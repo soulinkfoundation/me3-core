@@ -1,0 +1,135 @@
+type ProductPurchase = {
+  username: string;
+  slug: string;
+  price?: number;
+  currency?: string;
+  available?: boolean;
+  paymentMethod?: "stripe" | "manual";
+  enabled: boolean;
+};
+
+function escape(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+export function renderProductCheckout(product: ProductPurchase): string {
+  const hasPrice = Number.isInteger(product.price) && product.price! >= 50 && /^[a-z]{3}$/i.test(product.currency || "");
+  const price = typeof product.price === "number" && Number.isFinite(product.price)
+    ? `<p class="product-price">${escape((product.price / 100).toFixed(2))} ${escape((product.currency || "").toUpperCase())}</p>`
+    : "";
+  const manual = product.paymentMethod === "manual";
+  const unavailable = product.available === false ? "This product is currently unavailable."
+    : !hasPrice || !product.username ? "This product is not ready for checkout yet." : "";
+  if (unavailable) return `<section class="product-purchase" aria-label="Purchase">${price}<p>${unavailable}</p></section>`;
+  const config = JSON.stringify({ username: product.username, slug: product.slug, manual }).replace(/</g, "\\u003c");
+  return `<section class="product-purchase" aria-label="Purchase" data-product-purchase>
+    ${price}
+    <p class="product-status" data-product-status role="status" aria-live="polite"></p>
+    ${product.enabled ? `<details data-product-details><summary class="product-buy">${manual ? "Request this product" : "Buy now"}</summary>
+    <form data-product-checkout>
+      <label for="product-buyer-name">Your name</label><input id="product-buyer-name" name="buyerName" autocomplete="name" maxlength="120" required>
+      <label for="product-buyer-email">Email</label><input id="product-buyer-email" name="buyerEmail" type="email" autocomplete="email" maxlength="254" required>
+      <p class="product-help">${manual ? "Payment is not taken now. We’ll email you the payment details." : "You’ll complete your payment securely with Stripe."}</p>
+      <button class="product-buy" type="submit">${manual ? "Request payment details" : "Continue to Stripe"}</button>
+    </form></details>` : '<button class="product-buy" type="button" disabled>Buy now</button><p class="product-help">Checkout is available on your published site.</p>'}
+  </section>${product.enabled ? `<script>(${productCheckoutScript})(${config});</script>` : ""}`;
+}
+
+// Literal JavaScript stays independent of bundler helper functions.
+const productCheckoutScript = String.raw`function(config) {
+  const root = document.querySelector("[data-product-purchase]");
+  if (!root) return;
+  const form = root.querySelector("[data-product-checkout]");
+  const details = root.querySelector("[data-product-details]");
+  const status = root.querySelector("[data-product-status]");
+  const button = form.querySelector('button[type="submit"]');
+  let busy = false;
+  let completed = false;
+  function message(text, error = false) {
+    status.textContent = text;
+    status.classList.toggle("is-error", error);
+  }
+  function pending(value) {
+    busy = value;
+    button.disabled = value || completed;
+    form.setAttribute("aria-busy", String(value));
+  }
+  async function post(path, payload) {
+    const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "We couldn’t complete that request. Please try again.");
+    return data;
+  }
+  function clearReturnParameters() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("purchase");
+    url.searchParams.delete("session_id");
+    window.history.replaceState(null, "", url.toString());
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (busy || completed || !form.reportValidity()) return;
+    pending(true);
+    message(config.manual ? "Sending your request…" : "Opening secure checkout…");
+    try {
+      const values = new FormData(form);
+      const returnUrl = new URL(window.location.href);
+      returnUrl.searchParams.delete("purchase");
+      returnUrl.searchParams.delete("session_id");
+      returnUrl.hash = "";
+      const result = await post("/api/shop/" + encodeURIComponent(config.username) + "/" + encodeURIComponent(config.slug) + "/order", {
+        buyerName: values.get("buyerName"), buyerEmail: values.get("buyerEmail"), returnUrl: returnUrl.toString(),
+      });
+      if (result.paymentMethod === "manual") {
+        completed = true;
+        details.hidden = true;
+        message(result.message || "Your request is confirmed. Check your email for payment details.");
+        pending(false);
+      } else if (typeof result.url === "string" && new URL(result.url).protocol === "https:") {
+        window.location.assign(result.url);
+      } else throw new Error("Checkout is unavailable. Please try again.");
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Checkout is unavailable. Please try again.", true);
+      pending(false);
+    }
+  });
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("purchase") === "cancelled") {
+    message("Checkout cancelled. No payment was taken. You can try again.");
+    details.open = true;
+    clearReturnParameters();
+  } else if (params.get("purchase") === "success") {
+    const sessionId = params.get("session_id");
+    if (!sessionId) { details.hidden = true; completed = true; message("Payment could not be confirmed: the checkout reference is missing.", true); return; }
+    pending(true);
+    details.hidden = true;
+    message("Confirming your payment…");
+    post("/api/shop/" + encodeURIComponent(config.username) + "/complete-checkout", { sessionId }).then((result) => {
+      if (result.ok !== true || result.order?.status !== "paid" || result.order?.product_slug !== config.slug) {
+        throw new Error("Payment has not been confirmed for this product. Please contact the seller before paying again.");
+      }
+      completed = true;
+      message("Payment received. Thank you for your purchase.");
+      clearReturnParameters();
+    }).catch((error) => {
+      message((error instanceof Error ? error.message : "Payment could not be confirmed.") + " Refresh to check again; don’t pay again yet.", true);
+    });
+  }
+}`;
+
+export const productCheckoutCss = `
+.product-purchase{margin:28px 0 12px;padding-top:24px;border-top:1px solid var(--border)}
+.product-price{font-size:1.5rem;font-weight:700;margin:0 0 20px}
+.product-purchase [hidden]{display:none!important}
+.product-buy{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:48px;padding:12px 24px;border:1px solid var(--accent);border-radius:var(--radius-md);background:var(--accent);color:var(--surface);font:inherit;font-weight:700;cursor:pointer;list-style:none;text-align:center}
+.product-buy::-webkit-details-marker{display:none}
+.product-buy:disabled{opacity:.6;cursor:default}
+.product-buy:focus-visible,.product-purchase input:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.product-purchase form{display:grid;gap:10px;margin-top:20px;max-width:420px}
+.product-purchase label{font-weight:600}
+.product-purchase input{box-sizing:border-box;width:100%;min-height:48px;padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font:inherit}
+.product-help{font-size:.9rem;color:var(--muted);margin:4px 0 12px}
+.product-status:empty{display:none}
+.product-status{margin:0 0 18px}.product-status.is-error{font-weight:600}
+@media(max-width:520px){.product-buy{width:100%}}
+`;

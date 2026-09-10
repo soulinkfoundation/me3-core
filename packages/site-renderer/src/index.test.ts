@@ -56,7 +56,7 @@ describe("site generator", () => {
       ],
     );
 
-    expect(files["index.html"].match(/<details class="nav-group/g)).toHaveLength(2);
+    expect(files["index.html"].match(/<details class="nav-group/g)).toHaveLength(1);
     expect(files["index.html"]).toContain(
       '<summary class="nav-link nav-group-toggle">Services',
     );
@@ -116,27 +116,12 @@ describe("site generator", () => {
     );
   });
 
-  it("keeps standard navigation inline on larger screens with a mobile drawer", async () => {
-    const files = await generateSiteHtml(
-      {
-        name: "Standard Site",
-        pages: [{ slug: "about", title: "About", file: "about.md" }],
-      },
-      [{ name: "about.md", content: "About" }],
-    );
-
-    expect(files["index.html"]).toContain(
-      'body data-vibe="warm" data-navigation-style="standard"',
-    );
-    expect(files["index.html"]).toContain(
-      '<nav class="nav nav-inline" aria-label="Primary navigation">',
-    );
-    expect(files["index.html"]).toContain(
-      ".site-navigation-standard .site-menu-trigger{display:inline-flex}",
-    );
-    expect(files["about.html"]).toContain(
-      'class="site-navigation site-navigation-header site-navigation-standard"',
-    );
+  it("uses the top-right drawer at every width for legacy standard profiles", async () => {
+    const files = await generateSiteHtml({name: "Standard Site", links: {_navigation_style: "standard"}, pages: [{slug: "about", title: "About", file: "about.md"}]}, [{name: "about.md", content: "About"}]);
+    expect(files["index.html"]).toContain('data-navigation-style="compact"');
+    expect(files["index.html"]).not.toContain('<nav class="nav nav-inline"');
+    expect(files["index.html"].indexOf('<div class="site-navigation')).toBeLessThan(files["index.html"].indexOf('<main'));
+    expect(files["about.html"]).toContain('site-navigation-header site-navigation-compact');
   });
 
   it("publishes semantic native audio controls with responsive styling", async () => {
@@ -872,3 +857,13 @@ describe("site generator", () => {
     expect(files["blog/index.html"]).not.toContain(".hidden{display:none}");
   });
 });
+
+ it("renders checkout for products even without a markdown file", async () => {
+   const profile = {name: "Shop", handle:"shop", products:[{slug:"book",title:"Book",file:"missing.md",price:100,currency:"EUR",excerpt:"A book"}]};
+   const files = await generateSiteHtml(profile, []);
+   expect(files["shop/book.html"]).toContain("1.00 EUR");
+   expect(files["shop/book.html"]).toContain("Buy now");
+   expect(files["shop/book.html"]).toContain("data-product-checkout");
+   const preview = await generateSiteHtml(profile, [], {productCheckoutEnabled:false});
+   expect(preview["shop/book.html"]).not.toContain("<form data-product-checkout");
+ });

@@ -190,7 +190,7 @@ watchEffect(async () => {
       content: await contentWithPreviewAssets(file.content, file.images),
     })),
   );
-  const output = await generateSiteHtml(profile, sourceFiles);
+  const output = await generateSiteHtml(profile, sourceFiles, { productCheckoutEnabled: false });
   if (version !== renderVersion) return;
 
   generatedFiles.value = Object.fromEntries(

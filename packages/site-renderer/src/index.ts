@@ -1,3 +1,4 @@
+import { renderProductCheckout, productCheckoutCss } from "./product-checkout";
 import {
   formatPublicLocation,
   type PublicLocationData,
@@ -184,12 +185,14 @@ type SiteRenderCapabilities = {
   footerCustomization: boolean;
   bookingsEnabled: boolean;
   newsletterSignup: boolean;
+  productCheckoutEnabled: boolean;
 };
 
 const DEFAULT_CAPABILITIES: SiteRenderCapabilities = {
   footerCustomization: true,
   bookingsEnabled: true,
   newsletterSignup: true,
+  productCheckoutEnabled: true,
 };
 
 const DEFAULT_VIBE = "warm";
@@ -263,11 +266,9 @@ export async function generateSiteHtml(
   if (products.length > 0) {
     output[`${sectionPaths.shop}/index.html`] = generateCollectionIndex(profile, profile.shopTitle || "Shop", products, "shop", access, fileMap);
     for (const product of products) {
-      if (!product.file || !product.slug) continue;
-      const markdown = fileMap.get(normalizeSitePath(product.file));
-      if (markdown !== undefined) {
-        output[`${sectionPaths.shop}/${normalizeSitePath(product.slug)}.html`] = generateContentPageHtml(profile, product.title || titleFromSlug(product.slug), markdown, "shop", "../", access);
-      }
+      if (!product.slug) continue;
+      const markdown = (product.file ? fileMap.get(normalizeSitePath(product.file)) : undefined) || product.excerpt || "";
+      output[`${sectionPaths.shop}/${normalizeSitePath(product.slug)}.html`] = generateContentPageHtml(profile, product.title || titleFromSlug(product.slug), markdown, "shop", "../", access, product);
     }
   }
 
@@ -295,7 +296,7 @@ function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapa
     description,
     activeSlug: "",
     basePath: "./",
-    body: `${banner}
+    body: `${generateNav(profile, "", "./", "home")}${banner}
       <main class="main${banner ? "" : " no-banner"}">
         <header class="profile-header">
           ${avatar}
@@ -303,7 +304,6 @@ function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapa
           ${displayLocation ? `<p class="location">${escapeHtml(displayLocation)}</p>` : ""}
           ${profile.bio ? `<p class="bio">${parseInlineMarkdown(profile.bio)}</p>` : ""}
         </header>
-        ${generateNav(profile, "", "./", "home")}
         ${generateButtons(profile)}
         ${generateLinks(profile)}
         ${booking}
@@ -322,6 +322,7 @@ function generateContentPageHtml(
   activeSlug: string,
   basePath: string,
   capabilities: SiteRenderCapabilities,
+  product?: Me3Product,
 ): string {
   const htmlContent = expandReusableContentBlocks(
     profile,
@@ -335,7 +336,7 @@ function generateContentPageHtml(
     activeSlug,
     basePath,
     body: `<header class="page-header"><a class="back-link" href="${basePath}">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, basePath))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, activeSlug, basePath, "header")}</header>
-      <main class="content"><h1>${escapeHtml(title)}</h1>${htmlContent}</main>`,
+      <main class="content"><h1>${escapeHtml(title)}</h1>${htmlContent}${product ? renderProductCheckout({ ...product, username: profile.handle || "", slug: product.slug || "", enabled: capabilities.productCheckoutEnabled }) : ""}</main>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
     vibe: getVibe(profile),
     afterContainer: htmlContent.includes("<img") ? buildContentLightbox() : "",
@@ -414,7 +415,7 @@ function pageShell(
     ? `<link rel="icon" href="${escapeHtml(faviconPath)}">\n  <link rel="apple-touch-icon" href="${escapeHtml(faviconPath)}">`
     : "";
   const headLinks = [faviconLinks, fontLinks].filter(Boolean).join("\n  ");
-  const navigationStyle = getSiteNavigationStyle(profile);
+  const navigationStyle = getSiteNavigationStyle();
   const navigationScript = hasSiteNavigation(profile)
     ? buildNavigationDialogScript()
     : "";
@@ -426,7 +427,7 @@ function pageShell(
   <title>${escapeHtml(options.title)}</title>
   <meta name="description" content="${escapeHtml(options.description)}">
   ${headLinks}
-  <style>${siteCss(options.vibe, profile.links?._accent)}${options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(options.vibe)}${contentImageCss()}${contentAudioCss()}${navigationGroupCss()}${bookingControlsCss()}.main.no-banner .profile-header{margin-top:0}</style>
+  <style>${siteCss(options.vibe, profile.links?._accent)}${options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(options.vibe)}${contentImageCss()}${contentAudioCss()}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}.main.no-banner .profile-header{margin-top:0}</style>
 </head>
 <body data-vibe="${escapeHtml(options.vibe)}" data-navigation-style="${navigationStyle}">
   <div class="container">
@@ -441,12 +442,9 @@ function pageShell(
 
 type NavigationPlacement = "home" | "header";
 
-function getSiteNavigationStyle(
-  profile: Me3SiteProfile,
-): SiteNavigationStyle {
-  return normalizeSiteNavigationStyle(
-    profile.links?.[SITE_NAVIGATION_STYLE_LINK_KEY],
-  );
+function getSiteNavigationStyle(): SiteNavigationStyle {
+  // Public pages use the same drawer at every viewport size, including legacy profiles.
+  return "compact";
 }
 
 function hasSiteNavigation(profile: Me3SiteProfile): boolean {
@@ -475,17 +473,7 @@ function generateNav(
   const hasProducts = (profile.products || []).length > 0;
   if (pages.length === 0 && !hasPosts && !hasProducts) return "";
 
-  const style = getSiteNavigationStyle(profile);
-  const inlineLinks = generateNavLinks({
-    profile,
-    pages,
-    activeSlug,
-    basePath,
-    sectionPaths,
-    hasPosts,
-    hasProducts,
-    drawer: false,
-  });
+  const style = getSiteNavigationStyle();
   const drawerLinks = generateNavLinks({
     profile,
     pages,
@@ -496,14 +484,10 @@ function generateNav(
     hasProducts,
     drawer: true,
   });
-  const inlineNavigation =
-    style === "standard"
-      ? `<nav class="nav nav-inline" aria-label="Primary navigation">${inlineLinks}</nav>`
-      : "";
   const menuIcon = `<svg class="site-menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`;
   const closeIcon = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg>`;
 
-  return `<div class="site-navigation site-navigation-${placement} site-navigation-${style}">${inlineNavigation}<button class="site-menu-trigger" type="button" data-site-menu-open aria-label="Open menu" aria-haspopup="dialog" aria-controls="site-navigation-dialog" aria-expanded="false">${menuIcon}</button><dialog id="site-navigation-dialog" class="site-menu-dialog" data-site-menu-dialog aria-labelledby="site-navigation-title"><div class="site-menu-panel"><header class="site-menu-header"><span id="site-navigation-title" class="site-menu-title">Menu</span><button class="site-menu-close" type="button" data-site-menu-close aria-label="Close menu">${closeIcon}</button></header><nav class="site-menu-nav" aria-label="Primary navigation">${drawerLinks}</nav></div></dialog></div>`;
+  return `<div class="site-navigation site-navigation-${placement} site-navigation-${style}"><button class="site-menu-trigger" type="button" data-site-menu-open aria-label="Open menu" aria-haspopup="dialog" aria-controls="site-navigation-dialog" aria-expanded="false">${menuIcon}</button><dialog id="site-navigation-dialog" class="site-menu-dialog" data-site-menu-dialog aria-labelledby="site-navigation-title"><div class="site-menu-panel"><header class="site-menu-header"><span id="site-navigation-title" class="site-menu-title">Menu</span><button class="site-menu-close" type="button" data-site-menu-close aria-label="Close menu">${closeIcon}</button></header><nav class="site-menu-nav" aria-label="Primary navigation">${drawerLinks}</nav></div></dialog></div>`;
 }
 
 function generateNavLinks(options: {
@@ -1977,7 +1961,8 @@ function navigationGroupCss(): string {
 .site-menu-open{overflow:hidden}
 .site-navigation{display:flex;align-items:center;min-width:0}
 .site-navigation-home{justify-content:center;margin:28px 0 24px}
-.site-navigation-home.site-navigation-compact{position:absolute;top:16px;right:16px;z-index:10;margin:0;padding:0;border:0}
+.site-navigation-home + .main.no-banner{padding-top:80px}
+body .site-navigation-home.site-navigation-compact{position:absolute;top:16px;right:16px;z-index:10;margin:0;padding:0;border:0}
 .site-navigation-header{flex:1;justify-content:flex-end;min-width:0}
 .site-navigation-compact{justify-content:flex-end}
 .nav{align-items:center;margin:0}

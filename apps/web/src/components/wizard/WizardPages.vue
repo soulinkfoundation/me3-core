@@ -267,48 +267,6 @@ defineExpose({
   <div class="step-pages">
     <h2>Add simple pages</h2>
     <div v-if="selectedPageIndex === null">
-      <fieldset class="navigation-layout">
-        <legend>Menu layout</legend>
-        <div class="navigation-layout-options">
-          <label
-            class="navigation-layout-option"
-            :class="{
-              selected: wizard.profile.navigationStyle === 'standard',
-            }"
-          >
-            <input
-              type="radio"
-              name="navigation-layout"
-              value="standard"
-              :checked="wizard.profile.navigationStyle === 'standard'"
-              @change="wizard.updateProfile({ navigationStyle: 'standard' })"
-            />
-            <span>
-              <strong>Standard</strong>
-              <small>Links on larger screens, menu panel on mobile.</small>
-            </span>
-          </label>
-          <label
-            class="navigation-layout-option"
-            :class="{
-              selected: wizard.profile.navigationStyle === 'compact',
-            }"
-          >
-            <input
-              type="radio"
-              name="navigation-layout"
-              value="compact"
-              :checked="wizard.profile.navigationStyle === 'compact'"
-              @change="wizard.updateProfile({ navigationStyle: 'compact' })"
-            />
-            <span>
-              <strong>Compact</strong>
-              <small>Menu button and side panel at every screen size.</small>
-            </span>
-          </label>
-        </div>
-      </fieldset>
-
       <!-- Page list -->
       <div v-if="mainPages.length > 0" class="page-list">
         <div
@@ -690,79 +648,6 @@ defineExpose({
 .step-pages h2 {
   font-size: 28px;
   margin-bottom: 16px;
-}
-
-.navigation-layout {
-  padding: 0;
-  margin: 0 0 24px;
-  border: 0;
-}
-
-.navigation-layout legend {
-  margin-bottom: 10px;
-  color: var(--ui-text-muted, var(--color-text-muted));
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.navigation-layout-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.navigation-layout-option {
-  display: flex;
-  min-height: 72px;
-  box-sizing: border-box;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: var(--ui-radius-md, 12px);
-  background: var(--ui-surface, var(--color-bg));
-  color: var(--ui-text, var(--color-text));
-  cursor: pointer;
-}
-
-.navigation-layout-option.selected {
-  border-color: var(--ui-text, var(--color-text));
-  box-shadow: inset 0 0 0 1px var(--ui-text, var(--color-text));
-}
-
-.navigation-layout-option input {
-  width: 18px;
-  height: 18px;
-  margin: 2px 0 0;
-  accent-color: var(--ui-accent, var(--color-primary));
-}
-
-.navigation-layout-option input:focus-visible {
-  outline: 3px solid var(--ui-accent, var(--color-primary));
-  outline-offset: 3px;
-}
-
-.navigation-layout-option span {
-  display: grid;
-  gap: 3px;
-}
-
-.navigation-layout-option strong {
-  font-size: 14px;
-}
-
-.navigation-layout-option small {
-  color: var(--ui-text-muted, var(--color-text-muted));
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-@media (max-width: 560px) {
-  .navigation-layout-options {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Page list - matches .links-list / .buttons-list */
