@@ -248,7 +248,7 @@ export async function completeProductCheckout(
   env: Env,
   site: DbSite,
   sessionId: string,
-): Promise<{ ok: true; order: DbCommerceOrder; alreadyCompleted?: true }> {
+): Promise<{ ok: true; order: DbCommerceOrder; alreadyCompleted?: true } | { ok: false; checkoutStatus: "expired" }> {
   const order = await getOrderBySession(env, site.id, sessionId);
   if (!order) throw new CommerceOrderInputError("Checkout session not found.", 404);
   if (order.payment_method === "manual") {
@@ -257,6 +257,9 @@ export async function completeProductCheckout(
   if (order.status === "paid") return { ok: true, order, alreadyCompleted: true };
   if (order.provider === "me3_cloud") {
     const session = await retrieveManagedCheckout(env, sessionId);
+    if (session.checkoutStatus === "expired" && session.paymentStatus === "unpaid") {
+      return { ok: false, checkoutStatus: "expired" };
+    }
     return finalizeProductOrder(env, site, order, {
       paid: session.paymentStatus === "paid",
       paymentIntentId: session.paymentIntentId || null,
@@ -268,10 +271,14 @@ export async function completeProductCheckout(
   }
   const stripe = await getStripe(env, site.user_id);
   if (!stripe) throw new CommerceOrderInputError("Stripe is not configured.", 503);
+  const session = await stripe.checkout.sessions.retrieve(sessionId);
+  if (session.status === "expired" && session.payment_status === "unpaid") {
+    return { ok: false, checkoutStatus: "expired" };
+  }
   return finalizeStripeProductCheckout(
     env,
     site,
-    await stripe.checkout.sessions.retrieve(sessionId),
+    session,
   );
 }
 
@@ -485,6 +492,7 @@ async function retrieveManagedCheckout(env: Env, sessionId: string) {
   );
   const data = (await response.json()) as {
     paymentStatus?: string;
+    checkoutStatus?: string;
     paymentIntentId?: string | null;
     amountTotal?: number | null;
     currency?: string | null;

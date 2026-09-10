@@ -100,20 +100,56 @@ const productCheckoutScript = String.raw`function(config) {
     clearReturnParameters();
   } else if (params.get("purchase") === "success") {
     const sessionId = params.get("session_id");
-    if (!sessionId) { details.hidden = true; completed = true; message("Payment could not be confirmed: the checkout reference is missing.", true); return; }
-    pending(true);
     details.hidden = true;
-    message("Confirming your payment…");
-    post("/api/shop/" + encodeURIComponent(config.username) + "/complete-checkout", { sessionId }).then((result) => {
-      if (result.ok !== true || result.order?.status !== "paid" || result.order?.product_slug !== config.slug) {
-        throw new Error("Payment has not been confirmed for this product. Please contact the seller before paying again.");
-      }
-      completed = true;
-      message("Payment received. Thank you for your purchase.");
+    const recovery = document.createElement("div");
+    root.appendChild(recovery);
+    function returnToProduct() {
       clearReturnParameters();
-    }).catch((error) => {
-      message((error instanceof Error ? error.message : "Payment could not be confirmed.") + " Refresh to check again; don’t pay again yet.", true);
-    });
+      recovery.replaceChildren();
+      details.hidden = false;
+      details.open = true;
+      pending(false);
+    }
+    function action(label, handler) {
+      const control = document.createElement("button");
+      control.type = "button";
+      control.className = "product-buy";
+      control.textContent = label;
+      control.addEventListener("click", handler);
+      recovery.appendChild(control);
+    }
+    const validReference = sessionId && /^cs_[a-zA-Z0-9_]+$/.test(sessionId);
+    async function confirmPayment() {
+      recovery.replaceChildren();
+      pending(true);
+      message("Confirming your payment…");
+      try {
+        const result = await post("/api/shop/" + encodeURIComponent(config.username) + "/complete-checkout", { sessionId });
+        if (result.ok === false && result.checkoutStatus === "expired") {
+          message("This checkout expired without payment. You can try again.");
+          returnToProduct();
+          return;
+        }
+        if (result.ok !== true || result.order?.status !== "paid" || result.order?.product_slug !== config.slug) {
+          throw new Error("Payment has not been confirmed for this product.");
+        }
+        completed = true;
+        pending(false);
+        message("Payment received. Thank you for your purchase.");
+        clearReturnParameters();
+      } catch (error) {
+        pending(false);
+        message((error instanceof Error ? error.message : "Payment could not be confirmed.") + " Check the payment status again or contact the seller before paying again.", true);
+        action("Check payment status again", confirmPayment);
+        action("Return to product", returnToProduct);
+      }
+    }
+    if (!validReference) {
+      message("We couldn’t confirm payment because the checkout reference is missing or invalid. Contact the seller before paying again.", true);
+      action("Return to product", returnToProduct);
+    } else {
+      void confirmPayment();
+    }
   }
 }`;
 

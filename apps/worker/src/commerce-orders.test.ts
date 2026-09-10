@@ -196,6 +196,10 @@ describe("managed commerce orders", () => {
       checkout_session_id: "cs_managed",
     });
 
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ checkoutStatus: "expired", paymentStatus: "unpaid" })));
+    expect(await completeProductCheckout(env, site, "cs_managed")).toEqual({ ok: false, checkoutStatus: "expired" });
+    expect(orders[0].status).toBe("pending");
+
     fetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -210,7 +214,7 @@ describe("managed commerce orders", () => {
       ),
     );
     const completed = await completeProductCheckout(env, site, "cs_managed");
-    expect(completed.order).toMatchObject({ status: "paid", payment_intent_id: "pi_managed" });
+    expect(completed).toMatchObject({ ok: true, order: { status: "paid", payment_intent_id: "pi_managed" } });
   });
 
   it("creates a pending manual order and emails payment instructions without Stripe", async () => {

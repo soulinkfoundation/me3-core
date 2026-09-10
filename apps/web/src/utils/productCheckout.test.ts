@@ -62,4 +62,34 @@ describe("published product checkout", () => {
     expect(document.body.textContent).toContain("Checkout cancelled.");
     expect(request).not.toHaveBeenCalled();
   });
+  it("recovers from a literal Stripe placeholder without sending a bogus confirmation", () => {
+    window.history.replaceState(null, "", "/products/book?campaign=launch&purchase=success&session_id=%7BCHECKOUT_SESSION_ID%7D");
+    const request = vi.fn(); vi.stubGlobal("fetch", request); mount();
+    expect(document.body.textContent).toContain("missing or invalid");
+    expect(request).not.toHaveBeenCalled();
+    [...document.querySelectorAll("button")].find(button => button.textContent === "Return to product")!.click();
+    expect(window.location.search).toBe("?campaign=launch");
+    expect(document.querySelector("details")!.hidden).toBe(false);
+  });
+  it("rechecks an uncertain payment without starting another checkout", async () => {
+    window.history.replaceState(null, "", "/products/book?purchase=success&session_id=cs_test");
+    const request = vi.fn()
+      .mockResolvedValueOnce({ok:false,json:async()=>({error:"Temporarily unavailable"})})
+      .mockResolvedValueOnce({ok:true,json:async()=>({ok:true,order:{status:"paid",product_slug:"book"}})});
+    vi.stubGlobal("fetch", request); mount();
+    await vi.waitFor(() => expect([...document.querySelectorAll("button")].some(button => button.textContent === "Check payment status again")).toBe(true));
+    [...document.querySelectorAll("button")].find(button => button.textContent === "Check payment status again")!.click();
+    await vi.waitFor(() => expect(document.querySelector("[data-product-status]")!.textContent).toContain("Payment received"));
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls.every(([path]) => path.endsWith("/complete-checkout"))).toBe(true);
+  });
+  it("restores checkout only when the server confirms expiration", async () => {
+    window.history.replaceState(null, "", "/products/book?purchase=success&session_id=cs_expired");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ok:true,json:async()=>({ok:false,checkoutStatus:"expired"})}));
+    mount();
+    await vi.waitFor(() => expect(document.querySelector("[data-product-status]")!.textContent).toContain("expired without payment"));
+    expect(window.location.search).toBe("");
+    expect(document.querySelector("details")!.hidden).toBe(false);
+    expect((document.querySelector('button[type="submit"]') as HTMLButtonElement).disabled).toBe(false);
+  });
 });
