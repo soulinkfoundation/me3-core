@@ -1106,7 +1106,7 @@ async function loadMissionProfileSnapshot(
   const site = await env.DB.prepare(
     `SELECT id, username
      FROM sites
-     WHERE user_id = ? AND COALESCE(site_type, 'profile') = 'profile'
+     WHERE user_id = ? AND COALESCE(site_type, 'profile') = 'profile' AND site_role = 'profile'
      ORDER BY updated_at DESC
      LIMIT 1`,
   )

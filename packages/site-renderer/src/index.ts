@@ -1,4 +1,8 @@
 import { renderProductCheckout, productCheckoutCss } from "./product-checkout";
+import { applyImageMetadata, type SiteImageMetadata } from "./image-metadata";
+export * from "./image-metadata";
+import { discoveryLinks, jsonLd, publicDiscoveryFiles, publicSiteUrl, socialMetadata } from "./public-metadata";
+export * from "./public-metadata";
 import {
   formatPublicLocation,
   type PublicLocationData,
@@ -232,7 +236,9 @@ export async function generateSiteHtml(
   profile: Me3SiteProfile,
   files: { name: string; content: string }[],
   capabilities: Partial<SiteRenderCapabilities> = DEFAULT_CAPABILITIES,
+  context: { baseUrl?: string; entityType?: "Person" | "Organization"; images?: SiteImageMetadata } = {},
 ): Promise<Record<string, string>> {
+  if (profile.visibility === "private") return {};
   const output: Record<string, string> = {};
   const fileMap = new Map(files.map((file) => [normalizeSitePath(file.name), file.content]));
   const sectionPaths = resolveSiteSectionPaths(profile);
@@ -272,6 +278,29 @@ export async function generateSiteHtml(
     }
   }
 
+  const name = profile.name || profile.handle || "ME3 site";
+  const pages: Array<{ path: string; title: string }> = [];
+  for (const [file, html] of Object.entries(output)) {
+    const path = file.replace(/index\.html$/, "").replace(/\.html$/, "");
+    const canonicalUrl = publicSiteUrl(context.baseUrl, path);
+    const basePath = "../".repeat(file.split("/").length - 1) || "./";
+    const title = html.match(/<title>(.*?)<\/title>/)?.[1] || name;
+    pages.push({ path, title: path || name });
+    const identity = {
+      "@type": context.entityType || "Person", name,
+      ...(context.baseUrl ? { "@id": publicSiteUrl(context.baseUrl, "#identity"), url: publicSiteUrl(context.baseUrl) } : {}),
+      ...(profile.bio ? { description: contentToPlainText(profile.bio) } : {}),
+    };
+    // Existing title/description are escaped by pageShell; recover plain text before metadata escaping.
+    const decode = (value: string) => value.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const description = decode(html.match(/<meta name="description" content="([^"]*)"/)?.[1] || "");
+    const image = publicSiteUrl(context.baseUrl, profile.banner || profile.avatar || profile.logo || "");
+    const metadata = socialMetadata({ title: decode(title), description, canonicalUrl, image: (profile.banner || profile.avatar || profile.logo) ? image : undefined }) +
+      discoveryLinks(publicSiteUrl(context.baseUrl, "me.json") || `${basePath}me.json`) +
+      jsonLd({ "@context": "https://schema.org", "@type": file === "index.html" ? "ProfilePage" : "WebPage", name: decode(title), ...(canonicalUrl ? { url: canonicalUrl } : {}), mainEntity: identity });
+    output[file] = applyImageMetadata(html.replace("</head>", `${metadata}\n</head>`), context.images || {}, { baseUrl: context.baseUrl, pagePath: file, sizes: "(max-width: 640px) 100vw, 640px" });
+  }
+  Object.assign(output, publicDiscoveryFiles({ baseUrl: context.baseUrl, name, description: contentToPlainText(profile.bio || ""), pages }));
   return output;
 }
 
@@ -282,10 +311,10 @@ function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapa
   const bannerPath = profile.banner ? filePathForHtml(profile.banner) : "";
   const avatarPath = profile.avatar ? filePathForHtml(profile.avatar) : "";
   const banner = bannerPath
-    ? `<div class="banner"><img src="${escapeHtml(bannerPath)}" alt="" loading="eager" decoding="async"></div>`
+    ? `<div class="banner"><img src="${escapeHtml(bannerPath)}" alt="" loading="eager" decoding="async" fetchpriority="high"></div>`
     : "";
   const avatar = avatarPath
-    ? `<img class="avatar" src="${escapeHtml(avatarPath)}" alt="${escapeHtml(title)}" width="120" height="120" decoding="async">`
+    ? `<img class="avatar" src="${escapeHtml(avatarPath)}" alt="${escapeHtml(title)}" width="120" height="120" decoding="async" loading="eager" fetchpriority="${bannerPath ? "auto" : "high"}">`
     : "";
   const booking = capabilities.bookingsEnabled ? generateBooking(profile) : "";
   const newsletter = capabilities.newsletterSignup ? generateNewsletter(profile) : "";

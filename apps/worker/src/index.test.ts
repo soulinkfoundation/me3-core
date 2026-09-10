@@ -9,6 +9,7 @@ import {
 } from "@me3-core/plugin-agent-chat";
 import app, { getMe3CloudUsernamePublishBlockReason } from "./index";
 import coreApp from "./app";
+import * as networkDirectory from "./network-directory";
 import {
   DEFAULT_WORKERS_AI_TEXT_MODEL,
   generateAiText,
@@ -3945,7 +3946,26 @@ describe("ME3 Worker auth", () => {
     expect(privateAuth.status).toBe(404);
   });
 
-  it("preserves public site image caching while adding safe response headers", async () => {
+  it("revalidates published HTML and revokes cached access immediately on unpublish", async () => {
+    const env = createEnv();
+    addBookableSite(env);
+    addSiteFileText(env, "site-booking", "public/index.html", "<html>First</html>", "text/html");
+    env.ME3_SITE_USERNAME = "owner";
+    const first = await app.fetch(new Request("https://kieranbutler.com/"), env);
+    const etag = first.headers.get("ETag")!;
+    expect(first.headers.get("Link")).toContain('</me.json>');
+    const conditional = () => new Request("https://kieranbutler.com/", { headers: { "If-None-Match": etag } });
+    expect((await app.fetch(conditional(), env)).status).toBe(304);
+    const preview = await app.fetch(new Request("https://me3.example/preview/owner/"), env);
+    expect(preview.headers.get("Cache-Control")).toBe("no-store");
+    expect(preview.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    env.sites.find(site => site.id === "site-booking")!.published_at = null;
+    const revoked = await app.fetch(conditional(), env);
+    expect(revoked.status).toBe(404);
+    expect(revoked.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("revalidates mutable public site images while adding safe response headers", async () => {
     const env = createEnv();
     addBookableSite(env);
     addSiteFileText(env, "site-booking", "public/files/avatar.png", "PNG", "image/png");
@@ -3955,7 +3975,7 @@ describe("ME3 Worker auth", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("image/png");
-    expect(response.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
+    expect(response.headers.get("Cache-Control")).toBe("public, max-age=0, must-revalidate");
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(response.headers.get("X-Frame-Options")).toBeNull();
   });
@@ -6624,6 +6644,74 @@ describe("ME3 Worker auth", () => {
     expect(env.owner?.assistant_name).toBeNull();
   });
 
+  it.each(["Update my site bio", "publish it", "Update @missing site bio"])(
+    "does not choose a site for an ambiguous or unknown request: %s",
+    async (message) => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      addAssistantEditableSite(env);
+      env.sites.push({ ...env.sites[0]!, id: "studio", username: "studio", site_role: "organization" });
+      const before = env.siteFiles.map((file) => ({ ...file }));
+      const response = await app.fetch(new Request("http://localhost/api/assistant/chat/turn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: session },
+        body: JSON.stringify({ messageText: `@site ${message}` }),
+      }), env);
+      expect(response.status).toBe(200);
+      const payload = await response.json() as { replyText: string; siteAction: { siteId: string | null } };
+      expect(payload.replyText).toContain(message.includes("@missing") ? "could not find @missing" : "Which site");
+      expect(payload.siteAction.siteId).toBeNull();
+      expect(env.siteFiles).toEqual(before);
+    },
+  );
+
+  it("does not publish a personal draft when approval names a different site", async () => {
+    const env = createEnv();
+    const session = cookieHeader(await bootstrap(env));
+    addAssistantEditableSite(env);
+    env.sites.push({ ...env.sites[0]!, id: "studio", username: "studio", site_role: "organization" });
+    const send = (messageText: string, threadId?: string) => app.fetch(new Request("http://localhost/api/assistant/chat/turn", {
+      method: "POST", headers: { "Content-Type": "application/json", Cookie: session },
+      body: JSON.stringify({ messageText, threadId }),
+    }), env);
+    const drafted = await send('@site Update @owner short bio field to say "Personal update."');
+    expect(drafted.status).toBe(200);
+    const payload = await drafted.json() as { threadId: string; siteAction: { siteId: string } };
+    expect(payload.siteAction.siteId).toBe("site-assistant");
+    const before = env.siteFiles.map((file) => ({ ...file }));
+    const approval = await send("@site publish @studio", payload.threadId);
+    expect(approval.status).toBe(200);
+    expect(await approval.json()).toMatchObject({ replyText: expect.stringContaining("no pending draft for @studio") });
+    expect(env.siteFiles).toEqual(before);
+    expect(env.sites.every((site) => !site.published_at)).toBe(true);
+  });
+
+  it.each([["profile", "publish"], ["organization", "publish"], ["profile", "upload"], ["organization", "upload"]] as const)(
+    "only syncs the personal directory for a %s site via %s",
+    async (role, method) => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      addAssistantEditableSite(env);
+      env.sites[0]!.site_role = role;
+      addSiteFileText(env, "site-assistant", "public/index.html", "<h1>Site</h1>", "text/html");
+      addSiteFileText(env, "site-assistant", "public/me.json", JSON.stringify({ kind: "person", name: "Site" }), "application/json");
+      const sync = vi.spyOn(networkDirectory, "syncPublishedProfileToSoulinkDirectory").mockResolvedValue("synced");
+      const pending: Promise<unknown>[] = [];
+      try {
+        const form = new FormData();
+        form.append("files", new File([JSON.stringify({ version: "0.1", name: "Site", handle: "owner" })], "me.json", { type: "application/json" }));
+        const response = await app.fetch(new Request(`http://localhost/api/sites/owner/${method}`, {
+          method: "POST", headers: { Cookie: session }, body: method === "upload" ? form : undefined,
+        }), env, { waitUntil: (promise: Promise<unknown>) => { pending.push(promise); }, passThroughOnException() {} } as unknown as ExecutionContext);
+        expect(response.status).toBe(200);
+        await Promise.all(pending);
+        expect(sync).toHaveBeenCalledTimes(role === "profile" ? 1 : 0);
+      } finally {
+        sync.mockRestore();
+      }
+    },
+  );
+
   it("drafts and publishes profile site updates from assistant approval", async () => {
     const env = createEnv();
     const session = cookieHeader(await bootstrap(env));
@@ -8443,6 +8531,27 @@ describe("ME3 Worker auth", () => {
     expect(body.user.localeSource).toBe("inferred");
   });
 
+  it("disables direct Stripe key setup on managed hosting while allowing removal and currency changes", async () => {
+    const env = createEnv();
+    const session = cookieHeader(await bootstrap(env));
+    env.ME3_DEPLOYMENT_MODE = "managed";
+    const headers = { "Content-Type": "application/json", Cookie: session };
+    const status = await app.fetch(new Request("http://localhost/api/commerce/status", { headers }), env);
+    expect(await status.json()).toMatchObject({ stripe: { directKeySetupAllowed: false } });
+    for (const body of [{ stripeSecretKey: "sk_test_managed_setup" }, { preferredStripeProvider: "direct" }]) {
+      const response = await app.fetch(new Request("http://localhost/api/commerce/settings", {
+        method: "PUT", headers, body: JSON.stringify(body),
+      }), env);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "Use Stripe Connect for payments on managed hosting." });
+    }
+    const response = await app.fetch(new Request("http://localhost/api/commerce/settings", {
+      method: "PUT", headers, body: JSON.stringify({ clearStripeSecretKey: true, defaultCurrency: "EUR" }),
+    }), env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ defaultCurrency: "EUR", stripe: { directKeySetupAllowed: false } });
+  });
+
   it("stores Stripe payment settings for the signed-in owner", async () => {
     const env = createEnv();
     const session = cookieHeader(await bootstrap(env));
@@ -8473,6 +8582,7 @@ describe("ME3 Worker auth", () => {
     expect(beforeBody.encryptionConfigured).toBe(false);
     expect(beforeBody.defaultCurrency).toBe("EUR");
     expect(beforeBody.stripe).toMatchObject({
+      directKeySetupAllowed: true,
       configured: false,
       source: "not_configured",
       keyHint: null,

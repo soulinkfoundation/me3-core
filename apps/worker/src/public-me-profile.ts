@@ -48,8 +48,10 @@ function publicAsset(value: unknown): string | undefined {
 function publicOrigin(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
-    const origin = new URL(value).origin;
-    return origin.startsWith("https://") ? origin : undefined;
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password
+      ? `${url.origin}${url.pathname.replace(/\/+$/, "")}`
+      : undefined;
   } catch {
     return undefined;
   }

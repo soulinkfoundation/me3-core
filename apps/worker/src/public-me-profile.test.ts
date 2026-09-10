@@ -4,6 +4,11 @@ import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import { buildPublicMe3Profile } from "./public-me-profile";
 
 describe("public me.json profile", () => {
+  it("preserves username paths in public identity and action destinations", () => {
+    const profile = buildPublicMe3Profile({ name: "Alex", intents: { subscribe: { enabled: true } } }, "https://example.com/site/alex/");
+    expect(profile).toMatchObject({ id: "https://example.com/site/alex/me.json", url: "https://example.com/site/alex/" });
+    expect(JSON.stringify(profile)).toContain("https://example.com/site/alex/#newsletter");
+  });
   it("converts legacy site configuration into a public protocol 0.3 manifest", () => {
     const source: Me3SiteProfile = {
       version: "0.1",

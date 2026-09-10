@@ -31,6 +31,7 @@ export type CommerceSettingsResponse = {
     mode: "direct" | "managed";
     preferredProvider: StripeProviderPreference;
     directConfigured: boolean;
+    directKeySetupAllowed: boolean;
     directSource: "environment" | "stored" | "not_configured";
     managedAvailable: boolean;
     connectionStatus: ManagedCommerceConnectionStatus["status"] | "unavailable" | null;
@@ -106,6 +107,7 @@ export async function getCommerceSettings(
       mode,
       preferredProvider,
       directConfigured,
+      directKeySetupAllowed: env.ME3_DEPLOYMENT_MODE?.trim().toLowerCase() !== "managed",
       directSource: hasEnvKey
         ? "environment"
         : hasStoredKey
@@ -162,6 +164,10 @@ export async function updateCommerceSettings(
   const preferredProviderInput = hasPreferredProviderInput
     ? parseStripeProviderPreference(body.preferredStripeProvider)
     : null;
+  if (env.ME3_DEPLOYMENT_MODE?.trim().toLowerCase() === "managed" &&
+      (stripeSecretKey || preferredProviderInput === "direct")) {
+    throw new CommerceSettingsInputError("Use Stripe Connect for payments on managed hosting.", 400);
+  }
   const hasDefaultCurrencyInput = Object.prototype.hasOwnProperty.call(body, "defaultCurrency");
   const defaultCurrencyInput = hasDefaultCurrencyInput
     ? normalizeDefaultCurrency(body.defaultCurrency)

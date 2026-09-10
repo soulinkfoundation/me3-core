@@ -63,6 +63,7 @@ export function registerBusinessSiteRoutes(
       const site = await requireBusinessSite(c, deps);
       if (site instanceof Response) return site;
       try {
+        c.header("X-Robots-Tag", "noindex, nofollow");
         c.header("X-Frame-Options", "SAMEORIGIN");
         c.header("Content-Security-Policy", "frame-ancestors 'self'");
         return c.html(

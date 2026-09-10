@@ -167,6 +167,18 @@ class InboundEventTestDb {
   readonly mailboxMessages: Array<{ id: string; receivedAt: string }> = [];
   failMailboxInsert = false;
 
+  async batch(statements: InboundEventTestStatement[]) {
+    const before = this.mailboxMessages.length;
+    try {
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      return results;
+    } catch (error) {
+      this.mailboxMessages.length = before;
+      throw error;
+    }
+  }
+
   prepare(sql: string) {
     return new InboundEventTestStatement(this, sql);
   }

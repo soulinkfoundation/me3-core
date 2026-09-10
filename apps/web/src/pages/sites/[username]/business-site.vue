@@ -12,6 +12,7 @@ import {
   type LandingPageV3Section,
 } from "@me3-core/plugin-landing-pages";
 import { API_BASE, api } from "../../../api";
+import SiteEventFields from "../../../components/SiteEventFields.vue";
 import Button from "../../../components/Button.vue";
 import TiptapEditor from "../../../components/TiptapEditor.vue";
 import UiIcon from "../../../components/UiIcon.vue";
@@ -654,6 +655,7 @@ onMounted(load);
               <label>Page name<input v-model="selectedPageName" maxlength="70" /></label>
               <label>Headline<input v-model="selectedPageDraft.hero.headline" /></label>
               <label>Introduction<textarea v-model="selectedPageDraft.hero.subheadline" rows="4" /></label>
+              <SiteEventFields v-model="selectedPageDraft.event" />
               <div class="two-column-fields"><label>Hero layout<select v-model="selectedPageDraft.hero.imageLayout"><option value="split">Split image panel</option><option value="background">Full-bleed background</option></select></label><label class="checkbox-field"><input v-model="selectedPageDraft.hero.showActions" type="checkbox" /> Show primary action</label></div>
               <label>Hero image<input type="file" accept="image/*" @change="uploadHero" /></label>
             </section>

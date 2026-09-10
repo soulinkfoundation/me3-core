@@ -1,3 +1,4 @@
+import { discoveryLinks, publicSiteUrl, jsonLd, applyImageMetadata, type SiteImageMetadata } from "@me3-core/site-renderer";
 import {
   LANDING_PAGE_DESIGN_PACK_IDS,
   getDefaultLandingPageDesignPackId,
@@ -399,6 +400,7 @@ export type LandingPageV3Section =
     };
 
 export interface LandingPageDocumentV3 {
+  event?: LandingPageEvent;
   version: 3;
   intent: LandingPageDocumentV2["intent"];
   recipe: LandingPageDocumentV2["recipe"];
@@ -706,6 +708,7 @@ export function normalizeLandingPageDocument(
 
   if (raw.version === 3) {
     const page = raw as Partial<LandingPageDocumentV3>;
+    if (page.event !== undefined && !validLandingPageEvent(page.event)) return null;
     const designPackId = normalizeLandingPageDesignPackId(page.design?.packId);
     const hasDesignPackId = page.design?.packId !== undefined;
     const hasDesignPackVersion = page.design?.packVersion !== undefined;
@@ -1016,6 +1019,7 @@ export function getLandingPageValidationErrors(
   page: LandingPageDocumentV3,
 ): string[] {
   const errors: string[] = [];
+  if (page.event !== undefined && !validLandingPageEvent(page.event)) errors.push("Add valid event dates with a timezone and a location. The end must follow the start.");
   const actionIds = new Set(page.actions.map((action) => action.id));
   if (!page.seo.title.trim()) errors.push("Add a page title.");
   if (!page.seo.description.trim()) errors.push("Add a page description.");
@@ -1634,7 +1638,70 @@ export function buildLandingPageDocumentV2(
   };
 }
 
-export function renderLandingPageHtml(
+export function renderLandingPageHtml(page: LandingPageDocument, username: string, context: LandingPageRenderContext = {}): string {
+  let renderedPage = page;
+  if (page.version === 3 && page.event && validLandingPageEvent(page.event)) {
+    const event = page.event;
+    const formatDate = (value: string) => new Intl.DateTimeFormat("en-IE", { dateStyle: "long", timeStyle: "short", timeZone: event.timezone || "UTC" }).format(new Date(value)) + ` ${event.timezone || "UTC"}`;
+    const facts = [
+      { label: "When", value: `${formatDate(event.startDate)}${event.endDate ? ` – ${formatDate(event.endDate)}` : ""}` },
+      { label: "Where", value: event.location.type === "online" ? `Online · ${event.location.url}` : `${event.location.name} · ${event.location.address}` },
+    ];
+    const mergeFacts = (items: Array<{ label: string; value: string }>) => [...facts, ...items.filter(item => !["when", "where"].includes(item.label.toLowerCase()))];
+    const sections: LandingPageV3Section[] = page.content.sections.map(section => section.type === "details" ? { ...section, items: mergeFacts(section.items) } : section);
+    if (!sections.some(section => section.type === "details")) sections.unshift({ id: "event-details", type: "details", heading: "Event details", items: facts });
+    renderedPage = { ...page, hero: { ...page.hero, metadata: mergeFacts(page.hero.metadata || []) }, content: { ...page.content, sections } };
+  }
+  const html = renderLandingPageDocumentHtml(renderedPage, username, context);
+  const base = context.siteBaseUrl || (context.canonicalUrl ? new URL(context.canonicalUrl).origin : undefined);
+  const profileUrl = publicSiteUrl(base, "me.json") || `${context.siteBasePath || ""}/me.json`;
+  let metadata = discoveryLinks(profileUrl) + '<meta name="twitter:card" content="summary_large_image">';
+  if (context.canonicalUrl && !html.includes('rel="canonical"')) metadata += `<link rel="canonical" href="${escapeHtml(context.canonicalUrl)}"><meta property="og:url" content="${escapeHtml(context.canonicalUrl)}">`;
+  if (context.businessSite && !html.includes('"@type":"Organization"')) metadata += renderBusinessSiteOrganizationSchema(context.businessSite, context.canonicalUrl, context);
+  if (page.version === 3 && page.event && validLandingPageEvent(page.event)) {
+    const event = page.event;
+    metadata += jsonLd({ "@context": "https://schema.org", "@type": "Event", name: page.hero.headline,
+      description: page.hero.subheadline, startDate: event.startDate, ...(event.endDate ? { endDate: event.endDate } : {}),
+      ...(context.canonicalUrl ? { url: context.canonicalUrl } : {}),
+      ...(page.hero.image && publicSiteUrl(base, page.hero.image) ? { image: publicSiteUrl(base, page.hero.image) } : {}),
+      eventAttendanceMode: `https://schema.org/${event.location.type === "online" ? "OnlineEventAttendanceMode" : "OfflineEventAttendanceMode"}`,
+      location: event.location.type === "online" ? { "@type": "VirtualLocation", url: event.location.url } : { "@type": "Place", name: event.location.name, address: event.location.address },
+      ...(context.businessSite ? { organizer: { "@type": "Organization", name: context.businessSite.name, url: publicSiteUrl(base) } } : {}),
+    });
+
+  }
+  return applyImageMetadata(html.replace('</head>', `${metadata}</head>`), context.images || {}, { baseUrl: base, pagePath: context.canonicalUrl || (context.slug ? `${context.slug}/index.html` : "index.html"), sizes: "(max-width: 900px) 100vw, 1200px" });
+}
+
+export type LandingPageEvent = {
+  /** ISO 8601 date-time including UTC offset; never inferred from prose. */
+  startDate: string;
+  endDate?: string;
+  timezone?: string;
+  location: { type: "online"; url: string } | { type: "place"; name: string; address: string };
+};
+
+function validLandingPageEvent(value: unknown): value is LandingPageEvent {
+  if (!value || typeof value !== "object") return false;
+  const event = value as LandingPageEvent;
+  const date = (s: unknown): s is string => typeof s === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})$/.test(s) && Number.isFinite(Date.parse(s));
+  if (!date(event.startDate) || (event.endDate !== undefined && (!date(event.endDate) || Date.parse(event.endDate) < Date.parse(event.startDate)))) return false;
+  if (event.timezone !== undefined) {
+    if (typeof event.timezone !== "string") return false;
+    try { new Intl.DateTimeFormat("en", { timeZone: event.timezone }); } catch { return false; }
+  }
+  const validDay = (value: string) => {
+    const [year, month, day] = value.slice(0, 10).split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day)).toISOString().slice(0, 10) === value.slice(0, 10);
+  };
+  if (!validDay(event.startDate) || (event.endDate && !validDay(event.endDate))) return false;
+  const location = event.location;
+  if (!location) return false;
+  if (location.type === "online") return typeof location.url === "string" && !!publicSiteUrl(location.url);
+  return location.type === "place" && typeof location.name === "string" && !!location.name.trim() && typeof location.address === "string" && !!location.address.trim();
+}
+
+function renderLandingPageDocumentHtml(
   page: LandingPageDocument,
   username: string,
   context: LandingPageRenderContext = {},
@@ -1665,6 +1732,8 @@ export type LandingPageRenderContext = {
   businessSite?: BusinessSiteDocumentV1;
   canonicalUrl?: string;
   siteBasePath?: string;
+  siteBaseUrl?: string;
+  images?: SiteImageMetadata;
 };
 
 function renderLegacyLandingPageHtmlV3(
@@ -1684,7 +1753,7 @@ function renderLegacyLandingPageHtmlV3(
     action?.kind === "link" ? action.href || "#" : action ? `#action-${action.id}` : "#main";
   const heroImage = page.hero.image || page.assets.sectionImage;
   const heroVisual = heroImage
-    ? `<img src="${escapeHtml(heroImage)}" alt="" loading="eager" decoding="async">`
+    ? `<img src="${escapeHtml(heroImage)}" alt="" loading="eager" decoding="async" fetchpriority="high">`
     : renderGeneratedVisual(page);
   const metadata = (page.hero.metadata || [])
     .map(
@@ -1706,7 +1775,7 @@ function renderLegacyLandingPageHtmlV3(
     )
     .join("");
   const socialImage = page.seo.socialImage
-    ? `<meta property="og:image" content="${escapeHtml(resolveBusinessSiteAsset(context, page.seo.socialImage))}">`
+    ? `<meta property="og:image" content="${escapeHtml(publicSiteUrl(context.siteBaseUrl, resolveBusinessSiteAsset(context, page.seo.socialImage)) || resolveBusinessSiteAsset(context, page.seo.socialImage))}">`
     : "";
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.seo.title)}</title><meta name="description" content="${escapeHtml(page.seo.description)}"><meta property="og:title" content="${escapeHtml(page.seo.title)}"><meta property="og:description" content="${escapeHtml(page.seo.description)}">${socialImage}<style>${renderLandingPageCssV2(theme)}${renderActionCss()}</style></head><body data-theme="${escapeHtml(page.design.theme)}"><a href="#main" class="skip-link">Skip to content</a><header class="site-top"><div class="shell site-top-inner"><strong>${escapeHtml(username)}</strong>${primaryAction ? `<a class="top-action" href="${escapeHtml(actionHref(primaryAction))}">${escapeHtml(primaryAction.label)}</a>` : ""}</div></header><main id="main"><section class="hero"><div class="shell hero-grid"><div class="hero-copy">${metadata ? `<div class="meta-grid">${metadata}</div>` : ""}<h1>${escapeHtml(page.hero.headline)}</h1><p>${escapeHtml(page.hero.subheadline)}</p><div class="hero-actions">${primaryAction ? `<a class="button primary" href="${escapeHtml(actionHref(primaryAction))}">${escapeHtml(primaryAction.label)}</a>` : ""}${secondaryAction ? `<a class="button secondary" href="${escapeHtml(actionHref(secondaryAction))}">${escapeHtml(secondaryAction.label)}</a>` : ""}</div></div><div class="hero-visual">${heroVisual}</div></div></section>${sections}</main><script>${landingActionScript()}</script></body></html>`;
@@ -1775,7 +1844,7 @@ function renderStarterLandingPageHtml(
     )
     .join("");
   const socialImage = page.seo.socialImage
-    ? `<meta property="og:image" content="${escapeHtml(resolveBusinessSiteAsset(context, page.seo.socialImage))}">`
+    ? `<meta property="og:image" content="${escapeHtml(publicSiteUrl(context.siteBaseUrl, resolveBusinessSiteAsset(context, page.seo.socialImage)) || resolveBusinessSiteAsset(context, page.seo.socialImage))}">`
     : "";
   const pack = getLandingPageDesignPack(designPackId);
   const canonical = context.canonicalUrl
@@ -1887,7 +1956,7 @@ function renderBusinessSiteOrganizationSchema(
     ...(site.organization.email ? { email: site.organization.email } : {}),
     ...(site.organization.telephone ? { telephone: site.organization.telephone } : {}),
     ...(site.organization.address ? { address: site.organization.address } : {}),
-    ...(canonicalUrl ? { url: new URL(canonicalUrl).origin } : {}),
+    ...(context.siteBaseUrl || canonicalUrl ? { url: publicSiteUrl(context.siteBaseUrl || new URL(canonicalUrl!).origin) } : {}),
   };
   return `<script type="application/ld+json">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
 }
@@ -1977,7 +2046,7 @@ function renderStarterLandingPageVisual(
 ): string {
   const image = page.hero.image || page.assets.heroImage || page.assets.sectionImage;
   if (image) {
-    return `<figure class="pack-hero-image"><img src="${escapeHtml(resolveBusinessSiteAsset(context, image))}" alt="" loading="eager" decoding="async"></figure>`;
+    return `<figure class="pack-hero-image"><img src="${escapeHtml(resolveBusinessSiteAsset(context, image))}" alt="" loading="eager" decoding="async" fetchpriority="high"></figure>`;
   }
   if (designPackId === "starter-event-01") {
     return `<div class="event-landscape" aria-hidden="true"><span class="event-sun"></span><span class="event-hill event-hill-one"></span><span class="event-hill event-hill-two"></span></div>`;
@@ -2316,7 +2385,7 @@ function renderLandingPageHtmlV2(
   const theme = getThemeTokens(page);
   const heroImage = page.hero.image || page.assets.sectionImage;
   const heroVisual = heroImage
-    ? `<img src="${escapeHtml(heroImage)}" alt="" loading="eager" decoding="async">`
+    ? `<img src="${escapeHtml(heroImage)}" alt="" loading="eager" decoding="async" fetchpriority="high">`
     : renderGeneratedVisual(page);
   const metadata = (page.hero.metadata || [])
     .map(

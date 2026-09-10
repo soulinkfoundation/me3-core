@@ -9,6 +9,7 @@ export type CommerceSettingsResponse = {
     mode: "direct" | "managed";
     preferredProvider: "auto" | "direct" | "managed";
     directConfigured: boolean;
+    directKeySetupAllowed: boolean;
     directSource: "environment" | "stored" | "not_configured";
     managedAvailable: boolean;
     connectionStatus: "not_connected" | "pending" | "restricted" | "active" | "unavailable" | null;

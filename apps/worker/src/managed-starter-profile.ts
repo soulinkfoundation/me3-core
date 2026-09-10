@@ -1,3 +1,4 @@
+import { getSiteImageMetadata } from "./site-images";
 import { generateSiteHtml, type Me3SiteProfile } from "@me3-core/site-renderer";
 import { buildPublicMe3Profile } from "./public-me-profile";
 import {
@@ -7,6 +8,7 @@ import {
   getGeneratedSiteContentType,
   getMe3CloudApiOrigin,
   getPublicSiteOrigin,
+  getPublishedSiteBaseUrl,
   getR2SiteFileKey,
   getSiteFileText,
   normalizeSiteFileName,
@@ -425,7 +427,7 @@ export async function importManagedStarterProfile(
     }
 
     const publicProfileJson = JSON.stringify(
-      buildPublicMe3Profile(handoff.profile, getPublicSiteOrigin(env, site)),
+      buildPublicMe3Profile(handoff.profile, await getPublishedSiteBaseUrl(env, site)),
       null,
       2,
     );
@@ -433,7 +435,7 @@ export async function importManagedStarterProfile(
       handoff.profile.visibility === "public"
         ? await generateSiteHtml(handoff.profile, [
             { name: "me.json", content: profileJson },
-          ])
+          ], undefined, { baseUrl: await getPublishedSiteBaseUrl(env, site), images: await getSiteImageMetadata(env, site, [profileJson]) })
         : {};
     generatedFiles["me.json"] = publicProfileJson;
     for (const [name, content] of Object.entries(generatedFiles)) {

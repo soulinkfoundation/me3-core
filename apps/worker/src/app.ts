@@ -1427,7 +1427,7 @@ app.notFound(async (c) => {
       new URL(c.req.url).pathname,
     );
   }
-  return c.text("Not found", 404);
+  return c.text("Not found", 404, { "Cache-Control": "no-store" });
 });
 
 function normalizeClaimRedirect(value: unknown): string {
@@ -1844,7 +1844,7 @@ async function hasOwnerProfileSite(env: Env, ownerId: string): Promise<boolean> 
     `SELECT id
      FROM sites
      WHERE user_id = ?
-       AND COALESCE(site_type, 'profile') = 'profile'
+       AND COALESCE(site_type, 'profile') = 'profile' AND site_role = 'profile'
      LIMIT 1`,
   )
     .bind(ownerId)

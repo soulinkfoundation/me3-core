@@ -1,3 +1,5 @@
+import { getSiteImageMetadata } from "./site-images";
+import { publicDiscoveryFiles } from "@me3-core/site-renderer";
 import {
   businessSitePageHref,
   createBusinessSiteDocument,
@@ -127,6 +129,8 @@ export async function renderBusinessSitePagePreview(
     actionUsername: resourceSite.username,
     businessSite,
     siteBasePath: publicOrigin ? businessSiteBasePath(publicOrigin) : undefined,
+    siteBaseUrl: publicOrigin,
+    images: await getSiteImageMetadata(env, site, [JSON.stringify(pageDocument)]),
     canonicalUrl: publicOrigin
       ? `${publicOrigin}${businessSitePageHref(businessSite, page.slug)}`
       : undefined,
@@ -149,6 +153,7 @@ export async function publishBusinessSite(
   const errors = await validateBusinessSiteDocument(env, site, businessSite, true);
   if (errors.length) throw new BusinessSiteInputError(errors.join(" "), 409);
 
+  const images = await getSiteImageMetadata(env, site, pages.map(page => page.draft_json));
   const createdAt = new Date().toISOString();
   const revisionId = crypto.randomUUID();
   const renderedPages: Array<{
@@ -173,6 +178,8 @@ export async function publishBusinessSite(
         actionUsername: resourceSite.username,
         businessSite,
         siteBasePath: businessSiteBasePath(publicOrigin),
+        siteBaseUrl: publicOrigin,
+        images,
         canonicalUrl: `${publicOrigin}${businessSitePageHref(businessSite, page.slug)}`,
         ...paymentMethods,
       }),
@@ -240,6 +247,14 @@ export async function publishBusinessSite(
     );
   }
 
+  publicFiles.push({
+    path: "public/llms.txt",
+    content: publicDiscoveryFiles({ baseUrl: publicOrigin, name: businessSite.name,
+      description: businessSite.organization.description || businessSite.seo.description,
+      noindex: businessSite.seo.indexing === "noindex",
+      pages: pages.map(page => ({ title: page.title, path: businessSitePageHref(businessSite, page.slug).replace(/^\//, "") })),
+    })["llms.txt"], contentType: "text/plain; charset=utf-8",
+  });
   publicFiles.push(
     {
       path: BUSINESS_SITE_PUBLIC_PATH,
@@ -453,9 +468,7 @@ function renderRobots(
   publicOrigin: string,
   site: BusinessSiteDocumentV1,
 ): string {
-  return site.seo.indexing === "noindex"
-    ? "User-agent: *\nDisallow: /\n"
-    : `User-agent: *\nAllow: /\nSitemap: ${publicOrigin}/sitemap.xml\n`;
+  return `User-agent: *\nAllow: /\nSitemap: ${publicOrigin}/sitemap.xml\n`;
 }
 
 function parseBusinessSiteDocument(raw: string): BusinessSiteDocumentV1 | null {

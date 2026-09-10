@@ -1,3 +1,4 @@
+import { publicSiteFileResponse } from "./public-site-response";
 import {
   getLandingPageTemplateId,
   normalizeBusinessSiteDocument,
@@ -195,6 +196,13 @@ export function getSiteHost(env: Env, publicDomain?: string | null): string {
 export function getPublicSiteOrigin(env: Env, site: Pick<DbSite, "custom_domain">): string {
   const host = normalizeHost(site.custom_domain) || getSiteHost(env);
   return host ? `https://${host}` : "";
+}
+
+export async function getPublishedSiteBaseUrl(env: Env, site: DbSite): Promise<string> {
+  const origin = getPublicSiteOrigin(env, site);
+  if (origin && (await getPublicSiteForHost(env, new URL(origin).hostname))?.id === site.id) return origin;
+  const fallback = getCoreWebOrigin(env) || origin;
+  return fallback ? `${fallback}/site/${encodeURIComponent(site.username)}` : "";
 }
 
 export function getCoreWebOrigin(env: Env, requestUrl?: string): string {
@@ -508,11 +516,11 @@ export async function servePublicSiteRequest(env: Env, request: Request): Promis
   const site = await getPublicSiteForHost(env, new URL(request.url).hostname);
   if (!site) return new Response(renderNotFoundPage("Site not configured"), {
     status: 404,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
   });
 
   const requestedPath = new URL(request.url).pathname.replace(/^\/+/, "") || "index.html";
-  return serveSiteFileResponse(env, site, requestedPath, true);
+  return serveSiteFileResponse(env, site, requestedPath, true, "", request);
 }
 
 export async function serveDefaultPublicSitePath(
@@ -523,33 +531,18 @@ export async function serveDefaultPublicSitePath(
   const site = await getPublicSiteForHost(env, new URL(request.url).hostname);
   if (!site) return new Response(renderNotFoundPage("Site not configured"), {
     status: 404,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
   });
 
-  return serveSiteFileResponse(env, site, requestedPath, true);
+  return serveSiteFileResponse(env, site, requestedPath, true, "/me", request);
 }
 
 export async function serveMeJsonResponse(env: Env, request: Request): Promise<Response> {
   const requestHost = new URL(request.url).hostname;
   const requestedSite = await getPublicSiteForHost(env, requestHost);
   if (requestedSite) {
-    const site = await getRepresentedProfileSite(env, requestedSite);
-    const storedPublic = await getSiteFileText(env, site.id, "public/me.json");
-    if (site.published_at && storedPublic) {
-      const parsed = parseMe3Json(storedPublic);
-      if (parsed.valid && parsed.profile) return publicMeJsonResponse(parsed.profile);
-    }
-
-    const legacySource = await getSiteFileText(env, site.id, "src/me.json");
-    if (legacySource || storedPublic) {
-      const profile = parseSiteProfile(legacySource || storedPublic || "{}", site.username);
-      return publicMeJsonResponse(
-        buildPublicMe3Profile(
-          site.published_at ? profile : { ...profile, visibility: "private" },
-          new URL(request.url).origin,
-        ),
-      );
-    }
+    const response = await siteMeJsonResponse(env, requestedSite, new URL(request.url).origin);
+    if (response) return response;
   }
 
   if (!isKnownFallbackSiteHost(env, requestHost)) {
@@ -578,6 +571,27 @@ export async function serveMeJsonResponse(env: Env, request: Request): Promise<R
   );
 }
 
+async function siteMeJsonResponse(env: Env, requestedSite: DbSite, origin: string): Promise<Response | null> {
+  const site = await getRepresentedProfileSite(env, requestedSite);
+  const storedPublic = await getSiteFileText(env, site.id, "public/me.json");
+  if (site.published_at && storedPublic) {
+    const parsed = parseMe3Json(storedPublic);
+    if (parsed.valid && parsed.profile) return publicMeJsonResponse(parsed.profile);
+  }
+
+  const legacySource = await getSiteFileText(env, site.id, "src/me.json");
+  if (legacySource || storedPublic) {
+    const profile = parseSiteProfile(legacySource || storedPublic || "{}", site.username);
+    return publicMeJsonResponse(
+      buildPublicMe3Profile(
+        site.published_at ? profile : { ...profile, visibility: "private" },
+        origin,
+      ),
+    );
+  }
+  return null;
+}
+
 async function getRepresentedProfileSite(
   env: Env,
   site: DbSite,
@@ -600,7 +614,7 @@ function publicMeJsonResponse(profile: Me3CompatibleProfile): Response {
   return new Response(JSON.stringify(profile, null, 2), {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "public, max-age=60, must-revalidate",
+      "Cache-Control": "public, max-age=0, must-revalidate",
       "Access-Control-Allow-Origin": "*",
     },
   });
@@ -671,18 +685,19 @@ export async function servePublicSiteByUsername(
   rawHost: string,
   rawUsername: string,
   rawPath: string,
+  request?: Request,
 ): Promise<Response> {
   if (!isKnownFallbackSiteHost(env, rawHost)) {
     return new Response(renderNotFoundPage("Site not found"), {
       status: 404,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
     });
   }
   const site = await getSiteByUsername(env, rawUsername);
   if (!site) {
     return new Response(renderNotFoundPage("Site not found"), {
       status: 404,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
     });
   }
   return serveSiteFileResponse(
@@ -691,6 +706,7 @@ export async function servePublicSiteByUsername(
     rawPath,
     true,
     `/site/${encodeURIComponent(site.username)}`,
+    request,
   );
 }
 
@@ -700,15 +716,21 @@ export async function serveSiteFileResponse(
   rawPath: string,
   requirePublished: boolean,
   publicBasePath = "",
+  request?: Request,
 ): Promise<Response> {
   if (requirePublished && !site.published_at) {
     return new Response(renderNotFoundPage("Site not published"), {
       status: 404,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
     });
   }
 
   const requestedPath = normalizeSiteFileName(rawPath) || "index.html";
+  let noindex = false;
+  if (requirePublished && ["me.json", ".well-known/me.json"].includes(requestedPath)) {
+    const response = await siteMeJsonResponse(env, site, request ? new URL(request.url).origin + publicBasePath : "");
+    if (response) return response;
+  }
   if (requirePublished) {
     const businessSiteRaw = await getSiteFileText(
       env,
@@ -720,6 +742,7 @@ export async function serveSiteFileResponse(
         const businessSite = normalizeBusinessSiteDocument(
           JSON.parse(businessSiteRaw),
         );
+        noindex = businessSite?.seo.indexing === "noindex";
         const requestPath = `/${requestedPath
           .replace(/(?:^|\/)index\.html$/, "")
           .replace(/\/+$/, "")}`.replace(/\/$/, "") || "/";
@@ -763,17 +786,14 @@ export async function serveSiteFileResponse(
   if (!file) {
     return new Response(renderNotFoundPage("Page not found"), {
       status: 404,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
     });
   }
 
-  return new Response(siteFileContentToArrayBuffer(file.content), {
-    headers: {
-      "Content-Type": file.content_type,
-      "Cache-Control": /^(?:image|audio)\//.test(file.content_type)
-        ? "public, max-age=31536000, immutable"
-        : "no-store",
-    },
+  return publicSiteFileResponse({
+    content: siteFileContentToArrayBuffer(file.content), contentType: file.content_type,
+    sha256: file.sha256, published: requirePublished, request, path: requestedPath, noindex,
+    profileUrl: `${publicBasePath}/me.json`,
   });
 }
 
@@ -1129,7 +1149,7 @@ export async function pruneGeneratedPublicFiles(
     }
     const publicName = file.path.replace(/^public\//, "");
     if (keep.has(publicName)) continue;
-    if (!/\.(?:html|json)$/i.test(publicName)) continue;
+    if (!/\.(?:html|json|xml|txt)$/i.test(publicName)) continue;
     await deleteSiteFile(env, siteId, file.path);
   }
 }
@@ -1150,7 +1170,10 @@ export function normalizeProductCurrency(value: unknown): string {
 }
 
 export function getGeneratedSiteContentType(path: string): string {
-  return path.endsWith(".json") ? "application/json" : "text/html; charset=utf-8";
+  if (path.endsWith(".json")) return "application/json";
+  if (path.endsWith(".xml")) return "application/xml; charset=utf-8";
+  if (path.endsWith(".txt")) return "text/plain; charset=utf-8";
+  return "text/html; charset=utf-8";
 }
 
 export async function getSiteStorageStatus(env: Env, site: DbSite) {

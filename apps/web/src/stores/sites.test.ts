@@ -4,6 +4,8 @@ import { useSitesStore } from "./sites";
 import { api } from "../api";
 import { ApiError } from "../api";
 
+vi.mock("@/utils/imageVariants", () => ({ appendResponsiveImageVariants: vi.fn().mockResolvedValue(undefined) }));
+
 // Mock the API client
 vi.mock("../api", () => ({
   api: {

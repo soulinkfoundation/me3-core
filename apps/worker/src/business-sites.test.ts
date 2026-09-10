@@ -63,6 +63,23 @@ describe("Business Site publishing", () => {
     expect((await getBusinessSiteDraft(env, site)).name).toBe("Harbour Practice");
   });
 
+  it("keeps noindex pages crawlable and advertises the correct nested profile URL", async () => {
+    const db = new SqliteD1();
+    const env = { DB: db as unknown as D1Database, CORE_WEB_ORIGIN: "https://example.com" } as Env;
+    const site = db.businessSite;
+    db.insertPage("home", site.id, "home", buildPage("home", "Welcome"));
+    const draft = createBusinessSiteDocument("Harbour Practice", { homepageSlug: "home" });
+    draft.seo.indexing = "noindex";
+    await saveBusinessSiteDraft(env, site, draft);
+    await publishBusinessSite(env, site, "https://example.com/site/harbour-practice");
+    expect(db.textFile(site.id, "public/robots.txt")).toContain("Allow: /");
+    expect(db.textFile(site.id, "public/sitemap.xml")).not.toContain("<loc>");
+    const response = await servePublicSiteByUsername(env, "example.com", site.username, "index.html");
+    expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    expect(response.headers.get("Link")).toContain("</site/harbour-practice/me.json>");
+    expect(await response.text()).toContain('content="noindex,nofollow"');
+  });
+
   it("rejects a missing homepage before public output changes", async () => {
     const db = new SqliteD1();
     const env = { DB: db as unknown as D1Database } as Env;

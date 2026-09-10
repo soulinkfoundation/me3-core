@@ -1,3 +1,4 @@
+import { getSiteImageMetadata } from "../site-images";
 import { type Context } from "hono";
 import {
   createAssistantJobBuilderAction,
@@ -60,6 +61,7 @@ import {
   getMe3CloudUsernamePublishBlockReason,
   getOwnerProfile,
   getPublicSiteOrigin,
+  getPublishedSiteBaseUrl,
   getSiteFileText,
   loadPublishManifest,
   loadSiteSourceFiles,
@@ -1140,6 +1142,27 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     const draftSaveIntent = isAssistantSiteDraftSaveIntent(messageText);
     const retryIntent = isAssistantSiteRetryIntent(messageText);
 
+    if (approvalIntent || blogListIntent || statusIntent || updateIntent || refinementIntent || draftSaveIntent || retryIntent) {
+      const sites = await listAssistantOwnerProfileSites(env, ownerId);
+      const username = extractAssistantSiteUsername(messageText);
+      if ((username && !sites.some((site) => site.username === username)) || (!username && sites.length > 1)) {
+        return {
+          specialist: "core.sites.approval_status",
+          replyText: username
+            ? `I could not find @${username}. Specify the site to use: ${sites.map((site) => `@${site.username}`).join(", ") || "create a site first"}.`
+            : `Which site should I use? Include ${sites.map((site) => `@${site.username}`).join(" or ")} in your request.`,
+          siteAction: {
+            kind: "approval_status",
+            siteId: null,
+            username: null,
+            pending: false,
+            published: false,
+            files: [],
+          },
+        };
+      }
+    }
+
     if (retryIntent) {
       const site = await chooseAssistantSiteForMessage(env, ownerId, messageText);
       if (site) {
@@ -1466,6 +1489,20 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     let draft = pending?.draft || null;
 
     if (!site) return null;
+    if (!draft && (await listAssistantOwnerProfileSites(env, ownerId)).length > 1) {
+      return {
+        specialist: "core.sites.approval_status",
+        replyText: `There is no pending draft for @${site.username} in this thread. Ask me to draft the update for @${site.username} first.`,
+        siteAction: {
+          kind: "approval_status",
+          siteId: site.id,
+          username: site.username,
+          pending: false,
+          published: Boolean(site.published_at),
+          files: [],
+        },
+      };
+    }
     if (!draft) {
       draft = await createAssistantSiteDraftFromRecentThread(
         env,
@@ -1688,24 +1725,10 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
 
     const explicitUsername = extractAssistantSiteUsername(messageText);
     if (explicitUsername) {
-      const explicitSite = sites.find((site) => site.username === explicitUsername);
-      if (explicitSite) return explicitSite;
+      return sites.find((site) => site.username === explicitUsername) || null;
     }
 
-    const configuredUsername = normalizeUsername(env.ME3_SITE_USERNAME);
-    if (configuredUsername) {
-      const configuredSite = sites.find((site) => site.username === configuredUsername);
-      if (configuredSite) return configuredSite;
-    }
-
-    const ownerProfile = await getOwnerProfile(env, ownerId);
-    const ownerUsername = normalizeUsername(ownerProfile?.username);
-    if (ownerUsername) {
-      const ownerSite = sites.find((site) => site.username === ownerUsername);
-      if (ownerSite) return ownerSite;
-    }
-
-    return sites[0] || null;
+    return sites.length === 1 ? sites[0] : null;
   }
 
   async function listAssistantOwnerProfileSites(env: Env, ownerId: string): Promise<DbSite[]> {
@@ -1734,19 +1757,17 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
   ): Promise<{ site: DbSite; draft: AssistantSiteUpdateDraft } | null> {
     const sites = await listAssistantOwnerProfileSites(env, ownerId);
     const explicitUsername = extractAssistantSiteUsername(messageText);
-    const orderedSites = [...sites].sort((first, second) => {
-      if (explicitUsername) {
-        if (first.username === explicitUsername) return -1;
-        if (second.username === explicitUsername) return 1;
-      }
-      return 0;
-    });
-
-    for (const site of orderedSites) {
+    const candidates = explicitUsername
+      ? sites.filter((site) => site.username === explicitUsername)
+      : sites;
+    let pending: { site: DbSite; draft: AssistantSiteUpdateDraft } | null = null;
+    for (const site of candidates) {
       const draft = await loadAssistantSiteUpdateDraft(env, site.id, threadId);
-      if (draft) return { site, draft };
+      if (!draft) continue;
+      if (pending) return null;
+      pending = { site, draft };
     }
-    return null;
+    return pending;
   }
 
   async function getUnavailableAssistantSiteFeatureForDraft(
@@ -2492,9 +2513,10 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     const generatedFiles = await generateSiteHtml(
       profile,
       Array.from(sourceFiles.entries()).map(([name, content]) => ({ name, content })),
+      undefined, { baseUrl: await getPublishedSiteBaseUrl(env, site), images: await getSiteImageMetadata(env, site, [...sourceFiles.values()]) },
     );
     generatedFiles["me.json"] = JSON.stringify(
-      buildPublicMe3Profile(profile, getPublicSiteOrigin(env, site)),
+      buildPublicMe3Profile(profile, await getPublishedSiteBaseUrl(env, site)),
       null,
       2,
     );

@@ -6210,7 +6210,7 @@ async function loadCoreSetupProfileSiteReadiness(
       (await env.DB.prepare(
         `SELECT username, custom_domain, custom_domain_status, published_at
          FROM sites
-         WHERE user_id = ? AND COALESCE(site_type, 'profile') = 'profile'
+         WHERE user_id = ? AND COALESCE(site_type, 'profile') = 'profile' AND site_role = 'profile'
          ORDER BY updated_at DESC
          LIMIT 1`,
       )

@@ -1,3 +1,4 @@
+import { getSiteImageMetadata } from "./site-images";
 import {
   AGENT_LANDING_PAGE_SITE_TEMPLATE_ID,
   buildLandingPageDocument,
@@ -14,6 +15,7 @@ import type { DbSite, DbSitePage, DbSitePageRevision, Env } from "./types";
 import { isCommerceReady } from "./commerce-settings";
 import {
   deleteSiteFile,
+  getPublishedSiteBaseUrl,
   getR2SiteFile,
   getSiteFile,
   getSiteFileText,
@@ -223,7 +225,11 @@ export async function publishSitePage(
   }
   const revisionId = crypto.randomUUID();
   const resourceSite = await getPageResourceSite(env, site);
+  const baseUrl = await getPublishedSiteBaseUrl(env, site);
   const renderedHtml = renderLandingPageHtml(document, site.username, {
+    siteBaseUrl: baseUrl,
+    canonicalUrl: baseUrl ? `${baseUrl}/${isAgentLandingPageHomepage(site, page) ? "" : `${page.slug}/`}` : undefined,
+    images: await getSiteImageMetadata(env, site, [JSON.stringify(document)]),
     pageId: page.id,
     slug: page.slug,
     campaign: page.slug,

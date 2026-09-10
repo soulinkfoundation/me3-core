@@ -1,3 +1,4 @@
+import { getSiteImageMetadata, saveUploadedImageMetadata } from "../site-images";
 import {
   LANDING_PAGES_PLUGIN_ID,
   buildLandingPageDocument,
@@ -67,6 +68,7 @@ import {
   getCoreDomainState,
   getCoreWebOrigin,
   getPublicSiteOrigin,
+  getPublishedSiteBaseUrl,
   getGeneratedSiteContentType,
   getMe3CloudUsernamePublishBlockReason,
   getSiteByUsername,
@@ -1325,6 +1327,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
           const buffer = await file.arrayBuffer();
           const relativePath = normalizeSiteMediaPath(file.name);
           await putSiteMediaFile(c.env, site, `public/${relativePath}`, buffer, file.type || getContentType(file.name));
+          if (file.type.startsWith("image/")) await saveUploadedImageMetadata(c.env, site, relativePath, buffer);
           manifest.assetFiles[relativePath] = await sha256Buffer(buffer);
           continue;
         }
@@ -1353,8 +1356,9 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
           : await generateSiteHtml(
               profile,
               Array.from(sourceFiles.entries()).map(([name, content]) => ({ name, content })),
+              undefined, { baseUrl: await getPublishedSiteBaseUrl(c.env, site), images: await getSiteImageMetadata(c.env, site, [...sourceFiles.values()]) },
             );
-        networkProfile = buildPublicMe3Profile(profile, getPublicSiteOrigin(c.env, site));
+        networkProfile = buildPublicMe3Profile(profile, await getPublishedSiteBaseUrl(c.env, site));
         generatedFiles["me.json"] = JSON.stringify(networkProfile, null, 2);
         for (const [name, content] of Object.entries(generatedFiles)) {
           await putSiteFile(
@@ -1379,7 +1383,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
         .run();
 
       if (networkProfile) {
-        queueNetworkDirectoryProfileSync(c, networkProfile);
+        queueNetworkDirectoryProfileSync(c, site, networkProfile);
       }
 
       return c.json({
@@ -1415,6 +1419,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       const path = `public/${relativePath}`;
       const buffer = await file.arrayBuffer();
       const storage = await putSiteMediaFile(c.env, site, path, buffer, file.type);
+      await saveUploadedImageMetadata(c.env, site, relativePath, buffer, form);
 
       const manifest = (await loadPublishManifest(c.env, site.id)) || createEmptyPublishManifest();
       manifest.assetFiles[relativePath] = await sha256Buffer(buffer);
@@ -1454,6 +1459,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       const filename = `${pageSlug}-${imageIndex}.${ext}`;
       const buffer = await file.arrayBuffer();
       const storage = await putSiteMediaFile(c.env, site, `public/files/${filename}`, buffer, file.type);
+      await saveUploadedImageMetadata(c.env, site, `files/${filename}`, buffer, form);
 
       const manifest = (await loadPublishManifest(c.env, site.id)) || createEmptyPublishManifest();
       manifest.assetFiles[`files/${filename}`] = await sha256Buffer(buffer);
@@ -1522,6 +1528,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
         buffer,
         metadata.mimeType,
       );
+      if (kind === "image") await saveUploadedImageMetadata(c.env, site, relativePath, buffer, form);
 
       const manifest =
         (await loadPublishManifest(c.env, site.id)) || createEmptyPublishManifest();
@@ -1638,6 +1645,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       (await getSiteFileText(c.env, site.id, "public/index.html"));
     if (!html) return c.body(null, 204);
 
+    c.header("X-Robots-Tag", "noindex, nofollow");
     return c.html(injectBaseHref(html, `/preview/${site.username}/`));
   });
 
@@ -1740,6 +1748,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     const page = await getSitePage(c.env, site.id, c.req.param("pageId"));
     const document = page ? parsePageDocument(page.draft_json) : null;
     if (!page || !document) return c.json({ error: "Page not found" }, 404);
+    c.header("X-Robots-Tag", "noindex, nofollow");
     c.header("X-Frame-Options", "SAMEORIGIN");
     c.header("Content-Security-Policy", "frame-ancestors 'self'");
     return c.html(
@@ -1748,6 +1757,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
           pageId: page.id,
           slug: page.slug,
           campaign: page.slug,
+          images: await getSiteImageMetadata(c.env, site, [JSON.stringify(document)]),
         }),
         `/preview/${site.username}/`,
       ),
@@ -1954,6 +1964,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       if (profileJson) {
         queueNetworkDirectoryProfileSync(
           c,
+          site,
           buildPublicMe3Profile(
             parseSiteProfile(profileJson, site.username),
             getPublicSiteOrigin(c.env, site),
@@ -1975,7 +1986,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     const publicProfileJson = await getSiteFileText(c.env, site.id, "public/me.json");
     if (publicProfileJson) {
       try {
-        queueNetworkDirectoryProfileSync(c, JSON.parse(publicProfileJson));
+        queueNetworkDirectoryProfileSync(c, site, JSON.parse(publicProfileJson));
       } catch {
         // The already-published site remains authoritative if its public file
         // is unexpectedly invalid. A later valid publish can retry the index.
@@ -2030,7 +2041,9 @@ function siteLifecycleErrorResponse(c: AppContext, error: SiteLifecycleError) {
   return c.json({ error: error.message, code: error.code }, status);
 }
 
-function queueNetworkDirectoryProfileSync(c: AppContext, profile: unknown): void {
+function queueNetworkDirectoryProfileSync(c: AppContext, site: DbSite, profile: unknown): void {
+  // Only the personal site owns the installation's directory identity.
+  if (site.site_role !== "profile") return;
   let executionCtx: { waitUntil(promise: Promise<unknown>): void };
   try {
     executionCtx = c.executionCtx;
@@ -2084,7 +2097,7 @@ export function registerPublicSiteRoutes(app: AppHono) {
     if (!site) return c.html(renderNotFoundPage("Site not found"), 404);
 
     const requestedPath = c.req.path.replace(`/preview/${username}/`, "") || "index.html";
-    return serveSiteFileResponse(c.env, site, requestedPath, false);
+    return serveSiteFileResponse(c.env, site, requestedPath, false, "", c.req.raw);
   });
 
   app.get("/me", async (c) => {
@@ -2113,6 +2126,7 @@ export function registerPublicSiteRoutes(app: AppHono) {
       new URL(c.req.url).hostname,
       username,
       requestedPath,
+      c.req.raw,
     );
   });
 

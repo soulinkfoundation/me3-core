@@ -71,3 +71,19 @@ export async function generateImageVariants(
 
   return variants;
 }
+
+/** Upload real responsive candidates beside the original, never upscale or flatten GIFs. */
+export async function appendResponsiveImageVariants(form: FormData, blob: Blob): Promise<void> {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(blob.type)) return;
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  // Animated WebP/APNG must retain their original animation.
+  if ((blob.type === "image/webp" && String.fromCharCode(...bytes.slice(12, 16)) === "VP8X" && (bytes[20] & 2)) || (blob.type === "image/png" && new TextDecoder('latin1').decode(bytes).includes('acTL'))) return;
+  try {
+    for (const variant of await generateImageVariants(blob, [320, 640, 960, 1280], 0.82)) {
+      if (variant.blob.type !== "image/webp" || variant.blob.size >= blob.size) continue;
+      form.append(`variant-${variant.size}`, new File([variant.blob], `image-${variant.size}.webp`, { type: "image/webp" }));
+    }
+  } catch {
+    // Original uploads remain usable on browsers without canvas/WebP encoding.
+  }
+}

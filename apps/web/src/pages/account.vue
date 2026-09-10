@@ -3839,7 +3839,7 @@ onBeforeUnmount(() => {
                   </label>
 
                   <div
-                    v-if="!commerceSettings?.stripe.directConfigured"
+                    v-if="commerceSettings?.stripe.directKeySetupAllowed && !commerceSettings.stripe.directConfigured"
                     class="field commerce-settings-row__field commerce-settings-row__field--secret payment-key-field"
                   >
                     <label for="stripe-secret-key-input">
@@ -3923,7 +3923,7 @@ onBeforeUnmount(() => {
                   class="commerce-provider-actions"
                 >
                   <Button
-                    v-if="commerceSettings.stripe.mode === 'managed'"
+                    v-if="commerceSettings.stripe.directKeySetupAllowed && commerceSettings.stripe.mode === 'managed'"
                     color="outline"
                     size="compact"
                     type="button"

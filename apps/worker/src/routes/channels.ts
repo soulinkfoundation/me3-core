@@ -1052,7 +1052,7 @@ async function getOwnerMe3Url(env: Env, ownerId: string, requestUrl: string): Pr
   const site = await env.DB.prepare(
     `SELECT username, custom_domain
      FROM sites
-     WHERE user_id = ? AND (site_type = 'profile' OR site_type IS NULL)
+     WHERE user_id = ? AND site_role = 'profile'
      ORDER BY published_at DESC, created_at DESC
      LIMIT 1`,
   )

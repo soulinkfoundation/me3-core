@@ -225,7 +225,7 @@ async function loadPrivateMeJsonSnapshot(
      FROM sites s
      JOIN site_files sf ON sf.site_id = s.id
      WHERE s.user_id = ?
-       AND COALESCE(s.site_type, 'profile') = 'profile'
+       AND s.site_role = 'profile'
        AND sf.path IN ('src/me.json', 'me.json')
      ORDER BY s.updated_at DESC,
               CASE WHEN sf.path = 'src/me.json' THEN 0 ELSE 1 END
@@ -244,7 +244,7 @@ async function loadPublicMeJsonSnapshot(
      FROM sites s
      JOIN site_files sf ON sf.site_id = s.id
      WHERE s.user_id = ?
-       AND COALESCE(s.site_type, 'profile') = 'profile'
+       AND s.site_role = 'profile'
        AND sf.path IN ('public/me.json', 'src/me.json', 'me.json')
      ORDER BY s.updated_at DESC,
               CASE WHEN sf.path = 'public/me.json' THEN 0 WHEN sf.path = 'src/me.json' THEN 1 ELSE 2 END

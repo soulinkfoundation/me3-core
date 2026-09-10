@@ -1,4 +1,5 @@
 import { getEmailTestOperation, finishEmailTestOperation } from "../utils/emailTestOperation";
+import { appendResponsiveImageVariants } from "@/utils/imageVariants";
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { useWizardStore } from "./wizard";
@@ -608,6 +609,7 @@ export const useSitesStore = defineStore("sites", () => {
       });
       formData.append("file", imageFile);
       formData.append("type", type);
+      await appendResponsiveImageVariants(formData, file);
       if (options.variant) {
         formData.append("variant", String(options.variant));
       }
@@ -680,6 +682,7 @@ export const useSitesStore = defineStore("sites", () => {
       formData.append("file", imageFile);
       formData.append("pageSlug", pageSlug);
       formData.append("imageIndex", String(imageIndex));
+      await appendResponsiveImageVariants(formData, file);
 
       const result = await api.upload<UploadPageImageResult>(
         `/sites/${username}/upload-page-image`,
@@ -716,6 +719,7 @@ export const useSitesStore = defineStore("sites", () => {
       );
       formData.append("assetId", asset.assetId);
       formData.append("kind", asset.kind);
+      if (asset.kind === "image") await appendResponsiveImageVariants(formData, file);
 
       return await api.upload<UploadContentAssetResult>(
         `/sites/${username}/upload-content-asset`,

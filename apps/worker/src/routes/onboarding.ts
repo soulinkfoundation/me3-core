@@ -17,7 +17,7 @@ export async function getPendingOnboardingStartStep(
          SELECT 1 FROM sites
          WHERE sites.id = owner_onboarding.profile_site_id
            AND sites.user_id = owner_onboarding.user_id
-           AND COALESCE(sites.site_type, 'profile') = 'profile'
+           AND sites.site_role = 'profile'
        )`,
   )
     .bind(ownerId)

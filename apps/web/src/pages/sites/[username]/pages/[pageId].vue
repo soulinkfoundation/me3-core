@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SiteEventFields from "../../../../components/SiteEventFields.vue";
 import { computed, onMounted, ref } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { useRoute } from "vue-router";
@@ -469,6 +470,7 @@ onMounted(load);
           <h1 id="editor-title">Content</h1>
           <label>Headline<input v-model="draft.hero.headline" /></label>
           <label>Introduction<textarea v-model="draft.hero.subheadline" rows="4" /></label>
+          <SiteEventFields v-model="draft.event" />
           <label>Hero layout
             <select v-model="draft.hero.imageLayout">
               <option value="split">Split image panel</option>

@@ -50,6 +50,16 @@ class StarterProfileStatement {
     return null as T | null;
   }
 
+  async all() {
+    if (this.sql.includes("FROM site_files")) {
+      const prefix = `${this.values[0]}:${String(this.values[1]).replace(/%$/, "")}`;
+      return { results: [...this.db.files.entries()].filter(([key]) => key.startsWith(prefix)).map(([key, file]) => ({
+        site_id: this.values[0], path: key.slice(key.indexOf(":") + 1), content: file.content, content_type: file.contentType,
+      })) };
+    }
+    return { results: [] };
+  }
+
   async run() {
     if (this.sql.includes("INSERT INTO owner_onboarding")) {
       this.db.onboarding = {

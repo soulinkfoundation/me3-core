@@ -276,8 +276,8 @@ export function agentSocialSourceKey(
 async function primaryProfileSiteId(db: AgentSocialDb, userId: string): Promise<string> {
   const site = await db.prepare(
     `SELECT id FROM sites
-     WHERE user_id = ?
-     ORDER BY CASE WHEN site_type = 'profile' THEN 0 ELSE 1 END, created_at ASC
+     WHERE user_id = ? AND site_role = 'profile'
+     ORDER BY created_at ASC
      LIMIT 1`,
   )
     .bind(userId)

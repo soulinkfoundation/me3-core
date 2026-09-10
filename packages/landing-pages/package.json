@@ -14,5 +14,8 @@
   "devDependencies": {
     "typescript": "^5.3.3",
     "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "@me3-core/site-renderer": "workspace:*"
   }
 }
