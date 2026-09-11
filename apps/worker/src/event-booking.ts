@@ -16,6 +16,7 @@ import {
   sendBookingConfirmationEmails,
 } from "./transactional-emails";
 import type { DbBooking, DbSite, Env } from "./types";
+import { dispatchWebsitePaymentNotification } from "./payment-notifications";
 
 export type EventBookingType = "class" | "retreat";
 
@@ -564,6 +565,15 @@ export async function finalizePaidEventBookingCheckout(
   if (bookIntent && offer) {
     await notifyConfirmedEventBooking(env, { site, bookIntent, offer, booking });
   }
+  await dispatchWebsitePaymentNotification(env, site.user_id, {
+    sourceKind: "booking",
+    sourceId: booking.id,
+    amountCents: Number(booking.amount_paid || 0),
+    currency: String(booking.currency || "USD").toUpperCase(),
+    customerName: booking.guest_name?.trim() || null,
+    itemTitle: offer?.title || "Booking payment",
+    siteName: site.username,
+  }).catch((error) => console.error("Booking payment notification failed", error));
   return { ok: true, booking: serializeBooking(booking) };
 }
 

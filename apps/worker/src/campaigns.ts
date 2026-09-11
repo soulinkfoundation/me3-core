@@ -63,6 +63,7 @@ export type OwnedCampaign = {
   sender_ref: string | null;
   from_address: string | null;
   failure_reason: string | null;
+  audience_filter_json: string;
   created_at: string;
   updated_at: string;
   revision: CampaignRevisionRow;
@@ -72,6 +73,10 @@ type SiteRow = Pick<
   DbSite,
   "id" | "username" | "custom_domain" | "custom_domain_status"
 >;
+
+export type CampaignAudienceFilter =
+  | { kind: "all" }
+  | { kind: "customers"; itemRef: string | null };
 
 export async function listCampaigns(env: Env, ownerId: string) {
   const rows = await env.DB.prepare(
@@ -137,7 +142,7 @@ export async function getCampaign(env: Env, ownerId: string, campaignId: string)
 export async function createCampaign(
   env: Env,
   ownerId: string,
-  input: { siteId?: unknown; name?: unknown },
+  input: { siteId?: unknown; name?: unknown; audienceFilter?: unknown },
 ) {
   const siteId = normalizeReference(input.siteId);
   if (!siteId) throw new CampaignInputError("Choose a Site for this campaign");
@@ -148,6 +153,7 @@ export async function createCampaign(
   const campaignId = newId("campaign");
   const revisionId = newId("campaign-revision");
   const name = normalizeText(input.name, 160) || "Untitled campaign";
+  const audienceFilter = normalizeCampaignAudienceFilter(input.audienceFilter);
   const document = createEmptyCampaignDocument({
     name: defaultCampaignSenderName(site.username),
     homeUrl: getPublicSiteOrigin(env, {
@@ -176,9 +182,9 @@ export async function createCampaign(
   await runStatements(env.DB, [
     env.DB.prepare(
       `INSERT INTO email_campaigns
-       (id, site_id, name, status, current_revision_id, created_at, updated_at)
-       VALUES (?, ?, ?, 'draft', ?, ?, ?)`,
-    ).bind(campaignId, site.id, name, revisionId, now, now),
+       (id, site_id, name, status, current_revision_id, audience_filter_json, created_at, updated_at)
+       VALUES (?, ?, ?, 'draft', ?, ?, ?, ?)`,
+    ).bind(campaignId, site.id, name, revisionId, JSON.stringify(audienceFilter), now, now),
     env.DB.prepare(
       `INSERT INTO email_campaign_revisions
        (id, campaign_id, revision_number, subject, preview_text,
@@ -210,6 +216,7 @@ export async function saveCampaignDraft(
     previewText?: unknown;
     replyToAddress?: unknown;
     document?: unknown;
+    audienceFilter?: unknown;
   },
 ) {
   const campaign = await getOwnedCampaign(env, ownerId, campaignId);
@@ -235,6 +242,9 @@ export async function saveCampaignDraft(
   const previewText = normalizeText(input.previewText, 240);
   const replyToAddress = await verifiedReplyTo(env, ownerId, input.replyToAddress);
   const document = parseCampaignDocument(input.document);
+  const audienceFilter = input.audienceFilter === undefined
+    ? parseCampaignAudienceFilter(campaign.audience_filter_json)
+    : normalizeCampaignAudienceFilter(input.audienceFilter);
   await assertCampaignAssets(env, campaignId, document);
   const rendered = renderCampaign({
     document,
@@ -272,9 +282,9 @@ export async function saveCampaignDraft(
     ),
     env.DB.prepare(
       `UPDATE email_campaigns
-       SET site_id = ?, name = ?, current_revision_id = ?, updated_at = ?
+       SET site_id = ?, name = ?, current_revision_id = ?, audience_filter_json = ?, updated_at = ?
        WHERE id = ?`,
-    ).bind(siteId, name, revisionId, now, campaignId),
+    ).bind(siteId, name, revisionId, JSON.stringify(audienceFilter), now, campaignId),
   ];
   for (const assetId of campaignAssetIds(document)) {
     statements.push(
@@ -366,7 +376,11 @@ export async function previewCampaignAudience(
 ): Promise<CampaignAudienceEvaluation> {
   const campaign = await getOwnedCampaign(env, ownerId, campaignId);
   if (!campaign) throw new CampaignInputError("Campaign not found", 404, "campaign_not_found");
-  return evaluateCampaignAudience(await listSiteAudience(env, campaign.site_id));
+  return evaluateCampaignAudience(await listSiteAudience(
+    env,
+    campaign.site_id,
+    parseCampaignAudienceFilter(campaign.audience_filter_json),
+  ));
 }
 
 export async function getOwnedCampaign(
@@ -413,6 +427,9 @@ export async function getOwnedCampaign(
     sender_ref: nullableString(row.sender_ref),
     from_address: nullableString(row.from_address),
     failure_reason: nullableString(row.failure_reason),
+    audience_filter_json: typeof row.audience_filter_json === "string"
+      ? row.audience_filter_json
+      : '{"kind":"all"}',
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
     revision: {
@@ -435,15 +452,36 @@ export async function getOwnedCampaign(
 export async function listSiteAudience(
   env: Env,
   siteId: string,
+  filter: CampaignAudienceFilter = { kind: "all" },
 ): Promise<CampaignAudienceSubscriber[]> {
+  const customerFilter = filter.kind === "customers"
+    ? `AND (
+        EXISTS (
+          SELECT 1 FROM commerce_orders o
+          WHERE o.site_id = subscribers.site_id
+            AND LOWER(TRIM(o.buyer_email)) = LOWER(TRIM(subscribers.email))
+            AND (o.status IN ('paid', 'refunded') OR (o.payment_method = 'manual' AND o.status = 'pending'))
+            ${filter.itemRef?.startsWith("booking:") ? "AND 0" : filter.itemRef?.startsWith("product:") ? "AND ('product:' || o.product_slug) = ?" : ""}
+        )
+        OR EXISTS (
+          SELECT 1 FROM bookings b
+          WHERE b.site_id = subscribers.site_id
+            AND LOWER(TRIM(b.guest_email)) = LOWER(TRIM(subscribers.email))
+            AND b.status = 'confirmed'
+            ${filter.itemRef?.startsWith("product:") ? "AND 0" : filter.itemRef?.startsWith("booking:") ? "AND ('booking:' || COALESCE(b.offer_id, b.booking_type, 'booking')) = ?" : ""}
+        )
+      )`
+    : "";
+  const params: string[] = [siteId];
+  if (filter.kind === "customers" && filter.itemRef) params.push(filter.itemRef);
   const result = await env.DB.prepare(
     `SELECT id, email, first_name, last_name, subscribed_at, unsubscribed_at,
             marketing_status, marketing_permission_method,
             marketing_permission_granted_at,
             marketing_permission_evidence_json, delivery_status
-     FROM subscribers WHERE site_id = ? ORDER BY id`,
+     FROM subscribers WHERE site_id = ? ${customerFilter} ORDER BY id`,
   )
-    .bind(siteId)
+    .bind(...params)
     .all<CampaignAudienceSubscriber>();
   return result.results || [];
 }
@@ -465,6 +503,7 @@ export function serializeCampaign(
     sentAt: campaign.sent_at,
     cancelledAt: campaign.cancelled_at,
     failureReason: campaign.failure_reason,
+    audienceFilter: parseCampaignAudienceFilter(campaign.audience_filter_json),
     sender: campaign.sender_ref
       ? { ref: campaign.sender_ref, fromAddress: campaign.from_address }
       : null,
@@ -484,6 +523,43 @@ export function serializeCampaign(
     },
     progress: progressByStatus,
   };
+}
+
+export async function listCampaignCustomerItems(env: Env, ownerId: string, siteId: string) {
+  const site = await getOwnedSite(env, ownerId, siteId);
+  if (!site) throw new CampaignInputError("Site not found", 404, "site_not_found");
+  const result = await env.DB.prepare(
+    `SELECT item_ref AS value, item_label AS label FROM (
+       SELECT 'product:' || product_slug AS item_ref, product_title AS item_label
+       FROM commerce_orders WHERE site_id = ?
+       UNION
+       SELECT 'booking:' || COALESCE(offer_id, booking_type, 'booking') AS item_ref,
+              CASE booking_type WHEN 'one_to_one' THEN 'One-to-one booking'
+                WHEN 'class' THEN 'Class booking' WHEN 'retreat' THEN 'Retreat booking'
+                ELSE 'Booking' END AS item_label
+       FROM bookings WHERE site_id = ?
+     ) ORDER BY label COLLATE NOCASE`,
+  ).bind(siteId, siteId).all<{ value: string; label: string }>();
+  return result.results || [];
+}
+
+export function normalizeCampaignAudienceFilter(value: unknown): CampaignAudienceFilter {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { kind: "all" };
+  const input = value as Record<string, unknown>;
+  if (input.kind !== "customers") return { kind: "all" };
+  const itemRef = normalizeReference(input.itemRef);
+  if (itemRef && !itemRef.startsWith("product:") && !itemRef.startsWith("booking:")) {
+    throw new CampaignInputError("Choose a valid product or service");
+  }
+  return { kind: "customers", itemRef: itemRef || null };
+}
+
+export function parseCampaignAudienceFilter(value: string): CampaignAudienceFilter {
+  try {
+    return normalizeCampaignAudienceFilter(JSON.parse(value));
+  } catch {
+    return { kind: "all" };
+  }
 }
 
 async function getOwnedSite(env: Env, ownerId: string, siteId: string) {

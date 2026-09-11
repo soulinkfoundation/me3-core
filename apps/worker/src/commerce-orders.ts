@@ -22,6 +22,7 @@ import {
 } from "../../../shared/product-purchase-confirmation";
 import { getManagedCommerceBridgeConfig } from "./commerce-bridge";
 import { isCommerceReady } from "./commerce-settings";
+import { dispatchWebsitePaymentNotification } from "./payment-notifications";
 
 const PAYMENTS_UNAVAILABLE_MESSAGE =
   "Payments are not available for this purchase right now. Please contact the site owner.";
@@ -363,6 +364,7 @@ async function finalizeProductOrder(
   if (!updated) throw new Error("Paid order could not be loaded");
   if (updated.status !== "paid") throw new CommerceOrderInputError("Order cannot be completed in its current state.", 409);
   await sendProductConfirmation(env, site, updated);
+  await queueProductPaymentNotification(env, site, updated);
   return { ok: true as const, order: updated };
 }
 
@@ -571,8 +573,24 @@ export async function confirmManualProductOrder(env: Env, ownerId: string, order
   const order = await env.DB.prepare(`SELECT * FROM commerce_orders WHERE id = ? AND payment_method = 'manual'
     AND site_id IN (SELECT id FROM sites WHERE user_id = ?)`).bind(orderId, ownerId).first<DbCommerceOrder>();
   if (!order || (order.status !== "pending" && order.status !== "paid")) throw new CommerceOrderInputError("Manual order not found.", 404);
-  await env.DB.prepare(`UPDATE commerce_orders SET status = 'paid', amount_paid = amount_due, paid_at = datetime('now'), updated_at = datetime('now')
+  const paid = await env.DB.prepare(`UPDATE commerce_orders SET status = 'paid', amount_paid = amount_due, paid_at = datetime('now'), updated_at = datetime('now')
     WHERE id = ? AND site_id = ? AND status = 'pending'`).bind(order.id, order.site_id).run();
   const site = await env.DB.prepare("SELECT * FROM sites WHERE id = ? AND user_id = ?").bind(order.site_id, ownerId).first<DbSite>();
-  if (site) await sendProductConfirmation(env, site, { ...order, status: "paid", amount_paid: order.amount_due });
+  if (site) {
+    const updated: DbCommerceOrder = { ...order, status: "paid", amount_paid: order.amount_due };
+    await sendProductConfirmation(env, site, updated);
+    if (Number(paid.meta.changes || 0) > 0) await queueProductPaymentNotification(env, site, updated);
+  }
+}
+
+async function queueProductPaymentNotification(env: Env, site: DbSite, order: DbCommerceOrder) {
+  await dispatchWebsitePaymentNotification(env, site.user_id, {
+    sourceKind: "order",
+    sourceId: order.id,
+    amountCents: Number(order.amount_paid || order.amount_due || 0),
+    currency: String(order.currency || "USD").toUpperCase(),
+    customerName: order.buyer_name?.trim() || null,
+    itemTitle: order.product_title || "Product payment",
+    siteName: site.username,
+  }).catch((error) => console.error("Product payment notification failed", error));
 }

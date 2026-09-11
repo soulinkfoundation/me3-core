@@ -296,9 +296,9 @@ describe("Core runtime migrations", () => {
 
     await ensureCoreRuntimeMigrations({ DB: db as unknown as D1Database } as Env);
 
-    expect(db.statements.some((sql) => sql.includes("ALTER TABLE financial_entries"))).toBe(
-      false,
-    );
+    expect(db.statements.some((sql) =>
+      sql.includes("ALTER TABLE financial_entries") && sql.includes("ADD COLUMN project_id"),
+    )).toBe(false);
     expect(db.migrations.has("0010_ai_usage_events")).toBe(true);
     expect(db.migrations.has("0011_financial_entry_projects")).toBe(true);
     expect(db.migrations.has("0028_journal_entry_revision")).toBe(true);
@@ -563,6 +563,7 @@ class RuntimeMigrationStatement {
     const createdTable = this.sql.match(/CREATE TABLE IF NOT EXISTS (\w+)/)?.[1];
     if (createdTable) {
       this.db.tables.add(createdTable);
+      if (!this.db.columns.has(createdTable)) this.db.columns.set(createdTable, new Set());
       if (createdTable === "commerce_orders" && !this.db.columns.has(createdTable)) {
         this.db.columns.set(createdTable, new Set(["id", "site_id", "amount_paid"]));
       }
@@ -619,18 +620,32 @@ class RuntimeMigrationStatement {
       return { success: true };
     }
     if (this.sql.includes("ALTER TABLE financial_entries")) {
-      if (this.db.failFinancialProjectAlterOnce) {
+      const column = this.sql.match(/ADD COLUMN (\w+)/)?.[1] || "project_id";
+      if (column === "project_id" && this.db.failFinancialProjectAlterOnce) {
         this.db.failFinancialProjectAlterOnce = false;
         throw new Error("simulated alter failure");
       }
-      if (this.db.addFinancialProjectColumnBeforeAlterError) {
+      if (column === "project_id" && this.db.addFinancialProjectColumnBeforeAlterError) {
         this.db.addFinancialProjectColumnBeforeAlterError = false;
         this.db.columns.get("financial_entries")?.add("project_id");
         throw new Error("duplicate column name: project_id");
       }
       const columns = this.db.columns.get("financial_entries");
-      if (columns?.has("project_id")) throw new Error("duplicate column name: project_id");
-      columns?.add("project_id");
+      if (columns?.has(column)) throw new Error(`duplicate column name: ${column}`);
+      columns?.add(column);
+      return { success: true };
+    }
+    if (
+      this.sql.includes("ALTER TABLE email_campaigns") ||
+      this.sql.includes("ALTER TABLE mobile_push_preferences")
+    ) {
+      const match = this.sql.match(/ALTER TABLE (\w+) ADD COLUMN (\w+)/);
+      if (!match) throw new Error("invalid accounts alter statement");
+      const [, tableName, columnName] = match;
+      const columns = this.db.columns.get(tableName || "") || new Set<string>();
+      if (columns.has(columnName || "")) throw new Error(`duplicate column name: ${columnName}`);
+      columns.add(columnName || "");
+      this.db.columns.set(tableName || "", columns);
       return { success: true };
     }
     if (this.sql.includes("ALTER TABLE journal_entries")) {

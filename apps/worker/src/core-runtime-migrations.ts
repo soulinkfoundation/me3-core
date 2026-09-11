@@ -229,6 +229,59 @@ const runtimeMigrations: RuntimeMigration[] = [
       if (!existing) await db.prepare("UPDATE commerce_orders SET confirmation_sent_at = COALESCE(paid_at, created_at) WHERE status = 'paid'").run();
     },
   },
+  {
+    id: "0050_accounts_customer_payments",
+    checksum: "2026-09-11-accounts-customer-payments-v1",
+    async apply(db) {
+      const financialColumns: Array<[string, string]> = [
+        ["gross_amount_cents", "INTEGER"],
+        ["refunded_amount_cents", "INTEGER NOT NULL DEFAULT 0"],
+        ["customer_name", "TEXT"],
+        ["customer_email", "TEXT"],
+        ["payment_intent_id", "TEXT"],
+        ["site_id", "TEXT"],
+        ["item_ref", "TEXT"],
+        ["item_title", "TEXT"],
+      ];
+      for (const [column, declaration] of financialColumns) {
+        await addColumnIfMissing(db, "financial_entries", column, declaration);
+      }
+      await db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_financial_entries_payment_intent
+         ON financial_entries(user_id, payment_intent_id)`,
+      ).run();
+      await db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_financial_entries_customer_email
+         ON financial_entries(user_id, customer_email)`,
+      ).run();
+      await addColumnIfMissing(
+        db,
+        "email_campaigns",
+        "audience_filter_json",
+        `TEXT NOT NULL DEFAULT '{"kind":"all"}'`,
+      );
+      await addColumnIfMissing(
+        db,
+        "mobile_push_preferences",
+        "payment_notifications_enabled",
+        "INTEGER NOT NULL DEFAULT 1",
+      );
+      await db.prepare(
+        `CREATE TABLE IF NOT EXISTS payment_push_dispatches (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          source_kind TEXT NOT NULL CHECK (source_kind IN ('order', 'booking')),
+          source_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'sent', 'skipped', 'failed')),
+          error_message TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE (user_id, source_kind, source_id),
+          FOREIGN KEY (user_id) REFERENCES owner_profile(id) ON DELETE CASCADE
+        )`,
+      ).run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

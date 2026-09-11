@@ -7,7 +7,7 @@ export const ACCOUNTS_PLUGIN_ID = "me3.accounts";
 
 export type EntryType = "income" | "expense";
 type EntryStatus = "pending" | "paid" | "overdue" | "cancelled" | "needs_review";
-type EntrySource = "manual" | "email_triage" | "stripe" | "csv_import";
+type EntrySource = "manual" | "email_triage" | "stripe" | "csv_import" | "website";
 
 type FinancialCategoryRow = {
   id: string;
@@ -37,6 +37,14 @@ type FinancialEntryRow = {
   source_ref: string | null;
   source_email_id: string | null;
   stripe_charge_id: string | null;
+  gross_amount_cents: number | null;
+  refunded_amount_cents: number;
+  customer_name: string | null;
+  customer_email: string | null;
+  payment_intent_id: string | null;
+  site_id: string | null;
+  item_ref: string | null;
+  item_title: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -100,15 +108,15 @@ const ENTRY_STATUSES = new Set<EntryStatus>([
   "cancelled",
   "needs_review",
 ]);
-const ENTRY_SOURCES = new Set<EntrySource>(["manual", "email_triage", "stripe", "csv_import"]);
+const ENTRY_SOURCES = new Set<EntrySource>(["manual", "email_triage", "stripe", "csv_import", "website"]);
 const CURRENCY_REGEX = /^[A-Z]{3}$/;
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const STRIPE_SYNC_INITIAL_LOOKBACK_DAYS = 365;
-const STRIPE_SYNC_OVERLAP_DAYS = 7;
 
 export async function listFinancialEntries(env: Env, userId: string, query: URLSearchParams) {
   const entryType = parseEntryType(query.get("entryType"));
   if (!entryType) throw new AccountsInputError("entryType is required");
+  if (entryType === "income") await syncWebsiteIncomeEntries(env, userId);
 
   const limit = parseInteger(query.get("limit"), 50, { min: 1, max: 100 });
   const offset = parseInteger(query.get("offset"), 0, { min: 0, max: 100000 });
@@ -147,7 +155,10 @@ export async function listFinancialEntries(env: Env, userId: string, query: URLS
     env.DB.prepare(
       `SELECT e.id, e.user_id, e.entry_type, e.date, e.description, e.category_id,
               e.project_id, e.amount_cents, e.currency, e.status, e.source, e.notes, e.source_ref,
-              e.source_email_id, e.stripe_charge_id, e.created_at, e.updated_at,
+              e.source_email_id, e.stripe_charge_id, e.gross_amount_cents,
+              e.refunded_amount_cents, e.customer_name, e.customer_email,
+              e.payment_intent_id, e.site_id, e.item_ref, e.item_title,
+              e.created_at, e.updated_at,
               fc.name AS category_name, mp.name AS project_name
        ${fromClause}
        ${whereClause}
@@ -170,6 +181,7 @@ export async function listFinancialEntries(env: Env, userId: string, query: URLS
 }
 
 export async function listAccountCustomers(env: Env, userId: string, query: URLSearchParams) {
+  await syncWebsiteIncomeEntries(env, userId);
   const limit = parseInteger(query.get("limit"), 50, { min: 1, max: 100 });
   const offset = parseInteger(query.get("offset"), 0, { min: 0, max: 100000 });
   const [activityResult, contactResult] = await Promise.all([
@@ -210,9 +222,22 @@ export async function listAccountCustomers(env: Env, userId: string, query: URLS
        FROM bookings b
        INNER JOIN sites s ON s.id = b.site_id
        WHERE s.user_id = ? AND b.status IN ('confirmed', 'cancelled')
+       UNION ALL
+       SELECT 'purchase' AS activity_kind, e.id AS source_id,
+              COALESCE(e.customer_name, '') AS customer_name,
+              e.customer_email,
+              'stripe:' || COALESCE(e.payment_intent_id, e.stripe_charge_id, e.id) AS item_key,
+              COALESCE(e.item_title, e.description, 'Stripe payment') AS item_label,
+              COALESCE(e.updated_at, e.created_at) AS activity_at,
+              e.amount_cents, UPPER(e.currency) AS currency, e.status,
+              NULL AS delivery_json, NULL AS fulfilled_at,
+              '' AS site_id, 'Stripe' AS site_name
+       FROM financial_entries e
+       WHERE e.user_id = ? AND e.entry_type = 'income' AND e.source = 'stripe'
+         AND e.customer_email IS NOT NULL AND e.site_id IS NULL
        ORDER BY activity_at DESC`,
     )
-      .bind(userId, userId)
+      .bind(userId, userId, userId)
       .all<AccountCustomerSourceRow>(),
     env.DB.prepare(
       `SELECT id, name, email
@@ -384,6 +409,7 @@ export async function createFinancialEntry(env: Env, userId: string, input: unkn
   }
 
   const id = crypto.randomUUID();
+  const currency = payload.currency || await getDefaultCommerceCurrency(env, userId);
   await env.DB.prepare(
     `INSERT INTO financial_entries
        (id, user_id, entry_type, date, description, category_id, project_id, amount_cents,
@@ -399,7 +425,7 @@ export async function createFinancialEntry(env: Env, userId: string, input: unkn
       categoryId,
       projectId,
       payload.amountCents,
-      payload.currency || "USD",
+      currency,
       payload.status || "pending",
       payload.notes ?? null,
     )
@@ -420,7 +446,7 @@ export async function updateFinancialEntry(
   if (!existing) throw new AccountsInputError("Entry not found", 404);
 
   const nextEntryType = payload.entryType || existing.entry_type;
-  const nextDescription = payload.description || existing.description;
+  const nextDescription = payload.description ?? existing.description;
   const nextAmountCents = payload.amountCents ?? existing.amount_cents;
   if (!nextDescription.trim()) throw new AccountsInputError("Description is required");
   if (nextAmountCents <= 0) throw new AccountsInputError("amountCents must be a positive integer");
@@ -457,13 +483,13 @@ export async function updateFinancialEntry(
   )
     .bind(
       nextEntryType,
-      payload.date || existing.date,
+      payload.date ?? existing.date,
       nextDescription.trim(),
       categoryId,
       projectId,
       nextAmountCents,
-      payload.currency || existing.currency,
-      payload.status || existing.status,
+      payload.currency ?? existing.currency,
+      payload.status ?? existing.status,
       payload.notes === undefined ? existing.notes : payload.notes,
       entryId,
       userId,
@@ -650,16 +676,18 @@ export async function importFinancialEntriesCsv(
   if (!entryType) throw new AccountsInputError("entryType is required");
 
   await ensureDefaultCategories(env, userId, [entryType]);
-  const lines = (await file.text()).split(/\r?\n/).filter((line) => line.trim());
-  if (lines.length < 2) {
+  const fileText = await file.text();
+  const rows = parseCsvRows(fileText).filter((row) => row.some((value) => value.trim()));
+  if (rows.length < 2) {
     throw new AccountsInputError("CSV must have a header row and at least one data row");
   }
 
-  const headers = parseCsvLine(lines[0]).map(normalizeCsvHeader);
+  const headers = rows[0].map(normalizeCsvHeader);
   const dateIndex = findHeaderIndex(headers, ["date", "transaction_date", "invoice_date", "paid_at"]);
   const descriptionIndex = findHeaderIndex(headers, ["description", "vendor", "merchant", "name", "title"]);
   const amountIndex = findHeaderIndex(headers, ["amount", "total", "value"]);
   const categoryIndex = findHeaderIndex(headers, ["category", "category_name", "label"]);
+  const projectIndex = findHeaderIndex(headers, ["project", "project_name"]);
   const currencyIndex = findHeaderIndex(headers, ["currency", "currency_code"]);
   const statusIndex = findHeaderIndex(headers, ["status", "state"]);
   const notesIndex = findHeaderIndex(headers, ["notes", "note", "memo"]);
@@ -670,17 +698,22 @@ export async function importFinancialEntriesCsv(
   let imported = 0;
   let skipped = 0;
   const errors: Array<{ row: number; reason: string }> = [];
-  for (let i = 1; i < lines.length; i++) {
-    const values = parseCsvLine(lines[i]);
+  const [defaultCurrency, fileHash] = await Promise.all([
+    getDefaultCommerceCurrency(env, userId),
+    sha256Text(fileText),
+  ]);
+  for (let i = 1; i < rows.length; i++) {
+    const values = rows[i];
     const rowNumber = i + 1;
     const date = parseDateValue(values[dateIndex]);
     const description = values[descriptionIndex]?.trim();
     const amountCents = parseAmountToCents(values[amountIndex]);
-    const currency = parseCurrency(values[currencyIndex] || "USD") || "USD";
+    const suppliedCurrency = currencyIndex >= 0 ? values[currencyIndex]?.trim() : "";
+    const currency = suppliedCurrency ? parseCurrency(suppliedCurrency) : defaultCurrency;
     const status = parseCsvStatus(values[statusIndex], entryType);
     const notes = parseOptionalString(values[notesIndex]) ?? null;
 
-    if (!date || !description || amountCents == null || !status) {
+    if (!date || !description || amountCents == null || !currency || !status) {
       skipped++;
       errors.push({
         row: rowNumber,
@@ -690,6 +723,8 @@ export async function importFinancialEntriesCsv(
             ? "Description is required"
             : amountCents == null
               ? "Amount must be greater than zero"
+              : !currency
+                ? "Currency must be a three-letter code"
               : "Invalid status value",
       });
       continue;
@@ -699,15 +734,21 @@ export async function importFinancialEntriesCsv(
     const category = categoryName
       ? await getOrCreateCategoryByName(env, userId, entryType, categoryName)
       : null;
-    const sourceRef = `csv:${await sha256Text(
-      [entryType, date, description.toLowerCase(), String(amountCents), currency].join("|"),
-    )}`;
+    const projectName = values[projectIndex]?.trim();
+    const project = projectName ? await getProjectByName(env, userId, projectName) : null;
+    if (projectName && !project) {
+      skipped++;
+      errors.push({ row: rowNumber, reason: `Project “${projectName}” was not found` });
+      continue;
+    }
+    // The whole-file hash makes an exact retry idempotent; the row ordinal keeps duplicate-looking rows distinct.
+    const sourceRef = `csv:${fileHash}:${i}`;
 
     const result = await env.DB.prepare(
       `INSERT OR IGNORE INTO financial_entries
-         (id, user_id, entry_type, date, description, category_id, amount_cents,
+         (id, user_id, entry_type, date, description, category_id, project_id, amount_cents,
           currency, status, source, notes, source_ref)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'csv_import', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'csv_import', ?, ?)`,
     )
       .bind(
         crypto.randomUUID(),
@@ -716,6 +757,7 @@ export async function importFinancialEntriesCsv(
         date,
         description,
         category?.id || null,
+        project?.id || null,
         amountCents,
         currency,
         status,
@@ -731,12 +773,155 @@ export async function importFinancialEntriesCsv(
     }
   }
 
-  return { ok: true, imported, skipped, total: lines.length - 1, errors };
+  return { ok: true, imported, skipped, total: rows.length - 1, errors };
+}
+
+type WebsiteIncomeSource = {
+  source_kind: "order" | "booking";
+  source_id: string;
+  date: string;
+  description: string;
+  gross_amount_cents: number;
+  refunded_amount_cents: number;
+  currency: string;
+  status: EntryStatus;
+  customer_name: string;
+  customer_email: string;
+  payment_intent_id: string | null;
+  site_id: string;
+  item_ref: string | null;
+  item_title: string;
+};
+
+export async function syncWebsiteIncomeEntries(env: Env, userId: string) {
+  const result = await env.DB.prepare(
+    `SELECT 'order' AS source_kind, o.id AS source_id,
+            substr(COALESCE(o.paid_at, o.updated_at, o.created_at), 1, 10) AS date,
+            o.product_title AS description,
+            COALESCE(o.amount_paid, o.amount_due, 0) AS gross_amount_cents,
+            CASE WHEN o.status = 'refunded' THEN COALESCE(o.amount_paid, o.amount_due, 0) ELSE 0 END AS refunded_amount_cents,
+            UPPER(o.currency) AS currency,
+            CASE WHEN o.status = 'paid' THEN 'paid' ELSE 'needs_review' END AS status,
+            o.buyer_name AS customer_name, o.buyer_email AS customer_email,
+            o.payment_intent_id, s.id AS site_id,
+            'product:' || o.product_slug AS item_ref, o.product_title AS item_title
+     FROM commerce_orders o
+     JOIN sites s ON s.id = o.site_id
+     WHERE s.user_id = ? AND o.status IN ('paid', 'refunded')
+       AND COALESCE(o.amount_paid, o.amount_due, 0) > 0
+     UNION ALL
+     SELECT 'booking' AS source_kind, b.id AS source_id,
+            substr(COALESCE(b.paid_at, b.created_at), 1, 10) AS date,
+            CASE b.booking_type
+              WHEN 'one_to_one' THEN 'One-to-one booking'
+              WHEN 'class' THEN 'Class booking'
+              WHEN 'retreat' THEN 'Retreat booking'
+              ELSE 'Booking'
+            END AS description,
+            COALESCE(b.amount_paid, 0) AS gross_amount_cents,
+            0 AS refunded_amount_cents, UPPER(b.currency) AS currency,
+            'paid' AS status, b.guest_name AS customer_name,
+            b.guest_email AS customer_email, b.payment_intent_id,
+            s.id AS site_id, 'booking:' || COALESCE(b.offer_id, b.booking_type, 'booking') AS item_ref,
+            CASE b.booking_type
+              WHEN 'one_to_one' THEN 'One-to-one booking'
+              WHEN 'class' THEN 'Class booking'
+              WHEN 'retreat' THEN 'Retreat booking'
+              ELSE 'Booking'
+            END AS item_title
+     FROM bookings b
+     JOIN sites s ON s.id = b.site_id
+     WHERE s.user_id = ? AND b.status = 'confirmed'
+       AND b.payment_status = 'succeeded' AND COALESCE(b.amount_paid, 0) > 0`,
+  ).bind(userId, userId).all<WebsiteIncomeSource>();
+
+  let synced = 0;
+  for (const source of result.results || []) {
+    if (!(await upsertWebsiteIncomeEntry(env, userId, source))) continue;
+    synced++;
+  }
+  return { synced };
+}
+
+async function upsertWebsiteIncomeEntry(
+  env: Env,
+  userId: string,
+  source: WebsiteIncomeSource,
+) {
+  const currency = parseCurrency(source.currency);
+  const customerEmail = normalizeCustomerEmail(source.customer_email);
+  const gross = Number(source.gross_amount_cents);
+  const refunded = Math.min(gross, Math.max(0, Number(source.refunded_amount_cents) || 0));
+  if (!currency || !customerEmail || !Number.isSafeInteger(gross) || gross <= 0) return false;
+  const sourceRef = `website:${source.source_kind}:${source.source_id}`;
+  const existing = await env.DB.prepare(
+    `SELECT id FROM financial_entries
+     WHERE user_id = ? AND (source_ref = ? OR (? IS NOT NULL AND payment_intent_id = ?))
+     ORDER BY CASE WHEN source_ref = ? THEN 0 ELSE 1 END LIMIT 1`,
+  ).bind(
+    userId,
+    sourceRef,
+    source.payment_intent_id,
+    source.payment_intent_id,
+    sourceRef,
+  ).first<{ id: string }>();
+  if (existing) {
+    await env.DB.prepare(
+      `UPDATE financial_entries
+       SET date = ?, amount_cents = ?, gross_amount_cents = ?, refunded_amount_cents = ?,
+           currency = ?, status = ?, customer_name = ?, customer_email = ?,
+           payment_intent_id = COALESCE(?, payment_intent_id), site_id = ?, item_ref = ?, item_title = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND user_id = ?`,
+    ).bind(
+      source.date,
+      gross - refunded,
+      gross,
+      refunded,
+      currency,
+      source.status,
+      source.customer_name.trim() || null,
+      customerEmail,
+      source.payment_intent_id,
+      source.site_id,
+      source.item_ref,
+      source.item_title,
+      existing.id,
+      userId,
+    ).run();
+    return true;
+  }
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO financial_entries
+       (id, user_id, entry_type, date, description, amount_cents, gross_amount_cents,
+        refunded_amount_cents, currency, status, source, source_ref, customer_name,
+        customer_email, payment_intent_id, site_id, item_ref, item_title)
+     VALUES (?, ?, 'income', ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    crypto.randomUUID(),
+    userId,
+    source.date,
+    source.description,
+    gross - refunded,
+    gross,
+    refunded,
+    currency,
+    source.status,
+    sourceRef,
+    source.customer_name.trim() || null,
+    customerEmail,
+    source.payment_intent_id,
+    source.site_id,
+    source.item_ref,
+    source.item_title,
+  ).run();
+  return true;
 }
 
 export async function getFinancialStats(env: Env, userId: string, entryTypeValue: string | null) {
   const entryType = parseEntryType(entryTypeValue);
   if (!entryType) throw new AccountsInputError("entryType is required");
+  if (entryType === "income") await syncWebsiteIncomeEntries(env, userId);
   const thisMonth = getMonthWindow(0);
   const lastMonth = getMonthWindow(-1);
   const [
@@ -750,7 +935,7 @@ export async function getFinancialStats(env: Env, userId: string, entryTypeValue
       env.DB.prepare(
         `SELECT UPPER(currency) AS currency, COALESCE(SUM(amount_cents), 0) AS total
          FROM financial_entries
-         WHERE user_id = ? AND entry_type = ? AND date >= ? AND date < ? AND status != 'cancelled'
+         WHERE user_id = ? AND entry_type = ? AND date >= ? AND date < ? AND status = 'paid'
          GROUP BY UPPER(currency)
          ORDER BY currency ASC`,
       )
@@ -759,7 +944,7 @@ export async function getFinancialStats(env: Env, userId: string, entryTypeValue
       env.DB.prepare(
         `SELECT UPPER(currency) AS currency, COALESCE(SUM(amount_cents), 0) AS total
          FROM financial_entries
-         WHERE user_id = ? AND entry_type = ? AND date >= ? AND date < ? AND status != 'cancelled'
+         WHERE user_id = ? AND entry_type = ? AND date >= ? AND date < ? AND status = 'paid'
          GROUP BY UPPER(currency)
          ORDER BY currency ASC`,
       )
@@ -770,7 +955,7 @@ export async function getFinancialStats(env: Env, userId: string, entryTypeValue
                 COALESCE(SUM(e.amount_cents), 0) AS total
          FROM financial_entries e
          LEFT JOIN financial_categories fc ON fc.id = e.category_id
-         WHERE e.user_id = ? AND e.entry_type = ? AND e.date >= ? AND e.date < ? AND e.status != 'cancelled'
+         WHERE e.user_id = ? AND e.entry_type = ? AND e.date >= ? AND e.date < ? AND e.status = 'paid'
          GROUP BY COALESCE(fc.name, 'Uncategorized')
          ORDER BY total DESC, category_name ASC
          LIMIT 1`,
@@ -862,15 +1047,8 @@ export async function syncAccountsStripe(env: Env, userId: string) {
   if (!secretKey) throw new AccountsInputError("Stripe is not configured in Account settings", 409);
   const stripe = new Stripe(secretKey, { apiVersion: "2025-02-24.acacia" });
 
-  const latestStripeEntry = await env.DB.prepare(
-    `SELECT MAX(date) AS latest_date FROM financial_entries WHERE user_id = ? AND source = 'stripe'`,
-  )
-    .bind(userId)
-    .first<{ latest_date: string | null }>();
-  const syncStart = latestStripeEntry?.latest_date
-    ? new Date(`${latestStripeEntry.latest_date}T00:00:00Z`)
-    : new Date(Date.now() - STRIPE_SYNC_INITIAL_LOOKBACK_DAYS * 86400000);
-  syncStart.setUTCDate(syncStart.getUTCDate() - STRIPE_SYNC_OVERLAP_DAYS);
+  // Reconcile a clear fixed window on every run so later refunds and disputes are not missed.
+  const syncStart = new Date(Date.now() - STRIPE_SYNC_INITIAL_LOOKBACK_DAYS * 86400000);
   const createdGte = Math.max(0, Math.floor(syncStart.getTime() / 1000));
 
   let chargesImported = 0;
@@ -888,42 +1066,101 @@ export async function syncAccountsStripe(env: Env, userId: string) {
 
     for (const charge of page.data) {
       chargesProcessed++;
-      const status = buildStripeChargeStatus(charge);
-      if (!status || charge.amount <= 0) {
+      const payment = buildStripeChargeSnapshot(charge);
+      if (!payment) {
         chargesSkipped++;
         continue;
       }
       const sourceRef = `stripe:${charge.id}`;
       const existing = await env.DB.prepare(
-        `SELECT id FROM financial_entries WHERE user_id = ? AND source_ref = ? LIMIT 1`,
+        `SELECT id FROM financial_entries
+         WHERE user_id = ? AND (source_ref = ? OR (? IS NOT NULL AND payment_intent_id = ?))
+         ORDER BY CASE WHEN source_ref = ? THEN 0 ELSE 1 END LIMIT 1`,
       )
-        .bind(userId, sourceRef)
+        .bind(userId, sourceRef, payment.paymentIntentId, payment.paymentIntentId, sourceRef)
         .first<{ id: string }>();
-      const date = new Date(charge.created * 1000).toISOString().slice(0, 10);
-      const description = buildStripeDescription(charge);
-      const currency = charge.currency.toUpperCase();
-      const notes = buildStripeChargeNotes(charge);
 
       if (existing) {
         await env.DB.prepare(
           `UPDATE financial_entries
-           SET date = ?, description = ?, amount_cents = ?, currency = ?, status = ?,
-               notes = ?, stripe_charge_id = ?, updated_at = datetime('now')
+           SET date = ?, amount_cents = ?, gross_amount_cents = ?, refunded_amount_cents = ?,
+               currency = ?, status = ?, stripe_charge_id = ?,
+               payment_intent_id = COALESCE(?, payment_intent_id),
+               customer_name = COALESCE(customer_name, ?),
+               customer_email = COALESCE(customer_email, ?), updated_at = datetime('now')
            WHERE id = ? AND user_id = ?`,
         )
-          .bind(date, description, charge.amount, currency, status, notes, charge.id, existing.id, userId)
+          .bind(
+            payment.date,
+            payment.netAmountCents,
+            payment.grossAmountCents,
+            payment.refundedAmountCents,
+            payment.currency,
+            payment.status,
+            charge.id,
+            payment.paymentIntentId,
+            payment.customerName,
+            payment.customerEmail,
+            existing.id,
+            userId,
+          )
           .run();
         chargesUpdated++;
       } else {
-        await env.DB.prepare(
-          `INSERT INTO financial_entries
+        const inserted = await env.DB.prepare(
+          `INSERT OR IGNORE INTO financial_entries
              (id, user_id, entry_type, date, description, category_id, amount_cents,
-              currency, status, source, notes, source_ref, stripe_charge_id)
-           VALUES (?, ?, 'income', ?, ?, NULL, ?, ?, ?, 'stripe', ?, ?, ?)`,
+              gross_amount_cents, refunded_amount_cents, currency, status, source, notes,
+              source_ref, stripe_charge_id, customer_name, customer_email, payment_intent_id)
+           VALUES (?, ?, 'income', ?, ?, NULL, ?, ?, ?, ?, ?, 'stripe', ?, ?, ?, ?, ?, ?)`,
         )
-          .bind(crypto.randomUUID(), userId, date, description, charge.amount, currency, status, notes, sourceRef, charge.id)
+          .bind(
+            crypto.randomUUID(),
+            userId,
+            payment.date,
+            payment.description,
+            payment.netAmountCents,
+            payment.grossAmountCents,
+            payment.refundedAmountCents,
+            payment.currency,
+            payment.status,
+            payment.providerNotes,
+            sourceRef,
+            charge.id,
+            payment.customerName,
+            payment.customerEmail,
+            payment.paymentIntentId,
+          )
           .run();
-        chargesImported++;
+        if ((inserted.meta.changes || 0) > 0) {
+          chargesImported++;
+        } else {
+          await env.DB.prepare(
+            `UPDATE financial_entries
+             SET date = ?, amount_cents = ?, gross_amount_cents = ?, refunded_amount_cents = ?,
+                 currency = ?, status = ?, stripe_charge_id = ?,
+                 payment_intent_id = COALESCE(?, payment_intent_id),
+                 customer_name = COALESCE(customer_name, ?),
+                 customer_email = COALESCE(customer_email, ?), updated_at = CURRENT_TIMESTAMP
+             WHERE user_id = ? AND (source_ref = ? OR (? IS NOT NULL AND payment_intent_id = ?))`,
+          ).bind(
+            payment.date,
+            payment.netAmountCents,
+            payment.grossAmountCents,
+            payment.refundedAmountCents,
+            payment.currency,
+            payment.status,
+            charge.id,
+            payment.paymentIntentId,
+            payment.customerName,
+            payment.customerEmail,
+            userId,
+            sourceRef,
+            payment.paymentIntentId,
+            payment.paymentIntentId,
+          ).run();
+          chargesUpdated++;
+        }
       }
     }
 
@@ -938,6 +1175,7 @@ export async function syncAccountsStripe(env: Env, userId: string) {
     chargesUpdated,
     chargesSkipped,
     chargesProcessed,
+    supportedLookbackDays: STRIPE_SYNC_INITIAL_LOOKBACK_DAYS,
     lastSyncedAt: new Date().toISOString(),
   };
 }
@@ -967,7 +1205,12 @@ function parseInteger(
 function parseDateValue(value: unknown): string | null {
   if (typeof value !== "string" || !value.trim()) return null;
   const trimmed = value.trim();
-  if (DATE_ONLY_REGEX.test(trimmed)) return trimmed;
+  if (DATE_ONLY_REGEX.test(trimmed)) {
+    const parsed = new Date(`${trimmed}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === trimmed
+      ? trimmed
+      : null;
+  }
   const parsed = new Date(trimmed);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
 }
@@ -995,16 +1238,42 @@ function parseOptionalString(value: unknown): string | null | undefined {
 function parseEntryPayload(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
-  const amountValue =
-    typeof input.amountCents === "number"
-      ? input.amountCents
-      : typeof input.amountCents === "string"
-        ? Number.parseInt(input.amountCents, 10)
-        : NaN;
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(input, key);
+  const entryType = has("entryType")
+    ? parseEntryType(typeof input.entryType === "string" ? input.entryType : null)
+    : undefined;
+  if (has("entryType") && !entryType) throw new AccountsInputError("Invalid entryType");
+  const date = has("date") ? parseDateValue(input.date) : undefined;
+  if (has("date") && !date) throw new AccountsInputError("Invalid date");
+  let amountCents: number | undefined;
+  if (has("amountCents")) {
+    const raw = input.amountCents;
+    const amount = typeof raw === "number"
+      ? raw
+      : typeof raw === "string" && /^-?\d+$/.test(raw.trim())
+        ? Number(raw.trim())
+        : Number.NaN;
+    if (!Number.isSafeInteger(amount)) throw new AccountsInputError("amountCents must be a safe integer");
+    amountCents = amount;
+  }
+  const currency = has("currency") ? parseCurrency(input.currency) : undefined;
+  if (has("currency") && !currency) throw new AccountsInputError("Invalid currency");
+  const status = has("status")
+    ? parseEntryStatus(typeof input.status === "string" ? input.status : null)
+    : undefined;
+  if (has("status") && !status) throw new AccountsInputError("Invalid status");
+  if (has("notes") && input.notes !== null && typeof input.notes !== "string") {
+    throw new AccountsInputError("Invalid notes");
+  }
+  if (has("description") && typeof input.description !== "string") {
+    throw new AccountsInputError("Invalid description");
+  }
   return {
-    entryType: parseEntryType(typeof input.entryType === "string" ? input.entryType : null),
-    date: parseDateValue(input.date),
-    description: typeof input.description === "string" ? input.description.trim() : "",
+    entryType,
+    date,
+    description: has("description") && typeof input.description === "string"
+      ? input.description.trim()
+      : undefined,
     categoryId:
       typeof input.categoryId === "string" && input.categoryId.trim()
         ? input.categoryId.trim()
@@ -1017,9 +1286,9 @@ function parseEntryPayload(value: unknown) {
         : input.projectId === null
           ? null
           : undefined,
-    amountCents: Number.isInteger(amountValue) ? amountValue : null,
-    currency: input.currency === undefined ? undefined : parseCurrency(input.currency),
-    status: input.status === undefined ? undefined : parseEntryStatus(typeof input.status === "string" ? input.status : null),
+    amountCents,
+    currency,
+    status,
     notes: parseOptionalString(input.notes),
   };
 }
@@ -1063,8 +1332,12 @@ function buildEntryFiltersSql(filters: {
     params.push(filters.status);
   }
   if (filters.source) {
-    conditions.push("e.source = ?");
-    params.push(filters.source);
+    if (filters.source === "website") {
+      conditions.push("e.source_ref LIKE 'website:%'");
+    } else {
+      conditions.push("e.source = ?");
+      params.push(filters.source);
+    }
   }
   return { whereClause: `WHERE ${conditions.join(" AND ")}`, params };
 }
@@ -1105,12 +1378,23 @@ async function getProjectForUser(env: Env, userId: string, projectId: string) {
   );
 }
 
+async function getProjectByName(env: Env, userId: string, projectName: string) {
+  return env.DB.prepare(
+    `SELECT id FROM mission_projects
+     WHERE user_id = ? AND status != 'archived' AND name = ? COLLATE NOCASE
+     LIMIT 1`,
+  ).bind(userId, projectName.trim()).first<{ id: string }>();
+}
+
 async function getEntryForUser(env: Env, userId: string, entryId: string) {
   return (
     (await env.DB.prepare(
       `SELECT e.id, e.user_id, e.entry_type, e.date, e.description, e.category_id,
               e.project_id, e.amount_cents, e.currency, e.status, e.source, e.notes, e.source_ref,
-              e.source_email_id, e.stripe_charge_id, e.created_at, e.updated_at,
+              e.source_email_id, e.stripe_charge_id, e.gross_amount_cents,
+              e.refunded_amount_cents, e.customer_name, e.customer_email,
+              e.payment_intent_id, e.site_id, e.item_ref, e.item_title,
+              e.created_at, e.updated_at,
               fc.name AS category_name, mp.name AS project_name
        FROM financial_entries e
        LEFT JOIN financial_categories fc ON fc.id = e.category_id
@@ -1181,11 +1465,19 @@ function serializeEntry(entry: FinancialEntryRow) {
     amountCents: entry.amount_cents,
     currency: entry.currency,
     status: entry.status,
-    source: entry.source,
+    source: entry.source_ref?.startsWith("website:") ? "website" : entry.source,
     notes: entry.notes,
     sourceRef: entry.source_ref,
     sourceEmailId: entry.source_email_id,
     stripeChargeId: entry.stripe_charge_id,
+    grossAmountCents: entry.gross_amount_cents,
+    refundedAmountCents: entry.refunded_amount_cents,
+    customerName: entry.customer_name,
+    customerEmail: entry.customer_email,
+    paymentIntentId: entry.payment_intent_id,
+    siteId: entry.site_id,
+    itemRef: entry.item_ref,
+    itemTitle: entry.item_title,
     createdAt: entry.created_at,
     updatedAt: entry.updated_at,
   };
@@ -1221,13 +1513,14 @@ function parseCsvStatus(value: string | undefined, entryType: EntryType): EntryS
   return parseEntryStatus(normalized);
 }
 
-function parseCsvLine(line: string): string[] {
-  const values: string[] = [];
+export function parseCsvRows(csv: string): string[][] {
+  const rows: string[][] = [];
+  let values: string[] = [];
   let current = "";
   let inQuotes = false;
-  for (let index = 0; index < line.length; index++) {
-    const char = line[index];
-    const next = line[index + 1];
+  for (let index = 0; index < csv.length; index++) {
+    const char = csv[index];
+    const next = csv[index + 1];
     if (char === '"' && inQuotes && next === '"') {
       current += '"';
       index++;
@@ -1236,12 +1529,19 @@ function parseCsvLine(line: string): string[] {
     } else if (char === "," && !inQuotes) {
       values.push(current);
       current = "";
+    } else if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") index++;
+      values.push(current);
+      rows.push(values);
+      values = [];
+      current = "";
     } else {
       current += char;
     }
   }
   values.push(current);
-  return values;
+  rows.push(values);
+  return rows;
 }
 
 function escapeCsv(value: string): string {
@@ -1275,16 +1575,42 @@ function buildStripeDescription(charge: Stripe.Charge): string {
   );
 }
 
-function buildStripeChargeStatus(charge: Stripe.Charge): EntryStatus | null {
-  if (charge.refunded || charge.disputed) return "needs_review";
-  if (charge.status === "succeeded") return "paid";
-  if (charge.status === "pending") return "pending";
-  return null;
-}
-
-function buildStripeChargeNotes(charge: Stripe.Charge): string | null {
+export function buildStripeChargeSnapshot(charge: Stripe.Charge) {
+  if (!Number.isSafeInteger(charge.amount) || charge.amount <= 0) return null;
+  const refundedAmountCents = Math.min(
+    charge.amount,
+    Math.max(0, Number.isSafeInteger(charge.amount_refunded) ? charge.amount_refunded : 0),
+  );
+  const status: EntryStatus | null = charge.disputed || refundedAmountCents >= charge.amount
+    ? "needs_review"
+    : charge.status === "succeeded"
+      ? "paid"
+      : charge.status === "pending"
+        ? "pending"
+        : null;
+  const currency = parseCurrency(charge.currency);
+  if (!status || !currency) return null;
   const notes: string[] = [];
-  if (charge.refunded) notes.push("Refunded in Stripe");
+  if (refundedAmountCents > 0) {
+    notes.push(refundedAmountCents >= charge.amount ? "Refunded in Stripe" : "Partially refunded in Stripe");
+  }
   if (charge.disputed) notes.push("Charge marked as disputed in Stripe");
-  return notes.length > 0 ? notes.join(". ") : null;
+  const paymentIntentId = typeof charge.payment_intent === "string"
+    ? charge.payment_intent
+    : charge.payment_intent?.id || null;
+  return {
+    date: new Date(charge.created * 1000).toISOString().slice(0, 10),
+    description: buildStripeDescription(charge),
+    grossAmountCents: charge.amount,
+    refundedAmountCents,
+    netAmountCents: charge.amount - refundedAmountCents,
+    currency,
+    status,
+    providerNotes: notes.length > 0 ? notes.join(". ") : null,
+    customerName: charge.billing_details?.name?.trim() || null,
+    customerEmail: normalizeCustomerEmail(
+      charge.billing_details?.email || charge.receipt_email,
+    ),
+    paymentIntentId,
+  };
 }

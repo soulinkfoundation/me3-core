@@ -33,6 +33,7 @@ type Campaign = {
   siteUsername: string;
   name: string;
   status: string;
+  audienceFilter: { kind: "all" | "customers"; itemRef?: string | null };
   revision: {
     id: string;
     subject: string;
@@ -84,6 +85,9 @@ const hydrating = ref(true);
 let saveTimer: number | null = null;
 
 const selectedSiteId = ref("");
+const audienceKind = ref<"all" | "customers">("all");
+const audienceItem = ref("");
+const audienceItems = ref<Array<{ value: string; label: string }>>([]);
 const subject = ref("");
 const previewText = ref("");
 const replyToAddress = ref("");
@@ -117,7 +121,11 @@ const excludedReasons = computed(() =>
 );
 const previewFromAddress = computed(() => transport.value?.sender?.fromAddress || "");
 const previewToLabel = computed(() =>
-  campaign.value ? `@${campaign.value.siteUsername} subscribers` : "Subscribers",
+  campaign.value
+    ? audienceKind.value === "customers"
+      ? `@${campaign.value.siteUsername} customers`
+      : `@${campaign.value.siteUsername} subscribers`
+    : "Subscribers",
 );
 const currentRendererVersion = "me3.email-renderer.v2";
 
@@ -145,6 +153,21 @@ async function initialize() {
   }
 }
 
+async function loadAudienceItems(siteId: string) {
+  if (!siteId) {
+    audienceItems.value = [];
+    return;
+  }
+  try {
+    const response = await api.get<{ items: Array<{ value: string; label: string }> }>(
+      `/email/campaigns/audience-items?siteId=${encodeURIComponent(siteId)}`,
+    );
+    audienceItems.value = response.items || [];
+  } catch {
+    audienceItems.value = [];
+  }
+}
+
 async function loadCampaign(campaignId: string) {
   const response = await api.get<{ campaign: Campaign }>(
     `/email/campaigns/${encodeURIComponent(campaignId)}`,
@@ -163,6 +186,8 @@ function applyCampaign(next: Campaign) {
   hydrating.value = true;
   campaign.value = next;
   selectedSiteId.value = next.siteId;
+  audienceKind.value = next.audienceFilter?.kind === "customers" ? "customers" : "all";
+  audienceItem.value = next.audienceFilter?.itemRef || "";
   subject.value = next.revision.subject;
   previewText.value = next.revision.previewText;
   replyToAddress.value = next.revision.replyToAddress || ownerEmail.value;
@@ -183,6 +208,7 @@ async function createDraft() {
   try {
     const response = await api.post<{ campaign: Campaign }>("/email/campaigns", {
       siteId: selectedSiteId.value,
+      audienceFilter: { kind: audienceKind.value, itemRef: audienceItem.value || null },
     });
     applyCampaign(response.campaign);
     step.value = 2;
@@ -225,6 +251,7 @@ async function saveDraft(): Promise<boolean> {
         subject: subject.value,
         previewText: previewText.value,
         replyToAddress: replyToAddress.value || null,
+        audienceFilter: { kind: audienceKind.value, itemRef: audienceItem.value || null },
         document: buildDocument(),
       },
     );
@@ -375,6 +402,10 @@ async function uploadCampaignImage(input: {
 watch([subject, previewText, replyToAddress, richTextHtml, brand], scheduleSave, {
   deep: true,
 });
+watch(selectedSiteId, (siteId, previousSiteId) => {
+  if (previousSiteId && previousSiteId !== siteId) audienceItem.value = "";
+  void loadAudienceItems(siteId);
+});
 
 onMounted(() => void initialize());
 onBeforeUnmount(() => {
@@ -455,6 +486,21 @@ onBeforeUnmount(() => {
             <select v-model="selectedSiteId">
               <option disabled value="">Choose an email list</option>
               <option v-for="site in sites.sites" :key="site.id" :value="site.id">@{{ site.username }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Recipients</span>
+            <select v-model="audienceKind">
+              <option value="all">All eligible subscribers</option>
+              <option value="customers">Eligible customers</option>
+            </select>
+            <small>A purchase alone never subscribes someone to marketing email.</small>
+          </label>
+          <label v-if="audienceKind === 'customers' && audienceItems.length" class="field">
+            <span>Product or service</span>
+            <select v-model="audienceItem">
+              <option value="">All products and services</option>
+              <option v-for="item in audienceItems" :key="item.value" :value="item.value">{{ item.label }}</option>
             </select>
           </label>
           <Button

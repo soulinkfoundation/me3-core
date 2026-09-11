@@ -52,6 +52,7 @@ export async function getPushNotificationDevice(
     ...relay,
     dailyBriefingEnabled: preferences.dailyBriefingEnabled,
     calendarNotifications: preferences.calendarNotifications,
+    paymentNotificationsEnabled: preferences.paymentNotificationsEnabled,
   };
 }
 
@@ -73,9 +74,11 @@ export async function registerPushNotificationDevice(
     throw new PushNotificationInputError("Invalid push token", 400);
   }
   const dailyBriefingEnabled = input.dailyBriefingEnabled !== false;
+  const paymentNotificationsEnabled = input.paymentNotificationsEnabled !== false;
   const calendarNotifications = normalizeCalendarPushPreferences(input.calendarNotifications);
   await upsertLocalPushPreferences(env, userId, deviceId, {
     dailyBriefingEnabled,
+    paymentNotificationsEnabled,
     calendarNotifications,
   });
   return relayRequest(env, "/api/push/devices", {
@@ -87,6 +90,7 @@ export async function registerPushNotificationDevice(
       platform,
       environment: input.environment === "production" ? "production" : "sandbox",
       dailyBriefingEnabled,
+      paymentNotificationsEnabled,
       calendarNotifications,
     }),
   });
@@ -155,6 +159,32 @@ export async function notifyCalendarItemDue(env: Env, alert: CalendarPushAlert) 
   }
 }
 
+export type WebsitePaymentPush = {
+  sourceKind: "order" | "booking";
+  sourceId: string;
+  amountCents: number;
+  currency: string;
+  customerName: string | null;
+  itemTitle: string;
+  siteName: string;
+};
+
+export async function notifyWebsitePaymentReceived(env: Env, payment: WebsitePaymentPush) {
+  try {
+    return await relayRequest(env, "/api/push/payment-received", {
+      method: "POST",
+      body: JSON.stringify(payment),
+    });
+  } catch (error) {
+    console.warn("Payment push was skipped", {
+      sourceKind: payment.sourceKind,
+      sourceId: payment.sourceId,
+      error: error instanceof Error ? error.message : "Unknown push relay error",
+    });
+    return { ok: false, skipped: true };
+  }
+}
+
 export function normalizeCalendarPushPreferences(value: unknown): CalendarPushPreferences {
   const body = isRecord(value) ? value : {};
   const categories = isRecord(body.categories) ? body.categories : {};
@@ -172,32 +202,37 @@ async function upsertLocalPushPreferences(
   deviceId: string,
   preferences: {
     dailyBriefingEnabled: boolean;
+    paymentNotificationsEnabled: boolean;
     calendarNotifications: CalendarPushPreferences;
   },
 ) {
   await env.DB.prepare(
     `INSERT INTO mobile_push_preferences
-       (user_id, device_id, daily_briefing_enabled, calendar_notifications_json)
-     VALUES (?, ?, ?, ?)
+       (user_id, device_id, daily_briefing_enabled, calendar_notifications_json,
+        payment_notifications_enabled)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(user_id, device_id) DO UPDATE SET
        daily_briefing_enabled = excluded.daily_briefing_enabled,
        calendar_notifications_json = excluded.calendar_notifications_json,
+       payment_notifications_enabled = excluded.payment_notifications_enabled,
        updated_at = CURRENT_TIMESTAMP`,
   ).bind(
     userId,
     deviceId,
     preferences.dailyBriefingEnabled ? 1 : 0,
     JSON.stringify(preferences.calendarNotifications),
+    preferences.paymentNotificationsEnabled ? 1 : 0,
   ).run();
 }
 
 async function getLocalPushPreferences(env: Env, userId: string, deviceId: string) {
   const row = await env.DB.prepare(
-    `SELECT daily_briefing_enabled, calendar_notifications_json
+    `SELECT daily_briefing_enabled, calendar_notifications_json, payment_notifications_enabled
      FROM mobile_push_preferences WHERE user_id = ? AND device_id = ?`,
   ).bind(userId, deviceId).first<{
     daily_briefing_enabled: number;
     calendar_notifications_json: string;
+    payment_notifications_enabled: number;
   }>();
   let calendarNotifications = normalizeCalendarPushPreferences(null);
   if (row?.calendar_notifications_json) {
@@ -211,6 +246,7 @@ async function getLocalPushPreferences(env: Env, userId: string, deviceId: strin
   }
   return {
     dailyBriefingEnabled: row ? row.daily_briefing_enabled === 1 : true,
+    paymentNotificationsEnabled: row ? row.payment_notifications_enabled === 1 : true,
     calendarNotifications,
   };
 }

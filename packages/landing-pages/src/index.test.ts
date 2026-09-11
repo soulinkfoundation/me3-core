@@ -334,6 +334,7 @@ describe("landing pages package", () => {
     const serviceHtml = renderLandingPageHtml(service, "owner", {
       pageId: "page-2",
       bookingPaymentMethods: { "strategy-session": "manual" },
+      marketingOptIn: true,
     });
     expect(serviceHtml).toContain('data-offer="strategy-session"');
     expect(serviceHtml).toContain('data-payment-method="manual"');
@@ -341,6 +342,8 @@ describe("landing pages package", () => {
       "Payment is not taken now. You’ll receive payment details by email after booking.",
     );
     expect(serviceHtml).toContain("/api/book/");
+    expect(serviceHtml).toContain('name="marketingOptIn"');
+    expect(serviceHtml).toContain("/api/sites/'+encodeURIComponent(username)+'/subscribe");
     expect(serviceHtml).not.toContain("sk_test_");
 
     service.actions[0] = {
@@ -357,6 +360,7 @@ describe("landing pages package", () => {
     expect(productHtml).toContain(
       "Payment is not taken now. You’ll receive payment details by email after ordering.",
     );
+    expect(productHtml).not.toContain('name="marketingOptIn"');
   });
 
   it("upgrades valid v1 documents to editable v3 documents", () => {

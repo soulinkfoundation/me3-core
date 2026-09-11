@@ -21,6 +21,7 @@ import {
   CampaignInputError,
   getOwnedCampaign,
   listSiteAudience,
+  parseCampaignAudienceFilter,
   type OwnedCampaign,
 } from "./campaigns";
 import { isManagedRuntime } from "./managed-runtime-lifecycle";
@@ -256,7 +257,11 @@ export async function startCampaignDelivery(
   }
   const transport = await requireReadyTransport(env, fetcher);
   const scheduledFor = normalizeSchedule(input.scheduledFor);
-  const audience = evaluateCampaignAudience(await listSiteAudience(env, campaign.site_id));
+  const audience = evaluateCampaignAudience(await listSiteAudience(
+    env,
+    campaign.site_id,
+    parseCampaignAudienceFilter(campaign.audience_filter_json),
+  ));
   if (audience.eligible.length === 0) {
     throw new CampaignInputError(
       "This Site has no eligible campaign subscribers",

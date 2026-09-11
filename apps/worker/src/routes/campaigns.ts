@@ -19,6 +19,7 @@ import {
   createCampaign,
   deleteCampaign,
   getCampaign,
+  listCampaignCustomerItems,
   listCampaigns,
   previewCampaignAudience,
   saveCampaignDraft,
@@ -121,6 +122,18 @@ export function registerCampaignRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (pluginError) return pluginError;
     try {
       return c.json({ transport: await setupManagedCampaignSender(c.env) });
+    } catch (error) {
+      return campaignError(c, error);
+    }
+  });
+
+  app.get("/api/email/campaigns/audience-items", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const pluginError = await requireCampaignPlugin(c);
+    if (pluginError) return pluginError;
+    try {
+      return c.json({ items: await listCampaignCustomerItems(c.env, ownerId, c.req.query("siteId") || "") });
     } catch (error) {
       return campaignError(c, error);
     }

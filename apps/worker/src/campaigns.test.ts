@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { deleteCampaign, type CampaignStatus } from "./campaigns";
+import {
+  deleteCampaign,
+  normalizeCampaignAudienceFilter,
+  parseCampaignAudienceFilter,
+  type CampaignStatus,
+} from "./campaigns";
 import type { Env } from "./types";
 
 function campaignEnv(input: {
@@ -51,6 +56,14 @@ function campaignEnv(input: {
 }
 
 describe("campaign deletion", () => {
+  it("keeps customer audience filters narrow and defaults malformed stored data safely", () => {
+    expect(normalizeCampaignAudienceFilter({ kind: "customers", itemRef: "product:course" }))
+      .toEqual({ kind: "customers", itemRef: "product:course" });
+    expect(parseCampaignAudienceFilter("not-json")).toEqual({ kind: "all" });
+    expect(() => normalizeCampaignAudienceFilter({ kind: "customers", itemRef: "other:course" }))
+      .toThrow(/valid product or service/);
+  });
+
   it("deletes an owner draft and its stored assets", async () => {
     const fixture = campaignEnv();
 

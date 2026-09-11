@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  AccountsInputError,
   buildAccountCustomers,
+  buildStripeChargeSnapshot,
   createFinancialEntry,
   getFinancialStats,
+  parseCsvRows,
   updateFinancialEntry,
 } from "./accounts";
+import type Stripe from "stripe";
 import type { AccountCustomerSourceRow } from "./accounts";
 import type { Env } from "./types";
 
@@ -51,6 +55,7 @@ describe("accounts stats", () => {
       DB: new AccountsStatsDb([
         entry({ date: today, amount_cents: 500, currency: "USD" }),
         entry({ date: today, amount_cents: 500, currency: "EUR" }),
+        entry({ date: today, amount_cents: 900, currency: "USD", status: "pending" }),
         entry({
           date: today,
           amount_cents: 500,
@@ -101,6 +106,43 @@ describe("account entries", () => {
 
     expect(updated.entry.projectId).toBeNull();
     expect(updated.entry.projectName).toBeNull();
+  });
+
+  it("rejects invalid supplied values instead of retaining old data", async () => {
+    const env = { DB: new AccountsEntriesDb([]) } as unknown as Env;
+    await expect(createFinancialEntry(env, "owner", {
+      entryType: "income",
+      date: "2026-02-30",
+      description: "Impossible date",
+      amountCents: "10.5",
+    })).rejects.toBeInstanceOf(AccountsInputError);
+  });
+});
+
+describe("account imports and Stripe payment truth", () => {
+  it("parses exported multiline CSV fields", () => {
+    expect(parseCsvRows('date,notes\r\n2026-09-11,"Line one\nLine ""two"""')).toEqual([
+      ["date", "notes"],
+      ["2026-09-11", 'Line one\nLine "two"'],
+    ]);
+  });
+
+  it("uses net collected value for partial refunds and excludes full refunds", () => {
+    const partial = buildStripeChargeSnapshot(stripeCharge({ amount_refunded: 250 }));
+    expect(partial).toMatchObject({
+      grossAmountCents: 1000,
+      refundedAmountCents: 250,
+      netAmountCents: 750,
+      status: "paid",
+      paymentIntentId: "pi_123",
+    });
+    expect(buildStripeChargeSnapshot(stripeCharge({ amount_refunded: 1000 }))).toMatchObject({
+      netAmountCents: 0,
+      status: "needs_review",
+    });
+    expect(buildStripeChargeSnapshot(stripeCharge({ disputed: true }))).toMatchObject({
+      status: "needs_review",
+    });
   });
 });
 
@@ -250,9 +292,27 @@ class AccountsStatsStatement {
         entry.entry_type === entryType &&
         entry.date >= start &&
         entry.date < end &&
-        entry.status !== "cancelled",
+        entry.status === "paid",
     );
   }
+}
+
+function stripeCharge(overrides: Partial<Stripe.Charge> = {}): Stripe.Charge {
+  return {
+    id: "ch_123",
+    amount: 1000,
+    amount_refunded: 0,
+    billing_details: { name: "Buyer", email: "buyer@example.com" },
+    created: 1_757_500_000,
+    currency: "eur",
+    disputed: false,
+    payment_intent: "pi_123",
+    receipt_email: null,
+    refunded: false,
+    status: "succeeded",
+    metadata: {},
+    ...overrides,
+  } as Stripe.Charge;
 }
 
 class AccountsEntriesDb {

@@ -517,7 +517,11 @@ export async function getPagePaymentMethods(env: Env, site: DbSite) {
         product.paymentMethod === "manual" ? "manual" : "stripe";
     }
   }
-  return { bookingPaymentMethods, productPaymentMethods };
+  return {
+    bookingPaymentMethods,
+    productPaymentMethods,
+    marketingOptIn: profile.intents?.subscribe?.enabled === true,
+  };
 }
 
 export async function getPageResourceSite(

@@ -129,6 +129,9 @@ describe("campaign delivery lifecycle", () => {
         ('ME3_CLOUD_CORE_TOKEN', 'managed-core-token');
     `);
     for (const migration of migrations) database.exec(migration);
+    database.exec(
+      `ALTER TABLE email_campaigns ADD COLUMN audience_filter_json TEXT NOT NULL DEFAULT '{"kind":"all"}'`,
+    );
     database.exec(`
       INSERT INTO site_branding
         (site_id, display_name, logo_ref, accent_color, background_color,

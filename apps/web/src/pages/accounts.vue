@@ -25,7 +25,7 @@ definePage({
 type EntryType = "income" | "expense";
 type AccountsView = EntryType | "customers";
 type EntryStatus = "pending" | "paid" | "overdue" | "cancelled" | "needs_review";
-type EntrySource = "manual" | "email_triage" | "stripe" | "csv_import";
+type EntrySource = "manual" | "email_triage" | "stripe" | "csv_import" | "website";
 type Category = { id: string; name: string; entryType: EntryType };
 type Entry = {
   id: string;
@@ -116,6 +116,7 @@ const stripeConfigured = ref(false);
 const defaultCurrency = ref("USD");
 const importInput = ref<HTMLInputElement | null>(null);
 const actionsMenu = ref<HTMLDetailsElement | null>(null);
+const importFeedback = ref<{ imported: number; skipped: number; errors: Array<{ row: number; reason: string }> } | null>(null);
 const form = ref<EntryForm>(emptyForm(entryType.value));
 let accountsRequestId = 0;
 
@@ -138,8 +139,10 @@ const categoryOptions = computed(() =>
 const formDisabled = computed(
   () => saving.value || !form.value.date || !form.value.description.trim() || !text(form.value.amount),
 );
-const editingStripeEntry = computed(() =>
-  Boolean(editingEntryId.value && entries.value.find((entry) => entry.id === editingEntryId.value)?.source === "stripe"),
+const editingSyncedEntry = computed(() =>
+  Boolean(editingEntryId.value && ["stripe", "website"].includes(
+    entries.value.find((entry) => entry.id === editingEntryId.value)?.source || "",
+  )),
 );
 const currencyOptions = computed(() => {
   const current = normalizeCurrency(form.value.currency);
@@ -344,11 +347,12 @@ async function importCsv(event: Event) {
     const data = new FormData();
     data.append("entryType", entryType.value);
     data.append("file", file);
-    const response = await api.upload<{ imported: number; skipped: number; total: number }>(
+    const response = await api.upload<{ imported: number; skipped: number; total: number; errors: Array<{ row: number; reason: string }> }>(
       "/accounts/import",
       data,
     );
     offset.value = 0;
+    importFeedback.value = response;
     await loadAccounts();
     toastSuccess(`Imported ${response.imported} of ${response.total}; skipped ${response.skipped}.`);
   } catch (caught) {
@@ -603,7 +607,7 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
                 <td>
                   <div class="accounts-table__row-actions">
                     <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Edit entry" @click="openEditEntry(entry)"><UiIcon name="Pencil" :size="15" /></Button>
-                    <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Delete entry" @click="deleteEntry(entry)"><UiIcon name="Trash2" :size="15" /></Button>
+                    <Button v-if="!['stripe', 'website'].includes(entry.source)" color="ghost" shape="soft" size="compact" icon-only aria-label="Delete entry" @click="deleteEntry(entry)"><UiIcon name="Trash2" :size="15" /></Button>
                   </div>
                 </td>
               </tr>
@@ -617,6 +621,10 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
             <Button color="ghost" shape="soft" size="compact" icon-only :disabled="!hasNext" aria-label="Next page" @click="changePage(1)"><UiIcon name="ChevronRight" :size="18" /></Button>
           </div>
         </footer>
+        <details v-if="importFeedback?.skipped" class="accounts-import-feedback">
+          <summary>{{ importFeedback.skipped }} CSV {{ importFeedback.skipped === 1 ? "row was" : "rows were" }} skipped</summary>
+          <ul><li v-for="error in importFeedback.errors" :key="`${error.row}:${error.reason}`">Row {{ error.row }}: {{ error.reason }}</li></ul>
+        </details>
       </section>
     </div>
 
@@ -628,7 +636,7 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
           <label v-if="currentView === 'customers'" class="field"><span>Product or service</span><select v-model="itemFilter"><option value="">All products and services</option><option v-for="item in customerItems" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
           <template v-else>
             <label class="field"><span>Status</span><select v-model="statusFilter"><option value="">Any status</option><option value="pending">Pending</option><option value="paid">Paid</option><option value="overdue">Overdue</option><option value="needs_review">Needs review</option><option value="cancelled">Cancelled</option></select></label>
-            <label class="field"><span>Source</span><select v-model="sourceFilter"><option value="">Any source</option><option value="manual">Manual</option><option value="csv_import">CSV import</option><option value="stripe">Stripe</option><option value="email_triage">Email triage</option></select></label>
+            <label class="field"><span>Source</span><select v-model="sourceFilter"><option value="">Any source</option><option value="website">Website</option><option value="manual">Manual</option><option value="csv_import">CSV import</option><option value="stripe">Stripe</option><option value="email_triage">Email triage</option></select></label>
           </template>
         </div>
         <footer class="accounts-dialog__actions"><Button color="ghost" shape="soft" size="compact" type="button" :disabled="!activeFilterCount" @click="clearFilters">Clear</Button><Button color="primary" shape="soft" size="compact" type="submit">Search</Button></footer>
@@ -639,18 +647,18 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
       <form class="accounts-dialog" @submit.prevent="saveEntry">
         <header class="accounts-dialog__header"><h2 id="accounts-entry-title">{{ editingEntryId ? "Edit account entry" : "Add account entry" }}</h2><Button color="ghost" shape="soft" size="compact" icon-only aria-label="Close" @click="closeEntryDialog"><UiIcon name="X" :size="18" /></Button></header>
         <div class="accounts-dialog__content">
-          <label class="field"><span>Date</span><input v-model="form.date" type="date" autofocus /></label>
+          <label class="field"><span>Date</span><input v-model="form.date" type="date" :disabled="editingSyncedEntry" autofocus /></label>
           <div class="accounts-dialog__amount-grid">
-            <label class="field"><span>Amount</span><input v-model="form.amount" type="number" min="0" step="0.01" placeholder="0.00" :disabled="editingStripeEntry" /></label>
-            <label class="field"><span>Currency</span><select v-model="form.currency" :disabled="editingStripeEntry"><option v-for="option in currencyOptions" :key="option.value" :value="option.value">{{ option.value }}</option></select></label>
+            <label class="field"><span>Amount</span><input v-model="form.amount" type="number" min="0" step="0.01" placeholder="0.00" :disabled="editingSyncedEntry" /></label>
+            <label class="field"><span>Currency</span><select v-model="form.currency" :disabled="editingSyncedEntry"><option v-for="option in currencyOptions" :key="option.value" :value="option.value">{{ option.value }}</option></select></label>
           </div>
           <label class="field"><span>Description</span><input v-model="form.description" type="text" autocomplete="off" /></label>
           <div class="accounts-dialog__grid">
             <label class="field"><span>Category</span><select v-model="form.categoryId"><option value="">Uncategorized</option><option v-for="category in categoryOptions" :key="category.id" :value="category.id">{{ category.name }}</option></select></label>
-            <label class="field"><span>Status</span><select v-model="form.status" :disabled="editingStripeEntry"><option value="pending">Pending</option><option value="paid">Paid</option><option value="overdue">Overdue</option><option value="needs_review">Needs review</option><option value="cancelled">Cancelled</option></select></label>
+            <label class="field"><span>Status</span><select v-model="form.status" :disabled="editingSyncedEntry"><option value="pending">Pending</option><option value="paid">Paid</option><option value="overdue">Overdue</option><option value="needs_review">Needs review</option><option value="cancelled">Cancelled</option></select></label>
           </div>
           <label class="field"><span>Project</span><select v-model="form.projectId"><option value="">No project</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label>
-          <p v-if="editingStripeEntry" class="accounts-dialog__hint">Stripe keeps the amount, currency and payment status in sync.</p>
+          <p v-if="editingSyncedEntry" class="accounts-dialog__hint">The payment source keeps the date, amount, currency and status in sync.</p>
           <label class="field"><span>Notes</span><textarea v-model="form.notes" rows="3" /></label>
           <p v-if="formError" class="accounts-error" role="alert">{{ formError }}</p>
         </div>
@@ -685,6 +693,9 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
 .accounts-summary span, .accounts-pagination span { color: var(--ui-text-muted); font-size: 12px; }
 .accounts-summary strong { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
 .accounts-error { margin: 0; padding: 9px 11px; border-radius: var(--ui-radius-sm); background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 13px; }
+.accounts-import-feedback { color: var(--ui-text-muted); font-size: 12px; }
+.accounts-import-feedback summary { width: fit-content; cursor: pointer; }
+.accounts-import-feedback ul { margin: 8px 0 0; padding-left: 20px; }
 .accounts-workspace > section { display: grid; min-width: 0; gap: 14px; }
 .accounts-table-wrap { min-width: 0; overflow-x: auto; }
 .accounts-table { width: 100%; min-width: 980px; table-layout: fixed; border-collapse: collapse; border-top: 1px solid var(--ui-border); color: var(--ui-text-muted); font-size: 13px; }

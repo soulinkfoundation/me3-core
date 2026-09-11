@@ -47,6 +47,7 @@ import {
   finalizePaidEventBookingCheckout,
   isEventBookingType,
 } from "../event-booking";
+import { dispatchWebsitePaymentNotification } from "../payment-notifications";
 
 const PAYMENTS_UNAVAILABLE_MESSAGE =
   "Payments are not available for this booking right now. Please contact the site owner.";
@@ -680,6 +681,16 @@ async function finalizePaidBookingCheckout(
     bookingTitle: offer?.title || "Book a session",
     timezone,
   });
+
+  await dispatchWebsitePaymentNotification(env, site.user_id, {
+    sourceKind: "booking",
+    sourceId: booking.id,
+    amountCents: Number(booking.amount_paid || 0),
+    currency: String(booking.currency || "USD").toUpperCase(),
+    customerName: booking.guest_name?.trim() || null,
+    itemTitle: offer?.title || "Booking payment",
+    siteName: site.username,
+  }).catch((error) => console.error("Booking payment notification failed", error));
 
   return { ok: true, booking: serializeBooking(booking) };
 }
