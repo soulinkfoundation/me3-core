@@ -217,6 +217,18 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-09-09-mailbox-attachment-staging-v1",
     async apply(db) { await db.prepare(MAILBOX_ATTACHMENT_STAGING_SQL).run(); },
   },
+  {
+    id: "0049_commerce_confirmation_delivery",
+    checksum: "2026-09-11-commerce-confirmation-delivery-v1",
+    async apply(db) {
+      const existing = await columnExists(db, "commerce_orders", "confirmation_sent_at");
+      await addColumnIfMissing(db, "commerce_orders", "delivery_json", "TEXT");
+      await addColumnIfMissing(db, "commerce_orders", "fulfilled_at", "TEXT");
+      await addColumnIfMissing(db, "commerce_orders", "confirmation_sent_at", "TEXT");
+      await addColumnIfMissing(db, "commerce_orders", "payment_checked_at", "TEXT");
+      if (!existing) await db.prepare("UPDATE commerce_orders SET confirmation_sent_at = COALESCE(paid_at, created_at) WHERE status = 'paid'").run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

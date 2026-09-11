@@ -1618,6 +1618,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
           available: typeof meta?.available === "boolean" ? meta.available : true,
           publishedAt: meta?.publishedAt,
           excerpt: meta?.excerpt,
+          delivery: meta?.delivery,
           confirmationEmail: meta?.confirmationEmail,
         });
       }

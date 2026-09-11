@@ -1,3 +1,4 @@
+import type { ProductDelivery } from "../../../shared/product-delivery";
 import { renderProductCheckout, productCheckoutCss } from "./product-checkout";
 import { applyImageMetadata, type SiteImageMetadata } from "./image-metadata";
 export * from "./image-metadata";
@@ -46,6 +47,7 @@ type Me3Post = Me3Page & {
 };
 
 type Me3Product = Me3Page & {
+  delivery?: ProductDelivery;
   price?: number;
   currency?: string;
   images?: string[];

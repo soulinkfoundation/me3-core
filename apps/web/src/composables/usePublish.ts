@@ -1,3 +1,4 @@
+import { productDeliveryError } from "../../../../shared/product-delivery";
 import { computed, ref } from "vue";
 import { useWizardStore } from "../stores/wizard";
 import { productSendsPurchaseConfirmation } from "../../../../shared/product-purchase-confirmation";
@@ -52,6 +53,8 @@ function validateShopConfirmationEmails(
 ): string | null {
   if (!wizard.shopEnabled) return null;
   for (const p of wizard.products) {
+    const deliveryError = productDeliveryError(p.delivery);
+    if (p.available && deliveryError) return `Offerings — "${p.title}": ${deliveryError}`;
     const ce = p.confirmationEmail;
     if (ce?.enabled === true && !productSendsPurchaseConfirmation(ce)) {
       return `Offerings — "${p.title}": add both a subject and message for the purchase confirmation email, or turn the option off.`;

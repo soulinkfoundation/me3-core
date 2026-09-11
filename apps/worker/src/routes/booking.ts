@@ -525,7 +525,7 @@ export function registerBookingRoutes(app: AppHono) {
       return c.json({ error: "Invalid Stripe webhook signature" }, 400);
     }
 
-    if (event.type !== "checkout.session.completed") {
+    if (event.type !== "checkout.session.completed" && event.type !== "checkout.session.async_payment_succeeded") {
       return c.json({ received: true });
     }
 
@@ -534,12 +534,13 @@ export function registerBookingRoutes(app: AppHono) {
     if (!site) return c.json({ received: true, error: "site_not_found" });
 
     if (session.metadata?.purchase_kind === "product") {
+      if (session.payment_status !== "paid") return c.json({ received: true });
       try {
         const result = await finalizeStripeProductCheckout(c.env, site, session);
         return c.json({ received: true, order: result.order });
       } catch (error) {
         console.error("Stripe product webhook failed:", error);
-        return c.json({ received: true, error: "product_checkout_failed" });
+        return c.json({ received: false, error: "product_checkout_failed" }, 500);
       }
     }
     if (session.metadata?.purchase_kind !== "booking") {

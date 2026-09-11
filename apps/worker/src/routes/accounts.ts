@@ -1,3 +1,4 @@
+import { updateOrderFulfillment, recordManualOrderPayment } from "../account-order-fulfillment";
 import {
   ACCOUNTS_PLUGIN_ID,
   AccountsInputError,
@@ -19,6 +20,24 @@ import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { isCorePluginEnabled } from "../plugins";
 
 export function registerAccountsRoutes(app: AppHono, deps: OwnerRouteDeps) {
+  app.post("/api/accounts/orders/:id/manual-payment", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireAccountsPlugin(c);
+    if (blocked) return blocked;
+    try { return c.json(await recordManualOrderPayment(c.env, ownerId, c.req.param("id"))); }
+    catch (error) { if (error instanceof Error && "status" in error) return c.json({ error: error.message }, 404); throw error; }
+  });
+  app.put("/api/accounts/orders/:id/fulfillment", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireAccountsPlugin(c);
+    if (blocked) return blocked;
+    try {
+      const body = await c.req.json<{ fulfilled?: unknown }>().catch(() => ({} as { fulfilled?: unknown }));
+      return c.json(await updateOrderFulfillment(c.env, ownerId, c.req.param("id"), body.fulfilled));
+    } catch (error) { return accountsErrorResponse(c, error); }
+  });
   app.get("/api/accounts/customers", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);

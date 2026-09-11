@@ -62,6 +62,8 @@ type EntryForm = {
 };
 type ProjectOption = { id: string; name: string };
 type CustomerActivity = {
+  delivery: { instructions?: string; address?: Record<string, string> } | null;
+  fulfilledAt: string | null;
   id: string;
   kind: "purchase" | "booking";
   item: string;
@@ -427,6 +429,25 @@ function accountView(value: unknown): AccountsView {
       : "income";
 }
 
+const updatingOrder = ref<string | null>(null);
+async function recordPayment(activity: CustomerActivity) {
+  if (updatingOrder.value) return;
+  updatingOrder.value = activity.id;
+  try {
+    await api.post(`/accounts/orders/${encodeURIComponent(activity.id.slice("purchase:".length))}/manual-payment`, {});
+    activity.status = "paid";
+  } catch (error) { toastFromUnknown(error, "Could not record payment."); }
+  finally { updatingOrder.value = null; }
+}
+async function setFulfilled(activity: CustomerActivity) {
+  if (updatingOrder.value) return;
+  updatingOrder.value = activity.id;
+  try {
+    await api.put(`/accounts/orders/${encodeURIComponent(activity.id.slice("purchase:".length))}/fulfillment`, { fulfilled: !activity.fulfilledAt });
+    activity.fulfilledAt = activity.fulfilledAt ? null : new Date().toISOString();
+  } catch (error) { toastFromUnknown(error, "Could not update order."); }
+  finally { updatingOrder.value = null; }
+}
 function toggleCustomer(customerId: string) {
   const next = new Set(expandedCustomerIds.value);
   if (next.has(customerId)) next.delete(customerId);
@@ -548,6 +569,12 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
                         <span>{{ activity.siteName }}</span>
                         <span>{{ activity.amountCents == null || !activity.currency ? "—" : formatMoney(activity.amountCents, activity.currency) }}</span>
                         <span class="status-badge">{{ activityStatusLabel(activity.status) }}</span>
+                        <div v-if="activity.kind === 'purchase'" class="order-delivery">
+                          <p v-if="activity.delivery?.instructions">{{ activity.delivery.instructions }}</p>
+                          <address v-if="activity.delivery?.address">{{ Object.values(activity.delivery.address).filter(Boolean).join(', ') }}</address>
+                          <button v-if="activity.status === 'pending'" type="button" :disabled="updatingOrder !== null" @click="recordPayment(activity)">Mark payment received</button>
+                          <button v-if="activity.status === 'paid'" type="button" :disabled="updatingOrder !== null" @click="setFulfilled(activity)">{{ activity.fulfilledAt ? 'Fulfilled — mark unfulfilled' : 'Mark fulfilled' }}</button>
+                        </div>
                       </li>
                     </ul>
                   </td>
@@ -634,6 +661,7 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
 </template>
 
 <style scoped>
+.order-delivery{grid-column:1/-1}.order-delivery p{margin:8px 0}.order-delivery address{font-style:normal;margin:8px 0}.order-delivery button{min-height:44px;font:inherit;color:inherit;background:var(--ui-surface,var(--color-bg));border:1px solid var(--ui-border,var(--color-border));border-radius:8px;padding:8px 12px;cursor:pointer}
 .accounts-page { min-height: 100vh; min-height: 100dvh; padding: var(--workspace-topbar-padding-block) 24px 40px; background: var(--ui-bg); color: var(--ui-text); }
 .accounts-workspace { display: grid; width: min(1120px, 100%); gap: 14px; margin: 0 auto; }
 .accounts-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; min-height: var(--workspace-topbar-height); }

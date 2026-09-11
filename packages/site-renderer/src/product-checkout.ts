@@ -1,4 +1,6 @@
+import type { ProductDelivery } from "../../../shared/product-delivery";
 type ProductPurchase = {
+  delivery?: ProductDelivery;
   username: string;
   slug: string;
   price?: number;
@@ -18,17 +20,31 @@ export function renderProductCheckout(product: ProductPurchase): string {
     ? `<p class="product-price">${escape((product.price / 100).toFixed(2))} ${escape((product.currency || "").toUpperCase())}</p>`
     : "";
   const manual = product.paymentMethod === "manual";
+  const physical = product.delivery?.kind === "physical";
+  const money = (amount: number) => `${(amount / 100).toFixed(2)} ${(product.currency || "").toUpperCase()}`;
+  const deliveryInfo = product.delivery ? `<p>${escape(product.delivery.instructions || "")}</p>` : "";
+  const returns = product.delivery?.returns ? `<p><strong>Returns and cancellations</strong><br>${escape(product.delivery.returns)}</p>` : "";
+  const shipping = physical ? `<p>Shipping: ${escape(money(product.delivery?.shippingCost || 0))}<br><strong>Total: ${escape(money((product.price || 0) + (product.delivery?.shippingCost || 0)))}</strong></p>` : "";
+  const address = physical ? `<fieldset class="product-address"><legend>Delivery address</legend>
+    <label for="delivery-line1">Address</label><input id="delivery-line1" name="line1" autocomplete="shipping address-line1" maxlength="200" required>
+    <label for="delivery-line2">Apartment, suite, etc. (optional)</label><input id="delivery-line2" name="line2" autocomplete="shipping address-line2" maxlength="200">
+    <label for="delivery-city">Town or city</label><input id="delivery-city" name="city" autocomplete="shipping address-level2" maxlength="200" required>
+    <label for="delivery-region">County, state or region (optional)</label><input id="delivery-region" name="region" autocomplete="shipping address-level1" maxlength="200">
+    <label for="delivery-postal">Postal code (where applicable)</label><input id="delivery-postal" name="postalCode" autocomplete="shipping postal-code" maxlength="32">
+    <label for="delivery-country">Country</label><select id="delivery-country" name="country" autocomplete="shipping country" required><option value="">Choose country</option>${(product.delivery?.countries || []).map(code => `<option value="${escape(code)}">${escape(new Intl.DisplayNames(["en"], {type:"region"}).of(code) || code)}</option>`).join("")}</select>
+  </fieldset>` : "";
   const unavailable = product.available === false ? "This product is currently unavailable."
     : !hasPrice || !product.username ? "This product is not ready for checkout yet." : "";
   if (unavailable) return `<section class="product-purchase" aria-label="Purchase">${price}<p>${unavailable}</p></section>`;
-  const config = JSON.stringify({ username: product.username, slug: product.slug, manual }).replace(/</g, "\\u003c");
+  const config = JSON.stringify({ username: product.username, slug: product.slug, manual, physical }).replace(/</g, "\\u003c");
   return `<section class="product-purchase" aria-label="Purchase" data-product-purchase>
-    ${price}
+    ${price}${shipping}${deliveryInfo}${returns}
     <p class="product-status" data-product-status role="status" aria-live="polite"></p>
     ${product.enabled ? `<div data-product-details>
     <form data-product-checkout>
       <label for="product-buyer-name">Your name</label><input id="product-buyer-name" name="buyerName" autocomplete="name" maxlength="120" required>
       <label for="product-buyer-email">Email</label><input id="product-buyer-email" name="buyerEmail" type="email" autocomplete="email" maxlength="254" required>
+      ${address}
       ${manual ? '<p class="product-help">Payment is not taken now. We’ll email you the payment details.</p>' : ""}
       <button class="product-buy" type="submit">${manual ? "Request payment details" : "Continue to checkout"}</button>
     </form></div>` : '<button class="product-buy" type="button" disabled>Buy now</button><p class="product-help">Checkout is available on your published site.</p>'}
@@ -78,6 +94,7 @@ const productCheckoutScript = String.raw`function(config) {
       returnUrl.searchParams.delete("session_id");
       returnUrl.hash = "";
       const result = await post("/api/shop/" + encodeURIComponent(config.username) + "/" + encodeURIComponent(config.slug) + "/order", {
+        deliveryAddress: config.physical ? Object.fromEntries(["line1", "line2", "city", "region", "postalCode", "country"].map(key => [key, values.get(key)])) : undefined,
         buyerName: values.get("buyerName"), buyerEmail: values.get("buyerEmail"), returnUrl: returnUrl.toString(),
       });
       if (result.paymentMethod === "manual") {
@@ -161,7 +178,8 @@ export const productCheckoutCss = `
 .product-buy:focus-visible,.product-purchase input:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 .product-purchase form{display:grid;gap:10px;margin-top:20px;max-width:420px}
 .product-purchase label{font-weight:600}
-.product-purchase input{box-sizing:border-box;width:100%;min-height:48px;padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font:inherit}
+.product-address{display:grid;gap:10px;border:0;padding:0;margin:8px 0;min-width:0}.product-address legend{font-weight:700;margin-bottom:12px}
+.product-purchase select,.product-purchase input{box-sizing:border-box;width:100%;min-height:48px;padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font:inherit}
 .product-help{font-size:.9rem;color:var(--muted);margin:4px 0 12px}
 .product-status:empty{display:none}
 .product-status{margin:0 0 18px}.product-status.is-error{font-weight:600}

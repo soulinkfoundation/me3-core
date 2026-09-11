@@ -112,7 +112,8 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     const sessionId = typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
     if (!sessionId) return c.json({ error: "Checkout session ID is required" }, 400);
     try {
-      return c.json(await completeProductCheckout(c.env, site, sessionId));
+      const result = await completeProductCheckout(c.env, site, sessionId);
+      return c.json(result.ok ? { ok: true, order: { status: result.order.status, product_slug: result.order.product_slug }, alreadyCompleted: result.alreadyCompleted } : result);
     } catch (error) {
       if (error instanceof CommerceOrderInputError) {
         return c.json({ error: error.message }, error.status as 400);

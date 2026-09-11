@@ -1,3 +1,4 @@
+import type { ProductDelivery } from "../../../../shared/product-delivery";
 import { defineStore } from "pinia";
 import { ref, computed, watch } from "vue";
 import {
@@ -380,6 +381,7 @@ export type WizardProductConfirmationEmail = {
 };
 
 export interface WizardProduct {
+  delivery?: ProductDelivery;
   title: string;
   slug: string;
   slugCustomized?: boolean;
@@ -3317,6 +3319,7 @@ export const useWizardStore = defineStore("wizard", () => {
     if (shopEnabled.value && products.value.length > 0) {
       me3.products = products.value.map((p) => {
           const product: SiteSourceProduct = {
+            delivery: p.delivery,
             slug: p.slug,
             title: p.title,
             file: `shop/${p.slug}.md`,
@@ -4569,6 +4572,7 @@ export const useWizardStore = defineStore("wizard", () => {
       available?: boolean;
       publishedAt?: string;
       excerpt?: string;
+      delivery?: ProductDelivery;
       confirmationEmail?: WizardProductConfirmationEmail;
       paymentMethod?: WizardPaymentMethod;
       paymentInstructions?: string;
@@ -4990,6 +4994,7 @@ export const useWizardStore = defineStore("wizard", () => {
         ),
         publishedAt: p.publishedAt,
         excerpt: p.excerpt,
+        delivery: p.delivery,
         ...(confirmationEmail ? { confirmationEmail } : {}),
       };
     });

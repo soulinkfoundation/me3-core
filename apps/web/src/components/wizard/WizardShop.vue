@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProductDeliveryFields from "./ProductDeliveryFields.vue";
 import { ref, computed, watch, nextTick } from "vue";
 import {
   useWizardStore,
@@ -562,13 +563,15 @@ defineExpose({
           <span>Available for purchase</span>
         </div>
 
+        <ProductDeliveryFields :model-value="selectedProduct.delivery" @update:model-value="wizard.updateProduct(selectedProductIndex, { delivery: $event })" />
+
         <div class="confirmation-email-section">
           <h3 class="confirmation-email-title">Customer email</h3>
           <p class="confirmation-email-lead">
             {{
               productPaymentMethod === "manual"
                 ? "ME3 sends the payment instructions above after the request is confirmed. Add an optional message if you need to include other next steps."
-                : "Optional. Use this when you need to give the buyer specific next steps after payment."
+                : "Buyers receive a standard order confirmation after payment. Add a custom message if needed."
             }}
           </p>
           <div class="toggle-row">
@@ -580,7 +583,7 @@ defineExpose({
               {{
                 productPaymentMethod === "manual"
                   ? "Add a message to the payment email"
-                  : "Send buyers a confirmation email after payment"
+                  : "Customize the confirmation email"
               }}
             </span>
           </div>

@@ -224,6 +224,10 @@ export interface DbBooking {
 }
 
 export interface DbCommerceOrder {
+  delivery_json?: string | null;
+  fulfilled_at?: string | null;
+  confirmation_sent_at?: string | null;
+  payment_checked_at?: string | null;
   id: string;
   site_id: string;
   page_id: string | null;

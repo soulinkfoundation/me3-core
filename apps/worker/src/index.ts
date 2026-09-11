@@ -1,3 +1,4 @@
+import { reconcileProductOrders } from "./commerce-reconciliation";
 import { reconcileMailboxAttachmentStaging } from "./mailbox-attachment-staging";
 import app from "./app";
 import { dispatchDueCalendarSourceRefreshes } from "./calendar-sources";
@@ -106,6 +107,7 @@ const worker = {
         await dispatchDueCampaignJobs(env);
         return;
       }
+      await reconcileProductOrders(env);
       await reconcileMailboxAttachmentStaging(env);
       await dispatchDueScheduledAssistantJobs(env);
       await dispatchDueCalendarPushNotifications(env);

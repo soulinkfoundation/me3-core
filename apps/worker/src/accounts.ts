@@ -47,6 +47,8 @@ type CurrencyTotalRow = {
 };
 
 export type AccountCustomerSourceRow = {
+  delivery_json?: string | null;
+  fulfilled_at?: string | null;
   activity_kind: "purchase" | "booking";
   source_id: string;
   customer_name: string;
@@ -177,7 +179,7 @@ export async function listAccountCustomers(env: Env, userId: string, query: URLS
               'product:' || o.product_slug AS item_key, o.product_title AS item_label,
               COALESCE(o.paid_at, o.created_at) AS activity_at,
               COALESCE(o.amount_paid, o.amount_due) AS amount_cents,
-              UPPER(o.currency) AS currency, o.status,
+              UPPER(o.currency) AS currency, o.status, o.delivery_json, o.fulfilled_at,
               s.id AS site_id, s.username AS site_name
        FROM commerce_orders o
        INNER JOIN sites s ON s.id = o.site_id
@@ -203,7 +205,7 @@ export async function listAccountCustomers(env: Env, userId: string, query: URLS
                 WHEN b.payment_status = 'succeeded' THEN 'paid'
                 WHEN b.suggested_amount IS NOT NULL THEN 'payment_due'
                 ELSE 'confirmed'
-              END AS status,
+              END AS status, NULL AS delivery_json, NULL AS fulfilled_at,
               s.id AS site_id, s.username AS site_name
        FROM bookings b
        INNER JOIN sites s ON s.id = b.site_id
@@ -258,6 +260,8 @@ export function buildAccountCustomers(
         id: string;
         kind: "purchase" | "booking";
         itemKey: string;
+        delivery: { instructions?: string; address?: Record<string, string> } | null;
+        fulfilledAt: string | null;
         item: string;
         activityAt: string;
         amountCents: number | null;
@@ -289,6 +293,8 @@ export function buildAccountCustomers(
     customer.activities.push({
       id: `${row.activity_kind}:${row.source_id}`,
       kind: row.activity_kind,
+      delivery: row.delivery_json ? JSON.parse(row.delivery_json) : null,
+      fulfilledAt: row.fulfilled_at || null,
       itemKey: row.item_key,
       item: row.item_label,
       activityAt: row.activity_at,

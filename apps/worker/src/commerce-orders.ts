@@ -1,3 +1,4 @@
+import { productDeliveryError, parseDeliveryAddress, type ProductDelivery } from "../../../shared/product-delivery";
 import type Stripe from "stripe";
 import {
   appendQueryParams,
@@ -26,6 +27,7 @@ const PAYMENTS_UNAVAILABLE_MESSAGE =
   "Payments are not available for this purchase right now. Please contact the site owner.";
 
 type ProductCheckoutBody = {
+  deliveryAddress?: unknown;
   buyerName?: unknown;
   buyerEmail?: unknown;
   buyerNote?: unknown;
@@ -36,6 +38,7 @@ type ProductCheckoutBody = {
 };
 
 type ProductRecord = {
+  delivery?: ProductDelivery;
   slug?: string;
   title?: string;
   price?: number;
@@ -78,9 +81,19 @@ export async function createProductCheckout(
   if (!product || product.available === false) {
     throw new CommerceOrderInputError("Product is not available.", 404);
   }
-  const amount = Number(product.price || 0);
+  const deliveryError = productDeliveryError(product.delivery);
+  if (deliveryError) throw new CommerceOrderInputError(deliveryError, 409);
+  let deliveryAddress;
+  if (product.delivery?.kind === "physical") {
+    try { deliveryAddress = parseDeliveryAddress(body.deliveryAddress, product.delivery.countries!); }
+    catch (error) { throw new CommerceOrderInputError((error as Error).message); }
+  }
+  if (!Number.isSafeInteger(product.price) || product.price! < 50) throw new CommerceOrderInputError("Product price is not ready for checkout.", 409);
+  const shippingCost = product.delivery?.kind === "physical" ? product.delivery.shippingCost! : 0;
+  const amount = Number(product.price || 0) + shippingCost;
+  const deliverySnapshot = product.delivery ? JSON.stringify({ ...product.delivery, address: deliveryAddress, productAmount: product.price }) : null;
   const currency = normalizeShortText(product.currency, 3).toLowerCase();
-  if (!Number.isInteger(amount) || amount < 50 || !/^[a-z]{3}$/.test(currency)) {
+  if (!Number.isSafeInteger(amount) || amount < 50 || !/^[a-z]{3}$/.test(currency)) {
     throw new CommerceOrderInputError("Product price is not ready for checkout.", 409);
   }
   const paymentMethod = product.paymentMethod === "manual" ? "manual" : "stripe";
@@ -117,6 +130,7 @@ export async function createProductCheckout(
       )
       .run();
 
+    await env.DB.prepare("UPDATE commerce_orders SET delivery_json = ? WHERE id = ?").bind(deliverySnapshot, orderId).run();
     const owner = await getOwnerContact(env, site.user_id);
     const tokens = {
       buyerName,
@@ -191,6 +205,7 @@ export async function createProductCheckout(
     )
     .run();
 
+  await env.DB.prepare("UPDATE commerce_orders SET delivery_json = ? WHERE id = ?").bind(deliverySnapshot, orderId).run();
   const returnUrl = normalizeSiteCheckoutReturnUrl(
     body.returnUrl,
     requestUrl,
@@ -254,7 +269,10 @@ export async function completeProductCheckout(
   if (order.payment_method === "manual") {
     throw new CommerceOrderInputError("This order does not use online checkout.", 409);
   }
-  if (order.status === "paid") return { ok: true, order, alreadyCompleted: true };
+  if (order.status === "paid") {
+    await sendProductConfirmation(env, site, order);
+    return { ok: true, order, alreadyCompleted: true };
+  }
   if (order.provider === "me3_cloud") {
     const session = await retrieveManagedCheckout(env, sessionId);
     if (session.checkoutStatus === "expired" && session.paymentStatus === "unpaid") {
@@ -320,12 +338,18 @@ async function finalizeProductOrder(
   if (payment.orderId !== order.id || payment.siteId !== site.id) {
     throw new CommerceOrderInputError("Checkout does not match this order.", 409);
   }
-  if (order.status === "paid") return { ok: true as const, order, alreadyCompleted: true as const };
+  if (payment.currency?.toLowerCase() !== order.currency?.toLowerCase() || payment.amount !== order.amount_due) {
+    throw new CommerceOrderInputError("Payment total does not match this order.", 409);
+  }
+  if (order.status === "paid") {
+    await sendProductConfirmation(env, site, order);
+    return { ok: true as const, order, alreadyCompleted: true as const };
+  }
   await env.DB.prepare(
     `UPDATE commerce_orders
      SET status = 'paid', payment_intent_id = ?, amount_paid = ?, currency = ?,
          paid_at = datetime('now'), updated_at = datetime('now')
-     WHERE id = ? AND site_id = ? AND status = 'pending'`,
+     WHERE id = ? AND site_id = ? AND status IN ('pending', 'failed')`,
   )
     .bind(
       payment.paymentIntentId,
@@ -337,6 +361,7 @@ async function finalizeProductOrder(
     .run();
   const updated = await getOrderBySession(env, site.id, order.checkout_session_id || "");
   if (!updated) throw new Error("Paid order could not be loaded");
+  if (updated.status !== "paid") throw new CommerceOrderInputError("Order cannot be completed in its current state.", 409);
   await sendProductConfirmation(env, site, updated);
   return { ok: true as const, order: updated };
 }
@@ -364,7 +389,7 @@ async function getOrderBySession(
       `SELECT id, site_id, page_id, action_id, campaign, product_slug, product_title,
               buyer_name, buyer_email, buyer_note, amount_paid, amount_due, currency, status,
               provider, payment_method, checkout_session_id, payment_intent_id, paid_at,
-              created_at, updated_at
+              created_at, updated_at, confirmation_sent_at, payment_checked_at, delivery_json, fulfilled_at
        FROM commerce_orders WHERE site_id = ? AND checkout_session_id = ?`,
     )
       .bind(siteId, sessionId)
@@ -412,7 +437,7 @@ async function createDirectCheckout(
       {
         price_data: {
           currency: input.currency,
-          product_data: { name: input.product.title || input.product.slug || "ME3 offer" },
+          product_data: { name: (input.product.title || input.product.slug || "ME3 offer") + (input.product.delivery?.kind === "physical" ? " (including shipping)" : "") },
           unit_amount: input.amount,
         },
         quantity: 1,
@@ -451,7 +476,7 @@ async function createManagedCheckout(
         ownerId: input.site.user_id,
         product: {
           id: input.product.slug,
-          name: input.product.title,
+          name: (input.product.title || input.product.slug) + (input.product.delivery?.kind === "physical" ? " (including shipping)" : ""),
           amount: input.amount,
           currency: input.currency,
         },
@@ -511,18 +536,20 @@ async function sendProductConfirmation(
   site: DbSite,
   order: DbCommerceOrder,
 ): Promise<void> {
+  if (order.confirmation_sent_at) return;
   const product = await findProduct(env, site, order.product_slug);
-  if (!productSendsPurchaseConfirmation(product?.confirmationEmail)) return;
   const owner = await getOwnerContact(env, site.user_id);
-  if (!owner.email) return;
   const tokens = {
     buyerName: order.buyer_name,
     buyerNote: order.buyer_note || "",
     productTitle: order.product_title,
     siteName: site.username,
-    supportEmail: owner.email,
+    supportEmail: owner.email || "",
   };
-  await sendProductPurchaseConfirmationEmail(env, {
+  const custom = productSendsPurchaseConfirmation(product?.confirmationEmail) ? product.confirmationEmail : null;
+  const amount = new Intl.NumberFormat("en", { style: "currency", currency: order.currency || "EUR" }).format((order.amount_paid || 0) / 100);
+  const delivery = order.delivery_json ? JSON.parse(order.delivery_json) as ProductDelivery : null;
+  const result = await sendProductPurchaseConfirmationEmail(env, {
     operationId: `order:${order.id}:purchase-confirmation`,
     ownerId: site.user_id,
     hostName: owner.name || site.username,
@@ -530,7 +557,22 @@ async function sendProductConfirmation(
     buyerName: order.buyer_name,
     buyerEmail: order.buyer_email,
     productTitle: order.product_title,
-    subject: applyPurchaseEmailTokens(product.confirmationEmail.subject, tokens),
-    messageText: applyPurchaseEmailTokens(product.confirmationEmail.message, tokens),
+    subject: custom ? applyPurchaseEmailTokens(custom.subject, tokens) : `Order confirmed: ${order.product_title}`,
+    messageText: `Hi ${order.buyer_name},\n\nPayment received for ${order.product_title}.\nAmount paid: ${amount}\nOrder reference: ${order.id}` + (delivery?.instructions ? `\n\nDelivery: ${delivery.instructions}` : "") + (custom ? `\n\n${applyPurchaseEmailTokens(custom.message, tokens)}` : ""),
   });
+  if (result.status === "sent") {
+    await env.DB.prepare("UPDATE commerce_orders SET confirmation_sent_at = datetime('now') WHERE id = ? AND site_id = ?")
+      .bind(order.id, site.id).run();
+  }
+}
+
+
+export async function confirmManualProductOrder(env: Env, ownerId: string, orderId: string): Promise<void> {
+  const order = await env.DB.prepare(`SELECT * FROM commerce_orders WHERE id = ? AND payment_method = 'manual'
+    AND site_id IN (SELECT id FROM sites WHERE user_id = ?)`).bind(orderId, ownerId).first<DbCommerceOrder>();
+  if (!order || (order.status !== "pending" && order.status !== "paid")) throw new CommerceOrderInputError("Manual order not found.", 404);
+  await env.DB.prepare(`UPDATE commerce_orders SET status = 'paid', amount_paid = amount_due, paid_at = datetime('now'), updated_at = datetime('now')
+    WHERE id = ? AND site_id = ? AND status = 'pending'`).bind(order.id, order.site_id).run();
+  const site = await env.DB.prepare("SELECT * FROM sites WHERE id = ? AND user_id = ?").bind(order.site_id, ownerId).first<DbSite>();
+  if (site) await sendProductConfirmation(env, site, { ...order, status: "paid", amount_paid: order.amount_due });
 }

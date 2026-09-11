@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { completeProductCheckout, createProductCheckout } from "./commerce-orders";
 import type { DbCommerceOrder, DbSite, Env } from "./types";
 
+const sendProductPurchaseConfirmationEmail = vi.hoisted(() => vi.fn().mockResolvedValue({ status: "sent" }));
 const sendProductPaymentInstructionsEmail = vi.hoisted(() => vi.fn());
 vi.mock("./transactional-emails", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./transactional-emails")>()),
   sendProductPaymentInstructionsEmail,
+  sendProductPurchaseConfirmationEmail,
 }));
 
 afterEach(() => {
@@ -112,6 +114,12 @@ function createEnv(
               created_at: site.created_at,
               updated_at: site.updated_at,
             });
+          } else if (sql.includes("SET delivery_json = ?")) {
+            const order = orders.find(candidate => candidate.id === values[1]);
+            if (order) order.delivery_json = values[0] as string;
+          } else if (sql.includes("SET confirmation_sent_at")) {
+            const order = orders.find(candidate => candidate.id === values[0]);
+            if (order) order.confirmation_sent_at = "sent";
           } else if (sql.includes("checkout_session_id = ?")) {
             const order = orders.find((candidate) => candidate.id === values[1]);
             if (order) order.checkout_session_id = values[0] as string;
@@ -196,6 +204,9 @@ describe("managed commerce orders", () => {
       checkout_session_id: "cs_managed",
     });
 
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ paymentStatus: "paid", amountTotal: 1, currency: "eur", orderId: checkout.orderId, siteId: site.id })));
+    await expect(completeProductCheckout(env, site, "cs_managed")).rejects.toThrow("total does not match");
+    expect(orders[0].status).toBe("pending");
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ checkoutStatus: "expired", paymentStatus: "unpaid" })));
     expect(await completeProductCheckout(env, site, "cs_managed")).toEqual({ ok: false, checkoutStatus: "expired" });
     expect(orders[0].status).toBe("pending");
@@ -213,8 +224,26 @@ describe("managed commerce orders", () => {
         { status: 200 },
       ),
     );
+    sendProductPurchaseConfirmationEmail.mockResolvedValueOnce({ status: "failed" });
     const completed = await completeProductCheckout(env, site, "cs_managed");
     expect(completed).toMatchObject({ ok: true, order: { status: "paid", payment_intent_id: "pi_managed" } });
+    expect(sendProductPurchaseConfirmationEmail).toHaveBeenCalledWith(env, expect.objectContaining({ subject: "Order confirmed: Clarity Kit", messageText: expect.stringContaining(checkout.orderId) }));
+    expect(orders[0].confirmation_sent_at).toBeUndefined();
+    await completeProductCheckout(env, site, "cs_managed");
+    expect(sendProductPurchaseConfirmationEmail).toHaveBeenCalledTimes(2);
+    expect(orders[0].confirmation_sent_at).toBeTruthy();
+    await completeProductCheckout(env, site, "cs_managed");
+    expect(sendProductPurchaseConfirmationEmail).toHaveBeenCalledTimes(2);
+  });
+
+  it("adds server-configured shipping and retains a private delivery snapshot", async () => {
+    const { env, orders } = createEnv({slug:"print",title:"Print",price:1000,currency:"EUR",paymentMethod:"manual",paymentInstructions:"Bank transfer", delivery:{kind:"physical",returns:"Contact the seller for returns",shippingCost:500,countries:["IE"],instructions:"Ships in 3 days"}});
+    sendProductPaymentInstructionsEmail.mockResolvedValueOnce({status:"sent"});
+    await createProductCheckout(env,site,"print",{buyerName:"Buyer",buyerEmail:"buyer@example.com",deliveryAddress:{line1:"1 Test Street",city:"Dublin",country:"IE"}},"https://owner.example/order");
+    expect(orders[0].amount_due).toBe(1500);
+    expect(JSON.parse(orders[0].delivery_json!)).toMatchObject({shippingCost:500,address:{city:"Dublin"}});
+    await expect(createProductCheckout(env,site,"print",{buyerName:"Buyer",buyerEmail:"buyer@example.com",deliveryAddress:{line1:"1 Test Street",city:"Boston",country:"US"}},"https://owner.example/order")).rejects.toThrow("supported country");
+    expect(orders).toHaveLength(1);
   });
 
   it("creates a pending manual order and emails payment instructions without Stripe", async () => {

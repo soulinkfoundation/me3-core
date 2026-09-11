@@ -1,3 +1,4 @@
+import { productDeliveryError, type ProductDelivery } from "../../../shared/product-delivery";
 import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import { isCommerceReady } from "./commerce-settings";
 import type { Env } from "./types";
@@ -11,6 +12,7 @@ type BookingOffer = {
 };
 
 type CommerceProduct = {
+  delivery?: ProductDelivery;
   available?: boolean;
   paymentMethod?: "stripe" | "manual";
   paymentInstructions?: string;
@@ -84,6 +86,10 @@ export async function getProfileCommercePublishBlockReason(
   ownerId: string,
   profile: Me3SiteProfile,
 ): Promise<string | null> {
+  for (const product of profile.products || []) {
+    const error = productDeliveryError(product.delivery);
+    if (product.available !== false && error) return error;
+  }
   const manualPaymentError = profileManualPaymentBlockReason(profile);
   if (manualPaymentError) return manualPaymentError;
   if (!profileRequiresCommerce(profile) || await isCommerceReady(env, ownerId)) return null;
