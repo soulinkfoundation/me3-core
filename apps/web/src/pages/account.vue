@@ -32,6 +32,7 @@ import {
   type PluginsResponse,
 } from "../utils/plugins";
 import {
+  COMMERCE_CURRENCY_OPTIONS,
   STRIPE_CONNECT_COUNTRIES,
   getInitialStripeConnectCountry,
   persistStripeConnectCountry,
@@ -438,20 +439,7 @@ const savedDefaultCurrencyInput = ref("USD");
 const commerceError = ref<string | null>(null);
 const stripeConnectCountry = ref(getInitialStripeConnectCountry());
 
-const commerceCurrencyOptions = [
-  { value: "EUR", label: "EUR - Euro" },
-  { value: "GBP", label: "GBP - Pound sterling" },
-  { value: "USD", label: "USD - US dollar" },
-  { value: "CAD", label: "CAD - Canadian dollar" },
-  { value: "AUD", label: "AUD - Australian dollar" },
-  { value: "NZD", label: "NZD - New Zealand dollar" },
-  { value: "CHF", label: "CHF - Swiss franc" },
-  { value: "SGD", label: "SGD - Singapore dollar" },
-  { value: "HKD", label: "HKD - Hong Kong dollar" },
-  { value: "JPY", label: "JPY - Japanese yen" },
-  { value: "INR", label: "INR - Indian rupee" },
-  { value: "PKR", label: "PKR - Pakistani rupee" },
-];
+const commerceCurrencyOptions = COMMERCE_CURRENCY_OPTIONS;
 
 const soulinkPanelRef = ref<InstanceType<typeof SoulinkConnectPanel> | null>(
   null,

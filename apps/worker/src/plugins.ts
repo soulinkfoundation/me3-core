@@ -169,7 +169,7 @@ export class PluginInstallInputError extends Error {
 const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
   schemaVersion: CORE_PLUGIN_CATALOG_VERSION,
   id: "me3.social-publishing",
-  name: "ME3 Social Publishing",
+  name: "Social publishing",
   version: "0.1.0",
   description:
     "Turn human-authored Sources into reusable Posts, exact account Versions, and independently audited Publications.",
@@ -918,10 +918,9 @@ const CALENDAR_PLUGIN: CorePluginManifestSummary = {
 const ACCOUNTS_PLUGIN: CorePluginManifestSummary = {
   schemaVersion: CORE_PLUGIN_CATALOG_VERSION,
   id: ACCOUNTS_PLUGIN_ID,
-  name: "ME3 Accounts",
+  name: "Accounts",
   version: "0.1.0",
-  description:
-    "Use ME3 to manage your accounts.",
+  description: "Manage your accounts and customers in one place.",
   trustTier: "first_party",
   distribution: "workspace_package",
   installMode: "enabled_by_owner_config",
@@ -943,6 +942,12 @@ const ACCOUNTS_PLUGIN: CorePluginManifestSummary = {
     },
   ],
   routes: [
+    {
+      id: "accounts.customers.api",
+      path: "/api/accounts/customers",
+      methods: ["GET"],
+      auth: "owner",
+    },
     {
       id: "accounts.entries.api",
       path: "/api/accounts/entries",

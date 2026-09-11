@@ -20,6 +20,21 @@ export type CommerceSettingsResponse = {
   };
 };
 
+export const COMMERCE_CURRENCY_OPTIONS = [
+  { value: "EUR", label: "EUR - Euro" },
+  { value: "GBP", label: "GBP - Pound sterling" },
+  { value: "USD", label: "USD - US dollar" },
+  { value: "CAD", label: "CAD - Canadian dollar" },
+  { value: "AUD", label: "AUD - Australian dollar" },
+  { value: "NZD", label: "NZD - New Zealand dollar" },
+  { value: "CHF", label: "CHF - Swiss franc" },
+  { value: "SGD", label: "SGD - Singapore dollar" },
+  { value: "HKD", label: "HKD - Hong Kong dollar" },
+  { value: "JPY", label: "JPY - Japanese yen" },
+  { value: "INR", label: "INR - Indian rupee" },
+  { value: "PKR", label: "PKR - Pakistani rupee" },
+] as const;
+
 export const STRIPE_CONNECT_COUNTRIES = [
   { value: "AU", label: "Australia" },
   { value: "AT", label: "Austria" },

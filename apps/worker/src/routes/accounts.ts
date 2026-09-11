@@ -9,6 +9,7 @@ import {
   getAccountsStripeStatus,
   getFinancialStats,
   importFinancialEntriesCsv,
+  listAccountCustomers,
   listFinancialCategories,
   listFinancialEntries,
   syncAccountsStripe,
@@ -18,6 +19,19 @@ import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { isCorePluginEnabled } from "../plugins";
 
 export function registerAccountsRoutes(app: AppHono, deps: OwnerRouteDeps) {
+  app.get("/api/accounts/customers", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireAccountsPlugin(c);
+    if (blocked) return blocked;
+
+    try {
+      return c.json(await listAccountCustomers(c.env, ownerId, new URL(c.req.url).searchParams));
+    } catch (error) {
+      return accountsErrorResponse(c, error);
+    }
+  });
+
   app.get("/api/accounts/entries", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
@@ -180,7 +194,7 @@ export function registerAccountsRoutes(app: AppHono, deps: OwnerRouteDeps) {
 
 async function requireAccountsPlugin(c: AppContext) {
   if (await isCorePluginEnabled(c.env, ACCOUNTS_PLUGIN_ID)) return null;
-  return c.json({ ok: false, error: "ME3 Accounts is disabled" }, 403);
+  return c.json({ ok: false, error: "Accounts is disabled" }, 403);
 }
 
 function accountsErrorResponse(c: AppContext, error: unknown) {

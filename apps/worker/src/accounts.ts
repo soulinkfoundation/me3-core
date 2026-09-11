@@ -46,6 +46,27 @@ type CurrencyTotalRow = {
   total: number;
 };
 
+export type AccountCustomerSourceRow = {
+  activity_kind: "purchase" | "booking";
+  source_id: string;
+  customer_name: string;
+  customer_email: string;
+  item_key: string;
+  item_label: string;
+  activity_at: string;
+  amount_cents: number | null;
+  currency: string | null;
+  status: string;
+  site_id: string;
+  site_name: string;
+};
+
+export type AccountCustomerContactRow = {
+  id: string;
+  name: string;
+  email: string;
+};
+
 export class AccountsInputError extends Error {
   constructor(
     message: string,
@@ -143,6 +164,192 @@ export async function listFinancialEntries(env: Env, userId: string, query: URLS
     total: countResult?.count || 0,
     limit,
     offset,
+  };
+}
+
+export async function listAccountCustomers(env: Env, userId: string, query: URLSearchParams) {
+  const limit = parseInteger(query.get("limit"), 50, { min: 1, max: 100 });
+  const offset = parseInteger(query.get("offset"), 0, { min: 0, max: 100000 });
+  const [activityResult, contactResult] = await Promise.all([
+    env.DB.prepare(
+      `SELECT 'purchase' AS activity_kind, o.id AS source_id,
+              o.buyer_name AS customer_name, o.buyer_email AS customer_email,
+              'product:' || o.product_slug AS item_key, o.product_title AS item_label,
+              COALESCE(o.paid_at, o.created_at) AS activity_at,
+              COALESCE(o.amount_paid, o.amount_due) AS amount_cents,
+              UPPER(o.currency) AS currency, o.status,
+              s.id AS site_id, s.username AS site_name
+       FROM commerce_orders o
+       INNER JOIN sites s ON s.id = o.site_id
+       WHERE s.user_id = ?
+         AND (o.status IN ('paid', 'refunded')
+              OR (o.payment_method = 'manual' AND o.status = 'pending'))
+       UNION ALL
+       SELECT 'booking' AS activity_kind, b.id AS source_id,
+              b.guest_name AS customer_name, b.guest_email AS customer_email,
+              'booking:' || COALESCE(b.booking_type, 'booking') AS item_key,
+              CASE b.booking_type
+                WHEN 'one_to_one' THEN 'One-to-one booking'
+                WHEN 'class' THEN 'Class booking'
+                WHEN 'retreat' THEN 'Retreat booking'
+                ELSE 'Booking'
+              END AS item_label,
+              COALESCE(b.paid_at, b.created_at) AS activity_at,
+              COALESCE(b.amount_paid, b.suggested_amount) AS amount_cents,
+              UPPER(b.currency) AS currency,
+              CASE
+                WHEN b.status = 'cancelled' THEN 'cancelled'
+                WHEN b.is_free_booking = 1 THEN 'confirmed'
+                WHEN b.payment_status = 'succeeded' THEN 'paid'
+                WHEN b.suggested_amount IS NOT NULL THEN 'payment_due'
+                ELSE 'confirmed'
+              END AS status,
+              s.id AS site_id, s.username AS site_name
+       FROM bookings b
+       INNER JOIN sites s ON s.id = b.site_id
+       WHERE s.user_id = ? AND b.status IN ('confirmed', 'cancelled')
+       ORDER BY activity_at DESC`,
+    )
+      .bind(userId, userId)
+      .all<AccountCustomerSourceRow>(),
+    env.DB.prepare(
+      `SELECT id, name, email
+       FROM contacts
+       WHERE user_id = ? AND email IS NOT NULL AND status != 'archived'
+       ORDER BY updated_at DESC`,
+    )
+      .bind(userId)
+      .all<AccountCustomerContactRow>(),
+  ]);
+
+  return buildAccountCustomers(
+    activityResult.results || [],
+    contactResult.results || [],
+    {
+      search: query.get("search")?.trim() || "",
+      item: query.get("item")?.trim() || "",
+      limit,
+      offset,
+    },
+  );
+}
+
+export function buildAccountCustomers(
+  rows: AccountCustomerSourceRow[],
+  contacts: AccountCustomerContactRow[],
+  options: { search?: string; item?: string; limit?: number; offset?: number } = {},
+) {
+  const contactByEmail = new Map<string, AccountCustomerContactRow>();
+  for (const contact of contacts) {
+    const email = normalizeCustomerEmail(contact.email);
+    if (email && !contactByEmail.has(email)) contactByEmail.set(email, contact);
+  }
+
+  const customersByEmail = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      email: string;
+      contactId: string | null;
+      siteNames: Set<string>;
+      itemKeys: Set<string>;
+      activities: Array<{
+        id: string;
+        kind: "purchase" | "booking";
+        itemKey: string;
+        item: string;
+        activityAt: string;
+        amountCents: number | null;
+        currency: string | null;
+        status: string;
+        siteId: string;
+        siteName: string;
+      }>;
+    }
+  >();
+  const items = new Map<string, string>();
+
+  // ponytail: this in-memory grouping suits a personal installation; move it to SQL if source rows become large.
+  for (const row of rows) {
+    const email = normalizeCustomerEmail(row.customer_email);
+    if (!email) continue;
+    const contact = contactByEmail.get(email);
+    const customer = customersByEmail.get(email) || {
+      id: email,
+      name: contact?.name?.trim() || row.customer_name.trim() || email,
+      email,
+      contactId: contact?.id || null,
+      siteNames: new Set<string>(),
+      itemKeys: new Set<string>(),
+      activities: [],
+    };
+    customer.siteNames.add(row.site_name);
+    customer.itemKeys.add(row.item_key);
+    customer.activities.push({
+      id: `${row.activity_kind}:${row.source_id}`,
+      kind: row.activity_kind,
+      itemKey: row.item_key,
+      item: row.item_label,
+      activityAt: row.activity_at,
+      amountCents: row.amount_cents == null ? null : Number(row.amount_cents),
+      currency: parseCurrency(row.currency),
+      status: row.status,
+      siteId: row.site_id,
+      siteName: row.site_name,
+    });
+    customersByEmail.set(email, customer);
+    items.set(row.item_key, row.item_label);
+  }
+
+  const search = options.search?.toLowerCase() || "";
+  const item = options.item || "";
+  const customers = [...customersByEmail.values()]
+    .map((customer) => {
+      customer.activities.sort((a, b) => b.activityAt.localeCompare(a.activityAt));
+      const purchases = customer.activities.filter((activity) => activity.kind === "purchase").length;
+      const bookings = customer.activities.length - purchases;
+      const summary = customer.activities.length === 1
+        ? customer.activities[0].item
+        : [
+            purchases ? `${purchases} ${purchases === 1 ? "purchase" : "purchases"}` : "",
+            bookings ? `${bookings} ${bookings === 1 ? "booking" : "bookings"}` : "",
+          ].filter(Boolean).join(" · ");
+      return {
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        contactId: customer.contactId,
+        boughtOrBooked: summary,
+        latestActivity: customer.activities[0].activityAt,
+        siteNames: [...customer.siteNames].sort(),
+        activities: customer.activities,
+        itemKeys: customer.itemKeys,
+      };
+    })
+    .filter((customer) => !item || customer.itemKeys.has(item))
+    .filter((customer) => {
+      if (!search) return true;
+      return [
+        customer.name,
+        customer.email,
+        customer.boughtOrBooked,
+        ...customer.siteNames,
+        ...customer.activities.map((activity) => activity.item),
+      ].some((value) => value.toLowerCase().includes(search));
+    })
+    .sort((a, b) => b.latestActivity.localeCompare(a.latestActivity));
+
+  const limit = options.limit ?? 50;
+  const offset = options.offset ?? 0;
+  return {
+    customers: customers.slice(offset, offset + limit).map(({ itemKeys: _itemKeys, ...customer }) => customer),
+    total: customers.length,
+    limit,
+    offset,
+    items: [...items.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
   };
 }
 
@@ -763,6 +970,12 @@ function parseCurrency(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toUpperCase();
   return CURRENCY_REGEX.test(normalized) ? normalized : null;
+}
+
+function normalizeCustomerEmail(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized.includes("@") ? normalized : null;
 }
 
 function parseOptionalString(value: unknown): string | null | undefined {

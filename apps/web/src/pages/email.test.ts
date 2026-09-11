@@ -35,12 +35,16 @@ const routerReplace = vi.fn();
 const routerPush = vi.fn();
 let routeTab = "sent";
 let routePath = "/email";
+let routeMessage = "";
 
 vi.mock("vue-router", () => ({
   RouterView: {
     template: '<div data-email-child-route="true" />',
   },
-  useRoute: () => ({ path: routePath, query: { tab: routeTab } }),
+  useRoute: () => ({
+    path: routePath,
+    query: { tab: routeTab, ...(routeMessage ? { message: routeMessage } : {}) },
+  }),
   useRouter: () => ({
     replace: routerReplace,
     push: routerPush,
@@ -214,6 +218,7 @@ describe("EmailPage", () => {
     vi.clearAllMocks();
     routeTab = "sent";
     routePath = "/email";
+    routeMessage = "";
     document.body.innerHTML = '<div id="app-side-nav-mobile-page-controls"></div>';
     window.matchMedia = vi.fn().mockReturnValue({
       matches: true,
@@ -227,6 +232,15 @@ describe("EmailPage", () => {
     vi.mocked(api.post).mockResolvedValue({ ok: true });
     vi.mocked(api.put).mockResolvedValue({ ok: true });
     vi.mocked(api.delete).mockResolvedValue({ ok: true });
+  });
+
+  it("opens an email selected by an Accounts source link", async () => {
+    routeMessage = "sent-1";
+    const wrapper = mountEmailPage();
+    await flushPromises();
+
+    expect(api.get).toHaveBeenCalledWith("/mailbox/threads/thread-1");
+    expect(wrapper.text()).toContain("Hi Kim");
   });
 
   it("defers app-shell mobile controls until their target is mounted", async () => {

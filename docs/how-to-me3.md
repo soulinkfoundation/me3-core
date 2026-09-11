@@ -491,11 +491,11 @@ ME3 exposes its first-party capability catalog through `/api/plugins`. Account -
 | ME3 Agent Chat | Bundled, default on | Full assistant chat workspace, voice transcription route, and sandbox replies. |
 | ME3 Tasks and Projects | Bundled, default on | Projects, tasks, approvals, private memory, sources, activity, and review surfaces. |
 | ME3 Journal | Bundled, optional | Private daily writing, notes, drafts, and longer-form capture. |
-| ME3 Accounts | Bundled, optional | Income/expense ledger, categories, CSV import/export, and Stripe-backed context. |
+| Accounts | Bundled, optional | Income, expenses, customers, categories, CSV import/export, and Stripe-backed context. |
 | ME3 Calendar | Bundled | Events, reminders, bookings, birthdays, tasks, imports, recurring event expansion, and ready-plugin Social Publication visibility. |
 | Local Executor | Bundled, optional setup | Pairs a local runner for approved local tasks with policies, run history, and audit. |
 | ME3 Landing Pages | Bundled but coming soon; activation blocked | Landing-page draft generation and rendering package, not a live owner feature unless runtime state proves otherwise. |
-| ME3 Social Publishing | Bundled/catalog depending runtime; setup required | Grounded Suggestions, Source-backed Posts, account-specific Versions, connected accounts, approval-first Publications, and delivery history. |
+| Social publishing | Bundled/catalog depending runtime; setup required | Grounded Suggestions, Source-backed Posts, account-specific Versions, connected accounts, approval-first Publications, and delivery history. |
 
 ### Social Publishing
 

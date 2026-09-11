@@ -652,7 +652,7 @@ function formatAssistantJobSetupRequirement(requirement: string) {
     email: "Connect email before activation.",
     calendar: "Enable calendar setup before activation.",
     local_executor: "Connect the local executor before activation.",
-    accounts: "Enable ME3 Accounts before activation.",
+    accounts: "Enable Accounts before activation.",
   };
   return labels[requirement] || "Additional setup is required before activation.";
 }

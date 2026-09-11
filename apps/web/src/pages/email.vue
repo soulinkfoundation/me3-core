@@ -1416,6 +1416,23 @@ async function refreshMailboxMessage(id: string): Promise<InboxMessage | null> {
   }
 }
 
+async function openMessageFromRoute() {
+  const id = typeof route.query.message === "string" ? route.query.message.trim() : "";
+  if (!id) return;
+  if (!messages.value.some((message) => message.id === id)) {
+    try {
+      const data = await api.get<{ message: InboxMessage }>(
+        `/mailbox/messages/${encodeURIComponent(id)}`,
+      );
+      messages.value = [data.message, ...messages.value];
+    } catch (err) {
+      toastFromUnknown(err, "The source email could not be opened");
+      return;
+    }
+  }
+  await selectMessage(id);
+}
+
 async function refreshDraftDeliveryState(id: string) {
   const refreshed = await refreshMailboxMessage(id);
   if (!refreshed) return;
@@ -3049,9 +3066,15 @@ onMounted(() => {
   }
   void (async () => {
     await loadMessages();
+    await openMessageFromRoute();
     void Promise.all([loadMailboxHealth(), loadFolderCounts(false)]);
   })();
 });
+
+watch(
+  () => route.query.message,
+  () => void openMessageFromRoute(),
+);
 
 watch(
   () =>

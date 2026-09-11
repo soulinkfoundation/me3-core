@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAccountCustomers,
   createFinancialEntry,
   getFinancialStats,
   updateFinancialEntry,
 } from "./accounts";
+import type { AccountCustomerSourceRow } from "./accounts";
 import type { Env } from "./types";
 
 type TestEntry = {
@@ -101,6 +103,85 @@ describe("account entries", () => {
     expect(updated.entry.projectName).toBeNull();
   });
 });
+
+describe("account customers", () => {
+  it("groups repeat website activity by email and keeps filtering separate from history", () => {
+    const rows: AccountCustomerSourceRow[] = [
+      customerActivity({
+        activity_kind: "purchase",
+        source_id: "order-1",
+        customer_name: "Kieran",
+        customer_email: " KIERAN@example.com ",
+        item_key: "product:course",
+        item_label: "Gentle course",
+        activity_at: "2026-09-10 12:00:00",
+        amount_cents: 2500,
+        currency: "EUR",
+        status: "paid",
+      }),
+      customerActivity({
+        activity_kind: "booking",
+        source_id: "booking-1",
+        customer_name: "Kieran Butler",
+        customer_email: "kieran@example.com",
+        item_key: "booking:coaching",
+        item_label: "One-to-one booking",
+        activity_at: "2026-09-11 12:00:00",
+        amount_cents: null,
+        currency: null,
+        status: "confirmed",
+      }),
+      customerActivity({
+        source_id: "order-2",
+        customer_name: "Someone Else",
+        customer_email: "someone@example.com",
+        item_key: "product:book",
+        item_label: "Book",
+      }),
+    ];
+
+    const result = buildAccountCustomers(
+      rows,
+      [{ id: "contact-1", name: "Kieran B", email: "kieran@example.com" }],
+      { item: "product:course", limit: 50, offset: 0 },
+    );
+
+    expect(result.total).toBe(1);
+    expect(result.customers[0]).toMatchObject({
+      name: "Kieran B",
+      email: "kieran@example.com",
+      contactId: "contact-1",
+      boughtOrBooked: "1 purchase · 1 booking",
+      latestActivity: "2026-09-11 12:00:00",
+    });
+    expect(result.customers[0].activities).toHaveLength(2);
+    expect(result.items).toEqual([
+      { value: "product:book", label: "Book" },
+      { value: "product:course", label: "Gentle course" },
+      { value: "booking:coaching", label: "One-to-one booking" },
+    ]);
+  });
+});
+
+function customerActivity(
+  overrides: Partial<AccountCustomerSourceRow>,
+): AccountCustomerSourceRow {
+  return {
+    activity_kind: "purchase",
+    source_id: "order",
+    customer_name: "Customer",
+    customer_email: "customer@example.com",
+    item_key: "product:item",
+    item_label: "Item",
+    activity_at: "2026-09-01 12:00:00",
+    amount_cents: 1000,
+    currency: "USD",
+    status: "paid",
+    site_id: "site-1",
+    site_name: "kieran",
+    ...overrides,
+  };
+}
 
 function entry(overrides: Partial<TestEntry>): TestEntry {
   return {
