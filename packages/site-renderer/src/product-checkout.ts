@@ -25,13 +25,13 @@ export function renderProductCheckout(product: ProductPurchase): string {
   return `<section class="product-purchase" aria-label="Purchase" data-product-purchase>
     ${price}
     <p class="product-status" data-product-status role="status" aria-live="polite"></p>
-    ${product.enabled ? `<details data-product-details><summary class="product-buy">${manual ? "Request this product" : "Buy now"}</summary>
+    ${product.enabled ? `<div data-product-details>
     <form data-product-checkout>
       <label for="product-buyer-name">Your name</label><input id="product-buyer-name" name="buyerName" autocomplete="name" maxlength="120" required>
       <label for="product-buyer-email">Email</label><input id="product-buyer-email" name="buyerEmail" type="email" autocomplete="email" maxlength="254" required>
-      <p class="product-help">${manual ? "Payment is not taken now. We’ll email you the payment details." : "You’ll complete your payment securely with Stripe."}</p>
-      <button class="product-buy" type="submit">${manual ? "Request payment details" : "Continue to Stripe"}</button>
-    </form></details>` : '<button class="product-buy" type="button" disabled>Buy now</button><p class="product-help">Checkout is available on your published site.</p>'}
+      ${manual ? '<p class="product-help">Payment is not taken now. We’ll email you the payment details.</p>' : ""}
+      <button class="product-buy" type="submit">${manual ? "Request payment details" : "Continue to checkout"}</button>
+    </form></div>` : '<button class="product-buy" type="button" disabled>Buy now</button><p class="product-help">Checkout is available on your published site.</p>'}
   </section>${product.enabled ? `<script>(${productCheckoutScript})(${config});</script>` : ""}`;
 }
 
@@ -96,7 +96,6 @@ const productCheckoutScript = String.raw`function(config) {
   const params = new URLSearchParams(window.location.search);
   if (params.get("purchase") === "cancelled") {
     message("Checkout cancelled. No payment was taken. You can try again.");
-    details.open = true;
     clearReturnParameters();
   } else if (params.get("purchase") === "success") {
     const sessionId = params.get("session_id");
@@ -107,7 +106,6 @@ const productCheckoutScript = String.raw`function(config) {
       clearReturnParameters();
       recovery.replaceChildren();
       details.hidden = false;
-      details.open = true;
       pending(false);
     }
     function action(label, handler) {

@@ -862,7 +862,7 @@ describe("site generator", () => {
    const profile = {name: "Shop", handle:"shop", products:[{slug:"book",title:"Book",file:"missing.md",price:100,currency:"EUR",excerpt:"A book"}]};
    const files = await generateSiteHtml(profile, []);
    expect(files["shop/book.html"]).toContain("1.00 EUR");
-   expect(files["shop/book.html"]).toContain("Buy now");
+   expect(files["shop/book.html"]).toContain("Continue to checkout");
    expect(files["shop/book.html"]).toContain("data-product-checkout");
    const preview = await generateSiteHtml(profile, [], {productCheckoutEnabled:false});
    expect(preview["shop/book.html"]).not.toContain("<form data-product-checkout");
