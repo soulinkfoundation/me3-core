@@ -121,8 +121,10 @@ const page = computed(() => Math.floor(offset.value / PAGE_SIZE) + 1);
 const hasPrevious = computed(() => offset.value > 0);
 const hasNext = computed(() => offset.value + PAGE_SIZE < total.value);
 const resultCountLabel = computed(() => {
-  const label = currentView.value === "customers" ? "customer" : "entry";
-  return total.value === 1 ? `1 ${label}` : `${total.value} ${label}s`;
+  const [singular, plural] = currentView.value === "customers"
+    ? ["customer", "customers"]
+    : ["entry", "entries"];
+  return total.value === 1 ? `1 ${singular}` : `${total.value} ${plural}`;
 });
 const activeFilterCount = computed(() => currentView.value === "customers"
   ? [search.value.trim(), itemFilter.value].filter(Boolean).length
