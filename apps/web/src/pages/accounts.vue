@@ -84,8 +84,17 @@ type Customer = {
   activities: CustomerActivity[];
 };
 type CustomerItem = { value: string; label: string };
+type EntryColumn = "date" | "category" | "project" | "status" | "source";
 
 const PAGE_SIZE = 50;
+const ENTRY_COLUMN_STORAGE_KEY = "me3.accounts.visible-columns";
+const entryColumnOptions: Array<{ key: EntryColumn; label: string; width: number }> = [
+  { key: "date", label: "Date", width: 92 },
+  { key: "category", label: "Category", width: 112 },
+  { key: "project", label: "Project", width: 112 },
+  { key: "status", label: "Status", width: 112 },
+  { key: "source", label: "Source", width: 112 },
+];
 const { toastFromUnknown, toastSuccess } = useAppToast();
 const route = useRoute();
 const router = useRouter();
@@ -117,6 +126,13 @@ const defaultCurrency = ref("USD");
 const importInput = ref<HTMLInputElement | null>(null);
 const actionsMenu = ref<HTMLDetailsElement | null>(null);
 const importFeedback = ref<{ imported: number; skipped: number; errors: Array<{ row: number; reason: string }> } | null>(null);
+const visibleEntryColumns = ref<Record<EntryColumn, boolean>>({
+  date: true,
+  category: true,
+  project: true,
+  status: true,
+  source: true,
+});
 const form = ref<EntryForm>(emptyForm(entryType.value));
 let accountsRequestId = 0;
 
@@ -138,6 +154,15 @@ const categoryOptions = computed(() =>
 );
 const formDisabled = computed(
   () => saving.value || !form.value.date || !form.value.description.trim() || !text(form.value.amount),
+);
+const entryColumnCount = computed(() =>
+  3 + entryColumnOptions.filter(({ key }) => visibleEntryColumns.value[key]).length,
+);
+const entryTableMinWidth = computed(() =>
+  380 + entryColumnOptions.reduce(
+    (width, column) => width + (visibleEntryColumns.value[column.key] ? column.width : 0),
+    0,
+  ),
 );
 const editingSyncedEntry = computed(() =>
   Boolean(editingEntryId.value && ["stripe", "website"].includes(
@@ -338,6 +363,17 @@ function chooseImportFile() {
   importInput.value?.click();
 }
 
+function loadEntryColumnVisibility() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(ENTRY_COLUMN_STORAGE_KEY) || "{}") as Partial<Record<EntryColumn, unknown>>;
+    visibleEntryColumns.value = Object.fromEntries(
+      entryColumnOptions.map(({ key }) => [key, stored[key] !== false]),
+    ) as Record<EntryColumn, boolean>;
+  } catch {
+    // Keep the complete default table when browser storage is unavailable.
+  }
+}
+
 async function importCsv(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
@@ -503,7 +539,18 @@ watch(
   },
 );
 
-onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStatus()]));
+watch(visibleEntryColumns, (columns) => {
+  try {
+    localStorage.setItem(ENTRY_COLUMN_STORAGE_KEY, JSON.stringify(columns));
+  } catch {
+    // Column visibility can remain session-only when browser storage is unavailable.
+  }
+}, { deep: true });
+
+onMounted(() => {
+  loadEntryColumnVisibility();
+  void Promise.all([loadAccounts(), loadProjects(), loadStripeStatus()]);
+});
 </script>
 
 <template>
@@ -529,6 +576,13 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
           <details v-if="currentView !== 'customers'" ref="actionsMenu" class="accounts-actions-menu">
             <summary aria-label="Account actions"><UiIcon name="Ellipsis" :size="18" /></summary>
             <div class="accounts-actions-menu__popover">
+              <fieldset class="accounts-columns">
+                <legend>Columns</legend>
+                <label v-for="column in entryColumnOptions" :key="column.key">
+                  <input v-model="visibleEntryColumns[column.key]" type="checkbox" />
+                  <span>{{ column.label }}</span>
+                </label>
+              </fieldset>
               <button type="button" :disabled="syncing || !stripeConfigured" @click="syncStripe"><UiIcon name="RefreshCw" :size="15" />{{ syncing ? "Syncing Stripe" : "Sync Stripe" }}</button>
               <button type="button" :disabled="importing" @click="chooseImportFile"><UiIcon name="Upload" :size="15" />{{ importing ? "Importing CSV" : "Import CSV" }}</button>
               <button type="button" @click="exportCsv"><UiIcon name="Download" :size="15" />Export CSV</button>
@@ -574,10 +628,12 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
                         <span>{{ activity.amountCents == null || !activity.currency ? "—" : formatMoney(activity.amountCents, activity.currency) }}</span>
                         <span class="status-badge">{{ activityStatusLabel(activity.status) }}</span>
                         <div v-if="activity.kind === 'purchase'" class="order-delivery">
-                          <p v-if="activity.delivery?.instructions">{{ activity.delivery.instructions }}</p>
-                          <address v-if="activity.delivery?.address">{{ Object.values(activity.delivery.address).filter(Boolean).join(', ') }}</address>
-                          <button v-if="activity.status === 'pending'" type="button" :disabled="updatingOrder !== null" @click="recordPayment(activity)">Mark payment received</button>
-                          <button v-if="activity.status === 'paid'" type="button" :disabled="updatingOrder !== null" @click="setFulfilled(activity)">{{ activity.fulfilledAt ? 'Fulfilled — mark unfulfilled' : 'Mark fulfilled' }}</button>
+                          <button v-if="activity.status === 'pending'" class="order-delivery__action" type="button" :disabled="updatingOrder !== null" @click="recordPayment(activity)">Payment received</button>
+                          <button v-if="activity.status === 'paid'" class="order-delivery__action" type="button" :disabled="updatingOrder !== null" @click="setFulfilled(activity)">{{ activity.fulfilledAt ? 'Mark unfulfilled' : 'Mark fulfilled' }}</button>
+                          <div v-if="activity.delivery?.instructions || activity.delivery?.address" class="order-delivery__details">
+                            <p v-if="activity.delivery?.instructions">{{ activity.delivery.instructions }}</p>
+                            <address v-if="activity.delivery?.address">{{ Object.values(activity.delivery.address).filter(Boolean).join(', ') }}</address>
+                          </div>
                         </div>
                       </li>
                     </ul>
@@ -587,24 +643,24 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
             </tbody>
           </table>
 
-          <table v-else class="accounts-table">
+          <table v-else class="accounts-table" :style="{ minWidth: `${entryTableMinWidth}px` }">
             <caption class="visually-hidden">{{ currentView === "income" ? "Income" : "Expenses" }} ledger</caption>
-            <thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Category</th><th scope="col">Project</th><th scope="col">Amount</th><th scope="col">Status</th><th scope="col">Source</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+            <thead><tr><th v-if="visibleEntryColumns.date" class="accounts-table__date-column" scope="col">Date</th><th scope="col">Description</th><th v-if="visibleEntryColumns.category" class="accounts-table__category-column" scope="col">Category</th><th v-if="visibleEntryColumns.project" class="accounts-table__project-column" scope="col">Project</th><th class="accounts-table__amount-column" scope="col">Amount</th><th v-if="visibleEntryColumns.status" class="accounts-table__status-column" scope="col">Status</th><th v-if="visibleEntryColumns.source" class="accounts-table__source-column" scope="col">Source</th><th class="accounts-table__actions-column" scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
             <tbody>
-              <tr v-if="loading"><td colspan="8"><PageLoading compact label="Loading accounts..." /></td></tr>
-              <tr v-else-if="entries.length === 0"><td colspan="8">No {{ entryType }} entries yet.</td></tr>
+              <tr v-if="loading"><td :colspan="entryColumnCount"><PageLoading compact label="Loading accounts..." /></td></tr>
+              <tr v-else-if="entries.length === 0"><td :colspan="entryColumnCount">No {{ entryType }} entries yet.</td></tr>
               <tr v-for="entry in entries" v-else :key="entry.id">
-                <td>{{ formatDate(entry.date) }}</td>
+                <td v-if="visibleEntryColumns.date">{{ formatDate(entry.date) }}</td>
                 <th scope="row">{{ entry.description }}</th>
-                <td>{{ entry.categoryName || "Uncategorized" }}</td>
-                <td>{{ entry.projectName || "No project" }}</td>
+                <td v-if="visibleEntryColumns.category">{{ entry.categoryName || "Uncategorized" }}</td>
+                <td v-if="visibleEntryColumns.project">{{ entry.projectName || "No project" }}</td>
                 <td>{{ formatMoney(entry.amountCents, entry.currency) }}</td>
-                <td><span class="status-badge">{{ statusLabel(entry.status) }}</span></td>
-                <td>
+                <td v-if="visibleEntryColumns.status"><span class="status-badge">{{ statusLabel(entry.status) }}</span></td>
+                <td v-if="visibleEntryColumns.source">
                   <RouterLink v-if="entry.source === 'email_triage' && entry.sourceEmailId" class="accounts-source-link" :to="{ path: '/email', query: { message: entry.sourceEmailId } }">Email triage</RouterLink>
                   <span v-else>{{ sourceLabel(entry.source) }}</span>
                 </td>
-                <td>
+                <td class="accounts-table__actions-column">
                   <div class="accounts-table__row-actions">
                     <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Edit entry" @click="openEditEntry(entry)"><UiIcon name="Pencil" :size="15" /></Button>
                     <Button v-if="!['stripe', 'website'].includes(entry.source)" color="ghost" shape="soft" size="compact" icon-only aria-label="Delete entry" @click="deleteEntry(entry)"><UiIcon name="Trash2" :size="15" /></Button>
@@ -669,9 +725,15 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
 </template>
 
 <style scoped>
-.order-delivery{grid-column:1/-1}.order-delivery p{margin:8px 0}.order-delivery address{font-style:normal;margin:8px 0}.order-delivery button{min-height:44px;font:inherit;color:inherit;background:var(--ui-surface,var(--color-bg));border:1px solid var(--ui-border,var(--color-border));border-radius:8px;padding:8px 12px;cursor:pointer}
-.accounts-page { min-height: 100vh; min-height: 100dvh; padding: var(--workspace-topbar-padding-block) 24px 40px; background: var(--ui-bg); color: var(--ui-text); }
-.accounts-workspace { display: grid; width: min(1120px, 100%); gap: 14px; margin: 0 auto; }
+.order-delivery { display: contents; }
+.order-delivery__action { grid-column: 6; justify-self: end; min-height: 30px; padding: 3px 8px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); color: var(--ui-text-muted); font: inherit; font-size: 12px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.order-delivery__action:hover:not(:disabled) { background: var(--ui-bg); color: var(--ui-text); }
+.order-delivery__action:disabled { opacity: .5; cursor: not-allowed; }
+.order-delivery__details { grid-column: 2 / -1; display: grid; gap: 4px; padding: 2px 0; color: var(--ui-text-muted); font-size: 12px; }
+.order-delivery__details p { margin: 0; }
+.order-delivery__details address { margin: 0; font-style: normal; }
+.accounts-page { width: 100%; min-width: 0; min-height: 100vh; min-height: 100dvh; overflow-x: hidden; padding: var(--workspace-topbar-padding-block) 24px 40px; background: var(--ui-bg); color: var(--ui-text); }
+.accounts-workspace { display: grid; width: min(1120px, 100%); min-width: 0; gap: 14px; margin: 0 auto; }
 .accounts-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; min-height: var(--workspace-topbar-height); }
 .accounts-tabs { display: grid; width: min(540px, 100%); grid-template-columns: repeat(3, 1fr); grid-column: 2; justify-self: center; padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
 .accounts-tabs button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
@@ -688,6 +750,11 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
 .accounts-actions-menu__popover button { display: flex; min-height: 34px; align-items: center; gap: 8px; padding: 0 9px; border: 0; border-radius: var(--ui-radius-sm); background: transparent; color: var(--ui-text); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
 .accounts-actions-menu__popover button:hover:not(:disabled) { background: var(--ui-surface-muted); }
 .accounts-actions-menu__popover button:disabled { opacity: 0.5; cursor: not-allowed; }
+.accounts-columns { display: grid; gap: 2px; margin: 0 0 4px; padding: 4px 3px 7px; border: 0; border-bottom: 1px solid var(--ui-border); }
+.accounts-columns legend { width: 100%; padding: 0 6px 3px; color: var(--ui-text-muted); font-size: 11px; font-weight: 750; }
+.accounts-columns label { display: flex; min-height: 30px; align-items: center; gap: 8px; padding: 0 6px; border-radius: var(--ui-radius-sm); color: var(--ui-text); font-size: 13px; cursor: pointer; }
+.accounts-columns label:hover { background: var(--ui-surface-muted); }
+.accounts-columns input { width: 14px; height: 14px; accent-color: var(--ui-accent); }
 .accounts-summary { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 18px; }
 .accounts-summary div { display: grid; gap: 4px; min-width: 0; padding: 2px 0 8px; }
 .accounts-summary span, .accounts-pagination span { color: var(--ui-text-muted); font-size: 12px; }
@@ -698,15 +765,14 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
 .accounts-import-feedback ul { margin: 8px 0 0; padding-left: 20px; }
 .accounts-workspace > section { display: grid; min-width: 0; gap: 14px; }
 .accounts-table-wrap { min-width: 0; overflow-x: auto; }
-.accounts-table { width: 100%; min-width: 980px; table-layout: fixed; border-collapse: collapse; border-top: 1px solid var(--ui-border); color: var(--ui-text-muted); font-size: 13px; }
+.accounts-table { width: 100%; min-width: 920px; table-layout: fixed; border-collapse: collapse; border-top: 1px solid var(--ui-border); color: var(--ui-text-muted); font-size: 13px; }
 .accounts-table th, .accounts-table td { overflow: hidden; padding: 10px 10px 10px 0; border-bottom: 1px solid var(--ui-border); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .accounts-table thead th { color: var(--ui-text-muted); font-size: 12px; font-weight: 700; }
 .accounts-table tbody th { color: var(--ui-text); font-weight: 700; }
-.accounts-table th:nth-child(1) { width: 96px; }
-.accounts-table th:nth-child(3), .accounts-table th:nth-child(4) { width: 128px; }
-.accounts-table th:nth-child(5) { width: 112px; }
-.accounts-table th:nth-child(6), .accounts-table th:nth-child(7) { width: 118px; }
-.accounts-table th:nth-child(8) { width: 72px; }
+.accounts-table__date-column { width: 92px; }
+.accounts-table__category-column, .accounts-table__project-column, .accounts-table__status-column, .accounts-table__source-column { width: 112px; }
+.accounts-table__amount-column { width: 106px; }
+.accounts-table .accounts-table__actions-column { width: 84px; overflow: visible; padding-right: 0; }
 .accounts-table--customers { min-width: 760px; }
 .accounts-table--customers th:nth-child(1) { width: 26%; }
 .accounts-table--customers th:nth-child(2) { width: 32%; }
@@ -721,7 +787,7 @@ onMounted(() => void Promise.all([loadAccounts(), loadProjects(), loadStripeStat
 .customer-disclosure:focus-visible { border-radius: var(--ui-radius-sm); outline: 2px solid var(--ui-focus); outline-offset: 2px; }
 .customer-history-row td { padding: 0; background: var(--ui-surface-muted); white-space: normal; }
 .customer-history { display: grid; margin: 0; padding: 4px 14px 8px 42px; list-style: none; }
-.customer-history li { display: grid; grid-template-columns: 112px minmax(160px, 1fr) minmax(100px, .7fr) 112px 100px; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--ui-border); }
+.customer-history li { display: grid; grid-template-columns: 112px minmax(150px, 1fr) minmax(90px, .7fr) 104px 94px minmax(100px, auto); align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--ui-border); }
 .customer-history li:last-child { border-bottom: 0; }
 .customer-history time { color: var(--ui-text-muted); font-size: 12px; }
 .customer-history strong { overflow: hidden; color: var(--ui-text); text-overflow: ellipsis; white-space: nowrap; }

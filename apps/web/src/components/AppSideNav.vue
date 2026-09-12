@@ -310,25 +310,8 @@ watch(navDrawerOpen, (isOpen) => {
           <span class="sr-only">Accounts</span>
         </RouterLink>
 
-        <a
-          v-if="props.showSoulink && props.soulinkConnected"
-          :href="props.soulinkHref"
-          class="app-side-nav__row app-side-nav-control"
-          aria-label="Open Soulink chats"
-          title="Open Soulink chats"
-          @click="closeNavDrawer"
-        >
-          <img
-            class="app-side-nav__soulink-icon"
-            src="/images/soulink-logo.png"
-            alt=""
-            aria-hidden="true"
-          />
-          <span class="sr-only">Soulink</span>
-        </a>
-
         <button
-          v-else-if="props.showSoulink"
+          v-if="props.showSoulink && !props.soulinkConnected"
           type="button"
           class="app-side-nav__row app-side-nav-control"
           aria-label="Join Soulink"

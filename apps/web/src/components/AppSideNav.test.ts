@@ -118,15 +118,14 @@ describe("AppSideNav optional plugin links", () => {
     wrapper.unmount();
   });
 
-  it("links connected owners directly to their Soulink chats", async () => {
+  it("hides Soulink navigation for connected owners", async () => {
     const wrapper = await mountSideNav([], {
       soulinkConnected: true,
       soulinkHref: "https://soulinkfoundation.org/chats",
     });
 
-    expect(wrapper.get('[aria-label="Open Soulink chats"]').attributes("href")).toBe(
-      "https://soulinkfoundation.org/chats",
-    );
+    expect(wrapper.find('[aria-label="Open Soulink chats"]').exists()).toBe(false);
+    expect(wrapper.find('[aria-label="Join Soulink"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
