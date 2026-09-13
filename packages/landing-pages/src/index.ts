@@ -1,3 +1,5 @@
+import { retreatTemplateCss } from "./retreat-template";
+import { parseHeroVideo, renderHeroVideo, heroVideoControls, heroVideoCss, heroVideoScript } from "./hero-video";
 import { discoveryLinks, publicSiteUrl, jsonLd, applyImageMetadata, type SiteImageMetadata } from "@me3-core/site-renderer";
 import {
   LANDING_PAGE_DESIGN_PACK_IDS,
@@ -411,6 +413,8 @@ export interface LandingPageDocumentV3 {
     subheadline: string;
     image?: string | null;
     imageLayout?: "split" | "background";
+    /** HTTPS MP4/WebM or YouTube URL. The hero image remains the fallback. */
+    backgroundVideo?: string | null;
     showActions?: boolean;
     primaryActionId: string;
     secondaryActionId?: string;
@@ -731,6 +735,7 @@ export function normalizeLandingPageDocument(
       return null;
     }
     if (
+      (page.hero.backgroundVideo != null && page.hero.backgroundVideo !== "" && !parseHeroVideo(page.hero.backgroundVideo)) ||
       (page.hero.imageLayout !== undefined &&
         !["split", "background"].includes(page.hero.imageLayout)) ||
       (page.hero.showActions !== undefined &&
@@ -1831,7 +1836,7 @@ function renderStarterLandingPageHtml(
     )
     .join("");
   const heroImage = page.hero.image || page.assets.heroImage || page.assets.sectionImage;
-  const backgroundHero = page.hero.imageLayout === "background" && !!heroImage;
+  const backgroundHero = page.hero.imageLayout === "background" && !!(heroImage || parseHeroVideo(page.hero.backgroundVideo));
   const showHeroActions = page.hero.showActions !== false;
   const sections = page.content.sections
     .map((section, index) =>
@@ -1871,9 +1876,9 @@ function renderStarterLandingPageHtml(
     ? `<div class="pack-hero-actions">${primaryAction ? `<a class="button primary" href="${escapeHtml(actionHref(primaryAction))}">${escapeHtml(primaryAction.label)}</a>` : ""}${secondaryAction ? `<a class="button secondary" href="${escapeHtml(actionHref(secondaryAction))}">${escapeHtml(secondaryAction.label)}</a>` : ""}</div>`
     : "";
   const hero = backgroundHero
-    ? `<header class="pack-hero pack-hero-background"><figure class="pack-hero-media" aria-hidden="true"><img src="${escapeHtml(resolveBusinessSiteAsset(context, heroImage))}" alt="" loading="eager" decoding="async" fetchpriority="high"></figure><div class="shell pack-hero-grid"><div class="pack-hero-copy"><span class="pack-kicker">${escapeHtml(page.intent.audience)}</span><h1>${renderStarterHeadline(page.hero.headline)}</h1><p>${escapeHtml(page.hero.subheadline)}</p>${heroActions}${metadata ? `<div class="pack-meta">${metadata}</div>` : ""}</div></div></header>`
+    ? `<header class="pack-hero pack-hero-background"><figure class="pack-hero-media" aria-hidden="true">${heroImage ? `<img src="${escapeHtml(resolveBusinessSiteAsset(context, heroImage))}" alt="" loading="eager" decoding="async" fetchpriority="high">` : ""}${renderHeroVideo(page.hero.backgroundVideo)}</figure>${heroVideoControls(page.hero.backgroundVideo, context.businessSite?.footer.links)}<div class="shell pack-hero-grid"><div class="pack-hero-copy"><span class="pack-kicker">${escapeHtml(page.intent.audience)}</span><h1>${renderStarterHeadline(page.hero.headline)}</h1><p>${escapeHtml(page.hero.subheadline)}</p>${heroActions}${metadata ? `<div class="pack-meta">${metadata}</div>` : ""}</div></div></header>`
     : `<header class="pack-hero"><div class="shell pack-hero-grid"><div class="pack-hero-copy"><span class="pack-kicker">${escapeHtml(page.intent.audience)}</span><h1>${renderStarterHeadline(page.hero.headline)}</h1><p>${escapeHtml(page.hero.subheadline)}</p>${heroActions}</div><aside class="pack-hero-aside" aria-label="Page highlights">${renderStarterLandingPageVisual(page, designPackId, context)}${metadata ? `<div class="pack-meta">${metadata}</div>` : ""}</aside></div></header>`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.seo.title)}</title><meta name="description" content="${escapeHtml(page.seo.description)}"><meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(page.seo.title)}"><meta property="og:description" content="${escapeHtml(page.seo.description)}">${socialImage}${canonical}${robots}${organizationSchema}${starterLandingPageFontLinks(page, designPackId)}<style>${renderStarterLandingPageCss(page, designPackId)}${renderActionCss()}</style></head><body data-theme="${escapeHtml(page.design.theme)}" data-design-pack="${escapeHtml(designPackId)}" data-design-pack-version="${pack.version}" data-hero-layout="${backgroundHero ? "background" : "split"}"${context.businessSite ? " data-business-site" : ""}><a href="#main" class="skip-link">Skip to content</a>${announcement}${header}<main id="main">${hero}${sections}</main>${footer}<script>${landingNavigationScript()}${landingActionScript()}</script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.seo.title)}</title><meta name="description" content="${escapeHtml(page.seo.description)}"><meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(page.seo.title)}"><meta property="og:description" content="${escapeHtml(page.seo.description)}">${socialImage}${canonical}${robots}${organizationSchema}${starterLandingPageFontLinks(page, designPackId)}<style>${renderStarterLandingPageCss(page, designPackId)}${renderActionCss()}${heroVideoCss}</style></head><body data-theme="${escapeHtml(page.design.theme)}" data-design-pack="${escapeHtml(designPackId)}" data-design-pack-version="${pack.version}" data-hero-layout="${backgroundHero ? "background" : "split"}"${context.businessSite ? " data-business-site" : ""}><a href="#main" class="skip-link">Skip to content</a>${announcement}${header}<main id="main">${hero}${sections}</main>${footer}<script>${landingNavigationScript()}${landingActionScript()}${backgroundHero ? heroVideoScript() : ""}</script></body></html>`;
 }
 
 function renderBusinessSiteHeader(
@@ -1892,7 +1897,7 @@ function renderBusinessSiteHeader(
     })
     .join("");
   const brand = site.organization.logo
-    ? `<img src="${escapeHtml(resolveBusinessSiteAsset(context, site.organization.logo))}" alt="${escapeHtml(site.name)}">`
+    ? `<img src="${escapeHtml(resolveBusinessSiteAsset(context, site.organization.logo))}" alt="${site.design.packId === "retreat-01" ? "" : escapeHtml(site.name)}">${site.design.packId === "retreat-01" ? `<span>${escapeHtml(site.name)}</span>` : ""}`
     : escapeHtml(site.name);
   return `<header class="pack-header shell"><a class="pack-brand" href="${escapeHtml(resolveBusinessSiteHref(context, "/"))}">${brand}</a><button class="pack-menu-toggle" type="button" aria-expanded="false" aria-controls="pack-site-navigation" aria-label="Open site menu"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button><nav id="pack-site-navigation" aria-label="Site navigation">${items}${primaryAction ? `<a class="pack-nav-action" href="${escapeHtml(actionHref(primaryAction))}">${escapeHtml(primaryAction.label)}</a>` : ""}</nav></header>`;
 }
@@ -2139,6 +2144,7 @@ function starterLandingPageFontLinks(
   page: LandingPageDocumentV3,
   designPackId: LandingPageDesignPackId,
 ): string {
+  if (designPackId === "retreat-01") return `<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">`;
   const fontPreset = resolveLandingPageFontPreset(page, designPackId);
   const href =
     fontPreset === "editorial"
@@ -2168,10 +2174,10 @@ function renderStarterLandingPageCss(
       ? starterEventCss(accent)
       : designPackId === "starter-service-01"
         ? starterServiceCss(accent)
-        : designPackId === "clinical-editorial-01"
+        : (designPackId === "clinical-editorial-01" || designPackId === "retreat-01")
           ? clinicalEditorialCss(accent)
           : starterWaitlistCss(accent)
-  }${designPackId === "clinical-editorial-01" ? naturalEditorialEnhancementCss() : ""}${renderLandingPageCustomizationCss(page, designPackId)}`;
+  }${designPackId === "clinical-editorial-01" ? naturalEditorialEnhancementCss() : ""}${renderLandingPageCustomizationCss(page, designPackId)}${designPackId === "retreat-01" ? retreatTemplateCss() : ""}`;
 }
 
 function starterRichTextCss(): string {

@@ -54,13 +54,6 @@ const blogEnabled = computed({
   },
 });
 
-const blogTitle = computed({
-  get: () => wizard.blogTitle,
-  set: (val: string) => {
-    wizard.blogTitle = val;
-  },
-});
-
 const bookingsEnabled = computed({
   get: () => wizard.bookingsEnabled,
   set: (val: boolean) => {
@@ -232,23 +225,9 @@ const productsEnabled = computed({
           <div class="feature-text">
             <span class="feature-name">Blog</span>
             <span class="feature-desc">
-              Publish articles, notes, videos, or updates. The main menu title
-              also becomes the page URL.
+              Publish articles, notes, videos, or updates. Configure it in the
+              Blog step.
             </span>
-            <div v-if="blogEnabled" class="feature-field">
-              <label class="feature-field-label" for="blog-menu-title">
-                Main menu title
-              </label>
-              <input
-                id="blog-menu-title"
-                v-model="blogTitle"
-                type="text"
-                class="feature-field-input"
-                placeholder="Blog"
-                maxlength="40"
-              />
-              <p class="feature-field-hint">URL path: /{{ wizard.blogPath }}</p>
-            </div>
           </div>
         </div>
         <label class="feature-toggle">

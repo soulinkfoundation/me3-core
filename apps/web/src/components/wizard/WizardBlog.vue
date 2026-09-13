@@ -382,8 +382,23 @@ onMounted(() => {
 
 <template>
   <div class="step-blog">
-    <h2>Add posts</h2>
+    <h2>Blog</h2>
     <p>Add posts and optionally send them to email subscribers.</p>
+
+    <div class="blog-menu-title">
+      <label class="blog-menu-title-label" for="blog-menu-title-input">
+        Main menu title
+      </label>
+      <input
+        id="blog-menu-title-input"
+        v-model="wizard.blogTitle"
+        type="text"
+        class="blog-menu-title-input"
+        placeholder="Blog"
+        maxlength="40"
+      />
+      <p class="blog-menu-title-hint">URL path: /{{ wizard.blogPath }}</p>
+    </div>
 
     <!-- Post list -->
     <div
@@ -658,6 +673,37 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.blog-menu-title {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg);
+}
+
+.blog-menu-title-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.blog-menu-title-input {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface, var(--color-bg));
+  color: var(--color-text);
+  font: inherit;
+}
+
+.blog-menu-title-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
 }
 
 .post-list {

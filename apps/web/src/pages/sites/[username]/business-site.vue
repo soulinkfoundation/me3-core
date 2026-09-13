@@ -656,6 +656,7 @@ onMounted(load);
               <label>Headline<input v-model="selectedPageDraft.hero.headline" /></label>
               <label>Introduction<textarea v-model="selectedPageDraft.hero.subheadline" rows="4" /></label>
               <SiteEventFields v-model="selectedPageDraft.event" />
+          <label v-if="selectedPageDraft.hero.imageLayout === 'background'">Background video URL<input v-model="selectedPageDraft.hero.backgroundVideo" type="url" placeholder="https://… (MP4, WebM or YouTube)" /><small>The hero image stays visible while the video loads or motion is reduced. YouTube asks visitors for consent before loading.</small></label>
               <div class="two-column-fields"><label>Hero layout<select v-model="selectedPageDraft.hero.imageLayout"><option value="split">Split image panel</option><option value="background">Full-bleed background</option></select></label><label class="checkbox-field"><input v-model="selectedPageDraft.hero.showActions" type="checkbox" /> Show primary action</label></div>
               <label>Hero image<input type="file" accept="image/*" @change="uploadHero" /></label>
             </section>

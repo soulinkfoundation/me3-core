@@ -1406,7 +1406,81 @@ function generateFooter(profile: Me3SiteProfile, allowCustom: boolean): string {
 }
 
 export function markdownToHtml(markdown: string, basePath = "./"): string {
-  if (looksLikeHtml(markdown)) return rewriteContentAssetPaths(markdown, basePath);
+  // Saved Markdown contains HTML islands for rich editor blocks. Preserve each
+  // island, not the entire document, so surrounding Markdown is still parsed.
+  const blocks: string[] = [];
+  let marker = "ME3HTMLBLOCK";
+  while (markdown.includes(marker)) marker += "X";
+  // Scan whole elements (including nested galleries) before rendering prose.
+  let source = "";
+  let cursor = 0;
+  const openingTag = /<!--[\s\S]*?-->|<([a-z][a-z0-9-]*)(?=[\s/>])/gi;
+  let match: RegExpExecArray | null;
+  while ((match = openingTag.exec(markdown))) {
+    const start = match.index;
+    const end = match[1]
+      ? contentHtmlElementEnd(markdown, start, match[1].toLowerCase())
+      : start + match[0].length;
+    if (end < 0) continue;
+    source += markdown.slice(cursor, start);
+    const token = `${marker}${blocks.length}END`;
+    blocks.push(rewriteContentAssetPaths(markdown.slice(start, end), basePath));
+    const block = !match[1] || /^(?:address|article|aside|audio|blockquote|details|div|dl|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|iframe|main|nav|ol|p|pre|script|section|style|table|ul|video)$/i.test(match[1]);
+    source += block ? `\n\n${token}\n\n` : token;
+    cursor = end;
+    openingTag.lastIndex = end;
+  }
+  source += markdown.slice(cursor);
+  // Preserve existing all-HTML documents byte-for-byte apart from asset URLs.
+  const tokenPattern = new RegExp(`${marker}(\\d+)END`, "g");
+  if (blocks.length && !source.replace(tokenPattern, "").trim()) {
+    return rewriteContentAssetPaths(markdown, basePath);
+  }
+  const html = renderMarkdownProse(source, basePath);
+  return html
+    .replace(new RegExp(`<p>(${marker}\\d+END)</p>`, "g"), "$1")
+    .replace(tokenPattern, (_token, index: string) => blocks[Number(index)]);
+}
+
+function contentHtmlElementEnd(value: string, start: number, name: string): number {
+  const openingEnd = findHtmlTagEnd(value, start + 1);
+  if (openingEnd < 0) return -1;
+  if (/^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/.test(name) || value[openingEnd - 1] === "/") return openingEnd + 1;
+  if (/^(?:script|style|textarea|title)$/.test(name)) {
+    const closingTag = new RegExp(`</${name}\\s*>`, "gi");
+    closingTag.lastIndex = openingEnd + 1;
+    const closing = closingTag.exec(value);
+    return closing ? closing.index + closing[0].length : -1;
+  }
+  let depth = 1;
+  let cursor = openingEnd + 1;
+  while ((cursor = value.indexOf("<", cursor)) >= 0) {
+    if (value.startsWith("<!--", cursor)) {
+      const commentEnd = value.indexOf("-->", cursor + 4);
+      if (commentEnd < 0) return -1;
+      cursor = commentEnd + 3;
+      continue;
+    }
+    const end = findHtmlTagEnd(value, cursor + 1);
+    if (end < 0) return -1;
+    const tag = parseHtmlTag(value.slice(cursor + 1, end));
+    if (tag && !tag.closing && /^(?:script|style|textarea|title)$/.test(tag.name)) {
+      const rawEnd = contentHtmlElementEnd(value, cursor, tag.name);
+      if (rawEnd < 0) return -1;
+      cursor = rawEnd;
+      continue;
+    }
+    if (tag?.name === name) {
+      if (tag.closing) depth -= 1;
+      else if (value[end - 1] !== "/") depth += 1;
+      if (!depth) return end + 1;
+    }
+    cursor = end + 1;
+  }
+  return -1;
+}
+
+function renderMarkdownProse(markdown: string, basePath: string): string {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const html: string[] = [];
   let paragraph: string[] = [];
@@ -1538,21 +1612,6 @@ function parseInlineMarkdown(value: string, basePath = "./"): string {
 
 function unescapeMarkdownPunctuation(value: string): string {
   return value.replace(/\\([\\`*{}[\]()#+\-.!_>"'])/g, "$1");
-}
-
-function looksLikeHtml(value: string): boolean {
-  const trimmed = value.trim();
-  for (let index = 0; index < trimmed.length; index += 1) {
-    if (trimmed[index] !== "<") continue;
-    let cursor = index + 1;
-    if (trimmed[cursor] === "/") cursor += 1;
-    if (!isAsciiLetter(trimmed[cursor] || "")) continue;
-    while (isHtmlTagNameCharacter(trimmed[cursor] || "")) cursor += 1;
-    const separator = trimmed[cursor] || "";
-    if (!isHtmlTagSeparator(separator)) continue;
-    if (findHtmlTagEnd(trimmed, cursor) >= 0) return true;
-  }
-  return false;
 }
 
 function normalizeMarkdownLinkHref(value: string): string {
@@ -1868,10 +1927,6 @@ function parseHtmlTag(value: string): { name: string; closing: boolean } | null 
 
 function isHtmlTagNameCharacter(value: string): boolean {
   return isAsciiLetter(value) || isAsciiDigit(value) || value === "-";
-}
-
-function isHtmlTagSeparator(value: string): boolean {
-  return isAsciiWhitespace(value) || value === ">" || value === "/";
 }
 
 function isAsciiLetter(value: string): boolean {

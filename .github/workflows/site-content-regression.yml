@@ -1,0 +1,28 @@
+name: Site content regression checks
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  site-content:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check public rendering
+        run: pnpm --filter @me3-core/site-renderer test
+      - name: Check editor, save, and reopen
+        run: pnpm --filter @me3/web exec vitest run src/components/TiptapEditor.site-roundtrip.test.ts src/utils/contentMarkdown.test.ts src/utils/siteContentAssets.test.ts src/components/GeneratedSitePreview.test.ts

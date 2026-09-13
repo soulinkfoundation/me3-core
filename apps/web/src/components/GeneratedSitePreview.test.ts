@@ -8,6 +8,7 @@ describe("GeneratedSitePreview", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
+    useWizardStore().profile.visibility = "public";
   });
 
   it("renders unsaved wizard state with the production site renderer", async () => {

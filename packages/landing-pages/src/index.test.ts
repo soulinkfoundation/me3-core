@@ -164,6 +164,7 @@ describe("landing pages package", () => {
       "starter-service-01",
       "starter-waitlist-01",
       "clinical-editorial-01",
+      "retreat-01",
     ]);
     expect(packs.every((pack) => pack.version === 1)).toBe(true);
     expect(packs.every((pack) => pack.selectable)).toBe(true);

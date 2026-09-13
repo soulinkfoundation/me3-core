@@ -1,4 +1,5 @@
 export const LANDING_PAGE_DESIGN_PACK_IDS = [
+  "retreat-01",
   "legacy-standard",
   "starter-event-01",
   "starter-service-01",
@@ -78,6 +79,12 @@ export const LANDING_PAGE_DESIGN_PACKS: readonly LandingPageDesignPackDefinition
     status: "starter",
     selectable: true,
     previewPath: null,
+  },
+  {
+    id: "retreat-01", version: 1, name: "Retreat",
+    description: "Immersive photography, warm cream and burgundy, and expressive serif headings.",
+    bestFor: "Retreats, experiential training, nature and wellbeing businesses.",
+    purposes: ["event", "service", "waitlist"], status: "starter", selectable: true, previewPath: null,
   },
 ] as const;
 
