@@ -379,7 +379,7 @@ function resolveLifeSnapshot(wheel: WheelSnapshotRow | null) {
       label: "Wheel of Life snapshot",
       visibility: "private",
       reason: "Current life snapshot for balancing advice.",
-      sourceRef: "/create?step=wheel-of-life",
+      sourceRef: "/journal/wheel-of-life",
       updatedAt: wheel.created_at,
     }),
   };

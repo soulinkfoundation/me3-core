@@ -276,7 +276,7 @@ function persistState() {
 }
 
 async function loadServerState() {
-  const response = await api.get<WheelResponse>("/mission-control/wheel");
+  const response = await api.get<WheelResponse>("/journal/wheel");
   return {
     schemaVersion: 1,
     segments: sanitizeSegments(response.settings?.segments),
@@ -296,7 +296,7 @@ async function migrateLocalSnapshotsIfNeeded(
   for (const snapshot of [...localState.snapshots].reverse()) {
     try {
       const response = await api.post<WheelSnapshotResponse>(
-        "/mission-control/wheel/snapshots",
+        "/journal/wheel/snapshots",
         {
           id: snapshot.id,
           createdAt: snapshot.createdAt,
@@ -341,7 +341,7 @@ function queueSettingsSync() {
   if (settingsSyncTimer) clearTimeout(settingsSyncTimer);
   settingsSyncTimer = setTimeout(async () => {
     try {
-      await api.patch("/mission-control/wheel/settings", {
+      await api.patch("/journal/wheel/settings", {
         segments: segments.value,
       });
       syncError.value = "";
@@ -403,7 +403,7 @@ async function saveSnapshot() {
   saving.value = true;
   try {
     const response = await api.post<WheelSnapshotResponse>(
-      "/mission-control/wheel/snapshots",
+      "/journal/wheel/snapshots",
       {
         id: localSnapshot.id,
         createdAt: localSnapshot.createdAt,

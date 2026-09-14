@@ -1040,6 +1040,9 @@ onBeforeUnmount(() => {
         />
       </div>
       <div class="journal__topbar-actions">
+        <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Wheel of Life" title="Wheel of Life" :to="{ path: '/journal/wheel-of-life', query: { date: selectedDate } }">
+          <UiIcon name="ChartPie" :size="16" />
+        </Button>
         <Button
           :color="voiceDictationState === 'listening' ? 'accent' : 'ghost'"
           shape="soft"

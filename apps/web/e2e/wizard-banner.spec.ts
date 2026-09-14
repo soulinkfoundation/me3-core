@@ -31,6 +31,6 @@ test.describe("Wizard Banner Step", () => {
   test("should allow skipping banner step", async ({ page }) => {
     await wizard.nextStep();
 
-    await wizard.expectStepName("Mission");
+    await wizard.expectStepName("Who you help");
   });
 });

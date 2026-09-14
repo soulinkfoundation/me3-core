@@ -1,3 +1,5 @@
+import { registerWheelOfLifeRoutes } from "./routes/wheel-of-life";
+import { registerGoalRoutes } from "./routes/goals";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -1049,6 +1051,8 @@ registerAccountsRoutes(app, { requireOwner, unauthorized });
 registerFilesRoutes(app, { requireOwner, unauthorized });
 registerJournalRoutes(app, { requireOwner, unauthorized });
 registerMissionControlRoutes(app, { requireOwner, unauthorized });
+registerWheelOfLifeRoutes(app, { requireOwner, unauthorized });
+registerGoalRoutes(app, { requireOwner, unauthorized });
 registerLocalExecutorRoutes(app, { requireOwner, unauthorized, getCoreApiOrigin });
 registerMobileRoutes(app, { requireOwner, unauthorized, getCoreApiOrigin, getCoreWebOrigin });
 registerPushNotificationRoutes(app, { requireOwner, unauthorized });

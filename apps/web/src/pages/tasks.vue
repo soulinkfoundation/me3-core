@@ -10,6 +10,7 @@ import {
 import { definePage } from "unplugin-vue-router/runtime";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError, api } from "../api";
+import GoalsDialog from "../components/tasks/GoalsDialog.vue";
 import AppDialog from "../components/AppDialog.vue";
 import Button from "../components/Button.vue";
 import IconPicker from "../components/IconPicker.vue";
@@ -60,6 +61,16 @@ type TaskDraft = {
 
 const route = useRoute();
 const router = useRouter();
+const goalsOpen = ref(route.query.goals === "1");
+watch(() => route.query.goals, (value) => { goalsOpen.value = value === "1"; });
+function closeGoals() {
+  goalsOpen.value = false;
+  if (route.query.goals) {
+    const { goals: _goals, ...query } = route.query;
+    void router.replace({ query });
+  }
+}
+
 const { toastSuccess } = useAppToast();
 
 const projects = ref<TaskProject[]>([]);
@@ -592,19 +603,26 @@ onBeforeUnmount(() => {
         </div>
       </details>
 
-      <Button
-        color="ghost"
-        shape="soft"
-        size="compact"
-        icon-only
-        aria-label="Add task"
-        title="Add task"
-        :disabled="loading || projects.length === 0"
-        @click="openNewTask"
-      >
-        <UiIcon name="Plus" :size="19" />
-      </Button>
+      <div class="tasks-topbar-actions">
+        <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Goals" title="Goals" aria-haspopup="dialog" @click="goalsOpen = true">
+          <UiIcon name="Goal" :size="19" />
+        </Button>
+        <Button
+          color="ghost"
+          shape="soft"
+          size="compact"
+          icon-only
+          aria-label="Add task"
+          title="Add task"
+          :disabled="loading || projects.length === 0"
+          @click="openNewTask"
+        >
+          <UiIcon name="Plus" :size="19" />
+        </Button>
+      </div>
     </header>
+
+    <GoalsDialog v-if="goalsOpen" @close="closeGoals" />
 
     <section class="tasks-workspace" aria-labelledby="tasks-view-title">
       <h1 id="tasks-view-title" class="visually-hidden">Tasks</h1>
@@ -944,7 +962,7 @@ onBeforeUnmount(() => {
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  grid-template-columns: 80px minmax(0, 1fr) 80px;
   align-items: center;
   min-height: var(--workspace-topbar-height);
   padding: var(--workspace-topbar-padding-block) 24px;
@@ -952,9 +970,9 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(16px);
 }
 
-.tasks-topbar > :last-child {
-  width: 36px;
-  height: 36px;
+.tasks-topbar-actions {
+  display: flex;
+  gap: 4px;
   justify-self: end;
 }
 

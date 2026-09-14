@@ -544,21 +544,9 @@ const MISSION_CONTROL_PLUGIN: CorePluginManifestSummary = {
       auth: "owner",
     },
     {
-      id: "mission.wheel.api",
-      path: "/api/mission-control/wheel",
-      methods: ["GET"],
-      auth: "owner",
-    },
-    {
-      id: "mission.wheel.settings.api",
-      path: "/api/mission-control/wheel/settings",
-      methods: ["PATCH"],
-      auth: "owner",
-    },
-    {
-      id: "mission.wheel.snapshots.api",
-      path: "/api/mission-control/wheel/snapshots",
-      methods: ["GET", "POST"],
+      id: "mission.goals.api",
+      path: "/api/tasks/goals",
+      methods: ["GET", "PATCH"],
       auth: "owner",
     },
     {
@@ -1446,7 +1434,7 @@ const JOURNAL_PLUGIN: CorePluginManifestSummary = {
   name: "ME3 Journal",
   version: "0.1.0",
   description:
-    "Private daily writing workspace for notes, braindumps, drafts, and longer-form capture.",
+    "Private daily writing and reflection, including notes, drafts, and Wheel of Life check-ins.",
   trustTier: "first_party",
   distribution: "workspace_package",
   installMode: "enabled_by_owner_config",
@@ -1465,6 +1453,24 @@ const JOURNAL_PLUGIN: CorePluginManifestSummary = {
     },
   ],
   routes: [
+    {
+      id: "journal.wheel.api",
+      path: "/api/journal/wheel",
+      methods: ["GET"],
+      auth: "owner",
+    },
+    {
+      id: "journal.wheel.settings.api",
+      path: "/api/journal/wheel/settings",
+      methods: ["PATCH"],
+      auth: "owner",
+    },
+    {
+      id: "journal.wheel.snapshots.api",
+      path: "/api/journal/wheel/snapshots",
+      methods: ["GET", "POST"],
+      auth: "owner",
+    },
     {
       id: "journal.day.read.api",
       path: "/api/journal/days/:date",

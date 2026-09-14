@@ -18,7 +18,6 @@ import WizardAvatar from "../components/wizard/WizardAvatar.vue";
 import WizardBanner from "../components/wizard/WizardBanner.vue";
 import WizardMission from "../components/wizard/WizardMission.vue";
 import WizardGoals from "../components/wizard/WizardGoals.vue";
-import WizardWheelOfLife from "../components/wizard/WizardWheelOfLife.vue";
 import WizardLinks from "../components/wizard/WizardLinks.vue";
 import WizardCallToAction from "../components/wizard/WizardCallToAction.vue";
 import WizardPages from "../components/wizard/WizardPages.vue";
@@ -73,7 +72,6 @@ const stepComponentById = {
   banner: WizardBanner,
   mission: WizardMission,
   goals: WizardGoals,
-  "wheel-of-life": WizardWheelOfLife,
   links: WizardLinks,
   "call-to-action": WizardCallToAction,
   pages: WizardPages,
@@ -212,8 +210,7 @@ const showPreview = computed(
   () =>
     !showIntroScreen.value &&
     wizard.currentStep < wizard.totalSteps &&
-    wizard.currentStepId !== "goals" &&
-    wizard.currentStepId !== "wheel-of-life",
+    wizard.currentStepId !== "goals",
 );
 
 // Check if WizardPages/Blog/Offerings/Bookings is in editing mode
@@ -255,6 +252,14 @@ function handleStepJump(step: number) {
 function applyRouteStep() {
   const step = typeof route.query.step === "string" ? route.query.step : "";
   if (!step) return;
+  if (step === "wheel-of-life" || step === "wheel") {
+    void router.replace("/journal/wheel-of-life");
+    return;
+  }
+  if (step === "goals" && wizard.siteRole === "profile" && !isOpeningWizard.value) {
+    void router.replace("/tasks?goals=1");
+    return;
+  }
   const navigated = wizard.goToStepId(step, { enableOptional: true });
   if (!navigated) return;
   showIntroScreen.value = false;
@@ -308,6 +313,10 @@ let wizardOpenRequest = 0;
 let wizardMounted = false;
 
 async function openWizardTarget() {
+  if (route.query.step === "wheel-of-life" || route.query.step === "wheel") {
+    await router.replace("/journal/wheel-of-life");
+    return;
+  }
   const requestId = ++wizardOpenRequest;
   let openedExistingSite = false;
   isOpeningWizard.value = true;
@@ -364,6 +373,10 @@ async function openWizardTarget() {
   } finally {
     if (requestId !== wizardOpenRequest) return;
     showIntroScreen.value = !openedExistingSite;
+    if (route.query.step === "goals" && wizard.siteRole === "profile") {
+      void router.replace("/tasks?goals=1");
+      return;
+    }
     applyRouteStep();
     isOpeningWizard.value = false;
   }

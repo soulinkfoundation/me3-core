@@ -31,6 +31,7 @@ declare module 'vue-router/auto-routes' {
     '/email/campaigns/create': RouteRecordInfo<'/email/campaigns/create', '/email/campaigns/create', Record<never, never>, Record<never, never>>,
     '/files': RouteRecordInfo<'/files', '/files', Record<never, never>, Record<never, never>>,
     '/journal': RouteRecordInfo<'/journal', '/journal', Record<never, never>, Record<never, never>>,
+    '/journal-wheel-of-life': RouteRecordInfo<'/journal-wheel-of-life', '/journal/wheel-of-life', Record<never, never>, Record<never, never>>,
     '/mission-control-wheel-of-life': RouteRecordInfo<'/mission-control-wheel-of-life', '/mission-control/wheel-of-life', Record<never, never>, Record<never, never>>,
     '/mobile/pair/[pairingId]': RouteRecordInfo<'/mobile/pair/[pairingId]', '/mobile/pair/:pairingId', { pairingId: ParamValue<true> }, { pairingId: ParamValue<false> }>,
     '/sites/': RouteRecordInfo<'/sites/', '/sites', Record<never, never>, Record<never, never>>,

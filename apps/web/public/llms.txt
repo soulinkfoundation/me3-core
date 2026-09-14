@@ -66,7 +66,7 @@ Generated from the typed ME3 knowledge package. This file is public-safe and sho
   Approval mode: owner_approval
   Side effect: internal_write
   Data boundary: Task and project data is private, owner-scoped, and plugin-owned.
-  App/API routes: /mission-control, /mission-control/wheel-of-life
+  App/API routes: /tasks, /tasks?goals=1
   Agent tool ids: mission.task.create, mission.memory.write, mission.approval.request
   Boundaries: Private memory writes should be visible and approval-aware. Public me.json remains Core-owned and separate from private Assistant memory.
 - Optional local daemon bridge (workspace.local_daemon_bridge)

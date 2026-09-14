@@ -403,7 +403,6 @@ export type WizardStepId =
   | "banner"
   | "mission"
   | "goals"
-  | "wheel-of-life"
   | "links"
   | "call-to-action"
   | "pages"
@@ -426,7 +425,6 @@ const WIZARD_STEP_IDS: readonly WizardStepId[] = [
   "banner",
   "mission",
   "goals",
-  "wheel-of-life",
   "links",
   "call-to-action",
   "pages",
@@ -449,7 +447,6 @@ const WIZARD_STEP_ID_ALIASES: Partial<Record<string, WizardStepId>> = {
   product: "offerings",
   products: "offerings",
   cta: "call-to-action",
-  wheel: "wheel-of-life",
 };
 
 export function normalizeWizardStepId(value: string): WizardStepId | null {
@@ -1546,11 +1543,10 @@ export const useWizardStore = defineStore("wizard", () => {
       { id: "banner", name: "Banner" },
       {
         id: "mission",
-        name: "Mission",
+        name: "Who you help",
       },
-      { id: "goals", name: "Goals" },
-      ...(siteRole.value === "profile"
-        ? [{ id: "wheel-of-life" as const, name: "Wheel of Life" }]
+      ...(siteRole.value === "organization"
+        ? [{ id: "goals" as const, name: "Site goals" }]
         : []),
       { id: "additional-features", name: "Additional Features" },
     ];

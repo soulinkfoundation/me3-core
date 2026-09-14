@@ -6073,7 +6073,7 @@ async function loadCoreContextLifeSnapshot(
         label: "Wheel of Life snapshot",
         visibility: "private",
         reason: "Current life snapshot for balancing advice.",
-        sourceRef: "/mission-control/wheel-of-life",
+        sourceRef: "/journal/wheel-of-life",
         updatedAt: row.created_at,
       }),
     };

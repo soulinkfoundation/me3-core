@@ -467,7 +467,7 @@ describe("Mission Control dashboard settings", () => {
     expect(sources[1]).toMatchObject({
       label: "Wheel of Life",
       status: "setup_required",
-      sourceRef: "/create?step=wheel-of-life",
+      sourceRef: "/journal/wheel-of-life",
     });
 
     await updateMissionDashboard(env, "owner", {

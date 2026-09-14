@@ -445,13 +445,13 @@ describe("wizard store", () => {
       expect(store.stepIds).toContain("goals");
       expect(store.stepIds).not.toContain("wheel-of-life");
       expect(store.stepNames).toContain("Logo");
-      expect(store.stepNames).toContain("Mission");
+      expect(store.stepNames).toContain("Who you help");
 
       store.activateDraftContext({ role: "profile" });
-      expect(store.stepIds).toContain("goals");
-      expect(store.stepIds).toContain("wheel-of-life");
+      expect(store.stepIds).not.toContain("goals");
+      expect(store.stepIds).not.toContain("wheel-of-life");
       expect(store.stepNames).toContain("Avatar");
-      expect(store.stepNames).toContain("Mission");
+      expect(store.stepNames).toContain("Who you help");
     });
   });
 
@@ -2170,9 +2170,7 @@ describe("wizard store", () => {
         "Basics",
         "Avatar",
         "Banner",
-        "Mission",
-        "Goals",
-        "Wheel of Life",
+        "Who you help",
         "Additional Features",
         "Publish",
       ]);

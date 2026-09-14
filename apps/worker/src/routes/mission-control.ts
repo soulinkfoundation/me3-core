@@ -12,7 +12,6 @@ import {
   createMissionProject,
   createMissionTask,
   createMissionTaskFromJournal,
-  createMissionWheelSnapshot,
   deleteMissionContextSource,
   deleteMissionMemory,
   getMissionDaemonStatus,
@@ -21,7 +20,6 @@ import {
   getMissionProjectsSummary,
   getMissionSetup,
   getMissionTaskDetail,
-  getMissionWheel,
   listMissionAgentRuns,
   listMissionApprovals,
   listMissionContextSources,
@@ -30,7 +28,6 @@ import {
   listMissionPluginActivity,
   listMissionProjects,
   listMissionTaskPage,
-  listMissionWheelSnapshots,
   listMissionDaemonAudit,
   resolveMissionApproval,
   startMissionDaemonPairing,
@@ -42,7 +39,6 @@ import {
   updateMissionMemory,
   updateMissionProject,
   updateMissionTask,
-  updateMissionWheelSettings,
 } from "../mission-control";
 import { isCorePluginEnabled } from "../plugins";
 
@@ -149,73 +145,6 @@ export function registerMissionControlRoutes(app: AppHono, deps: OwnerRouteDeps)
       }
     },
   );
-
-  app.get("/api/mission-control/wheel", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    const blocked = await requireMissionControlPlugin(c);
-    if (blocked) return blocked;
-
-    try {
-      return c.json(await getMissionWheel(c.env, ownerId));
-    } catch (error) {
-      return missionControlErrorResponse(c, error);
-    }
-  });
-
-  app.patch("/api/mission-control/wheel/settings", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    const blocked = await requireMissionControlPlugin(c);
-    if (blocked) return blocked;
-
-    try {
-      return c.json(
-        await updateMissionWheelSettings(
-          c.env,
-          ownerId,
-          await c.req.json().catch(() => ({})),
-        ),
-      );
-    } catch (error) {
-      return missionControlErrorResponse(c, error);
-    }
-  });
-
-  app.get("/api/mission-control/wheel/snapshots", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    const blocked = await requireMissionControlPlugin(c);
-    if (blocked) return blocked;
-
-    try {
-      return c.json(
-        await listMissionWheelSnapshots(c.env, ownerId, c.req.query("limit")),
-      );
-    } catch (error) {
-      return missionControlErrorResponse(c, error);
-    }
-  });
-
-  app.post("/api/mission-control/wheel/snapshots", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    const blocked = await requireMissionControlPlugin(c);
-    if (blocked) return blocked;
-
-    try {
-      return c.json(
-        await createMissionWheelSnapshot(
-          c.env,
-          ownerId,
-          await c.req.json().catch(() => ({})),
-        ),
-        201,
-      );
-    } catch (error) {
-      return missionControlErrorResponse(c, error);
-    }
-  });
 
   app.post("/api/mission-control/projects", async (c) => {
     const ownerId = await deps.requireOwner(c);

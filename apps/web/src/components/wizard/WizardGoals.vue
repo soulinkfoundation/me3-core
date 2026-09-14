@@ -1,146 +1,36 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { api } from "../../api";
+import { ref } from "vue";
+import { useWizardStore, type WizardSiteGoal } from "../../stores/wizard";
 import { useAppToast } from "../../composables/useAppToast";
-import {
-  useWizardStore,
-  type WizardSiteGoal,
-} from "../../stores/wizard";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 
-type MissionGoal = WizardSiteGoal;
-
-type MissionDashboardResponse = {
-  settings: {
-    goals?: MissionGoal[];
-  };
-  data?: {
-    "mission.goals"?: {
-      goals?: MissionGoal[];
-    };
-  };
-};
-
-const goals = ref<MissionGoal[]>([]);
 const wizard = useWizardStore();
-const isOrganization = computed(() => wizard.siteRole === "organization");
-const loading = ref(true);
-const saving = ref(false);
-const error = ref("");
 const { toastSuccess } = useAppToast();
-let saveQueued = false;
-
-function createGoalId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return `goal-${crypto.randomUUID()}`;
-  }
-  return `goal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
+const goals = ref<WizardSiteGoal[]>(wizard.profile.business.goals.map((goal) => ({ ...goal })));
 function addGoal() {
-  goals.value.push({
-    id: createGoalId(),
-    title: "",
-    status: "active",
-  });
+  goals.value.push({ id: `goal-${crypto.randomUUID()}`, title: "", status: "active" });
 }
-
-async function saveGoals() {
-  if (saving.value) {
-    saveQueued = true;
-    return;
-  }
-  saving.value = true;
-  error.value = "";
-  try {
-    if (isOrganization.value) {
-      const siteGoals = goals.value
-        .map((goal) => ({ ...goal, title: goal.title.trim() }))
-        .filter((goal) => goal.title);
-      wizard.updateProfile({
-        business: {
-          ...wizard.profile.business,
-          goals: siteGoals,
-        },
-      });
-      goals.value = siteGoals;
-      toastSuccess("Site goals saved");
-      return;
-    }
-
-    const response = await api.patch<MissionDashboardResponse>(
-      "/mission-control/dashboard",
-      {
-        goals: goals.value
-          .map((goal) => ({ ...goal, title: goal.title.trim() }))
-          .filter((goal) => goal.title),
-      },
-    );
-    if (!saveQueued) {
-      goals.value =
-        response.settings.goals ||
-        response.data?.["mission.goals"]?.goals ||
-        [];
-      toastSuccess("Goals saved");
-    }
-  } catch (err) {
-    error.value =
-      err instanceof Error ? err.message : "Goals could not be saved.";
-  } finally {
-    saving.value = false;
-    if (saveQueued) {
-      saveQueued = false;
-      void saveGoals();
-    }
-  }
+function saveGoals() {
+  const siteGoals = goals.value.map((goal) => ({ ...goal, title: goal.title.trim() })).filter((goal) => goal.title);
+  wizard.updateProfile({ business: { ...wizard.profile.business, goals: siteGoals } });
+  goals.value = siteGoals;
+  toastSuccess("Site goals saved");
 }
-
-async function removeGoal(goalId: string) {
+function removeGoal(goalId: string) {
   goals.value = goals.value.filter((goal) => goal.id !== goalId);
-  await saveGoals();
+  saveGoals();
 }
-
-onMounted(async () => {
-  if (isOrganization.value) {
-    goals.value = wizard.profile.business.goals.map((goal) => ({ ...goal }));
-    loading.value = false;
-    return;
-  }
-
-  try {
-    const response = await api.get<MissionDashboardResponse>(
-      "/mission-control/dashboard",
-    );
-    goals.value =
-      response.settings.goals ||
-      response.data?.["mission.goals"]?.goals ||
-      [];
-  } catch (err) {
-    error.value =
-      err instanceof Error ? err.message : "Goals could not be loaded.";
-  } finally {
-    loading.value = false;
-  }
-});
 </script>
 
 <template>
-  <div class="step-goals" :aria-busy="saving">
-    <h2>Goals</h2>
+  <div class="step-goals">
+    <h2>Site goals</h2>
     <p class="section-desc">
-      {{
-        isOrganization
-          ? "Keep the outcomes this site is working towards here."
-          : "Keep the outcomes you are actively working towards here."
-      }}
+      Keep the outcomes this site is working towards here.
     </p>
 
-    <p v-if="loading" class="section-desc" role="status">
-      Loading goals...
-    </p>
-
-    <div v-else class="goal-list">
+    <div class="goal-list">
       <div
         v-for="(goal, index) in goals"
         :key="goal.id"
@@ -191,15 +81,12 @@ onMounted(async () => {
       shape="soft"
       size="compact"
       type="button"
-      :disabled="loading"
       @click="addGoal"
     >
       <UiIcon name="Plus" :size="16" aria-hidden="true" />
       Add goal
     </Button>
 
-    <p v-if="saving" class="save-status" role="status">Saving...</p>
-    <p v-if="error" class="save-error" role="alert">{{ error }}</p>
   </div>
 </template>
 
@@ -209,8 +96,7 @@ onMounted(async () => {
   margin-bottom: 8px;
 }
 
-.section-desc,
-.save-status {
+.section-desc {
   color: var(--color-text-muted);
   font-size: 14px;
   margin-bottom: 24px;
@@ -291,16 +177,6 @@ onMounted(async () => {
   color: var(--color-bg);
   font-size: 14px;
   font-weight: 700;
-}
-
-.save-status {
-  margin: 12px 0 0;
-}
-
-.save-error {
-  margin: 12px 0 0;
-  color: #ef4444;
-  font-size: 13px;
 }
 
 @media (max-width: 640px) {

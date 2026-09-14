@@ -26,21 +26,6 @@ test.describe("Wizard Full Flow", () => {
       }
     });
 
-    await page.route("**/api/mission-control/dashboard", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ settings: { goals: [] } }),
-      });
-    });
-
-    await page.route("**/api/mission-control/wheel", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ settings: { segments: [] }, snapshots: [] }),
-      });
-    });
   });
 
   test("should complete full wizard journey from start to publish", async ({
@@ -67,19 +52,11 @@ test.describe("Wizard Full Flow", () => {
     await wizard.expectStepName("Banner");
     await wizard.nextStep();
 
-    // Step 4: Mission
-    await wizard.expectStepName("Mission");
+    // Step 4: Who you help
+    await wizard.expectStepName("Who you help");
     await wizard.nextStep();
 
-    // Step 5: Goals
-    await wizard.expectStepName("Goals");
-    await wizard.nextStep();
-
-    // Step 6: Wheel of Life
-    await wizard.expectStepName("Wheel of Life");
-    await wizard.nextStep();
-
-    // Step 7: Additional Features
+    // Step 5: Additional Features
     await wizard.expectStepName("Additional Features");
     await wizard.nextStep();
 
@@ -157,7 +134,7 @@ test.describe("Wizard Full Flow", () => {
     await wizard.expectStepShortcutEnabled("Basics", true);
     await wizard.expectStepShortcutEnabled("Avatar", true);
     await wizard.expectStepShortcutEnabled("Banner", true);
-    await wizard.expectStepShortcutEnabled("Mission", false);
+    await wizard.expectStepShortcutEnabled("Who you help", false);
 
     await wizard.clickStepShortcut("Basics");
     await wizard.expectStepName("Basics");

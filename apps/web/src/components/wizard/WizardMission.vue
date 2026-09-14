@@ -71,7 +71,7 @@ const businessSolution = computed({
 
 <template>
   <div class="step-mission">
-    <h2>Mission</h2>
+    <h2>Who you help</h2>
     <p class="step-desc">
       {{
         isOrganization
