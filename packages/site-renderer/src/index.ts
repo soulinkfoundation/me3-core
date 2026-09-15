@@ -446,7 +446,7 @@ function pageShell(
     ? `<link rel="icon" href="${escapeHtml(faviconPath)}">\n  <link rel="apple-touch-icon" href="${escapeHtml(faviconPath)}">`
     : "";
   const headLinks = [faviconLinks, fontLinks].filter(Boolean).join("\n  ");
-  const navigationStyle = getSiteNavigationStyle();
+  const navigationStyle = getSiteNavigationStyle(profile);
   const navigationScript = hasSiteNavigation(profile)
     ? buildNavigationDialogScript()
     : "";
@@ -458,7 +458,7 @@ function pageShell(
   <title>${escapeHtml(options.title)}</title>
   <meta name="description" content="${escapeHtml(options.description)}">
   ${headLinks}
-  <style>${siteCss(options.vibe, profile.links?._accent)}${options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(options.vibe)}${contentImageCss()}${contentAudioCss()}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}.main.no-banner .profile-header{margin-top:0}</style>
+  <style>${siteCss(options.vibe, profile.links?._accent)}${options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(options.vibe)}${contentImageCss()}${contentAudioCss()}${profilePolishCss()}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}.main.no-banner .profile-header{margin-top:0}</style>
 </head>
 <body data-vibe="${escapeHtml(options.vibe)}" data-navigation-style="${navigationStyle}">
   <div class="container">
@@ -473,9 +473,19 @@ function pageShell(
 
 type NavigationPlacement = "home" | "header";
 
-function getSiteNavigationStyle(): SiteNavigationStyle {
-  // Public pages use the same drawer at every viewport size, including legacy profiles.
-  return "compact";
+function getSiteNavigationStyle(profile: Me3SiteProfile): SiteNavigationStyle {
+  const groups = new Set<string>();
+  let count = 1; // Home is a top-level item too.
+  for (const page of profile.pages || []) {
+    if (page.visible === false || !page.slug) continue;
+    const group = page.navigationGroup?.trim().toLocaleLowerCase();
+    if (group && groups.has(group)) continue;
+    if (group) groups.add(group);
+    count++;
+  }
+  if ((profile.posts || []).some((post) => !post.draft)) count++;
+  if (profile.products?.length) count++;
+  return count <= 4 ? "standard" : "compact";
 }
 
 function hasSiteNavigation(profile: Me3SiteProfile): boolean {
@@ -504,8 +514,8 @@ function generateNav(
   const hasProducts = (profile.products || []).length > 0;
   if (pages.length === 0 && !hasPosts && !hasProducts) return "";
 
-  const style = getSiteNavigationStyle();
-  const drawerLinks = generateNavLinks({
+  const style = getSiteNavigationStyle(profile);
+  const linkOptions = {
     profile,
     pages,
     activeSlug,
@@ -513,12 +523,15 @@ function generateNav(
     sectionPaths,
     hasPosts,
     hasProducts,
-    drawer: true,
-  });
+  };
+  const drawerLinks = generateNavLinks({ ...linkOptions, drawer: true });
+  const inlineNavigation = style === "standard"
+    ? `<nav class="nav nav-inline" aria-label="Primary navigation">${generateNavLinks({ ...linkOptions, drawer: false })}</nav>`
+    : "";
   const menuIcon = `<svg class="site-menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`;
   const closeIcon = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg>`;
 
-  return `<div class="site-navigation site-navigation-${placement} site-navigation-${style}"><button class="site-menu-trigger" type="button" data-site-menu-open aria-label="Open menu" aria-haspopup="dialog" aria-controls="site-navigation-dialog" aria-expanded="false">${menuIcon}</button><dialog id="site-navigation-dialog" class="site-menu-dialog" data-site-menu-dialog aria-labelledby="site-navigation-title"><div class="site-menu-panel"><header class="site-menu-header"><span id="site-navigation-title" class="site-menu-title">Menu</span><button class="site-menu-close" type="button" data-site-menu-close aria-label="Close menu">${closeIcon}</button></header><nav class="site-menu-nav" aria-label="Primary navigation">${drawerLinks}</nav></div></dialog></div>`;
+  return `<div class="site-navigation site-navigation-${placement} site-navigation-${style}">${inlineNavigation}<button class="site-menu-trigger" type="button" data-site-menu-open aria-label="Open menu" aria-haspopup="dialog" aria-controls="site-navigation-dialog" aria-expanded="false">${menuIcon}</button><dialog id="site-navigation-dialog" class="site-menu-dialog" data-site-menu-dialog aria-labelledby="site-navigation-title"><div class="site-menu-panel"><header class="site-menu-header"><span id="site-navigation-title" class="site-menu-title">Menu</span><button class="site-menu-close" type="button" data-site-menu-close aria-label="Close menu">${closeIcon}</button></header><nav class="site-menu-nav" aria-label="Primary navigation">${drawerLinks}</nav></div></dialog></div>`;
 }
 
 function generateNavLinks(options: {
@@ -583,6 +596,27 @@ function buildNavigationDialogScript(): string {
       var closeButton = dialog && dialog.querySelector("[data-site-menu-close]");
       if (!trigger || !dialog || !closeButton || typeof dialog.showModal !== "function") return;
 
+      var navigation = trigger.closest(".site-navigation");
+      var inline = navigation.querySelector(".nav-inline");
+      var mobile = window.matchMedia("(max-width:700px)");
+      function updateNavigation() {
+        if (!inline) return;
+        // Measure the real labels in the available row, including loaded theme fonts.
+        navigation.classList.remove("site-navigation-overflow");
+        var collapsed = mobile.matches || inline.scrollWidth > navigation.clientWidth;
+        navigation.classList.toggle("site-navigation-overflow", collapsed);
+        inline.inert = collapsed;
+        if (!collapsed && dialog.open) dialog.close();
+      }
+      if (inline) {
+        updateNavigation();
+        window.addEventListener("resize", updateNavigation);
+        if (typeof ResizeObserver === "function") {
+          new ResizeObserver(updateNavigation).observe(navigation.parentElement);
+        }
+        if (document.fonts) document.fonts.ready.then(updateNavigation);
+      }
+
       function openMenu() {
         if (dialog.open) return;
         dialog.showModal();
@@ -603,7 +637,11 @@ function buildNavigationDialogScript(): string {
       dialog.addEventListener("close", function() {
         trigger.setAttribute("aria-expanded", "false");
         document.documentElement.classList.remove("site-menu-open");
-        trigger.focus();
+        if (inline && !inline.inert) {
+          inline.querySelector("a, summary").focus();
+        } else {
+          trigger.focus();
+        }
       });
     })();
   </script>`;
@@ -2041,21 +2079,43 @@ function contentAudioCss(): string {
 `;
 }
 
+function profilePolishCss(): string {
+  return `
+:root{--ui-shadow-sm:0 2px 4px color-mix(in srgb,var(--text) 6%,transparent),0 6px 16px color-mix(in srgb,var(--text) 5%,transparent);--ui-shadow-md:0 4px 8px color-mix(in srgb,var(--text) 7%,transparent),0 12px 28px color-mix(in srgb,var(--text) 8%,transparent)}
+body[data-vibe=tech]{--ui-shadow-sm:0 2px 4px #0006,0 6px 16px #0004;--ui-shadow-md:0 4px 8px #0008,0 12px 28px #0006}
+.avatar{box-shadow:var(--ui-shadow-md)}
+.buttons{gap:12px}
+.cta-button{min-height:52px;padding:12px 18px;line-height:1.4;overflow-wrap:anywhere;box-shadow:var(--ui-shadow-sm)}
+.cta-button.outline{border-width:1px;box-shadow:none}
+.collection-card,.blog-item,.shop-item{border-width:1px;box-shadow:var(--ui-shadow-sm)}
+.cta-button,.link-item,.collection-card,.blog-item,.shop-item{transition:transform .18s ease,box-shadow .18s ease}
+.nav-link{transition:background-color .18s ease,color .18s ease}
+.link-item:focus-visible,.collection-card:focus-visible,.blog-item:focus-visible,.shop-item:focus-visible{outline:3px solid var(--accent);outline-offset:4px}
+@media(hover:hover) and (pointer:fine){.cta-button:hover,.collection-card:hover,.blog-item:hover,.shop-item:hover{transform:translateY(-2px);box-shadow:var(--ui-shadow-md)}.link-item:hover{transform:translateY(-2px)}.nav-link:not(.active):hover{background:var(--border);color:var(--text)}}
+@media(prefers-reduced-motion:reduce){.cta-button,.link-item,.collection-card,.blog-item,.shop-item,.nav-link{transition:none}.cta-button:hover,.link-item:hover,.collection-card:hover,.blog-item:hover,.shop-item:hover{transform:none}}
+`;
+}
+
 function navigationGroupCss(): string {
   return `
 .container{position:relative}
 .site-menu-open{overflow:hidden}
 .site-navigation{display:flex;align-items:center;min-width:0}
-.site-navigation-home{justify-content:center;margin:28px 0 24px}
-.site-navigation-home + .main.no-banner{padding-top:80px}
-body .site-navigation-home.site-navigation-compact{position:absolute;top:16px;right:16px;z-index:10;margin:0;padding:0;border:0}
+.site-navigation-home{justify-content:center;margin:24px 32px}
+.main.no-banner{padding-top:48px}
+.site-navigation-home + .main.no-banner{padding-top:24px}
+.site-navigation-home:is(.site-navigation-compact,.site-navigation-overflow) + .main.no-banner{padding-top:88px}
+body .site-navigation-home:is(.site-navigation-compact,.site-navigation-overflow){position:absolute;top:16px;right:16px;z-index:10;margin:0;padding:0;border:0}
 .site-navigation-header{flex:1;justify-content:flex-end;min-width:0}
 .site-navigation-compact{justify-content:flex-end}
 .nav{align-items:center;margin:0}
 .page-header{display:flex;align-items:center;justify-content:space-between;gap:16px}
-.page-header .back-link{min-width:0;flex:0 1 auto}
+.page-header .back-link{min-width:0;max-width:40%;flex:0 0 auto}
 .page-header .back-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.page-header .nav-inline{justify-content:flex-end;flex-wrap:wrap}
+.nav-inline{flex-wrap:nowrap;flex-shrink:0;width:max-content}
+.nav-inline>.nav-link,.nav-inline .nav-group-toggle{white-space:nowrap}
+.site-navigation-overflow .nav-inline{display:none}
+.page-header .nav-inline{justify-content:flex-end}
 .page-header .nav-link{padding:9px 12px}
 .nav-group{position:relative}
 .nav-group>summary{list-style:none;cursor:pointer}
@@ -2067,13 +2127,13 @@ body .site-navigation-home.site-navigation-compact{position:absolute;top:16px;ri
 .nav-submenu{position:absolute;z-index:20;top:calc(100% + 6px);left:50%;display:grid;min-width:180px;padding:7px;transform:translateX(-50%);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);box-shadow:0 12px 30px rgba(0,0,0,.12)}
 .nav-submenu .nav-link{display:block;border-radius:var(--radius-sm);white-space:nowrap}
 .site-menu-trigger,.site-menu-close{font:inherit;color:var(--text);cursor:pointer}
-.site-menu-trigger{display:none;width:52px;height:52px;min-width:52px;min-height:52px;box-sizing:border-box;align-items:center;justify-content:center;padding:0;border:1px solid var(--border);border-radius:var(--radius-full);background:var(--surface);font-weight:800}
-.site-navigation-compact .site-menu-trigger{display:inline-flex}
+.site-menu-trigger{display:none;width:52px;height:52px;min-width:52px;min-height:52px;box-sizing:border-box;align-items:center;justify-content:center;padding:0;border:0;border-radius:var(--radius-full);background:var(--surface);box-shadow:var(--ui-shadow-md);font-weight:800}
+.site-navigation-compact .site-menu-trigger,.site-navigation-overflow .site-menu-trigger{display:inline-flex}
 .site-menu-icon{display:block;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
 .site-menu-dialog{box-sizing:border-box;width:100vw;max-width:none;height:100vh;height:100dvh;max-height:none;margin:0;padding:0;border:0;background:transparent;color:var(--text)}
 .site-menu-dialog::backdrop{background:rgba(0,0,0,.42)}
 .site-menu-dialog[open]{display:flex;justify-content:flex-end}
-.site-menu-panel{box-sizing:border-box;width:min(88vw,360px);height:100%;overflow-y:auto;padding:20px;background:var(--surface);border-left:1px solid var(--border);box-shadow:-18px 0 48px rgba(0,0,0,.16)}
+.site-menu-panel{box-sizing:border-box;width:min(88vw,360px);height:100%;overflow-y:auto;padding:20px;background:var(--surface);border:0;box-shadow:-18px 0 48px rgba(0,0,0,.16)}
 .site-menu-header{display:flex;min-height:48px;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
 .site-menu-title{font-size:1.25rem;font-weight:800}
 .site-menu-close{display:inline-flex;width:44px;height:44px;align-items:center;justify-content:center;padding:0;border:0;border-radius:var(--radius-full);background:var(--border)}
@@ -2087,7 +2147,7 @@ body .site-navigation-home.site-navigation-compact{position:absolute;top:16px;ri
 .site-menu-nav .nav-submenu{position:static;width:100%;min-width:0;box-sizing:border-box;margin:4px 0 6px;padding:2px 0 2px 14px;transform:none;border:0;border-left:1px solid var(--border);border-radius:0;background:transparent;box-shadow:none}
 .site-menu-nav .nav-submenu .nav-link{min-height:44px;box-sizing:border-box;white-space:normal}
 .nav-link:focus-visible,.nav-group-toggle:focus-visible,.site-menu-trigger:focus-visible,.site-menu-close:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-@media(max-width:700px){.site-navigation-standard .nav-inline{display:none}.site-navigation-standard .site-menu-trigger{display:inline-flex}.site-navigation-home{justify-content:flex-end}.page-header{padding:20px 20px 0}}
+@media(max-width:700px){body .site-navigation-home{position:absolute;top:16px;right:16px;z-index:10;margin:0;padding:0;border:0}.site-navigation-home + .main.no-banner{padding-top:88px}.site-navigation-standard .nav-inline{display:none}.site-navigation-standard .site-menu-trigger{display:inline-flex}.site-navigation-home{justify-content:flex-end}.page-header{padding:20px 20px 0}}
 @media(prefers-reduced-motion:reduce){.nav-group-chevron{transition:none}}
 `;
 }

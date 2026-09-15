@@ -56,7 +56,7 @@ describe("site generator", () => {
       ],
     );
 
-    expect(files["index.html"].match(/<details class="nav-group/g)).toHaveLength(1);
+    expect(files["index.html"].match(/<details class="nav-group/g)).toHaveLength(2);
     expect(files["index.html"]).toContain(
       '<summary class="nav-link nav-group-toggle">Services',
     );
@@ -77,13 +77,14 @@ describe("site generator", () => {
     );
   });
 
-  it("offers a compact accessible navigation drawer on every page", async () => {
+  it("offers an accessible drawer on every page when navigation exceeds four items", async () => {
     const files = await generateSiteHtml(
       {
         name: "Compact Site",
         avatar: "./files/avatar.jpg",
-        links: { _navigation_style: "compact" },
-        pages: [{ slug: "about", title: "About", file: "about.md" }],
+        pages: ["about", "classes", "events", "contact"].map((slug) => ({
+          slug, title: slug, file: `${slug}.md`,
+        })),
       },
       [{ name: "about.md", content: "About" }],
     );
@@ -100,7 +101,7 @@ describe("site generator", () => {
     );
     expect(files["index.html"]).not.toContain('<span>Menu</span>');
     expect(files["index.html"]).toContain(
-      ".site-navigation-home.site-navigation-compact{position:absolute;top:16px;right:16px",
+      ".site-navigation-home:is(.site-navigation-compact,.site-navigation-overflow){position:absolute;top:16px;right:16px",
     );
     expect(files["index.html"]).toContain('aria-haspopup="dialog"');
     expect(files["index.html"]).toContain(
@@ -116,12 +117,37 @@ describe("site generator", () => {
     );
   });
 
-  it("uses the top-right drawer at every width for legacy standard profiles", async () => {
-    const files = await generateSiteHtml({name: "Standard Site", links: {_navigation_style: "standard"}, pages: [{slug: "about", title: "About", file: "about.md"}]}, [{name: "about.md", content: "About"}]);
-    expect(files["index.html"]).toContain('data-navigation-style="compact"');
-    expect(files["index.html"]).not.toContain('<nav class="nav nav-inline"');
-    expect(files["index.html"].indexOf('<div class="site-navigation')).toBeLessThan(files["index.html"].indexOf('<main'));
-    expect(files["about.html"]).toContain('site-navigation-header site-navigation-compact');
+  it.each(["standard", "compact"])("restores inline navigation for short legacy %s profiles", async (style) => {
+    const files = await generateSiteHtml({
+      name: "Standard Site",
+      links: { _navigation_style: style },
+      pages: ["about", "classes", "contact"].map((slug) => ({ slug, title: slug, file: `${slug}.md` })),
+    }, [{ name: "about.md", content: "About" }]);
+    expect(files["index.html"]).toContain('data-navigation-style="standard"');
+    expect(files["index.html"]).toContain('<nav class="nav nav-inline"');
+    expect(files["index.html"]).toContain('aria-label="Open menu"');
+    expect(files["about.html"]).toContain('site-navigation-header site-navigation-standard');
+  });
+
+  it("counts visible groups once and includes published blog and shop destinations", async () => {
+    const profile = {
+      name: "Grouped site",
+      pages: [
+        { slug: "classes", title: "Classes", navigationGroup: "Explore" },
+        { slug: "events", title: "Events", navigationGroup: " explore " },
+        { slug: "hidden", title: "Hidden", visible: false },
+        { title: "Unpublished" },
+      ],
+      posts: [{ slug: "draft", title: "Draft", draft: true }],
+      products: [{ slug: "cup", title: "Cup" }],
+    };
+    const short = await generateSiteHtml(profile, []);
+    expect(short["index.html"]).toContain('data-navigation-style="standard"');
+    const four = await generateSiteHtml({ ...profile, posts: [{ slug: "story", title: "Story" }] }, []);
+    expect(four["index.html"]).toContain('data-navigation-style="standard"');
+    const five = await generateSiteHtml({ ...profile, pages: [...profile.pages, { slug: "about", title: "About" }], posts: [{ slug: "story", title: "Story" }] }, []);
+    expect(five["index.html"]).toContain('data-navigation-style="compact"');
+    expect(five["index.html"]).not.toContain('<nav class="nav nav-inline"');
   });
 
   it("publishes semantic native audio controls with responsive styling", async () => {
