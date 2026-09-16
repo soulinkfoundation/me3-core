@@ -14,6 +14,13 @@ export type { PublicLocationData, PublicLocationProfile } from "./location-displ
 
 type Me3LinkMap = Record<string, string | undefined>;
 
+export const SITE_LAYOUT_LINK_KEY = "_layout";
+export type SiteLayout = "classic" | "portrait";
+
+export function normalizeSiteLayout(value: unknown): SiteLayout {
+  return value === "portrait" ? "portrait" : "classic";
+}
+
 export const SITE_NAVIGATION_STYLE_LINK_KEY = "_navigation_style";
 export type SiteNavigationStyle = "standard" | "compact";
 
@@ -327,7 +334,7 @@ function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapa
     description,
     activeSlug: "",
     basePath: "./",
-    body: `${generateNav(profile, "", "./", "home")}${banner}
+    body: `${banner}
       <main class="main${banner ? "" : " no-banner"}">
         <header class="profile-header">
           ${avatar}
@@ -335,6 +342,7 @@ function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapa
           ${displayLocation ? `<p class="location">${escapeHtml(displayLocation)}</p>` : ""}
           ${profile.bio ? `<p class="bio">${parseInlineMarkdown(profile.bio)}</p>` : ""}
         </header>
+        ${generateNav(profile, "", "./", "home")}
         ${generateButtons(profile)}
         ${generateLinks(profile)}
         ${booking}
@@ -460,7 +468,7 @@ function pageShell(
   ${headLinks}
   <style>${siteCss(options.vibe, profile.links?._accent)}${options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(options.vibe)}${contentImageCss()}${contentAudioCss()}${profilePolishCss()}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}.main.no-banner .profile-header{margin-top:0}</style>
 </head>
-<body data-vibe="${escapeHtml(options.vibe)}" data-navigation-style="${navigationStyle}">
+<body data-vibe="${escapeHtml(options.vibe)}" data-navigation-style="${navigationStyle}" data-layout="${normalizeSiteLayout(profile.links?.[SITE_LAYOUT_LINK_KEY])}">
   <div class="container">
     ${options.body}
     ${options.footer}
@@ -2084,6 +2092,11 @@ function profilePolishCss(): string {
 :root{--ui-shadow-sm:0 2px 4px color-mix(in srgb,var(--text) 6%,transparent),0 6px 16px color-mix(in srgb,var(--text) 5%,transparent);--ui-shadow-md:0 4px 8px color-mix(in srgb,var(--text) 7%,transparent),0 12px 28px color-mix(in srgb,var(--text) 8%,transparent)}
 body[data-vibe=tech]{--ui-shadow-sm:0 2px 4px #0006,0 6px 16px #0004;--ui-shadow-md:0 4px 8px #0008,0 12px 28px #0006}
 .avatar{box-shadow:var(--ui-shadow-md)}
+body[data-layout=portrait] .main .profile-header{margin-top:24px}
+body[data-layout=portrait] .main.no-banner .profile-header{margin-top:0}
+body[data-layout=portrait] .profile-header .avatar{display:block;width:clamp(160px,48vw,220px);height:auto;aspect-ratio:1;object-fit:contain;box-sizing:border-box;border:0;border-radius:var(--radius);margin:0 auto 24px}
+body[data-layout=portrait] .profile-header .name{font-size:32px;line-height:1.2}
+body[data-layout=portrait] .profile-header .bio{max-width:440px;margin:12px auto 24px}
 .buttons{gap:12px}
 .cta-button{min-height:52px;padding:12px 18px;line-height:1.4;overflow-wrap:anywhere;box-shadow:var(--ui-shadow-sm)}
 .cta-button.outline{border-width:1px;box-shadow:none}
@@ -2101,10 +2114,9 @@ function navigationGroupCss(): string {
 .container{position:relative}
 .site-menu-open{overflow:hidden}
 .site-navigation{display:flex;align-items:center;min-width:0}
-.site-navigation-home{justify-content:center;margin:24px 32px}
+.site-navigation-home{justify-content:center;margin:24px 0}
 .main.no-banner{padding-top:48px}
-.site-navigation-home + .main.no-banner{padding-top:24px}
-.site-navigation-home:is(.site-navigation-compact,.site-navigation-overflow) + .main.no-banner{padding-top:88px}
+.main.no-banner:has(>.site-navigation-home:is(.site-navigation-compact,.site-navigation-overflow)){padding-top:88px}
 body .site-navigation-home:is(.site-navigation-compact,.site-navigation-overflow){position:absolute;top:16px;right:16px;z-index:10;margin:0;padding:0;border:0}
 .site-navigation-header{flex:1;justify-content:flex-end;min-width:0}
 .site-navigation-compact{justify-content:flex-end}
@@ -2147,7 +2159,7 @@ body .site-navigation-home:is(.site-navigation-compact,.site-navigation-overflow
 .site-menu-nav .nav-submenu{position:static;width:100%;min-width:0;box-sizing:border-box;margin:4px 0 6px;padding:2px 0 2px 14px;transform:none;border:0;border-left:1px solid var(--border);border-radius:0;background:transparent;box-shadow:none}
 .site-menu-nav .nav-submenu .nav-link{min-height:44px;box-sizing:border-box;white-space:normal}
 .nav-link:focus-visible,.nav-group-toggle:focus-visible,.site-menu-trigger:focus-visible,.site-menu-close:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-@media(max-width:700px){body .site-navigation-home{position:absolute;top:16px;right:16px;z-index:10;margin:0;padding:0;border:0}.site-navigation-home + .main.no-banner{padding-top:88px}.site-navigation-standard .nav-inline{display:none}.site-navigation-standard .site-menu-trigger{display:inline-flex}.site-navigation-home{justify-content:flex-end}.page-header{padding:20px 20px 0}}
+@media(max-width:700px){body .site-navigation-home{position:absolute;top:16px;right:16px;z-index:10;margin:0;padding:0;border:0}.main.no-banner:has(>.site-navigation-home){padding-top:88px}.site-navigation-standard .nav-inline{display:none}.site-navigation-standard .site-menu-trigger{display:inline-flex}.site-navigation-home{justify-content:flex-end}.page-header{padding:20px 20px 0}}
 @media(prefers-reduced-motion:reduce){.nav-group-chevron{transition:none}}
 `;
 }

@@ -3,6 +3,9 @@ import { defineStore } from "pinia";
 import { ref, computed, watch } from "vue";
 import {
   SITE_NAVIGATION_STYLE_LINK_KEY,
+  SITE_LAYOUT_LINK_KEY,
+  normalizeSiteLayout,
+  type SiteLayout,
   normalizeSiteNavigationStyle,
   type Me3SiteProfile,
   type SiteNavigationStyle,
@@ -81,6 +84,7 @@ export interface WizardProfile {
   linkOrder: string[]; // Order of link keys for drag-and-drop
   buttons: Me3Button[];
   navigationStyle: SiteNavigationStyle;
+  layout: SiteLayout;
   footer: WizardFooterConfig;
   newsletter: WizardNewsletterConfig;
   booking: WizardBookingConfig;
@@ -1414,6 +1418,7 @@ const defaultProfile: WizardProfile = {
   linkOrder: [],
   buttons: [],
   navigationStyle: "standard",
+  layout: "classic",
   footer: {
     mode: "default",
     text: "",
@@ -1780,6 +1785,7 @@ export const useWizardStore = defineStore("wizard", () => {
   // Update profile
   function updateProfile(updates: Partial<WizardProfile>) {
     const nextProfile = { ...profile.value, ...updates };
+    if ("layout" in updates) nextProfile.layout = normalizeSiteLayout(updates.layout);
     if ("navigationStyle" in updates) {
       nextProfile.navigationStyle = normalizeSiteNavigationStyle(
         updates.navigationStyle,
@@ -3418,6 +3424,10 @@ export const useWizardStore = defineStore("wizard", () => {
       };
     }
 
+    if (profile.value.layout === "portrait") {
+      me3.links = { ...(me3.links || {}), [SITE_LAYOUT_LINK_KEY]: "portrait" };
+    }
+
     // Store accent override if set
     if (accentOverride.value) {
       me3.links = {
@@ -4024,6 +4034,7 @@ export const useWizardStore = defineStore("wizard", () => {
         profile.value = {
           ...defaultProfile,
           ...storedProfile,
+          layout: normalizeSiteLayout(storedProfile.layout),
           navigationStyle: normalizeSiteNavigationStyle(
             storedProfile.navigationStyle,
           ),
@@ -4881,6 +4892,7 @@ export const useWizardStore = defineStore("wizard", () => {
       linkOrder,
       buttons,
       navigationStyle: normalizeSiteNavigationStyle(savedNavigationStyle),
+      layout: normalizeSiteLayout(links[SITE_LAYOUT_LINK_KEY]),
       footer,
       newsletter,
       booking,

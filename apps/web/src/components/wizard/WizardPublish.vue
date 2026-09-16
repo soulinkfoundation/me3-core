@@ -1,73 +1,18 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import JSZip from "jszip";
-import {
-  useWizardStore,
-  type WizardPage,
-  type WizardPost,
-  type WizardProduct,
-} from "../../stores/wizard";
+import { useWizardStore } from "../../stores/wizard";
 import { useAuthStore } from "../../stores/auth";
 import { usePublish } from "../../composables/usePublish";
-import { useAppToast } from "../../composables/useAppToast";
 import { useRouter } from "vue-router";
 import GeneratedSitePreview from "../GeneratedSitePreview.vue";
 import UiIcon from "../UiIcon.vue";
 import {
   vibes,
   selectableVibeIds,
-  getVibeCss,
-  getVibeFontUrl,
   type VibeId,
 } from "../../styles/vibes";
-import {
-  exportSiteContentToMarkdown,
-  type ExportedSiteContentAsset,
-} from "../../utils/siteContentAssets";
-
-function getImageExt(blob: Blob): string {
-  return blob.type === "image/png"
-    ? "png"
-    : blob.type === "image/webp"
-      ? "webp"
-      : blob.type === "image/gif"
-        ? "gif"
-        : "jpg";
-}
-
-function exportPageToMarkdown(page: WizardPage) {
-  return exportSiteContentToMarkdown(page.content, page.images || [], "./");
-}
-
-function exportPostToMarkdown(post: WizardPost) {
-  return exportSiteContentToMarkdown(post.content, post.images || [], "../");
-}
-
-function exportProductToMarkdown(product: WizardProduct) {
-  return exportSiteContentToMarkdown(
-    product.content,
-    product.images || [],
-    "../",
-  );
-}
-
-async function contentAssetBlob(
-  asset: ExportedSiteContentAsset,
-): Promise<Blob> {
-  if (asset.blob) return asset.blob;
-  if (!asset.sourceUrl) {
-    throw new Error(`Missing source for ${asset.relativePath}`);
-  }
-  const response = await fetch(asset.sourceUrl, { credentials: "same-origin" });
-  if (!response.ok) {
-    throw new Error(`Could not include ${asset.relativePath} in the download`);
-  }
-  return response.blob();
-}
 
 const wizard = useWizardStore();
-// Keep the existing exporter dormant while its product value is reassessed.
-const siteZipExportEnabled = false;
 const isOrganization = computed(() => wizard.siteRole === "organization");
 const auth = useAuthStore();
 const router = useRouter();
@@ -78,9 +23,6 @@ const {
   publishNeedsStorage,
   publish,
 } = usePublish();
-const { toastError } = useAppToast();
-
-const isDownloading = ref(false);
 
 const isLoggedIn = computed(() => auth.isAuthenticated);
 const canCustomizeFooter = computed(() => true);
@@ -106,251 +48,6 @@ function setAccentOverride(color: string) {
 
 function resetAccentOverride() {
   wizard.setAccentOverride(null);
-}
-
-async function downloadZip() {
-  isDownloading.value = true;
-
-  try {
-    const zip = new JSZip();
-
-    // Generate me.json
-    const me3Json = wizard.generateMe3Json();
-    zip.file("me.json", JSON.stringify(me3Json, null, 2));
-
-    // Helper to fetch image from URL and determine extension
-    async function fetchImageAsBlob(
-      url: string,
-    ): Promise<{ blob: Blob; ext: string } | null> {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) return null;
-        const blob = await response.blob();
-        // Determine extension from content-type
-        const contentType = response.headers.get("content-type") || "";
-        let ext = "jpg";
-        if (contentType.includes("png")) ext = "png";
-        else if (contentType.includes("webp")) ext = "webp";
-        else if (contentType.includes("gif")) ext = "gif";
-        return { blob, ext };
-      } catch {
-        return null;
-      }
-    }
-
-    // Add site logo - use blob if available, otherwise fetch from URL
-    if (wizard.profile.logoBlob) {
-      const ext = getImageExt(wizard.profile.logoBlob);
-      zip.file(`files/logo.${ext}`, wizard.profile.logoBlob);
-      me3Json.logo = `./files/logo.${ext}`;
-    } else if (wizard.profile.logo) {
-      const result = await fetchImageAsBlob(wizard.profile.logo);
-      if (result) {
-        zip.file(`files/logo.${result.ext}`, result.blob);
-        me3Json.logo = `./files/logo.${result.ext}`;
-      }
-    }
-
-    // Add avatar - use blob if available, otherwise fetch from URL
-    if (wizard.profile.avatarBlob) {
-      zip.file("files/avatar.jpg", wizard.profile.avatarBlob);
-    } else if (wizard.profile.avatar) {
-      const result = await fetchImageAsBlob(wizard.profile.avatar);
-      if (result) {
-        zip.file(`files/avatar.${result.ext}`, result.blob);
-        // Update me.json with correct extension
-        if (me3Json.avatar) {
-          me3Json.avatar = `./files/avatar.${result.ext}`;
-        }
-      }
-    }
-
-    // Add banner - use blob if available, otherwise fetch from URL
-    if (wizard.profile.bannerBlob) {
-      zip.file("files/banner.jpg", wizard.profile.bannerBlob);
-    } else if (wizard.profile.banner) {
-      const result = await fetchImageAsBlob(wizard.profile.banner);
-      if (result) {
-        zip.file(`files/banner.${result.ext}`, result.blob);
-        // Update me.json with correct extension
-        if (me3Json.banner) {
-          me3Json.banner = `./files/banner.${result.ext}`;
-        }
-      }
-    }
-
-    function testimonialBlobExt(blob: Blob): string {
-      return blob.type === "image/png"
-        ? "png"
-        : blob.type === "image/webp"
-          ? "webp"
-          : blob.type === "image/gif"
-            ? "gif"
-            : "jpg";
-    }
-
-    const publishableT = wizard.testimonialsEnabled
-      ? wizard.publishableTestimonials()
-      : [];
-    for (let i = 0; i < publishableT.length; i++) {
-      const t = publishableT[i];
-      const slot = i + 1;
-      if (t.avatarBlob) {
-        const ext = testimonialBlobExt(t.avatarBlob);
-        zip.file(`files/testimonial-${slot}.${ext}`, t.avatarBlob);
-      } else if (t.avatar?.trim()) {
-        const raw = t.avatar.trim();
-        if (raw.startsWith("data:") || raw.startsWith("blob:")) continue;
-        if (/^\.\/files\/testimonial-\d+\./i.test(raw)) continue;
-        const result = await fetchImageAsBlob(raw);
-        if (result && Array.isArray(me3Json.testimonials)) {
-          zip.file(`files/testimonial-${slot}.${result.ext}`, result.blob);
-          const entry = me3Json.testimonials[i] as { avatar?: string };
-          if (entry) entry.avatar = `./files/testimonial-${slot}.${result.ext}`;
-        }
-      }
-    }
-
-    // Update me.json in case logo/avatar/banner paths changed
-    if (me3Json.links && "_avatar_variants" in me3Json.links) {
-      delete me3Json.links._avatar_variants;
-      if (Object.keys(me3Json.links).length === 0) {
-        delete me3Json.links;
-      }
-    }
-    zip.file("me.json", JSON.stringify(me3Json, null, 2));
-
-    // Add pages (convert HTML to Markdown)
-    if (wizard.pagesEnabled) {
-      for (const page of wizard.pages) {
-        const exported = exportPageToMarkdown(page);
-        zip.file(`${page.slug}.md`, exported.markdown);
-
-        for (const asset of exported.assets) {
-          zip.file(asset.relativePath, await contentAssetBlob(asset));
-        }
-      }
-    }
-
-    // Add blog posts (convert HTML to Markdown)
-    if (wizard.blogEnabled) {
-      for (const post of wizard.posts) {
-        const exported = exportPostToMarkdown(post);
-        zip.file(`blog/${post.slug}.md`, exported.markdown);
-
-        for (const asset of exported.assets) {
-          zip.file(asset.relativePath, await contentAssetBlob(asset));
-        }
-      }
-    }
-
-    // Add products (convert HTML to Markdown)
-    if (wizard.shopEnabled) {
-      for (const product of wizard.products) {
-        const exported = exportProductToMarkdown(product);
-        zip.file(`shop/${product.slug}.md`, exported.markdown);
-
-        for (const asset of exported.assets) {
-          zip.file(asset.relativePath, await contentAssetBlob(asset));
-        }
-      }
-    }
-
-    // Add portable index.html for self-hosting with vibe CSS injected
-    try {
-      let portableHtml = await fetch("/portable-index.html").then((r) =>
-        r.text(),
-      );
-
-      // Inject the selected vibe CSS
-      const vibeCss = getVibeCss(wizard.vibe);
-      const vibeFontUrl = getVibeFontUrl(wizard.vibe);
-      const vibeFontLink = vibeFontUrl
-        ? `<!-- Google Fonts -->\n<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link rel="stylesheet" href="${vibeFontUrl}">`
-        : "";
-
-      // Add accent override if set
-      let cssOverrides = "";
-      if (wizard.accentOverride) {
-        cssOverrides += `\n/* Accent Override */\n:root, [data-theme="light"], [data-theme="dark"] { --color-accent: ${wizard.accentOverride}; --color-primary: ${wizard.accentOverride}; }`;
-      }
-
-      portableHtml = portableHtml.replace(
-        "/* VIBE_CSS_PLACEHOLDER */",
-        `/* Vibe: ${wizard.vibe} */\n${vibeCss}${cssOverrides}`,
-      );
-      portableHtml = portableHtml.replace(
-        "<!-- VIBE_FONT_PLACEHOLDER -->",
-        vibeFontLink,
-      );
-
-      zip.file("index.html", portableHtml);
-    } catch (e) {
-      console.warn("Could not fetch portable-index.html:", e);
-    }
-
-    // Add a README
-    const readme = `# ${wizard.profile.name} ME3 site
-
-This folder contains a portable ME3 site.
-
-## Files
-- \`index.html\` - Self-contained site viewer
-- \`me.json\` - Site data (ME3 protocol)
-- \`files/\` - Site media (images and audio)
-${wizard.pagesEnabled && wizard.pages.length > 0 ? wizard.pages.map((p) => `- \`${p.slug}.md\` - ${p.title}`).join("\n") : ""}
-${wizard.blogEnabled && wizard.posts.length > 0 ? wizard.posts.map((p) => `- \`blog/${p.slug}.md\` - ${p.title}`).join("\n") : ""}
-${wizard.shopEnabled && wizard.products.length > 0 ? wizard.products.map((p) => `- \`shop/${p.slug}.md\` - ${p.title}`).join("\n") : ""}
-
-## How to publish
-
-### Option 1: ME3
-1. Open your ME3 app
-2. Sign in and claim the site's username
-3. Upload this zip or the extracted folder
-
-### Option 2: Self-host anywhere
-Upload these files to any static hosting:
-- Netlify (drag & drop the folder)
-- Vercel
-- GitHub Pages
-- Cloudflare Pages
-- Any web server
-
-The site is fully portable - no lock-in!
-
-## How to view locally
-
-1. Extract this zip to a folder
-2. Start a local server in that folder:
-   \`\`\`
-   npx serve .
-   # or: python3 -m http.server 8000
-   \`\`\`
-3. Open http://localhost:3000 (or :8000) in your browser
-
-Note: Opening index.html directly (file://) won't work due to browser security.
-`;
-    zip.file("README.md", readme);
-
-    // Generate the zip
-    const content = await zip.generateAsync({ type: "blob" });
-
-    // Download it
-    const url = URL.createObjectURL(content);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${wizard.profile.handle || "my-me3-site"}.zip`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch (error) {
-    console.error("Download error:", error);
-    toastError("Failed to generate zip file");
-  } finally {
-    isDownloading.value = false;
-  }
 }
 
 async function publishToMe3() {
@@ -386,7 +83,21 @@ function closeFooterModal() {
 <template>
   <div class="step-publish">
     <h2>{{ isOrganization ? "This site is ready!" : "Your site is ready!" }}</h2>
-    <p class="step-desc">Choose a vibe, then publish.</p>
+    <p class="step-desc">Choose a layout and vibe, then publish.</p>
+
+    <fieldset class="layout-section">
+      <legend>Layout</legend>
+      <div class="layout-options">
+        <label class="layout-option" :class="{ selected: wizard.profile.layout === 'classic' }">
+          <input type="radio" name="site-layout" value="classic" :checked="wizard.profile.layout === 'classic'" @change="wizard.updateProfile({ layout: 'classic' })" />
+          <span><strong>Classic</strong><small>Round photo and a compact introduction.</small></span>
+        </label>
+        <label class="layout-option" :class="{ selected: wizard.profile.layout === 'portrait' }">
+          <input type="radio" name="site-layout" value="portrait" :checked="wizard.profile.layout === 'portrait'" @change="wizard.updateProfile({ layout: 'portrait' })" />
+          <span><strong>Portrait</strong><small>A larger photo with soft corners. Uses your existing crop.</small></span>
+        </label>
+      </div>
+    </fieldset>
 
     <!-- Vibe Selector -->
     <div class="vibe-section">
@@ -493,15 +204,6 @@ function closeFooterModal() {
         </p>
       </div>
 
-      <div v-if="siteZipExportEnabled" class="publish-action">
-        <button
-          class="btn secondary"
-          :disabled="isDownloading"
-          @click="downloadZip"
-        >
-          {{ isDownloading ? "Preparing..." : "Download .zip" }}
-        </button>
-      </div>
     </div>
 
     <!-- Footer Customization Modal -->
@@ -634,6 +336,17 @@ function closeFooterModal() {
 </template>
 
 <style scoped>
+.layout-section { margin: 24px 0; padding: 0; border: 0; min-width: 0; }
+.layout-section legend { font-weight: 600; margin-bottom: 12px; }
+.layout-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.layout-option { display: flex; align-items: flex-start; gap: 10px; padding: 16px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); cursor: pointer; }
+.layout-option.selected { border-color: var(--ui-accent); background: var(--ui-accent-soft); }
+.layout-option:focus-within { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 3px; }
+.layout-option input { flex: 0 0 auto; margin-top: 4px; accent-color: var(--ui-accent); }
+.layout-option strong, .layout-option small { display: block; }
+.layout-option small { margin-top: 4px; color: var(--ui-text-muted); line-height: 1.5; }
+@media (max-width: 540px) { .layout-options { grid-template-columns: 1fr; } }
+
 .step-publish {
   margin: 0 auto;
   max-width: 600px;

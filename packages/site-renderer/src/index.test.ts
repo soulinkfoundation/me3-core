@@ -2,6 +2,48 @@ import { describe, expect, it } from "vitest";
 import { generateSiteHtml } from "./index";
 
 describe("site generator", () => {
+  it.each([
+    ["classic", true], ["classic", false],
+    ["portrait", true], ["portrait", false],
+  ])("places homepage navigation after the bio for %s (banner: %s)", async (layout, withBanner) => {
+    const output = await generateSiteHtml({
+      name: "Profile",
+      bio: "A short introduction.",
+      banner: withBanner ? "./files/banner.jpg" : undefined,
+      links: { _layout: String(layout) },
+      pages: [{ slug: "about", title: "About" }],
+      buttons: [{ text: "Get in touch", url: "https://example.com" }],
+    }, []);
+    const html = output["index.html"];
+    const nav = html.indexOf('<div class="site-navigation');
+    expect(nav).toBeGreaterThan(html.indexOf('<p class="bio">'));
+    expect(nav).toBeLessThan(html.indexOf('<div class="buttons">'));
+    if (withBanner) expect(html.indexOf('<div class="banner">')).toBeLessThan(nav);
+  });
+
+  it.each(["warm", "me3", "paper", "tech"])("renders Portrait with unchanged image sources in the %s vibe", async (vibe) => {
+    const profile = {
+      name: "Portrait profile",
+      avatar: "./files/avatar.jpg",
+      banner: "./files/banner.jpg",
+      links: { _vibe: vibe, _layout: "portrait" },
+      pages: [{ slug: "about", title: "About", file: "about.md" }],
+    };
+    const output = await generateSiteHtml(profile, [{ name: "about.md", content: "# About" }]);
+    expect(output["index.html"]).toContain('data-layout="portrait"');
+    expect(output["index.html"]).toContain('src="./files/avatar.jpg"');
+    expect(output["index.html"]).toContain('src="./files/banner.jpg"');
+    expect(output["about.html"]).toContain('<h1>About</h1>');
+    const withoutImages = await generateSiteHtml({ name: "Portrait profile", links: profile.links }, []);
+    expect(withoutImages["index.html"]).toContain('class="main no-banner"');
+    expect(withoutImages["index.html"]).not.toContain('<img class="avatar"');
+  });
+
+  it.each([undefined, "classic", "unknown"])("defaults layout %s to Classic", async (layout) => {
+    const output = await generateSiteHtml({ name: "Classic profile", links: { _layout: layout } }, []);
+    expect(output["index.html"]).toContain('data-layout="classic"');
+  });
+
   it("generates profile HTML without publishing the private source document", async () => {
     const files = await generateSiteHtml(
       {

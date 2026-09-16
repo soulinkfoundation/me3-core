@@ -1096,6 +1096,33 @@ describe("wizard store", () => {
   });
 
   describe("reset", () => {
+    it("preserves the layout through drafts and published source, then resets to Classic", () => {
+      const store = useWizardStore();
+      expect(store.profile.layout).toBe("classic");
+      expect(store.generateMe3Json().links?._layout).toBeUndefined();
+      store.updateProfile({ name: "Portrait profile", layout: "portrait" });
+      const source = store.generateMe3Json();
+      expect(source.links?._layout).toBe("portrait");
+      setActivePinia(createPinia());
+      const restored = useWizardStore();
+      expect(restored.profile.layout).toBe("portrait");
+      restored.loadFromSiteContent({ name: source.name || "Portrait profile", links: source.links }, [], [], [], "portrait");
+      expect(restored.profile.layout).toBe("portrait");
+      expect(restored.profile.links._layout).toBeUndefined();
+      restored.updateProfile({ layout: "classic" });
+      expect(restored.generateMe3Json().links?._layout).toBeUndefined();
+      restored.reset();
+      expect(restored.profile.layout).toBe("classic");
+    });
+
+    it("keeps older sites on Classic and normalizes unknown layouts", () => {
+      const store = useWizardStore();
+      store.loadFromSiteContent({ name: "Older site" }, [], [], [], "older");
+      expect(store.profile.layout).toBe("classic");
+      store.loadFromSiteContent({ name: "Unknown", links: { _layout: "unknown" } }, [], [], [], "unknown");
+      expect(store.profile.layout).toBe("classic");
+    });
+
     it("should reset all state", () => {
       const store = useWizardStore();
       store.profile.name = "Test";

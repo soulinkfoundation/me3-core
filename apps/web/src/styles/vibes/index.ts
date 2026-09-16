@@ -1,16 +1,8 @@
 /**
- * Vibes - CSS-only themes for me3 sites
+ * Vibes - picker metadata for generated me3 sites
  *
- * Each vibe is a complete visual identity with its own
- * color palette, typography, and spacing.
+ * Published styling is owned by @me3-core/site-renderer.
  */
-
-// Import CSS as raw strings for bundling
-import warmCss from "./warm.css?raw";
-import techCss from "./tech.css?raw";
-import retroCss from "./retro.css?raw";
-import paperCss from "./paper.css?raw";
-import me3Css from "./me3.css?raw";
 
 export type VibeId =
   | "warm"
@@ -33,7 +25,6 @@ export interface Vibe {
   id: VibeId;
   name: string;
   description: string;
-  css: string;
   colors: VibePalette;
   fontFamily: string;
   mode: VibeMode;
@@ -45,7 +36,6 @@ export const vibes: Record<VibeId, Vibe> = {
     id: "warm",
     name: "warm",
     description: "Cozy and personal, like a handwritten letter",
-    css: warmCss,
     fontFamily: "Georgia, serif",
     colors: {
       bg: "#faf8f5",
@@ -61,7 +51,6 @@ export const vibes: Record<VibeId, Vibe> = {
     id: "tech",
     name: "tech",
     description: "Terminal aesthetic for builders",
-    css: techCss,
     fontFamily: "'JetBrains Mono', ui-monospace, monospace",
     colors: {
       bg: "#0a0a0a",
@@ -78,7 +67,6 @@ export const vibes: Record<VibeId, Vibe> = {
     id: "retro",
     name: "retro",
     description: "Pixel art vibes, 8-bit nostalgia",
-    css: retroCss,
     fontFamily: "'Press Start 2P', monospace",
     colors: {
       bg: "#1a1a2e",
@@ -95,7 +83,6 @@ export const vibes: Record<VibeId, Vibe> = {
     id: "natural",
     name: "paper",
     description: "Paper-white and editorial with a burnt-orange accent",
-    css: paperCss,
     fontFamily: "'Fraunces', 'Newsreader', serif",
     colors: {
       bg: "#fffaf2",
@@ -112,7 +99,6 @@ export const vibes: Record<VibeId, Vibe> = {
     id: "paper",
     name: "paper",
     description: "Paper-white and editorial with a burnt-orange accent",
-    css: paperCss,
     fontFamily: "'Fraunces', 'Newsreader', serif",
     colors: {
       bg: "#fffaf2",
@@ -129,7 +115,6 @@ export const vibes: Record<VibeId, Vibe> = {
     id: "me3",
     name: "me3",
     description: "Clean white ME3 look with brand green accents",
-    css: me3Css,
     fontFamily:
       '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     colors: {
@@ -156,13 +141,6 @@ export function normalizeVibeId(value: unknown): VibeId {
   return typeof value === "string" && isVibeId(value)
     ? value
     : defaultVibe;
-}
-
-/**
- * Get the CSS for a vibe by ID
- */
-export function getVibeCss(vibeId: VibeId): string {
-  return vibes[vibeId]?.css || vibes[defaultVibe].css;
 }
 
 /**
