@@ -131,6 +131,34 @@ describe("Accounts page", () => {
     expect(amountGrid.text()).toContain("Currency");
     expect(amountGrid.find("select").exists()).toBe(true);
   });
+
+  it("explains an estimated mixed-currency summary on demand", async () => {
+    vi.mocked(api.get).mockImplementation(async (endpoint) => {
+      if (endpoint.startsWith("/accounts/entries?")) return { total: 0, entries: [] };
+      if (endpoint.startsWith("/accounts/categories?")) return { categories: [] };
+      if (endpoint.startsWith("/accounts/stats?")) return {
+        stats: {
+          defaultCurrency: "EUR",
+          thisMonthCents: 1500,
+          lastMonthCents: 0,
+          thisMonthTotals: [{ currency: "EUR", amountCents: 500 }, { currency: "USD", amountCents: 1000 }],
+          lastMonthTotals: [],
+          thisMonthEstimate: { status: "estimated", targetCurrency: "EUR", amountCents: 1471, provider: "ECB", rateDates: ["2025-01-03"] },
+          lastMonthEstimate: { status: "not_needed", targetCurrency: "EUR", amountCents: 0 },
+        },
+      };
+      if (endpoint === "/accounts/stripe/status") return { connected: false };
+      if (endpoint === "/mission-control/projects") return { projects: [] };
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    });
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("≈ €14.71");
+    await wrapper.get(".accounts-estimate-note").trigger("click");
+    expect(wrapper.text()).toContain("Some amounts were converted to EUR using ECB reference rates");
+    expect(wrapper.text()).toContain("Original amounts: €5.00 + $10.00");
+  });
 });
 
 function mountPage() {

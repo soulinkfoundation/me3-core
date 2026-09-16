@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AccountsInputError,
   buildAccountCustomers,
@@ -8,9 +8,12 @@ import {
   parseCsvRows,
   updateFinancialEntry,
 } from "./accounts";
+import { estimateAccountCurrencyTotal } from "./account-exchange-rates";
 import type Stripe from "stripe";
 import type { AccountCustomerSourceRow } from "./accounts";
 import type { Env } from "./types";
+
+afterEach(() => vi.unstubAllGlobals());
 
 type TestEntry = {
   user_id: string;
@@ -51,6 +54,12 @@ type StoredFinancialEntry = {
 describe("accounts stats", () => {
   it("keeps monthly totals separated by currency", async () => {
     const today = new Date().toISOString().slice(0, 10);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      date: today,
+      base: "EUR",
+      quote: "USD",
+      rate: 1.1,
+    })));
     const env = {
       DB: new AccountsStatsDb([
         entry({ date: today, amount_cents: 500, currency: "USD" }),
@@ -73,6 +82,60 @@ describe("accounts stats", () => {
       { currency: "USD", amountCents: 500 },
     ]);
     expect(result.stats.defaultCurrency).toBe("USD");
+    expect(result.stats.thisMonthEstimate).toMatchObject({
+      status: "estimated",
+      targetCurrency: "USD",
+      amountCents: 1050,
+      provider: "ECB",
+    });
+  });
+});
+
+describe("account currency estimates", () => {
+  it("uses the prior published ECB rate for a weekend entry and caches that rate", async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      date: "2025-01-03",
+      base: "USD",
+      quote: "EUR",
+      rate: 0.97097,
+    }));
+    const values = new Map<string, Response>();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("caches", {
+      default: {
+        match: async (request: Request) => values.get(request.url),
+        put: async (request: Request, response: Response) => values.set(request.url, response.clone()),
+      },
+    });
+
+    const input = [{ date: "2025-01-04", currency: "USD", amountCents: 10_000 }];
+    await expect(estimateAccountCurrencyTotal("EUR", input)).resolves.toMatchObject({
+      status: "estimated",
+      amountCents: 9710,
+      rateDates: ["2025-01-03"],
+    });
+    await estimateAccountCurrencyTotal("EUR", input);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to separate currency totals when a required reference rate is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Unavailable", { status: 503 })));
+    await expect(estimateAccountCurrencyTotal("EUR", [
+      { date: "2025-01-03", currency: "USD", amountCents: 10_000 },
+      { date: "2025-01-03", currency: "EUR", amountCents: 500 },
+    ])).resolves.toEqual({ status: "unavailable", targetCurrency: "EUR" });
+  });
+
+  it("does not use an old rate as an estimate", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      date: "2024-12-20",
+      base: "USD",
+      quote: "EUR",
+      rate: 0.97,
+    })));
+    await expect(estimateAccountCurrencyTotal("EUR", [
+      { date: "2025-01-03", currency: "USD", amountCents: 10_000 },
+    ])).resolves.toEqual({ status: "unavailable", targetCurrency: "EUR" });
   });
 });
 
@@ -259,6 +322,21 @@ class AccountsStatsStatement {
   }
 
   async all<T>() {
+    if (this.sql.includes("GROUP BY date, UPPER(currency)")) {
+      const totals = new Map<string, number>();
+      for (const entry of this.filteredEntries()) {
+        const key = `${entry.date}:${entry.currency.toUpperCase()}`;
+        totals.set(key, (totals.get(key) || 0) + entry.amount_cents);
+      }
+      return {
+        results: [...totals.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, total]) => {
+            const [date, currency] = key.split(":");
+            return { date, currency, total };
+          }) as T[],
+      };
+    }
     if (!this.sql.includes("GROUP BY UPPER(currency)")) return { results: [] as T[] };
     const totals = new Map<string, number>();
     for (const entry of this.filteredEntries()) {

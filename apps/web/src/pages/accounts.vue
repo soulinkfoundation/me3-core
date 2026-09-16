@@ -43,11 +43,20 @@ type Entry = {
   notes: string | null;
 };
 type MoneyTotal = { currency: string; amountCents: number };
+type CurrencyEstimate = {
+  status: "estimated" | "not_needed" | "unavailable";
+  targetCurrency: string;
+  amountCents?: number;
+  provider?: "ECB";
+  rateDates?: string[];
+};
 type Stats = {
   thisMonthCents: number;
   lastMonthCents: number;
   thisMonthTotals?: MoneyTotal[];
   lastMonthTotals?: MoneyTotal[];
+  thisMonthEstimate?: CurrencyEstimate;
+  lastMonthEstimate?: CurrencyEstimate;
   defaultCurrency?: string;
 };
 type EntryForm = {
@@ -112,6 +121,7 @@ const saving = ref(false);
 const importing = ref(false);
 const syncing = ref(false);
 const entryDialogOpen = ref(false);
+const estimateInfo = ref<{ estimate: CurrencyEstimate; totals: MoneyTotal[]; title: string } | null>(null);
 const filtersOpen = ref(false);
 const editingEntryId = ref<string | null>(null);
 const formError = ref("");
@@ -516,6 +526,22 @@ function formatTotals(totals: MoneyTotal[] | undefined, cents: number, currency:
     : formatMoney(cents, currency);
 }
 
+function formatSummaryTotal(
+  estimate: CurrencyEstimate | undefined,
+  totals: MoneyTotal[] | undefined,
+  cents: number,
+  currency: string,
+): string {
+  return estimate?.status === "estimated" && typeof estimate.amountCents === "number"
+    ? `≈ ${formatMoney(estimate.amountCents, estimate.targetCurrency)}`
+    : formatTotals(totals, cents, currency);
+}
+
+function openEstimateInfo(title: string, estimate: CurrencyEstimate | undefined, totals: MoneyTotal[] | undefined) {
+  if (!estimate || estimate.status === "not_needed") return;
+  estimateInfo.value = { estimate, totals: totals || [], title };
+}
+
 function formatDate(value: string): string {
   const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value);
   return Number.isNaN(date.getTime())
@@ -595,8 +621,20 @@ onMounted(() => {
       <section id="accounts-panel" role="tabpanel" :aria-labelledby="`accounts-tab-${currentView === 'expense' ? 'expenses' : currentView}`">
         <PageLoading v-if="loading && currentView !== 'customers' && !stats" compact label="Loading accounts..." />
         <div v-else-if="currentView !== 'customers'" class="accounts-summary">
-          <div><span>This month</span><strong>{{ formatTotals(stats?.thisMonthTotals, stats?.thisMonthCents || 0, form.currency) }}</strong></div>
-          <div><span>Last month</span><strong>{{ formatTotals(stats?.lastMonthTotals, stats?.lastMonthCents || 0, form.currency) }}</strong></div>
+          <div>
+            <span>This month</span>
+            <strong>{{ formatSummaryTotal(stats?.thisMonthEstimate, stats?.thisMonthTotals, stats?.thisMonthCents || 0, form.currency) }}</strong>
+            <button v-if="stats?.thisMonthEstimate && stats.thisMonthEstimate.status !== 'not_needed'" type="button" class="accounts-estimate-note" @click="openEstimateInfo('This month', stats?.thisMonthEstimate, stats?.thisMonthTotals)">
+              {{ stats?.thisMonthEstimate?.status === 'estimated' ? 'Estimated' : 'Conversion unavailable' }} <UiIcon name="Info" :size="13" />
+            </button>
+          </div>
+          <div>
+            <span>Last month</span>
+            <strong>{{ formatSummaryTotal(stats?.lastMonthEstimate, stats?.lastMonthTotals, stats?.lastMonthCents || 0, form.currency) }}</strong>
+            <button v-if="stats?.lastMonthEstimate && stats.lastMonthEstimate.status !== 'not_needed'" type="button" class="accounts-estimate-note" @click="openEstimateInfo('Last month', stats?.lastMonthEstimate, stats?.lastMonthTotals)">
+              {{ stats?.lastMonthEstimate?.status === 'estimated' ? 'Estimated' : 'Conversion unavailable' }} <UiIcon name="Info" :size="13" />
+            </button>
+          </div>
         </div>
 
         <div class="accounts-table-wrap">
@@ -699,6 +737,19 @@ onMounted(() => {
       </form>
     </AppDialog>
 
+    <AppDialog :open="Boolean(estimateInfo)" labelled-by="accounts-estimate-title" close-on-backdrop @close="estimateInfo = null">
+      <section v-if="estimateInfo" class="accounts-dialog accounts-estimate-dialog">
+        <header class="accounts-dialog__header"><h2 id="accounts-estimate-title">{{ estimateInfo.title }} total</h2><Button color="ghost" shape="soft" size="compact" icon-only aria-label="Close" @click="estimateInfo = null"><UiIcon name="X" :size="18" /></Button></header>
+        <div class="accounts-dialog__content">
+          <p v-if="estimateInfo.estimate.status === 'estimated'">Some amounts were converted to {{ estimateInfo.estimate.targetCurrency }} using ECB reference rates for their entry dates. Your bank or payment provider may use different rates.</p>
+          <p v-else>ME3 could not get every reference rate needed for this total, so the currencies remain separate.</p>
+          <p class="accounts-estimate-dialog__totals">Original amounts: {{ formatTotals(estimateInfo.totals, 0, estimateInfo.estimate.targetCurrency) }}</p>
+          <p v-if="estimateInfo.estimate.rateDates?.length" class="accounts-estimate-dialog__rates">ECB rates from {{ estimateInfo.estimate.rateDates.map(formatDate).join(', ') }}.</p>
+        </div>
+        <footer class="accounts-dialog__actions"><Button color="primary" shape="soft" size="compact" @click="estimateInfo = null">Done</Button></footer>
+      </section>
+    </AppDialog>
+
     <AppDialog :open="entryDialogOpen" labelled-by="accounts-entry-title" close-on-backdrop @close="closeEntryDialog">
       <form class="accounts-dialog" @submit.prevent="saveEntry">
         <header class="accounts-dialog__header"><h2 id="accounts-entry-title">{{ editingEntryId ? "Edit account entry" : "Add account entry" }}</h2><Button color="ghost" shape="soft" size="compact" icon-only aria-label="Close" @click="closeEntryDialog"><UiIcon name="X" :size="18" /></Button></header>
@@ -759,6 +810,11 @@ onMounted(() => {
 .accounts-summary div { display: grid; gap: 4px; min-width: 0; padding: 2px 0 8px; }
 .accounts-summary span, .accounts-pagination span { color: var(--ui-text-muted); font-size: 12px; }
 .accounts-summary strong { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.accounts-estimate-note { display: inline-flex; width: fit-content; min-height: 28px; align-items: center; gap: 3px; margin: -2px 0 0 -4px; padding: 2px 4px; border: 0; border-radius: var(--ui-radius-sm); background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 11px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.accounts-estimate-note:hover, .accounts-estimate-note:focus-visible { color: var(--ui-text); background: var(--ui-surface-muted); outline: none; }
+.accounts-estimate-dialog p { margin: 0; color: var(--ui-text-muted); font-size: 14px; line-height: 1.5; }
+.accounts-estimate-dialog__totals { color: var(--ui-text) !important; font-weight: 650; }
+.accounts-estimate-dialog__rates { font-size: 12px !important; }
 .accounts-error { margin: 0; padding: 9px 11px; border-radius: var(--ui-radius-sm); background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 13px; }
 .accounts-import-feedback { color: var(--ui-text-muted); font-size: 12px; }
 .accounts-import-feedback summary { width: fit-content; cursor: pointer; }

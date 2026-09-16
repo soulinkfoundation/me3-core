@@ -1,4 +1,8 @@
 import Stripe from "stripe";
+import {
+  estimateAccountCurrencyTotal,
+  type AccountCurrencyEstimate,
+} from "./account-exchange-rates";
 import { getDefaultCommerceCurrency, getStripeSecretKey } from "./commerce-settings";
 import type { Env } from "./types";
 import { decodeMimeHeaderValue } from "../../../shared/email-headers";
@@ -52,6 +56,10 @@ type FinancialEntryRow = {
 type CurrencyTotalRow = {
   currency: string | null;
   total: number;
+};
+
+type DailyCurrencyTotalRow = CurrencyTotalRow & {
+  date: string;
 };
 
 export type AccountCustomerSourceRow = {
@@ -926,6 +934,8 @@ export async function getFinancialStats(env: Env, userId: string, entryTypeValue
   const lastMonth = getMonthWindow(-1);
   const [
     thisMonthTotalsResult,
+    thisMonthDailyTotalsResult,
+    lastMonthDailyTotalsResult,
     lastMonthTotalsResult,
     topCategoryResult,
     countResult,
@@ -941,6 +951,24 @@ export async function getFinancialStats(env: Env, userId: string, entryTypeValue
       )
         .bind(userId, entryType, thisMonth.start, thisMonth.end)
         .all<CurrencyTotalRow>(),
+      env.DB.prepare(
+        `SELECT date, UPPER(currency) AS currency, COALESCE(SUM(amount_cents), 0) AS total
+         FROM financial_entries
+         WHERE user_id = ? AND entry_type = ? AND date >= ? AND date < ? AND status = 'paid'
+         GROUP BY date, UPPER(currency)
+         ORDER BY date ASC, currency ASC`,
+      )
+        .bind(userId, entryType, thisMonth.start, thisMonth.end)
+        .all<DailyCurrencyTotalRow>(),
+      env.DB.prepare(
+        `SELECT date, UPPER(currency) AS currency, COALESCE(SUM(amount_cents), 0) AS total
+         FROM financial_entries
+         WHERE user_id = ? AND entry_type = ? AND date >= ? AND date < ? AND status = 'paid'
+         GROUP BY date, UPPER(currency)
+         ORDER BY date ASC, currency ASC`,
+      )
+        .bind(userId, entryType, lastMonth.start, lastMonth.end)
+        .all<DailyCurrencyTotalRow>(),
       env.DB.prepare(
         `SELECT UPPER(currency) AS currency, COALESCE(SUM(amount_cents), 0) AS total
          FROM financial_entries
@@ -971,6 +999,10 @@ export async function getFinancialStats(env: Env, userId: string, entryTypeValue
     ]);
   const thisMonthTotals = serializeCurrencyTotals(thisMonthTotalsResult.results);
   const lastMonthTotals = serializeCurrencyTotals(lastMonthTotalsResult.results);
+  const [thisMonthEstimate, lastMonthEstimate] = await Promise.all([
+    estimateMonthlyTotal(defaultCurrency, thisMonthDailyTotalsResult.results),
+    estimateMonthlyTotal(defaultCurrency, lastMonthDailyTotalsResult.results),
+  ]);
 
   return {
     stats: {
@@ -978,12 +1010,28 @@ export async function getFinancialStats(env: Env, userId: string, entryTypeValue
       lastMonthCents: sumCurrencyTotals(lastMonthTotals),
       thisMonthTotals,
       lastMonthTotals,
+      thisMonthEstimate,
+      lastMonthEstimate,
       defaultCurrency,
       topCategoryName: topCategoryResult?.category_name || null,
       topCategoryTotalCents: topCategoryResult?.total || 0,
       entriesCount: countResult?.count || 0,
     },
   };
+}
+
+async function estimateMonthlyTotal(
+  defaultCurrency: string,
+  rows: DailyCurrencyTotalRow[] | undefined,
+): Promise<AccountCurrencyEstimate> {
+  return estimateAccountCurrencyTotal(
+    defaultCurrency,
+    (rows || []).map((row) => ({
+      date: row.date,
+      currency: parseCurrency(row.currency) || "USD",
+      amountCents: Number(row.total) || 0,
+    })),
+  );
 }
 
 function serializeCurrencyTotals(rows: CurrencyTotalRow[] | undefined) {
