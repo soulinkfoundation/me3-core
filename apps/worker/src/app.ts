@@ -1,5 +1,6 @@
 import { registerWheelOfLifeRoutes } from "./routes/wheel-of-life";
 import { registerGoalRoutes } from "./routes/goals";
+import { registerNavigationFeatureRoutes } from "./routes/navigation-features";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -892,6 +893,7 @@ app.post("/api/auth/logout", (c) => {
 
 registerAssistantRoutes(app, { requireOwner, unauthorized, getSessionOwnerId, getSetupRequired });
 registerOnboardingRoutes(app, { requireOwner, unauthorized });
+registerNavigationFeatureRoutes(app, { requireOwner, unauthorized });
 
 app.get("/api/account", async (c) => {
   const ownerId = await requireOwner(c);

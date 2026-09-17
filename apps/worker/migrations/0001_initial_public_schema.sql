@@ -1047,6 +1047,20 @@ CREATE TABLE plugin_installations (
   installed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE owner_navigation_features (
+  user_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  visible INTEGER NOT NULL CHECK (visible IN (0, 1)),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, feature_id),
+  FOREIGN KEY (user_id) REFERENCES owner_profile(id) ON DELETE CASCADE
+);
+CREATE TABLE owner_feature_discovery (
+  user_id TEXT PRIMARY KEY,
+  dismissed_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES owner_profile(id) ON DELETE CASCADE
+);
 CREATE TABLE scheduling_request_audit (
   id TEXT PRIMARY KEY,
   request_id TEXT NOT NULL,

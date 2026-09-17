@@ -23,8 +23,19 @@ async function mountSideNav(
     soulinkConnected?: boolean;
     soulinkHref?: string;
   } = {},
+  navigationFeatures: Array<{ id: string; visible: boolean }> = [
+    { id: "assistant", visible: true },
+    { id: "journal", visible: true },
+    { id: "tasks", visible: true },
+    { id: "email", visible: true },
+    { id: "files", visible: true },
+    { id: "social", visible: true },
+    { id: "accounts", visible: true },
+  ],
 ) {
-  vi.mocked(api.get).mockResolvedValue({ plugins });
+  vi.mocked(api.get).mockImplementation((endpoint: string) =>
+    Promise.resolve(endpoint === "/navigation-features" ? { features: navigationFeatures } : { plugins }),
+  );
   invalidatePluginAccess();
 
   const router = createRouter({
@@ -153,6 +164,28 @@ describe("AppSideNav optional plugin links", () => {
 
     expect(wrapper.find('[aria-label="Socials"]').exists()).toBe(false);
     expect(wrapper.find('[aria-label="Accounts"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("hides optional workspaces when navigation features are not enabled", async () => {
+    const wrapper = await mountSideNav([
+      { id: "me3.journal", status: "installed", enabled: true },
+      { id: "me3.mission-control", status: "installed", enabled: true },
+      { id: "me3.social-publishing", status: "installed", enabled: true },
+      { id: "me3.accounts", status: "installed", enabled: true },
+    ], {}, [
+      { id: "assistant", visible: false },
+      { id: "journal", visible: false },
+      { id: "tasks", visible: false },
+      { id: "email", visible: false },
+      { id: "files", visible: false },
+      { id: "social", visible: false },
+      { id: "accounts", visible: false },
+    ]);
+
+    for (const label of ["Assistant", "Journal", "Tasks", "Email", "Files", "Socials", "Accounts"]) {
+      expect(wrapper.find(`[aria-label="${label}"]`).exists()).toBe(false);
+    }
     wrapper.unmount();
   });
 });

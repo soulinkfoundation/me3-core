@@ -71,6 +71,8 @@ describe("Core runtime migrations", () => {
     ).toBe(true);
     expect(db.tables.has("managed_runtime_write_leases")).toBe(true);
     expect(db.tables.has("owner_onboarding")).toBe(true);
+    expect(db.tables.has("owner_navigation_features")).toBe(true);
+    expect(db.tables.has("owner_feature_discovery")).toBe(true);
     expect(db.tables.has("calendar_source_event_dismissals")).toBe(true);
     expect(db.tables.has("drive_multipart_uploads")).toBe(true);
     expect(db.tables.has("drive_multipart_parts")).toBe(true);
@@ -197,6 +199,12 @@ describe("Core runtime migrations", () => {
     );
     expect(db.migrations.get("0047_subscriber_double_opt_in")).toBe(
       "2026-09-03-subscriber-double-opt-in-v1",
+    );
+    expect(db.migrations.get("0051_owner_navigation_features")).toBe(
+      "2026-09-17-owner-navigation-features-v1",
+    );
+    expect(db.migrations.get("0052_owner_feature_discovery")).toBe(
+      "2026-09-17-owner-feature-discovery-v1",
     );
     expect(
       db.statements.some(

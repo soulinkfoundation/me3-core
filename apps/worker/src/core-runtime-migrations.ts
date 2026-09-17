@@ -282,6 +282,59 @@ const runtimeMigrations: RuntimeMigration[] = [
       ).run();
     },
   },
+  {
+    id: "0051_owner_navigation_features",
+    checksum: "2026-09-17-owner-navigation-features-v1",
+    async apply(db) {
+      await db.prepare(
+        `CREATE TABLE IF NOT EXISTS owner_navigation_features (
+          user_id TEXT NOT NULL,
+          feature_id TEXT NOT NULL,
+          visible INTEGER NOT NULL CHECK (visible IN (0, 1)),
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (user_id, feature_id),
+          FOREIGN KEY (user_id) REFERENCES owner_profile(id) ON DELETE CASCADE
+        )`,
+      ).run();
+      // Preserve the complete navigation for every installation that exists
+      // when this migration runs. Owners created afterwards use the quieter
+      // first-run default until they opt into a workspace.
+      await db.prepare(
+        `INSERT OR IGNORE INTO owner_navigation_features (user_id, feature_id, visible)
+         SELECT id, feature_id, 1
+         FROM owner_profile
+         CROSS JOIN (
+           SELECT 'assistant' AS feature_id
+           UNION ALL SELECT 'journal'
+           UNION ALL SELECT 'tasks'
+           UNION ALL SELECT 'email'
+           UNION ALL SELECT 'files'
+           UNION ALL SELECT 'social'
+           UNION ALL SELECT 'accounts'
+         )`,
+      ).run();
+    },
+  },
+  {
+    id: "0052_owner_feature_discovery",
+    checksum: "2026-09-17-owner-feature-discovery-v1",
+    async apply(db) {
+      await db.prepare(
+        `CREATE TABLE IF NOT EXISTS owner_feature_discovery (
+          user_id TEXT PRIMARY KEY,
+          dismissed_at TEXT,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES owner_profile(id) ON DELETE CASCADE
+        )`,
+      ).run();
+      // Existing owners have already discovered the full navigation, so the
+      // first-run prompt is reserved for installations created after release.
+      await db.prepare(
+        `INSERT OR IGNORE INTO owner_feature_discovery (user_id, dismissed_at)
+         SELECT id, CURRENT_TIMESTAMP FROM owner_profile`,
+      ).run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

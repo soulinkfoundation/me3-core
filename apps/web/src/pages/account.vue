@@ -61,6 +61,20 @@ type AccountResponse = {
   };
 };
 
+type NavigationFeature = {
+  id:
+    | "assistant"
+    | "journal"
+    | "tasks"
+    | "email"
+    | "files"
+    | "social"
+    | "accounts";
+  name: string;
+  description: string;
+  visible: boolean;
+};
+
 type MailboxRecord = {
   id: string;
   aliasLocalPart: string;
@@ -372,6 +386,10 @@ const pluginsLoading = ref(false);
 const plugins = ref<PluginRecord[]>([]);
 const pluginActionLoading = ref<string | null>(null);
 const pluginsError = ref<string | null>(null);
+const navigationFeatures = ref<NavigationFeature[]>([]);
+const navigationFeaturesLoading = ref(false);
+const navigationFeatureActionLoading = ref<string | null>(null);
+const navigationFeaturesError = ref<string | null>(null);
 const localExecutorSetupOpen = ref(false);
 const localExecutorPairing = ref<LocalExecutorPairingInstructions | null>(null);
 const localExecutorPairingBusy = ref(false);
@@ -455,7 +473,7 @@ const openSection = ref({
   account: false,
   mailbox: false,
   payments: false,
-  plugins: false,
+  plugins: true,
   storage: route.query.section === "storage",
   timezone: false,
 });
@@ -1400,6 +1418,46 @@ async function loadPlugins() {
   }
 }
 
+async function loadNavigationFeatures() {
+  navigationFeaturesLoading.value = true;
+  navigationFeaturesError.value = null;
+  try {
+    const response = await api.get<{ features: NavigationFeature[] }>(
+      "/navigation-features",
+    );
+    navigationFeatures.value = response.features || [];
+  } catch (e: any) {
+    navigationFeaturesError.value =
+      e.message || "Failed to load navigation features";
+  } finally {
+    navigationFeaturesLoading.value = false;
+  }
+}
+
+async function setNavigationFeatureVisible(
+  feature: NavigationFeature,
+  visible: boolean,
+) {
+  navigationFeatureActionLoading.value = feature.id;
+  navigationFeaturesError.value = null;
+  try {
+    const response = await api.put<{ feature: NavigationFeature }>(
+      `/navigation-features/${encodeURIComponent(feature.id)}`,
+      { visible },
+    );
+    const index = navigationFeatures.value.findIndex(
+      (candidate) => candidate.id === response.feature.id,
+    );
+    if (index >= 0) navigationFeatures.value.splice(index, 1, response.feature);
+    window.dispatchEvent(new CustomEvent("me3:plugins-changed"));
+  } catch (e: any) {
+    navigationFeaturesError.value =
+      e.message || `Failed to update ${feature.name}`;
+  } finally {
+    navigationFeatureActionLoading.value = null;
+  }
+}
+
 function syncPlugin(plugin: PluginRecord) {
   const index = plugins.value.findIndex(
     (candidate) => candidate.id === plugin.id,
@@ -2269,6 +2327,7 @@ onMounted(async () => {
   void loadAiSettings();
   void loadEmailProviderSettings();
   void loadPlugins();
+  void loadNavigationFeatures();
   void loadAppConnections();
   void completeCoreGithubInstallFromRoute().then((completed) => {
     if (!completed) void loadCoreGithubUpdater();
@@ -2487,6 +2546,100 @@ onBeforeUnmount(() => {
             >
               {{ coreGithubConnectLabel }}
             </Button>
+          </div>
+        </section>
+
+        <section class="card accordion-card plugins-section">
+          <button
+            id="account-trigger-plugins"
+            class="accordion-trigger"
+            type="button"
+            :aria-expanded="openSection.plugins"
+            aria-controls="account-panel-plugins"
+            @click="openSection.plugins = !openSection.plugins"
+          >
+            <span class="accordion-title-wrap accordion-title-flex">
+              <h2>Features &amp; plugins</h2>
+            </span>
+            <span class="accordion-chevron" aria-hidden="true">▼</span>
+          </button>
+          <div
+            id="account-panel-plugins"
+            class="accordion-panel"
+            role="region"
+            aria-labelledby="account-trigger-plugins"
+            :hidden="!openSection.plugins"
+          >
+            <p class="field-hint feature-intro">
+              Choose the workspaces you want in navigation. Hiding one keeps its
+              data and supporting ME3 functionality available.
+            </p>
+            <PageLoading
+              v-if="navigationFeaturesLoading"
+              compact
+              label="Loading features..."
+            />
+            <p v-else-if="navigationFeaturesError" class="error">
+              {{ navigationFeaturesError }}
+            </p>
+            <div v-else class="feature-list">
+              <article
+                v-for="feature in navigationFeatures"
+                :key="feature.id"
+                class="feature-row"
+              >
+                <div class="feature-row__copy">
+                  <h3>{{ feature.name }}</h3>
+                  <p>{{ feature.description }}</p>
+                </div>
+                <label
+                  class="plugin-toggle"
+                  :class="{
+                    'is-busy': navigationFeatureActionLoading === feature.id,
+                  }"
+                >
+                  <input
+                    type="checkbox"
+                    class="plugin-toggle__input"
+                    :checked="feature.visible"
+                    :disabled="navigationFeatureActionLoading === feature.id"
+                    :aria-label="
+                      feature.visible
+                        ? `Hide ${feature.name} from navigation`
+                        : `Show ${feature.name} in navigation`
+                    "
+                    @change="
+                      setNavigationFeatureVisible(
+                        feature,
+                        ($event.target as HTMLInputElement).checked,
+                      )
+                    "
+                  />
+                  <span class="plugin-toggle__track" aria-hidden="true" />
+                </label>
+              </article>
+            </div>
+
+            <PageLoading
+              v-if="pluginsLoading"
+              compact
+              label="Loading plugins..."
+            />
+            <p v-else-if="pluginsError" class="error">{{ pluginsError }}</p>
+            <template v-else>
+              <PluginList
+                v-if="visibleAccountPlugins.length"
+                :plugins="visibleAccountPlugins"
+                :busy-plugin-ids="pluginBusyIds"
+                :show-local-executor-config="true"
+                :show-coming-soon="true"
+                @toggle="togglePlugin"
+                @configure-local-executor="openLocalExecutorSetup"
+              />
+              <p v-else-if="plugins.length === 0" class="field-hint">
+                No curated plugins are registered in this Core build.
+              </p>
+            </template>
           </div>
         </section>
 
@@ -2949,52 +3102,6 @@ onBeforeUnmount(() => {
             <p v-else class="error">
               Mailbox configuration is not available in this Core install.
             </p>
-          </div>
-        </section>
-
-        <section class="card accordion-card plugins-section">
-          <button
-            id="account-trigger-plugins"
-            class="accordion-trigger"
-            type="button"
-            :aria-expanded="openSection.plugins"
-            aria-controls="account-panel-plugins"
-            @click="openSection.plugins = !openSection.plugins"
-          >
-            <span class="accordion-title-wrap accordion-title-flex">
-              <h2>Plugins</h2>
-            </span>
-            <span class="accordion-chevron" aria-hidden="true">▼</span>
-          </button>
-          <div
-            id="account-panel-plugins"
-            class="accordion-panel"
-            role="region"
-            aria-labelledby="account-trigger-plugins"
-            :hidden="!openSection.plugins"
-          >
-            <PageLoading
-              v-if="pluginsLoading"
-              compact
-              label="Loading plugins..."
-            />
-            <p v-else-if="pluginsError" class="error">{{ pluginsError }}</p>
-
-            <template v-else>
-              <PluginList
-                v-if="visibleAccountPlugins.length"
-                :plugins="visibleAccountPlugins"
-                :busy-plugin-ids="pluginBusyIds"
-                :show-local-executor-config="true"
-                :show-coming-soon="true"
-                @toggle="togglePlugin"
-                @configure-local-executor="openLocalExecutorSetup"
-              />
-
-              <p v-else-if="plugins.length === 0" class="field-hint">
-                No curated plugins are registered in this Core build.
-              </p>
-            </template>
           </div>
         </section>
 
@@ -4549,7 +4656,105 @@ h1 {
 }
 
 .plugins-section {
-  order: 4;
+  order: 1;
+}
+
+.feature-intro {
+  margin: 0 0 12px;
+}
+
+.feature-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.feature-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border, var(--color-border));
+  border-radius: var(--ui-radius-md, 10px);
+  background: var(--ui-surface, var(--color-bg));
+}
+
+.feature-row__copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.feature-row h3 {
+  margin: 0;
+  color: var(--ui-text, var(--color-text));
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.feature-row p {
+  margin: 2px 0 0;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.plugin-toggle {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  cursor: pointer;
+}
+
+.plugin-toggle.is-busy {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.plugin-toggle__input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.plugin-toggle__track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--ui-border, var(--color-border));
+  transition: background 0.2s ease;
+}
+
+.plugin-toggle__track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--ui-bg, var(--color-bg));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  transition: transform 0.2s ease;
+}
+
+.plugin-toggle__input:checked + .plugin-toggle__track {
+  background: var(--ui-accent, var(--color-accent));
+}
+
+.plugin-toggle__input:checked + .plugin-toggle__track::after {
+  transform: translateX(18px);
+}
+
+.plugin-toggle__input:focus-visible + .plugin-toggle__track {
+  outline: 2px solid var(--ui-focus, var(--ui-accent, var(--color-accent)));
+  outline-offset: 2px;
+}
+
+.plugin-toggle__input:disabled + .plugin-toggle__track {
+  opacity: 0.55;
 }
 
 .app-connections-section {

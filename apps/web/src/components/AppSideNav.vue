@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import UiIcon from "./UiIcon.vue";
+import { api } from "../api";
 import { ASSISTANT_AVATAR_SRC } from "../utils/assistantBranding";
 import {
   APP_FEATURE_ICONS,
@@ -39,6 +40,23 @@ const journalInstalled = ref(false);
 const calendarInstalled = ref(false);
 const socialPublishingInstalled = ref(false);
 const accountsInstalled = ref(false);
+type NavigationFeatureId =
+  | "assistant"
+  | "journal"
+  | "tasks"
+  | "email"
+  | "files"
+  | "social"
+  | "accounts";
+const navigationFeatures = ref<Record<NavigationFeatureId, boolean>>({
+  assistant: false,
+  journal: false,
+  tasks: false,
+  email: false,
+  files: false,
+  social: false,
+  accounts: false,
+});
 const pluginChangedEvent = "me3:plugins-changed";
 
 function closeNavDrawer() {
@@ -78,7 +96,16 @@ function rowActive(kind: AppFeatureId): boolean {
 
 async function loadInstalledPluginNav() {
   try {
-    const plugins = await ensurePluginAccess();
+    const [plugins, featureResponse] = await Promise.all([
+      ensurePluginAccess(),
+      api.get<{
+        features: Array<{ id: NavigationFeatureId; visible: boolean }>;
+      }>("/navigation-features"),
+    ]);
+    navigationFeatures.value = featureResponse.features.reduce(
+      (features, feature) => ({ ...features, [feature.id]: feature.visible }),
+      { ...navigationFeatures.value },
+    );
     missionControlInstalled.value = plugins.some(
       (plugin) =>
         plugin.id === "me3.mission-control" &&
@@ -115,6 +142,15 @@ async function loadInstalledPluginNav() {
     calendarInstalled.value = false;
     socialPublishingInstalled.value = false;
     accountsInstalled.value = false;
+    navigationFeatures.value = {
+      assistant: false,
+      journal: false,
+      tasks: false,
+      email: false,
+      files: false,
+      social: false,
+      accounts: false,
+    };
   }
 }
 
@@ -177,6 +213,7 @@ watch(navDrawerOpen, (isOpen) => {
     >
       <nav class="app-side-nav__links" aria-label="Primary">
         <RouterLink
+          v-if="navigationFeatures.assistant"
           to="/assistant"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('assistant') }"
@@ -209,7 +246,7 @@ watch(navDrawerOpen, (isOpen) => {
         </RouterLink>
 
         <RouterLink
-          v-if="journalInstalled"
+          v-if="journalInstalled && navigationFeatures.journal"
           to="/journal"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('journal') }"
@@ -224,7 +261,7 @@ watch(navDrawerOpen, (isOpen) => {
         </RouterLink>
 
         <RouterLink
-          v-if="missionControlInstalled"
+          v-if="missionControlInstalled && navigationFeatures.tasks"
           to="/tasks"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('mission-control') }"
@@ -239,6 +276,7 @@ watch(navDrawerOpen, (isOpen) => {
         </RouterLink>
 
         <RouterLink
+          v-if="navigationFeatures.email"
           to="/email"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('email') }"
@@ -267,6 +305,7 @@ watch(navDrawerOpen, (isOpen) => {
         </RouterLink>
 
         <RouterLink
+          v-if="navigationFeatures.files"
           to="/files"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('files') }"
@@ -281,7 +320,7 @@ watch(navDrawerOpen, (isOpen) => {
         </RouterLink>
 
         <RouterLink
-          v-if="socialPublishingInstalled"
+          v-if="socialPublishingInstalled && navigationFeatures.social"
           to="/social"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('social') }"
@@ -296,7 +335,7 @@ watch(navDrawerOpen, (isOpen) => {
         </RouterLink>
 
         <RouterLink
-          v-if="accountsInstalled"
+          v-if="accountsInstalled && navigationFeatures.accounts"
           to="/accounts"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('accounts') }"
