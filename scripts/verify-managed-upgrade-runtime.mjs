@@ -24,21 +24,20 @@ export async function verifyManagedUpgradeRuntime(
   const attempts = positiveInteger(options.attempts, 15);
   const delayMs = nonNegativeInteger(options.delayMs, 2_000);
   const version = expectedReleaseTag.slice(1);
+  let lastFailure = "runtime response did not satisfy the release contract";
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      const [health, mobile, core] = await Promise.all([
-        fetchJson(`${publicOrigin}/health`, request),
-        fetchJson(`${publicOrigin}/api/mobile/config`, request),
-        fetchJson(`${publicOrigin}/api/core/version`, request),
-      ]);
-      if (runtimeMatches({
+    const probe = await probeRuntime(publicOrigin, request);
+    if (probe.ok) {
+      const { health, mobile, core } = probe;
+      const mismatches = runtimeMismatches({
         health,
         mobile,
         core,
         version,
         publicOrigin,
         canonicalHostname,
-      })) {
+      });
+      if (mismatches.length === 0) {
         return {
           ok: true,
           releaseTag: expectedReleaseTag,
@@ -48,18 +47,41 @@ export async function verifyManagedUpgradeRuntime(
           coreInstallId: mobile.installId,
         };
       }
-    } catch {
-      // A new Worker version and its custom hostname can take a short time to
-      // converge. Retry both transport and semantic release checks together.
+      lastFailure = `contract mismatch: ${mismatches.join(", ")}`;
+    } else {
+      lastFailure = `request failure: ${probe.failures.join(", ")}`;
     }
     if (attempt < attempts && delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
-  throw new Error("managed upgrade live runtime does not match");
+  throw new Error(`managed upgrade live runtime does not match (${lastFailure})`);
 }
 
-function runtimeMatches({
+async function probeRuntime(publicOrigin, request) {
+  const endpoints = [
+    ["health", `${publicOrigin}/health`],
+    ["mobile", `${publicOrigin}/api/mobile/config`],
+    ["core", `${publicOrigin}/api/core/version`],
+  ];
+  const results = await Promise.allSettled(
+    endpoints.map(([, url]) => fetchJson(url, request)),
+  );
+  const failures = results.flatMap((result, index) =>
+    result.status === "rejected"
+      ? [`${endpoints[index][0]} (${safeErrorMessage(result.reason)})`]
+      : [],
+  );
+  if (failures.length > 0) return { ok: false, failures };
+  return {
+    ok: true,
+    health: results[0].value,
+    mobile: results[1].value,
+    core: results[2].value,
+  };
+}
+
+function runtimeMismatches({
   health,
   mobile,
   core,
@@ -67,25 +89,61 @@ function runtimeMatches({
   publicOrigin,
   canonicalHostname,
 }) {
-  return (
-    health?.ok === true &&
-    health?.service === "me3-core" &&
-    health?.core?.version === version &&
-    health?.core?.releaseChannel === "stable" &&
-    ["db", "userAgent", "workersAi", "siteAssets"].every(
-      (binding) => health?.bindings?.[binding] === true,
-    ) &&
-    health?.hosts?.admin === canonicalHostname &&
-    health?.hosts?.api === canonicalHostname &&
-    /^core_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
-      mobile?.installId || "",
-    ) &&
-    safeOrigin(mobile?.publicURL) === publicOrigin &&
-    mobile?.mobileApiVersion === 1 &&
-    mobile?.auth?.pairing === "owner-approved-code" &&
-    core?.version === version &&
-    core?.releaseChannel === "stable"
+  const mismatches = [];
+  if (health?.ok !== true || health?.service !== "me3-core") {
+    mismatches.push("health identity");
+  }
+  if (
+    health?.core?.version !== version ||
+    health?.core?.releaseChannel !== "stable"
+  ) {
+    mismatches.push(`health release (received ${safeVersion(health?.core)})`);
+  }
+  const missingBindings = ["db", "userAgent", "workersAi", "siteAssets"].filter(
+    (binding) => health?.bindings?.[binding] !== true,
   );
+  if (missingBindings.length > 0) {
+    mismatches.push(`health bindings (${missingBindings.join("/")})`);
+  }
+  if (
+    health?.hosts?.admin !== canonicalHostname ||
+    health?.hosts?.api !== canonicalHostname
+  ) {
+    mismatches.push("health hosts");
+  }
+  if (
+    !/^core_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      mobile?.installId || "",
+    )
+  ) {
+    mismatches.push("mobile install ID");
+  }
+  if (safeOrigin(mobile?.publicURL) !== publicOrigin) {
+    mismatches.push("mobile public origin");
+  }
+  if (
+    mobile?.mobileApiVersion !== 1 ||
+    mobile?.auth?.pairing !== "owner-approved-code"
+  ) {
+    mismatches.push("mobile API contract");
+  }
+  if (core?.version !== version || core?.releaseChannel !== "stable") {
+    mismatches.push(`core release (received ${safeVersion(core)})`);
+  }
+  return mismatches;
+}
+
+function safeVersion(value) {
+  const version = /^[0-9]+\.[0-9]+\.[0-9]+$/.test(value?.version || "")
+    ? value.version
+    : "invalid";
+  const channel = value?.releaseChannel === "stable" ? "stable" : "invalid";
+  return `${version}/${channel}`;
+}
+
+function safeErrorMessage(value) {
+  const message = value instanceof Error ? value.message : "unknown error";
+  return message.replace(/[^a-zA-Z0-9 .:_()\/-]/g, "").slice(0, 160);
 }
 
 function safeOrigin(value) {
@@ -102,8 +160,18 @@ async function fetchJson(url, request) {
     redirect: "error",
     signal: AbortSignal.timeout(10_000),
   });
-  if (!response.ok) throw new Error("managed upgrade runtime request failed");
-  return response.json();
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new Error(`unexpected content type ${contentType || "missing"}`);
+  }
+  try {
+    return await response.json();
+  } catch {
+    throw new Error("invalid JSON response");
+  }
 }
 
 function positiveInteger(value, fallback) {

@@ -42,6 +42,38 @@ test("rejects a stale live release even when every binding is healthy", async ()
   );
 });
 
+test("reports which release response is stale", async () => {
+  await assert.rejects(
+    verifyManagedUpgradeRuntime(
+      input,
+      async (value) => runtimeResponse(new URL(value).pathname, "0.1.108"),
+      { attempts: 1, delayMs: 0 },
+    ),
+    /health release \(received 0\.1\.108\/stable\).*core release \(received 0\.1\.108\/stable\)/,
+  );
+});
+
+test("reports endpoint transport and response failures without response bodies", async () => {
+  await assert.rejects(
+    verifyManagedUpgradeRuntime(
+      input,
+      async (value) => {
+        const path = new URL(value).pathname;
+        if (path === "/health") return new Response("secret", { status: 503 });
+        if (path === "/api/mobile/config") {
+          return new Response("<html>not JSON</html>", {
+            status: 200,
+            headers: { "Content-Type": "text/html" },
+          });
+        }
+        return runtimeResponse(path);
+      },
+      { attempts: 1, delayMs: 0 },
+    ),
+    /request failure: health \(HTTP 503\), mobile \(unexpected content type text\/html\)/,
+  );
+});
+
 test("waits for the target release to replace a healthy stale Worker version", async () => {
   let healthCalls = 0;
   const result = await verifyManagedUpgradeRuntime(

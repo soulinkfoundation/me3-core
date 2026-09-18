@@ -284,7 +284,7 @@ const runtimeMigrations: RuntimeMigration[] = [
   },
   {
     id: "0051_owner_navigation_features",
-    checksum: "2026-09-17-owner-navigation-features-v1",
+    checksum: "2026-09-18-owner-navigation-features-v2",
     async apply(db) {
       await db.prepare(
         `CREATE TABLE IF NOT EXISTS owner_navigation_features (
@@ -299,19 +299,23 @@ const runtimeMigrations: RuntimeMigration[] = [
       // Preserve the complete navigation for every installation that exists
       // when this migration runs. Owners created afterwards use the quieter
       // first-run default until they opt into a workspace.
+      // D1 limits compound SELECT statements to five terms. A VALUES CTE
+      // keeps this seed compatible as the navigation grows beyond that limit.
       await db.prepare(
-        `INSERT OR IGNORE INTO owner_navigation_features (user_id, feature_id, visible)
-         SELECT id, feature_id, 1
+        `WITH features(feature_id) AS (
+           VALUES
+             ('assistant'),
+             ('journal'),
+             ('tasks'),
+             ('email'),
+             ('files'),
+             ('social'),
+             ('accounts')
+         )
+         INSERT OR IGNORE INTO owner_navigation_features (user_id, feature_id, visible)
+         SELECT owner_profile.id, features.feature_id, 1
          FROM owner_profile
-         CROSS JOIN (
-           SELECT 'assistant' AS feature_id
-           UNION ALL SELECT 'journal'
-           UNION ALL SELECT 'tasks'
-           UNION ALL SELECT 'email'
-           UNION ALL SELECT 'files'
-           UNION ALL SELECT 'social'
-           UNION ALL SELECT 'accounts'
-         )`,
+         CROSS JOIN features`,
       ).run();
     },
   },

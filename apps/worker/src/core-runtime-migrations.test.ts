@@ -201,8 +201,14 @@ describe("Core runtime migrations", () => {
       "2026-09-03-subscriber-double-opt-in-v1",
     );
     expect(db.migrations.get("0051_owner_navigation_features")).toBe(
-      "2026-09-17-owner-navigation-features-v1",
+      "2026-09-18-owner-navigation-features-v2",
     );
+    const navigationSeed = db.statements.find((sql) =>
+      sql.includes("INSERT OR IGNORE INTO owner_navigation_features"),
+    );
+    expect(navigationSeed).toContain("WITH features(feature_id) AS");
+    expect(navigationSeed).toContain("VALUES");
+    expect(navigationSeed).not.toContain("UNION ALL");
     expect(db.migrations.get("0052_owner_feature_discovery")).toBe(
       "2026-09-17-owner-feature-discovery-v1",
     );
