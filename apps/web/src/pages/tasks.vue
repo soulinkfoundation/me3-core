@@ -15,12 +15,14 @@ import AppDialog from "../components/AppDialog.vue";
 import Button from "../components/Button.vue";
 import IconPicker from "../components/IconPicker.vue";
 import PageLoading from "../components/PageLoading.vue";
+import TiptapEditor from "../components/TiptapEditor.vue";
 import ProjectIcon from "../components/tasks/ProjectIcon.vue";
 import {
   TASK_MODES,
   displayTaskDate,
   projectIconIsImage,
   sortTasks,
+  taskDescriptionForEditor,
   taskDescriptionText,
   taskMode,
   taskModeStatus,
@@ -221,7 +223,7 @@ async function openTask(task: WorkspaceTask, updateRoute = true) {
   taskError.value = "";
   taskDraft.value = {
     title: task.title,
-    description: taskDescriptionText(task),
+    description: taskDescriptionForEditor(task),
     projectId: task.projectId || defaultProjectId(),
     status: task.status === "cancelled" ? "backlog" : task.status,
     important: task.priority === 1,
@@ -755,14 +757,19 @@ onBeforeUnmount(() => {
               autocomplete="off"
             />
           </label>
-          <label class="field">
-            <span>Description</span>
-            <textarea
+          <div
+            class="field task-description-field"
+            role="group"
+            aria-labelledby="task-description-label"
+          >
+            <span id="task-description-label">Description</span>
+            <TiptapEditor
               v-model="taskDraft.description"
-              rows="8"
+              variant="section"
+              aria-label="Task description"
               placeholder="Add details..."
             />
-          </label>
+          </div>
           <div class="tasks-dialog__grid">
             <label class="field">
               <span>Project</span>
@@ -1385,6 +1392,38 @@ onBeforeUnmount(() => {
   resize: vertical;
   padding: 11px;
   line-height: 1.5;
+}
+
+.task-description-field :deep(.tiptap-editor) {
+  gap: 0;
+  font-weight: 500;
+}
+
+.task-description-field :deep(.editor-toolbar) {
+  position: static;
+  z-index: auto;
+  margin: 0;
+  border: 1px solid var(--ui-border);
+  border-bottom: 0;
+  border-radius: var(--ui-radius-sm) var(--ui-radius-sm) 0 0;
+  background: var(--ui-bg);
+}
+
+.task-description-field :deep(.editor-content-wrapper) {
+  min-height: 150px;
+  border-color: var(--ui-border);
+  border-radius: 0 0 var(--ui-radius-sm) var(--ui-radius-sm);
+  background: var(--ui-bg);
+}
+
+.task-description-field :deep(.editor-content-wrapper:focus-within) {
+  border-color: var(--ui-focus);
+  outline: 2px solid color-mix(in oklab, var(--ui-focus), transparent 65%);
+  outline-offset: 1px;
+}
+
+.task-description-field :deep(.editor-content-wrapper .ProseMirror) {
+  min-height: 150px;
 }
 
 .field input:focus,

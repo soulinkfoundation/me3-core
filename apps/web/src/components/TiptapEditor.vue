@@ -37,6 +37,7 @@ const props = withDefaults(
   defineProps<{
     modelValue: string;
     placeholder?: string;
+    ariaLabel?: string;
     /** Tailors the shared editor to a full site, narrow workspace, or email campaign. */
     variant?: "default" | "workspace" | "campaign" | "section";
     /** Optional title shown below the toolbar (e.g. journal entry title). */
@@ -801,6 +802,13 @@ type PendingAsset = SiteContentAsset;
 
 const editor = useEditor({
   content: props.modelValue,
+  editorProps: {
+    attributes: {
+      ...(props.ariaLabel ? { "aria-label": props.ariaLabel } : {}),
+      "aria-multiline": "true",
+      role: "textbox",
+    },
+  },
   extensions: [
     StarterKit.configure({
       heading: {
@@ -1478,6 +1486,7 @@ defineExpose({
     :class="{
       'tiptap-editor--workspace': variant === 'workspace',
       'tiptap-editor--campaign': variant === 'campaign',
+      'tiptap-editor--section': variant === 'section',
     }"
   >
     <!-- Toolbar -->

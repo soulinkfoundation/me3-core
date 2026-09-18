@@ -167,7 +167,7 @@ describe("AppSideNav optional plugin links", () => {
     wrapper.unmount();
   });
 
-  it("hides optional workspaces when navigation features are not enabled", async () => {
+  it("hides configurable workspaces while keeping enabled Accounts available", async () => {
     const wrapper = await mountSideNav([
       { id: "me3.journal", status: "installed", enabled: true },
       { id: "me3.mission-control", status: "installed", enabled: true },
@@ -183,9 +183,10 @@ describe("AppSideNav optional plugin links", () => {
       { id: "accounts", visible: false },
     ]);
 
-    for (const label of ["Assistant", "Journal", "Tasks", "Email", "Files", "Socials", "Accounts"]) {
+    for (const label of ["Assistant", "Journal", "Tasks", "Email", "Files", "Socials"]) {
       expect(wrapper.find(`[aria-label="${label}"]`).exists()).toBe(false);
     }
+    expect(wrapper.find('[aria-label="Accounts"]').exists()).toBe(true);
     wrapper.unmount();
   });
 });

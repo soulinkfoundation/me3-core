@@ -74,6 +74,12 @@ export function sortTasks(tasks: WorkspaceTask[]): WorkspaceTask[] {
   });
 }
 
+export function taskDescriptionForEditor(
+  task: WorkspaceTask | null | undefined,
+): string {
+  return task?.description || "";
+}
+
 export function taskDescriptionText(task: WorkspaceTask | null | undefined): string {
   const description = task?.description?.trim();
   if (!description) return "";

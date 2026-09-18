@@ -31,6 +31,7 @@ import {
   type PluginRecord,
   type PluginsResponse,
 } from "../utils/plugins";
+import { APP_FEATURE_ICONS, type AppFeatureId } from "../utils/appFeatures";
 import {
   COMMERCE_CURRENCY_OPTIONS,
   STRIPE_CONNECT_COUNTRIES,
@@ -655,6 +656,16 @@ const telegramStatusClass = computed(() => {
 const visibleAccountPlugins = computed(() =>
   plugins.value.filter((plugin) => !isPluginHiddenFromList(plugin)),
 );
+
+const visibleNavigationFeatures = computed(() =>
+  navigationFeatures.value.filter((feature) => feature.id !== "accounts"),
+);
+
+function navigationFeatureEmoji(feature: NavigationFeature) {
+  const featureId: AppFeatureId =
+    feature.id === "tasks" ? "mission-control" : feature.id;
+  return APP_FEATURE_ICONS[featureId];
+}
 
 const pluginBusyIds = computed(() =>
   pluginActionLoading.value ? [pluginActionLoading.value.split(":")[0]] : [],
@@ -2584,10 +2595,13 @@ onBeforeUnmount(() => {
             </p>
             <div v-else class="feature-list">
               <article
-                v-for="feature in navigationFeatures"
+                v-for="feature in visibleNavigationFeatures"
                 :key="feature.id"
                 class="feature-row"
               >
+                <span class="feature-row__emoji" aria-hidden="true">
+                  {{ navigationFeatureEmoji(feature) }}
+                </span>
                 <div class="feature-row__copy">
                   <h3>{{ feature.name }}</h3>
                   <p>{{ feature.description }}</p>
@@ -4677,6 +4691,14 @@ h1 {
   border: 1px solid var(--ui-border, var(--color-border));
   border-radius: var(--ui-radius-md, 10px);
   background: var(--ui-surface, var(--color-bg));
+}
+
+.feature-row__emoji {
+  flex-shrink: 0;
+  font-family:
+    "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 21px;
+  line-height: 1;
 }
 
 .feature-row__copy {

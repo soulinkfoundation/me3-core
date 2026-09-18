@@ -7,6 +7,7 @@ import {
   projectIconIsImage,
   projectUiIcon,
   sortTasks,
+  taskDescriptionForEditor,
   taskDescriptionText,
   taskMode,
   taskModeStatus,
@@ -72,14 +73,13 @@ describe("task workspace utilities", () => {
     ]);
   });
 
-  it("turns rich task notes into a calm one-line preview", () => {
-    expect(
-      taskDescriptionText(
-        workspaceTask("notes", {
-          description: "<p>Plan <strong>the launch</strong></p><p>with Kieran</p>",
-        }),
-      ),
-    ).toBe("Plan the launch with Kieran");
+  it("preserves rich task notes for editing and flattens only list previews", () => {
+    const description =
+      "<p>Plan <strong>the launch</strong></p><p>with Kieran</p>";
+    const task = workspaceTask("notes", { description });
+
+    expect(taskDescriptionForEditor(task)).toBe(description);
+    expect(taskDescriptionText(task)).toBe("Plan the launch with Kieran");
   });
 
   it("distinguishes logos, shared icons, and emoji", () => {
