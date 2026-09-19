@@ -28,6 +28,7 @@ import type {
 } from "./index";
 import { runAgentToolModelStep } from "./model-tool-runtime";
 import { runAgentToolModelStreamStep } from "./model-tool-stream-runtime";
+import { runJevToolRouter, type JevToolFamily } from "./jev-router";
 import { modelErrorMessage, type AgentChatAiRoute } from "./model-runtime";
 import { modelSupportsToolUse } from "./model-capabilities";
 import {
@@ -433,33 +434,42 @@ export async function runCoreAgentToolTurn(input: {
     }
     return true;
   });
-  const requestedRequiredTool = statusUpdateRequest
+  const jevDecision = statusUpdateRequest || literalResponseRequest
+    ? null
+    : await runJevToolRouter({
+        route: input.route,
+        message: latestUserMessage,
+        recentMessages: input.messages
+          .filter((message) => message.role === "user")
+          .map((message) => message.content),
+      });
+  const activeJevFamilies = input.route.jevRouterMode === "active" && jevDecision?.selectedFamilies.length
+    ? new Set<JevToolFamily>(jevDecision.selectedFamilies)
+    : null;
+  const requestedRequiredTool = statusUpdateRequest || activeJevFamilies
     ? null
     : requiredSchedulingActionTool(input.messages, availableTools) ||
       requiredPrivateReadTool(input.messages, availableTools);
   const requiredTool = selectedModelSupportsTools ? requestedRequiredTool : null;
   const toolSelection = statusUpdateRequest
     ? { tools: [], families: new Set<CoreToolFamily>() }
-    : selectCoreToolsForTurn(
-        input.messages,
-        availableTools,
-        requiredTool,
-      );
-  const webTools = !statusUpdateRequest && !literalResponseRequest && input.webResearchServices
-    ? availableTools.filter((tool) =>
-        tool.capabilityId === "core.web.search" ||
-        tool.capabilityId === "core.web.open"
-      )
+    : activeJevFamilies
+      ? {
+          tools: availableTools.filter((tool) =>
+            coreToolFamiliesForCapability(tool.capabilityId).some((family) => activeJevFamilies.has(family))),
+          families: new Set<CoreToolFamily>(activeJevFamilies),
+        }
+      : selectCoreToolsForTurn(input.messages, availableTools, requiredTool);
+  const webTools = !statusUpdateRequest && !literalResponseRequest && input.webResearchServices && (!activeJevFamilies || activeJevFamilies.has("web"))
+    ? availableTools.filter((tool) => tool.capabilityId === "core.web.search" || tool.capabilityId === "core.web.open")
     : [];
-  const peopleTools = !statusUpdateRequest && !literalResponseRequest && input.peopleSearchServices
+  const peopleTools = !statusUpdateRequest && !literalResponseRequest && input.peopleSearchServices && (!activeJevFamilies || activeJevFamilies.has("people"))
     ? availableTools.filter((tool) => tool.capabilityId === "core.people.search")
     : [];
   const toolFamilies = new Set(toolSelection.families);
   if (selectedModelSupportsTools && webTools.length > 0) toolFamilies.add("web");
   if (selectedModelSupportsTools && peopleTools.length > 0) toolFamilies.add("people");
-  const tools = selectedModelSupportsTools
-    ? uniqueCoreTools([...toolSelection.tools, ...peopleTools, ...webTools])
-    : [];
+  const tools = selectedModelSupportsTools ? uniqueCoreTools([...toolSelection.tools, ...peopleTools, ...webTools]) : [];
   const webRouterTools = selectedModelSupportsTools ? [] : webTools;
   const metricTools = tools.length > 0 ? tools : webRouterTools;
   let messages = statusUpdateSnapshot
@@ -500,6 +510,11 @@ export async function runCoreAgentToolTurn(input: {
       me3_tool_count: metricTools.length,
       me3_input_chars: inputCharacterCount,
       ...(statusUpdateRequest ? { me3_intent: "status_update" } : {}),
+      ...(jevDecision ? {
+        me3_jev_mode: input.route.jevRouterMode || "off",
+        me3_jev_families: jevDecision.selectedFamilies.join(",") || "none",
+        me3_jev_duration_ms: jevDecision.durationMs,
+      } : {}),
     },
   };
 
@@ -725,9 +740,7 @@ export async function runCoreAgentToolTurn(input: {
         model: async (turnMessages, availableTools) => {
           throwIfStreamAborted(input.streamOptions?.signal);
           modelStep += 1;
-          const forcedTool = !requiredToolAttempted
-            ? requiredTool
-            : null;
+          const forcedTool = !requiredToolAttempted ? requiredTool : null;
           const modelTools = forcedTool ? [forcedTool] : availableTools;
           const modelRequestStartedAt = performance.now();
           const gatewayLogIdBefore = route.ai?.aiGatewayLogId ?? null;
@@ -769,13 +782,8 @@ export async function runCoreAgentToolTurn(input: {
               gatewayLogIds.push(gatewayLogId);
             }
           });
-          if (
-            forcedTool &&
-            !resolved.toolCalls.some((call) => call.name === forcedTool.name)
-          ) {
-            throw new Error(
-              `Model did not select required tool "${forcedTool.name}".`,
-            );
+          if (forcedTool && !resolved.toolCalls.some((call) => call.name === forcedTool.name)) {
+            throw new Error(`Model did not select required tool "${forcedTool.name}".`);
           }
           return resolved;
         },
@@ -783,9 +791,7 @@ export async function runCoreAgentToolTurn(input: {
           throwIfStreamAborted(input.streamOptions?.signal);
           const toolStartedAt = performance.now();
           toolCallCount += 1;
-          if (call.name === requiredTool?.name) {
-            requiredToolAttempted = true;
-          }
+          if (call.name === requiredTool?.name) requiredToolAttempted = true;
           await emit({
             event: "tool",
             data: {

@@ -44,6 +44,8 @@ export {
   modelSupportsImageInput,
   moveAgentMailboxMessage,
   parseAgentReminderInput,
+  resolveJevRouterMode,
+  runJevToolRouter,
   pauseAgentMailbox,
   rejectAgentMailboxDraft,
   runAgentToolLoop,
@@ -113,4 +115,7 @@ export {
   type CoreChatToolPlannerDecision,
   type CoreChatToolDefinition,
   type CoreChatToolDefinitionIssue,
+  type JevRouterDecision,
+  type JevRouterMode,
+  type JevToolFamily,
 } from "@me3-core/plugin-agent-chat";

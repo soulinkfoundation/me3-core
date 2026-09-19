@@ -41,6 +41,9 @@ import {
   runAssistantImageProviderGeneration,
   type AssistantImageGenerationUsage,
 } from "./image-generation-runtime";
+import { resolveJevRouterMode } from "./jev-router";
+export { resolveJevRouterMode, runJevToolRouter } from "./jev-router";
+export type { JevRouterDecision, JevRouterMode, JevToolFamily } from "./jev-router";
 import {
   modelErrorMessage,
   runModelTurn,
@@ -706,6 +709,7 @@ type CoreAgentChatEnv = {
   ME3_AI_IMAGE_GENERATION_MODEL?: string;
   ME3_DEPLOYMENT_MODE?: string;
   ME3_AI_RAW_MODEL_SELECTION_ENABLED?: string;
+  ME3_JEV_ROUTER_MODE?: string;
   CORE_API_ORIGIN?: string;
   CORE_WEB_ORIGIN?: string;
 };
@@ -2192,6 +2196,7 @@ export async function dispatchAgentSandboxTurn(
   );
   const route: AiRoute = {
     ...resolvedRoute,
+    jevRouterMode: resolveJevRouterMode(env.ME3_JEV_ROUTER_MODE, env.ME3_DEPLOYMENT_MODE),
     aiGatewayMetadata: {
       me3_request_id: input.requestId,
       me3_turn_id: input.turnId,

@@ -44,6 +44,7 @@ export type AgentChatAiRoute = {
   aiGateway: AgentChatAiGatewayRuntimeConfig | null;
   aiGatewayMetadata?: Record<string, string | number | boolean>;
   aiGatewayRequestPolicy?: AgentChatAiGatewayRequestPolicy | null;
+  jevRouterMode?: "off" | "shadow" | "active";
   recordUsage?: (input: {
     model: string;
     usage: AgentModelUsage;
