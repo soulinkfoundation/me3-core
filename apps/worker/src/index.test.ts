@@ -510,6 +510,9 @@ function createEnv(): Env & {
         "managed_runtime_state",
         "managed_runtime_control_requests",
         "managed_runtime_write_leases",
+        "mobile_push_preferences",
+        "owner_navigation_features",
+        "payment_push_dispatches",
       ]);
       return {
         async run() {

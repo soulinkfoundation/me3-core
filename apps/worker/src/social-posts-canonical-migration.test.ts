@@ -410,7 +410,11 @@ const RUNTIME_MIGRATIONS_EXCEPT_0022 = `
     ('0045_commerce_stripe_provider', '2026-08-31-commerce-stripe-provider-v1'),
     ('0046_business_site_profile_ownership', '2026-08-31-business-site-profile-ownership-v1'),
     ('0047_subscriber_double_opt_in', '2026-09-03-subscriber-double-opt-in-v1'),
-    ('0048_mailbox_attachment_staging', '2026-09-09-mailbox-attachment-staging-v1');
+    ('0048_mailbox_attachment_staging', '2026-09-09-mailbox-attachment-staging-v1'),
+    ('0049_commerce_confirmation_delivery', '2026-09-11-commerce-confirmation-delivery-v1'),
+    ('0050_accounts_customer_payments', '2026-09-11-accounts-customer-payments-v1'),
+    ('0051_owner_navigation_features', '2026-09-18-owner-navigation-features-v2'),
+    ('0052_owner_feature_discovery', '2026-09-17-owner-feature-discovery-v1');
 `;
 
 const LEGACY_SOCIAL_SCHEMA = `
