@@ -61,12 +61,12 @@ export async function listNavigationFeatures(
     (rows.results || []).map((row) => [row.feature_id, row.visible === 1]),
   );
 
-  // New installations have no rows and deliberately begin with optional
-  // workspaces hidden. The migration writes visible rows for installations
-  // that existed before this setting was introduced.
+  // New installations show the baseline assistant by default while optional
+  // workspaces remain hidden. The migration writes visible rows for
+  // installations that existed before this setting was introduced.
   return NAVIGATION_FEATURES.map((feature) => ({
     ...feature,
-    visible: visibility.get(feature.id) ?? false,
+    visible: visibility.get(feature.id) ?? feature.id === "assistant",
   }));
 }
 

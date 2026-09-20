@@ -18,11 +18,7 @@ const routeComponent = {
 
 async function mountSideNav(
   plugins: Array<{ id: string; status: string; enabled: boolean }>,
-  props: {
-    showSoulink?: boolean;
-    soulinkConnected?: boolean;
-    soulinkHref?: string;
-  } = {},
+  props: Record<string, never> = {},
   navigationFeatures: Array<{ id: string; visible: boolean }> = [
     { id: "assistant", visible: true },
     { id: "journal", visible: true },
@@ -108,7 +104,6 @@ describe("AppSideNav optional plugin links", () => {
       "Files",
       "Socials",
       "Accounts",
-      "Join Soulink",
       "Settings",
     ]);
     expect(wrapper.get('[aria-label="Tasks"]').attributes("href")).toBe(
@@ -120,28 +115,8 @@ describe("AppSideNav optional plugin links", () => {
     wrapper.unmount();
   });
 
-  it("opens the Soulink join flow until the assistant connection is active", async () => {
+  it("keeps Soulink out of side navigation", async () => {
     const wrapper = await mountSideNav([]);
-
-    await wrapper.get('[aria-label="Join Soulink"]').trigger("click");
-
-    expect(wrapper.emitted("openSoulink")).toHaveLength(1);
-    wrapper.unmount();
-  });
-
-  it("hides Soulink navigation for connected owners", async () => {
-    const wrapper = await mountSideNav([], {
-      soulinkConnected: true,
-      soulinkHref: "https://soulinkfoundation.org/chats",
-    });
-
-    expect(wrapper.find('[aria-label="Open Soulink chats"]').exists()).toBe(false);
-    expect(wrapper.find('[aria-label="Join Soulink"]').exists()).toBe(false);
-    wrapper.unmount();
-  });
-
-  it("keeps Soulink out of unlinked self-hosted navigation", async () => {
-    const wrapper = await mountSideNav([], { showSoulink: false });
 
     expect(wrapper.find('[aria-label="Join Soulink"]').exists()).toBe(false);
     expect(wrapper.find('[aria-label="Open Soulink chats"]').exists()).toBe(false);

@@ -56,14 +56,6 @@ const showAgentLauncher = computed(
     !route.path.startsWith("/email"),
 );
 
-const soulinkChatsUrl = computed(() => {
-  try {
-    return new URL("/chats", soulinkOrigin.value).toString();
-  } catch {
-    return "https://soulinkfoundation.org/chats";
-  }
-});
-
 const showSoulinkBanner = computed(
   () =>
     showAppShell.value &&
@@ -202,13 +194,7 @@ watch(
 
 <template>
   <div class="app-root" :class="{ 'app-root--shelled': showAppShell }">
-    <AppSideNav
-      v-if="showAppShell"
-      :show-soulink="soulinkAvailableToOwner"
-      :soulink-connected="soulinkConnected"
-      :soulink-href="soulinkChatsUrl"
-      @open-soulink="openSoulinkModal"
-    />
+    <AppSideNav v-if="showAppShell" />
     <div class="app-root__view">
       <div
         id="app-side-nav-mobile-page-controls"
