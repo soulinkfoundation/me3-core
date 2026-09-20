@@ -169,7 +169,7 @@ describe("managed starter profile import", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.me3.example/core/claim/starter-profile/acknowledge",
+      "https://api.me3.example/api/core/claim/starter-profile/acknowledge",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({ Authorization: "Bearer signed-claim" }),
@@ -198,7 +198,7 @@ describe("managed starter profile import", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.me3.example/core/claim/starter-profile",
+      "https://api.me3.example/api/core/claim/starter-profile",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer signed-claim" }),
       }),

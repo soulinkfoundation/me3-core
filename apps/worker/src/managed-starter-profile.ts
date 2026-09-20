@@ -184,7 +184,7 @@ async function fetchStarterProfile(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), HANDOFF_TIMEOUT_MS);
   try {
-    const response = await fetch(`${getMe3CloudApiOrigin(env)}/core/claim/starter-profile`, {
+    const response = await fetch(`${getMe3CloudApiOrigin(env)}/api/core/claim/starter-profile`, {
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${claimToken}`,
@@ -220,7 +220,7 @@ export async function acknowledgeStarterProfileHandoff(
   const timeout = setTimeout(() => controller.abort(), HANDOFF_TIMEOUT_MS);
   try {
     const response = await fetch(
-      `${getMe3CloudApiOrigin(env)}/core/claim/starter-profile/acknowledge`,
+      `${getMe3CloudApiOrigin(env)}/api/core/claim/starter-profile/acknowledge`,
       {
         method: "POST",
         headers: {
