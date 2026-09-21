@@ -1671,7 +1671,14 @@ export const CORE_CHAT_CAPABILITIES = [
           type: "string",
           description: "Optional task description, notes, details, or body.",
         },
-        projectId: { type: "string", description: "Project ID." },
+        projectId: {
+          type: "string",
+          description: "Optional stable project ID. Provide with projectName only when both identify the same project.",
+        },
+        projectName: {
+          type: "string",
+          description: "Optional exact project name or slug. ME3 resolves it to the owner's stable project ID before creating the task.",
+        },
         dueAt: {
           type: "string",
           description: "Optional YYYY-MM-DD due date.",
@@ -1797,7 +1804,14 @@ export const CORE_CHAT_CAPABILITIES = [
           type: "string",
           description: "Optional replacement task description, notes, details, or body.",
         },
-        projectId: { type: "string", description: "Optional destination project ID." },
+        projectId: {
+          type: "string",
+          description: "Optional stable destination project ID. Provide with projectName only when both identify the same project.",
+        },
+        projectName: {
+          type: "string",
+          description: "Optional exact destination project name or slug. ME3 resolves it to the owner's stable project ID before moving the task.",
+        },
         status: {
           type: "string",
           description: "Optional task status.",

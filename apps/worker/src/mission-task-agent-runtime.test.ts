@@ -44,7 +44,7 @@ afterEach(() => {
 
 describe("Mission Control Agent Runtime v2", () => {
   it.each(["workers-ai", "openai", "anthropic"] as const)(
-    "lists stable project IDs and creates through %s",
+    "creates a task in a named project through %s",
     async (providerId) => {
       const database = createMissionDb({
         projects: [
@@ -53,11 +53,10 @@ describe("Mission Control Agent Runtime v2", () => {
         ],
       });
       const route = providerRoute(providerId, [
-        providerToolCall(providerId, "list-1", "core_mission_task_list", {}),
         providerToolCall(providerId, "create-1", "core_mission_task_create", {
           title: "Follow up with Sam",
           description: "Confirm the launch checklist is ready.",
-          projectId: "project-launch",
+          projectName: "mE3 lAuNcH",
           dueAt: "2026-07-15",
           priority: 1,
         }),
@@ -95,12 +94,40 @@ describe("Mission Control Agent Runtime v2", () => {
         status: "backlog",
         priority: 1,
       });
-      expect(database.executions.map((row) => row.status)).toEqual([
-        "succeeded",
-        "succeeded",
-      ]);
+      expect(database.executions.map((row) => row.status)).toEqual(["succeeded"]);
     },
   );
+
+  it("moves a task to a named project", async () => {
+    const database = createMissionDb({
+      projects: [
+        projectRow("project-personal", "Personal", "personal"),
+        projectRow("project-me3", "ME3", "me3"),
+      ],
+      tasks: [taskRow("task-1", "Write the release notes", "project-personal")],
+    });
+    const response = await runCoreAgentToolTurn({
+      db: database.db,
+      userId: "owner",
+      requestId: "move-to-named-project",
+      turnId: "turn-move-to-named-project",
+      ownerTimezone: "Europe/Dublin",
+      route: providerRoute("workers-ai", [
+        providerToolCall("workers-ai", "move-1", "core_mission_task_update", {
+          taskId: "task-1",
+          projectName: "ME3",
+        }),
+        providerText("workers-ai", "Moved Write the release notes to ME3."),
+      ]) as never,
+      messages: baseMessages("Update task task-1 and move it to ME3."),
+    });
+
+    expect(response).toMatchObject({
+      specialist: "core.mission.task.update",
+      actionCards: [expect.objectContaining({ kind: "mission.task_updated" })],
+    });
+    expect(database.tasks[0]?.project_id).toBe("project-me3");
+  });
 
   it("updates only the stable task ID selected after listing", async () => {
     const database = createMissionDb({

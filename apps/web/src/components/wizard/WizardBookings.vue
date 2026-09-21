@@ -14,13 +14,15 @@ import {
 } from "../../stores/wizard";
 import { useSitesStore } from "../../stores/sites";
 import { useAuthStore } from "../../stores/auth";
-import BookingOfferDescriptionEditor from "./BookingOfferDescriptionEditor.vue";
+import InlineRichTextEditor from "./BookingOfferDescriptionEditor.vue";
 import PaymentCollectionFields from "./PaymentCollectionFields.vue";
 import BookingAvailabilityEditor, {
   type BookingAvailability,
 } from "../booking/BookingAvailabilityEditor.vue";
+import TimezonePicker from "../booking/TimezonePicker.vue";
 import UiIcon from "../UiIcon.vue";
 import { useAppToast } from "../../composables/useAppToast";
+import { getTimeZoneDisplayLabel, listSupportedTimeZones } from "../../utils/timezone";
 
 const wizard = useWizardStore();
 const sites = useSitesStore();
@@ -147,6 +149,20 @@ const bookingHeadingDescription = computed({
   set: (val: string) => wizard.setBooking({ description: val }),
 });
 
+function offerDescriptionText(value?: string): string {
+  return (value || "")
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/p>\s*<p(?:\s[^>]*)?>/gi, "\n")
+    .replace(/<\/?(?:p|div)(?:\s[^>]*)?>/gi, "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
 const bookingBufferTime = computed({
   get: () => profile.value.booking.bufferTime,
   set: (val: WizardBookingConfig["bufferTime"]) =>
@@ -189,7 +205,7 @@ const activeOfferTitle = computed({
 });
 
 const activeOfferDescription = computed({
-  get: () => activeOffer.value?.description || "",
+  get: () => offerDescriptionText(activeOffer.value?.description),
   set: (val: string) => updateActiveOffer({ description: val }),
 });
 
@@ -272,7 +288,7 @@ const activeClassOfferTitle = computed({
 });
 
 const activeClassOfferDescription = computed({
-  get: () => activeClassOffer.value?.description || "",
+  get: () => offerDescriptionText(activeClassOffer.value?.description),
   set: (val: string) => updateActiveClassOffer({ description: val }),
 });
 
@@ -447,7 +463,7 @@ const activeRetreatOfferTitle = computed({
 });
 
 const activeRetreatOfferDescription = computed({
-  get: () => activeRetreatOffer.value?.description || "",
+  get: () => offerDescriptionText(activeRetreatOffer.value?.description),
   set: (val: string) => updateActiveRetreatOffer({ description: val }),
 });
 
@@ -592,26 +608,13 @@ const weekdayOptions = [
   { value: "sunday", label: "Sunday" },
 ] as const;
 
-const timezones = [
-  { value: "America/New_York", label: "Eastern Time (ET)" },
-  { value: "America/Chicago", label: "Central Time (CT)" },
-  { value: "America/Denver", label: "Mountain Time (MT)" },
-  { value: "America/Los_Angeles", label: "Pacific Time (PT)" },
-  { value: "Europe/Dublin", label: "Dublin (GMT/IST)" },
-  { value: "Europe/London", label: "London (GMT/BST)" },
-  { value: "Europe/Paris", label: "Paris (CET/CEST)" },
-  { value: "Europe/Berlin", label: "Berlin (CET/CEST)" },
-  { value: "Asia/Dubai", label: "Dubai (GST)" },
-  { value: "Asia/Karachi", label: "Pakistan (PKT)" },
-  { value: "Asia/Kolkata", label: "India (IST)" },
-  { value: "Asia/Singapore", label: "Singapore (SGT)" },
-  { value: "Australia/Sydney", label: "Sydney (AEST/AEDT)" },
-  { value: "UTC", label: "UTC" },
-];
+const timezones = listSupportedTimeZones().map((value) => ({
+  value,
+  label: getTimeZoneDisplayLabel(value),
+}));
 
 function formatTimezoneLabel(timezone: string): string {
-  const fallback = timezone.split("/").pop()?.replace(/_/g, " ") || timezone;
-  return `${fallback} (${timezone})`;
+  return getTimeZoneDisplayLabel(timezone);
 }
 
 const timezoneOptions = computed(() => {
@@ -864,6 +867,28 @@ onMounted(() => {
       </div>
 
       <template v-else>
+        <div class="booking-heading-fields">
+          <div class="form-group">
+            <label for="booking-heading-title">Booking section title</label>
+            <input
+              id="booking-heading-title"
+              v-model="bookingHeadingTitle"
+              type="text"
+              placeholder="e.g. Book a session"
+              maxlength="100"
+            />
+          </div>
+          <div class="form-group">
+            <label for="booking-heading-description">Short intro</label>
+            <InlineRichTextEditor
+              v-model="bookingHeadingDescription"
+              input-id="booking-heading-description"
+              :max-characters="300"
+              placeholder="Help people understand what these sessions are for"
+            />
+          </div>
+        </div>
+
         <div
           class="booking-type-tabs"
           role="tablist"
@@ -898,29 +923,6 @@ onMounted(() => {
           v-if="activeBookingType === 'one_to_one'"
           class="booking-type-panel"
         >
-          <div class="booking-heading-fields">
-            <div class="form-group">
-              <label for="booking-heading-title">1:1 section title</label>
-              <input
-                id="booking-heading-title"
-                v-model="bookingHeadingTitle"
-                type="text"
-                placeholder="e.g. Book a session"
-                maxlength="100"
-              />
-            </div>
-            <div class="form-group">
-              <label for="booking-heading-description">Short intro</label>
-              <textarea
-                id="booking-heading-description"
-                v-model="bookingHeadingDescription"
-                rows="2"
-                maxlength="300"
-                placeholder="Help people understand what these sessions are for"
-              />
-            </div>
-          </div>
-
           <div class="offer-editor-card">
             <div class="section-heading">
               <label class="section-label">1:1 offers</label>
@@ -1022,11 +1024,11 @@ onMounted(() => {
                 <label :for="`booking-offer-description-${activeOffer.id}`">
                   Description
                 </label>
-                <BookingOfferDescriptionEditor
-                  :key="activeOffer.id"
+                <textarea
+                  :id="`booking-offer-description-${activeOffer.id}`"
                   v-model="activeOfferDescription"
-                  :input-id="`booking-offer-description-${activeOffer.id}`"
-                  placeholder="Short description of what this session includes (links allowed)"
+                  rows="3"
+                  placeholder="Briefly describe what this session includes"
                 />
               </div>
 
@@ -1191,11 +1193,11 @@ onMounted(() => {
                 <label :for="`class-offer-description-${activeClassOffer.id}`">
                   Description
                 </label>
-                <BookingOfferDescriptionEditor
-                  :key="activeClassOffer.id"
+                <textarea
+                  :id="`class-offer-description-${activeClassOffer.id}`"
                   v-model="activeClassOfferDescription"
-                  :input-id="`class-offer-description-${activeClassOffer.id}`"
-                  placeholder="What this class is like — link to another page for full details"
+                  rows="3"
+                  placeholder="Briefly describe what this class includes"
                 />
               </div>
 
@@ -1256,21 +1258,13 @@ onMounted(() => {
                 </div>
 
                 <div class="form-group">
-                  <label :for="`class-offer-timezone-${activeClassOffer.id}`">
-                    Timezone
-                  </label>
-                  <select
+                  <TimezonePicker
                     :id="`class-offer-timezone-${activeClassOffer.id}`"
-                    v-model="activeClassOfferTimezone"
-                  >
-                    <option
-                      v-for="tz in timezoneOptions"
-                      :key="tz.value"
-                      :value="tz.value"
-                    >
-                      {{ tz.label }}
-                    </option>
-                  </select>
+                    label="Timezone"
+                    :model-value="activeClassOfferTimezone"
+                    :options="timezoneOptions"
+                    @update:model-value="activeClassOfferTimezone = $event"
+                  />
                 </div>
 
                 <div class="form-group">
@@ -1448,11 +1442,11 @@ onMounted(() => {
                 >
                   Description
                 </label>
-                <BookingOfferDescriptionEditor
-                  :key="activeRetreatOffer.id"
+                <textarea
+                  :id="`retreat-offer-description-${activeRetreatOffer.id}`"
                   v-model="activeRetreatOfferDescription"
-                  :input-id="`retreat-offer-description-${activeRetreatOffer.id}`"
-                  placeholder="What’s included — meals, lodging, schedule, etc."
+                  rows="3"
+                  placeholder="Briefly describe what’s included"
                 />
               </div>
 
@@ -1506,23 +1500,13 @@ onMounted(() => {
 
               <div class="form-row">
                 <div class="form-group">
-                  <label
-                    :for="`retreat-offer-timezone-${activeRetreatOffer.id}`"
-                  >
-                    Timezone
-                  </label>
-                  <select
+                  <TimezonePicker
                     :id="`retreat-offer-timezone-${activeRetreatOffer.id}`"
-                    v-model="activeRetreatOfferTimezone"
-                  >
-                    <option
-                      v-for="tz in timezoneOptions"
-                      :key="tz.value"
-                      :value="tz.value"
-                    >
-                      {{ tz.label }}
-                    </option>
-                  </select>
+                    label="Timezone"
+                    :model-value="activeRetreatOfferTimezone"
+                    :options="timezoneOptions"
+                    @update:model-value="activeRetreatOfferTimezone = $event"
+                  />
                 </div>
 
                 <div class="form-group">

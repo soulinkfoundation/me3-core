@@ -68,7 +68,7 @@ describe("BookingAvailabilityEditor", () => {
     });
   });
 
-  it("edits a single day and filters invalid windows", async () => {
+  it("edits multiple time ranges with native time fields and rejects invalid ranges", async () => {
     const wrapper = mountEditor({
       availability: {
         ...emptyAvailability,
@@ -77,9 +77,14 @@ describe("BookingAvailabilityEditor", () => {
     });
 
     await wrapper.find(".day-action-btn").trigger("click");
-    await wrapper.find("#booking-availability-windows").setValue(
-      "09:00-12:00, nope, 14:00-17:00",
-    );
+    await wrapper.find("#booking-window-start-0").setValue("09:00");
+    await wrapper.find("#booking-window-end-0").setValue("12:00");
+    await wrapper.findAll(".modal-content .day-action-btn").at(-1)?.trigger("click");
+    await wrapper.find("#booking-window-start-1").setValue("14:00");
+    await wrapper.find("#booking-window-end-1").setValue("17:00");
+    await wrapper.findAll(".modal-content .day-action-btn").at(-1)?.trigger("click");
+    await wrapper.find("#booking-window-start-2").setValue("18:00");
+    await wrapper.find("#booking-window-end-2").setValue("17:00");
     await wrapper.find(".btn.primary").trigger("click");
 
     expect(latestEmittedAvailability(wrapper)).toMatchObject({
@@ -125,9 +130,22 @@ describe("BookingAvailabilityEditor", () => {
     });
 
     await wrapper.find("#booking-availability-buffer").setValue("15");
-    await wrapper.find("#booking-availability-timezone").setValue("UTC");
+    const timezoneInput = wrapper.get("#booking-availability-timezone");
+    await timezoneInput.setValue("UTC");
+    await wrapper
+      .findAll('[role="option"]')
+      .find((option) => option.text().startsWith("UTC — UTC"))!
+      .trigger("click");
 
     expect(wrapper.emitted("update:bufferTime")).toEqual([[15]]);
     expect(wrapper.emitted("update:timezone")).toEqual([["UTC"]]);
+  });
+
+  it("does not show the removed booking timezone explanation", () => {
+    const wrapper = mountEditor();
+
+    expect(wrapper.text()).not.toContain(
+      "Booking timezone controls the times visitors see",
+    );
   });
 });

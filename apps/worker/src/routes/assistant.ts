@@ -2791,7 +2791,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       .replace(/^#+\s*/gm, "")
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 280);
+      .slice(0, 320);
   }
 
   function generateAssistantShortBio(requestText: string): string {

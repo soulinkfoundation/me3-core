@@ -65,6 +65,7 @@ type AccountResponse = {
 type NavigationFeature = {
   id:
     | "assistant"
+    | "calendar"
     | "journal"
     | "tasks"
     | "email"

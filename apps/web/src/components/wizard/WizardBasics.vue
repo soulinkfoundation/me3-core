@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useWizardStore } from "../../stores/wizard";
 import { getUsernameAvailability, searchLocations, type LocationSearchResult } from "../../api";
+import InlineRichTextEditor from "./BookingOfferDescriptionEditor.vue";
 
 const wizard = useWizardStore();
 const isOrganization = computed(() => wizard.siteRole === "organization");
@@ -199,7 +200,23 @@ watch(handle, async (val) => {
   }, 500);
 });
 
-const bioLength = 160;
+const bioLength = 320;
+const bioTextLength = computed(() =>
+  bio.value
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/p>\s*<p(?:\s[^>]*)?>/gi, "\n")
+    .replace(/<\/?(?:p|div)(?:\s[^>]*)?>/gi, "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_match, code: string) =>
+      String.fromCodePoint(Number(code)),
+    ).length,
+);
 </script>
 
 <template>
@@ -265,18 +282,17 @@ const bioLength = 160;
         {{ isOrganization ? "Short description" : "Short bio" }}
         <span class="optional">(optional)</span>
       </label>
-      <textarea
-        id="bio"
+      <InlineRichTextEditor
         v-model="bio"
+        input-id="bio"
+        :max-characters="bioLength"
         :placeholder="
           isOrganization
             ? 'A brief description of this business, project, or community...'
             : 'A brief description of who you are...'
         "
-        :maxlength="bioLength"
-        rows="3"
       />
-      <div class="char-count">{{ bio.length }}/{{ bioLength }}</div>
+      <div class="char-count">{{ bioTextLength }}/{{ bioLength }}</div>
     </div>
 
     <fieldset v-if="wizard.siteRole === 'profile'" class="form-group visibility-group">

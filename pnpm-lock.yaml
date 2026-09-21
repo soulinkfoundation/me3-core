@@ -205,8 +205,8 @@ importers:
         specifier: ^2.2.1
         version: 2.2.1
       me3-protocol:
-        specifier: 4.0.1
-        version: 4.0.1
+        specifier: github:soulinkfoundation/me3-protocol#v4.0.2
+        version: https://codeload.github.com/soulinkfoundation/me3-protocol/tar.gz/8015e470a561e73db3a34f7d121e610be135f490
       stripe:
         specifier: ^17.0.0
         version: 17.7.0
@@ -1887,8 +1887,9 @@ packages:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
 
-  me3-protocol@4.0.1:
-    resolution: {integrity: sha512-2frXusciyZBanMbe/NFWy3Heif2OcjBmsDq0gkLhX/uWacxE1XjS1jDzZ08IMfNBGa1zeOGiBFl5ex5brd6bCg==}
+  me3-protocol@https://codeload.github.com/soulinkfoundation/me3-protocol/tar.gz/8015e470a561e73db3a34f7d121e610be135f490:
+    resolution: {tarball: https://codeload.github.com/soulinkfoundation/me3-protocol/tar.gz/8015e470a561e73db3a34f7d121e610be135f490}
+    version: 4.0.2
 
   merge2@1.4.1:
     resolution: {integrity: sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==}
@@ -3903,7 +3904,7 @@ snapshots:
 
   math-intrinsics@1.1.0: {}
 
-  me3-protocol@4.0.1:
+  me3-protocol@https://codeload.github.com/soulinkfoundation/me3-protocol/tar.gz/8015e470a561e73db3a34f7d121e610be135f490:
     dependencies:
       '@sinclair/typebox': 0.34.51
 

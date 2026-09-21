@@ -325,10 +325,12 @@ function buttonItemKey(button: Me3Button) {
             <label>Link URL</label>
             <input
               v-model="buttonUrl"
-              type="url"
+              type="text"
+              inputmode="url"
               :placeholder="urlPlaceholder"
               @keyup.enter="saveButton"
             />
+            <p class="url-hint">Use /about or #section for an internal link that stays in this tab.</p>
           </div>
 
           <div class="form-group">
@@ -720,7 +722,8 @@ function buttonItemKey(button: Me3Button) {
 }
 
 .input-preview.secondary {
-  background: var(--color-border);
+  border: 1px solid var(--color-text);
+  background: var(--color-bg);
   color: var(--color-text);
 }
 
@@ -1027,7 +1030,8 @@ function buttonItemKey(button: Me3Button) {
 }
 
 .style-preview.secondary {
-  background: var(--color-border);
+  border: 1px solid var(--color-text);
+  background: var(--color-bg);
   color: var(--color-text);
 }
 
@@ -1041,6 +1045,13 @@ function buttonItemKey(button: Me3Button) {
   font-size: 13px;
   color: #ef4444;
   margin-top: 16px;
+}
+
+.url-hint {
+  margin: -4px 0 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .icon-picker-row {

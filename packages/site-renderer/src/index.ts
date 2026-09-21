@@ -68,6 +68,8 @@ type Me3Product = Me3Page & {
 export type SiteSectionPaths = {
   blog: string;
   shop: string;
+  testimonials: string;
+  bookings: string;
 };
 
 type Me3Testimonial = {
@@ -316,7 +318,9 @@ export async function generateSiteHtml(
 function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities): string {
   const vibe = getVibe(profile);
   const title = profile.name || profile.handle || "ME3 site";
-  const description = profile.bio || `${title} on ME3`;
+  const description = profile.bio
+    ? contentToPlainText(profile.bio)
+    : `${title} on ME3`;
   const bannerPath = profile.banner ? filePathForHtml(profile.banner) : "";
   const avatarPath = profile.avatar ? filePathForHtml(profile.avatar) : "";
   const banner = bannerPath
@@ -340,13 +344,13 @@ function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapa
           ${avatar}
           <h1 class="name">${escapeHtml(title)}</h1>
           ${displayLocation ? `<p class="location">${escapeHtml(displayLocation)}</p>` : ""}
-          ${profile.bio ? `<p class="bio">${parseInlineMarkdown(profile.bio)}</p>` : ""}
+          ${profile.bio ? `<div class="bio">${renderRichText(profile.bio)}</div>` : ""}
         </header>
         ${generateNav(profile, "", "./", "home")}
         ${generateButtons(profile)}
         ${generateLinks(profile)}
-        ${booking}
         ${generateTestimonials(profile)}
+        ${booking}
         ${newsletter}
       </main>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
@@ -394,7 +398,6 @@ function generateCollectionIndex(
     .map((item) => generateCollectionCard(item, activeSlug, fileMap))
     .join("");
   const listClass = activeSlug === "shop" ? "shop-items" : "blog-items";
-
   return pageShell(profile, {
     title: `${title} | ${profile.name || "ME3"}`,
     description: `${title} by ${profile.name || "ME3"}`,
@@ -520,7 +523,9 @@ function generateNav(
   const pages = (profile.pages || []).filter((page) => page.visible !== false && page.slug);
   const hasPosts = (profile.posts || []).some((post) => !post.draft);
   const hasProducts = (profile.products || []).length > 0;
-  if (pages.length === 0 && !hasPosts && !hasProducts) return "";
+  const hasStandaloneTestimonials = false;
+  const hasStandaloneBooking = false;
+  if (pages.length === 0 && !hasPosts && !hasProducts && !hasStandaloneTestimonials && !hasStandaloneBooking) return "";
 
   const style = getSiteNavigationStyle(profile);
   const linkOptions = {
@@ -531,6 +536,8 @@ function generateNav(
     sectionPaths,
     hasPosts,
     hasProducts,
+    hasStandaloneTestimonials,
+    hasStandaloneBooking,
   };
   const drawerLinks = generateNavLinks({ ...linkOptions, drawer: true });
   const inlineNavigation = style === "standard"
@@ -550,6 +557,8 @@ function generateNavLinks(options: {
   sectionPaths: SiteSectionPaths;
   hasPosts: boolean;
   hasProducts: boolean;
+  hasStandaloneTestimonials: boolean;
+  hasStandaloneBooking: boolean;
   drawer: boolean;
 }): string {
   const {
@@ -560,6 +569,8 @@ function generateNavLinks(options: {
     sectionPaths,
     hasPosts,
     hasProducts,
+    hasStandaloneTestimonials,
+    hasStandaloneBooking,
     drawer,
   } = options;
 
@@ -591,6 +602,8 @@ function generateNavLinks(options: {
     ...pageLinks,
     hasPosts ? `<a href="${basePath}${escapeHtml(sectionPaths.blog)}/" class="nav-link${activeSlug === "blog" ? " active" : ""}">${escapeHtml(profile.blogTitle || "Blog")}</a>` : "",
     hasProducts ? `<a href="${basePath}${escapeHtml(sectionPaths.shop)}/" class="nav-link${activeSlug === "shop" ? " active" : ""}">${escapeHtml(profile.shopTitle || "Shop")}</a>` : "",
+    hasStandaloneTestimonials ? `<a href="${basePath}${escapeHtml(sectionPaths.testimonials)}/" class="nav-link${activeSlug === sectionPaths.testimonials ? " active" : ""}">${escapeHtml(profile.testimonialsTitle || "Testimonials")}</a>` : "",
+    hasStandaloneBooking ? `<a href="${basePath}${escapeHtml(sectionPaths.bookings)}/" class="nav-link${activeSlug === sectionPaths.bookings ? " active" : ""}">Bookings</a>` : "",
   ].join("");
 
   return links;
@@ -682,6 +695,9 @@ function expandReusableContentBlocks(
       if (blockType === "testimonials") {
         return generateTestimonials(profile, basePath);
       }
+      if (blockType === "booking") {
+        return capabilities.bookingsEnabled ? generateBooking(profile) : "";
+      }
       return "";
     },
   );
@@ -732,7 +748,11 @@ function generateButtons(profile: Me3SiteProfile): string {
     .map((button) => {
       const iconHtml = iconMarkup(button.icon);
       const icon = iconHtml ? `<span class="btn-icon">${iconHtml}</span>` : "";
-      return `<a class="cta-button ${escapeHtml(button.style || "primary")}" href="${escapeHtml(formatHref(button.url || ""))}" target="_blank" rel="noopener">${icon}${escapeHtml(button.text || "")}</a>`;
+      const href = formatHref(button.url || "");
+      const external = /^https?:\/\//i.test(href)
+        ? ' target="_blank" rel="noopener"'
+        : "";
+      return `<a class="cta-button ${escapeHtml(button.style || "primary")}" href="${escapeHtml(href)}"${external}>${icon}${escapeHtml(button.text || "")}</a>`;
     })
     .join("");
 
@@ -792,7 +812,7 @@ function normalizeIconName(name: string): string {
 
 function generateTestimonials(profile: Me3SiteProfile, basePath = "./"): string {
   const testimonials = (profile.testimonials || []).filter((item) => item.name && item.quote);
-  if (testimonials.length === 0 || profile.testimonialDisplay === "standalone") return "";
+  if (testimonials.length === 0) return "";
   const cards = testimonials.map((item) => {
     const avatar = item.avatar
       ? `<img class="testimonial-avatar" src="${escapeHtml(filePathForHtml(item.avatar, basePath))}" alt="${escapeHtml(item.name || "")}" loading="lazy" decoding="async">`
@@ -860,9 +880,7 @@ function generateBooking(profile: Me3SiteProfile): string {
   if (bookingTypes.length === 0) return "";
   const activeType = bookingTypes[0];
   const title = normalizeBookingHeading(book.title || activeType.title);
-  const description = plainTextFromMaybeHtml(
-    activeType.description || book.description || "",
-  );
+  const description = renderRichText(activeType.description || book.description || "");
   const tabs =
     bookingTypes.length > 1
       ? `<div class="booking-type-tablist" role="tablist" aria-label="Booking types">${bookingTypes
@@ -877,7 +895,7 @@ function generateBooking(profile: Me3SiteProfile): string {
     .join("");
   const tabScript = bookingTypes.length > 1 ? `<script>${bookingTypeTabsScript()}</script>` : "";
 
-  return `<section class="booking" id="booking"><h2>${escapeHtml(title || "Book a session")}</h2>${description ? `<p>${escapeHtml(description)}</p>` : ""}${tabs}${panels}${tabScript}</section>`;
+  return `<section class="booking" id="booking"><h2>${escapeHtml(title || "Book a session")}</h2>${description ? `<div class="booking-intro">${description}</div>` : ""}${tabs}${panels}${tabScript}</section>`;
 }
 
 function bookingTypeTabsScript(): string {
@@ -990,7 +1008,7 @@ function generateBookingTypeBody(
       const recurrence = offer.recurrence;
       const capacity = typeof offer.capacity === "number" ? `${offer.capacity} seats` : "Unlimited seats";
       const price = formatPricing(offer.pricing);
-      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Class")}</strong><span>${escapeHtml(recurrence?.frequency === "biweekly" ? "Every 2 weeks" : "Weekly")} · ${escapeHtml(recurrence?.weekday || "")} · ${escapeHtml(recurrence?.startTime || "--:--")} · ${offer.duration || 60} min${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small></button>`;
+      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Class")}</strong>${renderBookingOfferDescription(offer.description)}<span>${escapeHtml(recurrence?.frequency === "biweekly" ? "Every 2 weeks" : "Weekly")} · ${escapeHtml(recurrence?.weekday || "")} · ${escapeHtml(recurrence?.startTime || "--:--")} · ${offer.duration || 60} min${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small></button>`;
     }).join("");
     return generateEventBookingWidget({
       username: profile.handle || "owner",
@@ -1006,7 +1024,7 @@ function generateBookingTypeBody(
       const dates = offer.startDate && offer.endDate ? ` · ${offer.startDate} → ${offer.endDate}` : "";
       const capacity = typeof offer.capacity === "number" ? `${offer.capacity} spaces` : "Unlimited spaces";
       const price = formatPricing(offer.pricing);
-      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Retreat")}</strong><span>${offer.durationDays || 1} days${escapeHtml(dates)}${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small></button>`;
+      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Retreat")}</strong>${renderBookingOfferDescription(offer.description)}<span>${offer.durationDays || 1} days${escapeHtml(dates)}${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small></button>`;
     }).join("");
     return generateEventBookingWidget({
       username: profile.handle || "owner",
@@ -1030,7 +1048,7 @@ function generateBookingTypeBody(
   const cards = offers.map((offer, index) => {
     const duration = offer.duration || book?.duration || 30;
     const price = formatPricing(offer.pricing);
-    return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || `${duration}-min Session`)}</strong><span>${duration} min${price ? ` · ${escapeHtml(price)}` : ""}</span></button>`;
+    return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || `${duration}-min Session`)}</strong>${renderBookingOfferDescription(offer.description)}<span>${duration} min${price ? ` · ${escapeHtml(price)}` : ""}</span></button>`;
   }).join("");
 
   return generatePaidBookingWidget({
@@ -1041,6 +1059,16 @@ function generateBookingTypeBody(
     fallbackDuration: book?.duration || 30,
     cards,
   });
+}
+
+function renderBookingOfferDescription(value?: string): string {
+  const description = plainTextFromMaybeHtml(value || "");
+  if (!description) return "";
+  const limit = 220;
+  const preview = description.length > limit
+    ? `${description.slice(0, limit).trimEnd()}…`
+    : description;
+  return `<span class="booking-card-description">${escapeHtml(preview)}</span>`;
 }
 
 function generateEventBookingWidget(input: {
@@ -1229,6 +1257,7 @@ function paidBookingWidgetScript(): string {
   var backButton=root.querySelector('[data-booking-back]');
   var selectedOfferId=(config.offers[0]&&config.offers[0].id)||'';
   var selectedTime='';
+  var slotRequest=0;
   var dayNames=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
   function setStatus(message,isError){statusEl.textContent=message||'';statusEl.classList.toggle('is-error',!!isError);}
   function showReturnStatus(message,isError){setStatus(message,isError);try{root.scrollIntoView({block:'start'});}catch(_error){}}
@@ -1279,6 +1308,7 @@ function paidBookingWidgetScript(): string {
     timeInput.value='';
     setDetailsVisible(false);
     var dateValue=dateInput.value;
+    var request=++slotRequest;
     var windows=(config.windows&&config.windows[dayName(dateValue)])||[];
     var duration=Number(selected.duration||30);
     if(!Number.isFinite(duration)||duration<=0)duration=30;
@@ -1286,7 +1316,14 @@ function paidBookingWidgetScript(): string {
     if(!Number.isFinite(bufferTime)||bufferTime<0)bufferTime=0;
     var slotStep=duration+bufferTime;
     var found=false;
-    windows.forEach(function(windowValue){
+    if(!dateValue){slotsEl.hidden=true;emptyEl.hidden=true;return;}
+    setStatus('Checking availability...');
+    fetch('/api/book/'+encodeURIComponent(config.username)+'/slots?date='+encodeURIComponent(dateValue)+'&offerId='+encodeURIComponent(selected.id),{headers:{Accept:'application/json'}})
+      .then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Could not load available times.');return data;});})
+      .then(function(data){
+      if(request!==slotRequest)return;
+      var available={};(data.slots||[]).forEach(function(slot){available[slot.localTime]=true;});
+      windows.forEach(function(windowValue){
       var parts=String(windowValue).split('-');
       var start=toMinutes((parts[0]||'').trim());
       var end=parts.length>1?toMinutes((parts[1]||'').trim()):start;
@@ -1298,7 +1335,9 @@ function paidBookingWidgetScript(): string {
         button.className='booking-slot';
         button.textContent=value+' '+timezoneLabel(dateValue,value);
         button.dataset.timeValue=value;
+        if(!available[value]){button.disabled=true;button.setAttribute('aria-disabled','true');button.title='Already booked or unavailable';button.classList.add('is-unavailable');}
         button.addEventListener('click',function(event){
+          if(event.currentTarget.disabled)return;
           var slotButton=event.currentTarget;
           var slotValue=slotButton&&slotButton.dataset?slotButton.dataset.timeValue:value;
           selectedTime=slotValue;
@@ -1311,9 +1350,18 @@ function paidBookingWidgetScript(): string {
         found=true;
         if(parts.length===1) break;
       }
+      });
+      slotsEl.hidden=!found;
+      emptyEl.hidden=found||!dateValue;
+      setStatus('');
+    }).catch(function(error){
+      if(request!==slotRequest)return;
+      slotsEl.innerHTML='';
+      slotsEl.hidden=true;
+      setStatus(error.message||'Could not load available times.',true);
     });
     slotsEl.hidden=!found;
-    emptyEl.hidden=found||!dateValue;
+    emptyEl.hidden=true;
   }
   root.querySelectorAll('.booking-card').forEach(function(button,index){
     if(config.offers[index]) button.dataset.offerId=config.offers[index].id;
@@ -1656,6 +1704,83 @@ function parseInlineMarkdown(value: string, basePath = "./"): string {
     );
 }
 
+function renderRichText(value: string): string {
+  if (!/<\s*(?:p|strong|b|em|i|a|br)\b/i.test(value)) {
+    return parseInlineMarkdown(value);
+  }
+
+  const allowedTags: Record<string, string> = {
+    p: "p",
+    strong: "strong",
+    b: "strong",
+    em: "em",
+    i: "em",
+    br: "br",
+  };
+  let html = "";
+  let position = 0;
+  let ignoredContentTag: "script" | "style" | null = null;
+  let anchorOpen = false;
+  while (position < value.length) {
+    const tagStart = value.indexOf("<", position);
+    if (tagStart < 0) {
+      if (!ignoredContentTag) {
+        html += escapeHtml(decodeHtmlEntities(value.slice(position)));
+      }
+      break;
+    }
+    if (!ignoredContentTag) {
+      html += escapeHtml(decodeHtmlEntities(value.slice(position, tagStart)));
+    }
+    const tagEnd = findHtmlTagEnd(value, tagStart + 1);
+    if (tagEnd < 0) {
+      html += escapeHtml(decodeHtmlEntities(value.slice(tagStart)));
+      break;
+    }
+
+    const rawTag = value.slice(tagStart + 1, tagEnd);
+    const tag = parseHtmlTag(rawTag);
+    if (ignoredContentTag) {
+      if (tag?.closing && tag.name === ignoredContentTag) {
+        ignoredContentTag = null;
+      }
+    } else if (
+      tag && !tag.closing && (tag.name === "script" || tag.name === "style")
+    ) {
+      ignoredContentTag = tag.name;
+    } else if (tag?.name === "a") {
+      if (tag.closing) {
+        if (anchorOpen) html += "</a>";
+        anchorOpen = false;
+      } else {
+        const hrefAttribute = rawTag.match(
+          /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
+        );
+        const href = safeRichTextHref(
+          decodeHtmlEntities(hrefAttribute?.[1] || hrefAttribute?.[2] || hrefAttribute?.[3] || ""),
+        );
+        if (href) {
+          const external = /^https?:\/\//i.test(href);
+          html += `<a href="${escapeHtml(href)}"${external ? ' target="_blank" rel="noopener noreferrer"' : ""}>`;
+          anchorOpen = true;
+        }
+      }
+    } else if (tag && allowedTags[tag.name]) {
+      const safeTag = allowedTags[tag.name];
+      html += tag.closing && safeTag !== "br" ? `</${safeTag}>` : !tag.closing ? `<${safeTag}>` : "";
+    }
+    position = tagEnd + 1;
+  }
+  return html;
+}
+
+function safeRichTextHref(value: string): string | null {
+  const href = value.trim();
+  if (/^(?:https?:\/\/|mailto:|tel:|#)/i.test(href)) return href;
+  if (/^(?:\/(?!\/)|\.\.?\/)/.test(href)) return href;
+  return null;
+}
+
 function unescapeMarkdownPunctuation(value: string): string {
   return value.replace(/\\([\\`*{}[\]()#+\-.!_>"'])/g, "$1");
 }
@@ -1916,10 +2041,13 @@ export function resolveSiteSectionPaths(profile: Me3SiteProfile): SiteSectionPat
       .map((page) => page.slug?.trim())
       .filter((slug): slug is string => Boolean(slug)),
   );
-  return {
-    blog: ensureUniqueSectionPath(slugifySectionPath(profile.blogTitle || "", "blog"), taken),
-    shop: ensureUniqueSectionPath(slugifySectionPath(profile.shopTitle || "", "shop"), taken),
-  };
+  const blog = ensureUniqueSectionPath(slugifySectionPath(profile.blogTitle || "", "blog"), taken);
+  const shop = ensureUniqueSectionPath(slugifySectionPath(profile.shopTitle || "", "shop"), taken);
+  const testimonials = ensureUniqueSectionPath(
+    slugifySectionPath(profile.testimonialsTitle || "", "testimonials"), taken,
+  );
+  const bookings = ensureUniqueSectionPath("bookings", taken);
+  return { blog, shop, testimonials, bookings };
 }
 
 function slugifySectionPath(value: string, fallback: string): string {
@@ -2099,6 +2227,7 @@ body[data-layout=portrait] .profile-header .name{font-size:32px;line-height:1.2}
 body[data-layout=portrait] .profile-header .bio{max-width:440px;margin:12px auto 24px}
 .buttons{gap:12px}
 .cta-button{min-height:52px;padding:12px 18px;line-height:1.4;overflow-wrap:anywhere;box-shadow:var(--ui-shadow-sm)}
+.cta-button.secondary{border:1px solid var(--text);background:var(--surface);color:var(--text);box-shadow:none}
 .cta-button.outline{border-width:1px;box-shadow:none}
 .collection-card,.blog-item,.shop-item{border-width:1px;box-shadow:var(--ui-shadow-sm)}
 .cta-button,.link-item,.collection-card,.blog-item,.shop-item{transition:transform .18s ease,box-shadow .18s ease}
@@ -2122,7 +2251,7 @@ body .site-navigation-home:is(.site-navigation-compact,.site-navigation-overflow
 .site-navigation-compact{justify-content:flex-end}
 .nav{align-items:center;margin:0}
 .page-header{display:flex;align-items:center;justify-content:space-between;gap:16px}
-.page-header .back-link{min-width:0;max-width:40%;flex:0 0 auto}
+.page-header .back-link{min-width:0;max-width:100%;flex:0 1 auto}
 .page-header .back-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav-inline{flex-wrap:nowrap;flex-shrink:0;width:max-content}
 .nav-inline>.nav-link,.nav-inline .nav-group-toggle{white-space:nowrap}
@@ -2171,6 +2300,13 @@ function bookingControlsCss(): string {
 .booking-type-tab.active{border-color:var(--text);background:var(--text);color:var(--surface)}
 .booking-type-tab:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .booking-type-panel[hidden]{display:none}
+.booking-card-description{font-size:.95rem;line-height:1.45}
+.booking-intro{max-width:36rem;margin:0 auto 24px;color:var(--muted);font-size:1.1rem;line-height:1.55}
+.booking-intro p{margin:0 0 .75em}
+.booking-intro p:last-child{margin-bottom:0}
+.bio p{margin:0 0 .5em}
+.bio p:last-child{margin-bottom:0}
+.bio a,.booking-intro a{color:var(--accent);text-underline-offset:3px}
 .event-booking-widget .booking-form{margin-top:18px}
 .event-booking-widget .booking-submit{width:100%}
 `;
@@ -2298,7 +2434,7 @@ function buildContentLightbox(): string {
 
 function siteCss(vibe: string, accentOverride?: string): string {
   const theme = siteThemeTokens(vibe, accentOverride);
-  return `:root{--bg:${theme.bg};--surface:${theme.surface};--text:${theme.text};--muted:${theme.muted};--border:${theme.border};--accent:${theme.accent};--radius-sm:8px;--radius-md:12px;--radius:16px;--radius-full:9999px;--font:${theme.font};--mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);line-height:1.55}.container{width:min(640px,100%);margin:0 auto;min-height:100vh;background:var(--surface)}.banner{position:relative;height:190px;overflow:hidden;border-radius:0 0 var(--radius) var(--radius);background:#ddd}.banner img{width:100%;height:100%;object-fit:cover;display:block}.link-icon svg{width:28px;height:28px}.btn-icon svg{width:16px;height:16px}.btn-icon{display:inline-flex;align-items:center;justify-content:center;line-height:1}.main{padding:0 32px 36px}.profile-header{text-align:center;margin-top:-56px;position:relative}.banner+.main .profile-header{margin-top:-56px}.avatar{width:120px;height:120px;border-radius:999px;object-fit:cover;border:5px solid var(--surface);background:var(--surface)}.name{font-size:clamp(2rem,7vw,3rem);line-height:1.05;margin:22px 0 8px;font-weight:800;letter-spacing:0}.location,.bio{color:var(--muted);margin:8px auto;max-width:38rem}.nav{display:flex;gap:8px;justify-content:center;margin:28px 0 24px;flex-wrap:wrap}.nav-link{border-radius:var(--radius-full);padding:9px 16px;text-decoration:none;color:var(--muted);font-weight:700}.nav-link.active{background:var(--text);color:var(--surface)}.buttons{display:grid;gap:8px;margin:20px 0}.cta-button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:6px 16px;box-sizing:border-box;border-radius:var(--radius-md);text-decoration:none;font-weight:700;font-size:14px;letter-spacing:0;background:var(--accent);color:${theme.accentText}}.cta-button.primary{background:var(--accent);color:${theme.accentText}}.cta-button.secondary{background:var(--text);color:var(--surface)}.cta-button.outline{background:transparent;color:var(--text);border:2px solid var(--text)}.links{display:flex;justify-content:center;align-items:center;gap:16px;flex-wrap:wrap;margin:22px 0}.link-item{width:56px;height:56px;border-radius:999px;display:grid;place-items:center;color:var(--text);background:rgba(0,0,0,.06);padding:0;line-height:1}.link-label{display:none}.testimonials,.booking,.newsletter{margin:32px 0;padding:40px 48px;border-radius:24px;background:var(--border)}.booking,.newsletter{text-align:center}.booking h2,.newsletter h2,.testimonials h2{margin:0 0 14px;line-height:1.2}.booking>p,.newsletter>p{max-width:36rem;margin:0 auto 24px;color:var(--muted);font-size:1.1rem;line-height:1.55}.booking-subtitle{font-size:1.1rem;margin:22px 0 18px}.booking-session-preview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0 24px}.booking-session-preview:has(.booking-card:only-child){grid-template-columns:1fr}.booking-card{font:inherit;color:inherit;width:100%;border:0;border-radius:16px;padding:16px;margin:0;display:grid;gap:8px;text-align:left;background:transparent;cursor:pointer}.booking-card.active{border:2px solid var(--text);background:var(--surface)}.booking-card span,.booking-card small{color:var(--muted)}.booking-widget{display:grid;gap:18px;max-width:760px;margin:0 auto}.booking-form{display:none;gap:16px;margin:8px auto 0;text-align:left;max-width:520px;width:100%}.booking-form.is-visible{display:grid}.booking-actions{display:grid;grid-template-columns:minmax(120px,1fr) minmax(180px,2fr);gap:16px}.booking-back,.booking-submit{font:inherit;font-weight:800;border:0;border-radius:18px;padding:18px 22px;cursor:pointer}.booking-back{background:var(--surface);color:var(--text)}.booking-submit{background:var(--accent);color:${theme.accentText}}.booking-status{min-height:1.4em;color:var(--muted);margin:0}.booking-status.is-error{color:#b42318}.booking-timezone,.booking-empty-times{color:var(--muted);font-size:1rem;margin:8px 0 0}.booking-selected-time{padding:18px 22px;border-radius:18px;background:var(--surface);text-align:center;font-weight:800;font-size:1.1rem}.booking label{display:grid;gap:8px;color:var(--muted);text-align:left}.booking-slots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;justify-content:center;max-width:520px;margin:0 auto}.booking-slot{font:inherit;border:0;border-radius:14px;background:var(--surface);color:inherit;min-height:44px;padding:10px 8px;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:.95rem}.booking-slot.active{outline:2px solid var(--text);outline-offset:0;background:var(--surface)}.cta-button:focus-visible,.booking-card:focus-visible,.booking-slot:focus-visible,.newsletter button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}input,select,textarea{font:inherit;padding:18px 22px;border:0;border-radius:18px;background:var(--surface);color:inherit;box-sizing:border-box;width:100%}input::placeholder,textarea::placeholder{color:var(--muted);font-weight:700}textarea{resize:vertical}.booking-note{font-style:italic;color:var(--muted);text-align:center}.booking-payment-later{margin:0;padding:14px 16px;border:1px solid var(--text);border-radius:14px;color:var(--text);font-size:.95rem;line-height:1.5;text-align:left}.testimonial-list{display:grid;gap:16px}.testimonials h2{text-align:center}.testimonial-card{display:grid;gap:20px;padding:24px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);margin:0}.testimonial-card__person{display:flex;align-items:center;gap:14px}.testimonial-card__avatar{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;flex:0 0 auto;border-radius:999px;background:rgba(0,0,0,.08);color:var(--text);font-weight:800;object-fit:cover}.testimonial-card__meta{display:grid;gap:2px;min-width:0}.testimonial-card__name{color:var(--text)}.testimonial-card__handle{color:var(--muted);font-size:.9rem}.testimonial-link{margin-left:auto;color:var(--accent);font-weight:700}.testimonial-card__quote{font-size:1.05rem;line-height:1.55;margin:0}.newsletter form{display:flex;gap:10px;max-width:520px;margin:18px auto 10px}.newsletter input{min-width:0;flex:1}.newsletter button{font:inherit;font-weight:800;min-height:48px;border:0;border-radius:var(--radius-md);background:var(--accent);color:${theme.accentText};padding:12px 22px;cursor:pointer}.footer{text-align:center;color:var(--muted);padding:24px 32px}.footer a{color:inherit}.page-header{padding:28px 32px 0}.back-link{display:inline-flex;align-items:center;gap:10px;color:inherit;text-decoration:none;font-weight:800}.avatar-small{width:42px;height:42px;border-radius:999px;object-fit:cover}.content{margin:32px 0;padding:0 32px 32px;background:transparent;border-radius:0}.content h1{font-size:2.2rem;line-height:1.1;margin-top:0}.content img{max-width:100%;height:auto}.collection-list,.blog-items,.shop-items{display:grid;gap:12px}.collection-card,.blog-item,.shop-item{display:grid;gap:8px;text-decoration:none;color:inherit;padding:18px;border:2px solid var(--border);border-radius:var(--radius-md);background:transparent}.blog-item-title,.shop-item-title{font-weight:800;color:var(--text);line-height:1.25}.blog-item-date,.shop-item-price,.blog-item-excerpt,.shop-item-excerpt{color:var(--muted);line-height:1.45}.post-type{display:inline-flex;margin-left:8px;padding:2px 8px;border-radius:999px;background:rgba(0,0,0,.08);font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;vertical-align:middle}@media (max-width:560px){.main{padding:0 20px 28px}.testimonials,.booking,.newsletter{padding:28px}.newsletter form{display:grid}.booking-slots{grid-template-columns:repeat(2,minmax(0,1fr))}.booking-actions{grid-template-columns:1fr}}${vibe === "tech" ? `:root{--radius-sm:0;--radius-md:0;--radius:0}.name{text-transform:lowercase;font-family:var(--font)}.name:before{content:"> ";color:var(--accent)}.banner{border-radius:0}.nav-link{border-radius:0}.nav-link.active{background:var(--text);color:#111}.links{background:#242424;padding:16px}.link-item{border-radius:0;background:transparent}.booking,.newsletter{background:#242424}.content{background:transparent}.testimonials{background:transparent;padding-left:0;padding-right:0}.testimonial-card{background:#050505;border-color:#2a2a2a;border-radius:24px}.testimonial-card__avatar{background:#242424}.booking-card{background:#050505}.booking-slot.active{background:#050505}.cta-button{border-radius:0}` : ""}`;
+  return `:root{--bg:${theme.bg};--surface:${theme.surface};--text:${theme.text};--muted:${theme.muted};--border:${theme.border};--accent:${theme.accent};--radius-sm:8px;--radius-md:12px;--radius:16px;--radius-full:9999px;--font:${theme.font};--mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);line-height:1.55}.container{width:min(640px,100%);margin:0 auto;min-height:100vh;background:var(--surface)}.banner{position:relative;height:190px;overflow:hidden;border-radius:0 0 var(--radius) var(--radius);background:#ddd}.banner img{width:100%;height:100%;object-fit:cover;display:block}.link-icon svg{width:28px;height:28px}.btn-icon svg{width:16px;height:16px}.btn-icon{display:inline-flex;align-items:center;justify-content:center;line-height:1}.main{padding:0 32px 36px}.profile-header{text-align:center;margin-top:-56px;position:relative}.banner+.main .profile-header{margin-top:-56px}.avatar{width:120px;height:120px;border-radius:999px;object-fit:cover;border:5px solid var(--surface);background:var(--surface)}.name{font-size:clamp(2rem,7vw,3rem);line-height:1.05;margin:22px 0 8px;font-weight:800;letter-spacing:0}.location,.bio{color:var(--muted);margin:8px auto;max-width:38rem}.nav{display:flex;gap:8px;justify-content:center;margin:28px 0 24px;flex-wrap:wrap}.nav-link{border-radius:var(--radius-full);padding:9px 16px;text-decoration:none;color:var(--muted);font-weight:700}.nav-link.active{background:var(--text);color:var(--surface)}.buttons{display:grid;gap:8px;margin:20px 0}.cta-button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:6px 16px;box-sizing:border-box;border-radius:var(--radius-md);text-decoration:none;font-weight:700;font-size:14px;letter-spacing:0;background:var(--accent);color:${theme.accentText}}.cta-button.primary{background:var(--accent);color:${theme.accentText}}.cta-button.secondary{background:var(--text);color:var(--surface)}.cta-button.outline{background:transparent;color:var(--text);border:2px solid var(--text)}.links{display:flex;justify-content:center;align-items:center;gap:16px;flex-wrap:wrap;margin:22px 0}.link-item{width:56px;height:56px;border-radius:999px;display:grid;place-items:center;color:var(--text);background:rgba(0,0,0,.06);padding:0;line-height:1}.link-label{display:none}.testimonials,.booking,.newsletter{margin:32px 0;padding:40px 48px;border-radius:24px;background:var(--border)}.booking,.newsletter{text-align:center}.booking h2,.newsletter h2,.testimonials h2{margin:0 0 14px;line-height:1.2}.booking>p,.newsletter>p{max-width:36rem;margin:0 auto 24px;color:var(--muted);font-size:1.1rem;line-height:1.55}.booking-subtitle{font-size:1.1rem;margin:22px 0 18px}.booking-session-preview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0 24px}.booking-session-preview:has(.booking-card:only-child){grid-template-columns:1fr}.booking-card{font:inherit;color:inherit;width:100%;border:0;border-radius:16px;padding:16px;margin:0;display:grid;gap:8px;text-align:left;background:transparent;cursor:pointer}.booking-card.active{border:2px solid var(--text);background:var(--surface)}.booking-card span,.booking-card small{color:var(--muted)}.booking-widget{display:grid;gap:18px;max-width:760px;margin:0 auto}.booking-form{display:none;gap:16px;margin:8px auto 0;text-align:left;max-width:520px;width:100%}.booking-form.is-visible{display:grid}.booking-actions{display:grid;grid-template-columns:minmax(120px,1fr) minmax(180px,2fr);gap:16px}.booking-back,.booking-submit{font:inherit;font-weight:800;border:0;border-radius:18px;padding:18px 22px;cursor:pointer}.booking-back{background:var(--surface);color:var(--text)}.booking-submit{background:var(--accent);color:${theme.accentText}}.booking-status{min-height:1.4em;color:var(--muted);margin:0}.booking-status.is-error{color:#b42318}.booking-timezone,.booking-empty-times{color:var(--muted);font-size:1rem;margin:8px 0 0}.booking-selected-time{padding:18px 22px;border-radius:18px;background:var(--surface);text-align:center;font-weight:800;font-size:1.1rem}.booking label{display:grid;gap:8px;color:var(--muted);text-align:left}.booking-slots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;justify-content:center;max-width:520px;margin:0 auto}.booking-slot{font:inherit;border:0;border-radius:14px;background:var(--surface);color:inherit;min-height:44px;padding:10px 8px;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:.95rem}.booking-slot:disabled{opacity:.45;cursor:not-allowed}.booking-slot.active{outline:2px solid var(--text);outline-offset:0;background:var(--surface)}.cta-button:focus-visible,.booking-card:focus-visible,.booking-slot:focus-visible,.newsletter button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}input,select,textarea{font:inherit;padding:18px 22px;border:0;border-radius:18px;background:var(--surface);color:inherit;box-sizing:border-box;width:100%}input::placeholder,textarea::placeholder{color:var(--muted);font-weight:700}textarea{resize:vertical}.booking-note{font-style:italic;color:var(--muted);text-align:center}.booking-payment-later{margin:0;padding:14px 16px;border:1px solid var(--text);border-radius:14px;color:var(--text);font-size:.95rem;line-height:1.5;text-align:left}.testimonial-list{display:grid;gap:16px}.testimonials h2{text-align:center}.testimonial-card{display:grid;gap:20px;padding:24px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);margin:0}.testimonial-card__person{display:flex;align-items:center;gap:14px}.testimonial-card__avatar{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;flex:0 0 auto;border-radius:999px;background:rgba(0,0,0,.08);color:var(--text);font-weight:800;object-fit:cover}.testimonial-card__meta{display:grid;gap:2px;min-width:0}.testimonial-card__name{color:var(--text)}.testimonial-card__handle{color:var(--muted);font-size:.9rem}.testimonial-link{margin-left:auto;color:var(--accent);font-weight:700}.testimonial-card__quote{font-size:1.05rem;line-height:1.55;margin:0}.newsletter form{display:flex;gap:10px;max-width:520px;margin:18px auto 10px}.newsletter input{min-width:0;flex:1}.newsletter button{font:inherit;font-weight:800;min-height:48px;border:0;border-radius:var(--radius-md);background:var(--accent);color:${theme.accentText};padding:12px 22px;cursor:pointer}.footer{text-align:center;color:var(--muted);padding:24px 32px}.footer a{color:inherit}.page-header{padding:28px 32px 0}.back-link{display:inline-flex;align-items:center;gap:10px;color:inherit;text-decoration:none;font-weight:800}.avatar-small{width:42px;height:42px;border-radius:999px;object-fit:cover}.content{margin:32px 0;padding:0 32px 32px;background:transparent;border-radius:0}.content h1{font-size:2.2rem;line-height:1.1;margin-top:0}.content img{max-width:100%;height:auto}.collection-list,.blog-items,.shop-items{display:grid;gap:12px}.collection-card,.blog-item,.shop-item{display:grid;gap:8px;text-decoration:none;color:inherit;padding:18px;border:2px solid var(--border);border-radius:var(--radius-md);background:transparent}.blog-item-title,.shop-item-title{font-weight:800;color:var(--text);line-height:1.25}.blog-item-date,.shop-item-price,.blog-item-excerpt,.shop-item-excerpt{color:var(--muted);line-height:1.45}.post-type{display:inline-flex;margin-left:8px;padding:2px 8px;border-radius:999px;background:rgba(0,0,0,.08);font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;vertical-align:middle}@media (max-width:560px){.main{padding:0 20px 28px}.testimonials,.booking,.newsletter{padding:28px}.newsletter form{display:grid}.booking-slots{grid-template-columns:repeat(2,minmax(0,1fr))}.booking-actions{grid-template-columns:1fr}}${vibe === "tech" ? `:root{--radius-sm:0;--radius-md:0;--radius:0}.name{text-transform:lowercase;font-family:var(--font)}.name:before{content:"> ";color:var(--accent)}.banner{border-radius:0}.nav-link{border-radius:0}.nav-link.active{background:var(--text);color:#111}.links{background:#242424;padding:16px}.link-item{border-radius:0;background:transparent}.booking,.newsletter{background:#242424}.content{background:transparent}.testimonials{background:transparent;padding-left:0;padding-right:0}.testimonial-card{background:#050505;border-color:#2a2a2a;border-radius:24px}.testimonial-card__avatar{background:#242424}.booking-card{background:#050505}.booking-slot.active{background:#050505}.cta-button{border-radius:0}` : ""}`;
 }
 
 function siteThemeTokens(vibe: string, accentOverride?: string): {

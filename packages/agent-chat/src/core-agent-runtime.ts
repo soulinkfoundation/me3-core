@@ -1090,6 +1090,8 @@ async function executeWebToolCall(input: {
   if (!services) throw new Error("Public web research is not configured for this runtime.");
   assertOnlyDeclaredArguments(input.call.arguments, input.tool);
   const args = input.call.arguments;
+  const projectIdInput = optionalToolString(args.projectId);
+  const projectName = optionalToolString(args.projectName);
 
   if (input.tool.capabilityId === "core.web.search") {
     const freshnessMaxAgeSeconds = optionalToolNumber(args.freshnessMaxAgeSeconds);
@@ -1862,6 +1864,8 @@ async function executeMissionTaskToolCall(input: {
   enforceMissionTaskToolPolicy(input.tool);
   assertOnlyDeclaredArguments(input.call.arguments, input.tool);
   const args = input.call.arguments;
+  const projectIdInput = optionalToolString(args.projectId);
+  const projectName = optionalToolString(args.projectName);
 
   if (input.tool.capabilityId === "core.mission.task.list") {
     const [allTasks, projects] = await Promise.all([
@@ -1905,13 +1909,18 @@ async function executeMissionTaskToolCall(input: {
   }
 
   if (input.tool.capabilityId === "core.mission.task.create") {
+    const projectId = resolveMissionTaskProjectId(
+      await listAgentMissionProjects({ DB: input.db }, input.userId),
+      projectIdInput,
+      projectName,
+    );
     const task = await createAgentMissionTask(
       { DB: input.db },
       input.userId,
       {
         title: requiredToolString(args.title, "Task title"),
         description: optionalToolString(args.description),
-        projectId: optionalToolString(args.projectId),
+        projectId,
         dueAt: optionalToolString(args.dueAt),
         priority: optionalToolNumber(args.priority),
         idempotencyKey: input.idempotencyKey,
@@ -1943,7 +1952,13 @@ async function executeMissionTaskToolCall(input: {
     description: optionalToolBoolean(args.clearDescription)
       ? null
       : optionalToolString(args.description),
-    projectId: optionalToolString(args.projectId),
+    projectId: projectIdInput || projectName
+      ? resolveMissionTaskProjectId(
+          await listAgentMissionProjects({ DB: input.db }, input.userId),
+          projectIdInput,
+          projectName,
+        )
+      : undefined,
     status: optionalToolString(args.status),
     dueAt: optionalToolBoolean(args.clearDueAt)
       ? null
@@ -3114,7 +3129,7 @@ function withCoreToolInstructions(
           "- Search before task read/update/archive when the owner names or describes a record but no stable task ID is present. Use task list for browsing a project or status, not title discovery.",
           "- Task list accepts an exact projectName directly. Use projectId=null and projectName=null to list across all projects; never claim a project ID is required for a read.",
           "- Never invent a taskId or projectId. If multiple records could match, ask one concise clarification question and do not write.",
-          "- For create, use the project ID selected by the owner. Omit projectId only when the owner did not name a project and the host can choose an unambiguous default.",
+          "- For create and moves, an exact projectName or slug is enough: include it directly and ME3 will resolve the owner's stable project ID. Provide projectId only when it is already known; if both are present, they must identify the same project.",
           "- When asked to prioritise, list the matching tasks first and recommend a small Now set. Only update status or priority after the owner clearly confirms.",
           "- Priority is 1 (highest) through 5 (lowest). Use in_progress for the owner's small Now commitment list.",
           "- Convert relative due dates such as today or tomorrow to YYYY-MM-DD in the owner's timezone using the current-time context above.",

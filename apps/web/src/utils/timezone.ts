@@ -21,11 +21,38 @@ export function listSupportedTimeZones(): string[] {
     supportedValuesOf?: (key: string) => string[];
   }).supportedValuesOf?.("timeZone");
 
-  if (Array.isArray(supported) && supported.length > 0) {
-    return supported;
-  }
+  const common = [
+    detected,
+    "UTC",
+    "Europe/Dublin",
+    "Europe/London",
+    "Europe/Madrid",
+    "Atlantic/Canary",
+    "America/New_York",
+    "America/Los_Angeles",
+    "Asia/Kolkata",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+  ];
+  return Array.from(
+    new Set([...(Array.isArray(supported) ? supported : []), ...common].filter(Boolean)),
+  ) as string[];
+}
 
-  return Array.from(new Set([detected, "UTC"].filter(Boolean))) as string[];
+export function getTimeZoneCityLabel(timeZone: string): string {
+  const city = timeZone.split("/").at(-1)?.replace(/_/g, " ") || timeZone;
+  if (timeZone === "Atlantic/Canary") return "Canary Islands";
+  return city;
+}
+
+export function getTimeZoneSearchAliases(timeZone: string): string[] {
+  if (timeZone === "Europe/Madrid") {
+    return ["Spain", "Barcelona", "Valencia", "Seville", "Bilbao"];
+  }
+  if (timeZone === "Atlantic/Canary") {
+    return ["Spain", "Canary Islands", "Tenerife", "Las Palmas"];
+  }
+  return [];
 }
 
 function getTimeZoneNamePart(

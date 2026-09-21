@@ -5,6 +5,7 @@ import {
   type Me3SiteProfile,
 } from "@me3-core/site-renderer";
 import { useWizardStore, type WizardContentAsset } from "../stores/wizard";
+import { sitePreviewFileForView } from "../utils/site-preview";
 
 const props = withDefaults(
   defineProps<{
@@ -72,13 +73,12 @@ async function contentWithPreviewAssets(
 }
 
 function fileForView(view: string | undefined): string {
-  if (!view || view === "home") return "index.html";
-  const [section, item] = view.split(":", 2);
-  if (item) return `${section}/${item}.html`;
-  if (section === wizard.blogPath || section === wizard.shopPath) {
-    return `${section}/index.html`;
-  }
-  return `${section}.html`;
+  return sitePreviewFileForView(view, {
+    paths: {
+      blog: wizard.blogPath,
+      shop: wizard.shopPath,
+    },
+  });
 }
 
 function previewNavigationScript(currentFile: string): string {

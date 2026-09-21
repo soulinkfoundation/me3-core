@@ -101,20 +101,20 @@ test.describe("Wizard Basics Step", () => {
   });
 
   test("should enforce bio character limit", async ({ page }) => {
-    const longBio = "a".repeat(161); // Exceeds 160 char limit
+    const longBio = "a".repeat(321); // Exceeds 320 char limit
     await page.fill("#bio", longBio);
 
-    const bioValue = await page.locator("#bio").inputValue();
-    expect(bioValue.length).toBeLessThanOrEqual(160);
+    const bioValue = await page.locator("#bio").innerText();
+    expect(bioValue.length).toBeLessThanOrEqual(320);
 
     // Check character count display
-    await expect(page.locator(".char-count")).toContainText("160/160");
+    await expect(page.locator(".char-count")).toContainText("320/320");
   });
 
   test("should update bio character count", async ({ page }) => {
     await page.fill("#bio", "Hello world");
 
-    await expect(page.locator(".char-count")).toContainText("11/160");
+    await expect(page.locator(".char-count")).toContainText("11/320");
   });
 
   test("should allow optional fields to be empty", async ({ page }) => {

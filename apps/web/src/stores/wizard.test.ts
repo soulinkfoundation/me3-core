@@ -993,7 +993,7 @@ describe("wizard store", () => {
       expect(store.testimonialsPath).toBe("kind-words");
     });
 
-    it("should include testimonials when enabled", () => {
+    it("includes testimonials without legacy placement metadata", () => {
       const store = useWizardStore();
       store.profile.name = "Test User";
       store.testimonialsEnabled = true;
@@ -1008,7 +1008,7 @@ describe("wizard store", () => {
 
       expect(me3.testimonials).toHaveLength(1);
       expect(me3.testimonials?.[0].name).toBe("Jamie");
-      expect(me3.testimonialDisplay).toBe("standalone");
+      expect(me3.testimonialDisplay).toBeUndefined();
     });
 
     it("should use files path for testimonial avatars when avatarBlob is set", () => {
@@ -1055,7 +1055,7 @@ describe("wizard store", () => {
       expect(store.generateMe3Json().logo).toBe("./files/logo.png");
     });
 
-    it("should include non-home testimonial placement targets as link extensions", () => {
+    it("does not export legacy testimonial placement targets", () => {
       const store = useWizardStore();
       store.profile.name = "Test User";
       store.shopEnabled = true;
@@ -1070,7 +1070,7 @@ describe("wizard store", () => {
       const me3 = store.generateMe3Json();
 
       expect(me3.testimonialDisplay).toBeUndefined();
-      expect(me3.links?._testimonials_placement).toBe("shop");
+      expect(me3.links?._testimonials_placement).toBeUndefined();
     });
 
     it("should include vibe if not default", () => {
@@ -1603,6 +1603,15 @@ describe("wizard store", () => {
   });
 
   describe("booking", () => {
+    it("does not export legacy booking placement targets", () => {
+      const store = useWizardStore();
+      store.profile.name = "Test User";
+      store.profile.booking.enabled = true;
+      store.bookingPlacement = "standalone";
+
+      expect(store.generateMe3Json().links?._booking_placement).toBeUndefined();
+    });
+
     it("should initialize with default booking config", () => {
       const store = useWizardStore();
       expect(store.profile.booking.enabled).toBe(true);

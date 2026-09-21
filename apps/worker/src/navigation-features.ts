@@ -7,6 +7,11 @@ export const NAVIGATION_FEATURES = [
     description: "Chat with ME3 and run assistant jobs.",
   },
   {
+    id: "calendar",
+    name: "Calendar",
+    description: "View bookings, reminders, events, and imported calendars.",
+  },
+  {
     id: "journal",
     name: "Journal",
     description: "Write private daily notes and reflections.",
@@ -61,12 +66,13 @@ export async function listNavigationFeatures(
     (rows.results || []).map((row) => [row.feature_id, row.visible === 1]),
   );
 
-  // New installations show the baseline assistant by default while optional
-  // workspaces remain hidden. The migration writes visible rows for
-  // installations that existed before this setting was introduced.
+  // Calendar was previously always shown, so preserve that behavior for
+  // existing and new installations until the owner explicitly hides it.
   return NAVIGATION_FEATURES.map((feature) => ({
     ...feature,
-    visible: visibility.get(feature.id) ?? feature.id === "assistant",
+    visible:
+      visibility.get(feature.id) ??
+      (feature.id === "assistant" || feature.id === "calendar"),
   }));
 }
 

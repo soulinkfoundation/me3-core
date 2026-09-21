@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import UiIcon from "../UiIcon.vue";
+import { getTimeZoneDisplayLabel, listSupportedTimeZones } from "../../utils/timezone";
+import TimezonePicker from "./TimezonePicker.vue";
 
 export type BookingAvailability = Record<string, string[]>;
 
@@ -47,29 +49,17 @@ const days = [
   { key: "sunday", label: "Sun", title: "Sunday" },
 ] as const;
 
-const defaultTimezoneOptions = [
-  { value: "America/New_York", label: "Eastern Time (ET)" },
-  { value: "America/Chicago", label: "Central Time (CT)" },
-  { value: "America/Denver", label: "Mountain Time (MT)" },
-  { value: "America/Los_Angeles", label: "Pacific Time (PT)" },
-  { value: "Europe/Dublin", label: "Dublin (GMT/IST)" },
-  { value: "Europe/London", label: "London (GMT/BST)" },
-  { value: "Europe/Paris", label: "Paris (CET/CEST)" },
-  { value: "Europe/Berlin", label: "Berlin (CET/CEST)" },
-  { value: "Asia/Dubai", label: "Dubai (GST)" },
-  { value: "Asia/Karachi", label: "Pakistan (PKT)" },
-  { value: "Asia/Kolkata", label: "India (IST)" },
-  { value: "Asia/Singapore", label: "Singapore (SGT)" },
-  { value: "Australia/Sydney", label: "Sydney (AEST/AEDT)" },
-  { value: "UTC", label: "UTC" },
-];
+const defaultTimezoneOptions = listSupportedTimeZones().map((value) => ({
+  value,
+  label: getTimeZoneDisplayLabel(value),
+}));
 
 const resolvedTimezoneOptions = computed(
   () => props.timezoneOptions || defaultTimezoneOptions,
 );
 
 const editingDay = ref<(typeof days)[number] | null>(null);
-const editingWindows = ref("");
+const editingWindows = ref<Array<{ start: string; end: string }>>([]);
 
 function windowsForDay(dayKey: string) {
   return props.availability[dayKey] || [];
@@ -87,7 +77,10 @@ function setDayWindows(dayKey: string, windows: string[]) {
 }
 
 function openDayEditor(day: (typeof days)[number]) {
-  editingWindows.value = windowsForDay(day.key).join(", ");
+  editingWindows.value = windowsForDay(day.key).map((window) => {
+    const [start = "09:00", end = "17:00"] = window.split("-");
+    return { start, end };
+  });
   editingDay.value = day;
 }
 
@@ -95,17 +88,20 @@ function saveDayWindows() {
   if (!editingDay.value) return;
 
   const windows = editingWindows.value
-    .split(",")
-    .map((window) => window.trim())
-    .filter((window) => /^\d{2}:\d{2}-\d{2}:\d{2}$/.test(window));
+    .filter(({ start, end }) => /^\d{2}:\d{2}$/.test(start) && /^\d{2}:\d{2}$/.test(end) && start < end)
+    .map(({ start, end }) => `${start}-${end}`);
 
   setDayWindows(editingDay.value.key, windows);
   cancelDayEdit();
 }
 
+function addTimeWindow() {
+  editingWindows.value.push({ start: "09:00", end: "17:00" });
+}
+
 function cancelDayEdit() {
   editingDay.value = null;
-  editingWindows.value = "";
+  editingWindows.value = [];
 }
 
 function clearDayWindows(dayKey: string) {
@@ -221,25 +217,13 @@ function clearAllAvailability() {
         </select>
       </div>
       <div v-if="showTimezone" class="form-group">
-        <label for="booking-availability-timezone">Timezone</label>
-        <select
+        <TimezonePicker
           id="booking-availability-timezone"
-          :value="timezone"
-          @change="
-            emit(
-              'update:timezone',
-              ($event.target as HTMLSelectElement).value,
-            )
-          "
-        >
-          <option
-            v-for="tz in resolvedTimezoneOptions"
-            :key="tz.value"
-            :value="tz.value"
-          >
-            {{ tz.label }}
-          </option>
-        </select>
+          label="Timezone"
+          :model-value="timezone"
+          :options="resolvedTimezoneOptions"
+          @update:model-value="emit('update:timezone', $event)"
+        />
       </div>
     </div>
 
@@ -253,16 +237,15 @@ function clearAllAvailability() {
         </div>
         <div class="modal-content">
           <div class="form-group">
-            <label for="booking-availability-windows">Time windows</label>
-            <input
-              id="booking-availability-windows"
-              v-model="editingWindows"
-              type="text"
-              placeholder="09:00-12:00, 14:00-17:00"
-            />
-            <p class="field-hint">
-              Enter time windows separated by commas. Format: HH:MM-HH:MM
-            </p>
+            <label>Time windows</label>
+            <div v-for="(window, index) in editingWindows" :key="index" class="time-range-row">
+              <label :for="`booking-window-start-${index}`">From</label>
+              <input :id="`booking-window-start-${index}`" v-model="window.start" type="time" />
+              <label :for="`booking-window-end-${index}`">To</label>
+              <input :id="`booking-window-end-${index}`" v-model="window.end" type="time" />
+              <button class="day-action-btn danger" type="button" :aria-label="`Remove time range ${index + 1}`" @click="editingWindows.splice(index, 1)">Remove</button>
+            </div>
+            <button class="day-action-btn" type="button" @click="addTimeWindow">Add time range</button>
           </div>
         </div>
         <div class="modal-footer">
@@ -352,6 +335,7 @@ function clearAllAvailability() {
 }
 
 .form-group input[type="text"],
+.form-group input[type="time"],
 .form-group select {
   width: 100%;
   padding: 10px 14px;
@@ -361,6 +345,18 @@ function clearAllAvailability() {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: inherit;
+}
+
+.time-range-row {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 1fr) auto minmax(90px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.time-range-row label {
+  margin: 0;
 }
 
 .day-row {
@@ -459,6 +455,14 @@ function clearAllAvailability() {
   .form-row,
   .day-row {
     grid-template-columns: 1fr;
+  }
+
+  .time-range-row {
+    grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .time-range-row button {
+    grid-column: 2 / -1;
   }
 
   .day-actions {

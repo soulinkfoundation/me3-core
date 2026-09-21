@@ -3,7 +3,6 @@ import { ref, watch, onBeforeUnmount } from "vue";
 import { useEditor, EditorContent } from "@tiptap/vue-3";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
-import Link from "@tiptap/extension-link";
 import UiIcon from "../UiIcon.vue";
 
 function isEmptyEditorHtml(html: string): boolean {
@@ -15,6 +14,7 @@ const props = defineProps<{
   modelValue: string;
   placeholder?: string;
   inputId?: string;
+  maxCharacters?: number;
 }>();
 
 const emit = defineEmits<{
@@ -36,12 +36,12 @@ const editor = useEditor({
       horizontalRule: false,
       code: false,
       strike: false,
-    }),
-    Link.configure({
-      openOnClick: false,
-      HTMLAttributes: {
-        rel: "noopener noreferrer",
-        target: "_blank",
+      link: {
+        openOnClick: false,
+        HTMLAttributes: {
+          rel: "noopener noreferrer",
+          target: "_blank",
+        },
       },
     }),
     Placeholder.configure({
@@ -52,10 +52,31 @@ const editor = useEditor({
   editorProps: {
     attributes: {
       class: "booking-offer-description-editor__content",
+      role: "textbox",
+      "aria-multiline": "true",
       ...(props.inputId ? { id: props.inputId } : {}),
     },
   },
   onUpdate: ({ editor: ed }) => {
+    const limit = props.maxCharacters;
+    if (limit && ed.state.doc.textContent.length > limit) {
+      let characters = 0;
+      let cutPosition: number | null = null;
+      ed.state.doc.descendants((node, position) => {
+        if (!node.isText || cutPosition !== null) return;
+        const length = node.text?.length || 0;
+        const available = limit - characters;
+        if (length > available) {
+          cutPosition = position + Math.max(0, available);
+          return;
+        }
+        characters += length;
+      });
+      if (cutPosition !== null) {
+        ed.view.dispatch(ed.state.tr.delete(cutPosition, ed.state.doc.content.size));
+        return;
+      }
+    }
     const html = ed.getHTML();
     emit("update:modelValue", isEmptyEditorHtml(html) ? "" : html);
   },
@@ -79,6 +100,7 @@ function closeLinkModal() {
 function normalizeUrl(input: string): string | null {
   const raw = input.trim();
   if (!raw) return null;
+  if (/^(?:\/(?!\/)|\.\.?\/|#)/.test(raw)) return raw;
   if (raw.startsWith("mailto:")) return raw;
   if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
   if (/^[a-z0-9.-]+\.[a-z]{2,}/i.test(raw)) return `https://${raw}`;
@@ -89,7 +111,8 @@ function applyLink() {
   linkError.value = null;
   const normalized = normalizeUrl(linkUrl.value);
   if (!normalized) {
-    linkError.value = "Please enter a valid URL (https://...) or mailto:";
+    linkError.value =
+      "Enter a valid URL, an internal path (such as /about), or mailto:";
     return;
   }
 
@@ -153,7 +176,7 @@ onBeforeUnmount(() => {
         class="booking-offer-description-editor__btn"
         :class="{ active: editor?.isActive('link') }"
         title="Link"
-        aria-label="Link"
+        aria-label="Add or edit link"
         @click="openLinkModal"
       >
         <UiIcon name="Link" :size="16" aria-hidden="true" />
@@ -225,8 +248,8 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border: 1px solid var(--ui-border, var(--color-border));
   border-radius: var(--ui-radius-sm, 6px);

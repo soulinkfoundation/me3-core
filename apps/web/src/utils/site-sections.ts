@@ -3,13 +3,16 @@ type PageLike = {
 };
 
 export const TESTIMONIAL_PLACEMENT_LINK_KEY = "_testimonials_placement";
+export const BOOKING_PLACEMENT_LINK_KEY = "_booking_placement";
 
-export type TestimonialPlacement =
+export type SiteSectionPlacement =
   | "homepage"
   | "standalone"
   | "blog"
   | "shop"
   | `page:${string}`;
+export type TestimonialPlacement = SiteSectionPlacement;
+export type BookingPlacement = SiteSectionPlacement;
 
 const DEFAULT_BLOG_PATH = "blog";
 const DEFAULT_SHOP_PATH = "shop";
@@ -49,6 +52,7 @@ export function resolveSiteSectionPaths(options: {
   blog: string;
   shop: string;
   testimonials: string;
+  bookings: string;
 } {
   const taken = new Set(
     (options.pages || [])
@@ -72,7 +76,9 @@ export function resolveSiteSectionPaths(options: {
     taken,
   );
 
-  return { blog, shop, testimonials };
+  const bookings = ensureUniquePath("bookings", taken);
+
+  return { blog, shop, testimonials, bookings };
 }
 
 export function isPagePlacement(
@@ -137,4 +143,22 @@ export function getStoredTestimonialPlacement(
   return typeof profile.testimonialDisplay === "string"
     ? profile.testimonialDisplay
     : undefined;
+}
+
+export function normalizeBookingPlacement(
+  placement: unknown,
+  options: {
+    blogEnabled?: boolean;
+    shopEnabled?: boolean;
+    pages?: PageLike[];
+  } = {},
+): BookingPlacement {
+  return normalizeTestimonialPlacement(placement, options);
+}
+
+export function getStoredBookingPlacement(
+  links: Record<string, unknown> | null | undefined,
+): string | undefined {
+  const placement = links?.[BOOKING_PLACEMENT_LINK_KEY];
+  return typeof placement === "string" ? placement : undefined;
 }

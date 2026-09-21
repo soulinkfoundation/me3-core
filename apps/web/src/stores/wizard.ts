@@ -18,10 +18,14 @@ import {
   normalizeVibeId,
 } from "../styles/vibes";
 import {
+  BOOKING_PLACEMENT_LINK_KEY,
+  getStoredBookingPlacement,
   getStoredTestimonialPlacement,
+  normalizeBookingPlacement,
   normalizeTestimonialPlacement,
   resolveSiteSectionPaths,
   TESTIMONIAL_PLACEMENT_LINK_KEY,
+  type BookingPlacement,
   type TestimonialPlacement,
 } from "../utils/site-sections";
 import type { SiteContentAsset } from "../utils/siteContentAssets";
@@ -1500,6 +1504,7 @@ export const useWizardStore = defineStore("wizard", () => {
 
   // Testimonials placement (renderer hint)
   const testimonialsPlacement = ref<TestimonialPlacement>("homepage");
+  const bookingPlacement = ref<BookingPlacement>("homepage");
   const testimonialsTitle = ref<string>(DEFAULT_TESTIMONIALS_TITLE);
   const sectionPaths = computed(() =>
     resolveSiteSectionPaths({
@@ -1512,6 +1517,7 @@ export const useWizardStore = defineStore("wizard", () => {
   const blogPath = computed(() => sectionPaths.value.blog);
   const shopPath = computed(() => sectionPaths.value.shop);
   const testimonialsPath = computed(() => sectionPaths.value.testimonials);
+  const bookingPath = computed(() => sectionPaths.value.bookings);
 
   // Username for publishing
   const username = ref("");
@@ -1704,11 +1710,27 @@ export const useWizardStore = defineStore("wizard", () => {
       if (normalizedPlacement !== testimonialsPlacement.value) {
         testimonialsPlacement.value = normalizedPlacement;
       }
+      const normalizedBookingPlacement = normalizeBookingPlacement(
+        bookingPlacement.value,
+        {
+          blogEnabled: blogEnabled.value,
+          shopEnabled: shopEnabled.value && products.value.length > 0,
+          pages: pagesEnabled.value ? pages.value : [],
+        },
+      );
+      if (normalizedBookingPlacement !== bookingPlacement.value) {
+        bookingPlacement.value = normalizedBookingPlacement;
+      }
     },
     { deep: true },
   );
 
   watch(testimonialsPlacement, () => {
+    markAsEdited();
+    saveToStorage();
+  });
+
+  watch(bookingPlacement, () => {
     markAsEdited();
     saveToStorage();
   });
@@ -2649,6 +2671,9 @@ export const useWizardStore = defineStore("wizard", () => {
     if (page && testimonialsPlacement.value === `page:${page.slug}`) {
       testimonialsPlacement.value = "homepage";
     }
+    if (page && bookingPlacement.value === `page:${page.slug}`) {
+      bookingPlacement.value = "homepage";
+    }
     markAsEdited();
     saveToStorage();
   }
@@ -3388,24 +3413,6 @@ export const useWizardStore = defineStore("wizard", () => {
 
       if (cleaned.length > 0) {
         me3.testimonials = cleaned;
-        const normalizedPlacement = normalizeTestimonialPlacement(
-          testimonialsPlacement.value,
-          {
-            blogEnabled: blogEnabled.value,
-            shopEnabled: shopEnabled.value && products.value.length > 0,
-            pages: pagesEnabled.value ? pages.value : [],
-          },
-        );
-        if (normalizedPlacement !== "homepage") {
-          if (normalizedPlacement === "standalone") {
-            me3.testimonialDisplay = normalizedPlacement;
-          } else {
-            me3.links = {
-              ...(me3.links || {}),
-              [TESTIMONIAL_PLACEMENT_LINK_KEY]: normalizedPlacement,
-            };
-          }
-        }
         const cleanedTitle = testimonialsTitle.value.trim();
         if (
           cleanedTitle &&
@@ -3792,6 +3799,12 @@ export const useWizardStore = defineStore("wizard", () => {
       me3.intents = intents as Me3SiteProfile["intents"];
     }
 
+    delete me3.testimonialDisplay;
+    if (me3.links) {
+      delete me3.links[TESTIMONIAL_PLACEMENT_LINK_KEY];
+      delete me3.links[BOOKING_PLACEMENT_LINK_KEY];
+    }
+
     const handle = me3.handle?.trim();
     const publicApiBase = getPublicApiBase();
     const actions: Record<string, Me3ActionDefinition> = {};
@@ -3998,6 +4011,7 @@ export const useWizardStore = defineStore("wizard", () => {
         blogTitle: blogTitle.value,
         shopTitle: shopTitle.value,
         testimonialsPlacement: testimonialsPlacement.value,
+        bookingPlacement: bookingPlacement.value,
         testimonialsTitle: testimonialsTitle.value,
         lastPublishedAt: lastPublishedAt.value,
         lastLocalEditAt: lastLocalEditAt.value,
@@ -4169,6 +4183,11 @@ export const useWizardStore = defineStore("wizard", () => {
             pages: pagesEnabled.value ? pages.value : [],
           },
         );
+        bookingPlacement.value = normalizeBookingPlacement(state.bookingPlacement, {
+          blogEnabled: blogEnabled.value,
+          shopEnabled: shopEnabled.value && products.value.length > 0,
+          pages: pagesEnabled.value ? pages.value : [],
+        });
         lastPublishedAt.value = state.lastPublishedAt || null;
         lastLocalEditAt.value =
           state.lastLocalEditAt || new Date().toISOString();
@@ -4321,6 +4340,7 @@ export const useWizardStore = defineStore("wizard", () => {
     blogTitle.value = DEFAULT_BLOG_TITLE;
     shopTitle.value = DEFAULT_SHOP_TITLE;
     testimonialsPlacement.value = "homepage";
+    bookingPlacement.value = "homepage";
     testimonialsTitle.value = DEFAULT_TESTIMONIALS_TITLE;
     persistedOwnerUserId.value = sessionUserId.value;
     if (clearStorage) localStorage.removeItem(activeStorageKey.value);
@@ -5053,6 +5073,14 @@ export const useWizardStore = defineStore("wizard", () => {
         pages: pagesEnabled.value ? pages.value : [],
       },
     );
+    bookingPlacement.value = normalizeBookingPlacement(
+      getStoredBookingPlacement(siteProfile.links),
+      {
+        blogEnabled: blogEnabled.value,
+        shopEnabled: shopEnabled.value && products.value.length > 0,
+        pages: pagesEnabled.value ? pages.value : [],
+      },
+    );
     furthestStep.value = totalSteps.value;
 
     // Set last published timestamp if site was published
@@ -5115,8 +5143,10 @@ export const useWizardStore = defineStore("wizard", () => {
     blogPath,
     shopPath,
     testimonialsPlacement,
+    bookingPlacement,
     testimonialsTitle,
     testimonialsPath,
+    bookingPath,
 
     // Computed
     steps,

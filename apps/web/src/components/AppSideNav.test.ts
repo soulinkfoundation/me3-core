@@ -21,6 +21,7 @@ async function mountSideNav(
   props: Record<string, never> = {},
   navigationFeatures: Array<{ id: string; visible: boolean }> = [
     { id: "assistant", visible: true },
+    { id: "calendar", visible: true },
     { id: "journal", visible: true },
     { id: "tasks", visible: true },
     { id: "email", visible: true },
@@ -120,6 +121,20 @@ describe("AppSideNav optional plugin links", () => {
 
     expect(wrapper.find('[aria-label="Join Soulink"]').exists()).toBe(false);
     expect(wrapper.find('[aria-label="Open Soulink chats"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("hides Calendar when its navigation feature is disabled", async () => {
+    const wrapper = await mountSideNav(
+      [{ id: "me3.calendar", status: "installed", enabled: true }],
+      {},
+      [
+        { id: "assistant", visible: true },
+        { id: "calendar", visible: false },
+      ],
+    );
+
+    expect(wrapper.find('[aria-label="Calendar"]').exists()).toBe(false);
     wrapper.unmount();
   });
 

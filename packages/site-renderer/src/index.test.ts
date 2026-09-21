@@ -16,9 +16,38 @@ describe("site generator", () => {
     }, []);
     const html = output["index.html"];
     const nav = html.indexOf('<div class="site-navigation');
-    expect(nav).toBeGreaterThan(html.indexOf('<p class="bio">'));
+    expect(nav).toBeGreaterThan(html.indexOf('<div class="bio">'));
     expect(nav).toBeLessThan(html.indexOf('<div class="buttons">'));
     if (withBanner) expect(html.indexOf('<div class="banner">')).toBeLessThan(nav);
+  });
+
+  it("safely renders rich HTML in public bios and booking introductions", async () => {
+    const files = await generateSiteHtml(
+      {
+        name: "Rich text profile",
+        bio: '<p><strong>Bold</strong> and <em>clear</em>. <a href="/about">About me</a> <a href="javascript:alert(3)">unsafe</a></p><img src=x onerror="alert(1)"><script>alert(2)</script>',
+        intents: {
+          book: {
+            enabled: true,
+            title: "Book a session",
+            description: '<p>Ask a <em>question</em> or <a href="https://example.com">read more</a>.</p>',
+            offers: [{ id: "intro", title: "Intro call", duration: 30 }],
+            availability: {
+              timezone: "UTC",
+              windows: { monday: ["09:00-17:00"] },
+            },
+          },
+        },
+      },
+      [],
+    );
+
+    const html = files["index.html"];
+    expect(html).toContain('<div class="bio"><p><strong>Bold</strong> and <em>clear</em>. <a href="/about">About me</a> unsafe</p>');
+    expect(html).toContain('<div class="booking-intro"><p>Ask a <em>question</em> or <a href="https://example.com" target="_blank" rel="noopener noreferrer">read more</a>.</p></div>');
+    expect(html).not.toContain("onerror=");
+    expect(html).not.toContain("<script>alert(2)</script>");
+    expect(html).not.toContain('href="javascript:');
   });
 
   it.each(["warm", "me3", "paper", "tech"])("renders Portrait with unchanged image sources in the %s vibe", async (vibe) => {
@@ -65,6 +94,21 @@ describe("site generator", () => {
     expect(files["index.html"]).toContain("Join my course");
     expect(files["about.html"]).toContain("Generated from markdown.");
     expect(files["me.json"]).toBeUndefined();
+  });
+
+  it("allows the full profile name in content-page headers", async () => {
+    const files = await generateSiteHtml(
+      {
+        name: "Kieran Butler",
+        pages: [{ slug: "about", title: "About", file: "about.md" }],
+      },
+      [{ name: "about.md", content: "About" }],
+    );
+
+    expect(files["about.html"]).toContain("<span>Kieran Butler</span>");
+    expect(files["about.html"]).toContain(
+      ".page-header .back-link{min-width:0;max-width:100%;flex:0 1 auto}",
+    );
   });
 
   it("renders one-level navigation groups without changing page URLs", async () => {
@@ -234,7 +278,7 @@ describe("site generator", () => {
       [
         {
           name: "services.md",
-          content: `<p>Choose your next step.</p>
+        content: `<p>Choose your next step.</p>
             <div data-me3-cta-button="true" data-text="Book &amp; begin" data-url="/book" data-style="outline" data-icon=""></div>
             <div data-me3-site-block="testimonials"></div>
             <div data-me3-site-block="newsletter"></div>`,
@@ -256,7 +300,82 @@ describe("site generator", () => {
     expect(services).not.toContain('id="newsletter"');
   });
 
-  it("renders legacy rich booking intros as plain text", async () => {
+  it("renders internal CTA buttons in the same tab with a distinct secondary style", async () => {
+    const files = await generateSiteHtml(
+      {
+        name: "CTA links",
+        buttons: [
+          { text: "About me", url: "/about", style: "secondary" },
+          { text: "External site", url: "https://example.com" },
+        ],
+      },
+      [],
+    );
+
+    expect(files["index.html"]).toContain(
+      '<a class="cta-button secondary" href="/about">About me</a>',
+    );
+    expect(files["index.html"]).toContain(
+      '<a class="cta-button primary" href="https://example.com" target="_blank" rel="noopener">External site</a>',
+    );
+    expect(files["index.html"]).toContain(
+      ".cta-button.secondary{border:1px solid var(--text);background:var(--surface);color:var(--text);box-shadow:none}",
+    );
+  });
+
+  it("uses WYSIWYG widgets for non-homepage placement and keeps defaults on the homepage", async () => {
+    const files = await generateSiteHtml(
+      {
+        name: "Testimonials placement",
+        links: { _testimonials_placement: "page:about" },
+        testimonials: [{ name: "Jamie", quote: "A thoughtful experience." }],
+        pages: [{ slug: "about", title: "About", file: "about.md" }],
+      },
+      [
+        {
+          name: "about.md",
+          content: 'About this person.<div data-me3-site-block="testimonials"></div>',
+        },
+      ],
+    );
+
+    expect(files["index.html"]).toContain("A thoughtful experience.");
+    expect(files["about.html"]).toContain("A thoughtful experience.");
+    expect(files["about.html"].match(/A thoughtful experience\./g)).toHaveLength(1);
+  });
+
+  it("expands a booking widget inserted from the page editor", async () => {
+    const files = await generateSiteHtml(
+      {
+        name: "Booking block",
+        links: { _booking_placement: "page:contact" },
+        intents: {
+          book: {
+            enabled: true,
+            offers: [{ id: "intro", title: "Intro call", duration: 30 }],
+            availability: {
+              timezone: "UTC",
+              windows: { monday: ["09:00-17:00"] },
+            },
+          },
+        },
+        pages: [{ slug: "contact", title: "Contact", file: "contact.md" }],
+      },
+      [
+        {
+          name: "contact.md",
+          content: '<p>Get in touch.</p><div data-me3-site-block="booking"></div>',
+        },
+      ],
+    );
+
+    expect(files["contact.html"]).toContain('id="booking"');
+    expect(files["contact.html"]).toContain("Intro call");
+    expect(files["contact.html"].match(/id="booking"/g)).toHaveLength(1);
+    expect(files["contact.html"]).not.toContain("data-me3-site-block");
+  });
+
+  it("renders legacy rich booking intros with safe formatting", async () => {
     const files = await generateSiteHtml(
       {
         name: "Booking Intro",
@@ -277,10 +396,62 @@ describe("site generator", () => {
     );
 
     expect(files["index.html"]).toContain(
-      "<p>Choose a path &amp; begin.</p>",
+      '<div class="booking-intro"><p>Choose a path &amp; begin.</p></div>',
     );
     expect(files["index.html"]).not.toContain("&lt;p&gt;");
     expect(files["index.html"]).not.toContain("&amp;amp;");
+  });
+
+  it("renders offer description previews and keeps the booking intro above type tabs", async () => {
+    const files = await generateSiteHtml(
+      {
+        name: "Booking descriptions",
+        intents: {
+          book: {
+            enabled: true,
+            title: "Book a session",
+            description: "Choose the session that fits.",
+            offers: [
+              {
+                id: "intro",
+                title: "Intro call",
+                description: "<p>Includes <strong>planning</strong> &amp; follow-up.</p>",
+                duration: 30,
+              },
+            ],
+            bookingTypes: [
+              {
+                type: "one_to_one",
+                label: "1:1",
+                offers: [
+                  {
+                    id: "intro",
+                    title: "Intro call",
+                    description: "<p>Includes <strong>planning</strong> &amp; follow-up.</p>",
+                    duration: 30,
+                  },
+                ],
+                availability: {
+                  timezone: "UTC",
+                  windows: { monday: ["09:00-17:00"] },
+                },
+              },
+              { type: "class", label: "Classes", classes: [] },
+            ],
+          },
+        },
+      },
+      [],
+    );
+
+    const html = files["index.html"];
+    expect(html).toContain(
+      '<div class="booking-intro">Choose the session that fits.</div><div class="booking-type-tablist"',
+    );
+    expect(html).toContain(
+      '<span class="booking-card-description">Includes planning &amp; follow-up.</span>',
+    );
+    expect(html).not.toContain("<strong>planning</strong>");
   });
 
   it("keeps captions attached and adds one accessible gallery to image pages", async () => {
@@ -597,6 +768,9 @@ describe("site generator", () => {
     expect(files["index.html"]).toContain('"bufferTime":15');
     expect(files["index.html"]).toContain("t+=slotStep");
     expect(files["index.html"]).toContain("button.dataset.timeValue=value");
+    expect(files["index.html"]).toContain("/slots?date='+encodeURIComponent(dateValue)+'&offerId='");
+    expect(files["index.html"]).toContain("if(!available[value]){button.disabled=true");
+    expect(files["index.html"]).toContain(".booking-slot:disabled{opacity:.45;cursor:not-allowed}");
     expect(files["index.html"]).toContain("var slotButton=event.currentTarget");
     expect(files["index.html"]).toContain("item.classList.toggle('active',item===slotButton)");
     expect(files["index.html"]).toContain("No available times on this day.");
@@ -615,6 +789,36 @@ describe("site generator", () => {
     expect(files["index.html"]).toContain("body[data-vibe=tech] .name{font-size:24px");
     expect(files["index.html"]).toContain("body[data-vibe=tech] .newsletter input[type=email]");
     expect(files["index.html"]).not.toContain("readonly");
+  });
+
+  it("ignores legacy placement settings and no longer generates standalone widget pages", async () => {
+    const files = await generateSiteHtml(
+      {
+        name: "Placement Site",
+        handle: "placement-site",
+        testimonialDisplay: "standalone",
+        testimonials: [{ name: "Jamie", quote: "A thoughtful experience." }],
+        links: { _booking_placement: "page:about" },
+        pages: [{ slug: "about", title: "About", file: "about.md" }],
+        intents: {
+          book: {
+            enabled: true,
+            offers: [{ id: "intro", title: "Intro call", duration: 30 }],
+            availability: { timezone: "UTC", windows: { monday: ["09:00-17:00"] } },
+          },
+        },
+      },
+      [{ name: "about.md", content: "A little about me." }],
+    );
+
+    expect(files["index.html"]).toContain("A thoughtful experience.");
+    expect(files["index.html"]).toContain('id="booking"');
+    expect(files["index.html"].indexOf("A thoughtful experience.")).toBeLessThan(
+      files["index.html"].indexOf('id="booking"'),
+    );
+    expect(files["about.html"]).not.toContain('id="booking"');
+    expect(files["testimonials/index.html"]).toBeUndefined();
+    expect(files["bookings/index.html"]).toBeUndefined();
   });
 
   it("prefers a custom site logo for icons and otherwise falls back to the avatar", async () => {

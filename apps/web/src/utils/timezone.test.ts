@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+  getTimeZoneSearchAliases,
   instantToLocalDateTimeParts,
+  listSupportedTimeZones,
   localDateTimeToUtcIso,
   resolveLocalDateTimeToUtc,
 } from "./timezone";
 
 describe("timezone scheduling helpers", () => {
+  it("includes Spain timezones and useful city search aliases", () => {
+    const zones = listSupportedTimeZones();
+    expect(zones).toContain("Europe/Madrid");
+    expect(zones).toContain("Atlantic/Canary");
+    expect(getTimeZoneSearchAliases("Europe/Madrid")).toContain("Barcelona");
+    expect(getTimeZoneSearchAliases("Europe/Madrid")).toContain("Valencia");
+  });
+
   it("converts owner-entered wall time with its named timezone", () => {
     expect(
       localDateTimeToUtcIso("2026-07-20", "10:30", "Europe/Dublin"),

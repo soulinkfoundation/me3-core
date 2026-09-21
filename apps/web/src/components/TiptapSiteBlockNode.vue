@@ -8,20 +8,27 @@ const props = defineProps<{
   deleteNode: () => void;
 }>();
 
-const blockType = computed<"newsletter" | "testimonials">(() =>
-  props.node?.attrs?.blockType === "testimonials"
-    ? "testimonials"
-    : "newsletter",
-);
+const blockType = computed<"newsletter" | "testimonials" | "booking">(() => {
+  const value = props.node?.attrs?.blockType;
+  return value === "testimonials" || value === "booking"
+    ? value
+    : "newsletter";
+});
 
 const title = computed(() =>
-  blockType.value === "newsletter" ? "Newsletter signup" : "Testimonials",
+  blockType.value === "newsletter"
+    ? "Newsletter signup"
+    : blockType.value === "testimonials"
+      ? "Testimonials"
+      : "Booking widget",
 );
 
 const description = computed(() =>
   blockType.value === "newsletter"
     ? "Uses the newsletter title, description, and subscriber form from your site settings."
-    : "Uses the testimonial collection and title from your site settings.",
+    : blockType.value === "testimonials"
+      ? "Uses the testimonial collection and title from your site settings."
+      : "Uses your booking offers, schedule, and booking form from site settings.",
 );
 </script>
 
@@ -29,7 +36,7 @@ const description = computed(() =>
   <NodeViewWrapper class="site-block-node" contenteditable="false">
     <span class="site-block-icon" aria-hidden="true">
       <UiIcon
-        :name="blockType === 'newsletter' ? 'Mail' : 'MessageSquare'"
+        :name="blockType === 'newsletter' ? 'Mail' : blockType === 'testimonials' ? 'MessageSquare' : 'Calendar'"
         :size="18"
       />
     </span>

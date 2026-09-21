@@ -24,6 +24,7 @@ import TiptapCarouselNode from "./TiptapCarouselNode.vue";
 import TiptapSiteBlockNode from "./TiptapSiteBlockNode.vue";
 import TiptapCtaNode from "./TiptapCtaNode.vue";
 import TiptapAudioNode from "./TiptapAudioNode.vue";
+import type { UiIconName } from "../utils/icons";
 import {
   SITE_AUDIO_ACCEPT,
   audioContentTypeForFile,
@@ -114,7 +115,7 @@ type CarouselImageProvider = {
   uploadRandom: () => Promise<CarouselImageResult>;
 };
 
-type SiteBlockType = "newsletter" | "testimonials";
+type SiteBlockType = "newsletter" | "testimonials" | "booking";
 type CtaButtonStyle = "primary" | "secondary" | "outline";
 
 function parseImageWidth(value: string | null): number | string | null {
@@ -445,7 +446,11 @@ const SiteBlock = Node.create({
         getAttrs: (element) => {
           if (!(element instanceof HTMLElement)) return false;
           const blockType = element.getAttribute("data-me3-site-block");
-          if (blockType !== "newsletter" && blockType !== "testimonials") {
+          if (
+            blockType !== "newsletter" &&
+            blockType !== "testimonials" &&
+            blockType !== "booking"
+          ) {
             return false;
           }
           return { blockType };
@@ -455,7 +460,9 @@ const SiteBlock = Node.create({
   },
   renderHTML({ node, HTMLAttributes }) {
     const blockType: SiteBlockType =
-      node.attrs.blockType === "testimonials" ? "testimonials" : "newsletter";
+      node.attrs.blockType === "testimonials" || node.attrs.blockType === "booking"
+        ? node.attrs.blockType
+        : "newsletter";
     return [
       "div",
       mergeAttributes(HTMLAttributes, {
@@ -880,6 +887,9 @@ const editor = useEditor({
 const showLinkModal = ref(false);
 const linkUrl = ref("");
 const linkError = ref<string | null>(null);
+const showWidgetsModal = ref(false);
+const widgetsButtonRef = ref<HTMLButtonElement | null>(null);
+const widgetsModalRef = ref<HTMLDivElement | null>(null);
 const showYouTubeModal = ref(false);
 const youtubeUrl = ref("");
 const youtubeError = ref<string | null>(null);
@@ -1116,6 +1126,135 @@ function insertCtaButton() {
       },
     })
     .run();
+}
+
+type WidgetOptionId =
+  | "audio"
+  | "faq"
+  | "carousel"
+  | "cta"
+  | SiteBlockType;
+
+const widgetOptions = computed(() => {
+  const options: {
+    id: WidgetOptionId;
+    label: string;
+    description: string;
+    icon: UiIconName;
+  }[] = [];
+
+  if (props.variant === "default") {
+    options.push(
+      {
+        id: "audio",
+        label: "Audio player",
+        description: "Add an audio track visitors can play.",
+        icon: "AudioLines",
+      },
+      {
+        id: "faq",
+        label: "FAQ accordion",
+        description: "Show questions with expandable answers.",
+        icon: "HelpCircle",
+      },
+      {
+        id: "carousel",
+        label: "Card carousel",
+        description: "Present a swipeable set of cards.",
+        icon: "LayoutGrid",
+      },
+    );
+  }
+
+  if (props.variant !== "workspace" && !isSectionVariant.value) {
+    options.push({
+      id: "cta",
+      label: "Call-to-action button",
+      description: "Add a prominent button linking to something important.",
+      icon: "ExternalLink",
+    });
+  }
+
+  if (props.variant === "default") {
+    options.push(
+      {
+        id: "newsletter",
+        label: "Newsletter signup",
+        description: "Let visitors subscribe to your updates.",
+        icon: "Mail",
+      },
+      {
+        id: "testimonials",
+        label: "Testimonials",
+        description: "Show your saved client quotes.",
+        icon: "MessageSquare",
+      },
+      {
+        id: "booking",
+        label: "Booking widget",
+        description: "Let visitors view availability and request a booking.",
+        icon: "Calendar",
+      },
+    );
+  }
+
+  return options;
+});
+
+async function openWidgetsModal() {
+  showWidgetsModal.value = true;
+  await nextTick();
+  widgetsModalRef.value
+    ?.querySelector<HTMLButtonElement>(".widget-picker-option")
+    ?.focus();
+}
+
+function closeWidgetsModal(returnFocus = true) {
+  showWidgetsModal.value = false;
+  if (returnFocus) void nextTick(() => widgetsButtonRef.value?.focus());
+}
+
+function selectWidget(id: WidgetOptionId) {
+  switch (id) {
+    case "audio":
+      triggerAudioPicker();
+      break;
+    case "faq":
+      insertFaqBlock();
+      break;
+    case "carousel":
+      insertCarouselBlock();
+      break;
+    case "cta":
+      insertCtaButton();
+      break;
+    case "newsletter":
+    case "testimonials":
+    case "booking":
+      insertSiteBlock(id);
+      break;
+  }
+  closeWidgetsModal(false);
+}
+
+function trapWidgetsTab(event: KeyboardEvent) {
+  if (event.key !== "Tab") return;
+  const options = Array.from(
+    widgetsModalRef.value?.querySelectorAll<HTMLButtonElement>(
+      "button:not(:disabled)",
+    ) || [],
+  );
+  const first = options[0];
+  const last = options[options.length - 1];
+  if (!first || !last) return;
+
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function toggleBulletList() {
@@ -1681,79 +1820,18 @@ defineExpose({
       >
         <UiIcon name="Images" :size="16" aria-hidden="true" />
       </button>
-      <template v-if="variant === 'default'">
-        <span class="toolbar-divider"></span>
-        <button
-          type="button"
-          class="toolbar-btn"
-          :class="{ active: editor?.isActive('audioBlock') }"
-          :disabled="isProcessingAudio"
-          @click="triggerAudioPicker"
-          :title="isProcessingAudio ? 'Adding audio' : 'Insert audio'"
-          :aria-label="isProcessingAudio ? 'Adding audio' : 'Insert audio'"
-        >
-          <span v-if="isProcessingAudio">…</span>
-          <UiIcon v-else name="AudioLines" :size="16" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          class="toolbar-btn"
-          :class="{ active: editor?.isActive('faqBlock') }"
-          @click="insertFaqBlock"
-          title="Insert FAQ accordion"
-        >
-          <UiIcon name="HelpCircle" :size="16" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          class="toolbar-btn"
-          :class="{ active: editor?.isActive('carouselBlock') }"
-          @click="insertCarouselBlock"
-          title="Insert card carousel"
-        >
-          <UiIcon name="LayoutGrid" :size="16" aria-hidden="true" />
-        </button>
-      </template>
-      <span v-if="variant !== 'workspace' && !isSectionVariant" class="toolbar-divider"></span>
+      <span v-if="widgetOptions.length" class="toolbar-divider"></span>
       <button
-        v-if="variant !== 'workspace' && !isSectionVariant"
+        v-if="widgetOptions.length"
+        ref="widgetsButtonRef"
         type="button"
-        class="toolbar-btn"
-        :class="{ active: editor?.isActive('ctaButtonBlock') }"
-        @click="insertCtaButton"
-        title="Insert call-to-action button"
-        aria-label="Insert call-to-action button"
+        class="toolbar-btn widgets-toolbar-btn"
+        :aria-expanded="showWidgetsModal"
+        aria-haspopup="dialog"
+        @click="openWidgetsModal"
       >
-        <UiIcon name="ExternalLink" :size="16" aria-hidden="true" />
+        Widgets
       </button>
-      <template v-if="variant === 'default'">
-        <button
-          type="button"
-          class="toolbar-btn"
-          :class="{
-            active:
-              editor?.isActive('siteBlock', { blockType: 'newsletter' }),
-          }"
-          @click="insertSiteBlock('newsletter')"
-          title="Insert newsletter signup"
-          aria-label="Insert newsletter signup"
-        >
-          <UiIcon name="Mail" :size="16" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          class="toolbar-btn"
-          :class="{
-            active:
-              editor?.isActive('siteBlock', { blockType: 'testimonials' }),
-          }"
-          @click="insertSiteBlock('testimonials')"
-          title="Insert testimonials"
-          aria-label="Insert testimonials"
-        >
-          <UiIcon name="MessageSquare" :size="16" aria-hidden="true" />
-        </button>
-      </template>
     </div>
 
     <div v-if="showTitleField" class="editor-title-field">
@@ -1871,6 +1949,56 @@ defineExpose({
         </div>
       </div>
     </div>
+
+    <div
+      v-if="showWidgetsModal"
+      class="widget-picker-overlay editor-modal-overlay"
+      @click.self="closeWidgetsModal()"
+    >
+      <div
+        ref="widgetsModalRef"
+        class="widget-picker-modal editor-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="widget-picker-title"
+        @keydown.esc.stop.prevent="closeWidgetsModal()"
+        @keydown="trapWidgetsTab"
+      >
+        <div class="widget-picker-heading">
+          <div>
+            <h4 id="widget-picker-title">Add a widget</h4>
+            <p>Choose what you’d like to add to your content.</p>
+          </div>
+          <button
+            type="button"
+            class="widget-picker-close"
+            aria-label="Close widget picker"
+            @click="closeWidgetsModal()"
+          >
+            ×
+          </button>
+        </div>
+        <div class="widget-picker-options" aria-label="Available widgets">
+          <button
+            v-for="option in widgetOptions"
+            :key="option.id"
+            type="button"
+            class="widget-picker-option"
+            :disabled="option.id === 'audio' && isProcessingAudio"
+            @click="selectWidget(option.id)"
+          >
+            <span class="widget-picker-icon" aria-hidden="true">
+              <span v-if="option.id === 'audio' && isProcessingAudio">…</span>
+              <UiIcon v-else :name="option.icon" :size="18" aria-hidden="true" />
+            </span>
+            <span class="widget-picker-copy">
+              <span class="widget-picker-label">{{ option.label }}</span>
+              <span class="widget-picker-description">{{ option.description }}</span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1910,6 +2038,12 @@ defineExpose({
   transition:
     background 0.2s,
     color 0.2s;
+}
+
+.widgets-toolbar-btn {
+  width: auto;
+  padding: 0 10px;
+  font-weight: 600;
 }
 
 .toolbar-btn:hover {
@@ -2231,6 +2365,111 @@ defineExpose({
 
 .link-btn.primary:hover {
   background: var(--ui-accent-strong, #0056b3);
+}
+
+.widget-picker-modal {
+  width: min(520px, calc(100vw - 32px));
+  min-width: 0;
+  max-height: min(680px, calc(100vh - 32px));
+  overflow-y: auto;
+}
+
+.widget-picker-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.widget-picker-heading h4 {
+  margin-bottom: 4px;
+}
+
+.widget-picker-heading p {
+  margin: 0;
+  color: var(--ui-text-muted, var(--color-text-muted, #5d6368));
+  font-size: 14px;
+}
+
+.widget-picker-close {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--ui-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.widget-picker-close:hover,
+.widget-picker-close:focus-visible {
+  background: var(--ui-surface-muted, var(--color-bg-subtle, #f5f5f5));
+}
+
+.widget-picker-options {
+  display: grid;
+  gap: 8px;
+}
+
+.widget-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--ui-border, var(--color-border, #ddd));
+  border-radius: var(--ui-radius-md, 8px);
+  background: var(--ui-surface, var(--color-bg, #ffffff));
+  color: var(--ui-text, var(--color-text, #232428));
+  text-align: left;
+  cursor: pointer;
+}
+
+.widget-picker-option:hover:not(:disabled),
+.widget-picker-option:focus-visible {
+  border-color: var(--ui-focus, var(--ui-accent, #007bff));
+  outline: 2px solid var(--ui-focus, var(--ui-accent, #007bff));
+  outline-offset: 1px;
+}
+
+.widget-picker-option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.widget-picker-icon {
+  display: grid;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: var(--ui-radius-md, 8px);
+  background: var(--ui-surface-muted, var(--color-bg-subtle, #f5f5f5));
+}
+
+.widget-picker-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.widget-picker-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.widget-picker-description {
+  color: var(--ui-text-muted, var(--color-text-muted, #5d6368));
+  font-size: 13px;
+}
+
+@media (max-width: 520px) {
+  .widget-picker-modal {
+    padding: 20px;
+  }
 }
 
 .editor-title-field {

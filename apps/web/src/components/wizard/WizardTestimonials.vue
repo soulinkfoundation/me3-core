@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useWizardStore, type WizardTestimonial } from "../../stores/wizard";
-import type { TestimonialPlacement } from "../../utils/site-sections";
 import TestimonialCard from "../TestimonialCard.vue";
 import UiIcon from "../UiIcon.vue";
 
@@ -36,13 +35,6 @@ function revokeAvatarObjectUrl() {
   }
 }
 
-const placement = computed({
-  get: () => wizard.testimonialsPlacement,
-  set: (val: TestimonialPlacement) => {
-    wizard.testimonialsPlacement = val;
-  },
-});
-
 const testimonialsTitle = computed({
   get: () => wizard.testimonialsTitle,
   set: (val: string) => {
@@ -51,65 +43,6 @@ const testimonialsTitle = computed({
 });
 
 const canAddMore = computed(() => true);
-const placementOptions = computed(() => {
-  const options: Array<{
-    value: TestimonialPlacement;
-    label: string;
-  }> = [
-    {
-      value: "homepage",
-      label: "Homepage section",
-    },
-  ];
-
-  if (wizard.shopEnabled && wizard.products.length > 0) {
-    options.push({
-      value: "shop",
-      label: `${wizard.shopTitle} page (/${wizard.shopPath})`,
-    });
-  }
-
-  if (wizard.blogEnabled) {
-    options.push({
-      value: "blog",
-      label: `${wizard.blogTitle} page (/${wizard.blogPath})`,
-    });
-  }
-
-  for (const page of wizard.pages) {
-    options.push({
-      value: `page:${page.slug}`,
-      label: `${page.title} page (/${page.slug})`,
-    });
-  }
-
-  options.push({
-    value: "standalone",
-    label: `${wizard.testimonialsTitle} page (/${wizard.testimonialsPath})`,
-  });
-
-  return options;
-});
-
-const placementHint = computed(() => {
-  switch (placement.value) {
-    case "homepage":
-      return "Shows testimonials after your links and before newsletter or booking sections.";
-    case "shop":
-      return `Adds testimonials below the main content on /${wizard.shopPath}.`;
-    case "blog":
-      return `Adds testimonials below the main content on /${wizard.blogPath}.`;
-    case "standalone":
-      return `Creates a dedicated page at /${wizard.testimonialsPath}.`;
-    default:
-      if (placement.value.startsWith("page:")) {
-        const slug = placement.value.slice("page:".length);
-        return `Adds testimonials below the content on /${slug}.`;
-      }
-      return "Choose where this block should appear.";
-  }
-});
-
 function openForm() {
   name.value = "";
   quote.value = "";
@@ -340,20 +273,6 @@ function clearAvatar() {
       >
         Add testimonial
       </button>
-    </div>
-
-    <div class="placement-row">
-      <label for="testimonial-placement">Placement</label>
-      <select id="testimonial-placement" v-model="placement">
-        <option
-          v-for="option in placementOptions"
-          :key="option.value"
-          :value="option.value"
-        >
-          {{ option.label }}
-        </option>
-      </select>
-      <p class="placement-hint">{{ placementHint }}</p>
     </div>
 
     <!-- Testimonial Form Modal -->

@@ -241,12 +241,13 @@ describe("TiptapEditor", () => {
     expect(wrapper.find('[title="Embed YouTube video"]').exists()).toBe(true);
     expect(wrapper.find('[title="Insert image"]').exists()).toBe(true);
     expect(wrapper.find('[title="Insert gallery"]').exists()).toBe(true);
-    expect(wrapper.find('[title="Insert audio"]').exists()).toBe(true);
-    expect(wrapper.find('[title="Insert FAQ accordion"]').exists()).toBe(true);
-    expect(wrapper.find('[title="Insert card carousel"]').exists()).toBe(true);
-    expect(wrapper.find('[title="Insert call-to-action button"]').exists()).toBe(true);
-    expect(wrapper.find('[title="Insert newsletter signup"]').exists()).toBe(true);
-    expect(wrapper.find('[title="Insert testimonials"]').exists()).toBe(true);
+    expect(wrapper.find(".widgets-toolbar-btn").text()).toBe("Widgets");
+    expect(wrapper.find('[title="Insert audio"]').exists()).toBe(false);
+    expect(wrapper.find('[title="Insert FAQ accordion"]').exists()).toBe(false);
+    expect(wrapper.find('[title="Insert card carousel"]').exists()).toBe(false);
+    expect(wrapper.find('[title="Insert call-to-action button"]').exists()).toBe(false);
+    expect(wrapper.find('[title="Insert newsletter signup"]').exists()).toBe(false);
+    expect(wrapper.find('[title="Insert testimonials"]').exists()).toBe(false);
   });
 
   it("should hide site-builder toolbar blocks in workspace variant", () => {
@@ -257,12 +258,7 @@ describe("TiptapEditor", () => {
       },
     });
 
-    expect(wrapper.find('[title="Insert FAQ accordion"]').exists()).toBe(false);
-    expect(wrapper.find('[title="Insert card carousel"]').exists()).toBe(false);
-    expect(wrapper.find('[title="Insert audio"]').exists()).toBe(false);
-    expect(wrapper.find('[title="Insert call-to-action button"]').exists()).toBe(false);
-    expect(wrapper.find('[title="Insert newsletter signup"]').exists()).toBe(false);
-    expect(wrapper.find('[title="Insert testimonials"]').exists()).toBe(false);
+    expect(wrapper.find(".widgets-toolbar-btn").exists()).toBe(false);
   });
 
   it("shows only email-safe rich content controls in the campaign variant", async () => {
@@ -275,7 +271,7 @@ describe("TiptapEditor", () => {
 
     expect(wrapper.find('[title="Divider"]').exists()).toBe(true);
     expect(wrapper.find('[title="Insert image"]').exists()).toBe(true);
-    expect(wrapper.find('[title="Insert call-to-action button"]').exists()).toBe(true);
+    expect(wrapper.find(".widgets-toolbar-btn").exists()).toBe(true);
     expect(wrapper.find('[title="Heading 3"]').exists()).toBe(false);
     expect(wrapper.find('[title="Numbered list"]').exists()).toBe(false);
     expect(wrapper.find('[title="Task list"]').exists()).toBe(false);
@@ -287,7 +283,11 @@ describe("TiptapEditor", () => {
       'image/jpeg,image/png,image/gif',
     );
 
-    await wrapper.find('[title="Insert call-to-action button"]').trigger("click");
+    await wrapper.find(".widgets-toolbar-btn").trigger("click");
+    await wrapper
+      .findAll(".widget-picker-option")
+      .find((option) => option.text().includes("Call-to-action button"))!
+      .trigger("click");
     expect(mockInsertContent).toHaveBeenLastCalledWith({
       type: "ctaButtonBlock",
       attrs: {
@@ -305,19 +305,31 @@ describe("TiptapEditor", () => {
       props: { modelValue: "" },
     });
 
-    await wrapper.find('[title="Insert newsletter signup"]').trigger("click");
+    await wrapper.find(".widgets-toolbar-btn").trigger("click");
+    await wrapper
+      .findAll(".widget-picker-option")
+      .find((option) => option.text().includes("Newsletter signup"))!
+      .trigger("click");
     expect(mockInsertContent).toHaveBeenLastCalledWith({
       type: "siteBlock",
       attrs: { blockType: "newsletter" },
     });
 
-    await wrapper.find('[title="Insert testimonials"]').trigger("click");
+    await wrapper.find(".widgets-toolbar-btn").trigger("click");
+    await wrapper
+      .findAll(".widget-picker-option")
+      .find((option) => option.text().includes("Testimonials"))!
+      .trigger("click");
     expect(mockInsertContent).toHaveBeenLastCalledWith({
       type: "siteBlock",
       attrs: { blockType: "testimonials" },
     });
 
-    await wrapper.find('[title="Insert call-to-action button"]').trigger("click");
+    await wrapper.find(".widgets-toolbar-btn").trigger("click");
+    await wrapper
+      .findAll(".widget-picker-option")
+      .find((option) => option.text().includes("Call-to-action button"))!
+      .trigger("click");
     expect(mockInsertContent).toHaveBeenLastCalledWith({
       type: "ctaButtonBlock",
       attrs: {
@@ -468,6 +480,42 @@ describe("TiptapEditor", () => {
 
     expect(wrapper.find(".link-modal-overlay").exists()).toBe(true);
     expect(wrapper.find(".link-modal").exists()).toBe(true);
+  });
+
+  it("offers clear descriptions for all site widgets", async () => {
+    const wrapper = mount(TiptapEditor, { props: { modelValue: "" } });
+
+    await wrapper.get(".widgets-toolbar-btn").trigger("click");
+
+    expect(wrapper.get('[role="dialog"]').text()).toContain("Add a widget");
+    expect(wrapper.findAll(".widget-picker-option")).toHaveLength(7);
+    expect(wrapper.text()).toContain("Let visitors view availability and request a booking.");
+    expect(wrapper.text()).toContain("Show your saved client quotes.");
+  });
+
+  it("inserts the selected widget and closes the picker", async () => {
+    const wrapper = mount(TiptapEditor, { props: { modelValue: "" } });
+
+    await wrapper.get(".widgets-toolbar-btn").trigger("click");
+    await wrapper
+      .findAll(".widget-picker-option")
+      .find((option) => option.text().includes("Booking widget"))!
+      .trigger("click");
+
+    expect(mockInsertContent).toHaveBeenCalledWith({
+      type: "siteBlock",
+      attrs: { blockType: "booking" },
+    });
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+  });
+
+  it("closes the widget picker with Escape", async () => {
+    const wrapper = mount(TiptapEditor, { props: { modelValue: "" } });
+
+    await wrapper.get(".widgets-toolbar-btn").trigger("click");
+    await wrapper.get('[role="dialog"]').trigger("keydown.esc");
+
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
   });
 
   it("should close link modal when cancel clicked", async () => {

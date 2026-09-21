@@ -25,6 +25,7 @@ const socialPublishingInstalled = ref(false);
 const accountsInstalled = ref(false);
 type NavigationFeatureId =
   | "assistant"
+  | "calendar"
   | "journal"
   | "tasks"
   | "email"
@@ -33,6 +34,7 @@ type NavigationFeatureId =
   | "accounts";
 const navigationFeatures = ref<Record<NavigationFeatureId, boolean>>({
   assistant: false,
+  calendar: true,
   journal: false,
   tasks: false,
   email: false,
@@ -127,6 +129,7 @@ async function loadInstalledPluginNav() {
     accountsInstalled.value = false;
     navigationFeatures.value = {
       assistant: false,
+      calendar: true,
       journal: false,
       tasks: false,
       email: false,
@@ -209,7 +212,7 @@ watch(navDrawerOpen, (isOpen) => {
         </RouterLink>
 
         <RouterLink
-          v-if="calendarInstalled"
+          v-if="calendarInstalled && navigationFeatures.calendar"
           to="/calendar"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('calendar') }"
