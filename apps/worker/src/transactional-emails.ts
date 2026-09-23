@@ -24,6 +24,8 @@ export type BookingEmailDetails = {
   timezone: string;
   notes?: string | null;
   bookingId?: string | null;
+  meetingUrl?: string | null;
+  meetingHostUrl?: string | null;
   amountPaid?: number | null;
   amountDue?: number | null;
   currency?: string | null;
@@ -144,6 +146,7 @@ Your booking is confirmed.
 ${details.bookingTitle} with ${details.hostName}
 ${startTime}
 Duration: ${details.durationMinutes} minutes${paymentLine ? `\n${paymentLine}` : ""}${paymentInstructions ? `\n\nPayment is not taken now.\nPayment details:\n${paymentInstructions}` : ""}${details.notes ? `\n\nYour notes:\n${details.notes}` : ""}
+${details.meetingUrl ? `Join call: ${details.meetingUrl}\n` : ""}
 Add to Google Calendar: ${calendarUrl}
 ${guestMessage ? `\n\n${guestMessage}` : ""}
 
@@ -157,6 +160,7 @@ You can reply to this email to contact ${details.hostName}.
       ["With", details.hostName],
       ["When", startTime],
       ["Duration", `${details.durationMinutes} minutes`],
+      ...(details.meetingUrl ? [["Join call", details.meetingUrl] as [string, string]] : []),
       ...(paymentLine
         ? [[details.amountPaid ? "Payment" : "Amount due", paymentLine.replace(/^(?:Payment|Amount due): /, "")] as [string, string]]
         : []),
@@ -213,6 +217,7 @@ Email: ${details.guestEmail}
 ${details.bookingTitle}
 ${startTime}
 Duration: ${details.durationMinutes} minutes${paymentLine ? `\n${paymentLine}` : ""}${paymentInstructions ? `\n\nPayment details sent to the guest:\n${paymentInstructions}` : ""}${details.notes ? `\n\nGuest notes:\n${details.notes}` : ""}
+${details.meetingHostUrl || details.meetingUrl ? `Your call room: ${details.meetingHostUrl || details.meetingUrl}\n` : ""}
 
 - ME3`;
   const htmlBody = bookingEmailHtml({
@@ -223,6 +228,7 @@ Duration: ${details.durationMinutes} minutes${paymentLine ? `\n${paymentLine}` :
       ["Email", details.guestEmail],
       ["When", startTime],
       ["Duration", `${details.durationMinutes} minutes`],
+      ...(details.meetingHostUrl || details.meetingUrl ? [["Call room", (details.meetingHostUrl || details.meetingUrl)!] as [string, string]] : []),
       ...(paymentLine
         ? [[details.amountPaid ? "Payment" : "Amount due", paymentLine.replace(/^(?:Payment|Amount due): /, "")] as [string, string]]
         : []),
@@ -362,6 +368,8 @@ export function bookingDetailsFromBooking(input: {
     timezone: input.timezone,
     notes: input.booking.notes,
     bookingId: input.booking.id,
+    meetingUrl: input.booking.meeting_url,
+    meetingHostUrl: input.booking.meeting_host_url,
     amountPaid: input.booking.amount_paid,
     amountDue:
       !input.booking.amount_paid &&
@@ -458,8 +466,12 @@ function bookingEmailHtml(input: {
 }) {
   const rows = input.rows
     .map(
-      ([label, value]) =>
-        `<p style="margin:0 0 8px;color:#333;font-size:14px;"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</p>`,
+      ([label, value]) => {
+        const display = (label === "Join call" || label === "Call room") && /^https:\/\//.test(value)
+          ? `<a href="${escapeHtml(value)}" style="color:#111;font-weight:700;">${escapeHtml(value)}</a>`
+          : escapeHtml(value);
+        return `<p style="margin:0 0 8px;color:#333;font-size:14px;"><strong>${escapeHtml(label)}:</strong> ${display}</p>`;
+      },
     )
     .join("");
   const notes = input.notes
@@ -491,6 +503,7 @@ function googleCalendarUrl(details: BookingEmailDetails): string {
     dates,
     details: `Booking confirmed with ${details.hostName}.${details.hostEmail ? ` Reply to ${details.hostEmail} if you need to make changes.` : ""}`,
   });
+  if (details.meetingUrl) params.set("location", details.meetingUrl);
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 

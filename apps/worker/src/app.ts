@@ -612,7 +612,7 @@ app.get("/api/core/version", (c) => {
   return c.json(getCoreVersionInfo());
 });
 
-registerBookingRoutes(app);
+registerBookingRoutes(app, { requireOwner, unauthorized });
 registerEventBookingRoutes(app);
 registerCommerceRoutes(app, { requireOwner, unauthorized, getCoreWebOrigin });
 registerUsernameRoutes(app);

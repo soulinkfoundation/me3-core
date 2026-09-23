@@ -339,6 +339,30 @@ const runtimeMigrations: RuntimeMigration[] = [
       ).run();
     },
   },
+  {
+    id: "0053_booking_meeting",
+    checksum: "2026-09-23-booking-meeting-v1",
+    async apply(db) {
+      await addColumnIfMissing(db, "bookings", "meeting_provider", "TEXT");
+      await addColumnIfMissing(db, "bookings", "meeting_url", "TEXT");
+      await addColumnIfMissing(db, "bookings", "meeting_host_url", "TEXT");
+      await addColumnIfMissing(db, "bookings", "meeting_guest_token_hash", "TEXT");
+      await addColumnIfMissing(db, "bookings", "meeting_title", "TEXT");
+      await db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_bookings_soulink_upcoming
+         ON bookings(site_id, starts_at) WHERE meeting_provider = 'soulink' AND status = 'confirmed'`,
+      ).run();
+      await db.prepare(
+        `CREATE TABLE IF NOT EXISTS site_booking_meetings (
+          site_id TEXT NOT NULL,
+          offer_id TEXT NOT NULL,
+          meeting_url TEXT NOT NULL,
+          PRIMARY KEY (site_id, offer_id),
+          FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+        )`,
+      ).run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

@@ -204,6 +204,8 @@ export interface WizardBookingOffer {
   description: string;
   duration: WizardBookingDuration;
   pricing?: WizardBookingPricing;
+  meetingProvider?: "none" | "soulink" | "external";
+  meetingUrl?: string;
 }
 
 export interface WizardClassOffer {
@@ -542,6 +544,8 @@ type PublishedBookingOffer = {
   description?: string;
   duration?: number;
   pricing?: WizardBookingPricing;
+  meetingProvider?: "none" | "soulink" | "external";
+  meetingUrl?: string;
 };
 
 type PublishedBookingClass = {
@@ -736,6 +740,8 @@ function createDefaultBookingOffer(
       typeof overrides.description === "string" ? overrides.description : "",
     duration: (overrides.duration as WizardBookingDuration) || 30,
     ...(pricing ? { pricing } : {}),
+    meetingProvider: overrides.meetingProvider || "none",
+    meetingUrl: overrides.meetingUrl || "",
   };
 }
 
@@ -929,6 +935,8 @@ function normalizeWizardBookingOffers(input: unknown): WizardBookingOffer[] {
       description:
         typeof offer.description === "string" ? offer.description : "",
     duration: isWizardBookingDuration(offer.duration) ? offer.duration : 30,
+      meetingProvider: offer.meetingProvider === "soulink" || offer.meetingProvider === "external" ? offer.meetingProvider : "none",
+      meetingUrl: typeof offer.meetingUrl === "string" ? offer.meetingUrl : "",
       pricing:
         offer.pricing && typeof offer.pricing === "object"
           ? normalizeWizardBookingPricing(offer.pricing)
@@ -2001,6 +2009,21 @@ export const useWizardStore = defineStore("wizard", () => {
       }),
     };
     markAsEdited();
+    saveToStorage();
+  }
+
+  function hydrateBookingMeetingUrls(settings: Array<{ offerId: string; meetingUrl: string }>) {
+    const byOffer = new Map(settings.map((entry) => [entry.offerId, entry.meetingUrl]));
+    profile.value = {
+      ...profile.value,
+      booking: {
+        ...profile.value.booking,
+        offers: profile.value.booking.offers.map((offer) => ({
+          ...offer,
+          meetingUrl: offer.meetingUrl || byOffer.get(offer.id) || "",
+        })),
+      },
+    };
     saveToStorage();
   }
 
@@ -3543,6 +3566,7 @@ export const useWizardStore = defineStore("wizard", () => {
             title: normalizedTitle,
             description: offer.description.trim(),
             duration: offer.duration,
+            meetingProvider: offer.meetingProvider,
             pricing: offer.pricing
               ? {
                   enabled: offer.pricing.enabled,
@@ -3651,6 +3675,7 @@ export const useWizardStore = defineStore("wizard", () => {
               id: offer.id,
               title: offer.title,
               duration: offer.duration,
+              meetingProvider: offer.meetingProvider,
             };
             if (offer.description) {
               bookingOffer.description = offer.description;
@@ -4739,6 +4764,8 @@ export const useWizardStore = defineStore("wizard", () => {
                   title: offer.title,
                   description: offer.description || "",
                   duration: (offer.duration as WizardBookingDuration) || 30,
+                  meetingProvider: offer.meetingProvider,
+                  meetingUrl: offer.meetingUrl,
                   pricing: offer.pricing
                     ? {
                         ...defaultWizardBookingPricing(),
@@ -4755,6 +4782,8 @@ export const useWizardStore = defineStore("wizard", () => {
                   title: offer.title,
                   description: offer.description || "",
                   duration: (offer.duration as WizardBookingDuration) || 30,
+                  meetingProvider: offer.meetingProvider,
+                  meetingUrl: offer.meetingUrl,
                   pricing: offer.pricing
                     ? {
                         ...defaultWizardBookingPricing(),
@@ -5171,6 +5200,7 @@ export const useWizardStore = defineStore("wizard", () => {
     disableBookingType,
     addBookingOffer,
     updateBookingOffer,
+    hydrateBookingMeetingUrls,
     removeBookingOffer,
     addClassOffer,
     updateClassOffer,

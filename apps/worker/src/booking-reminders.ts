@@ -38,6 +38,8 @@ type BookingReminderPayload = {
   amountPaid: number | null;
   currency: string | null;
   isFree: boolean;
+  meetingUrl?: string | null;
+  meetingHostUrl?: string | null;
   telegramChatId?: string | null;
   soulinkConnectionId?: string | null;
   soulinkThreadId?: string | null;
@@ -127,6 +129,8 @@ export async function scheduleBookingRemindersForBooking(
     amountPaid: input.booking.amount_paid,
     currency: input.booking.currency,
     isFree: input.booking.is_free_booking === 1,
+    meetingUrl: input.booking.meeting_url || null,
+    meetingHostUrl: input.booking.meeting_host_url || null,
     reminders: input.reminders,
     telegramChatId: telegramConnection?.telegram_chat_id || null,
     soulinkConnection: soulinkConnection?.provider_thread_id
@@ -636,10 +640,10 @@ ${timeLabel}.
 
 ${payload.bookingTitle} with ${payload.hostName}
 ${startTime}
-Duration: ${payload.durationMinutes} minutes${notes ? `\n\nYour notes:\n${notes}` : ""}
+Duration: ${payload.durationMinutes} minutes${payload.meetingUrl ? `\nJoin call: ${payload.meetingUrl}` : ""}${notes ? `\n\nYour notes:\n${notes}` : ""}
 
 If you need to reschedule, reply to ${payload.hostEmail}.`;
-  const htmlBody = `<!doctype html><html><body style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;background:#f6f6f6"><main style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:32px"><h1 style="margin:0 0 8px">Reminder</h1><p style="margin:0 0 24px;color:#555">${escapeHtml(timeLabel)}</p><h2 style="font-size:18px;margin:0 0 16px">${escapeHtml(payload.bookingTitle)}</h2><p><strong>With:</strong> ${escapeHtml(payload.hostName)}</p><p><strong>When:</strong> ${escapeHtml(startTime)}</p><p><strong>Duration:</strong> ${payload.durationMinutes} minutes</p>${notes ? `<p><strong>Your notes:</strong><br>${escapeHtml(notes).replace(/\n/g, "<br>")}</p>` : ""}<p style="color:#555">If you need to reschedule, reply to ${escapeHtml(payload.hostEmail)}.</p></main></body></html>`;
+  const htmlBody = `<!doctype html><html><body style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;background:#f6f6f6"><main style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:32px"><h1 style="margin:0 0 8px">Reminder</h1><p style="margin:0 0 24px;color:#555">${escapeHtml(timeLabel)}</p><h2 style="font-size:18px;margin:0 0 16px">${escapeHtml(payload.bookingTitle)}</h2><p><strong>With:</strong> ${escapeHtml(payload.hostName)}</p><p><strong>When:</strong> ${escapeHtml(startTime)}</p><p><strong>Duration:</strong> ${payload.durationMinutes} minutes</p>${payload.meetingUrl ? `<p><strong>Join call:</strong> <a href="${escapeHtml(payload.meetingUrl)}">${escapeHtml(payload.meetingUrl)}</a></p>` : ""}${notes ? `<p><strong>Your notes:</strong><br>${escapeHtml(notes).replace(/\n/g, "<br>")}</p>` : ""}<p style="color:#555">If you need to reschedule, reply to ${escapeHtml(payload.hostEmail)}.</p></main></body></html>`;
   return { to: payload.guestEmail, subject, textBody, htmlBody };
 }
 
@@ -658,8 +662,8 @@ ${timeLabel}.
 ${payload.bookingTitle} with ${payload.guestName}
 ${startTime}
 Duration: ${payload.durationMinutes} minutes
-Guest contact: ${payload.guestEmail}${notes ? `\n\nGuest notes:\n${notes}` : ""}`;
-  const htmlBody = `<!doctype html><html><body style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;background:#f6f6f6"><main style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:32px"><h1 style="margin:0 0 8px">Upcoming booking</h1><p style="margin:0 0 24px;color:#555">${escapeHtml(timeLabel)}</p><h2 style="font-size:18px;margin:0 0 16px">${escapeHtml(payload.bookingTitle)}</h2><p><strong>With:</strong> ${escapeHtml(payload.guestName)}</p><p><strong>When:</strong> ${escapeHtml(startTime)}</p><p><strong>Duration:</strong> ${payload.durationMinutes} minutes</p><p><strong>Guest contact:</strong> ${escapeHtml(payload.guestEmail)}</p>${notes ? `<p><strong>Guest notes:</strong><br>${escapeHtml(notes).replace(/\n/g, "<br>")}</p>` : ""}</main></body></html>`;
+Guest contact: ${payload.guestEmail}${payload.meetingHostUrl || payload.meetingUrl ? `\nCall room: ${payload.meetingHostUrl || payload.meetingUrl}` : ""}${notes ? `\n\nGuest notes:\n${notes}` : ""}`;
+  const htmlBody = `<!doctype html><html><body style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;background:#f6f6f6"><main style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:32px"><h1 style="margin:0 0 8px">Upcoming booking</h1><p style="margin:0 0 24px;color:#555">${escapeHtml(timeLabel)}</p><h2 style="font-size:18px;margin:0 0 16px">${escapeHtml(payload.bookingTitle)}</h2><p><strong>With:</strong> ${escapeHtml(payload.guestName)}</p><p><strong>When:</strong> ${escapeHtml(startTime)}</p><p><strong>Duration:</strong> ${payload.durationMinutes} minutes</p><p><strong>Guest contact:</strong> ${escapeHtml(payload.guestEmail)}</p>${payload.meetingHostUrl || payload.meetingUrl ? `<p><strong>Call room:</strong> <a href="${escapeHtml((payload.meetingHostUrl || payload.meetingUrl)!)}">${escapeHtml((payload.meetingHostUrl || payload.meetingUrl)!)}</a></p>` : ""}${notes ? `<p><strong>Guest notes:</strong><br>${escapeHtml(notes).replace(/\n/g, "<br>")}</p>` : ""}</main></body></html>`;
   return { to: payload.hostEmail, subject, textBody, htmlBody };
 }
 
@@ -679,6 +683,7 @@ function buildOwnerReminderText(reminderType: BookingReminderType, payload: Book
     `${payload.durationMinutes} minutes`,
     payload.guestEmail,
   ];
+  if (payload.meetingHostUrl || payload.meetingUrl) lines.push(payload.meetingHostUrl || payload.meetingUrl || "");
   if (notes) lines.push("", "Guest notes:", notes);
   return lines.join("\n");
 }
@@ -694,7 +699,7 @@ async function fetchBooking(env: Env, bookingId: string) {
     `SELECT id, site_id, offer_id, booking_type, guest_name, guest_email, starts_at, ends_at,
             duration_minutes, calendar_event_id, status, notes, created_at,
             cancelled_at, payment_intent_id, amount_paid, suggested_amount,
-            currency, payment_status, is_free_booking, paid_at
+            currency, payment_status, is_free_booking, paid_at, meeting_url, meeting_host_url
      FROM bookings
      WHERE id = ?`,
   )

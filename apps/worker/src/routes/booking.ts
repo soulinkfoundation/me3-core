@@ -33,7 +33,7 @@ import {
   type PaidBookingCompletionBody,
   type PublicBookingConfirmBody,
 } from "../booking";
-import type { AppHono } from "../http/types";
+import type { AppHono, OwnerRouteDeps } from "../http/types";
 import {
   bookingDetailsFromBooking,
   getOwnerContact,
@@ -48,11 +48,46 @@ import {
   isEventBookingType,
 } from "../event-booking";
 import { dispatchWebsitePaymentNotification } from "../payment-notifications";
+import { BookingMeetingError, resolveBookingMeeting, validExternalMeetingUrl } from "../booking-meetings";
 
 const PAYMENTS_UNAVAILABLE_MESSAGE =
   "Payments are not available for this booking right now. Please contact the site owner.";
 
-export function registerBookingRoutes(app: AppHono) {
+export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized }: OwnerRouteDeps) {
+  app.get("/api/sites/:username/booking-meetings", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const site = await getSiteByUsername(c.env, c.req.param("username"));
+    if (!site || site.user_id !== ownerId) return c.json({ error: "Site not found" }, 404);
+    const { results } = await c.env.DB.prepare(
+      "SELECT offer_id, meeting_url FROM site_booking_meetings WHERE site_id = ?",
+    ).bind(site.id).all<{ offer_id: string; meeting_url: string }>();
+    return c.json({ offers: results.map((row) => ({ offerId: row.offer_id, meetingUrl: row.meeting_url })) });
+  });
+
+  app.put("/api/sites/:username/booking-meetings", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const site = await getSiteByUsername(c.env, c.req.param("username"));
+    if (!site || site.user_id !== ownerId) return c.json({ error: "Site not found" }, 404);
+    const body = await c.req.json<{ offers?: Array<{ offerId?: unknown; meetingUrl?: unknown }> }>().catch(() => null);
+    if (!body || !Array.isArray(body.offers) || body.offers.length > 100) return c.json({ error: "Invalid meeting settings" }, 400);
+    const settings: Array<{ offerId: string; meetingUrl: string }> = [];
+    for (const item of body.offers) {
+      const offerId = typeof item.offerId === "string" ? item.offerId.trim() : "";
+      const meetingUrl = validExternalMeetingUrl(typeof item.meetingUrl === "string" ? item.meetingUrl : undefined);
+      if (!offerId || offerId.length > 100 || !meetingUrl) return c.json({ error: "Each external offer needs a valid HTTPS meeting link" }, 400);
+      settings.push({ offerId, meetingUrl });
+    }
+    await c.env.DB.batch([
+      c.env.DB.prepare("DELETE FROM site_booking_meetings WHERE site_id = ?").bind(site.id),
+      ...settings.map((setting) => c.env.DB.prepare(
+        "INSERT INTO site_booking_meetings (site_id, offer_id, meeting_url) VALUES (?, ?, ?)",
+      ).bind(site.id, setting.offerId, setting.meetingUrl)),
+    ]);
+    return c.json({ ok: true });
+  });
+
   app.get("/api/book/:username/slots", async (c) => {
     const site = await getSiteByUsername(c.env, c.req.param("username"));
     if (!site) return c.json({ error: "Site not found" }, 404);
@@ -193,7 +228,11 @@ export function registerBookingRoutes(app: AppHono) {
       pageId,
       actionId,
       campaign,
+    }).catch((error) => {
+      if (error instanceof BookingMeetingError) return error;
+      throw error;
     });
+    if (booking instanceof BookingMeetingError) return c.json({ error: booking.message }, 409);
 
     if (booking) {
       await sendConfirmationEmailsForBooking(c.env, {
@@ -312,7 +351,11 @@ export function registerBookingRoutes(app: AppHono) {
       campaign,
       amountDueCents: manualAmount?.amountCents,
       paymentCurrency: manualAmount?.currency,
+    }).catch((error) => {
+      if (error instanceof BookingMeetingError) return error;
+      throw error;
     });
+    if (booking instanceof BookingMeetingError) return c.json({ error: booking.message }, 409);
 
     if (booking) {
       await sendConfirmationEmailsForBooking(c.env, {
@@ -626,14 +669,24 @@ async function finalizePaidBookingCheckout(
   }
 
   const bookingId = crypto.randomUUID();
+  const profile = await loadSiteProfileForCommerce(env, site);
+  const bookIntent = profile?.intents?.book as CoreBookIntent | undefined;
+  const offer = bookIntent ? resolveOneToOneBookingOffer(bookIntent, offerId) : null;
+  if (!offer) return { error: "Booking offer is no longer available", status: 409 };
+  const meeting = await resolveBookingMeeting(env, site.user_id, offer, bookingId, site.id, offer.id).catch((error) => {
+    if (error instanceof BookingMeetingError) return error;
+    throw error;
+  });
+  if (meeting instanceof BookingMeetingError) return { error: meeting.message, status: 409 };
   await env.DB.prepare(
     `INSERT INTO bookings
      (id, site_id, offer_id, booking_type, guest_name, guest_email, starts_at, ends_at,
       duration_minutes, status, notes, created_at, payment_intent_id, amount_paid,
       suggested_amount, currency, payment_status, is_free_booking, paid_at,
-      page_id, action_id, campaign)
+      page_id, action_id, campaign, meeting_provider, meeting_url, meeting_host_url,
+      meeting_guest_token_hash, meeting_title)
      VALUES (?, ?, ?, 'one_to_one', ?, ?, ?, ?, ?, 'confirmed', ?, datetime('now'),
-             ?, ?, ?, ?, 'succeeded', 0, datetime('now'), ?, ?, ?)`,
+             ?, ?, ?, ?, 'succeeded', 0, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       bookingId,
@@ -652,6 +705,11 @@ async function finalizePaidBookingCheckout(
       metadata.page_id || null,
       metadata.action_id || null,
       metadata.campaign || null,
+      meeting.provider,
+      meeting.guestUrl,
+      meeting.hostUrl,
+      meeting.guestTokenHash,
+      offer.title,
     )
     .run();
 
@@ -662,9 +720,6 @@ async function finalizePaidBookingCheckout(
     .first<DbBooking>();
   if (!booking) return { ok: true, booking: { id: bookingId } as ReturnType<typeof serializeBooking> };
 
-  const profile = await loadSiteProfileForCommerce(env, site);
-  const bookIntent = profile?.intents?.book as CoreBookIntent | undefined;
-  const offer = bookIntent ? resolveOneToOneBookingOffer(bookIntent, offerId) : null;
   const timezone = resolveTimeZone(offer?.availability.timezone);
   scheduleBookingRemindersForBooking(env, {
     booking,
@@ -833,7 +888,8 @@ function bookingSelectSql(where: string) {
   return `SELECT id, site_id, offer_id, booking_type, guest_name, guest_email, starts_at, ends_at,
                  duration_minutes, calendar_event_id, status, notes, created_at, cancelled_at,
                  payment_intent_id, amount_paid, suggested_amount, currency, payment_status,
-                 is_free_booking, paid_at
+                 is_free_booking, paid_at, meeting_provider, meeting_url, meeting_host_url,
+                 meeting_guest_token_hash, meeting_title
           FROM bookings
           ${where}`;
 }

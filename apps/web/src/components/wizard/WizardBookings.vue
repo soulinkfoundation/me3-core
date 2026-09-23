@@ -22,6 +22,7 @@ import BookingAvailabilityEditor, {
 import TimezonePicker from "../booking/TimezonePicker.vue";
 import UiIcon from "../UiIcon.vue";
 import { useAppToast } from "../../composables/useAppToast";
+import { api } from "../../api";
 import { getTimeZoneDisplayLabel, listSupportedTimeZones } from "../../utils/timezone";
 
 const wizard = useWizardStore();
@@ -36,6 +37,7 @@ const activeClassOfferId = ref<string | null>(null);
 const activeRetreatOfferId = ref<string | null>(null);
 const showAddTypeMenu = ref(false);
 const isSendingBookingConfirmationTest = ref(false);
+const soulinkConnected = ref(false);
 
 const enabledBookingTypes = computed(() => {
   const types: Array<{ type: WizardBookingType; label: string }> = [];
@@ -212,6 +214,26 @@ const activeOfferDescription = computed({
 const activeOfferDuration = computed({
   get: () => activeOffer.value?.duration || 30,
   set: (val: WizardBookingDuration) => updateActiveOffer({ duration: val }),
+});
+
+const activeOfferMeetingProvider = computed({
+  get: () => activeOffer.value?.meetingProvider || "none",
+  set: (value: "none" | "soulink" | "external") => updateActiveOffer({ meetingProvider: value }),
+});
+const activeOfferMeetingUrl = computed({
+  get: () => activeOffer.value?.meetingUrl || "",
+  set: (value: string) => updateActiveOffer({ meetingUrl: value }),
+});
+
+onMounted(async () => {
+  const [status, privateMeetings] = await Promise.all([
+    api.get<{ connection?: { status?: string } }>("/soulink/status").catch(() => null),
+    wizard.username
+      ? api.get<{ offers?: Array<{ offerId: string; meetingUrl: string }> }>(`/sites/${encodeURIComponent(wizard.username)}/booking-meetings`).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+  soulinkConnected.value = status?.connection?.status === "active";
+  if (privateMeetings?.offers) wizard.hydrateBookingMeetingUrls(privateMeetings.offers);
 });
 
 const activeOfferPriceMode = computed({
@@ -1030,6 +1052,21 @@ onMounted(() => {
                   rows="3"
                   placeholder="Briefly describe what this session includes"
                 />
+              </div>
+
+              <div class="form-group">
+                <label :for="`booking-offer-meeting-${activeOffer.id}`">Meeting place</label>
+                <select :id="`booking-offer-meeting-${activeOffer.id}`" v-model="activeOfferMeetingProvider">
+                  <option value="none">No online link</option>
+                  <option value="soulink" :disabled="!soulinkConnected">My Soulink call room</option>
+                  <option value="external">Other video link (Zoom, etc.)</option>
+                </select>
+                <p v-if="!soulinkConnected && activeOfferMeetingProvider === 'soulink'" class="form-hint">Reconnect Soulink before taking new bookings for this offer.</p>
+                <p v-else-if="!soulinkConnected" class="form-hint">Connect Soulink in Settings to use your call room.</p>
+              </div>
+              <div v-if="activeOfferMeetingProvider === 'external'" class="form-group">
+                <label :for="`booking-offer-meeting-url-${activeOffer.id}`">Video link</label>
+                <input :id="`booking-offer-meeting-url-${activeOffer.id}`" v-model.trim="activeOfferMeetingUrl" type="url" pattern="https://.*" placeholder="https://zoom.us/j/..." required />
               </div>
 
               <div

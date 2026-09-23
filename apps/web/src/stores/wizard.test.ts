@@ -1750,6 +1750,21 @@ describe("wizard store", () => {
       });
     });
 
+    it("keeps an external meeting URL out of public me.json", () => {
+      const store = useWizardStore();
+      store.profile.name = "Test User";
+      store.profile.handle = "testuser";
+      store.setBooking({ enabled: true, oneToOneEnabled: true, timezone: "UTC" });
+      store.setBookingAvailability("monday", ["09:00-17:00"]);
+      store.updateBookingOffer(store.profile.booking.offers[0].id, {
+        meetingProvider: "external",
+        meetingUrl: "https://zoom.example/private-room",
+      });
+      const published = JSON.stringify(store.generateMe3Json());
+      expect(published).toContain('"meetingProvider":"external"');
+      expect(published).not.toContain("https://zoom.example/private-room");
+    });
+
     it("should not include booking intent when disabled", () => {
       const store = useWizardStore();
       store.profile.name = "Test User";

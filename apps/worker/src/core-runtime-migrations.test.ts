@@ -51,9 +51,12 @@ describe("Core runtime migrations", () => {
     expect(db.tables.has("email_campaign_transport_state")).toBe(true);
     expect(db.tables.has("email_campaign_revision_assets")).toBe(true);
     expect(db.tables.has("site_branding")).toBe(true);
+    expect(db.tables.has("site_booking_meetings")).toBe(true);
     expect(db.columns.get("bookings")?.has("page_id")).toBe(true);
     expect(db.columns.get("bookings")?.has("action_id")).toBe(true);
     expect(db.columns.get("bookings")?.has("campaign")).toBe(true);
+    expect(db.columns.get("bookings")?.has("meeting_provider")).toBe(true);
+    expect(db.columns.get("bookings")?.has("meeting_guest_token_hash")).toBe(true);
     expect(db.tables.has("social_suggestions")).toBe(true);
     expect(db.tables.has("social_posting_preferences")).toBe(true);
     expect(db.tables.has("social_posting_plans")).toBe(true);
@@ -320,7 +323,8 @@ describe("Core runtime migrations", () => {
     expect(
       db.statements.some(
         (sql) =>
-          sql.includes("ALTER TABLE subscribers") || sql.includes("ALTER TABLE bookings"),
+          sql.includes("ALTER TABLE subscribers") ||
+          (sql.includes("ALTER TABLE bookings") && !sql.includes("meeting_")),
       ),
     ).toBe(false);
     expect(

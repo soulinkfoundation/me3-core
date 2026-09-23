@@ -170,6 +170,18 @@ export function usePublish() {
       if (manualPaymentError) {
         throw new Error(manualPaymentError);
       }
+      const externalMeetings = wizard.bookingsEnabled && wizard.profile.booking.oneToOneEnabled
+        ? wizard.profile.booking.offers.filter((offer) => offer.meetingProvider === "external")
+        : [];
+      const privateMeetingSettings = externalMeetings.map((offer) => {
+        let url: URL;
+        try { url = new URL(offer.meetingUrl?.trim() || ""); }
+        catch { throw new Error(`Bookings — "${offer.title}": enter a valid HTTPS video link.`); }
+        if (url.protocol !== "https:" || url.username || url.password) {
+          throw new Error(`Bookings — "${offer.title}": enter a valid HTTPS video link.`);
+        }
+        return { offerId: offer.id, meetingUrl: url.toString() };
+      });
 
       // First, check if site exists or needs to be claimed
       await sites.fetchSites();
@@ -469,6 +481,11 @@ export function usePublish() {
           throw new Error(sites.error || "Failed to upload site");
         }
       }
+
+      // Meeting URLs are private installation data, never part of public me.json.
+      await api.put(`/sites/${encodeURIComponent(username)}/booking-meetings`, {
+        offers: privateMeetingSettings,
+      });
 
       // Mark as published in wizard store
       wizard.markAsPublished();

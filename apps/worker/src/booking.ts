@@ -5,6 +5,7 @@ import { getStripeSecretKey } from "./commerce-settings";
 import { getPublicSiteOrigin } from "./sites";
 import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import type { DbBooking, DbSite, Env } from "./types";
+import { resolveBookingMeeting } from "./booking-meetings";
 
 export type PaidBookingCheckoutBody = {
   offerId?: unknown;
@@ -52,6 +53,8 @@ export type CoreBookingOffer = {
   description?: string;
   duration?: number;
   pricing?: CoreBookingPricing;
+  meetingProvider?: "none" | "soulink" | "external";
+  meetingUrl?: string;
 };
 export type CoreBookingAvailability = {
   timezone?: string;
@@ -83,6 +86,8 @@ export type ResolvedOneToOneBookingOffer = {
   description?: string;
   duration: number;
   pricing?: CoreBookingPricing;
+  meetingProvider?: "none" | "soulink" | "external";
+  meetingUrl?: string;
   availability: CoreBookingAvailability;
 };
 export type ResolvedPaidBookingOffer = ResolvedOneToOneBookingOffer & {
@@ -260,6 +265,8 @@ export function listOneToOneBookingOffers(
       ...(offer.description ? { description: offer.description } : {}),
       duration,
       pricing: offer.pricing,
+      meetingProvider: offer.meetingProvider,
+      meetingUrl: offer.meetingUrl,
       availability,
     };
   });
@@ -582,14 +589,16 @@ export async function createConfirmedOneToOneBooking(
       ).toLowerCase()
     : null;
   const bookingId = crypto.randomUUID();
+  const meeting = await resolveBookingMeeting(env, input.site.user_id, input.offer, bookingId, input.site.id, input.offer.id);
   await env.DB.prepare(
     `INSERT INTO bookings
      (id, site_id, offer_id, booking_type, guest_name, guest_email, starts_at, ends_at,
       duration_minutes, status, notes, created_at, payment_intent_id, amount_paid,
       suggested_amount, currency, payment_status, is_free_booking, paid_at,
-      page_id, action_id, campaign)
+      page_id, action_id, campaign, meeting_provider, meeting_url, meeting_host_url,
+      meeting_guest_token_hash, meeting_title)
      VALUES (?, ?, ?, 'one_to_one', ?, ?, ?, ?, ?, 'confirmed', ?, datetime('now'),
-             NULL, NULL, ?, ?, 'not_required', ?, NULL, ?, ?, ?)`,
+             NULL, NULL, ?, ?, 'not_required', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       bookingId,
@@ -607,6 +616,11 @@ export async function createConfirmedOneToOneBooking(
       input.pageId || null,
       input.actionId || null,
       input.campaign || null,
+      meeting.provider,
+      meeting.guestUrl,
+      meeting.hostUrl,
+      meeting.guestTokenHash,
+      input.offer.title,
     )
     .run();
 
@@ -614,7 +628,8 @@ export async function createConfirmedOneToOneBooking(
     `SELECT id, site_id, offer_id, booking_type, guest_name, guest_email, starts_at, ends_at,
             duration_minutes, calendar_event_id, status, notes, created_at, cancelled_at,
             payment_intent_id, amount_paid, suggested_amount, currency, payment_status,
-            is_free_booking, paid_at
+            is_free_booking, paid_at, meeting_provider, meeting_url, meeting_host_url,
+            meeting_guest_token_hash, meeting_title
      FROM bookings
      WHERE id = ?`,
   )
@@ -858,5 +873,7 @@ export function serializeBooking(booking: DbBooking) {
     amountPaid: booking.amount_paid,
     currency: booking.currency,
     paidAt: booking.paid_at,
+    meetingProvider: booking.meeting_provider || null,
+    meetingUrl: booking.meeting_url || null,
   };
 }

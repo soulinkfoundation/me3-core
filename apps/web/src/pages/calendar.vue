@@ -56,6 +56,8 @@ definePage({
 
 interface CalendarBookingRow {
   id: string;
+  meeting_url?: string | null;
+  meeting_host_url?: string | null;
   site_id: string;
   username: string;
   guest_name: string;
@@ -918,6 +920,11 @@ function mapBookingToCalendarEvent(
       { label: "Guest", value: booking.guest_name || "Unknown guest" },
       { label: "Email", value: booking.guest_email },
       { label: "Duration", value: `${booking.duration_minutes} minutes` },
+      ...(booking.meeting_host_url || booking.meeting_url ? [{
+        label: "Location",
+        value: (booking.meeting_host_url || booking.meeting_url)!,
+        href: calendarLocationHref((booking.meeting_host_url || booking.meeting_url)!),
+      }] : []),
       { label: "Payment", value: formatBookingPayment(booking) },
     ],
     notes: booking.notes,

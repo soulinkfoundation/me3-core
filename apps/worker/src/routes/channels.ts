@@ -28,6 +28,7 @@ import {
   originFromUrl,
 } from "../sites";
 import type { DbAgentChannelConnection, DbAgentChannelEvent, DbContact, Env } from "../types";
+import { hashGuestToken } from "../booking-meetings";
 
 const DEFAULT_SOULINK_API_ORIGIN = "https://soulinkfoundation.org";
 
@@ -410,6 +411,60 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
     if (!result.ok) return c.json({ ok: false, error: result.error }, result.status as any);
     return c.json(result);
   });
+
+  app.get("/api/soulink/bookings/upcoming", async (c) => {
+    const connection = await authorizedSoulinkBookingConnection(c.env, c.req.header("authorization"));
+    if (!connection) return c.json({ error: "Unauthorized" }, 401);
+    const { results } = await c.env.DB.prepare(
+      `SELECT b.id, b.meeting_title, b.guest_name, b.starts_at, b.ends_at
+       FROM bookings b JOIN sites s ON s.id = b.site_id
+       WHERE s.user_id = ? AND b.status = 'confirmed' AND b.meeting_provider = 'soulink'
+         AND b.ends_at > datetime('now') AND b.starts_at < datetime('now', '+90 days')
+       ORDER BY b.starts_at LIMIT 50`,
+    ).bind(connection.user_id).all<{ id: string; meeting_title: string | null; guest_name: string; starts_at: string; ends_at: string }>();
+    return c.json({ bookings: results.map((row) => ({
+      id: row.id, title: row.meeting_title || "Booking", guestName: row.guest_name,
+      startsAt: row.starts_at, endsAt: row.ends_at,
+    })) });
+  });
+
+  app.post("/api/soulink/bookings/:id/guest", async (c) => {
+    const connection = await authorizedSoulinkBookingConnection(c.env, c.req.header("authorization"));
+    if (!connection) return c.json({ error: "Unauthorized" }, 401);
+    const body = await c.req.json<{ token?: unknown }>().catch(() => null);
+    const token = typeof body?.token === "string" ? body.token : "";
+    if (!token || token.length > 2048) return c.json({ error: "Invalid invitation" }, 400);
+    const booking = await c.env.DB.prepare(
+      `SELECT b.id, b.guest_name, b.starts_at, b.ends_at, b.status, b.meeting_provider,
+              b.meeting_guest_token_hash, b.meeting_title, s.username
+       FROM bookings b JOIN sites s ON s.id = b.site_id
+       WHERE b.id = ? AND s.user_id = ?`,
+    ).bind(c.req.param("id"), connection.user_id).first<{
+      id: string; guest_name: string; starts_at: string; ends_at: string;
+      status: string; meeting_provider: string | null; meeting_guest_token_hash: string | null;
+      meeting_title: string | null; username: string;
+    }>();
+    if (!booking || booking.status !== "confirmed" || booking.meeting_provider !== "soulink" ||
+        !booking.meeting_guest_token_hash ||
+        !constantTimeEqual(booking.meeting_guest_token_hash, await hashGuestToken(token))) {
+      return c.json({ error: "This booking link is no longer valid" }, 403);
+    }
+    const now = Date.now();
+    if (now < Date.parse(booking.starts_at) - 15 * 60_000 || now > Date.parse(booking.ends_at) + 30 * 60_000) {
+      return c.json({ error: "This call is available from 15 minutes before its start until 30 minutes after it ends", startsAt: booking.starts_at }, 403);
+    }
+    return c.json({ booking: {
+      id: booking.id, title: booking.meeting_title || "Booking", guestName: booking.guest_name,
+      hostName: booking.username, startsAt: booking.starts_at, endsAt: booking.ends_at,
+    } });
+  });
+}
+
+async function authorizedSoulinkBookingConnection(env: Env, authorization: string | undefined) {
+  const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || "";
+  if (!token) return null;
+  const connection = await getActiveSoulinkConnectionByDispatchToken(env, token);
+  return connection && constantTimeEqual(connection.setup_token, token) ? connection : null;
 }
 
 function constantTimeEqual(a: string, b: string): boolean {

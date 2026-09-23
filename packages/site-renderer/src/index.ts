@@ -93,6 +93,8 @@ type BookingOffer = {
   description?: string;
   duration?: number;
   pricing?: BookingPricingConfig;
+  meetingProvider?: "none" | "soulink" | "external";
+  meetingUrl?: string;
 };
 
 type BookingClass = BookingOffer & {

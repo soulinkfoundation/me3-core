@@ -219,6 +219,11 @@ export interface DbBooking {
   is_free_booking: number;
   quantity?: number | null;
   paid_at: string | null;
+  meeting_provider?: "soulink" | "external" | null;
+  meeting_url?: string | null;
+  meeting_host_url?: string | null;
+  meeting_guest_token_hash?: string | null;
+  meeting_title?: string | null;
   page_id?: string | null;
   action_id?: string | null;
   campaign?: string | null;

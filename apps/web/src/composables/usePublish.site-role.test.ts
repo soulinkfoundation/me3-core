@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { usePublish } from "./usePublish";
 import { useSitesStore } from "../stores/sites";
 import { useWizardStore } from "../stores/wizard";
+import { api } from "../api";
 
 describe("usePublish site role", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     window.localStorage.clear();
     vi.clearAllMocks();
+    vi.spyOn(api, "put").mockResolvedValue({ ok: true });
   });
 
   it("claims a new additional site without renaming the profile", async () => {
