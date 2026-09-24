@@ -29,6 +29,7 @@ import {
 } from "../sites";
 import type { DbAgentChannelConnection, DbAgentChannelEvent, DbContact, Env } from "../types";
 import { hashGuestToken } from "../booking-meetings";
+import { getOrCreateInstallSessionSecret } from "../install-secrets";
 
 const DEFAULT_SOULINK_API_ORIGIN = "https://soulinkfoundation.org";
 
@@ -270,6 +271,16 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
     return c.json(await buildSoulinkStatusPayload(c.env, ownerId, c.req.url));
   });
 
+  app.post("/api/soulink/provision/verify", async (c) => {
+    const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+    if (!body || typeof body.proof !== "string" || typeof body.issuer !== "string" ||
+        typeof body.subject !== "string" || typeof body.callbackUrl !== "string" ||
+        typeof body.dispatchToken !== "string") return c.json({ authorized: false }, 400);
+    const authorized = body.issuer === getCoreApiOrigin(c.env, c.req.url) &&
+      await verifySoulinkProvisionProof(c.env, body as SoulinkProvisionProofInput & { proof: string });
+    return c.json({ authorized });
+  });
+
   app.post("/api/soulink/setup", async (c) => {
     const ownerId = await requireOwner(c);
     if (!ownerId) return unauthorized(c);
@@ -290,15 +301,18 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
     if (!owner) return c.json({ ok: false, error: "Account not found" }, 404);
 
     const dispatchToken = crypto.randomUUID();
-    const callbackUrl = `${getCoreApiOrigin(c.env, c.req.url)}/api/agent/channels/soulink/dispatch`;
+    const issuer = getCoreApiOrigin(c.env, c.req.url);
+    const callbackUrl = `${issuer}/api/agent/channels/soulink/dispatch`;
+    const proof = await createSoulinkProvisionProof(c.env, { issuer, subject: owner.id, callbackUrl, dispatchToken });
     const response = await fetch(`${config.apiOrigin}/api/me3/assistant-channel/provision`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        issuer: getCoreApiOrigin(c.env, c.req.url),
+        issuer,
         subject: owner.id,
+        proof,
         owner: {
           displayName: owner.name || owner.username || "ME3 Owner",
           handle: owner.username || "owner",
@@ -458,6 +472,30 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
       hostName: booking.username, startsAt: booking.starts_at, endsAt: booking.ends_at,
     } });
   });
+}
+
+type SoulinkProvisionProofInput = { issuer: string; subject: string; callbackUrl: string; dispatchToken: string };
+
+export async function createSoulinkProvisionProof(env: Env, input: SoulinkProvisionProofInput): Promise<string> {
+  const expiresAt = Math.floor(Date.now() / 1000) + 300;
+  const signature = await soulinkProvisionSignature(env, input, expiresAt);
+  return `${expiresAt}.${signature}`;
+}
+
+export async function verifySoulinkProvisionProof(env: Env, input: SoulinkProvisionProofInput & { proof: string }): Promise<boolean> {
+  const [expiry, signature, extra] = input.proof.split(".");
+  const expiresAt = Number(expiry);
+  if (extra !== undefined || !/^\d{10}$/.test(expiry || "") || !/^[a-f0-9]{64}$/.test(signature || "") ||
+      expiresAt < Math.floor(Date.now() / 1000) || expiresAt > Math.floor(Date.now() / 1000) + 300) return false;
+  return constantTimeEqual(signature, await soulinkProvisionSignature(env, input, expiresAt));
+}
+
+async function soulinkProvisionSignature(env: Env, input: SoulinkProvisionProofInput, expiresAt: number): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(await getOrCreateInstallSessionSecret(env)),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const payload = JSON.stringify(["soulink-provision-v1", input.issuer, input.subject, input.callbackUrl, input.dispatchToken, expiresAt]);
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)));
+  return Array.from(signature, byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function authorizedSoulinkBookingConnection(env: Env, authorization: string | undefined) {

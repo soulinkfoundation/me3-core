@@ -14073,13 +14073,21 @@ describe("ME3 Worker auth", () => {
       });
       expect(provisionMock).toHaveBeenCalledTimes(2);
       const init = provisionMock.mock.calls[0]?.[1] as RequestInit;
-      expect(JSON.parse(String(init.body))).toMatchObject({
+      const provision = JSON.parse(String(init.body));
+      expect(provision).toMatchObject({
         runtime: {
           kind: "standalone-me3-core",
           callbackUrl: "http://localhost:8787/api/agent/channels/soulink/dispatch",
           dispatchToken: env.soulinkConnection?.setup_token,
         },
       });
+      const verifyBody = { issuer: provision.issuer, subject: provision.subject,
+        callbackUrl: provision.runtime.callbackUrl, dispatchToken: provision.runtime.dispatchToken, proof: provision.proof };
+      const verify = (body: object) => app.fetch(new Request("http://localhost:8787/api/soulink/provision/verify", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      }), env);
+      expect(await (await verify(verifyBody)).json()).toEqual({ authorized: true });
+      expect(await (await verify({ ...verifyBody, subject: "another-owner" })).json()).toEqual({ authorized: false });
     } finally {
       vi.unstubAllGlobals();
     }
