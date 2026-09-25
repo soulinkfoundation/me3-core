@@ -194,6 +194,20 @@ watch(navDrawerOpen, (isOpen) => {
     >
       <nav class="app-side-nav__links" aria-label="Primary">
         <RouterLink
+          :to="sitesPath"
+          class="app-side-nav__row app-side-nav-control"
+          :class="{ 'app-side-nav__row--active': rowActive('sites') }"
+          aria-label="ME3 Profile"
+          title="ME3 Profile"
+          @click="closeNavDrawer"
+        >
+          <span class="app-side-nav__emoji" aria-hidden="true">{{
+            APP_FEATURE_ICONS.sites
+          }}</span>
+          <span class="sr-only">ME3 Profile</span>
+        </RouterLink>
+
+        <RouterLink
           v-if="navigationFeatures.assistant"
           to="/assistant"
           class="app-side-nav__row app-side-nav-control"
@@ -269,20 +283,6 @@ watch(navDrawerOpen, (isOpen) => {
             APP_FEATURE_ICONS.email
           }}</span>
           <span class="sr-only">Email</span>
-        </RouterLink>
-
-        <RouterLink
-          :to="sitesPath"
-          class="app-side-nav__row app-side-nav-control"
-          :class="{ 'app-side-nav__row--active': rowActive('sites') }"
-          aria-label="Sites"
-          title="Sites"
-          @click="closeNavDrawer"
-        >
-          <span class="app-side-nav__emoji" aria-hidden="true">{{
-            APP_FEATURE_ICONS.sites
-          }}</span>
-          <span class="sr-only">Sites</span>
         </RouterLink>
 
         <RouterLink

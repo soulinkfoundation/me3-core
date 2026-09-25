@@ -398,7 +398,7 @@ onMounted(load);
     <header class="builder-topbar">
       <router-link :to="builderBackUrl" class="back-link">
         <UiIcon name="ArrowLeft" :size="17" aria-hidden="true" />
-        Sites
+        ME3 Profile
       </router-link>
       <div class="builder-title">
         <strong>{{ page?.title || "Page builder" }}</strong>

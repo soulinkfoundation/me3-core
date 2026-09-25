@@ -96,12 +96,12 @@ describe("AppSideNav optional plugin links", () => {
         .findAll("nav .app-side-nav__row")
         .map((link) => link.attributes("aria-label")),
     ).toEqual([
+      "ME3 Profile",
       "Assistant",
       "Calendar",
       "Journal",
       "Tasks",
       "Email",
-      "Sites",
       "Files",
       "Socials",
       "Accounts",

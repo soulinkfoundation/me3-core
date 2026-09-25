@@ -17,8 +17,8 @@ import { ASSISTANT_SITE_BUILDER_STARTER_PROMPT } from "../../utils/assistantSite
 definePage({
   meta: {
     requiresAuth: true,
-    title: "Sites | ME3",
-    description: "Manage your ME3 sites.",
+    title: "ME3 Profile | ME3",
+    description: "Manage your ME3 Profile and websites.",
     robots: "noindex,follow",
   },
 });
@@ -170,7 +170,7 @@ onMounted(async () => {
 <template>
   <div class="sites-page">
     <main class="sites-shell">
-      <h1 class="sr-only">Sites</h1>
+      <h1 class="sr-only">ME3 Profile</h1>
       <header class="sites-header">
         <Button
           color="ghost"
