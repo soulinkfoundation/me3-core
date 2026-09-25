@@ -301,7 +301,7 @@ watch(navDrawerOpen, (isOpen) => {
         </RouterLink>
 
         <RouterLink
-          v-if="socialPublishingInstalled && navigationFeatures.social"
+          v-if="socialPublishingInstalled"
           to="/social"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('social') }"

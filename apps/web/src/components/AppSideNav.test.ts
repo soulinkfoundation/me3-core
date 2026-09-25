@@ -173,10 +173,11 @@ describe("AppSideNav optional plugin links", () => {
       { id: "accounts", visible: false },
     ]);
 
-    for (const label of ["Assistant", "Journal", "Tasks", "Email", "Files", "Socials"]) {
+    for (const label of ["Assistant", "Journal", "Tasks", "Email", "Files"]) {
       expect(wrapper.find(`[aria-label="${label}"]`).exists()).toBe(false);
     }
     expect(wrapper.find('[aria-label="Accounts"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="Socials"]').exists()).toBe(true);
     wrapper.unmount();
   });
 });

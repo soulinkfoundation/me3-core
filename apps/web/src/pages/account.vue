@@ -659,7 +659,9 @@ const visibleAccountPlugins = computed(() =>
 );
 
 const visibleNavigationFeatures = computed(() =>
-  navigationFeatures.value.filter((feature) => feature.id !== "accounts"),
+  navigationFeatures.value.filter(
+    (feature) => feature.id !== "accounts" && feature.id !== "social",
+  ),
 );
 
 function navigationFeatureEmoji(feature: NavigationFeature) {
