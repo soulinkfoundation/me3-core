@@ -494,6 +494,7 @@ const newBirthdayForm = ref({
 
 const importSubmitting = ref(false);
 const importError = ref("");
+const soulinkApprovalOrigin = ref<string | null>(null);
 const importForm = ref({
   mode: "url" as "url" | "file",
   name: "",
@@ -2678,6 +2679,7 @@ function isQuickCreateMode(mode: CreateMode): mode is QuickCreateMode {
 }
 
 function closeCreateMode() {
+  soulinkApprovalOrigin.value = null;
   activeCreateMode.value = null;
   compactEventCreate.value = false;
   showCreateMenu.value = false;
@@ -2952,6 +2954,10 @@ async function submitImport() {
     toastSuccess(
       `${importForm.value.mode === "url" ? "Synced" : "Imported"} ${response.importedCount} events from ${response.source.name}.`,
     );
+    if (soulinkApprovalOrigin.value) {
+      window.location.assign(`${soulinkApprovalOrigin.value}/settings`);
+      return;
+    }
     closeCreateMode();
     await reloadCalendar();
   } catch (err) {
@@ -3055,6 +3061,23 @@ function handleWindowResize() {
 }
 
 onMounted(async () => {
+  const soulinkFeed = new URLSearchParams(window.location.hash.slice(1)).get("soulink_calendar_feed");
+  if (soulinkFeed) {
+    window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+    try {
+      const feedUrl = new URL(soulinkFeed);
+      const trustedHost = feedUrl.hostname === "soulinkfoundation.org" ||
+        feedUrl.hostname === "soulink-staging.soulink.workers.dev" ||
+        feedUrl.hostname === "soulink-sandbox.kieranbutler22.workers.dev" ||
+        (import.meta.env.DEV && feedUrl.hostname === "localhost");
+      if (trustedHost && /^\/api\/me3\/calendar\/feeds\/[0-9a-f-]{36}\/[A-Za-z0-9._-]+$/.test(feedUrl.pathname)) {
+        openCreateMode("import");
+        importForm.value.name = "Soulink calls";
+        importForm.value.url = feedUrl.toString();
+        soulinkApprovalOrigin.value = feedUrl.origin;
+      }
+    } catch { /* Ignore malformed connection links. */ }
+  }
   loadCalendarVisibility();
   mobileMediaQuery = window.matchMedia(
     `(max-width: ${CALENDAR_COMPACT_MAX_WIDTH_PX}px)`,
@@ -4418,7 +4441,7 @@ onBeforeUnmount(() => {
     >
       <div class="modal-card">
         <div class="modal-header">
-          <h2 id="import-calendar-title">Sync calendar</h2>
+          <h2 id="import-calendar-title">{{ soulinkApprovalOrigin ? 'Connect Soulink calls' : 'Sync calendar' }}</h2>
           <button
             type="button"
             class="icon-close"
@@ -4430,7 +4453,7 @@ onBeforeUnmount(() => {
         </div>
 
         <form class="booking-form" @submit.prevent="submitImport">
-          <div class="create-tabs" role="group" aria-label="Calendar sync method">
+          <div v-if="!soulinkApprovalOrigin" class="create-tabs" role="group" aria-label="Calendar sync method">
             <button
               type="button"
               :aria-pressed="importForm.mode === 'url'"
@@ -4450,7 +4473,10 @@ onBeforeUnmount(() => {
           </div>
 
           <p class="form-hint">
-            <template v-if="importForm.mode === 'url'">
+            <template v-if="soulinkApprovalOrigin">
+              Allow Soulink to add your scheduled calls to this ME3 calendar and update them when plans change. Other ME3 calendar events stay private.
+            </template>
+            <template v-else-if="importForm.mode === 'url'">
               Paste a Google, Apple, or Outlook `.ics` subscription URL. ME3
               will keep it as a read-only source and refresh it automatically.
             </template>
@@ -4469,7 +4495,7 @@ onBeforeUnmount(() => {
             />
           </label>
 
-          <label v-if="importForm.mode === 'url'">
+          <label v-if="importForm.mode === 'url' && !soulinkApprovalOrigin">
             <span>Subscription URL</span>
             <input
               v-model="importForm.url"

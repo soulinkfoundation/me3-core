@@ -139,7 +139,7 @@ export async function subscribeIcsUrl(
   const parsedEvents = parseIcsEvents(text, {
     pastDays: ICS_URL_SYNC_PAST_DAYS,
     futureDays: ICS_URL_SYNC_FUTURE_DAYS,
-  });
+  }, Boolean(soulinkFeedParts(url)));
 
   const sourceId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -224,6 +224,48 @@ export async function removeCalendarSource(
   return { ok: true, sourceId: source.id };
 }
 
+function soulinkFeedParts(url: URL): { id: string; token: string } | null {
+  if (url.protocol !== "https:" || ![
+    "soulinkfoundation.org",
+    "soulink-staging.soulink.workers.dev",
+    "soulink-sandbox.kieranbutler22.workers.dev",
+  ].includes(url.hostname)) return null;
+  const match = /^\/api\/me3\/calendar\/feeds\/([0-9a-f-]{36})\/([A-Za-z0-9._-]+)$/.exec(url.pathname);
+  return match ? { id: match[1], token: match[2] } : null;
+}
+
+export async function acknowledgeSoulinkCalendarSource(sourceUrl: string, sourceId: string): Promise<void> {
+  const url = new URL(sourceUrl);
+  const parts = soulinkFeedParts(url);
+  if (!parts) return;
+  const callback = new URL(`/api/me3/calendar/connections/${parts.id}/complete`, url.origin);
+  const response = await fetch(callback, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: parts.token, sourceId }),
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  if (!response?.ok) throw new CalendarSourceInputError("Soulink could not complete the calendar connection. Try again.", 502);
+}
+
+export async function handleSoulinkCalendarSourceAction(
+  env: Env, sourceId: string, token: string, action: "refresh" | "disconnect",
+): Promise<CalendarSourceMutationResult | { ok: true; sourceId: string }> {
+  const source = await env.DB.prepare(
+    `SELECT id, user_id, kind, name, original_filename, encrypted_source_url,
+            source_url_hint, status, imported_event_count, last_synced_at,
+            last_sync_error, created_at, updated_at
+       FROM calendar_sources WHERE id = ? AND kind = 'ics_url' AND status = 'active'`,
+  ).bind(sourceId).first<CalendarSourceRow>();
+  if (!source?.encrypted_source_url) throw new CalendarSourceInputError("Calendar source not found.", 404);
+  const installKey = await getOrCreateInstallEncryptionKey(env);
+  const parts = soulinkFeedParts(new URL(await decryptSecret(source.encrypted_source_url, installKey)));
+  if (!parts || parts.token !== token) throw new CalendarSourceInputError("Calendar source not found.", 404);
+  return action === "refresh"
+    ? refreshCalendarSourceRow(env, source, fetch)
+    : removeCalendarSource(env, source.user_id, source.id);
+}
+
 export async function removeImportedCalendarEvent(
   env: Env,
   ownerId: string,
@@ -305,7 +347,7 @@ async function refreshCalendarSourceRow(
     const parsedEvents = parseIcsEvents(text, {
       pastDays: ICS_URL_SYNC_PAST_DAYS,
       futureDays: ICS_URL_SYNC_FUTURE_DAYS,
-    });
+    }, Boolean(soulinkFeedParts(url)));
     const now = new Date().toISOString();
 
     await replaceSourceWithEvents(env, {
@@ -372,8 +414,9 @@ async function getCalendarSource(
 function parseIcsEvents(
   icsText: string,
   window: { pastDays: number; futureDays: number },
+  allowEmpty = false,
 ): ParsedCalendarEvent[] {
-  if (!/\bBEGIN:VCALENDAR\b/i.test(icsText) || !/\bBEGIN:VEVENT\b/i.test(icsText)) {
+  if (!/\bBEGIN:VCALENDAR\b/i.test(icsText) || (!allowEmpty && !/\bBEGIN:VEVENT\b/i.test(icsText))) {
     throw new CalendarSourceInputError("That calendar feed did not contain any events.");
   }
 
@@ -406,7 +449,7 @@ function parseIcsEvents(
 
   }
 
-  if (parsedEvents.length === 0) {
+  if (parsedEvents.length === 0 && !allowEmpty) {
     throw new CalendarSourceInputError("No upcoming events were found in that calendar.");
   }
 
