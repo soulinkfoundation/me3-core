@@ -154,6 +154,22 @@ afterEach(() => {
 });
 
 describe("calendar source subscriptions", () => {
+  it("accepts an empty Soulink feed before the first scheduled call", async () => {
+    const { env, state } = createCalendarSourceEnv();
+    const fetcher = vi.fn(async () => new Response(
+      "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Soulink//Calls//EN\r\nEND:VCALENDAR\r\n",
+      { headers: { "content-type": "text/calendar" } },
+    )) as typeof fetch;
+
+    const result = await subscribeIcsUrl(env, "owner", {
+      url: "https://soulinkfoundation.org/api/me3/calendar/feeds/123e4567-e89b-42d3-a456-426614174000/feed-token",
+    }, fetcher);
+
+    expect(result.importedCount).toBe(0);
+    expect(state.sources).toHaveLength(1);
+    expect(state.events).toHaveLength(0);
+  });
+
   it("subscribes to an ICS URL without storing the URL in plain text", async () => {
     const { env, state } = createCalendarSourceEnv();
     const fetcher = vi.fn(async () => new Response(FEED_ONE, {
