@@ -793,6 +793,7 @@ export async function serveSiteFileResponse(
   return publicSiteFileResponse({
     content: siteFileContentToArrayBuffer(file.content), contentType: file.content_type,
     sha256: file.sha256, published: requirePublished, request, path: requestedPath, noindex,
+    showCreateSitePrompt: !(site.custom_domain && site.custom_domain_status === "active"),
     profileUrl: `${publicBasePath}/me.json`,
   });
 }

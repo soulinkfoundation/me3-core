@@ -3893,7 +3893,16 @@ describe("ME3 Worker auth", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain("Studio site");
+    const html = await response.text();
+    expect(html).toContain("Studio site");
+    expect(html).toContain('href="https://me3.app/"');
+    expect(html).toContain("Create a free ME3 site");
+
+    env.sites[0].custom_domain = "studio.example.com";
+    env.sites[0].custom_domain_status = "active";
+    const branded = await app.fetch(new Request("https://owner.me3.app/site/studio/"), env);
+    expect(await branded.text()).not.toContain("Create a free ME3 site");
+    expect(branded.headers.get("ETag")).not.toBe(response.headers.get("ETag"));
   });
 
   it("routes exact custom hosts and rejects discovery on unknown hosts", async () => {
