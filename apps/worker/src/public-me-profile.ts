@@ -100,6 +100,10 @@ function legacyLinkHref(platform: string, value: string): string | undefined {
       return `https://linkedin.com/in/${cleaned}`;
     case "github":
       return `https://github.com/${cleaned}`;
+    case "youtube":
+      return `https://youtube.com/@${cleaned}`;
+    case "tiktok":
+      return `https://tiktok.com/@${cleaned}`;
     case "substack":
       return `https://${cleaned}.substack.com/`;
     default:

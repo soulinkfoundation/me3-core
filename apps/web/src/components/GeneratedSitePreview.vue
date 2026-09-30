@@ -12,11 +12,13 @@ const props = withDefaults(
     activeView?: string;
     compact?: boolean;
     editableFooter?: boolean;
+    viewport?: "auto" | "mobile" | "desktop";
   }>(),
   {
     activeView: "home",
     compact: false,
     editableFooter: false,
+    viewport: "auto",
   },
 );
 
@@ -26,6 +28,16 @@ const emit = defineEmits<{
 
 const wizard = useWizardStore();
 const frame = ref<HTMLIFrameElement | null>(null);
+const previewHost = ref<HTMLDivElement | null>(null);
+const previewWidth = ref(375);
+const previewHeight = ref(760);
+const desktopScale = computed(() => Math.max(0.1, Math.min(1, previewWidth.value / 1200)));
+const frameStyle = computed(() => props.viewport === "desktop" ? {
+  width: "1200px",
+  height: `${Math.ceil(previewHeight.value / desktopScale.value)}px`,
+  transform: `scale(${desktopScale.value})`,
+  transformOrigin: "top left",
+} : undefined);
 const generatedFiles = ref<Record<string, string>>({});
 const selectedFile = ref("index.html");
 const previewHtml = computed(() => generatedFiles.value[selectedFile.value] || generatedFiles.value["index.html"] || "");
@@ -202,12 +214,22 @@ watchEffect(async () => {
   selectedFile.value = generatedFiles.value[requestedFile] ? requestedFile : "index.html";
 });
 
-onMounted(() => window.addEventListener("message", handleMessage));
-onBeforeUnmount(() => window.removeEventListener("message", handleMessage));
+let resizeObserver: ResizeObserver | undefined;
+onMounted(() => {
+  window.addEventListener("message", handleMessage);
+  if (previewHost.value && typeof ResizeObserver !== "undefined") {
+    resizeObserver = new ResizeObserver(([entry]) => { previewWidth.value = entry.contentRect.width; previewHeight.value = entry.contentRect.height; });
+    resizeObserver.observe(previewHost.value);
+  }
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("message", handleMessage);
+  resizeObserver?.disconnect();
+});
 </script>
 
 <template>
-  <div class="generated-site-preview" :class="{ compact }">
+  <div ref="previewHost" class="generated-site-preview" :class="{ compact, 'desktop-viewport': viewport === 'desktop' }">
     <span class="sr-only">Preview of {{ wizard.profile.name || "your site" }}</span>
     <iframe
       v-if="previewHtml"
@@ -215,6 +237,7 @@ onBeforeUnmount(() => window.removeEventListener("message", handleMessage));
       :srcdoc="previewHtml"
       sandbox="allow-scripts"
       title="Generated site preview"
+      :style="frameStyle"
     />
     <div v-else class="preview-loading" role="status">Generating preview…</div>
     <button
@@ -252,6 +275,7 @@ iframe {
   border: 0;
   background: #fff;
 }
+.desktop-viewport iframe{position:absolute;top:0;left:0}
 
 .preview-loading {
   display: grid;

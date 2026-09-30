@@ -2,10 +2,13 @@ import type { ProductDelivery } from "../../../../shared/product-delivery";
 import { defineStore } from "pinia";
 import { ref, computed, watch } from "vue";
 import {
+  DEFAULT_HOME_SECTIONS,
   SITE_NAVIGATION_STYLE_LINK_KEY,
   SITE_LAYOUT_LINK_KEY,
   normalizeSiteLayout,
   type SiteLayout,
+  type SiteColorMode,
+  type SitePresentationSettings,
   normalizeSiteNavigationStyle,
   type Me3SiteProfile,
   type SiteNavigationStyle,
@@ -18,15 +21,7 @@ import {
   normalizeVibeId,
 } from "../styles/vibes";
 import {
-  BOOKING_PLACEMENT_LINK_KEY,
-  getStoredBookingPlacement,
-  getStoredTestimonialPlacement,
-  normalizeBookingPlacement,
-  normalizeTestimonialPlacement,
   resolveSiteSectionPaths,
-  TESTIMONIAL_PLACEMENT_LINK_KEY,
-  type BookingPlacement,
-  type TestimonialPlacement,
 } from "../utils/site-sections";
 import type { SiteContentAsset } from "../utils/siteContentAssets";
 
@@ -531,7 +526,6 @@ type ExtendedMe3Profile = Omit<
   blogEnabled?: boolean;
   blogTitle?: string;
   shopTitle?: string;
-  testimonialDisplay?: TestimonialPlacement;
   testimonialsTitle?: string;
   business?: Me3BusinessContext;
   services?: Me3Service[];
@@ -1510,9 +1504,6 @@ export const useWizardStore = defineStore("wizard", () => {
   const blogTitle = ref<string>(DEFAULT_BLOG_TITLE);
   const shopTitle = ref<string>(DEFAULT_SHOP_TITLE);
 
-  // Testimonials placement (renderer hint)
-  const testimonialsPlacement = ref<TestimonialPlacement>("homepage");
-  const bookingPlacement = ref<BookingPlacement>("homepage");
   const testimonialsTitle = ref<string>(DEFAULT_TESTIMONIALS_TITLE);
   const sectionPaths = computed(() =>
     resolveSiteSectionPaths({
@@ -1543,6 +1534,11 @@ export const useWizardStore = defineStore("wizard", () => {
 
   // Theme customization
   const accentOverride = ref<string | null>(null);
+  const homeSections = ref<NonNullable<SitePresentationSettings["sections"]>>(DEFAULT_HOME_SECTIONS.map((section) => ({ ...section })));
+  const primaryAction = ref<SitePresentationSettings["primaryAction"]>();
+  const colorMode = ref<SiteColorMode>("auto");
+  const visitorThemeToggle = ref(true);
+  const legacySitePresentation = ref(false);
 
   // Publishing state
   const isPublishing = ref(false);
@@ -1575,7 +1571,7 @@ export const useWizardStore = defineStore("wizard", () => {
     if (callToActionEnabled.value) {
       visibleSteps.push({ id: "call-to-action", name: "Call-to-action" });
     }
-    if (pagesEnabled.value) visibleSteps.push({ id: "pages", name: "Pages" });
+    visibleSteps.push({ id: "pages", name: "Pages" });
     if (newsletterEnabled.value) {
       visibleSteps.push({ id: "newsletter", name: "Newsletter" });
     }
@@ -1703,46 +1699,6 @@ export const useWizardStore = defineStore("wizard", () => {
     { deep: true },
   );
 
-  watch(
-    [pages, pagesEnabled, blogEnabled, shopEnabled, products],
-    () => {
-      const normalizedPlacement = normalizeTestimonialPlacement(
-        testimonialsPlacement.value,
-        {
-          blogEnabled: blogEnabled.value,
-          shopEnabled: shopEnabled.value && products.value.length > 0,
-          pages: pagesEnabled.value ? pages.value : [],
-        },
-      );
-
-      if (normalizedPlacement !== testimonialsPlacement.value) {
-        testimonialsPlacement.value = normalizedPlacement;
-      }
-      const normalizedBookingPlacement = normalizeBookingPlacement(
-        bookingPlacement.value,
-        {
-          blogEnabled: blogEnabled.value,
-          shopEnabled: shopEnabled.value && products.value.length > 0,
-          pages: pagesEnabled.value ? pages.value : [],
-        },
-      );
-      if (normalizedBookingPlacement !== bookingPlacement.value) {
-        bookingPlacement.value = normalizedBookingPlacement;
-      }
-    },
-    { deep: true },
-  );
-
-  watch(testimonialsPlacement, () => {
-    markAsEdited();
-    saveToStorage();
-  });
-
-  watch(bookingPlacement, () => {
-    markAsEdited();
-    saveToStorage();
-  });
-
   watch(testimonialsTitle, () => {
     markAsEdited();
     saveToStorage();
@@ -1815,7 +1771,10 @@ export const useWizardStore = defineStore("wizard", () => {
   // Update profile
   function updateProfile(updates: Partial<WizardProfile>) {
     const nextProfile = { ...profile.value, ...updates };
-    if ("layout" in updates) nextProfile.layout = normalizeSiteLayout(updates.layout);
+    if ("layout" in updates) {
+      nextProfile.layout = normalizeSiteLayout(updates.layout);
+      legacySitePresentation.value = false;
+    }
     if ("navigationStyle" in updates) {
       nextProfile.navigationStyle = normalizeSiteNavigationStyle(
         updates.navigationStyle,
@@ -2491,6 +2450,7 @@ export const useWizardStore = defineStore("wizard", () => {
     };
 
     pages.value = [...pages.value, newPage];
+    pagesEnabled.value = true;
     markAsEdited();
     saveToStorage();
     return newPage;
@@ -2501,7 +2461,6 @@ export const useWizardStore = defineStore("wizard", () => {
 
     const updatedPages = [...pages.value];
     const current = updatedPages[index];
-    const previousSlug = current.slug;
     const nextTitle =
       typeof updates.title === "string" ? updates.title : current.title;
     const autoSlugBase = generateSlug(nextTitle) || "page";
@@ -2547,12 +2506,6 @@ export const useWizardStore = defineStore("wizard", () => {
     };
     updatedPages[index] = nextPage;
     pages.value = updatedPages;
-    if (
-      nextPage.slug !== previousSlug &&
-      testimonialsPlacement.value === `page:${previousSlug}`
-    ) {
-      testimonialsPlacement.value = `page:${nextPage.slug}`;
-    }
     markAsEdited();
     saveToStorage();
   }
@@ -2691,12 +2644,6 @@ export const useWizardStore = defineStore("wizard", () => {
       }
     }
     pages.value = pages.value.filter((_, i) => i !== index);
-    if (page && testimonialsPlacement.value === `page:${page.slug}`) {
-      testimonialsPlacement.value = "homepage";
-    }
-    if (page && bookingPlacement.value === `page:${page.slug}`) {
-      bookingPlacement.value = "homepage";
-    }
     markAsEdited();
     saveToStorage();
   }
@@ -3446,31 +3393,45 @@ export const useWizardStore = defineStore("wizard", () => {
       }
     }
 
-    // Store vibe and theme customization as extensions under links (not protocol top-level fields)
-    if (vibe.value && vibe.value !== defaultVibe) {
+    // Existing published sites keep their original rendering until design is edited.
+    if (legacySitePresentation.value && vibe.value && vibe.value !== defaultVibe) {
       me3.links = {
         ...(me3.links || {}),
         _vibe: vibe.value,
       };
     }
 
-    if (profile.value.layout === "portrait") {
+    if (legacySitePresentation.value && profile.value.layout === "portrait") {
       me3.links = { ...(me3.links || {}), [SITE_LAYOUT_LINK_KEY]: "portrait" };
     }
 
     // Store accent override if set
-    if (accentOverride.value) {
+    if (legacySitePresentation.value && accentOverride.value) {
       me3.links = {
         ...(me3.links || {}),
         _accent: accentOverride.value,
       };
     }
 
-    if (profile.value.navigationStyle === "compact") {
+    if (legacySitePresentation.value && profile.value.navigationStyle === "compact") {
       me3.links = {
         ...(me3.links || {}),
         [SITE_NAVIGATION_STYLE_LINK_KEY]: "compact",
       };
+    }
+
+    if (!legacySitePresentation.value) {
+      const layout = profile.value.layout === "portrait" ? "split" : profile.value.layout === "classic" ? "card" : profile.value.layout;
+      me3.extensions = { "me3.app/site": {
+        theme: vibe.value,
+        layout,
+        navigationStyle: profile.value.navigationStyle,
+        colorMode: colorMode.value,
+        ...(accentOverride.value ? { accent: accentOverride.value } : {}),
+        primaryAction: primaryAction.value,
+        sections: homeSections.value,
+        visitorThemeToggle: visitorThemeToggle.value,
+      } };
     }
 
     // Footer (Pro feature; enforced server-side)
@@ -3824,12 +3785,6 @@ export const useWizardStore = defineStore("wizard", () => {
       me3.intents = intents as Me3SiteProfile["intents"];
     }
 
-    delete me3.testimonialDisplay;
-    if (me3.links) {
-      delete me3.links[TESTIMONIAL_PLACEMENT_LINK_KEY];
-      delete me3.links[BOOKING_PLACEMENT_LINK_KEY];
-    }
-
     const handle = me3.handle?.trim();
     const publicApiBase = getPublicApiBase();
     const actions: Record<string, Me3ActionDefinition> = {};
@@ -4025,6 +3980,11 @@ export const useWizardStore = defineStore("wizard", () => {
         selectedSiteId: selectedSiteId.value,
         vibe: vibe.value,
         accentOverride: accentOverride.value,
+        homeSections: homeSections.value,
+        primaryAction: primaryAction.value,
+        colorMode: colorMode.value,
+        visitorThemeToggle: visitorThemeToggle.value,
+        legacySitePresentation: legacySitePresentation.value,
         linksEnabled: linksEnabled.value,
         callToActionEnabled: callToActionEnabled.value,
         pagesEnabled: pagesEnabled.value,
@@ -4035,8 +3995,6 @@ export const useWizardStore = defineStore("wizard", () => {
         testimonialsEnabled: testimonialsEnabled.value,
         blogTitle: blogTitle.value,
         shopTitle: shopTitle.value,
-        testimonialsPlacement: testimonialsPlacement.value,
-        bookingPlacement: bookingPlacement.value,
         testimonialsTitle: testimonialsTitle.value,
         lastPublishedAt: lastPublishedAt.value,
         lastLocalEditAt: lastLocalEditAt.value,
@@ -4154,6 +4112,11 @@ export const useWizardStore = defineStore("wizard", () => {
           state.siteRole === "organization" ? "organization" : "profile";
         vibe.value = normalizeVibeId(state.vibe);
         accentOverride.value = state.accentOverride || null;
+        homeSections.value = Array.isArray(state.homeSections) ? state.homeSections : DEFAULT_HOME_SECTIONS.map((section) => ({ ...section }));
+        primaryAction.value = state.primaryAction;
+        colorMode.value = state.colorMode === "light" || state.colorMode === "dark" ? state.colorMode : "auto";
+        visitorThemeToggle.value = state.visitorThemeToggle !== false;
+        legacySitePresentation.value = state.legacySitePresentation === true || (state.legacySitePresentation === undefined && Boolean(state.lastPublishedAt));
         const hasOptionalWebsiteFeatureState =
           state.optionalWebsiteFeaturesVersion === 1;
         linksEnabled.value = hasOptionalWebsiteFeatureState
@@ -4200,19 +4163,6 @@ export const useWizardStore = defineStore("wizard", () => {
           state.testimonialsTitle.trim().length > 0
             ? state.testimonialsTitle
             : DEFAULT_TESTIMONIALS_TITLE;
-        testimonialsPlacement.value = normalizeTestimonialPlacement(
-          state.testimonialsPlacement,
-          {
-            blogEnabled: blogEnabled.value,
-            shopEnabled: shopEnabled.value && products.value.length > 0,
-            pages: pagesEnabled.value ? pages.value : [],
-          },
-        );
-        bookingPlacement.value = normalizeBookingPlacement(state.bookingPlacement, {
-          blogEnabled: blogEnabled.value,
-          shopEnabled: shopEnabled.value && products.value.length > 0,
-          pages: pagesEnabled.value ? pages.value : [],
-        });
         lastPublishedAt.value = state.lastPublishedAt || null;
         lastLocalEditAt.value =
           state.lastLocalEditAt || new Date().toISOString();
@@ -4348,6 +4298,11 @@ export const useWizardStore = defineStore("wizard", () => {
     siteRole.value = "profile";
     vibe.value = defaultVibe;
     accentOverride.value = null;
+    homeSections.value = DEFAULT_HOME_SECTIONS.map((section) => ({ ...section }));
+    primaryAction.value = undefined;
+    colorMode.value = "auto";
+    visitorThemeToggle.value = true;
+    legacySitePresentation.value = false;
     isUsernameAvailable.value = null;
     publishError.value = null;
     lastPublishedAt.value = null;
@@ -4364,8 +4319,6 @@ export const useWizardStore = defineStore("wizard", () => {
     testimonialsEnabled.value = false;
     blogTitle.value = DEFAULT_BLOG_TITLE;
     shopTitle.value = DEFAULT_SHOP_TITLE;
-    testimonialsPlacement.value = "homepage";
-    bookingPlacement.value = "homepage";
     testimonialsTitle.value = DEFAULT_TESTIMONIALS_TITLE;
     persistedOwnerUserId.value = sessionUserId.value;
     if (clearStorage) localStorage.removeItem(activeStorageKey.value);
@@ -4494,6 +4447,7 @@ export const useWizardStore = defineStore("wizard", () => {
   // Set vibe
   function setVibe(newVibe: VibeId) {
     vibe.value = newVibe;
+    legacySitePresentation.value = false;
     markAsEdited();
     saveToStorage();
   }
@@ -4501,6 +4455,37 @@ export const useWizardStore = defineStore("wizard", () => {
   // Set accent color override
   function setAccentOverride(color: string | null) {
     accentOverride.value = color;
+    legacySitePresentation.value = false;
+    markAsEdited();
+    saveToStorage();
+  }
+
+  function setHomeSections(sections: NonNullable<SitePresentationSettings["sections"]>) {
+    homeSections.value = sections;
+    legacySitePresentation.value = false;
+    markAsEdited();
+    saveToStorage();
+  }
+
+  function setPrimaryAction(action: SitePresentationSettings["primaryAction"]) {
+    primaryAction.value = action;
+    const requiredSection = action?.kind === "offer" ? "offers" : action?.kind === "subscribe" ? "newsletter" : null;
+    if (requiredSection) homeSections.value = homeSections.value.map((section) => section.id === requiredSection ? { ...section, visible: true } : section);
+    legacySitePresentation.value = false;
+    markAsEdited();
+    saveToStorage();
+  }
+
+  function setColorMode(mode: SiteColorMode) {
+    colorMode.value = mode;
+    legacySitePresentation.value = false;
+    markAsEdited();
+    saveToStorage();
+  }
+
+  function setVisitorThemeToggle(show: boolean) {
+    visitorThemeToggle.value = show;
+    legacySitePresentation.value = false;
     markAsEdited();
     saveToStorage();
   }
@@ -4538,6 +4523,7 @@ export const useWizardStore = defineStore("wizard", () => {
       avatar?: string;
       banner?: string;
       links?: Record<string, string | undefined>;
+      extensions?: Me3SiteProfile["extensions"];
       pages?: Array<{
         slug: string;
         title: string;
@@ -4594,7 +4580,6 @@ export const useWizardStore = defineStore("wizard", () => {
       blogEnabled?: boolean;
       blogTitle?: string;
       shopTitle?: string;
-      testimonialDisplay?: TestimonialPlacement;
       testimonialsTitle?: string;
     },
     sitePages: Array<{ slug: string; title: string; content: string }>,
@@ -4671,12 +4656,21 @@ export const useWizardStore = defineStore("wizard", () => {
     // Extract link order from existing links (preserve order from object keys)
     // Also extract vibe and accent override from special _ prefixed keys
     const links = siteProfile.links || {};
+    const siteSettings = siteProfile.extensions?.["me3.app/site"];
+    legacySitePresentation.value = !siteSettings;
+    colorMode.value = siteSettings?.colorMode === "light" || siteSettings?.colorMode === "dark" ? siteSettings.colorMode : "auto";
+    visitorThemeToggle.value = siteSettings?.visitorThemeToggle !== false;
+    primaryAction.value = siteSettings?.primaryAction;
+    homeSections.value = Array.isArray(siteSettings?.sections)
+      ? siteSettings.sections
+      : siteSettings
+        ? DEFAULT_HOME_SECTIONS.map((section) => ({ ...section }))
+        : DEFAULT_HOME_SECTIONS.map((section) => ({ ...section, visible: section.id === "booking" || section.id === "testimonials" || section.id === "newsletter" }));
 
     // Extract vibe and accent override before filtering
-    const savedVibe = links._vibe as string | undefined;
-    const savedAccent = links._accent as string | undefined;
-    const savedNavigationStyle =
-      links[SITE_NAVIGATION_STYLE_LINK_KEY] as string | undefined;
+    const savedVibe = siteSettings?.theme || links._vibe;
+    const savedAccent = siteSettings?.accent || links._accent;
+    const savedNavigationStyle = siteSettings?.navigationStyle || links[SITE_NAVIGATION_STYLE_LINK_KEY];
 
     // Filter out special keys and empty values for regular links
     const filteredLinks: Record<string, string> = {};
@@ -4941,7 +4935,7 @@ export const useWizardStore = defineStore("wizard", () => {
       linkOrder,
       buttons,
       navigationStyle: normalizeSiteNavigationStyle(savedNavigationStyle),
-      layout: normalizeSiteLayout(links[SITE_LAYOUT_LINK_KEY]),
+      layout: normalizeSiteLayout(siteSettings?.layout || links[SITE_LAYOUT_LINK_KEY]),
       footer,
       newsletter,
       booking,
@@ -5091,25 +5085,6 @@ export const useWizardStore = defineStore("wizard", () => {
     bookingsEnabled.value = Boolean(siteProfile.intents?.book?.enabled);
     shopEnabled.value = products.value.length > 0;
     testimonialsEnabled.value = (siteProfile.testimonials || []).length > 0;
-    testimonialsPlacement.value = normalizeTestimonialPlacement(
-      getStoredTestimonialPlacement(siteProfile as {
-        testimonialDisplay?: unknown;
-        links?: Record<string, unknown>;
-      }),
-      {
-        blogEnabled: blogEnabled.value,
-        shopEnabled: shopEnabled.value && products.value.length > 0,
-        pages: pagesEnabled.value ? pages.value : [],
-      },
-    );
-    bookingPlacement.value = normalizeBookingPlacement(
-      getStoredBookingPlacement(siteProfile.links),
-      {
-        blogEnabled: blogEnabled.value,
-        shopEnabled: shopEnabled.value && products.value.length > 0,
-        pages: pagesEnabled.value ? pages.value : [],
-      },
-    );
     furthestStep.value = totalSteps.value;
 
     // Set last published timestamp if site was published
@@ -5159,6 +5134,10 @@ export const useWizardStore = defineStore("wizard", () => {
     draftSourceUrl,
     vibe,
     accentOverride,
+    homeSections,
+    primaryAction,
+    colorMode,
+    visitorThemeToggle,
     linksEnabled,
     callToActionEnabled,
     pagesEnabled,
@@ -5171,8 +5150,6 @@ export const useWizardStore = defineStore("wizard", () => {
     shopTitle,
     blogPath,
     shopPath,
-    testimonialsPlacement,
-    bookingPlacement,
     testimonialsTitle,
     testimonialsPath,
     bookingPath,
@@ -5262,6 +5239,10 @@ export const useWizardStore = defineStore("wizard", () => {
     loadFromSiteContent,
     setVibe,
     setAccentOverride,
+    setHomeSections,
+    setPrimaryAction,
+    setColorMode,
+    setVisitorThemeToggle,
     setSiteRole,
     markAsPublished,
     restorePublishedBaseline,

@@ -63,6 +63,17 @@ describe("wizard store", () => {
       expect(store.draftSourceUrl).toBe("https://example.com");
     });
 
+    it("keeps an older published draft on its original presentation", () => {
+      localStorage.setItem("me3_wizard_state", JSON.stringify({
+        profile: { name: "Older site", handle: "older", links: {}, buttons: [] },
+        pages: [], products: [], vibe: "tech", lastPublishedAt: "2026-01-01T00:00:00.000Z",
+      }));
+      const store = useWizardStore();
+      const me3 = store.generateMe3Json();
+      expect(me3.extensions?.["me3.app/site"]).toBeUndefined();
+      expect(me3.links?._vibe).toBe("tech");
+    });
+
     it("migrates the retired natural vibe to paper", () => {
       localStorage.setItem(
         "me3_wizard_state",
@@ -901,12 +912,10 @@ describe("wizard store", () => {
       store.profile.name = "Test User";
 
       store.updateProfile({ navigationStyle: "compact" });
-      expect((store.generateMe3Json() as any).links).toEqual({
-        _navigation_style: "compact",
-      });
+      expect(store.generateMe3Json().extensions?.["me3.app/site"]?.navigationStyle).toBe("compact");
 
       store.updateProfile({ navigationStyle: "standard" });
-      expect((store.generateMe3Json() as any).links).toBeUndefined();
+      expect(store.generateMe3Json().extensions?.["me3.app/site"]?.navigationStyle).toBe("standard");
     });
 
     it("should include custom blog and shop titles when set", () => {
@@ -997,7 +1006,6 @@ describe("wizard store", () => {
       const store = useWizardStore();
       store.profile.name = "Test User";
       store.testimonialsEnabled = true;
-      store.testimonialsPlacement = "standalone";
       store.addTestimonial({
         name: "Jamie",
         quote: "An incredible experience.",
@@ -1060,7 +1068,6 @@ describe("wizard store", () => {
       store.profile.name = "Test User";
       store.shopEnabled = true;
       store.testimonialsEnabled = true;
-      store.testimonialsPlacement = "shop";
       store.addProduct("Consulting");
       store.addTestimonial({
         name: "Jamie",
@@ -1080,7 +1087,7 @@ describe("wizard store", () => {
 
       const me3 = store.generateMe3Json();
 
-      expect(me3.links?._vibe).toBe("tech");
+      expect(me3.extensions?.["me3.app/site"]?.theme).toBe("tech");
     });
 
     it("should include accent override", () => {
@@ -1090,7 +1097,17 @@ describe("wizard store", () => {
 
       const me3 = store.generateMe3Json();
 
-      expect(me3.links?._accent).toBe("#ff0000");
+      expect(me3.extensions?.["me3.app/site"]?.accent).toBe("#ff0000");
+    });
+
+    it("writes new site presentation settings without private link keys", () => {
+      const store = useWizardStore();
+      store.profile.name = "Test User";
+      store.setVibe("meadow");
+      store.updateProfile({ layout: "cover", navigationStyle: "compact" });
+      const me3 = store.generateMe3Json();
+      expect(me3.extensions?.["me3.app/site"]).toMatchObject({ theme: "meadow", layout: "cover", navigationStyle: "compact" });
+      expect(Object.keys(me3.links || {}).filter((key) => key.startsWith("_"))).toEqual([]);
     });
 
   });
@@ -1102,12 +1119,12 @@ describe("wizard store", () => {
       expect(store.generateMe3Json().links?._layout).toBeUndefined();
       store.updateProfile({ name: "Portrait profile", layout: "portrait" });
       const source = store.generateMe3Json();
-      expect(source.links?._layout).toBe("portrait");
+      expect(source.extensions?.["me3.app/site"]?.layout).toBe("split");
       setActivePinia(createPinia());
       const restored = useWizardStore();
       expect(restored.profile.layout).toBe("portrait");
-      restored.loadFromSiteContent({ name: source.name || "Portrait profile", links: source.links }, [], [], [], "portrait");
-      expect(restored.profile.layout).toBe("portrait");
+      restored.loadFromSiteContent({ name: source.name || "Portrait profile", links: source.links, extensions: source.extensions }, [], [], [], "portrait");
+      expect(restored.profile.layout).toBe("split");
       expect(restored.profile.links._layout).toBeUndefined();
       restored.updateProfile({ layout: "classic" });
       expect(restored.generateMe3Json().links?._layout).toBeUndefined();
@@ -1572,7 +1589,7 @@ describe("wizard store", () => {
       expect(store.profile.newsletter.title).toBe("");
     });
 
-    it("should load testimonial placement from a link extension", () => {
+    it("ignores retired testimonial placement metadata", () => {
       const store = useWizardStore();
       const siteProfile = {
         name: "Test User",
@@ -1598,7 +1615,7 @@ describe("wizard store", () => {
 
       store.loadFromSiteContent(siteProfile, sitePages, [], [], "testuser");
 
-      expect(store.testimonialsPlacement).toBe("page:about");
+      expect(store.homeSections.find((section) => section.id === "testimonials")?.visible).toBe(true);
     });
   });
 
@@ -1607,7 +1624,6 @@ describe("wizard store", () => {
       const store = useWizardStore();
       store.profile.name = "Test User";
       store.profile.booking.enabled = true;
-      store.bookingPlacement = "standalone";
 
       expect(store.generateMe3Json().links?._booking_placement).toBeUndefined();
     });
@@ -2223,6 +2239,7 @@ describe("wizard store", () => {
         "Banner",
         "Who you help",
         "Additional Features",
+        "Pages",
         "Publish",
       ]);
     });
@@ -2235,8 +2252,18 @@ describe("wizard store", () => {
       expect(names).toContain("Newsletter");
       // Newsletter should come after Additional Features
       const newsletterIndex = names.indexOf("Newsletter");
+      const pagesIndex = names.indexOf("Pages");
       const additionalIndex = names.indexOf("Additional Features");
       expect(newsletterIndex).toBeGreaterThan(additionalIndex);
+      expect(pagesIndex).toBeLessThan(newsletterIndex);
+    });
+
+    it("publishes a page added from the always-present Pages step", () => {
+      const store = useWizardStore();
+      expect(store.pagesEnabled).toBe(false);
+      store.addPage("About");
+      expect(store.pagesEnabled).toBe(true);
+      expect(store.generateMe3Json().pages?.[0]?.slug).toBe("about");
     });
 
     it("should include Blog step when enabled", () => {

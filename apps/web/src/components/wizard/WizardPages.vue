@@ -10,6 +10,33 @@ import UiIcon from "../UiIcon.vue";
 import type { UiIconName } from "../../utils/icons";
 
 const wizard = useWizardStore();
+const editingHome = ref(false);
+const sectionLabels = { offers: "Offers", booking: "Booking calendar", writing: "Latest writing", testimonials: "Testimonials", newsletter: "Newsletter" } as const;
+
+const selectedAction = computed({
+  get: () => wizard.primaryAction ? `${wizard.primaryAction.kind}:${wizard.primaryAction.id || ""}` : "auto:",
+  set: (value: string) => {
+    if (value === "auto:") wizard.setPrimaryAction(undefined);
+    else {
+      const [kind, id] = value.split(":");
+      wizard.setPrimaryAction({ kind: kind as "offer" | "subscribe" | "button", id });
+    }
+  },
+});
+
+function moveHomeSection(index: number, direction: -1 | 1) {
+  const sections = [...wizard.homeSections];
+  const target = index + direction;
+  if (target < 0 || target >= sections.length) return;
+  [sections[index], sections[target]] = [sections[target], sections[index]];
+  wizard.setHomeSections(sections);
+}
+
+function toggleHomeSection(index: number, visible: boolean) {
+  const id = wizard.homeSections[index]?.id;
+  if (!visible && ((id === "offers" && wizard.primaryAction?.kind === "offer") || (id === "newsletter" && wizard.primaryAction?.kind === "subscribe"))) wizard.setPrimaryAction(undefined);
+  wizard.setHomeSections(wizard.homeSections.map((section, itemIndex) => itemIndex === index ? { ...section, visible } : section));
+}
 
 // Currently selected page index for editing
 const selectedPageIndex = ref<number | null>(null);
@@ -107,6 +134,7 @@ function addNewAdminPage() {
 
 function selectPage(index: number) {
   persistPageMeta();
+  editingHome.value = false;
   selectedPageIndex.value = index;
 }
 
@@ -211,6 +239,7 @@ function closeEditor() {
   persistPageMeta();
   editorRef.value?.flushPendingAssets?.();
   selectedPageIndex.value = null;
+  editingHome.value = false;
 }
 
 // Page suggestions
@@ -256,7 +285,7 @@ const navigationGroups = computed(() =>
 );
 
 // Expose editing state to parent
-const isEditingPage = computed(() => selectedPageIndex.value !== null);
+const isEditingPage = computed(() => selectedPageIndex.value !== null || editingHome.value);
 
 defineExpose({
   isEditingPage,
@@ -265,8 +294,9 @@ defineExpose({
 
 <template>
   <div class="step-pages">
-    <h2>Add simple pages</h2>
-    <div v-if="selectedPageIndex === null">
+    <h2>Pages</h2>
+    <div v-if="selectedPageIndex === null && !editingHome">
+      <div class="page-list"><div class="page-item home-page-item"><div class="page-header"><span class="page-icon" aria-hidden="true"><UiIcon name="LayoutGrid" :size="20" /></span><div class="page-details"><strong class="page-title">Home</strong><span class="page-slug">/ · Always first</span></div><button class="home-edit-button" type="button" @click="editingHome = true">Edit home</button></div></div></div>
       <!-- Page list -->
       <div v-if="mainPages.length > 0" class="page-list">
         <div
@@ -545,6 +575,30 @@ defineExpose({
               </span>
               <span class="platform-btn-label">Custom</span>
             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="editingHome" class="home-editor">
+      <button class="editor-back-link" type="button" @click="closeEditor">← Back to pages</button>
+      <h3>Home</h3>
+      <p>Your profile header stays at the top. Choose the main action and arrange the sections below it.</p>
+      <label class="home-action-label" for="home-main-action">Main action</label>
+      <select id="home-main-action" v-model="selectedAction">
+        <option value="auto:">Use the first available action</option>
+        <option v-if="wizard.profile.newsletter.enabled" value="subscribe:">Subscribe to newsletter</option>
+        <option v-for="(offer, index) in wizard.profile.booking.offers" :key="offer.id" :value="`offer:${offer.id || index}`">Book {{ offer.title }}</option>
+        <option v-for="(button, index) in wizard.profile.buttons" :key="index" :value="`button:${index}`">{{ button.text }}</option>
+      </select>
+      <h4>Homepage sections</h4>
+      <div class="home-section-list">
+        <div v-for="(section, index) in wizard.homeSections" :key="section.id" class="home-section-row">
+          <span>{{ sectionLabels[section.id] }}</span>
+          <div class="home-section-controls">
+            <button type="button" :disabled="index === 0" :aria-label="`Move ${sectionLabels[section.id]} up`" @click="moveHomeSection(index, -1)">↑</button>
+            <button type="button" :disabled="index === wizard.homeSections.length - 1" :aria-label="`Move ${sectionLabels[section.id]} down`" @click="moveHomeSection(index, 1)">↓</button>
+            <label><input type="checkbox" :checked="section.visible" @change="toggleHomeSection(index, ($event.target as HTMLInputElement).checked)" /> Show</label>
           </div>
         </div>
       </div>
@@ -990,4 +1044,20 @@ defineExpose({
   margin: 24px 0;
   border: 1px solid var(--color-border);
 }
+.home-page-item{border-color:var(--ui-accent,var(--color-border));background:var(--ui-accent-soft,var(--color-bg))}
+.home-edit-button{min-height:44px;padding:0 16px;border:1px solid var(--ui-border,var(--color-border));border-radius:8px;background:var(--ui-surface,var(--color-bg));color:var(--ui-text,var(--color-text));font:inherit;font-weight:700;cursor:pointer}
+.home-editor{display:grid;gap:18px}
+.home-editor h3,.home-editor h4,.home-editor p{margin:0}
+.home-editor h3{font-size:1.5rem}
+.home-editor p{color:var(--ui-text-muted,var(--color-text-muted))}
+.home-action-label{font-weight:700}
+.home-editor select{width:100%;min-height:44px;padding:8px 12px;border:1px solid var(--ui-border,var(--color-border));border-radius:8px;background:var(--ui-surface,var(--color-bg));color:var(--ui-text,var(--color-text));font:inherit}
+.home-section-list{border-top:1px solid var(--ui-border,var(--color-border))}
+.home-section-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:60px;border-bottom:1px solid var(--ui-border,var(--color-border))}
+.home-section-controls{display:flex;align-items:center;gap:4px}
+.home-section-controls button{width:40px;height:44px;border:0;background:transparent;color:var(--ui-text,var(--color-text));font:inherit;cursor:pointer}
+.home-section-controls button:disabled{opacity:.35;cursor:default}
+.home-section-controls label{display:flex;align-items:center;gap:8px;min-height:44px;margin-left:10px}
+.home-section-controls input{width:18px;height:18px}
+@media(max-width:480px){.home-section-row{align-items:flex-start;flex-direction:column;padding:10px 0}.home-section-controls{align-self:flex-end}}
 </style>

@@ -2,6 +2,88 @@ import { describe, expect, it } from "vitest";
 import { generateSiteHtml } from "./index";
 
 describe("site generator", () => {
+  it.each(["card", "split", "cover", "minimal"] as const)("renders the %s layout with one header and a mobile dock", async (layout) => {
+    const files = await generateSiteHtml({
+      name: "Alex",
+      avatar: "./files/avatar.jpg",
+      banner: "./files/banner.jpg",
+      pages: [{ slug: "about", title: "About", file: "about.md" }],
+      buttons: [{ text: "Contact", url: "https://example.com" }],
+      extensions: { "me3.app/site": { layout, theme: "meadow", colorMode: "dark" } },
+    }, [{ name: "about.md", content: "About Alex" }]);
+    const home = files["index.html"];
+    const about = files["about.html"];
+    expect(home).toContain(`data-layout="${layout}"`);
+    expect(home).toContain(`site-hero--${layout}`);
+    expect(home.match(/class="site-topbar"/g)).toHaveLength(1);
+    expect(about.match(/class="site-topbar"/g)).toHaveLength(1);
+    expect(home).toContain('class="site-action-dock"');
+    expect(home).toContain("@media(max-width:760px)");
+    if (layout === "cover") expect(home).toContain('class="site-cover-links"');
+    expect(about).toContain("Work with me");
+  });
+
+  it("uses the logo in the top bar and falls back to the avatar", async () => {
+    const base = { name: "Alex", avatar: "./files/avatar.jpg", extensions: { "me3.app/site": { layout: "card" as const } } };
+    const withLogo = await generateSiteHtml({ ...base, logo: "./files/logo.png" }, []);
+    const avatarOnly = await generateSiteHtml(base, []);
+    expect(withLogo["index.html"]).toContain('class="site-topbar__logo" src="./files/logo.png"');
+    expect(avatarOnly["index.html"]).toContain('class="site-topbar__avatar" src="./files/avatar.jpg"');
+    expect(withLogo["index.html"]).toContain('<span>Alex</span>');
+  });
+
+  it.each(["warm", "paper", "meadow", "me3", "tech"] as const)("renders %s with light and dark tokens and a visitor switch", async (theme) => {
+    const files = await generateSiteHtml({ name: "Alex", handle: "alex", extensions: { "me3.app/site": { theme, colorMode: "auto", visitorThemeToggle: true } } }, []);
+    const html = files["index.html"];
+    expect(html).toContain('data-site-theme-toggle');
+    expect(html).toContain('Switch to dark mode');
+    expect(html).toContain('me3:site-theme:alex');
+    expect(html).toContain('prefers-color-scheme:dark');
+    expect(html).toContain('html[data-color-mode=dark]');
+    expect(html).not.toContain('class="site-action-dock"');
+    expect(html).not.toContain(`body[data-vibe=${theme}]`);
+    expect(html.indexOf("document.documentElement.dataset.colorMode")).toBeLessThan(html.indexOf("<style>"));
+  });
+
+  it("honors an owner's choice to hide the visitor switch", async () => {
+    const files = await generateSiteHtml({ name: "Alex", extensions: { "me3.app/site": { theme: "meadow", colorMode: "dark", visitorThemeToggle: false } } }, []);
+    expect(files["index.html"]).not.toContain("data-site-theme-toggle");
+    expect(files["index.html"]).toContain("var mode=saved==='light'||saved==='dark'?saved:\"dark\"");
+  });
+
+  it("renders the themed booking day strip instead of a native date field", async () => {
+    const files = await generateSiteHtml({
+      name: "Alex", handle: "alex",
+      extensions: { "me3.app/site": { layout: "card", theme: "warm", sections: [{ id: "booking", visible: true }] } },
+      intents: { book: { enabled: true, offers: [{ id: "intro", title: "Intro call", duration: 30 }], availability: { timezone: "Europe/Dublin", windows: { monday: ["09:00-12:00"] } } } },
+    }, []);
+    const html = files["index.html"];
+    expect(html).toContain('data-booking-day-strip role="group"');
+    expect(html).toContain('name="localDate" type="hidden"');
+    expect(html).not.toContain('type="date"');
+    expect(html).toContain("Europe/Dublin");
+    expect(html).toContain("for(var i=0;i<14;i++)");
+    expect(html).toContain("config.windows[weekday]");
+  });
+
+  it("orders visible home sections while keeping booking blocks on content pages", async () => {
+    const files = await generateSiteHtml({
+      name: "Alex",
+      posts: [1, 2, 3, 4].map((number) => ({ slug: `post-${number}`, title: `Post ${number}`, file: `post-${number}.md`, publishedAt: `2026-09-0${number}` })),
+      pages: [{ slug: "about", title: "About", file: "about.md" }],
+      intents: { book: { enabled: true, offers: [{ id: "intro", title: "Intro call" }] } },
+      extensions: { "me3.app/site": { sections: [
+        { id: "writing", visible: true }, { id: "booking", visible: false }, { id: "offers", visible: true },
+      ] } },
+    }, [{ name: "about.md", content: '<div data-me3-site-block="booking"></div>' }]);
+    const home = files["index.html"];
+    expect(home.indexOf('class="site-writing"')).toBeLessThan(home.indexOf('class="site-offers"'));
+    expect(home).toContain("Post 4");
+    expect(home).not.toContain("Post 1");
+    expect(home).toContain('class="site-offer-booking" hidden');
+    expect(files["about.html"]).toContain('id="booking"');
+  });
+
   it.each([
     ["classic", true], ["classic", false],
     ["portrait", true], ["portrait", false],
@@ -537,6 +619,20 @@ describe("site generator", () => {
 
     expect(files["index.html"]).toContain('aria-label="Youtube"');
     expect(files["index.html"]).toContain("M23.498 6.186");
+  });
+
+  it("links YouTube and TikTok handles to their profiles", async () => {
+    const files = await generateSiteHtml({
+      name: "Social links",
+      links: {
+        youtube: "@creator",
+        tiktok: "creator",
+        custom_youtube: "https://youtube.com/@full-url",
+      },
+    }, []);
+    expect(files["index.html"]).toContain('href="https://youtube.com/@creator"');
+    expect(files["index.html"]).toContain('href="https://tiktok.com/@creator"');
+    expect(files["index.html"]).toContain('href="https://youtube.com/@full-url"');
   });
 
   it("renders escaped markdown links and images as html", async () => {

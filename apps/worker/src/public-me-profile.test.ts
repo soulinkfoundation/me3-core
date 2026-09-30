@@ -4,6 +4,17 @@ import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import { buildPublicMe3Profile } from "./public-me-profile";
 
 describe("public me.json profile", () => {
+  it("links YouTube and TikTok handles to their profiles", () => {
+    const profile = buildPublicMe3Profile({
+      name: "Social links",
+      links: { youtube: "@creator", tiktok: "creator", custom_youtube: "https://youtube.com/@full-url" },
+    }, "https://example.com");
+    expect(profile).toMatchObject({ links: expect.arrayContaining([
+      expect.objectContaining({ href: "https://youtube.com/@creator" }),
+      expect.objectContaining({ href: "https://tiktok.com/@creator" }),
+      expect.objectContaining({ href: "https://youtube.com/@full-url" }),
+    ]) });
+  });
   it("preserves username paths in public identity and action destinations", () => {
     const profile = buildPublicMe3Profile({ name: "Alex", intents: { subscribe: { enabled: true } } }, "https://example.com/site/alex/");
     expect(profile).toMatchObject({ id: "https://example.com/site/alex/me.json", url: "https://example.com/site/alex/" });

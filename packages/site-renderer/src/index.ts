@@ -1,4 +1,8 @@
 import type { ProductDelivery } from "../../../shared/product-delivery";
+import { normalizeSiteTheme, siteThemes, type SiteColorMode, type SiteThemeId } from "./themes";
+import { modernSiteCss } from "./modern-css";
+export { normalizeSiteTheme, siteThemes } from "./themes";
+export type { SiteColorMode, SiteThemeId } from "./themes";
 import { renderProductCheckout, productCheckoutCss } from "./product-checkout";
 import { applyImageMetadata, type SiteImageMetadata } from "./image-metadata";
 export * from "./image-metadata";
@@ -15,10 +19,10 @@ export type { PublicLocationData, PublicLocationProfile } from "./location-displ
 type Me3LinkMap = Record<string, string | undefined>;
 
 export const SITE_LAYOUT_LINK_KEY = "_layout";
-export type SiteLayout = "classic" | "portrait";
+export type SiteLayout = "classic" | "portrait" | "card" | "split" | "cover" | "minimal";
 
 export function normalizeSiteLayout(value: unknown): SiteLayout {
-  return value === "portrait" ? "portrait" : "classic";
+  return value === "portrait" || value === "card" || value === "split" || value === "cover" || value === "minimal" ? value : "classic";
 }
 
 export const SITE_NAVIGATION_STYLE_LINK_KEY = "_navigation_style";
@@ -147,6 +151,7 @@ export type Me3SiteProfile = {
   avatar?: string;
   banner?: string;
   links?: Me3LinkMap;
+  extensions?: { "me3.app/site"?: SitePresentationSettings; [key: string]: unknown };
   buttons?: Me3Button[];
   pages?: Me3Page[];
   posts?: Me3Post[];
@@ -190,6 +195,25 @@ export type Me3SiteProfile = {
     gift?: { enabled?: boolean; title?: string; description?: string; icon?: string };
   };
 };
+
+export type SitePresentationSettings = {
+  theme?: SiteThemeId;
+  layout?: SiteLayout;
+  navigationStyle?: SiteNavigationStyle;
+  colorMode?: SiteColorMode;
+  accent?: string;
+  visitorThemeToggle?: boolean;
+  primaryAction?: { kind: "offer" | "subscribe" | "button"; id?: string };
+  sections?: Array<{ id: "offers" | "booking" | "writing" | "testimonials" | "newsletter"; visible: boolean }>;
+};
+
+export const DEFAULT_HOME_SECTIONS: NonNullable<SitePresentationSettings["sections"]> = [
+  { id: "offers", visible: true },
+  { id: "booking", visible: false },
+  { id: "writing", visible: true },
+  { id: "testimonials", visible: false },
+  { id: "newsletter", visible: true },
+];
 
 type PricingConfig = {
   enabled?: boolean;
@@ -318,6 +342,7 @@ export async function generateSiteHtml(
 }
 
 function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities): string {
+  if (profile.extensions?.["me3.app/site"]) return generateModernIndexHtml(profile, capabilities);
   const vibe = getVibe(profile);
   const title = profile.name || profile.handle || "ME3 site";
   const description = profile.bio
@@ -360,6 +385,91 @@ function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapa
   });
 }
 
+function primarySiteAction(profile: Me3SiteProfile): { label: string; href: string } | null {
+  const choice = profile.extensions?.["me3.app/site"]?.primaryAction;
+  const sections = profile.extensions?.["me3.app/site"]?.sections || DEFAULT_HOME_SECTIONS;
+  const bookingOnHome = sections.some((section) => section.visible && (section.id === "booking" || (section.id === "offers" && normalizeBookingTypes(profile.intents?.book || {}).some((type) => (type.offers || type.classes || type.retreats || []).length))));
+  const newsletterOnHome = sections.some((section) => section.id === "newsletter" && section.visible);
+  if (choice?.kind === "subscribe" && profile.intents?.subscribe?.enabled && newsletterOnHome) {
+    return { label: "Subscribe", href: "#newsletter" };
+  }
+  if (choice?.kind === "offer" && profile.intents?.book?.enabled && bookingOnHome) {
+    const offer = normalizeBookingTypes(profile.intents.book).flatMap((type) => type.offers || type.classes || type.retreats || []).find((item) => item.id === choice.id);
+    return { label: offer ? `Book ${offer.title || "a call"}` : "Book a call", href: "#booking" };
+  }
+  const button = choice?.kind === "button"
+    ? profile.buttons?.[Number(choice.id)]
+    : profile.buttons?.find((item) => item.text && item.url);
+  if (button?.text && button.url) return { label: button.text, href: formatHref(button.url) };
+  if (profile.intents?.book?.enabled && bookingOnHome) return { label: "Book a call", href: "#booking" };
+  if (profile.intents?.subscribe?.enabled && newsletterOnHome) return { label: "Subscribe", href: "#newsletter" };
+  return null;
+}
+
+function siteActionLink(profile: Me3SiteProfile, className: string, basePath = "./"): string {
+  const action = primarySiteAction(profile);
+  if (!action || action.href === "#") return "";
+  const href = action.href.startsWith("#") && basePath !== "./" ? `${basePath}${action.href}` : action.href;
+  const external = /^https?:\/\//i.test(href) ? ' target="_blank" rel="noopener"' : "";
+  return `<a class="${className}" href="${escapeHtml(href)}"${external}>${escapeHtml(action.label)}</a>`;
+}
+
+function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities): string {
+  const title = profile.name || profile.handle || "ME3 site";
+  const description = profile.bio ? contentToPlainText(profile.bio) : `${title} on ME3`;
+  const layout = modernSiteLayout(profile);
+  const bannerPath = profile.banner ? filePathForHtml(profile.banner) : "";
+  const avatarPath = profile.avatar ? filePathForHtml(profile.avatar) : "";
+  const banner = bannerPath && layout !== "minimal" && layout !== "split"
+    ? `<div class="site-hero__banner"><img src="${escapeHtml(bannerPath)}" alt="" loading="eager" decoding="async" fetchpriority="high"></div>` : "";
+  const avatar = avatarPath ? `<img class="site-hero__avatar" src="${escapeHtml(avatarPath)}" alt="" loading="eager" decoding="async">` : "";
+  const displayLocation = formatPublicLocation(profile);
+  const location = displayLocation ? `<p class="location">${escapeHtml(displayLocation)}</p>` : "";
+  const hero = `<section class="site-hero site-hero--${layout}">${banner}${layout === "split" ? `<div class="site-hero__portrait">${avatar}</div>` : ""}<div class="site-hero__intro">${layout === "split" ? location : avatar}<h1 class="name">${escapeHtml(title)}</h1>${profile.bio ? `<div class="bio">${renderRichText(profile.bio)}</div>` : ""}${layout === "split" ? "" : location}${generateButtons(profile)}${layout === "cover" ? "" : generateLinks(profile)}</div></section>`;
+  const sections = profile.extensions?.["me3.app/site"]?.sections || DEFAULT_HOME_SECTIONS;
+  const showBooking = sections.some((section) => section.id === "booking" && section.visible);
+  const sectionHtml = sections.filter((section) => section.visible).map((section) => {
+    switch (section.id) {
+      case "offers": return capabilities.bookingsEnabled ? generateOffers(profile, !showBooking) : "";
+      case "booking": return capabilities.bookingsEnabled ? generateBooking(profile) : "";
+      case "writing": return generateLatestWriting(profile);
+      case "testimonials": return generateTestimonials(profile);
+      case "newsletter": return capabilities.newsletterSignup ? generateNewsletter(profile) : "";
+    }
+  }).join("");
+  return pageShell(profile, {
+    title, description, activeSlug: "", basePath: "./", vibe: getVibe(profile),
+    body: `<main class="site-main">${hero}${layout === "cover" ? `<div class="site-cover-links">${generateLinks(profile)}</div>` : ""}<div class="site-home-sections">${sectionHtml}</div></main><script>(function(){document.querySelectorAll('a[href="#booking"]').forEach(function(link){link.addEventListener('click',function(){var booking=document.getElementById('booking');if(!booking)return;var wrapper=booking.closest('.site-offer-booking');if(wrapper)wrapper.hidden=false;var offerId=${jsonForScript(profile.extensions?.["me3.app/site"]?.primaryAction?.kind === "offer" ? profile.extensions["me3.app/site"]?.primaryAction?.id || "" : "")};if(offerId){var card=Array.prototype.find.call(booking.querySelectorAll('.booking-card'),function(item){return item.dataset.offerId===offerId});if(card)card.click();}})})})();</script>`,
+    footer: generateFooter(profile, capabilities.footerCustomization),
+  });
+}
+
+function generateOffers(profile: Me3SiteProfile, inlineBooking: boolean): string {
+  const book = profile.intents?.book;
+  if (!book?.enabled) return "";
+  const offers = normalizeBookingTypes(book).flatMap((type) => type.offers || type.classes || type.retreats || []);
+  if (!offers.length) return "";
+  const cards = offers.map((offer, index) => `<article class="site-offer"><h3>${escapeHtml(offer.title || "Session")}</h3><div class="site-offer__pills"><span>${escapeHtml(String(offer.duration || book.duration || 30))} min</span><span>${escapeHtml(formatPricing(offer.pricing))}</span></div>${offer.description ? `<p>${escapeHtml(plainTextFromMaybeHtml(offer.description))}</p>` : ""}<button type="button" data-offer-book="${index}">Book ${escapeHtml(offer.title || "session")}</button></article>`).join("");
+  const booking = inlineBooking ? `<div class="site-offer-booking" hidden>${generateBooking(profile)}</div>` : "";
+  return `<section class="site-offers"><div class="site-section-heading"><h2>Work with me</h2></div><div class="site-offers__grid">${cards}</div>${booking}<script>(function(){var section=document.currentScript.parentElement;section.querySelectorAll('[data-offer-book]').forEach(function(button){button.addEventListener('click',function(){var booking=section.querySelector('.site-offer-booking');if(booking)booking.hidden=false;var target=booking||document.getElementById('booking');if(!target)return;var cards=target.querySelectorAll('.booking-card');var card=cards[Number(button.getAttribute('data-offer-book'))];if(card)card.click();target.scrollIntoView({behavior:'smooth',block:'start'});});});})();</script></section>`;
+}
+
+function generateLatestWriting(profile: Me3SiteProfile): string {
+  const posts = (profile.posts || []).filter((post) => !post.draft && post.slug)
+    .sort((a, b) => timestampForSort(b.publishedAt) - timestampForSort(a.publishedAt)).slice(0, 3);
+  if (!posts.length) return "";
+  const path = resolveSiteSectionPaths(profile).blog;
+  const rows = posts.map((post) => `<a class="site-writing-row" href="./${escapeHtml(path)}/${escapeHtml(normalizeSitePath(post.slug || ""))}"><time>${escapeHtml(formatPostDate(post.publishedAt) || "")}</time><strong>${escapeHtml(post.title || titleFromSlug(post.slug || ""))}</strong></a>`).join("");
+  return `<section class="site-writing"><div class="site-section-heading"><h2>Latest writing</h2><a href="./${escapeHtml(path)}/">All posts →</a></div><div class="site-writing__rows">${rows}</div></section>`;
+}
+
+function modernSiteLayout(profile: Me3SiteProfile): "card" | "split" | "cover" | "minimal" {
+  const value = profile.extensions?.["me3.app/site"]?.layout || profile.links?.[SITE_LAYOUT_LINK_KEY];
+  if (value === "portrait" || value === "split") return "split";
+  if (value === "cover" || value === "minimal") return value;
+  return "card";
+}
+
 function generateContentPageHtml(
   profile: Me3SiteProfile,
   title: string,
@@ -375,13 +485,14 @@ function generateContentPageHtml(
     basePath,
     capabilities,
   );
+  const endAction = profile.extensions?.["me3.app/site"] ? siteActionLink(profile, "site-end-action__button", basePath) : "";
   return pageShell(profile, {
     title: `${title} | ${profile.name || "ME3"}`,
     description: contentToPlainText(markdown).slice(0, 160),
     activeSlug,
     basePath,
-    body: `<header class="page-header"><a class="back-link" href="${basePath}">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, basePath))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, activeSlug, basePath, "header")}</header>
-      <main class="content"><h1>${escapeHtml(title)}</h1>${htmlContent}${product ? renderProductCheckout({ ...product, username: profile.handle || "", slug: product.slug || "", enabled: capabilities.productCheckoutEnabled }) : ""}</main>`,
+    body: `${profile.extensions?.["me3.app/site"] ? "" : `<header class="page-header"><a class="back-link" href="${basePath}">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, basePath))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, activeSlug, basePath, "header")}</header>`}
+      <main class="content"><h1>${escapeHtml(title)}</h1>${htmlContent}${product ? renderProductCheckout({ ...product, username: profile.handle || "", slug: product.slug || "", enabled: capabilities.productCheckoutEnabled }) : ""}${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
     vibe: getVibe(profile),
     afterContainer: htmlContent.includes("<img") ? buildContentLightbox() : "",
@@ -400,13 +511,14 @@ function generateCollectionIndex(
     .map((item) => generateCollectionCard(item, activeSlug, fileMap))
     .join("");
   const listClass = activeSlug === "shop" ? "shop-items" : "blog-items";
+  const endAction = profile.extensions?.["me3.app/site"] ? siteActionLink(profile, "site-end-action__button", "../") : "";
   return pageShell(profile, {
     title: `${title} | ${profile.name || "ME3"}`,
     description: `${title} by ${profile.name || "ME3"}`,
     activeSlug,
     basePath: "../",
-    body: `<header class="page-header"><a class="back-link" href="../">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, "../"))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, activeSlug, "../", "header")}</header>
-      <main class="content"><h1>${escapeHtml(title)}</h1><div class="${listClass}">${cards}</div></main>`,
+    body: `${profile.extensions?.["me3.app/site"] ? "" : `<header class="page-header"><a class="back-link" href="../">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, "../"))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, activeSlug, "../", "header")}</header>`}
+      <main class="content"><h1>${escapeHtml(title)}</h1><div class="${listClass}">${cards}</div>${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
     vibe: getVibe(profile),
   });
@@ -447,7 +559,10 @@ function pageShell(
     afterContainer?: string;
   },
 ): string {
-  const fontUrl = VIBE_FONT_URLS[options.vibe];
+  const siteSettings = profile.extensions?.["me3.app/site"];
+  const modern = Boolean(siteSettings);
+  const themeId = normalizeSiteTheme(siteSettings?.theme || options.vibe);
+  const fontUrl = modern ? siteThemes[themeId].fontUrl : VIBE_FONT_URLS[options.vibe];
   const fontLinks = fontUrl
     ? `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="${escapeHtml(fontUrl)}">`
     : "";
@@ -463,6 +578,9 @@ function pageShell(
   const navigationScript = hasSiteNavigation(profile)
     ? buildNavigationDialogScript()
     : "";
+  const topbar = modern ? generateSiteTopbar(profile, options.activeSlug, options.basePath) : "";
+  const actionDock = modern ? siteActionLink(profile, "site-action-dock__button", options.basePath) : "";
+  const footer = modern ? generateModernFooter(profile, options.basePath, options.footer) : options.footer;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -471,22 +589,66 @@ function pageShell(
   <title>${escapeHtml(options.title)}</title>
   <meta name="description" content="${escapeHtml(options.description)}">
   ${headLinks}
-  <style>${siteCss(options.vibe, profile.links?._accent)}${options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(options.vibe)}${contentImageCss()}${contentAudioCss()}${profilePolishCss()}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}.main.no-banner .profile-header{margin-top:0}</style>
+  ${modern ? siteThemeHeadScript(profile) : ""}
+  <style>${siteCss(modern ? "__modern" : options.vibe, profile.links?._accent)}${!modern && options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(modern ? "__modern" : options.vibe)}${contentImageCss()}${contentAudioCss()}${profilePolishCss(modern)}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}.main.no-banner .profile-header{margin-top:0}${modern ? modernSiteCss(themeId, siteSettings?.colorMode || "auto", siteSettings?.accent) : ""}</style>
 </head>
-<body data-vibe="${escapeHtml(options.vibe)}" data-navigation-style="${navigationStyle}" data-layout="${normalizeSiteLayout(profile.links?.[SITE_LAYOUT_LINK_KEY])}">
+<body data-vibe="${escapeHtml(modern ? themeId : options.vibe)}" data-navigation-style="${navigationStyle}" data-layout="${modern ? modernSiteLayout(profile) : normalizeSiteLayout(profile.links?.[SITE_LAYOUT_LINK_KEY])}" data-page="${options.activeSlug ? "inner" : "home"}">
   <div class="container">
+    ${topbar}
     ${options.body}
-    ${options.footer}
+    ${footer}
   </div>
+  ${actionDock ? `<div class="site-action-dock">${actionDock}</div>` : ""}
   ${options.afterContainer || ""}
   ${navigationScript}
+  ${modern && siteSettings?.visitorThemeToggle !== false ? siteThemeToggleScript(profile) : ""}
 </body>
 </html>`;
+}
+
+function generateSiteTopbar(profile: Me3SiteProfile, activeSlug: string, basePath: string): string {
+  const name = profile.name || profile.handle || "ME3 site";
+  const image = profile.logo || profile.avatar;
+  const identityImage = image ? `<img class="${profile.logo ? "site-topbar__logo" : "site-topbar__avatar"}" src="${escapeHtml(filePathForHtml(image, basePath))}" alt="">` : "";
+  return `<header class="site-topbar"><div class="site-topbar__inner"><a class="site-topbar__identity" href="${basePath}">${identityImage}<span>${escapeHtml(name)}</span></a>${generateNav(profile, activeSlug, basePath, "header")}${profile.extensions?.["me3.app/site"]?.visitorThemeToggle !== false ? themeToggleMarkup(false) : ""}${siteActionLink(profile, "site-topbar__action", basePath)}</div></header>`;
+}
+
+function themeToggleMarkup(menu: boolean): string {
+  const sun = '<svg class="site-theme-icon site-theme-icon--sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>';
+  const moon = '<svg class="site-theme-icon site-theme-icon--moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20.5 14.4A9 9 0 0 1 9.6 3.5 9 9 0 1 0 20.5 14.4Z"/></svg>';
+  return `<button type="button" class="site-theme-toggle${menu ? " site-theme-toggle--menu" : ""}" data-site-theme-toggle aria-label="Switch to dark mode"><span class="site-theme-icons">${sun}${moon}</span>${menu ? '<span class="site-theme-toggle__label">Dark mode</span>' : ""}</button>`;
+}
+
+function siteThemeStorageKey(profile: Me3SiteProfile): string {
+  return `me3:site-theme:${profile.handle || profile.name || "site"}`;
+}
+
+function siteThemeHeadScript(profile: Me3SiteProfile): string {
+  const settings = profile.extensions?.["me3.app/site"];
+  const mode = settings?.colorMode || "auto";
+  return `<script>(function(){var key=${jsonForScript(siteThemeStorageKey(profile))};var saved=null;${settings?.visitorThemeToggle === false ? "" : "try{saved=localStorage.getItem(key)}catch(e){}"}var mode=saved==='light'||saved==='dark'?saved:${jsonForScript(mode)};document.documentElement.dataset.colorMode=mode==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):mode})();</script>`;
+}
+
+function siteThemeToggleScript(profile: Me3SiteProfile): string {
+  return `<script>(function(){var key=${jsonForScript(siteThemeStorageKey(profile))};var buttons=document.querySelectorAll('[data-site-theme-toggle]');function update(){var dark=document.documentElement.dataset.colorMode==='dark';buttons.forEach(function(button){button.setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode');var label=button.querySelector('.site-theme-toggle__label');if(label)label.textContent=dark?'Light mode':'Dark mode'});}buttons.forEach(function(button){button.addEventListener('click',function(){var next=document.documentElement.dataset.colorMode==='dark'?'light':'dark';document.documentElement.dataset.colorMode=next;try{localStorage.setItem(key,next)}catch(e){}update()})});update()})();</script>`;
+}
+
+function generateModernFooter(profile: Me3SiteProfile, basePath: string, legacyFooter: string): string {
+  if (!legacyFooter) return "";
+  const pages = (profile.pages || []).filter((page) => page.visible !== false && page.slug)
+    .map((page) => `<a href="${basePath}${escapeHtml(normalizeSitePath(page.slug || ""))}">${escapeHtml(page.title || titleFromSlug(page.slug || ""))}</a>`);
+  const blog = (profile.posts || []).some((post) => !post.draft)
+    ? `<a href="${basePath}${escapeHtml(resolveSiteSectionPaths(profile).blog)}/">${escapeHtml(profile.blogTitle || "Blog")}</a>` : "";
+  const shop = profile.products?.length
+    ? `<a href="${basePath}${escapeHtml(resolveSiteSectionPaths(profile).shop)}/">${escapeHtml(profile.shopTitle || "Shop")}</a>` : "";
+  const copyright = `© ${new Date().getUTCFullYear()} ${escapeHtml(profile.name || "ME3")} · Powered by <a href="https://me3.app">ME3</a>`;
+  return `<footer class="site-footer"><div class="site-footer__top"><nav aria-label="Footer navigation"><a href="${basePath}">Home</a>${pages.join("")}${blog}${shop}</nav>${generateLinks(profile)}</div><p>${copyright}</p></footer>`;
 }
 
 type NavigationPlacement = "home" | "header";
 
 function getSiteNavigationStyle(profile: Me3SiteProfile): SiteNavigationStyle {
+  if (profile.extensions?.["me3.app/site"]) return normalizeSiteNavigationStyle(profile.extensions["me3.app/site"].navigationStyle);
   const groups = new Set<string>();
   let count = 1; // Home is a top-level item too.
   for (const page of profile.pages || []) {
@@ -503,6 +665,7 @@ function getSiteNavigationStyle(profile: Me3SiteProfile): SiteNavigationStyle {
 
 function hasSiteNavigation(profile: Me3SiteProfile): boolean {
   return (
+    Boolean(profile.extensions?.["me3.app/site"]) ||
     (profile.pages || []).some(
       (page) => page.visible !== false && Boolean(page.slug),
     ) ||
@@ -525,9 +688,7 @@ function generateNav(
   const pages = (profile.pages || []).filter((page) => page.visible !== false && page.slug);
   const hasPosts = (profile.posts || []).some((post) => !post.draft);
   const hasProducts = (profile.products || []).length > 0;
-  const hasStandaloneTestimonials = false;
-  const hasStandaloneBooking = false;
-  if (pages.length === 0 && !hasPosts && !hasProducts && !hasStandaloneTestimonials && !hasStandaloneBooking) return "";
+  if (pages.length === 0 && !hasPosts && !hasProducts && !profile.extensions?.["me3.app/site"]) return "";
 
   const style = getSiteNavigationStyle(profile);
   const linkOptions = {
@@ -538,8 +699,6 @@ function generateNav(
     sectionPaths,
     hasPosts,
     hasProducts,
-    hasStandaloneTestimonials,
-    hasStandaloneBooking,
   };
   const drawerLinks = generateNavLinks({ ...linkOptions, drawer: true });
   const inlineNavigation = style === "standard"
@@ -548,7 +707,7 @@ function generateNav(
   const menuIcon = `<svg class="site-menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`;
   const closeIcon = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg>`;
 
-  return `<div class="site-navigation site-navigation-${placement} site-navigation-${style}">${inlineNavigation}<button class="site-menu-trigger" type="button" data-site-menu-open aria-label="Open menu" aria-haspopup="dialog" aria-controls="site-navigation-dialog" aria-expanded="false">${menuIcon}</button><dialog id="site-navigation-dialog" class="site-menu-dialog" data-site-menu-dialog aria-labelledby="site-navigation-title"><div class="site-menu-panel"><header class="site-menu-header"><span id="site-navigation-title" class="site-menu-title">Menu</span><button class="site-menu-close" type="button" data-site-menu-close aria-label="Close menu">${closeIcon}</button></header><nav class="site-menu-nav" aria-label="Primary navigation">${drawerLinks}</nav></div></dialog></div>`;
+  return `<div class="site-navigation site-navigation-${placement} site-navigation-${style}">${inlineNavigation}<button class="site-menu-trigger" type="button" data-site-menu-open aria-label="Open menu" aria-haspopup="dialog" aria-controls="site-navigation-dialog" aria-expanded="false">${menuIcon}</button><dialog id="site-navigation-dialog" class="site-menu-dialog" data-site-menu-dialog aria-labelledby="site-navigation-title"><div class="site-menu-panel"><header class="site-menu-header"><span id="site-navigation-title" class="site-menu-title">Menu</span><button class="site-menu-close" type="button" data-site-menu-close aria-label="Close menu">${closeIcon}</button></header><nav class="site-menu-nav" aria-label="Primary navigation">${drawerLinks}</nav>${profile.extensions?.["me3.app/site"]?.visitorThemeToggle !== false && profile.extensions?.["me3.app/site"] ? themeToggleMarkup(true) : ""}${profile.extensions?.["me3.app/site"] ? siteActionLink(profile, "site-menu-action", basePath) : ""}</div></dialog></div>`;
 }
 
 function generateNavLinks(options: {
@@ -559,8 +718,6 @@ function generateNavLinks(options: {
   sectionPaths: SiteSectionPaths;
   hasPosts: boolean;
   hasProducts: boolean;
-  hasStandaloneTestimonials: boolean;
-  hasStandaloneBooking: boolean;
   drawer: boolean;
 }): string {
   const {
@@ -571,8 +728,6 @@ function generateNavLinks(options: {
     sectionPaths,
     hasPosts,
     hasProducts,
-    hasStandaloneTestimonials,
-    hasStandaloneBooking,
     drawer,
   } = options;
 
@@ -604,8 +759,6 @@ function generateNavLinks(options: {
     ...pageLinks,
     hasPosts ? `<a href="${basePath}${escapeHtml(sectionPaths.blog)}/" class="nav-link${activeSlug === "blog" ? " active" : ""}">${escapeHtml(profile.blogTitle || "Blog")}</a>` : "",
     hasProducts ? `<a href="${basePath}${escapeHtml(sectionPaths.shop)}/" class="nav-link${activeSlug === "shop" ? " active" : ""}">${escapeHtml(profile.shopTitle || "Shop")}</a>` : "",
-    hasStandaloneTestimonials ? `<a href="${basePath}${escapeHtml(sectionPaths.testimonials)}/" class="nav-link${activeSlug === sectionPaths.testimonials ? " active" : ""}">${escapeHtml(profile.testimonialsTitle || "Testimonials")}</a>` : "",
-    hasStandaloneBooking ? `<a href="${basePath}${escapeHtml(sectionPaths.bookings)}/" class="nav-link${activeSlug === sectionPaths.bookings ? " active" : ""}">Bookings</a>` : "",
   ].join("");
 
   return links;
@@ -1015,6 +1168,7 @@ function generateBookingTypeBody(
     return generateEventBookingWidget({
       username: profile.handle || "owner",
       bookingType: "class",
+      modern: Boolean(profile.extensions?.["me3.app/site"]),
       offers: classes,
       cards,
     });
@@ -1031,6 +1185,7 @@ function generateBookingTypeBody(
     return generateEventBookingWidget({
       username: profile.handle || "owner",
       bookingType: "retreat",
+      modern: Boolean(profile.extensions?.["me3.app/site"]),
       offers: retreats,
       cards,
     });
@@ -1055,6 +1210,7 @@ function generateBookingTypeBody(
 
   return generatePaidBookingWidget({
     username: profile.handle || "owner",
+    modern: Boolean(profile.extensions?.["me3.app/site"]),
     offers,
     availability: type.availability || book?.availability || {},
     bufferTime: book?.bufferTime || 0,
@@ -1075,6 +1231,7 @@ function renderBookingOfferDescription(value?: string): string {
 
 function generateEventBookingWidget(input: {
   username: string;
+  modern: boolean;
   bookingType: "class" | "retreat";
   offers: Array<BookingClass | BookingRetreat>;
   cards: string;
@@ -1087,6 +1244,7 @@ function generateEventBookingWidget(input: {
       `${input.bookingType}-${index + 1}`,
     title: offer.title || (input.bookingType === "class" ? "Class" : "Retreat"),
     timezone: offer.timezone || "UTC",
+    weekday: input.bookingType === "class" ? (offer as BookingClass).recurrence?.weekday : undefined,
     capacity: typeof offer.capacity === "number" ? offer.capacity : null,
     startDate:
       input.bookingType === "class"
@@ -1110,7 +1268,9 @@ function generateEventBookingWidget(input: {
   };
   const datePicker =
     input.bookingType === "class"
-      ? `<div class="booking-date-picker"><label for="booking-date-class">Choose a class date:</label><div class="booking-date-input-wrap" data-event-date-wrap><input id="booking-date-class" name="localDate" type="date" required></div></div>`
+      ? input.modern
+        ? bookingDayStripMarkup("Choose a class date")
+        : `<div class="booking-date-picker"><label for="booking-date-class">Choose a class date:</label><div class="booking-date-input-wrap" data-event-date-wrap><input id="booking-date-class" name="localDate" type="date" required></div></div>`
       : `<input name="localDate" type="hidden" value="${escapeHtml(first?.startDate || "")}">`;
   const amountInput = `<input name="amount" type="hidden" min="${escapeHtml(String(first?.pricing.minimumAmount || 5))}" step="1" value="${escapeHtml(String(first?.pricing.suggestedAmount || 0))}">`;
 
@@ -1132,6 +1292,14 @@ function generateEventBookingWidget(input: {
       </form>
     </div>
     <script>${eventBookingWidgetScript()}</script>`;
+}
+
+function bookingDayStripMarkup(label: string): string {
+  return `<div class="booking-date-picker booking-date-picker--strip"><p>${escapeHtml(label)}</p><input name="localDate" type="hidden"><div class="booking-day-strip" data-booking-day-strip role="group" aria-label="${escapeHtml(label)}"></div></div>`;
+}
+
+function bookingDayStripRuntime(timezone: string, enabled: string, onSelect: string): string {
+  return `var refreshDayStrip=function(){};var dayStrip=root.querySelector('[data-booking-day-strip]');if(dayStrip){refreshDayStrip=function(){var zone=${timezone};var parts;try{parts=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());}catch(e){parts=new Intl.DateTimeFormat('en-US',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());}var values={};parts.forEach(function(part){values[part.type]=part.value});var start=Date.UTC(Number(values.year),Number(values.month)-1,Number(values.day));dayStrip.innerHTML='';var first=null;for(var i=0;i<14;i++){var day=new Date(start+i*86400000);var dateValue=day.toISOString().slice(0,10);var weekday=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][day.getUTCDay()];var available=${enabled};var button=document.createElement('button');button.type='button';button.className='booking-day';button.disabled=!available;button.dataset.date=dateValue;button.setAttribute('aria-label',day.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',timeZone:'UTC'}));button.setAttribute('aria-pressed',String(dateInput.value===dateValue));button.innerHTML='<span>'+day.toLocaleDateString(undefined,{weekday:'short',timeZone:'UTC'})+'</span><strong>'+day.getUTCDate()+'</strong>';button.addEventListener('click',function(){var chosen=this;dateInput.value=chosen.dataset.date;dayStrip.querySelectorAll('.booking-day').forEach(function(item){item.setAttribute('aria-pressed',String(item===chosen));});${onSelect}();});dayStrip.appendChild(button);if(!first&&available)first=button;}var current=dayStrip.querySelector('[data-date="'+dateInput.value+'"]');if(current&&!current.disabled)current.click();else if(first)first.click();else dateInput.value='';};refreshDayStrip();}`;
 }
 
 function eventBookingWidgetScript(): string {
@@ -1166,16 +1334,18 @@ function eventBookingWidgetScript(): string {
       .then(function(data){if(data.soldOut)throw new Error('This event is sold out.');occurrence=data.occurrence;quantityInput.max=String(data.remaining===null?(selected.capacity||20):Math.max(1,data.remaining));occurrenceEl.textContent=occurrenceLabel({startsAt:data.occurrence.startsAt,endsAt:data.occurrence.endsAt,localDate:data.occurrence.localDate,localTime:data.occurrence.localTime,remaining:data.remaining});form.classList.add('is-visible');setStatus('');})
       .catch(function(error){setStatus(error.message||'This event is not available.',true);});
   }
-  root.querySelectorAll('.booking-card').forEach(function(button,index){if(config.offers[index])button.dataset.offerId=config.offers[index].id;button.addEventListener('click',function(){selectedOfferId=button.dataset.offerId||selectedOfferId;root.querySelectorAll('.booking-card').forEach(function(item){var active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});updateOfferFields();loadAvailability();});});
-  if(dateInput&&config.bookingType==='class'){var today=new Date();dateInput.min=String(today.getFullYear())+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');dateInput.addEventListener('change',loadAvailability);}
+  root.querySelectorAll('.booking-card').forEach(function(button,index){if(config.offers[index])button.dataset.offerId=config.offers[index].id;button.addEventListener('click',function(){selectedOfferId=button.dataset.offerId||selectedOfferId;root.querySelectorAll('.booking-card').forEach(function(item){var active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});updateOfferFields();if(root.querySelector('[data-booking-day-strip]'))refreshDayStrip();else loadAvailability();});});
+  updateOfferFields();
+  if(dateInput&&config.bookingType==='class'){if(root.querySelector('[data-booking-day-strip]')){${bookingDayStripRuntime("offer().timezone", "(!offer().startDate || dateValue >= offer().startDate) && (!offer().weekday || weekday === offer().weekday)", "loadAvailability")}}else{var today=new Date();dateInput.min=String(today.getFullYear())+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');dateInput.addEventListener('change',loadAvailability);}}
   form.addEventListener('submit',function(event){event.preventDefault();if(!occurrence){setStatus('Check availability before booking.',true);return;}if(!form.checkValidity()){form.reportValidity();return;}var selected=offer();var payload={localDate:dateInput.value,quantity:Number(quantityInput.value),guestName:form.elements.guestName.value,guestEmail:form.elements.guestEmail.value,notes:form.elements.notes.value,amount:Number(amountInput.value),returnUrl:window.location.href.split('#')[0]};var paid=selected.pricing&&selected.pricing.enabled&&selected.pricing.paymentMethod!=='manual';var endpoint='/api/book/'+encodeURIComponent(config.username)+'/events/'+encodeURIComponent(config.bookingType)+'/'+encodeURIComponent(selected.id)+'/'+(paid?'checkout-session':'register');setStatus(paid?'Preparing checkout...':'Confirming booking...');fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Booking failed.');return data;});}).then(function(data){if(paid){if(data.url){window.location.href=data.url;return;}throw new Error('Checkout URL missing.');}form.reset();form.classList.remove('is-visible');occurrence=null;setStatus(selected.pricing&&selected.pricing.paymentMethod==='manual'?'Your booking is confirmed. Check your email for payment details.':'Your booking is confirmed.');}).catch(function(error){setStatus(error.message||'Booking failed.',true);});});
-  updateOfferFields();if(config.bookingType==='retreat')loadAvailability();
+  if(config.bookingType==='retreat')loadAvailability();
   var params=new URLSearchParams(window.location.search);var pending=(config.bookingType+':'+selectedOfferId);var matches=params.get('event_booking_pending')===pending;var success=(params.get('event_booking')==='success'||params.get('purchase')==='success')&&params.get('session_id');if(matches&&success){setStatus('Confirming your paid booking...');fetch('/api/book/'+encodeURIComponent(config.username)+'/events/complete-checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:params.get('session_id')})}).then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Payment succeeded, but booking confirmation failed.');return data;});}).then(function(){setStatus('Payment successful. Your booking is confirmed.');clearParams();}).catch(function(error){setStatus(error.message,true);});}else if(matches&&(params.get('event_booking')==='cancelled'||params.get('purchase')==='cancelled')){setStatus('Checkout cancelled. No payment was taken.',true);clearParams();}
 })();`;
 }
 
 function generatePaidBookingWidget(input: {
   username: string;
+  modern: boolean;
   offers: BookingOffer[];
   availability: { timezone?: string; windows?: Record<string, string[]> };
   bufferTime: number;
@@ -1212,14 +1382,15 @@ function generatePaidBookingWidget(input: {
     <div class="booking-widget" data-booking-widget>
       <script type="application/json" data-booking-config>${jsonForScript(config)}</script>
       <div class="booking-session-preview">${input.cards}</div>
-      <div class="booking-date-picker">
+      ${input.modern ? bookingDayStripMarkup("Choose a date") : `<div class="booking-date-picker">
         <label for="booking-date">Select a date:</label>
         <div class="booking-date-input-wrap" data-booking-date-wrap>
           <input id="booking-date" name="localDate" type="date" required>
         </div>
-      </div>
+      </div>`}
       <div class="booking-slots" data-booking-slots role="group" aria-label="Available times"></div>
       <p class="booking-empty-times" data-booking-empty>No available times on this day.</p>
+      ${input.modern ? '<button type="button" class="booking-continue" data-booking-continue disabled>Continue</button>' : ""}
       <form class="booking-form">
         <input name="localTime" type="hidden" required>
         ${amountInput}
@@ -1257,6 +1428,7 @@ function paidBookingWidgetScript(): string {
   var selectedTimeEl=root.querySelector('[data-booking-selected-time]');
   var paymentLaterEl=root.querySelector('[data-booking-payment-later]');
   var backButton=root.querySelector('[data-booking-back]');
+  var continueButton=root.querySelector('[data-booking-continue]');
   var selectedOfferId=(config.offers[0]&&config.offers[0].id)||'';
   var selectedTime='';
   var slotRequest=0;
@@ -1303,11 +1475,19 @@ function paidBookingWidgetScript(): string {
   function toMinutes(value){var parts=String(value||'').split(':').map(Number);if(parts.length!==2||parts.some(isNaN))return null;return parts[0]*60+parts[1];}
   function toTime(value){var h=Math.floor(value/60);var m=value%60;return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');}
   function dayName(dateValue){if(!dateValue)return '';return dayNames[new Date(dateValue+'T12:00:00Z').getUTCDay()];}
+  function appendSlot(button,minutes){
+    if(!root.querySelector('[data-booking-day-strip]')){slotsEl.appendChild(button);return;}
+    var period=minutes<720?'Morning':minutes<1020?'Afternoon':'Evening';
+    var group=slotsEl.querySelector('[data-period="'+period+'"]');
+    if(!group){group=document.createElement('div');group.className='booking-slot-group';group.dataset.period=period;var heading=document.createElement('h4');heading.textContent=period;group.appendChild(heading);var buttons=document.createElement('div');buttons.className='booking-slot-group__buttons';group.appendChild(buttons);slotsEl.appendChild(group);}
+    group.querySelector('.booking-slot-group__buttons').appendChild(button);
+  }
   function populateSlots(){
     var selected=offer();
     slotsEl.innerHTML='';
     selectedTime='';
     timeInput.value='';
+    if(continueButton)continueButton.disabled=true;
     setDetailsVisible(false);
     var dateValue=dateInput.value;
     var request=++slotRequest;
@@ -1346,9 +1526,9 @@ function paidBookingWidgetScript(): string {
           timeInput.value=slotValue;
           Array.prototype.forEach.call(slotsEl.querySelectorAll('.booking-slot'),function(item){item.classList.toggle('active',item===slotButton);});
           if(selectedTimeEl)selectedTimeEl.textContent=formatSlotLabel(dateValue,slotValue,duration);
-          setDetailsVisible(true);
+          if(continueButton)continueButton.disabled=false;else setDetailsVisible(true);
         });
-        slotsEl.appendChild(button);
+        appendSlot(button,t);
         found=true;
         if(parts.length===1) break;
       }
@@ -1381,22 +1561,20 @@ function paidBookingWidgetScript(): string {
       populateSlots();
     });
   });
-  var now=new Date();
-  var today=String(now.getFullYear())+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
-  dateInput.min=today;
-  if(!dateInput.value) dateInput.value=today;
-  dateInput.addEventListener('change',populateSlots);
-  dateInput.addEventListener('click',openDatePicker);
-  if(dateWrap){
-    dateWrap.addEventListener('click',function(event){
-      if(event.target!==dateInput) openDatePicker();
-    });
-  }
   emptyEl.hidden=true;
   slotsEl.hidden=true;
   setDetailsVisible(false);
   updatePaymentNote();
-  populateSlots();
+  if(root.querySelector('[data-booking-day-strip]')){${bookingDayStripRuntime("config.timezone", "(config.windows[weekday]||[]).length > 0", "populateSlots")}}else{
+    var now=new Date();
+    var today=String(now.getFullYear())+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+    dateInput.min=today;
+    if(!dateInput.value) dateInput.value=today;
+    dateInput.addEventListener('change',populateSlots);
+    dateInput.addEventListener('click',openDatePicker);
+    if(dateWrap){dateWrap.addEventListener('click',function(event){if(event.target!==dateInput)openDatePicker();});}
+    populateSlots();
+  }
   if(emailInput){
     emailInput.addEventListener('input',function(){
       emailInput.setCustomValidity('');
@@ -1411,6 +1589,7 @@ function paidBookingWidgetScript(): string {
       populateSlots();
     });
   }
+  if(continueButton)continueButton.addEventListener('click',function(){if(!selectedTime)return;setDetailsVisible(true);form.scrollIntoView({behavior:'smooth',block:'nearest'});});
   form.addEventListener('submit',function(event){
     event.preventDefault();
     if(!validateForm()) return;
@@ -1929,6 +2108,10 @@ function formatLinkHref(platform: string, value: string): string {
       return `https://linkedin.com/in/${cleaned}`;
     case "github":
       return `https://github.com/${cleaned}`;
+    case "youtube":
+      return `https://youtube.com/@${cleaned}`;
+    case "tiktok":
+      return `https://tiktok.com/@${cleaned}`;
     case "substack":
       return `https://${cleaned}.substack.com/`;
     default:
@@ -1937,7 +2120,7 @@ function formatLinkHref(platform: string, value: string): string {
 }
 
 function getVibe(profile: Me3SiteProfile): string {
-  const vibe = profile.links?._vibe || DEFAULT_VIBE;
+  const vibe = profile.extensions?.["me3.app/site"]?.theme || profile.links?._vibe || DEFAULT_VIBE;
   return vibe === "natural" ? "paper" : vibe;
 }
 
@@ -2217,10 +2400,10 @@ function contentAudioCss(): string {
 `;
 }
 
-function profilePolishCss(): string {
+function profilePolishCss(modern = false): string {
   return `
 :root{--ui-shadow-sm:0 2px 4px color-mix(in srgb,var(--text) 6%,transparent),0 6px 16px color-mix(in srgb,var(--text) 5%,transparent);--ui-shadow-md:0 4px 8px color-mix(in srgb,var(--text) 7%,transparent),0 12px 28px color-mix(in srgb,var(--text) 8%,transparent)}
-body[data-vibe=tech]{--ui-shadow-sm:0 2px 4px #0006,0 6px 16px #0004;--ui-shadow-md:0 4px 8px #0008,0 12px 28px #0006}
+${modern ? "" : "body[data-vibe=tech]{--ui-shadow-sm:0 2px 4px #0006,0 6px 16px #0004;--ui-shadow-md:0 4px 8px #0008,0 12px 28px #0006}"}
 .avatar{box-shadow:var(--ui-shadow-md)}
 body[data-layout=portrait] .main .profile-header{margin-top:24px}
 body[data-layout=portrait] .main.no-banner .profile-header{margin-top:0}

@@ -72,4 +72,12 @@ describe("GeneratedSitePreview", () => {
     expect(html).toContain('<link rel="icon" href="./files/logo.png">');
     expect(html).not.toContain('<link rel="icon" href="./files/avatar.jpg">');
   });
+
+  it("renders the desktop preview at 1200px and scales it into the panel", async () => {
+    const wrapper = mount(GeneratedSitePreview, { props: { viewport: "desktop" } });
+    await flushPromises();
+    const style = wrapper.get("iframe").attributes("style");
+    expect(style).toContain("width: 1200px");
+    expect(style).toContain("transform: scale(0.3125)");
+  });
 });
