@@ -14,7 +14,6 @@ import {
 } from "../../styles/vibes";
 
 const wizard = useWizardStore();
-defineProps<{ designOnly?: boolean }>();
 const previewViewport = ref<"mobile" | "desktop">("mobile");
 const layoutChoices: Array<{ id: SiteLayout; name: string; description: string }> = [
   { id: "card", name: "Card", description: "Banner, round photo and links." },
@@ -92,10 +91,9 @@ function closeFooterModal() {
 </script>
 
 <template>
-  <div class="step-publish" :class="{ 'design-only': designOnly }">
-    <h2 v-if="!designOnly">{{ isOrganization ? "This site is ready!" : "Your site is ready!" }}</h2>
-    <p v-if="!designOnly" class="step-desc">Choose how it looks, then publish.</p>
-    <h2 v-if="designOnly">Design your site</h2>
+  <div class="step-publish">
+    <h2>{{ isOrganization ? "This site is ready!" : "Your site is ready!" }}</h2>
+    <p class="step-desc">Choose how it looks, then publish.</p>
     <div class="publish-grid">
     <div class="publish-settings">
     <fieldset class="layout-section">
@@ -178,7 +176,7 @@ function closeFooterModal() {
     </div>
     </div>
 
-    <div v-if="!designOnly" class="publish-actions">
+    <div class="publish-actions">
       <div class="publish-action">
         <button
           class="btn primary"
@@ -839,7 +837,6 @@ function closeFooterModal() {
 .publish-preview--desktop :deep(.generated-site-preview){width:100%;border-radius:10px}
 .publish-actions{max-width:none;align-items:flex-end;margin:24px 0 0}
 .publish-action{width:auto;min-width:180px}
-.design-only .color-mode-section{margin-bottom:0}
 @media(max-width:900px){.publish-grid{grid-template-columns:1fr}.publish-preview-column{order:-1}.publish-settings{max-width:680px}.publish-preview{min-height:640px}.publish-preview :deep(.generated-site-preview){height:620px;min-height:620px}}
 @media(max-width:640px){.step-publish h2{text-align:center}.step-desc{text-align:center}.publish-grid{gap:24px}.publish-preview{min-height:520px;padding:8px}.publish-preview :deep(.generated-site-preview){height:500px;min-height:500px}.layout-options{grid-template-columns:repeat(2,minmax(0,1fr))}.layout-option{min-height:165px}.publish-actions{position:sticky;bottom:0;z-index:10;margin:16px -16px -16px;padding:12px 16px;background:var(--ui-bg,var(--color-bg));border-top:1px solid var(--ui-border,var(--color-border))}.publish-action{width:100%}}
 </style>

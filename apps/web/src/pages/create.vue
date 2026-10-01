@@ -46,13 +46,6 @@ const router = useRouter();
 const { isPublishing: isQuickPublishing, publish } = usePublish();
 const showIntroScreen = ref(false);
 const isOpeningWizard = ref(true);
-const designDialog = ref<HTMLDialogElement | null>(null);
-const designPanelOpen = ref(false);
-
-function openDesignPanel() {
-  designPanelOpen.value = true;
-  designDialog.value?.showModal();
-}
 
 const requestedSiteRole = computed<WizardSiteRole>(() =>
   route.query.siteRole === "organization" ? "organization" : "profile",
@@ -400,7 +393,6 @@ watch(
   <div v-else class="wizard-page">
     <!-- Header -->
     <header v-if="!showIntroScreen" class="wizard-header">
-      <button v-if="wizard.currentStepId !== 'publish'" class="design-open" type="button" @click="openDesignPanel">Design</button>
       <div class="header-center">
         <div class="step-indicator">
           <span class="step-current">{{ wizard.currentStep }}</span>
@@ -425,10 +417,6 @@ watch(
         </button>
       </div>
     </header>
-    <dialog ref="designDialog" class="design-dialog" aria-label="Site design" @click.self="designDialog?.close()" @close="designPanelOpen = false">
-      <button class="design-close" type="button" aria-label="Close design settings" @click="designDialog?.close()">×</button>
-      <WizardPublish v-if="designPanelOpen" design-only />
-    </dialog>
 
     <!-- Progress bar -->
     <div
@@ -618,10 +606,6 @@ watch(
   align-items: center;
   gap: 16px;
 }
-.design-open{grid-column:1;grid-row:1;justify-self:start;min-height:44px;padding:0 16px;border:1px solid var(--ui-border,var(--color-border));border-radius:999px;background:var(--ui-surface,var(--color-bg));color:var(--ui-text,var(--color-text));font:inherit;font-weight:700;cursor:pointer}
-.design-dialog{box-sizing:border-box;width:min(1100px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto;padding:26px;border:1px solid var(--ui-border,var(--color-border));border-radius:16px;background:var(--ui-bg,var(--color-bg));color:var(--ui-text,var(--color-text))}
-.design-dialog::backdrop{background:rgba(0,0,0,.5)}
-.design-close{float:right;width:44px;height:44px;border:0;background:transparent;color:inherit;font:inherit;font-size:1.7rem;cursor:pointer}
 
 .logo {
   display: inline-flex;

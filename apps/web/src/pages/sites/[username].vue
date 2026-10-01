@@ -19,6 +19,7 @@ import {
   resolvePublicSiteUrl,
 } from "../../utils/publicSiteUrl";
 import { useAppToast } from "../../composables/useAppToast";
+import { compressImage, resizeImage } from "../../utils/imageCompression";
 
 definePage({
   meta: {
@@ -124,11 +125,12 @@ const siteBrandingSaving = ref(false);
 const siteLogoError = ref("");
 const siteLogoStatus = ref("");
 const siteLogoRevision = ref(0);
+const maxSiteLogoBytes = 1_900_000;
 const hasSiteLogo = computed(() => Boolean(siteProfile.value?.logo));
 const siteLogoPreview = computed(() => {
   const source =
-    siteBranding.value?.logoUrl ||
     siteProfile.value?.logo ||
+    siteBranding.value?.logoUrl ||
     siteProfile.value?.avatar ||
     site.value?.avatar;
   if (!source) return null;
@@ -272,17 +274,20 @@ async function handleSiteLogoSelect(event: Event) {
     siteLogoError.value = "Choose a PNG, JPEG, or WebP image.";
     return;
   }
-  if (file.size > 1_900_000) {
-    siteLogoError.value = "Choose an image smaller than 1.9 MB.";
-    return;
-  }
-
   siteLogoSaving.value = true;
   try {
     const currentProfile = siteProfile.value || (await loadSiteProfile());
     if (!currentProfile) return;
 
-    const uploaded = await sites.uploadImage(username.value, file, "logo");
+    let image: Blob = file;
+    if (file.size > maxSiteLogoBytes) {
+      image = (await resizeImage(file, 1600)).blob;
+      if (image.size > maxSiteLogoBytes) {
+        image = (await compressImage(image, maxSiteLogoBytes)).blob;
+      }
+    }
+
+    const uploaded = await sites.uploadImage(username.value, image, "logo");
     if (!uploaded?.ok) {
       siteLogoError.value = sites.error || "Could not upload the site logo.";
       return;
@@ -296,6 +301,11 @@ async function handleSiteLogoSelect(event: Event) {
         "Site logo updated.",
       );
     }
+  } catch (caught) {
+    siteLogoError.value = caught instanceof Error
+      ? caught.message
+      : "Could not prepare the site logo.";
+    toastError(siteLogoError.value);
   } finally {
     siteLogoSaving.value = false;
   }
@@ -683,8 +693,10 @@ async function unpublishLandingPage() {
                   @change="handleSiteLogoSelect"
                 />
                 <span id="site-logo-hint" class="site-logo-hint">
-                  1.9 MB max
+                  Large images are compressed automatically
                 </span>
+                <span v-if="siteLogoError" class="site-logo-error" role="alert">{{ siteLogoError }}</span>
+                <span v-else-if="siteLogoStatus" class="site-logo-status" role="status" aria-live="polite">{{ siteLogoStatus }}</span>
               </div>
             </div>
 
@@ -711,17 +723,6 @@ async function unpublishLandingPage() {
             </Button>
           </div>
         </template>
-        <p v-if="siteLogoError" class="site-logo-error" role="alert">
-          {{ siteLogoError }}
-        </p>
-        <p
-          v-else-if="siteLogoStatus"
-          class="site-logo-status"
-          role="status"
-          aria-live="polite"
-        >
-          {{ siteLogoStatus }}
-        </p>
       </section>
 
       <section
@@ -1354,6 +1355,11 @@ async function unpublishLandingPage() {
   flex-basis: 100%;
   color: var(--ui-text-muted, var(--color-text-muted));
   font-size: 12px;
+}
+
+.site-logo-actions .site-logo-error,
+.site-logo-actions .site-logo-status {
+  flex-basis: 100%;
 }
 
 .site-logo-loading,
