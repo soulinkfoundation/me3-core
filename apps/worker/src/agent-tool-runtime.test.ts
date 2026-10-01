@@ -76,6 +76,44 @@ describe("provider-neutral agent tool loop", () => {
     ]);
   });
 
+  it("treats strict-schema nulls as omitted only for optional non-nullable arguments", async () => {
+    const nullableTool: AgentToolDefinition = {
+      name: "nullable_tool",
+      description: "Accept an explicit null.",
+      parameters: {
+        type: "object",
+        properties: { note: { type: ["string", "null"] } },
+        additionalProperties: false,
+      },
+    };
+    const seen: Array<Record<string, unknown>> = [];
+    let modelCalls = 0;
+    await runAgentToolLoop({
+      messages: [{ role: "user", content: "Create a reminder" }],
+      tools: [...TOOLS, nullableTool],
+      model: async (messages) => {
+        if (++modelCalls === 2) {
+          expect(messages[1]).toMatchObject({
+            toolCalls: [{ arguments: { title: "Call Alex" } }, { arguments: { note: null } }],
+          });
+          return { text: "Done.", toolCalls: [] };
+        }
+        return {
+          text: "",
+          toolCalls: [
+            { id: "one", name: "reminders_create", arguments: { title: "Call Alex", note: null } },
+            { id: "two", name: "nullable_tool", arguments: { note: null } },
+          ],
+        };
+      },
+      executeTool: async (call) => {
+        seen.push(call.arguments);
+        return { ok: true };
+      },
+    });
+    expect(seen).toEqual([{ title: "Call Alex" }, { note: null }]);
+  });
+
   it("returns unknown tools to the model as errors without executing them", async () => {
     let modelCalls = 0;
     let executions = 0;

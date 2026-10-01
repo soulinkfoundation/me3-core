@@ -431,7 +431,7 @@ describe("Core Agent Runtime v2 reminders", () => {
   });
 
   it.each(["workers-ai", "openai", "anthropic"] as const)(
-    "executes the same typed create contract through %s",
+    "executes the same typed create contract through Cloudflare %s",
     async (providerId) => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-07-01T10:00:00Z"));
@@ -456,7 +456,7 @@ describe("Core Agent Runtime v2 reminders", () => {
       });
 
       expect(response).toMatchObject({
-        source: providerId,
+        source: "workers-ai",
         specialist: "core.reminders.create",
         reminderAction: {
           kind: "created",
@@ -1142,19 +1142,9 @@ function baseMessages(message: string): AgentToolMessage[] {
 
 function providerRoute(providerId: "workers-ai" | "openai" | "anthropic", payloads: unknown[]) {
   const next = vi.fn(async () => payloads.shift());
-  if (providerId === "workers-ai") return workersRoute(next);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => Response.json(await next())),
-  );
   return {
-    providerId,
-    model: `${providerId}-test-model`,
-    backupModel: null,
-    apiKey: "test-key",
-    ai: null,
-    aiGateway: null,
-    configured: true,
+    ...workersRoute(next),
+    model: providerId === "workers-ai" ? "workers-test-model" : `${providerId}/test-model`,
   };
 }
 

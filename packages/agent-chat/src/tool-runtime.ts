@@ -96,8 +96,12 @@ export async function runAgentToolLoop(input: {
     if (performance.now() >= deadline) throw new Error("Agent tool loop time budget exceeded.");
     const response = await input.model(messages, input.tools);
     const text = response.text.trim();
+    const calls = response.toolCalls.map((call) => {
+      const tool = toolsByName.get(call.name);
+      return tool ? omitOptionalNullArguments(call, tool) : call;
+    });
 
-    if (response.toolCalls.length === 0) {
+    if (calls.length === 0) {
       if (!text) {
         throw new Error("Agent model returned neither text nor tool calls.");
       }
@@ -108,12 +112,12 @@ export async function runAgentToolLoop(input: {
     messages.push({
       role: "assistant",
       content: text,
-      toolCalls: response.toolCalls,
+      toolCalls: calls,
     });
 
     // Side-effecting tools stay sequential until the policy layer can prove
     // that a group is safe to run in parallel.
-    for (const call of response.toolCalls) {
+    for (const call of calls) {
       if (performance.now() >= deadline) throw new Error("Agent tool loop time budget exceeded.");
       const tool = toolsByName.get(call.name);
       if (!tool) {
@@ -140,6 +144,23 @@ export async function runAgentToolLoop(input: {
   throw new Error(
     `Agent tool loop reached its ${maxModelSteps}-step limit without a final reply.`,
   );
+}
+
+function omitOptionalNullArguments(
+  call: AgentToolCall,
+  tool: AgentToolDefinition,
+): AgentToolCall {
+  // OpenAI strict schemas represent optional fields as required, nullable fields.
+  const entries = Object.entries(call.arguments).filter(([key, value]) => {
+    if (value !== null || tool.parameters.required?.includes(key)) return true;
+    const property = tool.parameters.properties[key];
+    if (!property) return true;
+    const types = Array.isArray(property.type) ? property.type : [property.type];
+    return types.includes("null");
+  });
+  return entries.length === Object.keys(call.arguments).length
+    ? call
+    : { ...call, arguments: Object.fromEntries(entries) };
 }
 
 export function toOpenAiToolRequest(

@@ -55,7 +55,7 @@ const scenarioFamilies = [
     id: "calendar-create",
     prompt: "Add a planning review for tomorrow at 2pm.",
     calls: [{ name: "core_calendar_event_create", arguments: { title: "Planning review", startDate: eventDay, startTime: "14:00", startTimezone: "Europe/Dublin", durationMinutes: 45 } }],
-    check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE user_id = ? AND title = 'Planning review'").get(seed.ownerId).n === 1,
+    check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE user_id = ? AND title = 'Planning review' COLLATE NOCASE").get(seed.ownerId).n === 1,
   },
   {
     id: "calendar-create-retried",
@@ -65,7 +65,7 @@ const scenarioFamilies = [
       { name: "core_calendar_event_create", arguments: { title: "Planning review", startDate: eventDay, startTime: "14:00", startTimezone: "Europe/Dublin", durationMinutes: 45 } },
     ],
     expectedExecutions: 1,
-    check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE user_id = ? AND title = 'Planning review'").get(seed.ownerId).n === 1,
+    check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE user_id = ? AND title = 'Planning review' COLLATE NOCASE").get(seed.ownerId).n === 1,
   },
   {
     id: "calendar-cancel-approved",
@@ -240,8 +240,11 @@ for (const scenario of scenarios) {
       toolResults.push(...seed.raw.prepare("SELECT tool_name, status, result_json FROM agent_tool_executions WHERE request_id = ? ORDER BY rowid").all(`eval-${scenario.id}-confirm`));
       approvalRequested &&= followUp.replyText.includes("Cancelled Planning session");
     }
-    const passed = approvalRequested && scenario.check(seed, toolResults) && toolResults.length === (scenario.expectedExecutions || scenario.calls.length) && toolResults.every((row) => row.status === "succeeded") && response.source !== "fallback";
-    results.push({ id: scenario.id, passed, providerFailure: response.source === "fallback" && toolResults.length === 0, modelSteps, toolCalls: toolResults.map((row) => row.tool_name), usage: sumUsage(usageSamples), elapsedMs: Math.round(performance.now() - started), ttftMs: firstDeltaMs === null ? null : Math.round(firstDeltaMs), error: passed ? null : response.debugError || "State or tool execution mismatch" });
+    const stateCheckPassed = scenario.check(seed, toolResults);
+    const executionCountMatched = toolResults.length === (scenario.expectedExecutions || scenario.calls.length);
+    const allExecutionsSucceeded = toolResults.every((row) => row.status === "succeeded");
+    const passed = approvalRequested && stateCheckPassed && executionCountMatched && allExecutionsSucceeded && response.source !== "fallback";
+    results.push({ id: scenario.id, passed, providerFailure: response.source === "fallback" && toolResults.length === 0, modelSteps, toolCalls: toolResults.map((row) => row.tool_name), ...(passed ? {} : { stateCheckPassed, executionCountMatched, toolStatuses: toolResults.map((row) => row.status) }), usage: sumUsage(usageSamples), elapsedMs: Math.round(performance.now() - started), ttftMs: firstDeltaMs === null ? null : Math.round(firstDeltaMs), error: passed ? null : response.debugError || "State or tool execution mismatch" });
   } catch (error) {
     results.push({ id: scenario.id, passed: false, providerFailure: false, modelSteps: modelInputs.length, toolCalls: [], usage: sumUsage(usageSamples), elapsedMs: Math.round(performance.now() - started), ttftMs: firstDeltaMs, error: String(error) });
   } finally {
