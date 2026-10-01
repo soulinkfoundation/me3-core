@@ -1,7 +1,4 @@
-import {
-  externalProviderGatewayUrl,
-  type AgentChatAiRoute,
-} from "./model-runtime";
+import type { AgentChatAiRoute } from "./model-runtime";
 
 export const DEFAULT_ASSISTANT_IMAGE_QUALITY = "medium";
 
@@ -36,9 +33,7 @@ export async function runAssistantImageProviderGeneration(
   if (route.providerId === "workers-ai") {
     return runWorkersAiImageGeneration(route, prompt, input);
   }
-  if (route.providerId === "openai") {
-    return runOpenAiImageGeneration(route, prompt, input);
-  }
+
   throw new Error(`${route.providerId} image generation is not supported yet.`);
 }
 
@@ -55,11 +50,11 @@ export function estimateAssistantImageUsage(
   const height = Math.max(1, Math.trunc(input.height));
   const normalizedModel = model.trim().toLowerCase();
 
-  if (providerId === "openai" && normalizedModel === "gpt-image-2") {
+  if (normalizedModel === "gpt-image-2" || normalizedModel === "openai/gpt-image-2") {
     const inputTokens = Math.max(0, Math.trunc(input.usage?.inputTokens || 0));
     const outputTokens = Math.max(0, Math.trunc(input.usage?.outputTokens || 0));
     const usageReported = inputTokens > 0 || outputTokens > 0;
-    const costUsd = usageReported
+    const providerCostUsd = usageReported
       ? (inputTokens * 5 + outputTokens * 30) / 1_000_000
       : 0.053;
     return {
@@ -67,7 +62,7 @@ export function estimateAssistantImageUsage(
       height,
       inputTokens,
       outputTokens,
-      costUsd,
+      costUsd: providerId === "workers-ai" ? providerCostUsd * 1.05 : providerCostUsd,
       pricing: usageReported
         ? "openai-gpt-image-2-token-rates-2026-07"
         : "openai-gpt-image-2-medium-1024x1024-estimate-2026-07",
@@ -77,6 +72,7 @@ export function estimateAssistantImageUsage(
         totalTokens: Math.max(0, Math.trunc(input.usage?.totalTokens || 0)),
         textInputUsdPerMillionTokens: 5,
         imageOutputUsdPerMillionTokens: 30,
+        billingFeeRate: providerId === "workers-ai" ? 0.05 : 0,
       },
     };
   }
@@ -140,6 +136,20 @@ async function runWorkersAiImageGeneration(
   input: { width: number; height: number },
 ): Promise<AssistantImageGenerationResult> {
   if (!route.ai) throw new Error("Workers AI binding is not configured.");
+  if (route.model.startsWith("openai/")) {
+    const result = await route.ai.run(
+      route.model,
+      {
+        prompt,
+        size: `${input.width}x${input.height}`,
+        quality: DEFAULT_ASSISTANT_IMAGE_QUALITY,
+      },
+      route.aiGateway?.gatewayId
+        ? { gateway: { id: route.aiGateway.gatewayId } }
+        : undefined,
+    );
+    return normalizeWorkersAiImageResult(result);
+  }
   const form = new FormData();
   form.append("prompt", prompt);
   form.append("width", String(input.width));
@@ -150,90 +160,14 @@ async function runWorkersAiImageGeneration(
   if (!body || !contentType) {
     throw new Error("Could not prepare Workers AI image request.");
   }
-  const result = await route.ai.run(route.model, {
-    multipart: {
-      body,
-      contentType,
-    },
-  });
+  const result = await route.ai.run(
+    route.model,
+    { multipart: { body, contentType } },
+    route.aiGateway?.gatewayId
+      ? { gateway: { id: route.aiGateway.gatewayId } }
+      : undefined,
+  );
   return normalizeWorkersAiImageResult(result);
-}
-
-async function runOpenAiImageGeneration(
-  route: AgentChatAiRoute,
-  prompt: string,
-  input: { width: number; height: number },
-): Promise<AssistantImageGenerationResult> {
-  if (!route.apiKey) throw new Error("OpenAI API key is not configured.");
-  const gatewayUrl = externalProviderGatewayUrl(
-    route,
-    "openai",
-    "images/generations",
-  );
-  const response = await fetch(
-    gatewayUrl || "https://api.openai.com/v1/images/generations",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${route.apiKey}`,
-        ...(gatewayUrl && route.aiGateway?.apiToken
-          ? {
-              "cf-aig-authorization": `Bearer ${route.aiGateway.apiToken}`,
-            }
-          : {}),
-      },
-      body: JSON.stringify({
-        model: route.model,
-        prompt,
-        n: 1,
-        size: `${input.width}x${input.height}`,
-        quality: DEFAULT_ASSISTANT_IMAGE_QUALITY,
-      }),
-    },
-  );
-  const payload = (await response.json().catch(() => null)) as
-    | {
-        data?: Array<{
-          b64_json?: unknown;
-          revised_prompt?: unknown;
-        }>;
-        usage?: {
-          input_tokens?: unknown;
-          output_tokens?: unknown;
-          total_tokens?: unknown;
-        };
-        error?: {
-          code?: unknown;
-          type?: unknown;
-          message?: unknown;
-        };
-      }
-    | null;
-
-  if (!response.ok) {
-    const code =
-      normalizedText(payload?.error?.code) ||
-      normalizedText(payload?.error?.type);
-    const message = normalizedText(payload?.error?.message);
-    throw new Error(
-      [code, message].filter(Boolean).join(": ") ||
-        `OpenAI image request failed (${response.status})`,
-    );
-  }
-
-  const image = payload?.data?.[0];
-  const imageBase64 = normalizedText(image?.b64_json);
-  if (!imageBase64) {
-    throw new Error("OpenAI image response did not include image bytes.");
-  }
-  const bytes = decodeBase64Image(imageBase64, "OpenAI");
-  return {
-    bytes,
-    mimeType: inferImageMimeType(bytes, "image/png"),
-    revisedPrompt: normalizedText(image?.revised_prompt),
-    usage: normalizeOpenAiImageUsage(payload?.usage),
-  };
 }
 
 async function normalizeWorkersAiImageResult(
@@ -276,9 +210,33 @@ async function normalizeWorkersAiImageResult(
 
   if (result && typeof result === "object") {
     const record = result as Record<string, unknown>;
+    const output = record.result && typeof record.result === "object"
+      ? record.result as Record<string, unknown>
+      : record;
+    const imageUrl = normalizedText(output.image);
+    if (imageUrl?.startsWith("https://")) {
+      const url = new URL(imageUrl);
+      if (!url.hostname.endsWith(".r2.dev")) {
+        throw new Error("Generated image URL is outside Cloudflare's image storage.");
+      }
+      const imageResponse = await fetch(url, { redirect: "error" });
+      if (!imageResponse.ok) throw new Error(`Generated image download failed (${imageResponse.status}).`);
+      const declaredSize = Number(imageResponse.headers.get("content-length"));
+      if (declaredSize > 25 * 1024 * 1024) throw new Error("Generated image is too large.");
+      const bytes = new Uint8Array(await imageResponse.arrayBuffer());
+      if (bytes.byteLength === 0 || bytes.byteLength > 25 * 1024 * 1024) {
+        throw new Error("Generated image size is invalid.");
+      }
+      return {
+        bytes,
+        mimeType: inferImageMimeType(bytes, imageResponse.headers.get("content-type")),
+        revisedPrompt: normalizedText(output.revised_prompt),
+        usage: normalizeOpenAiImageUsage(record.usage as { input_tokens?: unknown; output_tokens?: unknown; total_tokens?: unknown } | undefined),
+      };
+    }
     const imageBase64 =
-      normalizedText(record.image) ||
-      normalizedText(record.data) ||
+      normalizedText(output.image) ||
+      normalizedText(output.data) ||
       normalizedText(record.result);
     if (imageBase64) {
       const bytes = decodeBase64Image(imageBase64, "Workers AI");

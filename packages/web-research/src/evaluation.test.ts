@@ -85,15 +85,15 @@ describe("web research evaluation artifacts", () => {
         candidate.transport,
       ]),
     ).toContainEqual([
-      "openai-gpt-5.5-cloudflare-key-in-request",
-      "gpt-5.5",
-      "cloudflare-provider-native-openai-responses",
+      "openai-gpt-5.5-cloudflare",
+      "openai/gpt-5.5",
+      "cloudflare-unified-responses",
     ]);
     expect(
       candidateCatalog.candidates.find(
         (candidate) => candidate.id === "openai-gpt-5.5-cloudflare",
       )?.role,
-    ).toBe("transport_control");
+    ).toBe("primary_candidate");
   });
 
   it("validates rubric weights", () => {

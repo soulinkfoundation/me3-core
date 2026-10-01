@@ -75,69 +75,56 @@ function selectCandidates(value: string | undefined): ModelEvaluationCandidateCo
 function createLiveCandidate(
   config: ModelEvaluationCandidateConfig,
 ): ModelEvaluationCandidate {
-  if (config.providerId === "workers-ai") {
-    const accountId = env.CLOUDFLARE_ACCOUNT_ID?.trim() || "";
-    const apiToken = env.CLOUDFLARE_API_TOKEN?.trim() || "";
-    const configured = Boolean(accountId && apiToken);
-    return {
-      ...config,
-      route: {
-        providerId: "workers-ai",
-        model: config.model,
-        backupModel: null,
-        apiKey: null,
-        ai: configured
-          ? {
-              run: (model, input) =>
-                runWorkersAiRest(accountId, apiToken, model, input),
-            }
-          : null,
-        aiGateway: null,
-        configured,
-      },
-    };
-  }
-
-  const apiKey =
-    config.providerId === "anthropic"
-      ? env.ME3_MODEL_EVAL_ANTHROPIC_API_KEY?.trim() || null
-      : env.ME3_MODEL_EVAL_OPENAI_API_KEY?.trim() || null;
+  const accountId = env.CLOUDFLARE_ACCOUNT_ID?.trim() || "";
+  const apiToken = env.CLOUDFLARE_API_TOKEN?.trim() || "";
+  const gatewayId = env.CLOUDFLARE_AI_GATEWAY_ID?.trim() || "default";
+  const configured = Boolean(accountId && apiToken);
+  const model = config.providerId === "workers-ai"
+    ? config.model
+    : `${config.providerId}/${config.model}`;
   return {
     ...config,
     route: {
-      providerId: config.providerId,
-      model: config.model,
+      providerId: "workers-ai",
+      model,
       backupModel: null,
-      apiKey,
-      ai: null,
+      apiKey: null,
+      ai: configured
+        ? { run: (selectedModel, input) => runCloudflareAiRest(accountId, apiToken, gatewayId, selectedModel, input) }
+        : null,
       aiGateway: null,
-      configured: Boolean(apiKey),
+      configured,
     },
   };
 }
 
-async function runWorkersAiRest(
+async function runCloudflareAiRest(
   accountId: string,
   apiToken: string,
+  gatewayId: string,
   model: string,
   input: unknown,
 ): Promise<unknown> {
   const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${model}`,
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run`,
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiToken}`,
+        "cf-aig-gateway-id": gatewayId,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify({ model, input }),
     },
   );
-  const payload = (await response.json().catch(() => null)) as
-    | Record<string, unknown>
-    | null;
-  if (!response.ok) throw new Error(`Workers AI request failed (${response.status})`);
-  return payload?.result ?? payload;
+  const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!response.ok || payload?.success === false || payload?.error) {
+    throw new Error(`Cloudflare AI request failed (${response.status})`);
+  }
+  const run = payload?.result ?? payload;
+  return run && typeof run === "object" && ("gatewayMetadata" in run || "state" in run) && "result" in run
+    ? run.result
+    : run;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {

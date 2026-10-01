@@ -97,17 +97,11 @@ async function transcribeWithCloudflareWhisper(
   const aiGateway = options.ownerId
     ? await getAiGatewayRuntimeConfig(env, options.ownerId).catch(() => null)
     : null;
-  const requestOptions =
-    aiGateway?.routeWorkersAi && aiGateway.gatewayId
-      ? {
-          gateway: {
-            id: aiGateway.gatewayId,
-          },
-        }
-      : undefined;
-  const response = (requestOptions
-    ? await env.AI.run(model, input, requestOptions)
-    : await env.AI.run(model, input)) as CloudflareWhisperResponse;
+  const response = await env.AI.run(model, input, {
+    gateway: { id: env.ME3_DEPLOYMENT_MODE?.trim().toLowerCase() === "managed"
+      ? env.CLOUDFLARE_AI_GATEWAY_ID?.trim() || "default"
+      : aiGateway?.gatewayId || "default" },
+  }) as CloudflareWhisperResponse;
   const text = normalizeTranscriptText(response.text);
   if (!text) {
     throw new VoiceDictationInputError("Transcription returned no text", 502);

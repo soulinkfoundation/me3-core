@@ -108,12 +108,8 @@ export async function runModelTurn(
     const gatewayLogIdBefore = route.ai?.aiGatewayLogId ?? null;
     try {
       const attemptRoute = { ...route, model };
-      const replyText =
-        route.providerId === "openai"
-          ? await runOpenAi(attemptRoute, messages, images)
-          : route.providerId === "anthropic"
-            ? await runAnthropic(attemptRoute, messages, images)
-            : await runWorkersAi(attemptRoute, messages, images);
+      if (route.providerId !== "workers-ai") throw new Error("Direct model routes are disabled; use Cloudflare AI Gateway.");
+      const replyText = await runWorkersAi(attemptRoute, messages, images);
 
       if (!isEmptyModelReply(replyText, attemptRoute)) {
         modelAttempts.push({
@@ -266,131 +262,6 @@ function modelFallbackResponse(
   };
 }
 
-async function runOpenAi(
-  route: AgentChatAiRoute,
-  messages: AgentChatTextMessage[],
-  images: AgentChatImageInput[] = [],
-): Promise<string> {
-  if (!route.apiKey) throw new Error("OpenAI API key is not configured");
-  const body: Record<string, unknown> = {
-    model: route.model,
-    messages: withOpenAiImageContent(messages, images),
-  };
-  const reasoningEffort = openAiCompatibleReasoningEffort(route.model);
-  if (reasoningEffort) body.reasoning_effort = reasoningEffort;
-  if (!isOpenAiReasoningModel(route.model)) {
-    body.temperature = 0.4;
-  }
-
-  const gatewayUrl = externalProviderGatewayUrl(
-    route,
-    "openai",
-    "chat/completions",
-  );
-  const response = await fetch(
-    gatewayUrl || "https://api.openai.com/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${route.apiKey}`,
-        ...(gatewayUrl && route.aiGateway?.apiToken
-          ? { "cf-aig-authorization": `Bearer ${route.aiGateway.apiToken}` }
-          : {}),
-      },
-      body: JSON.stringify(body),
-    },
-  );
-
-  const payload = (await response.json().catch(() => null)) as
-    | {
-        choices?: Array<{ message?: { content?: unknown; refusal?: unknown } }>;
-        error?: { message?: string };
-      }
-    | null;
-
-  if (!response.ok) {
-    throw new Error(
-      payload?.error?.message || `OpenAI request failed (${response.status})`,
-    );
-  }
-
-  const message = payload?.choices?.[0]?.message;
-  return (
-    extractModelText(message?.content) ||
-    extractModelText(message?.refusal) ||
-    emptyModelReply(route)
-  );
-}
-
-function isOpenAiReasoningModel(model: string): boolean {
-  const normalized = model.trim().toLowerCase();
-  return /^gpt-5(?:[.-]|$)/.test(normalized) || /^o\d(?:[.-]|$)/.test(normalized);
-}
-
-async function runAnthropic(
-  route: AgentChatAiRoute,
-  messages: AgentChatTextMessage[],
-  images: AgentChatImageInput[] = [],
-): Promise<string> {
-  if (!route.apiKey) throw new Error("Anthropic API key is not configured");
-
-  const system =
-    messages.find((message) => message.role === "system")?.content || "";
-  const turns = withAnthropicImageContent(
-    messages
-      .filter(
-        (
-          message,
-        ): message is AgentChatTextMessage & { role: "user" | "assistant" } =>
-          message.role !== "system",
-      )
-      .map((message) => ({ role: message.role, content: message.content })),
-    images,
-  );
-
-  const gatewayUrl = externalProviderGatewayUrl(
-    route,
-    "anthropic",
-    "v1/messages",
-  );
-  const response = await fetch(
-    gatewayUrl || "https://api.anthropic.com/v1/messages",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": route.apiKey,
-        "anthropic-version": "2023-06-01",
-        ...(gatewayUrl && route.aiGateway?.apiToken
-          ? { "cf-aig-authorization": `Bearer ${route.aiGateway.apiToken}` }
-          : {}),
-      },
-      body: JSON.stringify({
-        model: route.model,
-        max_tokens: 800,
-        system,
-        messages: turns,
-      }),
-    },
-  );
-
-  const payload = (await response.json().catch(() => null)) as
-    | {
-        content?: Array<{ type?: string; text?: string }>;
-        error?: { message?: string };
-      }
-    | null;
-
-  if (!response.ok) {
-    throw new Error(
-      payload?.error?.message || `Anthropic request failed (${response.status})`,
-    );
-  }
-
-  return extractModelText(payload?.content) || emptyModelReply(route);
-}
-
 async function runWorkersAi(
   route: AgentChatAiRoute,
   messages: AgentChatTextMessage[],
@@ -489,25 +360,6 @@ function attachImagesToLastUserMessage<
       ? { ...message, content: contentForMessage(message) }
       : message,
   );
-}
-
-export function externalProviderGatewayUrl(
-  route: AgentChatAiRoute,
-  provider: "openai" | "anthropic",
-  path: string,
-): string | null {
-  const gateway = route.aiGateway;
-  if (
-    !gateway?.routeExternalProviders ||
-    !gateway.accountId ||
-    !gateway.gatewayId ||
-    !gateway.apiToken
-  ) {
-    return null;
-  }
-  return `https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(
-    gateway.accountId,
-  )}/${encodeURIComponent(gateway.gatewayId)}/${provider}/${path}`;
 }
 
 function extractModelText(value: unknown): string {

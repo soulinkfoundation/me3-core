@@ -79,15 +79,8 @@ test("installs hosted provider secrets before deploying the target", () => {
   const deploy = getStep("Deploy the target to the existing Worker");
   const secretWrites = workflow.match(/wrangler secret put/g) || [];
 
-  assert.equal(secretWrites.length, 2);
-  assert.match(
-    installSecret,
-    /ME3_MANAGED_OPENAI_API_KEY: \$\{\{ secrets\.ME3_MANAGED_OPENAI_API_KEY \}\}/,
-  );
-  assert.match(
-    installSecret,
-    /wrangler secret put OPENAI_API_KEY --config wrangler\.toml/,
-  );
+  assert.equal(secretWrites.length, 1);
+  assert.doesNotMatch(installSecret, /OPENAI_API_KEY/);
   assert.match(
     installSecret,
     /ME3_MANAGED_PEXELS_API_KEY: \$\{\{ secrets\.ME3_MANAGED_PEXELS_API_KEY \}\}/,

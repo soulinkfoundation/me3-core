@@ -203,9 +203,9 @@ R2 storage is not required for first install. Activate it later from Account set
 ### AI Models And Gateway
 
 - Account -> AI selects the provider and model route for the ME3 agent.
-- Workers AI uses the Cloudflare `AI` binding and does not need an API key.
-- OpenAI and Anthropic keys can be saved in Account; Core encrypts stored provider secrets and never returns them to the browser.
-- AI Gateway usage is backend-only setup. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` as Worker secrets. Set `CLOUDFLARE_AI_GATEWAY_ID` when an install should use a gateway other than Cloudflare's `default`.
+- Workers AI, OpenAI, and Anthropic model calls use the installation's Cloudflare `AI` binding and AI Gateway. Provider API keys are not used for model calls.
+- Add prepaid credits to the installation's Cloudflare AI Gateway account and enable Unified Billing. Remove any stored provider key from the gateway's default BYOK configuration so provider calls use Cloudflare billing. Set the gateway's Workers AI billing mode to Unified if Workers AI must draw from those same credits.
+- `CLOUDFLARE_AI_GATEWAY_ID` selects a gateway other than Cloudflare's `default`. `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` are used for gateway settings and usage reporting; the Worker `AI` binding authenticates model calls without them.
 - Use `/mission-control` -> AI Usage -> Configure for the Cloudflare dashboard steps.
 - To set or rotate them manually:
 
@@ -217,7 +217,7 @@ pnpm exec wrangler secret put CLOUDFLARE_API_TOKEN --config wrangler.toml
 
 #### Internal Live Model Evaluation
 
-The fixed 30-task evaluator is for explicitly internal evaluation only. It sends synthetic tasks
+The fixed 39-task evaluator is for explicitly internal evaluation only. It sends synthetic tasks
 through Core's existing provider-neutral model and tool runtime, can incur provider charges, and
 prints a metadata-only report without prompts, responses, tool arguments, owner context, or keys.
 Normal tests and builds never dispatch these live requests.
@@ -232,8 +232,8 @@ ME3_MODEL_EVAL_CONFIRM=I_UNDERSTAND_LIVE_PROVIDER_COSTS pnpm eval:models
 ```
 
 The default candidates are Gemma 4 26B and GLM 4.7 Flash for Everyday plus GLM 5.2 for Advanced.
-The optional existing Anthropic Sonnet candidate also requires
-`ME3_MODEL_EVAL_ANTHROPIC_API_KEY` and explicit inclusion in `ME3_MODEL_EVAL_CANDIDATES`.
+The optional OpenAI and Anthropic candidates use the same Cloudflare credentials
+and require explicit inclusion in `ME3_MODEL_EVAL_CANDIDATES`.
 
 ## Portable Snapshot And Clean Restore
 

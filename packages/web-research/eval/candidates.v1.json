@@ -1,15 +1,15 @@
 {
   "schemaVersion": "me3-web-research-candidates-v1",
-  "version": "2026-07-27.1",
+  "version": "2026-10-01.1",
   "pricingAsOf": "2026-07-27",
   "candidates": [
     {
-      "id": "openai-gpt-5.5-cloudflare-key-in-request",
-      "label": "OpenAI GPT-5.5 through Cloudflare with Key in Request",
+      "id": "openai-gpt-5.5-cloudflare",
+      "label": "OpenAI GPT-5.5 web search through Cloudflare Unified Billing",
       "providerId": "openai",
-      "model": "gpt-5.5",
-      "transport": "cloudflare-provider-native-openai-responses",
-      "endpoint": "https://gateway.ai.cloudflare.com/v1/{accountId}/{gatewayId}/openai/responses",
+      "model": "openai/gpt-5.5",
+      "transport": "cloudflare-unified-responses",
+      "endpoint": "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/responses",
       "role": "primary_candidate",
       "configuration": {
         "toolType": "web_search",
@@ -23,62 +23,21 @@
           "standard": "medium",
           "deep": "high"
         },
-        "maxToolCallsByDepth": { "quick": 1, "standard": 3, "deep": 5 },
+        "maxToolCallsByDepth": {
+          "quick": 1,
+          "standard": 3,
+          "deep": 5
+        },
         "maxOutputTokens": 1200,
         "promptVersion": "me3-web-research-eval-v1"
       },
       "requiredEnvironment": [
-        "OPENAI_API_KEY",
         "CLOUDFLARE_ACCOUNT_ID",
         "CLOUDFLARE_API_TOKEN"
       ],
-      "optionalEnvironment": ["CLOUDFLARE_AI_GATEWAY_ID"],
-      "pricing": {
-        "searchCallPer1000Usd": 10,
-        "inputPerMillionUsd": 5,
-        "outputPerMillionUsd": 30,
-        "unifiedBillingCreditFeePercent": 0,
-        "planningEstimateByDepthUsd": {
-          "quick": 0.06,
-          "standard": 0.1,
-          "deep": 0.13
-        }
-      },
-      "sources": [
-        "https://developers.cloudflare.com/ai-gateway/usage/providers/openai/",
-        "https://developers.cloudflare.com/ai-gateway/configuration/authentication/",
-        "https://developers.cloudflare.com/ai-gateway/configuration/manage-gateway/",
-        "https://developers.cloudflare.com/ai-gateway/observability/logging/",
-        "https://developers.openai.com/api/docs/guides/tools-web-search",
-        "https://developers.openai.com/api/docs/pricing#built-in-tools"
-      ]
-    },
-    {
-      "id": "openai-gpt-5.5-cloudflare",
-      "label": "OpenAI GPT-5.5 web search through Cloudflare Unified Billing control",
-      "providerId": "openai",
-      "model": "openai/gpt-5.5",
-      "transport": "cloudflare-unified-responses",
-      "endpoint": "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/responses",
-      "role": "transport_control",
-      "configuration": {
-        "toolType": "web_search",
-        "toolChoice": "required",
-        "includeSources": true,
-        "externalWebAccess": true,
-        "store": false,
-        "reasoningEffort": "low",
-        "searchContextSizeByDepth": {
-          "quick": "low",
-          "standard": "medium",
-          "deep": "high"
-        },
-        "maxToolCallsByDepth": { "quick": 1, "standard": 3, "deep": 5 },
-        "maxOutputTokens": 1200,
-        "promptVersion": "me3-web-research-eval-v1"
-      },
-      "requiredEnvironment": ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"],
-      "optionalEnvironment": ["CLOUDFLARE_AI_GATEWAY_ID"],
+      "optionalEnvironment": [
+        "CLOUDFLARE_AI_GATEWAY_ID"
+      ],
       "pricing": {
         "searchCallPer1000Usd": 10,
         "inputPerMillionUsd": 5,
@@ -107,13 +66,22 @@
       "role": "fallback_candidate",
       "configuration": {
         "toolType": "web_search_20250305",
-        "maxUsesByDepth": { "quick": 1, "standard": 3, "deep": 5 },
+        "maxUsesByDepth": {
+          "quick": 1,
+          "standard": 3,
+          "deep": 5
+        },
         "maxPauseTurns": 1,
         "maxOutputTokens": 1200,
         "promptVersion": "me3-web-research-eval-v1"
       },
-      "requiredEnvironment": ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"],
-      "optionalEnvironment": ["CLOUDFLARE_AI_GATEWAY_ID"],
+      "requiredEnvironment": [
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN"
+      ],
+      "optionalEnvironment": [
+        "CLOUDFLARE_AI_GATEWAY_ID"
+      ],
       "pricing": {
         "searchCallPer1000Usd": 10,
         "inputPerMillionUsd": 3,
@@ -127,81 +95,6 @@
       },
       "sources": [
         "https://developers.cloudflare.com/ai-gateway/usage/web-search/",
-        "https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool",
-        "https://platform.claude.com/docs/en/about-claude/pricing"
-      ]
-    },
-    {
-      "id": "openai-gpt-5.5-direct-control",
-      "label": "OpenAI GPT-5.5 direct transport control",
-      "providerId": "openai",
-      "model": "gpt-5.5",
-      "transport": "openai-responses",
-      "endpoint": "https://api.openai.com/v1/responses",
-      "role": "transport_control",
-      "configuration": {
-        "toolType": "web_search",
-        "toolChoice": "required",
-        "includeSources": true,
-        "externalWebAccess": true,
-        "store": false,
-        "reasoningEffort": "low",
-        "searchContextSizeByDepth": {
-          "quick": "low",
-          "standard": "medium",
-          "deep": "high"
-        },
-        "maxToolCallsByDepth": { "quick": 1, "standard": 3, "deep": 5 },
-        "maxOutputTokens": 1200,
-        "promptVersion": "me3-web-research-eval-v1"
-      },
-      "requiredEnvironment": ["OPENAI_API_KEY"],
-      "optionalEnvironment": [],
-      "pricing": {
-        "searchCallPer1000Usd": 10,
-        "inputPerMillionUsd": 5,
-        "outputPerMillionUsd": 30,
-        "unifiedBillingCreditFeePercent": 0,
-        "planningEstimateByDepthUsd": {
-          "quick": 0.06,
-          "standard": 0.1,
-          "deep": 0.13
-        }
-      },
-      "sources": [
-        "https://developers.openai.com/api/docs/guides/tools-web-search",
-        "https://developers.openai.com/api/docs/pricing#built-in-tools"
-      ]
-    },
-    {
-      "id": "anthropic-sonnet-4.6-direct-control",
-      "label": "Anthropic Claude Sonnet 4.6 direct transport control",
-      "providerId": "anthropic",
-      "model": "claude-sonnet-4-6",
-      "transport": "anthropic-messages",
-      "endpoint": "https://api.anthropic.com/v1/messages",
-      "role": "transport_control",
-      "configuration": {
-        "toolType": "web_search_20250305",
-        "maxUsesByDepth": { "quick": 1, "standard": 3, "deep": 5 },
-        "maxPauseTurns": 1,
-        "maxOutputTokens": 1200,
-        "promptVersion": "me3-web-research-eval-v1"
-      },
-      "requiredEnvironment": ["ANTHROPIC_API_KEY"],
-      "optionalEnvironment": [],
-      "pricing": {
-        "searchCallPer1000Usd": 10,
-        "inputPerMillionUsd": 3,
-        "outputPerMillionUsd": 15,
-        "unifiedBillingCreditFeePercent": 0,
-        "planningEstimateByDepthUsd": {
-          "quick": 0.07,
-          "standard": 0.13,
-          "deep": 0.18
-        }
-      },
-      "sources": [
         "https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool",
         "https://platform.claude.com/docs/en/about-claude/pricing"
       ]

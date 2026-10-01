@@ -9,11 +9,9 @@ afterEach(() => {
 describe("Worker public web research adapter", () => {
   it("uses the OpenAI Responses web-search tool and normalizes source citations", async () => {
     let requestBody: Record<string, unknown> | null = null;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        return Response.json({
+    const aiRun = vi.fn(async (_model: string, input: unknown) => {
+        requestBody = input as Record<string, unknown>;
+        return {
           id: "response-123",
           output: [
             {
@@ -36,14 +34,13 @@ describe("Worker public web research adapter", () => {
             },
           ],
           usage: { input_tokens: 12, output_tokens: 9 },
-        });
-      }),
-    );
+        };
+      });
 
     const service = createWebResearchToolServices(
       {
         DB: {} as D1Database,
-        OPENAI_API_KEY: "openai-test-key",
+        AI: { run: aiRun } as unknown as Ai,
       } as Env,
       "owner",
     );
@@ -54,9 +51,14 @@ describe("Worker public web research adapter", () => {
     });
 
     expect(requestBody).toMatchObject({
-      model: "gpt-4o-mini",
+      model: "openai/gpt-4o-mini",
       tools: [{ type: "web_search_preview" }],
     });
+    expect(aiRun).toHaveBeenCalledWith(
+      "openai/gpt-4o-mini",
+      expect.any(Object),
+      { gateway: { id: "default" } },
+    );
     expect(result).toMatchObject({
       status: "success",
       answer: "Cloudflare released Browser Run [1].",

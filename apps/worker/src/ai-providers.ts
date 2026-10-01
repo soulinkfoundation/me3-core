@@ -1,14 +1,10 @@
-import type { DbAiModelDefault, DbAiProviderCredential, Env } from "./types";
+import type { DbAiModelDefault, Env } from "./types";
 import {
   DEFAULT_OPENAI_IMAGE_GENERATION_MODEL,
   DEFAULT_WORKERS_AI_IMAGE_GENERATION_MODEL,
   normalizeMe3DeploymentMode,
 } from "@me3-core/plugin-agent-chat";
-import {
-  INSTALL_ENCRYPTION_KEY_NAME,
-  getOrCreateInstallEncryptionKey,
-  hasInstallEncryptionKey,
-} from "./install-secrets";
+import { hasInstallEncryptionKey } from "./install-secrets";
 import {
   getAiGatewayRuntimeConfig,
   type AiGatewayRuntimeConfig,
@@ -124,11 +120,11 @@ const AI_PROVIDER_ADAPTERS: readonly AiProviderAdapter[] = [
     id: "openai",
     label: "OpenAI",
     description:
-      "Uses OpenAI for chat, extraction, reasoning, and image-generation routes.",
-    setupLabel: "OpenAI API key",
-    supportsApiKey: true,
-    secretLabel: "API key",
-    secretEnv: "OPENAI_API_KEY",
+      "Uses OpenAI models through Cloudflare AI Gateway and Cloudflare billing.",
+    setupLabel: "Cloudflare AI binding",
+    supportsApiKey: false,
+    secretLabel: null,
+    bindingEnv: "AI",
     recommendedModels: {
       default: "gpt-4o",
       chat: "gpt-4o",
@@ -141,11 +137,11 @@ const AI_PROVIDER_ADAPTERS: readonly AiProviderAdapter[] = [
     id: "anthropic",
     label: "Anthropic",
     description:
-      "Stores an owner-supplied Anthropic key for Claude chat and reasoning routes.",
-    setupLabel: "Anthropic API key",
-    supportsApiKey: true,
-    secretLabel: "API key",
-    secretEnv: "ANTHROPIC_API_KEY",
+      "Uses Anthropic models through Cloudflare AI Gateway and Cloudflare billing.",
+    setupLabel: "Cloudflare AI binding",
+    supportsApiKey: false,
+    secretLabel: null,
+    bindingEnv: "AI",
     recommendedModels: {
       default: "claude-sonnet-4-6",
       chat: "claude-sonnet-4-6",
@@ -229,11 +225,10 @@ export class AiSettingsInputError extends Error {
 }
 
 export async function getAiSettings(env: Env, ownerId: string): Promise<AiSettingsResponse> {
-  const credentials = await listAiCredentials(env, ownerId);
   const storedDefaults = await listAiModelDefaults(env, ownerId);
   const encryptionConfigured = await hasInstallEncryptionKey(env);
   const providers = AI_PROVIDER_ADAPTERS.map((adapter) =>
-    serializeProvider(adapter, credentials.get(adapter.id) || null, env),
+    serializeProvider(adapter, env),
   );
   const defaultRoute = resolveRoute(
     "default",
@@ -321,7 +316,7 @@ export async function hasConfiguredAiProvider(env: Env, ownerId: string): Promis
     const settings = await getAiSettings(env, ownerId);
     return settings.providers.some((provider) => provider.configured);
   } catch {
-    return Boolean(env.AI || env.OPENAI_API_KEY || env.ANTHROPIC_API_KEY);
+    return Boolean(env.AI);
   }
 }
 
@@ -351,16 +346,15 @@ export async function generateAiText(
       ? Math.max(64, Math.min(Math.round(input.maxTokens), 4000))
       : 1200;
 
-  const text =
-    route.providerId === "workers-ai"
-      ? await runWorkersAiText(route, input.messages, { temperature, maxTokens })
-      : route.providerId === "openai"
-        ? await runOpenAiText(route, input.messages, { temperature, maxTokens })
-        : await runAnthropicText(route, input.messages, { temperature, maxTokens });
+  const text = await runWorkersAiText(route, input.messages, { temperature, maxTokens });
 
   return {
     text,
-    providerId: route.providerId,
+    providerId: route.model.startsWith("openai/")
+      ? "openai"
+      : route.model.startsWith("anthropic/")
+        ? "anthropic"
+        : "workers-ai",
     model: route.model,
   };
 }
@@ -393,35 +387,7 @@ async function applyProviderUpdate(
     return;
   }
 
-  if (!adapter.supportsApiKey) {
-    throw new AiSettingsInputError(`${adapter.label} does not accept an API key`);
-  }
-
-  if (typeof update.apiKey !== "string") {
-    throw new AiSettingsInputError("API key must be a string");
-  }
-
-  const apiKey = update.apiKey.trim();
-  if (!apiKey) return;
-
-  const installKey = await getOrCreateInstallEncryptionKey(env);
-  const encryptedApiKey = await encryptProviderSecret(apiKey, installKey);
-  const now = new Date().toISOString();
-
-  await env.DB.prepare(
-    `INSERT INTO ai_provider_credentials (
-       user_id, provider_id, encrypted_api_key, api_key_hint,
-       api_key_updated_at, created_at, updated_at
-     )
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(user_id, provider_id) DO UPDATE SET
-       encrypted_api_key = excluded.encrypted_api_key,
-       api_key_hint = excluded.api_key_hint,
-       api_key_updated_at = excluded.api_key_updated_at,
-       updated_at = excluded.updated_at`,
-  )
-    .bind(ownerId, providerId, encryptedApiKey, getSecretHint(apiKey), now, now, now)
-    .run();
+  throw new AiSettingsInputError(`${adapter.label} does not accept an API key`);
 }
 
 async function applyRouteUpdate(
@@ -468,34 +434,6 @@ async function applyRouteUpdate(
     .run();
 }
 
-async function listAiCredentials(
-  env: Env,
-  ownerId: string,
-): Promise<Map<AiProviderId, DbAiProviderCredential>> {
-  let rows: D1Result<DbAiProviderCredential>;
-  try {
-    rows = await env.DB.prepare(
-      `SELECT user_id, provider_id, encrypted_api_key, api_key_hint,
-              api_key_updated_at, created_at, updated_at
-       FROM ai_provider_credentials
-       WHERE user_id = ?`,
-    )
-      .bind(ownerId)
-      .all<DbAiProviderCredential>();
-  } catch (error) {
-    if (isMissingAiSettingsTableError(error)) return new Map();
-    throw error;
-  }
-
-  return new Map(
-    (rows.results || [])
-      .map((row) => [normalizeProviderId(row.provider_id), row] as const)
-      .filter((entry): entry is readonly [AiProviderId, DbAiProviderCredential] =>
-        Boolean(entry[0]),
-      ),
-  );
-}
-
 async function listAiModelDefaults(
   env: Env,
   ownerId: string,
@@ -523,22 +461,10 @@ async function listAiModelDefaults(
   );
 }
 
-function serializeProvider(
-  adapter: AiProviderAdapter,
-  credential: DbAiProviderCredential | null,
-  env: Env,
-): AiProviderSettingsRecord {
+function serializeProvider(adapter: AiProviderAdapter, env: Env): AiProviderSettingsRecord {
   const hasBinding = Boolean(adapter.bindingEnv && env[adapter.bindingEnv]);
-  const hasEnvSecret = Boolean(adapter.secretEnv && env[adapter.secretEnv]);
-  const hasStoredSecret = Boolean(credential?.encrypted_api_key);
-  const configured = hasBinding || hasEnvSecret || hasStoredSecret;
-  const source = hasBinding
-    ? "binding"
-    : hasStoredSecret
-      ? "stored"
-      : hasEnvSecret
-        ? "environment"
-        : "not_configured";
+  const configured = hasBinding;
+  const source = hasBinding ? "binding" : "not_configured";
 
   return {
     id: adapter.id,
@@ -551,8 +477,8 @@ function serializeProvider(
     setupRequired: !configured,
     statusLabel: configured ? "Ready" : "Setup required",
     source,
-    keyHint: credential?.api_key_hint || null,
-    keyUpdatedAt: credential?.api_key_updated_at || null,
+    keyHint: null,
+    keyUpdatedAt: null,
     recommendedModels: adapter.recommendedModels,
   };
 }
@@ -672,64 +598,28 @@ async function resolveTextGenerationRoute(
   const model = selectedModelName || defaultRoute.model;
   if (!model) throw new Error("AI model is not configured.");
 
-  const apiKey =
-    providerId === "openai"
-      ? env.OPENAI_API_KEY || (await getStoredProviderApiKey(env, ownerId, providerId))
-      : providerId === "anthropic"
-        ? env.ANTHROPIC_API_KEY || (await getStoredProviderApiKey(env, ownerId, providerId))
-        : null;
+  if (!env.AI) throw new Error("Cloudflare AI binding is not configured.");
 
-  if (providerId === "workers-ai" && !env.AI) {
-    throw new Error("Workers AI binding is not configured.");
-  }
-  if ((providerId === "openai" || providerId === "anthropic") && !apiKey) {
-    throw new Error(`${providerId} API key is not configured.`);
-  }
+  const configuredGateway = await getAiGatewayRuntimeConfig(env, ownerId).catch(() => null);
+  const aiGateway = {
+    accountId: configuredGateway?.accountId ?? null,
+    gatewayId: normalizeMe3DeploymentMode(env.ME3_DEPLOYMENT_MODE) === "managed"
+      ? env.CLOUDFLARE_AI_GATEWAY_ID?.trim() || "default"
+      : configuredGateway?.gatewayId || "default",
+    apiToken: configuredGateway?.apiToken ?? null,
+    routeWorkersAi: true,
+    routeExternalProviders: false,
+  };
 
-  const aiGateway = await getAiGatewayRuntimeConfig(env, ownerId).catch(() => null);
-
-  return { providerId, model, apiKey, ai: env.AI || null, aiGateway };
-}
-
-async function getStoredProviderApiKey(
-  env: Env,
-  ownerId: string,
-  providerId: Exclude<AiProviderId, "executor" | "workers-ai">,
-): Promise<string | null> {
-  const credentials = await listAiCredentials(env, ownerId);
-  const encrypted = credentials.get(providerId)?.encrypted_api_key || null;
-  if (!encrypted) return null;
-  const installKey = await getInstallEncryptionKey(env);
-  return installKey ? decryptProviderSecret(encrypted, installKey) : null;
-}
-
-async function getInstallEncryptionKey(env: Env): Promise<string | null> {
-  if (env.TOKEN_ENCRYPTION_KEY) return env.TOKEN_ENCRYPTION_KEY;
-  try {
-    const row = await env.DB.prepare("SELECT value FROM install_secrets WHERE name = ?")
-      .bind(INSTALL_ENCRYPTION_KEY_NAME)
-      .first<{ value: string }>();
-    return row?.value || null;
-  } catch {
-    return null;
-  }
-}
-
-async function decryptProviderSecret(
-  encrypted: string,
-  installKey: string,
-): Promise<string | null> {
-  const parts = encrypted.split(".");
-  if (parts.length !== 3 || parts[0] !== "v1") return null;
-  const iv = decodeBase64UrlBytes(parts[1]);
-  const ciphertext = decodeBase64UrlBytes(parts[2]);
-  const key = await importSecretCryptoKey(installKey, ["decrypt"]);
-  const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: toArrayBuffer(iv) },
-    key,
-    toArrayBuffer(ciphertext),
-  );
-  return new TextDecoder().decode(plaintext);
+  return {
+    providerId: "workers-ai",
+    model: providerId === "workers-ai" || model.startsWith(`${providerId}/`)
+      ? model
+      : `${providerId}/${model}`,
+    apiKey: null,
+    ai: env.AI,
+    aiGateway,
+  };
 }
 
 async function runWorkersAiText(
@@ -748,11 +638,16 @@ async function runWorkersAiText(
       : undefined;
   const result = await route.ai.run(
     route.model,
-    {
-      messages,
-      temperature: options.temperature,
-      max_tokens: options.maxTokens,
-    },
+    route.model.startsWith("anthropic/")
+      ? {
+          system: messages.filter((message) => message.role === "system").map((message) => message.content).join("\n\n"),
+          messages: messages.filter((message) => message.role !== "system"),
+          max_tokens: options.maxTokens,
+          temperature: options.temperature,
+        }
+      : isOpenAiReasoningModel(route.model.replace(/^openai\//, ""))
+        ? { messages, max_completion_tokens: options.maxTokens }
+        : { messages, temperature: options.temperature, max_tokens: options.maxTokens },
     requestOptions,
   );
   const text = extractAiText(result);
@@ -760,119 +655,9 @@ async function runWorkersAiText(
   return text;
 }
 
-async function runOpenAiText(
-  route: ResolvedTextGenerationRoute,
-  messages: AiTextMessage[],
-  options: { temperature: number; maxTokens: number },
-): Promise<string> {
-  if (!route.apiKey) throw new Error("OpenAI API key is not configured.");
-  const gatewayUrl = externalProviderGatewayUrl(route, "openai", "chat/completions");
-  const body = buildOpenAiChatCompletionBody(route.model, messages, options);
-  const response = await fetch(gatewayUrl || "https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${route.apiKey}`,
-      ...(gatewayUrl && route.aiGateway?.apiToken
-        ? { "cf-aig-authorization": `Bearer ${route.aiGateway.apiToken}` }
-        : {}),
-    },
-    body: JSON.stringify(body),
-  });
-  const payload = (await response.json().catch(() => null)) as
-    | { choices?: Array<{ message?: { content?: unknown; refusal?: unknown } }>; error?: { message?: string } }
-    | null;
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `OpenAI request failed (${response.status})`);
-  }
-  const text =
-    extractAiText(payload?.choices?.[0]?.message?.content) ||
-    extractAiText(payload?.choices?.[0]?.message?.refusal);
-  if (!text) throw new Error(`OpenAI (${route.model}) returned an empty reply.`);
-  return text;
-}
-
-function buildOpenAiChatCompletionBody(
-  model: string,
-  messages: AiTextMessage[],
-  options: { temperature: number; maxTokens: number },
-): Record<string, unknown> {
-  const usesReasoningChatParameters = isOpenAiReasoningModel(model);
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    [usesReasoningChatParameters ? "max_completion_tokens" : "max_tokens"]: options.maxTokens,
-  };
-
-  if (!usesReasoningChatParameters) {
-    body.temperature = options.temperature;
-  }
-
-  return body;
-}
-
 function isOpenAiReasoningModel(model: string): boolean {
   const normalized = model.trim().toLowerCase();
   return /^gpt-5(?:[.-]|$)/.test(normalized) || /^o\d(?:[.-]|$)/.test(normalized);
-}
-
-async function runAnthropicText(
-  route: ResolvedTextGenerationRoute,
-  messages: AiTextMessage[],
-  options: { temperature: number; maxTokens: number },
-): Promise<string> {
-  if (!route.apiKey) throw new Error("Anthropic API key is not configured.");
-  const system = messages.find((message) => message.role === "system")?.content || "";
-  const turns = messages
-    .filter((message) => message.role !== "system")
-    .map((message) => ({ role: message.role, content: message.content }));
-  const gatewayUrl = externalProviderGatewayUrl(route, "anthropic", "v1/messages");
-  const response = await fetch(gatewayUrl || "https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": route.apiKey,
-      "anthropic-version": "2023-06-01",
-      ...(gatewayUrl && route.aiGateway?.apiToken
-        ? { "cf-aig-authorization": `Bearer ${route.aiGateway.apiToken}` }
-        : {}),
-    },
-    body: JSON.stringify({
-      model: route.model,
-      max_tokens: options.maxTokens,
-      temperature: options.temperature,
-      system,
-      messages: turns,
-    }),
-  });
-  const payload = (await response.json().catch(() => null)) as
-    | { content?: Array<{ type?: string; text?: string }>; error?: { message?: string } }
-    | null;
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `Anthropic request failed (${response.status})`);
-  }
-  const text = extractAiText(payload?.content);
-  if (!text) throw new Error(`Anthropic (${route.model}) returned an empty reply.`);
-  return text;
-}
-
-function externalProviderGatewayUrl(
-  route: ResolvedTextGenerationRoute,
-  provider: "openai" | "anthropic",
-  path: string,
-): string | null {
-  const gateway = route.aiGateway;
-  if (
-    !gateway?.routeExternalProviders ||
-    !gateway.accountId ||
-    !gateway.gatewayId ||
-    !gateway.apiToken
-  ) {
-    return null;
-  }
-  return `https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(
-    gateway.accountId,
-  )}/${encodeURIComponent(gateway.gatewayId)}/${provider}/${path}`;
 }
 
 function extractAiText(value: unknown): string {
@@ -890,62 +675,6 @@ function extractAiText(value: unknown): string {
     extractAiText(record.result) ||
     extractAiText(record.output)
   );
-}
-
-function getSecretHint(secret: string): string {
-  return `***${secret.slice(-4)}`;
-}
-
-async function encryptProviderSecret(secret: string, installKey: string): Promise<string> {
-  const iv = new Uint8Array(12);
-  crypto.getRandomValues(iv);
-  const key = await importSecretCryptoKey(installKey, ["encrypt"]);
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    new TextEncoder().encode(secret),
-  );
-
-  return `v1.${encodeBase64Url(iv)}.${encodeBase64Url(ciphertext)}`;
-}
-
-async function importSecretCryptoKey(
-  installKey: string,
-  usages: KeyUsage[],
-): Promise<CryptoKey> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(installKey),
-  );
-
-  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, usages);
-}
-
-function encodeBase64Url(value: ArrayBuffer | Uint8Array): string {
-  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function decodeBase64UrlBytes(value: string): Uint8Array {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(
-    Math.ceil(value.length / 4) * 4,
-    "=",
-  );
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -143,6 +143,16 @@ const AI_MODEL_CAPABILITY_RECORDS: readonly AiModelCapabilityRecord[] = [
       formats: ["png"],
     },
   },
+  {
+    providerId: "workers-ai",
+    model: "openai/gpt-image-2",
+    capabilities: ["image_generation"],
+    image: {
+      generation: true,
+      sizes: ["1024x1024"],
+      formats: ["png"],
+    },
+  },
 ];
 
 export function modelSupportsCapability(

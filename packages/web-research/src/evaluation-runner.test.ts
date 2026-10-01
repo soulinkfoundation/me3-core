@@ -36,80 +36,34 @@ type TestBlindReviewEntry = Record<string, unknown> & {
 };
 
 describe("web research evaluation provider normalization", () => {
-  it("routes an OpenAI key through the named gateway without payload logs", () => {
-    const candidate = candidateCatalog.candidates.find(
-      (item) => item.id === "openai-gpt-5.5-cloudflare-key-in-request",
-    )!;
+  it("uses Cloudflare credentials and the named gateway without payload logs", () => {
+    const candidate = candidateCatalog.candidates.find((item) => item.id === "openai-gpt-5.5-cloudflare")!;
     const environment = {
-      OPENAI_API_KEY: "openai-test-key",
       CLOUDFLARE_ACCOUNT_ID: "account-id",
       CLOUDFLARE_API_TOKEN: "cloudflare-test-token",
       CLOUDFLARE_AI_GATEWAY_ID: "gateway-id",
     };
-
     expect(resolveCandidateEndpoint(candidate, environment)).toBe(
-      "https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/openai/responses",
+      "https://api.cloudflare.com/client/v4/accounts/account-id/ai/v1/responses",
     );
-    expect(openAiCandidateHeaders(candidate, 12_345, environment)).toEqual({
-      Authorization: "Bearer openai-test-key",
-      "cf-aig-authorization": "Bearer cloudflare-test-token",
-      "Content-Type": "application/json",
-      "cf-aig-skip-cache": "true",
-      "cf-aig-collect-log": "true",
-      "cf-aig-collect-log-payload": "false",
-      "cf-aig-max-attempts": "1",
-      "cf-aig-request-timeout": "12345",
-    });
-  });
-
-  it("uses Cloudflare's default gateway when no gateway ID is configured", () => {
-    const candidate = candidateCatalog.candidates.find(
-      (item) => item.id === "openai-gpt-5.5-cloudflare-key-in-request",
-    )!;
-
-    expect(
-      resolveCandidateEndpoint(candidate, {
-        CLOUDFLARE_ACCOUNT_ID: "account-id",
-      }),
-    ).toBe(
-      "https://gateway.ai.cloudflare.com/v1/account-id/default/openai/responses",
-    );
-  });
-
-  it("refuses to send provider credentials to a catalog-defined endpoint", () => {
-    const candidate = candidateCatalog.candidates.find(
-      (item) => item.id === "openai-gpt-5.5-cloudflare-key-in-request",
-    )!;
-
-    expect(() =>
-      resolveCandidateEndpoint(
-        { ...candidate, endpoint: "https://malicious.example/responses" },
-        { CLOUDFLARE_ACCOUNT_ID: "account-id" },
-      ),
-    ).toThrow("unsafe provider-native OpenAI endpoint");
-  });
-
-  it("keeps the Unified Billing authorization contract separate", () => {
-    const candidate = candidateCatalog.candidates.find(
-      (item) => item.id === "openai-gpt-5.5-cloudflare",
-    )!;
-    const headers = openAiCandidateHeaders(candidate, 10_000, {
-      CLOUDFLARE_API_TOKEN: "cloudflare-test-token",
-      CLOUDFLARE_AI_GATEWAY_ID: "gateway-id",
-    });
-
-    expect(headers).toMatchObject({
+    expect(openAiCandidateHeaders(candidate, 12_345, environment)).toMatchObject({
       Authorization: "Bearer cloudflare-test-token",
       "cf-aig-gateway-id": "gateway-id",
-      "cf-aig-collect-log": "true",
       "cf-aig-collect-log-payload": "false",
     });
-    expect(headers).not.toHaveProperty("cf-aig-authorization");
+  });
+
+  it("rejects a catalog endpoint outside the Cloudflare API", () => {
+    const candidate = candidateCatalog.candidates.find((item) => item.id === "openai-gpt-5.5-cloudflare")!;
+    expect(() => resolveCandidateEndpoint(
+      { ...candidate, endpoint: "https://malicious.example/responses" },
+      { CLOUDFLARE_ACCOUNT_ID: "account-id" },
+    )).toThrow("unsafe Cloudflare endpoint");
   });
 
   it("captures Cloudflare's non-secret gateway log correlation ID", () => {
     const candidate = candidateCatalog.candidates.find(
-      (item) => item.id === "openai-gpt-5.5-cloudflare-key-in-request",
+      (item) => item.id === "openai-gpt-5.5-cloudflare",
     )!;
     const observation = {
       providerMetadata: {
@@ -670,8 +624,8 @@ describe("web research evaluation runner policy", () => {
     )!;
     const candidates = candidateCatalog.candidates.filter((candidate) =>
       [
-        "openai-gpt-5.5-direct-control",
-        "anthropic-sonnet-4.6-direct-control",
+        "openai-gpt-5.5-cloudflare",
+        "anthropic-sonnet-4.6-cloudflare",
       ].includes(candidate.id),
     );
     const observations = candidates.map((candidate, index) => {
@@ -817,7 +771,10 @@ describe("web research evaluation runner policy", () => {
         selectionEligible: false,
         primaryCandidateId: null,
         fallbackCandidateId: null,
-        rankedCandidateIds: [],
+        rankedCandidateIds: [
+          "openai-gpt-5.5-cloudflare",
+          "anthropic-sonnet-4.6-cloudflare",
+        ],
       });
 
       await writeJson("blind-review-packet.json", {

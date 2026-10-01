@@ -88,10 +88,10 @@ async function runWebSearch(
   const gateway = env.AI
     ? await getAiGatewayRuntimeConfig(env, userId).catch(() => null)
     : null;
-  const gatewayId = gateway?.gatewayId || (managed && env.AI ? "default" : null);
-  const gatewayReady = Boolean(
-    env.AI && gatewayId && (gateway?.routeWorkersAi || managed),
-  );
+  const gatewayId = managed
+    ? env.CLOUDFLARE_AI_GATEWAY_ID?.trim() || "default"
+    : gateway?.gatewayId || (env.AI ? "default" : null);
+  const gatewayReady = Boolean(env.AI && gatewayId);
 
   try {
     if (gatewayReady) {
@@ -109,32 +109,9 @@ async function runWebSearch(
       });
     }
 
-    const provider = searchProviderForModel(model, env);
-    if (provider === "openai" && env.OPENAI_API_KEY) {
-      const payload = await runOpenAiSearch(env.OPENAI_API_KEY, model, request, context);
-      return normalizeSearchPayload(payload, request, {
-        startedAt,
-        model,
-        providerRequestId: extractRequestId(payload),
-      });
-    }
-    if (provider === "anthropic" && env.ANTHROPIC_API_KEY) {
-      const payload = await runAnthropicSearch(
-        env.ANTHROPIC_API_KEY,
-        model,
-        request,
-        context,
-      );
-      return normalizeSearchPayload(payload, request, {
-        startedAt,
-        model,
-        providerRequestId: extractRequestId(payload),
-      });
-    }
-
     return searchFailure(
       "not_configured",
-      "Public web search needs Cloudflare AI Gateway or an OpenAI/Anthropic API key.",
+      "Public web search needs the Cloudflare AI binding.",
       startedAt,
       model,
     );
@@ -156,12 +133,12 @@ async function runGatewaySearch(
   context?: WebResearchExecutionContext,
 ): Promise<unknown> {
   if (!env.AI) throw new Error("Workers AI binding is not configured.");
-  const provider = searchProviderForModel(model, env);
+  const provider = searchProviderForModel(model);
   const requestBody =
     provider === "anthropic"
       ? anthropicSearchBody(model, request)
       : openAiSearchBody(model, request);
-  return env.AI.run(model, requestBody, {
+  return env.AI.run(model.includes("/") ? model : `${provider}/${model}`, requestBody, {
     gateway: {
       id: gatewayId,
       ...(context?.requestId
@@ -174,57 +151,6 @@ async function runGatewaySearch(
         : {}),
     },
   });
-}
-
-async function runOpenAiSearch(
-  apiKey: string,
-  model: string,
-  request: WebResearchRequest,
-  context?: WebResearchExecutionContext,
-): Promise<unknown> {
-  const response = await fetchWithTimeout(
-    "https://api.openai.com/v1/responses",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(openAiSearchBody(stripProviderPrefix(model), request)),
-    },
-    context?.signal,
-  );
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(providerErrorMessage(payload, `OpenAI web search failed (${response.status})`));
-  }
-  return payload;
-}
-
-async function runAnthropicSearch(
-  apiKey: string,
-  model: string,
-  request: WebResearchRequest,
-  context?: WebResearchExecutionContext,
-): Promise<unknown> {
-  const response = await fetchWithTimeout(
-    "https://api.anthropic.com/v1/messages",
-    {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(anthropicSearchBody(stripProviderPrefix(model), request)),
-    },
-    context?.signal,
-  );
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(providerErrorMessage(payload, `Anthropic web search failed (${response.status})`));
-  }
-  return payload;
 }
 
 function openAiSearchBody(
@@ -815,27 +741,16 @@ function isManagedInstallation(env: Env): boolean {
   return env.ME3_DEPLOYMENT_MODE?.trim().toLowerCase() === "managed";
 }
 
-function searchProviderForModel(model: string, env: Env): "openai" | "anthropic" {
+function searchProviderForModel(model: string): "openai" | "anthropic" {
   const prefix = model.split("/", 1)[0]?.toLowerCase();
-  if (prefix === "anthropic") return "anthropic";
+  if (prefix === "anthropic" || prefix?.startsWith("claude-")) return "anthropic";
   if (prefix === "openai") return "openai";
-  if (env.ANTHROPIC_API_KEY && !env.OPENAI_API_KEY) return "anthropic";
   return "openai";
-}
-
-function stripProviderPrefix(model: string): string {
-  return model.includes("/") ? model.slice(model.indexOf("/") + 1) : model;
 }
 
 function extractRequestId(payload: unknown): string | null {
   if (!isRecord(payload)) return null;
   return textValue(payload.id) || textValue(payload.request_id) || null;
-}
-
-function providerErrorMessage(payload: unknown, fallback: string): string {
-  if (!isRecord(payload)) return fallback;
-  const error = isRecord(payload.error) ? payload.error : null;
-  return textValue(error?.message) || textValue(payload.message) || fallback;
 }
 
 function firstText(value: unknown): string {

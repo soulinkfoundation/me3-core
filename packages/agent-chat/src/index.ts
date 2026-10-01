@@ -688,8 +688,6 @@ type CoreAgentChatEnv = {
   };
   SITE_ASSETS?: R2Like;
   ENVIRONMENT?: string;
-  OPENAI_API_KEY?: string;
-  ANTHROPIC_API_KEY?: string;
   PEXELS_API_KEY?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_AI_GATEWAY_ID?: string;
@@ -790,11 +788,6 @@ type OwnerProfileRow = {
   timezone: string | null;
   locale?: string | null;
   assistant_name?: string | null;
-};
-
-type AiCredentialRow = {
-  provider_id: string;
-  encrypted_api_key: string | null;
 };
 
 type AiGatewaySettingsRow = {
@@ -4487,10 +4480,8 @@ async function resolveAiRoute(
     storedProvider ||
     envProvider ||
     (envModel ? "workers-ai" : null) ||
-    (env.OPENAI_API_KEY ? "openai" : null) ||
-    (env.ANTHROPIC_API_KEY ? "anthropic" : null) ||
     (env.AI ? "workers-ai" : "workers-ai");
-  const model =
+  const selectedRuntimeModel =
     (managedEveryday
       ? managedAiRuntimeModel(
           managedPolicy?.defaultModel || MANAGED_DEFAULT_MODEL,
@@ -4500,23 +4491,12 @@ async function resolveAiRoute(
     normalizeModel(stored?.model) ||
     envModel ||
     defaultModelForProvider(providerId);
+  const model = cloudflareModel(providerId, selectedRuntimeModel);
   const backupModel =
-    providerId === "workers-ai"
+    providerId === "workers-ai" || normalizeMe3DeploymentMode(env.ME3_DEPLOYMENT_MODE) === "managed"
       ? normalizeModel(env.ME3_AI_CHAT_BACKUP_MODEL) ||
         (model !== DEFAULT_WORKERS_AI_BACKUP_MODEL ? DEFAULT_WORKERS_AI_BACKUP_MODEL : null)
       : null;
-  const apiKey =
-    providerId === "openai"
-      ? env.OPENAI_API_KEY ||
-        (rawModelSelectionAllowed
-          ? await getStoredApiKey(env, ownerId, providerId)
-          : null)
-      : providerId === "anthropic"
-        ? env.ANTHROPIC_API_KEY ||
-          (rawModelSelectionAllowed
-            ? await getStoredApiKey(env, ownerId, providerId)
-            : null)
-        : null;
   const configuredAiGateway = await getAiGatewayRuntimeConfig(env, ownerId).catch(
     () => null,
   );
@@ -4526,30 +4506,31 @@ async function resolveAiRoute(
   // gateway explicit is important because per-request timeout/retry policy is
   // ignored when the third argument to env.AI.run() is omitted.
   const aiGateway =
-    managedEveryday && env.AI
+    env.AI
       ? {
           accountId: configuredAiGateway?.accountId ?? null,
           gatewayId:
-            configuredAiGateway?.gatewayId || DEFAULT_AI_GATEWAY_ID,
+            normalizeMe3DeploymentMode(env.ME3_DEPLOYMENT_MODE) === "managed"
+              ? normalizeEnvGatewayId(env.CLOUDFLARE_AI_GATEWAY_ID) || DEFAULT_AI_GATEWAY_ID
+              : configuredAiGateway?.gatewayId || DEFAULT_AI_GATEWAY_ID,
           apiToken: configuredAiGateway?.apiToken ?? null,
           routeWorkersAi: true,
-          routeExternalProviders:
-            configuredAiGateway?.routeExternalProviders ?? false,
+          routeExternalProviders: false,
         }
       : configuredAiGateway;
   const managedBudgetExceeded = await isManagedEverydayBudgetExceeded(
     env,
     ownerId,
-    providerId,
+    "workers-ai",
     model,
   );
   const routedModel = managedBudgetExceeded && backupModel ? backupModel : model;
 
   return {
-    providerId,
+    providerId: "workers-ai",
     model: routedModel,
     backupModel: managedBudgetExceeded ? null : backupModel,
-    apiKey,
+    apiKey: null,
     ai: env.AI || null,
     aiGateway,
     aiGatewayRequestPolicy: managedEveryday
@@ -4558,12 +4539,9 @@ async function resolveAiRoute(
     recordUsage:
       normalizeMe3DeploymentMode(env.ME3_DEPLOYMENT_MODE) === "managed"
         ? ({ model: usedModel, usage }) =>
-            recordManagedEverydayUsage(env.DB, ownerId, providerId, usedModel, usage)
+            recordManagedEverydayUsage(env.DB, ownerId, "workers-ai", usedModel, usage)
         : undefined,
-    configured:
-      providerId === "workers-ai"
-        ? Boolean(env.AI && routedModel)
-        : Boolean(apiKey && routedModel),
+    configured: Boolean(env.AI && routedModel),
   };
 }
 
@@ -4580,6 +4558,7 @@ const MANAGED_AI_FALLBACK_MODELS = ["zai-org/glm-4.7-flash"] as const;
 const MANAGED_AI_IMAGE_MODELS = [
   "black-forest-labs/flux-2-klein-4b",
   DEFAULT_OPENAI_IMAGE_GENERATION_MODEL,
+  `openai/${DEFAULT_OPENAI_IMAGE_GENERATION_MODEL}`,
 ] as const;
 const MANAGED_AI_BILLABLE_TEXT_MODELS = [...new Set<string>([
   ...MANAGED_AI_MODELS,
@@ -4665,7 +4644,7 @@ async function isManagedEverydayBudgetExceeded(
          AND (
            (kind = 'text' AND lower(replace(model, '@cf/', '')) IN (${MANAGED_AI_BILLABLE_TEXT_MODELS.map(() => "?").join(", ")}))
            OR
-           (kind = 'image' AND lower(replace(model, '@cf/', '')) IN (?, ?))
+           (kind = 'image' AND lower(replace(model, '@cf/', '')) IN (${MANAGED_AI_IMAGE_MODELS.map(() => "?").join(", ")}))
          )
          AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')`,
     )
@@ -4792,20 +4771,10 @@ async function resolveOwnerAiRoute(
     selectedModelName ||
     normalizeModel(stored?.model) ||
     defaultModelForProvider(providerId);
-  const apiKey =
-    providerId === "openai" || providerId === "anthropic"
-      ? await getStoredApiKey(env, ownerId, providerId)
-      : null;
-
-  return {
-    providerId,
-    model,
-    backupModel: null,
-    apiKey,
-    ai: null,
-    aiGateway: null,
-    configured: Boolean(apiKey && model),
-  };
+  if (await isManagedEverydayBudgetExceeded(env, ownerId, "workers-ai", cloudflareModel(providerId, model))) {
+    return buildAiRoute(env, ownerId, "workers-ai", DEFAULT_WORKERS_AI_BACKUP_MODEL, null);
+  }
+  return buildAiRoute(env, ownerId, providerId, model, null);
 }
 
 async function resolveImageGenerationRoute(
@@ -4867,24 +4836,37 @@ async function buildAiRoute(
   model: string,
   backupModel: string | null,
 ): Promise<AiRoute> {
-  const apiKey =
-    providerId === "openai"
-      ? env.OPENAI_API_KEY || (await getStoredApiKey(env, ownerId, providerId))
-      : providerId === "anthropic"
-        ? env.ANTHROPIC_API_KEY || (await getStoredApiKey(env, ownerId, providerId))
-        : null;
-  const aiGateway = await getAiGatewayRuntimeConfig(env, ownerId).catch(() => null);
+  const configuredGateway = await getAiGatewayRuntimeConfig(env, ownerId).catch(() => null);
+  const aiGateway = env.AI
+    ? {
+        accountId: configuredGateway?.accountId ?? null,
+        gatewayId: normalizeMe3DeploymentMode(env.ME3_DEPLOYMENT_MODE) === "managed"
+          ? normalizeEnvGatewayId(env.CLOUDFLARE_AI_GATEWAY_ID) || DEFAULT_AI_GATEWAY_ID
+          : configuredGateway?.gatewayId || DEFAULT_AI_GATEWAY_ID,
+        apiToken: configuredGateway?.apiToken ?? null,
+        routeWorkersAi: true,
+        routeExternalProviders: false,
+      }
+    : null;
 
   return {
-    providerId,
-    model,
+    providerId: "workers-ai",
+    model: cloudflareModel(providerId, model),
     backupModel,
-    apiKey,
+    apiKey: null,
     ai: env.AI || null,
     aiGateway,
-    configured:
-      providerId === "workers-ai" ? Boolean(env.AI && model) : Boolean(apiKey && model),
+    recordUsage: normalizeMe3DeploymentMode(env.ME3_DEPLOYMENT_MODE) === "managed"
+      ? ({ model: usedModel, usage }) =>
+          recordManagedEverydayUsage(env.DB, ownerId, "workers-ai", usedModel, usage)
+      : undefined,
+    configured: Boolean(env.AI && model),
   };
+}
+
+function cloudflareModel(providerId: AiProviderId, model: string): string {
+  if (providerId === "workers-ai" || model.startsWith(`${providerId}/`)) return model;
+  return `${providerId}/${model}`;
 }
 
 async function getAiGatewayRuntimeConfig(
@@ -4994,28 +4976,6 @@ async function getStoredImageGenerationDefault(
     )
       .bind(ownerId)
       .first<AiDefaultRow>();
-  } catch {
-    return null;
-  }
-}
-
-async function getStoredApiKey(
-  env: CoreAgentChatEnv,
-  ownerId: string,
-  providerId: AiProviderId,
-): Promise<string | null> {
-  try {
-    const row = await env.DB.prepare(
-      `SELECT provider_id, encrypted_api_key
-       FROM ai_provider_credentials
-       WHERE user_id = ? AND provider_id = ?
-       LIMIT 1`,
-    )
-      .bind(ownerId, providerId)
-      .first<AiCredentialRow>();
-    if (!row?.encrypted_api_key) return null;
-    const installKey = await getInstallEncryptionKey(env);
-    return installKey ? decryptProviderSecret(row.encrypted_api_key, installKey) : null;
   } catch {
     return null;
   }

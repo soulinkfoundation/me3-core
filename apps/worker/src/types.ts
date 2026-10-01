@@ -66,8 +66,6 @@ export interface Env {
     options?: SocketOptions,
   ) => Socket;
 
-  OPENAI_API_KEY?: string;
-  ANTHROPIC_API_KEY?: string;
   PEXELS_API_KEY?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_AI_GATEWAY_ID?: string;

@@ -2,7 +2,6 @@ import {
   fromAnthropicToolResponse,
   fromWorkersAiToolResponse,
   toAnthropicToolRequest,
-  toOpenAiToolRequest,
   toWorkersAiToolRequest,
   parseAgentModelUsage,
   type AgentModelUsage,
@@ -12,7 +11,6 @@ import {
   type AgentToolModelResponse,
 } from "./tool-runtime";
 import {
-  externalProviderGatewayUrl,
   openAiCompatibleReasoningEffort,
   workersAiGatewayRunOptions,
   type AgentChatAiRoute,
@@ -73,69 +71,7 @@ export async function runAgentToolModelStreamStep(
     return response;
   }
 
-  if (!route.apiKey) {
-    throw new Error(
-      `${route.providerId === "openai" ? "OpenAI" : "Anthropic"} API key is not configured`,
-    );
-  }
-
-  if (route.providerId === "openai") {
-    const gatewayUrl = externalProviderGatewayUrl(route, "openai", "chat/completions");
-    const response = await fetch(
-      gatewayUrl || "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: providerHeaders(route, "openai", Boolean(gatewayUrl)),
-        signal,
-        body: JSON.stringify({
-          model: route.model,
-          ...toOpenAiToolRequest(messages, tools, toolChoice),
-          ...(openAiCompatibleReasoningEffort(route.model)
-            ? { reasoning_effort: openAiCompatibleReasoningEffort(route.model) }
-            : {}),
-          stream: true,
-          stream_options: { include_usage: true },
-        }),
-      },
-    );
-    if (!response.ok || !response.body) {
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throwProviderResponseError("OpenAI", response.status, payload);
-      throw new Error("OpenAI returned no response stream.");
-    }
-    const result = await accumulateOpenAiCompatibleStream(
-      response.body,
-      onDelta,
-      signal,
-      "OpenAI",
-    );
-    if (result.usage) await route.recordUsage?.({ model: route.model, usage: result.usage });
-    return result;
-  }
-
-  const gatewayUrl = externalProviderGatewayUrl(route, "anthropic", "v1/messages");
-  const response = await fetch(
-    gatewayUrl || "https://api.anthropic.com/v1/messages",
-    {
-      method: "POST",
-      headers: providerHeaders(route, "anthropic", Boolean(gatewayUrl)),
-      signal,
-      body: JSON.stringify({
-        model: route.model,
-        max_tokens: 800,
-        ...toAnthropicToolRequest(messages, tools, toolChoice),
-        stream: true,
-      }),
-    },
-  );
-  if (!response.ok || !response.body) {
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throwProviderResponseError("Anthropic", response.status, payload);
-    throw new Error("Anthropic returned no response stream.");
-  }
-  const result = await accumulateAnthropicStream(response.body, onDelta, signal);
-  if (result.usage) await route.recordUsage?.({ model: route.model, usage: result.usage });
-  return result;
+  throw new Error("Direct model routes are disabled; use Cloudflare AI Gateway.");
 }
 
 function isAnthropicUnifiedModel(model: string): boolean {
@@ -288,29 +224,6 @@ async function readSseJson(
     signal?.removeEventListener("abort", abort);
     reader.releaseLock();
   }
-}
-
-function providerHeaders(
-  route: AgentChatAiRoute,
-  provider: "openai" | "anthropic",
-  gateway: boolean,
-): Record<string, string> {
-  return {
-    "Content-Type": "application/json",
-    ...(provider === "openai"
-      ? { Authorization: `Bearer ${route.apiKey}` }
-      : { "x-api-key": route.apiKey || "", "anthropic-version": "2023-06-01" }),
-    ...(gateway && route.aiGateway?.apiToken
-      ? { "cf-aig-authorization": `Bearer ${route.aiGateway.apiToken}` }
-      : {}),
-  };
-}
-
-function throwProviderResponseError(provider: string, status: number, payload: unknown): never {
-  const root = asRecord(payload);
-  throw new Error(
-    providerErrorMessage(root?.error, provider) || `${provider} request failed (${status})`,
-  );
 }
 
 function providerErrorMessage(value: unknown, provider: string): string {

@@ -13,10 +13,6 @@ import { normalizeWebResearchResult } from "../packages/web-research/src/normali
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const evalRoot = path.join(root, "packages", "web-research", "eval");
 const confirmation = "I_UNDERSTAND_LIVE_SEARCH_COSTS";
-const cloudflareProviderNativeOpenAiTransport =
-  "cloudflare-provider-native-openai-responses";
-const cloudflareProviderNativeOpenAiEndpoint =
-  "https://gateway.ai.cloudflare.com/v1/{accountId}/{gatewayId}/openai/responses";
 const blindReviewInstructions =
   "Score every listed applicable dimension using its anchors and mark every " +
   "manual hard gate true or false. Do not inspect blind-review-map.json " +
@@ -162,20 +158,12 @@ async function validateArtifacts() {
       issues.push(`Candidate ${candidate.id} has invalid model, transport, or endpoint.`);
     }
     if (
-      candidate.transport === cloudflareProviderNativeOpenAiTransport &&
-      (candidate.providerId !== "openai" ||
-        candidate.model !== "gpt-5.5" ||
-        candidate.endpoint !== cloudflareProviderNativeOpenAiEndpoint ||
-        candidate.requiredEnvironment?.length !== 3 ||
-        ![
-          "OPENAI_API_KEY",
-          "CLOUDFLARE_ACCOUNT_ID",
-          "CLOUDFLARE_API_TOKEN",
-        ].every((key) => candidate.requiredEnvironment.includes(key)))
+      !["cloudflare-unified-responses", "cloudflare-unified-messages"].includes(candidate.transport) ||
+      !candidate.endpoint.startsWith("https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/") ||
+      !candidate.model.startsWith(`${candidate.providerId}/`) ||
+      candidate.requiredEnvironment?.some((key) => !["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"].includes(key))
     ) {
-      issues.push(
-        `Candidate ${candidate.id} has an invalid provider-native OpenAI contract.`,
-      );
+      issues.push(`Candidate ${candidate.id} must use Cloudflare Unified Billing.`);
     }
     if (
       !Array.isArray(candidate.requiredEnvironment) ||
@@ -1376,7 +1364,6 @@ async function callAnthropicCandidate(candidate, evaluationCase, timeoutMs, asOf
         : {}),
     };
   }
-  const cloudflare = candidate.transport.startsWith("cloudflare-");
   const endpoint = resolveCandidateEndpoint(candidate);
   const messages = [
     { role: "user", content: evaluationPrompt(evaluationCase, asOf) },
@@ -1397,13 +1384,7 @@ async function callAnthropicCandidate(candidate, evaluationCase, timeoutMs, asOf
     try {
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: cloudflare
-          ? cloudflareHeaders(remainingMs)
-          : {
-              "x-api-key": process.env.ANTHROPIC_API_KEY,
-              "anthropic-version": "2023-06-01",
-              "Content-Type": "application/json",
-            },
+        headers: cloudflareHeaders(remainingMs),
         body: JSON.stringify({
           model: candidate.model,
           max_tokens: candidate.configuration.maxOutputTokens,
@@ -1450,32 +1431,14 @@ async function callAnthropicCandidate(candidate, evaluationCase, timeoutMs, asOf
 }
 
 function resolveCandidateEndpoint(candidate, environment = process.env) {
-  if (candidate.transport === cloudflareProviderNativeOpenAiTransport) {
-    if (
-      candidate.providerId !== "openai" ||
-      candidate.endpoint !== cloudflareProviderNativeOpenAiEndpoint
-    ) {
-      throw new Error(
-        `Candidate ${candidate.id} has an unsafe provider-native OpenAI endpoint.`,
-      );
-    }
-    const accountId = encodeURIComponent(
-      requiredEnvironmentValue(environment, "CLOUDFLARE_ACCOUNT_ID"),
-    );
-    const gatewayId = encodeURIComponent(
-      environment.CLOUDFLARE_AI_GATEWAY_ID?.trim() || "default",
-    );
-    return `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/openai/responses`;
+  if (!candidate.endpoint.startsWith("https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/")) {
+    throw new Error(`Candidate ${candidate.id} has an unsafe Cloudflare endpoint.`);
   }
   let endpoint = candidate.endpoint;
-  if (candidate.transport.startsWith("cloudflare-")) {
-    endpoint = endpoint.replace(
-      "{accountId}",
-      encodeURIComponent(
-        requiredEnvironmentValue(environment, "CLOUDFLARE_ACCOUNT_ID"),
-      ),
-    );
-  }
+  endpoint = endpoint.replace(
+    "{accountId}",
+    encodeURIComponent(requiredEnvironmentValue(environment, "CLOUDFLARE_ACCOUNT_ID")),
+  );
   if (endpoint.includes("{gatewayId}")) {
     endpoint = endpoint.replace(
       "{gatewayId}",
@@ -1516,9 +1479,7 @@ function cloudflareHeaders(timeoutMs, environment = process.env) {
       "CLOUDFLARE_API_TOKEN",
     )}`,
     ...cloudflareGatewayControls(timeoutMs),
-    ...(environment.CLOUDFLARE_AI_GATEWAY_ID?.trim()
-      ? { "cf-aig-gateway-id": environment.CLOUDFLARE_AI_GATEWAY_ID.trim() }
-      : {}),
+    "cf-aig-gateway-id": environment.CLOUDFLARE_AI_GATEWAY_ID?.trim() || "default",
   };
 }
 
@@ -1527,29 +1488,7 @@ function openAiCandidateHeaders(
   timeoutMs,
   environment = process.env,
 ) {
-  if (candidate.transport === cloudflareProviderNativeOpenAiTransport) {
-    return {
-      Authorization: `Bearer ${requiredEnvironmentValue(
-        environment,
-        "OPENAI_API_KEY",
-      )}`,
-      "cf-aig-authorization": `Bearer ${requiredEnvironmentValue(
-        environment,
-        "CLOUDFLARE_API_TOKEN",
-      )}`,
-      ...cloudflareGatewayControls(timeoutMs),
-    };
-  }
-  if (candidate.transport.startsWith("cloudflare-")) {
-    return cloudflareHeaders(timeoutMs, environment);
-  }
-  return {
-    Authorization: `Bearer ${requiredEnvironmentValue(
-      environment,
-      "OPENAI_API_KEY",
-    )}`,
-    "Content-Type": "application/json",
-  };
+  return cloudflareHeaders(timeoutMs, environment);
 }
 
 function attachCloudflareGatewayMetadata(candidate, response, observation) {

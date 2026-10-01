@@ -1131,6 +1131,7 @@ describe("Core chat native context", () => {
     expect(aiRun).toHaveBeenCalledWith(
       "@cf/example/everyday-model",
       expect.any(Object),
+      expect.objectContaining({ gateway: expect.objectContaining({ id: "default" }) }),
     );
   });
 
@@ -1157,6 +1158,7 @@ describe("Core chat native context", () => {
     expect(aiRun).toHaveBeenCalledWith(
       "@cf/example/advanced-model",
       expect.any(Object),
+      expect.objectContaining({ gateway: expect.objectContaining({ id: "default" }) }),
     );
   });
 
@@ -1193,6 +1195,7 @@ describe("Core chat native context", () => {
     expect(aiRun).toHaveBeenCalledWith(
       "@cf/example/selected-model",
       expect.any(Object),
+      expect.objectContaining({ gateway: expect.objectContaining({ id: "default" }) }),
     );
   });
 
@@ -1379,12 +1382,11 @@ describe("Core chat native context", () => {
     );
   });
 
-  it("uses only the stored owner credential for owner mode", async () => {
+  it("routes owner mode through the install's Cloudflare binding", async () => {
     const installKey = "owner-mode-install-key";
     const ownerApiKey = "sk-owner-stored";
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({ choices: [{ message: { content: "Owner AI reply." } }] }),
-    );
+    const fetchMock = vi.fn();
+    const aiRun = vi.fn(async () => ({ choices: [{ message: { content: "Owner AI reply." } }] }));
     vi.stubGlobal("fetch", fetchMock);
     const env = createEnv({
       aiDefaults: [
@@ -1408,6 +1410,7 @@ describe("Core chat native context", () => {
       const response = await dispatchAgentSandboxTurn(
         {
           ...env,
+          AI: { run: aiRun },
           TOKEN_ENCRYPTION_KEY: installKey,
           OPENAI_API_KEY: "sk-managed-platform",
           CLOUDFLARE_ACCOUNT_ID: "managed-account",
@@ -1418,22 +1421,15 @@ describe("Core chat native context", () => {
         createStorage(),
         { ...dispatchInput("Use my AI."), mode: "owner" },
       );
-      const [request, init] = fetchMock.mock.calls[0] as [
-        RequestInfo | URL,
-        RequestInit,
-      ];
-
       expect(response).toMatchObject({
         mode: "owner",
-        model: "gpt-owner-model",
-        source: "openai",
+        model: "openai/gpt-owner-model",
+        source: "workers-ai",
         replyText: "Owner AI reply.",
       });
-      expect(String(request)).toBe("https://api.openai.com/v1/chat/completions");
-      expect(init.headers).toMatchObject({
-        Authorization: `Bearer ${ownerApiKey}`,
-      });
-      expect(String(init.body)).not.toContain("sk-managed-platform");
+      expect(aiRun).toHaveBeenCalledWith("openai/gpt-owner-model", expect.any(Object),
+        expect.objectContaining({ gateway: expect.objectContaining({ id: "managed-gateway" }) }));
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -1527,6 +1523,7 @@ describe("Core chat native context", () => {
         image: "data:image/png;base64,iVBORw==",
         messages: expect.any(Array),
       }),
+      expect.objectContaining({ gateway: expect.objectContaining({ id: "default" }) }),
     );
     const modelInput = aiRun.mock.calls[0]?.[1] as {
       messages: Array<{ role: string; content: string }>;
@@ -1588,6 +1585,7 @@ describe("Core chat native context", () => {
     expect(aiRun).toHaveBeenCalledWith(
       "moonshotai/kimi-k3",
       expect.objectContaining({ messages: expect.any(Array) }),
+      expect.objectContaining({ gateway: expect.objectContaining({ id: "default" }) }),
     );
     const modelInput = aiRun.mock.calls[0]?.[1] as {
       messages: Array<{ role: string; content: unknown }>;
@@ -1714,8 +1712,9 @@ describe("Core chat native context", () => {
           contentType: expect.stringContaining("multipart/form-data"),
         }),
       }),
+      expect.objectContaining({ gateway: expect.objectContaining({ id: "default" }) }),
     );
-    expect(aiRun.mock.calls[0]).toHaveLength(2);
+    expect(aiRun.mock.calls[0]).toHaveLength(3);
     expect(response.replyText).toContain("Generated an image");
     expect(response.imageAction).toMatchObject({
       kind: "generated",
@@ -1782,121 +1781,43 @@ describe("Core chat native context", () => {
     });
   });
 
-  it("uses GPT Image 2 for managed image generation and preserves the mobile attachment contract", async () => {
+  it("uses GPT Image 2 through Cloudflare and stores the generated image", async () => {
     const tinyPngBase64 =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lzvKswAAAABJRU5ErkJggg==";
-    const fetchMock = vi.fn(
-      async (_input: RequestInfo | URL, _init?: RequestInit) =>
-        Response.json({
-          data: [{ b64_json: tinyPngBase64 }],
-          usage: {
-            input_tokens: 7,
-            output_tokens: 1_800,
-            total_tokens: 1_807,
-          },
-        }),
-    );
+    const imageBytes = Uint8Array.from(atob(tinyPngBase64), (character) => character.charCodeAt(0));
+    const fetchMock = vi.fn(async () => new Response(imageBytes, { headers: { "content-type": "image/png" } }));
     vi.stubGlobal("fetch", fetchMock);
-    const aiRun = vi.fn();
-    const env = createEnv({
-      aiDefaults: [
-        {
-          user_id: "owner",
-          use_case: "image_generation",
-          provider_id: "workers-ai",
-          model: DEFAULT_WORKERS_AI_IMAGE_GENERATION_MODEL,
-        },
-      ],
-    });
+    const aiRun = vi.fn(async () => ({
+      result: { image: "https://example.r2.dev/generated.png" },
+      usage: { input_tokens: 7, output_tokens: 1_800, total_tokens: 1_807 },
+    }));
+    const env = createEnv();
     const r2 = createR2Bucket();
 
     try {
       const response = await dispatchAgentSandboxTurn(
-        {
-          ...env,
-          AI: { run: aiRun },
-          SITE_ASSETS: r2.bucket,
-          OPENAI_API_KEY: "sk-managed-openai",
-          ME3_DEPLOYMENT_MODE: "managed",
-          ME3_AI_IMAGE_GENERATION_PROVIDER: "workers-ai",
-          ME3_AI_IMAGE_GENERATION_MODEL:
-            DEFAULT_WORKERS_AI_IMAGE_GENERATION_MODEL,
-        } as never,
+        { ...env, AI: { run: aiRun }, SITE_ASSETS: r2.bucket, ME3_DEPLOYMENT_MODE: "managed" } as never,
         createStorage(),
-        {
-          ...dispatchInput("Generate an image of a quiet writing desk."),
-          threadId: "thread-1",
-          selectedModel: {
-            providerId: "workers-ai",
-            model: DEFAULT_WORKERS_AI_IMAGE_GENERATION_MODEL,
-          },
-        },
+        { ...dispatchInput("Generate an image of a quiet writing desk."), threadId: "thread-1", selectedModel: { providerId: "workers-ai", model: DEFAULT_WORKERS_AI_IMAGE_GENERATION_MODEL } },
       );
-      const [request, init] = fetchMock.mock.calls[0] as [
-        RequestInfo | URL,
-        RequestInit,
-      ];
-      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-
-      expect(aiRun).not.toHaveBeenCalled();
-      expect(String(request)).toBe(
-        "https://api.openai.com/v1/images/generations",
+      expect(aiRun).toHaveBeenCalledWith(
+        "openai/gpt-image-2",
+        { prompt: expect.any(String), size: "1024x1024", quality: "medium" },
+        expect.objectContaining({ gateway: expect.objectContaining({ id: "default" }) }),
       );
-      expect(init.headers).toMatchObject({
-        Authorization: "Bearer sk-managed-openai",
-        "Content-Type": "application/json",
-      });
-      expect(body).toMatchObject({
-        model: DEFAULT_OPENAI_IMAGE_GENERATION_MODEL,
-        size: "1024x1024",
-        quality: "medium",
-        n: 1,
-      });
-      expect(response).toMatchObject({
-        model: DEFAULT_OPENAI_IMAGE_GENERATION_MODEL,
-        source: "openai",
-        imageAction: {
-          kind: "generated",
-          status: "complete",
-          providerId: "openai",
-          model: DEFAULT_OPENAI_IMAGE_GENERATION_MODEL,
-          assets: [
-            {
-              mimeType: "image/png",
-              url: expect.stringContaining("/api/assistant/attachments/"),
-            },
-          ],
-        },
-      });
-      expect(response.imageAction?.assets[0]).toEqual(
-        expect.objectContaining({
-          id: expect.any(String),
-          attachmentId: expect.any(String),
-          name: expect.stringMatching(/^generated-image-.+\.png$/),
-          size: expect.any(Number),
-          storageKey: expect.any(String),
-        }),
+      expect(fetchMock).toHaveBeenCalledWith(
+        new URL("https://example.r2.dev/generated.png"),
+        { redirect: "error" },
       );
+      expect(response.imageAction).toMatchObject({
+        status: "complete",
+        providerId: "workers-ai",
+        model: "openai/gpt-image-2",
+        assets: [{ mimeType: "image/png", url: expect.stringContaining("/api/assistant/attachments/") }],
+      });
       expect(env.state.aiUsageEvents).toEqual([
-        expect.objectContaining({
-          user_id: "owner",
-          provider: "openai",
-          model: DEFAULT_OPENAI_IMAGE_GENERATION_MODEL,
-          tokens_in: 7,
-          tokens_out: 1_800,
-        }),
+        expect.objectContaining({ model: "openai/gpt-image-2", tokens_in: 7, tokens_out: 1_800 }),
       ]);
-      expect(
-        Number(env.state.aiUsageEvents[0]?.estimated_cost_usd),
-      ).toBeCloseTo(0.054035);
-      expect(
-        JSON.parse(String(env.state.aiUsageEvents[0]?.metadata_json)),
-      ).toMatchObject({
-        quality: "medium",
-        usageReported: true,
-        totalTokens: 1_807,
-        pricing: "openai-gpt-image-2-token-rates-2026-07",
-      });
     } finally {
       vi.unstubAllGlobals();
     }
@@ -2000,121 +1921,44 @@ describe("Core chat native context", () => {
     );
   });
 
-  it("omits unsupported sampling controls for selected OpenAI reasoning models", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({ choices: [{ message: { content: "Selected OpenAI reply." } }] }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+  it("routes selected OpenAI reasoning through Cloudflare without sampling controls", async () => {
+    const aiRun = vi.fn(async (_model: string, _input: unknown) => ({ choices: [{ message: { content: "Selected OpenAI reply." } }] }));
     const env = createEnv();
-
-    try {
-      const response = await dispatchAgentSandboxTurn(
-        { ...env, OPENAI_API_KEY: "sk-openai-secret" } as never,
-        createStorage(),
-        {
-          ...dispatchInput("Say hello."),
-          selectedModel: {
-            providerId: "openai",
-            model: "gpt-5.5",
-            optionId: "openai-gpt-5-5",
-          },
-        },
-      );
-      const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-
-      expect(response).toMatchObject({
-        replyText: "Selected OpenAI reply.",
-        model: "gpt-5.5",
-        source: "openai",
-      });
-      expect(body).toMatchObject({
-        model: "gpt-5.5",
-      });
-      expect(body).not.toHaveProperty("temperature");
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    const response = await dispatchAgentSandboxTurn(
+      { ...env, AI: { run: aiRun }, OPENAI_API_KEY: "ignored-provider-key" } as never,
+      createStorage(),
+      { ...dispatchInput("Say hello."), selectedModel: { providerId: "openai", model: "gpt-5.5" } },
+    );
+    expect(response).toMatchObject({ replyText: "Selected OpenAI reply.", model: "openai/gpt-5.5", source: "workers-ai" });
+    expect(aiRun).toHaveBeenCalledWith("openai/gpt-5.5", expect.any(Object),
+      expect.objectContaining({ gateway: expect.objectContaining({ id: "default" }) }));
+    expect(aiRun.mock.calls[0]?.[1]).not.toHaveProperty("temperature");
   });
 
-  it("routes selected OpenAI chat through AI Gateway when configured", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({ choices: [{ message: { content: "Gateway OpenAI reply." } }] }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+  it("routes selected OpenAI chat through the configured Cloudflare gateway", async () => {
+    const aiRun = vi.fn(async () => ({ choices: [{ message: { content: "Gateway OpenAI reply." } }] }));
     const env = createEnv();
-
-    try {
-      const response = await dispatchAgentSandboxTurn(
-        {
-          ...env,
-          OPENAI_API_KEY: "sk-openai-secret",
-          CLOUDFLARE_ACCOUNT_ID: "cf-account",
-          CLOUDFLARE_API_TOKEN: "cf-token",
-        } as never,
-        createStorage(),
-        {
-          ...dispatchInput("Say hello."),
-          selectedModel: {
-            providerId: "openai",
-            model: "gpt-4.1-mini",
-            optionId: "openai-gpt-4-1-mini",
-          },
-        },
-      );
-      const [input, init] = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit];
-
-      expect(response.replyText).toBe("Gateway OpenAI reply.");
-      expect(String(input)).toBe(
-        "https://gateway.ai.cloudflare.com/v1/cf-account/default/openai/chat/completions",
-      );
-      expect(init.headers).toMatchObject({
-        Authorization: "Bearer sk-openai-secret",
-        "cf-aig-authorization": "Bearer cf-token",
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    const response = await dispatchAgentSandboxTurn(
+      { ...env, AI: { run: aiRun }, CLOUDFLARE_AI_GATEWAY_ID: "me3" } as never,
+      createStorage(),
+      { ...dispatchInput("Say hello."), selectedModel: { providerId: "openai", model: "gpt-4.1-mini" } },
+    );
+    expect(response.replyText).toBe("Gateway OpenAI reply.");
+    expect(aiRun).toHaveBeenCalledWith("openai/gpt-4.1-mini", expect.any(Object),
+      expect.objectContaining({ gateway: expect.objectContaining({ id: "me3" }) }));
   });
 
-  it("routes selected Anthropic chat through AI Gateway when configured", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({ content: [{ type: "text", text: "Gateway Anthropic reply." }] }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+  it("routes selected Anthropic chat through the configured Cloudflare gateway", async () => {
+    const aiRun = vi.fn(async () => ({ content: [{ type: "text", text: "Gateway Anthropic reply." }] }));
     const env = createEnv();
-
-    try {
-      const response = await dispatchAgentSandboxTurn(
-        {
-          ...env,
-          ANTHROPIC_API_KEY: "sk-ant-secret",
-          CLOUDFLARE_ACCOUNT_ID: "cf-account",
-          CLOUDFLARE_API_TOKEN: "cf-token",
-        } as never,
-        createStorage(),
-        {
-          ...dispatchInput("Say hello."),
-          selectedModel: {
-            providerId: "anthropic",
-            model: "claude-3-5-haiku-latest",
-            optionId: "anthropic-haiku",
-          },
-        },
-      );
-      const [input, init] = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit];
-
-      expect(response.replyText).toBe("Gateway Anthropic reply.");
-      expect(String(input)).toBe(
-        "https://gateway.ai.cloudflare.com/v1/cf-account/default/anthropic/v1/messages",
-      );
-      expect(init.headers).toMatchObject({
-        "x-api-key": "sk-ant-secret",
-        "cf-aig-authorization": "Bearer cf-token",
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    const response = await dispatchAgentSandboxTurn(
+      { ...env, AI: { run: aiRun }, CLOUDFLARE_AI_GATEWAY_ID: "me3" } as never,
+      createStorage(),
+      { ...dispatchInput("Say hello."), selectedModel: { providerId: "anthropic", model: "claude-3-5-haiku-latest" } },
+    );
+    expect(response.replyText).toBe("Gateway Anthropic reply.");
+    expect(aiRun).toHaveBeenCalledWith("anthropic/claude-3-5-haiku-latest", expect.any(Object),
+      expect.objectContaining({ gateway: expect.objectContaining({ id: "me3" }) }));
   });
 
   it("does not feed old provider setup fallbacks back into the model", async () => {

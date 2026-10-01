@@ -194,17 +194,10 @@ jobs:
       - name: Install the hosted provider secrets
         working-directory: source
         env:
-          ME3_MANAGED_OPENAI_API_KEY: ${{ secrets.ME3_MANAGED_OPENAI_API_KEY }}
           ME3_MANAGED_PEXELS_API_KEY: ${{ secrets.ME3_MANAGED_PEXELS_API_KEY }}
         run: |
           set -euo pipefail
           set +x
-          test -n "$ME3_MANAGED_OPENAI_API_KEY"
-          openai_key_file="$RUNNER_TEMP/me3-openai-api-key"
-          printf '%s' "$ME3_MANAGED_OPENAI_API_KEY" > "$openai_key_file"
-          chmod 600 "$openai_key_file"
-          pnpm exec wrangler secret put OPENAI_API_KEY --config wrangler.toml < "$openai_key_file"
-          rm -f "$openai_key_file"
           if [ -n "$ME3_MANAGED_PEXELS_API_KEY" ]; then
             pexels_key_file="$RUNNER_TEMP/me3-pexels-api-key"
             printf '%s' "$ME3_MANAGED_PEXELS_API_KEY" > "$pexels_key_file"

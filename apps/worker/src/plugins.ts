@@ -1110,18 +1110,7 @@ const AGENT_CHAT_PLUGIN: CorePluginManifestSummary = {
       approvalMode: "none",
     }),
   ],
-  secrets: [
-    {
-      name: "OPENAI_API_KEY",
-      label: "OpenAI API key",
-      required: false,
-    },
-    {
-      name: "ANTHROPIC_API_KEY",
-      label: "Anthropic API key",
-      required: false,
-    },
-  ],
+  secrets: [],
   migrations: [
     publicBaselineMigration(
       "agent-chat.public-baseline",

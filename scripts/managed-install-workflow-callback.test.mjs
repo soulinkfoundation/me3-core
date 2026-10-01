@@ -194,14 +194,7 @@ test("the workflow installs hosted provider keys as Worker secret bindings", () 
   const installSecret = getStep("Install the hosted provider secrets");
   const publish = getStep("Publish the managed Worker");
 
-  assert.match(
-    installSecret,
-    /ME3_MANAGED_OPENAI_API_KEY: \$\{\{ secrets\.ME3_MANAGED_OPENAI_API_KEY \}\}/,
-  );
-  assert.match(
-    installSecret,
-    /wrangler secret put OPENAI_API_KEY --config wrangler\.toml/,
-  );
+  assert.doesNotMatch(installSecret, /OPENAI_API_KEY/);
   assert.match(
     installSecret,
     /ME3_MANAGED_PEXELS_API_KEY: \$\{\{ secrets\.ME3_MANAGED_PEXELS_API_KEY \}\}/,

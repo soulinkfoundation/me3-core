@@ -13,8 +13,12 @@ if (!Number.isInteger(limit) || limit < 1 || limit > 48) throw new Error("--limi
 const modelChoice = process.argv.find((arg) => arg.startsWith("--model="))?.slice(8) || "scripted-fixture";
 const liveProvider = modelChoice.startsWith("openai:") ? "openai" : modelChoice.startsWith("anthropic:") ? "anthropic" : null;
 if (modelChoice !== "scripted-fixture" && !liveProvider) throw new Error("Use --model=scripted-fixture, openai:MODEL, or anthropic:MODEL");
-const apiKey = liveProvider === "openai" ? process.env.OPENAI_API_KEY : liveProvider === "anthropic" ? process.env.ANTHROPIC_API_KEY : null;
-if (liveProvider && !apiKey) throw new Error(`${liveProvider.toUpperCase()}_API_KEY is required for a live model eval.`);
+const cloudflareAccountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+const cloudflareApiToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+const cloudflareGatewayId = process.env.CLOUDFLARE_AI_GATEWAY_ID?.trim() || "default";
+if (liveProvider && (!cloudflareAccountId || !cloudflareApiToken)) {
+  throw new Error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required for a live model eval.");
+}
 const localToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Dublin", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const baseDate = localToday;
 const day = (offset) => {
@@ -160,12 +164,29 @@ for (const scenario of scenarios) {
   const modelInputs = [];
   const usageSamples = [];
   const liveRoute = liveProvider ? {
-    providerId: liveProvider,
-    model: modelChoice.slice(liveProvider.length + 1),
+    providerId: "workers-ai",
+    model: `${liveProvider}/${modelChoice.slice(liveProvider.length + 1)}`,
     backupModel: null,
-    apiKey,
-    ai: null,
-    aiGateway: null,
+    apiKey: null,
+    ai: { run: async (model, input) => {
+      const { stream: _stream, ...request } = input;
+      const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/ai/run`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${cloudflareApiToken}`,
+          "Content-Type": "application/json",
+          "cf-aig-gateway-id": cloudflareGatewayId,
+        },
+        body: JSON.stringify({ model, input: request }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success === false || payload?.error) {
+        throw new Error(payload?.errors?.[0]?.message || payload?.error?.message || `Cloudflare AI request failed (${response.status})`);
+      }
+      const run = payload?.result ?? payload;
+      return (run?.gatewayMetadata || run?.state) && run?.result ? run.result : run;
+    } },
+    aiGateway: { accountId: cloudflareAccountId, gatewayId: cloudflareGatewayId, apiToken: null, routeWorkersAi: true, routeExternalProviders: false },
     configured: true,
     recordUsage: ({ usage }) => usageSamples.push(usage),
   } : null;

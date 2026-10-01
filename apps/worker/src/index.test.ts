@@ -11723,349 +11723,87 @@ describe("ME3 Worker auth", () => {
     );
   });
 
-  it("reports GPT Image 2 as the managed image route without route variables", async () => {
+  it("reports GPT Image 2 as a Cloudflare-backed managed image route", async () => {
     const env = createEnv();
     env.ME3_DEPLOYMENT_MODE = "managed";
-    env.OPENAI_API_KEY = "sk-managed-openai";
+    env.AI = { run: vi.fn() } as unknown as Ai;
     const session = cookieHeader(await bootstrap(env));
-
     const response = await app.fetch(
-      new Request("http://localhost/api/ai-settings", {
-        headers: { Cookie: session },
-      }),
+      new Request("http://localhost/api/ai-settings", { headers: { Cookie: session } }),
       env,
     );
     const body = (await response.json()) as {
-      deploymentMode: string;
-      defaults: {
-        image_generation: {
-          providerId: string;
-          model: string;
-          configured: boolean;
-          source: string;
-        };
-      };
+      defaults: { image_generation: { providerId: string; model: string; configured: boolean } };
     };
-
     expect(response.status).toBe(200);
-    expect(body.deploymentMode).toBe("managed");
     expect(body.defaults.image_generation).toMatchObject({
       providerId: "openai",
       model: DEFAULT_OPENAI_IMAGE_GENERATION_MODEL,
       configured: true,
-      source: "recommended",
     });
   });
 
-  it("saves encrypted AI provider keys and model defaults", async () => {
+  it("saves AI model defaults and rejects direct provider API keys", async () => {
     const env = createEnv();
+    env.AI = { run: vi.fn() } as unknown as Ai;
     const session = cookieHeader(await bootstrap(env));
-
+    const keyResponse = await app.fetch(
+      new Request("http://localhost/api/ai-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Cookie: session },
+        body: JSON.stringify({ providers: [{ id: "openai", apiKey: "sk-test-secret" }] }),
+      }),
+      env,
+    );
+    expect(keyResponse.status).toBe(400);
     const response = await app.fetch(
       new Request("http://localhost/api/ai-settings", {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          providers: [{ id: "openai", apiKey: "sk-test-secret-1234" }],
-          defaults: {
-            chat: { providerId: "openai", model: "gpt-4.1-mini" },
-            reasoning: { providerId: "openai", model: "o4-mini" },
-            extraction: { providerId: "openai", model: "gpt-4.1-mini" },
-          },
-        }),
+        headers: { "Content-Type": "application/json", Cookie: session },
+        body: JSON.stringify({ defaults: { chat: { providerId: "openai", model: "gpt-4.1-mini" } } }),
       }),
       env,
     );
     const body = (await response.json()) as {
-      providers: Array<{ id: string; configured: boolean; source: string; keyHint: string }>;
+      providers: Array<{ id: string; configured: boolean; source: string }>;
       defaults: { chat: { providerId: string; model: string; configured: boolean } };
     };
-
     expect(response.status).toBe(200);
-    expect(body.providers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "openai",
-          configured: true,
-          source: "stored",
-          keyHint: "***1234",
-        }),
-      ]),
+    expect(body.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "openai", configured: true, source: "binding" }),
+    ]));
+    expect(body.defaults.chat).toMatchObject({ providerId: "openai", model: "gpt-4.1-mini", configured: true });
+    expect(env.aiCredentials).toHaveLength(0);
+  });
+
+  it("generates OpenAI and Anthropic text through the Cloudflare AI binding", async () => {
+    const env = createEnv();
+    env.CLOUDFLARE_AI_GATEWAY_ID = "me3";
+    const aiRun = vi.fn(async (model: string, _input: unknown, _options?: unknown) =>
+      model.startsWith("anthropic/")
+        ? { content: [{ type: "text", text: "Claude reply" }] }
+        : { choices: [{ message: { content: "OpenAI reply" } }] },
     );
-    expect(body.defaults.chat).toMatchObject({
-      providerId: "openai",
-      model: "gpt-4.1-mini",
-      configured: true,
+    env.AI = { run: aiRun } as unknown as Ai;
+    const openai = await generateAiText(env, "owner", {
+      selectedModel: { providerId: "openai", model: "gpt-4.1-mini" },
+      messages: [{ role: "user", content: "Hello" }],
     });
-    expect(env.aiCredentials[0].encrypted_api_key).toMatch(/^v1\./);
-    expect(env.aiCredentials[0].encrypted_api_key).not.toContain("sk-test-secret-1234");
-    expect(env.aiDefaults).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          use_case: "chat",
-          provider_id: "openai",
-          model: "gpt-4.1-mini",
-        }),
-      ]),
-    );
-  });
-
-  it("routes OpenAI text generation through AI Gateway when enabled", async () => {
-    const env = createEnv();
-    env.CLOUDFLARE_AI_GATEWAY_ID = "friend-one";
-    const session = cookieHeader(await bootstrap(env));
-
-    await app.fetch(
-      new Request("http://localhost/api/ai-settings", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          providers: [{ id: "openai", apiKey: "sk-openai-secret" }],
-        }),
-      }),
-      env,
-    );
-    const gatewayResponse = await app.fetch(
-      new Request("http://localhost/api/ai-gateway-settings", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          accountId: "cf-account",
-          apiToken: "cf-gateway-token",
-        }),
-      }),
-      env,
-    );
-    expect(await gatewayResponse.json()).toMatchObject({
-      configured: true,
-      gatewayId: "friend-one",
-      routeWorkersAi: true,
-      routeExternalProviders: true,
+    const reasoning = await generateAiText(env, "owner", {
+      selectedModel: { providerId: "openai", model: "gpt-5.5" },
+      messages: [{ role: "user", content: "Hello" }],
+      maxTokens: 1600,
     });
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({ choices: [{ message: { content: "Gateway reply" } }] }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    try {
-      const result = await generateAiText(env, "owner", {
-        selectedModel: { providerId: "openai", model: "gpt-4.1-mini" },
-        messages: [{ role: "user", content: "Hello" }],
-      });
-      const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-
-      expect(result.text).toBe("Gateway reply");
-      expect(fetchMock).toHaveBeenCalledWith(
-        "https://gateway.ai.cloudflare.com/v1/cf-account/friend-one/openai/chat/completions",
-        expect.any(Object),
-      );
-      expect(init.headers).toMatchObject({
-        Authorization: "Bearer sk-openai-secret",
-        "cf-aig-authorization": "Bearer cf-gateway-token",
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("uses stored AI provider keys when encryption key lives in install secrets", async () => {
-    const env = createEnv();
-    env.TOKEN_ENCRYPTION_KEY = undefined;
-
-    await updateAiSettings(env, "owner", {
-      providers: [{ id: "openai", apiKey: "sk-openai-secret" }],
+    const anthropic = await generateAiText(env, "owner", {
+      selectedModel: { providerId: "anthropic", model: "claude-3-5-haiku-latest" },
+      messages: [{ role: "user", content: "Hello" }],
     });
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({ choices: [{ message: { content: "Stored key reply" } }] }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    try {
-      const result = await generateAiText(env, "owner", {
-        selectedModel: { providerId: "openai", model: "gpt-4.1-mini" },
-        messages: [{ role: "user", content: "Hello" }],
-      });
-      const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-
-      expect(result.text).toBe("Stored key reply");
-      expect(env.installSecrets.get("TOKEN_ENCRYPTION_KEY")).toBeTruthy();
-      expect(init.headers).toMatchObject({
-        Authorization: "Bearer sk-openai-secret",
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("omits unsupported sampling controls for OpenAI reasoning models", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-
-    await app.fetch(
-      new Request("http://localhost/api/ai-settings", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          providers: [{ id: "openai", apiKey: "sk-openai-secret" }],
-        }),
-      }),
-      env,
-    );
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({ choices: [{ message: { content: "Reasoning reply" } }] }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    try {
-      const result = await generateAiText(env, "owner", {
-        selectedModel: { providerId: "openai", model: "gpt-5.5" },
-        messages: [{ role: "user", content: "Hello" }],
-        temperature: 0.4,
-        maxTokens: 1600,
-      });
-      const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-
-      expect(result.text).toBe("Reasoning reply");
-      expect(body).toMatchObject({
-        model: "gpt-5.5",
-        max_completion_tokens: 1600,
-      });
-      expect(body).not.toHaveProperty("temperature");
-      expect(body).not.toHaveProperty("max_tokens");
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("routes Anthropic text generation through AI Gateway when enabled", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-
-    await app.fetch(
-      new Request("http://localhost/api/ai-settings", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          providers: [{ id: "anthropic", apiKey: "sk-ant-secret" }],
-        }),
-      }),
-      env,
-    );
-    await app.fetch(
-      new Request("http://localhost/api/ai-gateway-settings", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          accountId: "cf-account",
-          gatewayId: "me3",
-          apiToken: "cf-gateway-token",
-          routeExternalProviders: true,
-        }),
-      }),
-      env,
-    );
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({ content: [{ type: "text", text: "Claude gateway reply" }] }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    try {
-      const result = await generateAiText(env, "owner", {
-        selectedModel: { providerId: "anthropic", model: "claude-3-5-haiku-latest" },
-        messages: [{ role: "user", content: "Hello" }],
-      });
-      const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-
-      expect(result.text).toBe("Claude gateway reply");
-      expect(fetchMock).toHaveBeenCalledWith(
-        "https://gateway.ai.cloudflare.com/v1/cf-account/me3/anthropic/v1/messages",
-        expect.any(Object),
-      );
-      expect(init.headers).toMatchObject({
-        "x-api-key": "sk-ant-secret",
-        "cf-aig-authorization": "Bearer cf-gateway-token",
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("routes OpenAI text generation through AI Gateway when legacy routing flags are disabled", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-
-    await app.fetch(
-      new Request("http://localhost/api/ai-settings", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          providers: [{ id: "openai", apiKey: "sk-openai-secret" }],
-        }),
-      }),
-      env,
-    );
-    await app.fetch(
-      new Request("http://localhost/api/ai-gateway-settings", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          accountId: "cf-account",
-          gatewayId: "me3",
-          apiToken: "cf-gateway-token",
-          routeExternalProviders: false,
-        }),
-      }),
-      env,
-    );
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({ choices: [{ message: { content: "Gateway reply" } }] }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    try {
-      const result = await generateAiText(env, "owner", {
-        selectedModel: { providerId: "openai", model: "gpt-4.1-mini" },
-        messages: [{ role: "user", content: "Hello" }],
-      });
-      const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-
-      expect(result.text).toBe("Gateway reply");
-      expect(fetchMock).toHaveBeenCalledWith(
-        "https://gateway.ai.cloudflare.com/v1/cf-account/me3/openai/chat/completions",
-        expect.any(Object),
-      );
-      expect(init.headers).toMatchObject({
-        Authorization: "Bearer sk-openai-secret",
-        "cf-aig-authorization": "Bearer cf-gateway-token",
-      });
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    expect(openai).toMatchObject({ text: "OpenAI reply", providerId: "openai", model: "openai/gpt-4.1-mini" });
+    expect(reasoning.text).toBe("OpenAI reply");
+    expect(aiRun.mock.calls[1]?.[1]).toMatchObject({ max_completion_tokens: 1600 });
+    expect(aiRun.mock.calls[1]?.[1]).not.toHaveProperty("temperature");
+    expect(anthropic).toMatchObject({ text: "Claude reply", providerId: "anthropic", model: "anthropic/claude-3-5-haiku-latest" });
+    expect(aiRun).toHaveBeenNthCalledWith(3, "anthropic/claude-3-5-haiku-latest", expect.any(Object), { gateway: { id: "me3" } });
   });
 
   it("requires owner auth for AI provider settings", async () => {

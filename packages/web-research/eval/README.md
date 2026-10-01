@@ -22,15 +22,8 @@ pnpm eval:web-research -- dry-run
 pnpm --filter @me3-core/web-research test
 ```
 
-The default plan compares an OpenAI Key in Request primary routed through
-Cloudflare AI Gateway with an Anthropic Cloudflare Unified Billing fallback.
-The legacy OpenAI Unified Billing candidate and direct provider candidates
-are transport controls and must be selected explicitly:
-
-```bash
-pnpm eval:web-research -- dry-run \
-  --candidates openai-gpt-5.5-direct-control,anthropic-sonnet-4.6-direct-control
-```
+The default plan compares OpenAI and Anthropic web search through Cloudflare
+Unified Billing. Both use Cloudflare credentials and the selected AI Gateway.
 
 Dry runs make no provider calls. They print exact cases, candidates, request
 count, maximum provider requests, configuration availability, skipped
@@ -50,21 +43,17 @@ ME3_WEB_RESEARCH_EVAL_CONFIRM=I_UNDERSTAND_LIVE_SEARCH_COSTS \
   pnpm eval:web-research -- run
 ```
 
-Cloudflare candidates require `CLOUDFLARE_ACCOUNT_ID` and
-`CLOUDFLARE_API_TOKEN`. The OpenAI Key in Request primary additionally
-requires `OPENAI_API_KEY`; it uses Cloudflare's `default` gateway unless
-`CLOUDFLARE_AI_GATEWAY_ID` overrides it. That provider key is sent through
-Cloudflare's provider-native OpenAI endpoint and remains billed by OpenAI
-rather than Cloudflare Unified Billing. Direct controls require
-`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The runner never prints credentials,
+Live candidates require `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_API_TOKEN`. They use Cloudflare's `default` gateway unless
+`CLOUDFLARE_AI_GATEWAY_ID` overrides it. The runner never prints credentials,
 explicitly enables gateway logging, and sends
 `cf-aig-collect-log-payload: false`, retaining metadata such as model, token
 counts, status, duration, and cost without request or response payloads.
 Successful Cloudflare responses also retain the non-secret `cf-aig-log-id`
 correlation value in the observation's provider metadata.
 
-The Cloudflare token used for provider-native requests must carry AI Gateway
-Run permission. Add AI Gateway Read permission when programmatic verification
+The Cloudflare token must carry Account > Workers AI > Read permission for
+model calls. Add AI Gateway Read permission when programmatic verification
 of the retained log metadata is required.
 
 Host the fixture directory at an immutable public
@@ -78,9 +67,8 @@ fetches each pinned fixture and requires its bytes to match the local SHA-256
 recorded in the run manifest.
 
 Likewise, a selection run requires the complete corpus and two configured
-production-role candidates from distinct providers. Case/category subsets,
-one-provider runs, and direct `transport_control` candidates are exploratory
-only. `--allow-ineligible-run` permits those runs but cannot make them suitable
+production-role candidates from distinct providers. Case/category subsets and
+one-provider runs are exploratory only. `--allow-ineligible-run` permits those runs but cannot make them suitable
 for choosing a production backend.
 
 Outputs are written under ignored `.me3-evals/web-research/<run-id>/` unless
