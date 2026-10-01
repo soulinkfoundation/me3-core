@@ -55,6 +55,7 @@ export type CoreBookingOffer = {
   pricing?: CoreBookingPricing;
   meetingProvider?: "none" | "soulink" | "external";
   meetingUrl?: string;
+  availability?: { windows?: Record<string, string[]> };
 };
 export type CoreBookingAvailability = {
   timezone?: string;
@@ -267,7 +268,9 @@ export function listOneToOneBookingOffers(
       pricing: offer.pricing,
       meetingProvider: offer.meetingProvider,
       meetingUrl: offer.meetingUrl,
-      availability,
+      availability: offer.availability?.windows
+        ? { timezone: availability.timezone, windows: offer.availability.windows }
+        : availability,
     };
   });
 }
@@ -717,7 +720,7 @@ export async function findConfirmedBookingOverlap(
        FROM bookings
        WHERE site_id = ?
          AND status = 'confirmed'
-         AND (? IS NULL OR offer_id = ?)
+         AND (booking_type = 'one_to_one' OR (? IS NULL OR offer_id = ?))
          AND starts_at < ?
          AND ends_at > ?
        LIMIT 1`,
@@ -739,7 +742,7 @@ export async function findActiveBookingHoldOverlap(
        WHERE site_id = ?
          AND status = 'active'
          AND expires_at > datetime('now')
-         AND (? IS NULL OR offer_id = ?)
+         AND (booking_type = 'one_to_one' OR (? IS NULL OR offer_id = ?))
          AND slot_start < ?
          AND slot_end > ?
        LIMIT 1`,

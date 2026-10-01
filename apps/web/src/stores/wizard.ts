@@ -201,6 +201,8 @@ export interface WizardBookingOffer {
   pricing?: WizardBookingPricing;
   meetingProvider?: "none" | "soulink" | "external";
   meetingUrl?: string;
+  availability?: WizardBookingConfig["availability"];
+  pageSlug?: string;
 }
 
 export interface WizardClassOffer {
@@ -241,6 +243,7 @@ export interface WizardBookingConfig {
   classEnabled: boolean;
   retreatEnabled: boolean;
   offers: WizardBookingOffer[];
+  offerDisplayMode: "cards" | "dropdown";
   classOffers: WizardClassOffer[];
   retreatOffers: WizardRetreatOffer[];
   title: string;
@@ -540,6 +543,8 @@ type PublishedBookingOffer = {
   pricing?: WizardBookingPricing;
   meetingProvider?: "none" | "soulink" | "external";
   meetingUrl?: string;
+  availability?: { windows?: Record<string, string[]> };
+  pageSlug?: string;
 };
 
 type PublishedBookingClass = {
@@ -588,6 +593,7 @@ type PublishedBookingType = {
 };
 
 type ExtendedMe3IntentBook = Me3IntentBook & {
+  offerDisplayMode?: "cards" | "dropdown";
   offers?: PublishedBookingOffer[];
   classes?: PublishedBookingClass[];
   retreats?: PublishedBookingRetreat[];
@@ -736,6 +742,21 @@ function createDefaultBookingOffer(
     ...(pricing ? { pricing } : {}),
     meetingProvider: overrides.meetingProvider || "none",
     meetingUrl: overrides.meetingUrl || "",
+    ...(overrides.availability ? { availability: normalizeOfferAvailability(overrides.availability) } : {}),
+    ...(typeof overrides.pageSlug === "string" && overrides.pageSlug.trim() ? { pageSlug: overrides.pageSlug.trim() } : {}),
+  };
+}
+
+function normalizeOfferAvailability(input: unknown): WizardBookingConfig["availability"] {
+  const windows = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  return {
+    monday: Array.isArray(windows.monday) ? windows.monday.filter((value): value is string => typeof value === "string") : [],
+    tuesday: Array.isArray(windows.tuesday) ? windows.tuesday.filter((value): value is string => typeof value === "string") : [],
+    wednesday: Array.isArray(windows.wednesday) ? windows.wednesday.filter((value): value is string => typeof value === "string") : [],
+    thursday: Array.isArray(windows.thursday) ? windows.thursday.filter((value): value is string => typeof value === "string") : [],
+    friday: Array.isArray(windows.friday) ? windows.friday.filter((value): value is string => typeof value === "string") : [],
+    saturday: Array.isArray(windows.saturday) ? windows.saturday.filter((value): value is string => typeof value === "string") : [],
+    sunday: Array.isArray(windows.sunday) ? windows.sunday.filter((value): value is string => typeof value === "string") : [],
   };
 }
 
@@ -931,6 +952,8 @@ function normalizeWizardBookingOffers(input: unknown): WizardBookingOffer[] {
     duration: isWizardBookingDuration(offer.duration) ? offer.duration : 30,
       meetingProvider: offer.meetingProvider === "soulink" || offer.meetingProvider === "external" ? offer.meetingProvider : "none",
       meetingUrl: typeof offer.meetingUrl === "string" ? offer.meetingUrl : "",
+      availability: offer.availability,
+      pageSlug: offer.pageSlug,
       pricing:
         offer.pricing && typeof offer.pricing === "object"
           ? normalizeWizardBookingPricing(offer.pricing)
@@ -1132,6 +1155,7 @@ function normalizeWizardBookingConfig(input: unknown): WizardBookingConfig {
     classEnabled,
     retreatEnabled,
     offers: normalizedOffers,
+    offerDisplayMode: record.offerDisplayMode === "dropdown" ? "dropdown" : "cards",
     classOffers: normalizedClassOffers,
     retreatOffers: normalizedRetreatOffers,
     title: headingTitle,
@@ -2506,6 +2530,11 @@ export const useWizardStore = defineStore("wizard", () => {
     };
     updatedPages[index] = nextPage;
     pages.value = updatedPages;
+    if (nextSlug !== current.slug) {
+      profile.value.booking.offers = profile.value.booking.offers.map((offer) =>
+        offer.pageSlug === current.slug ? { ...offer, pageSlug: nextSlug } : offer,
+      );
+    }
     markAsEdited();
     saveToStorage();
   }
@@ -2644,6 +2673,9 @@ export const useWizardStore = defineStore("wizard", () => {
       }
     }
     pages.value = pages.value.filter((_, i) => i !== index);
+    profile.value.booking.offers = profile.value.booking.offers.map((offer) =>
+      offer.pageSlug === page.slug ? { ...offer, pageSlug: undefined } : offer,
+    );
     markAsEdited();
     saveToStorage();
   }
@@ -3510,7 +3542,9 @@ export const useWizardStore = defineStore("wizard", () => {
 
       const oneToOneEnabled =
         profile.value.booking.oneToOneEnabled &&
-        Object.keys(windows).length > 0;
+        (Object.keys(windows).length > 0 || profile.value.booking.offers.some((offer) =>
+          offer.availability && Object.values(offer.availability).some((day) => day.length > 0)
+        ));
       const classEnabled = profile.value.booking.classEnabled;
       const retreatEnabled = profile.value.booking.retreatEnabled;
 
@@ -3610,6 +3644,7 @@ export const useWizardStore = defineStore("wizard", () => {
 
         const book: ExtendedMe3IntentBook = {
           enabled: true,
+          offerDisplayMode: profile.value.booking.offerDisplayMode,
           reminders: { ...profile.value.booking.reminders },
           bookingTypes: [],
         };
@@ -3643,6 +3678,15 @@ export const useWizardStore = defineStore("wizard", () => {
             }
             if (offer.pricing) {
               bookingOffer.pricing = offer.pricing;
+            }
+            const sourceOffer = sourceBookingOffers.find((entry) => entry.id === offer.id);
+            if (sourceOffer?.availability) {
+              bookingOffer.availability = {
+                windows: Object.fromEntries(days.filter((day) => sourceOffer.availability?.[day]?.length).map((day) => [day, sourceOffer.availability![day]])),
+              };
+            }
+            if (sourceOffer?.pageSlug && pagesEnabled.value && pages.value.some((page) => page.slug === sourceOffer.pageSlug && page.visible !== false)) {
+              bookingOffer.pageSlug = sourceOffer.pageSlug;
             }
             return bookingOffer;
           });
@@ -4760,6 +4804,8 @@ export const useWizardStore = defineStore("wizard", () => {
                   duration: (offer.duration as WizardBookingDuration) || 30,
                   meetingProvider: offer.meetingProvider,
                   meetingUrl: offer.meetingUrl,
+                  availability: offer.availability?.windows,
+                  pageSlug: offer.pageSlug,
                   pricing: offer.pricing
                     ? {
                         ...defaultWizardBookingPricing(),
@@ -4778,6 +4824,8 @@ export const useWizardStore = defineStore("wizard", () => {
                   duration: (offer.duration as WizardBookingDuration) || 30,
                   meetingProvider: offer.meetingProvider,
                   meetingUrl: offer.meetingUrl,
+                  availability: offer.availability?.windows,
+                  pageSlug: offer.pageSlug,
                   pricing: offer.pricing
                     ? {
                         ...defaultWizardBookingPricing(),
@@ -4860,6 +4908,7 @@ export const useWizardStore = defineStore("wizard", () => {
               typeof offer.capacity === "number" ? offer.capacity : null,
           })),
           bufferTime: rawBook.bufferTime,
+          offerDisplayMode: rawBook.offerDisplayMode,
           reminders: rawBook.reminders,
           confirmationEmail: rawBook.confirmationEmail,
           timezone:

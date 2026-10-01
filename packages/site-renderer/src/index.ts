@@ -99,6 +99,8 @@ type BookingOffer = {
   pricing?: BookingPricingConfig;
   meetingProvider?: "none" | "soulink" | "external";
   meetingUrl?: string;
+  availability?: { windows?: Record<string, string[]> };
+  pageSlug?: string;
 };
 
 type BookingClass = BookingOffer & {
@@ -185,6 +187,7 @@ export type Me3SiteProfile = {
       duration?: number;
       pricing?: BookingPricingConfig;
       offers?: BookingOffer[];
+      offerDisplayMode?: "cards" | "dropdown";
       classes?: BookingClass[];
       retreats?: BookingRetreat[];
       bookingTypes?: BookingType[];
@@ -439,7 +442,7 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
   }).join("");
   return pageShell(profile, {
     title, description, activeSlug: "", basePath: "./", vibe: getVibe(profile),
-    body: `<main class="site-main">${hero}${layout === "cover" ? `<div class="site-cover-links">${generateLinks(profile)}</div>` : ""}<div class="site-home-sections">${sectionHtml}</div></main><script>(function(){document.querySelectorAll('a[href="#booking"]').forEach(function(link){link.addEventListener('click',function(){var booking=document.getElementById('booking');if(!booking)return;var wrapper=booking.closest('.site-offer-booking');if(wrapper)wrapper.hidden=false;var offerId=${jsonForScript(profile.extensions?.["me3.app/site"]?.primaryAction?.kind === "offer" ? profile.extensions["me3.app/site"]?.primaryAction?.id || "" : "")};if(offerId){var card=Array.prototype.find.call(booking.querySelectorAll('.booking-card'),function(item){return item.dataset.offerId===offerId});if(card)card.click();}})})})();</script>`,
+    body: `<main class="site-main">${hero}${layout === "cover" ? `<div class="site-cover-links">${generateLinks(profile)}</div>` : ""}<div class="site-home-sections">${sectionHtml}</div></main><script>(function(){document.querySelectorAll('a[href="#booking"]').forEach(function(link){link.addEventListener('click',function(){var booking=document.getElementById('booking');if(!booking)return;var wrapper=booking.closest('.site-offer-booking');if(wrapper)wrapper.hidden=false;var offerId=${jsonForScript(profile.extensions?.["me3.app/site"]?.primaryAction?.kind === "offer" ? profile.extensions["me3.app/site"]?.primaryAction?.id || "" : "")};if(offerId){var card=Array.prototype.find.call(booking.querySelectorAll('.booking-card'),function(item){return item.dataset.offerId===offerId});if(card)card.click();var select=booking.querySelector('[data-booking-offer-select]');if(select){select.value=offerId;select.dispatchEvent(new Event('change',{bubbles:true}));}}})})})();</script>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
   });
 }
@@ -451,7 +454,7 @@ function generateOffers(profile: Me3SiteProfile, inlineBooking: boolean): string
   if (!offers.length) return "";
   const cards = offers.map((offer, index) => `<article class="site-offer"><h3>${escapeHtml(offer.title || "Session")}</h3><div class="site-offer__pills"><span>${escapeHtml(String(offer.duration || book.duration || 30))} min</span><span>${escapeHtml(formatPricing(offer.pricing))}</span></div>${offer.description ? `<p>${escapeHtml(plainTextFromMaybeHtml(offer.description))}</p>` : ""}<button type="button" data-offer-book="${index}">Book ${escapeHtml(offer.title || "session")}</button></article>`).join("");
   const booking = inlineBooking ? `<div class="site-offer-booking" hidden>${generateBooking(profile)}</div>` : "";
-  return `<section class="site-offers"><div class="site-section-heading"><h2>Work with me</h2></div><div class="site-offers__grid">${cards}</div>${booking}<script>(function(){var section=document.currentScript.parentElement;section.querySelectorAll('[data-offer-book]').forEach(function(button){button.addEventListener('click',function(){var booking=section.querySelector('.site-offer-booking');if(booking)booking.hidden=false;var target=booking||document.getElementById('booking');if(!target)return;var cards=target.querySelectorAll('.booking-card');var card=cards[Number(button.getAttribute('data-offer-book'))];if(card)card.click();target.scrollIntoView({behavior:'smooth',block:'start'});});});})();</script></section>`;
+  return `<section class="site-offers"><div class="site-section-heading"><h2>Work with me</h2></div><div class="site-offers__grid">${cards}</div>${booking}<script>(function(){var section=document.currentScript.parentElement;section.querySelectorAll('[data-offer-book]').forEach(function(button){button.addEventListener('click',function(){var booking=section.querySelector('.site-offer-booking');if(booking)booking.hidden=false;var target=booking||document.getElementById('booking');if(!target)return;var index=Number(button.getAttribute('data-offer-book'));var card=target.querySelectorAll('.booking-card')[index];if(card)card.click();var select=target.querySelector('[data-booking-offer-select]');if(select&&select.options[index]){select.selectedIndex=index;select.dispatchEvent(new Event('change',{bubbles:true}));}target.scrollIntoView({behavior:'smooth',block:'start'});});});})();</script></section>`;
 }
 
 function generateLatestWriting(profile: Me3SiteProfile): string {
@@ -1205,7 +1208,8 @@ function generateBookingTypeBody(
   const cards = offers.map((offer, index) => {
     const duration = offer.duration || book?.duration || 30;
     const price = formatPricing(offer.pricing);
-    return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || `${duration}-min Session`)}</strong>${renderBookingOfferDescription(offer.description)}<span>${duration} min${price ? ` · ${escapeHtml(price)}` : ""}</span></button>`;
+    const page = profile.pages?.find((entry) => entry.slug === offer.pageSlug && entry.visible !== false && entry.file);
+    return `<div class="booking-offer-card"><button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || `${duration}-min Session`)}</strong>${renderBookingOfferDescription(offer.description)}<span>${duration} min${price ? ` · ${escapeHtml(price)}` : ""}</span></button>${page ? `<a class="booking-offer-link" href="./${escapeHtml(normalizeSitePath(page.slug || ""))}">Learn more about this offer</a>` : ""}</div>`;
   }).join("");
 
   return generatePaidBookingWidget({
@@ -1216,6 +1220,8 @@ function generateBookingTypeBody(
     bufferTime: book?.bufferTime || 0,
     fallbackDuration: book?.duration || 30,
     cards,
+    displayMode: book?.offerDisplayMode === "dropdown" ? "dropdown" : "cards",
+    pageSlugs: new Set((profile.pages || []).filter((page): page is typeof page & { slug: string } => page.visible !== false && Boolean(page.file && page.slug)).map((page) => page.slug)),
   });
 }
 
@@ -1351,11 +1357,15 @@ function generatePaidBookingWidget(input: {
   bufferTime: number;
   fallbackDuration: number;
   cards: string;
+  displayMode: "cards" | "dropdown";
+  pageSlugs: Set<string>;
 }): string {
   const normalizedOffers = input.offers.map((offer, index) => ({
     id: offer.id || slugify(offer.title || `booking-${index + 1}`) || `booking-${index + 1}`,
     title: offer.title || `${offer.duration || input.fallbackDuration}-min Session`,
     duration: offer.duration || input.fallbackDuration,
+    windows: offer.availability?.windows || input.availability.windows || {},
+    pageHref: offer.pageSlug && input.pageSlugs.has(offer.pageSlug) ? `./${normalizeSitePath(offer.pageSlug)}` : "",
     pricing: {
       enabled: offer.pricing?.enabled === true,
       suggestedAmount: offer.pricing?.suggestedAmount || 0,
@@ -1381,7 +1391,7 @@ function generatePaidBookingWidget(input: {
   return `<h3 class="booking-subtitle">Choose an offer</h3>
     <div class="booking-widget" data-booking-widget>
       <script type="application/json" data-booking-config>${jsonForScript(config)}</script>
-      <div class="booking-session-preview">${input.cards}</div>
+      ${input.displayMode === "dropdown" ? `<select class="booking-offer-select" data-booking-offer-select aria-label="Choose an offer">${normalizedOffers.map((offer) => `<option value="${escapeHtml(offer.id)}">${escapeHtml(offer.title)} · ${offer.duration} min</option>`).join("")}</select><a class="booking-offer-select-link" data-booking-offer-link href="${escapeHtml(firstOffer?.pageHref || "#")}"${firstOffer?.pageHref ? "" : " hidden"}>Learn more about this offer</a>` : `<div class="booking-session-preview">${input.cards}</div>`}
       ${input.modern ? bookingDayStripMarkup("Choose a date") : `<div class="booking-date-picker">
         <label for="booking-date">Select a date:</label>
         <div class="booking-date-input-wrap" data-booking-date-wrap>
@@ -1429,6 +1439,8 @@ function paidBookingWidgetScript(): string {
   var paymentLaterEl=root.querySelector('[data-booking-payment-later]');
   var backButton=root.querySelector('[data-booking-back]');
   var continueButton=root.querySelector('[data-booking-continue]');
+  var offerSelect=root.querySelector('[data-booking-offer-select]');
+  var offerLink=root.querySelector('[data-booking-offer-link]');
   var selectedOfferId=(config.offers[0]&&config.offers[0].id)||'';
   var selectedTime='';
   var slotRequest=0;
@@ -1446,6 +1458,7 @@ function paidBookingWidgetScript(): string {
     return false;
   }
   function offer(){return config.offers.find(function(item){return item.id===selectedOfferId;})||config.offers[0];}
+  function updateOfferLink(){if(!offerLink)return;var href=offer().pageHref;offerLink.hidden=!href;if(href)offerLink.href=href;}
   function updatePaymentNote(){var selected=offer();if(paymentLaterEl)paymentLaterEl.hidden=!(selected.pricing&&selected.pricing.enabled&&selected.pricing.paymentMethod==='manual');}
   function setDetailsVisible(visible){
     form.classList.toggle('is-visible',!!visible);
@@ -1491,7 +1504,7 @@ function paidBookingWidgetScript(): string {
     setDetailsVisible(false);
     var dateValue=dateInput.value;
     var request=++slotRequest;
-    var windows=(config.windows&&config.windows[dayName(dateValue)])||[];
+    var windows=(selected.windows&&selected.windows[dayName(dateValue)])||[];
     var duration=Number(selected.duration||30);
     if(!Number.isFinite(duration)||duration<=0)duration=30;
     var bufferTime=Number(config.bufferTime||0);
@@ -1545,11 +1558,10 @@ function paidBookingWidgetScript(): string {
     slotsEl.hidden=!found;
     emptyEl.hidden=true;
   }
-  root.querySelectorAll('.booking-card').forEach(function(button,index){
-    if(config.offers[index]) button.dataset.offerId=config.offers[index].id;
-    button.addEventListener('click',function(){
-      selectedOfferId=button.dataset.offerId||selectedOfferId;
-      root.querySelectorAll('.booking-card').forEach(function(item){var active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});
+  function selectOffer(id){
+      selectedOfferId=id||selectedOfferId;
+      root.querySelectorAll('.booking-card').forEach(function(item){var active=item.dataset.offerId===selectedOfferId;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});
+      if(offerSelect)offerSelect.value=selectedOfferId;
       var selected=offer();
       if(amountInput&&selected.pricing){
         amountInput.value=selected.pricing.suggestedAmount||amountInput.value;
@@ -1558,14 +1570,20 @@ function paidBookingWidgetScript(): string {
         if(label) label.firstChild.textContent='Amount ('+(selected.pricing.currency||'USD')+')';
       }
       updatePaymentNote();
-      populateSlots();
-    });
+      updateOfferLink();
+      if(root.querySelector('[data-booking-day-strip]'))refreshDayStrip();else populateSlots();
+  }
+  root.querySelectorAll('.booking-card').forEach(function(button,index){
+    if(config.offers[index]) button.dataset.offerId=config.offers[index].id;
+    button.addEventListener('click',function(){selectOffer(button.dataset.offerId);});
   });
+  if(offerSelect)offerSelect.addEventListener('change',function(){selectOffer(offerSelect.value);});
   emptyEl.hidden=true;
   slotsEl.hidden=true;
   setDetailsVisible(false);
   updatePaymentNote();
-  if(root.querySelector('[data-booking-day-strip]')){${bookingDayStripRuntime("config.timezone", "(config.windows[weekday]||[]).length > 0", "populateSlots")}}else{
+  updateOfferLink();
+  if(root.querySelector('[data-booking-day-strip]')){${bookingDayStripRuntime("config.timezone", "(offer().windows[weekday]||[]).length > 0", "populateSlots")}}else{
     var now=new Date();
     var today=String(now.getFullYear())+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
     dateInput.min=today;
@@ -2486,6 +2504,14 @@ function bookingControlsCss(): string {
 .booking-type-tab:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .booking-type-panel[hidden]{display:none}
 .booking-card-description{font-size:.95rem;line-height:1.45}
+.booking-offer-card{display:flex;flex-direction:column;border-radius:16px;background:var(--surface);box-shadow:var(--ui-shadow-sm);overflow:hidden}
+.booking-session-preview:has(.booking-offer-card:only-child){grid-template-columns:1fr}
+.booking-offer-card .booking-card,.booking-offer-card .booking-card.active{border:0;background:transparent}
+.booking-offer-card:has(.booking-card.active){box-shadow:var(--ui-shadow-md);background:color-mix(in srgb,var(--surface) 92%,var(--accent))}
+.booking-offer-link,.booking-offer-select-link{display:block;margin:0 auto 12px;color:var(--muted);font-size:.85rem;text-align:center;text-underline-offset:3px}
+.booking-offer-link:focus-visible,.booking-offer-select-link:focus-visible,.booking-offer-select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.booking-offer-select{max-width:430px;margin:0 auto;box-shadow:var(--ui-shadow-sm)}
+.booking-offer-select-link{margin:-8px auto 0}
 .booking-intro{max-width:36rem;margin:0 auto 24px;color:var(--muted);font-size:1.1rem;line-height:1.55}
 .booking-intro p{margin:0 0 .75em}
 .booking-intro p:last-child{margin-bottom:0}

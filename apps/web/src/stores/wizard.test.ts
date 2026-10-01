@@ -1620,6 +1620,24 @@ describe("wizard store", () => {
   });
 
   describe("booking", () => {
+    it("publishes offer hours and a detail page, and follows page slug changes", () => {
+      const store = useWizardStore();
+      store.profile.name = "Alex";
+      const page = store.addPage("Alignment");
+      const offerId = store.profile.booking.offers[0].id;
+      store.setBooking({ oneToOneEnabled: true, offerDisplayMode: "dropdown" } as any);
+      store.updateBookingOffer(offerId, {
+        availability: { monday: ["19:00-21:00"] },
+        pageSlug: page!.slug,
+      } as any);
+      store.updatePage(0, { slug: "alignment-details" });
+      const book = store.generateMe3Json().intents?.book as any;
+      expect(book.offerDisplayMode).toBe("dropdown");
+      expect(book.offers[0].availability.windows.monday).toEqual(["19:00-21:00"]);
+      expect(book.offers[0].pageSlug).toBe("alignment-details");
+      store.removePage(0);
+      expect(store.profile.booking.offers[0].pageSlug).toBeUndefined();
+    });
     it("does not export legacy booking placement targets", () => {
       const store = useWizardStore();
       store.profile.name = "Test User";

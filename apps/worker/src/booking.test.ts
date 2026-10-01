@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createConfirmedOneToOneBooking,
   normalizeSiteCheckoutReturnUrl,
+  listOneToOneBookingOffers,
   resolvePaidOneToOneOffer,
   serializePublicBookingOffer,
   type CoreBookIntent,
@@ -37,6 +38,20 @@ const manualOffer: ResolvedOneToOneBookingOffer = {
     paymentInstructions: "Pay at https://pay.example/session",
   },
 };
+
+it("resolves each offer's own hours and keeps shared hours as the fallback", () => {
+  const book = {
+    enabled: true,
+    availability: { timezone: "America/New_York", windows: { monday: ["09:00-17:00"] } },
+    offers: [
+      { id: "alignment", duration: 45, availability: { windows: { monday: ["19:00-21:00"] } } },
+      { id: "calm", duration: 30 },
+    ],
+  } as CoreBookIntent;
+  const [alignment, calm] = listOneToOneBookingOffers(book);
+  expect(alignment.availability).toEqual({ timezone: "America/New_York", windows: { monday: ["19:00-21:00"] } });
+  expect(calm.availability).toEqual(book.availability);
+});
 
 describe("public checkout returns", () => {
   const requestUrl = "https://owner.me3.app/api/book/owner/checkout-session";

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, nextTick, onMounted, watch } from "vue";
 import { storeToRefs } from "pinia";
 import {
   useWizardStore,
@@ -187,6 +187,57 @@ const bookingAvailability = computed({
     }),
 });
 
+const offerDisplayMode = computed({
+  get: () => profile.value.booking.offerDisplayMode,
+  set: (offerDisplayMode: "cards" | "dropdown") => wizard.setBooking({ offerDisplayMode }),
+});
+
+const availabilityDialog = ref<HTMLDialogElement | null>(null);
+const availabilityTarget = ref<"default" | string | null>(null);
+const useDefaultAvailability = ref(true);
+const draftAvailability = ref<WizardBookingConfig["availability"]>(copyAvailability(profile.value.booking.availability));
+const draftBufferTime = ref<WizardBookingConfig["bufferTime"]>(0);
+const draftTimezone = ref("UTC");
+
+function copyAvailability(availability: WizardBookingConfig["availability"]): WizardBookingConfig["availability"] {
+  return { ...availability, ...Object.fromEntries(Object.entries(availability).map(([day, windows]) => [day, [...windows]])) };
+}
+
+function availabilitySummary(availability?: BookingAvailability): string {
+  if (!availability) return "Uses default hours";
+  const days = Object.values(availability).filter((windows) => windows.length).length;
+  return days ? `${days} ${days === 1 ? "day" : "days"} available` : "No available hours";
+}
+
+async function openAvailability(target: "default" | string) {
+  availabilityTarget.value = target;
+  const custom = target === "default" ? undefined : bookingOffers.value.find((offer) => offer.id === target)?.availability;
+  useDefaultAvailability.value = !custom;
+  draftAvailability.value = copyAvailability(custom || profile.value.booking.availability);
+  draftBufferTime.value = bookingBufferTime.value;
+  draftTimezone.value = bookingTimezone.value;
+  await nextTick();
+  availabilityDialog.value?.showModal();
+}
+
+function saveAvailability() {
+  const target = availabilityTarget.value;
+  if (target === "default") {
+    wizard.setBooking({ availability: draftAvailability.value, bufferTime: draftBufferTime.value, timezone: draftTimezone.value });
+  } else if (target) {
+    wizard.updateBookingOffer(target, { availability: useDefaultAvailability.value ? undefined : draftAvailability.value });
+  }
+  availabilityDialog.value?.close();
+}
+
+const detailPages = computed(() => wizard.pagesEnabled
+  ? wizard.pages.filter((page) => page.visible !== false && page.slug)
+  : []);
+const pageSearch = ref("");
+function pageOption(page: { title: string; slug: string }) {
+  return `${page.title || page.slug} · /${page.slug}`;
+}
+
 const activeOffer = computed(() => {
   if (!activeOfferId.value) return bookingOffers.value[0] || null;
   return (
@@ -199,6 +250,20 @@ const activeOffer = computed(() => {
 function updateActiveOffer(updates: Partial<WizardBookingOffer>) {
   if (!activeOffer.value) return;
   wizard.updateBookingOffer(activeOffer.value.id, updates);
+}
+
+watch(
+  () => [activeOfferId.value, activeOffer.value?.pageSlug, detailPages.value] as const,
+  () => {
+    const selected = detailPages.value.find((page) => page.slug === activeOffer.value?.pageSlug);
+    pageSearch.value = selected ? pageOption(selected) : "";
+  },
+  { immediate: true },
+);
+function selectDetailPage() {
+  const selected = detailPages.value.find((page) => pageOption(page) === pageSearch.value);
+  updateActiveOffer({ pageSlug: selected?.slug });
+  if (!selected) pageSearch.value = "";
 }
 
 const activeOfferTitle = computed({
@@ -1112,17 +1177,55 @@ onMounted(() => {
                   :input-id="`booking-offer-${activeOffer.id}`"
                 />
               </div>
+              <div class="offer-extra-settings">
+                <div class="offer-setting-row">
+                  <div>
+                    <strong>Availability</strong>
+                    <span>{{ availabilitySummary(activeOffer.availability) }}</span>
+                  </div>
+                  <button type="button" class="setting-action" @click="openAvailability(activeOffer.id)">Set availability</button>
+                </div>
+                <div class="form-group offer-page-field">
+                  <label :for="`booking-offer-page-${activeOffer.id}`">More about this offer</label>
+                  <div class="offer-page-input">
+                    <input
+                      :id="`booking-offer-page-${activeOffer.id}`"
+                      v-model="pageSearch"
+                      type="search"
+                      list="booking-offer-pages"
+                      placeholder="Search site pages (optional)"
+                      autocomplete="off"
+                      @change="selectDetailPage"
+                    />
+                    <button v-if="activeOffer.pageSlug" type="button" class="offer-page-clear" aria-label="Remove offer page" @click="updateActiveOffer({ pageSlug: undefined })">×</button>
+                  </div>
+                  <datalist id="booking-offer-pages">
+                    <option v-for="page in detailPages" :key="page.slug" :value="pageOption(page)" />
+                  </datalist>
+                  <p class="form-hint">Visitors can open this page from the offer choice.</p>
+                </div>
+              </div>
             </div>
           </div>
-
-          <!-- Weekly windows apply to 1:1 only; classes use each class’s day & start time. -->
-          <BookingAvailabilityEditor
-            v-model:availability="bookingAvailability"
-            v-model:buffer-time="bookingBufferTime"
-            v-model:timezone="bookingTimezone"
-            :timezone-options="timezoneOptions"
-            description="When you’re open for private sessions. This does not apply to classes or retreats — each has its own schedule in its tab."
-          />
+          <div class="booking-shared-settings">
+            <div class="offer-setting-row">
+              <div>
+                <strong>Default availability</strong>
+                <span>{{ availabilitySummary(bookingAvailability) }} · {{ formatTimezoneLabel(bookingTimezone) }}</span>
+              </div>
+              <button type="button" class="setting-action" @click="openAvailability('default')">Edit default hours</button>
+            </div>
+            <div class="offer-setting-row offer-display-row">
+              <div>
+                <strong>How offers appear</strong>
+                <span>Choose how visitors select a 1:1 offer.</span>
+              </div>
+              <div class="display-options" role="group" aria-label="How offers appear">
+                <button type="button" :aria-pressed="offerDisplayMode === 'cards'" :class="{ active: offerDisplayMode === 'cards' }" @click="offerDisplayMode = 'cards'">Cards</button>
+                <button type="button" :aria-pressed="offerDisplayMode === 'dropdown'" :class="{ active: offerDisplayMode === 'dropdown' }" @click="offerDisplayMode = 'dropdown'">Dropdown</button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div
@@ -1735,6 +1838,35 @@ onMounted(() => {
       </template>
     </div>
 
+    <dialog ref="availabilityDialog" class="availability-dialog" aria-labelledby="availability-dialog-title">
+      <div class="availability-dialog-header">
+        <div>
+          <h3 id="availability-dialog-title">{{ availabilityTarget === 'default' ? 'Default availability' : 'Offer availability' }}</h3>
+          <p v-if="availabilityTarget !== 'default'">All times use {{ formatTimezoneLabel(bookingTimezone) }}.</p>
+        </div>
+        <button type="button" class="availability-dialog-close" aria-label="Close availability" @click="availabilityDialog?.close()">×</button>
+      </div>
+      <div v-if="availabilityTarget !== 'default'" class="availability-choice" role="group" aria-label="Offer availability source">
+        <button type="button" :aria-pressed="useDefaultAvailability" :class="{ active: useDefaultAvailability }" @click="useDefaultAvailability = true">Use default hours</button>
+        <button type="button" :aria-pressed="!useDefaultAvailability" :class="{ active: !useDefaultAvailability }" @click="useDefaultAvailability = false">Set custom hours</button>
+      </div>
+      <BookingAvailabilityEditor
+        v-if="availabilityTarget === 'default' || !useDefaultAvailability"
+        v-model:availability="draftAvailability"
+        v-model:buffer-time="draftBufferTime"
+        v-model:timezone="draftTimezone"
+        :show-buffer="availabilityTarget === 'default'"
+        :show-timezone="availabilityTarget === 'default'"
+        :timezone-options="timezoneOptions"
+        :description="availabilityTarget === 'default' ? 'These hours apply to offers unless you set custom hours for one.' : 'These hours apply only to this offer.'"
+      />
+      <p v-else class="availability-inherit-note">This offer follows your default hours.</p>
+      <div class="availability-dialog-actions">
+        <button type="button" class="setting-action" @click="availabilityDialog?.close()">Cancel</button>
+        <button type="button" class="setting-action primary" @click="saveAvailability">Save availability</button>
+      </div>
+    </dialog>
+
   </div>
 </template>
 
@@ -1758,8 +1890,9 @@ onMounted(() => {
 
 .config-fields {
   background: var(--color-bg);
-  border: 1px solid var(--color-border);
+  border: 0;
   border-radius: 12px;
+  box-shadow: var(--ui-shadow-sm, 0 4px 18px rgba(0, 0, 0, 0.08));
 }
 
 .config-fields > div:first-of-type {
@@ -2012,10 +2145,11 @@ onMounted(() => {
 .offer-tab-item {
   display: inline-flex;
   align-items: stretch;
-  border: 1px solid var(--color-border);
+  border: 0;
   border-radius: 8px;
   overflow: hidden;
   background: var(--color-bg);
+  box-shadow: var(--ui-shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08));
 }
 
 .offer-tabs-bar .offer-tab-item.active {
@@ -2054,13 +2188,99 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  border: 1px dashed var(--color-border);
+  border: 0;
   border-radius: 8px;
   background: var(--color-bg);
   color: var(--color-text);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  box-shadow: var(--ui-shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08));
+}
+
+.offer-extra-settings,
+.booking-shared-settings {
+  display: grid;
+  gap: 16px;
+  margin: 20px 0;
+}
+.booking-shared-settings { padding: 0 20px 20px; }
+.offer-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--color-bg);
+  box-shadow: var(--ui-shadow-sm, 0 2px 10px rgba(0, 0, 0, 0.08));
+}
+.offer-setting-row > div:first-child { display: grid; gap: 4px; min-width: 0; }
+.offer-setting-row strong { color: var(--color-text); font-size: 14px; }
+.offer-setting-row span,
+.availability-dialog-header p,
+.availability-inherit-note { color: var(--color-text-muted); font-size: 13px; }
+.setting-action,
+.display-options button,
+.availability-choice button {
+  border: 0;
+  border-radius: 9px;
+  padding: 9px 13px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-shadow: var(--ui-shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08));
+  cursor: pointer;
+  white-space: nowrap;
+}
+.setting-action.primary,
+.display-options button.active,
+.availability-choice button.active { background: #232428; color: #fff; }
+.display-options,
+.availability-choice { display: flex; gap: 8px; flex-wrap: wrap; }
+.offer-page-field { margin: 0; }
+.offer-page-input { position: relative; }
+.offer-page-input input { padding-right: 36px; }
+.offer-page-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 20px;
+  cursor: pointer;
+}
+.availability-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.22);
+  overflow: auto;
+}
+.availability-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.availability-dialog-header,
+.availability-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px;
+}
+.availability-dialog-header h3 { margin: 0 0 4px; }
+.availability-dialog-header p { margin: 0; }
+.availability-dialog-close { border: 0; background: transparent; color: inherit; font-size: 26px; cursor: pointer; }
+.availability-choice { padding: 0 20px; }
+.availability-dialog :deep(.booking-availability-editor) { border: 0; }
+.availability-inherit-note { padding: 12px 20px; }
+.availability-dialog-actions { justify-content: flex-end; }
+@media (max-width: 560px) {
+  .offer-setting-row { align-items: stretch; flex-direction: column; }
+  .display-options button { flex: 1; }
 }
 
 .booking-type-panel,

@@ -2,6 +2,38 @@ import { describe, expect, it } from "vitest";
 import { generateSiteHtml } from "./index";
 
 describe("site generator", () => {
+  it("renders offer dropdowns, per-offer hours, and linked detail pages", async () => {
+    const files = await generateSiteHtml({
+      name: "Alex", handle: "alex",
+      pages: [{ slug: "alignment", title: "Alignment", file: "alignment.md" }],
+      intents: { book: {
+        enabled: true, offerDisplayMode: "dropdown",
+        availability: { timezone: "America/New_York", windows: { monday: ["09:00-17:00"] } },
+        offers: [
+          { id: "alignment", title: "Alignment", duration: 45, pageSlug: "alignment", availability: { windows: { monday: ["19:00-21:00"] } } },
+          { id: "calm", title: "Calm", duration: 30 },
+        ],
+      } },
+    } as any, [{ name: "alignment.md", content: "Details" }]);
+    const html = files["index.html"];
+    expect(html).toContain('data-booking-offer-select');
+    expect(html).not.toContain('<label for="booking-offer-select"');
+    expect(html).toContain('href="./alignment"');
+    expect(html).toContain('Learn more about this offer');
+    expect(html).toContain('"monday":["19:00-21:00"]');
+    expect(html).toContain('"monday":["09:00-17:00"]');
+    for (const [, script] of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)) {
+      if (script.trim().startsWith("{")) continue;
+      expect(() => new Function(script)).not.toThrow();
+    }
+
+    const cards = await generateSiteHtml({
+      name: "Alex", handle: "alex",
+      pages: [{ slug: "alignment", title: "Alignment", file: "alignment.md" }],
+      intents: { book: { enabled: true, offers: [{ id: "alignment", title: "Alignment", pageSlug: "alignment" }] } },
+    } as any, [{ name: "alignment.md", content: "Details" }]);
+    expect(cards["index.html"]).toMatch(/class="booking-offer-card"><button[\s\S]*?<\/button><a class="booking-offer-link" href="\.\/alignment">Learn more about this offer<\/a><\/div>/);
+  });
   it.each(["card", "split", "cover", "minimal"] as const)("renders the %s layout with one header and a mobile dock", async (layout) => {
     const files = await generateSiteHtml({
       name: "Alex",
@@ -63,7 +95,7 @@ describe("site generator", () => {
     expect(html).not.toContain('type="date"');
     expect(html).toContain("Europe/Dublin");
     expect(html).toContain("for(var i=0;i<14;i++)");
-    expect(html).toContain("config.windows[weekday]");
+    expect(html).toContain("offer().windows[weekday]");
   });
 
   it("orders visible home sections while keeping booking blocks on content pages", async () => {
