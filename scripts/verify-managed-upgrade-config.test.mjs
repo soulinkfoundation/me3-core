@@ -46,6 +46,29 @@ test("accepts only a deploy config bound to the complete frozen resources", () =
   }
 });
 
+test("accepts an optional isolated SDK agent binding when the SDK runtime is enabled", () => {
+  const directory = mkdtempSync(join(tmpdir(), "me3-sdk-upgrade-config-"));
+  const configPath = join(directory, "wrangler.toml");
+  const sdkConfig = config().replace(
+    'ME3_DEPLOYMENT_MODE = "managed"',
+    'ME3_DEPLOYMENT_MODE = "managed"\nME3_ASSISTANT_RUNTIME = "sdk"',
+  ).replace(
+    '[[migrations]]',
+    '[[durable_objects.bindings]]\nname = "ME3_SDK_USER_AGENT"\nclass_name = "Me3SdkUserAgent"\n[[migrations]]',
+  ).replace(
+    'new_sqlite_classes = ["Me3UserAgent"]',
+    'new_sqlite_classes = ["Me3UserAgent"]\n[[migrations]]\ntag = "sdk"\nnew_sqlite_classes = ["Me3SdkUserAgent"]',
+  );
+  try {
+    writeFileSync(configPath, sdkConfig);
+    assert.equal(contract(configPath).d1Id, d1Id);
+    writeFileSync(configPath, sdkConfig.replace('name = "ME3_SDK_USER_AGENT"', 'name = "MISSING_SDK_AGENT"'));
+    assert.throws(() => contract(configPath), /upgrade config is invalid/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 function contract(configPath) {
   return verifyManagedUpgradeConfig({
     configPath,

@@ -6,6 +6,7 @@
 - Never commit real secrets, `.dev.vars`, `.env`, production Cloudflare IDs, private owner data, or hosted subscription billing config.
 - Keep ME3 Core, plugin-owned, and hosted-only boundaries explicit in code, docs, and examples.
 - Run the narrow quality gate for the change. For web app work, run `pnpm build`.
+- Follow the shared testing policy in `/Users/kieranbutler/Coding/docs/testing.md`.
 - Verify git scope before staging so install-local or unrelated user work is not hidden or reverted.
 
 ## Ecosystem Source Of Truth
@@ -17,10 +18,7 @@
 
 ## Worker API Structure
 
-- Keep `apps/worker/src/index.ts` as Worker composition/runtime wiring only: Hono app setup, global middleware, route registration, and Cloudflare `fetch`/`email`/`scheduled`/`queue` handlers.
-- Do not add new feature routes or domain helper piles directly to `apps/worker/src/index.ts`. Add or extend a domain route module, for example `apps/worker/src/routes/<domain>.ts`, and keep business logic in a service module.
-- If a route needs more than thin request parsing, auth checks, and response shaping, move that logic beside the owning service before wiring the route.
-- When a domain adds several endpoints, register them through a `register<Domain>Routes(app, deps)` function so `index.ts` grows by one import and one registration call.
+- Keep `apps/worker/src/index.ts` for runtime wiring. Put feature routes in `routes/` and business logic beside the owning service.
 
 ## Core Updates And Releases
 
@@ -32,27 +30,7 @@
 - Commit and push the metadata update on `main`, then create and push the tag from that commit.
 - After tagging, verify with `pnpm update:check -- --manifest-url updates/stable.json --json`.
 
-## Session Completion
+## Landing work
 
-When code changed:
-
-1. Run the narrow quality gate for the change.
-2. Verify git scope and avoid staging unrelated user work.
-3. Commit completed work on `main` when the user asks you to land it.
-4. Push `main` only when the work is ready to land:
-   ```bash
-   git status
-   git pull --rebase
-   bd sync
-   git push origin main
-   git status
-   ```
-
-For Core update merge commits in install repositories, skip `git pull --rebase` after the merge commit and push the verified merge directly.
-
-**Critical rules:**
-
-- `main` is the only branch to push by default.
-- If push fails, resolve and retry until it succeeds.
-- Never force-push `main`.
-- Never run destructive cleanup commands unless the user explicitly asks.
+- Review the staged diff, preserve unrelated work, and land only completed changes on `main`. Before pushing, run `git pull --rebase` and `bd sync`; never force-push. For a completed Core update merge in an install repository, push the verified merge without rebasing it.
+- Never run destructive cleanup commands unless the user asks.

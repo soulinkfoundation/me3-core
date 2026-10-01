@@ -414,7 +414,10 @@ const RUNTIME_MIGRATIONS_EXCEPT_0022 = `
     ('0049_commerce_confirmation_delivery', '2026-09-11-commerce-confirmation-delivery-v1'),
     ('0050_accounts_customer_payments', '2026-09-11-accounts-customer-payments-v1'),
     ('0051_owner_navigation_features', '2026-09-18-owner-navigation-features-v2'),
-    ('0052_owner_feature_discovery', '2026-09-17-owner-feature-discovery-v1');
+    ('0052_owner_feature_discovery', '2026-09-17-owner-feature-discovery-v1'),
+    ('0053_booking_meeting', '2026-09-23-booking-meeting-v1'),
+    ('0054_wheel_of_life_navigation', '2026-09-30-wheel-of-life-navigation-v1'),
+    ('0055_calendar_agent_cancellation_approvals', '2026-10-01-calendar-agent-cancellation-approvals-v1');
 `;
 
 const LEGACY_SOCIAL_SCHEMA = `

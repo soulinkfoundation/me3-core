@@ -27,6 +27,7 @@ type NavigationFeatureId =
   | "assistant"
   | "calendar"
   | "journal"
+  | "wheel-of-life"
   | "tasks"
   | "email"
   | "files"
@@ -36,6 +37,7 @@ const navigationFeatures = ref<Record<NavigationFeatureId, boolean>>({
   assistant: false,
   calendar: true,
   journal: false,
+  "wheel-of-life": false,
   tasks: false,
   email: false,
   files: false,
@@ -131,6 +133,7 @@ async function loadInstalledPluginNav() {
       assistant: false,
       calendar: true,
       journal: false,
+      "wheel-of-life": false,
       tasks: false,
       email: false,
       files: false,
@@ -197,14 +200,14 @@ watch(navDrawerOpen, (isOpen) => {
           :to="sitesPath"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('sites') }"
-          aria-label="ME3 Profile"
-          title="ME3 Profile"
+          aria-label="Website"
+          title="Website"
           @click="closeNavDrawer"
         >
           <span class="app-side-nav__emoji" aria-hidden="true">{{
             APP_FEATURE_ICONS.sites
           }}</span>
-          <span class="sr-only">ME3 Profile</span>
+          <span class="sr-only">Website</span>
         </RouterLink>
 
         <RouterLink
@@ -253,6 +256,19 @@ watch(navDrawerOpen, (isOpen) => {
             APP_FEATURE_ICONS.journal
           }}</span>
           <span class="sr-only">Journal</span>
+        </RouterLink>
+
+        <RouterLink
+          v-if="navigationFeatures['wheel-of-life']"
+          to="/wheel-of-life"
+          class="app-side-nav__row app-side-nav-control"
+          :class="{ 'app-side-nav__row--active': rowActive('wheel-of-life') }"
+          aria-label="Wheel of Life"
+          title="Wheel of Life"
+          @click="closeNavDrawer"
+        >
+          <span class="app-side-nav__emoji" aria-hidden="true">🛞</span>
+          <span class="sr-only">Wheel of Life</span>
         </RouterLink>
 
         <RouterLink

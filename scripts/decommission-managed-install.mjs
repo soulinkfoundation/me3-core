@@ -104,10 +104,14 @@ export async function decommissionManagedInstall(
   // externally reported lifecycle stages remain strictly monotonic.
   let namespaces = await listDurableObjectNamespaces(api, input.accountId);
   const namespace = namespaces.find((item) => namespaceId(item) === contract.durableObjectNamespaceId);
+  const sdkNamespaces = namespaces.filter(
+    (item) => item.script === contract.workerName && item.class === "Me3SdkUserAgent",
+  );
+  if (sdkNamespaces.length > 1) throw new Error("Multiple SDK Durable Object namespaces match the managed install");
   const workerHasResourceBindings = presence.worker
     ? await hasManagedWorkerResourceBindings(api, input.accountId, contract.workerName)
     : false;
-  if (namespace || workerHasResourceBindings) {
+  if (namespace || sdkNamespaces.length || workerHasResourceBindings) {
     if (
       namespace &&
       (namespace.script !== contract.workerName || namespace.class !== "Me3UserAgent")
@@ -118,9 +122,11 @@ export async function decommissionManagedInstall(
       workerName: contract.workerName,
       operationId: contract.operationId,
       deleteDurableObject: Boolean(namespace),
+      deleteSdkDurableObject: sdkNamespaces.length === 1,
     });
     namespaces = await listDurableObjectNamespaces(api, input.accountId);
-    if (namespaces.some((item) => namespaceId(item) === contract.durableObjectNamespaceId)) {
+    const deletedNamespaceIds = [contract.durableObjectNamespaceId, ...sdkNamespaces.map(namespaceId)];
+    if (namespaces.some((item) => deletedNamespaceIds.includes(namespaceId(item)))) {
       throw new Error("Durable Object namespace deletion was not verified");
     }
   }
@@ -1221,6 +1227,7 @@ export function deployDurableObjectTombstone({
   workerName,
   operationId,
   deleteDurableObject = true,
+  deleteSdkDurableObject = false,
   allowApiUpdatedWorker = false,
 }) {
   const root = mkdtempSync(join(tmpdir(), "me3-managed-do-delete-"));
@@ -1236,11 +1243,14 @@ export function deployDurableObjectTombstone({
       'main = "tombstone.mjs"',
       'compatibility_date = "2026-06-24"',
       "workers_dev = false",
-      ...(deleteDurableObject
+      ...(deleteDurableObject || deleteSdkDurableObject
         ? [
             "[[migrations]]",
             `tag = "managed-delete-${operationId}"`,
-            'deleted_classes = ["Me3UserAgent"]',
+            `deleted_classes = [${[
+              ...(deleteDurableObject ? ['"Me3UserAgent"'] : []),
+              ...(deleteSdkDurableObject ? ['"Me3SdkUserAgent"'] : []),
+            ].join(", ")}]`,
           ]
         : []),
       "",

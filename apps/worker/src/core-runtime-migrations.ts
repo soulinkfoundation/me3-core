@@ -363,6 +363,45 @@ const runtimeMigrations: RuntimeMigration[] = [
       ).run();
     },
   },
+  {
+    id: "0054_wheel_of_life_navigation",
+    checksum: "2026-09-30-wheel-of-life-navigation-v1",
+    async apply(db) {
+      await db.prepare(
+        `INSERT OR IGNORE INTO owner_navigation_features (user_id, feature_id, visible)
+         SELECT user_id, 'wheel-of-life', 1 FROM mission_wheel_settings
+         UNION
+         SELECT user_id, 'wheel-of-life', 1 FROM mission_wheel_snapshots`,
+      ).run();
+    },
+  },
+  {
+    id: "0055_calendar_agent_cancellation_approvals",
+    checksum: "2026-10-01-calendar-agent-cancellation-approvals-v1",
+    async apply(db) {
+      await db.prepare(
+        `CREATE TABLE IF NOT EXISTS calendar_agent_cancellation_approvals (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          event_title TEXT NOT NULL,
+          starts_at TEXT NOT NULL,
+          ends_at TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'complete', 'expired')),
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          expires_at TEXT NOT NULL DEFAULT (datetime('now', '+1 day')),
+          completed_at TEXT,
+          FOREIGN KEY (user_id) REFERENCES owner_profile(id) ON DELETE CASCADE
+        )`,
+      ).run();
+      await db.prepare(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_agent_pending_cancel
+         ON calendar_agent_cancellation_approvals(user_id, event_id)
+         WHERE status = 'pending'`,
+      ).run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

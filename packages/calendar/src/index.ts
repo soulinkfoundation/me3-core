@@ -23,6 +23,7 @@ export type CalendarEventLike = {
 };
 
 type CalendarAgentStatement = {
+  first<T = unknown>(): Promise<T | null>;
   all<T = unknown>(): Promise<{ results?: T[] }>;
   run(): Promise<{ meta?: { changes?: number } }>;
 };
@@ -49,6 +50,11 @@ export type CalendarAgentCreateInput = {
   notes?: string;
   location?: string;
 };
+
+export type CalendarAgentRescheduleInput = Pick<
+  CalendarAgentCreateInput,
+  "startDate" | "startTime" | "startTimezone"
+> & { eventId: string };
 
 export type CalendarAgentCreatedEvent = {
   id: string;
@@ -183,14 +189,8 @@ export async function createCalendarEventForAgent(
   const title = boundedCalendarText(input.title, 300);
   if (!title) throw new Error("Calendar event title is required.");
 
-  const startDate = requiredCalendarDate(input.startDate, "Calendar event date");
-  const startTime = requiredCalendarTime(input.startTime, "Calendar event time");
-  const startTimezone = normalizeAgentTimeZone(input.startTimezone);
-  if (!startTimezone) {
-    throw new Error(
-      "Calendar event source timezone must be a valid IANA timezone, not an abbreviation.",
-    );
-  }
+  const { startDate, startTime, startTimezone, startsAt } =
+    resolveAgentCalendarStart(input);
   const requestedCalendarTimezone = input.calendarTimezone?.trim();
   const ownerCalendarTimezone = normalizeAgentTimeZone(ownerTimezone);
   const calendarTimezone = requestedCalendarTimezone
@@ -210,31 +210,6 @@ export async function createCalendarEventForAgent(
     );
   }
   const durationMinutes = normalizeAgentEventDuration(input.durationMinutes);
-  const [year, month, day] = startDate.split("-").map(Number);
-  const [hour, minute] = startTime.split(":").map(Number);
-  const startsAt = new Date(
-    getUtcMsForLocalTime(
-      { year, month, day, hour, minute },
-      startTimezone,
-    ),
-  ).toISOString();
-  const resolvedStart = localDateParts(startsAt, startTimezone);
-  if (
-    resolvedStart.year !== year ||
-    resolvedStart.month !== month ||
-    resolvedStart.day !== day ||
-    resolvedStart.hour !== hour ||
-    resolvedStart.minute !== minute
-  ) {
-    throw new Error(
-      `Calendar event time ${startDate} ${startTime} does not exist in ${startTimezone}.`,
-    );
-  }
-  if (hasAlternativeCalendarInstant(startsAt, resolvedStart, startTimezone)) {
-    throw new Error(
-      `Calendar event time ${startDate} ${startTime} occurs twice in ${startTimezone} because of a timezone transition. Ask the owner for an unambiguous time.`,
-    );
-  }
   const endsAt = new Date(
     Date.parse(startsAt) + durationMinutes * 60_000,
   ).toISOString();
@@ -277,6 +252,121 @@ export async function createCalendarEventForAgent(
     requestedTimezone: startTimezone,
     durationMinutes,
   };
+}
+
+export async function rescheduleCalendarEventForAgent(
+  db: CalendarAgentDb,
+  userId: string,
+  input: CalendarAgentRescheduleInput,
+): Promise<{ id: string; title: string; startsAt: string; endsAt: string; timezone: string }> {
+  const event = await getCancellableCalendarEventForAgent(db, userId, input.eventId);
+  const eventId = event.id;
+  const { startsAt } = resolveAgentCalendarStart(input);
+  const durationMs = Date.parse(event.ends_at) - Date.parse(event.starts_at);
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    throw new Error("Calendar event has an invalid duration.");
+  }
+  const endsAt = new Date(Date.parse(startsAt) + durationMs).toISOString();
+  const result = await db.prepare(
+    `UPDATE user_calendar_events
+     SET starts_at = ?, ends_at = ?, updated_at = datetime('now')
+     WHERE id = ? AND user_id = ? AND starts_at = ? AND ends_at = ?`,
+  ).bind(startsAt, endsAt, eventId, userId, event.starts_at, event.ends_at).run();
+  if ((result.meta?.changes || 0) !== 1) {
+    throw new Error("Calendar event changed while rescheduling. List it again and retry.");
+  }
+  return { id: event.id, title: event.title, startsAt, endsAt, timezone: event.timezone };
+}
+
+export async function getCancellableCalendarEventForAgent(
+  db: CalendarAgentDb,
+  userId: string,
+  eventIdInput: string,
+): Promise<{ id: string; title: string; starts_at: string; ends_at: string; timezone: string }> {
+  const eventId = eventIdInput.trim();
+  if (!eventId) throw new Error("Calendar event ID is required.");
+  const event = await db.prepare(
+    `SELECT id, title, starts_at, ends_at, timezone, all_day, kind, recurrence_rule
+     FROM user_calendar_events WHERE id = ? AND user_id = ?`,
+  ).bind(eventId, userId).first<{
+    id: string;
+    title: string;
+    starts_at: string;
+    ends_at: string;
+    timezone: string;
+    all_day: number;
+    kind: CalendarEventKind;
+    recurrence_rule: string | null;
+  }>();
+  if (!event) throw new Error("Calendar event not found in your personal calendar.");
+  if (event.recurrence_rule) {
+    throw new Error("A recurring calendar event needs a specific occurrence or series choice before changing it.");
+  }
+  if (event.all_day || event.kind !== "event") {
+    throw new Error("Only timed personal calendar events can be changed here.");
+  }
+  const linkedBooking = await db.prepare(
+    `SELECT b.id FROM bookings b JOIN sites s ON s.id = b.site_id
+     WHERE b.calendar_event_id = ? AND s.user_id = ? AND b.status = 'confirmed'
+     LIMIT 1`,
+  ).bind(event.id, userId).first<{ id: string }>();
+  const linkedMeeting = await db.prepare(
+    `SELECT id FROM scheduling_requests
+     WHERE finalized_calendar_event_id = ? AND user_id = ? AND status = 'finalized'
+     LIMIT 1`,
+  ).bind(event.id, userId).first<{ id: string }>();
+  if (linkedBooking || linkedMeeting) {
+    throw new Error("This event belongs to a confirmed booking or meeting. Cancel that booking or meeting first.");
+  }
+  return event;
+}
+
+export async function cancelCalendarEventForAgent(
+  db: CalendarAgentDb,
+  userId: string,
+  input: { eventId: string; startsAt: string; endsAt: string },
+): Promise<{ id: string; title: string }> {
+  const event = await getCancellableCalendarEventForAgent(db, userId, input.eventId);
+  if (event.starts_at !== input.startsAt || event.ends_at !== input.endsAt) {
+    throw new Error("Calendar event changed after approval was requested. List it again and retry.");
+  }
+  const result = await db.prepare(
+    `DELETE FROM user_calendar_events
+     WHERE id = ? AND user_id = ? AND starts_at = ? AND ends_at = ?
+       AND recurrence_rule IS NULL AND all_day = 0 AND kind = 'event'`,
+  ).bind(event.id, userId, input.startsAt, input.endsAt).run();
+  if ((result.meta?.changes || 0) !== 1) {
+    throw new Error("Calendar event changed before cancellation. List it again and retry.");
+  }
+  return { id: event.id, title: event.title };
+}
+
+function resolveAgentCalendarStart(input: Pick<CalendarAgentCreateInput,
+  "startDate" | "startTime" | "startTimezone"
+>): { startDate: string; startTime: string; startTimezone: string; startsAt: string } {
+  const startDate = requiredCalendarDate(input.startDate, "Calendar event date");
+  const startTime = requiredCalendarTime(input.startTime, "Calendar event time");
+  const startTimezone = normalizeAgentTimeZone(input.startTimezone);
+  if (!startTimezone) {
+    throw new Error("Calendar event source timezone must be a valid IANA timezone, not an abbreviation.");
+  }
+  const [year, month, day] = startDate.split("-").map(Number);
+  const [hour, minute] = startTime.split(":").map(Number);
+  const startsAt = new Date(getUtcMsForLocalTime(
+    { year, month, day, hour, minute }, startTimezone,
+  )).toISOString();
+  const resolvedStart = localDateParts(startsAt, startTimezone);
+  if (
+    resolvedStart.year !== year || resolvedStart.month !== month ||
+    resolvedStart.day !== day || resolvedStart.hour !== hour ||
+    resolvedStart.minute !== minute
+  ) {
+    throw new Error(`Calendar event time ${startDate} ${startTime} does not exist in ${startTimezone}.`);
+  }
+  if (hasAlternativeCalendarInstant(startsAt, resolvedStart, startTimezone)) {
+    throw new Error(`Calendar event time ${startDate} ${startTime} occurs twice in ${startTimezone} because of a timezone transition. Ask the owner for an unambiguous time.`);
+  }
+  return { startDate, startTime, startTimezone, startsAt };
 }
 
 export function normalizeEventRecurrenceRule(

@@ -472,7 +472,7 @@ async function assignProfile(event: Event) {
       username: profile?.username || "",
       published_at: profile?.published_at || null,
     };
-    toastSuccess("Represented ME3 Profile updated.");
+    toastSuccess("Represented website updated.");
   } catch (caught) {
     toastError(caught instanceof Error ? caught.message : "Could not assign the profile.");
   } finally {
@@ -622,7 +622,7 @@ onMounted(load);
           <div class="step-heading"><h1>Tell us about this site</h1><p>These details identify the business and supply structured information automatically.</p></div>
           <div class="form-stack">
             <label>Site name<input v-model="document.name" autocomplete="organization" /></label>
-            <label>Represented ME3 Profile<select :value="representedProfile?.id || ''" :disabled="busy" @change="assignProfile"><option v-for="profile in profileSites" :key="profile.id" :value="profile.id">@{{ profile.username }}</option></select></label>
+            <label>Represented website<select :value="representedProfile?.id || ''" :disabled="busy" @change="assignProfile"><option v-for="profile in profileSites" :key="profile.id" :value="profile.id">@{{ profile.username }}</option></select></label>
             <p class="field-note">The linked profile owns identity and connected resources. This site owns presentation and navigation.</p>
             <label>Homepage<select v-model="document.homepageSlug"><option v-for="page in orderedPages" :key="page.id" :value="page.slug">{{ navigationItem(page.slug)?.label || page.title }}</option></select></label>
             <label>Business description<textarea v-model="document.organization.description" rows="4" /></label>

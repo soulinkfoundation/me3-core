@@ -1594,12 +1594,14 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
           ? productMetaBySource.get(sourceName)
           : pageMetaBySource.get(sourceName);
       if (!meta) continue;
+      const source = await arrayBufferToText(file.content);
       const item = {
         slug: leafSlug,
         title: typeof meta?.title === "string" && meta.title.trim()
           ? meta.title
           : titleFromSlug(slug),
-        content: markdownToHtml(await arrayBufferToText(file.content)),
+        content: markdownToHtml(source),
+        source,
       };
       if (slug.startsWith("blog/")) {
         posts.push({

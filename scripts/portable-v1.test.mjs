@@ -71,13 +71,13 @@ test("portable migration allowlist exactly matches Core runtime migrations", () 
   const declaration = source.slice(declarationStart, declarationEnd);
   const runtimeMigrations = [
     ...declaration.matchAll(
-      /\{\s*id:\s*"([^"]+)",\s*checksum:\s*"([^"]+)",\s*apply:/gs,
+      /\{\s*id:\s*"([^"]+)",\s*checksum:\s*"([^"]+)",\s*(?:apply:|async\s+apply\s*\()/gs,
     ),
   ].map((match) => [match[1], match[2]]);
 
   assert.equal(
     runtimeMigrations.length,
-    [...declaration.matchAll(/\bapply:\s*/g)].length,
+    [...declaration.matchAll(/\b(?:apply:\s*|async\s+apply\s*\()/g)].length,
     "Every Core runtime migration must have a literal id and checksum",
   );
   assert.deepEqual(RUNTIME_MIGRATIONS, runtimeMigrations);

@@ -7,6 +7,7 @@ import {
   createCalendarEventForAgent,
   getUtcMsForLocalTime,
   readCalendarEventsForAgent,
+  rescheduleCalendarEventForAgent,
 } from "@me3-core/plugin-calendar";
 
 type CalendarRow = {
@@ -149,6 +150,77 @@ describe("Calendar Agent contract", () => {
       tool_name: "core_calendar_event_create",
       status: "succeeded",
     });
+  });
+
+  it("lists before rescheduling one owned event, preserving its duration and timezone", async () => {
+    const database = createCalendarDb();
+    const aiRun = vi.fn()
+      .mockResolvedValueOnce({ tool_calls: [{
+        id: "calendar-list-1",
+        name: "core_calendar_events_list",
+        arguments: { dateFrom: "2026-07-28", dateTo: "2026-07-28" },
+      }] })
+      .mockResolvedValueOnce({ tool_calls: [{
+        id: "calendar-move-1",
+        name: "core_calendar_event_reschedule",
+        arguments: {
+          eventId: "native-1",
+          startDate: "2026-07-29",
+          startTime: "13:30",
+          startTimezone: "Europe/Dublin",
+        },
+      }] })
+      .mockResolvedValueOnce({ response: "Moved the planning session to tomorrow at 1:30pm." });
+    const response = await runCoreAgentToolTurn({
+      db: database.db,
+      userId: "owner",
+      requestId: "calendar-move-request",
+      turnId: "calendar-move-turn",
+      ownerTimezone: "Europe/Dublin",
+      route: {
+        providerId: "workers-ai",
+        model: "workers-test-model",
+        backupModel: null,
+        apiKey: null,
+        ai: { run: aiRun },
+        aiGateway: null,
+        configured: true,
+      } as never,
+      messages: baseMessages("Move my calendar planning session tomorrow to 1:30pm."),
+    });
+
+    expect(response).toMatchObject({
+      specialist: "core.calendar.event.reschedule",
+      replyText: "Moved Planning session to 29 Jul 2026, 13:30 (Europe/Dublin).",
+    });
+    expect(database.nativeEvents.find((event) => event.id === "native-1"))
+      .toMatchObject({
+        starts_at: "2026-07-29T12:30:00.000Z",
+        ends_at: "2026-07-29T13:30:00.000Z",
+        timezone: "Europe/Dublin",
+      });
+    expect(database.nativeEvents).toHaveLength(2);
+    expect(database.executions.map((execution) => execution.tool_name))
+      .toEqual(["core_calendar_events_list", "core_calendar_event_reschedule"]);
+  });
+
+  it("refuses to reschedule another owner's, imported, or ambiguous recurring event", async () => {
+    const database = createCalendarDb();
+    const move = (eventId: string) => rescheduleCalendarEventForAgent(
+      database.db,
+      "owner",
+      {
+        eventId,
+        startDate: "2026-07-29",
+        startTime: "13:30",
+        startTimezone: "Europe/Dublin",
+      },
+    );
+    await expect(move("native-other")).rejects.toThrow("not found");
+    await expect(move("imported-1")).rejects.toThrow("not found");
+    database.nativeEvents[0].recurrence_rule = "daily";
+    await expect(move("native-1")).rejects.toThrow("recurring");
+    expect(database.nativeEvents[0].starts_at).toBe("2026-07-28T09:00:00.000Z");
   });
 
   it.each([
@@ -339,6 +411,11 @@ function createCalendarDb() {
         bind(...values: unknown[]) {
           return {
             async first<T>() {
+              if (sql.includes("FROM user_calendar_events")) {
+                return (nativeEvents.find((event) =>
+                  event.id === values[0] && event.user_id === values[1]
+                ) || null) as T;
+              }
               if (!sql.includes("FROM agent_tool_executions")) return null as T;
               return (executions.find(
                 (item) =>
@@ -374,6 +451,16 @@ function createCalendarDb() {
               return { results: [] as T[] };
             },
             async run() {
+              if (sql.includes("UPDATE user_calendar_events")) {
+                const event = nativeEvents.find((item) =>
+                  item.id === values[2] && item.user_id === values[3] &&
+                  item.starts_at === values[4] && item.ends_at === values[5]
+                );
+                if (!event) return { meta: { changes: 0 } };
+                event.starts_at = String(values[0]);
+                event.ends_at = String(values[1]);
+                return { meta: { changes: 1 } };
+              }
               if (sql.includes("INSERT INTO user_calendar_events")) {
                 nativeEvents.push({
                   id: values[0] as string,

@@ -28,6 +28,7 @@ import {
   ensureCoreRuntimeMigrationsForRequest,
 } from "./core-runtime-migrations";
 import { Me3UserAgent } from "./user-agent";
+import { Me3SdkUserAgent } from "./sdk-user-agent";
 import { syncManagedAiUsage } from "./managed-ai-billing";
 import { syncDueSoulinkContacts } from "./routes/channels";
 import {
@@ -48,7 +49,7 @@ import type {
   SocialPublishQueueMessage,
 } from "./types";
 
-export { Me3UserAgent };
+export { Me3UserAgent, Me3SdkUserAgent };
 export { getMe3CloudUsernamePublishBlockReason } from "./sites";
 
 export async function handleAssistantJobQueueBatch(

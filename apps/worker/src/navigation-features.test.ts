@@ -20,6 +20,17 @@ describe("navigation features", () => {
     expect(features.find((feature) => feature.id === "calendar")?.visible).toBe(true);
   });
 
+  it("keeps Wheel of Life hidden for new installations until enabled", async () => {
+    const { env } = navigationFeatureEnv();
+
+    const features = await listNavigationFeatures(env, "owner-1");
+
+    expect(features.find((feature) => feature.id === "wheel-of-life")).toMatchObject({
+      name: "Wheel of Life",
+      visible: false,
+    });
+  });
+
   it("allows Calendar visibility to be disabled", async () => {
     const { env, statement } = navigationFeatureEnv();
 

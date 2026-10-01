@@ -10,6 +10,7 @@ import {
   generateSchedulingCandidateSlots,
   getSchedulingRequest,
   listSchedulingTimeTypes,
+  normalizeCandidateLimit,
   parseSchedulingDateRange,
   resolveSchedulingPolicy,
   type SchedulingRequestSlot,
@@ -122,6 +123,23 @@ export function createAgentSchedulingToolServices(
   ownerId: string,
 ): CoreSchedulingToolServices {
   return {
+    availability: async (input) => {
+      const range = parseSchedulingDateRange({ start: input.dateFrom, end: input.dateTo });
+      if ("error" in range) throw new Error(range.error);
+      const types = await listSchedulingTimeTypes(env, ownerId);
+      const timeType = types.find((item) => input.timeTypeId
+        ? item.id === input.timeTypeId
+        : input.durationMinutes
+          ? item.durationMinutes === input.durationMinutes
+          : true);
+      if (!timeType) throw new Error("No matching booking time type is configured.");
+      const slots = await generateSchedulingCandidateSlots(env, ownerId, {
+        timeType,
+        dateRange: range,
+        limit: normalizeCandidateLimit(input.limit),
+      });
+      return { timeTypeName: timeType.title, timezone: timeType.timezone, slots };
+    },
     searchContacts: async (input) => {
       await ensureSoulinkContactsFresh(env, ownerId);
       return searchAgentSchedulingContacts(env, ownerId, input);

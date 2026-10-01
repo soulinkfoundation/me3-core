@@ -270,43 +270,35 @@ export async function searchLocationQuery(
   const cached = getCachedLocationSearch(cacheKey);
   if (cached) return cached;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LOCATION_SEARCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(upstreamUrl, {
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return {
-        ok: false,
-        status: 502,
-        error: "Location lookup is temporarily unavailable.",
+  let failure = "Location lookup is temporarily unavailable.";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), LOCATION_SEARCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(upstreamUrl, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!response.ok) continue;
+      const data = (await response.json()) as PhotonResponse;
+      const result: LocationSearchResponse = {
+        ok: true,
+        locations: normalizePhotonResponse(data, limit),
+        attribution: {
+          provider: "photon",
+          label: "Photon",
+          url: origin,
+        },
       };
+      setCachedLocationSearch(cacheKey, result);
+      return result;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        failure = "Location lookup timed out.";
+      }
+    } finally {
+      clearTimeout(timeout);
     }
-    const data = (await response.json()) as PhotonResponse;
-    const result: LocationSearchResponse = {
-      ok: true,
-      locations: normalizePhotonResponse(data, limit),
-      attribution: {
-        provider: "photon",
-        label: "Photon",
-        url: origin,
-      },
-    };
-    setCachedLocationSearch(cacheKey, result);
-    return result;
-  } catch (error) {
-    return {
-      ok: false,
-      status: 502,
-      error:
-        error instanceof DOMException && error.name === "AbortError"
-          ? "Location lookup timed out."
-          : "Location lookup is temporarily unavailable.",
-    };
-  } finally {
-    clearTimeout(timeout);
   }
+  return { ok: false, status: 502, error: failure };
 }

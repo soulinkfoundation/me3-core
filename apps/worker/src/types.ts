@@ -1,6 +1,7 @@
 export interface Env {
   DB: D1Database;
   ME3_USER_AGENT?: DurableObjectNamespace;
+  ME3_SDK_USER_AGENT?: DurableObjectNamespace;
   AI?: Ai;
   IMAGES?: ImageTransformationsBinding;
   ASSETS?: Fetcher;
@@ -35,6 +36,7 @@ export interface Env {
   ME3_ASSISTANT_SITE_TOOLS_ENABLED?: string;
   ME3_AI_RAW_MODEL_SELECTION_ENABLED?: string;
   ME3_JEV_ROUTER_MODE?: string;
+  ME3_ASSISTANT_RUNTIME?: string;
   ME3_AI_MODEL?: string;
   ME3_AI_DEFAULT_PROVIDER?: string;
   ME3_AI_DEFAULT_MODEL?: string;

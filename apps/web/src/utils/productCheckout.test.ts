@@ -32,7 +32,7 @@ describe("published product checkout", () => {
     expect(request.mock.calls[0][0]).toBe("/api/shop/test/book/order");
     expect(JSON.parse(request.mock.calls[0][1].body as string)).toEqual({buyerName:"Test Buyer",buyerEmail:"test@example.com",returnUrl: window.location.href});
     resolve({ok:true,json:async()=>({paymentMethod:"manual",message:"Check your email."})});
-    await vi.waitFor(() => expect(document.querySelector("details")!.hidden).toBe(true));
+    await vi.waitFor(() => expect((document.querySelector("[data-product-details]") as HTMLElement).hidden).toBe(true));
   });
   it("allows retry after a failed request", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ok:false,json:async()=>({error:"Unavailable"})}));
@@ -53,12 +53,12 @@ describe("published product checkout", () => {
     vi.stubGlobal("fetch",vi.fn().mockResolvedValue({ok:true,json:async()=>({ok:true,order:{status:"paid",product_slug:"other"}})}));
     mount();
     await vi.waitFor(() => expect(document.querySelector('[data-product-status]')!.textContent).toContain("not been confirmed"));
-    expect(document.querySelector("details")!.hidden).toBe(true);
+    expect((document.querySelector("[data-product-details]") as HTMLElement).hidden).toBe(true);
   });
   it("shows cancellation without completing an order", () => {
     window.history.replaceState(null,"","/products/book?purchase=cancelled");
     const request = vi.fn(); vi.stubGlobal("fetch",request); mount();
-    expect(document.querySelector("details")!.open).toBe(true);
+    expect((document.querySelector("[data-product-details]") as HTMLElement).hidden).toBe(false);
     expect(document.body.textContent).toContain("Checkout cancelled.");
     expect(request).not.toHaveBeenCalled();
   });
@@ -69,7 +69,7 @@ describe("published product checkout", () => {
     expect(request).not.toHaveBeenCalled();
     [...document.querySelectorAll("button")].find(button => button.textContent === "Return to product")!.click();
     expect(window.location.search).toBe("?campaign=launch");
-    expect(document.querySelector("details")!.hidden).toBe(false);
+    expect((document.querySelector("[data-product-details]") as HTMLElement).hidden).toBe(false);
   });
   it("rechecks an uncertain payment without starting another checkout", async () => {
     window.history.replaceState(null, "", "/products/book?purchase=success&session_id=cs_test");
@@ -89,7 +89,7 @@ describe("published product checkout", () => {
     mount();
     await vi.waitFor(() => expect(document.querySelector("[data-product-status]")!.textContent).toContain("expired without payment"));
     expect(window.location.search).toBe("");
-    expect(document.querySelector("details")!.hidden).toBe(false);
+    expect((document.querySelector("[data-product-details]") as HTMLElement).hidden).toBe(false);
     expect((document.querySelector('button[type="submit"]') as HTMLButtonElement).disabled).toBe(false);
   });
 });

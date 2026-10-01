@@ -60,10 +60,10 @@ const isAdditionalSite = computed(() =>
     : wizard.siteRole === "organization",
 );
 const introTitle = computed(() =>
-  isAdditionalSite.value ? "Create a new site" : "Create your ME3 Profile",
+  isAdditionalSite.value ? "Create a new site" : "Create your website",
 );
 const openingLabel = computed(() =>
-  isAdditionalSite.value ? "Opening your site..." : "Opening your ME3 Profile...",
+  isAdditionalSite.value ? "Opening your site..." : "Opening your website...",
 );
 
 const stepComponentById = {
@@ -239,7 +239,7 @@ function applyRouteStep() {
   const step = typeof route.query.step === "string" ? route.query.step : "";
   if (!step) return;
   if (step === "wheel-of-life" || step === "wheel") {
-    void router.replace("/journal/wheel-of-life");
+    void router.replace("/wheel-of-life");
     return;
   }
   if (step === "goals" && wizard.siteRole === "profile" && !isOpeningWizard.value) {
@@ -300,7 +300,7 @@ let wizardMounted = false;
 
 async function openWizardTarget() {
   if (route.query.step === "wheel-of-life" || route.query.step === "wheel") {
-    await router.replace("/journal/wheel-of-life");
+    await router.replace("/wheel-of-life");
     return;
   }
   const requestId = ++wizardOpenRequest;
@@ -497,8 +497,8 @@ watch(
             ready.
           </p>
           <p v-else>
-            Your ME3 profile includes everything you might need for an effective
-            website, it's also important context for your ME3 agent.
+            Your website represents you online and gives your ME3 agent
+            useful public context.
             <a href="https://me3.app/protocol" target="_blank" rel="noreferrer">
               Learn more about that here </a
             >.

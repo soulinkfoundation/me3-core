@@ -1,5 +1,4 @@
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
-import { isCorePluginEnabled } from "../plugins";
 import { MissionControlInputError } from "../workspace-input";
 import {
   getMissionWheel,
@@ -12,8 +11,6 @@ export function registerWheelOfLifeRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.on("GET", ["/api/journal/wheel", "/api/mission-control/wheel"], async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
-    const blocked = await requireJournalPlugin(c);
-    if (blocked) return blocked;
 
     try {
       return c.json(await getMissionWheel(c.env, ownerId));
@@ -25,8 +22,6 @@ export function registerWheelOfLifeRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.on("PATCH", ["/api/journal/wheel/settings", "/api/mission-control/wheel/settings"], async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
-    const blocked = await requireJournalPlugin(c);
-    if (blocked) return blocked;
 
     try {
       return c.json(
@@ -44,8 +39,6 @@ export function registerWheelOfLifeRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.on("GET", ["/api/journal/wheel/snapshots", "/api/mission-control/wheel/snapshots"], async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
-    const blocked = await requireJournalPlugin(c);
-    if (blocked) return blocked;
 
     try {
       return c.json(
@@ -59,8 +52,6 @@ export function registerWheelOfLifeRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.on("POST", ["/api/journal/wheel/snapshots", "/api/mission-control/wheel/snapshots"], async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
-    const blocked = await requireJournalPlugin(c);
-    if (blocked) return blocked;
 
     try {
       return c.json(
@@ -76,11 +67,6 @@ export function registerWheelOfLifeRoutes(app: AppHono, deps: OwnerRouteDeps) {
     }
   });
 
-}
-
-async function requireJournalPlugin(c: AppContext) {
-  if (await isCorePluginEnabled(c.env, "me3.journal")) return null;
-  return c.json({ ok: false, error: "Journal is disabled" }, 403);
 }
 
 function wheelErrorResponse(c: AppContext, error: unknown) {

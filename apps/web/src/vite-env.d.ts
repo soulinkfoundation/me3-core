@@ -9,6 +9,7 @@ declare module "vue-router" {
     requiresWorkspace?: boolean;
     /** Requires a Core plugin to be installed and enabled. */
     requiresPlugin?: string;
+    requiresNavigationFeature?: string;
     /** Hides the floating agent chat launcher on this route. */
     hideAgentLauncher?: boolean;
   }

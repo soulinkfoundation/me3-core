@@ -32,7 +32,6 @@ describe("reflection route ownership", () => {
     expect(current.status).toBe(200);
     expect(await current.json()).toEqual(await legacy.json());
     expect(getMissionWheel).toHaveBeenCalledWith(undefined, 'alice');
-    expect(isCorePluginEnabled).toHaveBeenCalledWith(undefined, 'me3.journal');
   });
   it("requires an owner on both wheel URLs and goals before touching private data", async () => {
     const app = appFor(null);
@@ -42,12 +41,12 @@ describe("reflection route ownership", () => {
     expect(getMissionWheel).not.toHaveBeenCalled();
     expect(getGoals).not.toHaveBeenCalled();
   });
-  it("keeps goals gated by Tasks while Wheel works independently in Journal", async () => {
+  it("keeps goals gated by Tasks while Wheel works independently of Journal", async () => {
     const app = appFor();
     expect((await app.request('/api/tasks/goals')).status).toBe(403);
     expect((await app.request('/api/journal/wheel')).status).toBe(200);
     vi.mocked(isCorePluginEnabled).mockResolvedValue(false);
-    expect((await app.request('/api/journal/wheel')).status).toBe(403);
-    expect((await app.request('/api/mission-control/wheel')).status).toBe(403);
+    expect((await app.request('/api/journal/wheel')).status).toBe(200);
+    expect((await app.request('/api/mission-control/wheel')).status).toBe(200);
   });
 });

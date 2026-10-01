@@ -39,6 +39,89 @@ afterEach(() => {
 });
 
 describe("Core Agent Runtime v2 reminders", () => {
+  it("shows calendar tools without keyword routing in SDK mode", async () => {
+    const run = vi.fn(async (_model: string, _input: unknown) => ({ response: "I can help move it." }));
+    await runCoreAgentToolTurn({
+      db: createReminderDb().db,
+      userId: "owner",
+      requestId: "request-sdk-calendar",
+      turnId: "turn-sdk-calendar",
+      ownerTimezone: "Europe/Dublin",
+      route: workersRoute(run) as never,
+      messages: baseMessages("Move my planning session tomorrow."),
+      runtime: "sdk",
+    });
+    const modelInput = run.mock.calls[0]?.[1] as { tools: Array<{ function: { name: string } }> };
+    expect(modelInput.tools.map((tool) => tool.function.name)).toContain("core_calendar_event_reschedule");
+  });
+
+  it("hides disabled plugin tools in SDK mode", async () => {
+    const run = vi.fn(async (_model: string, _input: unknown) => ({ response: "Okay." }));
+    await runCoreAgentToolTurn({
+      db: createReminderDb().db,
+      userId: "owner",
+      requestId: "request-sdk-disabled-plugin",
+      turnId: "turn-sdk-disabled-plugin",
+      ownerTimezone: "Europe/Dublin",
+      route: workersRoute(run) as never,
+      messages: baseMessages("Show my calendar."),
+      runtime: "sdk",
+      installedPluginIds: new Set(),
+    });
+    const modelInput = run.mock.calls[0]?.[1] as { tools: Array<{ function: { name: string } }> };
+    const names = modelInput.tools.map((tool) => tool.function.name);
+    expect(names).not.toContain("core_calendar_events_list");
+    expect(names).toContain("core_reminders_list");
+  });
+
+  it("does not execute approval-required tools in SDK mode", async () => {
+    const database = createReminderDb();
+    const run = vi.fn()
+      .mockResolvedValueOnce({ tool_calls: [{ id: "approve-1", name: "core_social_posting_plan_confirm", arguments: { planId: "plan-1", confirmed: true } }] })
+      .mockImplementationOnce(async (_model: string, input: { messages: AgentToolMessage[] }) => {
+        expect(JSON.stringify(input.messages.at(-1))).toContain("approval");
+        return { response: "Please review this action first." };
+      });
+    const response = await runCoreAgentToolTurn({
+      db: database.db,
+      userId: "owner",
+      requestId: "request-sdk-approval",
+      turnId: "turn-sdk-approval",
+      ownerTimezone: "Europe/Dublin",
+      route: workersRoute(run) as never,
+      messages: baseMessages("Confirm my posting plan."),
+      runtime: "sdk",
+    });
+    expect(response.replyText).toContain("review");
+    expect(database.executions).toHaveLength(0);
+  });
+
+  it("returns booking-buffer-aware availability through the scheduling service", async () => {
+    const availability = vi.fn(async () => ({
+      timeTypeName: "30-minute call",
+      timezone: "Europe/Dublin",
+      slots: [{ startsAt: "2026-10-03T10:00:00.000Z", endsAt: "2026-10-03T10:30:00.000Z" }],
+    }));
+    const run = vi.fn()
+      .mockResolvedValueOnce({ tool_calls: [{ id: "free-1", name: "core_calendar_availability", arguments: { dateFrom: "2026-10-03", dateTo: "2026-10-03", durationMinutes: 30 } }] })
+      .mockImplementationOnce(async (_model: string, input: { messages: AgentToolMessage[] }) => {
+        expect(JSON.stringify(input.messages.at(-1))).toContain("2026-10-03T10:00:00.000Z");
+        return { response: "You have a free slot at 11am." };
+      });
+    await runCoreAgentToolTurn({
+      db: createReminderDb().db,
+      userId: "owner",
+      requestId: "request-sdk-free",
+      turnId: "turn-sdk-free",
+      ownerTimezone: "Europe/Dublin",
+      route: workersRoute(run) as never,
+      messages: baseMessages("When am I free for a 30 minute call on Saturday?"),
+      schedulingServices: { availability } as never,
+      runtime: "sdk",
+    });
+    expect(availability).toHaveBeenCalledWith({ dateFrom: "2026-10-03", dateTo: "2026-10-03", durationMinutes: 30, timeTypeId: undefined, limit: undefined });
+  });
+
   it("omits tool schemas and tool instructions for a literal-response turn", async () => {
     const run = vi.fn(async (_model: string, _input: unknown) => ({
       response: "PONG",

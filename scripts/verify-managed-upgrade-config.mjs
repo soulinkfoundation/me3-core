@@ -51,6 +51,12 @@ export function verifyManagedUpgradeConfig({
     "ME3_USER_AGENT",
     "name",
   );
+  const sdkDurableObjectBlocks = getTomlArrayBlocks(
+    config,
+    "durable_objects.bindings",
+    "ME3_SDK_USER_AGENT",
+    "name",
+  );
   const allD1Count = countArrayHeader(config, "d1_databases");
   const allR2Count = countArrayHeader(config, "r2_buckets");
   const allDurableObjectCount = countArrayHeader(
@@ -70,9 +76,12 @@ export function verifyManagedUpgradeConfig({
     allR2Count !== 1 ||
     bucketBlocks.length !== 1 ||
     getTomlString(bucketBlocks[0], "bucket_name") !== r2Name ||
-    allDurableObjectCount !== 1 ||
+    allDurableObjectCount !== 1 + sdkDurableObjectBlocks.length ||
     durableObjectBlocks.length !== 1 ||
     getTomlString(durableObjectBlocks[0], "class_name") !== "Me3UserAgent" ||
+    sdkDurableObjectBlocks.length > 1 ||
+    (sdkDurableObjectBlocks.length === 1 && getTomlString(sdkDurableObjectBlocks[0], "class_name") !== "Me3SdkUserAgent") ||
+    (/^ME3_ASSISTANT_RUNTIME\s*=\s*"sdk"$/m.test(config) && sdkDurableObjectBlocks.length !== 1) ||
     hasUnexpectedArrayTable(config) ||
     hasUnsafeDurableObjectMigration(config) ||
     hasRouteDeclaration(config)
@@ -113,7 +122,7 @@ function hasUnsafeDurableObjectMigration(config) {
     const classNames = [...match[1].matchAll(/["']([^"']+)["']/g)].map(
       (item) => item[1],
     );
-    if (classNames.length === 0 || classNames.some((name) => name !== "Me3UserAgent")) {
+    if (classNames.length === 0 || classNames.some((name) => name !== "Me3UserAgent" && name !== "Me3SdkUserAgent")) {
       return true;
     }
   }

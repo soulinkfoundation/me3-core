@@ -126,6 +126,28 @@ describe("provider-neutral agent tool loop", () => {
     ).rejects.toThrow("4-step limit");
     expect(modelCalls).toBe(MAX_AGENT_TOOL_MODEL_STEPS);
   });
+
+  it("allows an explicit twenty-step SDK loop", async () => {
+    let modelCalls = 0;
+    const result = await runAgentToolLoop({
+      messages: [{ role: "user", content: "Work through this" }],
+      tools: TOOLS,
+      extended: true,
+      maxModelSteps: 20,
+      model: async () => {
+        modelCalls += 1;
+        return modelCalls === 12
+          ? { text: "Done.", toolCalls: [] }
+          : {
+              text: "",
+              toolCalls: [{ id: `call-${modelCalls}`, name: "reminders_create", arguments: { title: "A" } }],
+            };
+      },
+      executeTool: async () => ({ ok: true }),
+    });
+    expect(result.modelSteps).toBe(12);
+    expect(result.executedToolCalls).toBe(11);
+  });
 });
 
 describe("agent tool provider adapters", () => {

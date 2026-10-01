@@ -23,6 +23,7 @@ async function mountSideNav(
     { id: "assistant", visible: true },
     { id: "calendar", visible: true },
     { id: "journal", visible: true },
+    { id: "wheel-of-life", visible: false },
     { id: "tasks", visible: true },
     { id: "email", visible: true },
     { id: "files", visible: true },
@@ -96,7 +97,7 @@ describe("AppSideNav optional plugin links", () => {
         .findAll("nav .app-side-nav__row")
         .map((link) => link.attributes("aria-label")),
     ).toEqual([
-      "ME3 Profile",
+      "Website",
       "Assistant",
       "Calendar",
       "Journal",
@@ -107,6 +108,10 @@ describe("AppSideNav optional plugin links", () => {
       "Accounts",
       "Settings",
     ]);
+    const websiteLink = wrapper.get('[aria-label="Website"]');
+    expect(websiteLink.attributes("title")).toBe("Website");
+    expect(websiteLink.get(".sr-only").text()).toBe("Website");
+    expect(websiteLink.attributes("href")).toBe("/sites");
     expect(wrapper.get('[aria-label="Tasks"]').attributes("href")).toBe(
       "/tasks",
     );
@@ -135,6 +140,30 @@ describe("AppSideNav optional plugin links", () => {
     );
 
     expect(wrapper.find('[aria-label="Calendar"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("shows Wheel of Life only when its navigation feature is enabled", async () => {
+    const wrapper = await mountSideNav(
+      [],
+      {},
+      [
+        { id: "assistant", visible: true },
+        { id: "calendar", visible: true },
+        { id: "journal", visible: true },
+        { id: "wheel-of-life", visible: true },
+        { id: "tasks", visible: true },
+        { id: "email", visible: true },
+        { id: "files", visible: true },
+        { id: "social", visible: true },
+        { id: "accounts", visible: true },
+      ],
+    );
+
+    const link = wrapper.get('[aria-label="Wheel of Life"]');
+    expect(link.attributes("title")).toBe("Wheel of Life");
+    expect(link.attributes("href")).toBe("/wheel-of-life");
+    expect(link.find(".app-side-nav__emoji").text()).toBe("🛞");
     wrapper.unmount();
   });
 

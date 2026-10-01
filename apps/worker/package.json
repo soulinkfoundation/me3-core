@@ -24,10 +24,12 @@
     "@me3-core/site-renderer": "workspace:*",
     "@me3-core/web-research": "workspace:*",
     "@me3/knowledge": "workspace:*",
+    "agents": "^0.24.0",
     "hono": "^4.12.34",
     "ical.js": "^2.2.1",
     "me3-protocol": "github:soulinkfoundation/me3-protocol#v4.0.2",
-    "stripe": "^17.0.0"
+    "stripe": "^17.0.0",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260620.1",

@@ -42,5 +42,6 @@ declare module 'vue-router/auto-routes' {
     '/sites/[username]/pages/[pageId]': RouteRecordInfo<'/sites/[username]/pages/[pageId]', '/sites/:username/pages/:pageId', { username: ParamValue<true>, pageId: ParamValue<true> }, { username: ParamValue<false>, pageId: ParamValue<false> }>,
     '/social': RouteRecordInfo<'/social', '/social', Record<never, never>, Record<never, never>>,
     '/tasks': RouteRecordInfo<'/tasks', '/tasks', Record<never, never>, Record<never, never>>,
+    '/wheel-of-life': RouteRecordInfo<'/wheel-of-life', '/wheel-of-life', Record<never, never>, Record<never, never>>,
   }
 }

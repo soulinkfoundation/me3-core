@@ -72,6 +72,24 @@ test("cleans an authorized never-public provision and verifies exact absence", a
   assert.equal(events[0], "stage:deleting_failed_provision");
 });
 
+test("failed provision cleanup deletes the SDK Durable Object namespace too", async () => {
+  const fake = createFixture();
+  fake.state.namespaces.push({ id: "e".repeat(32), script: WORKER_NAME, class: "Me3SdkUserAgent" });
+  let deletedSdk = false;
+  await cleanupFailedManagedProvision(contract(), {
+    request: fake.request,
+    reportStage: async () => {},
+    emptyR2: async () => { fake.state.r2Objects = []; },
+    deployTombstone: async ({ deleteDurableObject, deleteSdkDurableObject }) => {
+      assert.equal(deleteDurableObject, true);
+      deletedSdk = deleteSdkDurableObject;
+      fake.state.producerBindings.clear();
+      fake.state.namespaces = [];
+    },
+  });
+  assert.equal(deletedSdk, true);
+});
+
 test("rejects current workers.dev or preview exposure before authorization", async (t) => {
   for (const field of ["enabled", "previews_enabled"]) {
     await t.test(field, async () => {

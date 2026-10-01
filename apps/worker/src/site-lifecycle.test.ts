@@ -265,6 +265,7 @@ describe("site role API lifecycle", () => {
       handle: "connie",
       name: "Connie Fahy",
       bio: "Published profile biography",
+      pages: [{ slug: "about", title: "About" }],
     });
     db.raw
       .prepare(
@@ -295,6 +296,15 @@ describe("site role API lifecycle", () => {
       posts: [],
       products: [],
     });
+
+    const markdown = '<div data-me3-site-block="booking">​</div>';
+    db.raw.prepare(
+      `INSERT INTO site_files (site_id, path, content, content_type, size)
+       VALUES (?, 'src/about.md', ?, 'text/markdown', ?)`,
+    ).run(profileId, new TextEncoder().encode(markdown), markdown.length);
+    const editable = await app.fetch(new Request("http://localhost/api/sites/connie/content"), env);
+    const editableBody = (await editable.json()) as { pages: Array<{ source: string }> };
+    expect(editableBody.pages[0].source).toBe(markdown);
   });
 
   it("renames only the organization selected by stable site id", async () => {

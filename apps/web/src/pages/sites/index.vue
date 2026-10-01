@@ -17,8 +17,8 @@ import { ASSISTANT_SITE_BUILDER_STARTER_PROMPT } from "../../utils/assistantSite
 definePage({
   meta: {
     requiresAuth: true,
-    title: "ME3 Profile | ME3",
-    description: "Manage your ME3 Profile and websites.",
+    title: "Website | ME3",
+    description: "Manage your website and other sites.",
     robots: "noindex,follow",
   },
 });
@@ -63,10 +63,10 @@ const profileCreationBlockReason = computed(() => {
   if (!quota.value) {
     return "Site availability could not be loaded. Refresh and try again.";
   }
-  return "Your current plan’s ME3 Profile limit has been reached.";
+  return "Your current plan’s website limit has been reached.";
 });
 const businessSiteCreationBlockReason = computed(() => {
-  if (sitesReady.value && !profileSite.value) return "Create a ME3 Profile first.";
+  if (sitesReady.value && !profileSite.value) return "Create a website first.";
   if (!sitesReady.value || quotaLoading.value) return "Checking availability…";
   if (!quota.value) {
     return "Site availability could not be loaded. Refresh and try again.";
@@ -170,7 +170,7 @@ onMounted(async () => {
 <template>
   <div class="sites-page">
     <main class="sites-shell">
-      <h1 class="sr-only">ME3 Profile</h1>
+      <h1 class="sr-only">Website</h1>
       <header class="sites-header">
         <Button
           color="ghost"
@@ -237,14 +237,14 @@ onMounted(async () => {
           <BrandLogo alt="" />
         </div>
         <div>
-          <h2 id="profile-callout-title">Create your ME3 Profile</h2>
+          <h2 id="profile-callout-title">Create your website</h2>
           <p>
-            Your ME3 Profile is your home on ME3 and unlocks creation of more
+            Your website is your home on ME3 and unlocks creation of more
             sites.
           </p>
         </div>
         <Button color="primary" shape="soft" size="large" :to="createProfileRoute">
-          Create ME3 Profile
+          Create website
         </Button>
       </section>
 
@@ -327,7 +327,7 @@ onMounted(async () => {
               <UiIcon name="UserRound" :size="24" />
             </span>
             <span class="add-site-option__copy">
-              <strong>ME3 Profile</strong>
+              <strong>Website</strong>
               <span>
                 A simple site and digital business card for you or your
                 business. It creates a structured identity you can use across
@@ -351,7 +351,7 @@ onMounted(async () => {
               <UiIcon name="UserRound" :size="24" />
             </span>
             <span class="add-site-option__copy">
-              <strong>ME3 Profile</strong>
+              <strong>Website</strong>
               <span>
                 A simple site and digital business card for you or your
                 business. It creates a structured identity you can use across

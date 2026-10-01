@@ -1,7 +1,10 @@
 import {
+  cancelCalendarEventForAgent,
   createCalendarEventForAgent,
+  getCancellableCalendarEventForAgent,
   normalizeTimeZone,
   readCalendarEventsForAgent,
+  rescheduleCalendarEventForAgent,
   type CalendarAgentCreatedEvent,
   type CalendarAgentEvent,
 } from "@me3-core/plugin-calendar";
@@ -161,6 +164,17 @@ export type CoreSchedulingOption = {
 };
 
 export type CoreSchedulingToolServices = {
+  availability?(input: {
+    dateFrom: string;
+    dateTo: string;
+    timeTypeId?: string;
+    durationMinutes?: number;
+    limit?: number;
+  }): Promise<{
+    timeTypeName: string;
+    timezone: string;
+    slots: Array<{ startsAt: string; endsAt: string }>;
+  }>;
   searchContacts(input: {
     query?: string;
     limit?: number;
@@ -285,7 +299,10 @@ export type CoreWebResearchToolServices = {
 const ACTIVE_CORE_TOOLS = CORE_CHAT_TOOLS.filter(
   (tool) =>
     tool.capabilityId === "core.calendar.events.list" ||
+    tool.capabilityId === "core.calendar.availability" ||
     tool.capabilityId === "core.calendar.event.create" ||
+    tool.capabilityId === "core.calendar.event.reschedule" ||
+    tool.capabilityId === "core.calendar.event.cancel" ||
     tool.capabilityId === "core.bookings.lookup" ||
     tool.capabilityId === "core.contacts.search" ||
     tool.capabilityId === "core.people.search" ||
@@ -361,6 +378,8 @@ export async function runCoreAgentToolTurn(input: {
   webResearchServices?: CoreWebResearchToolServices;
   landingPageEnv?: AgentLandingPageEnv;
   streamOptions?: AgentChatRuntimeStreamOptions;
+  runtime?: "legacy" | "sdk";
+  installedPluginIds?: ReadonlySet<string>;
 }): Promise<AgentSandboxDispatchResponse> {
   const startedAt = performance.now();
   let firstTokenAt: number | null = null;
@@ -383,7 +402,8 @@ export async function runCoreAgentToolTurn(input: {
   const socialSources = new Map<string, AgentSocialSource>();
   const modelAttempts: AgentChatModelAttemptTrace[] = [];
   const latestUserMessage = latestMessageContent(input.messages, "user");
-  const statusUpdateRequest = isStatusUpdateRequest(latestUserMessage);
+  const sdkRuntime = input.runtime === "sdk";
+  const statusUpdateRequest = !sdkRuntime && isStatusUpdateRequest(latestUserMessage);
   const literalResponseRequest = isContextFreeLiteralResponseRequest(latestUserMessage);
   const selectedModelSupportsTools = modelSupportsToolUse(
     input.route.providerId,
@@ -403,6 +423,11 @@ export async function runCoreAgentToolTurn(input: {
       })
     : null;
   const availableTools = ACTIVE_CORE_TOOLS.filter((tool) => {
+    if (input.runtime === "sdk" && input.installedPluginIds && tool.pluginId &&
+        !input.installedPluginIds.has(tool.pluginId)) return false;
+    if (tool.capabilityId === "core.calendar.availability" && !input.schedulingServices?.availability) {
+      return false;
+    }
     if (tool.capabilityId.startsWith("core.mailbox.") && !input.mailboxServices) {
       return false;
     }
@@ -434,7 +459,7 @@ export async function runCoreAgentToolTurn(input: {
     }
     return true;
   });
-  const jevDecision = statusUpdateRequest || literalResponseRequest
+  const jevDecision = sdkRuntime || statusUpdateRequest || literalResponseRequest
     ? null
     : await runJevToolRouter({
         route: input.route,
@@ -446,12 +471,14 @@ export async function runCoreAgentToolTurn(input: {
   const activeJevFamilies = input.route.jevRouterMode === "active" && jevDecision?.selectedFamilies.length
     ? new Set<JevToolFamily>(jevDecision.selectedFamilies)
     : null;
-  const requestedRequiredTool = statusUpdateRequest || activeJevFamilies
+  const requestedRequiredTool = sdkRuntime || statusUpdateRequest || activeJevFamilies
     ? null
     : requiredSchedulingActionTool(input.messages, availableTools) ||
       requiredPrivateReadTool(input.messages, availableTools);
   const requiredTool = selectedModelSupportsTools ? requestedRequiredTool : null;
-  const toolSelection = statusUpdateRequest
+  const toolSelection = sdkRuntime
+    ? { tools: availableTools, families: new Set<CoreToolFamily>(availableTools.flatMap((tool) => coreToolFamiliesForCapability(tool.capabilityId))) }
+    : statusUpdateRequest
     ? { tools: [], families: new Set<CoreToolFamily>() }
     : activeJevFamilies
       ? {
@@ -460,10 +487,10 @@ export async function runCoreAgentToolTurn(input: {
           families: new Set<CoreToolFamily>(activeJevFamilies),
         }
       : selectCoreToolsForTurn(input.messages, availableTools, requiredTool);
-  const webTools = !statusUpdateRequest && !literalResponseRequest && input.webResearchServices && (!activeJevFamilies || activeJevFamilies.has("web"))
+  const webTools = !sdkRuntime && !statusUpdateRequest && !literalResponseRequest && input.webResearchServices && (!activeJevFamilies || activeJevFamilies.has("web"))
     ? availableTools.filter((tool) => tool.capabilityId === "core.web.search" || tool.capabilityId === "core.web.open")
     : [];
-  const peopleTools = !statusUpdateRequest && !literalResponseRequest && input.peopleSearchServices && (!activeJevFamilies || activeJevFamilies.has("people"))
+  const peopleTools = !sdkRuntime && !statusUpdateRequest && !literalResponseRequest && input.peopleSearchServices && (!activeJevFamilies || activeJevFamilies.has("people"))
     ? availableTools.filter((tool) => tool.capabilityId === "core.people.search")
     : [];
   const toolFamilies = new Set(toolSelection.families);
@@ -737,6 +764,8 @@ export async function runCoreAgentToolTurn(input: {
       const result = await runAgentToolLoop({
         messages,
         tools,
+        extended: sdkRuntime,
+        maxDurationMs: sdkRuntime ? 120_000 : undefined,
         model: async (turnMessages, availableTools) => {
           throwIfStreamAborted(input.streamOptions?.signal);
           modelStep += 1;
@@ -806,12 +835,19 @@ export async function runCoreAgentToolTurn(input: {
           const occurrence = (callCounts.get(call.id) || 0) + 1;
           callCounts.set(call.id, occurrence);
           try {
+            if (sdkRuntime && (tool as CoreChatToolDefinition).approvalMode !== "none" &&
+                (tool as CoreChatToolDefinition).capabilityId !== "core.calendar.event.cancel") {
+              throw new Error("Owner approval is required before this action. Ask for review; do not claim it completed.");
+            }
+            const toolCallId = sdkRuntime && !(tool as CoreChatToolDefinition).sideEffect.startsWith("read_")
+              ? await semanticToolCallId(call)
+              : `${call.id}:${occurrence}`;
             const outcome = await executeIdempotentAgentTool(
               input.db,
               {
                 userId: input.userId,
                 requestId: input.requestId,
-                toolCallId: `${call.id}:${occurrence}`,
+                toolCallId,
                 toolName: call.name,
               },
               ({ idempotencyKey }) =>
@@ -831,6 +867,7 @@ export async function runCoreAgentToolTurn(input: {
                   landingPageEnv: input.landingPageEnv,
                   signal: input.streamOptions?.signal,
                   socialSources,
+                  validateSchema: sdkRuntime,
                 }),
             );
             cacheSocialSourceOutcome(outcome, socialSources);
@@ -879,15 +916,29 @@ export async function runCoreAgentToolTurn(input: {
           gatewayLogIds,
         }),
       });
+      const resolvedResponse = successfulResponse(
+        input.turnId,
+        route,
+        model,
+        result.text,
+        outcomes.at(-1) || null,
+        modelAttempts,
+      );
+      const toolErrors = result.messages.filter((message) => message.role === "tool" && message.isError);
+      const pendingApproval = outcomes.find((outcome) =>
+        outcome.capabilityId === "core.calendar.event.cancel" && outcome.result.status === "pending_approval"
+      );
+      if (pendingApproval) {
+        resolvedResponse.replyText = pendingApproval.fallbackReply;
+      } else if (sdkRuntime && toolErrors.length > 0) {
+        resolvedResponse.replyText = toolErrors.some((message) => message.content.includes("Owner approval is required"))
+          ? "This action needs owner approval. Please review it before I proceed."
+          : outcomes.length > 0
+            ? "Some actions completed, but I could not complete every requested action. Please review the results before retrying."
+            : "I could not complete the requested action. Please retry or clarify the details.";
+      }
       return attachStreamMetrics(
-        successfulResponse(
-          input.turnId,
-          route,
-          model,
-          result.text,
-          outcomes.at(-1) || null,
-          modelAttempts,
-        ),
+        resolvedResponse,
         input.streamOptions,
         startedAt,
         firstTokenAt,
@@ -1029,7 +1080,9 @@ function executeCoreToolCall(input: {
   landingPageEnv?: AgentLandingPageEnv;
   signal?: AbortSignal;
   socialSources: Map<string, AgentSocialSource>;
+  validateSchema?: boolean;
 }): Promise<CoreToolOutcome> {
+  if (input.validateSchema) assertToolArgumentsMatchSchema(input.call.arguments, input.tool);
   if (
     input.tool.capabilityId === "core.web.search" ||
     input.tool.capabilityId === "core.web.open"
@@ -1049,8 +1102,17 @@ function executeCoreToolCall(input: {
   if (input.tool.capabilityId === "core.calendar.events.list") {
     return executeCalendarEventsListToolCall(input);
   }
+  if (input.tool.capabilityId === "core.calendar.availability") {
+    return executeCalendarAvailabilityToolCall(input);
+  }
   if (input.tool.capabilityId === "core.calendar.event.create") {
     return executeCalendarEventCreateToolCall(input);
+  }
+  if (input.tool.capabilityId === "core.calendar.event.reschedule") {
+    return executeCalendarEventRescheduleToolCall(input);
+  }
+  if (input.tool.capabilityId === "core.calendar.event.cancel") {
+    return executeCalendarEventCancelToolCall(input);
   }
   if (input.tool.capabilityId === "core.bookings.lookup") {
     return executeBookingLookupToolCall(input);
@@ -1447,6 +1509,38 @@ async function executeCalendarEventsListToolCall(input: {
   };
 }
 
+async function executeCalendarAvailabilityToolCall(input: {
+  call: AgentToolCall;
+  tool: CoreChatToolDefinition;
+  schedulingServices?: CoreSchedulingToolServices;
+}): Promise<CoreToolOutcome> {
+  if (
+    input.tool.capabilityId !== "core.calendar.availability" ||
+    input.tool.handlerRoute !== input.tool.capabilityId ||
+    input.tool.approvalMode !== "none" ||
+    input.tool.requiredSetupChecks.some((check) => check !== "calendar.events" && check !== "booking")
+  ) throw new Error("Calendar availability tool is not allowed by runtime policy.");
+  assertOnlyDeclaredArguments(input.call.arguments, input.tool);
+  if (!input.schedulingServices?.availability) throw new Error("Calendar availability is unavailable.");
+  const args = input.call.arguments;
+  const result = await input.schedulingServices.availability({
+    dateFrom: requiredToolString(args.dateFrom, "Availability start date"),
+    dateTo: requiredToolString(args.dateTo, "Availability end date"),
+    timeTypeId: optionalToolString(args.timeTypeId),
+    durationMinutes: optionalToolNumber(args.durationMinutes),
+    limit: optionalToolNumber(args.limit),
+  });
+  return {
+    capabilityId: "core.calendar.availability",
+    result: { ok: true, ...result },
+    fallbackReply: result.slots.length
+      ? `${result.timeTypeName}: ${result.slots.map((slot) => slot.startsAt).join(", ")} (${result.timezone}).`
+      : `No free ${result.timeTypeName} slots in that range.`,
+    reminderAction: null,
+    actionCards: [],
+  };
+}
+
 async function executeCalendarEventCreateToolCall(input: {
   db: CoreAgentDb;
   userId: string;
@@ -1480,6 +1574,102 @@ async function executeCalendarEventCreateToolCall(input: {
     fallbackReply: formatCalendarEventCreatedReply(event),
     reminderAction: null,
     actionCards: [buildCalendarEventActionCard(event)],
+  };
+}
+
+async function executeCalendarEventRescheduleToolCall(input: {
+  db: CoreAgentDb;
+  userId: string;
+  call: AgentToolCall;
+  tool: CoreChatToolDefinition;
+}): Promise<CoreToolOutcome> {
+  enforceCalendarEventRescheduleToolPolicy(input.tool);
+  assertOnlyDeclaredArguments(input.call.arguments, input.tool);
+  const args = input.call.arguments;
+  const event = await rescheduleCalendarEventForAgent(input.db, input.userId, {
+    eventId: requiredToolString(args.eventId, "Calendar event ID"),
+    startDate: requiredToolString(args.startDate, "Calendar event date"),
+    startTime: requiredToolString(args.startTime, "Calendar event time"),
+    startTimezone: requiredToolString(args.startTimezone, "Calendar event source timezone"),
+  });
+  return {
+    capabilityId: "core.calendar.event.reschedule",
+    result: { ok: true, event },
+    fallbackReply: `Moved ${event.title} to ${formatAgentDateTime(event.startsAt, event.timezone)} (${event.timezone}).`,
+    reminderAction: null,
+    actionCards: [],
+  };
+}
+
+async function executeCalendarEventCancelToolCall(input: {
+  db: CoreAgentDb;
+  userId: string;
+  requestId: string;
+  messages: readonly AgentToolMessage[];
+  call: AgentToolCall;
+  tool: CoreChatToolDefinition;
+}): Promise<CoreToolOutcome> {
+  if (
+    input.tool.capabilityId !== "core.calendar.event.cancel" ||
+    input.tool.handlerRoute !== input.tool.capabilityId ||
+    input.tool.approvalMode !== "approval_required" ||
+    input.tool.requiredSetupChecks.some((check) => check !== "calendar.events")
+  ) throw new Error("Calendar cancellation is not allowed by runtime policy.");
+  assertOnlyDeclaredArguments(input.call.arguments, input.tool);
+  const event = await getCancellableCalendarEventForAgent(
+    input.db,
+    input.userId,
+    requiredToolString(input.call.arguments.eventId, "Calendar event ID"),
+  );
+  await input.db.prepare(
+    `UPDATE calendar_agent_cancellation_approvals SET status = 'expired'
+     WHERE user_id = ? AND event_id = ? AND status = 'pending'
+       AND (expires_at <= CURRENT_TIMESTAMP OR event_title != ? OR starts_at != ? OR ends_at != ?)`,
+  ).bind(input.userId, event.id, event.title, event.starts_at, event.ends_at).run();
+  await input.db.prepare(
+    `INSERT OR IGNORE INTO calendar_agent_cancellation_approvals
+       (id, user_id, event_id, event_title, starts_at, ends_at, request_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(crypto.randomUUID(), input.userId, event.id, event.title, event.starts_at, event.ends_at, input.requestId).run();
+  const approval = await input.db.prepare(
+    `SELECT id, request_id, starts_at, ends_at
+     FROM calendar_agent_cancellation_approvals
+     WHERE user_id = ? AND event_id = ? AND status = 'pending' AND expires_at > CURRENT_TIMESTAMP`,
+  ).bind(input.userId, event.id).first<{
+    id: string;
+    request_id: string;
+    starts_at: string;
+    ends_at: string;
+  }>();
+  if (!approval) throw new Error("Calendar cancellation approval could not be reserved.");
+  const phrase = `Confirm cancel ${event.title}`;
+  const confirmed = approval.request_id !== input.requestId &&
+    latestMessageContent(input.messages, "user").trim().toLocaleLowerCase() === phrase.toLocaleLowerCase();
+  if (!confirmed) {
+    return {
+      capabilityId: "core.calendar.event.cancel",
+      result: { ok: true, status: "pending_approval", eventId: event.id, title: event.title },
+      fallbackReply: `To cancel ${event.title}, reply exactly: ${phrase}`,
+      reminderAction: null,
+      actionCards: [],
+    };
+  }
+  await cancelCalendarEventForAgent(input.db, input.userId, {
+    eventId: event.id,
+    startsAt: approval.starts_at,
+    endsAt: approval.ends_at,
+  });
+  await input.db.prepare(
+    `UPDATE calendar_agent_cancellation_approvals
+     SET status = 'complete', completed_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND user_id = ? AND status = 'pending'`,
+  ).bind(approval.id, input.userId).run();
+  return {
+    capabilityId: "core.calendar.event.cancel",
+    result: { ok: true, status: "complete", eventId: event.id, title: event.title },
+    fallbackReply: `Cancelled ${event.title}.`,
+    reminderAction: null,
+    actionCards: [],
   };
 }
 
@@ -3055,13 +3245,14 @@ function withCoreToolInstructions(
     ...(hasFamily("calendar")
       ? [
           "Calendar event tool rules:",
-          "- Use core_calendar_events_list to read personal and imported calendar events. Use core_calendar_event_create to create a private event in the owner's ME3 calendar. Use reminder tools for reminders and booking lookup for bookings.",
+          "- Use core_calendar_events_list to read personal and imported calendar events. Use core_calendar_availability for free slots when available; it applies booking windows, confirmed bookings, events, and buffers. Use core_calendar_event_create to create a private event in the owner's ME3 calendar. For cancellation, list first and call core_calendar_event_cancel. Its first result requests approval; only a new owner message with the exact confirmation phrase permits deletion. Use reminder tools for reminders and booking lookup for bookings.",
           "- Resolve relative dates in the owner's timezone. Calendar reads require an inclusive dateFrom and dateTo and are limited to 31 days.",
           "- For event creation, title, date, and start time must be clear. If any is missing, ask one concise clarification question and do not call the tool.",
           "- A missing duration is not ambiguous: omit durationMinutes and ME3 will default to 60 minutes. Mention that default after creation.",
           "- Pass the requested wall date and time unchanged with its IANA startTimezone; the tool performs the timezone conversion. Use calendarTimezone only when the owner explicitly requests a display timezone; otherwise omit it to use the owner's timezone.",
           "- Treat startTimezone and calendarTimezone as separate IANA zones and never hardcode a fixed hour difference. Resolve an abbreviation from clear geographic context; abbreviations such as IST, CST, and BST have multiple meanings, so ask which source region the owner means when context does not disambiguate it. Never pass an abbreviation to the tool.",
           "- Calendar event creation writes only to the private ME3 calendar. Do not claim it synced to Google Calendar, Outlook, or another external provider.",
+          "- Before rescheduling, list events unless a stable personal event ID is already present in the conversation. If multiple events match, ask which one. Never invent an ID; imported and recurring events cannot be moved by this tool.",
         ]
       : []),
     ...(hasFamily("bookings")
@@ -3198,6 +3389,16 @@ function withCoreToolInstructions(
   );
 }
 
+async function semanticToolCallId(call: AgentToolCall): Promise<string> {
+  const canonical = JSON.stringify(call.arguments, (_key, value) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+      : value,
+  );
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${call.name}:${canonical}`));
+  return `sdk:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 function enforceOwnerContentSearchToolPolicy(tool: CoreChatToolDefinition): void {
   if (
     tool.capabilityId !== "core.owner_content.search" ||
@@ -3232,6 +3433,17 @@ function enforceCalendarEventCreateToolPolicy(tool: CoreChatToolDefinition): voi
     throw new Error(
       `Tool "${tool.name}" is not allowed by the Calendar create runtime policy.`,
     );
+  }
+}
+
+function enforceCalendarEventRescheduleToolPolicy(tool: CoreChatToolDefinition): void {
+  if (
+    tool.capabilityId !== "core.calendar.event.reschedule" ||
+    tool.handlerRoute !== tool.capabilityId ||
+    tool.approvalMode !== "none" ||
+    tool.requiredSetupChecks.some((check) => check !== "calendar.events")
+  ) {
+    throw new Error(`Tool "${tool.name}" is not allowed by the Calendar reschedule runtime policy.`);
   }
 }
 
@@ -3472,6 +3684,38 @@ function assertOnlyDeclaredArguments(
   if (unexpected) throw new Error(`Unexpected tool argument "${unexpected}".`);
 }
 
+function assertToolArgumentsMatchSchema(
+  args: Record<string, unknown>,
+  tool: CoreChatToolDefinition,
+): void {
+  assertOnlyDeclaredArguments(args, tool);
+  for (const key of tool.parameters.required || []) {
+    if (args[key] === undefined) throw new Error(`Required tool argument "${key}" is missing.`);
+  }
+  for (const [key, value] of Object.entries(args)) {
+    const schema = tool.parameters.properties[key];
+    if (!schema) continue;
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    const matches = types.some((type) =>
+      type === "null" ? value === null
+        : type === "array" ? Array.isArray(value)
+        : type === "integer" ? Number.isInteger(value)
+        : type === "number" ? typeof value === "number" && Number.isFinite(value)
+        : typeof value === type,
+    );
+    if (!matches) throw new Error(`Tool argument "${key}" has the wrong type.`);
+    if (schema.enum && !schema.enum.includes(value as never)) {
+      throw new Error(`Tool argument "${key}" must be one of its declared values.`);
+    }
+    if (Array.isArray(value) && schema.items && value.some((item) =>
+      schema.items?.type === "null" ? item !== null
+        : schema.items?.type === "integer" ? !Number.isInteger(item)
+        : schema.items?.type === "number" ? typeof item !== "number" || !Number.isFinite(item)
+        : typeof item !== schema.items?.type,
+    )) throw new Error(`Tool argument "${key}" has an invalid array item.`);
+  }
+}
+
 function reminderInputFromArguments(
   args: Record<string, unknown>,
   ownerTimezone: string | null | undefined,
@@ -3596,6 +3840,8 @@ function userFacingToolReply(
 ): string {
   if (
     outcome?.capabilityId === "core.calendar.event.create" ||
+    outcome?.capabilityId === "core.calendar.event.reschedule" ||
+    outcome?.capabilityId === "core.calendar.event.cancel" ||
     outcome?.capabilityId === "core.people.search" ||
     outcome?.capabilityId === "core.scheduling.request_profile" ||
     outcome?.capabilityId === "core.web.search"

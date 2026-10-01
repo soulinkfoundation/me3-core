@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { routes } from "vue-router/auto-routes";
 import { useAuthStore } from "./stores/auth";
+import { api } from "./api";
 import { useSitesStore } from "./stores/sites";
 import { useWizardStore } from "./stores/wizard";
 import { updateFeatureFavicon } from "./utils/favicon";
@@ -241,12 +242,26 @@ router.beforeEach(async (to, _from, next) => {
     return;
   }
 
-  const [defaultAppPath, requiredPluginEnabled] = await Promise.all([
+  const [defaultAppPath, requiredPluginEnabled, requiredNavigationFeatureEnabled] = await Promise.all([
     to.meta.requiresWorkspace
       ? resolveDefaultAppPathForSession()
       : Promise.resolve(DEFAULT_APP_PATH),
     typeof to.meta.requiresPlugin === "string"
       ? isPluginAccessEnabled(to.meta.requiresPlugin).catch(() => false)
+      : Promise.resolve(true),
+    typeof to.meta.requiresNavigationFeature === "string"
+      ? api
+          .get<{ features: Array<{ id: string; visible: boolean }> }>(
+            "/navigation-features",
+          )
+          .then((response) =>
+            response.features.some(
+              (feature) =>
+                feature.id === to.meta.requiresNavigationFeature &&
+                feature.visible,
+            ),
+          )
+          .catch(() => false)
       : Promise.resolve(true),
   ]);
 
@@ -270,6 +285,11 @@ router.beforeEach(async (to, _from, next) => {
       });
       return;
     }
+  }
+
+  if (to.meta.requiresNavigationFeature && !requiredNavigationFeatureEnabled) {
+    next({ path: defaultAppPath, replace: true });
+    return;
   }
 
   next();

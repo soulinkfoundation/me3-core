@@ -881,7 +881,7 @@ watch(
                     <div class="discovery-accordion__body">
                       <p class="discovery-panel-intro discovery-panel-intro--tight">
                         Sample lines teach ME3 your tone for prospect outreach.
-                        Drafts use your full ME3 profile as offer context.
+                        Drafts use your full website as offer context.
                       </p>
                       <div class="samples-grid samples-grid--compact">
                         <article
@@ -1026,7 +1026,7 @@ watch(
                       </div>
 
                       <p v-if="availableOffers.length === 0" class="discovery-note">
-                        No services on your ME3 profile yet. You can still set a
+                        No services on your website yet. You can still set a
                         custom offer URL.
                       </p>
                     </div>

@@ -11,9 +11,17 @@ head_sampling_rate = 1
 name = "ME3_USER_AGENT"
 class_name = "Me3UserAgent"
 
+[[durable_objects.bindings]]
+name = "ME3_SDK_USER_AGENT"
+class_name = "Me3SdkUserAgent"
+
 [[migrations]]
 tag = "2026-05-11-me3-core-user-agent"
 new_sqlite_classes = ["Me3UserAgent"]
+
+[[migrations]]
+tag = "2026-10-01-me3-sdk-user-agent"
+new_sqlite_classes = ["Me3SdkUserAgent"]
 
 # Workers AI is the default Core chat provider. Wrangler connects this binding
 # to Cloudflare's remote AI runtime during local development.
@@ -91,6 +99,8 @@ name = "EMAIL"
 [vars]
 ENVIRONMENT = "local"
 ME3_DEPLOYMENT_MODE = "self_hosted"
+# Set per installation after the seeded and live canary checks pass.
+# ME3_ASSISTANT_RUNTIME = "sdk"
 # Managed-fleet provisioning sets both values below. Self-hosted installs must
 # leave them unset; managed email then reuses the linked install's stored
 # ME3_CORE_INSTALL_ID and ME3_CLOUD_CORE_TOKEN rather than provider credentials.

@@ -54,7 +54,7 @@ describe("Sites dashboard", () => {
       remainingAdditionalSites: 1,
     }));
 
-    expect(wrapper.text()).toContain("Create your ME3 Profile");
+    expect(wrapper.text()).toContain("Create your website");
     expect(wrapper.text()).toContain("@studio");
     expect(wrapper.text()).not.toMatch(/organization sites/i);
     expect(wrapper.find('[aria-label="Add site"]').exists()).toBe(true);
@@ -65,12 +65,12 @@ describe("Sites dashboard", () => {
     await wrapper.get('[aria-label="Add site"]').trigger("click");
 
     const chooser = wrapper.get('[role="dialog"]');
-    expect(chooser.get("a.add-site-option").text()).toContain("ME3 Profile");
+    expect(chooser.get("a.add-site-option").text()).toContain("Website");
     expect(chooser.get("a.add-site-option").attributes("href")).toContain(
       "/create?new=1",
     );
     expect(chooser.get("button.add-site-option").text()).toContain(
-      "Create a ME3 Profile first.",
+      "Create a website first.",
     );
     expect(
       chooser.get("button.add-site-option").attributes("disabled"),
@@ -147,7 +147,7 @@ describe("Sites dashboard", () => {
     await wrapper.get('[aria-label="Add site"]').trigger("click");
 
     const chooser = wrapper.get('[role="dialog"]');
-    expect(chooser.text()).toContain("ME3 Profile");
+    expect(chooser.text()).toContain("Website");
     expect(chooser.text()).toContain("Business Site");
     expect(chooser.text()).not.toContain("Create manually");
 
@@ -164,9 +164,9 @@ describe("Sites dashboard", () => {
     expect(businessSiteLink?.attributes("href")).not.toContain("send=");
 
     const profileOption = chooser.get("button.add-site-option");
-    expect(profileOption.text()).toContain("ME3 Profile");
+    expect(profileOption.text()).toContain("Website");
     expect(profileOption.text()).toContain(
-      "Your current plan’s ME3 Profile limit has been reached.",
+      "Your current plan’s website limit has been reached.",
     );
     expect(profileOption.attributes("disabled")).toBeDefined();
   });

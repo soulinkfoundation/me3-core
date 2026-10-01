@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("./sdk-user-agent", () => ({ Me3SdkUserAgent: class {} }));
 import app from "./app";
 import { ME3_CORE_VERSION } from "./core-version";
 import { shouldBlockManagedRuntimeBackground } from "./index";
@@ -283,6 +284,10 @@ describe("managed runtime lifecycle", () => {
     const db = new LifecycleDb();
     const bucket = new LifecycleBucket(["one.txt", "nested/two.txt", "three.txt"]);
     const env = createEnv(db, bucket);
+    const purgeLegacy = vi.fn(async () => new Response(null, { status: 204 }));
+    const purgeSdk = vi.fn(async () => new Response(null, { status: 204 }));
+    env.ME3_USER_AGENT = { idFromName: () => "legacy", get: () => ({ fetch: purgeLegacy }) } as unknown as DurableObjectNamespace;
+    env.ME3_SDK_USER_AGENT = { idFromName: () => "sdk", get: () => ({ fetch: purgeSdk }) } as unknown as DurableObjectNamespace;
     await applyManagedRuntimeAction(env, {
       installationId: INSTALLATION_ID,
       requestId: SUSPEND_REQUEST_ID,
@@ -322,6 +327,8 @@ describe("managed runtime lifecycle", () => {
       expectedGeneration: revoked.generation,
     });
     expect(bucket.keys).toHaveLength(0);
+    expect(purgeLegacy).toHaveBeenCalledTimes(1);
+    expect(purgeSdk).toHaveBeenCalledTimes(1);
     expect(purged.storagePurgedAt).toBeTruthy();
     expect(purged.exportReady).toBe(false);
 

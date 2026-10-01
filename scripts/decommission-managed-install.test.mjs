@@ -140,6 +140,23 @@ test("removes Worker producer bindings before queue deletion and retries safely 
   assert.equal(stages.at(-1), "verifying_absence");
 });
 
+test("decommission deletes the SDK Durable Object namespace too", async () => {
+  const fake = createCloudflareFixture();
+  fake.state.namespaces.push({ id: "e".repeat(32), script: WORKER_NAME, class: "Me3SdkUserAgent" });
+  let deletedSdk = false;
+  await decommissionManagedInstall(contract(), {
+    request: fake.request,
+    reportStage: async () => {},
+    deployTombstone: async ({ deleteDurableObject, deleteSdkDurableObject }) => {
+      assert.equal(deleteDurableObject, true);
+      deletedSdk = deleteSdkDurableObject;
+      fake.state.producerBindings.clear();
+      fake.state.namespaces = [];
+    },
+  });
+  assert.equal(deletedSdk, true);
+});
+
 test("detaches and verifies the permanent custom domain before Worker deletion", async () => {
   const fake = createCloudflareFixture();
   let domain = {

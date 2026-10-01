@@ -77,6 +77,7 @@ describe("Core runtime migrations", () => {
     expect(db.tables.has("owner_navigation_features")).toBe(true);
     expect(db.tables.has("owner_feature_discovery")).toBe(true);
     expect(db.tables.has("calendar_source_event_dismissals")).toBe(true);
+    expect(db.tables.has("calendar_agent_cancellation_approvals")).toBe(true);
     expect(db.tables.has("drive_multipart_uploads")).toBe(true);
     expect(db.tables.has("drive_multipart_parts")).toBe(true);
     expect(db.tables.has("social_media_delivery_grants")).toBe(true);
@@ -215,6 +216,17 @@ describe("Core runtime migrations", () => {
     expect(db.migrations.get("0052_owner_feature_discovery")).toBe(
       "2026-09-17-owner-feature-discovery-v1",
     );
+    expect(db.migrations.get("0054_wheel_of_life_navigation")).toBe(
+      "2026-09-30-wheel-of-life-navigation-v1",
+    );
+    expect(db.migrations.get("0055_calendar_agent_cancellation_approvals")).toBe(
+      "2026-10-01-calendar-agent-cancellation-approvals-v1",
+    );
+    const wheelNavigationSeed = db.statements.find((sql) =>
+      sql.includes("SELECT user_id, 'wheel-of-life', 1 FROM mission_wheel_settings"),
+    );
+    expect(wheelNavigationSeed).toContain("INSERT OR IGNORE INTO owner_navigation_features");
+    expect(wheelNavigationSeed).toContain("FROM mission_wheel_snapshots");
     expect(
       db.statements.some(
         (sql) => sql.includes("UPDATE mission_tasks") && sql.includes("status = 'backlog'") &&

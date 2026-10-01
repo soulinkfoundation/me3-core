@@ -1,0 +1,33 @@
+name: Seeded agent integration eval
+
+on:
+  schedule:
+    - cron: '15 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare-runtimes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check seeded approval and schema contracts
+        run: node --import tsx --test scripts/agent-eval-seed.test.mjs scripts/agent-calendar-cancel.test.mjs scripts/agent-tool-schema.test.mjs
+      - name: Record legacy baseline
+        run: pnpm eval:agent -- --runtime=legacy --report=legacy-agent-eval.json --report-only
+      - name: Check SDK runtime
+        run: pnpm eval:agent -- --runtime=sdk --report=sdk-agent-eval.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-seeded-eval
+          path: '*-agent-eval.json'

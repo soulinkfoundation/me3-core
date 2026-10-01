@@ -10,10 +10,12 @@ describe("app feature utilities", () => {
     expect(APP_FEATURE_ICONS["mission-control"]).toBe("🚀");
     expect(APP_FEATURE_ICONS.journal).toBe("✍️");
     expect(APP_FEATURE_ICONS.calendar).toBe("🗓️");
+    expect(APP_FEATURE_ICONS["wheel-of-life"]).toBe("🛞");
   });
 
   it("matches feature paths and nested routes", () => {
     expect(appFeatureForPath("/journal")).toBe("journal");
+    expect(appFeatureForPath("/wheel-of-life")).toBe("wheel-of-life");
     expect(appFeatureForPath("/tasks")).toBe("mission-control");
     expect(appFeatureForPath("/mission-control/wheel-of-life")).toBe(
       "mission-control",

@@ -17,6 +17,11 @@ export const NAVIGATION_FEATURES = [
     description: "Write private daily notes and reflections.",
   },
   {
+    id: "wheel-of-life",
+    name: "Wheel of Life",
+    description: "Reflect on the areas of life that matter to you.",
+  },
+  {
     id: "tasks",
     name: "Tasks",
     description: "Plan goals, projects, and tasks.",

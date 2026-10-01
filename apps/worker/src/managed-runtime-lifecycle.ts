@@ -555,9 +555,10 @@ async function purgeManagedRuntimeStorage(
   }
   await requireManagedRuntimeDrain(env, installationId);
 
-  if (env.ME3_USER_AGENT) {
-    const objectId = env.ME3_USER_AGENT.idFromName("owner");
-    const response = await env.ME3_USER_AGENT.get(objectId).fetch(
+  for (const agentNamespace of [env.ME3_USER_AGENT, env.ME3_SDK_USER_AGENT]) {
+    if (!agentNamespace) continue;
+    const objectId = agentNamespace.idFromName("owner");
+    const response = await agentNamespace.get(objectId).fetch(
       new Request("https://me3-managed-internal/managed-lifecycle/purge-storage", {
         method: "POST",
         headers: { "X-ME3-Managed-Installation": installationId },

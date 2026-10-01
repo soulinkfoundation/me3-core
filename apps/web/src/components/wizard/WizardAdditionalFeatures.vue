@@ -95,7 +95,7 @@ const productsEnabled = computed({
       {{
         isOrganization
           ? "Choose the website features this site needs."
-          : "Your ME3 profile can also work as a fully functional website. Enable any features you want to add."
+          : "Add features to your website, such as bookings, a blog, or a shop."
       }}
     </p>
 

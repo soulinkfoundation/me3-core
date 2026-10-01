@@ -3316,7 +3316,9 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       attachmentManifest,
     );
 
-    const runtime = c.env.ME3_USER_AGENT;
+    const runtime = c.env.ME3_ASSISTANT_RUNTIME === "sdk"
+      ? c.env.ME3_SDK_USER_AGENT
+      : c.env.ME3_USER_AGENT;
     if (!runtime) {
       return c.json(
         { ok: false, error: "Agent chat runtime is not configured" },
@@ -3630,7 +3632,9 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
             }
           }
 
-          const runtime = c.env.ME3_USER_AGENT;
+          const runtime = c.env.ME3_ASSISTANT_RUNTIME === "sdk"
+            ? c.env.ME3_SDK_USER_AGENT
+            : c.env.ME3_USER_AGENT;
           if (!runtime) {
             send("error", { ok: false, error: "Agent chat runtime is not configured" });
             return;

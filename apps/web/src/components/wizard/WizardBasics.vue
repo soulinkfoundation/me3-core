@@ -198,7 +198,7 @@ watch(handle, async (val) => {
       wizard.isCheckingUsername = false;
     }
   }, 500);
-});
+}, { immediate: handle.value.length >= 3 });
 
 const bioLength = 320;
 const bioTextLength = computed(() =>

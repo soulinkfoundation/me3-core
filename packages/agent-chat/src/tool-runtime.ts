@@ -1,6 +1,7 @@
 import type { Me3AgentCapabilitySchema } from "@me3/knowledge";
 
 export const MAX_AGENT_TOOL_MODEL_STEPS = 4;
+export const MAX_EXTENDED_AGENT_TOOL_MODEL_STEPS = 20;
 
 export type AgentToolDefinition = {
   name: string;
@@ -72,6 +73,8 @@ export async function runAgentToolLoop(input: {
   model: AgentToolModel;
   executeTool: AgentToolExecutor;
   maxModelSteps?: number;
+  extended?: boolean;
+  maxDurationMs?: number;
 }): Promise<AgentToolLoopResult> {
   if (
     input.maxModelSteps !== undefined &&
@@ -81,14 +84,16 @@ export async function runAgentToolLoop(input: {
   }
 
   const maxModelSteps = Math.min(
-    input.maxModelSteps ?? MAX_AGENT_TOOL_MODEL_STEPS,
-    MAX_AGENT_TOOL_MODEL_STEPS,
+    input.maxModelSteps ?? (input.extended ? MAX_EXTENDED_AGENT_TOOL_MODEL_STEPS : MAX_AGENT_TOOL_MODEL_STEPS),
+    input.extended ? MAX_EXTENDED_AGENT_TOOL_MODEL_STEPS : MAX_AGENT_TOOL_MODEL_STEPS,
   );
+  const deadline = input.maxDurationMs ? performance.now() + input.maxDurationMs : Infinity;
   const toolsByName = new Map(input.tools.map((tool) => [tool.name, tool]));
   const messages = [...input.messages];
   let executedToolCalls = 0;
 
   for (let modelSteps = 1; modelSteps <= maxModelSteps; modelSteps += 1) {
+    if (performance.now() >= deadline) throw new Error("Agent tool loop time budget exceeded.");
     const response = await input.model(messages, input.tools);
     const text = response.text.trim();
 
@@ -109,6 +114,7 @@ export async function runAgentToolLoop(input: {
     // Side-effecting tools stay sequential until the policy layer can prove
     // that a group is safe to run in parallel.
     for (const call of response.toolCalls) {
+      if (performance.now() >= deadline) throw new Error("Agent tool loop time budget exceeded.");
       const tool = toolsByName.get(call.name);
       if (!tool) {
         messages.push(toolErrorMessage(call, `Unknown tool "${call.name}".`));

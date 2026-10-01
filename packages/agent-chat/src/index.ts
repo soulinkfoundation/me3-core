@@ -710,6 +710,7 @@ type CoreAgentChatEnv = {
   ME3_DEPLOYMENT_MODE?: string;
   ME3_AI_RAW_MODEL_SELECTION_ENABLED?: string;
   ME3_JEV_ROUTER_MODE?: string;
+  ME3_ASSISTANT_RUNTIME?: string;
   CORE_API_ORIGIN?: string;
   CORE_WEB_ORIGIN?: string;
 };
@@ -2127,6 +2128,7 @@ export async function dispatchAgentSandboxTurn(
 ): Promise<AgentSandboxDispatchResponse> {
   const dispatchStartedAt = performance.now();
   const turnPerformance = createAgentChatPerformanceMetrics();
+  const sdkRuntime = env.ME3_ASSISTANT_RUNTIME === "sdk";
   const mode = normalizeAgentChatMode(input.mode);
   const resultKey = agentTurnResultStorageKey(input.requestId);
   const memoryCacheLookupStartedAt = performance.now();
@@ -2206,7 +2208,7 @@ export async function dispatchAgentSandboxTurn(
   turnPerformance.routeResolutionMs = elapsedMs(routeResolutionStartedAt);
   const useCoreToolRuntime =
     route.configured &&
-    !isCoreChatOrientationTurn(toolPlan.decision) &&
+    (sdkRuntime || !isCoreChatOrientationTurn(toolPlan.decision)) &&
     !input.attachments?.some(
       (attachment) =>
         attachment.kind === "image" || attachment.mimeType?.startsWith("image/"),
@@ -2332,7 +2334,7 @@ export async function dispatchAgentSandboxTurn(
     !input.attachments?.length &&
     isContextFreeLiteralResponseRequest(runtimeMessageText);
   const recent = contextFreeTurn ? [] : toolPlan.recent;
-  const orientationTurn = isCoreChatOrientationTurn(toolPlan.decision);
+  const orientationTurn = !sdkRuntime && isCoreChatOrientationTurn(toolPlan.decision);
   await streamOptions?.onEvent({
     event: "status",
     data: { state: "context_loading" },
@@ -2346,7 +2348,12 @@ export async function dispatchAgentSandboxTurn(
           route.configured,
           owner,
         )
-      : Promise.resolve({ prompt: "", pluginInstallations: [] }),
+      : sdkRuntime
+        ? loadCorePluginInstallations(env).then((pluginInstallations) => ({
+            prompt: "",
+            pluginInstallations: pluginInstallations || [],
+          }))
+        : Promise.resolve({ prompt: "", pluginInstallations: [] }),
     contextFreeTurn
       ? Promise.resolve(null)
       : loadCoreChatAgentContext(env, {
@@ -2368,7 +2375,7 @@ export async function dispatchAgentSandboxTurn(
     runtimeMessageText,
     knowledgeContext,
     agentContext?.prompt ?? null,
-    buildCoreChatOrientationPrompt(toolPlan.decision, setupReadiness),
+    sdkRuntime ? "" : buildCoreChatOrientationPrompt(toolPlan.decision, setupReadiness),
     contextFreeTurn ? null : toolPlan.sourceReference,
     contextFreeTurn ? null : toolPlan.landingPageReference,
     contextFreeTurn ? null : toolPlan.peopleSearchReference,
@@ -2444,6 +2451,12 @@ export async function dispatchAgentSandboxTurn(
           webResearchServices,
           landingPageEnv: env,
           streamOptions,
+          runtime: sdkRuntime ? "sdk" : "legacy",
+          installedPluginIds: sdkRuntime
+            ? new Set(setupReadiness.pluginInstallations
+                .filter((plugin) => plugin.enabled === 1 && plugin.status === "installed")
+                .map((plugin) => plugin.plugin_id))
+            : undefined,
         })
       : await runModelTurn(route, messages, input.turnId, imageInputs);
   }

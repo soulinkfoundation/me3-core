@@ -8,6 +8,7 @@ import {
 export type CoreChatToolDefinition = {
   name: string;
   capabilityId: CoreChatCapabilityId;
+  pluginId: string | null;
   description: string;
   parameters: Me3AgentCapabilitySchema;
   handlerRoute: string;
@@ -28,6 +29,7 @@ export const CORE_CHAT_TOOLS: readonly CoreChatToolDefinition[] = CORE_CHAT_CAPA
   .map((capability) => ({
     name: coreChatToolName(capability.id),
     capabilityId: capability.id,
+    pluginId: capability.pluginId,
     description: capability.summary,
     parameters: capability.inputSchema,
     handlerRoute: capability.handler.route,
