@@ -10,6 +10,7 @@ const MANAGED_MODELS = [
   "zai-org/glm-4.7-flash",
   "moonshotai/kimi-k3",
   "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-sonnet-5",
   "openai/gpt-5.5",
 ] as const;
 const MANAGED_FALLBACK_MODELS = ["zai-org/glm-4.7-flash"] as const;

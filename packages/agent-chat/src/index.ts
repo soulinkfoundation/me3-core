@@ -4551,6 +4551,7 @@ export const MANAGED_AI_MODELS = [
   "zai-org/glm-4.7-flash",
   "moonshotai/kimi-k3",
   "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-sonnet-5",
   "openai/gpt-5.5",
 ] as const;
 const MANAGED_AI_MODEL_SET = new Set<string>(MANAGED_AI_MODELS);
@@ -4723,6 +4724,7 @@ export function estimateManagedAiUsage(model: string, usage: AgentModelUsage): {
     "openai/gpt-5.4-nano": { input: 0.2, cached: 0.02, output: 1.25, feeRate: 0.05, id: "cloudflare-unified-gpt-5-4-nano-2026-07" },
     "moonshotai/kimi-k3": { input: 3, cached: 0.3, output: 15, feeRate: 0.05, id: "cloudflare-unified-kimi-k3-2026-07" },
     "anthropic/claude-sonnet-4.6": { input: 3, cached: 0.3, output: 15, feeRate: 0.05, id: "cloudflare-unified-claude-sonnet-4-6-2026-07" },
+    "anthropic/claude-sonnet-5": { input: 2, cached: 0.2, output: 10, feeRate: 0.05, id: "cloudflare-unified-claude-sonnet-5-2026-10" },
     "openai/gpt-5.5": { input: 5, cached: 0.5, output: 30, feeRate: 0.05, id: "cloudflare-unified-gpt-5-5-2026-07" },
     "zai-org/glm-4.7-flash": { input: 0.06, cached: 0.06, output: 0.4, feeRate: 0, id: "workers-ai-glm-4-7-flash-2026-07" },
   }[normalizedModel];

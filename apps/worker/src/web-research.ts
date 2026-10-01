@@ -25,6 +25,7 @@ const MANAGED_SEARCH_MODELS = new Set([
   "openai/gpt-5.4-nano",
   "openai/gpt-5.5",
   "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-sonnet-5",
 ]);
 const MAX_SEARCH_OUTPUT_TOKENS = 1_200;
 const FETCH_TIMEOUT_MS = 12_000;

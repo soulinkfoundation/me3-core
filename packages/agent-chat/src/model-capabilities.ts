@@ -37,6 +37,11 @@ const AI_MODEL_CAPABILITY_RECORDS: readonly AiModelCapabilityRecord[] = [
   },
   {
     providerId: "anthropic",
+    model: "claude-sonnet-5",
+    capabilities: ["text", "image_input", "long-context", "reasoning", "tool-use"],
+  },
+  {
+    providerId: "anthropic",
     model: "claude-opus-4-8",
     capabilities: ["text", "image_input", "long-context", "reasoning", "tool-use"],
   },

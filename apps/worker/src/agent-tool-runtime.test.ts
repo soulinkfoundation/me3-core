@@ -82,7 +82,7 @@ describe("provider-neutral agent tool loop", () => {
       description: "Accept an explicit null.",
       parameters: {
         type: "object",
-        properties: { note: { type: ["string", "null"] } },
+        properties: { note: { type: ["string", "null"], description: "Optional note" } },
         additionalProperties: false,
       },
     };
