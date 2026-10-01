@@ -118,9 +118,13 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-offer button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .site-offer-booking{margin-top:24px}
 .site-offer-booking[hidden]{display:none}
-.booking-date-picker--strip{max-width:none}
+.booking-widget{box-sizing:border-box;width:100%;min-width:0;grid-template-columns:minmax(0,1fr)}
+.booking-session-preview{display:flex;max-width:100%;min-width:0;overflow-x:auto;scroll-snap-type:x mandatory}
+.booking-session-preview .booking-offer-card{flex:0 0 280px;max-width:calc(100% - 8px);scroll-snap-align:start}
+.booking-session-preview .booking-offer-card:only-child{flex:1 1 100%}
+.booking-date-picker--strip{box-sizing:border-box;max-width:100%;min-width:0}
 .booking-date-picker--strip p{margin:0 0 10px;font-family:var(--display-font);font-size:1.1rem;font-weight:700;text-align:left}
-.booking-day-strip{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 12px;scroll-snap-type:x mandatory}
+.booking-day-strip{box-sizing:border-box;display:flex;width:100%;max-width:100%;min-width:0;gap:8px;overflow-x:auto;padding:4px 2px 12px;scroll-snap-type:x mandatory}
 .booking-day{display:grid;flex:0 0 64px;gap:5px;min-height:70px;place-content:center;border:1px solid var(--border);border-radius:var(--button-radius);background:var(--surface);color:var(--text);font:inherit;cursor:pointer;scroll-snap-align:start}
 .booking-day span{font-size:.72rem;color:var(--muted)}
 .booking-day strong{font-size:1.1rem}

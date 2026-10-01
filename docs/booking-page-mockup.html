@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Booking page · ME3 design preview</title>
+  <style>
+    :root{font-family:ui-sans-serif,system-ui,sans-serif;color-scheme:light;--bg:#eef1e8;--surface:#fbfcf8;--raised:#e3e9da;--text:#1f2a1c;--muted:#5b6655;--line:#d3dbc8;--accent:#3f6b35;--accent-text:#fff;--soft:#f3f6ee}
+    *{box-sizing:border-box}
+    body{min-width:0;margin:0;background:var(--bg);color:var(--text)}
+    button,input{font:inherit}
+    button{cursor:pointer}
+    button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+    .preview-note{padding:9px 20px;background:var(--text);color:var(--surface);text-align:center;font-size:12px;letter-spacing:.04em}
+    .topbar{border-bottom:1px solid var(--line);background:var(--surface)}
+    .topbar-inner{display:flex;align-items:center;gap:28px;max-width:1160px;min-height:72px;margin:auto;padding:0 30px}
+    .identity{display:flex;align-items:center;gap:10px;color:var(--text);text-decoration:none;font-weight:750;white-space:nowrap}
+    .identity-mark{display:grid;width:35px;height:35px;place-items:center;border-radius:50%;background:var(--raised);font-family:Georgia,serif;font-size:15px}
+    nav{display:flex;align-items:center;gap:5px;margin-left:auto}
+    nav a{padding:11px 13px;border-radius:999px;color:var(--muted);text-decoration:none;font-size:14px;font-weight:650}
+    nav a[aria-current]{background:var(--raised);color:var(--text)}
+    .theme-button{width:42px;height:42px;border:0;border-radius:50%;background:transparent;color:var(--text);font-size:21px}
+    .shell{width:min(1080px,calc(100% - 48px));margin:78px auto 100px}
+    .eyebrow{margin:0 0 18px;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    .intro{max-width:650px;margin-bottom:42px}
+    h1,h2,h3,p{margin-top:0}
+    h1,h2{font-family:Georgia,serif;font-weight:400;letter-spacing:-.045em}
+    h1{margin-bottom:15px;font-size:clamp(42px,5vw,67px);line-height:1.04}
+    .intro p:last-child{max-width:500px;margin-bottom:0;color:var(--muted);font-size:17px;line-height:1.6}
+    .booking-layout{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:26px;align-items:start}
+    .sidebar,.calendar{min-width:0;border:1px solid var(--line);border-radius:18px;background:var(--surface)}
+    .sidebar{padding:26px}
+    .section-label{margin:0 0 14px;color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}
+    .offer-list{display:grid;gap:10px}
+    .offer{display:grid;width:100%;gap:8px;padding:20px;border:1px solid var(--line);border-radius:13px;background:var(--surface);color:var(--text);text-align:left}
+    .offer[aria-pressed="true"]{border-color:var(--accent);background:var(--soft);box-shadow:inset 0 0 0 1px var(--accent)}
+    .offer-title{font-family:Georgia,serif;font-size:22px;letter-spacing:-.03em}
+    .offer-description{color:var(--muted);font-size:14px;line-height:1.5}
+    .offer-meta{display:flex;gap:8px;align-items:center;margin-top:4px;color:var(--text);font-size:13px;font-weight:700}
+    .offer-meta span+span:before{content:"·";margin-right:8px;color:var(--muted)}
+    .sidebar-footer{display:flex;gap:11px;align-items:center;margin:24px 2px 0;color:var(--muted);font-size:13px;line-height:1.5}
+    .sidebar-footer svg{flex:none;color:var(--accent)}
+    .calendar{padding:29px}
+    .calendar-header{display:flex;justify-content:space-between;align-items:start;gap:16px;margin-bottom:25px}
+    .calendar h2{margin:0;font-size:34px;line-height:1.1}
+    .timezone{color:var(--muted);font-size:12px;white-space:nowrap}
+    .date-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}
+    .date-head strong{font-size:14px}
+    .date-hint{color:var(--muted);font-size:12px}
+    .date-rail{display:flex;min-width:0;max-width:100%;gap:8px;overflow-x:auto;padding:2px 2px 14px;scroll-snap-type:x mandatory;scrollbar-color:var(--line) transparent}
+    .date{display:grid;flex:0 0 62px;gap:7px;min-height:75px;place-content:center;border:1px solid var(--line);border-radius:11px;background:var(--surface);color:var(--text);scroll-snap-align:start}
+    .date span{color:var(--muted);font-size:12px}
+    .date strong{font-size:20px}
+    .date[aria-pressed="true"]{border-color:var(--accent);background:var(--soft);box-shadow:inset 0 0 0 1px var(--accent)}
+    .date:disabled{opacity:.38;cursor:not-allowed}
+    .divider{height:1px;margin:21px 0 22px;background:var(--line)}
+    .slots-heading{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:15px}
+    .slots-heading h3{margin:0;font-family:Georgia,serif;font-size:22px;font-weight:400}
+    .slots-heading span{color:var(--muted);font-size:12px}
+    .slots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+    .slot{min-height:45px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--text);font-size:14px;font-weight:650}
+    .slot[aria-pressed="true"]{border-color:var(--accent);background:var(--accent);color:var(--accent-text)}
+    .calendar-bottom{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:25px}
+    .selection{margin:0;color:var(--muted);font-size:13px;line-height:1.4}
+    .primary,.secondary{min-height:46px;padding:0 23px;border-radius:999px;font-weight:700}
+    .primary{border:1px solid var(--accent);background:var(--accent);color:var(--accent-text)}
+    .primary:disabled{opacity:.4;cursor:not-allowed}
+    .secondary{border:1px solid var(--line);background:var(--surface);color:var(--text)}
+    .details{display:none}
+    .details.is-visible{display:block}
+    .picker.is-hidden{display:none}
+    .details-summary{margin:0 0 24px;padding:16px 18px;border-radius:11px;background:var(--soft);font-size:14px;line-height:1.6}
+    .fields{display:grid;gap:15px}
+    .fields label{display:grid;gap:7px;color:var(--muted);font-size:13px;font-weight:700}
+    .fields input{width:100%;min-height:45px;padding:0 13px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--text)}
+    .details-actions{display:flex;justify-content:space-between;gap:12px;margin-top:24px}
+    .footnote{max-width:1080px;margin:0 auto 42px;padding:0 24px;color:var(--muted);font-size:12px}
+    @media(max-width:760px){
+      .topbar-inner{min-height:60px;padding:0 20px}.topbar nav a:not([aria-current]){display:none}.topbar nav a{padding:9px 11px}
+      .shell{width:calc(100% - 36px);margin:44px auto 64px}.intro{margin-bottom:29px}h1{font-size:43px}
+      .booking-layout{grid-template-columns:minmax(0,1fr);gap:16px}.sidebar,.calendar{padding:20px}
+      .offer-list{display:flex;overflow-x:auto;scroll-snap-type:x mandatory}.offer{flex:0 0 min(270px,calc(100% - 12px));scroll-snap-align:start}
+      .sidebar-footer{margin-top:18px}.calendar h2{font-size:29px}.calendar-header{margin-bottom:22px}
+    }
+    @media(max-width:410px){.shell{width:calc(100% - 28px)}.sidebar,.calendar{padding:17px}.slots{grid-template-columns:repeat(2,minmax(0,1fr))}.calendar-bottom{align-items:stretch;flex-direction:column}.calendar-bottom .primary{width:100%}.theme-button{width:36px}.topbar-inner{gap:10px}.identity-mark{width:30px;height:30px}}
+  </style>
+</head>
+<body>
+  <div class="preview-note">DESIGN PREVIEW · NO APPOINTMENT WILL BE MADE</div>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="identity" href="#" aria-label="Alex Rivera home"><span class="identity-mark" aria-hidden="true">AR</span><span>Alex Rivera</span></a>
+      <nav aria-label="Main navigation"><a href="#">Home</a><a href="#">About</a><a href="#" aria-current="page">Bookings</a></nav>
+      <button class="theme-button" type="button" aria-label="Switch to dark mode" title="Switch colour mode">☾</button>
+    </div>
+  </header>
+  <main class="shell">
+    <div class="intro">
+      <p class="eyebrow">Bookings with Alex</p>
+      <h1>Let’s find a time.</h1>
+      <p>Choose the conversation that fits, then pick a time that works for you. You’ll receive the details by email.</p>
+    </div>
+    <div class="booking-layout">
+      <aside class="sidebar" aria-labelledby="offer-heading">
+        <p class="section-label" id="offer-heading">01 / Choose a session</p>
+        <div class="offer-list" role="group" aria-label="Sessions">
+          <button class="offer" type="button" aria-pressed="true" data-offer="Intro call" data-duration="30 minutes" data-price="Free">
+            <span class="offer-title">Intro call</span><span class="offer-description">A relaxed first conversation about your idea and what comes next.</span><span class="offer-meta"><span>30 minutes</span><span>Free</span></span>
+          </button>
+          <button class="offer" type="button" aria-pressed="false" data-offer="Planning session" data-duration="60 minutes" data-price="€120">
+            <span class="offer-title">Planning session</span><span class="offer-description">A focused working session with space to map out the details.</span><span class="offer-meta"><span>60 minutes</span><span>€120</span></span>
+          </button>
+        </div>
+        <p class="sidebar-footer"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Times shown in the host’s timezone. You can confirm yours before booking.</p>
+      </aside>
+      <section class="calendar" aria-labelledby="calendar-heading">
+        <div class="picker">
+          <div class="calendar-header"><div><p class="section-label">02 / Pick a time</p><h2 id="calendar-heading">Available times</h2></div><span class="timezone">Europe / Dublin</span></div>
+          <div class="date-head"><strong id="month-label"></strong><span class="date-hint">Scroll for more dates →</span></div>
+          <div class="date-rail" role="group" aria-label="Choose a date"></div>
+          <div class="divider"></div>
+          <div class="slots-heading"><h3>Choose a time</h3><span>Host time · GMT / BST</span></div>
+          <div class="slots" role="group" aria-label="Choose a time"></div>
+          <div class="calendar-bottom"><p class="selection" aria-live="polite">Select a time to continue.</p><button class="primary continue" type="button" disabled>Continue <span aria-hidden="true">→</span></button></div>
+        </div>
+        <div class="details" aria-labelledby="details-heading">
+          <p class="section-label">03 / Your details</p><h2 id="details-heading">Almost there.</h2>
+          <p class="details-summary"></p>
+          <form class="details-form"><div class="fields"><label>Your name<input name="name" autocomplete="name" required></label><label>Email address<input name="email" type="email" autocomplete="email" required></label></div><div class="details-actions"><button class="secondary back" type="button">← Back</button><button class="primary" type="submit">Preview confirmation</button></div></form>
+        </div>
+      </section>
+    </div>
+  </main>
+  <p class="footnote">This mockup uses fictional profile details and sample availability. The final booking page would use the site’s existing booking types, offers and live availability.</p>
+  <script>
+    const offers = [...document.querySelectorAll('.offer')];
+    const rail = document.querySelector('.date-rail');
+    const slots = document.querySelector('.slots');
+    const selection = document.querySelector('.selection');
+    const continueButton = document.querySelector('.continue');
+    let selectedDate = null;
+    let selectedTime = null;
+    const times = ['09:00','09:30','10:00','11:00','11:30','13:00','13:30','14:00','15:00'];
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    document.querySelector('#month-label').textContent = new Intl.DateTimeFormat('en', {month:'long', year:'numeric'}).format(today);
+    for (let offset = 0; offset < 14; offset++) {
+      const day = new Date(today);
+      day.setDate(today.getDate() + offset);
+      const button = document.createElement('button');
+      const available = day.getDay() !== 0 && day.getDay() !== 6;
+      button.className = 'date';
+      button.type = 'button';
+      button.disabled = !available;
+      button.setAttribute('aria-label', new Intl.DateTimeFormat('en', {dateStyle:'full'}).format(day));
+      button.setAttribute('aria-pressed', 'false');
+      button.innerHTML = '<span>' + new Intl.DateTimeFormat('en', {weekday:'short'}).format(day) + '</span><strong>' + day.getDate() + '</strong>';
+      button.addEventListener('click', () => {
+        rail.querySelectorAll('.date').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+        selectedDate = day;
+        selectedTime = null;
+        renderSlots();
+      });
+      rail.append(button);
+    }
+    function renderSlots() {
+      slots.replaceChildren();
+      for (const time of times) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'slot';
+        button.textContent = time;
+        button.setAttribute('aria-pressed', String(selectedTime === time));
+        button.addEventListener('click', () => { selectedTime = time; renderSlots(); });
+        slots.append(button);
+      }
+      continueButton.disabled = !selectedDate || !selectedTime;
+      selection.textContent = selectedTime ? new Intl.DateTimeFormat('en', {weekday:'long', month:'short', day:'numeric'}).format(selectedDate) + ' at ' + selectedTime : 'Select a time to continue.';
+    }
+    offers.forEach(offer => offer.addEventListener('click', () => offers.forEach(item => item.setAttribute('aria-pressed', String(item === offer)))));
+    continueButton.addEventListener('click', () => {
+      const offer = document.querySelector('.offer[aria-pressed="true"]');
+      document.querySelector('.details-summary').textContent = offer.dataset.offer + ' · ' + offer.dataset.duration + ' · ' + offer.dataset.price + ' · ' + new Intl.DateTimeFormat('en', {weekday:'long', month:'long', day:'numeric'}).format(selectedDate) + ' at ' + selectedTime;
+      document.querySelector('.picker').classList.add('is-hidden');
+      document.querySelector('.details').classList.add('is-visible');
+      document.querySelector('[name="name"]').focus();
+    });
+    document.querySelector('.back').addEventListener('click', () => {
+      document.querySelector('.details').classList.remove('is-visible');
+      document.querySelector('.picker').classList.remove('is-hidden');
+      continueButton.focus();
+    });
+    document.querySelector('.details-form').addEventListener('submit', event => {
+      event.preventDefault();
+      alert('Design preview only — no booking was made.');
+    });
+    document.querySelector('.theme-button').addEventListener('click', event => {
+      const dark = document.documentElement.dataset.mode !== 'dark';
+      document.documentElement.dataset.mode = dark ? 'dark' : 'light';
+      const button = event.currentTarget;
+      button.textContent = dark ? '☀' : '☾';
+      button.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+    });
+    renderSlots();
+  </script>
+  <style>
+    html[data-mode="dark"]{color-scheme:dark;--bg:#121711;--surface:#192018;--raised:#222b20;--text:#e6eddf;--muted:#9fac98;--line:#2f3a2c;--accent:#8fc27f;--accent-text:#121711;--soft:#202b1d}
+  </style>
+</body>
+</html>
