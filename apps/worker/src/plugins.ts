@@ -1423,7 +1423,7 @@ const JOURNAL_PLUGIN: CorePluginManifestSummary = {
   name: "ME3 Journal",
   version: "0.1.0",
   description:
-    "Private daily writing and reflection, including notes, drafts, and Wheel of Life check-ins.",
+    "Private daily pages, articles, and Wheel of Life check-ins.",
   trustTier: "first_party",
   distribution: "workspace_package",
   installMode: "enabled_by_owner_config",
@@ -1478,12 +1478,30 @@ const JOURNAL_PLUGIN: CorePluginManifestSummary = {
       methods: ["GET"],
       auth: "owner",
     },
+    {
+      id: "journal.articles.api",
+      path: "/api/journal/articles",
+      methods: ["GET", "POST"],
+      auth: "owner",
+    },
+    {
+      id: "journal.article.api",
+      path: "/api/journal/articles/:id",
+      methods: ["GET", "PATCH", "DELETE"],
+      auth: "owner",
+    },
+    {
+      id: "journal.assist.api",
+      path: "/api/journal/assist",
+      methods: ["POST"],
+      auth: "owner",
+    },
   ],
   uiSlots: [
     {
       id: "journal.nav",
       slot: "dashboard.nav",
-      label: "Journal",
+      label: "Writing",
     },
   ],
   dashboardCards: [

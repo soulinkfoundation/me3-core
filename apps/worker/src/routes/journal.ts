@@ -1,4 +1,6 @@
 import { JOURNAL_PLUGIN_ID } from "@me3-core/plugin-journal";
+import { createJournalArticle, deleteJournalArticle, getJournalArticle, listJournalArticles, updateJournalArticle } from "../journal-articles";
+import { runJournalAssist } from "../journal-assist";
 import {
   JournalConflictError,
   JournalInputError,
@@ -13,6 +15,76 @@ import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { isCorePluginEnabled } from "../plugins";
 
 export function registerJournalRoutes(app: AppHono, deps: OwnerRouteDeps) {
+  app.get("/api/journal/articles", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+    try { return c.json(await listJournalArticles(c.env, ownerId)); }
+    catch (error) { return journalErrorResponse(c, error); }
+  });
+
+  app.post("/api/journal/articles", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+    try {
+      const result = await createJournalArticle(c.env, ownerId, await c.req.json().catch(() => ({})));
+      c.header("ETag", journalRevisionETag(result.article.revision));
+      return c.json(result, 201);
+    } catch (error) { return journalErrorResponse(c, error); }
+  });
+
+  app.get("/api/journal/articles/:id", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+    try {
+      const result = await getJournalArticle(c.env, ownerId, c.req.param("id"));
+      c.header("ETag", journalRevisionETag(result.article.revision));
+      c.header("Cache-Control", "private, no-cache");
+      c.header("Vary", "Authorization");
+      return c.json(result);
+    } catch (error) { return journalErrorResponse(c, error); }
+  });
+
+  app.patch("/api/journal/articles/:id", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+    try {
+      const revision = parseJournalIfMatch(c.req.header("If-Match"));
+      if (revision === undefined || revision === null) throw new JournalConflictError();
+      const result = await updateJournalArticle(c.env, ownerId, c.req.param("id"), await c.req.json().catch(() => ({})), revision);
+      c.header("ETag", journalRevisionETag(result.article.revision));
+      return c.json(result);
+    } catch (error) { return journalErrorResponse(c, error); }
+  });
+
+  app.delete("/api/journal/articles/:id", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+    try {
+      const revision = parseJournalIfMatch(c.req.header("If-Match"));
+      if (revision === undefined || revision === null) throw new JournalConflictError();
+      return c.json(await deleteJournalArticle(c.env, ownerId, c.req.param("id"), revision));
+    } catch (error) { return journalErrorResponse(c, error); }
+  });
+
+  app.post("/api/journal/assist", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+    try { return c.json(await runJournalAssist(c.env, ownerId, await c.req.json().catch(() => ({})))); }
+    catch (error) { return journalErrorResponse(c, error); }
+  });
+
   app.get("/api/journal/days/:date", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);

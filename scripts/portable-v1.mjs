@@ -78,6 +78,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0053_booking_meeting", "2026-09-23-booking-meeting-v1"],
   ["0054_wheel_of_life_navigation", "2026-09-30-wheel-of-life-navigation-v1"],
   ["0055_calendar_agent_cancellation_approvals", "2026-10-01-calendar-agent-cancellation-approvals-v1"],
+  ["0056_journal_articles", "2026-10-02-journal-articles-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -175,6 +176,7 @@ const COPIED_TABLES = [
   "financial_categories",
   "financial_entries",
   "journal_entries",
+  "journal_articles",
   "journal_project_links",
   "mailbox_messages",
   "mailbox_attachment_staging",

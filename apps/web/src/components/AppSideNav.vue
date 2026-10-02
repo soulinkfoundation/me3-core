@@ -248,14 +248,14 @@ watch(navDrawerOpen, (isOpen) => {
           to="/journal"
           class="app-side-nav__row app-side-nav-control"
           :class="{ 'app-side-nav__row--active': rowActive('journal') }"
-          aria-label="Journal"
-          title="Journal"
+          aria-label="Writing"
+          title="Writing"
           @click="closeNavDrawer"
         >
           <span class="app-side-nav__emoji" aria-hidden="true">{{
             APP_FEATURE_ICONS.journal
           }}</span>
-          <span class="sr-only">Journal</span>
+          <span class="sr-only">Writing</span>
         </RouterLink>
 
         <RouterLink

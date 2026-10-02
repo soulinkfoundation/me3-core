@@ -9,6 +9,7 @@ import {
 } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { useRoute } from "vue-router";
+import type { Editor } from "@tiptap/core";
 import { ApiError, api } from "../api";
 import Button from "../components/Button.vue";
 import DatePickerPopover from "../components/calendar/DatePickerPopover.vue";
@@ -18,18 +19,15 @@ import { useVoiceDictation } from "../composables/useVoiceDictation";
 import { useAuthStore } from "../stores/auth";
 import { findInlineTextMatch } from "../utils/inlineJournalChips";
 import { parseJournalReminderCapture } from "../utils/journalReminderCapture";
-import {
-  parseJournalTaskMarkers,
-  type JournalTaskMarkerSuggestion,
-} from "../utils/journalOrganize";
 import { journalBodyForEditor } from "../utils/journalContent";
+import { reorderJournalBlocks } from "../utils/journalWriting";
 
 definePage({
   meta: {
     requiresAuth: true,
     requiresWorkspace: true,
     requiresPlugin: "me3.journal",
-    title: "Journal | ME3",
+    title: "Writing | ME3",
     description: "Private ME3 Journal workspace.",
     robots: "noindex,follow",
   },
@@ -43,7 +41,15 @@ type JournalEntry = {
   bodyFormat: "plain_text" | "markdown" | "html";
   createdAt: string;
   updatedAt: string;
+  revision: number;
 };
+
+type Article = Omit<JournalEntry, "date">;
+type AssistMode = "structure" | "outline" | "feedback" | "restructure";
+type AssistGroup = { label: string; phrases: string[] };
+type AssistNote = { id: string; paragraphId: string; quote: string; category: string; comment: string };
+type AssistResult = { groups?: AssistGroup[]; notes?: AssistNote[]; order?: string[]; reason?: string };
+type AssistParagraph = { id: string; text: string; pos: number };
 
 type JournalArchiveEntry = JournalEntry & {
   preview: string;
@@ -79,9 +85,6 @@ type JournalProjectLink = {
 };
 
 type CaptureMode = "task" | "reminder";
-type OrganizeTaskSuggestion = JournalTaskMarkerSuggestion & {
-  selected: boolean;
-};
 type InlineJournalChip = {
   id: string;
   label: string;
@@ -93,6 +96,7 @@ type InlineJournalChip = {
 };
 type TiptapEditorExpose = {
   insertText: (text: string) => void;
+  editor: Editor | null;
 };
 
 const route = useRoute();
@@ -107,6 +111,20 @@ const archiveEntries = ref<JournalArchiveEntry[]>([]);
 const archiveOpen = ref(false);
 const archiveMobileDetailOpen = ref(false);
 const archiveLoaded = ref(false);
+const libraryTab = ref<"daily" | "articles">("daily");
+const articles = ref<Article[]>([]);
+const currentArticle = ref<Article | null>(null);
+const assistOpen = ref(false);
+const assistTab = ref<"structure" | "outline" | "feedback">("structure");
+const assistBusy = ref(false);
+const assistError = ref("");
+const assistResults = ref<Record<string, { result: AssistResult; content: string; editVersion: number; paragraphs: AssistParagraph[] } | undefined>>({});
+const editVersions = ref<Record<string, number>>({});
+const dismissedNotes = ref<Record<string, string[]>>({});
+const dictatedText = ref("");
+const dictationDuration = ref("");
+const dictationRange = ref<{ from: number; to: number } | null>(null);
+const assistFocus = ref("");
 const loading = ref(false);
 const archiveLoading = ref(false);
 const archiveActionDate = ref<string | null>(null);
@@ -124,11 +142,6 @@ const captureReminderTime = ref("");
 const captureReminderTimezone = ref(browserTimezone());
 const captureSaving = ref(false);
 const captureError = ref("");
-const organizeOpen = ref(false);
-const organizeSuggestions = ref<OrganizeTaskSuggestion[]>([]);
-const organizeSaving = ref(false);
-const organizeError = ref("");
-const showJournalOrganize = false;
 const editorWrap = ref<HTMLElement | null>(null);
 const editorRef = ref<TiptapEditorExpose | null>(null);
 const inlineJournalChips = ref<InlineJournalChip[]>([]);
@@ -141,6 +154,7 @@ const selectionToolbar = ref({
 const saveState = ref<"idle" | "saving" | "saved" | "error">("idle");
 const hydratingEntry = ref(false);
 let saveTimer: number | null = null;
+let saveQueue: Promise<void> = Promise.resolve();
 let currentLoadToken = 0;
 let inlineChipFrame: number | null = null;
 
@@ -157,8 +171,19 @@ const saveStatusText = computed(() => {
   return "";
 });
 const hasLoadedEntry = computed(
-  () => loadedEntry.value?.date === selectedDate.value,
+  () => !currentArticle.value && loadedEntry.value?.date === selectedDate.value,
 );
+const wordCount = computed(() => htmlToPlainText(description.value).split(/\s+/).filter(Boolean).length);
+const documentKey = computed(() => currentArticle.value ? `article:${currentArticle.value.id}` : `day:${selectedDate.value}`);
+const documentContent = computed(() => `${title.value}\n${description.value}`);
+const editVersion = computed(() => editVersions.value[documentKey.value] || 0);
+const assistKey = computed(() => `${documentKey.value}:${assistTab.value}`);
+const currentAssist = computed(() => assistResults.value[assistKey.value]);
+const assistStale = computed(() => !!currentAssist.value && (currentAssist.value.content !== documentContent.value || currentAssist.value.editVersion !== editVersion.value));
+const currentDismissedNotes = computed(() => dismissedNotes.value[`${documentKey.value}:feedback`] || []);
+const visibleFeedbackNotes = computed(() => currentAssist.value?.result.notes
+  ?.map((note, index) => ({ note, number: index + 1 }))
+  .filter(({ note }) => !currentDismissedNotes.value.includes(note.id)) || []);
 const nonEmptyArchiveEntries = computed(() =>
   archiveEntries.value.filter(entryHasContent),
 );
@@ -204,6 +229,7 @@ const {
   disabled: () => loading.value,
   filenamePrefix: "journal-dictation",
   onTranscript: insertVoiceTranscript,
+  onStart: () => { dictatedText.value = ""; },
 });
 
 function dateToKey(date: Date): string {
@@ -300,6 +326,23 @@ function formatArchiveTitle(entry: JournalArchiveEntry): string {
   return entryTitle ? `${date} - ${entryTitle}` : date;
 }
 
+function formatArchiveMonth(value: string): string {
+  return new Intl.DateTimeFormat("en-GB", { month: "long", ...(value.slice(0, 4) === todayKey().slice(0, 4) ? {} : { year: "numeric" }) })
+    .format(new Date(`${value}T12:00:00`));
+}
+
+function archiveWordCount(entry: JournalArchiveEntry) {
+  return htmlToPlainText(entry.body).split(/\s+/).filter(Boolean).length;
+}
+
+function articleEditedLabel(value: string) {
+  const hours = Math.floor((Date.now() - new Date(value).getTime()) / 3_600_000);
+  if (hours < 1) return "just now";
+  if (hours < 24) return `edited ${hours}h ago`;
+  if (hours < 48) return "yesterday";
+  return formatArchiveDate(value.slice(0, 10));
+}
+
 function htmlToPlainText(value: string): string {
   if (!value) return "";
   const doc = new DOMParser().parseFromString(value, "text/html");
@@ -309,21 +352,35 @@ function htmlToPlainText(value: string): string {
     .trim();
 }
 
-function htmlToLineText(value: string): string {
-  if (!value) return "";
-  const doc = new DOMParser().parseFromString(value, "text/html");
-  const blocks = Array.from(
-    doc.body.querySelectorAll("p, li, h1, h2, h3, h4, h5, h6, blockquote"),
-  )
-    .map((node) => (node.textContent || "").replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-  return blocks.length
-    ? blocks.join("\n")
-    : (doc.body.textContent || "").replace(/\s+/g, " ").trim();
+function insertVoiceTranscript(text: string) {
+  dictatedText.value = text.trim();
+  dictationDuration.value = voiceRecordingElapsedLabel.value;
+  const before = editorRef.value?.editor?.state.selection.from;
+  editorRef.value?.insertText(text);
+  const after = editorRef.value?.editor?.state.selection.from;
+  dictationRange.value = before !== undefined && after !== undefined ? { from: before, to: after } : null;
+  void nextTick().then(markDictation);
 }
 
-function insertVoiceTranscript(text: string) {
-  editorRef.value?.insertText(text);
+function clearDictationMark() {
+  editorWrap.value?.querySelectorAll(".journal-dictation-anchor").forEach((element) => element.classList.remove("journal-dictation-anchor"));
+}
+
+function markDictation() {
+  clearDictationMark();
+  const editor = editorRef.value?.editor;
+  const range = dictationRange.value;
+  if (!editor || !range || !dictatedText.value) return;
+  const dom = editor.view.domAtPos(range.from).node;
+  const element = dom instanceof HTMLElement ? dom : dom.parentElement;
+  element?.closest("p, li, blockquote")?.classList.add("journal-dictation-anchor");
+}
+
+function keepDictation() {
+  assistResults.value[`${documentKey.value}:structure`] = undefined;
+  dictatedText.value = "";
+  dictationRange.value = null;
+  clearDictationMark();
 }
 
 function defaultCaptureTitle(text: string): string {
@@ -380,10 +437,28 @@ function scheduleSave() {
   }, 700);
 }
 
-async function saveEntry() {
+function saveEntry() {
   clearSaveTimer();
+  const next = saveQueue.then(performSave);
+  saveQueue = next.catch(() => {});
+  return next;
+}
+
+async function performSave() {
   saveState.value = "saving";
   try {
+    if (currentArticle.value) {
+      const article = currentArticle.value;
+      const response = await api.patch<{ article: Article }>(
+        `/journal/articles/${encodeURIComponent(article.id)}`,
+        { title: title.value.trim() || null, body: description.value, bodyFormat: "html" },
+        { headers: { "If-Match": `"journal-${article.revision}"` } },
+      );
+      currentArticle.value = response.article;
+      articles.value = [response.article, ...articles.value.filter((item) => item.id !== article.id)];
+      saveState.value = "saved";
+      return;
+    }
     const response = await api.patch<{ entry: JournalEntry }>(
       `/journal/days/${encodeURIComponent(selectedDate.value)}`,
       {
@@ -430,8 +505,8 @@ async function uploadJournalImage(input: {
 }
 
 async function flushPendingSave() {
-  if (!saveTimer) return;
-  await saveEntry();
+  if (saveTimer) await saveEntry();
+  else await saveQueue;
 }
 
 async function loadDay(date: string) {
@@ -445,6 +520,11 @@ async function loadDay(date: string) {
     );
     if (token !== currentLoadToken) return;
     hydratingEntry.value = true;
+    clearFeedbackMarks();
+    clearDictationMark();
+    dictatedText.value = "";
+    dictationRange.value = null;
+    currentArticle.value = null;
     loadedEntry.value = response.entry;
     title.value = response.entry?.title || "";
     description.value = response.entry
@@ -494,7 +574,7 @@ async function openCapture(mode: CaptureMode) {
   hideSelectionToolbar();
   await flushPendingSave();
   const entry = loadedEntry.value;
-  if (!entry) {
+  if (!entry && !currentArticle.value) {
     error.value = "Write something first, then capture it.";
     return;
   }
@@ -533,75 +613,16 @@ async function openCapture(mode: CaptureMode) {
   captureOpen.value = true;
 }
 
-async function openOrganize() {
-  error.value = "";
-  organizeError.value = "";
+async function makeTaskFromPhrase(phrase: string) {
   await flushPendingSave();
-  const entry = loadedEntry.value;
-  if (!entry) {
-    error.value = "Write something first, then organize it.";
-    return;
-  }
+  if (!loadedEntry.value && !currentArticle.value) { error.value = "Save this page first."; return; }
   try {
     await loadProjects();
-  } catch (projectError) {
-    error.value =
-      projectError instanceof Error
-        ? projectError.message
-        : "Could not load projects.";
-    return;
-  }
-  organizeSuggestions.value = parseJournalTaskMarkers(
-    htmlToLineText(description.value),
-    projects.value,
-  ).map((suggestion) => ({ ...suggestion, selected: true }));
-  if (organizeSuggestions.value.length === 0) {
-    organizeError.value = "No #task markers found.";
-  }
-  organizeOpen.value = true;
-}
-
-function closeOrganize() {
-  if (organizeSaving.value) return;
-  organizeOpen.value = false;
-  organizeError.value = "";
-}
-
-async function submitOrganize() {
-  const entry = loadedEntry.value;
-  const selected = organizeSuggestions.value.filter((suggestion) => suggestion.selected);
-  if (!entry || selected.length === 0 || organizeSaving.value) return;
-  organizeSaving.value = true;
-  organizeError.value = "";
-  try {
-    const links: JournalProjectLink[] = [];
-    for (const suggestion of selected) {
-      const response = await api.post<{ link: JournalProjectLink }>(
-        "/mission-control/journal/tasks",
-        {
-          journalEntryId: entry.id,
-          projectId: suggestion.projectId,
-          sourceText: suggestion.sourceText,
-          title: suggestion.title,
-        },
-      );
-      links.push(response.link);
-    }
-    entryLinks.value = [
-      ...links,
-      ...entryLinks.value.filter(
-        (link) => !links.some((created) => created.id === link.id),
-      ),
-    ];
-    organizeOpen.value = false;
-  } catch (organizeSubmitError) {
-    organizeError.value =
-      organizeSubmitError instanceof ApiError
-        ? organizeSubmitError.message
-        : "Could not create journal tasks.";
-  } finally {
-    organizeSaving.value = false;
-  }
+    captureText.value = phrase;
+    captureTitle.value = defaultCaptureTitle(captureText.value);
+    captureMode.value = "task";
+    captureOpen.value = true;
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not load projects."; }
 }
 
 function hideSelectionToolbar() {
@@ -614,7 +635,7 @@ function hideSelectionToolbar() {
 }
 
 function updateSelectionToolbar() {
-  if (captureOpen.value || organizeOpen.value) {
+  if (captureOpen.value) {
     hideSelectionToolbar();
     return;
   }
@@ -771,7 +792,7 @@ function closeCapture() {
 
 async function submitCapture() {
   const entry = loadedEntry.value;
-  if (!entry || captureSubmitDisabled.value) return;
+  if ((!entry && !currentArticle.value) || captureSubmitDisabled.value) return;
   captureSaving.value = true;
   captureError.value = "";
   try {
@@ -788,8 +809,19 @@ async function submitCapture() {
       return;
     }
 
+    if (currentArticle.value) {
+      await api.post("/mission-control/tasks", {
+        title: captureTitle.value.trim(),
+        description: captureText.value.trim(),
+        projectId: captureProjectId.value,
+        status: "backlog",
+        priority: 3,
+      });
+      captureOpen.value = false;
+      return;
+    }
     const payload = {
-      journalEntryId: entry.id,
+      journalEntryId: entry!.id,
       projectId: captureProjectId.value,
       sourceText: captureText.value.trim(),
       title: captureTitle.value.trim(),
@@ -841,9 +873,10 @@ function toggleArchiveActions(date: string) {
 
 async function setDate(date: string) {
   const normalized = normalizeLocalDateInput(date);
-  if (!normalized || normalized === selectedDate.value) return;
+  if (!normalized || (normalized === selectedDate.value && !currentArticle.value)) return;
   await flushPendingSave();
   selectedDate.value = normalized;
+  libraryTab.value = "daily";
   datePickerMonth.value = monthKey(normalized);
   datePickerOpen.value = false;
   await loadDay(normalized);
@@ -923,7 +956,186 @@ async function toggleArchive() {
   if (archiveOpen.value) {
     await flushPendingSave();
     await loadArchive();
+    await loadArticles();
   }
+}
+
+async function loadArticles() {
+  try {
+    const response = await api.get<{ articles: Article[] }>("/journal/articles");
+    articles.value = response.articles || [];
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not load articles."; }
+}
+
+async function openArticle(id: string) {
+  await flushPendingSave();
+  const token = ++currentLoadToken;
+  loading.value = true;
+  try {
+    const response = await api.get<{ article: Article }>(`/journal/articles/${encodeURIComponent(id)}`);
+    if (token !== currentLoadToken) return;
+    hydratingEntry.value = true;
+    clearFeedbackMarks();
+    clearDictationMark();
+    dictatedText.value = "";
+    dictationRange.value = null;
+    currentArticle.value = response.article;
+    libraryTab.value = "articles";
+    title.value = response.article.title || "";
+    description.value = journalBodyForEditor(response.article.body, response.article.bodyFormat);
+    entryLinks.value = [];
+    await nextTick();
+    archiveMobileDetailOpen.value = true;
+    saveState.value = "saved";
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not load article."; }
+  finally { hydratingEntry.value = false; if (token === currentLoadToken) loading.value = false; }
+}
+
+async function createArticle() {
+  await flushPendingSave();
+  try {
+    const response = await api.post<{ article: Article }>("/journal/articles", { title: null, body: "", bodyFormat: "html" });
+    articles.value = [response.article, ...articles.value];
+    await openArticle(response.article.id);
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not create article."; }
+}
+
+async function deleteArticle(article: Article) {
+  if (!window.confirm(`Delete "${article.title || "Untitled article"}"?`)) return;
+  try {
+    await flushPendingSave();
+    const revision = articles.value.find((item) => item.id === article.id)?.revision ?? article.revision;
+    await api.delete(`/journal/articles/${encodeURIComponent(article.id)}`, { headers: { "If-Match": `"journal-${revision}"` } });
+    articles.value = articles.value.filter((item) => item.id !== article.id);
+    if (currentArticle.value?.id === article.id) await loadDay(selectedDate.value);
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not delete article."; }
+}
+
+function editorParagraphs(): AssistParagraph[] {
+  const editor = editorRef.value?.editor;
+  const paragraphs: AssistParagraph[] = [];
+  editor?.state.doc.forEach((node, offset) => {
+    if (node.textContent.trim()) paragraphs.push({ id: String(offset), text: node.textContent, pos: offset });
+  });
+  return paragraphs;
+}
+
+function selectedEditorText() {
+  const editor = editorRef.value?.editor;
+  if (!editor) return "";
+  const { from, to } = editor.state.selection;
+  return from === to ? "" : editor.state.doc.textBetween(from, to, "\n").trim();
+}
+
+function clearFeedbackMarks() {
+  editorWrap.value?.querySelectorAll("[data-feedback-number]").forEach((element) => {
+    element.removeAttribute("data-feedback-number");
+    element.classList.remove("journal-feedback-anchor");
+  });
+}
+
+function markFeedback() {
+  clearFeedbackMarks();
+  const editor = editorRef.value?.editor;
+  const stored = assistResults.value[`${documentKey.value}:feedback`];
+  if (!editor || !stored || stored.content !== documentContent.value || stored.editVersion !== editVersion.value) return;
+  stored.result.notes?.forEach((note, index) => {
+    if (currentDismissedNotes.value.includes(note.id)) return;
+    const paragraph = stored.paragraphs.find((item) => item.id === note.paragraphId);
+    const element = paragraph && editor.view.nodeDOM(paragraph.pos);
+    if (element instanceof HTMLElement) {
+      element.classList.add("journal-feedback-anchor");
+      element.setAttribute("data-feedback-number", String(index + 1));
+    }
+  });
+}
+
+async function runAssist(mode: AssistMode, source?: string) {
+  const paragraphs = source ? [{ id: "dictation", text: source, pos: 0 }] : editorParagraphs();
+  if (!paragraphs.length) { assistError.value = "Write something first."; return; }
+  const sourceContent = documentContent.value;
+  const sourceDocument = documentKey.value;
+  const sourceVersion = editVersion.value;
+  assistBusy.value = true;
+  assistError.value = "";
+  try {
+    const response = await api.post<{ result: AssistResult }>("/journal/assist", {
+      mode, paragraphs: paragraphs.map(({ id, text }) => ({ id, text })), focus: assistFocus.value.trim(),
+    });
+    assistResults.value[`${sourceDocument}:${mode === "restructure" ? "outline" : mode}`] = {
+      result: response.result, content: sourceContent, editVersion: sourceVersion, paragraphs,
+    };
+    if (mode === "feedback") dismissedNotes.value[`${sourceDocument}:feedback`] = [];
+    if (mode === "feedback") await nextTick().then(markFeedback);
+  } catch (cause) { assistError.value = cause instanceof Error ? cause.message : "Assist could not run."; }
+  finally { assistBusy.value = false; }
+}
+
+function structureThis() {
+  assistOpen.value = true;
+  assistTab.value = "structure";
+  const range = dictationRange.value;
+  markDictation();
+  if (range) editorRef.value?.editor?.chain().focus().setTextSelection(range).scrollIntoView().run();
+  void runAssist("structure", dictatedText.value);
+}
+
+function applyStructure(replace: boolean) {
+  const editor = editorRef.value?.editor;
+  const groups = currentAssist.value?.result.groups;
+  if (!editor || !groups || assistStale.value) return;
+  const nodes = groups.flatMap((group) => [
+    { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: group.label }] },
+    ...group.phrases.map((phrase) => ({ type: "paragraph", content: [{ type: "text", text: phrase }] })),
+  ]);
+  const text = dictatedText.value;
+  if (replace) {
+    const range = dictationRange.value;
+    if (!range || !editor.state.doc.textBetween(range.from, range.to).includes(text)) {
+      assistError.value = "The dictation changed. Run Structure again.";
+      return;
+    }
+    editor.chain().focus().insertContentAt(range, nodes).run();
+  } else editor.chain().focus().insertContentAt(editor.state.doc.content.size, nodes).run();
+  dictatedText.value = "";
+  dictationRange.value = null;
+  clearDictationMark();
+}
+
+function addHeadings() {
+  const editor = editorRef.value?.editor;
+  const groups = currentAssist.value?.result.groups;
+  if (!editor || !groups || assistStale.value) return;
+  editor.chain().focus().insertContentAt(0, groups.map((group) => ({
+    type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: group.label }],
+  }))).run();
+}
+
+function applyOrder() {
+  const editor = editorRef.value?.editor;
+  const order = currentAssist.value?.result.order;
+  if (!editor || !order || assistStale.value) return;
+  const original: Array<{ id: string; text: string; node: ReturnType<typeof editor.state.doc.child> }> = [];
+  editor.state.doc.forEach((node, offset) => original.push({ id: String(offset), text: node.textContent, node }));
+  const arranged = reorderJournalBlocks(original, order);
+  if (!arranged) return;
+  editor.chain().focus().command(({ tr }) => {
+    tr.replaceWith(0, tr.doc.content.size, arranged.map(({ node }) => node));
+    return true;
+  }).run();
+}
+
+function showFeedback(note: AssistNote) {
+  const editor = editorRef.value?.editor;
+  const paragraph = currentAssist.value?.paragraphs.find((item) => item.id === note.paragraphId);
+  if (!editor || !paragraph || assistStale.value) return;
+  const index = paragraph.text.indexOf(note.quote);
+  if (index < 0) return;
+  editor.chain().focus().setTextSelection({ from: paragraph.pos + 1 + index, to: paragraph.pos + 1 + index + note.quote.length }).scrollIntoView().run();
+}
+
+function dismissFeedback(id: string) {
+  dismissedNotes.value[`${documentKey.value}:feedback`] = [...currentDismissedNotes.value, id];
 }
 
 function handleWindowClick() {
@@ -933,10 +1145,6 @@ function handleWindowClick() {
 
 function handleWindowKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") {
-    if (organizeOpen.value) {
-      closeOrganize();
-      return;
-    }
     if (selectionToolbar.value.visible) {
       hideSelectionToolbar();
       return;
@@ -951,7 +1159,11 @@ function handleWindowKeydown(event: KeyboardEvent) {
   }
 }
 
-watch([title, description], scheduleSave);
+watch([title, description], () => {
+  if (!hydratingEntry.value) editVersions.value[documentKey.value] = editVersion.value + 1;
+  scheduleSave();
+});
+watch([documentContent, dismissedNotes], () => { void nextTick().then(markFeedback); }, { flush: "post", deep: true });
 watch([entryLinks, description, projects], scheduleInlineJournalChips, {
   flush: "post",
 });
@@ -990,7 +1202,8 @@ onBeforeUnmount(() => {
   <main class="journal">
     <header class="journal__topbar">
       <div class="journal__topbar-spacer" />
-      <div class="journal__day-switcher" aria-label="Selected day" @click.stop>
+      <div v-if="currentArticle" class="journal__day-switcher" aria-label="Article">Article</div>
+      <div v-else class="journal__day-switcher" aria-label="Selected day" @click.stop>
         <Button
           color="ghost"
           shape="soft"
@@ -1032,7 +1245,7 @@ onBeforeUnmount(() => {
           :today-date="todayKey()"
           :marked-dates="journalEntryDates"
           aria-label="Choose journal date"
-          secondary-action-label="View archive"
+          secondary-action-label="View library"
           @move-month="moveDatePickerMonth"
           @select-date="setDate"
           @today="setDate(todayKey())"
@@ -1066,15 +1279,16 @@ onBeforeUnmount(() => {
           />
         </Button>
         <Button
-          v-if="showJournalOrganize"
           color="ghost"
           shape="soft"
           size="compact"
           icon-only
-          aria-label="Organize journal markers"
-          title="Organize"
+          :active="assistOpen"
+          aria-label="Assist"
+          :aria-pressed="assistOpen ? 'true' : 'false'"
+          title="Assist"
           type="button"
-          @click="openOrganize"
+          @click="assistOpen = !assistOpen"
         >
           <UiIcon name="Sparkles" :size="16" />
         </Button>
@@ -1084,13 +1298,13 @@ onBeforeUnmount(() => {
           size="compact"
           icon-only
           :active="archiveOpen"
-          aria-label="Archive"
+          aria-label="Library"
           :aria-pressed="archiveOpen ? 'true' : 'false'"
-          title="Archive"
+          title="Library"
           type="button"
           @click="toggleArchive"
         >
-          <UiIcon name="Archive" :size="16" />
+          <UiIcon name="BookOpen" :size="16" />
         </Button>
       </div>
     </header>
@@ -1107,28 +1321,31 @@ onBeforeUnmount(() => {
       <aside
         v-if="archiveOpen"
         class="journal__archive"
-        aria-label="Journal archive"
+        aria-label="Writing library"
       >
         <div class="journal__archive-head">
-          <h2>Archive</h2>
+          <div class="journal__tabs" aria-label="Library sections">
+            <button type="button" :aria-pressed="libraryTab === 'daily'" @click="libraryTab = 'daily'">Daily</button>
+            <button type="button" :aria-pressed="libraryTab === 'articles'" @click="libraryTab = 'articles'; loadArticles()">Articles</button>
+          </div>
           <span v-if="archiveLoading">Loading</span>
+          <Button v-if="libraryTab === 'articles'" color="ghost" shape="soft" size="compact" icon-only type="button" aria-label="New article" title="New article" @click="createArticle"><UiIcon name="Plus" :size="16" /></Button>
+          <Button color="ghost" shape="soft" size="compact" icon-only type="button" aria-label="Close library" @click="archiveOpen = false"><UiIcon name="X" :size="16" /></Button>
         </div>
-        <div
-          v-for="entry in nonEmptyArchiveEntries"
-          :key="entry.id"
-          class="journal__archive-row"
-          :class="{
-            'is-active': entry.date === selectedDate,
-            'is-menu-open': archiveActionDate === entry.date,
-          }"
-        >
+        <template v-if="libraryTab === 'daily'">
+        <template v-for="(entry, index) in nonEmptyArchiveEntries" :key="entry.id">
+        <h3 v-if="index === 0 || monthKey(entry.date) !== monthKey(nonEmptyArchiveEntries[index - 1].date)" class="journal__month">{{ formatArchiveMonth(entry.date) }}</h3>
+        <div class="journal__archive-row" :class="{
+          'is-active': entry.date === selectedDate && !currentArticle,
+          'is-menu-open': archiveActionDate === entry.date,
+        }">
           <button
             type="button"
             class="journal__archive-row-main"
             :disabled="deletingDate === entry.date"
             @click="selectArchiveEntry(entry)"
           >
-            <strong>{{ formatArchiveTitle(entry) }}</strong>
+            <span class="journal__library-row-head"><strong>{{ entry.date === todayKey() ? 'Today' : formatDaySwitcherDate(entry.date) }}</strong><small>{{ entry.date === todayKey() ? formatArchiveDate(entry.date) : `${archiveWordCount(entry)} words` }}</small></span>
             <span v-if="entry.preview">{{ entry.preview }}</span>
           </button>
           <div class="journal__archive-row-actions" @click.stop>
@@ -1168,15 +1385,29 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
+        </template>
+        </template>
         <p
-          v-if="!archiveLoading && nonEmptyArchiveEntries.length === 0"
+          v-if="libraryTab === 'daily' && !archiveLoading && nonEmptyArchiveEntries.length === 0"
           class="journal__empty"
         >
           No saved entries yet.
         </p>
+        <button v-if="libraryTab === 'daily'" type="button" class="journal__panel-action" @click="toggleDatePicker">Jump to date</button>
+        <template v-if="libraryTab === 'articles'">
+          <h3 class="journal__month">Recent</h3>
+          <div v-for="article in articles" :key="article.id" class="journal__archive-row" :class="{ 'is-active': currentArticle?.id === article.id }">
+            <button type="button" class="journal__archive-row-main" @click="openArticle(article.id)">
+              <strong>{{ article.title || 'Untitled' }}</strong>
+              <span>{{ htmlToPlainText(article.body).split(/\s+/).filter(Boolean).length.toLocaleString() }} words · {{ articleEditedLabel(article.updatedAt) }}</span>
+            </button>
+            <Button color="ghost" shape="soft" size="compact" icon-only type="button" :aria-label="`Delete ${article.title || 'Untitled article'}`" @click="deleteArticle(article)"><UiIcon name="Trash2" :size="15" /></Button>
+          </div>
+          <p v-if="articles.length === 0" class="journal__empty">No articles yet.</p>
+        </template>
       </aside>
 
-      <section class="journal__sheet" aria-label="Journal entry">
+      <section class="journal__sheet" :aria-label="currentArticle ? 'Article' : 'Daily page'">
         <div v-if="archiveOpen" class="journal__mobile-detail-nav">
           <Button
             color="ghost"
@@ -1188,7 +1419,7 @@ onBeforeUnmount(() => {
             <template #icon>
               <UiIcon name="ArrowLeft" :size="16" aria-hidden="true" />
             </template>
-            Archive
+            Library
           </Button>
         </div>
 
@@ -1205,11 +1436,11 @@ onBeforeUnmount(() => {
             v-model:title="title"
             show-title-field
             variant="workspace"
-            title-placeholder="Untitled note"
+            :title-placeholder="currentArticle ? 'Untitled article' : 'Untitled note'"
             :title-max-length="180"
             :title-disabled="loading"
             :upload-image="uploadJournalImage"
-            placeholder="Write your note here..."
+            :placeholder="currentArticle ? 'Write your article here...' : 'Write your note here...'"
           />
         </div>
 
@@ -1238,12 +1469,54 @@ onBeforeUnmount(() => {
           <span v-else-if="voiceDictationState === 'processing'">
             Transcribing
           </span>
+          <span v-else-if="dictatedText">
+            Transcribed · {{ dictationDuration }}
+            <button type="button" @click="structureThis">Structure this</button>
+            <button type="button" @click="keepDictation">Dismiss</button>
+          </span>
           <span v-else-if="voiceDictationStatusText">
             {{ voiceDictationStatusText }}
           </span>
           <span v-else>{{ saveStatusText }}</span>
+          <span v-if="!loading"> · {{ wordCount.toLocaleString() }} {{ wordCount === 1 ? 'word' : 'words' }}</span>
         </div>
       </section>
+      <aside v-if="assistOpen" class="journal__assist" aria-label="Writing Assist">
+        <div class="journal__archive-head"><div class="journal__tabs" aria-label="Assist mode"><button v-for="tab in (['structure', 'outline', 'feedback'] as const)" :key="tab" type="button" :aria-pressed="assistTab === tab" @click="assistTab = tab">{{ tab[0].toUpperCase() + tab.slice(1) }}</button></div><Button color="ghost" shape="soft" size="compact" icon-only type="button" aria-label="Close Assist" @click="assistOpen = false"><UiIcon name="X" :size="16" /></Button></div>
+        <div class="journal__assist-body">
+          <p v-if="assistTab === 'structure' && dictatedText" class="journal__empty">From your dictation, {{ dictationDuration }}. Every line below a heading is in your own words.</p>
+          <p v-else-if="assistTab === 'feedback' && currentAssist?.result.notes" class="journal__empty">{{ currentAssist.result.notes.length }} notes on this {{ currentArticle ? 'article' : 'daily page' }}. Assist points at things; it does not rewrite them.</p>
+        </div>
+        <label class="journal__assist-focus">Focus (optional)<input v-model="assistFocus" type="text" maxlength="200" placeholder="e.g. the opening" /></label>
+        <p v-if="assistError" class="journal__message is-error">{{ assistError }}</p>
+        <p v-if="assistStale" class="journal__empty">Your writing changed. Run again for current results.</p>
+        <template v-if="assistTab === 'structure'">
+          <button type="button" class="journal__panel-action" :disabled="assistBusy" @click="runAssist('structure', dictatedText || selectedEditorText() || undefined)">{{ assistBusy ? 'Working…' : 'Structure dictation or selection' }}</button>
+          <div v-if="currentAssist && !assistStale" class="journal__assist-result">
+            <div v-for="(group, index) in currentAssist.result.groups" :key="index"><h3>{{ group.label }}</h3><p v-for="phrase in group.phrases" :key="phrase">{{ phrase }} <button v-if="/to.?do|tasks?|actions?/i.test(group.label) || /^(?:#task|to.?do:)/i.test(phrase)" type="button" @click="makeTaskFromPhrase(phrase)">Make task</button></p></div>
+            <button v-if="dictatedText" type="button" @click="applyStructure(true)">Replace dictation</button>
+            <button type="button" @click="applyStructure(false)">Insert below</button>
+            <button type="button" @click="keepDictation">Keep it as it was</button>
+            <button type="button" @click="editorRef?.editor?.chain().focus().undo().run()">Undo</button>
+          </div>
+          <p v-else-if="!assistBusy" class="journal__empty">Choose Structure to organize your own words.</p>
+        </template>
+        <template v-else-if="assistTab === 'outline'">
+          <button type="button" class="journal__panel-action" :disabled="assistBusy" @click="runAssist('outline')">Suggest outline</button>
+          <button type="button" class="journal__panel-action" :disabled="assistBusy" @click="runAssist('restructure')">Suggest new order</button>
+          <div v-if="currentAssist && !assistStale" class="journal__assist-result">
+            <template v-if="currentAssist.result.groups"><div v-for="(group, index) in currentAssist.result.groups" :key="index"><h3>{{ group.label }}</h3><p v-for="phrase in group.phrases" :key="phrase">{{ phrase }}</p></div><button type="button" @click="addHeadings">Add headings</button></template>
+            <template v-if="currentAssist.result.order"><p>{{ currentAssist.result.reason }}</p><ol><li v-for="id in currentAssist.result.order" :key="id">{{ currentAssist.paragraphs.find((p) => p.id === id)?.text }} <small>was {{ currentAssist.paragraphs.findIndex((p) => p.id === id) + 1 }}</small></li></ol><button type="button" @click="applyOrder">Apply order</button><button type="button" @click="assistResults[assistKey] = undefined">Keep mine</button></template>
+            <button type="button" @click="editorRef?.editor?.chain().focus().undo().run()">Undo</button>
+          </div>
+        </template>
+        <template v-else>
+          <button type="button" class="journal__panel-action" :disabled="assistBusy" @click="runAssist('feedback')">Get feedback</button>
+          <div v-if="currentAssist && !assistStale" class="journal__assist-result">
+            <div v-for="{ note, number } in visibleFeedbackNotes" :key="note.id"><h3>{{ number }}. {{ note.category }}</h3><p>“{{ note.quote }}”</p><p>{{ note.comment }}</p><button type="button" @click="showFeedback(note)">Show</button><button type="button" @click="dismissFeedback(note.id)">Dismiss</button></div>
+          </div>
+        </template>
+      </aside>
     </div>
 
     <a
@@ -1367,67 +1640,6 @@ onBeforeUnmount(() => {
       </form>
     </div>
 
-    <div v-if="organizeOpen" class="journal-capture" role="dialog" aria-modal="true">
-      <form
-        class="journal-capture__panel journal-organize"
-        @submit.prevent="submitOrganize"
-      >
-        <header>
-          <h2>Organize</h2>
-          <Button
-            color="ghost"
-            shape="soft"
-            size="compact"
-            icon-only
-            type="button"
-            aria-label="Close"
-            title="Close"
-            @click="closeOrganize"
-          >
-            <UiIcon name="X" :size="16" />
-          </Button>
-        </header>
-        <p v-if="organizeError" class="journal__message is-error">
-          {{ organizeError }}
-        </p>
-        <div v-if="organizeSuggestions.length > 0" class="journal-organize__list">
-          <label
-            v-for="suggestion in organizeSuggestions"
-            :key="suggestion.id"
-            class="journal-organize__item"
-          >
-            <input v-model="suggestion.selected" type="checkbox" />
-            <span>
-              <strong>{{ suggestion.title }}</strong>
-              <select v-model="suggestion.projectId">
-                <option
-                  v-for="project in projects"
-                  :key="project.id"
-                  :value="project.id"
-                >
-                  {{ project.name }}
-                </option>
-              </select>
-            </span>
-          </label>
-        </div>
-        <footer>
-          <span>{{ organizeSuggestions.filter((item) => item.selected).length }} tasks</span>
-          <Button
-            color="accent"
-            shape="soft"
-            size="compact"
-            type="submit"
-            :disabled="
-              organizeSaving ||
-              organizeSuggestions.filter((item) => item.selected).length === 0
-            "
-          >
-            {{ organizeSaving ? "Creating" : "Create selected" }}
-          </Button>
-        </footer>
-      </form>
-    </div>
   </main>
 </template>
 
@@ -1544,9 +1756,54 @@ onBeforeUnmount(() => {
 }
 
 .journal__workspace:has(.journal__archive) {
-  grid-template-columns: minmax(220px, 280px) minmax(0, 700px);
+  grid-template-columns: minmax(220px, 280px) minmax(0, 628px);
   align-items: stretch;
 }
+
+.journal__workspace:has(.journal__assist) {
+  grid-template-columns: minmax(0, 628px) minmax(220px, 280px);
+  width: min(100%, 980px);
+}
+
+.journal__workspace:has(.journal__archive):has(.journal__assist) {
+  grid-template-columns: minmax(220px, 280px) minmax(0, 628px) minmax(220px, 280px);
+  width: min(100%, 1284px);
+}
+
+.journal__tabs { display: flex; gap: 4px; padding: 3px; border-radius: var(--ui-radius-sm, 8px); background: var(--ui-surface-muted, var(--color-surface-muted)); }
+.journal__tabs button, .journal__panel-action, .journal__assist-result button, .journal__status button {
+  border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 7px 8px;
+  background: transparent; color: var(--ui-text, var(--color-text));
+  font: inherit; cursor: pointer;
+}
+.journal__tabs button[aria-pressed="true"] { background: var(--ui-surface, var(--color-surface)); font-weight: 700; }
+.journal__assist-body { padding: 0 8px; }
+.journal__tabs button:focus-visible, .journal__panel-action:focus-visible, .journal__assist-result button:focus-visible, .journal__status button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
+.journal__panel-action { width: 100%; text-align: left; color: var(--ui-accent-strong, var(--ui-accent)); }
+.journal__assist {
+  position: sticky; top: var(--workspace-topbar-height);
+  min-height: calc(100dvh - var(--workspace-topbar-height));
+  border-left: 1px solid var(--ui-border, var(--color-border));
+  padding-left: 14px; overflow-y: auto;
+}
+.journal__assist-focus { display: grid; gap: 6px; margin: 16px 8px; font-size: .82rem; color: var(--ui-text-muted); }
+.journal__assist-focus input { min-width: 0; padding: 8px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); color: var(--ui-text); }
+.journal__assist-result { padding: 8px; font-size: .86rem; }
+.journal__assist-result > div { padding: 12px; margin: 10px 0; border-radius: var(--ui-radius-sm, 8px); background: var(--ui-surface-muted, var(--color-surface-muted)); }
+.journal__assist-result h3 { margin: 16px 0 6px; font-size: .9rem; }
+.journal__assist-result p { margin: 6px 0; line-height: 1.45; }
+.journal__assist-result button, .journal__status button { color: var(--ui-accent-strong, var(--ui-accent)); }
+.journal__assist-result > button:first-of-type { background: var(--ui-text, var(--color-text)); color: var(--ui-bg, var(--color-bg)); font-weight: 700; }
+.journal__assist-result > button:nth-of-type(2) { border: 1px solid var(--ui-border, var(--color-border)); }
+.journal__assist-result ol { padding-left: 20px; }
+.journal__assist-result li { margin: 10px 0; }
+.journal__month { margin: 18px 8px 6px; color: var(--ui-text-muted); font-size: .78rem; font-weight: 700; }
+.journal__library-row-head { display: flex; justify-content: space-between; gap: 8px; }
+.journal__library-row-head small { flex-shrink: 0; color: var(--ui-text-muted); font-size: .78rem; }
+.journal__archive > .journal__panel-action { margin-top: 12px; border: 1px solid var(--ui-border, var(--color-border)); text-align: center; color: var(--ui-text, var(--color-text)); }
+.journal__editor-wrap :deep(.journal-feedback-anchor) { position: relative; background: var(--ui-accent-soft, color-mix(in srgb, var(--ui-accent) 12%, transparent)); }
+.journal__editor-wrap :deep(.journal-feedback-anchor::before) { content: attr(data-feedback-number); position: absolute; right: calc(100% + 8px); top: 0; color: var(--ui-accent-strong, var(--ui-accent)); font-size: .75rem; font-weight: 700; }
+.journal__editor-wrap :deep(.journal-dictation-anchor) { background: color-mix(in srgb, var(--ui-accent) 14%, transparent); border-radius: var(--ui-radius-sm, 8px); }
 
 .journal__archive {
   position: sticky;
@@ -1741,7 +1998,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.journal__workspace:has(.journal__archive)
+.journal__workspace:has(.journal__archive, .journal__assist)
   .journal__editor-wrap
   :deep(.tiptap-editor--workspace .editor-toolbar) {
   width: 100%;
@@ -1914,52 +2171,6 @@ onBeforeUnmount(() => {
   resize: vertical;
 }
 
-.journal-organize {
-  width: min(100%, 520px);
-}
-
-.journal-organize__list {
-  display: grid;
-  gap: 8px;
-  max-height: min(52vh, 420px);
-  overflow-y: auto;
-}
-
-.journal-organize__item {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
-  border-radius: var(--ui-radius-sm, 8px);
-  padding: 8px;
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-}
-
-.journal-organize__item input {
-  width: 16px;
-  height: 16px;
-  margin-top: 3px;
-}
-
-.journal-organize__item span {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.journal-organize__item strong {
-  min-width: 0;
-  color: var(--ui-text, var(--color-text));
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
-}
-
-.journal-organize__item select {
-  min-height: 34px;
-  padding: 6px 8px;
-  font-size: 0.84rem;
-}
-
 @media (max-width: 900px) {
   .journal__topbar {
     grid-template-columns: auto 1fr auto;
@@ -1980,7 +2191,9 @@ onBeforeUnmount(() => {
   }
 
   .journal__workspace,
-  .journal__workspace:has(.journal__archive) {
+  .journal__workspace:has(.journal__archive),
+  .journal__workspace:has(.journal__assist),
+  .journal__workspace:has(.journal__archive):has(.journal__assist) {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
     padding: 0 14px 12px;
@@ -2006,6 +2219,10 @@ onBeforeUnmount(() => {
   .journal__workspace--archive-detail .journal__archive {
     display: none;
   }
+
+  .journal__assist { position: static; min-height: 0; border-left: 0; padding: 12px 0; }
+  .journal__workspace:has(.journal__assist) .journal__archive { display: none; }
+  .journal__workspace:has(.journal__assist) .journal__sheet { display: none; }
 
   .journal__mobile-detail-nav {
     display: flex;

@@ -389,15 +389,16 @@ export const api = {
     })
   },
 
-  patch<T>(endpoint: string, body?: unknown): Promise<T> {
+  patch<T>(endpoint: string, body?: unknown, options: RequestInit = {}): Promise<T> {
     return request<T>(endpoint, {
+      ...options,
       method: 'PATCH',
       body: JSON.stringify(body),
     })
   },
 
-  delete<T>(endpoint: string): Promise<T> {
-    return request<T>(endpoint, { method: 'DELETE' })
+  delete<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    return request<T>(endpoint, { ...options, method: 'DELETE' })
   },
 
   upload<T>(endpoint: string, formData: FormData, options: RequestInit = {}): Promise<T> {

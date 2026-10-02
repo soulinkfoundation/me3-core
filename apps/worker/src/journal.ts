@@ -8,7 +8,7 @@ import type { Env } from "./types";
 export class JournalInputError extends Error {
   constructor(
     message: string,
-    public readonly status: 400 | 404 | 409 = 400,
+    public readonly status: 400 | 404 | 409 | 502 = 400,
   ) {
     super(message);
   }

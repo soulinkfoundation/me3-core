@@ -13,8 +13,8 @@ export const NAVIGATION_FEATURES = [
   },
   {
     id: "journal",
-    name: "Journal",
-    description: "Write private daily notes and reflections.",
+    name: "Writing",
+    description: "Write private daily pages and articles.",
   },
   {
     id: "wheel-of-life",

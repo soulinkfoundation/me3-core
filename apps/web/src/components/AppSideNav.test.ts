@@ -100,7 +100,7 @@ describe("AppSideNav optional plugin links", () => {
       "Website",
       "Assistant",
       "Calendar",
-      "Journal",
+      "Writing",
       "Tasks",
       "Email",
       "Files",
@@ -202,7 +202,7 @@ describe("AppSideNav optional plugin links", () => {
       { id: "accounts", visible: false },
     ]);
 
-    for (const label of ["Assistant", "Journal", "Tasks", "Email", "Files"]) {
+    for (const label of ["Assistant", "Writing", "Tasks", "Email", "Files"]) {
       expect(wrapper.find(`[aria-label="${label}"]`).exists()).toBe(false);
     }
     expect(wrapper.find('[aria-label="Accounts"]').exists()).toBe(true);
