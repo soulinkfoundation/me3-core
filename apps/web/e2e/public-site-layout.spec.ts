@@ -117,6 +117,7 @@ for (const mode of ["light", "dark"] as const) {
     await page.screenshot({ path: info.outputPath(`booking-continue-${mode}.png`) });
     await next.press("Enter");
     await expect(page.getByRole("textbox", { name: "Your name" })).toBeFocused();
+    await expect(page.getByRole("group", { name: "Available times" })).toBeHidden();
     await expect(dock).toBeHidden();
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(promo).toBeVisible();

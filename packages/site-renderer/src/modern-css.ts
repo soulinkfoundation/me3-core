@@ -140,6 +140,7 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .booking-day:disabled{opacity:.35;cursor:not-allowed}
 .booking-day:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .booking-slots:has(.booking-slot-group){display:grid;grid-template-columns:minmax(0,1fr);gap:14px;width:100%;max-width:520px}
+.booking-slots[hidden]{display:none}
 .booking-slot-group h4{margin:0 0 9px;font-family:var(--display-font);text-align:left}
 .booking-slot-group__buttons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .booking-slot{font:inherit;border:1px solid var(--border);border-radius:var(--button-radius)}
