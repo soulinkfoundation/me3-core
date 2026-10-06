@@ -49,6 +49,7 @@ test("shared links select the offer, reveal inline booking, and scroll below the
   expect(await page.locator("#booking").evaluate(el => el.getBoundingClientRect().top)).toBeLessThan(150);
   await page.reload();
   await expect(page.getByRole("button", { name: "Clarity call 30 min" })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.locator("#booking").evaluate(el => el.getBoundingClientRect().top)).toBeLessThan(150);
 });
 
 for (const width of [375, 499, 776, 1022]) {

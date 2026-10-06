@@ -23,7 +23,9 @@ export function bookingNavigationScript(): string {
       else if(select&&offerId){select.value=offerId;select.dispatchEvent(new Event('change',{bubbles:true}));}
     }
     if(window.location.hash==='#booking'||panel){
-      requestAnimationFrame(function(){root.scrollIntoView({block:'start'});});
+      var scrollToBooking=function(){requestAnimationFrame(function(){root.scrollIntoView({block:'start'});});};
+      if(document.readyState==='complete')scrollToBooking();
+      else window.addEventListener('load',scrollToBooking,{once:true});
     }
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',applyLink);else applyLink();
