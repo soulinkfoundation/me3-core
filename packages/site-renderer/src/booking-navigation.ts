@@ -12,6 +12,7 @@ export function bookingNavigationScript(): string {
       if(type&&item.dataset.bookingTypePanel!==type)return false;
       return offerId?Array.prototype.some.call(item.querySelectorAll('[data-offer-id],option'),function(choice){return (choice.dataset.offerId||choice.value)===offerId;}):!!type;
     });
+    panels.forEach(function(item){item.toggleAttribute('data-booking-shared-offer',item===panel&&!!offerId);});
     var wrapper=root.closest('.site-offer-booking');
     if(wrapper&&(window.location.hash==='#booking'||panel))wrapper.hidden=false;
     if(panel){

@@ -181,7 +181,7 @@ body[data-layout=minimal] .site-offer button{grid-column:2;grid-row:1/4;align-se
 .site-footer .link-icon svg{width:19px;height:19px}
 .site-footer>p{margin:20px 0 0;font-size:.82rem}
 .site-action-dock{display:none}
-[data-booking-dock-continue]{display:none;border:0;cursor:pointer}
+[data-booking-dock-continue],[data-booking-dock-select-time]{display:none;border:0;cursor:pointer}
 @media(max-width:760px){
   .site-topbar__inner{min-height:60px;padding:8px 16px}
   .site-topbar__identity{font-size:.92rem}
@@ -238,6 +238,8 @@ body[data-layout=minimal] .site-offer button{grid-column:2;grid-row:1/4;align-se
   body:has(.site-action-dock) [data-booking-continue]{display:none}
   body:has(.booking-type-panel:not([hidden]) [data-booking-continue]:not(:disabled)) .site-action-dock a{display:none}
   body:has(.booking-type-panel:not([hidden]) [data-booking-continue]:not(:disabled)) [data-booking-dock-continue]{display:inline-flex}
+  body:has(.booking-type-panel[data-booking-shared-offer]:not([hidden]) [data-booking-continue]:disabled) .site-action-dock a{display:none}
+  body:has(.booking-type-panel[data-booking-shared-offer]:not([hidden]) [data-booking-continue]:disabled) [data-booking-dock-select-time]{display:inline-flex}
   body:has(.booking-type-panel:not([hidden]) .booking-form.is-visible) .site-action-dock{display:none}
 }
 `;

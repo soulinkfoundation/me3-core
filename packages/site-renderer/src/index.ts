@@ -608,7 +608,7 @@ function pageShell(
     ${options.body}
     ${footer}
   </div>
-  ${actionDock ? `<div class="site-action-dock">${actionDock}<button type="button" class="site-action-dock__button" data-booking-dock-continue>Continue</button></div><script>document.querySelector('[data-booking-dock-continue]').addEventListener('click',function(){var next=document.querySelector('.booking-type-panel:not([hidden]) [data-booking-continue]:not(:disabled)');if(next)next.click();});</script>` : ""}
+  ${actionDock ? `<div class="site-action-dock">${actionDock}<button type="button" class="site-action-dock__button" data-booking-dock-select-time>Select a time</button><button type="button" class="site-action-dock__button" data-booking-dock-continue>Continue</button></div><script>document.querySelector('[data-booking-dock-continue]').addEventListener('click',function(){var next=document.querySelector('.booking-type-panel:not([hidden]) [data-booking-continue]:not(:disabled)');if(next)next.click();});document.querySelector('[data-booking-dock-select-time]').addEventListener('click',function(){var panel=document.querySelector('.booking-type-panel:not([hidden])');if(!panel)return;var target=panel.querySelector('.booking-slot:not(:disabled)')||panel.querySelector('.booking-day:not(:disabled)');if(target){target.focus({preventScroll:true});target.scrollIntoView({block:'center'});}});</script>` : ""}
   ${options.afterContainer || ""}
   ${navigationScript}
   ${modern && siteSettings?.visitorThemeToggle !== false ? siteThemeToggleScript(profile) : ""}
