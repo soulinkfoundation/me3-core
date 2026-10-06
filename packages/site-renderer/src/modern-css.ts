@@ -123,7 +123,7 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .booking{scroll-margin-top:90px}
 .booking-widget{box-sizing:border-box;width:100%;min-width:0;grid-template-columns:minmax(0,1fr)}
 .booking-widget>*{min-width:0;max-width:100%;box-sizing:border-box}
-.booking-session-preview{display:flex;max-width:100%;min-width:0;overflow-x:auto;scroll-snap-type:x mandatory}
+.booking-session-preview{display:flex;max-width:100%;min-width:0;box-sizing:border-box;padding:16px;margin:0 0 8px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-inline:16px}
 .booking-session-preview .booking-card{box-sizing:border-box;overflow-wrap:anywhere}
 .booking-session-preview>.booking-card{flex:0 0 280px;max-width:100%;scroll-snap-align:start}
 .booking-session-preview .booking-offer-card{flex:0 0 280px;max-width:calc(100% - 8px);scroll-snap-align:start}

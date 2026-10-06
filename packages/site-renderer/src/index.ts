@@ -1173,7 +1173,7 @@ function generateBookingTypeBody(
       const recurrence = offer.recurrence;
       const capacity = typeof offer.capacity === "number" ? `${offer.capacity} seats` : "Unlimited seats";
       const price = formatPricing(offer.pricing);
-      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Class")}</strong>${renderBookingOfferDescription(offer.description)}<span>${escapeHtml(recurrence?.frequency === "biweekly" ? "Every 2 weeks" : "Weekly")} · ${escapeHtml(recurrence?.weekday || "")} · ${escapeHtml(recurrence?.startTime || "--:--")} · ${offer.duration || 60} min${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small></button>`;
+      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Class")}</strong>${renderBookingOfferDescription(offer.description)}<span>${escapeHtml(recurrence?.frequency === "biweekly" ? "Every 2 weeks" : "Weekly")} · ${escapeHtml(recurrence?.weekday || "")} · ${escapeHtml(recurrence?.startTime || "--:--")} · ${offer.duration || 60} min${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small><span class="booking-card-selection" aria-hidden="true">✓ Selected</span></button>`;
     }).join("");
     return generateEventBookingWidget({
       username: profile.handle || "owner",
@@ -1190,7 +1190,7 @@ function generateBookingTypeBody(
       const dates = offer.startDate && offer.endDate ? ` · ${offer.startDate} → ${offer.endDate}` : "";
       const capacity = typeof offer.capacity === "number" ? `${offer.capacity} spaces` : "Unlimited spaces";
       const price = formatPricing(offer.pricing);
-      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Retreat")}</strong>${renderBookingOfferDescription(offer.description)}<span>${offer.durationDays || 1} days${escapeHtml(dates)}${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small></button>`;
+      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Retreat")}</strong>${renderBookingOfferDescription(offer.description)}<span>${offer.durationDays || 1} days${escapeHtml(dates)}${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small><span class="booking-card-selection" aria-hidden="true">✓ Selected</span></button>`;
     }).join("");
     return generateEventBookingWidget({
       username: profile.handle || "owner",
@@ -1216,7 +1216,7 @@ function generateBookingTypeBody(
     const duration = offer.duration || book?.duration || 30;
     const price = formatPricing(offer.pricing);
     const page = profile.pages?.find((entry) => entry.slug === offer.pageSlug && entry.visible !== false && entry.file);
-    return `<div class="booking-offer-card"><button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || `${duration}-min Session`)}</strong>${renderBookingOfferDescription(offer.description)}<span>${duration} min${price ? ` · ${escapeHtml(price)}` : ""}</span></button>${page ? `<a class="booking-offer-link" href="./${escapeHtml(normalizeSitePath(page.slug || ""))}">Learn more about this offer</a>` : ""}</div>`;
+    return `<div class="booking-offer-card"><button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || `${duration}-min Session`)}</strong>${renderBookingOfferDescription(offer.description)}<span>${duration} min${price ? ` · ${escapeHtml(price)}` : ""}</span><span class="booking-card-selection" aria-hidden="true">✓ Selected</span></button>${page ? `<a class="booking-offer-link" href="./${escapeHtml(normalizeSitePath(page.slug || ""))}">Learn more about this offer</a>` : ""}</div>`;
   }).join("");
 
   return generatePaidBookingWidget({
@@ -2515,10 +2515,14 @@ function bookingControlsCss(): string {
 .booking-type-tab:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .booking-type-panel[hidden]{display:none}
 .booking-card-description{font-size:.95rem;line-height:1.45}
-.booking-offer-card{display:flex;flex-direction:column;border-radius:16px;background:var(--surface);box-shadow:var(--ui-shadow-sm);overflow:hidden}
+.booking-offer-card{display:flex;flex-direction:column;box-sizing:border-box;border:2px solid var(--border);border-radius:16px;background:var(--surface);box-shadow:var(--ui-shadow-sm);overflow:hidden}
 .booking-session-preview:has(.booking-offer-card:only-child){grid-template-columns:1fr}
 .booking-offer-card .booking-card,.booking-offer-card .booking-card.active{border:0;background:transparent}
-.booking-offer-card:has(.booking-card.active){box-shadow:var(--ui-shadow-md);background:color-mix(in srgb,var(--surface) 92%,var(--accent))}
+.booking-offer-card:has(.booking-card.active),.booking-session-preview>.booking-card.active{border-color:color-mix(in srgb,var(--accent) 70%,var(--text));background:color-mix(in srgb,var(--surface) 82%,var(--accent))}
+.booking-session-preview>.booking-card{border-width:2px;border-style:solid;box-shadow:var(--ui-shadow-sm)}
+.booking-card .booking-card-selection{visibility:hidden;color:var(--text);font-size:.82rem;font-weight:800}
+.booking-card.active .booking-card-selection{visibility:visible}
+.booking-offer-card:has(.booking-card:focus-visible),.booking-session-preview>.booking-card:focus-visible{outline:3px solid var(--text);outline-offset:3px}
 .booking-offer-link,.booking-offer-select-link{display:block;margin:0 auto 12px;color:var(--muted);font-size:.85rem;text-align:center;text-underline-offset:3px}
 .booking-offer-link:focus-visible,.booking-offer-select-link:focus-visible,.booking-offer-select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .booking-offer-select{max-width:430px;margin:0 auto;box-shadow:var(--ui-shadow-sm)}

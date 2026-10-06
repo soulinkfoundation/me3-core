@@ -62,6 +62,20 @@ for (const width of [375, 499, 776, 1022]) {
       await expect(page.locator(".booking-day")).toHaveCount(14);
       await expect(page.locator('[data-offer-id="clarity"]')).toHaveAttribute("aria-pressed", "true");
       await expect(page.locator('[data-offer-id="clarity"]')).toBeInViewport();
+      const selected = page.locator('[data-offer-id="clarity"]');
+      const card = selected.locator("..");
+      await expect(selected.locator(".booking-card-selection")).toBeVisible();
+      await expect(card).toHaveCSS("border-top-width", "2px");
+      const gutters = await selected.evaluate(el => {
+        const card = el.closest(".booking-offer-card")!.getBoundingClientRect();
+        const strip = el.closest(".booking-session-preview")!.getBoundingClientRect();
+        return { top: card.top - strip.top, bottom: strip.bottom - card.bottom };
+      });
+      expect(gutters.top).toBeGreaterThanOrEqual(16);
+      expect(gutters.bottom).toBeGreaterThanOrEqual(16);
+      await selected.press("Space");
+      await expect(selected).toBeFocused();
+      await expect(card).toHaveCSS("outline-width", "3px");
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
       const strip = page.locator(".booking-day-strip");
       expect(await strip.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
