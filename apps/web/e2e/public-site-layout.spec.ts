@@ -98,7 +98,59 @@ test("dropdown links select the offer and allow continuing with an available tim
   await expect(page.getByRole("textbox", { name: "Your name" })).toBeVisible();
 });
 
+for (const mode of ["light", "dark"] as const) {
+  test(`mobile dock follows booking selection and details in ${mode} mode`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 375, height: 847 });
+    await page.emulateMedia({ colorScheme: mode });
+    await serve(page);
+    await page.goto("https://site.test/?offer=clarity#booking");
+    const dock = page.locator(".site-action-dock");
+    const promo = dock.getByRole("link", { name: "Website offer · €220" });
+    const next = dock.getByRole("button", { name: "Continue", exact: true });
+    const time = page.getByRole("button", { name: "10:00", exact: false });
+    await expect(promo).toBeVisible();
+    await expect(next).toBeHidden();
+    await time.click();
+    await expect(promo).toBeHidden();
+    await expect(next).toBeVisible();
+    await expect(page.locator("[data-booking-continue]")).toBeHidden();
+    await page.screenshot({ path: info.outputPath(`booking-continue-${mode}.png`) });
+    await next.press("Enter");
+    await expect(page.getByRole("textbox", { name: "Your name" })).toBeFocused();
+    await expect(dock).toBeHidden();
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(promo).toBeVisible();
+    await expect(next).toBeHidden();
+    await time.click();
+    await page.locator('[data-offer-id="website"]').click();
+    await expect(promo).toBeVisible();
+    await expect(next).toBeHidden();
+    await time.click();
+    await page.locator(".booking-day:not(.active):not(:disabled)").first().click();
+    await expect(promo).toBeVisible();
+    await expect(next).toBeHidden();
+    await time.click();
+    await next.click();
+    await page.getByRole("textbox", { name: "Your name" }).fill("UI Test Guest");
+    await page.getByRole("textbox", { name: "Your email" }).fill("guest@example.test");
+    await page.getByRole("button", { name: "Confirm Booking", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Your booking is confirmed.");
+    await expect(promo).toBeVisible();
+    await expect(next).toBeHidden();
+  });
+}
+
+test("desktop keeps its inline Continue action", async ({ page }) => {
+  await page.setViewportSize({ width: 1022, height: 847 });
+  await serve(page);
+  await page.goto("https://site.test/?offer=clarity#booking");
+  await page.getByRole("button", { name: "10:00", exact: false }).click();
+  await expect(page.locator(".site-action-dock")).toBeHidden();
+  await expect(page.locator("[data-booking-continue]")).toBeVisible();
+});
+
 test("booking type links activate the matching panel and invalid offers keep the default", async ({ page }) => {
+  await page.setViewportSize({ width: 499, height: 847 });
   const multiple = structuredClone(profile);
   multiple.intents!.book!.bookingTypes = [
     { type: "one_to_one", offers: profile.intents!.book!.offers, availability: profile.intents!.book!.availability },
@@ -110,4 +162,12 @@ test("booking type links activate the matching panel and invalid offers keep the
   await expect(page.locator('[data-offer-id="class-one"]')).toBeVisible();
   await page.goto("https://site.test/?offer=unknown#booking");
   await expect(page.locator('[data-offer-id="website"]')).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "10:00", exact: false }).click();
+  const next = page.locator("[data-booking-dock-continue]");
+  await expect(next).toBeVisible();
+  await page.getByRole("tab", { name: "Classes", exact: true }).click();
+  await expect(next).toBeHidden();
+  await expect(page.locator(".site-action-dock a")).toBeVisible();
+  await page.getByRole("tab", { name: "1:1", exact: true }).click();
+  await expect(next).toBeVisible();
 });

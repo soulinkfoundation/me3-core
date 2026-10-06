@@ -607,7 +607,7 @@ function pageShell(
     ${options.body}
     ${footer}
   </div>
-  ${actionDock ? `<div class="site-action-dock">${actionDock}</div>` : ""}
+  ${actionDock ? `<div class="site-action-dock">${actionDock}<button type="button" class="site-action-dock__button" data-booking-dock-continue>Continue</button></div><script>document.querySelector('[data-booking-dock-continue]').addEventListener('click',function(){var next=document.querySelector('.booking-type-panel:not([hidden]) [data-booking-continue]:not(:disabled)');if(next)next.click();});</script>` : ""}
   ${options.afterContainer || ""}
   ${navigationScript}
   ${modern && siteSettings?.visitorThemeToggle !== false ? siteThemeToggleScript(profile) : ""}
@@ -1613,7 +1613,7 @@ function paidBookingWidgetScript(): string {
       populateSlots();
     });
   }
-  if(continueButton)continueButton.addEventListener('click',function(){if(!selectedTime)return;setDetailsVisible(true);form.scrollIntoView({behavior:'smooth',block:'nearest'});});
+  if(continueButton)continueButton.addEventListener('click',function(){if(!selectedTime)return;setDetailsVisible(true);form.elements.guestName.focus({preventScroll:true});form.scrollIntoView({block:'nearest'});});
   form.addEventListener('submit',function(event){
     event.preventDefault();
     if(!validateForm()) return;
@@ -1632,7 +1632,7 @@ function paidBookingWidgetScript(): string {
     if(!selected.pricing||!selected.pricing.enabled||selected.pricing.paymentMethod==='manual'){
       fetch('/api/book/'+encodeURIComponent(config.username)+'/free',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
         .then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Failed to confirm booking.');return data;});})
-        .then(function(){form.reset();dateInput.value='';selectedTime='';timeInput.value='';if(selectedTimeEl)selectedTimeEl.textContent='';setDetailsVisible(false);slotsEl.hidden=true;emptyEl.hidden=true;setStatus(selected.pricing&&selected.pricing.paymentMethod==='manual'?'Your booking is confirmed. Check your email for payment details.':'Your booking is confirmed.');})
+        .then(function(){form.reset();dateInput.value='';selectedTime='';timeInput.value='';if(continueButton)continueButton.disabled=true;if(selectedTimeEl)selectedTimeEl.textContent='';setDetailsVisible(false);slotsEl.hidden=true;emptyEl.hidden=true;setStatus(selected.pricing&&selected.pricing.paymentMethod==='manual'?'Your booking is confirmed. Check your email for payment details.':'Your booking is confirmed.');})
         .catch(function(error){setStatus(error.message||'Failed to confirm booking.',true);});
       return;
     }
