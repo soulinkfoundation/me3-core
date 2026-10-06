@@ -5,6 +5,8 @@ node_modules/
 # Build outputs
 dist/
 .wrangler/
+apps/web/site-ui-report/
+apps/web/site-ui-results/
 
 # Environment
 .env

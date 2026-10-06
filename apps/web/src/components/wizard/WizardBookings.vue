@@ -23,6 +23,7 @@ import TimezonePicker from "../booking/TimezonePicker.vue";
 import UiIcon from "../UiIcon.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { api } from "../../api";
+import { resolvePublicSiteUrl } from "../../utils/publicSiteUrl";
 import { getTimeZoneDisplayLabel, listSupportedTimeZones } from "../../utils/timezone";
 
 const wizard = useWizardStore();
@@ -57,6 +58,27 @@ const hasBookingTypes = computed(() => enabledBookingTypes.value.length > 0);
 const bookingOffers = computed(() => profile.value.booking.offers);
 const classOffers = computed(() => profile.value.booking.classOffers);
 const retreatOffers = computed(() => profile.value.booking.retreatOffers);
+const selectedBookingOfferId = computed(() => activeBookingType.value === "class"
+  ? activeClassOfferId.value
+  : activeBookingType.value === "retreat" ? activeRetreatOfferId.value : activeOfferId.value);
+
+async function copyBookingLink() {
+  const offerId = selectedBookingOfferId.value;
+  if (!offerId || !activeBookingType.value) return;
+  try {
+    await sites.ensureSites();
+    const site = sites.sites.find(item => item.id === wizard.selectedSiteId)
+      || sites.sites.find(item => item.username === wizard.username);
+    const url = new URL(await resolvePublicSiteUrl(wizard.username, site || { site_role: wizard.siteRole }));
+    url.searchParams.set("offer", offerId);
+    url.searchParams.set("bookingType", activeBookingType.value);
+    url.hash = "booking";
+    await navigator.clipboard.writeText(url.href);
+    toastSuccess("Booking link copied. Publish any offer changes before sharing.");
+  } catch (error) {
+    toastFromUnknown(error, "Could not copy booking link");
+  }
+}
 
 function parseRetreatWallDateTime(
   date: string | undefined,
@@ -1006,6 +1028,14 @@ onMounted(() => {
           </div>
         </div>
 
+        <div v-if="selectedBookingOfferId" class="booking-share-actions">
+          <button type="button" class="btn btn-secondary" :disabled="!wizard.username" @click="copyBookingLink">
+            <UiIcon name="Link" :size="16" aria-hidden="true" />
+            Copy booking link
+          </button>
+          <p class="help-text">Opens your site at the calendar with the selected offer ready to book.</p>
+        </div>
+
         <div
           v-if="activeBookingType === 'one_to_one'"
           class="booking-type-panel"
@@ -1904,6 +1934,39 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.booking-share-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.booking-share-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.booking-share-actions button:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.booking-share-actions p {
+  flex: 1 1 220px;
+  margin: 0;
+  color: var(--ui-text-muted);
+  font-size: 13px;
 }
 
 .section-label {

@@ -1,6 +1,7 @@
 import type { ProductDelivery } from "../../../shared/product-delivery";
 import { normalizeSiteTheme, siteThemes, type SiteColorMode, type SiteThemeId } from "./themes";
 import { modernSiteCss } from "./modern-css";
+import { bookingNavigationScript } from "./booking-navigation";
 export { normalizeSiteTheme, siteThemes } from "./themes";
 export type { SiteColorMode, SiteThemeId } from "./themes";
 import { renderProductCheckout, productCheckoutCss } from "./product-checkout";
@@ -546,7 +547,12 @@ function generateCollectionCard(
   const date = formatPostDate(post.publishedAt);
   const excerpt = getCollectionExcerpt(post.excerpt, markdown, 160);
   const type = post.type === "video" ? ` <span class="post-type">Video</span>` : "";
-  return `<a class="blog-item" href="./${escapeHtml(slug)}"><div class="blog-item-title">${title}${type}</div>${date ? `<div class="blog-item-date">${escapeHtml(date)}</div>` : ""}${excerpt ? `<div class="blog-item-excerpt">${escapeHtml(excerpt)}</div>` : ""}</a>`;
+  const image = post.media?.thumbnail || markdownToHtml(markdown).match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1];
+  const imagePath = image ? decodeHtmlEntities(image).trim() : "";
+  const thumbnail = imagePath && !/^(?:javascript|data|vbscript):/i.test(imagePath)
+    ? `<img class="blog-item-thumbnail" src="${escapeHtml(filePathForHtml(contentAssetPathForHtml(imagePath), "../"))}" alt="" loading="lazy" decoding="async">`
+    : "";
+  return `<a class="blog-item${thumbnail ? " blog-item--with-image" : ""}" href="./${escapeHtml(slug)}">${thumbnail}<div class="blog-item-title">${title}${type}</div>${date ? `<div class="blog-item-date">${escapeHtml(date)}</div>` : ""}${excerpt ? `<div class="blog-item-excerpt">${escapeHtml(excerpt)}</div>` : ""}</a>`;
 }
 
 function pageShell(
@@ -1053,7 +1059,7 @@ function generateBooking(profile: Me3SiteProfile): string {
     .join("");
   const tabScript = bookingTypes.length > 1 ? `<script>${bookingTypeTabsScript()}</script>` : "";
 
-  return `<section class="booking" id="booking"><h2>${escapeHtml(title || "Book a session")}</h2>${description ? `<div class="booking-intro">${description}</div>` : ""}${tabs}${panels}${tabScript}</section>`;
+  return `<section class="booking" id="booking"><h2>${escapeHtml(title || "Book a session")}</h2>${description ? `<div class="booking-intro">${description}</div>` : ""}${tabs}${panels}${tabScript}<script>${bookingNavigationScript()}</script></section>`;
 }
 
 function bookingTypeTabsScript(): string {
