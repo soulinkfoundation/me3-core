@@ -1028,14 +1028,6 @@ onMounted(() => {
           </div>
         </div>
 
-        <div v-if="selectedBookingOfferId" class="booking-share-actions">
-          <button type="button" class="btn btn-secondary" :disabled="!wizard.username" @click="copyBookingLink">
-            <UiIcon name="Link" :size="16" aria-hidden="true" />
-            Copy booking link
-          </button>
-          <p class="help-text">Opens your site at the calendar with the selected offer ready to book.</p>
-        </div>
-
         <div
           v-if="activeBookingType === 'one_to_one'"
           class="booking-type-panel"
@@ -1747,6 +1739,21 @@ onMounted(() => {
           </div>
         </div>
 
+        <section
+          v-if="selectedBookingOfferId"
+          class="booking-share-actions offer-setting-row"
+          aria-labelledby="booking-share-title"
+        >
+          <div>
+            <h3 id="booking-share-title">Share this offer</h3>
+            <span>Opens your calendar with this offer ready to book.</span>
+          </div>
+          <button type="button" class="setting-action" :disabled="!wizard.username" @click="copyBookingLink">
+            <UiIcon name="Link" :size="16" aria-hidden="true" />
+            Copy booking link
+          </button>
+        </section>
+
         <div class="confirmation-email-section">
           <div class="confirmation-email-header">
             <div>
@@ -1937,36 +1944,29 @@ onMounted(() => {
 }
 
 .booking-share-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 16px;
+  margin: 0 20px 40px;
+}
+
+.booking-share-actions h3 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .booking-share-actions button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   min-height: 44px;
-  padding: 8px 12px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-surface);
-  color: var(--ui-text);
   font: inherit;
-  cursor: pointer;
+  font-size: 13px;
 }
 
 .booking-share-actions button:focus-visible {
   outline: 2px solid var(--ui-focus);
   outline-offset: 2px;
-}
-
-.booking-share-actions p {
-  flex: 1 1 220px;
-  margin: 0;
-  color: var(--ui-text-muted);
-  font-size: 13px;
 }
 
 .section-label {
