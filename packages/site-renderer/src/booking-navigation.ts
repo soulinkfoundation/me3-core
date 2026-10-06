@@ -23,7 +23,7 @@ export function bookingNavigationScript(): string {
       else if(select&&offerId){select.value=offerId;select.dispatchEvent(new Event('change',{bubbles:true}));}
     }
     if(window.location.hash==='#booking'||panel){
-      var scrollToBooking=function(){requestAnimationFrame(function(){root.scrollIntoView({block:'start'});});};
+      var scrollToBooking=function(){root.scrollIntoView({block:'start'});};
       if(document.readyState==='complete')scrollToBooking();
       else window.addEventListener('load',scrollToBooking,{once:true});
     }
