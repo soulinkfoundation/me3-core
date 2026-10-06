@@ -2,6 +2,7 @@ import type { ProductDelivery } from "../../../shared/product-delivery";
 import { normalizeSiteTheme, siteThemes, type SiteColorMode, type SiteThemeId } from "./themes";
 import { modernSiteCss } from "./modern-css";
 import { bookingNavigationScript } from "./booking-navigation";
+import { bookingConfirmationMarkup, bookingConfirmationRuntime, bookingConfirmationCss } from "./booking-confirmation";
 export { normalizeSiteTheme, siteThemes } from "./themes";
 export type { SiteColorMode, SiteThemeId } from "./themes";
 import { renderProductCheckout, productCheckoutCss } from "./product-checkout";
@@ -599,7 +600,7 @@ function pageShell(
   <meta name="description" content="${escapeHtml(options.description)}">
   ${headLinks}
   ${modern ? siteThemeHeadScript(profile) : ""}
-  <style>${siteCss(modern ? "__modern" : options.vibe, profile.links?._accent)}${!modern && options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(modern ? "__modern" : options.vibe)}${contentImageCss()}${contentAudioCss()}${profilePolishCss(modern)}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}.main.no-banner .profile-header{margin-top:0}${modern ? modernSiteCss(themeId, siteSettings?.colorMode || "auto", siteSettings?.accent) : ""}</style>
+  <style>${siteCss(modern ? "__modern" : options.vibe, profile.links?._accent)}${!modern && options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(modern ? "__modern" : options.vibe)}${contentImageCss()}${contentAudioCss()}${profilePolishCss(modern)}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}.main.no-banner .profile-header{margin-top:0}${modern ? modernSiteCss(themeId, siteSettings?.colorMode || "auto", siteSettings?.accent) : ""}${bookingConfirmationCss}</style>
 </head>
 <body data-vibe="${escapeHtml(modern ? themeId : options.vibe)}" data-navigation-style="${navigationStyle}" data-layout="${modern ? modernSiteLayout(profile) : normalizeSiteLayout(profile.links?.[SITE_LAYOUT_LINK_KEY])}" data-page="${options.activeSlug ? "inner" : "home"}">
   <div class="container">
@@ -1292,6 +1293,7 @@ function generateEventBookingWidget(input: {
       <div class="booking-session-preview">${input.cards}</div>
       ${datePicker}
       <p class="booking-status" data-event-booking-status role="status" aria-live="polite"></p>
+      ${bookingConfirmationMarkup()}
       <form class="booking-form" data-event-booking-form>
         ${amountInput}
         <div class="booking-selected-time" data-event-occurrence></div>
@@ -1322,6 +1324,7 @@ function eventBookingWidgetScript(): string {
   var config=JSON.parse(root.querySelector('[data-event-booking-config]').textContent||'{}');
   var form=root.querySelector('[data-event-booking-form]');
   var statusEl=root.querySelector('[data-event-booking-status]');
+  ${bookingConfirmationRuntime()}
   var occurrenceEl=root.querySelector('[data-event-occurrence]');
   var dateInput=root.querySelector('input[name="localDate"]');
   var quantityInput=form.elements.quantity;
@@ -1349,9 +1352,9 @@ function eventBookingWidgetScript(): string {
   root.querySelectorAll('.booking-card').forEach(function(button,index){if(config.offers[index])button.dataset.offerId=config.offers[index].id;button.addEventListener('click',function(){selectedOfferId=button.dataset.offerId||selectedOfferId;root.querySelectorAll('.booking-card').forEach(function(item){var active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});updateOfferFields();if(root.querySelector('[data-booking-day-strip]'))refreshDayStrip();else loadAvailability();});});
   updateOfferFields();
   if(dateInput&&config.bookingType==='class'){if(root.querySelector('[data-booking-day-strip]')){${bookingDayStripRuntime("offer().timezone", "(!offer().startDate || dateValue >= offer().startDate) && (!offer().weekday || weekday === offer().weekday)", "loadAvailability")}}else{var today=new Date();dateInput.min=String(today.getFullYear())+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');dateInput.addEventListener('change',loadAvailability);}}
-  form.addEventListener('submit',function(event){event.preventDefault();if(!occurrence){setStatus('Check availability before booking.',true);return;}if(!form.checkValidity()){form.reportValidity();return;}var selected=offer();var payload={localDate:dateInput.value,quantity:Number(quantityInput.value),guestName:form.elements.guestName.value,guestEmail:form.elements.guestEmail.value,notes:form.elements.notes.value,amount:Number(amountInput.value),returnUrl:window.location.href.split('#')[0]};var paid=selected.pricing&&selected.pricing.enabled&&selected.pricing.paymentMethod!=='manual';var endpoint='/api/book/'+encodeURIComponent(config.username)+'/events/'+encodeURIComponent(config.bookingType)+'/'+encodeURIComponent(selected.id)+'/'+(paid?'checkout-session':'register');setStatus(paid?'Preparing checkout...':'Confirming booking...');fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Booking failed.');return data;});}).then(function(data){if(paid){if(data.url){window.location.href=data.url;return;}throw new Error('Checkout URL missing.');}form.reset();form.classList.remove('is-visible');occurrence=null;setStatus(selected.pricing&&selected.pricing.paymentMethod==='manual'?'Your booking is confirmed. Check your email for payment details.':'Your booking is confirmed.');}).catch(function(error){setStatus(error.message||'Booking failed.',true);});});
+  form.addEventListener('submit',function(event){event.preventDefault();if(!occurrence){setStatus('Check availability before booking.',true);return;}if(!form.checkValidity()){form.reportValidity();return;}var selected=offer();var confirmedDetails=confirmationDetails(occurrence,selected.title,selected.timezone);var payload={localDate:dateInput.value,quantity:Number(quantityInput.value),guestName:form.elements.guestName.value,guestEmail:form.elements.guestEmail.value,notes:form.elements.notes.value,amount:Number(amountInput.value),returnUrl:window.location.href.split('#')[0]};var paid=selected.pricing&&selected.pricing.enabled&&selected.pricing.paymentMethod!=='manual';var endpoint='/api/book/'+encodeURIComponent(config.username)+'/events/'+encodeURIComponent(config.bookingType)+'/'+encodeURIComponent(selected.id)+'/'+(paid?'checkout-session':'register');setStatus(paid?'Preparing checkout...':'Confirming booking...');fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Booking failed.');return data;});}).then(function(data){if(paid){if(data.url){window.location.href=data.url;return;}throw new Error('Checkout URL missing.');}form.reset();form.classList.remove('is-visible');occurrence=null;setStatus(selected.pricing&&selected.pricing.paymentMethod==='manual'?'Your booking is confirmed. Check your email for payment details.':'Your booking is confirmed.');showConfirmation(confirmedDetails,selected.pricing&&selected.pricing.paymentMethod==='manual'?'Check your email for booking details and payment instructions.':'Check your email for booking details.');}).catch(function(error){setStatus(error.message||'Booking failed.',true);});});
   if(config.bookingType==='retreat')loadAvailability();
-  var params=new URLSearchParams(window.location.search);var pending=(config.bookingType+':'+selectedOfferId);var matches=params.get('event_booking_pending')===pending;var success=(params.get('event_booking')==='success'||params.get('purchase')==='success')&&params.get('session_id');if(matches&&success){setStatus('Confirming your paid booking...');fetch('/api/book/'+encodeURIComponent(config.username)+'/events/complete-checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:params.get('session_id')})}).then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Payment succeeded, but booking confirmation failed.');return data;});}).then(function(){setStatus('Payment successful. Your booking is confirmed.');clearParams();}).catch(function(error){setStatus(error.message,true);});}else if(matches&&(params.get('event_booking')==='cancelled'||params.get('purchase')==='cancelled')){setStatus('Checkout cancelled. No payment was taken.',true);clearParams();}
+  var params=new URLSearchParams(window.location.search);var paidOffer=config.offers.find(function(item){return params.get('event_booking_pending')===config.bookingType+':'+item.id;});var matches=!!paidOffer;var success=(params.get('event_booking')==='success'||params.get('purchase')==='success')&&params.get('session_id');if(matches&&success){setStatus('Confirming your paid booking...');fetch('/api/book/'+encodeURIComponent(config.username)+'/events/complete-checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:params.get('session_id')})}).then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Payment succeeded, but booking confirmation failed.');return data;});}).then(function(data){setStatus('Payment successful. Your booking is confirmed.');showConfirmation(confirmationDetails(data.booking,paidOffer.title,paidOffer.timezone),'Payment successful. Check your email for booking details.');clearParams();}).catch(function(error){setStatus(error.message,true);});}else if(matches&&(params.get('event_booking')==='cancelled'||params.get('purchase')==='cancelled')){setStatus('Checkout cancelled. No payment was taken.',true);clearParams();}
 })();`;
 }
 
@@ -1421,6 +1424,7 @@ function generatePaidBookingWidget(input: {
         </div>
       </form>
       <p class="booking-status" data-booking-status role="status" aria-live="polite"></p>
+      ${bookingConfirmationMarkup()}
       <p class="booking-timezone">Slots are shown in ${escapeHtml(config.timezone)}.</p>
     </div>
     <script>${paidBookingWidgetScript()}</script>`;
@@ -1434,6 +1438,7 @@ function paidBookingWidgetScript(): string {
   var config=JSON.parse(root.querySelector('[data-booking-config]').textContent||'{}');
   var form=root.querySelector('.booking-form');
   var statusEl=root.querySelector('[data-booking-status]');
+  ${bookingConfirmationRuntime()}
   var dateInput=root.querySelector('input[name="localDate"]');
   var dateWrap=root.querySelector('[data-booking-date-wrap]');
   var timeInput=form.elements.localTime;
@@ -1632,7 +1637,7 @@ function paidBookingWidgetScript(): string {
     if(!selected.pricing||!selected.pricing.enabled||selected.pricing.paymentMethod==='manual'){
       fetch('/api/book/'+encodeURIComponent(config.username)+'/free',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
         .then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Failed to confirm booking.');return data;});})
-        .then(function(){form.reset();dateInput.value='';selectedTime='';timeInput.value='';if(continueButton)continueButton.disabled=true;if(selectedTimeEl)selectedTimeEl.textContent='';setDetailsVisible(false);slotsEl.hidden=true;emptyEl.hidden=true;setStatus(selected.pricing&&selected.pricing.paymentMethod==='manual'?'Your booking is confirmed. Check your email for payment details.':'Your booking is confirmed.');})
+        .then(function(){var details=selected.title+String.fromCharCode(10)+formatSlotLabel(payload.localDate,payload.localTime,selected.duration);form.reset();dateInput.value='';selectedTime='';timeInput.value='';if(continueButton)continueButton.disabled=true;if(selectedTimeEl)selectedTimeEl.textContent='';setDetailsVisible(false);slotsEl.hidden=true;emptyEl.hidden=true;setStatus(selected.pricing&&selected.pricing.paymentMethod==='manual'?'Your booking is confirmed. Check your email for payment details.':'Your booking is confirmed.');showConfirmation(details,selected.pricing&&selected.pricing.paymentMethod==='manual'?'Check your email for booking details and payment instructions.':'Check your email for booking details.');})
         .catch(function(error){setStatus(error.message||'Failed to confirm booking.',true);});
       return;
     }
@@ -1646,7 +1651,7 @@ function paidBookingWidgetScript(): string {
     showReturnStatus('Confirming your booking...');
     fetch('/api/book/'+encodeURIComponent(config.username)+'/complete-checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:params.get('session_id')})})
       .then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Payment succeeded, but booking confirmation failed.');return data;});})
-      .then(function(){showReturnStatus('Payment successful. Your booking is confirmed. A confirmation email will be sent soon');clearBookingParams();})
+      .then(function(data){var bookedOffer=config.offers.find(function(item){return data.booking&&item.id===data.booking.offerId;});showReturnStatus('Payment successful. Your booking is confirmed. A confirmation email will be sent soon');showConfirmation(confirmationDetails(data.booking,bookedOffer&&bookedOffer.title,config.timezone),'Payment successful. Check your email for booking details.');clearBookingParams();})
       .catch(function(error){showReturnStatus(error.message,true);});
   } else if(params.get('booking')==='cancelled'||params.get('purchase')==='cancelled'){
     showReturnStatus('Checkout cancelled. No payment was taken.',true);

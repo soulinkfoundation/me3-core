@@ -135,19 +135,110 @@ for (const mode of ["light", "dark"] as const) {
     await page.getByRole("textbox", { name: "Your name" }).fill("UI Test Guest");
     await page.getByRole("textbox", { name: "Your email" }).fill("guest@example.test");
     await page.getByRole("button", { name: "Confirm Booking", exact: true }).click();
+    const confirmation = page.getByRole("dialog", { name: "Booking confirmed", exact: true });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toContainText("Website setup");
+    await expect(confirmation).toContainText("10:00");
+    await expect(confirmation.getByRole("button", { name: "Done", exact: true })).toBeFocused();
+    await page.screenshot({ path: info.outputPath(`booking-confirmation-mobile-${mode}.png`) });
+    await confirmation.press("Escape");
+    await expect(confirmation).toBeHidden();
     await expect(page.getByRole("status")).toContainText("Your booking is confirmed.");
     await expect(promo).toBeVisible();
     await expect(next).toBeHidden();
   });
 }
 
-test("desktop keeps its inline Continue action", async ({ page }) => {
+for (const mode of ["light", "dark"] as const) {
+test(`desktop keeps inline Continue and shows confirmation in ${mode} mode`, async ({ page }, info) => {
   await page.setViewportSize({ width: 1022, height: 847 });
+  await page.emulateMedia({ colorScheme: mode });
   await serve(page);
   await page.goto("https://site.test/?offer=clarity#booking");
   await page.getByRole("button", { name: "10:00", exact: false }).click();
   await expect(page.locator(".site-action-dock")).toBeHidden();
   await expect(page.locator("[data-booking-continue]")).toBeVisible();
+  await page.locator("[data-booking-continue]").click();
+  await page.getByRole("textbox", { name: "Your name" }).fill("UI Test Guest");
+  await page.getByRole("textbox", { name: "Your email" }).fill("guest@example.test");
+  await page.getByRole("button", { name: "Confirm Booking", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "Booking confirmed", exact: true });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText("Clarity call");
+  await page.screenshot({ path: info.outputPath(`booking-confirmation-desktop-${mode}.png`) });
+  await confirmation.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(confirmation).toBeHidden();
+  await expect(page.locator("[data-booking-status]")).toBeFocused();
+});
+}
+
+test("paid return shows a confirmation only after the booking is verified", async ({ page }) => {
+  await serve(page);
+  await page.route("https://site.test/api/book/example/complete-checkout", route => route.fulfill({
+    json: { ok: true, booking: { offerId: "clarity", startsAt: "2030-07-01T09:00:00Z" } },
+  }));
+  await page.goto("https://site.test/?booking=success&session_id=simulated-session#booking");
+  const confirmation = page.getByRole("dialog", { name: "Booking confirmed", exact: true });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText("Clarity call");
+  await expect(confirmation).toContainText("Payment successful");
+  await expect(confirmation).toContainText("Europe/Dublin");
+  await expect(page).not.toHaveURL(/session_id/);
+  await page.reload();
+  await expect(confirmation).toBeHidden();
+  await page.route("https://site.test/api/book/example/complete-checkout", route => route.fulfill({ status: 409, json: { error: "Booking could not be verified." } }));
+  await page.goto("https://site.test/?booking=success&session_id=simulated-failure#booking");
+  await expect(page.locator("[data-booking-status]")).toContainText("Booking could not be verified.");
+  await expect(confirmation).toBeHidden();
+  await page.goto("https://site.test/?booking=cancelled#booking");
+  await expect(page).not.toHaveURL(/booking=cancelled/);
+  await expect(confirmation).toBeHidden();
+});
+
+for (const type of ["class", "retreat"] as const) {
+  test(`${type} registrations show a clear confirmation`, async ({ page }) => {
+    const events = structuredClone(profile);
+    const offer = { id: "event-one", title: "Community gathering", timezone: "Europe/Dublin", pricing: {
+      enabled: type === "class", paymentMethod: "manual" as const, suggestedAmount: 20,
+    } };
+    events.intents!.book!.bookingTypes = type === "class"
+      ? [{ type, classes: [{ ...offer, duration: 60, recurrence: { weekday: "monday", startTime: "10:00" } }] }]
+      : [{ type, retreats: [{ ...offer, startDate: "2030-07-01", endDate: "2030-07-02" }] }];
+    await serve(page, events);
+    await page.route(/https:\/\/site.test\/api\/book\/example\/events\/.*\/availability/, route => {
+      const date = new URL(route.request().url()).searchParams.get("date") || "2030-07-01";
+      return route.fulfill({ json: { remaining: 10, occurrence: { startsAt: `${date}T09:00:00Z`, endsAt: `${date}T10:00:00Z` } } });
+    });
+    await page.goto("https://site.test/#booking");
+    await page.getByRole("textbox", { name: "Your name" }).fill("UI Test Guest");
+    await page.getByRole("textbox", { name: "Your email" }).fill("guest@example.test");
+    await page.getByRole("button", { name: `Book ${type}`, exact: true }).click();
+    const confirmation = page.getByRole("dialog", { name: "Booking confirmed", exact: true });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toContainText("Community gathering");
+    await expect(confirmation).toContainText("Europe/Dublin");
+    if (type === "class") await expect(confirmation).toContainText("payment instructions");
+    await confirmation.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(page.locator("[data-event-booking-status]")).toBeFocused();
+  });
+}
+
+test("paid event return confirms a nondefault offer", async ({ page }) => {
+  const events = structuredClone(profile);
+  events.intents!.book!.bookingTypes = [{ type: "class", classes: [
+    { id: "first-class", title: "First class", duration: 60, recurrence: { weekday: "monday", startTime: "10:00" } },
+    { id: "second-class", title: "Second class", timezone: "Europe/Dublin", duration: 60, recurrence: { weekday: "monday", startTime: "10:00" } },
+  ] }];
+  await serve(page, events);
+  await page.route("https://site.test/api/book/example/events/complete-checkout", route => route.fulfill({
+    json: { ok: true, booking: { offerId: "second-class", startsAt: "2030-07-01T09:00:00Z" } },
+  }));
+  await page.goto("https://site.test/?event_booking=success&event_booking_pending=class:second-class&session_id=simulated-session#booking");
+  const confirmation = page.getByRole("dialog", { name: "Booking confirmed", exact: true });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText("Second class");
+  await expect(confirmation).toContainText("Payment successful");
+  await expect(page).not.toHaveURL(/session_id/);
 });
 
 test("booking type links activate the matching panel and invalid offers keep the default", async ({ page }) => {
