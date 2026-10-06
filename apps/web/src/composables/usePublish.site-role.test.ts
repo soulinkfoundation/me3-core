@@ -13,7 +13,7 @@ describe("usePublish site role", () => {
     vi.spyOn(api, "put").mockResolvedValue({ ok: true });
   });
 
-  it("claims a new additional site without renaming the profile", async () => {
+  it("claims an additional site and refreshes unchanged source on republish", async () => {
     const wizard = useWizardStore();
     wizard.username = "studio";
     wizard.setSiteRole("organization");
@@ -66,6 +66,27 @@ describe("usePublish site role", () => {
     expect(sites.uploadSite).toHaveBeenCalledWith(
       "studio",
       expect.arrayContaining([expect.objectContaining({ name: "me.json" })]),
+    );
+
+    const uploaded = vi.mocked(sites.uploadSite).mock.calls[0][1];
+    const sourceFiles: Record<string, string> = {};
+    for (const file of uploaded) {
+      if (!(file instanceof File)) throw new Error("Expected a source file upload");
+      const digest = await crypto.subtle.digest(
+        "SHA-256", new TextEncoder().encode(await file.text()),
+      );
+      sourceFiles[file.name] = Array.from(new Uint8Array(digest),
+        byte => byte.toString(16).padStart(2, "0"),
+      ).join("");
+    }
+    sites.sites.push(await vi.mocked(sites.claimUsername).mock.results[0].value);
+    sites.fetchPublishManifest = vi.fn(async () => ({
+      version: 1, sourceFiles, assetFiles: {}, updatedAt: "2026-08-24T09:00:00.000Z",
+    })) as never;
+    vi.mocked(sites.uploadSite).mockClear();
+    expect(await publish({ celebrate: false, openSite: false })).toBe(true);
+    expect(sites.uploadSite).toHaveBeenCalledWith(
+      "studio", expect.arrayContaining([expect.objectContaining({ name: "me.json" })]),
     );
   });
 

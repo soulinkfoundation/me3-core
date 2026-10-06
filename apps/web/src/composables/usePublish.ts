@@ -465,7 +465,8 @@ export function usePublish() {
       for (const file of files) {
         const content = await file.text();
         const hash = await sha256Text(content);
-        if (publishManifest.sourceFiles[file.name] !== hash) {
+        // Always send the profile so publishing refreshes HTML with the current renderer.
+        if (file.name === "me.json" || publishManifest.sourceFiles[file.name] !== hash) {
           changedFiles.push(
             new File([content], file.name, {
               type: file.type || "text/plain",
