@@ -8,6 +8,7 @@ type RuntimeMigration = {
 };
 
 type MigrationRow = {
+  id: string;
   checksum: string;
 };
 
@@ -475,7 +476,12 @@ export function resetCoreRuntimeMigrationsForTest() {
 
 async function runCoreRuntimeMigrations(env: Env): Promise<void> {
   await ensureMigrationTable(env.DB);
+  const { results } = await env.DB
+    .prepare(`SELECT id, checksum FROM ${MIGRATION_TABLE}`)
+    .all<MigrationRow>();
+  const appliedChecksums = new Map(results.map((row) => [row.id, row.checksum]));
   for (const migration of runtimeMigrations) {
+    if (appliedChecksums.get(migration.id) === migration.checksum) continue;
     await runMigration(env.DB, migration);
   }
 }
@@ -493,12 +499,6 @@ async function ensureMigrationTable(db: D1Database): Promise<void> {
 }
 
 async function runMigration(db: D1Database, migration: RuntimeMigration): Promise<void> {
-  const row = await db
-    .prepare(`SELECT checksum FROM ${MIGRATION_TABLE} WHERE id = ?`)
-    .bind(migration.id)
-    .first<MigrationRow>();
-  if (row?.checksum === migration.checksum) return;
-
   await migration.apply(db);
   await db
     .prepare(

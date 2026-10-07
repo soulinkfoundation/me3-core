@@ -361,6 +361,63 @@ describe("Core runtime migrations", () => {
     expect(db.migrations.has("0011_financial_entry_projects")).toBe(true);
   });
 
+  it("reads completed migration history once for concurrent cold requests and reuses it when warm", async () => {
+    const db = new RuntimeMigrationDb();
+    const env = { DB: db as unknown as D1Database } as Env;
+    await ensureCoreRuntimeMigrations(env);
+    const history = [...db.migrations];
+    resetCoreRuntimeMigrationsForTest();
+    db.statements.length = 0;
+
+    await Promise.all(Array.from({ length: 5 }, () => ensureCoreRuntimeMigrations(env)));
+
+    expect(db.statements.filter((sql) => sql.includes("FROM core_runtime_migrations")))
+      .toEqual(["SELECT id, checksum FROM core_runtime_migrations"]);
+    expect(db.statements).toHaveLength(2); // Table guard and history read; no upgrades.
+    expect([...db.migrations]).toEqual(history);
+    await ensureCoreRuntimeMigrations(env);
+    expect(db.statements).toHaveLength(2);
+  });
+
+  it("applies missing and changed migrations in order without repeating completed upgrades", async () => {
+    const db = new RuntimeMigrationDb();
+    const env = { DB: db as unknown as D1Database } as Env;
+    await ensureCoreRuntimeMigrations(env);
+    const history = [...db.migrations];
+    db.migrations.delete("0002_mission_task_pins");
+    db.migrations.set("0011_financial_entry_projects", "older-checksum");
+    resetCoreRuntimeMigrationsForTest();
+    db.statements.length = 0;
+
+    await ensureCoreRuntimeMigrations(env);
+
+    expect(history.every(([id, checksum]) => db.migrations.get(id) === checksum)).toBe(true);
+    expect(db.statements.filter((sql) => sql.includes("INSERT INTO core_runtime_migrations")))
+      .toHaveLength(2);
+    expect(db.statements.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS ai_usage_events")))
+      .toBe(false);
+    expect(db.statements.filter((sql) => sql.includes("FROM core_runtime_migrations")))
+      .toHaveLength(1);
+    // Deleted history is restored first, then the changed checksum is updated.
+    expect([...db.migrations.keys()].at(-1)).toBe("0002_mission_task_pins");
+    const firstRecord = db.statements.findIndex((sql) => sql.includes("INSERT INTO core_runtime_migrations"));
+    const projectIndex = db.statements.findIndex((sql) => sql.includes("CREATE INDEX IF NOT EXISTS idx_financial_entries_project"));
+    expect(projectIndex).toBeGreaterThan(firstRecord);
+  });
+
+  it("retries a failed history read without running or recording any upgrades", async () => {
+    const db = new RuntimeMigrationDb();
+    db.failHistoryReadOnce = true;
+    const env = { DB: db as unknown as D1Database } as Env;
+
+    await expect(ensureCoreRuntimeMigrations(env)).rejects.toThrow("simulated history read failure");
+    expect(db.migrations.size).toBe(0);
+    expect(db.statements.some((sql) => sql.includes("ALTER TABLE"))).toBe(false);
+
+    await ensureCoreRuntimeMigrations(env);
+    expect(db.migrations.has("0011_financial_entry_projects")).toBe(true);
+  });
+
   it("keeps going when another request already added the project column", async () => {
     const db = new RuntimeMigrationDb({ addFinancialProjectColumnBeforeAlterError: true });
 
@@ -470,6 +527,7 @@ class RuntimeMigrationDb {
   ]);
   readonly migrations = new Map<string, string>();
   readonly statements: string[] = [];
+  failHistoryReadOnce = false;
   addFinancialProjectColumnBeforeAlterError: boolean;
   failFinancialProjectAlterOnce: boolean;
 
@@ -572,6 +630,7 @@ class RuntimeMigrationStatement {
       return { name: tableName } as T;
     }
     if (this.sql.includes("FROM core_runtime_migrations")) {
+      this.db.statements.push(this.sql);
       const id = this.values[0] as string;
       const checksum = this.db.migrations.get(id);
       return (checksum ? { checksum } : null) as T | null;
@@ -580,6 +639,14 @@ class RuntimeMigrationStatement {
   }
 
   async all<T>() {
+    if (this.sql.includes("FROM core_runtime_migrations")) {
+      this.db.statements.push(this.sql);
+      if (this.db.failHistoryReadOnce) {
+        this.db.failHistoryReadOnce = false;
+        throw new Error("simulated history read failure");
+      }
+      return { results: [...this.db.migrations].map(([id, checksum]) => ({ id, checksum })) as T[] };
+    }
     const tableName = this.sql.match(/PRAGMA table_info\(([^)]+)\)/)?.[1];
     if (tableName) {
       const columns = [...(this.db.columns.get(tableName) || [])].map((name) => ({ name }));
