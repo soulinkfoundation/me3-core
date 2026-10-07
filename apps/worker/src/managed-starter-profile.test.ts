@@ -236,6 +236,22 @@ describe("managed starter profile import", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("imports the full link-in-bio profile without losing button order or appearance", async () => {
+    const db = new StarterProfileDb();
+    const payload = await starterProfileResponse().json() as { profile: Record<string, unknown> };
+    const buttons = Array.from({ length: 100 }, (_, i) => ({ id: `b${i}`, text: `Link ${i}`, url: `https://example.com/${i}`, style: "primary" }));
+    Object.assign(payload.profile, { buttons, location: "Cork", extensions: { "me3.app/site": { theme: "me3", layout: "split", colorMode: "dark", accent: "#123456" } } });
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify(payload))));
+    await importManagedStarterProfile(createEnv(db), { claimToken: "signed-claim", handle: "connie" });
+    const saved = JSON.parse(fileText(db, "src/me.json") || "{}");
+    expect(saved.buttons).toEqual(buttons);
+    expect(saved.location).toBe("Cork");
+    expect(saved.extensions["me3.app/site"]).toMatchObject({ layout: "split", accent: "#123456" });
+    const manifest = JSON.parse(fileText(db, "public/me.json") || "{}");
+    expect(manifest.links.filter((link: { rel: string }) => link.rel === "cta")).toHaveLength(100);
+    expect(fileText(db, "public/index.html")).toContain("Link 99");
+  });
+
   it("does not overwrite an existing local profile", async () => {
     const db = new StarterProfileDb();
     db.site = {

@@ -1,3 +1,4 @@
+import { normalizeStarterHandoffProfile, MAX_HANDOFF_ASSET_BYTES, MAX_HANDOFF_TOTAL_ASSET_BYTES, PROFILE_ASSET_PATTERN } from "@me3-core/site-renderer/starter-profile-handoff";
 import { getSiteImageMetadata } from "./site-images";
 import { generateSiteHtml, type Me3SiteProfile } from "@me3-core/site-renderer";
 import { buildPublicMe3Profile } from "./public-me-profile";
@@ -23,9 +24,6 @@ import type { DbSite, Env } from "./types";
 
 const HANDOFF_TIMEOUT_MS = 15_000;
 const MAX_HANDOFF_RESPONSE_BYTES = 15 * 1024 * 1024;
-const MAX_HANDOFF_ASSET_BYTES = 5 * 1024 * 1024;
-const MAX_HANDOFF_TOTAL_ASSET_BYTES = 10 * 1024 * 1024;
-const PROFILE_ASSET_PATTERN = /^files\/[a-z0-9][a-z0-9._-]*\.(?:jpg|jpeg|png|webp|gif)$/i;
 
 type StarterProfileAsset = {
   path: string;
@@ -72,26 +70,6 @@ function profileAssetPath(value: unknown): string | null {
   return PROFILE_ASSET_PATTERN.test(path) ? path : null;
 }
 
-function profileImage(value: unknown): string | undefined {
-  const raw = text(value, 2048);
-  if (!raw) return undefined;
-  const assetPath = profileAssetPath(raw);
-  if (assetPath) return `/${assetPath}`;
-  return raw.startsWith("https://") ? raw : undefined;
-}
-
-function profileLinks(value: unknown): Record<string, string> | undefined {
-  const source = record(value);
-  if (!source) return undefined;
-  const links = Object.fromEntries(
-    Object.entries(source)
-      .filter(([key, entry]) => key !== "_avatar_variants" && Boolean(text(entry, 500)))
-      .slice(0, 20)
-      .map(([key, entry]) => [key.slice(0, 80), text(entry, 500)]),
-  );
-  return Object.keys(links).length > 0 ? links : undefined;
-}
-
 function decodeBase64(value: unknown): ArrayBuffer {
   if (
     typeof value !== "string" ||
@@ -122,25 +100,8 @@ function normalizeStarterProfile(value: unknown, expectedHandle: string): Starte
     throw new Error("Managed starter profile response is invalid");
   }
 
-  const handle = normalizeUsername(profileSource.handle);
-  if (handle !== expectedHandle || !USERNAME_REGEX.test(handle)) {
-    throw new Error("Managed starter profile handle does not match the install claim");
-  }
-
-  const name = text(profileSource.name, 100) || handle;
-  const avatar = profileImage(profileSource.avatar);
-  const banner = profileImage(profileSource.banner);
-  const links = profileLinks(profileSource.links);
-  const profile: StarterProfile["profile"] = {
-    version: text(profileSource.version, 20) || "0.1",
-    visibility: profileSource.visibility === "public" ? "public" : "private",
-    handle,
-    name,
-    ...(text(profileSource.bio, 500) ? { bio: text(profileSource.bio, 500) } : {}),
-    ...(avatar ? { avatar } : {}),
-    ...(banner ? { banner } : {}),
-    ...(links ? { links } : {}),
-  };
+  const profile = normalizeStarterHandoffProfile(profileSource, expectedHandle);
+  const { avatar, banner } = profile;
 
   const assets: StarterProfileAsset[] = [];
   const seenPaths = new Set<string>();
@@ -188,6 +149,7 @@ async function fetchStarterProfile(
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${claimToken}`,
+        "X-ME3-Starter-Handoff": "2",
       },
       signal: controller.signal,
     });

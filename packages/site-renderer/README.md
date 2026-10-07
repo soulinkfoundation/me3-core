@@ -7,7 +7,7 @@ ME3's shared HTML renderer, themes, layouts and public metadata. It has no Cloud
 Pin the package release and subdirectory with pnpm 9:
 
 ```sh
-pnpm add '@me3-core/site-renderer@github:soulinkfoundation/me3-core#site-renderer-v0.2.0&path:/packages/site-renderer'
+pnpm add '@me3-core/site-renderer@github:soulinkfoundation/me3-core#site-renderer-v0.3.0&path:/packages/site-renderer'
 ```
 
 The Git dependency's `prepare` script builds ESM and TypeScript declarations in `dist/`. Wrangler bundles the emitted JavaScript. No monorepo link or npm publishing credentials are required.
@@ -36,3 +36,7 @@ pnpm --filter @me3-core/site-renderer typecheck
 ```
 
 Build the package before running Core consumers. Regional pricing and product delivery live here; Core's `shared` modules re-export the same source.
+
+### Installation handoff
+
+The `./starter-profile-handoff` export owns the private starter authoring format, field normalizers and media size limits used by Cloud and the installation importer. It preserves ordered buttons, social links, locality, visibility and presentation. This envelope is separate from the public me.json protocol; old envelopes with only identity and links remain accepted. Installers request the extended fields with `X-ME3-Starter-Handoff: 2`; Cloud refuses a new-field handoff to an older importer before any import occurs.

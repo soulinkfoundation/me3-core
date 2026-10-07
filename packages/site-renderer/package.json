@@ -1,6 +1,6 @@
 {
   "name": "@me3-core/site-renderer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -15,6 +15,10 @@
     "./regional-pricing": {
       "types": "./dist/regional-pricing.d.ts",
       "import": "./dist/regional-pricing.js"
+    },
+    "./starter-profile-handoff": {
+      "types": "./dist/starter-profile-handoff.d.ts",
+      "import": "./dist/starter-profile-handoff.js"
     }
   },
   "scripts": {
