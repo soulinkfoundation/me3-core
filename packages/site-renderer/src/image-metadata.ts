@@ -1,4 +1,4 @@
-import { escapeMetadata, publicSiteUrl } from './public-metadata';
+import { escapeMetadata, publicSiteUrl } from './public-metadata.js';
 
 export type SiteImageMetadata = Record<string, { width: number; height: number; variants?: Array<{ path: string; width: number }> }>;
 

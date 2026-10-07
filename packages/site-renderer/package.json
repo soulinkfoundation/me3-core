@@ -1,18 +1,37 @@
 {
   "name": "@me3-core/site-renderer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./product-delivery": {
+      "types": "./dist/product-delivery.d.ts",
+      "import": "./dist/product-delivery.js"
+    },
+    "./regional-pricing": {
+      "types": "./dist/regional-pricing.d.ts",
+      "import": "./dist/regional-pricing.js"
+    }
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepare": "pnpm build",
+    "prepack": "pnpm build"
   },
   "devDependencies": {
     "typescript": "^5.3.3",
     "vitest": "^4.1.9"
-  }
+  },
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ]
 }

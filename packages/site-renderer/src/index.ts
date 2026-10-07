@@ -1,25 +1,25 @@
-import type { ProductDelivery } from "../../../shared/product-delivery";
-import { normalizeSiteTheme, siteThemes, type SiteColorMode, type SiteThemeId } from "./themes";
-import { modernSiteCss } from "./modern-css";
-import { bookingNavigationScript } from "./booking-navigation";
-import { bookingConfirmationMarkup, bookingConfirmationRuntime, bookingConfirmationCss } from "./booking-confirmation";
-export { normalizeSiteTheme, siteThemes } from "./themes";
-export type { SiteColorMode, SiteThemeId } from "./themes";
-import { renderProductCheckout, productCheckoutCss } from "./product-checkout";
-import { localizeRegionalPrices, regionalPricingCountries, type RegionalPrice } from "../../../shared/regional-pricing";
-import { applyImageMetadata, type SiteImageMetadata } from "./image-metadata";
-export * from "./image-metadata";
-import { discoveryLinks, jsonLd, publicDiscoveryFiles, publicSiteUrl, socialMetadata } from "./public-metadata";
-export * from "./public-metadata";
+import type { ProductDelivery } from "./product-delivery.js";
+import { normalizeSiteTheme, siteThemes, type SiteColorMode, type SiteThemeId } from "./themes.js";
+import { modernSiteCss } from "./modern-css.js";
+import { bookingNavigationScript } from "./booking-navigation.js";
+import { bookingConfirmationMarkup, bookingConfirmationRuntime, bookingConfirmationCss } from "./booking-confirmation.js";
+export { normalizeSiteTheme, siteThemes } from "./themes.js";
+export type { SiteColorMode, SiteThemeId } from "./themes.js";
+import { renderProductCheckout, productCheckoutCss } from "./product-checkout.js";
+import { localizeRegionalPrices, regionalPricingCountries, type RegionalPrice } from "./regional-pricing.js";
+import { applyImageMetadata, type SiteImageMetadata } from "./image-metadata.js";
+export * from "./image-metadata.js";
+import { discoveryLinks, jsonLd, publicDiscoveryFiles, publicSiteUrl, socialMetadata } from "./public-metadata.js";
+export * from "./public-metadata.js";
 import {
   formatPublicLocation,
   type PublicLocationData,
-} from "./location-display";
+} from "./location-display.js";
 
-export { formatPublicLocation } from "./location-display";
-export type { PublicLocationData, PublicLocationProfile } from "./location-display";
+export { formatPublicLocation } from "./location-display.js";
+export type { PublicLocationData, PublicLocationProfile } from "./location-display.js";
 
-type Me3LinkMap = Record<string, string | undefined>;
+export type Me3LinkMap = Record<string, string | undefined>;
 
 export const SITE_LAYOUT_LINK_KEY = "_layout";
 export type SiteLayout = "classic" | "portrait" | "card" | "split" | "cover" | "minimal";
@@ -37,7 +37,7 @@ export function normalizeSiteNavigationStyle(
   return value === "compact" ? "compact" : "standard";
 }
 
-type Me3Button = {
+export type Me3Button = {
   text?: string;
   url?: string;
   style?: "primary" | "secondary" | "outline" | string;
@@ -230,7 +230,7 @@ type PricingConfig = {
   allowFree?: boolean;
 };
 
-type SiteRenderCapabilities = {
+export type SiteRenderCapabilities = {
   footerCustomization: boolean;
   bookingsEnabled: boolean;
   newsletterSignup: boolean;
@@ -243,6 +243,35 @@ const DEFAULT_CAPABILITIES: SiteRenderCapabilities = {
   newsletterSignup: true,
   productCheckoutEnabled: true,
 };
+
+export const STARTER_PROFILE_CAPABILITIES: Readonly<SiteRenderCapabilities> = Object.freeze({
+  footerCustomization: false,
+  bookingsEnabled: false,
+  newsletterSignup: false,
+  productCheckoutEnabled: false,
+});
+
+/** Render identity and links only, even if the input contains installation content. */
+export async function renderStarterProfileHtml(
+  profile: Me3SiteProfile,
+  context: Parameters<typeof generateSiteHtml>[3] = {},
+): Promise<Record<string, string>> {
+  if (profile.visibility === "private") return {};
+  const look = profile.extensions?.["me3.app/site"];
+  const output = await generateSiteHtml({
+    name: profile.name, handle: profile.handle, bio: profile.bio,
+    avatar: profile.avatar, banner: profile.banner,
+    location: profile.location, locationData: profile.locationData,
+    links: Object.fromEntries(Object.entries(profile.links || {}).filter(([key]) => !key.startsWith("_"))),
+    buttons: profile.buttons,
+    extensions: { "me3.app/site": {
+      theme: normalizeSiteTheme(look?.theme), layout: normalizeSiteLayout(look?.layout),
+      colorMode: look?.colorMode === "light" || look?.colorMode === "dark" ? look.colorMode : "auto",
+      accent: look?.accent, visitorThemeToggle: look?.visitorThemeToggle,
+    } },
+  }, [], STARTER_PROFILE_CAPABILITIES, context);
+  return { "index.html": output["index.html"] };
+}
 
 const DEFAULT_VIBE = "warm";
 
@@ -461,7 +490,7 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
   }).join("");
   return pageShell(profile, {
     title, description, activeSlug: "", basePath: "./", vibe: getVibe(profile),
-    body: `<main class="site-main">${hero}${layout === "cover" ? `<div class="site-cover-links">${generateLinks(profile)}</div>` : ""}<div class="site-home-sections">${sectionHtml}</div></main><script>(function(){document.querySelectorAll('a[href="#booking"]').forEach(function(link){link.addEventListener('click',function(){var booking=document.getElementById('booking');if(!booking)return;var wrapper=booking.closest('.site-offer-booking');if(wrapper)wrapper.hidden=false;var offerId=${jsonForScript(profile.extensions?.["me3.app/site"]?.primaryAction?.kind === "offer" ? profile.extensions["me3.app/site"]?.primaryAction?.id || "" : "")};if(offerId){var card=Array.prototype.find.call(booking.querySelectorAll('.booking-card'),function(item){return item.dataset.offerId===offerId});if(card)card.click();var select=booking.querySelector('[data-booking-offer-select]');if(select){select.value=offerId;select.dispatchEvent(new Event('change',{bubbles:true}));}}})})})();</script>`,
+    body: `<main class="site-main">${hero}${layout === "cover" ? `<div class="site-cover-links">${generateLinks(profile)}</div>` : ""}<div class="site-home-sections">${sectionHtml}</div></main>${capabilities.bookingsEnabled && profile.intents?.book?.enabled ? `<script>(function(){document.querySelectorAll('a[href="#booking"]').forEach(function(link){link.addEventListener('click',function(){var booking=document.getElementById('booking');if(!booking)return;var wrapper=booking.closest('.site-offer-booking');if(wrapper)wrapper.hidden=false;var offerId=${jsonForScript(profile.extensions?.["me3.app/site"]?.primaryAction?.kind === "offer" ? profile.extensions["me3.app/site"]?.primaryAction?.id || "" : "")};if(offerId){var card=Array.prototype.find.call(booking.querySelectorAll('.booking-card'),function(item){return item.dataset.offerId===offerId});if(card)card.click();var select=booking.querySelector('[data-booking-offer-select]');if(select){select.value=offerId;select.dispatchEvent(new Event('change',{bubbles:true}));}}})})})();</script>` : ""}`,
     footer: generateFooter(profile, capabilities.footerCustomization),
   });
 }
@@ -625,7 +654,7 @@ function pageShell(
     ${options.body}
     ${footer}
   </div>
-  ${actionDock ? `<div class="site-action-dock">${actionDock}<button type="button" class="site-action-dock__button" data-booking-dock-select-time>Select a time</button><button type="button" class="site-action-dock__button" data-booking-dock-continue>Continue</button></div><script>document.querySelector('[data-booking-dock-continue]').addEventListener('click',function(){var next=document.querySelector('.booking-type-panel:not([hidden]) [data-booking-continue]:not(:disabled)');if(next)next.click();});document.querySelector('[data-booking-dock-select-time]').addEventListener('click',function(){var panel=document.querySelector('.booking-type-panel:not([hidden])');if(!panel)return;var target=panel.querySelector('.booking-slot:not(:disabled)')||panel.querySelector('.booking-day:not(:disabled)');if(target){target.focus({preventScroll:true});target.scrollIntoView({block:'center'});}});</script>` : ""}
+  ${actionDock ? `<div class="site-action-dock">${actionDock}${profile.intents?.book?.enabled ? `<button type="button" class="site-action-dock__button" data-booking-dock-select-time>Select a time</button><button type="button" class="site-action-dock__button" data-booking-dock-continue>Continue</button><script>document.querySelector('[data-booking-dock-continue]').addEventListener('click',function(){var next=document.querySelector('.booking-type-panel:not([hidden]) [data-booking-continue]:not(:disabled)');if(next)next.click();});document.querySelector('[data-booking-dock-select-time]').addEventListener('click',function(){var panel=document.querySelector('.booking-type-panel:not([hidden])');if(!panel)return;var target=panel.querySelector('.booking-slot:not(:disabled)')||panel.querySelector('.booking-day:not(:disabled)');if(target){target.focus({preventScroll:true});target.scrollIntoView({block:'center'});}});</script>` : ""}</div>` : ""}
   ${options.afterContainer || ""}
   ${navigationScript}
   ${modern && siteSettings?.visitorThemeToggle !== false ? siteThemeToggleScript(profile) : ""}

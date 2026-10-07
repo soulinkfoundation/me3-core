@@ -1,4 +1,4 @@
-import type { ProductDelivery } from "../../../shared/product-delivery";
+import type { ProductDelivery } from "./product-delivery.js";
 type ProductPurchase = {
   delivery?: ProductDelivery;
   username: string;

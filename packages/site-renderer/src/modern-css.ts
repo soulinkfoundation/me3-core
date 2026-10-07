@@ -1,4 +1,4 @@
-import { siteThemes, type SiteColorMode, type SiteThemeId } from "./themes";
+import { siteThemes, type SiteColorMode, type SiteThemeId } from "./themes.js";
 
 export function modernSiteCss(themeId: SiteThemeId, colorMode: SiteColorMode, accentOverride?: string): string {
   const theme = siteThemes[themeId];
