@@ -76,7 +76,7 @@ describe("Mission Control Agent Runtime v2", () => {
       });
 
       expect(response).toMatchObject({
-        source: providerId,
+        source: "workers-ai",
         specialist: "core.mission.task.create",
         actionCards: [
           expect.objectContaining({
@@ -353,24 +353,12 @@ function baseMessages(message: string): AgentToolMessage[] {
 
 function providerRoute(providerId: "workers-ai" | "openai" | "anthropic", payloads: unknown[]) {
   const next = vi.fn(async () => payloads.shift());
-  if (providerId === "workers-ai") {
-    return {
-      providerId,
-      model: "workers-test-model",
-      backupModel: null,
-      apiKey: null,
-      ai: { run: next },
-      aiGateway: null,
-      configured: true,
-    };
-  }
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json(await next())));
   return {
-    providerId,
-    model: `${providerId}-test-model`,
+    providerId: "workers-ai",
+    model: providerId === "workers-ai" ? "workers-test-model" : `${providerId}/test-model`,
     backupModel: null,
-    apiKey: "test-key",
-    ai: null,
+    apiKey: null,
+    ai: { run: next },
     aiGateway: null,
     configured: true,
   };
