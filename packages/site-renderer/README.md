@@ -7,7 +7,7 @@ ME3's shared HTML renderer, themes, layouts and public metadata. It has no Cloud
 Pin the package release and subdirectory with pnpm 9:
 
 ```sh
-pnpm add '@me3-core/site-renderer@github:soulinkfoundation/me3-core#site-renderer-v0.3.0&path:/packages/site-renderer'
+pnpm add '@me3-core/site-renderer@github:soulinkfoundation/me3-core#site-renderer-v0.3.1&path:/packages/site-renderer'
 ```
 
 The Git dependency's `prepare` script builds ESM and TypeScript declarations in `dist/`. Wrangler bundles the emitted JavaScript. No monorepo link or npm publishing credentials are required.
@@ -24,6 +24,8 @@ const pages = await renderStarterProfileHtml({
 ```
 
 The starter helper allowlists identity, links, buttons and appearance settings, forces all capabilities off and returns only `index.html`. Private profiles return no files; the caller owns the private identity shell and HTTP headers. Supply absolute media URLs for pages served under a handle path. Callers validate public input and enforce their own storage limits.
+
+Starter pages show their identity once in the main profile layout, with no site header, menu or Home navigation. The colour-mode toggle and ME3 attribution remain available. Installation pages retain their navigation by default.
 
 `classic` and `portrait` are legacy aliases for the modern `card` and `split` layouts, matching Core. Button labels use `text`; editor IDs belong to the caller. Full installation publishing still uses `generateSiteHtml`, whose existing capability defaults are preserved.
 

@@ -231,6 +231,7 @@ type PricingConfig = {
 };
 
 export type SiteRenderCapabilities = {
+  navigationEnabled?: boolean;
   footerCustomization: boolean;
   bookingsEnabled: boolean;
   newsletterSignup: boolean;
@@ -238,6 +239,7 @@ export type SiteRenderCapabilities = {
 };
 
 const DEFAULT_CAPABILITIES: SiteRenderCapabilities = {
+  navigationEnabled: true,
   footerCustomization: true,
   bookingsEnabled: true,
   newsletterSignup: true,
@@ -245,6 +247,7 @@ const DEFAULT_CAPABILITIES: SiteRenderCapabilities = {
 };
 
 export const STARTER_PROFILE_CAPABILITIES: Readonly<SiteRenderCapabilities> = Object.freeze({
+  navigationEnabled: false,
   footerCustomization: false,
   bookingsEnabled: false,
   newsletterSignup: false,
@@ -490,6 +493,7 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
   }).join("");
   return pageShell(profile, {
     title, description, activeSlug: "", basePath: "./", vibe: getVibe(profile),
+    navigationEnabled: capabilities.navigationEnabled,
     body: `<main class="site-main">${hero}${layout === "cover" ? `<div class="site-cover-links">${generateLinks(profile)}</div>` : ""}<div class="site-home-sections">${sectionHtml}</div></main>${capabilities.bookingsEnabled && profile.intents?.book?.enabled ? `<script>(function(){document.querySelectorAll('a[href="#booking"]').forEach(function(link){link.addEventListener('click',function(){var booking=document.getElementById('booking');if(!booking)return;var wrapper=booking.closest('.site-offer-booking');if(wrapper)wrapper.hidden=false;var offerId=${jsonForScript(profile.extensions?.["me3.app/site"]?.primaryAction?.kind === "offer" ? profile.extensions["me3.app/site"]?.primaryAction?.id || "" : "")};if(offerId){var card=Array.prototype.find.call(booking.querySelectorAll('.booking-card'),function(item){return item.dataset.offerId===offerId});if(card)card.click();var select=booking.querySelector('[data-booking-offer-select]');if(select){select.value=offerId;select.dispatchEvent(new Event('change',{bubbles:true}));}}})})})();</script>` : ""}`,
     footer: generateFooter(profile, capabilities.footerCustomization),
   });
@@ -613,6 +617,7 @@ function pageShell(
     footer: string;
     vibe: string;
     afterContainer?: string;
+    navigationEnabled?: boolean;
   },
 ): string {
   const siteSettings = profile.extensions?.["me3.app/site"];
@@ -631,12 +636,16 @@ function pageShell(
     : "";
   const headLinks = [faviconLinks, fontLinks].filter(Boolean).join("\n  ");
   const navigationStyle = getSiteNavigationStyle(profile);
-  const navigationScript = hasSiteNavigation(profile)
+  const navigationEnabled = options.navigationEnabled !== false;
+  const navigationScript = navigationEnabled && hasSiteNavigation(profile)
     ? buildNavigationDialogScript()
     : "";
-  const topbar = modern ? generateSiteTopbar(profile, options.activeSlug, options.basePath) : "";
+  const topbar = modern ? (navigationEnabled
+    ? generateSiteTopbar(profile, options.activeSlug, options.basePath)
+    : siteSettings?.visitorThemeToggle !== false
+      ? `<div class="starter-theme-control">${themeToggleMarkup(false)}</div>` : "") : "";
   const actionDock = modern ? siteActionLink(profile, "site-action-dock__button", options.basePath) : "";
-  const footer = modern ? generateModernFooter(profile, options.basePath, options.footer) : options.footer;
+  const footer = modern ? generateModernFooter(profile, options.basePath, options.footer, navigationEnabled) : options.footer;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -689,8 +698,9 @@ function siteThemeToggleScript(profile: Me3SiteProfile): string {
   return `<script>(function(){var key=${jsonForScript(siteThemeStorageKey(profile))};var buttons=document.querySelectorAll('[data-site-theme-toggle]');function update(){var dark=document.documentElement.dataset.colorMode==='dark';buttons.forEach(function(button){button.setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode');var label=button.querySelector('.site-theme-toggle__label');if(label)label.textContent=dark?'Light mode':'Dark mode'});}buttons.forEach(function(button){button.addEventListener('click',function(){var next=document.documentElement.dataset.colorMode==='dark'?'light':'dark';document.documentElement.dataset.colorMode=next;try{localStorage.setItem(key,next)}catch(e){}update()})});update()})();</script>`;
 }
 
-function generateModernFooter(profile: Me3SiteProfile, basePath: string, legacyFooter: string): string {
+function generateModernFooter(profile: Me3SiteProfile, basePath: string, legacyFooter: string, navigationEnabled = true): string {
   if (!legacyFooter) return "";
+  if (!navigationEnabled) return `<footer class="site-footer"><p>Powered by <a href="https://me3.app">ME3</a></p></footer>`;
   const pages = (profile.pages || []).filter((page) => page.visible !== false && page.slug)
     .map((page) => `<a href="${basePath}${escapeHtml(normalizeSitePath(page.slug || ""))}">${escapeHtml(page.title || titleFromSlug(page.slug || ""))}</a>`);
   const blog = (profile.posts || []).some((post) => !post.draft)

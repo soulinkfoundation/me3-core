@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Keep starter identity in one hero, without installation header, menu or footer link duplicates.
+- Preserve starter theme switching and default installation navigation.
+
 ## 0.2.0
 
 - Package-local source with built ESM and TypeScript declarations for external consumers.

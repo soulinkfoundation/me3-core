@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderStarterProfileHtml, siteThemes, type Me3SiteProfile, type SiteLayout } from "./index";
+import { generateSiteHtml, renderStarterProfileHtml, siteThemes, type Me3SiteProfile, type SiteLayout } from "./index";
 
 // Failure modes: forbidden authoring fields reaching HTML, lost/reordered links,
 // private content leaking, and an unsupported combination of theme/layout.
@@ -43,6 +43,21 @@ describe("starter profile rendering", () => {
   it("renders a name-only profile and protects private profiles", async () => {
     expect((await renderStarterProfileHtml({ name: "Starter" }))["index.html"]).toContain("Starter");
     expect(await renderStarterProfileHtml({ name: "Private", visibility: "private" })).toEqual({});
+  });
+
+  it("shows one identity hero without installation navigation, while keeping theme switching", async () => {
+    const profile: Me3SiteProfile = { name: 'Starter', avatar: 'https://example.com/avatar.jpg', banner: 'https://example.com/banner.jpg', links: { instagram: 'https://instagram.com/starter' }, extensions: { 'me3.app/site': { layout: 'card' } } };
+    const markup = (await renderStarterProfileHtml(profile))['index.html'].replace(/<style>[\s\S]*?<\/style>/g, '');
+    expect(markup).not.toContain('<header');
+    expect(markup).not.toContain('Footer navigation');
+    expect(markup).not.toContain('Open menu');
+    expect(markup.match(/<img\b[^>]*src="https:\/\/example.com\/avatar.jpg"/g)).toHaveLength(1);
+    expect(markup.match(/href="https:\/\/instagram.com\/starter"/g)).toHaveLength(1);
+    expect(markup).toContain('data-site-theme-toggle');
+    expect(markup).toContain('site-hero__banner');
+    const installation = (await generateSiteHtml(profile, []))['index.html'];
+    expect(installation).toContain('<header class="site-topbar">');
+    expect(installation).toContain('Footer navigation');
   });
 
   it("keeps safe bio formatting and rejects executable links", async () => {

@@ -35,6 +35,8 @@ body[data-layout=minimal]{--site-width:720px}
 body[data-layout=cover] .site-main{width:100%}
 body[data-layout=cover] .site-home-sections{width:min(1080px,calc(100% - 48px));margin:52px auto 80px}
 .site-topbar{position:sticky;top:0;z-index:40;width:100%;background:var(--bg);border-bottom:1px solid var(--border)}
+.starter-theme-control{position:absolute;top:12px;right:16px;z-index:40}
+.starter-theme-control .site-theme-toggle{background:var(--raised)}
 .site-topbar__inner{box-sizing:border-box;display:flex;align-items:center;gap:20px;width:min(1200px,100%);min-height:70px;margin:auto;padding:8px 24px}
 .site-topbar__identity{display:flex;align-items:center;gap:10px;min-width:0;color:var(--text);font-family:var(--display-font);font-weight:700;font-size:1.05rem;text-decoration:none;white-space:nowrap}
 .site-topbar__identity img{width:36px;height:36px;border-radius:50%;object-fit:cover}
