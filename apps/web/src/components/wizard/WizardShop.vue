@@ -88,7 +88,7 @@ function formatProductPrice(product: WizardProduct): string {
 
 function setRegionalPrices(regionalPrices: RegionalPrice[] | undefined) {
   if (selectedProductIndex.value === null) return;
-  wizard.updateProduct(selectedProductIndex.value, { regionalPrices, ...(regionalPrices?.length ? { currency: "USD" } : {}) });
+  wizard.updateProduct(selectedProductIndex.value, { regionalPrices });
 }
 
 const productCurrency = computed({
@@ -521,7 +521,7 @@ defineExpose({
 
         <div class="form-grid">
           <div class="form-group">
-            <label for="product-price">{{ selectedProduct.regionalPrices?.length ? "Outside Pakistan price (USD)" : "Price" }}</label>
+            <label for="product-price">{{ selectedProduct.regionalPrices?.length ? "Default price" : "Price" }}</label>
             <input
               id="product-price"
               v-model.number="priceDollars"
@@ -532,7 +532,7 @@ defineExpose({
           </div>
           <div class="form-group">
             <label for="product-currency">Currency</label>
-            <select id="product-currency" v-model="productCurrency" :disabled="Boolean(selectedProduct.regionalPrices?.length)">
+            <select id="product-currency" v-model="productCurrency">
               <option value="USD">USD</option>
               <option value="GBP">GBP</option>
               <option value="EUR">EUR</option>
@@ -546,7 +546,7 @@ defineExpose({
           </div>
         </div>
 
-        <RegionalPriceFields :model-value="selectedProduct.regionalPrices" :input-id="`product-${selectedProduct.slug}`" :shipping="selectedProduct.delivery?.kind === 'physical'" @update:model-value="setRegionalPrices" />
+        <RegionalPriceFields :model-value="selectedProduct.regionalPrices" :default-currency="selectedProduct.currency" :input-id="`product-${selectedProduct.slug}`" :shipping="selectedProduct.delivery?.kind === 'physical'" @update:model-value="setRegionalPrices" />
 
         <PaymentCollectionFields
           v-if="selectedProductIsPaid"

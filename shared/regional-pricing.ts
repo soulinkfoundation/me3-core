@@ -1,12 +1,21 @@
 import { DELIVERY_COUNTRIES } from "./product-delivery";
 
-/** Fixed country prices, in minor units (USD cents / PKR paisa). No FX conversion. */
+/** Fixed country prices in hundredths of the selected currency. No FX conversion. */
 export type RegionalPrice = {
   country: string;
   currency: string;
   amount: number;
   shippingCost?: number;
 };
+
+// Keep supported regional amounts explicit: runtime locale data can report
+// different currency precisions from our commerce providers (including PKR).
+export const REGIONAL_PRICE_CURRENCIES: readonly string[] = [
+  "USD", "GBP", "EUR", "CAD", "AUD", "NZD", "CHF", "SGD", "HKD", "INR", "PKR",
+];
+export function regionalCurrencySupported(currency: string): boolean {
+  return REGIONAL_PRICE_CURRENCIES.includes(currency);
+}
 
 /** Only Cloudflare's runtime metadata is authoritative; never trust a body/header override. */
 export function requestCountry(request?: Request): string | null {
@@ -36,7 +45,7 @@ export function regionalPricingError(value: unknown): string | null {
     for (const price of prices) {
       if (!price || !DELIVERY_COUNTRIES.includes(price.country) || countries.has(price.country)) return "Choose a different valid country for each regional price.";
       countries.add(price.country);
-      if (typeof price.currency !== "string" || !/^[A-Z]{3}$/.test(price.currency) || !Number.isSafeInteger(price.amount) || price.amount < 50) return "Enter a valid currency and a positive regional price (at least 0.50).";
+      if (typeof price.currency !== "string" || !regionalCurrencySupported(price.currency) || !Number.isSafeInteger(price.amount) || price.amount < 50) return "Choose a supported currency and a positive regional price (at least 0.50).";
       const delivery = record.delivery as { kind?: string } | undefined;
       if (delivery?.kind === "physical" && (!Number.isSafeInteger(price.shippingCost) || price.shippingCost < 0)) return "Enter a regional shipping charge, or 0 for free shipping.";
     }

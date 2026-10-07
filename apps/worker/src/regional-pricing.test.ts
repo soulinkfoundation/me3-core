@@ -4,7 +4,7 @@ import { generateSiteHtml } from "@me3-core/site-renderer";
 import { serveSiteFileResponse } from "./sites";
 import type { DbSite, Env } from "./types";
 
-// Failure modes: default/PK confusion, major/minor-unit confusion, altered amounts,
+// Failure modes: forced USD/PK defaults, unsupported currency precision, major/minor-unit confusion, altered amounts,
 // lost nested booking prices, reused country HTML, and untrusted country headers.
 const regionalPrices = [{ country: "PK", currency: "PKR", amount: 800000, shippingCost: 100000 }];
 const profile = {
@@ -18,6 +18,23 @@ const profile = {
 };
 
 describe("regional pricing", () => {
+  it("uses owner-selected countries and currencies while preserving a non-USD default", async () => {
+    const custom = { ...profile, products: [{ ...profile.products[0], currency: "EUR", regionalPrices: [
+      { country: "CA", currency: "CAD", amount: 7500, shippingCost: 800 },
+      { country: "GB", currency: "GBP", amount: 4000, shippingCost: 600 },
+    ] }] };
+    expect(regionalPricingError(custom)).toBeNull();
+    const files = await generateSiteHtml(custom, []);
+    expect(files["shop/kit.html"]).toContain("50.00 EUR");
+    expect(files["_pricing/CA/shop/kit.html"]).toContain("75.00 CAD");
+    expect(files["_pricing/GB/shop/kit.html"]).toContain("40.00 GBP");
+    expect(localizeRegionalPrices(custom, "PK").products[0]).toMatchObject({ price: 5000, currency: "EUR" });
+  });
+  it("rejects currencies with incompatible minor-unit precision", () => {
+    for (const currency of ["JPY", "BHD"]) {
+      expect(regionalPricingError({ regionalPrices: [{ country: "JP", currency, amount: 10000 }] })).toBeTruthy();
+    }
+  });
   it("chooses trusted request metadata rather than headers supplied by a visitor", () => {
     const spoof = new Request("https://example.test", { headers: { "CF-IPCountry": "PK" } });
     expect(requestCountry(spoof)).toBeNull();

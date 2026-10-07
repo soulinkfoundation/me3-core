@@ -29,7 +29,7 @@ import { resolvePublicSiteUrl } from "../../utils/publicSiteUrl";
 import { getTimeZoneDisplayLabel, listSupportedTimeZones } from "../../utils/timezone";
 
 function regionalPricePatch(regionalPrices: RegionalPrice[] | undefined): Partial<WizardBookingPricing> {
-  return { regionalPrices, ...(regionalPrices?.length ? { currency: "USD", allowFlexiblePricing: false, allowFree: false } : {}) };
+  return { regionalPrices, ...(regionalPrices?.length ? { allowFlexiblePricing: false, allowFree: false } : {}) };
 }
 
 const wizard = useWizardStore();
@@ -1169,7 +1169,7 @@ onMounted(() => {
                 <div class="form-row">
                   <div class="form-group">
                     <label :for="`booking-offer-price-${activeOffer.id}`"
-                      >{{ activeOffer.pricing?.regionalPrices?.length ? "Outside Pakistan price (USD)" : "Price" }}</label
+                      >{{ activeOffer.pricing?.regionalPrices?.length ? "Default price" : "Price" }}</label
                     >
                     <input
                       :id="`booking-offer-price-${activeOffer.id}`"
@@ -1186,7 +1186,6 @@ onMounted(() => {
                     <select
                       :id="`booking-offer-currency-${activeOffer.id}`"
                       v-model="activeOfferPriceCurrency"
-                      :disabled="Boolean(activeOffer.pricing?.regionalPrices?.length)"
                     >
                       <option value="USD">USD ($)</option>
                       <option value="GBP">GBP (£)</option>
@@ -1200,7 +1199,7 @@ onMounted(() => {
                     </select>
                   </div>
                 </div>
-                <RegionalPriceFields :model-value="activeOffer.pricing?.regionalPrices" :input-id="`booking-offer-${activeOffer.id}`" @update:model-value="wizard.setBookingOfferPricing(activeOffer.id, regionalPricePatch($event))" />
+                <RegionalPriceFields :model-value="activeOffer.pricing?.regionalPrices" :default-currency="activeOffer.pricing?.currency" :input-id="`booking-offer-${activeOffer.id}`" @update:model-value="wizard.setBookingOfferPricing(activeOffer.id, regionalPricePatch($event))" />
                 <PaymentCollectionFields
                   v-model="activeOfferPaymentMethod"
                   v-model:instructions="activeOfferPaymentInstructions"
@@ -1463,7 +1462,7 @@ onMounted(() => {
                 <div class="form-row">
                   <div class="form-group">
                     <label :for="`class-offer-price-${activeClassOffer.id}`"
-                      >{{ activeClassOffer.pricing?.regionalPrices?.length ? "Outside Pakistan price (USD)" : "Price" }}</label
+                      >{{ activeClassOffer.pricing?.regionalPrices?.length ? "Default price" : "Price" }}</label
                     >
                     <input
                       :id="`class-offer-price-${activeClassOffer.id}`"
@@ -1480,7 +1479,6 @@ onMounted(() => {
                     <select
                       :id="`class-offer-currency-${activeClassOffer.id}`"
                       v-model="activeClassOfferPriceCurrency"
-                      :disabled="Boolean(activeClassOffer.pricing?.regionalPrices?.length)"
                     >
                       <option value="USD">USD ($)</option>
                       <option value="GBP">GBP (£)</option>
@@ -1494,7 +1492,7 @@ onMounted(() => {
                     </select>
                   </div>
                 </div>
-                <RegionalPriceFields :model-value="activeClassOffer.pricing?.regionalPrices" :input-id="`class-offer-${activeClassOffer.id}`" @update:model-value="wizard.setClassOfferPricing(activeClassOffer.id, regionalPricePatch($event))" />
+                <RegionalPriceFields :model-value="activeClassOffer.pricing?.regionalPrices" :default-currency="activeClassOffer.pricing?.currency" :input-id="`class-offer-${activeClassOffer.id}`" @update:model-value="wizard.setClassOfferPricing(activeClassOffer.id, regionalPricePatch($event))" />
                 <PaymentCollectionFields
                   v-model="activeClassOfferPaymentMethod"
                   v-model:instructions="activeClassOfferPaymentInstructions"
@@ -1707,7 +1705,7 @@ onMounted(() => {
                 <div class="form-row">
                   <div class="form-group">
                     <label :for="`retreat-offer-price-${activeRetreatOffer.id}`"
-                      >{{ activeRetreatOffer.pricing?.regionalPrices?.length ? "Outside Pakistan price (USD)" : "Price" }}</label
+                      >{{ activeRetreatOffer.pricing?.regionalPrices?.length ? "Default price" : "Price" }}</label
                     >
                     <input
                       :id="`retreat-offer-price-${activeRetreatOffer.id}`"
@@ -1726,7 +1724,6 @@ onMounted(() => {
                     <select
                       :id="`retreat-offer-currency-${activeRetreatOffer.id}`"
                       v-model="activeRetreatOfferPriceCurrency"
-                      :disabled="Boolean(activeRetreatOffer.pricing?.regionalPrices?.length)"
                     >
                       <option value="USD">USD ($)</option>
                       <option value="GBP">GBP (£)</option>
@@ -1740,7 +1737,7 @@ onMounted(() => {
                     </select>
                   </div>
                 </div>
-                <RegionalPriceFields :model-value="activeRetreatOffer.pricing?.regionalPrices" :input-id="`retreat-offer-${activeRetreatOffer.id}`" @update:model-value="wizard.setRetreatOfferPricing(activeRetreatOffer.id, regionalPricePatch($event))" />
+                <RegionalPriceFields :model-value="activeRetreatOffer.pricing?.regionalPrices" :default-currency="activeRetreatOffer.pricing?.currency" :input-id="`retreat-offer-${activeRetreatOffer.id}`" @update:model-value="wizard.setRetreatOfferPricing(activeRetreatOffer.id, regionalPricePatch($event))" />
                 <PaymentCollectionFields
                   v-model="activeRetreatOfferPaymentMethod"
                   v-model:instructions="activeRetreatOfferPaymentInstructions"
