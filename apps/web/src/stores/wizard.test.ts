@@ -9,6 +9,34 @@ describe("wizard store", () => {
     vi.clearAllMocks();
   });
 
+  it("retains fixed country prices through source generation, site loading and draft reload", () => {
+    const store = useWizardStore();
+    const regionalPrices = [{ country: "PK", currency: "PKR", amount: 800000 }];
+    store.shopEnabled = true;
+    store.addProduct("Guide");
+    store.updateProduct(0, { regionalPrices });
+    store.setBooking({ enabled: true, oneToOneEnabled: true, classEnabled: true, retreatEnabled: true });
+    const session = store.profile.booking.offers[0];
+    const lesson = store.profile.booking.classOffers[0];
+    const retreat = store.profile.booking.retreatOffers[0];
+    store.setBookingOfferPricing(session.id, { enabled: true, regionalPrices });
+    store.setClassOfferPricing(lesson.id, { enabled: true, regionalPrices });
+    store.setRetreatOfferPricing(retreat.id, { enabled: true, regionalPrices });
+    const source = store.generateMe3Json();
+    expect(source.products?.[0].regionalPrices).toEqual(regionalPrices);
+    expect(source.intents?.book?.offers?.[0].pricing?.regionalPrices).toEqual(regionalPrices);
+    expect(source.intents?.book?.classes?.[0].pricing?.regionalPrices).toEqual(regionalPrices);
+    expect(source.intents?.book?.retreats?.[0].pricing?.regionalPrices).toEqual(regionalPrices);
+    store.loadFromSiteContent({ ...source, name: "Example" } as Parameters<typeof store.loadFromSiteContent>[0], [], [], [{ ...store.products[0] }], "example");
+    expect(store.products[0].regionalPrices).toEqual(regionalPrices);
+    expect(store.profile.booking.classOffers[0].pricing?.regionalPrices).toEqual(regionalPrices);
+    store.saveToStorage();
+    setActivePinia(createPinia());
+    const reloaded = useWizardStore();
+    expect(reloaded.products[0].regionalPrices).toEqual(regionalPrices);
+    expect(reloaded.profile.booking.retreatOffers[0].pricing?.regionalPrices).toEqual(regionalPrices);
+  });
+
   describe("initialization", () => {
     it("should initialize with default values", () => {
       const store = useWizardStore();

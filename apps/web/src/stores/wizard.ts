@@ -1,3 +1,4 @@
+import { regionalPricingError, type RegionalPrice } from "../../../../shared/regional-pricing";
 import type { ProductDelivery } from "../../../../shared/product-delivery";
 import { defineStore } from "pinia";
 import { ref, computed, watch } from "vue";
@@ -127,6 +128,7 @@ export interface WizardNewsletterConfig {
 }
 
 export interface WizardBookingPricing {
+  regionalPrices?: RegionalPrice[];
   enabled: boolean;
   suggestedAmount: number;
   currency: "USD" | "GBP" | "EUR" | "CAD" | "AUD" | "CHF" | "SGD" | "INR" | "PKR";
@@ -389,6 +391,7 @@ export type WizardProductConfirmationEmail = {
 };
 
 export interface WizardProduct {
+  regionalPrices?: RegionalPrice[];
   delivery?: ProductDelivery;
   title: string;
   slug: string;
@@ -1673,6 +1676,9 @@ export const useWizardStore = defineStore("wizard", () => {
       );
     }
 
+    if (["offerings", "bookings", "publish"].includes(currentStepId.value)) {
+      return regionalPricingError({ products: products.value, booking: profile.value.booking }) === null;
+    }
     return true;
   });
 
@@ -3354,6 +3360,7 @@ export const useWizardStore = defineStore("wizard", () => {
             file: `shop/${p.slug}.md`,
             price: normalizeProductPriceCents(p.price),
             currency: p.currency,
+            regionalPrices: p.regionalPrices,
             images: undefined,
             available: undefined,
             publishedAt: undefined,
@@ -3566,6 +3573,7 @@ export const useWizardStore = defineStore("wizard", () => {
               ? {
                   enabled: offer.pricing.enabled,
                   suggestedAmount: offer.pricing.suggestedAmount,
+                  regionalPrices: offer.pricing.regionalPrices,
                   currency: offer.pricing.currency as "USD" | "GBP" | "EUR",
                   minimumAmount: offer.pricing.minimumAmount,
                   allowFlexiblePricing: offer.pricing.allowFlexiblePricing,
@@ -3592,6 +3600,7 @@ export const useWizardStore = defineStore("wizard", () => {
               ? {
                   enabled: offer.pricing.enabled,
                   suggestedAmount: offer.pricing.suggestedAmount,
+                  regionalPrices: offer.pricing.regionalPrices,
                   currency: offer.pricing.currency as "USD" | "GBP" | "EUR",
                   minimumAmount: offer.pricing.minimumAmount,
                   allowFlexiblePricing: offer.pricing.allowFlexiblePricing,
@@ -3622,6 +3631,7 @@ export const useWizardStore = defineStore("wizard", () => {
               ? {
                   enabled: offer.pricing.enabled,
                   suggestedAmount: offer.pricing.suggestedAmount,
+                  regionalPrices: offer.pricing.regionalPrices,
                   currency: offer.pricing.currency as "USD" | "GBP" | "EUR",
                   minimumAmount: offer.pricing.minimumAmount,
                   allowFlexiblePricing: offer.pricing.allowFlexiblePricing,
@@ -3712,6 +3722,7 @@ export const useWizardStore = defineStore("wizard", () => {
             bookWithPricing.pricing = {
               enabled: pricing.enabled,
               suggestedAmount: pricing.suggestedAmount,
+              regionalPrices: pricing.regionalPrices,
               currency: pricing.currency as "USD" | "GBP" | "EUR",
               minimumAmount: pricing.minimumAmount,
               allowFlexiblePricing: pricing.allowFlexiblePricing,
@@ -4645,6 +4656,7 @@ export const useWizardStore = defineStore("wizard", () => {
       draft?: boolean;
     }>,
     siteProducts: Array<{
+      regionalPrices?: RegionalPrice[];
       slug: string;
       title: string;
       content: string;
@@ -5087,6 +5099,7 @@ export const useWizardStore = defineStore("wizard", () => {
         images: [],
         price: normalizeProductPriceCents(p.price),
         currency: p.currency,
+        regionalPrices: p.regionalPrices,
         available: p.available ?? true,
         paymentMethod: normalizeWizardPaymentMethod(p.paymentMethod),
         paymentInstructions: normalizeWizardPaymentInstructions(

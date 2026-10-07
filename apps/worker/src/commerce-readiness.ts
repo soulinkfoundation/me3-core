@@ -2,6 +2,7 @@ import { productDeliveryError, type ProductDelivery } from "../../../shared/prod
 import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import { isCommerceReady } from "./commerce-settings";
 import type { Env } from "./types";
+import { regionalPricingError } from "../../../shared/regional-pricing";
 
 type BookingOffer = {
   pricing?: {
@@ -86,6 +87,8 @@ export async function getProfileCommercePublishBlockReason(
   ownerId: string,
   profile: Me3SiteProfile,
 ): Promise<string | null> {
+  const pricingError = regionalPricingError(profile);
+  if (pricingError) return pricingError;
   for (const product of profile.products || []) {
     const error = productDeliveryError(product.delivery);
     if (product.available !== false && error) return error;

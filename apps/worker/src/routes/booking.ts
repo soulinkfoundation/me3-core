@@ -1,3 +1,4 @@
+import { requestCountry } from "../../../../shared/regional-pricing";
 import Stripe from "stripe";
 import { resolveTimeZone } from "../calendar";
 import { scheduleBookingRemindersForBooking } from "../booking-reminders";
@@ -97,7 +98,7 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
       return c.json({ error: "date is required in YYYY-MM-DD format" }, 400);
     }
 
-    const profile = await loadSiteProfileForCommerce(c.env, site);
+    const profile = await loadSiteProfileForCommerce(c.env, site, requestCountry(c.req.raw));
     const bookIntent = profile?.intents?.book as CoreBookIntent | undefined;
     if (!bookIntent?.enabled) return c.json({ error: "Booking is not enabled for this site" }, 404);
 
@@ -148,7 +149,7 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
       return c.json({ error: "Enter a valid email address" }, 400);
     }
 
-    const profile = await loadSiteProfileForCommerce(c.env, site);
+    const profile = await loadSiteProfileForCommerce(c.env, site, requestCountry(c.req.raw));
     const bookIntent = profile?.intents?.book as CoreBookIntent | undefined;
     if (!bookIntent?.enabled) return c.json({ error: "Booking is not enabled for this site" }, 404);
 
@@ -274,7 +275,7 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
       return c.json({ error: "Enter a valid email address" }, 400);
     }
 
-    const profile = await loadSiteProfileForCommerce(c.env, site);
+    const profile = await loadSiteProfileForCommerce(c.env, site, requestCountry(c.req.raw));
     const bookIntent = profile?.intents?.book as CoreBookIntent | undefined;
     if (!bookIntent?.enabled) return c.json({ error: "Booking is not enabled for this site" }, 404);
 
@@ -295,7 +296,7 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
     }
     const manualAmount =
       offer.pricing?.enabled && offer.pricing.paymentMethod === "manual"
-        ? normalizeBookingAmount(body.amount, offer.pricing)
+        ? normalizeBookingAmount(body.amount, offer.pricing, body.currency)
         : null;
     if (manualAmount && !manualAmount.ok) {
       return c.json({ error: manualAmount.error }, 400);
@@ -403,7 +404,7 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
       return c.json({ error: "Enter a valid email address" }, 400);
     }
 
-    const profile = await loadSiteProfileForCommerce(c.env, site);
+    const profile = await loadSiteProfileForCommerce(c.env, site, requestCountry(c.req.raw));
     const bookIntent = profile?.intents?.book as CoreBookIntent | undefined;
     if (!bookIntent?.enabled) return c.json({ error: "Booking is not enabled for this site" }, 404);
 
@@ -411,7 +412,7 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
     if (!offer) return c.json({ error: "Paid booking offer not found" }, 404);
 
     const pricing = offer.pricing;
-    const amount = normalizeBookingAmount(body.amount, pricing);
+    const amount = normalizeBookingAmount(body.amount, pricing, body.currency);
     if (!amount.ok) return c.json({ error: amount.error }, 400);
 
     const slot = resolveBookingSlot({

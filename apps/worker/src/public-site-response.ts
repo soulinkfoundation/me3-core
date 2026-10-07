@@ -9,15 +9,17 @@ export async function publicSiteFileResponse(options: {
   path?: string;
   noindex?: boolean;
   showCreateSitePrompt?: boolean;
+  regionalPricing?: boolean;
 }): Promise<Response> {
   const showPrompt = options.published && options.showCreateSitePrompt && options.contentType.startsWith('text/html');
   const content = showPrompt
     ? new TextEncoder().encode(addCreateSitePrompt(new TextDecoder().decode(options.content))).buffer
     : options.content;
   const headers = new Headers({ 'Content-Type': options.contentType });
-  if (!options.published) {
-    headers.set('Cache-Control', 'no-store');
-    headers.set('X-Robots-Tag', 'noindex, nofollow');
+  if (!options.published || options.regionalPricing) {
+    headers.set('Cache-Control', options.published ? 'private, no-store' : 'no-store');
+    if (!options.published || options.noindex) headers.set('X-Robots-Tag', 'noindex, nofollow');
+    if (options.published) headers.set('Link', `<${options.profileUrl}>; rel="alternate"; type="application/json"; title="ME3 public profile"`);
     return new Response(options.request?.method === 'HEAD' ? null : content, { headers });
   }
   headers.set('Cache-Control', 'public, max-age=0, must-revalidate');

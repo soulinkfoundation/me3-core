@@ -15,6 +15,7 @@ import {
 } from "../commerce-bridge";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import type { Env } from "../types";
+import { requestCountry } from "../../../../shared/regional-pricing";
 
 type CommerceRouteDeps = OwnerRouteDeps & {
   getCoreWebOrigin(env: Env, requestUrl?: string): string;
@@ -89,6 +90,7 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
           c.req.param("productSlug") || "",
           body,
           c.req.url,
+          requestCountry(c.req.raw),
         ),
       );
     } catch (error) {

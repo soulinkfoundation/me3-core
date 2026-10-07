@@ -1,3 +1,4 @@
+import { requestCountry } from "../../../../shared/regional-pricing";
 import Stripe from "stripe";
 import {
   appendQueryParams,
@@ -36,6 +37,7 @@ type EventBookingBody = {
   guestEmail?: unknown;
   notes?: unknown;
   amount?: unknown;
+  currency?: unknown;
   returnUrl?: unknown;
   pageId?: unknown;
   actionId?: unknown;
@@ -52,6 +54,7 @@ export function registerEventBookingRoutes(app: AppHono) {
       bookingType: c.req.param("bookingType"),
       offerId: c.req.param("offerId"),
       localDate: normalizeShortText(c.req.query("date"), 20),
+      country: requestCountry(c.req.raw),
     });
     if ("error" in context) return c.json({ error: context.error }, context.status as any);
     if (context.occurrence.startsAtMs <= Date.now() + 5 * 60_000) {
@@ -78,6 +81,7 @@ export function registerEventBookingRoutes(app: AppHono) {
       bookingType: c.req.param("bookingType"),
       offerId: c.req.param("offerId"),
       localDate: normalizeShortText(body.localDate, 20),
+      country: requestCountry(c.req.raw),
     });
     if ("error" in context) return c.json({ error: context.error }, context.status as any);
     if (context.occurrence.startsAtMs <= Date.now() + 5 * 60_000) {
@@ -106,7 +110,7 @@ export function registerEventBookingRoutes(app: AppHono) {
     const manualAmount =
       context.offer.pricing?.enabled &&
       context.offer.pricing.paymentMethod === "manual"
-        ? normalizeBookingAmount(body.amount, context.offer.pricing)
+        ? normalizeBookingAmount(body.amount, context.offer.pricing, body.currency)
         : null;
     if (manualAmount && !manualAmount.ok) {
       return c.json({ error: manualAmount.error }, 400);
@@ -143,6 +147,7 @@ export function registerEventBookingRoutes(app: AppHono) {
         bookingType: c.req.param("bookingType"),
         offerId: c.req.param("offerId"),
         localDate: normalizeShortText(body.localDate, 20),
+        country: requestCountry(c.req.raw),
       });
       if ("error" in context) return c.json({ error: context.error }, context.status as any);
       if (context.occurrence.startsAtMs <= Date.now() + 5 * 60_000) {
@@ -161,7 +166,7 @@ export function registerEventBookingRoutes(app: AppHono) {
       if (!guestName) return c.json({ error: "Name is required" }, 400);
       if (!guestEmail) return c.json({ error: "Enter a valid email address" }, 400);
       if (!quantity) return c.json({ error: "Choose a valid number of attendees" }, 400);
-      const amount = normalizeBookingAmount(body.amount, context.offer.pricing);
+      const amount = normalizeBookingAmount(body.amount, context.offer.pricing, body.currency);
       if (!amount.ok) return c.json({ error: amount.error }, 400);
 
       const stripe = await getStripe(c.env, context.site.user_id);
@@ -293,6 +298,7 @@ async function resolveEventRequest(
     bookingType: string;
     offerId: string;
     localDate: string;
+    country: string | null;
   },
 ) {
   if (!isEventBookingType(input.bookingType)) {
@@ -300,7 +306,7 @@ async function resolveEventRequest(
   }
   const site = await getSiteByUsername(env, input.username);
   if (!site) return { error: "Site not found", status: 404 as const };
-  const profile = await loadSiteProfileForCommerce(env, site);
+  const profile = await loadSiteProfileForCommerce(env, site, input.country);
   const bookIntent = profile?.intents?.book as CoreBookIntent | undefined;
   if (!bookIntent?.enabled) {
     return { error: "Booking is not enabled for this site", status: 404 as const };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createConfirmedOneToOneBooking,
+  normalizeBookingAmount,
   normalizeSiteCheckoutReturnUrl,
   listOneToOneBookingOffers,
   resolvePaidOneToOneOffer,
@@ -9,6 +10,16 @@ import {
   type ResolvedOneToOneBookingOffer,
 } from "./booking";
 import type { DbBooking, DbSite, Env } from "./types";
+import { localizeRegionalPrices } from "../../../shared/regional-pricing";
+
+it("validates fixed booking amounts and currencies against the country price", () => {
+  const pricing = { enabled: true, suggestedAmount: 50, currency: "USD", allowFlexiblePricing: false, regionalPrices: [{ country: "PK", currency: "PKR", amount: 800000 }] };
+  const pk = localizeRegionalPrices(pricing, "PK");
+  expect(normalizeBookingAmount(8000, pk, "PKR")).toEqual({ ok: true, amountCents: 800000, currency: "pkr" });
+  expect(normalizeBookingAmount(50, pk, "USD").ok).toBe(false);
+  expect(normalizeBookingAmount(8000, pk, "USD").ok).toBe(false);
+  expect(normalizeBookingAmount(undefined, pricing)).toEqual({ ok: true, amountCents: 5000, currency: "usd" });
+});
 
 const site: DbSite = {
   id: "site-1",

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import RegionalPriceFields from "./RegionalPriceFields.vue";
+import type { RegionalPrice } from "../../../../../shared/regional-pricing";
 import ProductDeliveryFields from "./ProductDeliveryFields.vue";
 import { ref, computed, watch, nextTick } from "vue";
 import {
@@ -82,6 +84,11 @@ function formatProductPrice(product: WizardProduct): string {
   const cents = Number(product.price);
   const safeCents = Number.isFinite(cents) && cents >= 0 ? cents : 0;
   return `${(safeCents / 100).toFixed(2)} ${product.currency}`;
+}
+
+function setRegionalPrices(regionalPrices: RegionalPrice[] | undefined) {
+  if (selectedProductIndex.value === null) return;
+  wizard.updateProduct(selectedProductIndex.value, { regionalPrices, ...(regionalPrices?.length ? { currency: "USD" } : {}) });
 }
 
 const productCurrency = computed({
@@ -514,8 +521,9 @@ defineExpose({
 
         <div class="form-grid">
           <div class="form-group">
-            <label>Price</label>
+            <label for="product-price">{{ selectedProduct.regionalPrices?.length ? "Outside Pakistan price (USD)" : "Price" }}</label>
             <input
+              id="product-price"
               v-model.number="priceDollars"
               type="number"
               min="0"
@@ -523,8 +531,8 @@ defineExpose({
             />
           </div>
           <div class="form-group">
-            <label>Currency</label>
-            <select v-model="productCurrency">
+            <label for="product-currency">Currency</label>
+            <select id="product-currency" v-model="productCurrency" :disabled="Boolean(selectedProduct.regionalPrices?.length)">
               <option value="USD">USD</option>
               <option value="GBP">GBP</option>
               <option value="EUR">EUR</option>
@@ -537,6 +545,8 @@ defineExpose({
             </select>
           </div>
         </div>
+
+        <RegionalPriceFields :model-value="selectedProduct.regionalPrices" :input-id="`product-${selectedProduct.slug}`" :shipping="selectedProduct.delivery?.kind === 'physical'" @update:model-value="setRegionalPrices" />
 
         <PaymentCollectionFields
           v-if="selectedProductIsPaid"

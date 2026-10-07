@@ -1,3 +1,4 @@
+import { localizeRegionalPrices, regionalPricingError, type RegionalPrice } from "../../../shared/regional-pricing";
 import { productDeliveryError, parseDeliveryAddress, type ProductDelivery } from "../../../shared/product-delivery";
 import type Stripe from "stripe";
 import {
@@ -28,6 +29,8 @@ const PAYMENTS_UNAVAILABLE_MESSAGE =
   "Payments are not available for this purchase right now. Please contact the site owner.";
 
 type ProductCheckoutBody = {
+  expectedCurrency?: unknown;
+  expectedAmount?: unknown;
   deliveryAddress?: unknown;
   buyerName?: unknown;
   buyerEmail?: unknown;
@@ -39,6 +42,7 @@ type ProductCheckoutBody = {
 };
 
 type ProductRecord = {
+  regionalPrices?: RegionalPrice[];
   delivery?: ProductDelivery;
   slug?: string;
   title?: string;
@@ -66,6 +70,7 @@ export async function createProductCheckout(
   productSlug: string,
   body: ProductCheckoutBody,
   requestUrl: string,
+  country: string | null = null,
 ): Promise<{
   paymentMethod: "stripe" | "manual";
   orderId: string;
@@ -78,9 +83,15 @@ export async function createProductCheckout(
   const buyerNote = normalizeLongText(body.buyerNote, 2000);
   if (!buyerName) throw new CommerceOrderInputError("Your name is required.");
   if (!buyerEmail) throw new CommerceOrderInputError("Enter a valid email address.");
-  const product = await findProduct(env, site, productSlug);
-  if (!product || product.available === false) {
+  const sourceProduct = await findProduct(env, site, productSlug);
+  if (!sourceProduct || sourceProduct.available === false) {
     throw new CommerceOrderInputError("Product is not available.", 404);
+  }
+  const pricingError = regionalPricingError(sourceProduct);
+  if (pricingError) throw new CommerceOrderInputError(pricingError, 409);
+  const product = localizeRegionalPrices(sourceProduct, country);
+  if ((body.expectedCurrency !== undefined && body.expectedCurrency !== product.currency) || (body.expectedAmount !== undefined && body.expectedAmount !== product.price)) {
+    throw new CommerceOrderInputError("The price has changed for your location. Reload the page before paying.", 409);
   }
   const deliveryError = productDeliveryError(product.delivery);
   if (deliveryError) throw new CommerceOrderInputError(deliveryError, 409);

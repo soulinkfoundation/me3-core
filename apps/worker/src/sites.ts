@@ -1,4 +1,5 @@
 import { publicSiteFileResponse } from "./public-site-response";
+import { requestCountry } from "../../../shared/regional-pricing";
 import {
   getLandingPageTemplateId,
   normalizeBusinessSiteDocument,
@@ -726,6 +727,9 @@ export async function serveSiteFileResponse(
   }
 
   const requestedPath = normalizeSiteFileName(rawPath) || "index.html";
+  if (requestedPath.split("/").includes("_pricing")) {
+    return new Response("Page not found", { status: 404, headers: { "Cache-Control": "no-store" } });
+  }
   let noindex = false;
   if (requirePublished && ["me.json", ".well-known/me.json"].includes(requestedPath)) {
     const response = await siteMeJsonResponse(env, site, request ? new URL(request.url).origin + publicBasePath : "");
@@ -777,7 +781,7 @@ export async function serveSiteFileResponse(
       : null;
   const isMediaPath = publicPath.startsWith("public/files/") || publicPath === "public/favicon.png";
   const r2File = isMediaPath ? await getSiteMediaFile(env, site, publicPath) : null;
-  const file =
+  let file =
     r2File ||
     (await getSiteFile(env, site.id, publicPath)) ||
     (indexPath ? await getSiteFile(env, site.id, indexPath) : null) ||
@@ -790,11 +794,21 @@ export async function serveSiteFileResponse(
     });
   }
 
+  const pricingCountries = file.content_type.startsWith("text/html")
+    ? new TextDecoder().decode(siteFileContentToArrayBuffer(file.content)).match(/<meta name="me3-pricing-countries" content="([A-Z,]+)">/)?.[1].split(",")
+    : undefined;
+  const country = requestCountry(request);
+  if (requirePublished && country && pricingCountries?.includes(country)) {
+    const localized = await getSiteFile(env, site.id, `public/_pricing/${country}/${file.path.replace(/^public\//, "")}`);
+    if (!localized) return new Response("Pricing is temporarily unavailable. Please try again.", { status: 503, headers: { "Cache-Control": "no-store" } });
+    file = localized;
+  }
   return publicSiteFileResponse({
     content: siteFileContentToArrayBuffer(file.content), contentType: file.content_type,
     sha256: file.sha256, published: requirePublished, request, path: requestedPath, noindex,
     showCreateSitePrompt: !(site.custom_domain && site.custom_domain_status === "active"),
     profileUrl: `${publicBasePath}/me.json`,
+    regionalPricing: Boolean(pricingCountries?.length),
   });
 }
 

@@ -1,4 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
+import { Hono } from "hono";
+import { registerEventBookingRoutes } from "./routes/event-booking";
+import type { AppBindings } from "./http/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./booking-reminders", () => ({
@@ -78,6 +81,35 @@ describe("event booking capacity", () => {
   beforeEach(() => {
     database = new SqliteD1();
     env = { DB: database as unknown as D1Database } as Env;
+  });
+
+  it.each([
+    ["class", "PK", 800000, "pkr"], ["class", "US", 5000, "usd"],
+    ["retreat", "PK", 800000, "pkr"], ["retreat", null, 5000, "usd"],
+  ] as const)("registers a %s for %s using the trusted country price", async (kind, country, amount, currency) => {
+    database.raw.exec(`CREATE TABLE sites (id TEXT, user_id TEXT, username TEXT, site_type TEXT, site_role TEXT, template_id TEXT, custom_domain TEXT, custom_domain_status TEXT, custom_domain_cf_id TEXT, created_at TEXT, updated_at TEXT, published_at TEXT);
+      INSERT INTO sites (id, user_id, username, published_at) VALUES ('site-1','owner','owner','2026-10-07');`);
+    const book = eventBookIntent();
+    const pricing = { enabled: true, suggestedAmount: 50, currency: "USD", paymentMethod: "manual" as const, paymentInstructions: "Transfer the amount in your confirmation", regionalPrices: [{ country: "PK", currency: "PKR", amount: 800000 }] };
+    const lesson = book.bookingTypes![0].classes![0];
+    lesson.pricing = pricing;
+    lesson.recurrence = { frequency: "weekly", weekday: "monday", startTime: "18:00", startDate: "2099-01-05" };
+    const retreat = book.bookingTypes![1].retreats![0];
+    retreat.pricing = pricing;
+    retreat.startDate = "2099-01-05";
+    retreat.endDate = "2099-01-06";
+    database.raw.prepare("INSERT INTO site_files (site_id, path, content) VALUES (?, 'src/me.json', ?)").run(site.id, Buffer.from(JSON.stringify({ intents: { book } })));
+    const app = new Hono<AppBindings>();
+    registerEventBookingRoutes(app);
+    const id = kind === "class" ? lesson.id : retreat.id;
+    const request = new Request(`https://owner.example/api/book/owner/events/${kind}/${id}/register`, {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-IPCountry": "PK" },
+      body: JSON.stringify({ localDate: "2099-01-05", quantity: 2, guestName: "Buyer", guestEmail: "buyer@example.com", amount: amount / 100, currency: currency.toUpperCase(), country: "PK" }),
+    });
+    if (country) Object.defineProperty(request, "cf", { value: { country } });
+    const response = await app.fetch(request, env);
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(database.raw.prepare("SELECT suggested_amount, currency, quantity FROM bookings").get()).toMatchObject({ suggested_amount: amount * 2, currency, quantity: 2 });
   });
 
   it("atomically gives the final class spaces to only one concurrent registration", async () => {

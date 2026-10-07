@@ -149,8 +149,22 @@ function createEnv(
 }
 
 describe("managed commerce orders", () => {
-  it("keeps the direct key as fallback while delegating payment creation and verification", async () => {
-    const { env, orders } = createEnv();
+  it.each([["PK", 800000, "pkr"], ["US", 5000, "usd"], [null, 5000, "usd"]] as const)("persists the fixed price for %s in manual orders and emails", async (country, amount, currency) => {
+    const { env, orders } = createEnv({ slug: "session", title: "Session", price: 5000, currency: "USD", paymentMethod: "manual", paymentInstructions: "Transfer the amount shown", regionalPrices: [{ country: "PK", currency: "PKR", amount: 800000 }] });
+    sendProductPaymentInstructionsEmail.mockResolvedValue({ status: "sent" });
+    await createProductCheckout(env, site, "session", { buyerName: "Buyer", buyerEmail: "buyer@example.com" }, "https://owner.example/order", country);
+    expect(orders[0]).toMatchObject({ amount_due: amount, currency, payment_method: "manual" });
+    expect(sendProductPaymentInstructionsEmail).toHaveBeenCalledWith(env, expect.objectContaining({ amountDue: amount, currency }));
+  });
+
+  it("rejects a stale displayed price and never trusts a country supplied in the body", async () => {
+    const { env, orders } = createEnv({ slug: "session", title: "Session", price: 5000, currency: "USD", paymentMethod: "manual", paymentInstructions: "Transfer", regionalPrices: [{ country: "PK", currency: "PKR", amount: 800000 }] });
+    await expect(createProductCheckout(env, site, "session", { buyerName: "Buyer", buyerEmail: "buyer@example.com", expectedCurrency: "USD", expectedAmount: 5000 }, "https://owner.example/order", "PK")).rejects.toThrow("price has changed");
+    expect(orders).toHaveLength(0);
+  });
+
+  it.each([["US", 4900, "eur"], ["PK", 800000, "pkr"]] as const)("delegates and verifies the fixed country price for %s through managed checkout", async (country, amount, currency) => {
+    const { env, orders } = createEnv({ slug: "clarity-kit", title: "Clarity Kit", price: 4900, currency: "EUR", available: true, regionalPrices: [{ country: "PK", currency: "PKR", amount: 800000 }] });
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -187,6 +201,7 @@ describe("managed commerce orders", () => {
         returnUrl: "https://owner.example/clarity",
       },
       "https://owner.example/api/shop/owner/clarity-kit/checkout-session",
+      country,
     );
     const statusPayload = JSON.parse(
       (fetchMock.mock.calls[1][1] as RequestInit).body as string,
@@ -194,7 +209,7 @@ describe("managed commerce orders", () => {
     expect(statusPayload).toMatchObject({
       orderId: checkout.orderId,
       siteId: site.id,
-      product: { id: "clarity-kit", amount: 4900, currency: "eur" },
+      product: { id: "clarity-kit", amount, currency },
       attribution: { pageId: "page-1", actionId: "primary-action", campaign: "launch" },
     });
     expect(orders[0]).toMatchObject({
@@ -204,7 +219,7 @@ describe("managed commerce orders", () => {
       checkout_session_id: "cs_managed",
     });
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ paymentStatus: "paid", amountTotal: 1, currency: "eur", orderId: checkout.orderId, siteId: site.id })));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ paymentStatus: "paid", amountTotal: 1, currency, orderId: checkout.orderId, siteId: site.id })));
     await expect(completeProductCheckout(env, site, "cs_managed")).rejects.toThrow("total does not match");
     expect(orders[0].status).toBe("pending");
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ checkoutStatus: "expired", paymentStatus: "unpaid" })));
@@ -216,8 +231,8 @@ describe("managed commerce orders", () => {
         JSON.stringify({
           paymentStatus: "paid",
           paymentIntentId: "pi_managed",
-          amountTotal: 4900,
-          currency: "eur",
+          amountTotal: amount,
+          currency,
           orderId: checkout.orderId,
           siteId: site.id,
         }),

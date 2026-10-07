@@ -4,6 +4,7 @@ import { scheduleBookingRemindersForBooking } from "./booking-reminders";
 import { getStripeSecretKey } from "./commerce-settings";
 import { getPublicSiteOrigin } from "./sites";
 import type { Me3SiteProfile } from "@me3-core/site-renderer";
+import { localizeRegionalPrices, type RegionalPrice } from "../../../shared/regional-pricing";
 import type { DbBooking, DbSite, Env } from "./types";
 import { resolveBookingMeeting } from "./booking-meetings";
 
@@ -15,6 +16,7 @@ export type PaidBookingCheckoutBody = {
   guestEmail?: unknown;
   notes?: unknown;
   amount?: unknown;
+  currency?: unknown;
   returnUrl?: unknown;
   pageId?: unknown;
   actionId?: unknown;
@@ -38,6 +40,7 @@ export type PaidBookingCompletionBody = {
 };
 
 export type CoreBookingPricing = {
+  regionalPrices?: RegionalPrice[];
   enabled?: boolean;
   suggestedAmount?: number;
   currency?: string;
@@ -213,11 +216,14 @@ export function normalizeEmail(value: unknown): string {
 export async function loadSiteProfileForCommerce(
   env: Env,
   site: DbSite,
+  country?: string | null,
 ): Promise<Me3SiteProfile | null> {
   const meJson =
     (await getSiteFileText(env, site.id, "src/me.json")) ||
     (await getSiteFileText(env, site.id, "public/me.json"));
-  return meJson ? parseSiteProfile(meJson, site.username) : null;
+  if (!meJson) return null;
+  const profile = parseSiteProfile(meJson, site.username);
+  return country === undefined ? profile : localizeRegionalPrices(profile, country);
 }
 
 export function resolveOneToOneBookingOffer(
@@ -326,7 +332,11 @@ function slugifyBookingOfferId(value: string): string {
 export function normalizeBookingAmount(
   value: unknown,
   pricing: CoreBookingPricing,
+  expectedCurrency?: unknown,
 ): { ok: true; amountCents: number; currency: string } | { ok: false; error: string } {
+  if (expectedCurrency !== undefined && (typeof expectedCurrency !== "string" || expectedCurrency.toUpperCase() !== String(pricing.currency || "USD").toUpperCase())) {
+    return { ok: false, error: "The price has changed for your location. Reload the page before booking." };
+  }
   const suggestedAmount = Number(pricing.suggestedAmount);
   const requestedAmount =
     typeof value === "number" && Number.isFinite(value)

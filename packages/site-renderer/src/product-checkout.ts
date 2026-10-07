@@ -36,7 +36,7 @@ export function renderProductCheckout(product: ProductPurchase): string {
   const unavailable = product.available === false ? "This product is currently unavailable."
     : !hasPrice || !product.username ? "This product is not ready for checkout yet." : "";
   if (unavailable) return `<section class="product-purchase" aria-label="Purchase">${price}<p>${unavailable}</p></section>`;
-  const config = JSON.stringify({ username: product.username, slug: product.slug, manual, physical }).replace(/</g, "\\u003c");
+  const config = JSON.stringify({ username: product.username, slug: product.slug, expectedAmount: product.price, expectedCurrency: product.currency, manual, physical }).replace(/</g, "\\u003c");
   return `<section class="product-purchase" aria-label="Purchase" data-product-purchase>
     ${price}${shipping}${deliveryInfo}${returns}
     <p class="product-status" data-product-status role="status" aria-live="polite"></p>
@@ -95,7 +95,7 @@ const productCheckoutScript = String.raw`function(config) {
       returnUrl.hash = "";
       const result = await post("/api/shop/" + encodeURIComponent(config.username) + "/" + encodeURIComponent(config.slug) + "/order", {
         deliveryAddress: config.physical ? Object.fromEntries(["line1", "line2", "city", "region", "postalCode", "country"].map(key => [key, values.get(key)])) : undefined,
-        buyerName: values.get("buyerName"), buyerEmail: values.get("buyerEmail"), returnUrl: returnUrl.toString(),
+        buyerName: values.get("buyerName"), buyerEmail: values.get("buyerEmail"), expectedAmount: config.expectedAmount, expectedCurrency: config.expectedCurrency, returnUrl: returnUrl.toString(),
       });
       if (result.paymentMethod === "manual") {
         completed = true;

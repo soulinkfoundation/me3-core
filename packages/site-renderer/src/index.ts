@@ -6,6 +6,7 @@ import { bookingConfirmationMarkup, bookingConfirmationRuntime, bookingConfirmat
 export { normalizeSiteTheme, siteThemes } from "./themes";
 export type { SiteColorMode, SiteThemeId } from "./themes";
 import { renderProductCheckout, productCheckoutCss } from "./product-checkout";
+import { localizeRegionalPrices, regionalPricingCountries, type RegionalPrice } from "../../../shared/regional-pricing";
 import { applyImageMetadata, type SiteImageMetadata } from "./image-metadata";
 export * from "./image-metadata";
 import { discoveryLinks, jsonLd, publicDiscoveryFiles, publicSiteUrl, socialMetadata } from "./public-metadata";
@@ -60,6 +61,7 @@ type Me3Post = Me3Page & {
 };
 
 type Me3Product = Me3Page & {
+  regionalPrices?: RegionalPrice[];
   delivery?: ProductDelivery;
   price?: number;
   currency?: string;
@@ -221,6 +223,7 @@ export const DEFAULT_HOME_SECTIONS: NonNullable<SitePresentationSettings["sectio
 ];
 
 type PricingConfig = {
+  regionalPrices?: RegionalPrice[];
   enabled?: boolean;
   suggestedAmount?: number;
   currency?: string;
@@ -281,6 +284,20 @@ export async function generateSiteHtml(
   context: { baseUrl?: string; entityType?: "Person" | "Organization"; images?: SiteImageMetadata } = {},
 ): Promise<Record<string, string>> {
   if (profile.visibility === "private") return {};
+  const pricingCountries = regionalPricingCountries(profile);
+  if (pricingCountries.length) {
+    const output = await generateSiteHtml(localizeRegionalPrices(profile, null), files, capabilities, context);
+    for (const [path, html] of Object.entries(output)) {
+      if (path.endsWith(".html")) output[path] = html.replace("</head>", `<meta name="me3-pricing-countries" content="${escapeHtml(pricingCountries.join(","))}">\n</head>`);
+    }
+    for (const country of pricingCountries) {
+      const localized = await generateSiteHtml(localizeRegionalPrices(profile, country), files, capabilities, context);
+      for (const [path, html] of Object.entries(localized)) {
+        if (path.endsWith(".html")) output[`_pricing/${country}/${path}`] = html;
+      }
+    }
+    return output;
+  }
   const output: Record<string, string> = {};
   const fileMap = new Map(files.map((file) => [normalizeSitePath(file.name), file.content]));
   const sectionPaths = resolveSiteSectionPaths(profile);
@@ -1352,7 +1369,7 @@ function eventBookingWidgetScript(): string {
   root.querySelectorAll('.booking-card').forEach(function(button,index){if(config.offers[index])button.dataset.offerId=config.offers[index].id;button.addEventListener('click',function(){selectedOfferId=button.dataset.offerId||selectedOfferId;root.querySelectorAll('.booking-card').forEach(function(item){var active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-pressed',String(active));});updateOfferFields();if(root.querySelector('[data-booking-day-strip]'))refreshDayStrip();else loadAvailability();});});
   updateOfferFields();
   if(dateInput&&config.bookingType==='class'){if(root.querySelector('[data-booking-day-strip]')){${bookingDayStripRuntime("offer().timezone", "(!offer().startDate || dateValue >= offer().startDate) && (!offer().weekday || weekday === offer().weekday)", "loadAvailability")}}else{var today=new Date();dateInput.min=String(today.getFullYear())+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');dateInput.addEventListener('change',loadAvailability);}}
-  form.addEventListener('submit',function(event){event.preventDefault();if(!occurrence){setStatus('Check availability before booking.',true);return;}if(!form.checkValidity()){form.reportValidity();return;}var selected=offer();var confirmedDetails=confirmationDetails(occurrence,selected.title,selected.timezone);var payload={localDate:dateInput.value,quantity:Number(quantityInput.value),guestName:form.elements.guestName.value,guestEmail:form.elements.guestEmail.value,notes:form.elements.notes.value,amount:Number(amountInput.value),returnUrl:window.location.href.split('#')[0]};var paid=selected.pricing&&selected.pricing.enabled&&selected.pricing.paymentMethod!=='manual';var endpoint='/api/book/'+encodeURIComponent(config.username)+'/events/'+encodeURIComponent(config.bookingType)+'/'+encodeURIComponent(selected.id)+'/'+(paid?'checkout-session':'register');setStatus(paid?'Preparing checkout...':'Confirming booking...');fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Booking failed.');return data;});}).then(function(data){if(paid){if(data.url){window.location.href=data.url;return;}throw new Error('Checkout URL missing.');}form.reset();form.classList.remove('is-visible');occurrence=null;setStatus(selected.pricing&&selected.pricing.paymentMethod==='manual'?'Your booking is confirmed. Check your email for payment details.':'Your booking is confirmed.');showConfirmation(confirmedDetails,selected.pricing&&selected.pricing.paymentMethod==='manual'?'Check your email for booking details and payment instructions.':'Check your email for booking details.');}).catch(function(error){setStatus(error.message||'Booking failed.',true);});});
+  form.addEventListener('submit',function(event){event.preventDefault();if(!occurrence){setStatus('Check availability before booking.',true);return;}if(!form.checkValidity()){form.reportValidity();return;}var selected=offer();var confirmedDetails=confirmationDetails(occurrence,selected.title,selected.timezone);var payload={localDate:dateInput.value,quantity:Number(quantityInput.value),guestName:form.elements.guestName.value,guestEmail:form.elements.guestEmail.value,notes:form.elements.notes.value,amount:Number(amountInput.value),currency:selected.pricing.currency,returnUrl:window.location.href.split('#')[0]};var paid=selected.pricing&&selected.pricing.enabled&&selected.pricing.paymentMethod!=='manual';var endpoint='/api/book/'+encodeURIComponent(config.username)+'/events/'+encodeURIComponent(config.bookingType)+'/'+encodeURIComponent(selected.id)+'/'+(paid?'checkout-session':'register');setStatus(paid?'Preparing checkout...':'Confirming booking...');fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Booking failed.');return data;});}).then(function(data){if(paid){if(data.url){window.location.href=data.url;return;}throw new Error('Checkout URL missing.');}form.reset();form.classList.remove('is-visible');occurrence=null;setStatus(selected.pricing&&selected.pricing.paymentMethod==='manual'?'Your booking is confirmed. Check your email for payment details.':'Your booking is confirmed.');showConfirmation(confirmedDetails,selected.pricing&&selected.pricing.paymentMethod==='manual'?'Check your email for booking details and payment instructions.':'Check your email for booking details.');}).catch(function(error){setStatus(error.message||'Booking failed.',true);});});
   if(config.bookingType==='retreat')loadAvailability();
   var params=new URLSearchParams(window.location.search);var paidOffer=config.offers.find(function(item){return params.get('event_booking_pending')===config.bookingType+':'+item.id;});var matches=!!paidOffer;var success=(params.get('event_booking')==='success'||params.get('purchase')==='success')&&params.get('session_id');if(matches&&success){setStatus('Confirming your paid booking...');fetch('/api/book/'+encodeURIComponent(config.username)+'/events/complete-checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:params.get('session_id')})}).then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Payment succeeded, but booking confirmation failed.');return data;});}).then(function(data){setStatus('Payment successful. Your booking is confirmed.');showConfirmation(confirmationDetails(data.booking,paidOffer.title,paidOffer.timezone),'Payment successful. Check your email for booking details.');clearParams();}).catch(function(error){setStatus(error.message,true);});}else if(matches&&(params.get('event_booking')==='cancelled'||params.get('purchase')==='cancelled')){setStatus('Checkout cancelled. No payment was taken.',true);clearParams();}
 })();`;
@@ -1632,6 +1649,7 @@ function paidBookingWidgetScript(): string {
       guestEmail:form.elements.guestEmail.value,
       notes:form.elements.notes.value,
       amount:amountInput?Number(amountInput.value):selected.pricing.suggestedAmount,
+      currency:selected.pricing.currency,
       returnUrl:window.location.href.split('#')[0]
     };
     if(!selected.pricing||!selected.pricing.enabled||selected.pricing.paymentMethod==='manual'){
@@ -2084,7 +2102,7 @@ function formatPricing(pricing?: BookingPricingConfig): string {
 }
 
 function currencySymbol(currency: string): string {
-  return ({ USD: "$", GBP: "£", EUR: "€", CAD: "C$", AUD: "A$" } as Record<string, string>)[currency] || currency;
+  return ({ USD: "$", GBP: "£", EUR: "€", CAD: "C$", AUD: "A$", PKR: "PKR " } as Record<string, string>)[currency] || currency;
 }
 
 function filePathForHtml(url: string, basePath = "./"): string {
