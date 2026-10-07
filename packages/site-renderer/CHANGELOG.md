@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+
+- Centre the sun and moon icons inside the theme toggle button.
+
 ## 0.3.1
 
 - Keep starter identity in one hero, without installation header, menu or footer link duplicates.

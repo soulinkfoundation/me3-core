@@ -51,7 +51,7 @@ body[data-layout=cover] .site-home-sections{width:min(1080px,calc(100% - 48px));
 .site-topbar .site-menu-panel{background:var(--surface)}
 .site-theme-toggle{position:relative;display:grid;width:44px;height:44px;flex:0 0 44px;place-items:center;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);cursor:pointer}
 .site-theme-icons{position:relative;display:block;width:22px;height:22px;flex:0 0 22px}
-.site-theme-icon{position:absolute;width:22px;height:22px;transition:transform .45s ease-out,opacity .3s}
+.site-theme-icon{position:absolute;inset:0;display:block;width:22px;height:22px;transition:transform .45s ease-out,opacity .3s}
 .site-theme-icon--sun{opacity:0;transform:rotate(-90deg) scale(.4)}
 .site-theme-icon--moon{opacity:1;transform:rotate(0) scale(1)}
 html[data-color-mode=dark] .site-theme-icon--sun{opacity:1;transform:rotate(0) scale(1)}

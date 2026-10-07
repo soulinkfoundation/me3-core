@@ -7,7 +7,7 @@ ME3's shared HTML renderer, themes, layouts and public metadata. It has no Cloud
 Pin the package release and subdirectory with pnpm 9:
 
 ```sh
-pnpm add '@me3-core/site-renderer@github:soulinkfoundation/me3-core#site-renderer-v0.3.1&path:/packages/site-renderer'
+pnpm add '@me3-core/site-renderer@github:soulinkfoundation/me3-core#site-renderer-v0.3.2&path:/packages/site-renderer'
 ```
 
 The Git dependency's `prepare` script builds ESM and TypeScript declarations in `dist/`. Wrangler bundles the emitted JavaScript. No monorepo link or npm publishing credentials are required.
