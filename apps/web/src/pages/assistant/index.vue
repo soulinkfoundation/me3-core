@@ -1475,6 +1475,7 @@ async function setRouteThreadId(threadId: string) {
       ...route.query,
       thread: threadId,
       project: thread?.projectId || undefined,
+      new: undefined,
     },
   });
 }
@@ -1494,6 +1495,7 @@ async function startNewAssistantChat(
       ...route.query,
       thread: undefined,
       project: projectId || undefined,
+      new: "1",
       prompt: undefined,
       send: undefined,
     },
@@ -2078,7 +2080,21 @@ function threadTitle(thread: AssistantThread) {
 }
 
 async function loadAssistantThreadFromRoute() {
-  const threadId = routeThreadId();
+  let threadId = routeThreadId();
+  if (!threadId && !routeProjectId() && !siteBuilderMode.value && route.query.new !== "1") {
+    try {
+      const response = await api.post<{ thread: AssistantThread }>("/assistant/threads/primary", {});
+      // A project or history selection made while resolving takes precedence.
+      if (routeThreadId() || routeProjectId() || route.query.new === "1") return;
+      threadId = response.thread.id;
+      assistantThreadId.value = threadId;
+      upsertAssistantThread(response.thread);
+      await setRouteThreadId(threadId);
+    } catch (err) {
+      assistantError.value = messageFromUnknown(err, "Your main conversation could not load.");
+      return;
+    }
+  }
   assistantThreadId.value = threadId;
   assistantError.value = null;
 

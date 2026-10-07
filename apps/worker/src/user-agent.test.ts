@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ dispatch: vi.fn(), moduleDispatch: vi.fn() }));
 
-vi.mock("./agent-chat", () => ({
+vi.mock("./agent-chat", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./agent-chat")>(),
   dispatchAgentSandboxTurn: mocks.moduleDispatch,
   isAgentSandboxDispatchInput: () => true,
 }));

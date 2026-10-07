@@ -138,6 +138,7 @@ test("exports sanitized owner data and restores the exact identity, D1 rows, and
   assert.equal(result.sessionsRotated, true);
   assert.equal(result.requiresClientRepair, true);
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM assistant_messages;"), "1");
+  assert.equal(queryScalar(target, "SELECT thread_id FROM assistant_primary_threads WHERE owner_id = 'owner';"), "main-thread-1");
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM mission_tasks;"), "1");
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM journal_entries;"), "1");
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM email_campaigns;"), "1");

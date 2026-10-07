@@ -367,7 +367,7 @@ export const CORE_CHAT_CAPABILITIES = [
       type: "object",
       required: ["title", "startDate", "startTime", "startTimezone"],
       properties: {
-        title: { type: "string", description: "Calendar event title." },
+        title: { type: "string", description: "Use the owner's event description as the title, for example 'Planning review' from 'Add a planning review tomorrow at 2pm'." },
         startDate: {
           type: "string",
           description: "Event date as YYYY-MM-DD in startTimezone.",

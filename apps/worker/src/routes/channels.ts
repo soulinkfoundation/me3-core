@@ -30,6 +30,7 @@ import {
 import type { DbAgentChannelConnection, DbAgentChannelEvent, DbContact, Env } from "../types";
 import { hashGuestToken } from "../booking-meetings";
 import { getOrCreateInstallSessionSecret } from "../install-secrets";
+import { resolvePrimaryAssistantThread } from "../assistant-primary-thread";
 
 const DEFAULT_SOULINK_API_ORIGIN = "https://soulinkfoundation.org";
 
@@ -352,6 +353,7 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
       runtimeCallbackUrl: callbackUrl,
       dispatchToken,
     });
+    await resolvePrimaryAssistantThread(c.env, ownerId);
 
     await insertProviderChannelEventOnce(c.env, {
       channel: "soulink",

@@ -3,6 +3,7 @@ import type {
   CoreSchedulingToolServices,
 } from "./agent-chat";
 import { formatUtcInstantInTimeZone } from "./booking";
+import { resolvePrimaryAssistantThread } from "./assistant-primary-thread";
 import { addDaysToDateString, resolveTimeZone } from "./calendar";
 import {
   approveSchedulingRequest,
@@ -1611,16 +1612,9 @@ async function notifySchedulingOwner(
   messageId: string,
   scheduling?: AgentSchedulingNotification,
 ) {
-  const threadId = connection.provider_thread_id;
-  if (!threadId) throw new AgentSchedulingError("Soulink assistant chat is not connected.", 409);
-  await env.DB.prepare(
-    `INSERT INTO assistant_threads
-       (id, owner_id, title, origin_surface, status, last_message_at)
-     VALUES (?, ?, 'Soulink scheduling', 'soulink', 'active', CURRENT_TIMESTAMP)
-     ON CONFLICT(id) DO NOTHING`,
-  )
-    .bind(threadId, connection.user_id)
-    .run();
+  const streamChannelId = connection.provider_thread_id;
+  if (!streamChannelId) throw new AgentSchedulingError("Soulink assistant chat is not connected.", 409);
+  const { id: threadId } = await resolvePrimaryAssistantThread(env, connection.user_id);
   await env.DB.prepare(
     `INSERT OR IGNORE INTO assistant_messages
        (id, owner_id, role, content, thread_id)
@@ -1647,7 +1641,7 @@ async function notifySchedulingOwner(
       },
       body: JSON.stringify({
         streamChannelType: connection.provider_connection_id || "messaging",
-        streamChannelId: threadId,
+        streamChannelId,
         messageId,
         messageText,
         createdAt: new Date().toISOString(),

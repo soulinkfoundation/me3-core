@@ -31,7 +31,6 @@ import {
   canRetryAgentChannelInboundEvent,
   claimAgentChannelInboundEvent,
   dispatchAgentChannelTurn,
-  ensureAgentChannelAssistantThread,
   getActiveSoulinkConnectionForThread,
   getAgentChannelDispatchReplay,
   insertProviderChannelEvent,
@@ -83,6 +82,7 @@ import {
 } from "../voice-dictation";
 import type { AppContext, AppHono } from "../http/types";
 import type { DbSite, Env } from "../types";
+import { getPrimaryAssistantThread, resolvePrimaryAssistantThread, type AssistantThreadRow } from "../assistant-primary-thread";
 
 const MAX_ASSISTANT_ATTACHMENT_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_ASSISTANT_TEXT_ATTACHMENT_BYTES = 1 * 1024 * 1024;
@@ -138,20 +138,6 @@ type AssistantChatRoutePerformance = {
   durableObjectHeadersMs: number | null;
   durableObjectStreamMs: number | null;
   routeToRuntimeDoneMs: number | null;
-};
-type AssistantThreadRow = {
-  id: string;
-  owner_id: string;
-  title: string;
-  origin_surface: "assistant" | "launcher" | "soulink" | "job" | "system";
-  project_id: string | null;
-  status: "active" | "archived" | "deleted";
-  pinned_at: string | null;
-  archived_at: string | null;
-  deleted_at: string | null;
-  last_message_at: string | null;
-  created_at: string;
-  updated_at: string;
 };
 type AssistantMessageRow = {
   id: string;
@@ -3029,6 +3015,12 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     return c.json({ ok: true, deleted });
   });
 
+  app.post("/api/assistant/threads/primary", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    return c.json({ thread: serializeAssistantThread(await resolvePrimaryAssistantThread(c.env, ownerId)) });
+  });
+
   app.patch("/api/assistant/threads/:threadId", async (c) => {
     const ownerId = await requireOwner(c);
     if (!ownerId) return unauthorized(c);
@@ -3046,6 +3038,9 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
         : thread.project_id;
     if (projectId && !(await assistantProjectExists(c.env, ownerId, projectId))) {
       return c.json({ ok: false, error: "Project not found" }, 404);
+    }
+    if (projectId && (await getPrimaryAssistantThread(c.env, ownerId))?.id === threadId) {
+      return c.json({ ok: false, error: "The main conversation cannot be moved into a project" }, 409);
     }
 
     let nextStatus = thread.status;
@@ -4219,7 +4214,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       return c.json({ ok: false, error: message }, status as any);
     }
 
-    const threadId = `soulink:${conversationId}`;
     const claimed = await claimAgentChannelInboundEvent(c.env, {
       channel: "soulink",
       connectionId: connection.id,
@@ -4284,15 +4278,13 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       });
     }
     const messageText = resolution.messageText;
-    const threadReady = await ensureAgentChannelAssistantThread(c.env, {
-      userId: connection.user_id,
-      threadId,
-      messageText,
-    });
-    if (!threadReady) {
-      const error = "Soulink assistant thread could not be prepared";
-      await updateAgentChannelInboundDispatchStatus(c.env, claimed.id, "failed", error);
-      return c.json({ ok: false, error }, 409);
+    let threadId: string;
+    try {
+      threadId = (await resolvePrimaryAssistantThread(c.env, connection.user_id)).id;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The main conversation could not be prepared";
+      await updateAgentChannelInboundDispatchStatus(c.env, claimed.id, "failed", message);
+      return c.json({ ok: false, error: message }, 503);
     }
 
     const response = await dispatchAgentChannelTurn(c.env, {

@@ -472,6 +472,7 @@ function createEnv(): Env & {
     return new TextEncoder().encode(String(value ?? ""));
   };
 
+  const primaryThreads = new Map<string, string>();
   const db = {
     async batch(statements: Array<{ run: () => Promise<unknown> }>) {
       const results: unknown[] = [];
@@ -634,7 +635,23 @@ function createEnv(): Env & {
                 state.installSecrets.delete(values[0] as string);
               }
 
+              if (sql.includes("INSERT INTO assistant_primary_threads")) {
+                const ownerId = values[0] as string;
+                const current = state.assistantThreads.find((t) => t.id === primaryThreads.get(ownerId) && t.owner_id === ownerId && t.status === "active" && !t.project_id);
+                if (!current) {
+                  const channelId = state.soulinkConnection?.provider_thread_id;
+                  const eligible = state.assistantThreads.filter((t) => t.owner_id === ownerId && t.status === "active" && !t.project_id);
+                  const candidate = eligible.find((t) => t.id === `soulink:${channelId}`)
+                    || eligible.find((t) => t.id === channelId)
+                    || eligible.find((t) => t.origin_surface === "assistant" || t.origin_surface === "launcher");
+                  primaryThreads.set(ownerId, candidate?.id || values[2] as string);
+                }
+                return { success: true, meta: { changes: 1 } };
+              }
               if (sql.includes("INSERT INTO assistant_threads")) {
+                if (sql.includes("FROM assistant_primary_threads")) {
+                  values = [primaryThreads.get(values[0] as string), values[0], "ME3", null];
+                }
                 const existing = state.assistantThreads.some((thread) => thread.id === values[0]);
                 if (sql.includes("ON CONFLICT(id)") && existing) {
                   return { success: true, meta: { changes: 0 } };
@@ -2321,6 +2338,10 @@ function createEnv(): Env & {
                     ? state.aiGatewaySettings
                     : null
                 ) as T | null;
+              }
+              if (sql.includes("FROM assistant_primary_threads p")) {
+                return (state.assistantThreads.find((thread) => thread.id === primaryThreads.get(values[0] as string)
+                  && thread.owner_id === values[0] && thread.status === "active" && !thread.project_id) || null) as T | null;
               }
               if (sql.includes("FROM assistant_threads")) {
                 return (
@@ -13987,13 +14008,13 @@ describe("ME3 Worker auth", () => {
     expect(runtimeFetch).toHaveBeenCalledOnce();
     const runtimeRequest = runtimeFetch.mock.calls[0]?.[1] as RequestInit;
     expect(JSON.parse(String(runtimeRequest.body))).toMatchObject({
-      threadId: "soulink:assistant-channel",
+      threadId: env.assistantThreads[0]?.id,
       attachmentTextContext: null,
     });
     expect(env.assistantThreads).toEqual([
       expect.objectContaining({
-        id: "soulink:assistant-channel",
-        origin_surface: "soulink",
+        id: expect.any(String),
+        origin_surface: "assistant",
       }),
     ]);
     expect(env.agentEvents).toEqual(
@@ -14258,7 +14279,7 @@ describe("ME3 Worker auth", () => {
         const runtimeRequest = call[1] as RequestInit;
         expect(JSON.parse(String(runtimeRequest.body))).toMatchObject({
           messageText: "List my overdue tasks",
-          threadId: "soulink:assistant-voice-channel",
+          threadId: env.assistantThreads[0]?.id,
           attachmentTextContext: expect.stringContaining(
             "successfully processed and transcribed",
           ),

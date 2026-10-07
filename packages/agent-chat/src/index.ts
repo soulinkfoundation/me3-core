@@ -2118,6 +2118,7 @@ export async function dispatchAgentSandboxTurn(
   schedulingServices?: CoreSchedulingToolServices,
   peopleSearchServices?: CorePeopleSearchToolServices,
   webResearchServices?: CoreWebResearchToolServices,
+  enabledPluginIds?: ReadonlySet<string>,
 ): Promise<AgentSandboxDispatchResponse> {
   const dispatchStartedAt = performance.now();
   const turnPerformance = createAgentChatPerformanceMetrics();
@@ -2446,7 +2447,7 @@ export async function dispatchAgentSandboxTurn(
           streamOptions,
           runtime: sdkRuntime ? "sdk" : "legacy",
           installedPluginIds: sdkRuntime
-            ? new Set(setupReadiness.pluginInstallations
+            ? enabledPluginIds || new Set(setupReadiness.pluginInstallations
                 .filter((plugin) => plugin.enabled === 1 && plugin.status === "installed")
                 .map((plugin) => plugin.plugin_id))
             : undefined,

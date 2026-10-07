@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { api } from "../api";
 import { useAuthStore } from "../stores/auth";
-import { useAgentChat } from "../composables/useAgentChat";
+import { useAgentChat, type AgentChatMessage } from "../composables/useAgentChat";
 import {
   formatAgentRuntimeDetail,
   formatAgentRuntimeMetadata,
@@ -89,6 +89,19 @@ const draft = ref("");
 const error = ref<string | null>(null);
 const composerRef = ref<HTMLTextAreaElement | null>(null);
 const scrollerRef = ref<HTMLDivElement | null>(null);
+const primaryThreadId = ref<string | null>(null);
+
+async function loadPrimaryConversation() {
+  const ownerId = currentUserId.value;
+  primaryThreadId.value = null;
+  const response = await api.post<{ thread: { id: string } }>("/assistant/threads/primary", {});
+  const history = await api.get<{ messages: AgentChatMessage[] }>(
+    `/assistant/threads/${encodeURIComponent(response.thread.id)}/messages`,
+  );
+  if (currentUserId.value !== ownerId) return;
+  primaryThreadId.value = response.thread.id;
+  agentChat.replaceMessages(history.messages);
+}
 
 const showRuntimeMetadata = import.meta.env.DEV;
 const launcherLabel = computed(() => `Open ${assistantDisplayName.value} chat`);
@@ -98,7 +111,7 @@ const typingLabel = computed(() => `${assistantDisplayName.value} is typing`);
 const composerLabel = computed(() => `Message ${assistantDisplayName.value}`);
 
 const canSend = computed(
-  () => draft.value.trim().length > 0 && !sending.value && auth.isAuthenticated,
+  () => draft.value.trim().length > 0 && !sending.value && auth.isAuthenticated && primaryThreadId.value !== null,
 );
 
 function formatMetadata(result: AgentSandboxResponse): string | null {
@@ -171,6 +184,7 @@ async function sendMessage() {
     const result = await api.post<AgentSandboxResponse>("/assistant/chat/turn", {
       requestId: crypto.randomUUID(),
       messageText: text,
+      threadId: primaryThreadId.value,
     });
 
     const replyText = resolveAgentReplyText(result.replyText);
@@ -230,6 +244,13 @@ function actionHrefOpensNewTab(href: string): boolean {
 
 watch(chatOpen, async (value) => {
   if (value) {
+    if (!sending.value) {
+      sending.value = true;
+      error.value = null;
+      try { await loadPrimaryConversation(); }
+      catch (cause: any) { error.value = cause?.message || "Your main conversation could not load."; }
+      finally { sending.value = false; }
+    }
     await nextTick();
     autosizeComposer();
     composerRef.value?.focus();
@@ -240,6 +261,7 @@ watch(chatOpen, async (value) => {
 watch(currentUserId, (value, previous) => {
   if (value === previous) return;
   agentChat.resetState();
+  primaryThreadId.value = null;
   if (value) void loadAssistantDisplayName();
 });
 

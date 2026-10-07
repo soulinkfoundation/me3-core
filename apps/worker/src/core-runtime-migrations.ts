@@ -417,6 +417,16 @@ const runtimeMigrations: RuntimeMigration[] = [
         ON journal_articles(user_id, updated_at DESC)`).run();
     },
   },
+  {
+    id: "0057_assistant_primary_thread",
+    checksum: "2026-10-07-assistant-primary-thread-v1",
+    async apply(db) {
+      await db.prepare(`CREATE TABLE IF NOT EXISTS assistant_primary_threads (
+        owner_id TEXT PRIMARY KEY REFERENCES owner_profile(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL UNIQUE REFERENCES assistant_threads(id) DEFERRABLE INITIALLY DEFERRED
+      )`).run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

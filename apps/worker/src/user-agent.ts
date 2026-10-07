@@ -7,6 +7,7 @@ import {
 import { createAgentSchedulingToolServices } from "./agent-scheduling";
 import { createPeopleSearchToolServices } from "./network-directory";
 import { createWebResearchToolServices } from "./web-research";
+import { listCorePluginRecords } from "./plugins";
 import {
   MAILBOX_EVENTS_PUBLISH_PATH,
   MAILBOX_EVENTS_SUBSCRIBE_PATH,
@@ -106,6 +107,7 @@ export class Me3UserAgent {
         createAgentSchedulingToolServices(this.env, input.userId),
         createPeopleSearchToolServices(this.env, input.userId),
         createWebResearchToolServices(this.env, input.userId),
+        await this.enabledPluginIds(),
       );
       return Response.json(response, { status: response.ok ? 200 : 500 });
     }
@@ -151,6 +153,7 @@ export class Me3UserAgent {
               createAgentSchedulingToolServices(this.env, input.userId),
               createPeopleSearchToolServices(this.env, input.userId),
               createWebResearchToolServices(this.env, input.userId),
+              await this.enabledPluginIds(),
             );
             const completedResponse = response.performance
               ? {
@@ -208,6 +211,12 @@ export class Me3UserAgent {
       },
       { status: 202 },
     );
+  }
+
+  private async enabledPluginIds(): Promise<ReadonlySet<string> | undefined> {
+    if (this.env.ME3_ASSISTANT_RUNTIME !== "sdk") return undefined;
+    const plugins = await listCorePluginRecords(this.env);
+    return new Set(plugins.filter((plugin) => plugin.enabled && plugin.status === "installed").map((plugin) => plugin.id));
   }
 
   private subscribeToMailboxEvents(request: Request): Response {

@@ -79,6 +79,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0054_wheel_of_life_navigation", "2026-09-30-wheel-of-life-navigation-v1"],
   ["0055_calendar_agent_cancellation_approvals", "2026-10-01-calendar-agent-cancellation-approvals-v1"],
   ["0056_journal_articles", "2026-10-02-journal-articles-v1"],
+  ["0057_assistant_primary_thread", "2026-10-07-assistant-primary-thread-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -150,6 +151,7 @@ const COPIED_TABLES = [
   "assistant_jobs",
   "assistant_message_assets",
   "assistant_messages",
+  "assistant_primary_threads",
   "assistant_skills",
   "assistant_threads",
   "booking_reminders",

@@ -12,6 +12,8 @@ const limit = Number(process.argv.find((arg) => arg.startsWith("--limit="))?.sli
 if (!Number.isInteger(limit) || limit < 1 || limit > 48) throw new Error("--limit must be an integer from 1 to 48.");
 const modelChoice = process.argv.find((arg) => arg.startsWith("--model="))?.slice(8) || "scripted-fixture";
 const liveProvider = modelChoice.startsWith("openai:") ? "openai" : modelChoice.startsWith("anthropic:") ? "anthropic" : null;
+const modelStepDelayMs = Number(process.argv.find((arg) => arg.startsWith("--model-step-delay-ms="))?.split("=")[1] || "0");
+if (!Number.isInteger(modelStepDelayMs) || modelStepDelayMs < 0 || modelStepDelayMs > 30000) throw new Error("--model-step-delay-ms must be an integer from 0 to 30000.");
 if (modelChoice !== "scripted-fixture" && !liveProvider) throw new Error("Use --model=scripted-fixture, openai:MODEL, or anthropic:MODEL");
 const cloudflareAccountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
 const cloudflareApiToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
@@ -93,7 +95,7 @@ const scenarioFamilies = [
     prompt: "Find a free 30-minute call slot three days from now.",
     calls: [{ name: "core_calendar_availability", arguments: { dateFrom: bookingDay, dateTo: bookingDay, durationMinutes: 30, limit: 50 } }],
     check: (_seed, results) => {
-      const slots = JSON.parse(results[0]?.result_json || "{}").result?.slots || [];
+      const slots = JSON.parse(results.find((row) => row.tool_name === "core_calendar_availability")?.result_json || "{}").result?.slots || [];
       const blockedStart = Date.parse(`${bookingDay}T12:45:00.000Z`);
       const blockedEnd = Date.parse(`${bookingDay}T14:15:00.000Z`);
       return slots.length > 0 && slots.every((slot) => Date.parse(slot.endsAt) <= blockedStart || Date.parse(slot.startsAt) >= blockedEnd);
@@ -163,12 +165,15 @@ for (const scenario of scenarios) {
   outputs.push({ response: "The requested action is complete." });
   const modelInputs = [];
   const usageSamples = [];
+  let liveModelRequests = 0;
   const liveRoute = liveProvider ? {
     providerId: "workers-ai",
     model: `${liveProvider}/${modelChoice.slice(liveProvider.length + 1)}`,
     backupModel: null,
     apiKey: null,
     ai: { run: async (model, input) => {
+      liveModelRequests++;
+      if (modelStepDelayMs) await new Promise((resolve) => setTimeout(resolve, modelStepDelayMs));
       const { stream: _stream, ...request } = input;
       const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/ai/run`, {
         method: "POST",
@@ -205,12 +210,15 @@ for (const scenario of scenarios) {
       ownerTimezone: "Europe/Dublin",
       route: liveRoute || { providerId: "workers-ai", model: "scripted-fixture", backupModel: null, apiKey: null, ai: { run: model }, aiGateway: null, configured: true },
       messages: [{ role: "system", content: `You are ME3. Today is ${baseDate} in Europe/Dublin.` }, { role: "user", content: scenario.prompt }],
-      schedulingServices: { availability: createAgentSchedulingToolServices({ DB: seed.db }, seed.ownerId).availability },
+      schedulingServices: createAgentSchedulingToolServices({ DB: seed.db }, seed.ownerId),
       runtime,
       installedPluginIds,
       ...(liveProvider ? { streamOptions: { onEvent: (event) => { if (event.event === "delta") firstDeltaMs ??= performance.now() - started; } } } : {}),
     });
-    const toolResults = seed.raw.prepare("SELECT tool_name, status, result_json FROM agent_tool_executions WHERE request_id = ? ORDER BY rowid").all(`eval-${scenario.id}`);
+    const toolResults = seed.raw.prepare("SELECT tool_name, status, result_json, error_message FROM agent_tool_executions WHERE request_id = ? ORDER BY rowid").all(`eval-${scenario.id}`);
+    let providerFailure = response.source === "fallback";
+    let providerError = response.debugError;
+    let confirmationReply = null;
     let modelSteps = response.streamMetrics?.modelRequestCount || modelInputs.length;
     let approvalRequested = true;
     if (scenario.confirmPrompt) {
@@ -235,16 +243,25 @@ for (const scenario of scenarios) {
         ],
         runtime,
         installedPluginIds,
+        schedulingServices: createAgentSchedulingToolServices({ DB: seed.db }, seed.ownerId),
       });
       modelSteps += followUp.streamMetrics?.modelRequestCount || (liveProvider ? 0 : 2);
-      toolResults.push(...seed.raw.prepare("SELECT tool_name, status, result_json FROM agent_tool_executions WHERE request_id = ? ORDER BY rowid").all(`eval-${scenario.id}-confirm`));
-      approvalRequested &&= followUp.replyText.includes("Cancelled Planning session");
+      toolResults.push(...seed.raw.prepare("SELECT tool_name, status, result_json, error_message FROM agent_tool_executions WHERE request_id = ? ORDER BY rowid").all(`eval-${scenario.id}-confirm`));
+      providerFailure ||= followUp.source === "fallback";
+      providerError ||= followUp.debugError;
+      confirmationReply = followUp.replyText;
     }
+    if (liveProvider) modelSteps = liveModelRequests;
     const stateCheckPassed = scenario.check(seed, toolResults);
-    const executionCountMatched = toolResults.length === (scenario.expectedExecutions || scenario.calls.length);
+    // Live cancellation may first look up the event ID. Still require exactly
+    // one reservation and one confirmed cancellation, without extra writes.
+    const countedResults = liveProvider && scenario.confirmPrompt
+      ? toolResults.filter((row) => row.tool_name !== "core_calendar_events_list")
+      : toolResults;
+    const executionCountMatched = countedResults.length === (scenario.expectedExecutions || scenario.calls.length);
     const allExecutionsSucceeded = toolResults.every((row) => row.status === "succeeded");
-    const passed = approvalRequested && stateCheckPassed && executionCountMatched && allExecutionsSucceeded && response.source !== "fallback";
-    results.push({ id: scenario.id, passed, providerFailure: response.source === "fallback" && toolResults.length === 0, modelSteps, toolCalls: toolResults.map((row) => row.tool_name), ...(passed ? {} : { stateCheckPassed, executionCountMatched, toolStatuses: toolResults.map((row) => row.status) }), usage: sumUsage(usageSamples), elapsedMs: Math.round(performance.now() - started), ttftMs: firstDeltaMs === null ? null : Math.round(firstDeltaMs), error: passed ? null : response.debugError || "State or tool execution mismatch" });
+    const passed = approvalRequested && stateCheckPassed && executionCountMatched && allExecutionsSucceeded && !providerFailure;
+    results.push({ id: scenario.id, passed, providerFailure, modelSteps, toolCalls: toolResults.map((row) => row.tool_name), ...(passed ? {} : { replyText: response.replyText, confirmationReply, approvalRequested, stateCheckPassed, executionCountMatched, toolStatuses: toolResults.map((row) => row.status), toolErrors: toolResults.filter((row) => row.error_message).map((row) => ({ tool: row.tool_name, error: row.error_message })) }), usage: sumUsage(usageSamples), elapsedMs: Math.round(performance.now() - started), ttftMs: firstDeltaMs === null ? null : Math.round(firstDeltaMs), error: passed ? null : providerError || "State or tool execution mismatch" });
   } catch (error) {
     results.push({ id: scenario.id, passed: false, providerFailure: false, modelSteps: modelInputs.length, toolCalls: [], usage: sumUsage(usageSamples), elapsedMs: Math.round(performance.now() - started), ttftMs: firstDeltaMs, error: String(error) });
   } finally {
@@ -259,10 +276,13 @@ const report = {
     : "The model is scripted. This checks tool visibility and persisted state, not live model choices, answer quality, cost, or streaming latency.",
   runtime,
   model: modelChoice,
+  modelStepDelayMs,
+  transport: liveProvider ? "Buffered Cloudflare REST model responses; first delta is client rendering, not provider streaming latency. Pacing is included in elapsed and TTFT measurements." : "Scripted fixture",
   commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+  workingTreeDirty: Boolean(execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim()),
   baseDate,
   seed: "Fresh in-memory SQLite database from all Worker migrations for each scenario; discarded after each run.",
-  command: `pnpm eval:agent -- --runtime=${runtime} --model=${modelChoice} ${selectedIds ? `--scenarios=${selectedIds.join(",")}` : `--limit=${limit}`}`,
+  command: `pnpm eval:agent --runtime=${runtime} --model=${modelChoice} --model-step-delay-ms=${modelStepDelayMs} ${selectedIds ? `--scenarios=${selectedIds.join(",")}` : `--limit=${limit}`}`,
   generatedAt: new Date().toISOString(),
   totals: {
     scenarios: results.length,

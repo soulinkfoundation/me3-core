@@ -399,6 +399,10 @@ export function seedProofInstallation(database, r2Directory) {
        VALUES ('task-1', 'owner', 'project-1', 'Restore ME3', 'Verify clean restore', 'done');
      INSERT INTO assistant_threads (id, owner_id, title, project_id)
        VALUES ('thread-1', 'owner', 'Portable conversation', 'project-1');
+     INSERT INTO assistant_threads (id, owner_id, title)
+       VALUES ('main-thread-1', 'owner', 'ME3');
+     INSERT INTO assistant_primary_threads (owner_id, thread_id)
+       VALUES ('owner', 'main-thread-1');
      INSERT INTO assistant_messages (id, owner_id, thread_id, role, content)
        VALUES ('message-1', 'owner', 'thread-1', 'user', 'Keep this owner message');
      INSERT INTO assistant_attachments
