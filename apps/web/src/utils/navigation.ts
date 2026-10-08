@@ -1,1 +1,1 @@
-export const DEFAULT_APP_PATH = "/journal";
+export const DEFAULT_APP_PATH = "/assistant";

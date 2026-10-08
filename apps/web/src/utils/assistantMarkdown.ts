@@ -8,8 +8,7 @@ export function renderAssistantMarkdown(text: string): string {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const html: string[] = [];
   let paragraphLines: string[] = [];
-  let listKind: ListKind | null = null;
-  let listItems: string[] = [];
+  let listLines: string[] = [];
   let blockquoteLines: string[] = [];
 
   function flushParagraph() {
@@ -21,12 +20,8 @@ export function renderAssistantMarkdown(text: string): string {
   }
 
   function flushList() {
-    if (!listKind || !listItems.length) return;
-    html.push(
-      `<${listKind}>${listItems.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</${listKind}>`,
-    );
-    listKind = null;
-    listItems = [];
+    if (listLines.length) html.push(renderListLines(listLines));
+    listLines = [];
   }
 
   function flushBlockquote() {
@@ -79,23 +74,14 @@ export function renderAssistantMarkdown(text: string): string {
       continue;
     }
 
-    const unorderedItem = trimmed.match(/^[-*+]\s+(.+)$/);
-    if (unorderedItem) {
+    if (/^\s*(?:[-*+]|\d+[.)])\s+.+$/.test(line)) {
       flushParagraph();
       flushBlockquote();
-      if (listKind !== "ul") flushList();
-      listKind = "ul";
-      listItems.push(unorderedItem[1]);
+      listLines.push(line);
       continue;
     }
-
-    const orderedItem = trimmed.match(/^\d+[.)]\s+(.+)$/);
-    if (orderedItem) {
-      flushParagraph();
-      flushBlockquote();
-      if (listKind !== "ol") flushList();
-      listKind = "ol";
-      listItems.push(orderedItem[1]);
+    if (listLines.length && /^\s+\S/.test(line)) {
+      listLines.push(line);
       continue;
     }
 
@@ -114,6 +100,41 @@ export function renderAssistantMarkdown(text: string): string {
 
   flushBlocks();
   return html.join("");
+}
+
+// Keep list children and continuation lines inside their parent <li>.
+function renderListLines(lines: string[]): string {
+  let index = 0;
+  const matchItem = (line: string) => line.match(/^(\s*)([-*+]|\d+[.)])\s+(.+)$/);
+  function renderLevel(indent: number): string {
+    let output = "";
+    while (index < lines.length) {
+      const first = matchItem(lines[index]);
+      if (!first || first[1].length !== indent) break;
+      const kind: ListKind = /^\d/.test(first[2]) ? "ol" : "ul";
+      output += `<${kind}>`;
+      while (index < lines.length) {
+        const item = matchItem(lines[index]);
+        if (!item || item[1].length !== indent || (/^\d/.test(item[2]) ? "ol" : "ul") !== kind) break;
+        output += `<li>${renderInlineMarkdown(item[3])}`;
+        index += 1;
+        while (index < lines.length) {
+          const child = matchItem(lines[index]);
+          if (child) {
+            if (child[1].length <= indent) break;
+            output += renderLevel(child[1].length);
+          } else {
+            output += `<br>${renderInlineMarkdown(lines[index].trim())}`;
+            index += 1;
+          }
+        }
+        output += "</li>";
+      }
+      output += `</${kind}>`;
+    }
+    return output;
+  }
+  return renderLevel(matchItem(lines[0])?.[1].length || 0);
 }
 
 function normalizeAssistantHtml(text: string): string {

@@ -11,6 +11,9 @@ import { useRoute, useRouter } from "vue-router";
 import { definePage } from "unplugin-vue-router/runtime";
 import { api, type ApiStreamEvent } from "../../api";
 import Button from "../../components/Button.vue";
+import HomePanels from "../../components/home/HomePanels.vue";
+import ComposerPrompt from "../../components/ComposerPrompt.vue";
+import { useAuthStore } from "../../stores/auth";
 import LandingGrids from "../../components/LandingGrids.vue";
 import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
@@ -722,6 +725,19 @@ const assistantMemoryActionId = ref("");
 const assistantSourceActionId = ref("");
 const assistantClearingActivity = ref(false);
 const copiedMessageKey = ref<string | null>(null);
+const homeMode = ref(route.query.view === "home" || (!route.query.thread && !route.query.new && !route.query.prompt && !route.query.project && route.query.view !== "chat"));
+async function showWorkspace(home: boolean) {
+  homeMode.value = home;
+  await router.replace({ query: { ...route.query, view: home ? "home" : "chat" } });
+}
+const composerFocused = ref(false);
+const homeAuth = useAuthStore();
+const composerMenu = ref<HTMLDetailsElement | null>(null);
+function homeSuggestion(text: string) {
+  assistantDraft.value = text;
+  void showWorkspace(false);
+  void nextTick(() => { autosizeAssistantComposer(); assistantComposerRef.value?.focus(); });
+}
 const assistantComposerRef = ref<HTMLTextAreaElement | null>(null);
 const assistantScrollerRef = ref<HTMLDivElement | null>(null);
 const assistantAttachmentInputRef = ref<HTMLInputElement | null>(null);
@@ -826,9 +842,6 @@ const starterPrompts: StarterPrompt[] = [
   },
   { label: "Status update", icon: "🚀", prompt: "Status update" },
 ];
-const assistantPlaceholderIndex = Math.floor(
-  Math.random() * assistantPlaceholders.length,
-);
 const assistantAttachmentLimit = 4;
 const assistantAttachmentMaxBytes = 10_000_000;
 const assistantTextAttachmentMaxBytes = 1_000_000;
@@ -1064,12 +1077,6 @@ const assistantMessageLabel = computed(
 );
 const assistantThinkingLabel = computed(
   () => `${assistantDisplayName.value} is thinking...`,
-);
-const assistantPlaceholder = computed(() =>
-  (
-    assistantPlaceholders[assistantPlaceholderIndex] ||
-    assistantPlaceholders[0]
-  ).replace("{{assistantName}}", assistantDisplayName.value),
 );
 const selectedModelTitle = computed(() => {
   const model = selectedModel.value;
@@ -1474,6 +1481,7 @@ async function setRouteThreadId(threadId: string) {
     query: {
       ...route.query,
       thread: threadId,
+      view: homeMode.value ? "home" : "chat",
       project: thread?.projectId || undefined,
       new: undefined,
     },
@@ -1484,6 +1492,7 @@ async function startNewAssistantChat(
   projectId: string | null = null,
   options: { closeHistory?: boolean } = {},
 ) {
+  homeMode.value = false;
   assistantThreadId.value = null;
   assistantError.value = null;
   if (options.closeHistory !== false) {
@@ -1496,6 +1505,7 @@ async function startNewAssistantChat(
       thread: undefined,
       project: projectId || undefined,
       new: "1",
+      view: "chat",
       prompt: undefined,
       send: undefined,
     },
@@ -1505,6 +1515,7 @@ async function startNewAssistantChat(
 }
 
 async function selectAssistantThread(threadId: string) {
+  await showWorkspace(false);
   assistantHistoryDrawerOpen.value = false;
   if (!threadId || assistantThreadId.value === threadId) {
     return;
@@ -2201,7 +2212,7 @@ const COMPOSER_MAX_HEIGHT_PX = 160;
 async function scrollAssistantToBottom() {
   await nextTick();
   const node = assistantScrollerRef.value;
-  if (!node) return;
+  if (!node || (homeMode.value && !siteBuilderMode.value)) return;
   node.scrollTop = node.scrollHeight;
   (node.lastElementChild || node).scrollIntoView({ block: "end" });
 }
@@ -2219,7 +2230,7 @@ async function scrollAssistantMessageIntoView(messageId: string) {
 function autosizeAssistantComposer() {
   const el = assistantComposerRef.value;
   if (!el) return;
-  if (assistantDraft.value.length === 0) {
+  if (!composerFocused.value || assistantDraft.value.length === 0) {
     el.style.height = "";
     el.style.overflowY = "hidden";
     return;
@@ -2794,6 +2805,7 @@ async function submitAssistantText(
     serializeAssistantAttachmentsForTurn(),
   turnModel = resolveAssistantTurnModel(attachments),
 ) {
+  await showWorkspace(false);
   const normalized = text.trim();
   if (!normalized || assistantSending.value) return;
 
@@ -5149,7 +5161,16 @@ function messageFromUnknown(err: unknown, fallback: string) {
       </section>
 
       <section class="assistant-console" aria-label="Assistant conversation">
+        <header v-if="!siteBuilderMode" class="home-chat-header">
+          <div class="home-chat-switcher" role="group" aria-label="Workspace view">
+            <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
+            <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>
+          </div>
+          <RouterLink to="/account" class="home-profile" aria-label="Your account">{{ (homeAuth.user?.name || 'ME3').slice(0, 1).toUpperCase() }}</RouterLink>
+        </header>
+        <HomePanels v-if="homeMode && !siteBuilderMode" class="assistant-home" @suggest="homeSuggestion" />
         <div
+          v-show="!homeMode || siteBuilderMode"
           ref="assistantScrollerRef"
           class="assistant-timeline"
           aria-live="polite"
@@ -5954,6 +5975,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
             </span>
           </div>
           <div class="assistant-input-wrap">
+            <ComposerPrompt v-if="!assistantDraft && voiceDictationState !== 'listening' && voiceDictationState !== 'processing'" :prompts="assistantPlaceholders.map(p => p.replace('{{assistantName}}', assistantDisplayName))" :animate="!composerFocused && !assistantSending" />
             <div
               v-if="voiceDictationState === 'listening'"
               class="assistant-composer__voice-wave"
@@ -5990,7 +6012,9 @@ function messageFromUnknown(err: unknown, fallback: string) {
               v-model="assistantDraft"
               class="assistant-input"
               rows="1"
-              :placeholder="assistantPlaceholder"
+              placeholder=""
+              @focus="composerFocused = true; autosizeAssistantComposer()"
+              @blur="composerFocused = false; autosizeAssistantComposer()"
               :disabled="assistantSending"
               @keydown="onAssistantComposerKeydown"
               @input="autosizeAssistantComposer"
@@ -5998,32 +6022,11 @@ function messageFromUnknown(err: unknown, fallback: string) {
             />
           </div>
           <div class="assistant-composer__bottom">
-            <div class="assistant-composer__left">
-              <input
-                ref="assistantAttachmentInputRef"
-                class="sr-only"
-                type="file"
-                multiple
-                accept=".txt,.md,.markdown,.csv,.tsv,.json,.xml,.avif,text/*,application/json,application/xml,image/*,image/avif"
-                @change="onAssistantAttachmentChange"
-              />
-              <Button
-                color="ghost"
-                shape="pill"
-                size="small"
-                icon-only
-                class="composer-icon-button"
-                type="button"
-                title="Add attachment"
-                aria-label="Add attachment"
-                :disabled="assistantSending"
-                @click="openAssistantAttachmentPicker"
-              >
-                <UiIcon name="Paperclip" :size="18" aria-hidden="true" />
-              </Button>
-            </div>
-
-            <div class="assistant-composer__right">
+            <input ref="assistantAttachmentInputRef" class="sr-only" type="file" multiple accept=".txt,.md,.markdown,.csv,.tsv,.json,.xml,.avif,text/*,application/json,application/xml,image/*,image/avif" @change="onAssistantAttachmentChange" />
+            <details ref="composerMenu" class="composer-options" @keydown.esc="composerMenu?.removeAttribute('open')">
+              <summary aria-label="Message options"><UiIcon name="Plus" :size="22" aria-hidden="true" /></summary>
+              <div class="composer-options__menu">
+                <button type="button" :disabled="assistantSending" @click="openAssistantAttachmentPicker(); composerMenu?.removeAttribute('open')"><UiIcon name="Paperclip" :size="18" /> Attach files</button>
               <div
                 v-if="
                   voiceDictationState !== 'listening' &&
@@ -6064,7 +6067,11 @@ function messageFromUnknown(err: unknown, fallback: string) {
                   {{ selectedModelSetup.statusLabel }}
                 </RouterLink>
               </div>
+              </div>
+            </details>
+            <div class="assistant-composer__right">
               <Button
+                v-if="voiceDictationState === 'listening' || voiceDictationState === 'processing' || (!assistantDraft.trim() && !assistantAttachments.length && !assistantSending)"
                 :color="
                   voiceDictationState === 'listening' ? 'accent' : 'ghost'
                 "
@@ -6095,6 +6102,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
                 />
               </Button>
               <Button
+                v-else
                 :color="assistantSending ? 'secondary' : 'primary'"
                 shape="pill"
                 size="small"
@@ -7483,7 +7491,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
 
 <style scoped>
 .assistant-page {
-  --assistant-composer-clearance: clamp(230px, 28vh, 320px);
+  --assistant-composer-clearance: 110px;
   --assistant-header-clearance: calc(var(--app-shell-mobile-nav-height) + 18px);
 
   position: relative;
@@ -10762,7 +10770,7 @@ button:disabled {
 
 @media (max-width: 760px) {
   .assistant-page {
-    --assistant-composer-clearance: clamp(250px, 32vh, 360px);
+    --assistant-composer-clearance: 110px;
     --assistant-header-clearance: calc(
       var(--app-shell-mobile-nav-height) + 14px
     );
@@ -10974,4 +10982,32 @@ button:disabled {
     opacity: 1;
   }
 }
+</style>
+
+<style scoped>
+.home-chat-header { margin-top: var(--app-shell-mobile-nav-height, 0px); position: sticky; top: var(--app-shell-mobile-nav-height, 0px); z-index: 35; display: flex; align-items: center; justify-content: center; min-height: 60px; background: var(--ui-bg); }
+.home-chat-header::after { content: ""; position: absolute; top: 100%; left: 0; right: 0; height: 14px; pointer-events: none; background: linear-gradient(var(--ui-bg), transparent); }
+.home-chat-switcher { display: flex; padding: 3px; border-radius: 28px; background: var(--ui-surface-muted); }
+.home-chat-switcher button { min-width: 68px; min-height: 38px; padding: 0 14px; border: 0; border-radius: 22px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
+.home-chat-switcher button[aria-pressed="true"] { color: var(--ui-text); background: var(--ui-surface); box-shadow: 0 1px 3px color-mix(in srgb, var(--ui-text) 8%, transparent); }
+.home-profile { position: absolute; right: 0; width: 44px; height: 44px; display: grid; place-items: center; font-size: 14px; color: var(--ui-text); text-decoration: none; }
+.home-profile::before { position: absolute; content: ""; inset: 6px; border-radius: 50%; background: var(--ui-surface-muted); z-index: -1; }
+.assistant-home { height: calc(100dvh - var(--app-shell-mobile-nav-height, 0px) - 154px); overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 18px; align-content: start; padding: 18px 0 12px; box-sizing: border-box; }
+.assistant-page:not(.assistant-page--site-builder) .assistant-timeline { padding-top: 18px; }
+.assistant-composer { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: 5px 6px 5px 16px; gap: 0 4px; min-height: 56px; box-sizing: border-box; }
+.assistant-composer .assistant-attachments, .assistant-composer > p, .assistant-composer > .sr-only { grid-column: 1 / -1; }
+.assistant-input-wrap { min-width: 0; min-height: 44px; }
+.assistant-input { min-height: 44px; box-sizing: border-box; padding: 11px 0; font-size: 16px; line-height: 22px; }
+.assistant-composer__bottom, .assistant-composer__right { gap: 0; flex: 0 0 auto; }
+.assistant-composer__bottom { min-width: 0; }
+.composer-icon-button, .assistant-send { min-width: 44px; min-height: 44px; }
+.composer-options { position: relative; }
+.composer-options summary { list-style: none; display: grid; place-items: center; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; }
+.composer-options summary::-webkit-details-marker { display: none; }
+.composer-options summary:hover { background: var(--ui-surface-muted); }
+.composer-options__menu { position: absolute; right: 0; bottom: calc(100% + 12px); z-index: 60; padding: 10px; min-width: 250px; display: grid; gap: 8px; background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: 16px; box-shadow: 0 8px 24px color-mix(in srgb, var(--ui-text) 10%, transparent); }
+.composer-options__menu > button { display: flex; align-items: center; gap: 8px; min-height: 44px; background: transparent; color: var(--ui-text); border: 0; border-radius: 10px; padding: 0 10px; font: inherit; cursor: pointer; text-align: left; }
+.composer-options__menu .model-picker { flex-wrap: wrap; padding: 8px; }
+.home-chat-header button:focus-visible, .home-profile:focus-visible, .composer-options summary:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+
 </style>

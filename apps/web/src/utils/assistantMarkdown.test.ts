@@ -30,6 +30,12 @@ describe("renderAssistantMarkdown", () => {
     );
   });
 
+  it("keeps wrapped and nested items under their parent bullet", () => {
+    expect(renderAssistantMarkdown("- First line\n  continuation\n  - Nested\n- Second")).toBe(
+      "<ul><li>First line<br>continuation<ul><li>Nested</li></ul></li><li>Second</li></ul>",
+    );
+  });
+
   it("escapes unsafe html and link protocols", () => {
     expect(
       renderAssistantMarkdown(
