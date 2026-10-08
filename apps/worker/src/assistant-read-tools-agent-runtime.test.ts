@@ -9,6 +9,75 @@ describe("Assistant read tools Runtime v2 contract", () => {
     vi.useRealTimers();
   });
 
+  it.each([
+    ["legacy", "I cannot list all your contacts. Tell me a contact name to search."],
+    ["sdk", "I cannot list all your contacts. Tell me a contact name to search."],
+    ["legacy", "I couldn't find a Soulink Link or public profile matching that need."],
+    ["sdk", "I couldn't find a Soulink Link or public profile matching that need."],
+  ] as const)(
+    "keeps private contact search available in %s mode after %s",
+    async (runtime, priorReply) => {
+      const database = createReadToolsDb();
+      const searchContacts = vi.fn(async () => ({
+        contacts: [{ name: "QA Person", relationship: "contact", me3AssistantAvailable: false }],
+        total: 1,
+      }));
+      const aiRun = vi.fn()
+        .mockResolvedValueOnce({
+          tool_calls: [{ id: "contacts-follow-up", name: "core_contacts_search", arguments: { limit: 10 } }],
+        })
+        .mockResolvedValueOnce({ response: "The recent active contacts include QA Person." });
+      await runCoreAgentToolTurn({
+        db: database.db,
+        userId: "owner",
+        requestId: `contacts-follow-up-${runtime}`,
+        turnId: `contacts-follow-up-${runtime}`,
+        ownerTimezone: "Europe/Dublin",
+        route: testRoute(aiRun),
+        runtime,
+        schedulingServices: { searchContacts } as never,
+        messages: [
+          { role: "system", content: "You are ME3." },
+          { role: "user", content: "Can you access my contacts?" },
+          { role: "assistant", content: "Yes, I can search your contacts." },
+          { role: "user", content: "List them all." },
+          { role: "assistant", content: priorReply },
+          { role: "user", content: "List them all." },
+        ],
+      });
+      const modelInput = aiRun.mock.calls[0]?.[1] as { tools: Array<{ function: { name: string } }>; tool_choice?: unknown };
+      expect(modelInput.tools.map((tool) => tool.function.name)).toContain("core_contacts_search");
+      expect(modelInput.tool_choice).toBeUndefined();
+      expect(searchContacts).toHaveBeenCalledWith({ query: undefined, limit: 10 });
+      expect(database.executions.map((item) => item.tool_name)).toEqual(["core_contacts_search"]);
+    },
+  );
+
+  it("does not carry a contact topic into an unrelated legacy request", async () => {
+    const database = createReadToolsDb();
+    const aiRun = vi.fn(async (_model: string, _input: unknown) => ({ response: "Rain falls quietly." }));
+    const searchContacts = vi.fn();
+    await runCoreAgentToolTurn({
+      db: database.db,
+      userId: "owner",
+      requestId: "contacts-new-topic",
+      turnId: "contacts-new-topic",
+      ownerTimezone: "Europe/Dublin",
+      route: testRoute(aiRun),
+      schedulingServices: { searchContacts } as never,
+      messages: [
+        { role: "system", content: "You are ME3." },
+        { role: "user", content: "Can you access my contacts?" },
+        { role: "assistant", content: "Yes, I can search your contacts." },
+        { role: "user", content: "Write a short poem about rain." },
+      ],
+    });
+    const modelInput = aiRun.mock.calls[0]?.[1] as { tools: Array<{ function: { name: string } }> };
+    expect(modelInput.tools.map((tool) => tool.function.name)).not.toContain("core_contacts_search");
+    expect(searchContacts).not.toHaveBeenCalled();
+    expect(database.executions).toHaveLength(0);
+  });
+
   it("reads upcoming confirmed owner bookings through a model-selected tool", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-28T10:00:00.000Z"));

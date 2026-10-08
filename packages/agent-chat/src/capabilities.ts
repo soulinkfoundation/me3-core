@@ -468,7 +468,7 @@ export const CORE_CHAT_CAPABILITIES = [
     pluginId: null,
     ownerFacingLabel: "Search contacts",
     summary:
-      "Search the owner's contacts by name and report whether each contact has a connected ME3 assistant available through Soulink.",
+      "Search the owner's private contacts by name, or omit query to list up to 10 recent active contacts. This is a bounded page, not the entire address book. Report whether each contact has a connected ME3 assistant through Soulink. Use this for contact-list follow-ups, not public people discovery.",
     category: "messaging",
     handler: {
       surface: "chat",

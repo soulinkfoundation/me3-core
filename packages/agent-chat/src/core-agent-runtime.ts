@@ -341,7 +341,7 @@ const CORE_TOOL_FAMILY_PATTERNS: ReadonlyArray<{
   { family: "calendar", pattern: /\b(?:calendar|agenda|calendar event|calendar events)\b/i },
   { family: "reminders", pattern: /\bremind(?:er|ers|ing)?\b/i },
   { family: "bookings", pattern: /\b(?:booking|bookings|booked call|booked calls|appointment|appointments|client session|client sessions)\b/i },
-  { family: "scheduling", pattern: /\b(?:availability|available times?|schedule|scheduling|meeting|meet with|call with|time with)\b/i },
+  { family: "scheduling", pattern: /\b(?:contacts?|address book|rolodex|availability|available times?|schedule|scheduling|meeting|meet with|call with|time with)\b/i },
   { family: "journal", pattern: /\b(?:journal|journal entry|journal entries|diary)\b/i },
   {
     family: "mission",
@@ -2858,13 +2858,14 @@ function selectCoreToolsForTurn(
     }
   } else {
     const latestAssistantMessage = latestMessageContent(messages, "assistant");
-    const recentAssistantMessage = isLikelyToolFollowUp(
+    const followUp = isLikelyToolFollowUp(
       latestUserMessage,
       latestAssistantMessage,
-    )
-      ? latestAssistantMessage
-      : "";
-    const routingText = [latestUserMessage, recentAssistantMessage]
+    );
+    const recentUserMessages = followUp
+      ? messages.filter((message) => message.role === "user").slice(-4, -1).map((message) => message.content)
+      : [];
+    const routingText = [latestUserMessage, followUp ? latestAssistantMessage : "", ...recentUserMessages]
       .filter(Boolean)
       .join("\n");
     for (const matcher of CORE_TOOL_FAMILY_PATTERNS) {
@@ -3268,6 +3269,8 @@ function withCoreToolInstructions(
       ? [
           "Contact and agent-assisted scheduling tool rules:",
           "- Use core_contacts_search to find owner contacts and whether a contact has a connected ME3 assistant through Soulink. Do not expose contact IDs, connection tokens, node IDs, or private chat history.",
+          "- To list the owner's contacts, omit query and use limit=10. This returns at most 10 recent active contacts, not the whole address book. Show the available page and explain that limit; do not refuse a supported contact list just because the owner asked for all contacts.",
+          "- Keep contact-list follow-ups on core_contacts_search. core_people_search discovers Soulink Links and public profiles; it cannot list the owner's private address book. Resolve references from the owner's recent request, even if an earlier assistant reply chose the wrong tool. If the reference is ambiguous, ask which list they mean before reading.",
           "- Use core_scheduling_request when the owner asks to arrange time with a contact. The contact name is the only required input.",
           "- A missing duration is not ambiguous: omit durationMinutes and ME3 will default to 30 minutes. A missing date window is not ambiguous: omit dateFrom and dateTo and ME3 will default to the next seven local calendar days. Do not ask a clarification question for either omission.",
           "- The request tool exchanges only structured availability with the other ME3 assistant. It does not open, read, or write either owner's private assistant chat.",
