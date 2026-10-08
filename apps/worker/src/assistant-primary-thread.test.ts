@@ -128,6 +128,119 @@ function reminderSelectionFixture(runtime: "legacy" | "sdk", duplicate = true) {
 }
 
 describe("owner selection at the reminder write boundary", () => {
+  it.each(["legacy", "sdk"] as const)("prepares server choices by the owner's exact title without inventing an ID in %s", async runtime => {
+    for (const operation of ["update", "cancel"] as const) {
+      const f = reminderSelectionFixture(runtime); const before = f.rows();
+      const { reminderId: _id, ...args } = f.call(operation).tool_calls[0].arguments;
+      const call = { tool_calls: [{ id: "by-title", name: `core_reminders_${operation}`, arguments: { ...args, reminderTitle: "ME3 QA check launch" } }] };
+      f.outputs.push(call, { response: "Done." });
+      const first = await f.send(operation === "cancel" ? "Cancel my ME3 QA check launch reminder."
+        : "Move my ME3 QA check launch reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+      expect(first.replyText).toContain("Which reminder do you mean?");
+      expect(first.reminderAction).toBeNull();
+      expect(f.rows()).toEqual(before);
+      f.outputs.push(call, { response: "Done." });
+      const selected = await f.send("1");
+      expect(selected.reminderAction?.kind).toBe(operation === "cancel" ? "cancelled" : "updated");
+      expect(f.rows()).toEqual(before.map(row => row.id === "first-reminder"
+        ? operation === "cancel" ? { ...row, status: "cancelled" } : { ...row, remind_at: "2027-01-16T09:30:00.000Z" }
+        : row));
+    }
+  });
+
+  it.each(["legacy", "sdk"] as const)("resolves a single exact owner title while preserving saved fields in %s", async runtime => {
+    const f = reminderSelectionFixture(runtime, false); const before = f.rows();
+    const { reminderId: _id, title: _title, ...args } = f.call("update").tool_calls[0].arguments;
+    f.outputs.push({ tool_calls: [{ id: "by-title", name: "core_reminders_update", arguments: { ...args, reminderTitle: "ME3 QA check launch" } }] }, { response: "Moved it." });
+    const result = await f.send("Move my ME3 QA check launch reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+    expect(result.reminderAction?.kind).toBe("updated");
+    expect(f.rows()).toEqual(before.map(row => row.id === "first-reminder" ? { ...row, remind_at: "2027-01-16T09:30:00.000Z" } : row));
+  });
+
+  it.each(["legacy", "sdk"] as const)("uses an explicit original due date to select the second same-title record in %s", async runtime => {
+    const f = reminderSelectionFixture(runtime); const before = f.rows();
+    const { reminderId: _id, title: _title, ...args } = f.call("update").tool_calls[0].arguments;
+    f.outputs.push({ tool_calls: [{ id: "by-title-and-date", name: "core_reminders_update", arguments: { ...args, reminderTitle: "ME3 QA check launch" } }] }, { response: "Moved it." });
+    const result = await f.send("Move my ME3 QA check launch reminder originally due on 17 January 2027 to 16 January 2027 at 9:30am in Europe/Dublin.");
+    expect(result.reminderAction?.kind).toBe("updated");
+    expect(f.rows()).toEqual(before.map(row => row.id === "second-reminder" ? { ...row, remind_at: "2027-01-16T09:30:00.000Z" } : row));
+  });
+
+  it.each(["missing", "other owner", "unrequested", "conflicting ID"])("does not write to a %s title selector", async failure => {
+    const f = reminderSelectionFixture("sdk");
+    f.raw.exec("INSERT INTO user_reminders(id,user_id,title,remind_at) VALUES ('bob-only','bob','ME3 QA private title','2027-01-15T12:00:00.000Z'), ('unrelated','alice','ME3 QA unrelated','2027-01-15T12:00:00.000Z')");
+    const before = f.rows();
+    const args = failure === "conflicting ID" ? { reminderId: "first-reminder", reminderTitle: "ME3 QA unrelated" }
+      : { reminderTitle: failure === "other owner" ? "ME3 QA private title" : failure === "unrequested" ? "ME3 QA unrelated" : "ME3 QA missing" };
+    f.outputs.push({ tool_calls: [{ id: "by-title", name: "core_reminders_cancel", arguments: args }] }, { response: "Done." });
+    await f.send(`Cancel my ${failure === "unrequested" || failure === "conflicting ID" ? "ME3 QA check launch" : args.reminderTitle} reminder.`);
+    expect(f.rows()).toEqual(before);
+  });
+
+  it.each(["legacy", "sdk"] as const)("asks for a server selection when the model appends the reminder noun in %s", async runtime => {
+    for (const duplicate of [true, false]) {
+      const f = reminderSelectionFixture(runtime, duplicate); const before = f.rows();
+      const { reminderId: _id, title: _title, ...args } = f.call("update").tool_calls[0].arguments;
+      const call = { tool_calls: [{ id: "descriptor", name: "core_reminders_update", arguments: { ...args, reminderTitle: "ME3 QA check launch reminder" } }] };
+      f.outputs.push(call, { response: "Done." });
+      const first = await f.send("Move my ME3 QA check launch reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+      expect(first.replyText).toContain("Which reminder do you mean?");
+      expect(first.reminderAction).toBeNull();
+      expect(f.rows()).toEqual(before);
+      f.outputs.push(call, { response: "Done." });
+      await f.send("1");
+      expect(f.rows()).toEqual(before.map(row => row.id === "first-reminder" ? { ...row, remind_at: "2027-01-16T09:30:00.000Z" } : row));
+    }
+  });
+
+  it.each(["pending", "cancelled"])("honours an actual %s title ending in reminder without substituting its shorter name", async status => {
+    const f = reminderSelectionFixture("sdk");
+    f.raw.prepare("INSERT INTO user_reminders(id,user_id,title,remind_at,status) VALUES ('literal','alice','ME3 QA check launch reminder','2027-01-20T12:00:00.000Z',?)").run(status);
+    const before = f.rows();
+    f.outputs.push({ tool_calls: [{ id: "literal", name: "core_reminders_cancel", arguments: { reminderTitle: "ME3 QA check launch reminder" } }] }, { response: "Done." });
+    await f.send("Cancel my ME3 QA check launch reminder.");
+    expect(f.rows()).toEqual(before.map(row => row.id === "literal" && status === "pending" ? { ...row, status: "cancelled" } : row));
+  });
+
+  it.each(["legacy", "sdk"] as const)("keeps a descriptor clarification pending through model retries in the same %s turn", async runtime => {
+    for (const retry of ["stable ID", "shorter title"]) {
+      const f = reminderSelectionFixture(runtime, false); const before = f.rows();
+      const { reminderId: _id, title: _title, ...args } = f.call("update").tool_calls[0].arguments;
+      const first = { tool_calls: [{ id: "descriptor", name: "core_reminders_update", arguments: { ...args, reminderTitle: "ME3 QA check launch reminder" } }] };
+      const second = retry === "stable ID" ? f.call("update")
+        : { tool_calls: [{ id: "retry", name: "core_reminders_update", arguments: { ...args, reminderTitle: "ME3 QA check launch" } }] };
+      f.outputs.push(first, second, { response: "Done." });
+      const result = await f.send("Move my ME3 QA check launch reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+      expect(f.rows()).toEqual(before);
+      expect(result.reminderAction).toBeNull();
+      expect(result.replyText).toContain("Which reminder do you mean?");
+    }
+  });
+
+  it("retains the required owner question when a later read would mask it", async () => {
+    const f = reminderSelectionFixture("sdk", false); const before = f.rows();
+    const { reminderId: _id, title: _title, ...args } = f.call("update").tool_calls[0].arguments;
+    f.outputs.push({ tool_calls: [{ id: "descriptor", name: "core_reminders_update", arguments: { ...args, reminderTitle: "ME3 QA check launch reminder" } }] },
+      { tool_calls: [{ id: "read-again", name: "core_reminders_list", arguments: {} }] }, { response: "Done, moved it." });
+    const result = await f.send("Move my ME3 QA check launch reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+    expect(f.rows()).toEqual(before);
+    expect(result.replyText).toContain("Which reminder do you mean?");
+    expect(result.reminderAction).toBeNull();
+  });
+
+  it.each(["legacy", "sdk"] as const)("does not treat a preceding title as permission after the owner changes target in %s", async runtime => {
+    const f = reminderSelectionFixture(runtime, false);
+    f.raw.exec("INSERT INTO user_reminders(id,user_id,title,remind_at) VALUES ('new-target','alice','ME3 QA unrelated','2027-01-15T12:00:00.000Z')");
+    f.outputs.push({ response: "Here are your reminders." });
+    await f.send("List my ME3 QA check launch reminders.");
+    const before = f.rows();
+    f.outputs.push({ tool_calls: [{ id: "stale-title", name: "core_reminders_cancel", arguments: { reminderTitle: "ME3 QA check launch" } }] }, { response: "Cancelled it." });
+    const result = await f.send("Cancel my ME3 QA unrelated reminder.");
+    expect(f.rows()).toEqual(before);
+    expect(result.reminderAction).toBeNull();
+    expect(result.replyText).toContain("Which reminder do you mean?");
+  });
+
   it.each(["legacy", "sdk"] as const)("moves an explicit stable ID without asking for or replacing its title in %s", async runtime => {
     const f = reminderSelectionFixture(runtime); const before = f.rows();
     const { title: _title, ...args } = f.call("update").tool_calls[0].arguments;

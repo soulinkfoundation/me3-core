@@ -62,7 +62,7 @@ import {
   type AgentReminderInput,
 } from "./reminders";
 import { executeIdempotentAgentTool } from "./tool-idempotency";
-import { loadAgentReminderSelection, requireAgentReminderSelection, selectedAgentReminderChoice } from "./reminder-selection";
+import { loadAgentReminderSelection, loadAgentReminderTitleChoices, requireAgentReminderSelection, selectedAgentReminderChoice, selectedAgentReminderSourceDate } from "./reminder-selection";
 import {
   runAgentToolLoop,
   type AgentToolCall,
@@ -852,6 +852,9 @@ export async function runCoreAgentToolTurn(input: {
             const toolCallId = sdkRuntime && !(tool as CoreChatToolDefinition).sideEffect.startsWith("read_")
               ? await semanticToolCallId(call)
               : `${call.id}:${occurrence}`;
+            const pendingReminderChoice = ["core.reminders.update", "core.reminders.cancel"].includes((tool as CoreChatToolDefinition).capabilityId)
+              ? outcomes.find(outcome => outcome.result.needsOwnerChoice === true)
+              : undefined;
             const outcome = await executeIdempotentAgentTool(
               input.db,
               {
@@ -861,7 +864,7 @@ export async function runCoreAgentToolTurn(input: {
                 toolName: call.name,
               },
               ({ idempotencyKey }) =>
-                executeCoreToolCall({
+                pendingReminderChoice ? Promise.resolve(pendingReminderChoice) : executeCoreToolCall({
                   db: input.db,
                   userId: input.userId,
                   requestId: input.requestId,
@@ -938,7 +941,11 @@ export async function runCoreAgentToolTurn(input: {
       const pendingApproval = outcomes.find((outcome) =>
         outcome.capabilityId === "core.calendar.event.cancel" && outcome.result.status === "pending_approval"
       );
-      if (pendingApproval) {
+      const pendingReminderChoice = outcomes.find(outcome => outcome.result.needsOwnerChoice === true);
+      if (pendingReminderChoice) {
+        resolvedResponse.replyText = pendingReminderChoice.fallbackReply;
+        resolvedResponse.reminderAction = null;
+      } else if (pendingApproval) {
         resolvedResponse.replyText = pendingApproval.fallbackReply;
       } else if (sdkRuntime && toolErrors.length > 0) {
         resolvedResponse.replyText = toolErrors.some((message) => message.content.includes("Owner approval is required"))
@@ -1779,11 +1786,44 @@ async function executeReminderToolCall(input: {
   const selectedChoice = priorSelection?.operation === operation
     ? selectedAgentReminderChoice(priorSelection, latestMessageContent(input.messages, "user"), input.ownerTimezone)
     : undefined;
-  // Resolve a displayed owner choice before consulting a model-authored ID; the guard below still checks the proposal and snapshot.
-  const reminderId = selectedChoice?.id || requiredString(input.call.arguments.reminderId, "reminderId");
+  let reminderTitle = optionalToolString(input.call.arguments.reminderTitle);
+  if (selectedChoice && reminderTitle?.toLocaleLowerCase() === `${selectedChoice.title} reminder`.toLocaleLowerCase()) {
+    reminderTitle = selectedChoice.title;
+  }
+  let titleNeedsSelection = false;
+  let reminderId = selectedChoice?.id || optionalToolString(input.call.arguments.reminderId);
+  if (!reminderId && reminderTitle) {
+    const ownerText = latestMessageContent(input.messages, "user");
+    const ownerTarget = `${ownerText}\n${input.messages.filter(message => message.role === "user").at(-2)?.content || ""}`;
+    if (!ownerTarget.toLocaleLowerCase().includes(reminderTitle.toLocaleLowerCase())) {
+      throw new Error("Use an exact reminder title from the owner's request, or list reminders for its stable ID.");
+    }
+    // A candidate only lets the existing selection guard prepare the exact-title choices; it does not authorize a duplicate write.
+    let choices = await loadAgentReminderTitleChoices(input.db, input.userId, reminderTitle);
+    if (!choices.length && / reminder$/i.test(reminderTitle)) {
+      const literal = await input.db.prepare(
+        "SELECT id FROM user_reminders WHERE user_id = ? AND lower(trim(title)) = lower(trim(?)) LIMIT 1",
+      ).bind(input.userId, reminderTitle).first<{ id: string }>();
+      if (!literal) {
+        const title = reminderTitle.slice(0, -9).trim();
+        choices = await loadAgentReminderTitleChoices(input.db, input.userId, title);
+        if (choices.length) { reminderTitle = title; titleNeedsSelection = true; }
+      }
+    }
+    const sourceDate = selectedAgentReminderSourceDate(choices, ownerText, input.ownerTimezone);
+    // Previous context can find the choices, but cannot authorize an unrelated current request.
+    titleNeedsSelection ||= !ownerText.toLocaleLowerCase().includes(reminderTitle.toLocaleLowerCase()) && !sourceDate;
+    const candidate = sourceDate || choices[0];
+    if (!candidate) throw new Error("No pending reminder has that exact title. List reminders and use its current title or stable ID.");
+    reminderId = candidate.id;
+  }
+  if (!reminderId) throw new Error("Supply a known reminderId or the exact reminderTitle from the owner's request.");
   const existing = await getPendingAgentReminder({ DB: input.db }, input.userId, reminderId);
   if (!existing && selectedChoice) return reminderNeedsRefreshOutcome(input.tool.capabilityId);
   if (!existing) throw new Error("Reminder not found. List reminders and use a valid stable ID.");
+  if (reminderTitle && existing.title.trim().toLocaleLowerCase() !== reminderTitle.toLocaleLowerCase()) {
+    throw new Error("Reminder ID and current title do not match. Read the reminders again before retrying.");
+  }
   const cancelling = input.tool.capabilityId === "core.reminders.cancel";
   const reminderInput = cancelling ? null : reminderInputFromArguments({
     ...input.call.arguments,
@@ -1792,7 +1832,7 @@ async function executeReminderToolCall(input: {
   if (reminderInput) assertFutureReminder(reminderInput);
   const selection = await requireAgentReminderSelection({
     db: input.db, userId: input.userId, reminder: existing,
-    operation, priorSelection,
+    operation, priorSelection, forceSelection: titleNeedsSelection,
     signature: JSON.stringify({ ...reminderInput, notes: input.call.arguments.notes ?? null, recurrence: input.call.arguments.recurrence ?? null }),
     ownerText: latestMessageContent(input.messages, "user"), assistantText: latestMessageContent(input.messages, "assistant"),
     previousOwnerText: input.messages.filter(message => message.role === "user").at(-2)?.content || "",
@@ -1800,7 +1840,9 @@ async function executeReminderToolCall(input: {
   });
   if (selection) return {
     capabilityId: input.tool.capabilityId,
-    result: { ok: true, status: "needs_selection", selection: selection.selection, choicePrompt: selection.reply, selectedReminderId: selection.selectedReminderId },
+    result: { ok: true, status: "needs_selection", selection: selection.selection, choicePrompt: selection.reply, selectedReminderId: selection.selectedReminderId,
+      ...(titleNeedsSelection ? { needsOwnerChoice: true } : {}),
+    },
     fallbackReply: selection.reply, reminderAction: null, actionCards: [],
   };
 
@@ -3276,9 +3318,9 @@ function withCoreToolInstructions(
           "- Use reminder tools only when the owner clearly asks to list, create, update, or cancel reminders. Reminder lists contain future reminders only; do not infer work from reminders whose time has passed.",
           "- For create/update, pass the requested future local date as YYYY-MM-DD and time as HH:MM with its IANA timezone. ME3 performs the timezone conversion; never calculate a UTC offset. Noon means 12:00; midnight means 00:00. Resolve weekdays in the owner's timezone.",
           "- If the requested date or time is missing or ambiguous, ask one concise clarification question and do not call a write tool.",
-          "- Before update/cancel, list reminders unless a stable reminder ID is already present in the conversation. Never invent or infer an ID from a title.",
+          "- Update/cancel accepts either a known stable reminderId or reminderTitle, the exact current title from the owner's request. Use reminderTitle for named requests when the ID is unknown; ME3 resolves owner records and asks which one if needed. For other references, list reminders first. Never invent or infer an ID from a title.",
           "- When moving an existing reminder, omit title, notes and recurrence unless the owner asks to change them; ME3 preserves the saved values. A move does not require a new title.",
-          "- For multiple reminders with exactly the same title, the update/cancel tool checks owner selection before writing and returns a durable needs_selection choice list. Use one of the listed stable IDs with the requested change to obtain that list, and show its exact choicePrompt. Do not invent your own numbered choice list. For other ambiguous matches, ask the owner which reminder they mean without calling a write tool.",
+          "- For multiple reminders with exactly the same title, call update/cancel with reminderTitle and the requested change. The tool checks owner selection before writing and returns a durable needs_selection choice list; show its exact choicePrompt. Do not invent your own numbered choice list. For other ambiguous matches, ask the owner which reminder they mean without calling a write tool.",
           "- A reply such as 1 selects an item from the displayed choices; it is never a reminder ID. List again if needed, match the selected original due date, and pass that record's stable ID. Keep the requested change unchanged. An explicit stable ID or uniquely matching original due date already selects the target; another reminder with the same title is not a reason to ask again.",
         ]
       : []),

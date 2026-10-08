@@ -833,7 +833,7 @@ export const CORE_CHAT_CAPABILITIES = [
     owner: "core",
     pluginId: null,
     ownerFacingLabel: "Update reminder",
-    summary: "Update a pending Core reminder using its stable identifier.",
+    summary: "Move a pending Core reminder by stable ID or exact current title. Duplicate titles return server choices without changing any reminder.",
     category: "calendar",
     handler: {
       surface: "chat",
@@ -844,9 +844,10 @@ export const CORE_CHAT_CAPABILITIES = [
     requiresSetup: ["calendar.reminders"],
     inputSchema: {
       type: "object",
-      required: ["reminderId", "date", "time"],
+      required: ["date", "time"],
       properties: {
-        reminderId: { type: "string", description: "Stable reminder identifier." },
+        reminderId: { type: "string", description: "Known stable reminder identifier. Supply this or reminderTitle; never invent an ID." },
+        reminderTitle: { type: "string", description: "Exact current reminder title from the owner's request, as an alternative to reminderId. ME3 asks which one when titles are duplicated." },
         title: { type: "string", description: "New title only when the owner requests a rename. Omit to preserve the existing title." },
         notes: { type: "string", description: "Optional updated reminder notes." },
         date: {
@@ -877,7 +878,7 @@ export const CORE_CHAT_CAPABILITIES = [
     owner: "core",
     pluginId: null,
     ownerFacingLabel: "Cancel reminder",
-    summary: "Cancel a pending Core reminder using its stable identifier.",
+    summary: "Cancel a pending Core reminder by stable ID or exact title from the owner's request. Duplicate titles return server choices without cancelling anything.",
     category: "calendar",
     handler: {
       surface: "chat",
@@ -888,9 +889,9 @@ export const CORE_CHAT_CAPABILITIES = [
     requiresSetup: ["calendar.reminders"],
     inputSchema: {
       type: "object",
-      required: ["reminderId"],
       properties: {
-        reminderId: { type: "string", description: "Stable reminder identifier." },
+        reminderId: { type: "string", description: "Known stable reminder identifier. Supply this or reminderTitle; never invent an ID." },
+        reminderTitle: { type: "string", description: "Exact current reminder title from the owner's request, as an alternative to reminderId. ME3 asks which one when titles are duplicated." },
       },
       additionalProperties: false,
     },

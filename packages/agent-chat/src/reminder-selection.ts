@@ -4,6 +4,19 @@ import type { AgentReminder, ReminderDb } from "./reminders";
 type Choice = Pick<AgentReminder, "id" | "title" | "remindAt" | "timezone" | "status">;
 type Selection = { operation: "update" | "cancel"; signature: string; choices: Choice[] };
 
+export async function loadAgentReminderTitleChoices(db: ReminderDb, userId: string, title: string): Promise<Choice[]> {
+  const rows = await db.prepare(
+    `SELECT id, title, remind_at, timezone, status FROM user_reminders
+     WHERE user_id = ? AND lower(trim(title)) = lower(trim(?)) AND status IN ('pending', 'failed')
+     ORDER BY remind_at, id LIMIT 51`,
+  ).bind(userId, title).all<{
+    id: string; title: string; remind_at: string; timezone: string | null; status: AgentReminder["status"];
+  }>();
+  return (rows.results || []).map(row => ({
+    id: row.id, title: row.title, remindAt: row.remind_at, timezone: row.timezone, status: row.status,
+  }));
+}
+
 export async function loadAgentReminderSelection(input: {
   db: ReminderDb; userId: string; requestId: string; assistantText: string;
 }): Promise<Selection | null> {
@@ -30,6 +43,15 @@ export function selectedAgentReminderChoice(selection: Selection | null, ownerTe
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
+export function selectedAgentReminderSourceDate(choices: Choice[], ownerText: string, ownerTimezone: string | null | undefined): Choice | undefined {
+  const text = normalizeChoiceText(ownerText);
+  if (choices.length > 50 || /\b(?:not|except|neither)\b/.test(text) || /\breminder\s+id\s+/i.test(ownerText)) return undefined;
+  const dated = choices.filter(choice => dateAliases(choice, ownerTimezone).some(date =>
+    (` ${text} `).includes(` due on ${date} `),
+  ));
+  return dated.length === 1 ? dated[0] : undefined;
+}
+
 export async function requireAgentReminderSelection(input: {
   db: ReminderDb;
   userId: string;
@@ -41,17 +63,9 @@ export async function requireAgentReminderSelection(input: {
   previousOwnerText: string;
   ownerTimezone: string | null | undefined;
   priorSelection: Selection | null;
+  forceSelection?: boolean;
 }): Promise<{ selection: Selection; reply: string; selectedReminderId?: string } | null> {
-  const rows = await input.db.prepare(
-    `SELECT id, title, remind_at, timezone, status FROM user_reminders
-     WHERE user_id = ? AND lower(trim(title)) = lower(trim(?)) AND status IN ('pending', 'failed')
-     ORDER BY remind_at, id LIMIT 51`,
-  ).bind(input.userId, input.reminder.title).all<{
-    id: string; title: string; remind_at: string; timezone: string | null; status: AgentReminder["status"];
-  }>();
-  const choices: Choice[] = (rows.results || []).map(row => ({
-    id: row.id, title: row.title, remindAt: row.remind_at, timezone: row.timezone, status: row.status,
-  }));
+  const choices = await loadAgentReminderTitleChoices(input.db, input.userId, input.reminder.title);
   const ownerText = normalizeChoiceText(input.ownerText);
   const excluded = /\b(?:not|except|neither)\b/.test(ownerText);
   const tokens: string[] = input.ownerText.match(/[\w-]+/g) || [];
@@ -62,15 +76,12 @@ export async function requireAgentReminderSelection(input: {
     normalizeChoiceText(input.previousOwnerText).includes(normalizeChoiceText(input.reminder.title));
   const hasSourceDate = hasSourceContext && /\bdue on\b/.test(ownerText);
   const replyingToChoice = input.assistantText.startsWith("Which reminder do you mean? I haven't changed any reminders.");
-  if (choices.length < 2 && !replyingToChoice && !hasSourceDate && !explicitOwnerId && !explicitIds.length) return null;
+  if (choices.length < 2 && !replyingToChoice && !hasSourceDate && !explicitOwnerId && !explicitIds.length && !input.forceSelection) return null;
   let selected = explicitIds.length === 1 && !excluded ? explicitIds[0] : undefined;
 
   // An explicit source date identifies the existing record, never the proposed destination date.
   if (!selected && !explicitIds.length && !explicitOwnerId && choices.length <= 50 && hasSourceDate) {
-    const dated = choices.filter(choice => dateAliases(choice, input.ownerTimezone).some(date =>
-      (` ${ownerText} `).includes(` due on ${date} `),
-    ));
-    if (dated.length === 1 && !excluded) selected = dated[0];
+    selected = selectedAgentReminderSourceDate(choices, input.ownerText, input.ownerTimezone);
   }
 
   const prior = input.priorSelection;
@@ -81,7 +92,7 @@ export async function requireAgentReminderSelection(input: {
         choice.remindAt === old.remindAt && choice.timezone === old.timezone && choice.status === old.status);
     }
   }
-  if (selected?.id === input.reminder.id) return null;
+  if (selected?.id === input.reminder.id && !input.forceSelection) return null;
 
   const selection: Selection = { operation: input.operation, signature: input.signature, choices: choices.slice(0, 8) };
   const reply = [
