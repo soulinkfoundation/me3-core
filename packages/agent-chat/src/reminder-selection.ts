@@ -4,16 +4,43 @@ import type { AgentReminder, ReminderDb } from "./reminders";
 type Choice = Pick<AgentReminder, "id" | "title" | "remindAt" | "timezone" | "status">;
 type Selection = { operation: "update" | "cancel"; signature: string; choices: Choice[] };
 
+export async function loadAgentReminderSelection(input: {
+  db: ReminderDb; userId: string; requestId: string; assistantText: string;
+}): Promise<Selection | null> {
+  if (!input.assistantText.startsWith("Which reminder do you mean? I haven't changed any reminders.")) return null;
+  const previous = await input.db.prepare(
+    `SELECT result_json FROM agent_tool_executions
+     WHERE user_id = ? AND tool_name IN ('core_reminders_update', 'core_reminders_cancel')
+       AND request_id != ? AND status = 'succeeded'
+       AND json_valid(result_json) AND json_extract(result_json, '$.result.status') = 'needs_selection'
+       AND json_extract(result_json, '$.fallbackReply') = ?
+       AND datetime(updated_at) > datetime('now', '-30 minutes')
+     ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+  ).bind(input.userId, input.requestId, input.assistantText).first<{ result_json: string }>();
+  return previous ? JSON.parse(previous.result_json).result.selection as Selection : null;
+}
+
+export function selectedAgentReminderChoice(selection: Selection | null, ownerText: string, ownerTimezone: string | null | undefined): Choice | undefined {
+  if (!selection) return undefined;
+  const text = normalizeChoiceText(ownerText);
+  const number = numberedChoice(text);
+  const candidates = number === null
+    ? selection.choices.filter(choice => dateAliases(choice, ownerTimezone).includes(text))
+    : selection.choices.slice(number - 1, number);
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
 export async function requireAgentReminderSelection(input: {
   db: ReminderDb;
   userId: string;
-  requestId: string;
   reminder: AgentReminder;
   operation: Selection["operation"];
   signature: string;
   ownerText: string;
   assistantText: string;
+  previousOwnerText: string;
   ownerTimezone: string | null | undefined;
+  priorSelection: Selection | null;
 }): Promise<{ selection: Selection; reply: string; selectedReminderId?: string } | null> {
   const rows = await input.db.prepare(
     `SELECT id, title, remind_at, timezone, status FROM user_reminders
@@ -31,7 +58,8 @@ export async function requireAgentReminderSelection(input: {
   const explicitOwnerId = input.ownerText.match(/\breminder\s+id\s+([\w-]+)/i)?.[1];
   const explicitIds = choices.filter(choice => explicitOwnerId ? choice.id === explicitOwnerId : tokens.includes(choice.id));
   const hasSourceContext = ownerText.includes(normalizeChoiceText(input.reminder.title)) ||
-    normalizeChoiceText(input.assistantText).includes(normalizeChoiceText(input.reminder.title));
+    normalizeChoiceText(input.assistantText).includes(normalizeChoiceText(input.reminder.title)) ||
+    normalizeChoiceText(input.previousOwnerText).includes(normalizeChoiceText(input.reminder.title));
   const hasSourceDate = hasSourceContext && /\bdue on\b/.test(ownerText);
   const replyingToChoice = input.assistantText.startsWith("Which reminder do you mean? I haven't changed any reminders.");
   if (choices.length < 2 && !replyingToChoice && !hasSourceDate && !explicitOwnerId && !explicitIds.length) return null;
@@ -45,23 +73,10 @@ export async function requireAgentReminderSelection(input: {
     if (dated.length === 1 && !excluded) selected = dated[0];
   }
 
-  const previous = await input.db.prepare(
-    `SELECT result_json FROM agent_tool_executions
-     WHERE user_id = ? AND tool_name = ? AND request_id != ? AND status = 'succeeded'
-       AND json_valid(result_json) AND json_extract(result_json, '$.result.status') = 'needs_selection'
-       AND json_extract(result_json, '$.fallbackReply') = ?
-       AND datetime(updated_at) > datetime('now', '-30 minutes')
-     ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
-  ).bind(input.userId, `core_reminders_${input.operation}`, input.requestId, input.assistantText)
-    .first<{ result_json: string }>();
-  const prior = previous ? JSON.parse(previous.result_json).result.selection as Selection : null;
+  const prior = input.priorSelection;
   if (!selected && prior?.operation === input.operation && prior.signature === input.signature) {
-    const number = numberedChoice(ownerText);
-    const candidates = number === null
-      ? prior.choices.filter(choice => dateAliases(choice, input.ownerTimezone).includes(ownerText))
-      : prior.choices.slice(number - 1, number);
-    if (candidates.length === 1) {
-      const old = candidates[0];
+    const old = selectedAgentReminderChoice(prior, input.ownerText, input.ownerTimezone);
+    if (old) {
       selected = choices.find(choice => choice.id === old.id && choice.title === old.title &&
         choice.remindAt === old.remindAt && choice.timezone === old.timezone && choice.status === old.status);
     }

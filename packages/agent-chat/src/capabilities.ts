@@ -844,10 +844,10 @@ export const CORE_CHAT_CAPABILITIES = [
     requiresSetup: ["calendar.reminders"],
     inputSchema: {
       type: "object",
-      required: ["reminderId", "title", "date", "time"],
+      required: ["reminderId", "date", "time"],
       properties: {
         reminderId: { type: "string", description: "Stable reminder identifier." },
-        title: { type: "string", description: "Updated reminder title." },
+        title: { type: "string", description: "New title only when the owner requests a rename. Omit to preserve the existing title." },
         notes: { type: "string", description: "Optional updated reminder notes." },
         date: {
           type: "string",
