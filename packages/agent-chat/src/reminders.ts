@@ -40,7 +40,7 @@ export type AgentReminderParseResult =
     }
   | { error: string };
 
-type ReminderDb = {
+export type ReminderDb = {
   prepare(sql: string): {
     bind(...values: unknown[]): {
       first<T = unknown>(): Promise<T | null>;
@@ -218,6 +218,7 @@ export async function updateAgentReminder(
   userId: string,
   reminderId: string,
   input: AgentReminderInput,
+  expected?: AgentReminder,
 ): Promise<AgentReminder | { error: string; status?: 400 | 404 }> {
   const parsed = parseAgentReminderInput(input);
   if ("error" in parsed) return { ...parsed, status: 400 };
@@ -226,7 +227,8 @@ export async function updateAgentReminder(
     `UPDATE user_reminders
      SET title = ?, notes = ?, remind_at = ?, timezone = ?, recurrence_rule = ?,
          error_message = NULL, updated_at = datetime('now')
-     WHERE id = ? AND user_id = ? AND status IN ('pending', 'failed')`,
+     WHERE id = ? AND user_id = ? AND status IN ('pending', 'failed')
+       ${expected ? "AND title = ? AND remind_at = ? AND notes IS ? AND timezone IS ? AND recurrence_rule IS ?" : ""}`,
   )
     .bind(
       parsed.title,
@@ -236,6 +238,7 @@ export async function updateAgentReminder(
       parsed.recurrenceRule,
       reminderId,
       userId,
+      ...(expected ? [expected.title, expected.remindAt, expected.notes, expected.timezone, expected.recurrenceRule] : []),
     )
     .run();
 
@@ -258,13 +261,15 @@ export async function cancelAgentReminder(
   env: ReminderEnv,
   userId: string,
   reminderId: string,
+  expected?: AgentReminder,
 ): Promise<{ ok: true } | { error: string; status: 404 }> {
   const result = await env.DB.prepare(
     `UPDATE user_reminders
      SET status = 'cancelled', cancelled_at = datetime('now'), updated_at = datetime('now')
-     WHERE id = ? AND user_id = ? AND status IN ('pending', 'failed')`,
+     WHERE id = ? AND user_id = ? AND status IN ('pending', 'failed')
+       ${expected ? "AND title = ? AND remind_at = ? AND notes IS ? AND timezone IS ? AND recurrence_rule IS ?" : ""}`,
   )
-    .bind(reminderId, userId)
+    .bind(reminderId, userId, ...(expected ? [expected.title, expected.remindAt, expected.notes, expected.timezone, expected.recurrenceRule] : []))
     .run();
 
   if ((result.meta?.changes || 0) === 0) {

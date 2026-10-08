@@ -74,6 +74,162 @@ function fixture() {
   return { raw, env, app, thread, connect };
 }
 
+function reminderSelectionFixture(runtime: "legacy" | "sdk", duplicate = true) {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-08T10:00:00Z"));
+  const f = fixture();
+  f.env.ME3_ASSISTANT_RUNTIME = runtime;
+  f.env.ME3_DEPLOYMENT_MODE = "self_hosted";
+  f.env.ME3_AI_CHAT_PROVIDER = "workers-ai";
+  f.env.ME3_AI_CHAT_MODEL = "scripted-fixture";
+  f.env.ME3_JEV_ROUTER_MODE = "off";
+  const insert = f.raw.prepare(`INSERT INTO user_reminders(id,user_id,title,notes,remind_at,timezone,recurrence_rule)
+    VALUES (?, ?, 'ME3 QA check launch', 'Keep these notes', ?, 'Europe/Dublin', 'weekly:fri')`);
+  insert.run("first-reminder", "alice", "2027-01-15T12:00:00.000Z");
+  if (duplicate) insert.run("second-reminder", "alice", "2027-01-17T12:00:00.000Z");
+  insert.run("other-owner-reminder", "bob", "2027-01-15T12:00:00.000Z");
+  const outputs: unknown[] = [];
+  f.env.AI = { run: async () => {
+    if (!outputs.length) throw new Error("Unexpected model step");
+    return outputs.shift();
+  } } as unknown as Ai;
+  // Every request opens a new agent/cache; the conversation and selection must come from D1.
+  f.env.ME3_SDK_USER_AGENT = {
+    idFromName: (id: string) => id,
+    get: () => {
+      const cache = new Map<string, unknown>();
+      const state = { storage: {
+        get: async (key: string) => cache.get(key), put: async (key: string, value: unknown) => { cache.set(key, value); },
+        delete: async (keys: string | string[]) => { for (const key of Array.isArray(keys) ? keys : [keys]) cache.delete(key); },
+      } } as unknown as DurableObjectState;
+      const agent = new Me3UserAgent(state, f.env);
+      return { fetch: (url: string, init: RequestInit) => agent.fetch(new Request(url, init)) };
+    },
+  } as unknown as DurableObjectNamespace;
+  f.env.ME3_USER_AGENT = f.env.ME3_SDK_USER_AGENT;
+  const rows = () => f.raw.prepare("SELECT id,user_id,title,notes,remind_at,timezone,recurrence_rule,status FROM user_reminders ORDER BY id").all();
+  const call = (operation: "update" | "cancel", id = "first-reminder") => ({ tool_calls: [{
+    id: "guessed", name: `core_reminders_${operation}`, arguments: operation === "cancel" ? { reminderId: id }
+      : { reminderId: id, title: "ME3 QA check launch", date: "2027-01-16", time: "09:30", timezone: "Europe/Dublin" },
+  }] });
+  const send = async (messageText: string) => {
+    outputs.unshift({ tool_calls: [{ id: "list-first", name: "core_reminders_list", arguments: {} }] });
+    const primary = await resolvePrimaryAssistantThread(f.env, "alice");
+    const response = await f.app.fetch(new Request("https://install.test/api/assistant/chat/turn", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Test-Owner": "alice" },
+      body: JSON.stringify({ requestId: crypto.randomUUID(), threadId: primary.id, messageText }),
+    }), f.env);
+    if (response.status !== 200) throw new Error(`Assistant returned ${response.status}: ${await response.text()}`);
+    return await response.json() as { replyText: string; reminderAction: { kind: string } | null };
+  };
+  return { ...f, outputs, rows, call, send };
+}
+
+describe("owner selection at the reminder write boundary", () => {
+  it.each(["legacy", "sdk"] as const)("blocks guessed duplicate targets and accepts a natural date selection after a fresh %s agent", async runtime => {
+    const f = reminderSelectionFixture(runtime);
+    const before = f.rows();
+    f.outputs.push(f.call("update"), { response: "Done — I guessed the first reminder." });
+    const first = await f.send("Move my ME3 QA check launch reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+    expect(f.rows()).toEqual(before);
+    expect(first.replyText).toContain("Which reminder");
+    expect(first.replyText).not.toContain("Done");
+    expect(first.reminderAction).toBeNull();
+    f.outputs.push(f.call("update"), { response: "Done." });
+    await f.send("The one originally due on 15 January 2027. Move only that reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+    expect(f.rows()).toEqual(before.map(row => row.id === "first-reminder" ? { ...row, remind_at: "2027-01-16T09:30:00.000Z" } : row));
+    expect(f.raw.prepare("SELECT count(*) AS n FROM assistant_primary_threads WHERE owner_id='alice'").get()?.n).toBe(1);
+    expect(f.raw.prepare("SELECT count(*) AS n FROM assistant_messages WHERE owner_id='alice'").get()?.n).toBe(4);
+  });
+
+  it.each(["legacy", "sdk"] as const)("blocks a guessed cancellation and uses the stored numbered selection in %s", async runtime => {
+    const f = reminderSelectionFixture(runtime); const before = f.rows();
+    f.outputs.push(f.call("cancel"), { response: "Done." });
+    await f.send("Cancel my ME3 QA check launch reminder.");
+    expect(f.rows()).toEqual(before);
+    f.outputs.push(f.call("cancel"), { response: "Done." });
+    await f.send("1");
+    expect(f.rows()).toEqual(before.map(row => row.id === "first-reminder" ? { ...row, status: "cancelled" } : row));
+  });
+
+  it.each(["wrong ID", "changed record", "removed selected record", "no selection", "changed destination", "expired choice"])("does not authorize a %s from a prior choice list", async failure => {
+    const f = reminderSelectionFixture("sdk");
+    f.outputs.push(f.call("update"), { response: "Done." });
+    await f.send("Move my ME3 QA check launch reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+    if (failure === "changed record") f.raw.exec("UPDATE user_reminders SET remind_at='2027-01-18T12:00:00.000Z' WHERE id='first-reminder'");
+    if (failure === "removed selected record") f.raw.exec("DELETE FROM user_reminders WHERE id='first-reminder'");
+    if (failure === "expired choice") f.raw.exec("UPDATE agent_tool_executions SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-31 minutes')");
+    const before = f.rows();
+    const call = f.call("update", failure === "wrong ID" || failure === "removed selected record" ? "second-reminder" : "first-reminder");
+    if (failure === "changed destination") call.tool_calls[0].arguments.time = "10:30";
+    f.outputs.push(call, { response: "Done." });
+    const result = await f.send(failure === "no selection" ? "Go ahead" : "1");
+    expect(f.rows()).toEqual(before);
+    expect(result.replyText).toContain("Which reminder");
+    expect(result.reminderAction).toBeNull();
+  });
+
+  it("does not cancel a reminder ID the owner explicitly excluded", async () => {
+    const f = reminderSelectionFixture("sdk"); const before = f.rows();
+    f.outputs.push(f.call("cancel"), { response: "Done." });
+    const result = await f.send("Cancel my ME3 QA check launch reminder, but not reminder ID first-reminder.");
+    expect(f.rows()).toEqual(before);
+    expect(result.replyText).toContain("Which reminder");
+    expect(result.reminderAction).toBeNull();
+  });
+
+  it.each(["source date", "stable ID"])("does not substitute a single remaining reminder for a missing %s", async identifier => {
+    const f = reminderSelectionFixture("sdk", false); const before = f.rows();
+    f.outputs.push(f.call("update"), { response: "Done." });
+    const target = identifier === "source date" ? "ME3 QA check launch reminder due on 17 January 2027" : "reminder ID missing-reminder";
+    const result = await f.send(`Move my ${target} to 16 January 2027 at 9:30am in Europe/Dublin.`);
+    expect(f.rows()).toEqual(before);
+    expect(result.replyText).toContain("Which reminder");
+    expect(result.reminderAction).toBeNull();
+  });
+
+  it.each(["update", "cancel"] as const)("reports a concurrent edit instead of claiming a successful %s", async operation => {
+    const f = reminderSelectionFixture("sdk");
+    const prepare = f.env.DB.prepare.bind(f.env.DB);
+    let changed = false;
+    f.env.DB.prepare = (sql => {
+      const statement = prepare(sql);
+      const bind = statement.bind.bind(statement);
+      statement.bind = (...values: unknown[]) => {
+        const bound = bind(...values);
+        const run = bound.run.bind(bound);
+        bound.run = async () => {
+          if (!changed && sql.includes("UPDATE user_reminders")) {
+            changed = true;
+            f.raw.exec("UPDATE user_reminders SET remind_at='2027-01-18T12:00:00.000Z',notes='Concurrent owner edit' WHERE id='first-reminder'");
+          }
+          return run();
+        };
+        return bound;
+      };
+      return statement;
+    }) as D1Database["prepare"];
+    f.outputs.push(f.call(operation), { response: "Done." });
+    const result = await f.send(`${operation === "cancel" ? "Cancel" : "Move"} reminder ID first-reminder${operation === "update" ? " to 16 January 2027 at 9:30am in Europe/Dublin" : ""}.`);
+    expect(changed).toBe(true);
+    expect(f.raw.prepare("SELECT remind_at,notes,status FROM user_reminders WHERE id='first-reminder'").get())
+      .toEqual({ remind_at: "2027-01-18T12:00:00.000Z", notes: "Concurrent owner edit", status: "pending" });
+    expect(result.replyText).toContain("changed");
+    expect(result.replyText).not.toContain("Done");
+    expect(result.reminderAction).toBeNull();
+  });
+
+  it.each(["single match", "explicit ID", "explicit due date"])("keeps a %s usable without an extra selection turn", async control => {
+    const f = reminderSelectionFixture("sdk", control !== "single match"); const before = f.rows();
+    f.outputs.push(f.call("update"), { response: "Done." });
+    const target = control === "explicit ID" ? "reminder ID first-reminder" : control === "explicit due date"
+      ? "ME3 QA check launch reminder due on 15 January 2027" : "ME3 QA check launch reminder";
+    const result = await f.send(`Move my ${target} to 16 January 2027 at 9:30am in Europe/Dublin.`);
+    expect(result.reminderAction?.kind).toBe("updated");
+    expect(f.rows()).toEqual(before.map(row => row.id === "first-reminder" ? { ...row, remind_at: "2027-01-16T09:30:00.000Z" } : row));
+  });
+});
+
 describe("primary assistant conversation persisted in D1", () => {
   it.each([
     ["legacy", "2027-01-15", "2027-01-16", "2027-01-16T09:30:00.000Z"],

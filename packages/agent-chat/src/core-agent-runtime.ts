@@ -62,6 +62,7 @@ import {
   type AgentReminderInput,
 } from "./reminders";
 import { executeIdempotentAgentTool } from "./tool-idempotency";
+import { requireAgentReminderSelection } from "./reminder-selection";
 import {
   runAgentToolLoop,
   type AgentToolCall,
@@ -1730,6 +1731,8 @@ async function executeJournalReadToolCall(input: {
 async function executeReminderToolCall(input: {
   db: CoreAgentDb;
   userId: string;
+  requestId: string;
+  messages: readonly AgentToolMessage[];
   ownerTimezone: string | null | undefined;
   idempotencyKey: string;
   call: AgentToolCall;
@@ -1752,65 +1755,71 @@ async function executeReminderToolCall(input: {
     };
   }
 
-  if (input.tool.capabilityId === "core.reminders.cancel") {
-    const reminderId = requiredString(input.call.arguments.reminderId, "reminderId");
-    const reminder = await getPendingAgentReminder(
-      { DB: input.db },
-      input.userId,
-      reminderId,
-    );
-    if (!reminder) throw new Error("Reminder not found. List reminders and use a valid stable ID.");
-    const result = await cancelAgentReminder(
-      { DB: input.db },
-      input.userId,
-      reminderId,
-    );
-    if ("error" in result) throw new Error(result.error);
-    const cancelled = { ...reminder, status: "cancelled" as const };
-    return {
-      capabilityId: "core.reminders.cancel",
-      result: { ok: true, reminder: cancelled },
-      fallbackReply: `Cancelled the reminder: ${reminder.title}.`,
-      reminderAction: {
-        kind: "cancelled",
-        reminderId,
-        title: reminder.title,
-        remindAt: reminder.remindAt,
-      },
-      actionCards: [buildReminderActionCard(cancelled, "cancelled")],
-    };
-  }
-
-  const reminderInput = reminderInputFromArguments(
-    input.call.arguments,
-    input.ownerTimezone,
-  );
-  assertFutureReminder(reminderInput);
-
-  if (input.tool.capabilityId === "core.reminders.create") {
-    const reminder = await createAgentReminder(
-      { DB: input.db },
-      input.userId,
-      reminderInput,
-      { idempotencyKey: input.idempotencyKey },
-    );
+  const cancelling = input.tool.capabilityId === "core.reminders.cancel";
+  const reminderInput = cancelling ? null : reminderInputFromArguments(input.call.arguments, input.ownerTimezone);
+  if (reminderInput) assertFutureReminder(reminderInput);
+  if (input.tool.capabilityId === "core.reminders.create" && reminderInput) {
+    const reminder = await createAgentReminder({ DB: input.db }, input.userId, reminderInput, { idempotencyKey: input.idempotencyKey });
     if ("error" in reminder) throw new Error(reminder.error);
     return reminderWriteOutcome(reminder, "created");
   }
 
   const reminderId = requiredString(input.call.arguments.reminderId, "reminderId");
+  const existing = await getPendingAgentReminder({ DB: input.db }, input.userId, reminderId);
+  if (!existing) throw new Error("Reminder not found. List reminders and use a valid stable ID.");
+  const selection = await requireAgentReminderSelection({
+    db: input.db, userId: input.userId, requestId: input.requestId, reminder: existing,
+    operation: cancelling ? "cancel" : "update",
+    signature: JSON.stringify({ ...reminderInput, notes: input.call.arguments.notes ?? null, recurrence: input.call.arguments.recurrence ?? null }),
+    ownerText: latestMessageContent(input.messages, "user"), assistantText: latestMessageContent(input.messages, "assistant"),
+    ownerTimezone: input.ownerTimezone,
+  });
+  if (selection) return {
+    capabilityId: input.tool.capabilityId,
+    result: { ok: true, status: "needs_selection", selection: selection.selection, selectedReminderId: selection.selectedReminderId },
+    fallbackReply: selection.reply, reminderAction: null, actionCards: [],
+  };
+
+  if (cancelling) {
+    const result = await cancelAgentReminder(
+      { DB: input.db },
+      input.userId,
+      reminderId,
+      existing,
+    );
+    if ("error" in result) {
+      if (result.status === 404) return reminderNeedsRefreshOutcome(input.tool.capabilityId);
+      throw new Error(result.error);
+    }
+    const cancelled = { ...existing, status: "cancelled" as const };
+    return {
+      capabilityId: "core.reminders.cancel",
+      result: { ok: true, reminder: cancelled },
+      fallbackReply: `Cancelled the reminder: ${existing.title}.`,
+      reminderAction: {
+        kind: "cancelled",
+        reminderId,
+        title: existing.title,
+        remindAt: existing.remindAt,
+      },
+      actionCards: [buildReminderActionCard(cancelled, "cancelled")],
+    };
+  }
+
+  if (!reminderInput) throw new Error("Reminder update details are required.");
   const reminder = await updateAgentReminder(
     { DB: input.db },
     input.userId,
     reminderId,
-    reminderInput,
+    { ...reminderInput,
+      notes: input.call.arguments.notes === undefined ? existing.notes : reminderInput.notes,
+      recurrence: input.call.arguments.recurrence === undefined ? existing.recurrenceRule : reminderInput.recurrence,
+    },
+    existing,
   );
   if ("error" in reminder) {
-    throw new Error(
-      reminder.status === 404
-        ? "Reminder not found. List reminders and use a valid stable ID."
-        : reminder.error,
-    );
+    if (reminder.status === 404) return reminderNeedsRefreshOutcome(input.tool.capabilityId);
+    throw new Error(reminder.error);
   }
   return reminderWriteOutcome(reminder, "updated");
 }
@@ -2901,6 +2910,8 @@ function isLikelyToolFollowUp(message: string, assistantMessage: string): boolea
     .replace(/\s+/g, " ")
     .trim();
   if (!normalized || normalized.length > 180) return false;
+  if (assistantMessage.startsWith("Which reminder do you mean? I haven't changed any reminders.") &&
+      /^(?:[1-8]|first|second|third|fourth|fifth|sixth|seventh|eighth)$/.test(normalized)) return true;
   if (
     /^(?:yes|yeah|yep|okay|ok|sure|go ahead|do (?:it|that)|(?:open|read|show|draft|reply|update|change|move|archive|delete|cancel|send|schedule|mark|complete)\b)|\b(?:it|that|those|them|the (?:first|second|third|last|latest) one)\b/.test(
       normalized,
@@ -3242,7 +3253,8 @@ function withCoreToolInstructions(
           "- For create/update, pass the requested future local date as YYYY-MM-DD and time as HH:MM with its IANA timezone. ME3 performs the timezone conversion; never calculate a UTC offset. Noon means 12:00; midnight means 00:00. Resolve weekdays in the owner's timezone.",
           "- If the requested date or time is missing or ambiguous, ask one concise clarification question and do not call a write tool.",
           "- Before update/cancel, list reminders unless a stable reminder ID is already present in the conversation. Never invent or infer an ID from a title.",
-          "- If multiple listed reminders could match, ask the owner which one they mean and do not write.",
+          "- For multiple reminders with exactly the same title, the update/cancel tool checks owner selection before writing and returns a durable needs_selection choice list. Use one of the listed stable IDs with the requested change to obtain that list, and show its exact fallbackReply. Do not invent your own numbered choice list. For other ambiguous matches, ask the owner which reminder they mean without calling a write tool.",
+          "- A reply such as 1 selects an item from the displayed choices; it is never a reminder ID. List again if needed, match the selected original due date, and pass that record's stable ID. Keep the requested change unchanged. An explicit stable ID or uniquely matching original due date already selects the target; another reminder with the same title is not a reason to ask again.",
         ]
       : []),
     ...(hasFamily("calendar")
@@ -3845,10 +3857,19 @@ function successfulResponse(
   };
 }
 
+function reminderNeedsRefreshOutcome(capabilityId: string): CoreToolOutcome {
+  return {
+    capabilityId, result: { ok: false, status: "needs_refresh" },
+    fallbackReply: "That reminder changed or became unavailable while I was reading it. I haven't changed it. Please read the reminders again before retrying.",
+    reminderAction: null, actionCards: [],
+  };
+}
+
 function userFacingToolReply(
   replyText: string,
   outcome: CoreToolOutcome | null,
 ): string {
+  if (outcome?.result.status === "needs_selection" || outcome?.result.status === "needs_refresh") return outcome.fallbackReply;
   if (
     outcome?.capabilityId === "core.calendar.event.create" ||
     outcome?.capabilityId === "core.calendar.event.reschedule" ||
