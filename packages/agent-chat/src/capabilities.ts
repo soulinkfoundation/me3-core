@@ -801,16 +801,16 @@ export const CORE_CHAT_CAPABILITIES = [
     requiresSetup: ["calendar.reminders"],
     inputSchema: {
       type: "object",
-      required: ["title", "remindAt"],
+      required: ["title", "date", "time"],
       properties: {
         title: { type: "string", description: "Reminder title." },
         notes: { type: "string", description: "Optional reminder notes." },
-        remindAt: {
+        date: {
           type: "string",
-          description: "ISO timestamp for when to remind the owner.",
-          format: "date-time",
+          description: "Requested local reminder date as YYYY-MM-DD. ME3 performs timezone conversion.",
         },
-        timezone: { type: "string", description: "Owner timezone." },
+        time: { type: "string", description: "Requested local reminder time as HH:MM (24-hour). Noon is 12:00." },
+        timezone: { type: "string", description: "IANA timezone for the requested local date and time. Omit to use the owner's timezone." },
         recurrence: {
           type: "string",
           description: "Optional daily, weekly, monthly, yearly, or custom recurrence.",
@@ -844,17 +844,17 @@ export const CORE_CHAT_CAPABILITIES = [
     requiresSetup: ["calendar.reminders"],
     inputSchema: {
       type: "object",
-      required: ["reminderId", "title", "remindAt"],
+      required: ["reminderId", "title", "date", "time"],
       properties: {
         reminderId: { type: "string", description: "Stable reminder identifier." },
         title: { type: "string", description: "Updated reminder title." },
         notes: { type: "string", description: "Optional updated reminder notes." },
-        remindAt: {
+        date: {
           type: "string",
-          description: "Updated ISO timestamp for the reminder.",
-          format: "date-time",
+          description: "New requested local reminder date as YYYY-MM-DD. ME3 performs timezone conversion.",
         },
-        timezone: { type: "string", description: "Owner timezone." },
+        time: { type: "string", description: "New requested local reminder time as HH:MM (24-hour). Noon is 12:00." },
+        timezone: { type: "string", description: "IANA timezone for the requested local date and time. Omit to use the owner's timezone." },
         recurrence: {
           type: "string",
           description: "Optional updated recurrence.",

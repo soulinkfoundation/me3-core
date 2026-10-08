@@ -34,7 +34,6 @@ const bookingDay = day(3);
 const journalDay = day(-1);
 const [year, month, date] = eventDay.split("-").map(Number);
 const movedEventUtc = new Date(getUtcMsForLocalTime({ year, month, day: date, hour: 13, minute: 30 }, "Europe/Dublin")).toISOString();
-const reminderUtc = new Date(getUtcMsForLocalTime({ year, month, day: date, hour: 9, minute: 0 }, "Europe/Dublin")).toISOString();
 const scenarioFamilies = [
   {
     id: "calendar-find",
@@ -104,7 +103,7 @@ const scenarioFamilies = [
   {
     id: "reminder-create",
     prompt: "Remind me tomorrow at 9am to call Alex.",
-    calls: [{ name: "core_reminders_create", arguments: { title: "Call Alex", remindAt: reminderUtc, timezone: "Europe/Dublin" } }],
+    calls: [{ name: "core_reminders_create", arguments: { title: "Call Alex", date: eventDay, time: "09:00", timezone: "Europe/Dublin" } }],
     check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_reminders WHERE user_id = ? AND title = 'Call Alex'").get(seed.ownerId).n === 1,
   },
   {

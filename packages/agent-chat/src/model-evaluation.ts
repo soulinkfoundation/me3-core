@@ -367,7 +367,8 @@ export const FIXED_MODEL_EVALUATION_TASKS: readonly FixedModelEvaluationTask[] =
         name: "core_reminders_create",
         arguments: {
           title: "Call Sam",
-          remindAt: "2026-07-16T09:00:00+01:00",
+          date: "2026-07-16",
+          time: "09:00",
           timezone: "Europe/Dublin",
         },
       },
@@ -518,7 +519,8 @@ export const FIXED_MODEL_EVALUATION_TASKS: readonly FixedModelEvaluationTask[] =
         name: "core_reminders_create",
         arguments: {
           title: "Call Sam",
-          remindAt: "2026-07-16T09:00:00+01:00",
+          date: "2026-07-16",
+          time: "09:00",
           timezone: "Europe/Dublin",
         },
       },

@@ -222,7 +222,8 @@ describe("Core Agent Runtime v2 reminders", () => {
         "core_reminders_create",
         {
           title: "Call Sam",
-          remindAt: "2026-07-11T09:00:00+01:00",
+          date: "2026-07-11",
+          time: "09:00",
           timezone: "Europe/Dublin",
         },
       ))
@@ -399,7 +400,8 @@ describe("Core Agent Runtime v2 reminders", () => {
           name: "core_reminders_create",
           arguments: {
             title: "Call Sam",
-            remindAt: "2026-07-11T09:00:00+01:00",
+            date: "2026-07-11",
+            time: "09:00",
             timezone: "Europe/Dublin",
           },
         }],
@@ -439,7 +441,8 @@ describe("Core Agent Runtime v2 reminders", () => {
       const route = providerRoute(providerId, [
         providerToolCall(providerId, "create-1", "core_reminders_create", {
           title: "Call Sam",
-          remindAt: "2026-07-11T09:00:00+01:00",
+          date: "2026-07-11",
+          time: "09:00",
           timezone: "Europe/Dublin",
         }),
         providerText(providerId, "Done. I set the reminder for Saturday at 9:00."),
@@ -501,7 +504,8 @@ describe("Core Agent Runtime v2 reminders", () => {
             arguments: {
               reminderId: "reminder-1",
               title: "Call Sam about launch",
-              remindAt: "2026-07-11T12:00:00+01:00",
+              date: "2026-07-11",
+              time: "12:00",
               timezone: "Europe/Dublin",
             },
           },
@@ -615,7 +619,8 @@ describe("Core Agent Runtime v2 reminders", () => {
         route: providerRoute("workers-ai", [
           providerToolCall("workers-ai", "create-replay", "core_reminders_create", {
             title: "Call Sam",
-            remindAt: "2026-07-11T09:00:00+01:00",
+            date: "2026-07-11",
+            time: "09:00",
             timezone: "Europe/Dublin",
           }),
           { response: "Reminder set." },
@@ -646,7 +651,8 @@ describe("Core Agent Runtime v2 reminders", () => {
             name: "core_reminders_create",
             arguments: JSON.stringify({
               title: "Call Sam",
-              remindAt: "2026-07-11T09:00:00+01:00",
+              date: "2026-07-11",
+              time: "09:00",
               timezone: "Europe/Dublin",
             }),
           },
@@ -732,7 +738,8 @@ describe("Core Agent Runtime v2 reminders", () => {
             name: "core_reminders_create",
             arguments: {
               title: "Call Sam",
-              remindAt: "2026-06-30T09:00:00+01:00",
+              date: "2026-06-30",
+              time: "09:00",
               timezone: "Europe/Dublin",
             },
           },

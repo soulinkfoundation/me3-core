@@ -57,7 +57,8 @@ const GOLDEN_SCENARIOS: readonly EvalScenario[] = [
           name: "core_reminders_create",
           arguments: {
             title: "Call Sam",
-            remindAt: "2026-07-11T09:00:00+01:00",
+            date: "2026-07-11",
+            time: "09:00",
             timezone: "Europe/Dublin",
           },
         }],
@@ -135,7 +136,8 @@ const GOLDEN_SCENARIOS: readonly EvalScenario[] = [
           name: "core_reminders_create",
           arguments: {
             title: "Call Sam",
-            remindAt: "2026-07-11T09:00:00+01:00",
+            date: "2026-07-11",
+            time: "09:00",
             timezone: "Europe/Dublin",
           },
         }],
@@ -279,24 +281,12 @@ function providerRoute(
 ): AgentChatAiRoute {
   const payloads = turns.map((turn, index) => providerPayload(provider, turn, index));
   const next = vi.fn(async () => payloads.shift());
-  if (provider === "workers-ai") {
-    return {
-      providerId: provider,
-      model: "workers-ai-eval-model",
-      backupModel: null,
-      apiKey: null,
-      ai: { run: next },
-      aiGateway: null,
-      configured: true,
-    };
-  }
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json(await next())));
   return {
-    providerId: provider,
-    model: `${provider}-eval-model`,
+    providerId: "workers-ai",
+    model: provider === "anthropic" ? "anthropic/claude-sonnet-5" : provider === "openai" ? "openai/gpt-5.4-mini" : "workers-ai-eval-model",
     backupModel: null,
-    apiKey: "eval-key",
-    ai: null,
+    apiKey: null,
+    ai: { run: next },
     aiGateway: null,
     configured: true,
   };

@@ -2677,7 +2677,8 @@ describe("Core chat native context", () => {
             name: "core_reminders_create",
             arguments: {
               title: "follow up with Sam",
-              remindAt: "2026-06-01T09:00:00+01:00",
+              date: "2026-06-01",
+              time: "09:00",
               timezone: "Europe/Dublin",
             },
           },
@@ -2894,7 +2895,8 @@ describe("Core chat native context", () => {
               name: "core_reminders_create",
               arguments: {
                 title: "tell erum about soulink",
-                remindAt: "2026-07-06T09:00:00+01:00",
+                date: "2026-07-06",
+                time: "09:00",
                 timezone: "Europe/Dublin",
               },
             },

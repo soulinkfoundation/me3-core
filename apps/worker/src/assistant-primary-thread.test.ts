@@ -7,10 +7,14 @@ import { registerAssistantRoutes } from "./routes/assistant";
 import { dispatchAgentChannelTurn } from "./agent-channels";
 import { Me3UserAgent } from "./user-agent";
 import { listAgentMailboxMessages } from "./agent-chat";
+import { runCoreAgentToolTurn } from "@me3-core/plugin-agent-chat";
 import type { Env } from "./types";
 
 const databases: DatabaseSync[] = [];
-afterEach(() => databases.splice(0).forEach((db) => db.close()));
+afterEach(() => {
+  databases.splice(0).forEach((db) => db.close());
+  vi.useRealTimers();
+});
 
 function fixture() {
   const raw = new DatabaseSync(":memory:");
@@ -71,6 +75,59 @@ function fixture() {
 }
 
 describe("primary assistant conversation persisted in D1", () => {
+  it.each([
+    ["legacy", "2027-01-15", "2027-01-16", "2027-01-16T09:30:00.000Z"],
+    ["sdk", "2027-01-15", "2027-01-16", "2027-01-16T09:30:00.000Z"],
+    ["legacy", "2027-07-15", "2027-07-16", "2027-07-16T08:30:00.000Z"],
+    ["sdk", "2027-07-15", "2027-07-16", "2027-07-16T08:30:00.000Z"],
+  ] as const)("preserves requested reminder wall times through %s on %s", async (runtime, date, movedDate, expectedUtc) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T10:00:00Z"));
+    const { env, raw } = fixture();
+    raw.exec(`INSERT INTO user_reminders(id, user_id, title, remind_at, timezone)
+      VALUES ('other-reminder', 'bob', 'Call Ada', '2027-01-15T12:00:00.000Z', 'Europe/Dublin')`);
+    const run = vi.fn()
+      .mockResolvedValueOnce({ tool_calls: [{ id: "create", name: "core_reminders_create", arguments: { title: "Call Ada", date, time: "12:00", timezone: "Europe/Dublin" } }] })
+      .mockResolvedValueOnce({ response: "Saved the reminder." });
+    const route = { providerId: "workers-ai", model: "scripted-fixture", configured: true, backupModel: null, apiKey: null, aiGateway: null, ai: { run } } as const;
+    const turn = (requestId: string, text: string) => runCoreAgentToolTurn({
+      db: env.DB, userId: "alice", requestId, turnId: requestId, ownerTimezone: "Europe/Dublin", runtime, route,
+      messages: [{ role: "system", content: "You are ME3." }, { role: "user", content: text }],
+    });
+    const created = await turn("wall-create", `Remind me to call Ada on ${date} at noon in Europe/Dublin.`);
+    expect(created.reminderAction?.kind).toBe("created");
+    const first = raw.prepare("SELECT id, remind_at FROM user_reminders WHERE user_id = 'alice'").get();
+    expect(first?.remind_at).toBe(`${date}T${date.includes("-07-") ? "11" : "12"}:00:00.000Z`);
+    run.mockResolvedValueOnce({ tool_calls: [{ id: "move", name: "core_reminders_update", arguments: { reminderId: first?.id, title: "Call Ada", date: movedDate, time: "09:30", timezone: "Europe/Dublin" } }] })
+      .mockResolvedValueOnce({ response: "Moved the reminder." });
+    const moved = await turn("wall-move", `Move reminder ${String(first?.id)} to ${movedDate} at 9:30am in Europe/Dublin.`);
+    expect(moved.reminderAction).toMatchObject({ kind: "updated", reminderId: first?.id, remindAt: expectedUtc });
+    expect(raw.prepare("SELECT id, remind_at FROM user_reminders WHERE user_id = 'alice'").all()).toEqual([{ id: first?.id, remind_at: expectedUtc }]);
+    expect(raw.prepare("SELECT remind_at FROM user_reminders WHERE user_id = 'bob'").get()?.remind_at).toBe("2027-01-15T12:00:00.000Z");
+  });
+
+  it.each([
+    ["2027-02-30", "09:30", "Europe/Dublin", "YYYY-MM-DD"],
+    ["2027-01-16", "25:30", "Europe/Dublin", "HH:MM"],
+    ["2027-03-28", "01:30", "Europe/Dublin", "does not exist"],
+    ["2027-10-31", "01:30", "Europe/Dublin", "occurs twice"],
+    ["2027-01-16", "09:30", "IST", "IANA timezone"],
+  ])("rejects invalid or ambiguous reminder wall time %s %s %s without a write", async (date, time, timezone, error) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T10:00:00Z"));
+    const { env, raw } = fixture();
+    const run = vi.fn()
+      .mockResolvedValueOnce({ tool_calls: [{ id: "invalid", name: "core_reminders_create", arguments: { title: "Call Ada", date, time, timezone } }] })
+      .mockResolvedValueOnce({ response: "Please choose a valid, unambiguous time." });
+    await runCoreAgentToolTurn({
+      db: env.DB, userId: "alice", requestId: "wall-invalid", turnId: "wall-invalid", ownerTimezone: "Europe/Dublin", runtime: "sdk",
+      route: { providerId: "workers-ai", model: "scripted-fixture", configured: true, backupModel: null, apiKey: null, aiGateway: null, ai: { run } },
+      messages: [{ role: "user", content: `Remind me to call Ada on ${date} at ${time} in ${timezone}.` }],
+    });
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM user_reminders").get()?.n).toBe(0);
+    expect(raw.prepare("SELECT status, error_message FROM agent_tool_executions").get()).toMatchObject({ status: "failed", error_message: expect.stringContaining(error) });
+  });
+
   it("finds sender and subject keywords through the real agent mailbox search before saving an unsent reply", async () => {
     const { env, raw, app } = fixture();
     env.ME3_ASSISTANT_RUNTIME = "sdk";
@@ -133,7 +190,7 @@ describe("primary assistant conversation persisted in D1", () => {
     const tomorrow = new Date(Date.now() + 86400000).toISOString();
     const modelInputs: Array<{ messages: Array<{ content: string }> }> = [];
     const outputs = [
-      { tool_calls: [{ id: "create", name: "core_reminders_create", arguments: { title: "Call Ada", remindAt: tomorrow, timezone: "Europe/Dublin" } }] },
+      { tool_calls: [{ id: "create", name: "core_reminders_create", arguments: { title: "Call Ada", date: tomorrow.slice(0, 10), time: tomorrow.slice(11, 16), timezone: "UTC" } }] },
       { response: "Reminder created for Call Ada." },
       { tool_calls: [{ id: "read", name: "core_reminders_list", arguments: {} }] },
       { response: "Call Ada is on your reminders." },

@@ -5,6 +5,7 @@ import {
   normalizeTimeZone,
   readCalendarEventsForAgent,
   rescheduleCalendarEventForAgent,
+  resolveAgentCalendarStart,
   type CalendarAgentCreatedEvent,
   type CalendarAgentEvent,
 } from "@me3-core/plugin-calendar";
@@ -3238,7 +3239,7 @@ function withCoreToolInstructions(
       ? [
           "Reminder tool rules:",
           "- Use reminder tools only when the owner clearly asks to list, create, update, or cancel reminders. Reminder lists contain future reminders only; do not infer work from reminders whose time has passed.",
-          "- For create/update, remindAt must be a future ISO date-time with the correct timezone offset. Noon means 12:00; midnight means 00:00. Resolve weekdays in the owner's timezone.",
+          "- For create/update, pass the requested future local date as YYYY-MM-DD and time as HH:MM with its IANA timezone. ME3 performs the timezone conversion; never calculate a UTC offset. Noon means 12:00; midnight means 00:00. Resolve weekdays in the owner's timezone.",
           "- If the requested date or time is missing or ambiguous, ask one concise clarification question and do not call a write tool.",
           "- Before update/cancel, list reminders unless a stable reminder ID is already present in the conversation. Never invent or infer an ID from a title.",
           "- If multiple listed reminders could match, ask the owner which one they mean and do not write.",
@@ -3730,10 +3731,15 @@ function reminderInputFromArguments(
   if (timezoneValue && !normalizeTimeZone(timezoneValue)) {
     throw new Error(`Invalid reminder timezone "${timezoneValue}".`);
   }
+  const { startsAt } = resolveAgentCalendarStart({
+    startDate: requiredString(args.date, "date"),
+    startTime: requiredString(args.time, "time"),
+    startTimezone: timezone,
+  }, "Reminder");
   return {
     title: requiredString(args.title, "title"),
     notes: optionalString(args.notes),
-    remindAt: requiredString(args.remindAt, "remindAt"),
+    remindAt: startsAt,
     timezone,
     recurrence: optionalString(args.recurrence),
   };

@@ -341,14 +341,14 @@ export async function cancelCalendarEventForAgent(
   return { id: event.id, title: event.title };
 }
 
-function resolveAgentCalendarStart(input: Pick<CalendarAgentCreateInput,
+export function resolveAgentCalendarStart(input: Pick<CalendarAgentCreateInput,
   "startDate" | "startTime" | "startTimezone"
->): { startDate: string; startTime: string; startTimezone: string; startsAt: string } {
-  const startDate = requiredCalendarDate(input.startDate, "Calendar event date");
-  const startTime = requiredCalendarTime(input.startTime, "Calendar event time");
+>, label = "Calendar event"): { startDate: string; startTime: string; startTimezone: string; startsAt: string } {
+  const startDate = requiredCalendarDate(input.startDate, `${label} date`);
+  const startTime = requiredCalendarTime(input.startTime, `${label} time`);
   const startTimezone = normalizeAgentTimeZone(input.startTimezone);
   if (!startTimezone) {
-    throw new Error("Calendar event source timezone must be a valid IANA timezone, not an abbreviation.");
+    throw new Error(`${label} source timezone must be a valid IANA timezone, not an abbreviation.`);
   }
   const [year, month, day] = startDate.split("-").map(Number);
   const [hour, minute] = startTime.split(":").map(Number);
@@ -361,10 +361,10 @@ function resolveAgentCalendarStart(input: Pick<CalendarAgentCreateInput,
     resolvedStart.day !== day || resolvedStart.hour !== hour ||
     resolvedStart.minute !== minute
   ) {
-    throw new Error(`Calendar event time ${startDate} ${startTime} does not exist in ${startTimezone}.`);
+    throw new Error(`${label} time ${startDate} ${startTime} does not exist in ${startTimezone}.`);
   }
   if (hasAlternativeCalendarInstant(startsAt, resolvedStart, startTimezone)) {
-    throw new Error(`Calendar event time ${startDate} ${startTime} occurs twice in ${startTimezone} because of a timezone transition. Ask the owner for an unambiguous time.`);
+    throw new Error(`${label} time ${startDate} ${startTime} occurs twice in ${startTimezone} because of a timezone transition. Ask the owner for an unambiguous time.`);
   }
   return { startDate, startTime, startTimezone, startsAt };
 }
