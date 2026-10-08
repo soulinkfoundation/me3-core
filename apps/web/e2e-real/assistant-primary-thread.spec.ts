@@ -46,7 +46,7 @@ test("main chat persists across sessions while new and project chats stay availa
     const resolver = await fresh.request.post(`${api}/assistant/threads/primary`);
     expect((await resolver.json()).thread.id).toBe(primaryId);
     const freshPage = await fresh.newPage();
-    await freshPage.goto("http://127.0.0.1:4000/assistant");
+    await freshPage.goto("http://127.0.0.1:8787/assistant");
     await expect(freshPage).toHaveURL(new RegExp(`thread=${primaryId}`));
     await testInfo.attach("primary-conversation-evidence", {
       contentType: "application/json",

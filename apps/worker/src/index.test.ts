@@ -4027,7 +4027,7 @@ describe("ME3 Worker auth", () => {
     expect(await response.text()).toBe("PNG");
   });
 
-  it("canonicalizes /me so relative site files resolve under the Worker public prefix", async () => {
+  it("redirects legacy profile home URLs to the root and keeps relative media working", async () => {
     const env = createEnv();
     addBookableSite(env);
     addSiteFileText(
@@ -4046,10 +4046,14 @@ describe("ME3 Worker auth", () => {
     );
     expect(redirect.status).toBe(308);
     expect(redirect.headers.get("Location")).toBe(
-      "https://kierans-me3.example.workers.dev/me/?ref=share",
+      "https://kierans-me3.example.workers.dev/?ref=share",
     );
 
-    const pageUrl = "https://kierans-me3.example.workers.dev/me/";
+    const legacyHome = await app.fetch(new Request("https://kierans-me3.example.workers.dev/me/"), env);
+    expect(legacyHome.status).toBe(308);
+    expect(legacyHome.headers.get("Location")).toBe("https://kierans-me3.example.workers.dev/");
+
+    const pageUrl = "https://kierans-me3.example.workers.dev/";
     const page = await app.fetch(new Request(pageUrl), env);
     const html = await page.text();
     expect(page.status).toBe(200);
@@ -4059,6 +4063,94 @@ describe("ME3 Worker auth", () => {
     const asset = await app.fetch(new Request(assetUrl), env);
     expect(asset.status).toBe(200);
     expect(asset.headers.get("Content-Type")).toBe("image/png");
+
+    const legacyAsset = await app.fetch(new Request("https://kierans-me3.example.workers.dev/me/files/avatar.png"), env);
+    expect(legacyAsset.status).toBe(200);
+    expect(await legacyAsset.text()).toBe("PNG");
+  });
+
+  it("preserves custom-domain canonical metadata and discovery across installation aliases", async () => {
+    const env = createEnv();
+    addBookableSite(env);
+    env.CORE_WEB_ORIGIN = "https://owner.me3.app";
+    env.CORE_API_ORIGIN = "https://owner.me3.app";
+    env.sites[0].custom_domain = "www.owner.example";
+    env.sites[0].custom_domain_status = "active";
+    addSiteFileText(env, "site-booking", "public/index.html", '<!doctype html><link rel="canonical" href="https://www.owner.example/"><h1>Public Owner</h1>', "text/html");
+    for (const host of ["owner.me3.app", "www.owner.example"]) {
+      const home = await app.fetch(new Request(`https://${host}/`), env);
+      expect(home.status).toBe(200);
+      expect(await home.text()).toContain('href="https://www.owner.example/"');
+      for (const path of ["/me.json", "/.well-known/me.json", "/me/me.json"]) {
+        const response = await app.fetch(new Request(`https://${host}${path}`), env);
+        expect(response.status).toBe(200);
+        expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+        const profile = await response.json() as { id: string; url: string; name: string };
+        expect(profile.url).toBe("https://www.owner.example/");
+        expect(profile.id).toBe("https://www.owner.example/me.json");
+        expect(profile.name).toBe("Booking Owner");
+      }
+    }
+  });
+
+  it("keeps owner routes and app assets separate from published pages", async () => {
+    const env = createEnv();
+    addBookableSite(env);
+    env.CORE_WEB_ORIGIN = "https://owner.me3.app";
+    env.CORE_API_ORIGIN = "https://owner.me3.app";
+    env.ASSETS = { fetch: async () => new Response("OWNER APP") } as unknown as Fetcher;
+    addSiteFileText(env, "site-booking", "public/about.html", "PUBLIC ABOUT", "text/html");
+    addSiteFileText(env, "site-booking", "public/login.html", "PUBLIC LOGIN", "text/html");
+    for (const path of ["/login", "/journal", "/assistant", "/files", "/files/", "/account", "/assets/app.js"]) {
+      const response = await app.fetch(new Request(`https://owner.me3.app${path}`), env);
+      expect(await response.text()).toBe("OWNER APP");
+    }
+    for (const path of ["/about", "/me/about"]) {
+      const response = await app.fetch(new Request(`https://owner.me3.app${path}`), env);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain("PUBLIC ABOUT");
+    }
+    const missing = await app.fetch(new Request("https://owner.me3.app/no-public-page"), env);
+    expect(missing.status).toBe(404);
+  });
+
+  it("sends an unpublished installation to login without serving public content", async () => {
+    const env = createEnv();
+    addBookableSite(env);
+    env.CORE_WEB_ORIGIN = "https://owner.me3.app";
+    env.CORE_API_ORIGIN = "https://owner.me3.app";
+    env.sites[0].published_at = null;
+    addSiteFileText(env, "site-booking", "public/index.html", "HIDDEN PROFILE", "text/html");
+    const response = await app.fetch(new Request("https://owner.me3.app/"), env);
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/login");
+    const page = await app.fetch(new Request("https://owner.me3.app/about"), env);
+    expect(page.status).toBe(404);
+    expect(await page.text()).not.toContain("HIDDEN PROFILE");
+  });
+
+  it("returns failed ME3 claims to login even when the public homepage is published", async () => {
+    const env = createEnv();
+    env.CORE_WEB_ORIGIN = "https://owner.me3.app";
+    env.CORE_API_ORIGIN = "https://owner.me3.app";
+    const response = await app.fetch(new Request("https://owner.me3.app/api/auth/me3/callback"), env);
+    expect(response.headers.get("Location")).toBe("https://owner.me3.app/login?me3_claim_error=missing_claim");
+  });
+
+  it("updates legacy installation canonical URLs in existing published snapshots", async () => {
+    const env = createEnv();
+    addBookableSite(env);
+    env.CORE_WEB_ORIGIN = "https://owner.me3.app";
+    env.CORE_API_ORIGIN = "https://owner.me3.app";
+    addSiteFileText(env, "site-booking", "public/index.html", '<!doctype html><link rel="canonical" href="https://owner.me3.app/site/owner/"><meta property="og:url" content="https://owner.me3.app/site/owner/">', "text/html");
+    addSiteFileText(env, "site-booking", "public/sitemap.xml", '<url><loc>https://owner.me3.app/site/owner/</loc></url>', "application/xml");
+    for (const path of ["/", "/sitemap.xml"]) {
+      const response = await app.fetch(new Request(`https://owner.me3.app${path}`), env);
+      expect(response.status).toBe(200);
+      const content = await response.text();
+      expect(content).toContain("https://owner.me3.app/");
+      expect(content).not.toContain("https://owner.me3.app/site/owner/");
+    }
   });
 
   it("serves the published site profile at the well-known me.json discovery path", async () => {

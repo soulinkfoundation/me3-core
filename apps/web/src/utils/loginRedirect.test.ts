@@ -62,8 +62,8 @@ describe("login redirects", () => {
     ).toBe("/create");
   });
 
-  it("returns to root for ME3.app OAuth when setup state should decide", () => {
-    expect(resolveMe3OAuthRedirect(undefined, options)).toBe("/");
+  it("returns to login for ME3.app OAuth so setup state can decide", () => {
+    expect(resolveMe3OAuthRedirect(undefined, options)).toBe("/login");
   });
 
   it("keeps safe same-origin redirects", () => {

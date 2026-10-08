@@ -17,7 +17,7 @@ function browserOrigin(): string {
 
 function fallbackPublicSiteUrl(): string {
   const origin = browserOrigin();
-  return origin ? `${origin}/me` : "/me";
+  return origin ? `${origin}/` : "/";
 }
 
 export function configuredPublicSiteUrl(
@@ -55,7 +55,7 @@ export function permanentPublicSitePath(
 ): string {
   return siteRole === "organization"
     ? `/site/${encodeURIComponent(username)}/`
-    : "/me/";
+    : "/";
 }
 
 export function permanentPublicSiteUrl(
@@ -96,5 +96,5 @@ export async function resolvePublicProfileUrl(
 
 export function defaultPublicProfileUrlLabel(): string {
   if (import.meta.env.DEV) return "localhost preview";
-  return "/me";
+  return "/";
 }

@@ -2321,7 +2321,7 @@ async function completeCoreGithubInstallFromRoute() {
 
 async function logout() {
   await auth.logout();
-  router.push("/");
+  router.push("/login");
 }
 
 async function scrollToRouteHash() {

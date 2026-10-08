@@ -97,6 +97,12 @@ async function resolveDefaultAppPathForSession(): Promise<string> {
 
 // Navigation guard
 router.beforeEach(async (to, _from, next) => {
+  // The public homepage is rendered by the Worker, outside the owner SPA.
+  if (to.path === "/") {
+    if (import.meta.env.DEV) next({ path: "/login", query: to.query, hash: to.hash });
+    else window.location.assign(to.fullPath);
+    return;
+  }
   const auth = useAuthStore();
   await auth.ensureInitialized();
 
@@ -123,12 +129,6 @@ router.beforeEach(async (to, _from, next) => {
       next(redirect);
       return;
     }
-    next({ path: await resolveDefaultAppPathForSession() });
-    return;
-  }
-
-  // Redirect logged-in users from the public root to the app landing path.
-  if (to.path === "/" && auth.isAuthenticated) {
     next({ path: await resolveDefaultAppPathForSession() });
     return;
   }

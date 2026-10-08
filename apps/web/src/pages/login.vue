@@ -17,8 +17,7 @@ import {
 import { detectBrowserTimeZone } from "../utils/timezone";
 
 definePage({
-  path: "/",
-  alias: ["/login"],
+  path: "/login",
   meta: {
     title: "Set up ME3 | Personal AI assistant",
     description: "Claim installation with a ME3 account.",

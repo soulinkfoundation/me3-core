@@ -76,5 +76,5 @@ export function resolveMe3OAuthRedirect(
 ): string {
   if (options.setupIncomplete) return "/create";
 
-  return normalizeSafeLoginRedirect(raw, options) || "/";
+  return normalizeSafeLoginRedirect(raw, options) || "/login";
 }

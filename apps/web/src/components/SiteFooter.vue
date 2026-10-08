@@ -3,7 +3,7 @@
     <div class="footer-left">
       <p class="copyright">&copy; 2026 ME3</p>
       <div class="footer-links">
-        <router-link to="/">Home</router-link>
+        <a href="/">Home</a>
         <router-link to="/login">Sign in</router-link>
       </div>
     </div>

@@ -3,7 +3,7 @@
   "short_name": "ME3",
   "description": "An assistant for coaches, educators, therapists, and creators who help people every day.",
   "id": "/",
-  "start_url": "/",
+  "start_url": "/login",
   "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",

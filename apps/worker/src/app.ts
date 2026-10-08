@@ -195,6 +195,7 @@ import {
   imageExtension,
   isMissingSiteFilesTableError,
   isPublicSiteHost,
+  isKnownFallbackSiteHost,
   loadPublishManifest,
   loadSiteSourceFiles,
   normalizeSiteFileName,
@@ -376,6 +377,19 @@ const OWNER_APP_ROUTE_PREFIXES = [
   "/sites",
   "/social",
   "/tasks",
+  "/agent",
+  "/auth",
+  "/clients",
+  "/dashboard",
+  "/home",
+  "/messages",
+  "/settings",
+  "/socials",
+  "/wheel-of-life",
+];
+const OWNER_APP_ASSET_PATHS = [
+  "/assets", "/icons", "/manifest.webmanifest", "/sw.js", "/favicon.ico",
+  "/me3-logo-light.png", "/me3-logo-dark.png",
 ];
 const STRICT_TRANSPORT_SECURITY_HEADER = "max-age=31536000";
 const fetchWithWorkerGlobalContext: typeof fetch = (input, init) =>
@@ -529,6 +543,7 @@ app.use("*", async (c, next) => {
   if (
     !isPublicDiscoveryPath(pathname) &&
     !pathname.startsWith("/api/") &&
+    pathname !== "/me" && !pathname.startsWith("/me/") &&
     await isPublicSiteHost(c.env, c.req.url)
   ) {
     return servePublicSiteRequest(c.env, c.req.raw);
@@ -1426,6 +1441,18 @@ app.notFound(async (c) => {
   if (await isPublicSiteHost(c.env, c.req.url)) {
     return servePublicSiteRequest(c.env, c.req.raw);
   }
+  const pathname = new URL(c.req.url).pathname;
+  const reservedPath = [...OWNER_APP_ROUTE_PREFIXES, ...OWNER_APP_ASSET_PATHS, "/api", "/site", "/preview", "/me"]
+    .some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  // Public files live below /files/; the owner's file browser stays at /files.
+  const publicMediaPath = pathname.startsWith("/files/") && pathname !== "/files/";
+  if (
+    ["GET", "HEAD"].includes(c.req.method) &&
+    isKnownFallbackSiteHost(c.env, new URL(c.req.url).hostname) &&
+    (!reservedPath || publicMediaPath)
+  ) {
+    return servePublicSiteRequest(c.env, c.req.raw);
+  }
   if (c.env.ASSETS) {
     const response = await c.env.ASSETS.fetch(c.req.raw);
     return applyOwnerAppAssetCachePolicy(
@@ -1661,7 +1688,7 @@ function isPublicDiscoveryPath(pathname: string): boolean {
 }
 
 function isPublicMeJsonPath(pathname: string): boolean {
-  return pathname === "/me.json" || pathname === "/.well-known/me.json";
+  return /^\/(?:me\/|site\/[^/]+\/)?(?:\.well-known\/)?me\.json$/.test(pathname);
 }
 
 function isOwnerSurfaceRequest(c: AppContext, pathname: string): boolean {
@@ -2080,7 +2107,9 @@ function redirectMe3ClaimError(
   code: string,
   redirectPath?: string | null,
 ): Response {
-  const target = new URL(normalizeClaimRedirect(redirectPath) || "/", getCoreWebOrigin(c.env, c.req.url));
+  const target = new URL("/login", getCoreWebOrigin(c.env, c.req.url));
+  const redirect = normalizeClaimRedirect(redirectPath);
+  if (redirect) target.searchParams.set("redirect", redirect);
   target.searchParams.set("me3_claim_error", code);
   return c.redirect(target.toString());
 }

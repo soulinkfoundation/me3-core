@@ -28,6 +28,6 @@ describe("configuredPublicProfileUrl", () => {
     expect(permanentPublicSitePath("studio", "organization")).toBe(
       "/site/studio/",
     );
-    expect(permanentPublicSitePath("owner", "profile")).toBe("/me/");
+    expect(permanentPublicSitePath("owner", "profile")).toBe("/");
   });
 });

@@ -69,6 +69,8 @@ import {
   getCoreWebOrigin,
   getPublicSiteOrigin,
   getPublishedSiteBaseUrl,
+  getAdminHost,
+  hostsMatch,
   getGeneratedSiteContentType,
   getMe3CloudUsernamePublishBlockReason,
   getSiteByUsername,
@@ -112,6 +114,8 @@ import {
   serveDefaultPublicSitePath,
   serveMeJsonResponse,
   servePublicSiteByUsername,
+  servePublicSiteRequest,
+  getPublicSiteForHost,
   serveSiteFileResponse,
   sha256Buffer,
   sha256Text,
@@ -2097,6 +2101,16 @@ function siteStorageActivationRequired(c: AppContext) {
 }
 
 export function registerPublicSiteRoutes(app: AppHono) {
+  app.get("/", async (c) => {
+    const requestHost = new URL(c.req.url).hostname;
+    const site = await getPublicSiteForHost(c.env, requestHost);
+    if (!site?.published_at && hostsMatch(requestHost, getAdminHost(c.env, c.req.url))) {
+      c.header("Cache-Control", "no-store");
+      return c.redirect("/login");
+    }
+    return servePublicSiteRequest(c.env, c.req.raw);
+  });
+
   app.get("/preview/:username/*", async (c) => {
     const username = normalizeUsername(c.req.param("username"));
     const site = await getSiteByUsername(c.env, username);
@@ -2106,9 +2120,9 @@ export function registerPublicSiteRoutes(app: AppHono) {
     return serveSiteFileResponse(c.env, site, requestedPath, false, "", c.req.raw);
   });
 
-  app.get("/me", async (c) => {
+  app.on("GET", ["/me", "/me/"], async (c) => {
     const canonicalUrl = new URL(c.req.url);
-    canonicalUrl.pathname = `${canonicalUrl.pathname}/`;
+    canonicalUrl.pathname = "/";
     return c.redirect(canonicalUrl.toString(), 308);
   });
 

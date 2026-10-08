@@ -203,7 +203,10 @@ export async function getPublishedSiteBaseUrl(env: Env, site: DbSite): Promise<s
   const origin = getPublicSiteOrigin(env, site);
   if (origin && (await getPublicSiteForHost(env, new URL(origin).hostname))?.id === site.id) return origin;
   const fallback = getCoreWebOrigin(env) || origin;
-  return fallback ? `${fallback}/site/${encodeURIComponent(site.username)}` : "";
+  if (!fallback) return "";
+  return site.site_role === "organization"
+    ? `${fallback}/site/${encodeURIComponent(site.username)}`
+    : fallback;
 }
 
 export function getCoreWebOrigin(env: Env, requestUrl?: string): string {
@@ -574,10 +577,14 @@ export async function serveMeJsonResponse(env: Env, request: Request): Promise<R
 
 async function siteMeJsonResponse(env: Env, requestedSite: DbSite, origin: string): Promise<Response | null> {
   const site = await getRepresentedProfileSite(env, requestedSite);
+  const canonicalBase = await getPublishedSiteBaseUrl(env, site) || origin;
   const storedPublic = await getSiteFileText(env, site.id, "public/me.json");
   if (site.published_at && storedPublic) {
     const parsed = parseMe3Json(storedPublic);
-    if (parsed.valid && parsed.profile) return publicMeJsonResponse(parsed.profile);
+    if (parsed.valid && parsed.profile) return publicMeJsonResponse({
+      ...parsed.profile,
+      ...(canonicalBase ? { id: `${canonicalBase}/me.json`, url: `${canonicalBase}/` } : {}),
+    });
   }
 
   const legacySource = await getSiteFileText(env, site.id, "src/me.json");
@@ -586,7 +593,7 @@ async function siteMeJsonResponse(env: Env, requestedSite: DbSite, origin: strin
     return publicMeJsonResponse(
       buildPublicMe3Profile(
         site.published_at ? profile : { ...profile, visibility: "private" },
-        origin,
+        canonicalBase,
       ),
     );
   }
@@ -803,9 +810,29 @@ export async function serveSiteFileResponse(
     if (!localized) return new Response("Pricing is temporarily unavailable. Please try again.", { status: 503, headers: { "Cache-Control": "no-store" } });
     file = localized;
   }
+  let content = siteFileContentToArrayBuffer(file.content);
+  let sha256 = file.sha256;
+  if (
+    requirePublished && site.site_role !== "organization" && !getPublicSiteOrigin(env, site) &&
+    /^(?:text\/|application\/xml)/.test(file.content_type)
+  ) {
+    // Existing snapshots may predate the installation homepage. Update their
+    // absolute public URLs on read; custom-domain snapshots remain untouched.
+    const baseUrl = await getPublishedSiteBaseUrl(env, site);
+    if (baseUrl) {
+      const original = new TextDecoder().decode(content);
+      const updated = original
+        .replaceAll(`${baseUrl}/site/${encodeURIComponent(site.username)}/`, `${baseUrl}/`)
+        .replaceAll(`${baseUrl}/me/`, `${baseUrl}/`);
+      if (updated !== original) {
+        content = new TextEncoder().encode(updated).buffer;
+        sha256 = null;
+      }
+    }
+  }
   return publicSiteFileResponse({
-    content: siteFileContentToArrayBuffer(file.content), contentType: file.content_type,
-    sha256: file.sha256, published: requirePublished, request, path: requestedPath, noindex,
+    content, contentType: file.content_type,
+    sha256, published: requirePublished, request, path: requestedPath, noindex,
     showCreateSitePrompt: !(site.custom_domain && site.custom_domain_status === "active"),
     profileUrl: `${publicBasePath}/me.json`,
     regionalPricing: Boolean(pricingCountries?.length),
