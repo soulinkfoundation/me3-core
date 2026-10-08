@@ -644,6 +644,7 @@ export type AgentMailboxMessageListOptions = {
   direction?: unknown;
   folder?: unknown;
   query?: unknown;
+  queryMode?: "phrase" | "terms";
   unread?: unknown;
 };
 
@@ -1647,6 +1648,7 @@ export async function listAgentMailboxMessages(
     direction: normalizeNullableText(options.direction) || "outbound",
     folder: normalizeNullableText(options.folder) || "",
     query: normalizeNullableText(options.query) || "",
+    queryMode: options.queryMode,
     unread: normalizeNullableText(options.unread) || "",
   });
 
@@ -3613,6 +3615,7 @@ function buildAgentMailboxMessageFilters(
     direction: string;
     folder: string;
     query: string;
+    queryMode?: "phrase" | "terms";
     unread: string;
   },
 ) {
@@ -3646,11 +3649,15 @@ function buildAgentMailboxMessageFilters(
     conditions.push("read_at IS NULL");
   }
   if (options.query.trim()) {
-    conditions.push(
-      `(LOWER(COALESCE(subject, '')) LIKE ? OR LOWER(COALESCE(text_body, '')) LIKE ? OR LOWER(COALESCE(from_address, '')) LIKE ? OR LOWER(COALESCE(to_address, '')) LIKE ?)`,
-    );
-    const like = `%${options.query.trim().toLowerCase()}%`;
-    bindings.push(like, like, like, like);
+    const query = options.query.trim().toLowerCase();
+    const terms = options.queryMode === "terms" ? [...new Set(query.split(/\s+/))] : [query];
+    for (const term of terms) {
+      conditions.push(
+        `(LOWER(COALESCE(subject, '')) LIKE ? OR LOWER(COALESCE(text_body, '')) LIKE ? OR LOWER(COALESCE(from_address, '')) LIKE ? OR LOWER(COALESCE(to_address, '')) LIKE ?)`,
+      );
+      const like = `%${term}%`;
+      bindings.push(like, like, like, like);
+    }
   }
 
   return { where: conditions.join(" AND "), bindings };

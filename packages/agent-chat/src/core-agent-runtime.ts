@@ -2691,6 +2691,7 @@ async function executeMailboxToolCall(input: {
     }
     const found = await services.search({
       query: optionalToolString(args.query),
+      queryMode: "terms",
       direction: direction || "all",
       folder,
       unread: optionalToolBoolean(args.unread) ? "true" : undefined,

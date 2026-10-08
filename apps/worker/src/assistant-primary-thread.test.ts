@@ -6,6 +6,7 @@ import { resolvePrimaryAssistantThread } from "./assistant-primary-thread";
 import { registerAssistantRoutes } from "./routes/assistant";
 import { dispatchAgentChannelTurn } from "./agent-channels";
 import { Me3UserAgent } from "./user-agent";
+import { listAgentMailboxMessages } from "./agent-chat";
 import type { Env } from "./types";
 
 const databases: DatabaseSync[] = [];
@@ -70,6 +71,60 @@ function fixture() {
 }
 
 describe("primary assistant conversation persisted in D1", () => {
+  it("finds sender and subject keywords through the real agent mailbox search before saving an unsent reply", async () => {
+    const { env, raw, app } = fixture();
+    env.ME3_ASSISTANT_RUNTIME = "sdk";
+    env.ME3_DEPLOYMENT_MODE = "self_hosted";
+    env.ME3_AI_MODEL = "scripted-fixture";
+    raw.exec(`INSERT INTO mailbox_aliases(id, user_id, alias_local_part, forwarding_email, status)
+      VALUES ('alice-mailbox', 'alice', 'alice', '', 'active'), ('bob-mailbox', 'bob', 'bob', '', 'active')`);
+    const message = raw.prepare(`INSERT INTO mailbox_messages(id, mailbox_id, direction, message_kind, status,
+      from_address, to_address, subject, text_body, folder)
+      VALUES (?, ?, ?, 'email', 'received', 'ada@example.invalid', 'alice@example.invalid', ?, 'Ready?', ?)`);
+    message.run("ada-launch", "alice-mailbox", "inbound", "ME3 QA launch checklist", "inbox");
+    message.run("other-owner", "bob-mailbox", "inbound", "ME3 QA launch checklist", "inbox");
+    message.run("other-direction", "alice-mailbox", "outbound", "ME3 QA launch checklist", "sent");
+    message.run("other-folder", "alice-mailbox", "inbound", "ME3 QA launch checklist", "archive");
+    message.run("missing-term", "alice-mailbox", "inbound", "QA update", "inbox");
+    const outputs = [
+      { tool_calls: [{ id: "find", name: "core_mailbox_search", arguments: { query: "Ada QA launch", direction: "inbound", folder: "inbox" } }] },
+      { tool_calls: [{ id: "read", name: "core_mailbox_read", arguments: { messageId: "ada-launch" } }] },
+      { tool_calls: [{ id: "draft", name: "core_mailbox_draft", arguments: { to: "ada@example.invalid", subject: "Re: ME3 QA launch checklist", body: "The QA checklist is ready.", replyToMessageId: "ada-launch" } }] },
+      { response: "Saved an unsent reply draft." },
+    ];
+    const searches: Array<{ messages: Array<{ id: string }>; total: number }> = [];
+    env.AI = { run: async (_model: string, input: { messages: Array<{ role: string; content: string }> }) => {
+      const last = input.messages.at(-1);
+      if (last?.role === "tool") {
+        const result = JSON.parse(last.content);
+        if (Array.isArray(result.messages)) searches.push(result);
+      }
+      return outputs.shift();
+    } } as unknown as Ai;
+    const cache = new Map<string, unknown>();
+    const state = { storage: {
+      get: async (key: string) => cache.get(key), put: async (key: string, value: unknown) => { cache.set(key, value); },
+      delete: async (keys: string | string[]) => { for (const key of Array.isArray(keys) ? keys : [keys]) cache.delete(key); },
+    } } as unknown as DurableObjectState;
+    const agent = new Me3UserAgent(state, env);
+    env.ME3_SDK_USER_AGENT = {
+      idFromName: (id: string) => id,
+      get: () => ({ fetch: (url: string, init: RequestInit) => agent.fetch(new Request(url, init)) }),
+    } as unknown as DurableObjectNamespace;
+    const primary = await resolvePrimaryAssistantThread(env, "alice");
+    const response = await app.fetch(new Request("https://install.test/api/assistant/chat/turn", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Test-Owner": "alice" },
+      body: JSON.stringify({ requestId: "native-email-reply", threadId: primary.id, messageText: "Find Ada's QA launch email and save an unsent reply." }),
+    }), env);
+    expect(response.status).toBe(200);
+    expect(searches).toMatchObject([{ total: 1, messages: [{ id: "ada-launch" }] }]);
+    expect(raw.prepare("SELECT mailbox_id, source_id, status, folder, sent_at FROM mailbox_messages WHERE message_kind = 'draft'").all())
+      .toEqual([{ mailbox_id: "alice-mailbox", source_id: "ada-launch", status: "pending_approval", folder: "drafts", sent_at: null }]);
+    // Ordinary mailbox searches retain phrase matching and do not opt into agent keyword semantics.
+    expect((await listAgentMailboxMessages(env, "alice", { query: "Ada QA launch", direction: "inbound" })).total).toBe(0);
+    expect((await listAgentMailboxMessages(env, "alice", { query: "QA launch", direction: "inbound", folder: "inbox" })).messages.map(item => item.id)).toEqual(["ada-launch"]);
+  });
+
   it("runs native and Soulink turns through the real dispatcher with shared context and persistent reminder state", async () => {
     const { env, raw, app, connect } = fixture();
     env.ME3_ASSISTANT_RUNTIME = "sdk";

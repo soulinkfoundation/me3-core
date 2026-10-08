@@ -176,7 +176,7 @@ export const CORE_CHAT_CAPABILITIES = [
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Optional subject, sender, recipient, or body search." },
+        query: { type: "string", description: "Optional search keywords. Every space-separated term must match the message's subject, sender, recipient, or body; terms may match different fields." },
         direction: {
           type: "string",
           description: "Optional message direction.",
