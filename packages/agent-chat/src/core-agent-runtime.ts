@@ -48,6 +48,7 @@ import {
 } from "@me3-core/plugin-mission-control";
 import {
   readJournalEntriesForAgent,
+  saveJournalDayForAgent,
   type JournalAgentEntry,
   type JournalAgentReadInput,
 } from "@me3-core/plugin-journal";
@@ -311,7 +312,7 @@ const ACTIVE_CORE_TOOLS = CORE_CHAT_TOOLS.filter(
     tool.capabilityId === "core.scheduling.request_profile" ||
     tool.capabilityId.startsWith("core.scheduling.") ||
     tool.capabilityId.startsWith("core.reminders.") ||
-    tool.capabilityId === "core.journal.read" ||
+    tool.capabilityId.startsWith("core.journal.") ||
     tool.capabilityId === "core.owner_content.search" ||
     tool.capabilityId.startsWith("core.sites.landing_page.") ||
     tool.capabilityId === "core.sites.blog_post.read" ||
@@ -849,7 +850,9 @@ export async function runCoreAgentToolTurn(input: {
                 (tool as CoreChatToolDefinition).capabilityId !== "core.calendar.event.cancel") {
               throw new Error("Owner approval is required before this action. Ask for review; do not claim it completed.");
             }
-            const toolCallId = sdkRuntime && !(tool as CoreChatToolDefinition).sideEffect.startsWith("read_")
+            const toolCallId = (tool as CoreChatToolDefinition).capabilityId === "core.journal.save"
+              ? await journalSaveToolCallId(input.db, input.userId, input.requestId, call)
+              : sdkRuntime && !(tool as CoreChatToolDefinition).sideEffect.startsWith("read_")
               ? await semanticToolCallId(call)
               : `${call.id}:${occurrence}`;
             const pendingReminderChoice = ["core.reminders.update", "core.reminders.cancel"].includes((tool as CoreChatToolDefinition).capabilityId)
@@ -1142,6 +1145,9 @@ function executeCoreToolCall(input: {
   }
   if (input.tool.capabilityId === "core.journal.read") {
     return executeJournalReadToolCall(input);
+  }
+  if (input.tool.capabilityId === "core.journal.save") {
+    return executeJournalSaveToolCall(input);
   }
   if (input.tool.capabilityId === "core.owner_content.search") {
     return executeOwnerContentSearchToolCall(input);
@@ -1696,6 +1702,7 @@ async function executeJournalReadToolCall(input: {
   call: AgentToolCall;
   tool: CoreChatToolDefinition;
 }): Promise<CoreToolOutcome> {
+  await requireEnabledJournal(input.db);
   enforceJournalReadToolPolicy(input.tool);
   assertOnlyDeclaredArguments(input.call.arguments, input.tool);
   const args = input.call.arguments;
@@ -1740,6 +1747,67 @@ async function executeJournalReadToolCall(input: {
           sourceId: result.entries[0].id,
         }
       : null,
+  };
+}
+
+async function requireEnabledJournal(db: CoreAgentDb) {
+  const plugin = await db.prepare("SELECT enabled, status FROM plugin_installations WHERE plugin_id = ?")
+    .bind("me3.journal").first<{ enabled: number; status: string }>();
+  if (plugin && (plugin.enabled !== 1 || plugin.status !== "installed")) throw new Error("ME3 Journal is disabled.");
+}
+
+async function journalSaveToolCallId(db: CoreAgentDb, userId: string, requestId: string, call: AgentToolCall) {
+  const key = await semanticToolCallId({ ...call, arguments: { ...call.arguments, expectedRevision: null } });
+  const attempts = await db.prepare(`SELECT tool_call_id, status FROM agent_tool_executions
+    WHERE user_id = ? AND request_id = ? AND tool_name = 'core_journal_save'
+      AND (tool_call_id = ? OR tool_call_id LIKE ?)`)
+    .bind(userId, requestId, key, `${key}:attempt:%`).all<{ tool_call_id: string; status: string }>();
+  const succeeded = attempts.results?.find(row => row.status === "succeeded");
+  if (succeeded) return succeeded.tool_call_id;
+  // Retry a failed precondition under a new audit receipt; successful writes keep their original receipt.
+  return attempts.results?.some(row => row.status === "failed") ? `${key}:attempt:${crypto.randomUUID()}` : key;
+}
+
+async function executeJournalSaveToolCall(input: {
+  db: CoreAgentDb; userId: string; requestId: string;
+  call: AgentToolCall; tool: CoreChatToolDefinition;
+}): Promise<CoreToolOutcome> {
+  await requireEnabledJournal(input.db);
+  assertOnlyDeclaredArguments(input.call.arguments, input.tool);
+  const args = input.call.arguments;
+  const date = requiredToolString(args.date, "Journal date");
+  const mode = requiredToolString(args.mode, "Journal save mode");
+  if (mode !== "create" && mode !== "append" && mode !== "replace") throw new Error("Invalid Journal save mode.");
+  const expectedRevision = args.expectedRevision;
+  if (expectedRevision !== null && (typeof expectedRevision !== "number" || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) {
+    throw new Error("Journal expectedRevision is required: use a saved revision, or null for create.");
+  }
+  if (mode !== "create") {
+    const reads = await input.db.prepare(`SELECT result_json FROM agent_tool_executions
+      WHERE user_id = ? AND request_id = ? AND tool_name = 'core_journal_read' AND status = 'succeeded'`)
+      .bind(input.userId, input.requestId).all<{ result_json: string }>();
+    const read = (reads.results || []).some(row => {
+      const outcome = JSON.parse(row.result_json) as { result?: { entries?: JournalAgentEntry[] } };
+      return outcome.result?.entries?.some(entry => entry.date === date && entry.revision === expectedRevision);
+    });
+    if (!read) throw new Error("Read this Journal date in the current turn before editing it; use the returned revision.");
+  }
+  const bodyFormat = optionalToolString(args.bodyFormat);
+  if (bodyFormat !== undefined && bodyFormat !== "plain_text" && bodyFormat !== "markdown") throw new Error("Invalid Journal save bodyFormat.");
+  const title = optionalToolString(args.title);
+  const body = typeof args.body === "string" ? args.body : "";
+  const writeId = `${input.requestId}:${await semanticToolCallId({
+    id: "journal-save", name: "core_journal_save",
+    arguments: { date, mode, body, title: title ?? null, bodyFormat: bodyFormat ?? "plain_text" },
+  })}`;
+  const saved = await saveJournalDayForAgent(input.db, input.userId, {
+    date, mode, body, title, bodyFormat, expectedRevision,
+  }, writeId);
+  const { metadata: _metadata, ...entry } = saved.entry;
+  return {
+    capabilityId: "core.journal.save", result: { ok: true, mode, entry },
+    fallbackReply: `Saved your Journal entry for ${entry.date}.`, reminderAction: null, actionCards: [],
+    sourceReference: { sourceType: "journal", sourceId: entry.id },
   };
 }
 
@@ -3057,7 +3125,7 @@ function coreToolFamiliesForCapability(
     return ["people", "scheduling"];
   }
   if (capabilityId.startsWith("core.scheduling.")) return ["scheduling"];
-  if (capabilityId === "core.journal.read") return ["journal"];
+  if (capabilityId.startsWith("core.journal.")) return ["journal"];
   if (capabilityId === "core.owner_content.search") {
     return ["journal", "mission", "social"];
   }
@@ -3419,6 +3487,9 @@ function withCoreToolInstructions(
           "- Use core_journal_read whenever the owner asks to read, list, review, summarize, or reason about Journal entries. Journal content is never present in the owner snapshot.",
           "- Use mode latest for recent entries (default 7), mode date for one YYYY-MM-DD date, and mode range for an inclusive YYYY-MM-DD date range.",
           "- Resolve today and other relative dates using the owner's timezone and current-time context above. Never invent an entry or infer that an entry is missing without calling the Journal tool in this turn.",
+          "- Use core_journal_save for a clear request to save private daily writing. Read the date first; use create with expectedRevision=null only if missing. For an existing date, append the new writing unless the owner explicitly asks to replace the entire body. Use the exact revision returned by core_journal_read in this turn for append/replace.",
+          "- For append, send only the new writing without added separators or leading blank lines; ME3 inserts the paragraph break. Never rewrite the saved body or change the title unless requested. If the tool reports a conflict, read the latest entry and ask before replacing changed writing. Never claim a save without a successful save result. Saving a Journal entry does not publish it or send it anywhere.",
+          "- Preserve owner-supplied writing exactly, including final punctuation and line breaks. Do not paraphrase, tidy, or strip punctuation from an exact body. Writing after a label such as 'with exactly:' is entry content, not a request to edit the wording.",
         ]
       : []),
     ...(hasFamily("mailbox")

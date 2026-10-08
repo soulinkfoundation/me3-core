@@ -18,7 +18,7 @@ export type JevRouterDecision = {
 const CRITERIA: Record<JevToolFamily | "conversation", string> = {
   bookings: "Read existing bookings, appointments, or client sessions.",
   calendar: "Read or create calendar events and agenda items.",
-  journal: "Read the owner's private journal entries.",
+  journal: "Read, save, append to or edit the owner's private daily journal entries.",
   mailbox: "Search or read email, or create an email draft.",
   mission: "Read, create, update, prioritize, complete, or archive Mission Control tasks.",
   people: "Discover people, providers, collaborators, products, or services in the public network.",

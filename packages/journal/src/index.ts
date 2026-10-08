@@ -20,6 +20,12 @@ export {
 } from "./schema";
 
 export {
+  getJournalDay, updateJournalDay, JournalInputError, JournalConflictError,
+  requireJournalDateKey, serializeJournalEntry, type JournalEntryRow,
+} from "./day";
+export { saveJournalDayForAgent } from "./agent-write";
+
+export {
   readJournalEntriesForAgent,
   type JournalAgentDb,
   type JournalAgentEntry,
