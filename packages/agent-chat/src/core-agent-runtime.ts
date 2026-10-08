@@ -996,8 +996,18 @@ export async function runCoreAgentToolTurn(input: {
     }
   }
 
+  const pendingReminderChoice = outcomes.find(outcome => outcome.result.needsOwnerChoice === true);
+  const lastOutcome = outcomes.at(-1);
+  const confirmedReminder = modelAttempts.at(-1)?.status === "empty" && lastOutcome?.reminderAction &&
+    lastOutcome.reminderAction.kind !== "listed" && toolCallCount === outcomes.length &&
+    outcomes.every(outcome => outcome.capabilityId.startsWith("core.reminders.")) ? lastOutcome : null;
+  // A saved choice or confirmed reminder result does not need a second model narration.
+  const reminderResult = pendingReminderChoice || confirmedReminder;
   return attachStreamMetrics(
-    fallbackResponse(
+    reminderResult ? successfulResponse(
+      input.turnId, route, modelAttempts.at(-1)?.model || route.model,
+      reminderResult.fallbackReply, reminderResult, modelAttempts,
+    ) : fallbackResponse(
       input.turnId,
       route,
       outcomes.at(-1) || null,
@@ -1824,7 +1834,9 @@ async function executeReminderToolCall(input: {
   enforceReminderToolPolicy(input.tool);
   assertOnlyDeclaredArguments(input.call.arguments, input.tool);
 
-  if (input.tool.capabilityId === "core.reminders.list") {
+  const preparingSelection = input.tool.capabilityId === "core.reminders.list" && input.call.arguments.selectionOperation !== undefined;
+  if (input.tool.capabilityId === "core.reminders.list" && !preparingSelection) {
+    if (Object.keys(input.call.arguments).length) throw new Error("Use selectionOperation with a named move/cancel proposal, or omit all arguments for a reminder list.");
     const reminders = await listPendingAgentReminders(
       { DB: input.db },
       input.userId,
@@ -1846,7 +1858,15 @@ async function executeReminderToolCall(input: {
     return reminderWriteOutcome(reminder, "created");
   }
 
-  const operation = input.tool.capabilityId === "core.reminders.cancel" ? "cancel" : "update";
+  const operation = preparingSelection ? input.call.arguments.selectionOperation
+    : input.tool.capabilityId === "core.reminders.cancel" ? "cancel" : "update";
+  if (operation !== "cancel" && operation !== "update") throw new Error("Reminder selection operation must be update or cancel.");
+  if (preparingSelection) {
+    requiredToolString(input.call.arguments.reminderTitle, "Reminder title");
+    if (operation === "cancel" && ["date", "time", "timezone"].some(key => input.call.arguments[key] !== undefined)) {
+      throw new Error("Cancellation has no destination date, time or timezone. Omit those proposal arguments.");
+    }
+  }
   const priorSelection = await loadAgentReminderSelection({
     db: input.db, userId: input.userId, requestId: input.requestId,
     assistantText: latestMessageContent(input.messages, "assistant"),
@@ -1892,7 +1912,7 @@ async function executeReminderToolCall(input: {
   if (reminderTitle && existing.title.trim().toLocaleLowerCase() !== reminderTitle.toLocaleLowerCase()) {
     throw new Error("Reminder ID and current title do not match. Read the reminders again before retrying.");
   }
-  const cancelling = input.tool.capabilityId === "core.reminders.cancel";
+  const cancelling = operation === "cancel";
   const reminderInput = cancelling ? null : reminderInputFromArguments({
     ...input.call.arguments,
     title: input.call.arguments.title === undefined ? existing.title : input.call.arguments.title,
@@ -1900,19 +1920,34 @@ async function executeReminderToolCall(input: {
   if (reminderInput) assertFutureReminder(reminderInput);
   const selection = await requireAgentReminderSelection({
     db: input.db, userId: input.userId, reminder: existing,
-    operation, priorSelection, forceSelection: titleNeedsSelection,
+    operation, priorSelection, forceSelection: titleNeedsSelection || preparingSelection,
     signature: JSON.stringify({ ...reminderInput, notes: input.call.arguments.notes ?? null, recurrence: input.call.arguments.recurrence ?? null }),
     ownerText: latestMessageContent(input.messages, "user"), assistantText: latestMessageContent(input.messages, "assistant"),
     previousOwnerText: input.messages.filter(message => message.role === "user").at(-2)?.content || "",
     ownerTimezone: input.ownerTimezone,
   });
-  if (selection) return {
-    capabilityId: input.tool.capabilityId,
-    result: { ok: true, status: "needs_selection", selection: selection.selection, choicePrompt: selection.reply, selectedReminderId: selection.selectedReminderId,
-      ...(titleNeedsSelection ? { needsOwnerChoice: true } : {}),
-    },
-    fallbackReply: selection.reply, reminderAction: null, actionCards: [],
-  };
+  if (selection) {
+    if (preparingSelection && selection.selectedReminderId) return {
+      capabilityId: input.tool.capabilityId,
+      result: { ok: true, status: "target_identified", selection: selection.selection, selectedReminderId: selection.selectedReminderId },
+      fallbackReply: "Found the selected reminder. No reminders were changed.",
+      reminderAction: null, actionCards: [],
+    };
+    let choicePrompt = selection.reply;
+    if (preparingSelection) {
+      const action = cancelling ? "Cancel the selected reminder."
+        : `Move the selected reminder to ${formatAgentDateTime(requiredString(reminderInput?.remindAt, "remindAt"), optionalString(reminderInput?.timezone))} (${optionalString(reminderInput?.timezone)}).`;
+      choicePrompt = choicePrompt.replace("\n", `\n${action}\n`);
+    }
+    return {
+      capabilityId: input.tool.capabilityId,
+      result: { ok: true, status: "needs_selection", selection: selection.selection, choicePrompt, selectedReminderId: selection.selectedReminderId,
+        ...(titleNeedsSelection || preparingSelection ? { needsOwnerChoice: true } : {}),
+      },
+      fallbackReply: choicePrompt, reminderAction: null, actionCards: [],
+    };
+  }
+  if (preparingSelection) throw new Error("Reminder selection could not be prepared. No reminders were changed.");
 
   if (cancelling) {
     const result = await cancelAgentReminder(
@@ -3385,10 +3420,12 @@ function withCoreToolInstructions(
           "Reminder tool rules:",
           "- Use reminder tools only when the owner clearly asks to list, create, update, or cancel reminders. Reminder lists contain future reminders only; do not infer work from reminders whose time has passed.",
           "- For create/update, pass the requested future local date as YYYY-MM-DD and time as HH:MM with its IANA timezone. ME3 performs the timezone conversion; never calculate a UTC offset. Noon means 12:00; midnight means 00:00. Resolve weekdays in the owner's timezone.",
-          "- If the requested date or time is missing or ambiguous, ask one concise clarification question and do not call a write tool.",
+          "- For create/update only, if the requested destination date or time is missing or ambiguous, ask one concise clarification question and do not call a write tool. Cancellation needs no destination date or time.",
           "- Update/cancel accepts either a known stable reminderId or reminderTitle, the exact current title from the owner's request. Use reminderTitle for named requests when the ID is unknown; ME3 resolves owner records and asks which one if needed. For other references, list reminders first. Never invent or infer an ID from a title.",
+          "- reminderTitle is the saved title, excluding the generic word reminder unless it is actually part of the saved title. If unsure, list with no arguments to check the saved title and ID first.",
           "- When moving an existing reminder, omit title, notes and recurrence unless the owner asks to change them; ME3 preserves the saved values. A move does not require a new title.",
-          "- For multiple reminders with exactly the same title, call update/cancel with reminderTitle and the requested change. The tool checks owner selection before writing and returns a durable needs_selection choice list; show its exact choicePrompt. Do not invent your own numbered choice list. For other ambiguous matches, ask the owner which reminder they mean without calling a write tool.",
+          "- Before asking which same-title reminder to move/cancel, prepare server choices: call core_reminders_list with selectionOperation (update/cancel), reminderTitle and the requested destination date/time/timezone for update. It never writes, and returns a durable needs_selection proposal; show its exact choicePrompt. You can also call update/cancel by exact reminderTitle, which checks selection before writing. Never invent your own numbered choice list from a plain read. For other ambiguous matches, ask the owner which reminder they mean without calling a write tool.",
+          "- A read proposal returning target_identified means the owner has already selected a valid source record. Use its selectedReminderId with update/cancel and the unchanged requested change; do not ask the owner to select it again.",
           "- A reply such as 1 selects an item from the displayed choices; it is never a reminder ID. List again if needed, match the selected original due date, and pass that record's stable ID. Keep the requested change unchanged. An explicit stable ID or uniquely matching original due date already selects the target; another reminder with the same title is not a reason to ask again.",
         ]
       : []),

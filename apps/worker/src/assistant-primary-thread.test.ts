@@ -114,8 +114,8 @@ function reminderSelectionFixture(runtime: "legacy" | "sdk", duplicate = true) {
     id: "guessed", name: `core_reminders_${operation}`, arguments: operation === "cancel" ? { reminderId: id }
       : { reminderId: id, title: "ME3 QA check launch", date: "2027-01-16", time: "09:30", timezone: "Europe/Dublin" },
   }] });
-  const send = async (messageText: string) => {
-    outputs.unshift({ tool_calls: [{ id: "list-first", name: "core_reminders_list", arguments: {} }] });
+  const send = async (messageText: string, listArguments: Record<string, unknown> = {}) => {
+    outputs.unshift({ tool_calls: [{ id: "list-first", name: "core_reminders_list", arguments: listArguments }] });
     const primary = await resolvePrimaryAssistantThread(f.env, "alice");
     const response = await f.app.fetch(new Request("https://install.test/api/assistant/chat/turn", {
       method: "POST", headers: { "Content-Type": "application/json", "X-Test-Owner": "alice" },
@@ -126,6 +126,131 @@ function reminderSelectionFixture(runtime: "legacy" | "sdk", duplicate = true) {
   };
   return { ...f, outputs, modelInputs, rows, call, send };
 }
+
+describe("typed reminder selection during a read", () => {
+  const proposal = (operation: "update" | "cancel") => ({
+    selectionOperation: operation, reminderTitle: "ME3 QA check launch",
+    ...(operation === "update" ? { date: "2027-01-16", time: "09:30", timezone: "Europe/Dublin" } : {}),
+  });
+
+  it.each(["legacy", "sdk"] as const)("persists a read-only proposal and binds the next owner number in %s", async runtime => {
+    for (const operation of ["update", "cancel"] as const) {
+      const f = reminderSelectionFixture(runtime); const before = f.rows();
+      f.outputs.push({ response: "Which one? 1. January 17. 2. January 15." });
+      const first = await f.send(operation === "cancel" ? "Cancel my ME3 QA check launch reminder."
+        : "Move my ME3 QA check launch reminder to 16 January 2027 at 9:30am in Europe/Dublin.", proposal(operation));
+      expect(f.rows()).toEqual(before);
+      expect(first.reminderAction).toBeNull();
+      expect(first.replyText).toContain("Which reminder do you mean?");
+      expect(first.replyText).toContain(operation === "cancel" ? "Cancel the selected reminder." : "Move the selected reminder to 16 Jan 2027, 09:30 (Europe/Dublin).");
+      expect(first.replyText).toContain("1. ME3 QA check launch — 15 January 2027");
+      expect(first.replyText).toContain("2. ME3 QA check launch — 17 January 2027");
+      expect(first.replyText).not.toContain("other-owner-reminder");
+      const next = f.modelInputs.length;
+      f.outputs.push(f.call(operation, "1"), { response: "Done." });
+      const selected = await f.send("the second one");
+      expect(JSON.stringify(f.modelInputs[next])).toContain("Saved reminder selection");
+      expect(selected.reminderAction?.kind).toBe(operation === "cancel" ? "cancelled" : "updated");
+      expect(f.rows()).toEqual(before.map(row => row.id === "second-reminder"
+        ? operation === "cancel" ? { ...row, status: "cancelled" } : { ...row, remind_at: "2027-01-16T09:30:00.000Z" }
+        : row));
+      expect(f.raw.prepare("SELECT count(*) AS n FROM assistant_primary_threads WHERE owner_id='alice'").get()?.n).toBe(1);
+      expect(f.raw.prepare("SELECT count(*) AS n FROM assistant_messages WHERE owner_id='alice'").get()?.n).toBe(4);
+    }
+  });
+
+  it.each(["legacy", "sdk"] as const)("prepares a single candidate without writing or permitting a same-turn write in %s", async runtime => {
+    const f = reminderSelectionFixture(runtime, false); const before = f.rows();
+    f.outputs.push(f.call("cancel"), { response: "Cancelled." });
+    const first = await f.send("Cancel my ME3 QA check launch reminder.", proposal("cancel"));
+    expect(first.replyText).toContain("Cancel the selected reminder.");
+    expect(first.replyText).toContain("Which reminder do you mean?");
+    expect(first.reminderAction).toBeNull();
+    expect(f.rows()).toEqual(before);
+  });
+
+  it.each(["legacy", "sdk"] as const)("uses an already explicit source date without asking again after a read in %s", async runtime => {
+    const f = reminderSelectionFixture(runtime); const before = f.rows();
+    f.outputs.push(f.call("update"), { response: "Moved it." });
+    const result = await f.send("Move my ME3 QA check launch reminder originally due on 15 January 2027 to 16 January 2027 at 9:30am in Europe/Dublin.", proposal("update"));
+    expect(result.reminderAction?.kind).toBe("updated");
+    expect(f.rows()).toEqual(before.map(row => row.id === "first-reminder" ? { ...row, remind_at: "2027-01-16T09:30:00.000Z" } : row));
+    const receipt = f.raw.prepare("SELECT result_json FROM agent_tool_executions WHERE tool_name='core_reminders_list' ORDER BY rowid LIMIT 1").get();
+    expect(JSON.parse(String(receipt?.result_json)).result.status).toBe("target_identified");
+  });
+
+  it.each(["legacy", "sdk"] as const)("retains the canonical question when the model returns empty after preparation in %s", async runtime => {
+    const f = reminderSelectionFixture(runtime); const before = f.rows();
+    f.outputs.push({ response: "" });
+    const first = await f.send("Cancel my ME3 QA check launch reminder.", proposal("cancel"));
+    const receipt = f.raw.prepare("SELECT result_json FROM agent_tool_executions WHERE tool_name='core_reminders_list' ORDER BY rowid LIMIT 1").get();
+    expect(first.replyText).toBe(JSON.parse(String(receipt?.result_json)).fallbackReply);
+    expect(f.rows()).toEqual(before);
+    f.outputs.push(f.call("cancel", "1"), { response: "Done." });
+    const selected = await f.send("the second one");
+    expect(selected.reminderAction?.kind).toBe("cancelled");
+    expect(f.rows()).toEqual(before.map(row => row.id === "second-reminder" ? { ...row, status: "cancelled" } : row));
+  });
+
+  it.each(["legacy", "sdk"] as const)("delivers a confirmed reminder move when the final model reply is empty in %s", async runtime => {
+    const f = reminderSelectionFixture(runtime); const before = f.rows();
+    f.outputs.push(f.call("update"), { response: "" });
+    const result = await f.send("Move reminder ID first-reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+    expect(result.reminderAction?.kind).toBe("updated");
+    expect(result.replyText).toBe("Updated the reminder for 16 Jan 2027, 09:30: ME3 QA check launch.");
+    expect(f.rows()).toEqual(before.map(row => row.id === "first-reminder" ? { ...row, remind_at: "2027-01-16T09:30:00.000Z" } : row));
+  });
+
+  it("keeps the failure notice if another tool fails after a confirmed move", async () => {
+    const f = reminderSelectionFixture("sdk");
+    f.outputs.push(f.call("update"), { tool_calls: [{ id: "invalid", name: "core_reminders_cancel", arguments: { reminderId: "missing" } }] }, { response: "" });
+    const result = await f.send("Move reminder ID first-reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+    expect(result.replyText).toContain("The model could not finish its reply");
+    expect(result.reminderAction?.kind).toBe("updated");
+  });
+
+  it.each(["changed record", "expired choice", "changed destination", "different operation"])("keeps a read proposal from authorizing a %s", async failure => {
+    const f = reminderSelectionFixture("sdk");
+    f.outputs.push({ response: "Which one?" });
+    const first = await f.send("Move my ME3 QA check launch reminder to 16 January 2027 at 9:30am in Europe/Dublin.", proposal("update"));
+    expect(first.replyText).toContain("Move the selected reminder");
+    if (failure === "changed record") f.raw.exec("UPDATE user_reminders SET remind_at='2027-01-18T12:00:00.000Z' WHERE id='second-reminder'");
+    if (failure === "expired choice") f.raw.exec("UPDATE agent_tool_executions SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-31 minutes')");
+    const before = f.rows();
+    const call = f.call(failure === "different operation" ? "cancel" : "update", "second-reminder");
+    if (failure === "changed destination") call.tool_calls[0].arguments.time = "10:30";
+    f.outputs.push(call, { response: "Done." });
+    const result = await f.send("the second one");
+    expect(result.reminderAction).toBeNull();
+    expect(f.rows()).toEqual(before);
+  });
+
+  it("leaves an ordinary list read-only and does not bind its model-authored numbers", async () => {
+    const f = reminderSelectionFixture("sdk"); const before = f.rows();
+    f.outputs.push({ response: "Which one? 1. January 17. 2. January 15." });
+    const first = await f.send("List my future reminders.");
+    expect(first.reminderAction?.kind).toBe("listed");
+    expect(f.raw.prepare("SELECT count(*) AS n FROM agent_tool_executions WHERE json_extract(result_json, '$.result.status')='needs_selection'").get()?.n).toBe(0);
+    f.outputs.push(f.call("cancel", "first-reminder"), { response: "Done." });
+    await f.send("the second one");
+    expect(f.rows()).toEqual(before);
+  });
+
+  it.each(["unrequested title", "other owner", "missing time", "invalid operation"])("does not create a binding for a %s proposal", async failure => {
+    const f = reminderSelectionFixture("sdk");
+    f.raw.exec("INSERT INTO user_reminders(id,user_id,title,remind_at) VALUES ('bob-only','bob','ME3 QA private title','2027-01-15T12:00:00.000Z'),('unrelated','alice','ME3 QA unrelated','2027-01-15T12:00:00.000Z')");
+    const before = f.rows();
+    const args: Record<string, unknown> = proposal("update");
+    if (failure === "unrequested title") args.reminderTitle = "ME3 QA unrelated";
+    if (failure === "other owner") args.reminderTitle = "ME3 QA private title";
+    if (failure === "missing time") delete args.time;
+    if (failure === "invalid operation") args.selectionOperation = "create";
+    f.outputs.push({ response: "Please clarify." });
+    await f.send(`Move my ${failure === "other owner" ? "ME3 QA private title" : "ME3 QA check launch"} reminder to 16 January 2027 at 9:30am in Europe/Dublin.`, args);
+    expect(f.rows()).toEqual(before);
+    expect(f.raw.prepare("SELECT count(*) AS n FROM agent_tool_executions WHERE json_extract(result_json, '$.result.status')='needs_selection'").get()?.n).toBe(0);
+  });
+});
 
 describe("owner selection at the reminder write boundary", () => {
   it.each(["legacy", "sdk"] as const)("prepares server choices by the owner's exact title without inventing an ID in %s", async runtime => {

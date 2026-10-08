@@ -23,7 +23,7 @@ export async function loadAgentReminderSelection(input: {
   if (!input.assistantText.startsWith("Which reminder do you mean? I haven't changed any reminders.")) return null;
   const previous = await input.db.prepare(
     `SELECT result_json FROM agent_tool_executions
-     WHERE user_id = ? AND tool_name IN ('core_reminders_update', 'core_reminders_cancel')
+     WHERE user_id = ? AND tool_name IN ('core_reminders_update', 'core_reminders_cancel', 'core_reminders_list')
        AND request_id != ? AND status = 'succeeded'
        AND json_valid(result_json) AND json_extract(result_json, '$.result.status') = 'needs_selection'
        AND json_extract(result_json, '$.fallbackReply') = ?

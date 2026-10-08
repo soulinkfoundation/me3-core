@@ -766,7 +766,7 @@ export const CORE_CHAT_CAPABILITIES = [
     owner: "core",
     pluginId: null,
     ownerFacingLabel: "List reminders",
-    summary: "Read upcoming Core reminders for the owner.",
+    summary: "List upcoming reminders or prepare a read-only named move/cancel selection; show exact choicePrompt.",
     category: "calendar",
     handler: {
       surface: "chat",
@@ -775,6 +775,17 @@ export const CORE_CHAT_CAPABILITIES = [
     sideEffect: "read_private",
     approvalMode: "none",
     requiresSetup: ["calendar.reminders"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        selectionOperation: { type: "string", enum: ["update", "cancel"], description: "Prepare choices only; omit for an ordinary list." },
+        reminderTitle: { type: "string", description: "Owner-requested exact title; required with selectionOperation." },
+        date: { type: "string", description: "Update proposal: future local YYYY-MM-DD." },
+        time: { type: "string", description: "Update proposal: local HH:MM." },
+        timezone: { type: "string", description: "IANA zone; default owner timezone." },
+      },
+      additionalProperties: false,
+    },
     auditEventKind: "core_reminders_listed",
     examples: {
       positive: ["Do I have any upcoming reminders?"],
@@ -807,10 +818,10 @@ export const CORE_CHAT_CAPABILITIES = [
         notes: { type: "string", description: "Optional reminder notes." },
         date: {
           type: "string",
-          description: "Requested local reminder date as YYYY-MM-DD. ME3 performs timezone conversion.",
+          description: "Requested future local YYYY-MM-DD; ME3 converts timezone.",
         },
-        time: { type: "string", description: "Requested local reminder time as HH:MM (24-hour). Noon is 12:00." },
-        timezone: { type: "string", description: "IANA timezone for the requested local date and time. Omit to use the owner's timezone." },
+        time: { type: "string", description: "Requested local HH:MM (24h); noon 12:00." },
+        timezone: { type: "string", description: "IANA zone for local date/time; default owner timezone." },
         recurrence: {
           type: "string",
           description: "Optional daily, weekly, monthly, yearly, or custom recurrence.",
@@ -833,7 +844,7 @@ export const CORE_CHAT_CAPABILITIES = [
     owner: "core",
     pluginId: null,
     ownerFacingLabel: "Update reminder",
-    summary: "Move a pending Core reminder by stable ID or exact current title. Duplicate titles return server choices without changing any reminder.",
+    summary: "Move by stable ID or exact owner-requested title. Duplicates return choices without writing.",
     category: "calendar",
     handler: {
       surface: "chat",
@@ -846,16 +857,16 @@ export const CORE_CHAT_CAPABILITIES = [
       type: "object",
       required: ["date", "time"],
       properties: {
-        reminderId: { type: "string", description: "Known stable reminder identifier. Supply this or reminderTitle; never invent an ID." },
-        reminderTitle: { type: "string", description: "Exact current reminder title from the owner's request, as an alternative to reminderId. ME3 asks which one when titles are duplicated." },
+        reminderId: { type: "string", description: "Known stable ID; supply this or reminderTitle. Never invent." },
+        reminderTitle: { type: "string", description: "Exact current owner-requested title; duplicate matches return choices." },
         title: { type: "string", description: "New title only when the owner requests a rename. Omit to preserve the existing title." },
         notes: { type: "string", description: "Optional updated reminder notes." },
         date: {
           type: "string",
-          description: "New requested local reminder date as YYYY-MM-DD. ME3 performs timezone conversion.",
+          description: "New future local YYYY-MM-DD; ME3 converts timezone.",
         },
-        time: { type: "string", description: "New requested local reminder time as HH:MM (24-hour). Noon is 12:00." },
-        timezone: { type: "string", description: "IANA timezone for the requested local date and time. Omit to use the owner's timezone." },
+        time: { type: "string", description: "New local HH:MM (24h); noon 12:00." },
+        timezone: { type: "string", description: "IANA zone for local date/time; default owner timezone." },
         recurrence: {
           type: "string",
           description: "Optional updated recurrence.",
@@ -878,7 +889,7 @@ export const CORE_CHAT_CAPABILITIES = [
     owner: "core",
     pluginId: null,
     ownerFacingLabel: "Cancel reminder",
-    summary: "Cancel a pending Core reminder by stable ID or exact title from the owner's request. Duplicate titles return server choices without cancelling anything.",
+    summary: "Cancel by stable ID or exact owner-requested title. Duplicates return choices without writing.",
     category: "calendar",
     handler: {
       surface: "chat",
@@ -890,8 +901,8 @@ export const CORE_CHAT_CAPABILITIES = [
     inputSchema: {
       type: "object",
       properties: {
-        reminderId: { type: "string", description: "Known stable reminder identifier. Supply this or reminderTitle; never invent an ID." },
-        reminderTitle: { type: "string", description: "Exact current reminder title from the owner's request, as an alternative to reminderId. ME3 asks which one when titles are duplicated." },
+        reminderId: { type: "string", description: "Known stable ID; supply this or reminderTitle. Never invent." },
+        reminderTitle: { type: "string", description: "Exact current owner-requested title; duplicate matches return choices." },
       },
       additionalProperties: false,
     },
