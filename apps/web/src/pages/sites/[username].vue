@@ -20,6 +20,7 @@ import {
 } from "../../utils/publicSiteUrl";
 import { useAppToast } from "../../composables/useAppToast";
 import { compressImage, resizeImage } from "../../utils/imageCompression";
+import { cloneSiteProfile, withoutCurrentSiteImage } from "../../utils/siteProfile";
 
 definePage({
   meta: {
@@ -127,12 +128,15 @@ const siteLogoStatus = ref("");
 const siteLogoRevision = ref(0);
 const maxSiteLogoBytes = 1_900_000;
 const hasSiteLogo = computed(() => Boolean(siteProfile.value?.logo));
+const hasSiteImage = computed(() => Boolean(
+  siteProfile.value?.logo || siteProfile.value?.avatar || siteBranding.value?.logoRef,
+));
 const siteLogoPreview = computed(() => {
   const source =
     siteProfile.value?.logo ||
-    siteBranding.value?.logoUrl ||
     siteProfile.value?.avatar ||
-    site.value?.avatar;
+    siteBranding.value?.logoUrl ||
+    (!siteProfile.value && site.value?.avatar);
   if (!source) return null;
 
   try {
@@ -233,7 +237,7 @@ async function loadSiteProfile(): Promise<SiteProfile | null> {
       siteLogoError.value = "Could not load the current site logo.";
       return null;
     }
-    siteProfile.value = structuredClone(content.profile);
+    siteProfile.value = cloneSiteProfile(content.profile);
     siteLogoError.value = "";
     return siteProfile.value;
   } finally {
@@ -293,7 +297,7 @@ async function handleSiteLogoSelect(event: Event) {
       return;
     }
 
-    const nextProfile = structuredClone(currentProfile);
+    const nextProfile = cloneSiteProfile(currentProfile);
     nextProfile.logo = `./${uploaded.path}`;
     if (await saveSiteProfile(nextProfile)) {
       await saveSiteBranding(
@@ -311,7 +315,7 @@ async function handleSiteLogoSelect(event: Event) {
   }
 }
 
-async function removeSiteLogo() {
+async function removeSiteImage() {
   if (siteLogoSaving.value) return;
 
   siteLogoSaving.value = true;
@@ -321,12 +325,13 @@ async function removeSiteLogo() {
     const currentProfile = siteProfile.value || (await loadSiteProfile());
     if (!currentProfile) return;
 
-    const nextProfile = structuredClone(currentProfile);
-    delete nextProfile.logo;
+    const nextProfile = withoutCurrentSiteImage(currentProfile);
     if (await saveSiteProfile(nextProfile)) {
       await saveSiteBranding(
         { logoRef: nextProfile.avatar || null },
-        "The site avatar is now used as the logo.",
+        nextProfile.avatar
+          ? "The site avatar is now used as the logo."
+          : "Site image removed.",
       );
     }
   } finally {
@@ -672,15 +677,15 @@ async function unpublishLandingPage() {
                   }}
                 </Button>
                 <Button
-                  v-if="hasSiteLogo"
+                  v-if="hasSiteImage"
                   color="ghost"
                   shape="soft"
                   size="compact"
                   type="button"
                   :disabled="siteLogoSaving || siteBrandingSaving"
-                  @click="removeSiteLogo"
+                  @click="removeSiteImage"
                 >
-                  Use avatar
+                  {{ hasSiteLogo ? "Use avatar" : siteProfile?.avatar ? "Remove avatar" : "Remove image" }}
                 </Button>
                 <input
                   ref="siteLogoFileInput"
