@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renamePersistentSite } from "./site-lifecycle";
 import type { AppBindings, AppContext } from "./http/types";
 import { registerSiteRoutes } from "./routes/sites";
 import type { Env } from "./types";
@@ -151,6 +152,40 @@ describe("site role API lifecycle", () => {
       unauthorized: (c: AppContext) => c.json({ error: "Unauthorized" }, 401),
     });
   });
+
+  for (const [name, sequence] of [
+    ["missing cursor", [undefined]],
+    ["repeated cursor", ["a", "a"]],
+    ["cursor cycle", ["a", "b", "a"]],
+  ] as const) {
+    it(`preserves the profile and its assets when rename encounters a ${name}`, async () => {
+      const siteAssets = new MemoryR2Bucket();
+      env.SITE_ASSETS = siteAssets as unknown as R2Bucket;
+      const created = await postSite(app, env, { username: "owner" });
+      await siteAssets.put("sites/owner/public/hero.png", "profile-image");
+      let calls = 0;
+      const list = vi.spyOn(siteAssets, "list").mockImplementation(async (options = {}) => {
+        if (options.prefix === "sites/new-owner/") {
+          return { objects: [], truncated: false, delimitedPrefixes: [] };
+        }
+        if (calls >= sequence.length) throw new Error("Test stopped an unbounded scan");
+        return {
+          objects: [{ key: "sites/owner/public/hero.png", size: 13 }],
+          truncated: true,
+          cursor: sequence[calls++],
+          delimitedPrefixes: [],
+        } as unknown as Awaited<ReturnType<MemoryR2Bucket["list"]>>;
+      });
+      await expect(renamePersistentSite(env, {
+        ownerId: "owner", siteId: created.body.site.id, expectedRole: "profile", toUsername: "new-owner",
+      })).rejects.toThrow("R2 object listing did not advance");
+      expect(list).toHaveBeenCalledTimes(sequence.length + 1);
+      expect(db.raw.prepare("SELECT username FROM sites WHERE id = ?").get(created.body.site.id))
+        .toEqual({ username: "owner" });
+      expect(siteAssets.has("sites/owner/public/hero.png")).toBe(true);
+      expect(siteAssets.has("sites/new-owner/public/hero.png")).toBe(false);
+    });
+  }
 
   it("requires a profile, associates organizations, and reports role-aware quota", async () => {
     const rejected = await postSite(app, env, {

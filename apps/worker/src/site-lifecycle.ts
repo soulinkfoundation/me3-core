@@ -401,12 +401,19 @@ async function copySiteAssetsForRename(
 async function listSiteAssetKeys(env: Env, username: string): Promise<string[]> {
   if (!env.SITE_ASSETS) return [];
   const keys: string[] = [];
+  const seenCursors = new Set<string>();
   let cursor: string | undefined;
   do {
     const page = await env.SITE_ASSETS.list({
       prefix: siteAssetPrefix(username),
       ...(cursor ? { cursor } : {}),
     });
+    if (page.truncated) {
+      if (!page.cursor || seenCursors.has(page.cursor)) {
+        throw new Error("R2 object listing did not advance");
+      }
+      seenCursors.add(page.cursor);
+    }
     keys.push(...page.objects.map((object) => object.key));
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);

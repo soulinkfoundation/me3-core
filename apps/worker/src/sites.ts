@@ -1152,11 +1152,18 @@ export async function pruneUnreferencedContentAssets(
 
   if (!env.SITE_ASSETS) return;
   let cursor: string | undefined;
+  const seenCursors = new Set<string>();
   const prefix = `${getR2SiteFileKey(site, "public/files/content")}/`;
   do {
     const listing = await env.SITE_ASSETS.list(
       cursor ? { prefix, cursor } : { prefix },
     );
+    if (listing.truncated) {
+      if (!listing.cursor || seenCursors.has(listing.cursor)) {
+        throw new Error("R2 object listing did not advance");
+      }
+      seenCursors.add(listing.cursor);
+    }
     for (const object of listing.objects) {
       const relativePath = object.key.slice(prefix.length);
       const manifestPath = `files/content/${relativePath}`.toLowerCase();
@@ -1258,12 +1265,19 @@ export async function getSiteStorageStatus(env: Env, site: DbSite) {
 export async function getR2StorageStats(env: Env, site: DbSite): Promise<{ files: number; bytes: number }> {
   if (!env.SITE_ASSETS) return { files: 0, bytes: 0 };
   let cursor: string | undefined;
+  const seenCursors = new Set<string>();
   let files = 0;
   let bytes = 0;
   const prefix = `sites/${site.username}/public/`;
 
   do {
     const listing = await env.SITE_ASSETS.list(cursor ? { prefix, cursor } : { prefix });
+    if (listing.truncated) {
+      if (!listing.cursor || seenCursors.has(listing.cursor)) {
+        throw new Error("R2 object listing did not advance");
+      }
+      seenCursors.add(listing.cursor);
+    }
     for (const object of listing.objects) {
       files += 1;
       bytes += object.size;
