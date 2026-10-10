@@ -125,7 +125,8 @@ export async function deleteJournalDay(
     )
     .run();
 
-  if (expectedRevision !== undefined && (result.meta?.changes || 0) !== 1) {
+  // D1 includes search-index trigger changes; zero means the revision did not match.
+  if (expectedRevision !== undefined && (result.meta?.changes || 0) < 1) {
     throw new JournalConflictError();
   }
 

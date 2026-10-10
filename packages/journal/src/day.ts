@@ -123,7 +123,8 @@ export async function updateJournalDay(
     )
       .bind(id, userId, normalizedDate, title, entryBody, bodyFormat, ...(options.writeId ? [options.writeId] : []), now, now, ...(options.writeId ? [options.writeId] : []))
       .run();
-    if ((result.meta?.changes || 0) !== 1) throw new JournalConflictError();
+    // D1 includes search-index trigger changes; zero means the conditional write lost.
+    if ((result.meta?.changes || 0) < 1) throw new JournalConflictError();
   } else if (expectedRevision !== undefined) {
     const result = await env.DB.prepare(
       `UPDATE journal_entries
@@ -133,7 +134,7 @@ export async function updateJournalDay(
     )
       .bind(title, entryBody, bodyFormat, now, ...(options.writeId ? [options.writeId] : []), userId, normalizedDate, expectedRevision)
       .run();
-    if ((result.meta?.changes || 0) !== 1) throw new JournalConflictError();
+    if ((result.meta?.changes || 0) < 1) throw new JournalConflictError();
   } else {
     await env.DB.prepare(
       `INSERT INTO journal_entries (

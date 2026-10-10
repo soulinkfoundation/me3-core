@@ -23,7 +23,12 @@ function fixture(runtime: "sdk" | "legacy") {
     const bound = (values: (string | number | null)[]) => ({
       async first() { return raw.prepare(sql).get(...values) || null; },
       async all() { return { results: raw.prepare(sql).all(...values) }; },
-      async run() { return { meta: { changes: Number(raw.prepare(sql).run(...values).changes) } }; },
+      async run() {
+        // D1 counts trigger changes, including the Journal search index.
+        const before = Number(raw.prepare("SELECT total_changes() AS changes").get()?.changes);
+        raw.prepare(sql).run(...values);
+        return { meta: { changes: Number(raw.prepare("SELECT total_changes() AS changes").get()?.changes) - before } };
+      },
     });
     return { ...bound([]), bind: (...values: (string | number | null)[]) => bound(values) };
   } } } as unknown as Env;
@@ -50,6 +55,58 @@ function fixture(runtime: "sdk" | "legacy") {
   const snapshot = () => raw.prepare("SELECT * FROM journal_entries ORDER BY user_id, entry_date").all();
   return { raw, env, app, outputs, call, read, save, send, run, snapshot };
 }
+
+describe("native conditional Journal writes with search-index triggers", () => {
+  const path = "/api/journal/days/2026-10-08";
+  const headers = { "X-Test-Owner": "alice", "Content-Type": "application/json" };
+
+  it("creates a missing day successfully and rejects a duplicate without changing it", async () => {
+    const f = fixture("sdk");
+    await updateJournalDay(f.env, "bob", "2026-10-08", { body: "Other owner writing" });
+    const other = f.snapshot();
+    const missing = await f.app.request(path, { headers }, f.env);
+    expect(missing.headers.get("ETag")).toBe('"journal-missing"');
+    expect(await missing.json()).toEqual({ entry: null });
+    const input = { method: "PATCH", headers: { ...headers, "If-Match": '"journal-missing"' }, body: JSON.stringify({ body: "Slow Saturday", bodyFormat: "markdown" }) };
+    const created = await f.app.request(path, input, f.env);
+    expect(created.status).toBe(200);
+    expect(created.headers.get("ETag")).toBe('"journal-1"');
+    expect(await created.json()).toMatchObject({ entry: { body: "Slow Saturday", revision: 1 } });
+    const before = f.snapshot();
+    expect((await f.app.request(path, input, f.env)).status).toBe(409);
+    expect(f.snapshot()).toEqual(before);
+    expect(f.snapshot().filter(row => row.user_id === "bob")).toEqual(other);
+    expect(f.raw.prepare("SELECT body FROM owner_content_search WHERE user_id = 'alice' AND source_type = 'journal'").get()?.body).toBe("Slow Saturday");
+  });
+
+  it("edits a current day successfully and rejects stale edits and deletes", async () => {
+    const f = fixture("sdk");
+    await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Original" });
+    const input = { method: "PATCH", headers: { ...headers, "If-Match": '"journal-1"' }, body: JSON.stringify({ body: "Saved edit" }) };
+    const edited = await f.app.request(path, input, f.env);
+    expect(edited.status).toBe(200);
+    expect(edited.headers.get("ETag")).toBe('"journal-2"');
+    expect(await edited.json()).toMatchObject({ entry: { body: "Saved edit", revision: 2 } });
+    const before = f.snapshot();
+    expect((await f.app.request(path, input, f.env)).status).toBe(409);
+    expect((await f.app.request(path, { method: "DELETE", headers: input.headers }, f.env)).status).toBe(409);
+    expect(f.snapshot()).toEqual(before);
+    expect((await getJournalDay(f.env, "alice", "2026-10-08")).entry?.body).toBe("Saved edit");
+  });
+
+  it("archives a current day successfully and restores it with the missing validator", async () => {
+    const f = fixture("sdk");
+    await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Original" });
+    const deleted = await f.app.request(path, { method: "DELETE", headers: { ...headers, "If-Match": '"journal-1"' } }, f.env);
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toEqual({ ok: true });
+    expect((await getJournalDay(f.env, "alice", "2026-10-08")).entry).toBeNull();
+    expect(f.raw.prepare("SELECT source_id FROM owner_content_search WHERE user_id = 'alice' AND source_type = 'journal'").all()).toEqual([]);
+    const restored = await f.app.request(path, { method: "PATCH", headers: { ...headers, "If-Match": '"journal-missing"' }, body: JSON.stringify({ body: "Restored" }) }, f.env);
+    expect(restored.status).toBe(200);
+    expect(await restored.json()).toMatchObject({ entry: { body: "Restored", revision: 3, archivedAt: null } });
+  });
+});
 
 describe.each(["sdk", "legacy"] as const)("%s daily Journal agent writes through Core and native API", runtime => {
   it("creates one owner day, exposes it through the native API, and replays without a second save", async () => {
