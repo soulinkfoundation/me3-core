@@ -23,10 +23,28 @@ export type PeopleRecord = { profileId: string | null; name: string; [key: strin
 export interface AgentPeopleServices {
   search(input: { query: string; offeringType?: "service" | "product"; countryCode?: string; limit?: number }): Promise<{ results: PeopleRecord[]; [key: string]: unknown }>;
 }
+export type AgentGeneratedImageAsset = {
+  id: string; attachmentId: string; name: string; mimeType: string; size: number;
+  width: number | null; height: number | null; url: string; storageKey: string;
+};
+export type AgentGeneratedImageAction = {
+  kind: "generated"; status: "complete"; prompt: string; revisedPrompt: string | null;
+  providerId: string; model: string; reason: null; assets: AgentGeneratedImageAsset[];
+};
+export type AgentImageGenerationResult =
+  | { status: "complete"; operationId: string; action: AgentGeneratedImageAction }
+  | { status: "unknown"; operationId: string; error: string }
+  | { status: "failed"; operationId?: string; error: string };
+export interface AgentImageGenerationServices {
+  generate(prompt: string, input: {
+    idempotencyKey: string; threadId: string; turnId: string; requestId: string; signal: AbortSignal;
+  }): Promise<AgentImageGenerationResult>;
+}
 export interface AgentDomainServices {
   mailbox?: AgentMailboxServices;
   scheduling?: AgentSchedulingServices;
   people?: AgentPeopleServices;
+  images?: AgentImageGenerationServices;
   web?: { search: WebResearchService["search"]; open: WebContentFetcher["open"] };
   landingPageEnv?: AgentLandingPageEnv;
 }

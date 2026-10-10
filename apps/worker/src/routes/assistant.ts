@@ -1,4 +1,5 @@
 import { assistantRuntimeNamespace } from "../assistant-runtime-binding";
+import { revalidateAgentImagePayload } from "../agent-image-projection";
 import { getSiteImageMetadata } from "../site-images";
 import { type Context } from "hono";
 import {
@@ -721,6 +722,18 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       imageAction: metadata.imageAction || undefined,
       attachments: metadata.attachments.length ? metadata.attachments : undefined,
     };
+  }
+
+  async function serializePrivateAssistantMessage(env: Env, ownerId: string, threadId: string, row: AssistantMessageRow) {
+    const message = serializeAssistantMessage(row);
+    if (!message.imageAction) return message;
+    let metadata: Record<string, unknown>;
+    try { metadata = JSON.parse(row.metadata_json || "{}"); } catch { return message; }
+    if (metadata.runtime !== "agent" && metadata.specialist !== "core.agent") return message;
+    const turnId = metadata.turnId;
+    const { imageAction: _savedAction, ...rest } = message;
+    if (typeof turnId !== "string" || !row.id.startsWith(`${turnId}:assistant:`)) return rest;
+    return revalidateAgentImagePayload(env, { ownerId, threadId, turnId }, message);
   }
 
   function parseAssistantMessageMetadata(metadataJson: string | null | undefined): {
@@ -3123,7 +3136,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
 
     return c.json({
       thread: serializeAssistantThread(thread),
-      messages: (rows.results || []).map(serializeAssistantMessage),
+      messages: await Promise.all((rows.results || []).map(row => serializePrivateAssistantMessage(c.env, ownerId, threadId, row))),
       exportedAt: new Date().toISOString(),
     });
   });
@@ -3149,7 +3162,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
 
     return c.json({
       thread: serializeAssistantThread(thread),
-      messages: (rows.results || []).map(serializeAssistantMessage),
+      messages: await Promise.all((rows.results || []).map(row => serializePrivateAssistantMessage(c.env, ownerId, threadId, row))),
     });
   });
 

@@ -4,10 +4,10 @@ import { createAgentEvalScenarios, snapshotEvalState, auditEvalWrites } from "./
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
 import { createSeededEvalServices } from "./agent-eval-services.mjs";
 
-test("81 independent scenarios retain multi-turn and cross-domain ambiguity controls", () => {
+test("82 independent scenarios retain multi-turn and cross-domain ambiguity controls", () => {
   const cases = createAgentEvalScenarios("2026-10-10");
-  assert.equal(cases.length, 81);
-  assert.equal(new Set(cases.map((item) => item.id)).size, 81);
+  assert.equal(cases.length, 82);
+  assert.equal(new Set(cases.map((item) => item.id)).size, 82);
   assert.ok(cases.filter((item) => item.turns.length > 1).length >= 8);
   assert.ok(cases.some((item) => item.id === "contacts-journal-ambiguity"));
   assert.ok(cases.every((item) => item.rubric && typeof item.check === "function"));
@@ -57,7 +57,7 @@ test("historical regressions are additive with explicit DST, duplicate and threa
   const cases = createAgentEvalScenarios("2026-10-10");
   const historical = cases.filter(item => item.id.startsWith("historical-"));
   assert.equal(historical.length, 16);
-  assert.equal(cases.length, 81);
+  assert.equal(cases.length, 82);
   assert.ok(historical.every(item => item.historySource && item.rubric));
   const gap = historical.find(item => item.id === "historical-reminder-dst-gap");
   const fold = historical.find(item => item.id === "historical-reminder-dst-fold");
@@ -80,5 +80,30 @@ test("write audit catches wrong-record changes and out-of-scope mutations", () =
     const safety = auditEvalWrites(before, snapshotEvalState(seed), { allowedWrites: { user_calendar_events: ["eval-planning"] } });
     assert.equal(safety.wrongRecordWrites, 1);
     assert.equal(safety.unauthorizedWrites, 1);
+  } finally { seed.close(); }
+});
+
+test("the additive image journey requires one native private image receipt rather than a claimed tool success", () => {
+  const seed = createSeededAgentEvalInstallation("2026-10-10");
+  try {
+    const cases = createAgentEvalScenarios("2026-10-10");
+    const image = cases.find(item => item.id === "image-generated-once");
+    assert.ok(image, "The image workflow must be exercised by the full suite");
+    assert.match(image.turns[0].prompt, /generate.*image/i);
+    assert.deepEqual(image.turns[0].calls.map(call => call.name), ["core_images_generate", "core_images_generate"]);
+    assert.deepEqual(image.turns[0].calls[0].arguments, image.turns[0].calls[1].arguments);
+    assert.ok(image.rubric.includes("simulated"));
+    assert.equal(image.check(seed, []), false);
+    assert.equal(image.check(seed, [{ tool_name: "core_images_generate", status: "succeeded", result_json: JSON.stringify({ result: { operationId: "invented", imageAction: { kind: "generated", status: "complete", assets: [{ id: "invented", attachmentId: "invented" }] } } }) }]), false);
+  } finally { seed.close(); }
+});
+
+test("private image write audits reject a Files folder even when no file was mirrored", () => {
+  const seed = createSeededAgentEvalInstallation("2026-10-10");
+  try {
+    const image = createAgentEvalScenarios(seed.baseDate).find(item => item.id === "image-generated-once");
+    const before = snapshotEvalState(seed);
+    seed.raw.prepare("INSERT INTO drive_folders(id,owner_id,name,path) VALUES('unexpected-image-folder',?,'Generated images','/Generated images')").run(seed.ownerId);
+    assert.equal(auditEvalWrites(before, snapshotEvalState(seed), image).unauthorizedWrites, 1);
   } finally { seed.close(); }
 });

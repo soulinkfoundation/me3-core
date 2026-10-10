@@ -1,6 +1,7 @@
 import type { AgentTool } from "../types";
 import { calendarTools } from "./calendar";
 import { journalTools } from "./journal";
+import { imageTools } from "./images";
 import { mailboxTools } from "./mailbox";
 import { reminderTools } from "./reminders";
 import { schedulingTools } from "./scheduling";
@@ -10,7 +11,7 @@ import { taskTools } from "./tasks";
 import { webTools } from "./web";
 
 export function createDomainTools(): AgentTool[] {
-  const tools = [...calendarTools(), ...journalTools(), ...mailboxTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...taskTools(), ...webTools()];
+  const tools = [...calendarTools(), ...journalTools(), ...mailboxTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...taskTools(), ...webTools(), ...imageTools()];
   for (const tool of tools) {
     if (tool.approval === "required") {
       // Share the read-only validation prefix; each consequential executor returns before its effect.
@@ -19,4 +20,4 @@ export function createDomainTools(): AgentTool[] {
   }
   return tools;
 }
-export type { AgentDomainServices, AgentMailboxServices, AgentSchedulingServices, AgentPeopleServices, MailboxRecord, SchedulingContact, SchedulingRequest } from "./services";
+export type { AgentDomainServices, AgentMailboxServices, AgentSchedulingServices, AgentPeopleServices, AgentImageGenerationServices, AgentImageGenerationResult, AgentGeneratedImageAction, AgentGeneratedImageAsset, MailboxRecord, SchedulingContact, SchedulingRequest } from "./services";

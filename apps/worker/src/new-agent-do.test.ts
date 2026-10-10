@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AGENT_SCHEMA_STATEMENTS, appendAgentStreamEvent, createD1TurnStore, decideAgentApproval, persistAgentInput } from "../../../packages/agent/src/store";
 import { runAgentTurn } from "../../../packages/agent/src/loop";
@@ -6,6 +7,7 @@ import { toolIdempotencyKey } from "../../../packages/agent/src/schema";
 import type { AgentCheckpoint, AgentDb, AgentModel, AgentTool } from "../../../packages/agent/src/types";
 import type { NewAgentDispatchInput } from "./agent-runtime";
 import type { Env } from "./types";
+import { AGENT_IMAGE_SCHEMA_STATEMENTS } from "./agent-image-schema";
 
 const runtime = vi.hoisted(() => ({ execute: vi.fn(), fiberGate: undefined as Promise<void> | undefined }));
 // Match the SDK's managed-fiber contract: idempotent starts share one execution,
@@ -42,7 +44,11 @@ function checkpoint(call: { id: string; name: string; arguments: Record<string, 
 function fixture(model: AgentModel = { id: "fixture", async step() { return { text: "Completed.", toolCalls: [] }; } }, tools: AgentTool[] = [], beforePersist?: (status: string) => Promise<void>) {
   const raw = new DatabaseSync(":memory:"); databases.push(raw);
   for (const sql of AGENT_SCHEMA_STATEMENTS) raw.exec(sql);
+  for (const sql of AGENT_IMAGE_SCHEMA_STATEMENTS) raw.exec(sql);
   raw.exec("CREATE TABLE assistant_threads(id TEXT PRIMARY KEY,owner_id TEXT,status TEXT); INSERT INTO assistant_threads VALUES('thread','owner','active'); CREATE TABLE assistant_messages(id TEXT PRIMARY KEY,owner_id TEXT,thread_id TEXT,role TEXT,content TEXT,metadata_json TEXT); CREATE TABLE effects(id TEXT PRIMARY KEY);");
+  raw.exec("CREATE TABLE owner_profile(id TEXT PRIMARY KEY); INSERT INTO owner_profile VALUES('owner'),('foreign-owner'); INSERT INTO assistant_threads VALUES('foreign-thread','foreign-owner','active');");
+  const attachmentSchema = readFileSync(new URL("../migrations/0001_initial_public_schema.sql", import.meta.url), "utf8").match(/CREATE TABLE assistant_attachments \([\s\S]*?\n\);/)![0];
+  raw.exec(attachmentSchema);
   const db: AgentDb = { prepare(sql) {
     const query = raw.prepare(sql); let values: unknown[] = [];
     const statement = { bind(...args: unknown[]) { values = args; return statement; }, async first<T>() { return (query.get(...values as never[]) ?? null) as T | null; }, async all<T>() { return { results: query.all(...values as never[]) as T[] }; }, async run() { return { meta: { changes: Number(query.run(...values as never[]).changes) } }; } }; return statement;
@@ -73,7 +79,94 @@ function events(text: string) {
   return text.split("\n\n").filter(frame => frame.includes("event:")).map(frame => ({ event: /event: (.+)/.exec(frame)![1], seq: Number(/id: (\d+)/.exec(frame)?.[1] || 0), data: JSON.parse(/data: (.+)/.exec(frame)![1]) }));
 }
 
+const forgedImage = { kind: "generated", status: "complete", prompt: "Forged claim", assets: [{ attachmentId: "foreign-image", url: "https://foreign.example.invalid/image.png" }] };
+async function savedImage(f: ReturnType<typeof fixture>, status = "complete", native = true) {
+  await persistAgentInput(f.db, identity, input);
+  if (native) {
+    f.raw.prepare(`INSERT INTO assistant_attachments(id,owner_id,thread_id,filename,mime_type,size,kind,status,storage_key,metadata_json)
+      VALUES('image-asset','owner','thread','private.png','image/png',68,'image','ready','assistant/owner/generated/private.png',?)`).run(JSON.stringify({ operationId: "image-operation", sha256: "synthetic-hash", generated: true, width: 1, height: 1 }));
+    f.raw.exec(`INSERT INTO me3_agent_image_operations(id,owner_id,thread_id,turn_id,request_id,idempotency_key,prompt,model,billing_managed,status,usage_event_id,attachment_id,storage_key,mime_type,size,width,height,sha256)
+      VALUES('image-operation','owner','thread','turn','request','image-key','Synthetic private image','openai/gpt-image-2',0,'complete','image-usage','image-asset','assistant/owner/generated/private.png','image/png',68,1,1,'synthetic-hash');`);
+  }
+  const payload = { ok: status === "complete", status, turnId: input.turnId, threadId: input.threadId, replyText: "Saved result", imageAction: forgedImage };
+  await f.db.prepare("UPDATE me3_agent_turns SET status=?,response_json=? WHERE turn_id=?").bind(status,JSON.stringify(payload),input.turnId).run();
+  return payload;
+}
+
 describe("D1-backed agent Durable Object execution and stream replay", () => {
+  it("does not render a forged image in a cached HTTP response without an authoritative native operation", async () => {
+    const f = fixture(); await savedImage(f, "complete", false);
+    const result = await (await f.dispatch()).json() as Record<string, unknown>;
+    expect(result.replyText).toBe("Saved result"); expect(result.imageAction).toBeUndefined();
+    expect(runtime.execute).not.toHaveBeenCalled();
+  });
+
+  it("replaces cached image metadata with the authoritative current native asset for HTTP and SSE", async () => {
+    const f = fixture(); const payload = await savedImage(f);
+    await appendAgentStreamEvent(f.db,identity.ownerId,identity.turnId,"done",payload);
+    const expected = { assets: [expect.objectContaining({ attachmentId: "image-asset", name: "private.png", url: "/api/assistant/attachments/image-asset/content" })] };
+    expect((await (await f.dispatch()).json() as Record<string, unknown>).imageAction).toMatchObject(expected);
+    expect(events(await streamText(await f.dispatch(input,true))).at(-1)?.data.imageAction).toMatchObject(expected);
+    expect(runtime.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "UPDATE assistant_attachments SET owner_id='foreign-owner'",
+    "UPDATE assistant_attachments SET thread_id='foreign-thread'",
+    "UPDATE assistant_attachments SET status='deleted'",
+    "UPDATE assistant_attachments SET kind='text'",
+    "UPDATE assistant_attachments SET storage_key='foreign-key'",
+    "UPDATE assistant_attachments SET mime_type='image/jpeg'",
+    "UPDATE assistant_attachments SET size=69",
+    "UPDATE me3_agent_image_operations SET status='unknown'",
+  ])("revalidates a stale private asset before cached HTTP and terminal SSE replay: %s", async update => {
+    const f = fixture(); const payload = await savedImage(f); f.raw.exec(update);
+    await appendAgentStreamEvent(f.db,identity.ownerId,identity.turnId,"done",payload);
+    expect((await (await f.dispatch()).json() as Record<string, unknown>).imageAction).toBeUndefined();
+    expect(events(await streamText(await f.dispatch(input,true))).at(-1)?.data.imageAction).toBeUndefined();
+    expect(runtime.execute).not.toHaveBeenCalled();
+    expect((await f.row())?.response_json).toContain('"imageAction"');
+  });
+
+  it.each(["done", "error"])("revalidates the final cached %s fallback when reconnecting at the terminal event cursor", async event => {
+    const f = fixture(); const payload = await savedImage(f,event === "error" ? "failed" : "complete",false);
+    const cursor = await appendAgentStreamEvent(f.db,identity.ownerId,identity.turnId,event,payload);
+    const replay = events(await streamText(await f.dispatch(input,true,cursor)));
+    expect(replay.at(-1)).toMatchObject({ event, data: { status: payload.status } });
+    expect(replay.at(-1)?.data.imageAction).toBeUndefined(); expect(runtime.execute).not.toHaveBeenCalled();
+  });
+
+  it("revalidates a terminal image event queued while historical stream initialization is awaiting D1", async () => {
+    const f = fixture(); const payload = await savedImage(f); const entered = deferred(), release = deferred();
+    f.raw.exec("UPDATE me3_agent_turns SET status='running',response_json=NULL");
+    const prepare = f.db.prepare.bind(f.db);
+    vi.spyOn(f.db,"prepare").mockImplementation(sql => {
+      const statement = prepare(sql);
+      if (sql.startsWith("SELECT seq,event,data_json FROM me3_agent_stream_events")) {
+        const all = statement.all.bind(statement);
+        statement.all = async <T>() => { const rows = await all<T>(); await release.promise; return rows; };
+      }
+      return statement;
+    });
+    runtime.execute.mockImplementation(async (_env, _input, _signal, emit) => {
+      await f.db.prepare("UPDATE me3_agent_turns SET status='complete',response_json=?").bind(JSON.stringify(payload)).run();
+      emit("done",payload,await appendAgentStreamEvent(f.db,identity.ownerId,identity.turnId,"done",payload));
+      entered.resolve();
+    });
+    const response = await f.dispatch(input,true); await entered.promise;
+    f.raw.exec("UPDATE assistant_attachments SET status='deleted'"); release.resolve();
+    const replay = events(await streamText(response));
+    expect(replay.at(-1)).toMatchObject({ event: "done", data: { status: "complete" } });
+    expect(replay.at(-1)?.data.imageAction).toBeUndefined();
+  });
+
+  it("does not query image operations on ordinary text responses or terminal stream replay", async () => {
+    const f = fixture(); const prepare = vi.spyOn(f.db,"prepare");
+    expect(await (await f.dispatch()).json()).toMatchObject({ status: "complete", replyText: "Completed." });
+    expect(events(await streamText(await f.dispatch(input,true))).at(-1)).toMatchObject({ event: "done", data: { status: "complete" } });
+    expect(prepare.mock.calls.some(([sql]) => sql.includes("me3_agent_image_operations") || sql.includes("assistant_attachments"))).toBe(false);
+  });
+
   it("rolls back a fresh approval request mapping if recording its decision fails", async () => {
     const effect = vi.fn(async () => ({ status: 'ok' as const })); let step = 0;
     const { dispatch, db } = fixture({ id: 'fixture', async step() { return step++ === 0 ? { text: '', toolCalls: [{ id: 'send', name: 'send', arguments: {} }] } : { text: 'Handled.', toolCalls: [] }; } }, [{ name: 'send', description: 'Send', parameters: { type: 'object' }, effect: 'external', approval: 'required', execute: effect }]);

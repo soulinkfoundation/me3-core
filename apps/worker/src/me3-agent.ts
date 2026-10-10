@@ -2,6 +2,7 @@ import { Agent, type FiberRecoveryContext } from "agents";
 import { AgentInputConflictError, appendAgentStreamEvent, createD1TurnStore, persistAgentApprovalReply, persistAgentInput, persistAgentRequestAlias, isAgentCancellationRequested, requestAgentCancellation } from "../../../packages/agent/src/store";
 import { executeNewAgentTurn, isNewAgentDispatchInput, type NewAgentDispatchInput } from "./agent-runtime";
 import { resolvePrimaryAssistantThread } from "./assistant-primary-thread";
+import { revalidateAgentImagePayload } from "./agent-image-projection";
 import type { Env } from "./types";
 
 type StreamEvent={event:string;data:Record<string,unknown>;seq:number};
@@ -133,11 +134,17 @@ export class Me3Agent extends Agent<Env> {
           const replay=[...(history.results||[]).map(row=>({seq:row.seq,event:row.event,data:JSON.parse(row.data_json)})),...subscriber.queued].sort((a,b)=>a.seq-b.seq);
           if(subscriber.closed)return;
           const boundary=replay.filter(item=>item.event==="status"&&item.data.state==="resuming").at(-1)?.seq||0;
-          subscriber.initializing=false;subscriber.queued=[];
-          for(const item of replay)if(item.seq>=boundary)this.send(subscriber,item.event,item.data,item.seq);
+          subscriber.queued=[];
+          for(const item of replay)if(item.seq>=boundary)await this.sendReplayed(subscriber,input,item);
+          // Image revalidation awaits D1; keep newer events queued until replay is drained.
+          while(!subscriber.closed&&subscriber.queued.length) {
+            const queued=subscriber.queued.sort((a,b)=>a.seq-b.seq);subscriber.queued=[];
+            for(const item of queued)await this.sendReplayed(subscriber,input,item);
+          }
+          subscriber.initializing=false;
           const row=await this.loadTurn(input.userId,input.turnId);
           if(row?.response_json&&!subscriber.closed&&row.status!=="running") {
-            const payload=JSON.parse(row.response_json);this.send(subscriber,payload.status==="failed"?"error":"done",payload,0);
+            const payload=JSON.parse(row.response_json);await this.sendReplayed(subscriber,input,{event:payload.status==="failed"?"error":"done",data:payload,seq:0});
           }
         }catch(error){this.send(subscriber,"error",{ok:false,error:error instanceof Error?error.message:"Stream replay failed"},0);remove();}
       },cancel:remove,
@@ -150,6 +157,11 @@ export class Me3Agent extends Agent<Env> {
       if(subscriber.initializing)subscriber.queued.push({event,data,seq});else this.send(subscriber,event,data,seq);
     }
   }
+  private async sendReplayed(subscriber:Subscriber,input:NewAgentDispatchInput,item:StreamEvent) {
+    const data=(item.event==="done"||item.event==="error")&&item.data.imageAction
+      ?await revalidateAgentImagePayload(this.env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId},item.data):item.data;
+    this.send(subscriber,item.event,data,item.seq);
+  }
   private send(subscriber:Subscriber,event:string,data:Record<string,unknown>,seq:number) {
     if(subscriber.closed||seq&&seq<=subscriber.lastSeq)return;
     try {
@@ -159,7 +171,10 @@ export class Me3Agent extends Agent<Env> {
     }catch{subscriber.remove();}
   }
   private loadTurn(ownerId:string,turnId:string) {return this.env.DB.prepare("SELECT * FROM me3_agent_turns WHERE owner_id=? AND turn_id=?").bind(ownerId,turnId).first<SavedTurn>();}
-  private async readResponse(input:NewAgentDispatchInput) {const row=await this.loadTurn(input.userId,input.turnId);return row?.response_json?JSON.parse(row.response_json):{ok:false,error:"Agent turn has not completed",turnId:input.turnId};}
+  private async readResponse(input:NewAgentDispatchInput) {
+    const row=await this.loadTurn(input.userId,input.turnId);
+    return row?.response_json?revalidateAgentImagePayload(this.env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId},JSON.parse(row.response_json)):{ok:false,error:"Agent turn has not completed",turnId:input.turnId};
+  }
 
   private async cancel(body:Record<string,unknown>|null) {
     if(typeof body?.userId!=="string"||!body.userId||!(typeof body.requestId==="string"&&body.requestId.length>0&&body.requestId.length<=500||typeof body.turnId==="string"&&body.turnId.length>0))return Response.json({error:"Invalid turn identity"},{status:400});

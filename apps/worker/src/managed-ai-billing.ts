@@ -27,6 +27,7 @@ const MANAGED_BILLABLE_TEXT_MODELS = [...new Set<string>([
 const MANAGED_IMAGE_MODELS = [
   "black-forest-labs/flux-2-klein-4b",
   "gpt-image-2",
+  "openai/gpt-image-2",
 ] as const;
 
 export type ManagedAiModelOption = {
@@ -149,7 +150,7 @@ export async function syncManagedAiUsage(
        WHERE (
            (kind = 'text' AND lower(replace(model, '@cf/', '')) IN (${MANAGED_BILLABLE_TEXT_MODELS.map(() => "?").join(", ")}))
            OR
-           (kind = 'image' AND lower(replace(model, '@cf/', '')) IN (?, ?))
+           (kind = 'image' AND lower(replace(model, '@cf/', '')) IN (${MANAGED_IMAGE_MODELS.map(() => "?").join(", ")}))
          )
          AND created_at >= datetime('now', '-35 days')
          AND json_extract(metadata_json, '$.managedBillingReportedAt') IS NULL
@@ -177,7 +178,7 @@ export async function syncManagedAiUsage(
     return {
       id: row.id,
       provider: row.provider,
-      model: row.model.replace(/^@cf\//i, ""),
+      model: row.kind === "image" && row.model.toLowerCase() === "openai/gpt-image-2" ? "gpt-image-2" : row.model.replace(/^@cf\//i, ""),
       kind: row.kind,
       inputTokens: Math.max(0, Math.trunc(Number(row.tokens_in) || 0)),
       cachedInputTokens: Math.max(

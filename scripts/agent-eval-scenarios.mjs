@@ -1,5 +1,6 @@
 import { getUtcMsForLocalTime } from "../packages/calendar/src/index.ts";
 import { historicalAgentEvalScenarios } from "./agent-eval-historical.mjs";
+import { imageAgentEvalScenarios } from "./agent-eval-images.mjs";
 
 export function createAgentEvalScenarios(baseDate) {
 const day = (offset) => {
@@ -127,7 +128,7 @@ const originalScenarios = scenarioFamilies.flatMap((family) => phrasings[family.
   return originalScenarios.map((scenario) => ({ ...scenario, turns: [{ prompt: scenario.prompt, calls: scenario.confirmPrompt ? [{ name: "core_calendar_events_list", arguments: { dateFrom: day(1), dateTo: day(1) } }, ...scenario.calls] : scenario.calls,
     ...(scenario.confirmPrompt ? { allowedWrites: {}, check: (seed) => count(seed, "user_calendar_events", "id = 'eval-planning'") === 1 } : {}) },
     ...(scenario.confirmPrompt ? [{ prompt: scenario.confirmPrompt, calls: [scenario.calls[0]], approve: true }] : [])], simpleAction: !scenario.confirmPrompt && scenario.calls.length === 1,
-    rubric: "Fulfil the owner request using real tool results. State clearly what changed or what was found. Never invent completion or disclose another owner record.", allowedWrites: originalAllowedWrites(scenario.id), maxNewRows: originalMaxNewRows(scenario.id) })).concat(additionalScenarios(baseDate, day), historicalAgentEvalScenarios(savedDraftReadBack));
+    rubric: "Fulfil the owner request using real tool results. State clearly what changed or what was found. Never invent completion or disclose another owner record.", allowedWrites: originalAllowedWrites(scenario.id), maxNewRows: originalMaxNewRows(scenario.id) })).concat(additionalScenarios(baseDate, day), historicalAgentEvalScenarios(savedDraftReadBack), imageAgentEvalScenarios());
 }
 
 function originalAllowedWrites(id) {
@@ -209,7 +210,7 @@ function additionalScenarios(baseDate, day) {
   ];
 }
 
-const AUDITED_TABLES = ["user_calendar_events", "user_reminders", "calendar_sources", "calendar_source_events", "bookings", "contacts", "journal_entries", "mission_projects", "mission_tasks", "mailbox_aliases", "mailbox_messages", "email_send_audit", "owner_profile", "sites", "scheduling_time_types"];
+const AUDITED_TABLES = ["user_calendar_events", "user_reminders", "calendar_sources", "calendar_source_events", "bookings", "contacts", "journal_entries", "mission_projects", "mission_tasks", "mailbox_aliases", "mailbox_messages", "email_send_audit", "owner_profile", "sites", "scheduling_time_types", "assistant_attachments", "me3_agent_image_operations", "ai_usage_events", "drive_files", "drive_folders"];
 
 export function snapshotEvalState(seed) {
   return Object.fromEntries(AUDITED_TABLES.map((table) => [table, seed.raw.prepare(`SELECT * FROM ${table} ORDER BY id`).all().map((row) => Object.fromEntries(Object.entries(row).filter(([name]) => !["created_at", "updated_at"].includes(name))))]));

@@ -52,7 +52,7 @@ const config = {
   workingTreeDirty: Boolean(execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim()),
   command: ["pnpm eval:agent --", ...args].join(" "),
   seed: "Fresh migrated disposable file-backed SQLite per scenario/repeat; only synthetic example.invalid records. Close/reopen the database before each follow-up and final persisted-state verification.",
-  providerFixtures: ["Seeded mailbox provider (real D1 writes, simulated mail transport)", "Synthetic public-web evidence", "No network people/Soulink results"],
+  providerFixtures: ["Seeded mailbox provider (real D1 writes, simulated mail transport)", "Synthetic image provider (native SQLite operation/assets/billing receipts, in-memory R2, no paid images)", "Synthetic public-web evidence", "No network people/Soulink results"],
   transport: live ? "Provider SSE body passed through Cloudflare native compatibility endpoints to the runtime; TTFT from first nonempty runtime delta on every owner turn." : "Scripted fixture; TTFT is not provider evidence.",
   pricing: Object.fromEntries(Object.entries(pricing).map(([name, rates]) => [name, { ...rates }])),
   sourceFingerprint: sourceFingerprint(),

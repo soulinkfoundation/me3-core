@@ -1,5 +1,6 @@
 import { MAILBOX_ATTACHMENT_STAGING_SQL } from "./mailbox-attachment-staging";
 import { AGENT_SCHEMA_STATEMENTS } from "../../../packages/agent/src/store";
+import { AGENT_IMAGE_SCHEMA_STATEMENTS } from "./agent-image-schema";
 import type { Env } from "./types";
 
 type RuntimeMigration = {
@@ -460,6 +461,13 @@ const runtimeMigrations: RuntimeMigration[] = [
     async apply(db) {
       await addColumnIfMissing(db, "mission_tasks", "goal_id", "TEXT");
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_mission_tasks_goal ON mission_tasks(user_id, goal_id)").run();
+    },
+  },
+  {
+    id: "0061_agent_image_operations",
+    checksum: "2026-10-10-agent-image-operations-v1",
+    async apply(db) {
+      for (const sql of AGENT_IMAGE_SCHEMA_STATEMENTS) await db.prepare(sql).run();
     },
   },
 ];

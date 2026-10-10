@@ -15,6 +15,7 @@ export function createSeededAgentEvalInstallation(baseDate) {
   let raw = new DatabaseSync(databasePath);
   let closed = false;
   let reopenCount = 0;
+  const batchExecutions = new WeakMap();
   for (const file of readdirSync(migrations).filter((name) => name.endsWith(".sql")).sort()) {
     raw.exec(readFileSync(new URL(file, migrations), "utf8"));
   }
@@ -76,6 +77,7 @@ export function createSeededAgentEvalInstallation(baseDate) {
   }
   insert("UPDATE mailbox_messages SET thread_key = ?, raw_headers_json = ? WHERE id = 'eval-email-ada'",
     "eval-ada-thread", JSON.stringify({ "message-id": "<eval-email-ada@example.invalid>", references: "<eval-thread-origin@example.invalid>" }));
+  insert("INSERT INTO assistant_threads (id, owner_id, title) VALUES ('eval-thread', ?, 'Synthetic evaluation thread')", "eval-owner");
 
   return {
     get raw() { return raw; },
@@ -87,14 +89,33 @@ export function createSeededAgentEvalInstallation(baseDate) {
       prepare(sql) {
         return {
           bind(...values) {
-            const statement = raw.prepare(sql);
-            return {
-              async first() { return statement.get(...values) || null; },
-              async all() { return { results: statement.all(...values) }; },
-              async run() { return { meta: { changes: statement.run(...values).changes } }; },
+            const bound = {
+              async first() { return raw.prepare(sql).get(...values) || null; },
+              async all() { return { results: raw.prepare(sql).all(...values) }; },
+              async run() { return { meta: { changes: raw.prepare(sql).run(...values).changes } }; },
             };
+            batchExecutions.set(bound, () => {
+              const statement = raw.prepare(sql);
+              if (!statement.columns().length) return { success: true, results: [], meta: { changes: statement.run(...values).changes } };
+              const results = statement.all(...values);
+              return { success: true, results, meta: { changes: /^\s*(SELECT|PRAGMA|EXPLAIN)\b/i.test(sql) ? 0 : raw.prepare("SELECT changes() AS n").get().n } };
+            });
+            return bound;
           },
         };
+      },
+      async batch(statements) {
+        const executions = statements.map(statement => {
+          const execute = batchExecutions.get(statement);
+          if (!execute) throw new Error("Batch statement belongs to another eval installation");
+          return execute;
+        });
+        raw.exec("BEGIN IMMEDIATE");
+        try {
+          const results = executions.map(execute => execute());
+          raw.exec("COMMIT");
+          return results;
+        } catch (error) { raw.exec("ROLLBACK"); throw error; }
       },
     },
     reopen() {

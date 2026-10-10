@@ -14,11 +14,12 @@ describe("Core runtime migrations", () => {
     const db = new RuntimeMigrationDb();
     await ensureCoreRuntimeMigrations({ DB: db as unknown as D1Database } as Env);
     for (const table of [
-      "me3_agent_turns", "me3_agent_stream_events",
+      "me3_agent_turns", "me3_agent_stream_events", "me3_agent_image_operations",
       "me3_agent_tool_receipts", "me3_agent_approvals", "me3_agent_targets", "me3_agent_selections", "me3_agent_cancellations", "me3_agent_request_aliases",
     ]) expect(db.tables.has(table), table).toBe(true);
     expect(db.migrations.get("0058_agent_turns")).toBe("2026-10-10-agent-turns-v3");
     expect(db.migrations.get("0059_agent_targets")).toBe("2026-10-10-agent-targets-v1");
+    expect(db.migrations.get("0061_agent_image_operations")).toBe("2026-10-10-agent-image-operations-v1");
     const agentSql = db.statements.filter(sql => sql.includes("me3_agent_"));
     expect(agentSql.some(sql => /\b(?:DROP|DELETE|ALTER)\b/i.test(sql))).toBe(false);
     resetCoreRuntimeMigrationsForTest();

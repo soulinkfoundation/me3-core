@@ -8,6 +8,8 @@ import { getManagedAiBillingSettings, syncManagedAiUsage, MANAGED_AI_FALLBACK_MO
 import { createStableAgentSchedulingServices } from "./agent-domain-scheduling";
 import { createAgentMailboxServices } from "./agent-mailbox-services";
 import { prepareAgentImageInputs, resolveAgentImageInputs, loadAgentAttachmentManifest, type AgentAttachmentInput } from "./agent-image-input";
+import { createAgentImageGenerationServices, loadAgentGeneratedImageAction } from "./agent-image-generation";
+import { revalidateAgentImagePayload } from "./agent-image-projection";
 import { createPeopleSearchToolServices } from "./network-directory";
 import { createWebResearchToolServices } from "./web-research";
 import { listCorePluginRecords } from "./plugins";
@@ -122,28 +124,36 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
 }
 
 async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void) {
-  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(result.status==="failed"?{error:result.replyText}:{})};
+  const imageAction=await loadAgentGeneratedImageAction(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId});
+  const messageId=`${input.turnId}:assistant:${result.status}:${result.approvalId||"final"}`;
+  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
   await env.DB.batch([
-    env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)").bind(`${input.turnId}:assistant:${result.status}:${result.approvalId||"final"}`,input.userId,input.threadId,result.replyText,JSON.stringify(payload)),
+    env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)").bind(messageId,input.userId,input.threadId,result.replyText,JSON.stringify(payload)),
     env.DB.prepare("UPDATE me3_agent_turns SET response_json=?,trace_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND turn_id=?").bind(JSON.stringify(payload),JSON.stringify(result.trace),input.userId,input.turnId),
     env.DB.prepare("UPDATE assistant_threads SET updated_at=CURRENT_TIMESTAMP,last_message_at=CURRENT_TIMESTAMP WHERE id=? AND owner_id=?").bind(input.threadId,input.userId),
     env.DB.prepare(`INSERT INTO agent_turn_results(user_id,request_id,turn_id,response_json) VALUES(?,?,?,?) ON CONFLICT(user_id,request_id) DO UPDATE SET response_json=excluded.response_json,updated_at=CURRENT_TIMESTAMP`).bind(input.userId,input.requestId,input.turnId,JSON.stringify(payload)),
+    ...(imageAction?.assets||[]).map(asset=>env.DB.prepare(`INSERT OR IGNORE INTO assistant_message_assets(id,owner_id,thread_id,message_id,attachment_id,role,metadata_json)
+      SELECT ?,?,?,?,?, 'generated_output',? WHERE EXISTS(SELECT 1 FROM assistant_attachments WHERE id=? AND owner_id=? AND thread_id=? AND status='ready' AND kind='image')`)
+      .bind(`${messageId}:image:${asset.attachmentId}`,input.userId,input.threadId,messageId,asset.attachmentId,JSON.stringify(asset),asset.attachmentId,input.userId,input.threadId)),
   ]);
+  const visiblePayload=await revalidateAgentImagePayload(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId},payload);
   const event=result.status==="failed"?"error":"done";
-  const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event,payload);
-  onEvent?.(event,payload,seq);
-  return payload;
+  const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event,visiblePayload);
+  onEvent?.(event,visiblePayload,seq);
+  return visiblePayload;
 }
 
 async function newAgentServices(env:Env,ownerId:string):Promise<AgentDomainServices> {
   return {
     scheduling:createStableAgentSchedulingServices(env,ownerId),
     mailbox:createAgentMailboxServices(env,ownerId),
+    images:createAgentImageGenerationServices(env,ownerId),
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
     web:createWebResearchToolServices(env,ownerId),landingPageEnv:env as never,
   };
 }
 function isToolAvailable(name:string,services:AgentDomainServices):boolean {
+  if(name==="core_images_generate")return Boolean(services.images);
   if(name.startsWith("core_mailbox_"))return Boolean(services.mailbox);
   if(name==="core_scheduling_request_read")return Boolean(services.scheduling?.getRequest);
   if(name==="core_scheduling_request")return Boolean(services.scheduling?.request);

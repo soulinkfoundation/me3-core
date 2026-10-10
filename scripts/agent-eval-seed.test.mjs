@@ -58,3 +58,21 @@ test("agent eval installation is synthetic, owner-scoped, and disposable", async
     fresh.close();
   }
 });
+
+test("native service D1 batches commit together and roll back a later SQLite constraint failure", async () => {
+  const fixture = createSeededAgentEvalInstallation("2026-10-10");
+  try {
+    const writes = await fixture.db.batch([
+      fixture.db.prepare("UPDATE user_reminders SET notes = ? WHERE id = ?").bind("Atomic image fixture control", "eval-reminder"),
+      fixture.db.prepare("UPDATE user_calendar_events SET title = ? WHERE id = ?").bind("Atomic calendar control", "eval-planning"),
+    ]);
+    assert.deepEqual(writes.map(result => result.meta.changes), [1, 1]);
+    await assert.rejects(fixture.db.batch([
+      fixture.db.prepare("UPDATE user_reminders SET notes = ? WHERE id = ?").bind("Should roll back", "eval-reminder"),
+      fixture.db.prepare("INSERT INTO owner_profile (id,name) VALUES (?,?)").bind(fixture.ownerId, "Duplicate owner"),
+    ]), /UNIQUE constraint/);
+    fixture.reopen();
+    assert.equal(fixture.raw.prepare("SELECT notes FROM user_reminders WHERE id = 'eval-reminder'").get().notes, "Atomic image fixture control");
+    assert.equal(fixture.raw.prepare("SELECT title FROM user_calendar_events WHERE id = 'eval-planning'").get().title, "Atomic calendar control");
+  } finally { fixture.close(); }
+});

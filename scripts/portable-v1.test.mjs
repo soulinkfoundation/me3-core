@@ -123,7 +123,11 @@ before(async () => {
      INSERT INTO me3_agent_cancellations (owner_id, request_id, requested_at)
      VALUES ('owner', 'portable-stopped-request', '2026-10-10T12:05:00Z');
      INSERT INTO me3_agent_request_aliases (owner_id, request_id, turn_id, input_json)
-     VALUES ('owner', 'portable-alias-request', 'portable-agent-turn', '{"messageText":"approve","requestId":"portable-alias-request"}');`,
+     VALUES ('owner', 'portable-alias-request', 'portable-agent-turn', '{"messageText":"approve","requestId":"portable-alias-request"}');
+     INSERT INTO me3_agent_image_operations
+       (id,owner_id,thread_id,turn_id,request_id,idempotency_key,prompt,model,billing_managed,status,usage_event_id)
+     VALUES ('portable-image-operation','owner','main-thread-1','portable-agent-turn','portable-agent-request',
+       'portable-image-key','Synthetic flower','openai/gpt-image-2',0,'unknown','portable-image-usage');`,
   );
   await exportPortableV1({
     database: source,
@@ -164,9 +168,10 @@ test("exports sanitized owner data and restores the exact identity, D1 rows, and
   assert.equal(queryScalar(target, "SELECT thread_id FROM assistant_primary_threads WHERE owner_id = 'owner';"), "main-thread-1");
   for (const table of [
     "me3_agent_turns", "me3_agent_stream_events", "me3_agent_tool_receipts",
-    "me3_agent_approvals", "me3_agent_targets", "me3_agent_selections", "me3_agent_cancellations", "me3_agent_request_aliases",
+    "me3_agent_approvals", "me3_agent_targets", "me3_agent_selections", "me3_agent_cancellations", "me3_agent_request_aliases", "me3_agent_image_operations",
   ]) assert.equal(queryScalar(target, `SELECT COUNT(*) FROM ${table};`), "1", `${table} must survive transfer`);
   assert.equal(queryScalar(target, "SELECT status FROM me3_agent_approvals WHERE id = 'portable-agent-approval';"), "pending");
+  assert.equal(queryScalar(target, "SELECT status || ':' || billing_managed || ':' || usage_event_id FROM me3_agent_image_operations WHERE id='portable-image-operation';"), "unknown:0:portable-image-usage");
   assert.equal(queryScalar(target, "SELECT json_extract(checkpoint_json, '$.approvalId') FROM me3_agent_turns WHERE turn_id = 'portable-agent-turn';"), "portable-agent-approval");
   assert.equal(queryScalar(target, "SELECT json_extract(result_json, '$.draftId') FROM me3_agent_tool_receipts WHERE idempotency_key = 'portable-agent-key';"), "portable-draft");
   assert.equal(queryScalar(target, "SELECT json_extract(candidates_json, '$[0].id') FROM me3_agent_selections WHERE id = 'portable-agent-selection';"), "portable-reminder");
