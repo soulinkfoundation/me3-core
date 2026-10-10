@@ -224,6 +224,22 @@ describe("Mission Control dashboard settings", () => {
     expect(new Set(dashboard.settings.goals.map((goal) => goal.id)).size).toBe(2);
   });
 
+  it("preserves goal metadata when an older dashboard client edits its title", async () => {
+    const env = createDashboardEnv({ dashboardSettings: { settings_json: JSON.stringify({ goals: [
+      { id: "run", title: "Run 10k", status: "active", areaId: "health", progress: 35, projectIds: ["project-run"] },
+    ] }) } });
+    const dashboard = await updateMissionDashboard(env, "owner", { goals: [{ id: "run", title: "Run 10k by December", status: "active" }] });
+    expect(dashboard.settings.goals[0]).toMatchObject({ areaId: "health", progress: 35, projectIds: ["project-run"] });
+  });
+
+  it("clears direct task links when an older dashboard client removes a goal", async () => {
+    const taskLinks = [{ id: "task-run", user_id: "owner", goal_id: "run" }, { id: "private", user_id: "other", goal_id: "run" }];
+    const env = createDashboardEnv({ taskLinks, dashboardSettings: { settings_json: JSON.stringify({ goals: [{ id: "run", title: "Run 10k" }] }) } });
+    await updateMissionDashboard(env, "owner", { goals: [] });
+    expect(taskLinks[0].goal_id).toBeNull();
+    expect(taskLinks[1].goal_id).toBe("run");
+  });
+
   it("normalizes dashboard updates through curated cards and destinations", async () => {
     const env = createDashboardEnv({ enabledPlugins: ["me3.journal"] });
 
@@ -276,6 +292,10 @@ describe("Mission Control dashboard settings", () => {
           id: "legacy-main-goal",
           title: "Finish the onboarding polish.",
           status: "active",
+          areaId: null,
+          progress: 0,
+          taskIds: [],
+          projectIds: [],
         },
       ],
       setupChecklistDismissed: true,
@@ -503,6 +523,7 @@ describe("Mission Control dashboard settings", () => {
 });
 
 function createDashboardEnv(options: {
+  taskLinks?: Array<{ id: string; user_id: string; goal_id: string | null }>;
   enabledPlugins?: string[];
   activity?: Array<Record<string, unknown> & { id: string; user_id: string }>;
   projectSummaryRows?: Array<{
@@ -561,6 +582,11 @@ function createDashboardEnv(options: {
   }
 
   const db = {
+    async batch(statements: { run(): Promise<unknown> }[]) {
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      return results;
+    },
     prepare(sql: string) {
       return {
         async all<T>() {
@@ -684,6 +710,12 @@ function createDashboardEnv(options: {
               return { results: [] as T[] };
             },
             async run() {
+              if (sql.includes("UPDATE mission_tasks SET goal_id = NULL")) {
+                const removedIds = JSON.parse(String(values[1])) as string[];
+                for (const task of options.taskLinks || []) {
+                  if (task.user_id === values[0] && task.goal_id && removedIds.includes(task.goal_id)) task.goal_id = null;
+                }
+              }
               if (sql.includes("mission_dashboard_settings")) {
                 const userId = String(values[0]);
                 settings.set(userId, {

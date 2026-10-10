@@ -82,6 +82,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0057_assistant_primary_thread", "2026-10-07-assistant-primary-thread-v1"],
   ["0058_agent_turns", "2026-10-10-agent-turns-v3"],
   ["0059_agent_targets", "2026-10-10-agent-targets-v1"],
+  ["0060_mission_goal_links", "2026-10-10-mission-goal-links-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];

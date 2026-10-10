@@ -1,4 +1,4 @@
-import { normalizeMainGoal, normalizeMissionGoals } from "./goals";
+import { normalizeMainGoal, normalizeMissionGoals, resolveMissionGoalId } from "./goals";
 import { getLatestMissionWheelSnapshot } from "./wheel-of-life";
 // Compatibility exports for existing native clients and integrations.
 export {
@@ -65,6 +65,7 @@ type MissionTaskRow = {
   id: string;
   user_id: string;
   project_id: string | null;
+  goal_id?: string | null;
   column_id?: string | null;
   title: string;
   description: string | null;
@@ -104,6 +105,7 @@ type MissionTaskListOptions = {
   limit?: unknown;
   archived?: boolean;
   projectId?: unknown;
+  goalId?: unknown;
   cursor?: unknown;
 };
 
@@ -578,10 +580,11 @@ export async function listMissionTaskPage(
     typeof options.projectId === "string" && options.projectId.trim()
       ? options.projectId.trim()
       : null;
+  const goalId = normalizeNullableText(options.goalId);
   const order = options.archived ? "archived" : "active";
   const cursor = decodeMissionTaskCursor(options.cursor, order);
   const workspaceStatusWhere = WORKSPACE_TASK_STATUSES.map((item) => `'${item}'`).join(", ");
-  let sql = `SELECT id, user_id, project_id, column_id, title, description, status, priority, position, pinned_at,
+  let sql = `SELECT id, user_id, project_id, goal_id, column_id, title, description, status, priority, position, pinned_at,
                     due_at, scheduled_for, source_kind, source_ref, approval_id,
                     metadata_json, created_at, updated_at, archived_at
              FROM mission_tasks
@@ -590,6 +593,10 @@ export async function listMissionTaskPage(
   if (projectId) {
     sql += " AND project_id = ?";
     values.push(projectId);
+  }
+  if (goalId) {
+    sql += " AND goal_id = ?";
+    values.push(goalId);
   }
   if (status) {
     sql += " AND status = ?";
@@ -689,6 +696,7 @@ export async function createMissionTask(env: Env, userId: string, input: unknown
   const body = isRecord(input) ? input : {};
   const title = normalizeNullableText(body.title);
   if (!title) throw new MissionControlInputError("Task title is required");
+  const goalId = await resolveMissionGoalId(env, userId, body.goalId);
   const projectId =
     typeof body.projectId === "string" && body.projectId.trim()
       ? body.projectId.trim()
@@ -706,13 +714,14 @@ export async function createMissionTask(env: Env, userId: string, input: unknown
 
   await env.DB.prepare(
     `INSERT INTO mission_tasks
-       (id, user_id, project_id, column_id, title, description, status, priority, position, pinned_at, due_at, scheduled_for, source_kind)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN datetime('now') ELSE NULL END, ?, ?, 'manual')`,
+       (id, user_id, project_id, goal_id, column_id, title, description, status, priority, position, pinned_at, due_at, scheduled_for, source_kind)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN datetime('now') ELSE NULL END, ?, ?, 'manual')`,
   )
     .bind(
       id,
       userId,
       projectId,
+      goalId,
       column.id,
       title,
       normalizeNullableText(body.description),
@@ -800,6 +809,7 @@ export async function updateMissionTask(
   const existing = await getMissionTask(env, userId, taskId);
   if (!existing) throw new MissionControlInputError("Task not found", 404);
   const body = isRecord(input) ? input : {};
+  const goalId = body.goalId === undefined ? existing.goal_id || null : await resolveMissionGoalId(env, userId, body.goalId);
   const projectId =
     typeof body.projectId === "string" && body.projectId.trim()
       ? body.projectId.trim()
@@ -826,7 +836,7 @@ export async function updateMissionTask(
 
   await env.DB.prepare(
     `UPDATE mission_tasks
-     SET project_id = ?, column_id = ?, title = ?, description = ?, status = ?, priority = ?, position = ?,
+     SET project_id = ?, goal_id = ?, column_id = ?, title = ?, description = ?, status = ?, priority = ?, position = ?,
          pinned_at = CASE
            WHEN ? THEN CASE WHEN pinned_at IS NULL THEN datetime('now') ELSE pinned_at END
            WHEN ? THEN NULL
@@ -837,6 +847,7 @@ export async function updateMissionTask(
   )
     .bind(
       projectId,
+      goalId,
       columnId,
       normalizeNullableText(body.title) || existing.title,
       body.description === undefined
@@ -1294,14 +1305,14 @@ export async function updateMissionDashboard(
     ...(body.goals === undefined && legacyGoalUpdate === undefined
       ? {}
       : { goals: body.goals ?? legacyGoalUpdate }),
-  });
+  }, existing.settings.goals);
   const persistedSettings = {
     kanbanEnabled: settings.kanbanEnabled,
     goals: settings.goals,
     setupChecklistDismissed: settings.setupChecklistDismissed,
   };
 
-  await env.DB.prepare(
+  const writeSettings = env.DB.prepare(
     `INSERT INTO mission_dashboard_settings
        (user_id, cards_json, quick_links_json, settings_json, mission_statement, updated_at)
      VALUES (?, ?, ?, ?, ?, datetime('now'))
@@ -1318,8 +1329,14 @@ export async function updateMissionDashboard(
       JSON.stringify(quickLinks),
       JSON.stringify(persistedSettings),
       missionStatement,
-    )
-    .run();
+    );
+  const removedGoalIds = existing.settings.goals.filter(goal => !settings.goals.some(next => next.id === goal.id)).map(goal => goal.id);
+  if (removedGoalIds.length) {
+    await env.DB.batch([writeSettings, env.DB.prepare(`UPDATE mission_tasks SET goal_id = NULL, updated_at = datetime('now')
+      WHERE user_id = ? AND goal_id IN (SELECT value FROM json_each(?))`).bind(userId, JSON.stringify(removedGoalIds))]);
+  } else {
+    await writeSettings.run();
+  }
 
   return getMissionDashboard(env, userId);
 }
@@ -2220,7 +2237,7 @@ async function resolveMissionTaskColumn(
 
 async function getMissionTask(env: Env, userId: string, taskId: string) {
   return env.DB.prepare(
-    `SELECT id, user_id, project_id, column_id, title, description, status, priority, position, pinned_at,
+    `SELECT id, user_id, project_id, goal_id, column_id, title, description, status, priority, position, pinned_at,
             due_at, scheduled_for, source_kind, source_ref, approval_id,
             metadata_json, created_at, updated_at, archived_at
      FROM mission_tasks
@@ -2878,6 +2895,7 @@ function serializeTask(row: MissionTaskRow) {
     id: row.id,
     userId: row.user_id,
     projectId: row.project_id,
+    goalId: row.goal_id || null,
     columnId: row.column_id || null,
     title: row.title,
     description: row.description,
@@ -3189,9 +3207,9 @@ function normalizeContextMissionStatement(value: unknown): string | null {
   return trimmed.slice(0, 2000);
 }
 
-function normalizeDashboardSettings(value: Record<string, unknown>) {
+function normalizeDashboardSettings(value: Record<string, unknown>, previousGoals: ReturnType<typeof normalizeMissionGoals> = []) {
   const legacyMainGoal = normalizeMainGoal(value.mainGoal);
-  const goals = normalizeMissionGoals(value.goals, legacyMainGoal);
+  const goals = normalizeMissionGoals(value.goals, legacyMainGoal, previousGoals);
   return {
     kanbanEnabled: value.kanbanEnabled === true,
     mainGoal: goals.find((goal) => goal.status === "active")?.title || "",

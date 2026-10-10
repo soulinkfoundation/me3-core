@@ -25,6 +25,7 @@ const expectedRepairNames = [
   "0028_journal_entry_revision.sql",
   "0029_social_media_delivery.sql",
   "0030_social_youtube_tiktok.sql",
+  "0060_mission_goal_links.sql",
 ];
 
 function readMigrationNames(db) {
@@ -72,6 +73,8 @@ test("preflight does not mark absent or partial schemas as migrated", () => {
 test("preflight repairs the complete final schema without replaying migrations", () => {
   const db = new DatabaseSync(":memory:");
   db.exec(`
+    CREATE TABLE mission_tasks (user_id TEXT, goal_id TEXT);
+    CREATE INDEX idx_mission_tasks_goal ON mission_tasks(user_id, goal_id);
     CREATE TABLE financial_entries (project_id TEXT);
     CREATE TABLE mailbox_messages (
       id TEXT,

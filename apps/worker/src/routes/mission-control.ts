@@ -247,6 +247,7 @@ export function registerMissionControlRoutes(app: AppHono, deps: OwnerRouteDeps)
           activeOnly: c.req.query("active") === "1",
           archived: c.req.query("archived") === "1",
           projectId: c.req.query("projectId"),
+          goalId: c.req.query("goalId"),
           limit: c.req.query("limit"),
           cursor: c.req.query("cursor"),
         }),

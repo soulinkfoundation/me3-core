@@ -202,6 +202,10 @@ export const SCHEMA_BACKED_MIGRATION_REPAIRS = [
       tableSupportsPlatforms("social_publications"),
     ].join("\nAND "),
   },
+  {
+    name: "0060_mission_goal_links.sql",
+    evidenceSql: [hasColumn("mission_tasks", "goal_id"), hasSchemaObject("index", "idx_mission_tasks_goal")].join("\nAND "),
+  },
 ];
 
 const repairStatements = SCHEMA_BACKED_MIGRATION_REPAIRS.map(

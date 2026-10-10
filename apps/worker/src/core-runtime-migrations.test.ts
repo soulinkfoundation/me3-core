@@ -34,6 +34,8 @@ describe("Core runtime migrations", () => {
 
     expect(db.tables.has("core_runtime_migrations")).toBe(true);
     expect(db.columns.get("mission_tasks")?.has("pinned_at")).toBe(true);
+    expect(db.columns.get("mission_tasks")?.has("goal_id")).toBe(true);
+    expect(db.migrations.get("0060_mission_goal_links")).toBe("2026-10-10-mission-goal-links-v1");
     expect(db.columns.get("commerce_settings")?.has("default_currency")).toBe(true);
     expect(db.columns.get("commerce_settings")?.has("preferred_stripe_provider")).toBe(true);
     expect(db.tables.has("ai_usage_events")).toBe(true);
@@ -718,8 +720,9 @@ class RuntimeMigrationStatement {
     }
     if (this.sql.includes("ALTER TABLE mission_tasks")) {
       const columns = this.db.columns.get("mission_tasks");
-      if (columns?.has("pinned_at")) throw new Error("duplicate column name: pinned_at");
-      columns?.add("pinned_at");
+      const column = this.sql.match(/ADD COLUMN (\w+)/)?.[1]!;
+      if (columns?.has(column)) throw new Error(`duplicate column name: ${column}`);
+      columns?.add(column);
       return { success: true };
     }
     if (this.sql.includes("ALTER TABLE commerce_settings")) {

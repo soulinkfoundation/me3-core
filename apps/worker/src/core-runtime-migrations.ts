@@ -454,6 +454,14 @@ const runtimeMigrations: RuntimeMigration[] = [
         ON me3_agent_selections(owner_id, thread_id, domain, created_at DESC)`).run();
     },
   },
+  {
+    id: "0060_mission_goal_links",
+    checksum: "2026-10-10-mission-goal-links-v1",
+    async apply(db) {
+      await addColumnIfMissing(db, "mission_tasks", "goal_id", "TEXT");
+      await db.prepare("CREATE INDEX IF NOT EXISTS idx_mission_tasks_goal ON mission_tasks(user_id, goal_id)").run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;
