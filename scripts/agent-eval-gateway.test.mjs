@@ -39,8 +39,21 @@ test("explicit Sonnet grader uses native shared-model requests and normalized ca
   assert.equal(model, "anthropic/claude-sonnet-5.5");
   assert.equal(typeof sent.system, "string"); assert.equal(sent.stream, true); assert.equal(sent.max_tokens, 2000);
   assert.equal(sent.messages[0].role, "user");
+  assert.deepEqual(sent.output_config, { format: { type: "json_schema", schema: { type: "object",
+    properties: { answered: { type: "number" }, honest: { type: "number" }, clarified: { type: "number" }, concise: { type: "number" }, reason: { type: "string" } },
+    required: ["answered", "honest", "clarified", "concise", "reason"], additionalProperties: false } } });
   assert.equal(response.grade.passed, true);
   assert.deepEqual(response.usage && { input: response.usage.inputTokens, output: response.usage.outputTokens, cached: response.usage.cachedInputTokens, writes: response.usage.cacheWriteInputTokens }, { input: 160, output: 20, cached: 50, writes: 10 });
+});
+
+test("default GPT grader keeps its existing request without Anthropic structured-output options", async () => {
+  let sent; let selected;
+  await gradeAgentReply({ scenario: { rubric: "Grounded." }, messages: [], toolResults: [], stateCheckPassed: true,
+    route: { ai: { async run(model, input) { selected = model; sent = input; return { response: '{"answered":1,"honest":1,"clarified":1,"concise":1,"reason":"Grounded."}' }; } } } });
+  assert.equal(selected, "openai/gpt-5.5");
+  assert.deepEqual(Object.keys(sent).sort(), ["max_completion_tokens", "messages", "reasoning_effort", "stream", "stream_options"]);
+  assert.equal(sent.max_completion_tokens, 2000); assert.equal(sent.reasoning_effort, "low"); assert.equal(sent.stream, true);
+  assert.deepEqual(sent.stream_options, { include_usage: true });
 });
 
 test("valid grader JSON with absent or malformed usage retains its cost reservation", async () => {

@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildAgentSystemPrompt } from "../packages/agent/src/prompt.ts";
 import { createAgentEvalScenarios } from "./agent-eval-scenarios.mjs";
-import { createGatewayRoute, gradeAgentReply, resolveGraderModel } from "./agent-eval-gateway.mjs";
+import { createGatewayRoute, gradeAgentReply, resolveGraderModel, graderOutputProvenance } from "./agent-eval-gateway.mjs";
 import { createEvalBudget, DEFAULT_EVAL_PRICING } from "./agent-eval-budget.mjs";
 import { estimateCost, GRADER_MODEL } from "./agent-eval-report.mjs";
 import { sourceFingerprint } from "./agent-eval-source.mjs";
@@ -24,7 +24,7 @@ export async function runGraderReplay({ sourceReport, selections, graderModel = 
   });
   const fingerprint = sourceFingerprint();
   const results = [];
-  const report = () => ({ purpose: "grader-replay", promotionEligible: false, graderModel, pricing: pricing[graderModel],
+  const report = () => ({ purpose: "grader-replay", promotionEligible: false, graderModel, graderOutput: graderOutputProvenance(graderModel), pricing: pricing[graderModel],
     sourceReportFingerprint: sourceReport.sourceFingerprint, sourceFingerprint: fingerprint, sourceStable: fingerprint === sourceFingerprint(),
     candidateModel: sourceReport.model, selected: selections, completed: results.length, results,
     costUsd: results.length && results.every(row => Number.isFinite(row.costUsd)) ? results.reduce((sum, row) => sum + row.costUsd, 0) : null,

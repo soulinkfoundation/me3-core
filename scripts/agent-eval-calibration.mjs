@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createDomainTools } from "../packages/agent/src/tools/index.ts";
-import { createGatewayRoute, gradeAgentReply, resolveGraderModel } from "./agent-eval-gateway.mjs";
+import { createGatewayRoute, gradeAgentReply, resolveGraderModel, graderOutputProvenance } from "./agent-eval-gateway.mjs";
 import { DEFAULT_EVAL_PRICING, createEvalBudget } from "./agent-eval-budget.mjs";
 import { GRADER_MODEL, estimateCost } from "./agent-eval-report.mjs";
 import { sourceFingerprint } from "./agent-eval-source.mjs";
@@ -41,7 +41,7 @@ export async function runGraderCalibration({ graderModel = GRADER_MODEL, routeFa
     const matched = results.filter(row => row.matched).length;
     const costUsd = results.length && results.every(row => Number.isFinite(row.costUsd)) ? results.reduce((sum, row) => sum + row.costUsd, 0) : null;
     const sourceStable = fingerprint === sourceFingerprint();
-    return { purpose: "grader-calibration", promotionEligible: false, live, graderModel, pricing: pricing[graderModel], sourceFingerprint: fingerprint, sourceStable,
+    return { purpose: "grader-calibration", promotionEligible: false, live, graderModel, graderOutput: graderOutputProvenance(graderModel), pricing: pricing[graderModel], sourceFingerprint: fingerprint, sourceStable,
       fixtureCount: GRADER_CALIBRATION_CASES.length, completed: results.length, matched, costUsd, budget: budget?.summary(),
       passed: live && sourceStable && results.length === GRADER_CALIBRATION_CASES.length && matched === results.length && costUsd !== null,
       evidenceLimit: "Fixed synthetic positive/negative judgments assess grader behavior only; this cannot authorize runtime promotion.", results };

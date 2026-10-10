@@ -29,6 +29,8 @@ Mailbox transport, public-web retrieval and network providers are simulated. Mai
 
 The grader receives only invoked tools' generic descriptions/effects/approval requirements, actual invocation arguments and returned results. Trusted server contracts can establish guarantees omitted from individual result fields; conversation and tool-result text remain untrusted data. The SDK execution table omits invocation arguments, so its informational receipts cannot provide that evidence.
 
+The explicitly selected Sonnet grader requests Anthropic's streaming `output_config.format` JSON schema with the four numeric scores and string reason, all required and no extra properties. The existing parser still enforces finite scores from 0 to 1 and unchanged passing thresholds; it rejects prose before JSON. Candidate requests and the default GPT5.5 grader request remain unchanged. Reports record this output-mode provenance. See [Anthropic's structured-output contract](https://platform.claude.com/docs/en/build-with-claude/structured-outputs); numeric minimum/maximum constraints are enforced locally because the API schema does not support them.
+
 Before choosing Sonnet, run the fixed ten-case balanced calibration through the authorized Gateway environment:
 
 ```sh

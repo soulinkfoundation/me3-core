@@ -1,12 +1,13 @@
 import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createD1TurnStore, runAgentTurn, type AgentMessage, type AgentModel, type AgentTurnResult } from "../../../packages/agent/src";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
-import { modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
+import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
 import { getAiSettings } from "./ai-providers";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
 import { getManagedAiBillingSettings, syncManagedAiUsage, MANAGED_AI_FALLBACK_MODEL, type ManagedAiBillingSettings } from "./managed-ai-billing";
 import { createStableAgentSchedulingServices } from "./agent-domain-scheduling";
 import { createAgentMailboxServices } from "./agent-mailbox-services";
+import { prepareAgentImageInputs, resolveAgentImageInputs, loadAgentAttachmentManifest, type AgentAttachmentInput } from "./agent-image-input";
 import { createPeopleSearchToolServices } from "./network-directory";
 import { createWebResearchToolServices } from "./web-research";
 import { listCorePluginRecords } from "./plugins";
@@ -17,7 +18,7 @@ export type NewAgentDispatchInput = {
   userId:string;threadId:string;turnId:string;requestId:string;messageText:string;
   selectedModel?:{providerId:string;model:string}|null;
   attachmentTextContext?:string|null;
-  attachments?:Array<{kind?:string|null;storageKey?:string|null;mimeType?:string|null}>;
+  attachments?:AgentAttachmentInput[];
   connectionId?:string;sourceEventId?:string;mode?:string;
 };
 
@@ -47,8 +48,12 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const gateway=await getAiGatewayRuntimeConfig(env,input.userId);
     if(!env.AI)throw new Error("Cloudflare AI binding is not configured");
     const metadata={me3_runtime:"agent",me3_turn_id:input.turnId,me3_request_id:input.requestId,me3_thread_id:input.threadId};
+    const imageScope={ownerId:input.userId,threadId:input.threadId};
     let usageIndex=0;
     const cloudflareModel=(selected:string,reportCount=0):AgentModel=>({id:selected,async step(step){
+      step.signal.throwIfAborted();
+      if(step.messages.some(message=>message.images?.length)&&!bindingModelSupportsImageInput(selected))throw new Error("This model cannot read images. Choose an image-input model for this turn.");
+      const messages=await resolveAgentImageInputs(env,imageScope,step.messages,step.signal);
       step.signal.throwIfAborted();
       const usageId=`${input.turnId}:model:${crypto.randomUUID()}:${usageIndex++}`;
       const receiptMetadata={...metadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0]};
@@ -75,7 +80,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
         const costKnown=tokensKnown&&billedCostUsd!==null&&Number.isFinite(billedCostUsd)&&billedCostUsd>=0;
         await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,metadata_json=? WHERE id=?")
           .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
-      }}).step(step);
+      }}).step({...step,messages});
     }});
     const modelFor=(requested:string):AgentModel=>{
       if(!managed)return cloudflareModel(canonicalNativeModel(requested));
@@ -101,9 +106,10 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const recent=await env.DB.prepare("SELECT role,content FROM assistant_messages WHERE owner_id=? AND thread_id=? ORDER BY created_at DESC,rowid DESC LIMIT 80").bind(input.userId,input.threadId).all<{role:"user"|"assistant"|"system";content:string}>();
       messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt})},...(recent.results||[]).reverse().filter(message=>message.role!=="system")];
       const content=[input.messageText,input.attachmentTextContext].filter(Boolean).join("\n\n");
-      const images=await loadImageAttachments(env,input);
+      const images=await prepareAgentImageInputs(env,imageScope,input.attachments||[],signal);
       messages.push({role:"user",content,...(images.length?{images}:{})});
-      await env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").bind(`${input.turnId}:user`,input.userId,input.threadId,input.messageText,JSON.stringify({requestId:input.requestId,runtime:"agent"})).run();
+      const attachments=await loadAgentAttachmentManifest(env,imageScope,input.attachments||[]);
+      await env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").bind(`${input.turnId}:user`,input.userId,input.threadId,input.messageText,JSON.stringify({requestId:input.requestId,runtime:"agent",...(attachments.length?{attachments}:{})})).run();
     }
     const services=await newAgentServices(env,input.userId);
     const tools=createDomainTools().filter(tool=>isToolAvailable(tool.name,services));
@@ -172,16 +178,9 @@ function resolveManagedModel(policy:ManagedAiBillingSettings,requested:string):s
   if(policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)return MANAGED_AI_FALLBACK_MODEL;
   return canonicalNativeModel(requested);
 }
-async function loadImageAttachments(env:Env,input:NewAgentDispatchInput) {
-  const images:Array<{url:string}>=[];
-  for(const attachment of (input.attachments||[]).filter(item=>item.kind==="image").slice(0,4)) {
-    if(!attachment.storageKey||!env.SITE_ASSETS)throw new Error("Image attachment storage is unavailable");
-    const asset=await env.DB.prepare("SELECT id FROM assistant_message_assets WHERE owner_id=? AND thread_id=? AND storage_key=? AND status='ready'").bind(input.userId,input.threadId,attachment.storageKey).first();
-    if(!asset)throw new Error("Image is unavailable for this conversation");
-    const object=await env.SITE_ASSETS.get(attachment.storageKey);if(!object)throw new Error("Image attachment not found");
-    if(object.size>10*1024*1024)throw new Error("Image exceeds attachment limit");
-    const bytes=new Uint8Array(await object.arrayBuffer());let binary="";for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.slice(i,i+8192));
-    images.push({url:`data:${attachment.mimeType||"image/png"};base64,${btoa(binary)}`});
-  }
-  return images;
+function bindingModelSupportsImageInput(model:string):boolean {
+  if(modelSupportsImageInput("workers-ai",model))return true;
+  if(model.startsWith("openai/"))return modelSupportsImageInput("openai",model.slice("openai/".length));
+  if(model.startsWith("anthropic/"))return modelSupportsImageInput("anthropic",model.slice("anthropic/".length));
+  return false;
 }

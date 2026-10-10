@@ -16,6 +16,7 @@ test("failed-row replay makes only one grader call, preserves exact evidence and
     return { content: [{ type: "text", text: 'Explanation before invalid {"answered":1' }], usage: { input_tokens: 100, output_tokens: 20 } };
   } } }) });
   assert.equal(calls, 1); assert.equal(report.promotionEligible, false); assert.equal(report.purpose, "grader-replay");
+  assert.equal(report.graderOutput.mode, "anthropic-json-schema");
   assert.equal(report.completed, 1); assert.equal(report.costUsd, 0.0004);
   assert.equal(report.results[0].rawText, 'Explanation before invalid {"answered":1');
   assert.match(report.results[0].error, /Malformed model grader JSON/);

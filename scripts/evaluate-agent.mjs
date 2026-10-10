@@ -5,7 +5,7 @@ import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
 import { createAgentEvalScenarios, snapshotEvalState, auditEvalWrites } from "./agent-eval-scenarios.mjs";
 import { createRuntimeAdapter } from "./agent-eval-adapters.mjs";
 import { createSeededEvalServices } from "./agent-eval-services.mjs";
-import { createGatewayRoute, gradeAgentReply, resolveGraderModel } from "./agent-eval-gateway.mjs";
+import { createGatewayRoute, gradeAgentReply, resolveGraderModel, graderOutputProvenance } from "./agent-eval-gateway.mjs";
 import { GRADER_MODEL, buildAgentEvalReport, agentEvalMarkdown, sumUsage, estimateCost } from "./agent-eval-report.mjs";
 import { DEFAULT_EVAL_PRICING, createEvalBudget } from "./agent-eval-budget.mjs";
 import { buildAgentSystemPrompt } from "../packages/agent/src/prompt.ts";
@@ -47,7 +47,7 @@ const reportPath = resolve(value("report", `.me3-evals/agent/${stamp}-${runtime}
 const markdownPath = reportPath.replace(/\.json$/, "") + ".md";
 mkdirSync(dirname(reportPath), { recursive: true });
 const config = {
-  runtime, model: modelChoice, graderModel, live, repeat, scenarioCount: scenarios.length, totalScenarioCount: allScenarios.length, baseDate,
+  runtime, model: modelChoice, graderModel, graderOutput: graderOutputProvenance(graderModel), live, repeat, scenarioCount: scenarios.length, totalScenarioCount: allScenarios.length, baseDate,
   commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   workingTreeDirty: Boolean(execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim()),
   command: ["pnpm eval:agent --", ...args].join(" "),
