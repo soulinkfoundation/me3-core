@@ -9,6 +9,40 @@ function stream(events: unknown[], done = true) {
   return new ReadableStream<Uint8Array>({start(c){for(let i=0;i<bytes.length;i+=7)c.enqueue(bytes.slice(i,i+7));c.close();}});
 }
 describe("new agent Cloudflare model transport", () => {
+  it("keeps Anthropic initial usage provisional until final output usage arrives", async () => {
+    for (const final of [undefined, {}, {output_tokens: null}, {output_tokens: -1}]) {
+      let recorded = false;
+      const model = createCloudflareModel({model: "anthropic/claude-sonnet-5.5", gatewayId: "test", recordUsage: () => { recorded = true; }, ai: {run: async () => stream([
+        {type: "message_start", message: {usage: {input_tokens: 100, output_tokens: 0}}},
+        {type: "content_block_delta", index: 0, delta: {type: "text_delta", text: "Ready"}},
+        ...(final === undefined ? [] : [{type: "message_delta", usage: final}]),
+        {type: "message_stop"},
+      ])}});
+      const result = await model.step({messages: [], tools: [], signal: new AbortController().signal, onDelta: async () => {}});
+      expect(result.text).toBe("Ready");
+      expect(result.usage).toBeUndefined();
+      expect(recorded).toBe(false);
+    }
+  });
+  it("keeps malformed or incomplete provider usage unknown instead of recording a free call", async () => {
+    for (const usage of [{}, {prompt_tokens: 100}, {prompt_tokens: "", completion_tokens: 0}, {prompt_tokens: null, completion_tokens: 0}, {prompt_tokens: 100, completion_tokens: -1}, {prompt_tokens: 100, completion_tokens: 10, prompt_tokens_details: {cached_tokens: 101}}, {prompt_tokens: 100, completion_tokens: 10, prompt_tokens_details: {cached_tokens: null}}]) {
+      let recorded = false;
+      const model = createCloudflareModel({model: "openai/gpt-6.1-sol", gatewayId: "test", recordUsage: () => { recorded = true; }, ai: {run: async () => ({choices: [{message: {content: "Ready"}}], usage})}});
+      const result = await model.step({messages: [], tools: [], signal: new AbortController().signal, onDelta: async () => {}});
+      expect(result.text).toBe("Ready");
+      expect(result.usage).toBeUndefined();
+      expect(recorded).toBe(false);
+    }
+  });
+  it("accounts for existing managed defaults and the hosted budget fallback", async () => {
+    for (const [name, expected] of [["openai/gpt-5.4-mini", 0.00039], ["openai/gpt-5.4-nano", 0.0001045], ["@cf/zai-org/glm-4.7-flash", 0.0000645]] as const) {
+      const model = createCloudflareModel({ model: name, gatewayId: "test", ai: { run: async () => ({
+        choices: [{ message: { content: "Ready" } }], usage: { prompt_tokens: 1000, completion_tokens: 10, prompt_tokens_details: { cached_tokens: 600 } },
+      }) } });
+      const result = await model.step({ messages: [], tools: [], signal: new AbortController().signal, onDelta: async () => {} });
+      expect(result.usage?.estimatedCostUsd, name).toBeCloseTo(expected, 12);
+    }
+  });
   it("streams OpenAI fragmented calls, usage and images through the AI binding and Gateway", async () => {
     let request: Record<string,unknown> = {}; let options: unknown;
     const model = createCloudflareModel({model:"openai/gpt-5.5",gatewayId:"test",metadata:{turn:"synthetic"},ai:{run:async(_model,input,opts)=>{request=input;options=opts;return stream([
@@ -88,7 +122,7 @@ describe("new agent Cloudflare model transport", () => {
     expect(result.text).toBe("Ready");
   });
   it("charges the published Cloudflare cached-input and cache-write candidate rates", async () => {
-    const cases: Array<[string, number]> = [["anthropic/claude-sonnet-5.5",0.00107],["openai/gpt-6-astra",0.0053],["@cf/zai-org/glm-5.3-flash",0.000083]];
+    const cases: Array<[string, number]> = [["anthropic/claude-sonnet-5.5",0.00107],["anthropic/claude-sonnet-5",0.00107],["anthropic/claude-sonnet-4.6",0.001605],["moonshotai/kimi-k3",0.00153],["openai/gpt-6-astra",0.0053],["@cf/zai-org/glm-5.3-flash",0.000083]];
     for (const [name, expected] of cases) {
       const raw = name.startsWith("anthropic/")
         ? {content:[{type:"text",text:"Ready"}],usage:{input_tokens:300,output_tokens:10,cache_read_input_tokens:600,cache_creation_input_tokens:100}}

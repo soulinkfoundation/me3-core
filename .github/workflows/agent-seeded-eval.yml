@@ -21,9 +21,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Check harness, write safety and streaming contracts
-        run: node --import tsx --test scripts/agent-eval-seed.test.mjs scripts/agent-eval-scenarios.test.mjs scripts/agent-eval-report.test.mjs scripts/agent-eval-gateway.test.mjs scripts/agent-eval-budget.test.mjs
+        run: node --import tsx --test scripts/agent-eval-*.test.mjs
       - name: Check new runtime seeded plumbing
-        run: pnpm eval:agent -- --runtime=new --repeat=1 --report=new-agent-eval.json
+        run: node --import tsx scripts/agent-eval-ci.mjs --repeat=1 --report=new-agent-eval.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

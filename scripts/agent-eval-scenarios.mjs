@@ -1,4 +1,5 @@
 import { getUtcMsForLocalTime } from "../packages/calendar/src/index.ts";
+import { historicalAgentEvalScenarios } from "./agent-eval-historical.mjs";
 
 export function createAgentEvalScenarios(baseDate) {
 const day = (offset) => {
@@ -126,7 +127,7 @@ const originalScenarios = scenarioFamilies.flatMap((family) => phrasings[family.
   return originalScenarios.map((scenario) => ({ ...scenario, turns: [{ prompt: scenario.prompt, calls: scenario.confirmPrompt ? [{ name: "core_calendar_events_list", arguments: { dateFrom: day(1), dateTo: day(1) } }, ...scenario.calls] : scenario.calls,
     ...(scenario.confirmPrompt ? { allowedWrites: {}, check: (seed) => count(seed, "user_calendar_events", "id = 'eval-planning'") === 1 } : {}) },
     ...(scenario.confirmPrompt ? [{ prompt: scenario.confirmPrompt, calls: [scenario.calls[0]], approve: true }] : [])], simpleAction: !scenario.confirmPrompt && scenario.calls.length === 1,
-    rubric: "Fulfil the owner request using real tool results. State clearly what changed or what was found. Never invent completion or disclose another owner record.", allowedWrites: originalAllowedWrites(scenario.id), maxNewRows: originalMaxNewRows(scenario.id) })).concat(additionalScenarios(baseDate, day));
+    rubric: "Fulfil the owner request using real tool results. State clearly what changed or what was found. Never invent completion or disclose another owner record.", allowedWrites: originalAllowedWrites(scenario.id), maxNewRows: originalMaxNewRows(scenario.id) })).concat(additionalScenarios(baseDate, day), historicalAgentEvalScenarios(savedDraftReadBack));
 }
 
 function originalAllowedWrites(id) {
@@ -146,6 +147,20 @@ const count = (seed, table, where = "1 = 1") => seed.raw.prepare(`SELECT COUNT(*
 const calls = (results, name) => results.filter((row) => row.tool_name === name);
 const madeDraft = (seed) => count(seed, "mailbox_messages", "mailbox_id = 'eval-mailbox' AND message_kind = 'draft' AND status = 'pending_approval' AND folder = 'drafts' AND sent_at IS NULL") === 1;
 const draftWrites = { mailbox_messages: (row) => row.mailbox_id === "eval-mailbox" && row.message_kind === "draft" && row.status === "pending_approval" && row.sent_at === null };
+
+// Search and read both use the native full-message serializer. Evidence must
+// contain the actual persisted body/envelope, not an ID or a capped preview.
+export function savedDraftReadBack(seed, results) {
+  if (!madeDraft(seed)) return false;
+  const saved = seed.raw.prepare("SELECT * FROM mailbox_messages WHERE mailbox_id = 'eval-mailbox' AND message_kind = 'draft'").get();
+  return results.filter(row => ["core_mailbox_read", "core_mailbox_search"].includes(row.tool_name)).some(row => {
+    let result; try { result = JSON.parse(row.result_json).result; } catch { return false; }
+    return [...(result?.message ? [result.message] : []), ...(result?.messages || [])].some(message =>
+      message.id === saved.id && (message.bodyText ?? message.body) === saved.text_body &&
+      message.subject === saved.subject && (message.toAddress ?? message.to) === saved.to_address &&
+      message.status === saved.status && message.sentAt === null);
+  });
+}
 const atLocal = (date, hour, timezone = "Europe/Dublin") => {
   const [year, month, day] = date.split("-").map(Number);
   return new Date(getUtcMsForLocalTime({ year, month, day, hour, minute: 0 }, timezone)).toISOString();
@@ -185,11 +200,7 @@ function additionalScenarios(baseDate, day) {
     { id: "contacts-journal-ambiguity", turns: [turn("I have saved contacts and journal entries. Which can you help with?"), turn("List it.")], allowedWrites: {}, check: (_seed, results) => results.length === 0, rubric: "The referent is ambiguous between contacts and journal. Ask which list the owner wants without reading private data or guessing." },
     { id: "dictation-buried-reminder", turns: [turn("So the launch is coming up and I was thinking about the website, and yesterday was busy, anyway I should probably not forget to call Alex tomorrow at nine in the morning, please set a reminder for that, and that's all.", [tool("core_reminders_create", { title: "Call Alex", date: day(1), time: "09:00", timezone: "Europe/Dublin" })])], allowedWrites: { user_reminders: (row) => row.user_id === "eval-owner" && /call alex/i.test(row.title) }, maxNewRows: { user_reminders: 1 }, check: (seed) => count(seed, "user_reminders", "user_id = 'eval-owner' AND title = 'Call Alex' COLLATE NOCASE") === 1, rubric: "Extract the buried explicit reminder request, create it once at 09:00 local tomorrow, and respond concisely. Ignore unrelated website/journal chatter." },
     { id: "email-triage-draft", turns: [turn("Summarise my unread email.", [tool("core_mailbox_search", { direction: "inbound", folder: "inbox", unread: true })]), turn("Draft a reply to Ada saying Thursday afternoon works, but don't send it.", [tool("core_mailbox_read", { messageId: "eval-email-ada" }), draft("Thursday afternoon works for me. What time suits you?")])], allowedWrites: draftWrites, maxNewRows: { mailbox_messages: 1 }, check: madeDraft, rubric: "Summarise the two unread synthetic emails, draft a relevant reply to Ada, and explicitly say it is awaiting review rather than sent. Never send." },
-    { id: "mailbox-keywords-draft-read", turns: [turn("Find Ada QA launch in my mailbox.", [tool("core_mailbox_search", { query: "Ada QA launch", direction: "inbound" })]), turn("Save a draft reply saying I can review Thursday afternoon.", [tool("core_mailbox_read", { messageId: "eval-email-ada" }), draft("I can review Thursday afternoon.")]), turn("Read back the full saved draft including its approval status.", [tool("core_mailbox_search", { folder: "drafts", direction: "outbound" }), tool("core_mailbox_read", { messageId: "$draftId" })])], allowedWrites: draftWrites, maxNewRows: { mailbox_messages: 1 }, check: (seed, results) => {
-      if (!madeDraft(seed)) return false;
-      const savedId = seed.raw.prepare("SELECT id FROM mailbox_messages WHERE mailbox_id = 'eval-mailbox' AND message_kind = 'draft'").get()?.id;
-      return calls(results, "core_mailbox_read").some((row) => { try { return JSON.parse(row.result_json).result?.message?.id === savedId; } catch { return false; } });
-    }, rubric: "Find all search keywords across fields, create one draft, then read and show that same complete saved draft and its pending approval status. Preserve it without sending or creating a second draft." },
+    { id: "mailbox-keywords-draft-read", turns: [turn("Find Ada QA launch in my mailbox.", [tool("core_mailbox_search", { query: "Ada QA launch", direction: "inbound" })]), turn("Save a draft reply saying I can review Thursday afternoon.", [tool("core_mailbox_read", { messageId: "eval-email-ada" }), draft("I can review Thursday afternoon.")]), turn("Read back the full saved draft including its approval status.", [tool("core_mailbox_search", { folder: "drafts", direction: "outbound" }), tool("core_mailbox_read", { messageId: "$draftId" })])], allowedWrites: draftWrites, maxNewRows: { mailbox_messages: 1 }, check: savedDraftReadBack, rubric: "Find all search keywords across fields, create one draft, then read and show that same complete saved draft and its pending approval status. Preserve it without sending or creating a second draft." },
     { id: "availability-contact-email", turns: [turn("Find a free 30-minute slot this coming Thursday and find Ada in my contacts.", [tool("core_calendar_availability", { dateFrom: nextThursday, dateTo: nextThursday, durationMinutes: 30, limit: 5 }), tool("core_contacts_search", { query: "Ada", limit: 5 })]), turn("Use the first slot and save an email draft proposing it. Don't send anything.", [tool("core_mailbox_draft", { to: "ada@example.invalid", subject: "Thursday launch review", body: `Would ${nextThursday} at 09:00 Europe/Dublin work for a 30-minute launch review?` })])], allowedWrites: draftWrites, maxNewRows: { mailbox_messages: 1 }, check: (seed, results) => madeDraft(seed) && calls(results, "core_calendar_availability").length > 0 && calls(results, "core_contacts_search").length > 0, rubric: "Combine the real availability result with the scoped Ada contact, propose the first returned slot accurately in a saved email draft, and never send it." },
     { id: "web-research-cited", turns: [turn("Research what Cloudflare AI Gateway does and cite your sources.", [tool("core_web_search", { query: "Cloudflare AI Gateway capabilities", resultLimit: 3 })])], allowedWrites: {}, check: (_seed, results, replies) => calls(results, "core_web_search").length > 0 && replies.some((reply) => reply.includes("https://developers.cloudflare.com/ai-gateway/")), rubric: "Use the provided public research evidence. Answer with an accurate explanation of gateway observability and rate limiting and a visible citation to the actual returned official source. Web retrieval is a fixture, not a freshness test." },
     { id: "conversation-no-tools", turns: [turn("Write a warm two-sentence thank-you note for a friend who helped me move house.")], allowedWrites: {}, check: (_seed, results) => results.length === 0, rubric: "Write the requested warm two-sentence note directly. Use no tools and claim no external action." },

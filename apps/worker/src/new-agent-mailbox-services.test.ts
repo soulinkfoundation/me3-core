@@ -6,9 +6,21 @@ import {
   listAgentMailboxMessages,
 } from "../../../packages/agent/src/services/mailbox";
 import { listAgentContacts } from "../../../packages/agent/src/services/contacts";
+import { createAgentMailboxServices } from "./agent-mailbox-services";
+import type { Env } from "./types";
 
 
 describe("independent new agent mailbox services", () => {
+  it("honors direction and the boolean unread filter through the Worker bridge", async () => {
+    const f = mailboxFixture();
+    f.raw.exec(`INSERT INTO mailbox_messages(id,mailbox_id,direction,message_kind,status,subject,text_body,folder,read_at)
+      VALUES ('alice-read','alice-mailbox','inbound','email','received','Read','Read body','inbox','2026-10-10T12:00:00Z'),
+      ('alice-outbound','alice-mailbox','outbound','draft','pending_approval','Draft','Draft body','drafts',NULL);`);
+    const services = createAgentMailboxServices(f.env as Env, "alice");
+    expect((await services.search({ direction: "inbound", unread: true })).messages.map(row => row.id)).toEqual(["alice-message"]);
+    expect((await services.search({ direction: "inbound", unread: false })).messages.map(row => row.id).sort()).toEqual(["alice-message", "alice-read"]);
+    expect((await services.search({ direction: "outbound" })).messages.map(row => row.id)).toEqual(["alice-outbound"]);
+  });
   it("lists only owner contacts and counts bookings only on that owner's sites", async () => {
     const f = mailboxFixture();
     f.raw.exec(`INSERT INTO contacts (id,user_id,name,email) VALUES

@@ -83,6 +83,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         if (emittedText) await emit({event:"status",data:{state:"retrying",replaceText:true}});
         response = await model.step(stepInput);
       }
+      checkpoint.trace.model = model.id;
       checkpoint.steps++;
       checkpoint.trace.steps = checkpoint.steps;
       if (response.usage) {

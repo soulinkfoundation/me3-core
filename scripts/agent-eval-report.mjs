@@ -18,10 +18,16 @@ export function sumUsage(samples) {
 }
 
 export function estimateCost(usage, pricing) {
-  if (!usage || !pricing || ![pricing.input, pricing.output, pricing.cached].every((price) => Number.isFinite(price) && price >= 0)) return null;
+  if (!validEvalUsage(usage) || !pricing || ![pricing.input, pricing.output, pricing.cached].every((price) => Number.isFinite(price) && price >= 0)) return null;
   const cached = Math.min(usage.inputTokens, usage.cachedInputTokens || 0);
   const writes = Math.min(usage.inputTokens - cached, usage.cacheWriteInputTokens || 0);
   return Number((((usage.inputTokens - cached - writes) * pricing.input + cached * pricing.cached + writes * (pricing.cacheWrite ?? pricing.input) + usage.outputTokens * pricing.output) / 1e6).toFixed(12));
+}
+
+export function validEvalUsage(usage) {
+  if (!usage) return false;
+  const counts = [usage.inputTokens, usage.outputTokens, usage.cachedInputTokens === undefined ? 0 : usage.cachedInputTokens, usage.cacheWriteInputTokens === undefined ? 0 : usage.cacheWriteInputTokens];
+  return counts.every(count => typeof count === "number" && Number.isSafeInteger(count) && count >= 0) && counts[2] + counts[3] <= counts[0];
 }
 
 export function parseGraderResponse(text) {
@@ -76,10 +82,10 @@ export function buildAgentEvalReport(config, results) {
       : (row.turnTtftMs || [row.ttftMs]).every(Number.isFinite)),
     ttft: totals.ttftP95Ms !== null && totals.ttftP95Ms <= AGENT_EVAL_GATE.ttftP95Ms,
     simpleAction: totals.simpleActionP95Ms !== null && totals.simpleActionP95Ms <= AGENT_EVAL_GATE.simpleActionP95Ms,
-    cost: totals.costUsd !== null,
+    cost: totals.costUsd !== null && totals.graderCostUsd !== null,
     sourceStable: config.sourceChangedDuringRun !== true,
   };
-  return { schemaVersion: 2, ...config, graderModel: GRADER_MODEL, generatedAt: new Date().toISOString(),
+  return { schemaVersion: 2, ...config, graderModel: config.graderModel ?? GRADER_MODEL, generatedAt: new Date().toISOString(),
     evidenceLimit: config.live ? "Synthetic model calls on fresh migrated SQLite. Mailbox transport, network providers and public-web retrieval are fixtures; delivery, web freshness and deployed/native behavior are not assessed." : "Scripted fixture checks plumbing and persisted state. It is not live quality, latency, grader or cost evidence.",
     gate: { thresholds: AGENT_EVAL_GATE, checks, passed: Object.values(checks).every(Boolean), informationalOnly: config.runtime === "sdk" },
     economics: { subscriptionUsd: 29.99, typicalConversationDefinition: "Mean complete scenario (including owner follow-ups), equally weighted. This synthetic mix is not measured owner usage.", costPerTypicalConversationUsd,

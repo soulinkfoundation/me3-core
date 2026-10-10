@@ -12,21 +12,23 @@ export function siteTools() {
     domainTool("core.sites.landing_page.list", async (args, context) => {
       const env = services(context).landingPageEnv || { DB: context.db };
       const pages = await listAgentLandingPages(env, context.ownerId, optionalString(args.site));
-      await rememberTargets(context, "landing page", await Promise.all(pages.map(page => readAgentLandingPageRevision(env, context.ownerId, page.id))));
+      await rememberTargets(context, "landing page", await Promise.all(pages.map(page => readAgentLandingPageRevision(env, context.ownerId, page.id))), record => pages.find(page => page.id === record.id)?.title);
       return ok({ pages });
     }),
     domainTool("core.sites.landing_page.create", async (args, context) => {
       const env = services(context).landingPageEnv || { DB: context.db };
+      context.signal.throwIfAborted();
       const page = await createAgentLandingPageDraft(env, context.ownerId, args as AgentLandingPageDraftInput);
-      await rememberTargets(context, "landing page", [await readAgentLandingPageRevision(env, context.ownerId, page.id)]);
+      await rememberTargets(context, "landing page", [await readAgentLandingPageRevision(env, context.ownerId, page.id)], () => page.title);
       return ok({ page, published: false });
     }),
     domainTool("core.sites.landing_page.update", async (args, context) => {
       const env = services(context).landingPageEnv || { DB: context.db };
       const id = requiredString(args.pageId, "Page ID");
       const expected = await requireTarget<{ id: string; draftJson: string; updatedAt: string; siteUsername: string }>(context, "landing page", id);
+      context.signal.throwIfAborted();
       const page = await updateAgentLandingPageDraft(env, context.ownerId, { ...args as AgentLandingPageUpdateInput, site: expected.siteUsername }, expected);
-      await rememberTargets(context, "landing page", [await readAgentLandingPageRevision(env, context.ownerId, page.id)]);
+      await rememberTargets(context, "landing page", [await readAgentLandingPageRevision(env, context.ownerId, page.id)], () => page.title);
       return ok({ page, published: false });
     }),
     domainTool("core.sites.blog_post.read", async (args, context) => {

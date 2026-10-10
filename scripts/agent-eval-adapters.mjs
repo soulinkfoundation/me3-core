@@ -25,6 +25,7 @@ async function runNewEvalTurn(input) {
         const args = { ...call.arguments };
         if (call.name === "core_reminders_list" && args.reminderTitle) { args.query = args.reminderTitle; delete args.reminderTitle; delete args.selectionOperation; delete args.date; delete args.time; delete args.timezone; }
         if (args.messageId === "$draftId") args.messageId = input.seed.raw.prepare("SELECT id FROM mailbox_messages WHERE mailbox_id = 'eval-mailbox' AND message_kind = 'draft' ORDER BY rowid DESC LIMIT 1").get()?.id || "missing-draft";
+        if (args.reminderId === "$createdReminderId") args.reminderId = input.seed.raw.prepare("SELECT id FROM user_reminders WHERE user_id = ? AND title = 'Call Ada' ORDER BY rowid DESC LIMIT 1").get(input.ownerId)?.id || "missing-reminder";
         return { text: "", toolCalls: [{ id: crypto.randomUUID(), name: call.name, arguments: args }] };
       }
       const text = input.fixtureReply || "The requested action is complete.";
@@ -32,15 +33,16 @@ async function runNewEvalTurn(input) {
       return { text, toolCalls: [] };
     } };
   } else model = createCloudflareModel({ ai: input.modelRoute.ai, model: input.modelRoute.model, gatewayId: input.modelRoute.aiGateway.gatewayId, recordUsage: (usage) => input.modelRoute.recordUsage({ usage }) });
-  const response = await runAgentTurn({ model, tools: createDomainTools(), messages: input.messages, store,
+  const tools = createDomainTools();
+  const response = await runAgentTurn({ model, tools, messages: input.messages, store,
     context: { db: input.seed.db, ownerId: input.ownerId, ...contextIds, ownerTimezone: input.ownerTimezone, messageText: input.messages.at(-1)?.content || "", enabledPluginIds: input.enabledPluginIds, services: input.services }, onEvent: input.onEvent });
   if (response.status === "needs_approval") paused.set(input.seed, { store, contextIds, approvalId: response.approvalId });
   else paused.delete(input.seed);
   const checkpoint = await store.load();
   const toolResults = (checkpoint?.messages || []).filter((message) => message.role === "tool").map((message) => {
     let result; try { result = JSON.parse(message.content); } catch { result = { status: "error", error: "Malformed tool result" }; }
-    const toolName = checkpoint.messages.flatMap((item) => item.toolCalls || []).find((call) => call.id === message.toolCallId)?.name || "unknown";
-    return { execution_id: `${contextIds.requestId}:${message.toolCallId}`, tool_name: toolName, status: result.status === "error" ? "failed" : "succeeded", result_json: JSON.stringify({ result: result.data ?? result }), error_message: result.error || null };
+    const call = checkpoint.messages.flatMap((item) => item.toolCalls || []).find((call) => call.id === message.toolCallId);
+    return { execution_id: `${contextIds.requestId}:${message.toolCallId}`, tool_name: call?.name || "unknown", arguments: call?.arguments, status: result.status === "error" ? "failed" : "succeeded", result_json: JSON.stringify({ result: result.data ?? result }), error_message: result.error || null };
   });
-  return { ...response, toolResults };
+  return { ...response, toolResults, toolContracts: tools.map(({ name, description, effect, approval }) => ({ name, description, effect, approval })) };
 }

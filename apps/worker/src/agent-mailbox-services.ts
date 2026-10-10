@@ -14,7 +14,10 @@ const unknownDelivery = { error: "Email delivery is unconfirmed. Check delivery 
 export function createAgentMailboxServices(env: Env, ownerId: string): AgentMailboxServices {
   return {
     async search(options) {
-      const result = await listAgentMailboxMessages(env, ownerId, { ...options, direction: "all", queryMode: "terms" });
+      const result = await listAgentMailboxMessages(env, ownerId, {
+        ...options, direction: options.direction ?? "all", queryMode: "terms",
+        unread: typeof options.unread === "boolean" ? String(options.unread) : options.unread,
+      });
       return { ...result, messages: result.messages.map(mailboxRecord) };
     },
     async read(id) {

@@ -1,5 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const migrations = new URL("../apps/worker/migrations/", import.meta.url);
 
@@ -8,7 +10,11 @@ export function createSeededAgentEvalInstallation(baseDate) {
       new Date(`${baseDate}T12:00:00.000Z`).toISOString().slice(0, 10) !== baseDate) {
     throw new Error("Eval baseDate must be YYYY-MM-DD.");
   }
-  const raw = new DatabaseSync(":memory:");
+  const directory = mkdtempSync(join(tmpdir(), "me3-agent-eval-"));
+  const databasePath = join(directory, "installation.sqlite");
+  let raw = new DatabaseSync(databasePath);
+  let closed = false;
+  let reopenCount = 0;
   for (const file of readdirSync(migrations).filter((name) => name.endsWith(".sql")).sort()) {
     raw.exec(readFileSync(new URL(file, migrations), "utf8"));
   }
@@ -68,9 +74,12 @@ export function createSeededAgentEvalInstallation(baseDate) {
   ]) {
     insert("INSERT INTO mailbox_messages (id, mailbox_id, direction, message_kind, status, from_address, to_address, subject, text_body, folder, received_at) VALUES (?, ?, 'inbound', 'email', 'received', ?, ?, ?, ?, 'inbox', ?)", id, mailbox, sender, "eval-owner@example.invalid", subject, body, at(-1, "10"));
   }
+  insert("UPDATE mailbox_messages SET thread_key = ?, raw_headers_json = ? WHERE id = 'eval-email-ada'",
+    "eval-ada-thread", JSON.stringify({ "message-id": "<eval-email-ada@example.invalid>", references: "<eval-thread-origin@example.invalid>" }));
 
   return {
-    raw,
+    get raw() { return raw; },
+    get reopenCount() { return reopenCount; },
     ownerId: "eval-owner",
     baseDate,
     day,
@@ -88,6 +97,18 @@ export function createSeededAgentEvalInstallation(baseDate) {
         };
       },
     },
-    close() { raw.close(); },
+    reopen() {
+      if (closed) throw new Error("Eval installation is closed");
+      raw.close();
+      raw = new DatabaseSync(databasePath);
+      raw.exec("PRAGMA foreign_keys = ON");
+      reopenCount++;
+    },
+    close() {
+      if (closed) return;
+      raw.close();
+      closed = true;
+      rmSync(directory, { recursive: true });
+    },
   };
 }

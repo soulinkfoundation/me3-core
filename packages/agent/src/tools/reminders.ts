@@ -1,4 +1,4 @@
-import { normalizeTimeZone } from "@me3-core/plugin-calendar";
+import { resolveAgentCalendarStart } from "@me3-core/plugin-calendar";
 import { cancelAgentReminder, createAgentReminder, getPendingAgentReminder, listPendingAgentReminders, parseAgentReminderInput, updateAgentReminder, type AgentReminder, type AgentReminderInput } from "../../../agent-chat/src/reminders";
 import { domainTool, idProperty, objectSchema, ok, optionalString, requiredString, resultOrThrow } from "./common";
 import { approval, assertUnchanged, rememberTargets, requireTarget } from "./targets";
@@ -11,12 +11,11 @@ const reminderTimeProperties = {
   title: { type: "string", minLength: 1 }, notes: { type: "string" }, recurrence: { type: "string" },
 };
 function reminderInput(args: Record<string, unknown>, context: AgentToolContext, existing?: AgentReminder): AgentReminderInput {
-  const date = requiredString(args.date, "Reminder date");
-  const time = requiredString(args.time, "Reminder time");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || new Date(`${date}T12:00:00Z`).toISOString().slice(0, 10) !== date) throw new Error("Reminder date must be a real YYYY-MM-DD date.");
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("Reminder time must use a valid HH:MM time.");
-  const timezone = normalizeTimeZone(args.timezone ?? context.ownerTimezone);
-  if (!timezone) throw new Error("Reminder timezone must be a valid IANA timezone.");
+  const { startDate: date, startTime: time, startTimezone: timezone } = resolveAgentCalendarStart({
+    startDate: requiredString(args.date, "Reminder date"),
+    startTime: requiredString(args.time, "Reminder time"),
+    startTimezone: requiredString(args.timezone ?? context.ownerTimezone, "Reminder timezone"),
+  }, "Reminder");
   const input = { date, time, timezone, title: args.title ?? existing?.title, notes: args.notes ?? existing?.notes, recurrence: args.recurrence ?? existing?.recurrenceRule };
   const parsed = parseAgentReminderInput(input);
   if ("error" in parsed) throw new Error(parsed.error);
@@ -29,12 +28,13 @@ export function reminderTools() {
     domainTool("core.reminders.list", async (args, context) => {
       const query = optionalString(args.query)?.trim().toLocaleLowerCase();
       const reminders = await listPendingAgentReminders({ DB: context.db }, context.ownerId, { query, limit: 50 });
-      const selection = await rememberTargets(context, "reminder", reminders);
+      const selection = await rememberTargets(context, "reminder", reminders, reminder => reminder.title);
       return ok({ reminders, ...selection, ambiguous: reminders.length > 1 });
     }, { description: "List upcoming owner reminders with stable IDs. Use query to find matching titles; multiple matches return numbered candidates. Read before changing a reminder.", parameters: objectSchema({ query: { type: "string" } }) }),
     domainTool("core.reminders.create", async (args, context) => {
+      context.signal.throwIfAborted();
       const reminder = resultOrThrow(await createAgentReminder({ DB: context.db }, context.ownerId, reminderInput(args, context), { idempotencyKey: context.idempotencyKey }));
-      await rememberTargets(context, "reminder", [reminder]);
+      await rememberTargets(context, "reminder", [reminder], value => value.title);
       return ok({ reminder });
     }, { parameters: objectSchema(reminderTimeProperties, ["title", "date", "time"]) }),
     domainTool("core.reminders.update", async (args, context) => {
@@ -43,10 +43,11 @@ export function reminderTools() {
       const existing = await getPendingAgentReminder({ DB: context.db }, context.ownerId, id);
       if (!existing) throw new Error("Reminder not found.");
       assertUnchanged(expected, existing, "Reminder");
+      context.signal.throwIfAborted();
       resultOrThrow(await updateAgentReminder({ DB: context.db }, context.ownerId, id, reminderInput(args, context, existing), expected));
       const reminder = await getPendingAgentReminder({ DB: context.db }, context.ownerId, id);
       if (!reminder) throw new Error("Updated reminder could not be read back.");
-      await rememberTargets(context, "reminder", [reminder]);
+      await rememberTargets(context, "reminder", [reminder], value => value.title);
       return ok({ reminder });
     }, { description: "Change one reminder using its stable ID from a prior read. Preserve omitted fields; ambiguous titles must first be resolved with list.", parameters: objectSchema({ reminderId: idProperty("reminder"), ...reminderTimeProperties }, ["reminderId", "date", "time"]) }),
     domainTool("core.reminders.cancel", async (args, context) => {
@@ -57,6 +58,7 @@ export function reminderTools() {
       assertUnchanged(expected, current, "Reminder");
       const pending = approval(context, "Cancel reminder", `${current.title} at ${current.remindAt}`, { target: current, targetDomain: "reminder" });
       if (pending) return pending;
+      context.signal.throwIfAborted();
       resultOrThrow(await cancelAgentReminder({ DB: context.db }, context.ownerId, id, expected));
       return ok({ cancelled: true, reminderId: id });
     }, { description: "Cancel one previously read reminder using its stable ID. Requires durable owner approval.", effect: "destructive", approval: "required", parameters: objectSchema({ reminderId: idProperty("reminder") }, ["reminderId"]) }),

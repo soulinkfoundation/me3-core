@@ -30,6 +30,7 @@ export function socialTools() {
       return ok({ items, total: items.length });
     }),
     domainTool("core.social.posting_plan.create", async (args, context) => {
+      context.signal.throwIfAborted();
       const plan = await createPostingPlan({ DB: context.db } as never, context.ownerId, { ...args, versionIds: optionalString(args.versionIds)?.split(",").map(id => id.trim()).filter(Boolean) });
       await rememberTargets(context, "posting plan", [plan]); return ok({ plan, scheduled: false });
     }),
@@ -41,17 +42,20 @@ export function socialTools() {
       assertUnchanged(expected, current, "Posting plan");
       const pending = approval(context, "Confirm posting plan", `Schedule ${current.items.length} approved social posts`, { target: expected, targetDomain: "posting plan" });
       if (pending) return pending;
+      context.signal.throwIfAborted();
       const plan = await confirmPostingPlan({ DB: context.db } as never, context.ownerId, id, { expectedUpdatedAt: expected.updatedAt, expectedPlan: expected, confirmed: true }, { requestedByType: "agent" });
       if (!plan) throw new Error("Posting plan not found.");
       return ok({ plan, scheduled: plan.status === "confirmed" });
     }, { parameters: objectSchema({ planId: idProperty("posting plan") }, ["planId"]), effect: "external", approval: "required", description: "Schedule the exact previously proposed social posting plan after durable owner approval." }),
     domainTool("core.social.draft.create", async (args, context) => {
       const source = await reviewedSource(args, context);
+      context.signal.throwIfAborted();
       const post = await createAgentSocialPost(context.db, context.ownerId, source, args as CreateAgentSocialPostInput);
       return ok({ post, published: false, sourceTitle: source.title });
     }),
     domainTool("core.social.suggestions.create", async (args, context) => {
       const source = await reviewedSource(args, context);
+      context.signal.throwIfAborted();
       const suggestions = await createAgentSocialSuggestions(context.db, context.ownerId, source, args as CreateAgentSocialSuggestionsInput);
       return ok({ suggestions, postCreated: false, sourceTitle: source.title });
     }),

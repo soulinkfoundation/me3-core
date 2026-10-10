@@ -21,6 +21,7 @@ export function journalTools() {
           if (pending) return pending;
         }
       }
+      context.signal.throwIfAborted();
       const result = await saveJournalDayForAgent(context.db, context.ownerId, args as Parameters<typeof saveJournalDayForAgent>[2], context.idempotencyKey);
       const { metadata: _metadata, ...entry } = result.entry;
       await rememberTargets(context, "journal day", [{ ...entry, id: entry.date }]);

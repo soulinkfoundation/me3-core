@@ -4,10 +4,10 @@ import { createAgentEvalScenarios, snapshotEvalState, auditEvalWrites } from "./
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
 import { createSeededEvalServices } from "./agent-eval-services.mjs";
 
-test("65 independent scenarios include multi-turn and cross-domain ambiguity controls", () => {
+test("81 independent scenarios retain multi-turn and cross-domain ambiguity controls", () => {
   const cases = createAgentEvalScenarios("2026-10-10");
-  assert.equal(cases.length, 65);
-  assert.equal(new Set(cases.map((item) => item.id)).size, 65);
+  assert.equal(cases.length, 81);
+  assert.equal(new Set(cases.map((item) => item.id)).size, 81);
   assert.ok(cases.filter((item) => item.turns.length > 1).length >= 8);
   assert.ok(cases.some((item) => item.id === "contacts-journal-ambiguity"));
   assert.ok(cases.every((item) => item.rubric && typeof item.check === "function"));
@@ -36,16 +36,39 @@ test("contacts follow-up permits reuse of the grounded private list and rejects 
   assert.equal(item.check(null,[{tool_name:"core_contacts_search"},{tool_name:"core_people_search"}]),false);
 });
 
-test("saved-draft readback accepts a searched source and one read of the actual draft, rejecting source-only reads",async()=>{
+test("saved-draft readback requires the complete persisted draft, accepting native search or read evidence",async()=>{
   const seed=createSeededAgentEvalInstallation("2026-10-10");
   try {
     const {draft}=await createSeededEvalServices(seed).mailbox.createDraft({to:"ada@example.invalid",subject:"Launch review",body:"Thursday afternoon works."},"test-draft");
     const item=createAgentEvalScenarios("2026-10-10").find(item=>item.id==="mailbox-keywords-draft-read");
-    const read=(id)=>({tool_name:"core_mailbox_read",result_json:JSON.stringify({result:{message:{id}}})});
-    assert.equal(item.check(seed,[read(draft.id)]),true);
-    assert.equal(item.check(seed,[read("eval-email-ada"),read("eval-email-ada")]),false);
+    const read=(message)=>({tool_name:"core_mailbox_read",result_json:JSON.stringify({result:{message}})});
+    const search=(message)=>({tool_name:"core_mailbox_search",result_json:JSON.stringify({result:{messages:[message]}})});
+    assert.equal(item.check(seed,[read(draft)]),true);
+    assert.equal(item.check(seed,[search(draft)]),true);
+    for (const incomplete of [{id:draft.id}, {...draft,bodyText:"Preview only",body:"Preview only"}, {...draft,status:"sent"}, {...draft,toAddress:"wrong@example.invalid",to:"wrong@example.invalid"}, {...draft,id:"eval-email-ada"}]) {
+      assert.equal(item.check(seed,[read(incomplete)]),false);
+      assert.equal(item.check(seed,[search(incomplete)]),false);
+    }
     assert.equal(item.check(seed,[]),false);
   }finally{seed.close();}
+});
+
+test("historical regressions are additive with explicit DST, duplicate and threaded reply checks", () => {
+  const cases = createAgentEvalScenarios("2026-10-10");
+  const historical = cases.filter(item => item.id.startsWith("historical-"));
+  assert.equal(historical.length, 16);
+  assert.equal(cases.length, 81);
+  assert.ok(historical.every(item => item.historySource && item.rubric));
+  const gap = historical.find(item => item.id === "historical-reminder-dst-gap");
+  const fold = historical.find(item => item.id === "historical-reminder-dst-fold");
+  assert.match(gap.turns[0].prompt, /28 March 2027.*1:30am/);
+  assert.match(fold.turns[0].prompt, /31 October 2027.*1:30am/);
+  for (const item of historical.filter(item => /invalid|dst-gap|dst-fold/.test(item.id))) assert.deepEqual(item.allowedWrites, {});
+  const duplicate = historical.find(item => item.id === "historical-reminder-duplicate-move-select");
+  assert.equal(duplicate.turns[0].prompt, "Move my ME3 QA check launch reminder to 16 January 2027 at 9:30am in Europe/Dublin.");
+  assert.equal(duplicate.turns[1].prompt, "the second one");
+  assert.deepEqual(duplicate.turns[0].allowedWrites, {});
+  assert.match(historical.find(item => item.id === "historical-reminder-source-date-followup").turns[1].prompt, /originally due on 15 January 2027/);
 });
 
 test("write audit catches wrong-record changes and out-of-scope mutations", () => {

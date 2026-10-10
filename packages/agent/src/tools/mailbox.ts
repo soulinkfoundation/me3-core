@@ -9,13 +9,13 @@ export function mailboxTools(): AgentTool[] {
       const service = services(context).mailbox;
       if (!service?.search) throw new Error("Mailbox search is unavailable.");
       const result = await service.search(args);
-      return ok({ ...result, ...await rememberTargets(context, "mailbox message", result.messages) });
+      return ok({ ...result, ...await rememberTargets(context, "mailbox message", result.messages, message => message.subject) });
     }),
     domainTool("core.mailbox.read", async (args, context) => {
       const service = services(context).mailbox;
       if (!service?.read) throw new Error("Mailbox read is unavailable.");
       const result = resultOrThrow(await service.read(requiredString(args.messageId, "Message ID")));
-      await rememberTargets(context, "mailbox message", [result.message]); return ok(result);
+      await rememberTargets(context, "mailbox message", [result.message], message => message.subject); return ok(result);
     }),
     domainTool("core.mailbox.draft", async (args, context) => {
       const service = services(context).mailbox;
@@ -25,8 +25,9 @@ export function mailboxTools(): AgentTool[] {
         const source = await requireTarget<MailboxRecord>(context, "mailbox message", replyToMessageId);
         assertUnchanged(source, resultOrThrow(await service.read(replyToMessageId)).message, "Reply source");
       }
+      context.signal.throwIfAborted();
       const result = resultOrThrow(await service.createDraft({ to: requiredString(args.to, "Recipient"), subject: requiredString(args.subject, "Subject"), body: requiredString(args.body, "Body"), replyToMessageId }, context.idempotencyKey));
-      await rememberTargets(context, "mailbox message", [result.draft]); return ok(result);
+      await rememberTargets(context, "mailbox message", [result.draft], message => message.subject); return ok(result);
     }),
   ];
   tools.push({
@@ -50,6 +51,7 @@ export function mailboxTools(): AgentTool[] {
         }
         const pending = approval(context, "Send email", `To ${current.to || current.toAddress || "the reviewed recipient"}: ${current.subject || "(no subject)"}`, { target: expected, targetDomain: "mailbox message", recipient: current.to || current.toAddress, subject: current.subject, body: current.bodyText || current.textBody });
         if (pending) return pending;
+        context.signal.throwIfAborted();
         const result = await service.sendDraft(id, context.idempotencyKey, expected);
         if (result && typeof result === "object" && "error" in result) throw new Error(String(result.error));
         return ok(result);

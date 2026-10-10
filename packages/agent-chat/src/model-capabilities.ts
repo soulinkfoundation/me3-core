@@ -30,6 +30,11 @@ export const DEFAULT_WORKERS_AI_IMAGE_GENERATION_MODEL =
 export const DEFAULT_OPENAI_IMAGE_GENERATION_MODEL = "gpt-image-2";
 
 const AI_MODEL_CAPABILITY_RECORDS: readonly AiModelCapabilityRecord[] = [
+  ...["openai/gpt-6.1-sol", "openai/gpt-6-astra", "anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "@cf/zai-org/glm-5.3-flash"].map(model => ({
+    providerId: "workers-ai" as const,
+    model,
+    capabilities: ["text", "image_input", "long-context", "reasoning", "tool-use"] as AiAgentModelCapability[],
+  })),
   {
     providerId: "anthropic",
     model: "claude-sonnet-4-6",

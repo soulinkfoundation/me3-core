@@ -12,7 +12,13 @@ const MANAGED_MODELS = [
   "anthropic/claude-sonnet-4.6",
   "anthropic/claude-sonnet-5",
   "openai/gpt-5.5",
+  "openai/gpt-6.1-sol",
+  "openai/gpt-6-astra",
+  "anthropic/claude-opus-5.5",
+  "anthropic/claude-sonnet-5.5",
+  "zai-org/glm-5.3-flash",
 ] as const;
+export const MANAGED_AI_FALLBACK_MODEL = "@cf/zai-org/glm-4.7-flash";
 const MANAGED_FALLBACK_MODELS = ["zai-org/glm-4.7-flash"] as const;
 const MANAGED_BILLABLE_TEXT_MODELS = [...new Set<string>([
   ...MANAGED_MODELS,
@@ -65,10 +71,11 @@ type LocalUsageRow = {
 
 export async function getManagedAiBillingSettings(
   env: Env,
+  options: { syncUsage?: boolean } = {},
 ): Promise<ManagedAiBillingSettings> {
   if (!isManaged(env)) return unavailableSettings(false, null);
 
-  const synced = await syncManagedAiUsage(env);
+  const synced = options.syncUsage === false ? null : await syncManagedAiUsage(env);
   if (synced) return synced;
 
   const bridge = await getManagedCommerceBridgeConfig(env);
@@ -146,12 +153,19 @@ export async function syncManagedAiUsage(
          )
          AND created_at >= datetime('now', '-35 days')
          AND json_extract(metadata_json, '$.managedBillingReportedAt') IS NULL
+         AND coalesce(json_extract(metadata_json, '$.costKnown'), 1) != 0
+         AND (coalesce(json_extract(metadata_json, '$.me3_runtime'), '') != 'agent'
+              OR coalesce(json_extract(metadata_json, '$.billingManaged'), 1) != 0)
+         AND estimated_cost_usd >= 0
        ORDER BY created_at ASC
        LIMIT 100`,
     )
       .bind(...MANAGED_BILLABLE_TEXT_MODELS, ...MANAGED_IMAGE_MODELS)
       .all<LocalUsageRow>();
-    rows = result.results || [];
+    rows = (result.results || []).filter(row => {
+      const metadata = parseMetadata(row.metadata_json);
+      return metadata.costKnown !== false && Number.isFinite(row.estimated_cost_usd) && row.estimated_cost_usd >= 0 && !(metadata.me3_runtime === "agent" && metadata.billingManaged === false);
+    });
   } catch (error) {
     console.error("Managed AI usage outbox query failed", error);
     return null;
@@ -280,9 +294,12 @@ function isManagedAiBillingSettings(value: unknown): value is ManagedAiBillingSe
     typeof root.overagesEnabled === "boolean" &&
     typeof root.defaultModel === "string" &&
     Array.isArray(root.models) &&
+    typeof root.eligible === "boolean" &&
+    typeof root.fallbackActive === "boolean" &&
+    typeof root.effectiveMaximumCents === "number" && Number.isFinite(root.effectiveMaximumCents) && root.effectiveMaximumCents >= 0 &&
     typeof root.includedMonthlyCents === "number" &&
     typeof root.monthlyMaximumCents === "number" &&
-    typeof root.currentMonthUsageMicrousd === "number",
+    typeof root.currentMonthUsageMicrousd === "number" && Number.isFinite(root.currentMonthUsageMicrousd) && root.currentMonthUsageMicrousd >= 0,
   );
 }
 

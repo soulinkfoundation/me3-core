@@ -13,8 +13,17 @@ export interface CloudflareModelOptions {
 // Catalog prices per million tokens, excluding infrastructure and Gateway fees.
 // https://developers.cloudflare.com/ai/models/openai/gpt-6-astra/
 // https://developers.cloudflare.com/ai/models/anthropic/claude-sonnet-5.5/
+// https://developers.cloudflare.com/ai/models/anthropic/claude-sonnet-5/
+// https://developers.cloudflare.com/ai/models/anthropic/claude-sonnet-4.6/
+// https://developers.cloudflare.com/ai/models/moonshotai/kimi-k3/
 // https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/
 const PRICING: Record<string, {input:number;output:number;cachedInput?:number;cacheWriteInput?:number}> = {
+  "openai/gpt-5.4-mini": {input:0.75,output:4.5,cachedInput:0.075},
+  "openai/gpt-5.4-nano": {input:0.2,output:1.25,cachedInput:0.02},
+  "@cf/zai-org/glm-4.7-flash": {input:0.0605,output:0.4},
+  "moonshotai/kimi-k3": {input:3,output:15,cachedInput:0.3},
+  "anthropic/claude-sonnet-4.6": {input:3,output:15,cachedInput:0.3,cacheWriteInput:3.75},
+  "anthropic/claude-sonnet-5": {input:2,output:10,cachedInput:0.2,cacheWriteInput:2.5},
   "openai/gpt-6-astra": {input:10,output:50,cachedInput:1,cacheWriteInput:12},
   "openai/gpt-6.1-sol": {input:2,output:10,cachedInput:0.1,cacheWriteInput:2.5},
   "openai/gpt-5.5": {input:5,output:30,cachedInput:0.5},
@@ -97,6 +106,7 @@ async function consumeStream(stream: ReadableStream<Uint8Array>, anthropic: bool
   const reader=stream.getReader();const decoder=new TextDecoder();let buffer="";let text="";
   let completed=false,nativeProtocol=anthropic;
   let usage: AgentUsage | undefined;
+  let finalAnthropicUsage=false;
   const calls=new Map<number,{id:string;name:string;json:string;input?:Record<string,unknown>}>();
   const abort=()=>void reader.cancel("cancelled");signal.addEventListener("abort",abort,{once:true});
   async function consume(frame:string) {
@@ -119,6 +129,7 @@ async function consumeStream(stream: ReadableStream<Uint8Array>, anthropic: bool
       if(event.type==="message_start") usage=readUsage(record(event.message).usage,true,usage);
       if(event.type==="message_delta") {
         usage=readUsage(event.usage,true,usage);
+        finalAnthropicUsage=Boolean(usage && record(event.usage).output_tokens!==undefined);
         if(record(event.delta).stop_reason==="max_tokens") throw new Error("Model response was truncated");
       }
       const index=Number(event.index ?? 0);const block=record(event.content_block);const delta=record(event.delta);
@@ -153,7 +164,7 @@ async function consumeStream(stream: ReadableStream<Uint8Array>, anthropic: bool
     if(!completed)throw new Error("Model stream did not complete; no tool calls are accepted");
   } catch(error) {await reader.cancel().catch(()=>{});throw error;}
   finally {signal.removeEventListener("abort",abort);reader.releaseLock();}
-  return {text,toolCalls:[...calls.entries()].sort(([a],[b])=>a-b).map(([,call])=>({id:call.id || crypto.randomUUID(),name:call.name,arguments:parseArguments(call.json || JSON.stringify(call.input ?? {}))})),...(usage?{usage}:{})};
+  return {text,toolCalls:[...calls.entries()].sort(([a],[b])=>a-b).map(([,call])=>({id:call.id || crypto.randomUUID(),name:call.name,arguments:parseArguments(call.json || JSON.stringify(call.input ?? {}))})),...(usage && (!anthropic || finalAnthropicUsage)?{usage}:{})};
 }
 
 function parseResponse(raw: unknown, anthropic: boolean): AgentModelResponse {
@@ -172,13 +183,21 @@ function parseResponse(raw: unknown, anthropic: boolean): AgentModelResponse {
   return {text,toolCalls,...(usage?{usage}:{})};
 }
 
-function readUsage(value:unknown,anthropic:boolean,previous?:AgentUsage):AgentUsage {
+function readUsage(value:unknown,anthropic:boolean,previous?:AgentUsage):AgentUsage|undefined {
   const usage=record(value);
   const details=record(usage.prompt_tokens_details??usage.input_tokens_details);
-  const cached=Number(anthropic?usage.cache_read_input_tokens ?? previous?.cachedInputTokens ?? 0:details.cached_tokens ?? 0);
-  const cacheWrite=Number(anthropic?usage.cache_creation_input_tokens??previous?.cacheWriteInputTokens??0:details.cache_write_tokens??0);
-  const input=anthropic && usage.input_tokens===undefined ? previous?.inputTokens ?? 0 : Number(anthropic?usage.input_tokens ?? 0:usage.prompt_tokens ?? usage.input_tokens ?? 0)+(anthropic?cached+Number(usage.cache_creation_input_tokens ?? 0):0);
-  return {inputTokens:input,outputTokens:Number(usage.output_tokens ?? usage.completion_tokens ?? previous?.outputTokens ?? 0),cachedInputTokens:cached,cacheWriteInputTokens:cacheWrite,estimatedCostUsd:null};
+  const reported=[usage.prompt_tokens,usage.input_tokens,usage.output_tokens,usage.completion_tokens,usage.cache_read_input_tokens,usage.cache_creation_input_tokens,details.cached_tokens,details.cache_write_tokens].filter(count=>count!==undefined);
+  if (!reported.every(count=>typeof count==="number" && Number.isSafeInteger(count) && count>=0)) return undefined;
+  const cached=anthropic?usage.cache_read_input_tokens ?? previous?.cachedInputTokens ?? 0:details.cached_tokens ?? 0;
+  const cacheWrite=anthropic?usage.cache_creation_input_tokens??previous?.cacheWriteInputTokens??0:details.cache_write_tokens??0;
+  const input=anthropic
+    ? usage.input_tokens===undefined && previous ? previous.inputTokens-previous.cachedInputTokens-(previous.cacheWriteInputTokens??0) : usage.input_tokens
+    : usage.prompt_tokens ?? usage.input_tokens;
+  const output=usage.output_tokens!==undefined?usage.output_tokens:usage.completion_tokens!==undefined?usage.completion_tokens:previous?.outputTokens;
+  if (![input,output,cached,cacheWrite].every(count=>typeof count==="number" && Number.isSafeInteger(count) && count>=0)) return undefined;
+  const totalInput=(input as number)+(anthropic?(cached as number)+(cacheWrite as number):0);
+  if (!Number.isSafeInteger(totalInput) || (cached as number)+(cacheWrite as number)>totalInput) return undefined;
+  return {inputTokens:totalInput,outputTokens:output as number,cachedInputTokens:cached as number,cacheWriteInputTokens:cacheWrite as number,estimatedCostUsd:null};
 }
 function estimateCost(model:string,usage:AgentUsage,pricing?:CloudflareModelOptions["pricing"]):number|null {
   const price=pricing ?? PRICING[model];if(!price)return null;

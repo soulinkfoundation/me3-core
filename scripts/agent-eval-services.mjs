@@ -1,11 +1,12 @@
 import { createAgentSchedulingToolServices } from "../apps/worker/src/agent-scheduling.ts";
+import { createAgentMailboxDraft, getAgentMailboxMessage, listAgentMailboxMessages } from "../packages/agent/src/services/mailbox.ts";
 
 // Synthetic provider adapters retain real D1 rows, but never send mail, relay a
 // Soulink message, or query the public web. Tool safety remains in the runtime.
 export function createSeededEvalServices(seed) {
   const scheduling = createAgentSchedulingToolServices({ DB: seed.db }, seed.ownerId);
-  const mailboxId = seed.raw.prepare("SELECT id FROM mailbox_aliases WHERE user_id = ?").get(seed.ownerId)?.id;
-  const message = (row) => row && ({ ...row, from: row.from_address, to: row.to_address, fromAddress: row.from_address, toAddress: row.to_address, bodyText: row.text_body, bodyHtml: row.html_body, receivedAt: row.received_at, sentAt: row.sent_at, messageKind: row.message_kind });
+  const env = { DB: seed.db };
+  const message = (record) => ({ ...record, toAddress: record.toAddress || "", bodyText: record.body });
   return {
     scheduling: { ...scheduling, async searchContacts({ query = "", limit = 5 }) {
       const rows = seed.raw.prepare("SELECT id, name, relationship FROM contacts WHERE user_id = ? AND status = 'active' AND name LIKE ? ORDER BY name LIMIT ?").all(seed.ownerId, `%${query}%`, Math.min(10, Math.max(1, limit)));
@@ -13,24 +14,23 @@ export function createSeededEvalServices(seed) {
       return { contacts: rows.map((row) => ({ ...row, me3AssistantAvailable: false })), total };
     } },
     mailbox: {
-      async search({ query = "", direction, folder, unread, limit = 20 } = {}) {
-        const terms = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
-        const rows = seed.raw.prepare("SELECT * FROM mailbox_messages WHERE mailbox_id = ? ORDER BY created_at DESC, id").all(mailboxId)
-          .filter((row) => (!direction || row.direction === direction) && (!folder || row.folder === folder) && (!unread || (row.direction === "inbound" && row.read_at === null)) && terms.every((term) => [row.subject, row.from_address, row.to_address, row.text_body].some((value) => String(value || "").toLocaleLowerCase().includes(term))));
-        return { messages: rows.slice(0, Math.min(20, limit)).map(message), total: rows.length };
+      async search(options = {}) {
+        const result = await listAgentMailboxMessages(env, seed.ownerId, {
+          ...options, direction: options.direction ?? "all", queryMode: "terms",
+          unread: typeof options.unread === "boolean" ? String(options.unread) : options.unread,
+          limit: Math.min(20, options.limit ?? 20),
+        });
+        return { ...result, messages: result.messages.map(message) };
       },
       async read(id) {
-        const row = seed.raw.prepare("SELECT * FROM mailbox_messages WHERE id = ? AND mailbox_id = ?").get(id, mailboxId);
-        return row ? { message: message(row) } : { error: "Message not found", status: 404 };
+        const result = await getAgentMailboxMessage(env, seed.ownerId, id);
+        return "error" in result ? result : { message: message(result.message) };
       },
       async createDraft(input, key) {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.to) || !input.subject?.trim() || !input.body?.trim()) return { error: "Invalid email draft", status: 400 };
-        if (input.replyToMessageId && !seed.raw.prepare("SELECT id FROM mailbox_messages WHERE mailbox_id = ? AND id = ?").get(mailboxId, input.replyToMessageId)) return { error: "Reply target not found", status: 404 };
-        const existing = seed.raw.prepare("SELECT * FROM mailbox_messages WHERE mailbox_id = ? AND agent_idempotency_key = ?").get(mailboxId, key);
-        if (existing) return { draft: message(existing) };
-        const id = crypto.randomUUID();
-        seed.raw.prepare("INSERT INTO mailbox_messages (id, mailbox_id, direction, message_kind, status, from_address, to_address, subject, text_body, folder, created_by, agent_idempotency_key) VALUES (?, ?, 'outbound', 'draft', 'pending_approval', 'eval-owner@example.invalid', ?, ?, ?, 'drafts', 'agent', ?)").run(id, mailboxId, input.to, input.subject, input.body, key);
-        return { draft: message(seed.raw.prepare("SELECT * FROM mailbox_messages WHERE id = ?").get(id)) };
+        if (input.replyToMessageId && "error" in await getAgentMailboxMessage(env, seed.ownerId, input.replyToMessageId)) return { error: "Reply target not found", status: 404 };
+        const result = await createAgentMailboxDraft(env, seed.ownerId, { ...input, textBody: input.body, source: "agent" }, { idempotencyKey: key });
+        return "error" in result ? result : { draft: message(result.draft) };
       },
     },
     people: { async search() { return { results: [], total: 0, bounded: true }; } },

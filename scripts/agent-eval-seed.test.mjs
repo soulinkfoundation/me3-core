@@ -2,6 +2,19 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
 
+test("a reopened installation retains writes through a different SQLite connection", async () => {
+  const fixture = createSeededAgentEvalInstallation("2026-10-10");
+  try {
+    const first = fixture.raw;
+    first.prepare("UPDATE user_reminders SET notes = 'Persist across reopen' WHERE id = 'eval-reminder'").run();
+    fixture.reopen();
+    assert.notEqual(fixture.raw, first);
+    assert.throws(() => first.prepare("SELECT 1"));
+    assert.equal((await fixture.db.prepare("SELECT notes FROM user_reminders WHERE id = ?").bind("eval-reminder").first()).notes, "Persist across reopen");
+    assert.equal(fixture.reopenCount, 1);
+  } finally { fixture.close(); }
+});
+
 test("contacts and mailbox fixtures include isolated synthetic other-owner controls", () => {
   const fixture = createSeededAgentEvalInstallation("2026-10-10");
   try {
