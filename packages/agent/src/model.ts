@@ -11,16 +11,20 @@ export interface CloudflareModelOptions {
 }
 
 // Catalog prices per million tokens, excluding infrastructure and Gateway fees.
+// https://developers.cloudflare.com/ai/models/openai/gpt-6-astra/
+// https://developers.cloudflare.com/ai/models/anthropic/claude-sonnet-5.5/
+// https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/
 const PRICING: Record<string, {input:number;output:number;cachedInput?:number;cacheWriteInput?:number}> = {
-  "openai/gpt-6-astra": {input:10,output:50,cachedInput:1},
+  "openai/gpt-6-astra": {input:10,output:50,cachedInput:1,cacheWriteInput:12},
   "openai/gpt-6.1-sol": {input:2,output:10,cachedInput:0.1,cacheWriteInput:2.5},
   "openai/gpt-5.5": {input:5,output:30,cachedInput:0.5},
   "anthropic/claude-opus-5.5": {input:4,output:20,cachedInput:0.2,cacheWriteInput:5},
-  "anthropic/claude-sonnet-5.5": {input:2,output:10,cachedInput:0.1,cacheWriteInput:2.5},
+  "anthropic/claude-sonnet-5.5": {input:2,output:10,cachedInput:0.2,cacheWriteInput:2.5},
+  "@cf/zai-org/glm-5.3-flash": {input:0.15,output:0.5,cachedInput:0.03},
 };
 
 export function createCloudflareModel(options: CloudflareModelOptions): AgentModel {
-  const model = options.model.replace(/^@cf\/(?=(?:openai|anthropic)\/)/, "");
+  const model = options.model;
   const anthropic = model.startsWith("anthropic/");
   const responses = model.startsWith("openai/gpt-6");
   if (/^(openai|anthropic)\//.test(model) && !options.gatewayId) throw new Error("External models require the installation's AI Gateway");
@@ -82,7 +86,7 @@ function anthropicRequest(messages: readonly AgentMessage[], tools: readonly Age
     else history.push({role,content});
   }
   return {
-    system: [{type:"text",text:messages.filter(message=>message.role==="system").map(message=>message.content).join("\n\n"),cache_control:{type:"ephemeral"}}],
+    system: messages.filter(message=>message.role==="system").map(message=>message.content).join("\n\n"),
     messages:history,
     ...(tools.length?{tools:tools.map((tool,index)=>({name:tool.name,description:tool.description,input_schema:tool.parameters,...(index===tools.length-1?{cache_control:{type:"ephemeral"}}:{})}))}:{}),
     max_tokens:maxTokens,

@@ -28,11 +28,22 @@ test("cost evidence remains incomplete until every candidate request reports usa
 });
 
 test("native streaming requests use their documented Cloudflare compatibility endpoint", async () => {
-  for(const [model,input,path] of [["openai/gpt-6.1-sol",{input:[],stream:true},"responses"],["anthropic/claude-opus-5.5",{messages:[],stream:true},"messages"],["openai/gpt-5.5",{messages:[],stream:true},"chat/completions"]]) {
+  for(const [model,input,path] of [["openai/gpt-6.1-sol",{input:[],stream:true},"responses"],["anthropic/claude-opus-5.5",{messages:[],stream:true},"messages"],["openai/gpt-5.5",{messages:[],stream:true},"chat/completions"],["@cf/zai-org/glm-5.3-flash",{messages:[],stream:true},"chat/completions"],["@cf/openai/gpt-oss-120b",{messages:[],stream:true},"chat/completions"]]) {
     let sent;let url;
     const route=createGatewayRoute(model.replace("/",":"),{accountId:"synthetic",apiToken:"synthetic",fetch:async(target,options)=>{url=target;sent=JSON.parse(options.body);return new Response('data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});}});
     await route.ai.run(model,input);
     assert.equal(url,`https://api.cloudflare.com/client/v4/accounts/synthetic/ai/v1/${path}`);
     assert.deepEqual(sent,{model,...input});
   }
+});
+
+test("buffered usage settles cache writes at their distinct published price", async () => {
+  let settled;
+  const route = createGatewayRoute("openai:gpt-6-astra", {
+    accountId: "synthetic", apiToken: "synthetic",
+    budget: { reserve: () => "reservation", settle: (id, usage) => { settled = { id, usage }; } },
+    fetch: async () => Response.json({ usage: { prompt_tokens: 1000, completion_tokens: 10, prompt_tokens_details: { cached_tokens: 600, cache_write_tokens: 100 } } }),
+  });
+  await route.ai.run("openai/gpt-6-astra", { messages: [], stream: false });
+  assert.deepEqual(settled, { id: "reservation", usage: { inputTokens: 1000, outputTokens: 10, cachedInputTokens: 600, cacheWriteInputTokens: 100 } });
 });

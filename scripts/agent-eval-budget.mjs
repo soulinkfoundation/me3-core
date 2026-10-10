@@ -3,8 +3,10 @@ import { estimateCost } from "./agent-eval-report.mjs";
 export const DEFAULT_EVAL_PRICING = Object.freeze({
   "openai:gpt-5.5": { input: 5, output: 30, cached: 0.5, cacheWrite: 5, source: "https://developers.openai.com/api/docs/models/gpt-5.5", verifiedAt: "2026-10-10" },
   "openai:gpt-6.1-sol": { input: 2, output: 10, cached: 0.1, cacheWrite: 2.5, source: "https://developers.openai.com/api/docs/models/gpt-6.1-sol", verifiedAt: "2026-10-10" },
+  "openai:gpt-6-astra": { input: 10, output: 50, cached: 1, cacheWrite: 12, source: "https://developers.cloudflare.com/ai/models/openai/gpt-6-astra/", verifiedAt: "2026-10-10" },
   "anthropic:claude-opus-5.5": { input: 4, output: 20, cached: 0.2, cacheWrite: 5, source: "https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5", verifiedAt: "2026-10-10" },
-  "anthropic:claude-sonnet-5.5": { input: 2, output: 10, cached: 0.1, cacheWrite: 2.5, source: "https://platform.claude.com/docs/en/models/sonnet-5-5/overview", verifiedAt: "2026-10-10" },
+  "anthropic:claude-sonnet-5.5": { input: 2, output: 10, cached: 0.2, cacheWrite: 2.5, source: "https://developers.cloudflare.com/ai/models/anthropic/claude-sonnet-5.5/", verifiedAt: "2026-10-10" },
+  "workers-ai:@cf/zai-org/glm-5.3-flash": { input: 0.15, output: 0.5, cached: 0.03, source: "https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/", verifiedAt: "2026-10-10" },
 });
 
 export function createEvalBudget(maxUsd, pricing) {

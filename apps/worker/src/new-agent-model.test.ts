@@ -47,7 +47,9 @@ describe("new agent Cloudflare model transport", () => {
       {type:"message_stop"},
     ]);}}});
     const result=await model.step({messages:[{role:"system",content:"Be useful"},{role:"user",content:"Save"},{role:"assistant",content:"",toolCalls:[{id:"old",name:"save",arguments:{title:"first"}}]},{role:"tool",content:'{"status":"ok"}',toolCallId:"old"}],tools:[tool],signal:new AbortController().signal,onDelta:async()=>{}});
-    expect(JSON.stringify(request)).toContain("tool_result");expect(JSON.stringify(request)).toContain("cache_control");
+    expect(request.system).toBe("Be useful");
+    expect(request.tools).toMatchObject([{cache_control:{type:"ephemeral"}}]);
+    expect(JSON.stringify(request)).toContain("tool_result");
     expect(result.usage).toMatchObject({inputTokens:140,outputTokens:10,cachedInputTokens:40});
     expect(result.toolCalls[0].arguments).toEqual({title:"hello"});
   });
@@ -76,5 +78,24 @@ describe("new agent Cloudflare model transport", () => {
     const model=createCloudflareModel({model:"openai/gpt-6.1-sol",gatewayId:"test",ai:{run:async()=>{calls++;return {};}}});
     await expect(model.step({messages:[],tools:[],signal:controller.signal,onDelta:async()=>{}})).rejects.toThrow(); expect(calls).toBe(0);
     expect(()=>createCloudflareModel({model:"openai/gpt-6.1-sol",ai:{run:async()=>({})}})).toThrow("Gateway");
+  });
+  it("keeps Cloudflare-hosted OpenAI models in the Workers AI namespace", async () => {
+    let selected = "";
+    const model = createCloudflareModel({model:"@cf/openai/gpt-oss-120b",ai:{run:async(name)=>{selected=name;return {response:"Ready"};}}});
+    const result = await model.step({messages:[{role:"user",content:"Hello"}],tools:[],signal:new AbortController().signal,onDelta:async()=>{}});
+    expect(model.id).toBe("@cf/openai/gpt-oss-120b");
+    expect(selected).toBe(model.id);
+    expect(result.text).toBe("Ready");
+  });
+  it("charges the published Cloudflare cached-input and cache-write candidate rates", async () => {
+    const cases: Array<[string, number]> = [["anthropic/claude-sonnet-5.5",0.00107],["openai/gpt-6-astra",0.0053],["@cf/zai-org/glm-5.3-flash",0.000083]];
+    for (const [name, expected] of cases) {
+      const raw = name.startsWith("anthropic/")
+        ? {content:[{type:"text",text:"Ready"}],usage:{input_tokens:300,output_tokens:10,cache_read_input_tokens:600,cache_creation_input_tokens:100}}
+        : {choices:[{message:{content:"Ready"}}],usage:{prompt_tokens:1000,completion_tokens:10,prompt_tokens_details:{cached_tokens:600,cache_write_tokens:100}}};
+      const model=createCloudflareModel({model:name,gatewayId:"test",ai:{run:async()=>raw}});
+      const result=await model.step({messages:[],tools:[],signal:new AbortController().signal,onDelta:async()=>{}});
+      expect(result.usage?.estimatedCostUsd,name).toBeCloseTo(expected,12);
+    }
   });
 });

@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDomainTools } from "../../../packages/agent/src/tools/index";
+import { rememberTargets } from "../../../packages/agent/src/tools/targets";
 import type { AgentDb, AgentStatement, AgentToolContext } from "../../../packages/agent/src/types";
 
 const databases: DatabaseSync[] = [];
@@ -109,6 +110,59 @@ describe("new agent domain tools", () => {
     ctx.turnId = "turn-2"; ctx.messageText = "2";
     const result = await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx);
     expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/candidate sets/i) });
+  });
+
+  it("rejects an older domain's numbered choices after a newer domain list", async () => {
+    const ctx = context(); await tool("core_reminders_list").execute({}, ctx);
+    await rememberTargets({ ...ctx, turnId: "newer-task-turn" }, "task", [{ id: "t1" }, { id: "t2" }]);
+    ctx.turnId = "selection-turn"; ctx.messageText = "The second one.";
+    expect(await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/selection/i) });
+    expect(ctx.raw.prepare("SELECT remind_at FROM user_reminders WHERE id='r2'").get()).toMatchObject({ remind_at: "2099-10-12T08:00:00.000Z" });
+    ctx.messageText = "Move reminder r2 to 10 tomorrow.";
+    expect((await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx)).status).toBe("ok");
+  });
+
+  it.each([0, 1])("invalidates old numbered choices after a newer list with %i records", async count => {
+    const ctx = context(); await tool("core_reminders_list").execute({}, ctx);
+    await rememberTargets({ ...ctx, turnId: "newer-task-turn" }, "task", [{ id: "t1" }].slice(0, count));
+    ctx.raw.prepare("UPDATE me3_agent_selections SET created_at=?").run(new Date().toISOString()); // Timestamp ties cannot revive an older domain's choices.
+    ctx.turnId = "selection-turn"; ctx.messageText = "2";
+    expect(await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/selection/i) });
+    expect(ctx.raw.prepare("SELECT remind_at FROM user_reminders WHERE id='r2'").get()).toMatchObject({ remind_at: "2099-10-12T08:00:00.000Z" });
+  });
+
+  it("rejects tied selection turns after an import changes their row order", async () => {
+    const ctx = context(); await tool("core_reminders_list").execute({}, ctx);
+    await rememberTargets({ ...ctx, turnId: "newer-task-turn" }, "task", [{ id: "t1" }, { id: "t2" }]);
+    ctx.raw.prepare("UPDATE me3_agent_selections SET created_at=?").run(new Date().toISOString());
+    ctx.raw.exec(`CREATE TEMP TABLE exported_selections AS SELECT * FROM me3_agent_selections;
+      DELETE FROM me3_agent_selections;
+      INSERT INTO me3_agent_selections SELECT * FROM exported_selections ORDER BY CASE domain WHEN 'task' THEN 0 ELSE 1 END;`);
+    ctx.turnId = "selection-turn"; ctx.messageText = "2";
+    expect(await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/selection/i) });
+    expect(ctx.raw.prepare("SELECT remind_at FROM user_reminders WHERE id='r2'").get()).toMatchObject({ remind_at: "2099-10-12T08:00:00.000Z" });
+  });
+
+  it("keeps an owner's reply bound to the prior turn despite a fresh current-turn read", async () => {
+    const ctx = context(); await tool("core_reminders_list").execute({}, ctx);
+    ctx.turnId = "selection-turn"; ctx.messageText = "2";
+    await rememberTargets(ctx, "task", [{ id: "t1" }]);
+    expect((await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx)).status).toBe("ok");
+  });
+
+  it("rejects a numbered reply after mixed-domain choices in the same prior turn", async () => {
+    const ctx = context(); await tool("core_reminders_list").execute({}, ctx);
+    await rememberTargets(ctx, "task", [{ id: "t1" }, { id: "t2" }]);
+    ctx.turnId = "selection-turn"; ctx.messageText = "2";
+    expect(await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/candidate sets/i) });
+    expect(ctx.raw.prepare("SELECT remind_at FROM user_reminders WHERE id='r2'").get()).toMatchObject({ remind_at: "2099-10-12T08:00:00.000Z" });
+  });
+
+  it("rejects zero as an invalid numbered choice before any reminder write", async () => {
+    const ctx = context(); await tool("core_reminders_list").execute({}, ctx);
+    ctx.turnId = "selection-turn"; ctx.messageText = "0";
+    expect(await tool("core_reminders_update").execute({ reminderId: "r1", date: "2099-10-13", time: "10:00" }, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/selection/i) });
+    expect(ctx.raw.prepare("SELECT remind_at FROM user_reminders WHERE id='r1'").get()).toMatchObject({ remind_at: "2099-10-11T08:00:00.000Z" });
   });
 
   it("keeps numbered choices bound after reading the selected record", async () => {

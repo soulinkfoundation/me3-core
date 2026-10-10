@@ -20,12 +20,11 @@ export function createGatewayRoute(modelChoice, options = {}) {
       const reservation = options.budget?.reserve(selectedModel, input);
       // AI/run currently serializes native streaming results as an empty envelope.
       // The documented compatibility endpoints preserve the provider SSE stream.
-      const native = /^(openai|anthropic)\//.test(selectedModel);
-      const endpoint = native ? `v1/${selectedModel.startsWith("anthropic/") ? "messages" : "input" in input ? "responses" : "chat/completions"}` : "run";
-      const response = await (options.fetch || fetch)(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/${endpoint}`, {
+      const endpoint = selectedModel.startsWith("anthropic/") ? "messages" : selectedModel.startsWith("openai/") && "input" in input ? "responses" : "chat/completions";
+      const response = await (options.fetch || fetch)(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1/${endpoint}`, {
         method: "POST", signal: options.signal || AbortSignal.timeout(120_000),
         headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json", "cf-aig-gateway-id": gatewayId },
-        body: JSON.stringify(native ? { model: selectedModel, ...input } : { model: selectedModel, input }),
+        body: JSON.stringify({ model: selectedModel, ...input }),
       });
       if (input.stream && response.ok) {
         if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) throw new Error("Gateway returned a buffered response to a streaming request; no provider TTFT evidence.");
@@ -37,7 +36,7 @@ export function createGatewayRoute(modelChoice, options = {}) {
       const run = payload?.result ?? payload;
       const result = (run?.gatewayMetadata || run?.state) && run?.result ? run.result : run;
       const usage = result?.usage;
-      options.budget?.settle(reservation, usage ? { inputTokens: usage.prompt_tokens ?? usage.input_tokens ?? 0, outputTokens: usage.completion_tokens ?? usage.output_tokens ?? 0, cachedInputTokens: usage.prompt_tokens_details?.cached_tokens ?? usage.cache_read_input_tokens ?? 0 } : null);
+      options.budget?.settle(reservation, usage ? gatewayUsage(usage, selectedModel.startsWith("anthropic/")) : null);
       return result;
     } },
   };
@@ -48,5 +47,16 @@ export async function gradeAgentReply({ scenario, messages, toolResults, stateCh
   const response = await route.ai.run(GRADER_MODEL.replace(":", "/"), { messages: [{ role: "system", content: "You are a strict evaluation grader. Return a JSON object only." }, { role: "user", content: prompt }], reasoning_effort: "low", max_completion_tokens: 2000, response_format: { type: "json_object" }, stream: false });
   const text = response?.choices?.[0]?.message?.content ?? response?.response ?? response?.content?.map((block) => block.text || "").join("") ?? "";
   const usage = response?.usage;
-  return { grade: parseGraderResponse(text), usage: usage ? { inputTokens: usage.prompt_tokens ?? usage.input_tokens ?? 0, outputTokens: usage.completion_tokens ?? usage.output_tokens ?? 0, cachedInputTokens: usage.prompt_tokens_details?.cached_tokens ?? usage.cache_read_input_tokens ?? 0 } : null };
+  return { grade: parseGraderResponse(text), usage: usage ? gatewayUsage(usage, false) : null };
+}
+
+function gatewayUsage(usage, anthropic) {
+  const details = usage.prompt_tokens_details ?? usage.input_tokens_details;
+  const cachedInputTokens = details?.cached_tokens ?? usage.cache_read_input_tokens ?? 0;
+  const cacheWriteInputTokens = details?.cache_write_tokens ?? usage.cache_creation_input_tokens ?? 0;
+  return {
+    inputTokens: (usage.prompt_tokens ?? usage.input_tokens ?? 0) + (anthropic ? cachedInputTokens + cacheWriteInputTokens : 0),
+    outputTokens: usage.completion_tokens ?? usage.output_tokens ?? 0,
+    cachedInputTokens, cacheWriteInputTokens,
+  };
 }

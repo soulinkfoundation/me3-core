@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createEvalBudget } from "./agent-eval-budget.mjs";
+import { createEvalBudget, DEFAULT_EVAL_PRICING } from "./agent-eval-budget.mjs";
 
 test("budget blocks an unaffordable next request before sending it", () => {
   const budget = createEvalBudget(0.01, { "openai:test": { input: 1, output: 10, cached: 0.1 } });
@@ -20,4 +20,19 @@ test("unknown usage retains reservations while reported usage releases them", ()
   budget.settle(unknown, null);
   assert.equal(budget.summary().reservedUsd, held);
   assert.throws(() => budget.reserve("openai/unknown", {}), /price/i);
+});
+
+test("published candidate prices account for cached reads and writes separately", () => {
+  const cases = [
+    ["anthropic/claude-sonnet-5.5", 0.00107],
+    ["openai/gpt-6-astra", 0.0053],
+    ["@cf/zai-org/glm-5.3-flash", 0.000083],
+  ];
+  for (const [model, expected] of cases) {
+    const budget = createEvalBudget(1, DEFAULT_EVAL_PRICING);
+    const reservation = budget.reserve(model, { messages: [], max_tokens: 10 });
+    budget.settle(reservation, { inputTokens: 1000, outputTokens: 10, cachedInputTokens: 600, cacheWriteInputTokens: 100 });
+    assert.ok(Math.abs(budget.summary().chargedUsd - expected) < 1e-12, model);
+    assert.equal(budget.summary().reservedUsd, 0);
+  }
 });

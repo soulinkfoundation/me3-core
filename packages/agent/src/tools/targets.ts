@@ -14,12 +14,11 @@ export async function rememberTargets(context: AgentToolContext, domain: string,
       .bind(context.ownerId, context.threadId, domain, record.id, JSON.stringify(record), context.turnId, readAt).run();
   }
   const selectionId = crypto.randomUUID();
-  if (records.length > 1) {
-    await context.db.prepare(`INSERT INTO me3_agent_selections
-      (id, owner_id, thread_id, domain, candidates_json, read_turn_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .bind(selectionId, context.ownerId, context.threadId, domain, JSON.stringify(records.map((record, index) => ({ option: index + 1, id: record.id }))), context.turnId, readAt).run();
-  }
+  // Empty and single-record reads must also invalidate older numbered choices.
+  await context.db.prepare(`INSERT INTO me3_agent_selections
+    (id, owner_id, thread_id, domain, candidates_json, read_turn_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(selectionId, context.ownerId, context.threadId, domain, JSON.stringify(records.map((record, index) => ({ option: index + 1, id: record.id }))), context.turnId, readAt).run();
   return { selectionId, candidates: records.map((record, index) => ({ option: index + 1, ...record })) };
 }
 
@@ -38,19 +37,21 @@ export async function requireTarget<T>(context: AgentToolContext, domain: string
   }
   // An exact numbered reply is a generic target binding, independent of domain phrasing.
   const selectedOption = ownerSelectionOption(context.messageText);
-  if (selectedOption) {
-    const selection = await context.db.prepare(`SELECT candidates_json, created_at, read_turn_id FROM me3_agent_selections
-      WHERE owner_id = ? AND thread_id = ? AND domain = ? AND read_turn_id != ?
+  if (selectedOption !== null) {
+    const selection = await context.db.prepare(`SELECT domain, candidates_json, created_at, read_turn_id FROM me3_agent_selections
+      WHERE owner_id = ? AND thread_id = ? AND read_turn_id != ?
       ORDER BY created_at DESC, rowid DESC LIMIT 1`)
-      .bind(context.ownerId, context.threadId, domain, context.turnId).first<{ candidates_json: string; created_at: string; read_turn_id: string }>();
+      .bind(context.ownerId, context.threadId, context.turnId).first<{ domain: string; candidates_json: string; created_at: string; read_turn_id: string }>();
     if (selection) {
-      const groups = await context.db.prepare(`SELECT candidates_json FROM me3_agent_selections
-        WHERE owner_id = ? AND thread_id = ? AND domain = ? AND read_turn_id = ?`)
-        .bind(context.ownerId, context.threadId, domain, selection.read_turn_id).all<{ candidates_json: string }>();
-      if (new Set(groups.results?.map(group => group.candidates_json)).size > 1) throw new Error("Multiple candidate sets were returned. Ask the owner to identify the exact record before changing it.");
+      const groups = await context.db.prepare(`SELECT domain, candidates_json, read_turn_id FROM me3_agent_selections
+        WHERE owner_id = ? AND thread_id = ? AND (read_turn_id = ? OR created_at = ?) AND read_turn_id != ?`)
+        .bind(context.ownerId, context.threadId, selection.read_turn_id, selection.created_at, context.turnId).all<{ domain: string; candidates_json: string; read_turn_id: string }>();
+      // SQLite row order is not portable, so equal timestamps cannot order different turns.
+      if (new Set(groups.results?.map(group => group.read_turn_id)).size > 1) throw new Error("The recorded selection is ambiguous across turns. Show the candidates again.");
+      if (new Set(groups.results?.map(group => JSON.stringify([group.domain, group.candidates_json]))).size > 1) throw new Error("Multiple candidate sets were returned. Ask the owner to identify the exact record before changing it.");
     }
     const candidates = selection ? JSON.parse(selection.candidates_json) as Array<{ option: number; id: string }> : [];
-    if (!selection || Date.now() - Date.parse(selection.created_at) > MAX_RECEIPT_AGE_MS || candidates.find(candidate => candidate.option === Number(selectedOption))?.id !== id) {
+    if (!selection || selection.domain !== domain || Date.now() - Date.parse(selection.created_at) > MAX_RECEIPT_AGE_MS || candidates.find(candidate => candidate.option === selectedOption)?.id !== id) {
       throw new Error("The requested stable ID does not match the owner's recorded selection. Show the candidates again.");
     }
   }
