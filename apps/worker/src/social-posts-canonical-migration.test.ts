@@ -367,6 +367,10 @@ function sqliteLiteral(value: unknown): string {
 }
 
 const RUNTIME_MIGRATIONS_EXCEPT_0022 = `
+  CREATE TABLE mission_tasks (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT 'owner'
+  );
   CREATE TABLE core_runtime_migrations (
     id TEXT PRIMARY KEY,
     checksum TEXT NOT NULL,
