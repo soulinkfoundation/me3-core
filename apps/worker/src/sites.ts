@@ -1,3 +1,4 @@
+import { extractEmbeddedPageImages, hasEmbeddedPageImages } from "./site-embedded-images";
 import { publicSiteFileResponse } from "./public-site-response";
 import { requestCountry } from "../../../shared/regional-pricing";
 import {
@@ -907,6 +908,11 @@ export async function prepareSiteFileUpsert(
   content: string | ArrayBuffer,
   contentType: string,
 ): Promise<D1PreparedStatement> {
+  if (typeof content === "string" && hasEmbeddedPageImages(path, content)) {
+    const site = await env.DB.prepare("SELECT id, username FROM sites WHERE id = ?").bind(siteId).first<DbSite>();
+    if (!site) throw new Error("Site not found");
+    content = await extractEmbeddedPageImages(env, site, path, content);
+  }
   const buffer =
     typeof content === "string" ? new TextEncoder().encode(content).buffer : content;
   if (buffer.byteLength > D1_SITE_FILE_MAX_BYTES) {
@@ -958,6 +964,11 @@ export async function putR2SiteFile(
 }
 
 export async function getSiteFile(env: Env, siteId: string, path: string): Promise<SiteFileRecord | null> {
+  const file = await readSiteFile(env, siteId, path);
+  return file ? migrateEmbeddedPageImages(env, file) : null;
+}
+
+async function readSiteFile(env: Env, siteId: string, path: string): Promise<SiteFileRecord | null> {
   return (
     (await env.DB.prepare(
       `SELECT site_id, path, content, content_type, size, sha256, updated_at
@@ -1020,7 +1031,32 @@ export async function listSiteFiles(env: Env, siteId: string, prefix: string): P
   )
     .bind(siteId, `${prefix}%`)
     .all<SiteFileRecord>();
-  return rows.results || [];
+  const files: SiteFileRecord[] = [];
+  for (const file of rows.results || []) files.push(await migrateEmbeddedPageImages(env, file));
+  return files;
+}
+
+async function migrateEmbeddedPageImages(env: Env, file: SiteFileRecord): Promise<SiteFileRecord> {
+  if (!/^(?:src|public)\/.*\.(?:md|html)$/i.test(file.path)) return file;
+  const original = siteFileContentToArrayBuffer(file.content);
+  const content = new TextDecoder().decode(original);
+  if (!hasEmbeddedPageImages(file.path, content)) return file;
+  try {
+    const site = await env.DB.prepare("SELECT id, username FROM sites WHERE id = ?").bind(file.site_id).first<DbSite>();
+    if (!site) return file;
+    const migrated = await extractEmbeddedPageImages(env, site, file.path, content);
+    if (migrated === content) return file;
+    const bytes = new TextEncoder().encode(migrated).buffer;
+    const hash = await sha256Buffer(bytes);
+    // A concurrent save wins; migration never republishes a draft or overwrites an edit.
+    await env.DB.prepare(`UPDATE site_files SET content = ?, size = ?, sha256 = ?
+      WHERE site_id = ? AND path = ? AND content = ?`)
+      .bind(bytes, bytes.byteLength, hash, file.site_id, file.path, original).run();
+    return (await readSiteFile(env, file.site_id, file.path)) || file;
+  } catch {
+    console.warn("Embedded page image migration deferred; original page preserved");
+    return file;
+  }
 }
 
 export async function loadSiteSourceFiles(env: Env, siteId: string): Promise<Map<string, string>> {

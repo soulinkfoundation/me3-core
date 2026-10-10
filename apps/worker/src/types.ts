@@ -90,7 +90,7 @@ export interface ImageTransformationsPipeline {
     background?: string;
   }): ImageTransformationsPipeline;
   output(options: {
-    format: "image/jpeg";
+    format: "image/jpeg" | "image/webp";
     quality?: number;
   }): Promise<{ response(): Response }>;
 }
