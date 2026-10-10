@@ -60,8 +60,14 @@ export async function gradeAgentReply({ scenario, messages, toolResults, toolCon
   const model = createCloudflareModel({ ai: route.ai, model: resolveGraderModel(graderModel).replace(":", "/"), gatewayId: route.aiGateway?.gatewayId || "default", maxOutputTokens: 2000,
     recordUsage: usage => route.recordUsage?.({ usage }) });
   const response = await model.step({ messages: [{ role: "system", content: "You are a strict evaluation grader. Return a JSON object only." }, { role: "user", content: prompt }], tools: [], signal: AbortSignal.timeout(120_000), onDelta: async () => {} });
-  if (response.toolCalls.length) throw new Error("Grader unexpectedly returned a tool invocation");
-  return { grade: parseGraderResponse(response.text), usage: validEvalUsage(response.usage) ? response.usage : null };
+  const evidence = { rawText: response.text, usage: validEvalUsage(response.usage) ? response.usage : null };
+  try {
+    if (response.toolCalls.length) throw new Error("Grader unexpectedly returned a tool invocation");
+    return { grade: parseGraderResponse(response.text), ...evidence };
+  } catch (error) {
+    // A billed response remains priced evidence even when its judgment is invalid.
+    throw Object.assign(error, { graderEvidence: evidence });
+  }
 }
 
 function gatewayUsage(usage, anthropic) {

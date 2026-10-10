@@ -21,3 +21,12 @@ test("calibration rejects unknown costs even when every truth judgment matches",
   } });
   assert.equal(report.matched, 10); assert.equal(report.costUsd, null); assert.equal(report.passed, false);
 });
+
+test("calibration retains priced parse failures without matching negative truth labels", async () => {
+  const report = await runGraderCalibration({ graderModel: "anthropic:claude-sonnet-5.5", live: true, routeFactory: () => ({ ai: { async run() {
+    return { content: [{ type: "text", text: "invalid synthetic JSON" }], usage: { input_tokens: 100, output_tokens: 20 } };
+  } } }) });
+  assert.equal(report.matched, 0); assert.equal(report.passed, false);
+  assert.ok(Math.abs(report.costUsd - 0.004) < 1e-12);
+  assert.ok(report.results.every(row => row.rawText === "invalid synthetic JSON" && row.usage.inputTokens === 100 && row.costUsd === 0.0004 && /Malformed/.test(row.error)));
+});

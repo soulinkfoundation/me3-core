@@ -58,6 +58,7 @@ const config = {
   sourceFingerprint: sourceFingerprint(),
 };
 const results = [];
+let activeScenario = null;
 const saveReport = () => {
   config.budget = budget.summary();
   config.sourceChangedDuringRun = config.sourceFingerprint !== sourceFingerprint();
@@ -66,9 +67,15 @@ const saveReport = () => {
   writeFileSync(markdownPath, agentEvalMarkdown(report));
   return report;
 };
+for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => {
+  config.interruption = { signal, at: new Date().toISOString(), activeScenario };
+  saveReport();
+  process.exit(1);
+});
 saveReport();
 evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
   for (const scenario of scenarios) {
+    activeScenario = { id: scenario.id, repeat: iteration, stage: "candidate" };
     const seed = createSeededAgentEvalInstallation(baseDate);
     const started = performance.now();
     const row = { id: scenario.id, repeat: iteration, simpleAction: Boolean(scenario.simpleAction), passed: false, stateCheckPassed: false,
@@ -125,16 +132,23 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
       row.usageComplete = live && route.usageComplete;
       row.costUsd = row.usageComplete ? estimateCost(row.usage, pricing[modelChoice]) : null;
       if (live) {
+        activeScenario.stage = "grader";
         try {
           const graded = await gradeAgentReply({ scenario, messages, toolResults: row.toolResults, toolContracts: row.toolContracts, stateCheckPassed: row.stateCheckPassed, graderModel, route: createGatewayRoute(graderModel, { budget }) });
           row.grader = graded.grade; row.graderUsage = graded.usage; row.graderCostUsd = estimateCost(graded.usage, pricing[graderModel]);
-        } catch (error) { row.grader = { passed: false, error: String(error) }; }
+        } catch (error) {
+          row.grader = { passed: false, error: String(error) };
+          row.graderRawText = error.graderEvidence?.rawText ?? null;
+          row.graderUsage = error.graderEvidence?.usage ?? null;
+          row.graderCostUsd = estimateCost(row.graderUsage, pricing[graderModel]);
+        }
       }
       row.passed = row.stateCheckPassed && Object.values(row.safety).every((count) => count === 0) && !row.providerFailure && (!live || row.grader?.passed === true);
     } catch (error) { row.error = String(error); row.elapsedMs = Math.round(performance.now() - started); }
     finally { seed.close(); }
     results.push(row);
     saveReport();
+    activeScenario = null;
     console.log(`${scenario.id} repeat ${iteration}/${repeat}: ${row.passed ? "pass" : "FAIL"}${row.error ? ` (${row.error})` : ""}`);
     if (budget.summary().stopped) { console.log("Stopping before another billed request because the eval cost guard was reached."); break evaluation; }
   }

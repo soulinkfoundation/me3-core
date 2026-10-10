@@ -53,7 +53,10 @@ export async function runGraderCalibration({ graderModel = GRADER_MODEL, routeFa
       const graded = await gradeAgentReply({ scenario: fixture, messages: fixture.messages, toolResults: fixture.toolResults, toolContracts: tools, stateCheckPassed: fixture.stateCheckPassed, graderModel, route });
       row.grade = graded.grade; row.usage = graded.usage; row.costUsd = estimateCost(graded.usage, pricing[graderModel]);
       row.matched = graded.grade.passed === fixture.expectedPassed && Object.entries(fixture.expectedDimensions).every(([name, score]) => graded.grade[name] === score);
-    } catch (error) { row.error = String(error); }
+    } catch (error) {
+      row.error = String(error); row.rawText = error.graderEvidence?.rawText ?? null;
+      row.usage = error.graderEvidence?.usage ?? null; row.costUsd = estimateCost(row.usage, pricing[graderModel]);
+    }
     results.push(row);
     await onCheckpoint?.(report());
     if (budget?.summary().stopped) break;

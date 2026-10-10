@@ -2,6 +2,34 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createGatewayRoute, gradeAgentReply } from "./agent-eval-gateway.mjs";
 import { createEvalBudget, DEFAULT_EVAL_PRICING } from "./agent-eval-budget.mjs";
+import { estimateCost } from "./agent-eval-report.mjs";
+
+test("malformed grader JSON preserves exact synthetic text and priced native stream usage", async () => {
+  const text = 'I checked the evidence. {"answered":1';
+  const budget = createEvalBudget(1, DEFAULT_EVAL_PRICING);
+  const frames = [{ type: "message_start", message: { usage: { input_tokens: 100, output_tokens: 0, cache_read_input_tokens: 50 } } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+    { type: "message_delta", usage: { output_tokens: 20 }, delta: { stop_reason: "end_turn" } }, { type: "message_stop" }];
+  const route = createGatewayRoute("anthropic:claude-sonnet-5.5", { accountId: "synthetic", apiToken: "synthetic", budget, fetch: async () => new Response(frames.map(event => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } }) });
+  await assert.rejects(gradeAgentReply({ graderModel: "anthropic:claude-sonnet-5.5", scenario: { rubric: "Grounded." }, messages: [], toolResults: [], stateCheckPassed: true, route }), error => {
+    assert.match(error.message, /Malformed model grader JSON/);
+    assert.equal(error.graderEvidence?.rawText, text);
+    assert.equal(estimateCost(error.graderEvidence?.usage, DEFAULT_EVAL_PRICING["anthropic:claude-sonnet-5.5"]), 0.00041);
+    return true;
+  });
+  assert.equal(route.usageComplete, true);
+  assert.equal(budget.summary().chargedUsd, 0.00041);
+  assert.equal(budget.summary().reservedUsd, 0);
+});
+
+test("malformed grader JSON without normalized usage preserves an unknown cost", async () => {
+  await assert.rejects(gradeAgentReply({ scenario: { rubric: "Answer." }, messages: [], toolResults: [], stateCheckPassed: true,
+    route: { ai: { async run() { return { response: "not JSON", usage: {} }; } } } }), error => {
+    assert.equal(error.graderEvidence?.rawText, "not JSON");
+    assert.equal(error.graderEvidence?.usage, null);
+    return true;
+  });
+});
 
 test("explicit Sonnet grader uses native shared-model requests and normalized cache usage", async () => {
   let model; let sent;
