@@ -52,6 +52,22 @@ export function createSeededAgentEvalInstallation(baseDate) {
     "eval-task", "eval-owner", "eval-project", "Review launch plan", at(4, "15"));
   insert("INSERT INTO journal_entries (id, user_id, entry_date, title, body) VALUES (?, ?, ?, ?, ?)",
     "eval-journal", "eval-owner", day(-1), "Planning reflection", "I need a calmer launch week.");
+  for (let index = 0; index < 12; index++) {
+    insert("INSERT INTO contacts (id, user_id, name, email, notes) VALUES (?, ?, ?, ?, ?)",
+      `eval-contact-${index + 1}`, "eval-owner", index === 0 ? "Ada Example" : `Contact ${String(index + 1).padStart(2, "0")} Example`,
+      index === 0 ? "ada@example.invalid" : `contact${index + 1}@example.invalid`, "Synthetic evaluation contact.");
+  }
+  insert("INSERT INTO contacts (id, user_id, name, email) VALUES (?, ?, ?, ?)", "other-contact", "other-owner", "Private other-owner contact", "private@example.invalid");
+  for (const [id, owner, local] of [["eval-mailbox", "eval-owner", "eval-owner"], ["other-mailbox", "other-owner", "other-owner"]]) {
+    insert("INSERT INTO mailbox_aliases (id, user_id, alias_local_part, forwarding_email, forwarding_status, status) VALUES (?, ?, ?, ?, 'verified', 'active')", id, owner, local, `${local}@example.invalid`);
+  }
+  for (const [id, mailbox, sender, subject, body] of [
+    ["eval-email-ada", "eval-mailbox", "ada@example.invalid", "QA launch review", "Could we review the launch plan this Thursday? I am free in the afternoon."],
+    ["eval-email-news", "eval-mailbox", "news@example.invalid", "Community newsletter", "This month's community circle is open for registration."],
+    ["other-email", "other-mailbox", "private@example.invalid", "Private other-owner email", "Do not expose this private fixture."],
+  ]) {
+    insert("INSERT INTO mailbox_messages (id, mailbox_id, direction, message_kind, status, from_address, to_address, subject, text_body, folder, received_at) VALUES (?, ?, 'inbound', 'email', 'received', ?, ?, ?, ?, 'inbox', ?)", id, mailbox, sender, "eval-owner@example.invalid", subject, body, at(-1, "10"));
+  }
 
   return {
     raw,

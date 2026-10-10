@@ -100,7 +100,30 @@ before(async () => {
      VALUES ('11111111-1111-4111-8111-111111111111', 'mi-aaaaaaaaaaaaaaaa', 'quiesce', 1, 'applied', 2);
      INSERT INTO managed_runtime_write_leases
        (lease_id, installation_id, method, path_class)
-     VALUES ('managed-write-lease-must-not-export', 'mi-aaaaaaaaaaaaaaaa', 'POST', 'api');`,
+     VALUES ('managed-write-lease-must-not-export', 'mi-aaaaaaaaaaaaaaaa', 'POST', 'api');
+     INSERT INTO me3_agent_turns
+       (turn_id, owner_id, thread_id, request_id, status, checkpoint_json)
+     VALUES ('portable-agent-turn', 'owner', 'main-thread-1', 'portable-agent-request', 'needs_approval',
+       '{"status":"needs_approval","approvalId":"portable-agent-approval","steps":1,"messages":[{"role":"user","content":"Review this synthetic draft"}]}');
+     INSERT INTO me3_agent_tool_receipts
+       (owner_id, idempotency_key, turn_id, tool_name, arguments_json, status, result_json)
+     VALUES ('owner', 'portable-agent-key', 'portable-agent-turn', 'core_mailbox_draft_create', '{}', 'finished', '{"status":"ok","draftId":"portable-draft"}');
+     INSERT INTO me3_agent_approvals
+       (id, owner_id, thread_id, turn_id, idempotency_key, tool_name, arguments_json, card_json)
+     VALUES ('portable-agent-approval', 'owner', 'main-thread-1', 'portable-agent-turn', 'portable-agent-key', 'core_mailbox_send',
+       '{"draftId":"portable-draft"}', '{"title":"Send synthetic draft"}');
+     INSERT INTO me3_agent_targets
+       (owner_id, thread_id, domain, record_id, snapshot_json, read_turn_id, read_at)
+     VALUES ('owner', 'main-thread-1', 'reminder', 'portable-reminder', '{"id":"portable-reminder","title":"Original"}', 'portable-agent-turn', '2026-10-10T12:00:00Z');
+     INSERT INTO me3_agent_selections
+       (id, owner_id, thread_id, domain, candidates_json, read_turn_id, created_at)
+     VALUES ('portable-agent-selection', 'owner', 'main-thread-1', 'reminder', '[{"option":1,"id":"portable-reminder"}]', 'portable-agent-turn', '2026-10-10T12:00:00Z');
+     INSERT INTO me3_agent_stream_events (owner_id, turn_id, event, data_json)
+     VALUES ('owner', 'portable-agent-turn', 'approval_required', '{"id":"portable-agent-approval"}');
+     INSERT INTO me3_agent_cancellations (owner_id, request_id, requested_at)
+     VALUES ('owner', 'portable-stopped-request', '2026-10-10T12:05:00Z');
+     INSERT INTO me3_agent_request_aliases (owner_id, request_id, turn_id, input_json)
+     VALUES ('owner', 'portable-alias-request', 'portable-agent-turn', '{"messageText":"approve","requestId":"portable-alias-request"}');`,
   );
   await exportPortableV1({
     database: source,
@@ -139,6 +162,17 @@ test("exports sanitized owner data and restores the exact identity, D1 rows, and
   assert.equal(result.requiresClientRepair, true);
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM assistant_messages;"), "1");
   assert.equal(queryScalar(target, "SELECT thread_id FROM assistant_primary_threads WHERE owner_id = 'owner';"), "main-thread-1");
+  for (const table of [
+    "me3_agent_turns", "me3_agent_stream_events", "me3_agent_tool_receipts",
+    "me3_agent_approvals", "me3_agent_targets", "me3_agent_selections", "me3_agent_cancellations", "me3_agent_request_aliases",
+  ]) assert.equal(queryScalar(target, `SELECT COUNT(*) FROM ${table};`), "1", `${table} must survive transfer`);
+  assert.equal(queryScalar(target, "SELECT status FROM me3_agent_approvals WHERE id = 'portable-agent-approval';"), "pending");
+  assert.equal(queryScalar(target, "SELECT json_extract(checkpoint_json, '$.approvalId') FROM me3_agent_turns WHERE turn_id = 'portable-agent-turn';"), "portable-agent-approval");
+  assert.equal(queryScalar(target, "SELECT json_extract(result_json, '$.draftId') FROM me3_agent_tool_receipts WHERE idempotency_key = 'portable-agent-key';"), "portable-draft");
+  assert.equal(queryScalar(target, "SELECT json_extract(candidates_json, '$[0].id') FROM me3_agent_selections WHERE id = 'portable-agent-selection';"), "portable-reminder");
+  assert.equal(queryScalar(target, "SELECT requested_at FROM me3_agent_cancellations WHERE owner_id = 'owner' AND request_id = 'portable-stopped-request';"), "2026-10-10T12:05:00Z");
+  assert.equal(queryScalar(target, "SELECT turn_id FROM me3_agent_request_aliases WHERE owner_id = 'owner' AND request_id = 'portable-alias-request';"), "portable-agent-turn");
+  assert.equal(queryScalar(target, "SELECT json_extract(input_json, '$.messageText') FROM me3_agent_request_aliases WHERE owner_id = 'owner' AND request_id = 'portable-alias-request';"), "approve");
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM mission_tasks;"), "1");
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM journal_entries;"), "1");
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM email_campaigns;"), "1");

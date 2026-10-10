@@ -126,17 +126,22 @@ export function parseAgentReminderInput(
 export async function listPendingAgentReminders(
   env: ReminderEnv,
   userId: string,
+  input: { query?: string; limit?: number } = {},
 ): Promise<AgentReminder[]> {
+  const query = normalizeNullableText(input.query);
+  const limit = input.limit ?? 8;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("Reminder limit must be an integer from 1 to 50.");
   const now = new Date().toISOString();
   const rows = await env.DB.prepare(
     `SELECT id, title, notes, remind_at, timezone, recurrence_rule, context_type,
             context_id, context_label, status, delivered_at, dismissed_at, created_at
      FROM user_reminders
      WHERE user_id = ? AND status IN ('pending', 'failed') AND remind_at >= ?
+       ${query ? "AND INSTR(LOWER(title), LOWER(?)) > 0" : ""}
      ORDER BY remind_at ASC
-     LIMIT 8`,
+     LIMIT ${limit}`,
   )
-    .bind(userId, now)
+    .bind(userId, now, ...(query ? [query] : []))
     .all<DbReminderRow>();
   return (rows.results || []).map(serializeAgentReminder);
 }

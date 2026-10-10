@@ -15,6 +15,10 @@ class_name = "Me3UserAgent"
 name = "ME3_SDK_USER_AGENT"
 class_name = "Me3SdkUserAgent"
 
+[[durable_objects.bindings]]
+name = "ME3_AGENT"
+class_name = "Me3Agent"
+
 [[migrations]]
 tag = "2026-05-11-me3-core-user-agent"
 new_sqlite_classes = ["Me3UserAgent"]
@@ -22,6 +26,10 @@ new_sqlite_classes = ["Me3UserAgent"]
 [[migrations]]
 tag = "2026-10-01-me3-sdk-user-agent"
 new_sqlite_classes = ["Me3SdkUserAgent"]
+
+[[migrations]]
+tag = "2026-10-10-me3-agent"
+new_sqlite_classes = ["Me3Agent"]
 
 # Workers AI is the default Core chat provider. Wrangler connects this binding
 # to Cloudflare's remote AI runtime during local development.

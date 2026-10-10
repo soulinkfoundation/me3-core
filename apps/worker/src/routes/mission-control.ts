@@ -41,6 +41,7 @@ import {
   updateMissionTask,
 } from "../mission-control";
 import { isCorePluginEnabled } from "../plugins";
+import { decideNewAgentApproval, listNewAgentApprovals } from "./new-agent";
 
 export function registerMissionControlRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.get("/api/mission-control/projects", async (c) => {
@@ -360,6 +361,14 @@ export function registerMissionControlRoutes(app: AppHono, deps: OwnerRouteDeps)
   app.get("/api/mission-control/approvals", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
+    if (c.env.ME3_ASSISTANT_RUNTIME === "agent") {
+      const coreApprovals = await listNewAgentApprovals(c.env, ownerId, c.req.query("status"));
+      const pluginApprovals = await isCorePluginEnabled(c.env, "me3.mission-control")
+        ? await listMissionApprovals(c.env, ownerId, c.req.query("status")) : [];
+      const approvals = [...coreApprovals, ...pluginApprovals];
+      approvals.sort((a, b) => Date.parse(b.requestedAt) - Date.parse(a.requestedAt));
+      return c.json({ approvals: approvals.slice(0, 100) });
+    }
     const blocked = await requireMissionControlPlugin(c);
     if (blocked) return blocked;
 
@@ -375,6 +384,18 @@ export function registerMissionControlRoutes(app: AppHono, deps: OwnerRouteDeps)
   app.post("/api/mission-control/approvals/:id", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
+    if (c.env.ME3_ASSISTANT_RUNTIME === "agent") {
+      const approval = await c.env.DB.prepare("SELECT id FROM me3_agent_approvals WHERE id = ? AND owner_id = ?")
+        .bind(c.req.param("id"), ownerId).first();
+      if (approval) {
+        const body = await c.req.json<{ decision?: unknown; status?: unknown; action?: unknown }>().catch(() => null);
+        const value = body?.decision ?? body?.status ?? body?.action;
+        const decision = value === "approved" || value === "approve" ? "approved"
+          : value === "rejected" || value === "declined" || value === "reject" || value === "cancelled" ? "declined" : null;
+        if (!decision) return c.json({ ok: false, error: "Decision is required" }, 400);
+        return decideNewAgentApproval(c, ownerId, c.req.param("id"), decision);
+      }
+    }
     const blocked = await requireMissionControlPlugin(c);
     if (blocked) return blocked;
 

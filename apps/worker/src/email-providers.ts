@@ -8,7 +8,7 @@ import {
   ManagedEmailGatewayError,
   MANAGED_EMAIL_PROVIDER_ID,
   sendManagedEmailThroughGateway,
-} from "./managed-email";
+} from "./managed-email-outbound";
 import type { DbEmailProviderSetting, Env } from "./types";
 
 export const EMAIL_PROVIDER_IDS = [

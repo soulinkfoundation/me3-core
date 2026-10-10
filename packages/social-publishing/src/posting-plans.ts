@@ -1,4 +1,5 @@
 import { canScheduleSocialPlatform } from "./capabilities";
+import { reviewedPostingPlanCte, reviewedPostingPlanPredicate, sameReviewedPostingPlan } from "./posting-plan-preconditions";
 import type { SocialPlatform } from "./index";
 
 type BoundStatement = {
@@ -1221,6 +1222,7 @@ function weekdayLabel(day: PostingWeekday): string {
 export type ConfirmPostingPlanInput = {
   confirmed?: unknown;
   expectedUpdatedAt?: unknown;
+  expectedPlan?: PostingPlan;
 };
 
 export type PostingPlanConfirmationClaim = {
@@ -1314,6 +1316,9 @@ export async function claimPostingPlanForConfirmation(
   if (!row) return null;
   const existing = await getPostingPlan(env, ownerId, planId);
   if (!existing) return null;
+  if (input.expectedPlan && (input.expectedPlan.id !== planId || !sameReviewedPostingPlan(input.expectedPlan, existing))) {
+    throw new SocialPostingPlanInputError("This Posting plan changed after it was reviewed. Refresh before confirming.", 409);
+  }
   if (row.status === "confirmed") {
     return { plan: existing, token: null, alreadyConfirmed: true };
   }
@@ -1339,13 +1344,14 @@ export async function claimPostingPlanForConfirmation(
   const token = crypto.randomUUID();
   const now = new Date().toISOString();
   const claimed = await env.DB.prepare(
-    `UPDATE social_posting_plans
+    `${input.expectedPlan ? reviewedPostingPlanCte : ""}UPDATE social_posting_plans
      SET status = 'confirming', confirmation_token = ?, confirmation_started_at = ?, updated_at = ?
      WHERE id = ? AND user_id = ? AND updated_at = ?
        AND status IN ('suggested', 'needs_attention', 'confirming')
+       ${input.expectedPlan ? reviewedPostingPlanPredicate : ""}
      RETURNING id`,
   )
-    .bind(token, now, now, planId, ownerId, expectedUpdatedAt)
+    .bind(...(input.expectedPlan ? [JSON.stringify(input.expectedPlan)] : []), token, now, now, planId, ownerId, expectedUpdatedAt)
     .first<{ id: string }>();
   if (!claimed) {
     throw new SocialPostingPlanInputError(

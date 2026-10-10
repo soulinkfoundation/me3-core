@@ -1,3 +1,4 @@
+import { assistantRuntimeNamespace } from "./assistant-runtime-binding";
 import type { AgentSandboxDispatchResponse } from "./agent-chat";
 import type { DbAgentChannelConnection, DbAgentChannelEvent, Env } from "./types";
 
@@ -232,7 +233,7 @@ export async function dispatchAgentChannelTurn(
     replyToMessageId: unknown;
   },
 ): Promise<AgentSandboxDispatchResponse> {
-  const runtime = env.ME3_ASSISTANT_RUNTIME === "sdk" ? env.ME3_SDK_USER_AGENT : env.ME3_USER_AGENT;
+  const runtime = assistantRuntimeNamespace(env);
   if (!runtime) {
     return {
       ok: false,

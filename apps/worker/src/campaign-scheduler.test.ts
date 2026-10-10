@@ -8,6 +8,7 @@ import type { Env } from "./types";
 vi.mock("./app", () => ({ default: {} }));
 vi.mock("./user-agent", () => ({ Me3UserAgent: class {} }));
 vi.mock("./sdk-user-agent", () => ({ Me3SdkUserAgent: class {} }));
+vi.mock("./me3-agent", () => ({ Me3Agent: class {} }));
 vi.mock("./core-runtime-migrations", () => ({ ensureCoreRuntimeMigrations: vi.fn() }));
 vi.mock("./campaign-delivery", async (original) => ({
   ...(await original<typeof import("./campaign-delivery")>()),

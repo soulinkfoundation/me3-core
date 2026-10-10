@@ -9,9 +9,10 @@ import {
 } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { definePage } from "unplugin-vue-router/runtime";
-import { api, type ApiStreamEvent } from "../../api";
+import { api, ApiError, type ApiStreamEvent } from "../../api";
 import Button from "../../components/Button.vue";
 import HomePanels from "../../components/home/HomePanels.vue";
+import AssistantApprovalDialog from "../../components/AssistantApprovalDialog.vue";
 import ComposerPrompt from "../../components/ComposerPrompt.vue";
 import { useAuthStore } from "../../stores/auth";
 import LandingGrids from "../../components/LandingGrids.vue";
@@ -524,6 +525,7 @@ type MissionApproval = {
   riskLevel: "low" | "medium" | "high";
   status: string;
   requestedAt: string;
+  payload?: Record<string, unknown>;
 };
 type MissionRun = {
   id: string;
@@ -587,6 +589,7 @@ type AssistantActivityViewItem = {
   summary: string | null;
   status: string | null;
   createdAt: string;
+  approval?: MissionApproval;
 };
 type AssistantThreadExportResponse = {
   thread: AssistantThread;
@@ -718,6 +721,9 @@ const assistantSources = ref<MissionContextSource[]>([]);
 const assistantContextLoading = ref(false);
 const assistantActivityLoading = ref(false);
 const assistantPendingApprovals = ref<MissionApproval[]>([]);
+const assistantReviewApproval = ref<MissionApproval | null>(null);
+const assistantApprovalBusy = ref(false);
+const assistantApprovalError = ref("");
 const assistantRecentRuns = ref<MissionRun[]>([]);
 const assistantRecentActivity = ref<MissionActivity[]>([]);
 const assistantMemoryDraft = ref("");
@@ -767,6 +773,7 @@ const {
   onTranscript: insertVoiceTranscript,
 });
 let assistantAbortController: AbortController | null = null;
+let assistantActiveRequestId: string | null = null;
 
 const defaultDailyBriefingTemplate =
   "{{calendar.summary}}\n\n{{calendar.events}}\n{{calendar.reminders}}\n{{mission.tasks}}\n\nI'll keep an eye on the day from here.";
@@ -1294,6 +1301,7 @@ const assistantActivityItems = computed<AssistantActivityViewItem[]>(() => {
       summary: approval.summary || approval.actionId,
       status: approval.riskLevel,
       createdAt: approval.requestedAt,
+      approval,
     })),
     ...assistantRecentRuns.value.map((run) => ({
       id: `run:${run.id}`,
@@ -1391,6 +1399,15 @@ watch(
     if (!assistantSending.value) void scrollAssistantToBottom();
   },
 );
+let assistantApprovalHistoryRefreshPending = false;
+async function refreshAssistantAfterApproval() {
+  if (assistantSending.value) { assistantApprovalHistoryRefreshPending = true; return; }
+  assistantApprovalHistoryRefreshPending = false;
+  await loadAssistantThreadFromRoute();
+}
+watch(assistantSending, sending => {
+  if (!sending && assistantApprovalHistoryRefreshPending) void refreshAssistantAfterApproval();
+});
 watch(
   () => route.query.thread,
   () => {
@@ -1778,7 +1795,7 @@ async function loadAssistantActivity() {
   assistantSettingsError.value = "";
   try {
     const [approvalsResponse, runsResponse, activityResponse] =
-      await Promise.all([
+      await Promise.allSettled([
         api.get<{ approvals: MissionApproval[] }>(
           "/mission-control/approvals?status=pending",
         ),
@@ -1787,9 +1804,11 @@ async function loadAssistantActivity() {
           "/mission-control/plugin-activity?limit=50",
         ),
       ]);
-    assistantPendingApprovals.value = approvalsResponse.approvals || [];
-    assistantRecentRuns.value = runsResponse.runs || [];
-    assistantRecentActivity.value = activityResponse.activity || [];
+    assistantPendingApprovals.value = approvalsResponse.status === "fulfilled" ? approvalsResponse.value.approvals || [] : [];
+    assistantRecentRuns.value = runsResponse.status === "fulfilled" ? runsResponse.value.runs || [] : [];
+    assistantRecentActivity.value = activityResponse.status === "fulfilled" ? activityResponse.value.activity || [] : [];
+    const failed = [approvalsResponse, runsResponse, activityResponse].find(response => response.status === "rejected" && !(response.reason instanceof ApiError && [403, 404].includes(response.reason.status)));
+    if (failed?.status === "rejected") toastFromUnknown(failed.reason, "Some activity could not load.");
   } catch (err) {
     assistantSettingsError.value = messageFromUnknown(
       err,
@@ -1798,6 +1817,21 @@ async function loadAssistantActivity() {
   } finally {
     assistantActivityLoading.value = false;
   }
+}
+
+async function decideAssistantApproval(decision: "approved" | "declined") {
+  const approval = assistantReviewApproval.value;
+  if (!approval || assistantApprovalBusy.value) return;
+  assistantApprovalBusy.value = true; assistantApprovalError.value = "";
+  try {
+    await api.post(`/assistant/approvals/${encodeURIComponent(approval.id)}`, { decision });
+    assistantReviewApproval.value = null;
+    await Promise.all([loadAssistantActivity(), refreshAssistantAfterApproval()]);
+    toastSuccess(decision === "approved" ? "Approved" : "Declined");
+  } catch (error) {
+    assistantApprovalError.value = messageFromUnknown(error, "Couldn't save this decision. Try again.");
+    toastFromUnknown(error, "Couldn't save approval");
+  } finally { assistantApprovalBusy.value = false; }
 }
 
 async function addAssistantMemory() {
@@ -2827,6 +2861,7 @@ async function submitAssistantText(
   assistantAwaitingResponse.value = true;
   await scrollAssistantToBottom();
   const requestId = crypto.randomUUID();
+  assistantActiveRequestId = requestId;
   const clientTurnStartedAt = performance.now();
   let clientResponseAt: number | null = null;
   let clientFirstEventAt: number | null = null;
@@ -3018,6 +3053,7 @@ async function submitAssistantText(
   } finally {
     if (assistantAbortController === abortController) {
       assistantAbortController = null;
+      assistantActiveRequestId = null;
     }
     assistantAwaitingResponse.value = false;
     assistantSending.value = false;
@@ -3778,6 +3814,9 @@ function setAssistantStoppedMessage(
 
 function stopAssistantTurn() {
   if (!assistantSending.value) return;
+  const requestId = assistantActiveRequestId;
+  assistantActiveRequestId = null;
+  if (requestId) void api.post("/assistant/chat/turn/abort", { requestId }).catch(error => toastFromUnknown(error, "The server turn could not be stopped. Refresh to check its result."));
   assistantAbortController?.abort();
 }
 
@@ -5168,7 +5207,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
           </div>
           <RouterLink to="/account" class="home-profile" aria-label="Your account">{{ (homeAuth.user?.name || 'ME3').slice(0, 1).toUpperCase() }}</RouterLink>
         </header>
-        <HomePanels v-if="homeMode && !siteBuilderMode" class="assistant-home" @suggest="homeSuggestion" />
+        <HomePanels v-if="homeMode && !siteBuilderMode" class="assistant-home" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" />
         <div
           v-show="!homeMode || siteBuilderMode"
           ref="assistantScrollerRef"
@@ -6691,6 +6730,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
                       }}</span>
                     </div>
                     <p>{{ item.summary || "No summary yet" }}</p>
+                    <Button v-if="item.approval?.pluginId === 'me3.core'" color="secondary" shape="soft" @click="assistantReviewApproval = item.approval; assistantApprovalError = ''">Review</Button>
                   </div>
                 </article>
               </template>
@@ -6699,6 +6739,8 @@ function messageFromUnknown(err: unknown, fallback: string) {
         </section>
       </div>
     </Teleport>
+
+    <AssistantApprovalDialog :approval="assistantReviewApproval" :busy="assistantApprovalBusy" :error="assistantApprovalError" @close="assistantReviewApproval = null" @decide="decideAssistantApproval" />
 
     <Teleport to="body">
       <div

@@ -80,6 +80,8 @@ export const RUNTIME_MIGRATIONS = [
   ["0055_calendar_agent_cancellation_approvals", "2026-10-01-calendar-agent-cancellation-approvals-v1"],
   ["0056_journal_articles", "2026-10-02-journal-articles-v1"],
   ["0057_assistant_primary_thread", "2026-10-07-assistant-primary-thread-v1"],
+  ["0058_agent_turns", "2026-10-10-agent-turns-v3"],
+  ["0059_agent_targets", "2026-10-10-agent-targets-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -139,6 +141,14 @@ const TRANSFORMED_TABLES = [
   "social_suggestions",
 ];
 const COPIED_TABLES = [
+  "me3_agent_cancellations",
+  "me3_agent_request_aliases",
+  "me3_agent_turns",
+  "me3_agent_stream_events",
+  "me3_agent_tool_receipts",
+  "me3_agent_approvals",
+  "me3_agent_targets",
+  "me3_agent_selections",
   "ai_model_defaults",
   "ai_provider_credentials",
   "ai_usage_events",

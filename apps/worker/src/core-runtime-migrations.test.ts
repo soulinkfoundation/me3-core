@@ -10,6 +10,23 @@ describe("Core runtime migrations", () => {
     resetCoreRuntimeMigrationsForTest();
   });
 
+  it("creates the portable agent recovery and target ledgers additively", async () => {
+    const db = new RuntimeMigrationDb();
+    await ensureCoreRuntimeMigrations({ DB: db as unknown as D1Database } as Env);
+    for (const table of [
+      "me3_agent_turns", "me3_agent_stream_events",
+      "me3_agent_tool_receipts", "me3_agent_approvals", "me3_agent_targets", "me3_agent_selections", "me3_agent_cancellations", "me3_agent_request_aliases",
+    ]) expect(db.tables.has(table), table).toBe(true);
+    expect(db.migrations.get("0058_agent_turns")).toBe("2026-10-10-agent-turns-v3");
+    expect(db.migrations.get("0059_agent_targets")).toBe("2026-10-10-agent-targets-v1");
+    const agentSql = db.statements.filter(sql => sql.includes("me3_agent_"));
+    expect(agentSql.some(sql => /\b(?:DROP|DELETE|ALTER)\b/i.test(sql))).toBe(false);
+    resetCoreRuntimeMigrationsForTest();
+    const before = db.statements.length;
+    await ensureCoreRuntimeMigrations({ DB: db as unknown as D1Database } as Env);
+    expect(db.statements.slice(before).some(sql => sql.includes("CREATE TABLE IF NOT EXISTS me3_agent_"))).toBe(false);
+  });
+
   it("creates missing update-era tables and columns", async () => {
     const db = new RuntimeMigrationDb();
 

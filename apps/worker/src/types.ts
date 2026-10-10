@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   ME3_USER_AGENT?: DurableObjectNamespace;
   ME3_SDK_USER_AGENT?: DurableObjectNamespace;
+  ME3_AGENT?: DurableObjectNamespace;
   AI?: Ai;
   IMAGES?: ImageTransformationsBinding;
   ASSETS?: Fetcher;

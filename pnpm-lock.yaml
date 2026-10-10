@@ -230,6 +230,34 @@ importers:
         specifier: ^4.125.0
         version: 4.125.0(@cloudflare/workers-types@4.20260620.1)
 
+  packages/agent:
+    dependencies:
+      '@me3-core/plugin-calendar':
+        specifier: workspace:*
+        version: link:../calendar
+      '@me3-core/plugin-journal':
+        specifier: workspace:*
+        version: link:../journal
+      '@me3-core/plugin-landing-pages':
+        specifier: workspace:*
+        version: link:../landing-pages
+      '@me3-core/plugin-mission-control':
+        specifier: workspace:*
+        version: link:../mission-control
+      '@me3-core/plugin-social-publishing':
+        specifier: workspace:*
+        version: link:../social-publishing
+      '@me3-core/web-research':
+        specifier: workspace:*
+        version: link:../web-research
+      '@me3/knowledge':
+        specifier: workspace:*
+        version: link:../knowledge
+    devDependencies:
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+
   packages/agent-chat:
     dependencies:
       '@me3-core/plugin-calendar':

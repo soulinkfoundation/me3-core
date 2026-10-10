@@ -1,3 +1,4 @@
+import { sameSchedulingRequest, schedulingRequestPrecondition, schedulingRequestValues } from "./scheduling-preconditions";
 import {
   addDaysToDateString,
   expandRecurringCalendarEvents,
@@ -1010,12 +1011,14 @@ export async function approveSchedulingRequest(
   ownerId: string,
   requestId: string,
   value: unknown,
+  expected?: DbSchedulingRequest,
 ): Promise<
   | { request: ReturnType<typeof serializeSchedulingRequest> }
-  | { error: string; status: 400 | 404 }
+  | { error: string; status: 400 | 404 | 409 }
 > {
   const request = await getSchedulingRequest(env, ownerId, requestId);
   if (!request) return { error: "Scheduling request not found", status: 404 };
+  if (expected && !sameSchedulingRequest(request, expected)) return { error: "Scheduling request changed since it was read", status: 409 };
   if (request.status === "finalized" || request.status === "cancelled") {
     return { error: "Scheduling request is closed", status: 400 };
   }
@@ -1031,7 +1034,7 @@ export async function approveSchedulingRequest(
   ) || firstPositiveSchedulingVoteSlot(await listSchedulingRequestVotes(env, request.id));
   if (!slot) return { error: "Select a shared candidate slot before approving", status: 400 };
 
-  await env.DB.prepare(
+  const changed = await env.DB.prepare(
     `UPDATE scheduling_requests
      SET selected_slot_json = COALESCE(selected_slot_json, ?),
          requester_approved_at = CASE
@@ -1049,10 +1052,11 @@ export async function approveSchedulingRequest(
            ELSE 'pending_approval'
          END,
          updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND user_id = ?`,
+     WHERE id = ? AND user_id = ? ${expected ? schedulingRequestPrecondition : ""}`,
   )
-    .bind(JSON.stringify(slot), role, role, role, role, request.id, ownerId)
+    .bind(JSON.stringify(slot), role, role, role, role, request.id, ownerId, ...(expected ? schedulingRequestValues(expected) : []))
     .run();
+  if (expected && changed.meta.changes !== 1) return { error: "Scheduling request changed before approval", status: 409 };
 
   await insertSchedulingRequestAudit(env, {
     requestId: request.id,

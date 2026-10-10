@@ -91,19 +91,24 @@ export async function cleanupFailedManagedProvision(
     (item) => item.script === contract.workerName && item.class === "Me3SdkUserAgent",
   );
   if (sdkNamespaces.length > 1) throw new Error("Multiple SDK Durable Object namespaces match the failed provision");
+  const agentNamespaces = namespaces.filter(
+    (item) => item.script === contract.workerName && item.class === "Me3Agent",
+  );
+  if (agentNamespaces.length > 1) throw new Error("Multiple agent Durable Object namespaces match the failed provision");
   const workerHasResourceBindings = before.worker
     ? await hasWorkerResourceBindings(api, input.accountId, contract.workerName)
     : false;
-  if (namespace || sdkNamespaces.length || workerHasResourceBindings) {
+  if (namespace || sdkNamespaces.length || agentNamespaces.length || workerHasResourceBindings) {
     if (namespace) assertNamespaceIdentity(namespace, contract);
     await deployTombstone({
       workerName: contract.workerName,
       operationId: contract.operationId,
       deleteDurableObject: Boolean(namespace),
       deleteSdkDurableObject: sdkNamespaces.length === 1,
+      deleteAgentDurableObject: agentNamespaces.length === 1,
     });
     namespaces = await listDurableObjectNamespaces(api, input.accountId);
-    const deletedNamespaceIds = [contract.durableObjectNamespaceId, ...sdkNamespaces.map(namespaceId)];
+    const deletedNamespaceIds = [contract.durableObjectNamespaceId, ...sdkNamespaces.map(namespaceId), ...agentNamespaces.map(namespaceId)];
     if (namespaces.some((item) => deletedNamespaceIds.includes(namespaceId(item)))) {
       throw new Error("failed provision Durable Object namespace deletion was not verified");
     }

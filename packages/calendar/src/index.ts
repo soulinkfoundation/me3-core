@@ -185,6 +185,7 @@ export async function createCalendarEventForAgent(
   userId: string,
   ownerTimezone: string | null | undefined,
   input: CalendarAgentCreateInput,
+  options?: { idempotencyKey?: string },
 ): Promise<CalendarAgentCreatedEvent> {
   const title = boundedCalendarText(input.title, 300);
   if (!title) throw new Error("Calendar event title is required.");
@@ -213,12 +214,14 @@ export async function createCalendarEventForAgent(
   const endsAt = new Date(
     Date.parse(startsAt) + durationMinutes * 60_000,
   ).toISOString();
-  const id = crypto.randomUUID();
+  const id = options?.idempotencyKey
+    ? `agent-${Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([userId, options.idempotencyKey])))), (byte) => byte.toString(16).padStart(2, "0")).join("")}`
+    : crypto.randomUUID();
   const notes = boundedCalendarText(input.notes, 4_000);
   const location = boundedCalendarText(input.location, 500);
 
   await db.prepare(
-    `INSERT INTO user_calendar_events
+    `INSERT ${options?.idempotencyKey ? "OR IGNORE " : ""}INTO user_calendar_events
        (id, user_id, title, notes, location, starts_at, ends_at, timezone,
         all_day, kind, recurrence_rule)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'event', NULL)`,
@@ -234,6 +237,18 @@ export async function createCalendarEventForAgent(
       calendarTimezone,
     )
     .run();
+
+  if (options?.idempotencyKey) {
+    const persisted = await db.prepare(
+      `SELECT id, title, notes, location, starts_at, ends_at, timezone, all_day, kind, recurrence_rule
+       FROM user_calendar_events WHERE id = ? AND user_id = ?`,
+    ).bind(id, userId).first<CalendarAgentNativeRow>();
+    if (!persisted || persisted.title !== title || persisted.notes !== notes || persisted.location !== location ||
+      persisted.starts_at !== startsAt || persisted.ends_at !== endsAt || persisted.timezone !== calendarTimezone ||
+      persisted.all_day !== 0 || persisted.kind !== "event" || persisted.recurrence_rule !== null) {
+      throw new Error("Calendar creation retry conflicts with its saved event. Read it again before changing it.");
+    }
+  }
 
   return {
     id,
@@ -258,8 +273,10 @@ export async function rescheduleCalendarEventForAgent(
   db: CalendarAgentDb,
   userId: string,
   input: CalendarAgentRescheduleInput,
+  expected?: CalendarAgentEvent,
 ): Promise<{ id: string; title: string; startsAt: string; endsAt: string; timezone: string }> {
   const event = await getCancellableCalendarEventForAgent(db, userId, input.eventId);
+  assertReviewedCalendarEvent(event, expected);
   const eventId = event.id;
   const { startsAt } = resolveAgentCalendarStart(input);
   const durationMs = Date.parse(event.ends_at) - Date.parse(event.starts_at);
@@ -270,8 +287,8 @@ export async function rescheduleCalendarEventForAgent(
   const result = await db.prepare(
     `UPDATE user_calendar_events
      SET starts_at = ?, ends_at = ?, updated_at = datetime('now')
-     WHERE id = ? AND user_id = ? AND starts_at = ? AND ends_at = ?`,
-  ).bind(startsAt, endsAt, eventId, userId, event.starts_at, event.ends_at).run();
+     WHERE id = ? AND user_id = ? AND starts_at = ? AND ends_at = ?${expected ? reviewedCalendarPredicate : ""}`,
+  ).bind(startsAt, endsAt, eventId, userId, event.starts_at, event.ends_at, ...reviewedCalendarValues(expected)).run();
   if ((result.meta?.changes || 0) !== 1) {
     throw new Error("Calendar event changed while rescheduling. List it again and retry.");
   }
@@ -282,15 +299,17 @@ export async function getCancellableCalendarEventForAgent(
   db: CalendarAgentDb,
   userId: string,
   eventIdInput: string,
-): Promise<{ id: string; title: string; starts_at: string; ends_at: string; timezone: string }> {
+): Promise<{ id: string; title: string; notes: string | null; location: string | null; starts_at: string; ends_at: string; timezone: string }> {
   const eventId = eventIdInput.trim();
   if (!eventId) throw new Error("Calendar event ID is required.");
   const event = await db.prepare(
-    `SELECT id, title, starts_at, ends_at, timezone, all_day, kind, recurrence_rule
+    `SELECT id, title, notes, location, starts_at, ends_at, timezone, all_day, kind, recurrence_rule
      FROM user_calendar_events WHERE id = ? AND user_id = ?`,
   ).bind(eventId, userId).first<{
     id: string;
     title: string;
+    notes: string | null;
+    location: string | null;
     starts_at: string;
     ends_at: string;
     timezone: string;
@@ -325,20 +344,39 @@ export async function cancelCalendarEventForAgent(
   db: CalendarAgentDb,
   userId: string,
   input: { eventId: string; startsAt: string; endsAt: string },
+  expected?: CalendarAgentEvent,
 ): Promise<{ id: string; title: string }> {
   const event = await getCancellableCalendarEventForAgent(db, userId, input.eventId);
+  assertReviewedCalendarEvent(event, expected);
   if (event.starts_at !== input.startsAt || event.ends_at !== input.endsAt) {
     throw new Error("Calendar event changed after approval was requested. List it again and retry.");
   }
   const result = await db.prepare(
     `DELETE FROM user_calendar_events
      WHERE id = ? AND user_id = ? AND starts_at = ? AND ends_at = ?
-       AND recurrence_rule IS NULL AND all_day = 0 AND kind = 'event'`,
-  ).bind(event.id, userId, input.startsAt, input.endsAt).run();
+       AND recurrence_rule IS NULL AND all_day = 0 AND kind = 'event'${expected ? reviewedCalendarPredicate : ""}`,
+  ).bind(event.id, userId, input.startsAt, input.endsAt, ...reviewedCalendarValues(expected)).run();
   if ((result.meta?.changes || 0) !== 1) {
     throw new Error("Calendar event changed before cancellation. List it again and retry.");
   }
   return { id: event.id, title: event.title };
+}
+
+const reviewedCalendarPredicate = ` AND title IS ? AND notes IS ? AND location IS ? AND timezone IS ?
+  AND recurrence_rule IS NULL AND all_day = 0 AND kind = 'event'
+  AND NOT EXISTS (SELECT 1 FROM bookings b JOIN sites s ON s.id = b.site_id WHERE b.calendar_event_id = user_calendar_events.id AND s.user_id = user_calendar_events.user_id AND b.status = 'confirmed')
+  AND NOT EXISTS (SELECT 1 FROM scheduling_requests r WHERE r.finalized_calendar_event_id = user_calendar_events.id AND r.user_id = user_calendar_events.user_id AND r.status = 'finalized')`;
+
+function reviewedCalendarValues(expected?: CalendarAgentEvent): unknown[] {
+  return expected ? [expected.title, expected.notes, expected.location, expected.timezone] : [];
+}
+
+function assertReviewedCalendarEvent(event: { id: string; title: string; notes: string | null; location: string | null; starts_at: string; ends_at: string; timezone: string }, expected?: CalendarAgentEvent) {
+  if (expected && (expected.id !== event.id || expected.sourceKind !== "native" || expected.allDay || expected.recurrenceRule ||
+    expected.title !== event.title || expected.notes !== event.notes || expected.location !== event.location ||
+    expected.startsAt !== event.starts_at || expected.endsAt !== event.ends_at || expected.timezone !== event.timezone)) {
+    throw new Error("Calendar event changed since it was reviewed. List it again and retry.");
+  }
 }
 
 export function resolveAgentCalendarStart(input: Pick<CalendarAgentCreateInput,

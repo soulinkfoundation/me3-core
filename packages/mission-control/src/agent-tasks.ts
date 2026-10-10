@@ -64,7 +64,7 @@ export type UpdateAgentMissionTaskInput = {
 
 export type AgentMissionTaskError = {
   error: string;
-  status?: 400 | 404;
+  status?: 400 | 404 | 409;
 };
 
 const TASK_STATUSES = new Set(["backlog", "in_progress", "done"]);
@@ -87,7 +87,13 @@ export async function listAgentMissionProjects(
 export async function listAgentMissionTasks(
   env: MissionTaskEnv,
   userId: string,
+  options: { projectId?: string; status?: string } = {},
 ): Promise<AgentMissionTask[]> {
+  if (options.status && !TASK_STATUSES.has(options.status)) throw new Error("Invalid task status.");
+  const values: unknown[] = [userId];
+  const conditions: string[] = [];
+  if (options.projectId) { conditions.push("AND t.project_id = ?"); values.push(options.projectId); }
+  if (options.status) { conditions.push("AND t.status = ?"); values.push(options.status); }
   const rows = await env.DB.prepare(
     `SELECT t.id, t.title, t.description, t.project_id, t.status, t.priority, t.due_at,
             t.scheduled_for, t.source_ref, p.name AS project_name
@@ -95,10 +101,11 @@ export async function listAgentMissionTasks(
      LEFT JOIN mission_projects p
        ON p.id = t.project_id AND p.user_id = t.user_id
      WHERE t.user_id = ? AND t.archived_at IS NULL
+       ${conditions.join(" ")}
      ORDER BY t.updated_at DESC, t.id ASC
      LIMIT 100`,
   )
-    .bind(userId)
+    .bind(...values)
     .all<MissionTaskRow>();
   return (rows.results || []).flatMap(serializeMissionTaskRow);
 }
@@ -190,11 +197,13 @@ export async function updateAgentMissionTask(
   env: MissionTaskEnv,
   userId: string,
   input: UpdateAgentMissionTaskInput,
+  expected?: AgentMissionTask,
 ): Promise<AgentMissionTask | AgentMissionTaskError> {
   const taskId = requiredText(input.taskId);
   if (!taskId) return { error: "Task taskId is required.", status: 400 };
   const existing = await getAgentMissionTask(env, userId, taskId);
   if (!existing) return { error: "Mission task not found.", status: 404 };
+  if (expected && !sameTaskSnapshot(existing, expected)) return taskChanged();
 
   const projects = await listAgentMissionProjects(env, userId);
   const project = input.projectId
@@ -221,7 +230,8 @@ export async function updateAgentMissionTask(
     `UPDATE mission_tasks
      SET project_id = ?, column_id = ?, title = ?, description = ?, status = ?,
          priority = ?, due_at = ?, updated_at = datetime('now')
-     WHERE id = ? AND user_id = ? AND archived_at IS NULL`,
+     WHERE id = ? AND user_id = ? AND archived_at IS NULL
+       ${expected ? taskSnapshotPredicate : ""}`,
   )
     .bind(
       project.id,
@@ -233,10 +243,11 @@ export async function updateAgentMissionTask(
       dueAt,
       taskId,
       userId,
+      ...(expected ? taskSnapshotValues(expected) : []),
     )
     .run();
   if ((result.meta?.changes || 0) === 0) {
-    return { error: "Mission task not found.", status: 404 };
+    return expected ? taskChanged() : { error: "Mission task not found.", status: 404 };
   }
 
   return {
@@ -255,21 +266,24 @@ export async function archiveAgentMissionTask(
   env: MissionTaskEnv,
   userId: string,
   taskIdInput: string,
+  expected?: AgentMissionTask,
 ): Promise<AgentMissionTask | AgentMissionTaskError> {
   const taskId = requiredText(taskIdInput);
   if (!taskId) return { error: "Task taskId is required.", status: 400 };
   const task = await getAgentMissionTask(env, userId, taskId);
   if (!task) return { error: "Mission task not found.", status: 404 };
+  if (expected && !sameTaskSnapshot(task, expected)) return taskChanged();
 
   const result = await env.DB.prepare(
     `UPDATE mission_tasks
      SET archived_at = datetime('now'), updated_at = datetime('now')
-     WHERE id = ? AND user_id = ? AND archived_at IS NULL`,
+     WHERE id = ? AND user_id = ? AND archived_at IS NULL
+       ${expected ? taskSnapshotPredicate : ""}`,
   )
-    .bind(taskId, userId)
+    .bind(taskId, userId, ...(expected ? taskSnapshotValues(expected) : []))
     .run();
   if ((result.meta?.changes || 0) === 0) {
-    return { error: "Mission task not found.", status: 404 };
+    return expected ? taskChanged() : { error: "Mission task not found.", status: 404 };
   }
   return task;
 }
@@ -386,4 +400,18 @@ function statusPosition(status: string): number {
   if (status === "in_progress") return 1;
   if (status === "done") return 2;
   return 0;
+}
+
+const taskSnapshotPredicate = "AND title IS ? AND description IS ? AND project_id IS ? AND status IS ? AND priority IS ? AND COALESCE(due_at, scheduled_for) IS ?";
+
+function taskSnapshotValues(task: AgentMissionTask): unknown[] {
+  return [task.title, task.description, task.projectId, task.status, task.priority, task.dueAt];
+}
+
+function sameTaskSnapshot(current: AgentMissionTask, expected: AgentMissionTask): boolean {
+  return current.id === expected.id && JSON.stringify(taskSnapshotValues(current)) === JSON.stringify(taskSnapshotValues(expected));
+}
+
+function taskChanged(): AgentMissionTaskError {
+  return { error: "Mission task changed since it was read. Read it again before changing it.", status: 409 };
 }

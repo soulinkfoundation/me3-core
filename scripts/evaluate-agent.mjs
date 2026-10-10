@@ -1,317 +1,147 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { runCoreAgentToolTurn } from "../packages/agent-chat/src/core-agent-runtime.ts";
-import { getUtcMsForLocalTime } from "../packages/calendar/src/index.ts";
-import { createAgentSchedulingToolServices } from "../apps/worker/src/agent-scheduling.ts";
+import { createHash } from "node:crypto";
+import { resolve, dirname } from "node:path";
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
+import { createAgentEvalScenarios, snapshotEvalState, auditEvalWrites } from "./agent-eval-scenarios.mjs";
+import { createRuntimeAdapter } from "./agent-eval-adapters.mjs";
+import { createSeededEvalServices } from "./agent-eval-services.mjs";
+import { createGatewayRoute, gradeAgentReply } from "./agent-eval-gateway.mjs";
+import { GRADER_MODEL, buildAgentEvalReport, agentEvalMarkdown, sumUsage, estimateCost } from "./agent-eval-report.mjs";
+import { DEFAULT_EVAL_PRICING, createEvalBudget } from "./agent-eval-budget.mjs";
+import { buildAgentSystemPrompt } from "../packages/agent/src/prompt.ts";
 
-const runtime = process.argv.find((arg) => arg.startsWith("--runtime="))?.slice(10) || "legacy";
-if (runtime !== "legacy" && runtime !== "sdk") throw new Error("Use --runtime=legacy or --runtime=sdk");
-const reportPath = process.argv.find((arg) => arg.startsWith("--report="))?.slice(9) || "/tmp/me3-agent-eval.json";
-const limit = Number(process.argv.find((arg) => arg.startsWith("--limit="))?.slice(8) || "48");
-if (!Number.isInteger(limit) || limit < 1 || limit > 48) throw new Error("--limit must be an integer from 1 to 48.");
-const modelChoice = process.argv.find((arg) => arg.startsWith("--model="))?.slice(8) || "scripted-fixture";
-const liveProvider = modelChoice.startsWith("openai:") ? "openai" : modelChoice.startsWith("anthropic:") ? "anthropic" : null;
-const modelStepDelayMs = Number(process.argv.find((arg) => arg.startsWith("--model-step-delay-ms="))?.split("=")[1] || "0");
-if (!Number.isInteger(modelStepDelayMs) || modelStepDelayMs < 0 || modelStepDelayMs > 30000) throw new Error("--model-step-delay-ms must be an integer from 0 to 30000.");
-if (modelChoice !== "scripted-fixture" && !liveProvider) throw new Error("Use --model=scripted-fixture, openai:MODEL, or anthropic:MODEL");
-const cloudflareAccountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
-const cloudflareApiToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
-const cloudflareGatewayId = process.env.CLOUDFLARE_AI_GATEWAY_ID?.trim() || "default";
-if (liveProvider && (!cloudflareAccountId || !cloudflareApiToken)) {
-  throw new Error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required for a live model eval.");
+const args = process.argv.slice(2).filter((arg) => arg !== "--");
+const allowedFlags = new Set(["runtime", "model", "repeat", "date", "limit", "scenarios", "pricing", "report", "report-only", "max-cost-usd"]);
+for (const arg of args) if (!arg.startsWith("--") || !allowedFlags.has(arg.slice(2).split("=")[0])) throw new Error(`Unknown eval option: ${arg}`);
+const value = (name, fallback) => args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3) ?? fallback;
+const runtime = value("runtime", "new");
+const adapter = createRuntimeAdapter(runtime);
+const modelChoice = value("model", "scripted-fixture");
+const live = modelChoice !== "scripted-fixture";
+if (live && !/^(openai|anthropic|workers-ai):[^\s]+$/.test(modelChoice)) throw new Error("Use --model=scripted-fixture or provider:MODEL (openai, anthropic, workers-ai).");
+const repeat = Number(value("repeat", "3"));
+if (!Number.isInteger(repeat) || repeat < 1 || repeat > 20) throw new Error("--repeat must be an integer from 1 to 20.");
+const baseDate = value("date", new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Dublin", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()));
+const allScenarios = createAgentEvalScenarios(baseDate);
+const limit = Number(value("limit", String(allScenarios.length)));
+if (!Number.isInteger(limit) || limit < 1 || limit > allScenarios.length) throw new Error(`--limit must be an integer from 1 to ${allScenarios.length}.`);
+const selectedIds = value("scenarios", "").split(",").filter(Boolean);
+if (new Set(selectedIds).size !== selectedIds.length) throw new Error("--scenarios must not contain duplicates.");
+const scenarios = selectedIds.length ? selectedIds.map((id) => {
+  const scenario = allScenarios.find((item) => item.id === id);
+  if (!scenario) throw new Error(`Unknown scenario: ${id}`);
+  return scenario;
+}) : allScenarios.slice(0, limit);
+const pricingPath = value("pricing", null);
+const pricing = { ...DEFAULT_EVAL_PRICING, ...(pricingPath ? JSON.parse(readFileSync(pricingPath, "utf8")) : {}) };
+for (const [name, rates] of Object.entries(pricing)) {
+  if (![rates.input, rates.output, rates.cached, rates.cacheWrite ?? rates.input].every((rate) => Number.isFinite(rate) && rate >= 0) || typeof rates.source !== "string" || !rates.source.startsWith("https://")) throw new Error(`Pricing for ${name} needs nonnegative input/output/cached USD per million tokens plus a source URL.`);
 }
-const localToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Dublin", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const baseDate = localToday;
-const day = (offset) => {
-  const date = new Date(`${baseDate}T12:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + offset);
-  return date.toISOString().slice(0, 10);
-};
-const eventDay = day(1);
-const soulinkDay = day(2);
-const bookingDay = day(3);
-const journalDay = day(-1);
-const [year, month, date] = eventDay.split("-").map(Number);
-const movedEventUtc = new Date(getUtcMsForLocalTime({ year, month, day: date, hour: 13, minute: 30 }, "Europe/Dublin")).toISOString();
-const scenarioFamilies = [
-  {
-    id: "calendar-find",
-    prompt: "What's on my calendar tomorrow?",
-    calls: [{ name: "core_calendar_events_list", arguments: { dateFrom: eventDay, dateTo: eventDay } }],
-    check: (seed, results) => JSON.stringify(results).includes("Planning session") &&
-      !JSON.stringify(results).includes("Private other-owner event") &&
-      seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE user_id = ?").get(seed.ownerId).n === 1,
-  },
-  {
-    id: "calendar-move",
-    prompt: "Move my planning session tomorrow to 1:30pm.",
-    calls: [
-      { name: "core_calendar_events_list", arguments: { dateFrom: eventDay, dateTo: eventDay } },
-      { name: "core_calendar_event_reschedule", arguments: { eventId: "eval-planning", startDate: eventDay, startTime: "13:30", startTimezone: "Europe/Dublin" } },
-    ],
-    check: (seed) => seed.raw.prepare("SELECT starts_at FROM user_calendar_events WHERE id = 'eval-planning'").get().starts_at === movedEventUtc,
-  },
-  {
-    id: "calendar-create",
-    prompt: "Add a planning review for tomorrow at 2pm.",
-    calls: [{ name: "core_calendar_event_create", arguments: { title: "Planning review", startDate: eventDay, startTime: "14:00", startTimezone: "Europe/Dublin", durationMinutes: 45 } }],
-    check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE user_id = ? AND title = 'Planning review' COLLATE NOCASE").get(seed.ownerId).n === 1,
-  },
-  {
-    id: "calendar-create-retried",
-    prompt: "Add the same planning review and recover a repeated model call.",
-    calls: [
-      { name: "core_calendar_event_create", arguments: { title: "Planning review", startDate: eventDay, startTime: "14:00", startTimezone: "Europe/Dublin", durationMinutes: 45 } },
-      { name: "core_calendar_event_create", arguments: { title: "Planning review", startDate: eventDay, startTime: "14:00", startTimezone: "Europe/Dublin", durationMinutes: 45 } },
-    ],
-    expectedExecutions: 1,
-    check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE user_id = ? AND title = 'Planning review' COLLATE NOCASE").get(seed.ownerId).n === 1,
-  },
-  {
-    id: "calendar-cancel-approved",
-    prompt: "Cancel my planning session tomorrow.",
-    calls: [{ name: "core_calendar_event_cancel", arguments: { eventId: "eval-planning" } }],
-    confirmPrompt: "Confirm cancel Planning session",
-    expectedExecutions: 2,
-    check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE id = 'eval-planning'").get().n === 0 &&
-      seed.raw.prepare("SELECT COUNT(*) AS n FROM calendar_agent_cancellation_approvals WHERE status = 'complete'").get().n === 1,
-  },
-  {
-    id: "soulink-calendar-read",
-    prompt: "When is my Soulink circle?",
-    calls: [{ name: "core_calendar_events_list", arguments: { dateFrom: soulinkDay, dateTo: soulinkDay } }],
-    check: (seed, results) => JSON.stringify(results).includes("Soulink circle") && seed.raw.prepare("SELECT COUNT(*) AS n FROM calendar_source_events").get().n === 1,
-  },
-  {
-    id: "booking-read",
-    prompt: "What upcoming bookings do I have?",
-    calls: [{ name: "core_bookings_lookup", arguments: {} }],
-    check: (seed, results) => JSON.stringify(results).includes("Ada Example") && seed.raw.prepare("SELECT COUNT(*) AS n FROM bookings").get().n === 1,
-  },
-  {
-    id: "calendar-availability",
-    prompt: "Find a free 30-minute call slot three days from now.",
-    calls: [{ name: "core_calendar_availability", arguments: { dateFrom: bookingDay, dateTo: bookingDay, durationMinutes: 30, limit: 50 } }],
-    check: (_seed, results) => {
-      const slots = JSON.parse(results.find((row) => row.tool_name === "core_calendar_availability")?.result_json || "{}").result?.slots || [];
-      const blockedStart = Date.parse(`${bookingDay}T12:45:00.000Z`);
-      const blockedEnd = Date.parse(`${bookingDay}T14:15:00.000Z`);
-      return slots.length > 0 && slots.every((slot) => Date.parse(slot.endsAt) <= blockedStart || Date.parse(slot.startsAt) >= blockedEnd);
-    },
-  },
-  {
-    id: "reminder-create",
-    prompt: "Remind me tomorrow at 9am to call Alex.",
-    calls: [{ name: "core_reminders_create", arguments: { title: "Call Alex", date: eventDay, time: "09:00", timezone: "Europe/Dublin" } }],
-    check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_reminders WHERE user_id = ? AND title = 'Call Alex'").get(seed.ownerId).n === 1,
-  },
-  {
-    id: "reminder-list",
-    prompt: "What reminders are coming up?",
-    calls: [{ name: "core_reminders_list", arguments: {} }],
-    check: (seed, results) => JSON.stringify(results).includes("Call Sam") && seed.raw.prepare("SELECT COUNT(*) AS n FROM user_reminders").get().n === 1,
-  },
-  {
-    id: "journal-read",
-    prompt: "What did I write in my journal yesterday?",
-    calls: [{ name: "core_journal_read", arguments: { mode: "date", date: journalDay } }],
-    check: (seed, results) => JSON.stringify(results).includes("calmer launch week") && seed.raw.prepare("SELECT COUNT(*) AS n FROM journal_entries").get().n === 1,
-  },
-  {
-    id: "mission-task-read",
-    prompt: "Show my ME3 Launch tasks.",
-    calls: [{ name: "core_mission_task_list", arguments: { projectName: "ME3 Launch" } }],
-    check: (seed, results) => JSON.stringify(results).includes("Review launch plan") && seed.raw.prepare("SELECT COUNT(*) AS n FROM mission_tasks").get().n === 1,
-  },
-];
-
-const phrasings = {
-  "calendar-find": ["What's on my calendar tomorrow?", "Show tomorrow's events.", "Anything planned tomorrow?", "Tomorrow's agenda, please."],
-  "calendar-move": ["Move my planning session tomorrow to 1:30pm.", "Shift the planning session to 13:30 tomorrow.", "Push that planning session to half one tomorrow.", "Planning session: move it to 1:30pm tomorrow."],
-  "calendar-create": ["Add a planning review for tomorrow at 2pm.", "Put a planning review on tomorrow at 14:00.", "Block 45 minutes for planning review tomorrow at two.", "Planning review, tomorrow 2pm, 45 minutes."],
-  "calendar-create-retried": ["Add the same planning review and recover a repeated model call.", "Create a planning review, handling a retry.", "Block the review once even if retried.", "Planning review, but no duplicate."],
-  "calendar-cancel-approved": ["Cancel my planning session tomorrow.", "Remove tomorrow's planning session.", "Delete that planning session tomorrow.", "I need to cancel the planning session."],
-  "soulink-calendar-read": ["When is my Soulink circle?", "Show the imported Soulink event.", "Is the circle the day after tomorrow?", "What's in the connected calendar the day after tomorrow?"],
-  "booking-read": ["What upcoming bookings do I have?", "Any client sessions booked?", "Show my confirmed appointments.", "What's booked over the next few days?"],
-  "calendar-availability": ["Find a free 30-minute call slot three days from now.", "When am I available for a half-hour call in three days?", "Give me openings around my booking three days out.", "Any free half-hour slots in three days?"],
-  "reminder-create": ["Remind me tomorrow at 9am to call Alex.", "Set a reminder to call Alex tomorrow morning at nine.", "Call Alex: alert me at 9 tomorrow.", "Please ping me tomorrow 09:00 to call Alex."],
-  "reminder-list": ["What reminders are coming up?", "Show my pending alerts.", "Anything I need to remember?", "List my reminders."],
-  "journal-read": ["What did I write in my journal yesterday?", "Find yesterday's reflection.", "What was on my mind yesterday?", "Read yesterday's journal entry."],
-  "mission-task-read": ["Show my ME3 Launch tasks.", "What's left to do for the ME3 Launch project?", "Find the launch work items.", "List tasks in ME3 Launch."],
-};
-const allScenarios = scenarioFamilies.flatMap((family) => phrasings[family.id].map((prompt, index) => ({
-  ...family,
-  id: `${family.id}-${index + 1}`,
-  prompt,
-})));
-const selectedIds = process.argv.find((arg) => arg.startsWith("--scenarios="))?.slice(12).split(",");
-const scenarios = selectedIds
-  ? selectedIds.map((id) => {
-      const scenario = allScenarios.find((item) => item.id === id);
-      if (!scenario) throw new Error(`Unknown scenario: ${id}`);
-      return scenario;
-    })
-  : allScenarios.slice(0, limit);
-
-const results = [];
-for (const scenario of scenarios) {
-  const seed = createSeededAgentEvalInstallation(baseDate);
-  const installedPluginIds = new Set(seed.raw.prepare("SELECT plugin_id FROM plugin_installations WHERE enabled = 1 AND status = 'installed'").all().map((row) => row.plugin_id));
-  const outputs = scenario.calls.map((call, index) => ({
-    tool_calls: [{ id: `${scenario.id}-${index}`, ...call }],
-  }));
-  outputs.push({ response: "The requested action is complete." });
-  const modelInputs = [];
-  const usageSamples = [];
-  let liveModelRequests = 0;
-  const liveRoute = liveProvider ? {
-    providerId: "workers-ai",
-    model: `${liveProvider}/${modelChoice.slice(liveProvider.length + 1)}`,
-    backupModel: null,
-    apiKey: null,
-    ai: { run: async (model, input) => {
-      liveModelRequests++;
-      if (modelStepDelayMs) await new Promise((resolve) => setTimeout(resolve, modelStepDelayMs));
-      const { stream: _stream, ...request } = input;
-      const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/ai/run`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${cloudflareApiToken}`,
-          "Content-Type": "application/json",
-          "cf-aig-gateway-id": cloudflareGatewayId,
-        },
-        body: JSON.stringify({ model, input: request }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || payload?.success === false || payload?.error) {
-        throw new Error(payload?.errors?.[0]?.message || payload?.error?.message || `Cloudflare AI request failed (${response.status})`);
-      }
-      const run = payload?.result ?? payload;
-      return (run?.gatewayMetadata || run?.state) && run?.result ? run.result : run;
-    } },
-    aiGateway: { accountId: cloudflareAccountId, gatewayId: cloudflareGatewayId, apiToken: null, routeWorkersAi: true, routeExternalProviders: false },
-    configured: true,
-    recordUsage: ({ usage }) => usageSamples.push(usage),
-  } : null;
-  const model = async (_name, input) => {
-    modelInputs.push(input);
-    return outputs.shift();
-  };
-  const started = performance.now();
-  let firstDeltaMs = null;
-  try {
-    const response = await runCoreAgentToolTurn({
-      db: seed.db,
-      userId: seed.ownerId,
-      requestId: `eval-${scenario.id}`,
-      turnId: `eval-${scenario.id}`,
-      ownerTimezone: "Europe/Dublin",
-      route: liveRoute || { providerId: "workers-ai", model: "scripted-fixture", backupModel: null, apiKey: null, ai: { run: model }, aiGateway: null, configured: true },
-      messages: [{ role: "system", content: `You are ME3. Today is ${baseDate} in Europe/Dublin.` }, { role: "user", content: scenario.prompt }],
-      schedulingServices: createAgentSchedulingToolServices({ DB: seed.db }, seed.ownerId),
-      runtime,
-      installedPluginIds,
-      ...(liveProvider ? { streamOptions: { onEvent: (event) => { if (event.event === "delta") firstDeltaMs ??= performance.now() - started; } } } : {}),
-    });
-    const toolResults = seed.raw.prepare("SELECT tool_name, status, result_json, error_message FROM agent_tool_executions WHERE request_id = ? ORDER BY rowid").all(`eval-${scenario.id}`);
-    let providerFailure = response.source === "fallback";
-    let providerError = response.debugError;
-    let confirmationReply = null;
-    let modelSteps = response.streamMetrics?.modelRequestCount || modelInputs.length;
-    let approvalRequested = true;
-    if (scenario.confirmPrompt) {
-      approvalRequested = response.replyText.includes(scenario.confirmPrompt) &&
-        seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE id = 'eval-planning'").get().n === 1;
-      const followUpOutputs = [
-        { tool_calls: [{ id: `${scenario.id}-confirm`, ...scenario.calls[0] }] },
-        { response: "The event was cancelled." },
-      ];
-      const followUp = await runCoreAgentToolTurn({
-        db: seed.db,
-        userId: seed.ownerId,
-        requestId: `eval-${scenario.id}-confirm`,
-        turnId: `eval-${scenario.id}-confirm`,
-        ownerTimezone: "Europe/Dublin",
-        route: liveRoute || { providerId: "workers-ai", model: "scripted-fixture", backupModel: null, apiKey: null, ai: { run: async () => followUpOutputs.shift() }, aiGateway: null, configured: true },
-        messages: [
-          { role: "system", content: `You are ME3. Today is ${baseDate} in Europe/Dublin.` },
-          { role: "user", content: scenario.prompt },
-          { role: "assistant", content: response.replyText },
-          { role: "user", content: scenario.confirmPrompt },
-        ],
-        runtime,
-        installedPluginIds,
-        schedulingServices: createAgentSchedulingToolServices({ DB: seed.db }, seed.ownerId),
-      });
-      modelSteps += followUp.streamMetrics?.modelRequestCount || (liveProvider ? 0 : 2);
-      toolResults.push(...seed.raw.prepare("SELECT tool_name, status, result_json, error_message FROM agent_tool_executions WHERE request_id = ? ORDER BY rowid").all(`eval-${scenario.id}-confirm`));
-      providerFailure ||= followUp.source === "fallback";
-      providerError ||= followUp.debugError;
-      confirmationReply = followUp.replyText;
-    }
-    if (liveProvider) modelSteps = liveModelRequests;
-    const stateCheckPassed = scenario.check(seed, toolResults);
-    // Live cancellation may first look up the event ID. Still require exactly
-    // one reservation and one confirmed cancellation, without extra writes.
-    const countedResults = liveProvider && scenario.confirmPrompt
-      ? toolResults.filter((row) => row.tool_name !== "core_calendar_events_list")
-      : toolResults;
-    const executionCountMatched = countedResults.length === (scenario.expectedExecutions || scenario.calls.length);
-    const allExecutionsSucceeded = toolResults.every((row) => row.status === "succeeded");
-    const passed = approvalRequested && stateCheckPassed && executionCountMatched && allExecutionsSucceeded && !providerFailure;
-    results.push({ id: scenario.id, passed, providerFailure, modelSteps, toolCalls: toolResults.map((row) => row.tool_name), ...(passed ? {} : { replyText: response.replyText, confirmationReply, approvalRequested, stateCheckPassed, executionCountMatched, toolStatuses: toolResults.map((row) => row.status), toolErrors: toolResults.filter((row) => row.error_message).map((row) => ({ tool: row.tool_name, error: row.error_message })) }), usage: sumUsage(usageSamples), elapsedMs: Math.round(performance.now() - started), ttftMs: firstDeltaMs === null ? null : Math.round(firstDeltaMs), error: passed ? null : providerError || "State or tool execution mismatch" });
-  } catch (error) {
-    results.push({ id: scenario.id, passed: false, providerFailure: false, modelSteps: modelInputs.length, toolCalls: [], usage: sumUsage(usageSamples), elapsedMs: Math.round(performance.now() - started), ttftMs: firstDeltaMs, error: String(error) });
-  } finally {
-    seed.close();
-  }
-}
-const report = {
-  schemaVersion: 1,
-  kind: liveProvider ? "live-model-seeded-integration" : "scripted-seeded-integration",
-  evidenceLimit: liveProvider
-    ? "Live model actions are checked against seeded state. Open-ended answer quality and cost are not graded here."
-    : "The model is scripted. This checks tool visibility and persisted state, not live model choices, answer quality, cost, or streaming latency.",
-  runtime,
-  model: modelChoice,
-  modelStepDelayMs,
-  transport: liveProvider ? "Buffered Cloudflare REST model responses; first delta is client rendering, not provider streaming latency. Pacing is included in elapsed and TTFT measurements." : "Scripted fixture",
+const maxCostUsd = Number(value("max-cost-usd", "40"));
+if (!Number.isFinite(maxCostUsd) || maxCostUsd <= 0 || maxCostUsd > 50) throw new Error("--max-cost-usd must be above 0 and at most 50 under this task's spending limit.");
+const budget = createEvalBudget(maxCostUsd, pricing);
+const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+const reportPath = resolve(value("report", `.me3-evals/agent/${stamp}-${runtime}-${modelChoice.replace(/[^a-z0-9.-]/gi, "-")}.json`));
+const markdownPath = reportPath.replace(/\.json$/, "") + ".md";
+mkdirSync(dirname(reportPath), { recursive: true });
+const config = {
+  runtime, model: modelChoice, live, repeat, scenarioCount: scenarios.length, totalScenarioCount: allScenarios.length, baseDate,
   commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   workingTreeDirty: Boolean(execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim()),
-  baseDate,
-  seed: "Fresh in-memory SQLite database from all Worker migrations for each scenario; discarded after each run.",
-  command: `pnpm eval:agent --runtime=${runtime} --model=${modelChoice} --model-step-delay-ms=${modelStepDelayMs} ${selectedIds ? `--scenarios=${selectedIds.join(",")}` : `--limit=${limit}`}`,
-  generatedAt: new Date().toISOString(),
-  totals: {
-    scenarios: results.length,
-    passed: results.filter((item) => item.passed).length,
-    failed: results.filter((item) => !item.passed).length,
-    providerFailures: results.filter((item) => item.providerFailure).length,
-    usage: sumUsage(results.flatMap((item) => item.usage ? [item.usage] : [])),
-    modelStepsP50: percentile(results.map((item) => item.modelSteps), 0.5),
-    modelStepsP95: percentile(results.map((item) => item.modelSteps), 0.95),
-    elapsedP50Ms: percentile(results.map((item) => item.elapsedMs), 0.5),
-    elapsedP95Ms: percentile(results.map((item) => item.elapsedMs), 0.95),
-    costUsd: null,
-    liveTtftP95Ms: liveProvider ? percentile(results.flatMap((item) => item.ttftMs === null ? [] : [item.ttftMs]), 0.95) : null,
-  },
-  results,
+  command: ["pnpm eval:agent --", ...args].join(" "),
+  seed: "Fresh migrated in-memory SQLite per scenario/repeat; only synthetic example.invalid records. State checked again through a fresh D1 statement after all turns.",
+  providerFixtures: ["Seeded mailbox provider (real D1 writes, simulated mail transport)", "Synthetic public-web evidence", "No network people/Soulink results"],
+  transport: live ? "Provider SSE body passed through Cloudflare native compatibility endpoints to the runtime; TTFT from first nonempty runtime delta on every owner turn." : "Scripted fixture; TTFT is not provider evidence.",
+  pricing: Object.fromEntries(Object.entries(pricing).map(([name, rates]) => [name, { ...rates }])),
+  sourceFingerprint: sourceFingerprint(),
 };
-writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-console.log(`${report.totals.passed}/${report.totals.scenarios} passed; report: ${reportPath}`);
-if (report.totals.passed !== report.totals.scenarios && !process.argv.includes("--report-only")) process.exitCode = 1;
-
-function percentile(values, quantile) {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.ceil((sorted.length - 1) * quantile)] ?? null;
+const results = [];
+const saveReport = () => {
+  config.budget = budget.summary();
+  config.sourceChangedDuringRun = config.sourceFingerprint !== sourceFingerprint();
+  const report = buildAgentEvalReport(config, results);
+  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  writeFileSync(markdownPath, agentEvalMarkdown(report));
+  return report;
+};
+saveReport();
+evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
+  for (const scenario of scenarios) {
+    const seed = createSeededAgentEvalInstallation(baseDate);
+    const started = performance.now();
+    const row = { id: scenario.id, repeat: iteration, simpleAction: Boolean(scenario.simpleAction), passed: false, stateCheckPassed: false,
+      providerFailure: false, safety: { duplicateWrites: 0, unauthorizedWrites: 0, wrongRecordWrites: 0 }, turns: [], turnTtftMs: [], toolCalls: [], usage: null, grader: null, graderUsage: null, costUsd: null, graderCostUsd: null };
+    const toolResults = new Map();
+    const messages = [{ role: "system", content: buildAgentSystemPrompt({ ownerName: "Eval Owner", timezone: "Europe/Dublin", now: new Date(`${baseDate}T12:00:00Z`), ownerSnapshot: "Synthetic owner. Main project: ME3 Launch. Goals: a calmer launch week. Contact and mailbox data require tools." }) }];
+    const route = live ? createGatewayRoute(modelChoice, { budget }) : { model: "scripted-fixture", providerId: "workers-ai", configured: true, usageSamples: [], recordUsage() {}, ai: { async run() { throw new Error("Fixture provider not initialized"); } }, aiGateway: null };
+    try {
+      scenario.setup?.(seed);
+      const initialState = snapshotEvalState(seed);
+      const services = createSeededEvalServices(seed);
+      const enabledPluginIds = new Set(seed.raw.prepare("SELECT plugin_id FROM plugin_installations WHERE enabled = 1 AND status = 'installed'").all().map((row) => row.plugin_id));
+      let intermediatePassed = true;
+      for (const [turnIndex, turn] of scenario.turns.entries()) {
+        const turnStarted = performance.now();
+        let firstDeltaMs = null;
+        messages.push({ role: "user", content: turn.prompt });
+        const fixtureOutputs = turn.calls.map((call, index) => ({ tool_calls: [{ id: `fixture-${iteration}-${turnIndex}-${index}`, name: call.name, arguments: { ...call.arguments } }] }));
+        const fixtureReply = scenario.id === "web-research-cited" ? "Cloudflare AI Gateway provides observability and rate limiting. [Cloudflare documentation](https://developers.cloudflare.com/ai-gateway/)." : "The requested action is complete.";
+        fixtureOutputs.push({ response: fixtureReply });
+        if (!live) route.ai.run = async () => {
+          const next = fixtureOutputs.shift();
+          const call = next?.tool_calls?.[0];
+          if (call?.arguments.messageId === "$draftId") call.arguments.messageId = seed.raw.prepare("SELECT id FROM mailbox_messages WHERE mailbox_id = 'eval-mailbox' AND message_kind = 'draft' ORDER BY rowid DESC LIMIT 1").get()?.id;
+          return next;
+        };
+        const response = await adapter.runTurn({ seed, ownerId: seed.ownerId, messages: [...messages], requestId: `eval-${scenario.id}-${iteration}-${turnIndex}`, turnId: `eval-${scenario.id}-${iteration}-${turnIndex}`,
+          ownerTimezone: "Europe/Dublin", modelRoute: route, services, enabledPluginIds, fixtureCalls: turn.calls, fixtureReply, approve: turn.approve,
+          onEvent(event) { if (event.event === "delta" && typeof event.data?.text === "string" && event.data.text) firstDeltaMs ??= performance.now() - turnStarted; } });
+        messages.push({ role: "assistant", content: response.replyText });
+        for (const result of response.toolResults || []) toolResults.set(result.execution_id, result);
+        row.providerFailure ||= response.source === "fallback" || response.status === "failed";
+        const turnSafety = auditEvalWrites(initialState, snapshotEvalState(seed), { ...scenario, allowedWrites: turn.allowedWrites ?? scenario.allowedWrites });
+        // Maximum observed counts retain failures even when a later turn restores state.
+        for (const name of Object.keys(row.safety)) row.safety[name] = Math.max(row.safety[name], turnSafety[name]);
+        intermediatePassed &&= !turn.check || Boolean(turn.check(seed, [...toolResults.values()], messages.filter((message) => message.role === "assistant").map((message) => message.content)));
+        row.turnTtftMs.push(live && firstDeltaMs !== null ? Math.round(firstDeltaMs) : null);
+        row.turns.push({ prompt: turn.prompt, reply: response.replyText, status: response.status || response.source, elapsedMs: Math.round(performance.now() - turnStarted), ttftMs: row.turnTtftMs.at(-1), modelRequests: response.modelRequestCount });
+      }
+      row.stateCheckPassed = intermediatePassed && Boolean(scenario.check(seed, [...toolResults.values()], row.turns.map((turn) => turn.reply)));
+      row.toolCalls = [...toolResults.values()].map((result) => result.tool_name);
+      row.toolResults = [...toolResults.values()];
+      row.elapsedMs = Math.round(performance.now() - started);
+      row.ttftMs = row.turnTtftMs[0] ?? null;
+      row.usage = sumUsage(route.usageSamples);
+      row.usageComplete = live && route.usageComplete;
+      row.costUsd = row.usageComplete ? estimateCost(row.usage, pricing[modelChoice]) : null;
+      if (live) {
+        try {
+          const graded = await gradeAgentReply({ scenario, messages, toolResults: row.toolResults, stateCheckPassed: row.stateCheckPassed, route: createGatewayRoute(GRADER_MODEL, { budget }) });
+          row.grader = graded.grade; row.graderUsage = graded.usage; row.graderCostUsd = estimateCost(graded.usage, pricing[GRADER_MODEL]);
+        } catch (error) { row.grader = { passed: false, error: String(error) }; }
+      }
+      row.passed = row.stateCheckPassed && Object.values(row.safety).every((count) => count === 0) && !row.providerFailure && (!live || row.grader?.passed === true);
+    } catch (error) { row.error = String(error); row.elapsedMs = Math.round(performance.now() - started); }
+    finally { seed.close(); }
+    results.push(row);
+    saveReport();
+    console.log(`${scenario.id} repeat ${iteration}/${repeat}: ${row.passed ? "pass" : "FAIL"}${row.error ? ` (${row.error})` : ""}`);
+    if (budget.summary().stopped) { console.log("Stopping before another billed request because the eval cost guard was reached."); break evaluation; }
+  }
 }
+const report = saveReport();
+console.log(`${report.totals.passed}/${report.totals.runs} passed; gate ${report.gate.passed ? "PASS" : "FAIL"}; ${reportPath}; ${markdownPath}`);
+if (!args.includes("--report-only") && (live && runtime === "new" ? !report.gate.passed : results.some((row) => !row.passed))) process.exitCode = 1;
 
-function sumUsage(samples) {
-  if (!samples.length) return null;
-  return samples.reduce((total, sample) => ({
-    inputTokens: total.inputTokens + sample.inputTokens,
-    outputTokens: total.outputTokens + sample.outputTokens,
-    cachedInputTokens: total.cachedInputTokens + sample.cachedInputTokens,
-  }), { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 });
+function sourceFingerprint() {
+  const walk = (directory) => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? walk(`${directory}/${entry.name}`) : [`${directory}/${entry.name}`]);
+  const files = ["scripts/evaluate-agent.mjs", ...readdirSync("scripts").filter((name) => name.startsWith("agent-eval-") && name.endsWith(".mjs")).map((name) => `scripts/${name}`),
+    ...["agent", "calendar", "journal", "mission-control", "social-publishing", "landing-pages", "web-research", "knowledge"].flatMap(name => walk(`packages/${name}/src`)),
+    ...walk("apps/worker/migrations"),
+    ...["me3-agent", "agent-runtime", "assistant-runtime-binding", "core-runtime-migrations", "agent-domain-scheduling", "agent-mailbox-services", "agent-scheduling", "calendar", "scheduling", "scheduling-preconditions", "email-providers", "managed-email-outbound", "network-directory", "web-research", "assistant-primary-thread", "routes/new-agent", "routes/assistant", "routes/mission-control"].map(name => `apps/worker/src/${name}.ts`),
+    ...["base-character", "capabilities", "owner-snapshot", "owner-content-search", "landing-pages", "landing-page-images", "site-blog", "social-content", "reminders", "bookings"].map(name => `packages/agent-chat/src/${name}.ts`)];
+  const hash = createHash("sha256");
+  for (const file of files.sort()) hash.update(file).update("\0").update(readFileSync(file)).update("\0");
+  return hash.digest("hex");
 }

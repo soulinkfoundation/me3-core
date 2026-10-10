@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  compare-runtimes:
+  check-new-runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -20,14 +20,14 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Check seeded approval and schema contracts
-        run: node --import tsx --test scripts/agent-eval-seed.test.mjs scripts/agent-calendar-cancel.test.mjs scripts/agent-tool-schema.test.mjs
-      - name: Record legacy baseline
-        run: pnpm eval:agent -- --runtime=legacy --report=legacy-agent-eval.json --report-only
-      - name: Check SDK runtime
-        run: pnpm eval:agent -- --runtime=sdk --report=sdk-agent-eval.json
+      - name: Check harness, write safety and streaming contracts
+        run: node --import tsx --test scripts/agent-eval-seed.test.mjs scripts/agent-eval-scenarios.test.mjs scripts/agent-eval-report.test.mjs scripts/agent-eval-gateway.test.mjs scripts/agent-eval-budget.test.mjs
+      - name: Check new runtime seeded plumbing
+        run: pnpm eval:agent -- --runtime=new --repeat=1 --report=new-agent-eval.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: agent-seeded-eval
-          path: '*-agent-eval.json'
+          path: |
+            *-agent-eval.json
+            *-agent-eval.md

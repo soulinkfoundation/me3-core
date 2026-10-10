@@ -2,10 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
 
+test("contacts and mailbox fixtures include isolated synthetic other-owner controls", () => {
+  const fixture = createSeededAgentEvalInstallation("2026-10-10");
+  try {
+    assert.equal(fixture.raw.prepare("SELECT COUNT(*) AS n FROM contacts WHERE user_id = ?").get(fixture.ownerId).n, 12);
+    assert.equal(fixture.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_messages WHERE mailbox_id = 'eval-mailbox' AND direction = 'inbound'").get().n, 2);
+    assert.equal(fixture.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_messages WHERE mailbox_id = 'other-mailbox'").get().n, 1);
+    assert.equal(fixture.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_messages WHERE sent_at IS NOT NULL").get().n, 0);
+  } finally { fixture.close(); }
+});
+
 test("agent eval installation is synthetic, owner-scoped, and disposable", async () => {
   const fixture = createSeededAgentEvalInstallation("2026-10-05");
   try {
     const count = (table) => fixture.raw.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
+    assert.equal(count("me3_agent_cancellations"), 0);
     for (const table of [
       "sites", "user_calendar_events", "calendar_sources", "calendar_source_events",
       "bookings", "user_reminders", "mission_projects", "mission_tasks", "journal_entries",

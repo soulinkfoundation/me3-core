@@ -3,9 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api, ApiError, API_BASE } from "../../api";
 import { useAuthStore } from "../../stores/auth";
 import AppDialog from "../AppDialog.vue";
+import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
+import { useAppToast } from "../../composables/useAppToast";
 import UiIcon from "../UiIcon.vue";
 import { HOME_CARDS, emptyHomeLayout, homeDateLabel, homeDoneToday, homeOpenTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeTask } from "../../utils/homeSummary";
-const emit = defineEmits<{ suggest: [text: string] }>();
+const emit = defineEmits<{ suggest: [text: string]; approvalResolved: [] }>();
 const auth = useAuthStore();
 const storageKey = computed(() => `me3.home.${location.origin}.${API_BASE}.${auth.user?.id || "owner"}`);
 const layout = ref<HomeLayout>(emptyHomeLayout());
@@ -13,7 +15,10 @@ const tasks = ref<HomeTask[]>([]);
 const journal = ref<{ id: string; date: string; body?: string; preview?: string }[]>([]);
 const mail = ref<{ id: string; subject: string; fromName?: string; fromAddress?: string; preview?: string; agentSummary?: string }[]>([]);
 const soulink = ref<{ id: string; textBody?: string; outcome?: string }[]>([]);
-const approvals = ref<{ id: string; title: string; summary?: string }[]>([]);
+const approvals = ref<{ id: string; pluginId?: string; title: string; summary?: string | null; payload?: Record<string, unknown> }[]>([]);
+const reviewApproval = ref<(typeof approvals.value)[number] | null>(null);
+const approvalError = ref("");
+const { toastFromUnknown } = useAppToast();
 const events = ref<{ id: string; title: string; start: string; allDay?: boolean }[]>([]);
 const goals = ref<{ id: string; title: string; status: string }[]>([]);
 const wheel = ref<{ id: string; label?: string; name?: string; value?: number | null }[]>([]);
@@ -82,12 +87,16 @@ async function loadToday() {
   await resource("today", async () => {
     const start = new Date(`${day.value}T00:00:00`); const end = new Date(start); end.setDate(end.getDate() + 1);
     type Event = { id: string; title?: string; startsAt?: string; endsAt?: string; remindAt?: string; dueAt?: string; scheduledFor?: string; allDay?: boolean; status?: string; archivedAt?: string; starts_at?: string; ends_at?: string; guest_name?: string };
-    const [feed, pending, sites] = await Promise.all([
+    const [feedResult, pendingResult, sitesResult] = await Promise.allSettled([
       api.get<{ events?: Event[]; importedEvents?: Event[]; bookings?: Event[]; reminders?: Event[]; tasks?: Event[]; sources?: unknown[] }>(`/calendar/feed?${new URLSearchParams({ start: start.toISOString(), end: end.toISOString() })}`),
       api.get<{ approvals: typeof approvals.value }>("/mission-control/approvals?status=pending"),
       api.get<{ sites: { username: string; bookings_enabled?: boolean; bookingsEnabled?: boolean }[] }>("/sites"),
     ]);
     if (disposed || generation !== todayGeneration) return;
+    if (pendingResult.status === "fulfilled") approvals.value = pendingResult.value.approvals;
+    if (feedResult.status === "rejected") throw feedResult.reason;
+    if (sitesResult.status === "rejected") throw sitesResult.reason;
+    const feed = feedResult.value; const sites = sitesResult.value;
     const bookingSites = sites.sites.filter(s => s.bookings_enabled || s.bookingsEnabled).map(s => s.username);
     events.value = [...(feed.events || []), ...(feed.importedEvents || []), ...(feed.reminders || []), ...(feed.tasks || []).filter(t => !t.archivedAt && !["done", "cancelled"].includes(t.status || "")), ...(feed.bookings || []).filter(b => bookingSites.includes((b as Event & { username: string }).username))]
       .flatMap(e => {
@@ -99,7 +108,7 @@ async function loadToday() {
         return [{ id: e.id, title: e.title || `Meeting with ${e.guest_name || "a guest"}`, start: time.toISOString(), allDay: e.allDay }];
       }).sort((a, b) => a.start.localeCompare(b.start));
     calendarConnected.value = Boolean(feed.sources?.length);
-    approvals.value = pending.approvals;
+    if (pendingResult.status === "rejected") throw pendingResult.reason;
   });
 }
 function money(stats: { thisMonthTotals?: { currency: string; amountCents: number }[]; thisMonthCents?: number; defaultCurrency?: string }): string {
@@ -159,6 +168,18 @@ async function confirm(id: string) {
   catch (error) { errors.value.today = error instanceof Error ? error.message : "Couldn't confirm"; }
   finally { busy.value = busy.value.filter(item => item !== id); }
 }
+async function decideCoreApproval(decision: "approved" | "declined") {
+  const approval = reviewApproval.value;
+  if (!approval || busy.value.includes(approval.id)) return;
+  busy.value.push(approval.id); approvalError.value = "";
+  try {
+    await api.post(`/assistant/approvals/${encodeURIComponent(approval.id)}`, { decision });
+    approvals.value = approvals.value.filter(item => item.id !== approval.id); reviewApproval.value = null;
+    emit("approvalResolved");
+    await loadToday();
+  } catch (error) { approvalError.value = error instanceof Error ? error.message : "Couldn't save this decision. Try again."; toastFromUnknown(error, "Couldn't save approval"); }
+  finally { busy.value = busy.value.filter(id => id !== approval.id); }
+}
 watch(day, loadToday);
 onMounted(refresh);
 onBeforeUnmount(() => { disposed = true; cancelPress(); });
@@ -184,7 +205,7 @@ onBeforeUnmount(() => { disposed = true; cancelPress(); });
         <template v-if="card === 'today'">
           <p v-if="day !== localDateKey(new Date())" class="home-muted">{{ homeDateLabel(day) }}</p>
           <RouterLink v-for="event in events.slice(0, 5)" :key="event.id" to="/calendar" class="home-line"><span class="home-muted home-time">{{ event.allDay ? 'All day' : new Date(event.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }}</span><span>{{ event.title }}</span></RouterLink>
-          <div v-for="approval in approvals.slice(0, 3)" :key="approval.id" class="home-approval"><strong>{{ approval.title }}</strong><p v-if="approval.summary" class="home-muted">{{ journalPreview(approval.summary) }}</p><div class="home-actions"><button type="button" :disabled="busy.includes(approval.id)" @click="confirm(approval.id)">Confirm</button><button type="button" @click="emit('suggest', `Help me find another time for: ${approval.title}`)">Another time</button></div></div>
+          <div v-for="approval in approvals.slice(0, 3)" :key="approval.id" class="home-approval"><strong>{{ approval.title }}</strong><p v-if="approval.summary" class="home-muted">{{ journalPreview(approval.summary) }}</p><div class="home-actions"><template v-if="approval.pluginId === 'me3.core'"><button type="button" :disabled="busy.includes(approval.id)" @click="reviewApproval = approval; approvalError = ''">Review</button></template><template v-else><button type="button" :disabled="busy.includes(approval.id)" @click="confirm(approval.id)">Confirm</button><button type="button" @click="emit('suggest', `Help me find another time for: ${approval.title}`)">Another time</button></template></div></div>
           <p v-if="!events.length && !approvals.length" class="home-muted">Your day is clear.</p>
           <RouterLink v-if="!calendarConnected && !events.length" to="/calendar" class="home-connect">Connect a calendar <UiIcon name="ArrowRight" :size="16" /></RouterLink>
         </template>
@@ -217,6 +238,7 @@ onBeforeUnmount(() => { disposed = true; cancelPress(); });
         <template v-else><p class="home-muted">Move cards into the order that works for you.</p><div v-for="(card, index) in visible" :key="card" class="home-dialog__row"><span>{{ cards[card].title }}</span><div><button type="button" :disabled="index === 0" :aria-label="`Move ${cards[card].title} up`" @click="move(card, -1)"><UiIcon name="ArrowUp" :size="20" /></button><button type="button" :disabled="index === visible.length - 1" :aria-label="`Move ${cards[card].title} down`" @click="move(card, 1)"><UiIcon name="ArrowDown" :size="20" /></button></div></div></template>
       </section>
     </AppDialog>
+    <AssistantApprovalDialog :approval="reviewApproval" :busy="Boolean(reviewApproval && busy.includes(reviewApproval.id))" :error="approvalError" @close="reviewApproval = null" @decide="decideCoreApproval" />
   </div>
 </template>
 

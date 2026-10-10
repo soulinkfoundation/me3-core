@@ -1,3 +1,4 @@
+import { sameSchedulingRequest, schedulingRequestPrecondition, schedulingRequestValues } from "./scheduling-preconditions";
 import type {
   CoreSchedulingOption,
   CoreSchedulingToolServices,
@@ -399,10 +400,11 @@ export class AgentSchedulingError extends Error {
   }
 }
 
-async function searchAgentSchedulingContacts(
+export async function searchAgentSchedulingContacts(
   env: Env,
   ownerId: string,
   input: { query?: string; limit?: number },
+  includeStableIds = false,
 ) {
   const query = shortText(input.query, 160);
   const limit = clampInteger(input.limit, 1, 10, 5);
@@ -434,6 +436,7 @@ async function searchAgentSchedulingContacts(
       .bind(ownerId, limit)
       .all<DbContact>();
   const contacts = (rows.results || []).map((contact) => ({
+    ...(includeStableIds ? { id: contact.id, updatedAt: contact.updated_at, peerNodeId: soulinkPeerNodeId(contact) } : {}),
     name: contact.name,
     relationship: contact.relationship,
     me3AssistantAvailable: Boolean(soulinkPeerNodeId(contact)),
@@ -441,11 +444,13 @@ async function searchAgentSchedulingContacts(
   return { contacts, total: contacts.length };
 }
 
-async function requestAgentScheduling(
+export async function requestAgentScheduling(
   env: Env,
   ownerId: string,
   input: {
     contact: string;
+    contactId?: string;
+    expectedContact?: { id: string; name: string; updatedAt?: unknown; peerNodeId?: unknown };
     durationMinutes?: number;
     dateFrom?: string;
     dateTo?: string;
@@ -454,7 +459,13 @@ async function requestAgentScheduling(
   idempotencyKey: string,
 ) {
   await ensureSoulinkContactsFresh(env, ownerId);
-  const contact = await resolveAgentSchedulingContact(env, ownerId, input.contact);
+  const contact = input.contactId
+    ? await env.DB.prepare("SELECT * FROM contacts WHERE id = ? AND user_id = ? AND status = 'active'").bind(input.contactId, ownerId).first<DbContact>()
+    : await resolveAgentSchedulingContact(env, ownerId, input.contact);
+  if (!contact) throw new AgentSchedulingError("Scheduling contact not found.", 404);
+  if (input.expectedContact && (contact.id !== input.expectedContact.id || contact.name !== input.expectedContact.name || contact.updated_at !== input.expectedContact.updatedAt || soulinkPeerNodeId(contact) !== input.expectedContact.peerNodeId)) {
+    throw new AgentSchedulingError("Scheduling contact changed since it was read.", 409);
+  }
   const targetNodeId = soulinkPeerNodeId(contact);
   if (!targetNodeId) {
     throw new AgentSchedulingError(
@@ -612,7 +623,7 @@ async function requestAgentScheduling(
   };
 }
 
-async function requestNetworkAgentScheduling(
+export async function requestNetworkAgentScheduling(
   env: Env,
   ownerId: string,
   input: {
@@ -806,10 +817,12 @@ export async function performAgentSchedulingOwnerAction(
   env: Env,
   connection: DbAgentChannelConnection,
   input: AgentSchedulingOwnerAction,
+  expected?: DbSchedulingRequest,
 ) {
   const request = await getSchedulingRequest(env, connection.user_id, input.requestId);
   if (!request) throw new AgentSchedulingError("Agent scheduling request was not found.", 404);
-  return performSchedulingOwnerAction(env, connection, request, input);
+  if (expected && !sameSchedulingRequest(request, expected)) throw new AgentSchedulingError("Scheduling request changed since it was read.", 409);
+  return performSchedulingOwnerAction(env, connection, request, input, expected);
 }
 
 async function performSchedulingOwnerAction(
@@ -817,6 +830,7 @@ async function performSchedulingOwnerAction(
   connection: DbAgentChannelConnection,
   request: DbSchedulingRequest & { contact_name?: string | null },
   input: AgentSchedulingOwnerAction,
+  expected?: DbSchedulingRequest,
 ) {
   const ownerId = connection.user_id;
   const policy = requireOpenPeerPolicy(request);
@@ -839,6 +853,12 @@ async function performSchedulingOwnerAction(
   };
 
   if (input.action === "decline") {
+    if (expected) {
+      const changed = await env.DB.prepare(`UPDATE scheduling_requests SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ? ${schedulingRequestPrecondition}`).bind(request.id, ownerId, ...schedulingRequestValues(expected)).run();
+      if (changed.meta.changes !== 1) throw new AgentSchedulingError("Scheduling request changed before declining it.", 409);
+      await recordSchedulingAudit(env, request.id, ownerId, "finalization_blocked", "assistant", "Agent scheduling request was declined after owner approval", { reason: input.reason || null });
+    }
     const reason = shortText(input.reason, 500) || null;
     await relayAgentSchedulingMessage(env, connection, {
       ...envelope,
@@ -869,6 +889,11 @@ async function performSchedulingOwnerAction(
       : candidates;
     if (offered.length === 0) {
       throw new AgentSchedulingError("Choose at least one suitable time to offer.", 400);
+    }
+    if (expected) {
+      const changed = await env.DB.prepare(`UPDATE scheduling_requests SET status = 'candidates_shared', candidate_slots_json = ?, stream_payload_json = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ? ${schedulingRequestPrecondition}`).bind(JSON.stringify(offered), request.id, ownerId, ...schedulingRequestValues(expected)).run();
+      if (changed.meta.changes !== 1) throw new AgentSchedulingError("Scheduling request changed before offering its times.", 409);
     }
     await relayAgentSchedulingMessage(env, connection, {
       ...envelope,
@@ -917,7 +942,7 @@ async function performSchedulingOwnerAction(
     participantRole: "requester",
     startsAt: selectedSlot.startsAt,
     endsAt: selectedSlot.endsAt,
-  });
+  }, expected);
   if ("error" in approved) throw new AgentSchedulingError(approved.error, approved.status);
   const relayed = await relayAgentSchedulingMessage(env, connection, {
     ...envelope,

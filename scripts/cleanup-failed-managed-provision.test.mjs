@@ -90,6 +90,32 @@ test("failed provision cleanup deletes the SDK Durable Object namespace too", as
   assert.equal(deletedSdk, true);
 });
 
+test("failed provision cleanup deletes the new agent namespace and verifies it before deleting D1", async () => {
+  for (const keepAgent of [false, true]) {
+    const fake = createFixture();
+    const agentNamespace = { id: "f".repeat(32), script: WORKER_NAME, class: "Me3Agent" };
+    fake.state.namespaces.push(agentNamespace);
+    let deletedAgent = false;
+    const run = cleanupFailedManagedProvision(contract(), {
+      request: fake.request,
+      reportStage: async () => {},
+      emptyR2: async () => { fake.state.r2Objects = []; },
+      deployTombstone: async ({ deleteAgentDurableObject }) => {
+        deletedAgent = deleteAgentDurableObject;
+        fake.state.producerBindings.clear();
+        fake.state.namespaces = keepAgent ? [agentNamespace] : [];
+      },
+    });
+    if (keepAgent) {
+      await assert.rejects(run, /Durable Object namespace deletion was not verified/);
+      assert.notEqual(fake.state.d1, null);
+    } else {
+      assert.equal((await run).resourcesAbsent, true);
+    }
+    assert.equal(deletedAgent, true);
+  }
+});
+
 test("rejects current workers.dev or preview exposure before authorization", async (t) => {
   for (const field of ["enabled", "previews_enabled"]) {
     await t.test(field, async () => {

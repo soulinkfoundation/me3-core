@@ -69,6 +69,36 @@ test("accepts an optional isolated SDK agent binding when the SDK runtime is ena
   }
 });
 
+test("accepts the isolated agent runtime only with its exact binding and additive migration", () => {
+  const directory = mkdtempSync(join(tmpdir(), "me3-agent-upgrade-config-"));
+  const configPath = join(directory, "wrangler.toml");
+  const agentConfig = config().replace(
+    'ME3_DEPLOYMENT_MODE = "managed"',
+    'ME3_DEPLOYMENT_MODE = "managed"\nME3_ASSISTANT_RUNTIME = "agent"',
+  ).replace(
+    '[[migrations]]',
+    '[[durable_objects.bindings]]\nname = "ME3_AGENT"\nclass_name = "Me3Agent"\n[[migrations]]',
+  ).replace(
+    'new_sqlite_classes = ["Me3UserAgent"]',
+    'new_sqlite_classes = ["Me3UserAgent"]\n[[migrations]]\ntag = "2026-10-10-me3-agent"\nnew_sqlite_classes = ["Me3Agent"]',
+  );
+  try {
+    writeFileSync(configPath, agentConfig);
+    assert.equal(contract(configPath).d1Id, d1Id);
+    for (const unsafe of [
+      agentConfig.replace('name = "ME3_AGENT"', 'name = "MISSING_AGENT"'),
+      agentConfig.replace('class_name = "Me3Agent"', 'class_name = "OtherAgent"'),
+      `${agentConfig}\n[[durable_objects.bindings]]\nname = "ME3_AGENT"\nclass_name = "Me3Agent"\n`,
+      `${agentConfig}\n[[migrations]]\ntag = "delete"\ndeleted_classes = ["Me3UserAgent"]\n`,
+    ]) {
+      writeFileSync(configPath, unsafe);
+      assert.throws(() => contract(configPath), /upgrade config is invalid/);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 function contract(configPath) {
   return verifyManagedUpgradeConfig({
     configPath,

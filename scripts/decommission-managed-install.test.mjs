@@ -157,6 +157,31 @@ test("decommission deletes the SDK Durable Object namespace too", async () => {
   assert.equal(deletedSdk, true);
 });
 
+test("decommission deletes the new agent namespace and verifies it before deleting D1", async () => {
+  for (const keepAgent of [false, true]) {
+    const fake = createCloudflareFixture();
+    const agentNamespace = { id: "f".repeat(32), script: WORKER_NAME, class: "Me3Agent" };
+    fake.state.namespaces.push(agentNamespace);
+    let deletedAgent = false;
+    const run = decommissionManagedInstall(contract(), {
+      request: fake.request,
+      reportStage: async () => {},
+      deployTombstone: async ({ deleteAgentDurableObject }) => {
+        deletedAgent = deleteAgentDurableObject;
+        fake.state.producerBindings.clear();
+        fake.state.namespaces = keepAgent ? [agentNamespace] : [];
+      },
+    });
+    if (keepAgent) {
+      await assert.rejects(run, /Durable Object namespace deletion was not verified/);
+      assert.notEqual(fake.state.d1, null);
+    } else {
+      assert.equal((await run).ok, true);
+    }
+    assert.equal(deletedAgent, true);
+  }
+});
+
 test("detaches and verifies the permanent custom domain before Worker deletion", async () => {
   const fake = createCloudflareFixture();
   let domain = {

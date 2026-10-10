@@ -1,3 +1,4 @@
+import { assistantRuntimeNamespace } from "../assistant-runtime-binding";
 import { getSiteImageMetadata } from "../site-images";
 import { type Context } from "hono";
 import {
@@ -5,6 +6,7 @@ import {
   type AssistantJobBuilderAction,
 } from "../assistant-jobs";
 import { registerAssistantJobsRoutes } from "./assistant-jobs";
+import { registerNewAgentRoutes } from "./new-agent";
 import { registerAssistantSkillsRoutes } from "./assistant-skills";
 import {
   generateAiText,
@@ -629,6 +631,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
 
   registerAssistantSkillsRoutes(app, { requireOwner, unauthorized });
   registerAssistantJobsRoutes(app, { requireOwner, unauthorized });
+  registerNewAgentRoutes(app, { requireOwner, unauthorized });
 
   function parseAssistantChatTurnModelSelection(
     value: unknown,
@@ -3184,7 +3187,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     const requestId = request.requestId;
     const replay = await getAgentSandboxTurnResult(c.env, ownerId, requestId);
     if (replay) return c.json({ mode, ...replay });
-    const siteToolsEnabled = assistantSiteToolsEnabled(c.env);
+    const siteToolsEnabled = c.env.ME3_ASSISTANT_RUNTIME !== "agent" && assistantSiteToolsEnabled(c.env);
     const scopeParse = siteToolsEnabled
       ? parseAssistantScopes(displayMessageText, body.scopes)
       : null;
@@ -3221,7 +3224,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       return c.json({ ok: false, error: thread.error }, thread.status);
     }
 
-    const builderAction = await createAssistantJobBuilderAction(c.env, ownerId, messageText);
+    const builderAction = c.env.ME3_ASSISTANT_RUNTIME === "agent" ? null : await createAssistantJobBuilderAction(c.env, ownerId, messageText);
     if (builderAction) {
       const replyText = assistantJobBuilderReplyText(builderAction);
       await persistAssistantTurnMessages(
@@ -3311,9 +3314,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       attachmentManifest,
     );
 
-    const runtime = c.env.ME3_ASSISTANT_RUNTIME === "sdk"
-      ? c.env.ME3_SDK_USER_AGENT
-      : c.env.ME3_USER_AGENT;
+    const runtime = assistantRuntimeNamespace(c.env);
     if (!runtime) {
       return c.json(
         { ok: false, error: "Agent chat runtime is not configured" },
@@ -3424,7 +3425,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       return c.json({ ok: false, error: request.error }, 400);
     }
     const requestId = request.requestId;
-    const siteToolsEnabled = assistantSiteToolsEnabled(c.env);
+    const siteToolsEnabled = c.env.ME3_ASSISTANT_RUNTIME !== "agent" && assistantSiteToolsEnabled(c.env);
     const scopeParse = siteToolsEnabled
       ? parseAssistantScopes(displayMessageText, body.scopes)
       : null;
@@ -3523,7 +3524,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
           send("thread", { threadId: thread.id });
 
           const jobBuilderCheckStartedAt = performance.now();
-          const builderAction = await createAssistantJobBuilderAction(c.env, ownerId, messageText);
+          const builderAction = c.env.ME3_ASSISTANT_RUNTIME === "agent" ? null : await createAssistantJobBuilderAction(c.env, ownerId, messageText);
           routePerformance.jobBuilderCheckMs = assistantRouteDurationMs(
             jobBuilderCheckStartedAt,
           );
@@ -3627,9 +3628,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
             }
           }
 
-          const runtime = c.env.ME3_ASSISTANT_RUNTIME === "sdk"
-            ? c.env.ME3_SDK_USER_AGENT
-            : c.env.ME3_USER_AGENT;
+          const runtime = assistantRuntimeNamespace(c.env);
           if (!runtime) {
             send("error", { ok: false, error: "Agent chat runtime is not configured" });
             return;
@@ -3688,8 +3687,8 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
             "https://me3-core-user-agent.internal/dispatch/sandbox/stream",
             {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
-              signal: c.req.raw.signal,
+              headers: { "Content-Type": "application/json", ...(c.env.ME3_ASSISTANT_RUNTIME === "agent" && c.req.header("Last-Event-ID") ? {"Last-Event-ID":c.req.header("Last-Event-ID")!} : {}) },
+              ...(c.env.ME3_ASSISTANT_RUNTIME === "agent" ? {} : { signal: c.req.raw.signal }),
               body: JSON.stringify({
                 userId: ownerId,
                 requestId,

@@ -259,12 +259,16 @@ export async function updateAgentLandingPageDraft(
   env: AgentLandingPageEnv,
   userId: string,
   input: AgentLandingPageUpdateInput,
+  expected?: { draftJson: string; updatedAt: string },
 ): Promise<AgentLandingPageSummary> {
   await assertLandingPagesPluginEnabled(env);
   const site = await resolveAgentLandingPageSite(env, userId, input.site);
   const row = await loadAgentLandingPage(env, site.id, input.pageId);
   if (!row) {
     throw new Error("Landing page not found. List landing pages and use an exact page ID.");
+  }
+  if (expected && (row.draft_json !== expected.draftJson || row.updated_at !== expected.updatedAt)) {
+    throw new Error("Landing page changed since it was read. List it again before changing it.");
   }
   const current = parseAgentLandingPageDocument(row.draft_json);
   if (!current) throw new Error("The landing-page draft is invalid and cannot be updated in chat.");
@@ -307,10 +311,10 @@ export async function updateAgentLandingPageDraft(
       document.seo.socialImage = replacementImage.path;
     }
     document.updatedAt = new Date().toISOString();
-    await env.DB.prepare(
+    const result = await env.DB.prepare(
       `UPDATE site_pages
        SET title = ?, template_id = ?, draft_json = ?, updated_at = datetime('now')
-       WHERE id = ? AND site_id = ?`,
+       WHERE id = ? AND site_id = ? ${expected ? "AND draft_json = ?" : ""}`,
     )
       .bind(
         getLandingPageTitle(document),
@@ -318,8 +322,10 @@ export async function updateAgentLandingPageDraft(
         JSON.stringify(document),
         row.id,
         site.id,
+        ...(expected ? [expected.draftJson] : []),
       )
       .run();
+    if (expected && (result.meta?.changes || 0) !== 1) throw new Error("Landing page changed while updating. List it again before changing it.");
   } catch (error) {
     await deleteAgentLandingPageHero(env, {
       siteId: site.id,
@@ -801,4 +807,13 @@ function serializeAgentLandingPage(
 
 function normalizeOptionalText(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export async function readAgentLandingPageRevision(env: AgentLandingPageEnv, userId: string, pageId: string) {
+  const row = await env.DB.prepare(`SELECT p.id, p.draft_json, p.updated_at, s.username
+    FROM site_pages p JOIN sites s ON s.id = p.site_id
+    WHERE p.id = ? AND s.user_id = ? AND p.kind = 'landing_page'`)
+    .bind(pageId, userId).first<{ id: string; draft_json: string; updated_at: string; username: string }>();
+  if (!row) throw new Error("Landing page not found.");
+  return { id: row.id, draftJson: row.draft_json, updatedAt: row.updated_at, siteUsername: row.username };
 }
