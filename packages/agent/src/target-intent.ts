@@ -75,9 +75,9 @@ async function buildEvidence(c:AgentTargetIntentContext,{selectionId,domain:sour
   if(!current?.seq)throw Error('The current canonical turn ordering is unavailable.');
   const groups:SelectionGroup[]=(rows.results||[]).filter(row=>row.seq&&row.seq<=current.seq!).map(row=>({...row,candidates:JSON.parse(row.candidates_json)}));
   if(groups.some(row=>!Array.isArray(row.candidates)))throw Error('Invalid immutable candidate group.');
-  const latestSeq=Math.max(0,...groups.filter(row=>row.read_turn_id!==c.turnId).map(row=>row.seq!));
   // An already-read ID locates its full evidence group; the independent judge still decides whether the owner selected it.
-  const anchors=groups.filter(row=>row.read_turn_id===c.turnId||row.seq===latestSeq||row.id===selectionId||(row.domain===sourceDomain&&row.candidates.some(candidate=>candidate.id===recordId)));
+  // Unrelated earlier turns must not become required evidence for a fresh action.
+  const anchors=groups.filter(row=>row.read_turn_id===c.turnId||row.id===selectionId||(row.domain===sourceDomain&&row.candidates.some(candidate=>candidate.id===recordId)));
   if(selectionId&&!anchors.some(row=>row.id===selectionId))throw Error('The proposed selection lacks a current scoped immutable read.');
   const presentation=await shownPresentation(c);
   const idsByDomain=new Map<string,Set<string>>();
