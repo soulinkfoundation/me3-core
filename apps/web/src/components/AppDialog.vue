@@ -118,7 +118,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 640px) {
-  .app-dialog {
+  .app-dialog[open] {
     align-items: end;
     padding: 0;
   }

@@ -5,8 +5,11 @@ import { useAppToast } from "../../composables/useAppToast";
 import AppDialog from "../AppDialog.vue";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
+import type { HomeGoal } from "../../utils/homeSummary";
 
-type Goal = { id: string; title: string; status: "active" | "completed" };
+type Goal = HomeGoal;
+const props = defineProps<{ initialAreaId?: string | null }>();
+const areas = [{ id: 'health', name: '❤️ Health' }, { id: 'spirituality', name: '🌿 Spirituality' }, { id: 'work', name: '💼 Work' }, { id: 'finances', name: '💰 Finances' }, { id: 'home', name: '🏡 Home' }, { id: 'joy', name: '🤗 Joy' }];
 const emit = defineEmits<{ close: [] }>();
 const { toastSuccess, toastFromUnknown } = useAppToast();
 const goals = ref<Goal[]>([]);
@@ -21,6 +24,7 @@ async function loadGoals() {
     const response = await api.get<{ goals: Goal[] }>("/tasks/goals");
     goals.value = response.goals.map((goal) => ({ ...goal }));
     loaded.value = true;
+    if (props.initialAreaId) addGoal();
   } catch (error) {
     toastFromUnknown(error, "Goals could not be loaded");
   } finally {
@@ -29,7 +33,7 @@ async function loadGoals() {
 }
 
 function addGoal() {
-  goals.value.push({ id: `goal-${crypto.randomUUID()}`, title: "", status: "active" });
+  goals.value.push({ id: `goal-${crypto.randomUUID()}`, title: "", status: "active", areaId: props.initialAreaId || null, progress: 0 });
   void nextTick(() => {
     form.value?.querySelectorAll<HTMLInputElement>(".goal-title").item(goals.value.length - 1)?.focus();
   });
@@ -102,6 +106,10 @@ onMounted(loadGoals);
             maxlength="600"
             placeholder="e.g. Publish four useful videos this month"
           />
+          <select v-model="goal.areaId" :aria-label="`Wheel area for ${goal.title || 'new goal'}`">
+            <option :value="null">No area</option><option v-for="area in areas" :key="area.id" :value="area.id">{{ area.name }}</option>
+          </select>
+          <label class="goal-progress">Progress<input v-model.number="goal.progress" type="number" min="0" max="100" :aria-label="`Progress for ${goal.title || 'new goal'}`" />%</label>
           <Button
             color="ghost"
             size="compact"
@@ -159,11 +167,15 @@ fieldset {
 }
 .goal-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 10px 0;
   border-bottom: 1px solid var(--ui-border);
 }
+.goal-row select { color: var(--ui-text); background: var(--ui-surface-muted); border: 0; border-radius: var(--ui-radius-sm); padding: 8px; font: inherit; font-size: 13px; }
+.goal-progress { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ui-text-muted); }
+.goal-progress input { width: 46px; padding: 6px 2px; color: var(--ui-text); background: var(--ui-surface-muted); border: 0; border-radius: var(--ui-radius-sm); }
 .goal-row:last-of-type {
   margin-bottom: 12px;
 }

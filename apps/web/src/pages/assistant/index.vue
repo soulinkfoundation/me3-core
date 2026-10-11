@@ -17,7 +17,6 @@ import AgentTargetChoices from "../../components/AgentTargetChoices.vue";
 import { normalizeAgentTargetPresentation, targetChoiceRequest, type AgentTargetChoice, type AgentTargetPresentation } from "../../utils/agentTargetChoices";
 import ComposerPrompt from "../../components/ComposerPrompt.vue";
 import { useAuthStore } from "../../stores/auth";
-import LandingGrids from "../../components/LandingGrids.vue";
 import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import WorkspaceTabs from "../../components/WorkspaceTabs.vue";
@@ -736,6 +735,7 @@ const assistantMemoryActionId = ref("");
 const assistantSourceActionId = ref("");
 const assistantClearingActivity = ref(false);
 const copiedMessageKey = ref<string | null>(null);
+const homePanels = ref<InstanceType<typeof HomePanels> | null>(null);
 const homeMode = ref(route.query.view === "home" || (!route.query.thread && !route.query.new && !route.query.prompt && !route.query.project && route.query.view !== "chat"));
 useAgentChatPresence(assistantThreadId, computed(() => !homeMode.value && !configureJobsModalOpen.value && !detailModalOpen.value));
 async function showWorkspace(home: boolean) {
@@ -4858,7 +4858,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
       'assistant-page--site-builder': siteBuilderMode,
     }"
   >
-    <LandingGrids />
     <button
       v-if="!siteBuilderMode && assistantHistoryDrawerOpen"
       type="button"
@@ -5222,13 +5221,14 @@ function messageFromUnknown(err: unknown, fallback: string) {
 
       <section class="assistant-console" aria-label="Assistant conversation">
         <header v-if="!siteBuilderMode" class="home-chat-header">
+          <button v-if="homeMode" type="button" class="home-add-card" aria-label="Add a card to Home" @click="homePanels?.openAddDialog()"><UiIcon name="Plus" :size="24" /></button>
           <div class="home-chat-switcher" role="group" aria-label="Workspace view">
             <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
             <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>
           </div>
           <RouterLink to="/account" class="home-profile" aria-label="Your account">{{ (homeAuth.user?.name || 'ME3').slice(0, 1).toUpperCase() }}</RouterLink>
         </header>
-        <HomePanels v-if="homeMode && !siteBuilderMode" class="assistant-home" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" />
+        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" ref="homePanels" class="assistant-home" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" />
         <div
           v-show="!homeMode || siteBuilderMode"
           ref="assistantScrollerRef"
@@ -8117,7 +8117,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  width: min(820px, 100%);
+  width: 100%;
   margin: 0 auto;
   padding: 0;
 }
@@ -8275,13 +8275,15 @@ function messageFromUnknown(err: unknown, fallback: string) {
   display: flex;
   flex-direction: column;
   flex: 1;
-  width: min(600px, 100%);
-  max-width: 600px;
+  width: 100%;
+  max-width: none;
   min-height: 0;
   margin: 0 auto;
 }
 
 .assistant-timeline {
+  width: min(720px, 100%);
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -9283,11 +9285,11 @@ function messageFromUnknown(err: unknown, fallback: string) {
   z-index: 40;
   display: grid;
   gap: 8px;
-  width: min(600px, calc(100vw - 28px));
-  max-width: 600px;
+  width: min(720px, calc(100vw - 28px));
+  max-width: 720px;
   margin-inline: auto;
-  border: 1px solid var(--ui-border);
-  border-radius: 24px;
+  border: 0;
+  border-radius: 28px;
   padding: 10px;
   background: var(--ui-surface);
   box-shadow: var(--ui-shadow-sm, 0 8px 24px rgba(15, 23, 42, 0.08));
@@ -11058,7 +11060,9 @@ button:disabled {
 .home-chat-switcher button[aria-pressed="true"] { color: var(--ui-primary-contrast); background: var(--ui-primary); font-weight: 600; }
 .home-profile { position: absolute; right: 0; width: 44px; height: 44px; display: grid; place-items: center; font-size: 14px; color: var(--ui-text); text-decoration: none; }
 .home-profile::before { position: absolute; content: ""; inset: 6px; border-radius: 50%; background: var(--ui-surface-muted); z-index: -1; }
-.assistant-home { height: calc(100dvh - var(--app-shell-mobile-nav-height, 0px) - 154px); overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 18px; align-content: start; padding: 18px 0 12px; box-sizing: border-box; }
+.assistant-home { height: calc(100dvh - var(--app-shell-mobile-nav-height, 0px) - 78px); overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 18px; align-content: start; box-sizing: border-box; }
+.home-add-card { position: absolute; left: 0; display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--ui-text); border-radius: 50%; cursor: pointer; }
+.home-add-card:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .assistant-page:not(.assistant-page--site-builder) .assistant-timeline { padding-top: 18px; }
 .assistant-composer { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: 5px 6px 5px 16px; gap: 0 4px; min-height: 56px; box-sizing: border-box; }
 .assistant-composer .assistant-attachments, .assistant-composer > p, .assistant-composer > .sr-only { grid-column: 1 / -1; }

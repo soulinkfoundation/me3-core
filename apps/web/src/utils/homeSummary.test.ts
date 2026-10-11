@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homeOpenTasks, homeDoneToday, journalPreview, homeDateLabel, visibleHomeCards } from "./homeSummary";
+import { homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, homeDateLabel, visibleHomeCards } from "./homeSummary";
 
 describe("Home summaries", () => {
   // Failure modes: board order hides due work, archived/done work leaks into open tasks,
@@ -33,6 +33,18 @@ describe("Home summaries", () => {
     expect(homeDateLabel("2026-10-06", now, "en-GB")).toBe("Tue 6 Oct");
   });
   it("restores hidden cards and keeps a deduplicated saved order", () => {
-    expect(visibleHomeCards({ order: ["journal", "journal", "today"], hidden: ["inbox"], pinned: ["files"], earned: ["journal"] })).toEqual(["journal", "today", "files"]);
+    expect(visibleHomeCards({ order: ["journal", "journal", "today"], hidden: ["inbox"], pinned: ["files"], earned: ["journal"] })).toEqual(["journal", "today", "mission", "wheel", "accounts", "files"]);
+  });
+  // Goal tasks must include direct and project links, exclude other goals and closed work,
+  // and deduplicate a task that is linked both ways without deriving goal progress from tasks.
+  it("shows only the selected goal's open direct and project tasks", () => {
+    const tasks = [
+      { id: "direct", title: "Direct", goalId: "launch" },
+      { id: "project", title: "Project", projectId: "app" },
+      { id: "both", title: "Both", goalId: "launch", projectId: "app" },
+      { id: "other", title: "Other", goalId: "run" },
+      { id: "done", title: "Done", goalId: "launch", status: "done" },
+    ];
+    expect(homeGoalTasks(tasks, { id: "launch", projectIds: ["app"] }).map(t => t.id)).toEqual(["both", "direct", "project"]);
   });
 });

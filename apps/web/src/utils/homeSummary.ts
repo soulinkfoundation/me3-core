@@ -1,15 +1,17 @@
 export type HomeTask = {
   id: string; title: string; status?: string; priority?: number | null;
   dueAt?: string | null; scheduledFor?: string | null; updatedAt?: string | null; archivedAt?: string | null;
+  goalId?: string | null; projectId?: string | null;
 };
-export const HOME_CARDS = ["today", "inbox", "tasks", "accounts", "journal", "goals", "wheel", "mission", "files"] as const;
+export type HomeGoal = { id: string; title: string; status: "active" | "completed"; areaId?: string | null; progress?: number; taskIds?: string[]; projectIds?: string[] };
+export const HOME_CARDS = ["today", "inbox", "mission", "journal", "wheel", "accounts", "tasks", "goals", "files"] as const;
 export type HomeCard = typeof HOME_CARDS[number];
 export type HomeLayout = { order: string[]; hidden: string[]; pinned: string[]; earned: string[] };
 export const emptyHomeLayout = (): HomeLayout => ({ order: [], hidden: [], pinned: [], earned: [] });
 export function visibleHomeCards(layout: HomeLayout): HomeCard[] {
   return [...new Set([...layout.order, ...HOME_CARDS])].filter((id): id is HomeCard =>
     HOME_CARDS.includes(id as HomeCard) && !layout.hidden.includes(id) &&
-    (id === "today" || id === "inbox" || layout.pinned.includes(id) || layout.earned.includes(id)),
+    (["today", "inbox", "mission", "journal", "wheel", "accounts"].includes(id) || layout.pinned.includes(id) || layout.earned.includes(id)),
   );
 }
 export function localDateKey(date: Date): string {
@@ -34,6 +36,9 @@ export function homeOpenTasks(tasks: HomeTask[], now = new Date()): HomeTask[] {
 export function homeDoneToday(tasks: HomeTask[], now = new Date()): number {
   // The task contract has updatedAt rather than completedAt; match the native Home summary.
   return tasks.filter(t => !t.archivedAt && t.status === "done" && t.updatedAt && localDateKey(new Date(taskTimestamp(t.updatedAt))) === localDateKey(now)).length;
+}
+export function homeGoalTasks(tasks: HomeTask[], goal: Pick<HomeGoal, "id" | "taskIds" | "projectIds">): HomeTask[] {
+  return homeOpenTasks(tasks.filter(task => task.goalId === goal.id || goal.taskIds?.includes(task.id) || (task.projectId && goal.projectIds?.includes(task.projectId))));
 }
 export function homeDateLabel(value: string, now = new Date(), locale?: string): string {
   const date = new Date(`${value.slice(0, 10)}T12:00:00`);

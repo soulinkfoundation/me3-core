@@ -30,7 +30,7 @@ describe("Goals dialog", () => {
     await flushPromises();
     expect(api.patch).toHaveBeenCalledWith('/tasks/goals', { goals: [
       { id:'existing', title:'Walk every day', status:'completed' },
-      { id:expect.any(String), title:'Read more', status:'active' },
+      { id:expect.any(String), title:'Read more', status:'active', areaId:null, progress:0 },
     ] });
     wrapper.unmount();
   });

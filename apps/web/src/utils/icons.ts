@@ -103,6 +103,7 @@ import {
   User,
   UserRound,
   UsersRound,
+  WifiOff,
   X,
 } from "lucide";
 import type { IconNode } from "lucide";
@@ -224,6 +225,7 @@ export const UI_ICONS = {
   User,
   UserRound,
   UsersRound,
+  WifiOff,
   UserStar: USER_STAR_ICON,
   X,
 } as const satisfies Record<string, IconNode>;

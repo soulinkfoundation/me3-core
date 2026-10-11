@@ -37,8 +37,11 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
     });
     await page.goto('/assistant');
+    await page.getByRole('button', { name: 'Add to Home', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Tasks', exact: true }).click();
+    await page.getByRole('button', { name: 'Close Home editor' }).click();
     const tasks = page.getByRole('article', { name: 'Tasks', exact: true });
-    const journal = page.getByRole('article', { name: 'Journal', exact: true });
+    const journal = page.getByRole('article', { name: 'Writing', exact: true });
     await expect(tasks).toContainText('1 done today');
     await expect(tasks.locator('.home-line').first()).toContainText('Send the proposal');
     await expect(tasks).not.toContainText('Finished reel');
@@ -50,20 +53,19 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     const composer = page.getByLabel('Message composer');
     expect((await composer.boundingBox())!.height).toBeLessThan(80);
     await page.screenshot({ path: testInfo.outputPath('home.png'), fullPage: true });
-    await page.getByRole('button', { name: 'Journal options' }).click();
-    await page.getByRole('button', { name: 'Reorder cards', exact: true }).click();
-    await page.getByRole('button', { name: 'Move Journal up' }).click();
-    await page.getByRole('button', { name: 'Move Journal up' }).click();
-    await page.getByRole('button', { name: 'Move Journal up' }).click();
-    await page.getByRole('button', { name: 'Close Home editor' }).click();
+    for (let i = 0; i < 3; i++) {
+      await page.getByRole('button', { name: 'Writing options' }).click();
+      await page.getByRole('menuitem', { name: 'Move up', exact: true }).click();
+    }
     await page.reload();
-    await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Journal');
+    await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Writing');
     await page.screenshot({ path: testInfo.outputPath('reloaded.png'), fullPage: true });
-    await page.getByRole('button', { name: 'Journal options' }).click();
-    await page.getByRole('button', { name: 'Remove from Home', exact: true }).click();
+    await page.getByRole('button', { name: 'Writing options' }).click();
+    await page.getByRole('menuitem', { name: 'Remove from Home', exact: true }).click();
     await expect(journal).toHaveCount(0);
     await page.getByRole('button', { name: 'Add to Home', exact: true }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Journal', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Writing', exact: true }).click();
+    await page.getByRole('button', { name: 'Close Home editor' }).click();
     await expect(journal).toBeVisible();
     await page.getByRole('button', { name: 'Complete Send the proposal' }).click();
     await expect(tasks).toContainText('2 done today');
