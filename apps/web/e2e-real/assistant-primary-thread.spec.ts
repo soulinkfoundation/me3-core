@@ -48,6 +48,10 @@ test("main chat persists across sessions while new and project chats stay availa
     const freshPage = await fresh.newPage();
     await freshPage.goto("http://127.0.0.1:8787/assistant");
     await expect(freshPage).toHaveURL(new RegExp(`thread=${primaryId}`));
+    await freshPage.getByRole("button", { name: "Chat", exact: true }).click();
+    await expect(freshPage.getByRole("heading", { name: "What should I fetch?" })).toBeVisible();
+    await expect(freshPage.locator('.agent-dog[data-state="idle"]:visible')).toBeVisible();
+    await freshPage.screenshot({ path: testInfo.outputPath("chat-dog-real.png"), fullPage: true });
     await testInfo.attach("primary-conversation-evidence", {
       contentType: "application/json",
       body: JSON.stringify({
@@ -56,6 +60,7 @@ test("main chat persists across sessions while new and project chats stay availa
         seed: "Isolated local Wrangler D1; all migrations; synthetic bootstrap owner; no developer .dev.vars",
         primaryId, concurrentRequests: ids.length, freshSession: "same server mapping and browser route",
         projectChats: "separate project route preserved", explicitNewChat: "preserved",
+        workingTreeChanges: true, chatEmptyState: "Dog and suggestions shown after fresh real Core login",
       }, null, 2),
     });
   } finally {

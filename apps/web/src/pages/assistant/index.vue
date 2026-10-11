@@ -58,7 +58,7 @@ import {
   type AiAgentModelProviderId,
 } from "../../utils/aiModelCatalog";
 import type { UiIconName } from "../../utils/icons";
-import { ASSISTANT_AVATAR_SRC } from "../../utils/assistantBranding";
+import AgentDog from "../../components/AgentDog.vue";
 
 definePage({
   meta: {
@@ -768,10 +768,13 @@ const {
   state: voiceDictationState,
   statusText: voiceDictationStatusText,
   toggle: toggleVoiceDictation,
+  stop: stopVoiceDictation,
+  elapsedLabel: voiceDictationElapsed,
 } = useVoiceDictation({
   disabled: () => assistantSending.value,
   filenamePrefix: "assistant-dictation",
   onStart: () => {
+    if (homeMode.value) void showWorkspace(false);
     assistantError.value = null;
   },
   onTranscript: insertVoiceTranscript,
@@ -834,24 +837,26 @@ const assistantPlaceholders = [
 ];
 type StarterPrompt = {
   label: string;
-  icon: string;
+  icon: UiIconName;
   prompt: string;
   mode?: "site-builder";
 };
 const siteBuilderStarterPrompt = ASSISTANT_SITE_BUILDER_STARTER_PROMPT;
 const starterPrompts: StarterPrompt[] = [
+  { label: "What's on tomorrow?", icon: "CalendarDays", prompt: "What's on my calendar tomorrow?" },
+  { label: "Help me reply to an email", icon: "Mail", prompt: "Help me choose an email to reply to and draft a response. Ask me before sending." },
+  { label: "Help me plan my day", icon: "ListTodo", prompt: "Help me plan my day using my calendar, goals and tasks." },
   {
     label: "Build a site",
-    icon: "✨",
+    icon: "Sparkles",
     prompt: siteBuilderStarterPrompt,
     mode: "site-builder",
   },
   {
     label: "Configure",
-    icon: "⚙️",
+    icon: "Settings",
     prompt: configureStarterPrompt,
   },
-  { label: "Status update", icon: "🚀", prompt: "Status update" },
 ];
 const assistantAttachmentLimit = 4;
 const assistantAttachmentMaxBytes = 10_000_000;
@@ -5194,20 +5199,12 @@ function messageFromUnknown(err: unknown, fallback: string) {
           />
 
           <div
-            v-else-if="assistantConsoleMessages.length === 0"
+            v-else-if="assistantConsoleMessages.length === 0 && voiceDictationState !== 'listening'"
             class="assistant-empty-state"
           >
-            <h2
-              class="assistant-empty-state__heading"
-              :aria-label="assistantMessageLabel"
-            >
-              <img
-                class="assistant-empty-state__avatar"
-                :src="ASSISTANT_AVATAR_SRC"
-                alt=""
-                aria-hidden="true"
-              />
-            </h2>
+            <AgentDog :size="128" />
+            <h2 class="assistant-empty-state__heading">What should I fetch?</h2>
+            <p class="assistant-empty-state__hint">Ask for anything. I’ll do the legwork.</p>
             <div
               v-if="visibleStarterPrompts.length"
               class="starter-prompt-list"
@@ -5220,9 +5217,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
                 class="starter-prompt"
                 @click="startStarterPrompt(prompt)"
               >
-                <span class="starter-prompt__icon" aria-hidden="true">
-                  {{ prompt.icon }}
-                </span>
+                <UiIcon :name="prompt.icon" :size="19" aria-hidden="true" />
                 <span>{{ prompt.label }}</span>
               </button>
             </div>
@@ -5888,7 +5883,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
           </article>
 
           <article
-            v-if="assistantSending && assistantAwaitingResponse"
+            v-if="assistantSending"
             class="assistant-message assistant-message--assistant"
           >
             <div
@@ -5896,18 +5891,20 @@ function messageFromUnknown(err: unknown, fallback: string) {
               role="status"
               aria-live="polite"
             >
+              <AgentDog state="working" :size="34" />
               <span class="assistant-message__pending-detail">
                 {{ assistantTurnStatusText || assistantThinkingLabel }}
-              </span>
-              <span class="assistant-typing" aria-hidden="true">
-                <span />
-                <span />
-                <span />
               </span>
             </div>
           </article>
         </div>
 
+        <section v-if="voiceDictationState === 'listening'" class="assistant-listening" role="status" aria-label="ME3 is listening">
+          <AgentDog state="listening" :size="72" />
+          <strong>Listening…</strong>
+          <span class="assistant-listening__elapsed">{{ voiceDictationElapsed }}</span>
+          <Button color="primary" shape="pill" @click="stopVoiceDictation()">Done</Button>
+        </section>
         <footer
           class="assistant-composer"
           :class="{
@@ -8182,64 +8179,20 @@ function messageFromUnknown(err: unknown, fallback: string) {
 }
 
 .assistant-empty-state {
-  display: grid;
-  gap: 20px;
-  justify-items: center;
-  margin: 0 0 18px;
-  padding: clamp(90px, 28vh, 250px) 0 10px;
-  text-align: center;
+  display: grid; gap: 12px; justify-items: center; margin: 0 0 18px;
+  padding: clamp(60px, 17vh, 170px) 0 10px; text-align: center;
 }
-
-.assistant-empty-state__heading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0;
-}
-
-.assistant-empty-state__avatar {
-  display: block;
-  width: clamp(71px, 13.6vw, 95px);
-  height: clamp(71px, 13.6vw, 95px);
-  object-fit: contain;
-}
-
-.starter-prompt-list {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  max-width: 520px;
-}
-
-.starter-prompt {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 34px;
-  border: 1px solid var(--ui-border);
-  border-radius: 999px;
-  padding: 0 10px;
-  background: var(--ui-surface);
-  color: var(--ui-text-muted);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.starter-prompt__icon {
-  font-family:
-    "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
-  font-size: 14px;
-  line-height: 1;
-}
-
-.starter-prompt:hover {
-  border-color: color-mix(in oklab, var(--ui-accent) 40%, var(--ui-border));
-  background: var(--ui-surface-muted);
-  color: var(--ui-text);
-}
+.assistant-empty-state__heading { margin: 6px 0 0; font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
+.assistant-empty-state__hint { margin: 0; color: var(--ui-text-muted); font-size: 15px; }
+.starter-prompt-list { display: flex; flex-direction: column; align-items: stretch; gap: 10px; width: min(340px, 100%); margin-top: 12px; }
+.starter-prompt { display: inline-flex; align-items: center; gap: 10px; min-height: 46px; border: 0; border-radius: 24px; padding: 10px 16px; background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); color: var(--ui-text); font: 500 15px var(--font-sans); text-align: left; cursor: pointer; }
+.starter-prompt svg { flex-shrink: 0; color: var(--ui-text-muted); }
+.starter-prompt:hover { background: var(--ui-surface-muted); }
+.starter-prompt:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
+.assistant-listening { position: fixed; left: 50%; bottom: max(96px, calc(env(safe-area-inset-bottom, 0px) + 96px)); z-index: 41; display: grid; justify-items: center; gap: 12px; box-sizing: border-box; width: min(720px, calc(100vw - 28px)); padding: 32px 20px 20px; border-radius: 28px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); transform: translateX(-50%); }
+.assistant-listening strong { margin-top: 8px; font-size: 20px; font-weight: 600; }
+.assistant-listening__elapsed { color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
+.assistant-listening .button { min-width: 100px; }
 
 .assistant-message {
   display: flex;
@@ -9144,27 +9097,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
   cursor: not-allowed;
 }
 
-.assistant-typing {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.assistant-typing span {
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: currentColor;
-  animation: assistant-typing-bounce 1.1s infinite ease-in-out;
-}
-
-.assistant-typing span:nth-child(2) {
-  animation-delay: 0.12s;
-}
-
-.assistant-typing span:nth-child(3) {
-  animation-delay: 0.24s;
-}
+.assistant-message__bubble--pending { display: flex; align-items: center; gap: 10px; }
 
 .assistant-composer {
   position: fixed;
@@ -10923,19 +10856,7 @@ button:disabled {
   }
 }
 
-@keyframes assistant-typing-bounce {
-  0%,
-  80%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.45;
-  }
 
-  40% {
-    transform: translateY(-3px);
-    opacity: 1;
-  }
-}
 </style>
 
 <style scoped>
