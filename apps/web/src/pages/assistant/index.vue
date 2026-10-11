@@ -11055,7 +11055,7 @@ button:disabled {
 .home-chat-header::after { content: ""; position: absolute; top: 100%; left: 0; right: 0; height: 14px; pointer-events: none; background: linear-gradient(var(--ui-bg), transparent); }
 .home-chat-switcher { display: flex; padding: 3px; border-radius: 28px; background: var(--ui-surface-muted); }
 .home-chat-switcher button { min-width: 68px; min-height: 38px; padding: 0 14px; border: 0; border-radius: 22px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
-.home-chat-switcher button[aria-pressed="true"] { color: var(--ui-text); background: var(--ui-surface); box-shadow: 0 1px 3px color-mix(in srgb, var(--ui-text) 8%, transparent); }
+.home-chat-switcher button[aria-pressed="true"] { color: var(--ui-primary-contrast); background: var(--ui-primary); font-weight: 600; }
 .home-profile { position: absolute; right: 0; width: 44px; height: 44px; display: grid; place-items: center; font-size: 14px; color: var(--ui-text); text-decoration: none; }
 .home-profile::before { position: absolute; content: ""; inset: 6px; border-radius: 50%; background: var(--ui-surface-muted); z-index: -1; }
 .assistant-home { height: calc(100dvh - var(--app-shell-mobile-nav-height, 0px) - 154px); overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 18px; align-content: start; padding: 18px 0 12px; box-sizing: border-box; }

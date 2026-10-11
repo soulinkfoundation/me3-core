@@ -1,10 +1,11 @@
 /* me3 Global Styles */
 
 :root {
-  --brand-primary: oklch(59.02% 0.146 172.62);
+  --brand-primary: #229874;
   --brand-primary-strong: color-mix(in oklab, var(--brand-primary), black 10%);
   --brand-primary-soft: color-mix(in oklab, var(--brand-primary), white 85%);
   --color-bg: #ffffff;
+  --color-surface: #ffffff;
   --color-bg-subtle: #f6f7f7;
   --color-bg-muted: #eef1f0;
   --color-text: #232428;
@@ -15,27 +16,27 @@
   --color-accent-contrast: #ffffff;
   --shadow-soft: 0 12px 30px rgba(27, 27, 29, 0.08);
   --ui-bg: var(--color-bg);
-  --ui-surface: var(--color-bg);
+  --ui-surface: var(--color-surface);
   --ui-surface-muted: var(--color-bg-subtle);
   --ui-text: var(--color-text);
   --ui-text-muted: var(--color-text-muted);
   --ui-border: var(--color-border);
   --ui-border-strong: var(--color-border-strong);
-  --ui-primary: var(--color-accent);
-  --ui-primary-strong: var(--brand-primary-strong);
+  --ui-primary: #1b4d3e;
+  --ui-primary-strong: color-mix(in oklab, var(--ui-primary), black 10%);
   --ui-primary-soft: var(--brand-primary-soft);
   --ui-primary-contrast: var(--color-accent-contrast);
   --ui-secondary: var(--color-bg-subtle);
   --ui-secondary-strong: var(--color-bg-muted);
   --ui-secondary-contrast: var(--color-text);
   --ui-accent: var(--color-accent);
-  --ui-accent-strong: var(--brand-primary-strong);
+  --ui-accent-strong: #1b4d3e;
   --ui-accent-soft: var(--brand-primary-soft);
   --ui-accent-contrast: var(--color-accent-contrast);
   --ui-radius-sm: 6px;
   --ui-radius-md: 8px;
   --ui-radius-lg: 12px;
-  --ui-shadow-sm: 0 8px 22px rgba(27, 27, 29, 0.08);
+  --ui-shadow-sm: 0 1px 2px rgba(13, 40, 32, 0.05), 0 10px 28px rgba(13, 40, 32, 0.08);
   --ui-shadow-md: var(--shadow-soft);
   --workspace-topbar-height: 52px;
   --workspace-topbar-padding-block: 8px;
@@ -59,7 +60,8 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
-    --color-bg: #0f1412;
+    --color-bg: #0b0d13;
+    --color-surface: #161b20;
     --color-bg-subtle: #1a1a1a;
     --color-bg-muted: #222;
     --color-text: #e8e8e8;
@@ -69,6 +71,11 @@
     --color-accent: var(--brand-primary);
     --color-accent-contrast: #ffffff;
     --shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.28);
+    --ui-primary: #ffffff;
+    --ui-primary-strong: #e4efea;
+    --ui-primary-contrast: #0b0d13;
+    --ui-accent-strong: #56c5a1;
+    --ui-shadow-sm: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 30px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
 }
@@ -88,7 +95,8 @@
 }
 
 :root[data-theme="dark"] {
-  --color-bg: #0f1412;
+  --color-bg: #0b0d13;
+  --color-surface: #161b20;
   --color-bg-subtle: #1a1a1a;
   --color-bg-muted: #222;
   --color-text: #e8e8e8;
@@ -98,6 +106,11 @@
   --color-accent: var(--brand-primary);
   --color-accent-contrast: #ffffff;
   --shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.28);
+  --ui-primary: #ffffff;
+  --ui-primary-strong: #e4efea;
+  --ui-primary-contrast: #0b0d13;
+  --ui-accent-strong: #56c5a1;
+  --ui-shadow-sm: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 30px rgba(0, 0, 0, 0.4);
   color-scheme: dark;
 }
 
@@ -174,9 +187,9 @@ code {
 /* vue-sonner: match ME3 surfaces (no loud semantic fills) */
 [data-sonner-toaster][data-theme="light"],
 [data-sonner-toaster][data-theme="dark"] {
-  --normal-bg: var(--color-bg);
-  --normal-border: var(--color-border-strong);
-  --normal-text: var(--color-text);
+  --normal-bg: var(--ui-primary);
+  --normal-border: transparent;
+  --normal-text: var(--ui-primary-contrast);
   --success-bg: var(--color-bg-subtle);
   --success-border: var(--color-border-strong);
   --success-text: var(--color-text);
@@ -189,4 +202,9 @@ code {
   --info-bg: var(--color-bg-subtle);
   --info-border: var(--color-border-strong);
   --info-text: var(--color-text);
+}
+
+[data-sonner-toast][data-styled="true"] {
+  border: 0;
+  box-shadow: var(--ui-shadow-md);
 }

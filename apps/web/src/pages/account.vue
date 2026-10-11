@@ -4923,9 +4923,10 @@ h1 {
 
 .card {
   margin-bottom: 20px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg);
+  border: 0;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .accordion-card {
@@ -4956,6 +4957,7 @@ h1 {
 .accordion-title-wrap h2 {
   margin: 0;
   font-size: 18px;
+  font-weight: 600;
   line-height: 1.2;
 }
 
@@ -5368,14 +5370,9 @@ h1 {
 }
 
 .theme-segmented__option--active {
-  border-color: color-mix(
-    in oklab,
-    var(--ui-accent, var(--color-accent)) 38%,
-    var(--ui-border, var(--color-border))
-  );
-  background: var(--ui-surface, var(--color-bg));
-  color: var(--ui-text, var(--color-text));
-  box-shadow: var(--ui-shadow-sm, var(--shadow-soft));
+  border-color: transparent;
+  background: var(--ui-primary);
+  color: var(--ui-primary-contrast);
 }
 
 .field-hint {

@@ -1776,7 +1776,7 @@ onBeforeUnmount(() => {
   background: transparent; color: var(--ui-text, var(--color-text));
   font: inherit; cursor: pointer;
 }
-.journal__tabs button[aria-pressed="true"] { background: var(--ui-surface, var(--color-surface)); font-weight: 700; }
+.journal__tabs button[aria-pressed="true"] { background: var(--ui-primary); color: var(--ui-primary-contrast); font-weight: 600; }
 .journal__assist-body { padding: 0 8px; }
 .journal__tabs button:focus-visible, .journal__panel-action:focus-visible, .journal__assist-result button:focus-visible, .journal__status button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
 .journal__panel-action { width: 100%; text-align: left; color: var(--ui-accent-strong, var(--ui-accent)); }
@@ -1793,7 +1793,7 @@ onBeforeUnmount(() => {
 .journal__assist-result h3 { margin: 16px 0 6px; font-size: .9rem; }
 .journal__assist-result p { margin: 6px 0; line-height: 1.45; }
 .journal__assist-result button, .journal__status button { color: var(--ui-accent-strong, var(--ui-accent)); }
-.journal__assist-result > button:first-of-type { background: var(--ui-text, var(--color-text)); color: var(--ui-bg, var(--color-bg)); font-weight: 700; }
+.journal__assist-result > button:first-of-type { background: var(--ui-primary); color: var(--ui-primary-contrast); font-weight: 600; }
 .journal__assist-result > button:nth-of-type(2) { border: 1px solid var(--ui-border, var(--color-border)); }
 .journal__assist-result ol { padding-left: 20px; }
 .journal__assist-result li { margin: 10px 0; }

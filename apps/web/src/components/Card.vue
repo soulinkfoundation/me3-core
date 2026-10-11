@@ -13,9 +13,10 @@
   flex-direction: column;
   gap: 16px;
   padding: 20px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg);
+  border: 0;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .card :deep(.card__head) {
@@ -24,7 +25,7 @@
 
 .card :deep(.card__title) {
   font-size: 1.125rem;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.3;
   margin: 0;
 }
