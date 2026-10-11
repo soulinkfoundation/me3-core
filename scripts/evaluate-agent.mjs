@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
 import { createAgentEvalScenarios, snapshotEvalState, auditEvalWrites } from "./agent-eval-scenarios.mjs";
-import { createRuntimeAdapter } from "./agent-eval-adapters.mjs";
+import { createRuntimeAdapter, createEvalStreamTiming } from "./agent-eval-adapters.mjs";
 import { createSeededEvalServices } from "./agent-eval-services.mjs";
 import { createGatewayRoute, gradeAgentReply, resolveGraderModel, graderOutputProvenance } from "./agent-eval-gateway.mjs";
 import { GRADER_MODEL, buildAgentEvalReport, agentEvalMarkdown, sumUsage, estimateCost } from "./agent-eval-report.mjs";
@@ -48,12 +48,13 @@ const markdownPath = reportPath.replace(/\.json$/, "") + ".md";
 mkdirSync(dirname(reportPath), { recursive: true });
 const config = {
   runtime, model: modelChoice, graderModel, graderOutput: graderOutputProvenance(graderModel), live, repeat, scenarioCount: scenarios.length, totalScenarioCount: allScenarios.length, baseDate,
+  scenarioSubsets: Object.fromEntries([...new Set(allScenarios.map(item => item.suite))].map(suite => [suite, allScenarios.filter(item => item.suite === suite).length])),
   commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   workingTreeDirty: Boolean(execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim()),
   command: ["pnpm eval:agent --", ...args].join(" "),
   seed: "Fresh migrated disposable file-backed SQLite per scenario/repeat; only synthetic example.invalid records. Close/reopen the database before each follow-up and final persisted-state verification.",
   providerFixtures: ["Seeded mailbox provider (real D1 writes, simulated mail transport)", "Synthetic image provider (native SQLite operation/assets/billing receipts, in-memory R2, no paid images)", "Synthetic public-web evidence", "No network people/Soulink results"],
-  transport: live ? "Provider SSE body passed through Cloudflare native compatibility endpoints to the runtime; TTFT from first nonempty runtime delta on every owner turn." : "Scripted fixture; TTFT is not provider evidence.",
+  transport: live ? "Provider SSE body passed through Cloudflare native compatibility endpoints to the runtime. First owner-text delta timing/source is measured separately from model-delta TTFT and the runtime's provider-only trace." : "Scripted fixture; TTFT is not provider evidence.",
   pricing: Object.fromEntries(Object.entries(pricing).map(([name, rates]) => [name, { ...rates }])),
   sourceFingerprint: sourceFingerprint(),
 };
@@ -78,10 +79,11 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
     activeScenario = { id: scenario.id, repeat: iteration, stage: "candidate" };
     const seed = createSeededAgentEvalInstallation(baseDate);
     const started = performance.now();
-    const row = { id: scenario.id, repeat: iteration, simpleAction: Boolean(scenario.simpleAction), passed: false, stateCheckPassed: false,
+    const row = { id: scenario.id, suite: scenario.suite, repeat: iteration, simpleAction: Boolean(scenario.simpleAction), passed: false, stateCheckPassed: false,
       providerFailure: false, safety: { duplicateWrites: 0, unauthorizedWrites: 0, wrongRecordWrites: 0 }, turns: [], turnTtftMs: [], toolCalls: [], usage: null, grader: null, graderUsage: null, costUsd: null, graderCostUsd: null };
     const toolResults = new Map();
     const toolContracts = new Map();
+    const canonicalOwnerInputs = [];
     const messages = [{ role: "system", content: buildAgentSystemPrompt({ ownerName: "Eval Owner", timezone: "Europe/Dublin", now: new Date(`${baseDate}T12:00:00Z`), ownerSnapshot: "Synthetic owner. Main project: ME3 Launch. Goals: a calmer launch week. Contact and mailbox data require tools." }) }];
     const route = live ? createGatewayRoute(modelChoice, { budget }) : { model: "scripted-fixture", providerId: "workers-ai", configured: true, usageSamples: [], recordUsage() {}, ai: { async run() { throw new Error("Fixture provider not initialized"); } }, aiGateway: null };
     try {
@@ -93,8 +95,10 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
       for (const [turnIndex, turn] of scenario.turns.entries()) {
         if (turnIndex > 0) seed.reopen();
         const turnStarted = performance.now();
-        let firstDeltaMs = null;
+        const streamTiming = createEvalStreamTiming(turnStarted);
         messages.push({ role: "user", content: turn.prompt });
+        // Separate authenticated synthetic instruction source, not assistant/checkpoint/model messages.
+        canonicalOwnerInputs.push({ turnId: `eval-${scenario.id}-${iteration}-${turnIndex}`, requestId: `eval-${scenario.id}-${iteration}-${turnIndex}`, messageText: turn.prompt });
         const fixtureOutputs = turn.calls.map((call, index) => ({ tool_calls: [{ id: `fixture-${iteration}-${turnIndex}-${index}`, name: call.name, arguments: { ...call.arguments } }] }));
         const fixtureReply = scenario.id === "web-research-cited" ? "Cloudflare AI Gateway provides observability and rate limiting. [Cloudflare documentation](https://developers.cloudflare.com/ai-gateway/)." : "The requested action is complete.";
         fixtureOutputs.push({ response: fixtureReply });
@@ -106,8 +110,8 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
           return next;
         };
         const response = await adapter.runTurn({ seed, ownerId: seed.ownerId, messages: [...messages], requestId: `eval-${scenario.id}-${iteration}-${turnIndex}`, turnId: `eval-${scenario.id}-${iteration}-${turnIndex}`,
-          ownerTimezone: "Europe/Dublin", modelRoute: route, services, enabledPluginIds, fixtureCalls: turn.calls, fixtureReply, approve: turn.approve,
-          onEvent(event) { if (event.event === "delta" && typeof event.data?.text === "string" && event.data.text) firstDeltaMs ??= performance.now() - turnStarted; } });
+          ownerTimezone: "Europe/Dublin", canonicalOwnerInputs: [...canonicalOwnerInputs], intentFixtureVerdicts: typeof turn.intentVerdicts === "function" ? turn.intentVerdicts(seed) : turn.intentVerdicts || [], modelRoute: route, services, enabledPluginIds, fixtureCalls: turn.calls, fixtureReply, approve: turn.approve,
+          onEvent: streamTiming.onEvent });
         messages.push({ role: "assistant", content: response.replyText });
         for (const result of response.toolResults || []) toolResults.set(result.execution_id, result);
         for (const contract of response.toolContracts || []) toolContracts.set(contract.name, contract);
@@ -116,8 +120,10 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
         // Maximum observed counts retain failures even when a later turn restores state.
         for (const name of Object.keys(row.safety)) row.safety[name] = Math.max(row.safety[name], turnSafety[name]);
         intermediatePassed &&= !turn.check || Boolean(turn.check(seed, [...toolResults.values()], messages.filter((message) => message.role === "assistant").map((message) => message.content)));
-        row.turnTtftMs.push(live && firstDeltaMs !== null ? Math.round(firstDeltaMs) : null);
-        row.turns.push({ prompt: turn.prompt, reply: response.replyText, status: response.status || response.source, elapsedMs: Math.round(performance.now() - turnStarted), ttftMs: row.turnTtftMs.at(-1), modelRequests: response.modelRequestCount });
+        const timing = streamTiming.snapshot(response.trace);
+        row.turnTtftMs.push(live ? timing.ttftMs : null);
+        row.turns.push({ prompt: turn.prompt, reply: response.replyText, status: response.status || response.source, elapsedMs: Math.round(performance.now() - turnStarted),
+          firstDeltaMs: timing.firstDeltaMs, firstDeltaSource: timing.firstDeltaSource, ttftMs: row.turnTtftMs.at(-1), providerTtftMs: live ? timing.providerTtftMs : null, modelRequests: response.modelRequestCount });
       }
       seed.reopen();
       row.persistedVerification = { freshConnection: true, reopenCount: seed.reopenCount };

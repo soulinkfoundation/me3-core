@@ -14,6 +14,17 @@ const migrationSql = readFileSync(
   "utf8",
 );
 
+const initialSchema = readFileSync(new URL("../migrations/0001_initial_public_schema.sql", import.meta.url), "utf8");
+// These historical-ledger fixtures still need the real prerequisites of later migrations.
+const runtimePrerequisites = [
+  readFileSync(new URL("../migrations/0036_calendar_push_notifications.sql", import.meta.url), "utf8"),
+  ...["owner_profile", "sites", "assistant_threads", "mission_plugin_activity", "mission_agent_runs", "mission_approvals", "local_executor_runs", "mission_tasks"].map(table => {
+    const statement = initialSchema.match(new RegExp(`^CREATE TABLE ${table} \\([\\s\\S]+?^\\);`, "m"))?.[0];
+    if (!statement) throw new Error(`Missing initial fixture schema for ${table}`);
+    return statement;
+  }),
+].join("\n");
+
 describe("canonical social Post legacy bridge", () => {
   beforeEach(() => {
     resetCoreRuntimeMigrationsForTest();
@@ -241,6 +252,9 @@ describe("canonical social Post legacy bridge", () => {
       resetCoreRuntimeMigrationsForTest();
       await ensureCoreRuntimeMigrations(env);
 
+      expect(sqliteRows<{ name: string; notnull: number; dflt_value: string }>(database, "PRAGMA table_info(mobile_push_preferences)")).toContainEqual(expect.objectContaining({ name: "agent_notifications_enabled", notnull: 1, dflt_value: "1" }));
+      expect(sqliteRows<{ checksum: string }>(database, "SELECT checksum FROM core_runtime_migrations WHERE id = '0062_agent_notifications'")).toEqual([{ checksum: "2026-10-11-agent-notifications-v1" }]);
+
       expect(
         sqliteRows<{ count: number }>(
           database,
@@ -305,12 +319,17 @@ function sqliteD1(database: string): D1Database {
         async first<T>() {
           return sqliteRows<T>(database, bindSql(sql, values))[0] || null;
         },
+        fixtureSql() { return bindSql(sql, values); },
         async run() {
           sqliteExec(database, bindSql(sql, values));
           return { success: true };
         },
       };
       return statement;
+    },
+    async batch(statements: Array<{ fixtureSql(): string }>) {
+      sqliteExec(database, `BEGIN;\n${statements.map(statement => statement.fixtureSql()).join(";\n")};\nCOMMIT;`);
+      return statements.map(() => ({ success: true }));
     },
   } as unknown as D1Database;
 }
@@ -367,10 +386,7 @@ function sqliteLiteral(value: unknown): string {
 }
 
 const RUNTIME_MIGRATIONS_EXCEPT_0022 = `
-  CREATE TABLE mission_tasks (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT 'owner'
-  );
+  ${runtimePrerequisites}
   CREATE TABLE core_runtime_migrations (
     id TEXT PRIMARY KEY,
     checksum TEXT NOT NULL,

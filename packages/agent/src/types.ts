@@ -56,6 +56,14 @@ export interface AgentToolContext {
   approvalData?: Record<string, unknown>;
   targetSelection?: AgentTargetSelection;
   toolCall?: AgentToolCall;
+  declaredTarget?: AgentTargetMetadata;
+  effectReceiptClaimed?: boolean;
+  loadIntentOwnerInputs?(references:AgentTargetIntentInputReferences,signal:AbortSignal):Promise<AgentTargetIntentOwnerInput[]>;
+  intentOwnerInputs?:AgentTargetIntentOwnerInput[];
+  intentToolContracts?:AgentTargetIntentOperation[];
+  verifyTargetIntent?(evidence:AgentTargetIntentEvidence,signal:AbortSignal):Promise<AgentTargetIntentVerdictResult>;
+  onTargetIntentReceipt?(receipt:AgentTargetIntentReceipt):void|Promise<void>;
+
   signal: AbortSignal;
 }
 export interface AgentTool {
@@ -74,6 +82,7 @@ export interface AgentTool {
 export type AgentEvent = { event: "status" | "tool" | "delta" | "step" | "approval_required"; data: Record<string, unknown> };
 export type AgentTrace = {
   model: string;
+  targetIntentRequests?:Array<{receiptId:string;modelId:string;usageId?:string;uncertain:boolean}>;
   steps: number;
   toolCalls: Array<{ name: string; effect: AgentEffect; status: string; durationMs: number }>;
   startedAt: string;
@@ -88,7 +97,7 @@ export interface AgentTurnStore {
   save(checkpoint: AgentCheckpoint): Promise<void>;
   getReceipt(key: string): Promise<AgentToolResult | null>;
   claimReceipt(key: string, call: AgentToolCall): Promise<boolean>;
-  finishReceipt(key: string, result: AgentToolResult): Promise<void>;
+  finishReceipt(key: string, result: AgentToolResult, options?: { notAdmitted?: boolean }): Promise<void>;
   requestApproval(key: string, call: AgentToolCall, card: NonNullable<AgentToolResult["approval"]>): Promise<string>;
   approvalDecision(id: string): Promise<"pending" | "approved" | "declined">;
   approvalData?(id: string): Promise<Record<string, unknown> | undefined>;
@@ -98,7 +107,7 @@ export type AgentTurnInput = {
   backupModel?: AgentModel;
   tools: readonly AgentTool[];
   messages: AgentMessage[];
-  context: Omit<AgentToolContext, "toolCallId" | "idempotencyKey" | "signal" | "messages">;
+  context: Omit<AgentToolContext, "toolCallId" | "idempotencyKey" | "effectReceiptClaimed" | "signal" | "messages">;
   store: AgentTurnStore;
   signal?: AbortSignal;
   maxSteps?: number;
@@ -107,3 +116,19 @@ export type AgentTurnInput = {
   onEvent?(event: AgentEvent): void | Promise<void>;
 };
 export type AgentTurnResult = { replyText: string; source: string; toolCalls: AgentTrace["toolCalls"]; usage: AgentUsage; modelRequestCount: number; trace: AgentTrace; status: AgentCheckpoint["status"]; approvalId?: string; targetPresentation?: AgentTargetPresentationCard };
+
+export type AgentTargetIntentOwnerInput = { turnId: string; requestId: string; messageText: string };
+export type AgentTargetIntentInputReferences = { readTurnIds: string[]; presentationTurnId?: string };
+export type AgentTargetIntentOperation = Pick<AgentTool,"name"|"description"|"parameters"|"effect"|"approval"> & {target:{domain:string;idParameter:string}};
+export type AgentTargetIntentCandidate = { id:string; selectionId:string; readTurnId:string; snapshot:Record<string,unknown> & {id:string} };
+export type AgentTargetIntentSourceRead = { selectionId:string; domain:string; readTurnId:string };
+export type AgentTargetIntentPresentation = { id:string; ordinal:number; createdTurnId:string; selectionId:string; domain:string; action:{name:string;arguments:Record<string,unknown>}; candidates:Array<{id:string;option:number;snapshot:Record<string,unknown>&{id:string}}> };
+export type AgentTargetIntentEvidence = { version:1; ownerId:string; threadId:string; turnId:string; requestId:string; ownerTimezone:string; ownerInputs:AgentTargetIntentOwnerInput[]; targets:Array<{domain:string;candidates:AgentTargetIntentCandidate[]}>; operations:AgentTargetIntentOperation[]; sourceReads?:AgentTargetIntentSourceRead[]; presentation?:AgentTargetIntentPresentation };
+export type AgentTargetIntentAction = {selectedCandidateId:string;authorizedCall:{name:string;arguments:Record<string,unknown>}};
+export type AgentTargetIntentVerdict = ({decision:"allow"} & (AgentTargetIntentAction | {actions:AgentTargetIntentAction[]})) | {decision:"deny"|"clarify";reason:string};
+export type AgentTargetIntentAuthorizedAction = AgentTargetIntentAction & {domain:string;actionKey:string};
+export type AgentTargetIntentInference = {modelId:string;usageId?:string;usage?:AgentUsage};
+export type AgentTargetIntentVerdictResult = AgentTargetIntentVerdict & {inference?:AgentTargetIntentInference};
+export type AgentTargetIntentReceipt = {receiptId:string;verdict?:AgentTargetIntentVerdict;inference?:AgentTargetIntentInference;authorizedActionKey?:string;authorizedActions?:AgentTargetIntentAuthorizedAction[];uncertain?:boolean;cacheHit:boolean};
+
+export type AgentTargetIntentContext = AgentToolContext;

@@ -4,10 +4,11 @@ import { createAgentEvalScenarios, snapshotEvalState, auditEvalWrites } from "./
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
 import { createSeededEvalServices } from "./agent-eval-services.mjs";
 
-test("82 independent scenarios retain multi-turn and cross-domain ambiguity controls", () => {
+test("85 independent scenarios retain the original82 multi-turn and cross-domain ambiguity controls", () => {
   const cases = createAgentEvalScenarios("2026-10-10");
-  assert.equal(cases.length, 82);
-  assert.equal(new Set(cases.map((item) => item.id)).size, 82);
+  assert.equal(cases.length, 85);
+  assert.equal(cases.filter(item => item.suite === "original-82").length, 82);
+  assert.equal(new Set(cases.map((item) => item.id)).size, 85);
   assert.ok(cases.filter((item) => item.turns.length > 1).length >= 8);
   assert.ok(cases.some((item) => item.id === "contacts-journal-ambiguity"));
   assert.ok(cases.every((item) => item.rubric && typeof item.check === "function"));
@@ -28,6 +29,30 @@ test("calendar creation controls supply the scheduled title, date, time and dura
   }
   for(const item of createAgentEvalScenarios("2026-10-10").filter(item=>item.id.startsWith("reminder-create")))assert.match(item.turns[0].prompt,/(?:9\s*am|09:00|morning)/i,item.id);
 });
+
+for (const id of ["calendar-create-1", "calendar-create-retried-3"]) {
+  for (const variant of [
+    { name: "lowercase title with the exact requested time", title: "planning review", statePassed: true, wrongRecordWrites: 0 },
+    { name: "wrong start time", startsAt: "2026-10-12T14:00:00.000Z", endsAt: "2026-10-12T14:45:00.000Z", statePassed: false, wrongRecordWrites: 1 },
+    { name: "wrong duration", endsAt: "2026-10-12T14:00:00.000Z", statePassed: false, wrongRecordWrites: 1 },
+    { name: "wrong owner", ownerId: "other-owner", statePassed: false, wrongRecordWrites: 1 },
+    { name: "duplicate creation", copies: 2, statePassed: false, wrongRecordWrites: 0, duplicateWrites: 1 },
+  ]) {
+    test(`${id} verifies ${variant.name} after a fresh SQLite connection`, () => {
+      const seed = createSeededAgentEvalInstallation("2026-10-11");
+      try {
+        const scenario = createAgentEvalScenarios(seed.baseDate).find(item => item.id === id);
+        const before = snapshotEvalState(seed);
+        for (let n = 0; n < (variant.copies ?? 1); n++) seed.raw.prepare("INSERT INTO user_calendar_events(id,user_id,title,starts_at,ends_at,timezone) VALUES(?,?,?,?,?,?)").run(
+          `created-review-${n}`, variant.ownerId ?? seed.ownerId, variant.title ?? "Planning review", variant.startsAt ?? "2026-10-12T13:00:00.000Z", variant.endsAt ?? "2026-10-12T13:45:00.000Z", "Europe/Dublin");
+        seed.reopen();
+        assert.equal(seed.reopenCount, 1);
+        assert.equal(scenario.check(seed), variant.statePassed);
+        assert.deepEqual(auditEvalWrites(before, snapshotEvalState(seed), scenario), { duplicateWrites: variant.duplicateWrites ?? 0, unauthorizedWrites: 0, wrongRecordWrites: variant.wrongRecordWrites });
+      } finally { seed.close(); }
+    });
+  }
+}
 
 test("contacts follow-up permits reuse of the grounded private list and rejects absent or public discovery",()=>{
   const item=createAgentEvalScenarios("2026-10-10").find(item=>item.id==="contacts-pronoun-list");
@@ -57,7 +82,7 @@ test("historical regressions are additive with explicit DST, duplicate and threa
   const cases = createAgentEvalScenarios("2026-10-10");
   const historical = cases.filter(item => item.id.startsWith("historical-"));
   assert.equal(historical.length, 16);
-  assert.equal(cases.length, 82);
+  assert.equal(cases.filter(item => item.suite === "original-82").length, 82);
   assert.ok(historical.every(item => item.historySource && item.rubric));
   const gap = historical.find(item => item.id === "historical-reminder-dst-gap");
   const fold = historical.find(item => item.id === "historical-reminder-dst-fold");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runAgentTurn } from "../../../packages/agent/src/loop";
-import type { AgentCheckpoint, AgentModel, AgentTool, AgentToolResult, AgentTurnStore } from "../../../packages/agent/src/types";
+import type { AgentCheckpoint, AgentEvent, AgentModel, AgentTool, AgentToolResult, AgentTurnStore } from "../../../packages/agent/src/types";
 
 function fixture() {
   let checkpoint: AgentCheckpoint | null = null;
@@ -10,7 +10,7 @@ function fixture() {
     load: async () => checkpoint && structuredClone(checkpoint),
     save: async (value) => { checkpoint = structuredClone(value); },
     getReceipt: async (key) => receipts.get(key) ?? null,
-    claimReceipt: async (key) => { if (receipts.has(key)) return false; receipts.set(key, null); return true; },
+    claimReceipt: async (key) => { if (receipts.has(key) && receipts.get(key)?.status !== "needs_approval") return false; receipts.set(key, null); return true; },
     finishReceipt: async (key, value) => { receipts.set(key, value); },
     requestApproval: async () => "approval-1",
     approvalDecision: async () => decision,
@@ -23,6 +23,28 @@ function fixture() {
 }
 
 describe("from scratch agent loop", () => {
+  it.each(["selection", "step-limit", "cancelled", "approval"])("streams the actual %s reply without fabricating a provider token", async (kind) => {
+    const f = fixture(), events: AgentEvent[] = [];
+    f.tool.effect = kind === "approval" ? "external" : "read";
+    f.tool.endsTurn = kind === "selection";
+    f.tool.execute = async () => kind === "selection" ? { status: "needs_selection", data: { targetPresentation: { id: "presentation", status: "pending" } } } : { status: "ok" };
+    const input = { ...f, tools: [f.tool], messages: [], model: f.model([{ text: "", toolCalls: [f.call()] }]),
+      ...(kind === "step-limit" ? { maxSteps: 1 } : {}), ...(kind === "cancelled" ? { signal: AbortSignal.abort() } : {}), onEvent: (event: AgentEvent) => { events.push(event); } };
+    const completed = await runAgentTurn(input);
+    expect(events.filter(event => event.event === "delta")).toEqual([{ event: "delta", data: { text: completed.replyText, source: "runtime" } }]);
+    expect(completed.trace.timeToFirstTokenMs).toBeNull();
+    if (kind !== "approval") {
+      const replay: AgentEvent[] = [];
+      expect((await runAgentTurn({ ...input, model: f.model([]), onEvent: event => { replay.push(event); } })).replyText).toBe(completed.replyText);
+      expect(replay).toEqual([]);
+    }
+  });
+  it("tags provider text and does not duplicate it at completion", async () => {
+    const f = fixture(), events: AgentEvent[] = [];
+    const result = await runAgentTurn({ ...f, tools: [], messages: [], model: f.model([{ text: "Hello", toolCalls: [] }]), onEvent: event => { events.push(event); } });
+    expect(events.filter(event => event.event === "delta")).toEqual([{ event: "delta", data: { text: "Hello", source: "model" } }]);
+    expect(result.trace.timeToFirstTokenMs).toEqual(expect.any(Number));
+  });
   it("does not admit an effect after cancellation during the running event", async () => {
     const f = fixture(), controller = new AbortController(); let effects = 0;
     f.tool.execute = async () => { effects++; return { status: "ok" }; };

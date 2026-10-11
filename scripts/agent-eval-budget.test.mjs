@@ -36,3 +36,24 @@ test("published candidate prices account for cached reads and writes separately"
     assert.equal(budget.summary().reservedUsd, 0);
   }
 });
+
+test("candidate affordability stop prohibits an otherwise affordable grader reserve", () => {
+  const budget = createEvalBudget(0.1, { "openai:test": { input: 1, output: 1, cached: 0, cacheWrite: 1 } });
+  assert.throws(() => budget.reserve("openai/test", { max_tokens: 200_000 }), /budget would exceed/);
+  assert.equal(budget.summary().stopped, true);
+  assert.throws(() => budget.reserve("openai/test", { max_tokens: 1 }), /budget.*(?:stopped|exceed)/i);
+  assert.equal(budget.summary().reservedUsd, 0);
+});
+
+test("a terminal guard still settles admitted usage without reopening admission", () => {
+  const budget = createEvalBudget(0.1, { "openai:test": { input: 1, output: 1, cached: 0, cacheWrite: 1 } });
+  const pending = budget.reserve("openai/test", { max_tokens: 10 });
+  assert.ok(budget.summary().reservedUsd > 0);
+  assert.throws(() => budget.reserve("openai/test", { max_tokens: 200_000 }), /budget would exceed/);
+  budget.settle(pending, { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0, cacheWriteInputTokens: 0 });
+  assert.equal(budget.summary().chargedUsd, 0.00011);
+  assert.equal(budget.summary().reservedUsd, 0);
+  assert.equal(budget.summary().stopped, true);
+  assert.throws(() => budget.reserve("openai/test", { max_tokens: 1 }), /budget.*(?:stopped|exceed)/i);
+  assert.equal(budget.summary().reservedUsd, 0);
+});

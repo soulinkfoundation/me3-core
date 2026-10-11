@@ -77,6 +77,40 @@ test("later known usage settles that request without releasing an earlier unknow
   assert.equal(settled[0].id, 2); assert.equal(route.usageComplete, false);
 });
 
+test("rejected reservation supplies neither admission provenance nor a provider request", async () => {
+  const budget = createEvalBudget(0.01, DEFAULT_EVAL_PRICING);
+  let admissions = 0;
+  let requests = 0;
+  const route = createGatewayRoute("openai:gpt-6.1-sol", { accountId: "synthetic", apiToken: "synthetic", budget,
+    fetch: async () => { requests++; return new Response(); } });
+  await assert.rejects(route.ai.run("openai/gpt-6.1-sol", { stream: true, max_completion_tokens: 4096 }, { onAdmission() { admissions++; } }), /budget/i);
+  assert.equal(admissions, 0);
+  assert.equal(requests, 0);
+  assert.equal(budget.summary().reservedUsd, 0);
+});
+
+test("successful budget admission exposes its real ID before fetch and retains unknown usage", async () => {
+  const budget = createEvalBudget(1, DEFAULT_EVAL_PRICING);
+  let admittedId;
+  let observedId;
+  let requests = 0;
+  const observedBudget = { reserve(model, input) { admittedId = budget.reserve(model, input); return admittedId; }, settle: budget.settle };
+  const route = createGatewayRoute("openai:gpt-6.1-sol", { accountId: "synthetic", apiToken: "synthetic", budget: observedBudget,
+    fetch: async (_url, options) => {
+      requests++;
+      assert.equal(observedId, admittedId);
+      assert.equal(typeof observedId, "string");
+      assert.equal("onAdmission" in JSON.parse(options.body), false);
+      return new Response("data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    } });
+  await route.ai.run("openai/gpt-6.1-sol", { stream: true, max_completion_tokens: 10 }, { onAdmission(id) { observedId = id; } });
+  assert.equal(requests, 1);
+  assert.equal(observedId, admittedId);
+  assert.equal(budget.summary().chargedUsd, 0);
+  assert.ok(budget.summary().reservedUsd > 0);
+  assert.equal(route.usageComplete, false);
+});
+
 test("shared grader still rejects malformed scores and invented tool invocations", async () => {
   const input = { scenario: { rubric: "Answer." }, messages: [], toolResults: [], stateCheckPassed: true };
   await assert.rejects(gradeAgentReply({ ...input, route: { ai: { async run() { return { response: '{"answered":1}' }; } } } }), /grader/i);

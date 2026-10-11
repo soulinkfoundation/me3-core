@@ -62,12 +62,12 @@ export function createD1TurnStore(db:AgentDb,identity:D1TurnIdentity):AgentTurnS
       const inserted=await db.prepare(`INSERT OR IGNORE INTO me3_agent_tool_receipts(owner_id,idempotency_key,turn_id,tool_name,arguments_json,status)
         VALUES(?,?,?,?,?,'running')`).bind(ownerId,key,turnId,call.name,JSON.stringify(call.arguments)).run();
       if(inserted.meta?.changes)return true;
-      const resumed=await db.prepare("UPDATE me3_agent_tool_receipts SET status='running',updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND status='waiting'").bind(ownerId,key,turnId).run();
+      const resumed=await db.prepare("UPDATE me3_agent_tool_receipts SET status='running',updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND status IN ('waiting','not_admitted')").bind(ownerId,key,turnId).run();
       return Boolean(resumed.meta?.changes);
     },
-    async finishReceipt(key,value) {
-      await db.prepare("UPDATE me3_agent_tool_receipts SET status=?,result_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND idempotency_key=? AND turn_id=?")
-        .bind(value.status==="needs_approval"?"waiting":"finished",JSON.stringify(value),ownerId,key,turnId).run();
+    async finishReceipt(key,value,options) {
+      await db.prepare("UPDATE me3_agent_tool_receipts SET status=?,result_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND status='running'")
+        .bind(options?.notAdmitted&&value.status==="error"?"not_admitted":value.status==="needs_approval"?"waiting":"finished",JSON.stringify(value),ownerId,key,turnId).run();
     },
     async requestApproval(key,call,card) {
       await db.prepare(`INSERT OR IGNORE INTO me3_agent_approvals(id,owner_id,thread_id,turn_id,idempotency_key,tool_name,arguments_json,card_json)

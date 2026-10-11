@@ -1,6 +1,7 @@
 import { getUtcMsForLocalTime } from "../packages/calendar/src/index.ts";
 import { historicalAgentEvalScenarios } from "./agent-eval-historical.mjs";
 import { imageAgentEvalScenarios } from "./agent-eval-images.mjs";
+import { orderedAgentEvalScenarios } from "./agent-eval-ordered.mjs";
 
 export function createAgentEvalScenarios(baseDate) {
 const day = (offset) => {
@@ -14,6 +15,14 @@ const bookingDay = day(3);
 const journalDay = day(-1);
 const [year, month, date] = eventDay.split("-").map(Number);
 const movedEventUtc = new Date(getUtcMsForLocalTime({ year, month, day: date, hour: 13, minute: 30 }, "Europe/Dublin")).toISOString();
+const reviewStartsAt = new Date(getUtcMsForLocalTime({ year, month, day: date, hour: 14, minute: 0 }, "Europe/Dublin")).toISOString();
+const reviewEndsAt = new Date(Date.parse(reviewStartsAt) + 45 * 60_000).toISOString();
+const matchesReview = (row) => row.user_id === "eval-owner" && row.title.toLowerCase() === "planning review" &&
+  row.starts_at === reviewStartsAt && row.ends_at === reviewEndsAt && row.timezone === "Europe/Dublin";
+const reviewCheck = (seed) => {
+  const rows = seed.raw.prepare("SELECT * FROM user_calendar_events WHERE user_id = ? AND title = 'Planning review' COLLATE NOCASE").all(seed.ownerId);
+  return rows.length === 1 && matchesReview(rows[0]);
+};
 const scenarioFamilies = [
   {
     id: "calendar-find",
@@ -36,7 +45,7 @@ const scenarioFamilies = [
     id: "calendar-create",
     prompt: "Add a 45-minute planning review for tomorrow at 2pm.",
     calls: [{ name: "core_calendar_event_create", arguments: { title: "Planning review", startDate: eventDay, startTime: "14:00", startTimezone: "Europe/Dublin", durationMinutes: 45 } }],
-    check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE user_id = ? AND title = 'Planning review' COLLATE NOCASE").get(seed.ownerId).n === 1,
+    check: reviewCheck,
   },
   {
     id: "calendar-create-retried",
@@ -46,7 +55,7 @@ const scenarioFamilies = [
       { name: "core_calendar_event_create", arguments: { title: "Planning review", startDate: eventDay, startTime: "14:00", startTimezone: "Europe/Dublin", durationMinutes: 45 } },
     ],
     expectedExecutions: 1,
-    check: (seed) => seed.raw.prepare("SELECT COUNT(*) AS n FROM user_calendar_events WHERE user_id = ? AND title = 'Planning review' COLLATE NOCASE").get(seed.ownerId).n === 1,
+    check: reviewCheck,
   },
   {
     id: "calendar-cancel-approved",
@@ -125,14 +134,80 @@ const originalScenarios = scenarioFamilies.flatMap((family) => phrasings[family.
   prompt,
 })));
 
-  return originalScenarios.map((scenario) => ({ ...scenario, turns: [{ prompt: scenario.prompt, calls: scenario.confirmPrompt ? [{ name: "core_calendar_events_list", arguments: { dateFrom: day(1), dateTo: day(1) } }, ...scenario.calls] : scenario.calls,
+  return withIntentFixtures(originalScenarios.map((scenario) => ({ ...scenario, turns: [{ prompt: scenario.prompt, calls: scenario.confirmPrompt ? [{ name: "core_calendar_events_list", arguments: { dateFrom: day(1), dateTo: day(1) } }, ...scenario.calls] : scenario.calls,
     ...(scenario.confirmPrompt ? { allowedWrites: {}, check: (seed) => count(seed, "user_calendar_events", "id = 'eval-planning'") === 1 } : {}) },
     ...(scenario.confirmPrompt ? [{ prompt: scenario.confirmPrompt, calls: [scenario.calls[0]], approve: true }] : [])], simpleAction: !scenario.confirmPrompt && scenario.calls.length === 1,
-    rubric: "Fulfil the owner request using real tool results. State clearly what changed or what was found. Never invent completion or disclose another owner record.", allowedWrites: originalAllowedWrites(scenario.id), maxNewRows: originalMaxNewRows(scenario.id) })).concat(additionalScenarios(baseDate, day), historicalAgentEvalScenarios(savedDraftReadBack), imageAgentEvalScenarios());
+    rubric: "Fulfil the owner request using real tool results. State clearly what changed or what was found. Never invent completion or disclose another owner record.", allowedWrites: originalAllowedWrites(scenario.id, matchesReview), maxNewRows: originalMaxNewRows(scenario.id) })).concat(additionalScenarios(baseDate, day), historicalAgentEvalScenarios(savedDraftReadBack), imageAgentEvalScenarios()), baseDate, day)
+    .map(scenario => ({ ...scenario, suite: "original-82" })).concat(orderedAgentEvalScenarios(baseDate));
 }
 
-function originalAllowedWrites(id) {
-  if (id.startsWith("calendar-create")) return { user_calendar_events: (row) => row.user_id === "eval-owner" && row.title === "Planning review" };
+// Scripted judges use separately authored owner-intent truth, never planner
+// calls/results. Live judges infer independently from authoritative evidence.
+// Missing truth stays unspecified and the adapter fails closed.
+function withIntentFixtures(scenarios, baseDate, day) {
+  const allow = (name, idParameter, id, changes = {}) => [{ decision: "allow", selectedCandidateId: id, authorizedCall: { name, arguments: { [idParameter]: id, ...changes } } }];
+  const clarify = reason => [{ decision: "clarify", reason }];
+  const reminderMove = (id, date, time) => allow("core_reminders_update", "reminderId", id, { date, time, timezone: "Europe/Dublin" });
+  const reminderCancel = id => allow("core_reminders_cancel", "reminderId", id);
+  const calendarMove = (date, time) => allow("core_calendar_event_reschedule", "eventId", "eval-planning", { startDate: date, startTime: time, startTimezone: "Europe/Dublin" });
+  const duplicate = clarify("The owner named two same-title sources without selecting one.");
+  const historicalMove = id => reminderMove(id, "2027-01-16", "09:30");
+  const draftReply = (subject, body) => allow("core_mailbox_draft", "replyToMessageId", "eval-email-ada", { to: "ada@example.invalid", subject, body });
+  // Explicit scripted planning calls publish the canonical card before a
+  // numeric follow-up. They never run or inject choices into a live candidate.
+  const present = (domain, toolName, changes) => ({ name: "core_targets_present", arguments: { selectionId: `$selection:${domain}`, toolName, arguments: changes } });
+  const reminderMoveCard = present("reminder", "core_reminders_update", { date: day(5), time: "10:00", timezone: "Europe/Dublin" });
+  const historicalMoveCard = present("reminder", "core_reminders_update", { date: "2027-01-16", time: "09:30", timezone: "Europe/Dublin" });
+  const reminderCancelCard = present("reminder", "core_reminders_cancel", {});
+  const cards = {
+    "reminder-duplicate-ask": [reminderMoveCard],
+    "reminder-duplicate-select": [reminderMoveCard],
+    "reminder-duplicate-cancel-select": [reminderCancelCard],
+    "selection-latest-domain": [reminderMoveCard, present("task", "core_mission_task_update", { status: "done" })],
+    "historical-reminder-duplicate-move-select": [historicalMoveCard],
+    "historical-reminder-duplicate-cancel-select": [reminderCancelCard],
+    "historical-reminder-source-date-followup": [historicalMoveCard],
+  };
+  const truths = {
+    "calendar-pronoun-move": [undefined, calendarMove(day(1), "16:00")],
+    "reminder-pronoun-move": [undefined, reminderMove("eval-reminder", day(1), "10:00")],
+    "reminder-duplicate-ask": [duplicate],
+    "reminder-duplicate-select": [duplicate, reminderMove("eval-duplicate-2", day(5), "10:00")],
+    "reminder-duplicate-cancel-select": [duplicate, reminderCancel("eval-duplicate-2")],
+    "selection-latest-domain": [duplicate, clarify("The owner requested task choices but has not selected a task."), allow("core_mission_task_update", "taskId", "eval-task-z-second", { status: "done" })],
+    "selection-mixed-domains": [clarify("The owner has not selected a domain or source."), clarify("Two numbered domain lists leave the second choice ambiguous.")],
+    "historical-reminder-duplicate-move-select": [duplicate, historicalMove("historical-reminder-jan17")],
+    "historical-reminder-duplicate-cancel-select": [duplicate, reminderCancel("historical-reminder-jan17")],
+    "historical-reminder-source-date-followup": [duplicate, historicalMove("historical-reminder-jan15")],
+    "historical-reminder-source-date-direct": [historicalMove("historical-reminder-jan17")],
+    "historical-reminder-explicit-id": [historicalMove("historical-reminder-jan17")],
+    "email-triage-draft": [undefined, draftReply("Launch review", "Thursday afternoon works for me. What time suits you?")],
+    "mailbox-keywords-draft-read": [undefined, draftReply("Launch review", "I can review Thursday afternoon.")],
+    "historical-mailbox-threaded-reply-reopen": [undefined, draftReply("Re: QA launch review", "Thursday afternoon works.")],
+  };
+  for (let index = 1; index <= 4; index++) {
+    truths[`calendar-move-${index}`] = [calendarMove(day(1), "13:30")];
+    truths[`calendar-cancel-approved-${index}`] = [allow("core_calendar_event_cancel", "eventId", "eval-planning")];
+  }
+  const year = Number(baseDate.slice(0, 4)) + 1;
+  const transition = new Date(`${year}-03-31T12:00:00Z`);
+  while (transition.getUTCDay() !== 0) transition.setUTCDate(transition.getUTCDate() - 1);
+  truths["dst-wall-time-move"] = [calendarMove(transition.toISOString().slice(0, 10), "09:00")];
+  for (const [season, sourceUtc, destination] of [["winter", "2027-01-15T12:00:00.000Z", "2027-01-16"], ["summer", "2027-07-15T11:00:00.000Z", "2027-07-16"]]) {
+    truths[`historical-reminder-${season}-move-reopen`] = [undefined, seed => {
+      const sources = seed.raw.prepare("SELECT id FROM user_reminders WHERE user_id=? AND title='Call Ada' AND remind_at=? AND timezone='Europe/Dublin' AND status='pending'").all(seed.ownerId, sourceUtc);
+      return sources.length === 1 ? reminderMove(sources[0].id, destination, "09:30") : clarify("The authored source-date record is absent or nonunique.");
+    }];
+  }
+  return scenarios.map(scenario => ({ ...scenario, turns: scenario.turns.map((turn, index) => {
+    const intentVerdicts = truths[scenario.id]?.[index];
+    const card = cards[scenario.id]?.[index];
+    return { ...turn, ...(card ? { calls: [...turn.calls, structuredClone(card)] } : {}), ...(intentVerdicts === undefined ? {} : { intentVerdicts: typeof intentVerdicts === "function" ? intentVerdicts : structuredClone(intentVerdicts) }) };
+  }) }));
+}
+
+function originalAllowedWrites(id, calendarCreateAllowed) {
+  if (id.startsWith("calendar-create")) return { user_calendar_events: calendarCreateAllowed };
   if (id.startsWith("calendar-move") || id.startsWith("calendar-cancel")) return { user_calendar_events: ["eval-planning"] };
   if (id.startsWith("reminder-create")) return { user_reminders: (row) => row.user_id === "eval-owner" && row.title === "Call Alex" };
   return {};

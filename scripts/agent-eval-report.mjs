@@ -44,11 +44,17 @@ export function buildAgentEvalReport(config, results) {
   const rate = (predicate) => count ? results.filter(predicate).length / count : 0;
   const safety = ["duplicateWrites", "unauthorizedWrites", "wrongRecordWrites"].reduce((out, name) => ({ ...out, [name]: results.reduce((sum, row) => sum + (row.safety?.[name] || 0), 0) }), {});
   const turnTtfts = results.flatMap((row) => row.turnTtftMs || [row.ttftMs]);
+  const turns = results.flatMap(row => row.turns || []);
+  const hasStreamProvenance = turns.some(turn => Object.hasOwn(turn, "firstDeltaSource"));
+  const firstDeltas = turns.map(turn => turn.firstDeltaMs);
   const totals = {
     runs: count, passed: results.filter((row) => row.passed).length, passRate: rate((row) => row.passed),
     statePassRate: rate((row) => row.stateCheckPassed), graderPassRate: rate((row) => row.grader?.passed),
     providerFailures: results.filter((row) => row.providerFailure).length, safety,
     ttftP50Ms: percentile(turnTtfts, 0.5), ttftP95Ms: percentile(turnTtfts, 0.95),
+    firstDeltaP50Ms: percentile(firstDeltas, 0.5), firstDeltaP95Ms: percentile(firstDeltas, 0.95),
+    runtimeFirstDeltaTurns: turns.filter(turn => turn.firstDeltaSource === "runtime").length,
+    modelFirstDeltaTurns: turns.filter(turn => turn.firstDeltaSource === "model").length,
     elapsedP50Ms: percentile(results.map((row) => row.elapsedMs), 0.5), elapsedP95Ms: percentile(results.map((row) => row.elapsedMs), 0.95),
     simpleActionP95Ms: percentile(results.filter((row) => row.simpleAction).map((row) => row.elapsedMs), 0.95),
     usage: sumUsage(results.map((row) => row.usage)), graderUsage: sumUsage(results.map((row) => row.graderUsage)),
@@ -65,6 +71,13 @@ export function buildAgentEvalReport(config, results) {
       elapsedP50Ms: percentile(runs.map((row) => row.elapsedMs), 0.5), elapsedP95Ms: percentile(runs.map((row) => row.elapsedMs), 0.95),
       costUsd: runs.every((row) => Number.isFinite(row.costUsd)) ? runs.reduce((sum, row) => sum + row.costUsd, 0) / runs.length : null };
   });
+  const subsets = [...new Set(results.map(row => row.suite).filter(Boolean))].map(name => {
+    const rows = results.filter(row => row.suite === name);
+    return { name, configuredScenarioCount: config.scenarioSubsets?.[name] ?? null, observedScenarioCount: new Set(rows.map(row => row.id)).size,
+      runs: rows.length, passed: rows.filter(row => row.passed).length, statePassed: rows.filter(row => row.stateCheckPassed).length,
+      graderPassed: rows.filter(row => row.grader?.passed).length,
+      safety: Object.fromEntries(Object.keys(safety).map(key => [key, rows.reduce((sum, row) => sum + (row.safety?.[key] || 0), 0)])) };
+  });
   const costPerTypicalConversationUsd = totals.costUsd === null ? null : totals.costUsd / count;
   const checks = {
     liveModel: config.live === true, complete: count > 0 && count === config.repeat * config.scenarioCount,
@@ -77,7 +90,9 @@ export function buildAgentEvalReport(config, results) {
     }),
     state: totals.statePassRate >= AGENT_EVAL_GATE.statePassRate, grader: totals.graderPassRate >= AGENT_EVAL_GATE.graderPassRate,
     safety: Object.values(safety).every((value) => value === 0), provider: totals.providerFailures === 0,
-    streaming: turnTtfts.some(Number.isFinite) && results.every((row) => row.turns?.length
+    streaming: hasStreamProvenance ? firstDeltas.some(Number.isFinite) && results.every(row => row.turns?.length && row.turns.every(turn =>
+      Number.isFinite(turn.firstDeltaMs) && turn.firstDeltaMs >= 0 && ["runtime", "model"].includes(turn.firstDeltaSource)))
+      : turnTtfts.some(Number.isFinite) && results.every((row) => row.turns?.length
       ? row.turns.every((turn) => turn.status === "needs_approval" || Number.isFinite(turn.ttftMs))
       : (row.turnTtftMs || [row.ttftMs]).every(Number.isFinite)),
     ttft: totals.ttftP95Ms !== null && totals.ttftP95Ms <= AGENT_EVAL_GATE.ttftP95Ms,
@@ -90,7 +105,7 @@ export function buildAgentEvalReport(config, results) {
     gate: { thresholds: AGENT_EVAL_GATE, checks, passed: Object.values(checks).every(Boolean), informationalOnly: config.runtime === "sdk" },
     economics: { subscriptionUsd: 29.99, typicalConversationDefinition: "Mean complete scenario (including owner follow-ups), equally weighted. This synthetic mix is not measured owner usage.", costPerTypicalConversationUsd,
       conversationsPerSubscriptionBeforeInfrastructure: costPerTypicalConversationUsd > 0 ? 29.99 / costPerTypicalConversationUsd : null, excludes: "Infrastructure, Jev, storage, tax and billing overhead; grader cost is reported separately." },
-    totals, scenarios, results };
+    totals, scenarios, subsets, results };
 }
 
 export function agentEvalMarkdown(report) {
@@ -100,6 +115,8 @@ export function agentEvalMarkdown(report) {
   return ["# ME3 agent evaluation", "", `Runtime: ${report.runtime}; model: ${report.model}; grader: ${report.graderModel}; revision: ${report.commit || "unknown"}.`, "",
     `Gate: **${report.gate.passed ? "PASS" : "FAIL"}**${report.gate.informationalOnly ? " (SDK informational comparison)" : ""}. State ${percent(report.totals.statePassRate)}, grader ${percent(report.totals.graderPassRate)}. Unsafe writes: ${Object.values(report.totals.safety).reduce((a, b) => a + b, 0)}.`, "",
     `TTFT p50/p95: ${format(report.totals.ttftP50Ms)}/${format(report.totals.ttftP95Ms)} ms. Total p50/p95: ${format(report.totals.elapsedP50Ms)}/${format(report.totals.elapsedP95Ms)} ms. Typical conversation: ${money(report.economics.costPerTypicalConversationUsd)} against the $29.99 plan; grader cost: ${money(report.totals.graderCostUsd)}.`, "",
+    `First delivered text p50/p95: ${format(report.totals.firstDeltaP50Ms)}/${format(report.totals.firstDeltaP95Ms)} ms; runtime/model first-delta turns: ${report.totals.runtimeFirstDeltaTurns}/${report.totals.modelFirstDeltaTurns}. Runtime text never fills model/provider TTFT.`, "",
+    ...(report.subsets?.length ? [`Subsets: ${report.subsets.map(subset => `${subset.name}: ${subset.passed}/${subset.runs} passed, ${subset.observedScenarioCount}/${subset.configuredScenarioCount} scenarios observed`).join("; ")}.`, ""] : []),
     "| Scenario | Pass | State | Grader | Flaky | TTFT p50/p95 ms | Total p50/p95 ms | Cost/conversation |", "| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: |",
     ...report.scenarios.map((row) => `| ${row.id} | ${percent(row.passRate)} | ${percent(row.statePassRate)} | ${percent(row.graderPassRate)} | ${row.flaky ? "yes" : "no"} | ${format(row.ttftP50Ms)}/${format(row.ttftP95Ms)} | ${format(row.elapsedP50Ms)}/${format(row.elapsedP95Ms)} | ${money(row.costUsd)} |`), "", report.evidenceLimit, "",
     `Command: \`${report.command || "unknown"}\``, "", `Failed gate checks: ${Object.entries(report.gate.checks).filter(([, passed]) => !passed).map(([name]) => name).join(", ") || "none"}.`, ""].join("\n");

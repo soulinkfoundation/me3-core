@@ -33,10 +33,11 @@ function fixture() {
     INSERT INTO user_reminders(id,user_id,title,remind_at,timezone,status) VALUES('first','owner','Same title','2027-01-15T12:00:00Z','Europe/Dublin','pending'),('second','owner','Same title','2027-01-17T12:00:00Z','Europe/Dublin','pending');`);
   const db:AgentDb={prepare(sql){let values:unknown[]=[];const statement={bind(...args:unknown[]){values=args;return statement;},async first<T>(){return(raw.prepare(sql).get(...values as never[])??null) as T|null;},async all<T>(){return{results:raw.prepare(sql).all(...values as never[]) as T[]};},async run(){return{meta:{changes:Number(raw.prepare(sql).run(...values as never[]).changes)}};}};return statement;},async batch(statements){raw.exec("BEGIN IMMEDIATE");try{const result=[];for(const statement of statements)result.push(await statement.run());raw.exec("COMMIT");return result;}catch(error){raw.exec("ROLLBACK");throw error;}}};
   let calls=0;
-  const run=vi.fn(async(_model:string,input:{messages:Array<{role:string;content:string}>})=>{
+  const run=vi.fn(async(_model:string,input:{messages:Array<{role:string;content:string}>;tools?:Array<{function?:{name:string};name?:string}>})=>{
     calls++;
     const usage={prompt_tokens:10,completion_tokens:10,total_tokens:20};
     const tool=(name:string,args:unknown)=>({response:"",tool_calls:[{id:`call-${calls}`,type:"function",function:{name,arguments:JSON.stringify(args)}}],usage});
+    if(input.tools?.length===1&&(input.tools[0].function?.name??input.tools[0].name)==="core_target_intent_verdict")return tool("core_target_intent_verdict",{decision:"clarify",reason:"The owner has not selected between the two same-title reminders."});
     if(calls===1)return tool("core_reminders_list",{query:"Same title"});
     if(calls===2){const read=JSON.parse([...input.messages].reverse().find(message=>message.role==="tool")!.content);return tool("core_targets_present",{selectionId:read.data.selectionId,toolName:"core_reminders_update",arguments:{date:"2027-01-16",time:"09:30",timezone:"Europe/Dublin"}});}
     return{response:"Moved the exact selected reminder.",usage};
@@ -55,7 +56,7 @@ describe("new runtime target card persistence and durable delivery",()=>{
     expect(result.status).toBe("complete");expect(result.targetPresentation).toMatchObject({status:"pending",actionLabel:"Move reminder",candidates:[{id:"first",option:1},{id:"second",option:2}]});
     expect(events.at(-1)).toMatchObject({event:"done",data:{targetPresentation:{status:"pending"}}});
     const saved=JSON.parse((f.raw().prepare("SELECT metadata_json FROM assistant_messages WHERE role='assistant'").get() as {metadata_json:string}).metadata_json);
-    expect(saved.targetPresentation).toEqual(result.targetPresentation);expect(JSON.stringify(saved.targetPresentation)).not.toContain("snapshot");expect(f.run).toHaveBeenCalledTimes(2);
+    expect(saved.targetPresentation).toEqual(result.targetPresentation);expect(JSON.stringify(saved.targetPresentation)).not.toContain("snapshot");expect(f.run).toHaveBeenCalledTimes(3);
     f.reopen();const selection={presentationId:(result.targetPresentation as {id:string}).id,candidateId:"second"};
     const chosen={...f.input,turnId:"choice",requestId:"choice-request",messageText:"Choose option 2",targetSelection:selection};
     await persistAgentTargetSelectionInput(f.env,chosen);const complete=await executeNewAgentTurn(f.env,chosen,new AbortController().signal);
@@ -63,7 +64,7 @@ describe("new runtime target card persistence and durable delivery",()=>{
     expect(f.raw().prepare("SELECT remind_at FROM user_reminders WHERE id='second'").get()).toMatchObject({remind_at:"2027-01-16T09:30:00.000Z"});
     expect(f.raw().prepare("SELECT COUNT(*) count FROM test_reminder_effects").get()).toMatchObject({count:1});
     f.reopen();await persistAgentTargetSelectionInput(f.env,chosen);await executeNewAgentTurn(f.env,chosen,new AbortController().signal);
-    expect(f.raw().prepare("SELECT COUNT(*) count FROM test_reminder_effects").get()).toMatchObject({count:1});expect(f.run).toHaveBeenCalledTimes(3);
+    expect(f.raw().prepare("SELECT COUNT(*) count FROM test_reminder_effects").get()).toMatchObject({count:1});expect(f.run).toHaveBeenCalledTimes(4);
   });
   it.each(["expired","superseded","cancelled"])("fresh DO cached response and terminal SSE revalidate a %s saved card",async reason=>{
     const f=fixture();await f.persist();const result=await executeNewAgentTurn(f.env,f.input,new AbortController().signal);
@@ -73,6 +74,6 @@ describe("new runtime target card persistence and durable delivery",()=>{
     f.reopen();const agent=new Me3Agent({} as DurableObjectState,f.env);
     const response=await agent.onRequest(f.request());expect(response.status).toBe(200);expect(await response.json()).toMatchObject({targetPresentation:{id:(result.targetPresentation as {id:string}).id,status:"unavailable"}});
     const replay=new Me3Agent({} as DurableObjectState,f.env);const stream=await replay.onRequest(f.request(f.input,true));const text=await stream.text();
-    expect(text).toContain('"targetPresentation"');expect(text).toContain('"status":"unavailable"');expect(f.run).toHaveBeenCalledTimes(2);
+    expect(text).toContain('"targetPresentation"');expect(text).toContain('"status":"unavailable"');expect(f.run).toHaveBeenCalledTimes(3);
   });
 });

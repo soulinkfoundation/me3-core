@@ -16,9 +16,9 @@ export function domainTool(id: string, execute: AgentTool["execute"], overrides:
         const properties = tool.parameters.properties as Record<string, unknown>;
         for (const key of Object.keys(args)) if (!(key in properties)) throw new Error(`Undeclared argument ${key}.`);
         if (context.signal.aborted) throw new Error("Turn cancelled.");
-        return await execute(args, { ...context, toolCall: context.toolCall ?? { id: context.toolCallId, name: tool.name, arguments: args } });
+        return await execute(args, { ...context, declaredTarget: tool.target, toolCall: { id: context.toolCallId, name: tool.name, arguments: args } });
       } catch (error) {
-        return { status: "error", error: error instanceof Error ? error.message : String(error) };
+        return { status: "error", error: error instanceof Error ? error.message : String(error), ...(error && typeof error === "object" && "data" in error ? { data: error.data } : {}) };
       }
     },
   };

@@ -21,6 +21,7 @@ describe("voice dictation", () => {
     expect(run).toHaveBeenCalledWith(
       "@cf/openai/whisper-large-v3-turbo",
       expect.objectContaining({ audio: expect.any(String) }),
+      { gateway: { id: "default" } },
     );
     expect(result).toEqual({
       providerId: "cloudflare-whisper",

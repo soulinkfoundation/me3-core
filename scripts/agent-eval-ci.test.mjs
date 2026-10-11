@@ -19,22 +19,19 @@ const failKnown = report => {
   return report;
 };
 
-test("CI executes full evidence and explicitly classifies only the two tracked safe refusals", () => {
+test("CI requires full success and rejects the former source-date refusals", () => {
   const report = failKnown(fixture());
   const result = validateScriptedCiReport(report);
-  assert.equal(result.passed, true);
-  assert.deepEqual(result.quarantined.map(item => item.id).sort(), ["historical-reminder-source-date-direct", "historical-reminder-source-date-followup"]);
-  assert.ok(result.quarantined.every(item => item.bead === "me3-ahsk.25"));
+  assert.equal(result.passed, false);
+  assert.deepEqual(result.quarantined, []);
   assert.equal(report.results.filter(row => !row.passed).length, 2, "validator does not alter raw outcomes");
   assert.equal(validateScriptedCiReport(fixture()).passed, true);
 });
 
-test("CI rejects unrelated, unsafe, incomplete, stale or differently classified failures", () => {
+test("CI rejects unrelated, unsafe, incomplete or stale evidence", () => {
   const controls = [
     report => { report.results[0].passed = false; },
     report => { report.results.find(row => row.id === "historical-reminder-source-date-direct").safety.unauthorizedWrites = 1; },
-    report => { report.results.find(row => row.id === "historical-reminder-source-date-direct").toolResults[0].error_message = "Database unavailable"; },
-    report => { report.results.find(row => row.id === "historical-reminder-source-date-direct").toolResults.push({ tool_name: "core_reminders_update", status: "succeeded" }); },
     report => { report.results.pop(); },
     report => { report.results[1].id = report.results[0].id; },
     report => { report.results[0].repeat = 2; },
@@ -46,7 +43,9 @@ test("CI rejects unrelated, unsafe, incomplete, stale or differently classified 
     report => { report.live = true; },
   ];
   for (const mutate of controls) {
-    const report = failKnown(fixture()); mutate(report);
+    const report = fixture();
+    assert.equal(validateScriptedCiReport(report).passed, true);
+    mutate(report);
     assert.equal(validateScriptedCiReport(report).passed, false);
   }
 });

@@ -2,13 +2,17 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDomainTools } from "../../../packages/agent/src/tools/index";
-import { rememberTargets } from "../../../packages/agent/src/tools/targets";
-import type { AgentDb, AgentStatement, AgentToolContext } from "../../../packages/agent/src/types";
+import { rememberTargets as rememberDomainTargets } from "../../../packages/agent/src/tools/targets";
+import { AGENT_SCHEMA_STATEMENTS, AGENT_PRESENTATION_SCHEMA_STATEMENTS } from "../../../packages/agent/src/index";
+import type { AgentDb, AgentStatement, AgentToolContext, AgentTool, AgentTargetIntentVerdict } from "../../../packages/agent/src/types";
 
 const databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); vi.useRealTimers(); });
-function context(): AgentToolContext & { raw: DatabaseSync } {
+type TestContext = AgentToolContext & { raw:DatabaseSync; intentVerdict?:AgentTargetIntentVerdict };
+function context(): TestContext {
   const raw = new DatabaseSync(":memory:"); databases.push(raw);
+  for (const sql of [...AGENT_SCHEMA_STATEMENTS,...AGENT_PRESENTATION_SCHEMA_STATEMENTS]) raw.exec(sql);
+  raw.exec(`CREATE TABLE assistant_messages(id TEXT PRIMARY KEY,owner_id TEXT,thread_id TEXT,role TEXT,content TEXT,metadata_json TEXT);`);
   raw.exec(readFileSync(new URL("../migrations/0059_agent_targets.sql", import.meta.url), "utf8"));
   raw.exec(`CREATE TABLE user_reminders (id TEXT PRIMARY KEY, user_id TEXT, title TEXT, notes TEXT, remind_at TEXT, timezone TEXT, recurrence_rule TEXT, context_type TEXT, context_id TEXT, context_label TEXT, status TEXT, delivered_at TEXT, dismissed_at TEXT, cancelled_at TEXT, created_at TEXT, updated_at TEXT, error_message TEXT, source_dispatch_id TEXT, created_via TEXT); CREATE UNIQUE INDEX reminder_write ON user_reminders(user_id, source_dispatch_id);`);
   raw.prepare(`INSERT INTO user_reminders(id,user_id,title,remind_at,timezone,status) VALUES (?,?,?,?,?,?)`).run("r1", "owner", "Call Ada", "2099-10-11T08:00:00.000Z", "Europe/Dublin", "pending");
@@ -19,7 +23,34 @@ function context(): AgentToolContext & { raw: DatabaseSync } {
   const db: AgentDb = { prepare: sql => statement(sql) };
   return { raw, db, ownerId: "owner", threadId: "thread", turnId: "turn", requestId: "request", toolCallId: "call", idempotencyKey: "write-1", ownerTimezone: "Europe/Dublin", messageText: "Move Call Ada", messages: [], enabledPluginIds: new Set(), signal: new AbortController().signal };
 }
-const tool = (name: string) => { const result = createDomainTools().find(tool => tool.name === name); if (!result) throw new Error(`Missing ${name}`); return result; };
+// Predetermined semantic fixtures are independent of the proposed tool arguments.
+function authorize(ctx:TestContext, arguments_:Record<string,unknown>, name="core_reminders_update", selectedCandidateId=String(arguments_.reminderId)) {
+  ctx.intentVerdict={decision:"allow",selectedCandidateId,authorizedCall:{name,arguments:arguments_}};
+}
+function canonical(ctx:TestContext) {
+  const existing=ctx.raw.prepare("SELECT input_json FROM me3_agent_turns WHERE turn_id=?").get(ctx.turnId);
+  const saved=existing?.input_json?JSON.parse(String(existing.input_json)):undefined;
+  if(saved&&(saved.messageText!==ctx.messageText||saved.userId!==ctx.ownerId||saved.threadId!==ctx.threadId))ctx.turnId+=`:owner-${crypto.randomUUID()}`;
+  ctx.requestId=`${ctx.turnId}:request`;
+  ctx.raw.prepare("UPDATE me3_agent_turns SET status='complete' WHERE owner_id=? AND thread_id=? AND turn_id!=? AND status='running'").run(ctx.ownerId,ctx.threadId,ctx.turnId);
+  const input={userId:ctx.ownerId,threadId:ctx.threadId,turnId:ctx.turnId,requestId:ctx.requestId,messageText:ctx.messageText};
+  ctx.raw.prepare("INSERT OR IGNORE INTO me3_agent_turns(turn_id,owner_id,thread_id,request_id,input_json,created_at) VALUES(?,?,?,?,?,?)").run(ctx.turnId,ctx.ownerId,ctx.threadId,ctx.requestId,JSON.stringify(input),new Date().toISOString());
+  ctx.raw.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").run(`${ctx.turnId}:user`,ctx.ownerId,ctx.threadId,ctx.messageText,JSON.stringify({requestId:ctx.requestId}));
+  if(!ctx.raw.prepare("SELECT 1 FROM me3_agent_stream_events WHERE owner_id=? AND turn_id=?").get(ctx.ownerId,ctx.turnId))ctx.raw.prepare("INSERT INTO me3_agent_stream_events(owner_id,turn_id,event,data_json) VALUES(?,?,'status','{}')").run(ctx.ownerId,ctx.turnId);
+  ctx.intentToolContracts=createDomainTools().filter(t=>t.target&&(!t.pluginId||ctx.enabledPluginIds.has(t.pluginId))).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}}));
+  ctx.loadIntentOwnerInputs=async references=>{
+    const rows=ctx.raw.prepare("SELECT t.turn_id,t.request_id,t.input_json,MIN(e.seq) seq FROM me3_agent_turns t JOIN me3_agent_stream_events e ON e.owner_id=t.owner_id AND e.turn_id=t.turn_id WHERE t.owner_id=? AND t.thread_id=? GROUP BY t.turn_id ORDER BY seq").all(ctx.ownerId,ctx.threadId);
+    const required=new Set([ctx.turnId,...references.readTurnIds,...(references.presentationTurnId?[references.presentationTurnId]:[])]);
+    const indexes=rows.map((row,index)=>required.has(String(row.turn_id))?index:-1).filter(index=>index>=0);
+    return rows.slice(Math.min(...indexes),rows.findIndex(row=>row.turn_id===ctx.turnId)+1).map(row=>({turnId:String(row.turn_id),requestId:String(row.request_id),messageText:JSON.parse(String(row.input_json)).messageText as string}));
+  };
+  ctx.verifyTargetIntent=async()=>structuredClone(ctx.intentVerdict??{decision:"clarify",reason:"The fixture leaves same-label or ambiguous selection/candidate sets unresolved."});
+}
+async function rememberTargets<T extends {id:string}>(ctx:AgentToolContext,domain:string,records:readonly T[],label?:(record:T)=>string|null|undefined) {canonical(ctx as TestContext);return rememberDomainTargets(ctx,domain,records,label);}
+const tool = (name:string):AgentTool => {
+  const result=createDomainTools().find(t=>t.name===name);if(!result)throw Error(`Missing ${name}`);
+  return {...result,execute:async(args,ctx)=>{canonical(ctx as TestContext);return result.execute(args,ctx);},...(result.prepareApproval?{prepareApproval:async(args:Record<string,unknown>,ctx:AgentToolContext)=>{canonical(ctx as TestContext);return result.prepareApproval!(args,ctx);}}:{})};
+};
 
 describe("new agent domain tools", () => {
   it("ports all 40 active tools and declares safe external and destructive policies", () => {
@@ -60,6 +91,7 @@ describe("new agent domain tools", () => {
 
   it("refuses invented target IDs and stale durable snapshots", async () => {
     const ctx = context();
+    authorize(ctx,{reminderId:"r1",date:"2099-10-13",time:"10:00"});
     ctx.messageText = "Move reminder r1";
     const args = { reminderId: "r1", date: "2099-10-13", time: "10:00" };
     expect(await tool("core_reminders_update").execute(args, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/read/i) });
@@ -70,23 +102,23 @@ describe("new agent domain tools", () => {
   });
 
   it("binds a numbered reply to persisted candidates and preserves unrelated reminder fields", async () => {
-    const ctx = context();
+    const ctx = context(); authorize(ctx,{reminderId:"r2",date:"2099-10-13",time:"10:00"});
     await tool("core_reminders_list").execute({ query: "Call Ada" }, ctx);
     ctx.turnId = "turn-2"; ctx.messageText = "2";
-    expect(await tool("core_reminders_update").execute({ reminderId: "r1", date: "2099-10-13", time: "10:00" }, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/selection/i) });
+    expect(await tool("core_reminders_update").execute({ reminderId: "r1", date: "2099-10-13", time: "10:00" }, ctx)).toMatchObject({ status: "error", data: { authorizedCall: { name: "core_reminders_update", arguments: { reminderId: "r2", date: "2099-10-13", time: "10:00" } } } });
     const result = await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx);
     expect(result).toMatchObject({ status: "ok", data: { reminder: { id: "r2", title: "Call Ada", remindAt: "2099-10-13T09:00:00.000Z" } } });
     expect(ctx.raw.prepare("SELECT remind_at FROM user_reminders WHERE id='r1'").get()).toMatchObject({ remind_at: "2099-10-11T08:00:00.000Z" });
   });
 
   it("binds a generic ordinal owner reply to the recorded candidate ID", async () => {
-    const ctx = context(); await tool("core_reminders_list").execute({ query: "Call Ada" }, ctx);
+    const ctx = context(); authorize(ctx,{reminderId:"r2",date:"2099-10-13",time:"10:00"}); await tool("core_reminders_list").execute({ query: "Call Ada" }, ctx);
     ctx.turnId = "turn-2"; ctx.messageText = "The second one.";
-    expect(await tool("core_reminders_update").execute({ reminderId: "r1", date: "2099-10-13", time: "10:00" }, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/selection/i) });
+    expect(await tool("core_reminders_update").execute({ reminderId: "r1", date: "2099-10-13", time: "10:00" }, ctx)).toMatchObject({ status: "error", data: { authorizedCall: { name: "core_reminders_update", arguments: { reminderId: "r2", date: "2099-10-13", time: "10:00" } } } });
   });
 
   it("preserves identical ordered choices when an older receipt lacks the new label metadata", async () => {
-    const ctx = context(); await tool("core_reminders_list").execute({}, ctx);
+    const ctx = context(); authorize(ctx,{reminderId:"r2",date:"2099-10-13",time:"10:00"}); await tool("core_reminders_list").execute({}, ctx);
     ctx.raw.prepare("UPDATE me3_agent_selections SET candidates_json=?").run(JSON.stringify([{ option: 1, id: "r1" }, { option: 2, id: "r2" }]));
     await tool("core_reminders_list").execute({}, ctx);
     ctx.turnId = "selection-turn"; ctx.messageText = "2";
@@ -95,13 +127,14 @@ describe("new agent domain tools", () => {
   });
 
   it("can change a reminder twice without losing its persisted read shape", async () => {
-    const ctx = context(); ctx.messageText = "Move reminder r1"; await tool("core_reminders_list").execute({}, ctx);
+    const ctx = context(); authorize(ctx,{reminderId:"r1",date:"2099-10-13",time:"10:00"}); ctx.messageText = "Move reminder r1"; await tool("core_reminders_list").execute({}, ctx);
     expect((await tool("core_reminders_update").execute({ reminderId: "r1", date: "2099-10-13", time: "10:00" }, ctx)).status).toBe("ok");
+    ctx.turnId="second-owner-edit";ctx.messageText="Move reminder r1 to14October2099 at11am Europe/Dublin.";authorize(ctx,{reminderId:"r1",date:"2099-10-14",time:"11:00"});
     expect((await tool("core_reminders_update").execute({ reminderId: "r1", date: "2099-10-14", time: "11:00" }, ctx)).status).toBe("ok");
   });
 
   it.each(["update", "cancel"])("does not admit reminder %s after Stop arrives during its final read", async operation => {
-    const ctx = context(); const controller = new AbortController(); ctx.signal = controller.signal;
+    const ctx = context(); authorize(ctx,operation==="update"?{reminderId:"r2",date:"2099-10-13",time:"10:00"}:{reminderId:"r2"},`core_reminders_${operation}`); const controller = new AbortController(); ctx.signal = controller.signal;
     await tool("core_reminders_list").execute({}, ctx);
     ctx.turnId = "selection-turn"; ctx.messageText = "The second one.";
     const args = operation === "update" ? { reminderId: "r2", date: "2099-10-13", time: "10:00" } : { reminderId: "r2" };
@@ -140,6 +173,7 @@ describe("new agent domain tools", () => {
     if (operation === "update") {
       await tool("core_reminders_list").execute({}, ctx);
       ctx.turnId = "selection-turn"; ctx.messageText = "The second one.";
+      ctx.approved=true;ctx.approvalData={targetDomain:"reminder",target:JSON.parse(String(ctx.raw.prepare("SELECT snapshot_json FROM me3_agent_targets WHERE record_id='r2'").get()!.snapshot_json))};
     }
     const args = operation === "create" ? { title: "Invalid wall time", date, time, timezone } : { reminderId: "r2", date, time, timezone };
     expect(await tool(`core_reminders_${operation}`).execute(args, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(error) });
@@ -151,7 +185,7 @@ describe("new agent domain tools", () => {
     ["2027-07", "11:00:00.000Z", "08:30:00.000Z"],
   ])("preserves winter/summer wall time, notes and recurrence when moving the second selected reminder: %s", async (month, noonUtc, movedUtc) => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-10T12:00:00Z"));
-    const ctx = context();
+    const ctx = context(); authorize(ctx,{reminderId:"season-second",date:`${month}-16`,time:"09:30"});
     expect(await tool("core_reminders_create").execute({ title: "Season reminder", date: `${month}-15`, time: "12:00", timezone: "Europe/Dublin", notes: "Keep these notes", recurrence: "weekly:fri" }, ctx)).toMatchObject({ status: "ok", data: { reminder: { remindAt: `${month}-15T${noonUtc}` } } });
     ctx.raw.prepare("INSERT INTO user_reminders(id,user_id,title,notes,remind_at,timezone,recurrence_rule,status) VALUES (?,?,?,?,?,?,?,?)").run("season-second", "owner", "Season reminder", "Keep these notes", `${month}-17T${noonUtc}`, "Europe/Dublin", "weekly:fri", "pending");
     ctx.raw.prepare("INSERT INTO user_reminders(id,user_id,title,remind_at,timezone,status) VALUES (?,?,?,?,?,?)").run("other-owner", "other", "Season reminder", `${month}-17T${noonUtc}`, "Europe/Dublin", "pending");
@@ -165,7 +199,7 @@ describe("new agent domain tools", () => {
   });
 
   it("keeps the original approved draft snapshot when a later turn reads a changed draft", async () => {
-    const ctx = context(); let sends = 0;
+    const ctx = context(); authorize(ctx,{draftId:"draft-1"},"core_mailbox_send","draft-1"); let sends = 0;
     let message = { id: "draft-1", status: "draft", to: "ada@example.test", subject: "Launch", bodyText: "Ready" };
     ctx.services = { mailbox: { read: async () => ({ message }), sendDraft: async () => { sends++; return { message }; } } };
     await tool("core_mailbox_read").execute({ messageId: "draft-1" }, ctx);
@@ -193,7 +227,7 @@ describe("new agent domain tools", () => {
     ctx.turnId = "selection-turn"; ctx.messageText = "The second one.";
     expect(await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/selection/i) });
     expect(ctx.raw.prepare("SELECT remind_at FROM user_reminders WHERE id='r2'").get()).toMatchObject({ remind_at: "2099-10-12T08:00:00.000Z" });
-    ctx.messageText = "Move reminder r2 to 10 tomorrow.";
+    ctx.messageText = "Move reminder r2 to 10 tomorrow."; authorize(ctx,{reminderId:"r2",date:"2099-10-13",time:"10:00"});
     expect((await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx)).status).toBe("ok");
   });
 
@@ -219,7 +253,7 @@ describe("new agent domain tools", () => {
   });
 
   it("keeps an owner's reply bound to the prior turn despite a fresh current-turn read", async () => {
-    const ctx = context(); await tool("core_reminders_list").execute({}, ctx);
+    const ctx = context(); authorize(ctx,{reminderId:"r2",date:"2099-10-13",time:"10:00"}); await tool("core_reminders_list").execute({}, ctx);
     ctx.turnId = "selection-turn"; ctx.messageText = "2";
     await rememberTargets(ctx, "task", [{ id: "t1" }]);
     expect((await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx)).status).toBe("ok");
@@ -234,7 +268,7 @@ describe("new agent domain tools", () => {
   });
 
   it.each([false, true])("binds the sole nonempty candidate set in the prior turn regardless of empty read order: %s", async emptyFirst => {
-    const ctx = context();
+    const ctx = context(); authorize(ctx,{reminderId:"r2",date:"2099-10-13",time:"10:00"});
     if (emptyFirst) await rememberTargets(ctx, "calendar event", []);
     await tool("core_reminders_list").execute({}, ctx);
     if (!emptyFirst) await rememberTargets(ctx, "calendar event", []);
@@ -260,7 +294,7 @@ describe("new agent domain tools", () => {
   });
 
   it("keeps numbered choices bound after reading the selected record", async () => {
-    const ctx = context(); await tool("core_reminders_list").execute({ query: "Call Ada" }, ctx);
+    const ctx = context(); authorize(ctx,{reminderId:"r2",date:"2099-10-13",time:"10:00"}); await tool("core_reminders_list").execute({ query: "Call Ada" }, ctx);
     ctx.turnId = "turn-2"; ctx.messageText = "2";
     const result = await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx);
     expect(result.status).toBe("ok");
@@ -307,7 +341,7 @@ describe("new agent domain tools", () => {
 
   it("admits the one exact owner ID or an approved immutable target among duplicate reminders", async () => {
     const ctx = context(); await tool("core_reminders_list").execute({}, ctx);
-    ctx.messageText = "Move reminder (r2).";
+    ctx.messageText = "Move reminder (r2)."; authorize(ctx,{reminderId:"r2",date:"2099-10-13",time:"10:00"});
     expect((await tool("core_reminders_update").execute({ reminderId: "r2", date: "2099-10-13", time: "10:00" }, ctx)).status).toBe("ok");
     ctx.approved = true; ctx.approvalData = { targetDomain: "reminder", target: JSON.parse(String(ctx.raw.prepare("SELECT snapshot_json FROM me3_agent_targets WHERE record_id='r1'").get()!.snapshot_json)) };
     expect((await tool("core_reminders_update").execute({ reminderId: "r1", date: "2099-10-14", time: "10:00" }, ctx)).status).toBe("ok");
@@ -315,7 +349,7 @@ describe("new agent domain tools", () => {
   });
 
   it("allows an ordinary read with distinct labels and scopes ambiguity to its owner and thread", async () => {
-    const ctx = context(); ctx.raw.prepare("UPDATE user_reminders SET title='Different task' WHERE id='r2'").run();
+    const ctx = context(); authorize(ctx,{reminderId:"r1",date:"2099-10-13",time:"10:00"}); ctx.raw.prepare("UPDATE user_reminders SET title='Different task' WHERE id='r2'").run();
     await rememberTargets({ ...ctx, ownerId: "another-owner" }, "reminder", [{ id: "r1" }, { id: "r2" }]);
     await rememberTargets({ ...ctx, threadId: "another-thread" }, "reminder", [{ id: "r1" }, { id: "r2" }]);
     await tool("core_reminders_list").execute({}, ctx);
@@ -353,7 +387,7 @@ describe("new agent domain tools", () => {
   });
 
   it("returns a structured approval before sending a reviewed email and never treats confirmed as authorization", async () => {
-    const ctx = context(); let sends = 0;
+    const ctx = context(); authorize(ctx,{draftId:"draft-1"},"core_mailbox_send","draft-1"); let sends = 0;
     const message = { id: "draft-1", status: "draft", to: "ada@example.test", subject: "Launch", bodyText: "Ready" };
     ctx.services = { mailbox: { read: async () => ({ message }), sendDraft: async () => { sends++; return { message: { ...message, status: "sent" } }; } } };
     await tool("core_mailbox_read").execute({ messageId: "draft-1" }, ctx);

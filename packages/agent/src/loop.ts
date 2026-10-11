@@ -1,3 +1,5 @@
+import type {AgentTargetIntentReceipt} from "./types";
+import { preflightTargetIntent, savedTargetIntentProgress, TargetIntentOrderMismatch } from "./target-intent";
 import { canonicalJson, toolIdempotencyKey, validateArguments } from "./schema";
 import { compactAgentContext } from "./context";
 import { validateTargetSelection } from "./presentations";
@@ -30,10 +32,28 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     if (text) checkpoint.messages.push({role:"assistant",content:text});
     checkpoint.trace.totalDurationMs += performance.now() - started;
     await save();
-    return result(checkpoint);
+    const completed = result(checkpoint);
+    if (text || status === "needs_approval") await emit({event:"delta",data:{text:completed.replyText,source:"runtime"}});
+    return completed;
+  };
+  const unfinishedPlan = async () => {
+    if (!input.context.verifyTargetIntent) return;
+    const progress = await savedTargetIntentProgress({...input.context,messages:checkpoint.messages,toolCallId:"",idempotencyKey:"",signal:controller.signal});
+    if (checkpoint.status !== "complete" && await cancelled()) {
+      await emit({event:"status",data:{state:"running",replaceText:true}});
+      return finish("cancelled", "The turn was cancelled before completion.");
+    }
+    if (!progress || progress.completed === progress.total) return;
+    const text = `Completed ${progress.completed} of ${progress.total} requested actions. The remaining work is unfinished.`;
+    const declinedText = `The next action was declined. ${text}`;
+    if (progress.declined && checkpoint.status === "complete" && result(checkpoint).replyText === declinedText) return;
+    await emit({event:"status",data:{state:"running",replaceText:true}});
+    if (progress.declined) return finish("complete", declinedText);
+    return finish("failed", text);
   };
   try {
-    if (["complete", "cancelled", "failed"].includes(checkpoint.status)) return result(checkpoint);
+    if (checkpoint.status === "complete") return await unfinishedPlan() ?? result(checkpoint);
+    if (["cancelled", "failed"].includes(checkpoint.status)) return result(checkpoint);
     if (freshTurn && input.context.targetSelection) {
       const chosen = await validateTargetSelection({ ...input.context, messages: checkpoint.messages, toolCallId: "", idempotencyKey: "", signal: controller.signal }, input.context.targetSelection, tools);
       if (chosen.presentation.status !== "selected") throw new Error("The choice was not authenticated and persisted.");
@@ -90,7 +110,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         if (!text) return;
         emittedText = true;
         checkpoint.trace.timeToFirstTokenMs ??= performance.now() - started;
-        await emit({event:"delta",data:{text}});
+        await emit({event:"delta",data:{text,source:"model"}});
       } };
       let response;
       try { response = await model.step(stepInput); }
@@ -115,6 +135,10 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         checkpoint.trace.usage.estimatedCostUsd = response.usage.estimatedCostUsd === null || checkpoint.trace.usage.estimatedCostUsd === null ? null : checkpoint.trace.usage.estimatedCostUsd + response.usage.estimatedCostUsd;
       } else checkpoint.trace.usage.estimatedCostUsd = null;
       if (await cancelled()) return finish("cancelled", "The turn was cancelled before completion.");
+      if (!response.toolCalls.length && response.text.trim()) {
+        try { const unfinished = await unfinishedPlan(); if (unfinished) return unfinished; }
+        catch (error) { await emit({event:"status",data:{state:"running",replaceText:true}}); throw error; }
+      }
       checkpoint.messages.push({role:"assistant",content:response.text, ...(response.toolCalls.length ? {toolCalls:response.toolCalls} : {})});
       checkpoint.pendingCalls = response.toolCalls;
       checkpoint.nextCallIndex = 0;
@@ -159,24 +183,50 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       approvalData = await input.store.approvalData?.(checkpoint.approvalId);
     }
     const needsApproval = tool.approval === "required" || tool.effect === "external" || tool.effect === "destructive";
-    if (needsApproval && !approved) {
-      const prepared = await tool.prepareApproval?.(call.arguments, {...input.context,messages:checkpoint.messages,toolCall:call,toolCallId:call.id,idempotencyKey:key,approved:false,signal:controller.signal});
-      if (await cancelled()) return reject("Turn cancelled");
-      if (prepared && prepared.status !== "needs_approval") return prepared;
-      return pause(prepared?.approval ?? {title:tool.description,summary:JSON.stringify(call.arguments)});
-    }
     const receipt = tool.effect === "read" ? null : await input.store.getReceipt(key);
     if (receipt && receipt.status !== "needs_approval") return receipt;
     if (tool.effect !== "read" && !await input.store.claimReceipt(key, call)) return reject("This action has an uncertain earlier outcome. Inspect the saved record before attempting another write.");
     const toolStarted = performance.now();
     await emit({event:"tool",data:{state:"running",name:tool.name,toolName:tool.name,callId:call.id}});
+    const context = {...input.context,messages:checkpoint.messages,toolCall:call,toolCallId:call.id,idempotencyKey:key,effectReceiptClaimed:tool.effect!=="read",approved,approvalData,signal:controller.signal,
+      intentToolContracts: tools.filter(value=>value.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),
+      onTargetIntentReceipt: async (record: AgentTargetIntentReceipt) => {
+        if (!record.inference) return;
+        const requests = (checkpoint.trace.targetIntentRequests ??= []);
+        if (requests.some(value=>value.receiptId===record.receiptId)) return;
+        requests.push({receiptId:record.receiptId,modelId:record.inference.modelId,...(record.inference.usageId?{usageId:record.inference.usageId}:{}),uncertain:!!record.uncertain});
+        const usage=record.inference.usage;
+        if (usage) {
+          checkpoint.trace.usage.inputTokens+=usage.inputTokens;
+          checkpoint.trace.usage.outputTokens+=usage.outputTokens;
+          checkpoint.trace.usage.cachedInputTokens+=usage.cachedInputTokens;
+          checkpoint.trace.usage.cacheWriteInputTokens=(checkpoint.trace.usage.cacheWriteInputTokens??0)+(usage.cacheWriteInputTokens??0);
+          checkpoint.trace.usage.estimatedCostUsd=usage.estimatedCostUsd===null||checkpoint.trace.usage.estimatedCostUsd===null?null:checkpoint.trace.usage.estimatedCostUsd+usage.estimatedCostUsd;
+        } else checkpoint.trace.usage.estimatedCostUsd=null;
+        await input.context.onTargetIntentReceipt?.(record);
+        await save();
+      },
+    };
     let output: AgentToolResult;
+    let notAdmitted = false;
     try {
-      // No await separates this final cancellation check from effect admission.
-      output = await cancelled() ? {status:"error",error:"Turn cancelled before the tool started"} : await tool.execute(call.arguments, {...input.context,messages:checkpoint.messages,toolCall:call,toolCallId:call.id,idempotencyKey:key,approved,approvalData,signal:controller.signal});
-    } catch (error) { output = {status:"error",error:error instanceof Error ? error.message : "Tool failed"}; }
+      const hasTarget = tool.target && (Object.hasOwn(call.arguments, tool.target.idParameter) || (tool.parameters.required as string[] | undefined)?.includes(tool.target.idParameter));
+      if (hasTarget && tool.target && !approved && !input.context.targetSelection) {
+        try { await preflightTargetIntent(context,tool.target.domain,String(call.arguments[tool.target.idParameter]),call); }
+        catch (error) {
+          // Only this preflight can prove that a later ordered effect never started.
+          notAdmitted = error instanceof TargetIntentOrderMismatch;
+          throw error;
+        }
+      }
+      if (await cancelled()) output={status:"error",error:"Turn cancelled before the tool started"};
+      else if (needsApproval && !approved) {
+        const prepared=await tool.prepareApproval?.(call.arguments,context);
+        output=prepared??{status:"needs_approval",approval:{title:tool.description,summary:JSON.stringify(call.arguments)}};
+      } else output=await tool.execute(call.arguments,context);
+    } catch (error) { output={status:"error",error:error instanceof Error?error.message:"Tool failed",...(error&&typeof error==="object"&&"data" in error?{data:error.data}:{})}; }
     checkpoint.trace.toolCalls.push({name:tool.name,effect:tool.effect,status:output.status,durationMs:performance.now()-toolStarted});
-    if (tool.effect !== "read") await input.store.finishReceipt(key, output);
+    if (tool.effect !== "read") await input.store.finishReceipt(key, output, { notAdmitted });
     await emit({event:"tool",data:{state:"complete",name:tool.name,toolName:tool.name,callId:call.id,result:output}});
     if (output.status === "needs_approval") return pause(output.approval ?? {title:tool.description,summary:"Approval required"});
     return output;
@@ -195,5 +245,5 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
 
 function result(state: AgentCheckpoint): AgentTurnResult {
   const replyText = state.status === "needs_approval" ? "This action needs your approval before I can continue." : [...state.messages].reverse().find(message => message.role === "assistant" && !message.toolCalls?.length)?.content ?? "";
-  return {replyText,source:"agent",toolCalls:state.trace.toolCalls,usage:state.trace.usage,modelRequestCount:state.steps,trace:state.trace,status:state.status,...(state.approvalId?{approvalId:state.approvalId}:{}),...(state.targetPresentation?{targetPresentation:state.targetPresentation}:{})};
+  return {replyText,source:"agent",toolCalls:state.trace.toolCalls,usage:state.trace.usage,modelRequestCount:state.steps+(state.trace.targetIntentRequests?.length??0),trace:state.trace,status:state.status,...(state.approvalId?{approvalId:state.approvalId}:{}),...(state.targetPresentation?{targetPresentation:state.targetPresentation}:{})};
 }

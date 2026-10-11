@@ -19,6 +19,7 @@ import { loadAgentTargetPresentation, revalidateAgentTargetPayload } from "./age
 import { parseAgentTargetSelection } from "./agent-target-selection";
 import type { AgentTargetSelection } from "../../../packages/agent/src/types";
 import { notifyAgentTurnFinished } from "./agent-notifications";
+import { createTargetIntentVerifier, loadTargetIntentOwnerInputs } from "./agent-target-intent";
 
 export type NewAgentDispatchInput = {
   userId:string;threadId:string;turnId:string;requestId:string;messageText:string;
@@ -58,13 +59,15 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const metadata={me3_runtime:"agent",me3_turn_id:input.turnId,me3_request_id:input.requestId,me3_thread_id:input.threadId};
     const imageScope={ownerId:input.userId,threadId:input.threadId};
     let usageIndex=0;
-    const cloudflareModel=(selected:string,reportCount=0):AgentModel=>({id:selected,async step(step){
+    type ModelPurpose = {purpose:"target_intent";onAdmission(id:string):void};
+    const cloudflareModel=(selected:string,reportCount=0,purpose?:ModelPurpose):AgentModel=>({id:selected,async step(step){
       step.signal.throwIfAborted();
       if(step.messages.some(message=>message.images?.length)&&!bindingModelSupportsImageInput(selected))throw new Error("This model cannot read images. Choose an image-input model for this turn.");
       const messages=await resolveAgentImageInputs(env,imageScope,step.messages,step.signal);
       step.signal.throwIfAborted();
       const usageId=`${input.turnId}:model:${crypto.randomUUID()}:${usageIndex++}`;
-      const receiptMetadata={...metadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0]};
+      const callMetadata={...metadata,...(purpose?{purpose:purpose.purpose}:{})};
+      const receiptMetadata={...callMetadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0]};
       const billingFeeRate=managed&&!selected.startsWith("@cf/")?0.05:0;
       // An interrupted or unpriced paid request must remain visibly unreconciled.
       const admitted=await env.DB.prepare(`INSERT INTO ai_usage_events(id,user_id,kind,provider,model,tokens_in,tokens_out,estimated_cost_usd,metadata_json)
@@ -81,7 +84,8 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
         await assertManagedCostsReconciled(env,input.userId,true);
         throw new Error("Managed AI budget policy changed before model admission; retry this turn");
       }
-      return createCloudflareModel({ai:env.AI as never,model:selected,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata,recordUsage:async usage=>{
+      purpose?.onAdmission(usageId);
+      return createCloudflareModel({ai:env.AI as never,model:selected,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:callMetadata,recordUsage:async usage=>{
         const tokensKnown=[usage.inputTokens,usage.outputTokens,usage.cachedInputTokens,usage.cacheWriteInputTokens??0].every(value=>typeof value==="number"&&Number.isFinite(value)&&value>=0);
         const baseCostUsd=usage.estimatedCostUsd;
         const billedCostUsd=baseCostUsd===null?null:baseCostUsd*(1+billingFeeRate);
@@ -90,8 +94,8 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
           .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
       }}).step({...step,messages});
     }});
-    const modelFor=(requested:string):AgentModel=>{
-      if(!managed)return cloudflareModel(canonicalNativeModel(requested));
+    const modelFor=(requested:string,purpose?:ModelPurpose):AgentModel=>{
+      if(!managed)return cloudflareModel(canonicalNativeModel(requested),0,purpose);
       const model:AgentModel={id:resolveManagedModel(managed,requested),async step(step){
         await assertManagedCostsReconciled(env,input.userId);
         await syncManagedAiUsage(env);
@@ -100,7 +104,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
         model.id=resolveManagedModel(policy,requested);
         await assertManagedCostsReconciled(env,input.userId,true);
         step.signal.throwIfAborted();
-        return cloudflareModel(model.id,reportCount).step(step);
+        return cloudflareModel(model.id,reportCount,purpose).step(step);
       }};
       return model;
     };
@@ -121,7 +125,16 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     }
     const services=await newAgentServices(env,input.userId);
     const tools=createDomainTools().filter(tool=>isToolAvailable(tool.name,services));
-    const result=await runAgentTurn({model,backupModel:backup,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
+    const intentTools=tools.filter(tool=>!tool.pluginId||enabledPluginIds.has(tool.pluginId));
+    const intentScope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId};
+    const loadIntentOwnerInputs=(references:Parameters<typeof loadTargetIntentOwnerInputs>[2],intentSignal:AbortSignal)=>
+      loadTargetIntentOwnerInputs(env.DB,intentScope,references,intentSignal);
+    const verifyTargetIntent=createTargetIntentVerifier({db:env.DB,scope:intentScope,ownerTimezone:timezone,tools:intentTools,admit:()=>{
+      let usageId:string|undefined;
+      const verifier=modelFor(modelName,{purpose:"target_intent",onAdmission:id=>{usageId=id;}});
+      return {model:verifier,usageId:()=>usageId};
+    }});
+    const result=await runAgentTurn({model,backupModel:backup,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
       const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event.event,event.data);
       onEvent?.(event.event,event.data,seq);
     }});

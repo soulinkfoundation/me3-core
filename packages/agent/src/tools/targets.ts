@@ -1,3 +1,4 @@
+import { preflightTargetIntent } from "../target-intent";
 import type { AgentToolContext, AgentToolResult } from "../types";
 import { selectedTargetSnapshot } from "../presentations";
 
@@ -37,6 +38,11 @@ export async function requireTarget<T>(context: AgentToolContext, domain: string
     .bind(context.ownerId, context.threadId, domain, id).first<{ snapshot_json: string; read_at: string }>();
   if (!row || Date.now() - Date.parse(row.read_at) > MAX_RECEIPT_AGE_MS) {
     throw new Error(`Read this ${domain} record before changing it; use its returned stable ID.`);
+  }
+  if (context.declaredTarget) {
+    if (context.declaredTarget.domain !== domain || context.toolCall?.arguments[context.declaredTarget.idParameter] !== id) throw new Error("The declared target does not match this effect.");
+    const verified = await preflightTargetIntent(context, domain, id);
+    return verified.expectedSnapshot as T;
   }
   // An exact numbered reply is a generic target binding, independent of domain phrasing.
   const selectedOption = ownerSelectionOption(context.messageText);

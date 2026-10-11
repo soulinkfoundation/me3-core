@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 
 // Alter only disposable copied source. A report must become stale if any choice
 // admission, projection, immutable snapshot or presentation tool behavior changes.
-for (const dependency of ["apps/worker/src/agent-target-selection.ts", "apps/worker/src/agent-target-projection.ts", "packages/agent/src/presentations.ts", "packages/agent/src/tools/presentations.ts"]) {
+for (const dependency of ["apps/worker/src/agent-target-intent.ts", "apps/worker/src/agent-target-selection.ts", "apps/worker/src/agent-target-projection.ts", "packages/agent/src/presentations.ts", "packages/agent/src/tools/presentations.ts"]) {
   test(`fingerprint covers target execution dependency ${dependency}`, () => {
     const directory = mkdtempSync(join(tmpdir(), "me3-eval-source-"));
     try {

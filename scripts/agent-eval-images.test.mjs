@@ -76,7 +76,7 @@ test("the real runtime adapter generates one private image with Files disabled a
     const scenario = createAgentEvalScenarios(seed.baseDate).find(item => item.id === "image-generated-once");
     scenario.setup(seed);
     const response = await createRuntimeAdapter("new").runTurn({ seed, ownerId: seed.ownerId,
-      messages: [{ role: "user", content: scenario.turns[0].prompt }], requestId: "image-runtime-request", turnId: "image-runtime-turn", ownerTimezone: "Europe/Dublin",
+      messages: [{ role: "user", content: scenario.turns[0].prompt }], requestId: "image-runtime-request", turnId: "image-runtime-turn", canonicalOwnerInputs: [{turnId:"image-runtime-turn",requestId:"image-runtime-request",messageText:scenario.turns[0].prompt}], ownerTimezone: "Europe/Dublin",
       modelRoute: { model: "scripted-fixture" }, services: createSeededEvalServices(seed, { onImageProviderCall() { providerCalls++; } }),
       enabledPluginIds: new Set(), fixtureCalls: scenario.turns[0].calls, fixtureReply: "The private image is ready in this conversation.", onEvent() {} });
     assert.equal(response.status, "complete"); assert.equal(providerCalls, 1);

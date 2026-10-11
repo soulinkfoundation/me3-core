@@ -8,6 +8,31 @@ function database(): AgentDb {
   return {prepare(sql){const query=raw.prepare(sql);let args:unknown[]=[];const statement={bind(...values:unknown[]){args=values;return statement;},async first<T>(){return (query.get(...args as never[]) ?? null) as T|null;},async all<T>(){return {results:query.all(...args as never[]) as T[]};},async run(){return {meta:{changes:Number(query.run(...args as never[]).changes)}};}};return statement;}};
 }
 describe("canonical D1 agent checkpoints and approvals",()=>{
+  it("reopens only a preflight rejection that never admitted an effect",async()=>{
+    const db=database(),identity={ownerId:"owner",threadId:"thread",turnId:"turn",requestId:"req"},call={id:"call",name:"save",arguments:{id:"second"}};
+    const store=createD1TurnStore(db,identity);
+    expect(await store.claimReceipt("key",call)).toBe(true);
+    await store.finishReceipt("key",{status:"error",error:"First action must finish"},{notAdmitted:true});
+    const reopened=createD1TurnStore(db,identity);
+    expect(await reopened.getReceipt("key")).toBeNull();
+    expect(await createD1TurnStore(db,{...identity,turnId:"other"}).claimReceipt("key",call)).toBe(false);
+    expect(await reopened.claimReceipt("key",call)).toBe(true);
+    expect(await reopened.claimReceipt("key",call)).toBe(false);
+    await reopened.finishReceipt("key",{status:"ok"});
+    await reopened.finishReceipt("key",{status:"error",error:"Stale preflight"},{notAdmitted:true});
+    expect(await reopened.getReceipt("key")).toEqual({status:"ok"});
+    expect(await reopened.claimReceipt("key",call)).toBe(false);
+  });
+  it("does not reopen unknown outcomes or trust a tool-returned retry flag",async()=>{
+    const db=database(),identity={ownerId:"owner",threadId:"thread",turnId:"turn",requestId:"req"},call={id:"call",name:"save",arguments:{}};
+    const store=createD1TurnStore(db,identity);
+    expect(await store.claimReceipt("unknown",call)).toBe(true);
+    expect(await createD1TurnStore(db,identity).claimReceipt("unknown",call)).toBe(false);
+    expect(await store.claimReceipt("finished",call)).toBe(true);
+    await store.finishReceipt("finished",{status:"error",error:"Effect failed",data:{notAdmitted:true}});
+    expect(await store.getReceipt("finished")).toMatchObject({status:"error"});
+    expect(await createD1TurnStore(db,identity).claimReceipt("finished",call)).toBe(false);
+  });
   it("reopens owner-scoped cancellation intent before input and refuses a later approval",async()=>{
     const db=database(),identity={ownerId:"a",threadId:"thread",turnId:"turn",requestId:"req"};
     await db.prepare("INSERT INTO me3_agent_cancellations(owner_id,request_id) VALUES(?,?)").bind("a","req").run();

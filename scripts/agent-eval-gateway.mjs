@@ -35,9 +35,10 @@ export function createGatewayRoute(modelChoice, options = {}) {
       // Calls are serial. An earlier request without usage keeps its reservation.
       options.budget?.settle(pendingReservations.pop(), usage);
     },
-    ai: { async run(selectedModel, input) {
+    ai: { async run(selectedModel, input, callOptions = {}) {
       requestCount++;
       const reservation = options.budget?.reserve(selectedModel, input);
+      if (reservation !== undefined) callOptions.onAdmission?.(reservation);
       // AI/run currently serializes native streaming results as an empty envelope.
       // The documented compatibility endpoints preserve the provider SSE stream.
       const endpoint = selectedModel.startsWith("anthropic/") ? "messages" : selectedModel.startsWith("openai/") && "input" in input ? "responses" : "chat/completions";

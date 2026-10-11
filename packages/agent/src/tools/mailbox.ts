@@ -30,11 +30,13 @@ export function mailboxTools(): AgentTool[] {
       await rememberTargets(context, "mailbox message", [result.draft], message => message.subject); return ok(result);
     }),
   ];
-  tools.push({
+  const sendTool: AgentTool = {
     name: "core_mailbox_send", description: "Send one previously read or created mailbox draft using its stable ID. Requires durable owner approval of its exact recipient, subject, and body.",
     parameters: objectSchema({ draftId: idProperty("draft") }, ["draftId"]), effect: "external", approval: "required", pluginId: null,
+    target: { domain: "mailbox message", idParameter: "draftId", actionLabel: "Send email draft" },
     async execute(args, context) {
       try {
+        context = { ...context, declaredTarget: sendTool.target, toolCall: { id: context.toolCallId, name: sendTool.name, arguments: args } };
         if (Object.keys(args).some(key => key !== "draftId")) throw new Error("Only draftId is permitted; model confirmation cannot authorize sending.");
         if (context.signal.aborted) throw new Error("Turn cancelled.");
         const service = services(context).mailbox;
@@ -55,8 +57,9 @@ export function mailboxTools(): AgentTool[] {
         const result = await service.sendDraft(id, context.idempotencyKey, expected);
         if (result && typeof result === "object" && "error" in result) throw new Error(String(result.error));
         return ok(result);
-      } catch (error) { return { status: "error", error: error instanceof Error ? error.message : String(error) }; }
+      } catch (error) { return { status: "error", error: error instanceof Error ? error.message : String(error), ...(error && typeof error === "object" && "data" in error ? { data: error.data } : {}) }; }
     },
-  });
+  };
+  tools.push(sendTool);
   return tools;
 }

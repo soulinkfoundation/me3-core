@@ -17,6 +17,7 @@ export function createEvalBudget(maxUsd, pricing) {
   return {
     summary,
     reserve(model, input) {
+      if (stopped) throw new Error("Eval budget is stopped; no further model requests are permitted.");
       const modelChoice = /^(openai|anthropic)\//.test(model) ? model.replace("/", ":") : `workers-ai:${model}`;
       const rates = pricing[modelChoice];
       if (!rates) { stopped = true; throw new Error(`No published price for ${modelChoice}; provide --pricing before spending credits.`); }
