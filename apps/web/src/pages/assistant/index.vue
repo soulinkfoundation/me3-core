@@ -16,7 +16,6 @@ import AssistantApprovalDialog from "../../components/AssistantApprovalDialog.vu
 import AgentTargetChoices from "../../components/AgentTargetChoices.vue";
 import { normalizeAgentTargetPresentation, targetChoiceRequest, type AgentTargetChoice, type AgentTargetPresentation } from "../../utils/agentTargetChoices";
 import ComposerPrompt from "../../components/ComposerPrompt.vue";
-import { useAuthStore } from "../../stores/auth";
 import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import WorkspaceTabs from "../../components/WorkspaceTabs.vue";
@@ -743,7 +742,6 @@ async function showWorkspace(home: boolean) {
   await router.replace({ query: { ...route.query, view: home ? "home" : "chat" } });
 }
 const composerFocused = ref(false);
-const homeAuth = useAuthStore();
 const composerMenu = ref<HTMLDetailsElement | null>(null);
 function homeSuggestion(text: string) {
   assistantDraft.value = text;
@@ -4865,63 +4863,24 @@ function messageFromUnknown(err: unknown, fallback: string) {
       aria-label="Close chat history"
       @click="assistantHistoryDrawerOpen = false"
     />
-    <Teleport
-      v-if="!siteBuilderMode && !assistantHistoryDrawerOpen"
-      to="#app-side-nav-mobile-page-controls"
-      defer
-    >
-      <div class="assistant-mobile-nav">
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          class="assistant-mobile-nav__button"
-          aria-label="Open chat history"
-          title="Open chat history"
-          type="button"
-          @click="assistantHistoryDrawerOpen = true"
-        >
-          <UiIcon name="MessagesSquare" :size="18" aria-hidden="true" />
-        </Button>
-        <div class="assistant-mobile-nav__actions">
-          <Button
-            color="ghost"
-            shape="soft"
-            size="compact"
-            icon-only
-            class="assistant-mobile-nav__button"
-            aria-label="New chat"
-            title="New chat"
-            type="button"
-            @click="startNewAssistantChat(null)"
-          >
-            <UiIcon name="Plus" :size="18" aria-hidden="true" />
-          </Button>
+    <Teleport v-if="!siteBuilderMode" to="#app-top-bar-controls" defer>
+      <div class="home-chat-header">
+        <div class="home-chat-actions">
+          <button v-if="homeMode" type="button" class="home-nav-button" aria-label="Add a card to Home" @click="homePanels?.openAddDialog()"><UiIcon name="Plus" :size="24" /></button>
+          <button type="button" class="home-nav-button" aria-label="Open chat history" @click="assistantHistoryDrawerOpen = true"><UiIcon name="MessagesSquare" :size="20" /></button>
+          <button v-if="!homeMode" type="button" class="home-nav-button" aria-label="New chat" @click="startNewAssistantChat(null)"><UiIcon name="Plus" :size="24" /></button>
+        </div>
+        <div class="home-chat-switcher" role="group" aria-label="Workspace view">
+          <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
+          <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>
         </div>
       </div>
     </Teleport>
-    <div
-      v-if="!siteBuilderMode"
-      class="assistant-page-tools"
-      aria-label="Assistant tools"
-    >
-      <Button
-        color="ghost"
-        shape="soft"
-        size="compact"
-        icon-only
-        type="button"
-        aria-label="New chat"
-        title="New chat"
-        @click="startNewAssistantChat(null)"
-      >
-        <UiIcon name="Plus" :size="18" aria-hidden="true" />
-      </Button>
-    </div>
     <aside
       v-if="!siteBuilderMode"
       class="assistant-history"
+      :inert="!assistantHistoryDrawerOpen"
+      :aria-hidden="!assistantHistoryDrawerOpen"
       :class="{
         'assistant-history--collapsed': assistantHistoryCollapsed,
         'assistant-history--open': assistantHistoryDrawerOpen,
@@ -5220,14 +5179,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
       </section>
 
       <section class="assistant-console" aria-label="Assistant conversation">
-        <header v-if="!siteBuilderMode" class="home-chat-header">
-          <button v-if="homeMode" type="button" class="home-add-card" aria-label="Add a card to Home" @click="homePanels?.openAddDialog()"><UiIcon name="Plus" :size="24" /></button>
-          <div class="home-chat-switcher" role="group" aria-label="Workspace view">
-            <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
-            <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>
-          </div>
-          <RouterLink to="/account" class="home-profile" aria-label="Your account">{{ (homeAuth.user?.name || 'ME3').slice(0, 1).toUpperCase() }}</RouterLink>
-        </header>
         <HomePanels v-if="!siteBuilderMode" v-show="homeMode" ref="homePanels" class="assistant-home" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" />
         <div
           v-show="!homeMode || siteBuilderMode"
@@ -7558,14 +7509,13 @@ function messageFromUnknown(err: unknown, fallback: string) {
 <style scoped>
 .assistant-page {
   --assistant-composer-clearance: 110px;
-  --assistant-header-clearance: calc(var(--app-shell-mobile-nav-height) + 18px);
+  --assistant-header-clearance: 18px;
 
   position: relative;
   isolation: isolate;
   display: block;
   box-sizing: border-box;
-  min-height: 100vh;
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--app-topbar-height));
   padding: 0 14px 18px;
   background: var(--ui-bg);
   color: var(--ui-text);
@@ -7580,8 +7530,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
 }
 
 .assistant-page--site-builder {
-  height: 100vh;
-  height: 100dvh;
+  height: calc(100dvh - var(--app-topbar-height));
   min-height: 0;
   padding: 0;
   overflow: hidden;
@@ -7590,8 +7539,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
 .assistant-workspace--site-builder {
   display: grid;
   grid-template-columns: minmax(290px, 42%) minmax(320px, 1fr);
-  height: 100vh;
-  height: 100dvh;
+  height: calc(100dvh - var(--app-topbar-height));
   min-height: 0;
 }
 
@@ -7764,20 +7712,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
   line-height: 1.5;
 }
 
-.assistant-page-tools {
-  position: fixed;
-  top: 14px;
-  right: 18px;
-  z-index: 42;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px;
-  border: 1px solid transparent;
-  border-radius: var(--ui-radius-md);
-  background: color-mix(in oklab, var(--ui-bg) 86%, transparent);
-  backdrop-filter: blur(14px);
-}
 
 .assistant-history {
   position: fixed;
@@ -7828,10 +7762,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
   color: var(--ui-text);
 }
 
-.assistant-mobile-nav__button {
-  flex: 0 0 auto;
-  pointer-events: auto;
-}
 
 .assistant-history__collapse {
   display: none;
@@ -8124,47 +8054,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
 
 .assistant-topbar {
   display: none;
-}
-
-.assistant-mobile-nav {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  padding: 0;
-}
-
-:global(#app-side-nav-mobile-page-controls:has(.assistant-mobile-nav)) {
-  position: fixed;
-  top: 0;
-  right: 0;
-  left: 0;
-  z-index: 45;
-  min-height: var(--app-shell-mobile-nav-height);
-  height: var(--app-shell-mobile-nav-height);
-  padding: var(--workspace-topbar-padding-block) 8px
-    var(--workspace-topbar-padding-block)
-    var(--app-shell-mobile-nav-leading-padding);
-  align-items: center;
-  pointer-events: none;
-}
-
-:global(.app-root:has(.assistant-page--history-open) .app-side-nav-mobile-bar) {
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.assistant-mobile-nav__actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  flex: 0 0 auto;
 }
 
 .assistant-topbar__actions {
@@ -10861,9 +10750,6 @@ button:disabled {
     font-size: max(16px, 1em);
   }
 
-  .assistant-page-tools {
-    display: none;
-  }
 
   .assistant-timeline {
     padding-top: var(--assistant-header-clearance);
@@ -11010,18 +10896,18 @@ button:disabled {
 @media (max-width: 620px) {
   .assistant-page--site-builder {
     height: auto;
-    min-height: 100dvh;
+    min-height: calc(100dvh - var(--app-topbar-height));
     overflow: auto;
   }
 
   .assistant-workspace--site-builder {
     grid-template-columns: 1fr;
     height: auto;
-    min-height: 100dvh;
+    min-height: calc(100dvh - var(--app-topbar-height));
   }
 
   .assistant-page--site-builder .assistant-main {
-    height: 100dvh;
+    height: calc(100dvh - var(--app-topbar-height));
     border-right: 0;
     border-bottom: 1px solid var(--ui-border);
   }
@@ -11053,16 +10939,16 @@ button:disabled {
 </style>
 
 <style scoped>
-.home-chat-header { margin-top: var(--app-shell-mobile-nav-height, 0px); position: sticky; top: var(--app-shell-mobile-nav-height, 0px); z-index: 35; display: flex; align-items: center; justify-content: center; min-height: 60px; background: var(--ui-bg); }
-.home-chat-header::after { content: ""; position: absolute; top: 100%; left: 0; right: 0; height: 14px; pointer-events: none; background: linear-gradient(var(--ui-bg), transparent); }
-.home-chat-switcher { display: flex; padding: 3px; border-radius: 28px; background: var(--ui-surface-muted); }
+.home-chat-header { display: flex; align-items: center; height: 44px; }
+.home-chat-actions { display: flex; align-items: center; }
+.home-chat-switcher { position: absolute; left: 50%; transform: translateX(-50%); display: flex; padding: 3px; border-radius: 28px; background: var(--ui-surface-muted); }
 .home-chat-switcher button { min-width: 68px; min-height: 38px; padding: 0 14px; border: 0; border-radius: 22px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
 .home-chat-switcher button[aria-pressed="true"] { color: var(--ui-primary-contrast); background: var(--ui-primary); font-weight: 600; }
-.home-profile { position: absolute; right: 0; width: 44px; height: 44px; display: grid; place-items: center; font-size: 14px; color: var(--ui-text); text-decoration: none; }
-.home-profile::before { position: absolute; content: ""; inset: 6px; border-radius: 50%; background: var(--ui-surface-muted); z-index: -1; }
-.assistant-home { height: calc(100dvh - var(--app-shell-mobile-nav-height, 0px) - 78px); overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 18px; align-content: start; box-sizing: border-box; }
-.home-add-card { position: absolute; left: 0; display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--ui-text); border-radius: 50%; cursor: pointer; }
-.home-add-card:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.assistant-home { height: calc(100dvh - var(--app-topbar-height)); overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 18px; align-content: start; box-sizing: border-box; }
+.home-nav-button { display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--ui-text-muted); border-radius: 50%; cursor: pointer; }
+.home-nav-button:hover { background: var(--ui-surface-muted); }
+@media (max-width: 360px) { .home-chat-switcher { left: calc(50% + 8px); } .home-chat-switcher button { min-width: 52px; padding-inline: 10px; } }
+.home-nav-button:focus-visible, .home-chat-switcher button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .assistant-page:not(.assistant-page--site-builder) .assistant-timeline { padding-top: 18px; }
 .assistant-composer { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: 5px 6px 5px 16px; gap: 0 4px; min-height: 56px; box-sizing: border-box; }
 .assistant-composer .assistant-attachments, .assistant-composer > p, .assistant-composer > .sr-only { grid-column: 1 / -1; }

@@ -3105,7 +3105,7 @@ onBeforeUnmount(() => {
     class="agent-page"
     :class="{ 'agent-page--with-mobile-controls': isEmailTab(activeTab) }"
   >
-    <Teleport to="#app-side-nav-mobile-page-controls" defer>
+    <Teleport to="#app-page-controls" defer>
       <form
         v-if="isEmailTab(activeTab)"
         class="mail-search mail-search--mobile-nav"
@@ -4349,15 +4349,14 @@ onBeforeUnmount(() => {
 .agent-page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
+  height: calc(100dvh - var(--app-topbar-height));
   min-height: 0;
   overflow: hidden;
 }
 
 .agent-page--with-mobile-controls {
-  height: calc(100vh - var(--app-shell-mobile-nav-height));
-  height: calc(100dvh - var(--app-shell-mobile-nav-height));
+  height: calc(100vh - var(--app-topbar-height) - var(--app-shell-mobile-nav-height));
+  height: calc(100dvh - var(--app-topbar-height) - var(--app-shell-mobile-nav-height));
 }
 
 .agent-main {

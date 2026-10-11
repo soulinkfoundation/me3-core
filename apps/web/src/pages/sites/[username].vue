@@ -819,7 +819,7 @@ async function unpublishLandingPage() {
 
 .site-header__close {
   position: fixed;
-  top: var(--workspace-topbar-padding-block);
+  top: calc(var(--app-topbar-height) + var(--workspace-topbar-padding-block));
   right: var(--app-shell-mobile-nav-inset-inline-start);
   z-index: 70;
   flex: 0 0 auto;

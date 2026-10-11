@@ -966,7 +966,7 @@ onBeforeUnmount(() => {
 
 .tasks-topbar {
   position: sticky;
-  top: 0;
+  top: var(--app-topbar-height);
   z-index: 20;
   display: grid;
   grid-template-columns: 80px minmax(0, 1fr) 80px;

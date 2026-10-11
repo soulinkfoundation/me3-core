@@ -30,7 +30,7 @@ describe("campaign list", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
-    document.body.innerHTML = '<div id="app-side-nav-mobile-page-controls"></div>';
+    document.body.innerHTML = '<div id="app-page-controls"></div>';
     apiGet.mockImplementation((path: string) => {
       if (path === "/plugins") {
         return Promise.resolve({

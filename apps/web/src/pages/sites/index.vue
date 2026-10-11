@@ -579,7 +579,7 @@ onMounted(async () => {
 .sites-header > :deep(.me3-btn) {
   position: fixed;
   z-index: 70;
-  top: var(--workspace-topbar-padding-block);
+  top: calc(var(--app-topbar-height) + var(--workspace-topbar-padding-block));
   right: var(--app-shell-mobile-nav-inset-inline-start);
   min-width: 44px;
   min-height: 44px;

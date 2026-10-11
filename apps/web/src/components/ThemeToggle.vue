@@ -39,10 +39,6 @@ const emoji = computed(() => (isDark.value ? "🌞" : "🌗"));
     transform 0.2s ease;
   border: none;
 }
-.app-side-nav__row--theme:hover {
-  background: none !important;
-}
-
 .theme-toggle:hover {
   transform: translateY(-1px);
 }

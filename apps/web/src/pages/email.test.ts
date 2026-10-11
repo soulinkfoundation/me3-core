@@ -219,7 +219,7 @@ describe("EmailPage", () => {
     routeTab = "sent";
     routePath = "/email";
     routeMessage = "";
-    document.body.innerHTML = '<div id="app-side-nav-mobile-page-controls"></div>';
+    document.body.innerHTML = '<div id="app-page-controls"></div>';
     window.matchMedia = vi.fn().mockReturnValue({
       matches: true,
       media: "(min-width: 641px)",
@@ -249,7 +249,7 @@ describe("EmailPage", () => {
       setup() {
         return () =>
           h("div", [
-            h("div", { id: "app-side-nav-mobile-page-controls" }),
+            h("div", { id: "app-page-controls" }),
             h(EmailPage),
           ]);
       },
@@ -260,7 +260,7 @@ describe("EmailPage", () => {
 
     expect(
       document.querySelector(
-        "#app-side-nav-mobile-page-controls #mail-search-input-mobile-nav",
+        "#app-page-controls #mail-search-input-mobile-nav",
       ),
     ).not.toBeNull();
     expect(wrapper.text()).toContain("ME3");

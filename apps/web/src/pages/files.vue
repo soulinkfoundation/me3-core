@@ -632,7 +632,7 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
   <main class="files-page">
     <Teleport
       v-if="r2Available"
-      to="#app-side-nav-mobile-page-controls"
+      to="#app-page-controls"
       defer
     >
       <div class="files-mobile-controls">
@@ -1158,7 +1158,7 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: calc(100dvh - var(--app-shell-mobile-nav-height));
+  min-height: calc(100dvh - var(--app-topbar-height) - var(--app-shell-mobile-nav-height));
   overflow: hidden;
 }
 

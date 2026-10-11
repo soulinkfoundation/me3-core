@@ -4,7 +4,7 @@ import { RouterView, useRoute } from "vue-router";
 import { Toaster } from "vue-sonner";
 import { api } from "./api";
 import AgentChatLauncher from "./components/AgentChatLauncher.vue";
-import AppSideNav from "./components/AppSideNav.vue";
+import AppTopBar from "./components/AppTopBar.vue";
 import SoulinkJoinPrompt from "./components/SoulinkJoinPrompt.vue";
 import { useMailboxRealtime } from "./composables/useMailboxRealtime";
 import { useAuthStore } from "./stores/auth";
@@ -194,10 +194,10 @@ watch(
 
 <template>
   <div class="app-root" :class="{ 'app-root--shelled': showAppShell }">
-    <AppSideNav v-if="showAppShell" />
+    <AppTopBar v-if="showAppShell" />
     <div class="app-root__view">
       <div
-        id="app-side-nav-mobile-page-controls"
+        id="app-page-controls"
         class="app-root__mobile-page-controls"
       />
       <RouterView />
@@ -236,6 +236,7 @@ watch(
   min-height: 100vh;
   min-height: 100dvh;
   box-sizing: border-box;
+  padding-top: var(--app-topbar-height);
 }
 
 .app-root__mobile-page-controls {
@@ -244,9 +245,7 @@ watch(
   justify-content: stretch;
   min-width: 0;
   min-height: var(--app-shell-mobile-nav-height);
-  padding: var(--workspace-topbar-padding-block) 8px
-    var(--workspace-topbar-padding-block)
-    var(--app-shell-mobile-nav-leading-padding);
+  padding: var(--workspace-topbar-padding-block) 14px;
   background: var(--color-bg);
   box-sizing: border-box;
 }

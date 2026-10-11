@@ -1,10 +1,12 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { h } from "vue";
+import { createPinia } from "pinia";
+import { useAuthStore } from "../stores/auth";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
 import { invalidatePluginAccess } from "../utils/pluginAccess";
-import AppSideNav from "./AppSideNav.vue";
+import AppProfileMenu from "./AppProfileMenu.vue";
 
 vi.mock("../api", () => ({
   api: {
@@ -16,7 +18,7 @@ const routeComponent = {
   render: () => h("div"),
 };
 
-async function mountSideNav(
+async function mountProfileMenu(
   plugins: Array<{ id: string; status: string; enabled: boolean }>,
   props: Record<string, never> = {},
   navigationFeatures: Array<{ id: string; visible: boolean }> = [
@@ -32,7 +34,7 @@ async function mountSideNav(
   ],
 ) {
   vi.mocked(api.get).mockImplementation((endpoint: string) =>
-    Promise.resolve(endpoint === "/navigation-features" ? { features: navigationFeatures } : { plugins }),
+    Promise.resolve(endpoint === "/navigation-features" ? { features: navigationFeatures } : endpoint === "/sites" ? { sites: [] } : { plugins }),
   );
   invalidatePluginAccess();
 
@@ -48,24 +50,29 @@ async function mountSideNav(
   await router.push("/assistant");
   await router.isReady();
 
-  const wrapper = mount(AppSideNav, {
+  const pinia = createPinia();
+  useAuthStore(pinia).setSession({ id: "owner", name: "Demo Owner", username: "demo", email: null, timezone: null, locale: "en-US", localeSource: "inferred" });
+  const wrapper = mount(AppProfileMenu, {
     props,
     global: {
-      plugins: [router],
+      plugins: [router, pinia],
+      stubs: { Teleport: true },
     },
   });
+  await flushPromises();
+  await wrapper.get(".profile-trigger").trigger("click");
   await flushPromises();
   return wrapper;
 }
 
-describe("AppSideNav optional plugin links", () => {
+describe("AppProfileMenu optional plugin links", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     invalidatePluginAccess();
   });
 
   it("shows Socials and Accounts when both plugins are enabled", async () => {
-    const wrapper = await mountSideNav([
+    const wrapper = await mountProfileMenu([
       {
         id: "me3.social-publishing",
         status: "installed",
@@ -83,8 +90,8 @@ describe("AppSideNav optional plugin links", () => {
     wrapper.unmount();
   });
 
-  it("uses the approved navigation order, Tasks destination, and dog-head image", async () => {
-    const wrapper = await mountSideNav([
+  it("retains the drawer destinations using emoji and Settings rows", async () => {
+    const wrapper = await mountProfileMenu([
       { id: "me3.journal", status: "installed", enabled: true },
       { id: "me3.calendar", status: "installed", enabled: true },
       { id: "me3.mission-control", status: "installed", enabled: true },
@@ -94,35 +101,32 @@ describe("AppSideNav optional plugin links", () => {
 
     expect(
       wrapper
-        .findAll("nav .app-side-nav__row")
+        .findAll("nav .profile-menu__row")
         .map((link) => link.attributes("aria-label")),
     ).toEqual([
-      "Website",
-      "Assistant",
       "Calendar",
+      "Email",
       "Writing",
       "Tasks",
-      "Email",
       "Files",
       "Socials",
       "Accounts",
-      "Settings",
+      "Website",
+      "Chat",
     ]);
     const websiteLink = wrapper.get('[aria-label="Website"]');
-    expect(websiteLink.attributes("title")).toBe("Website");
-    expect(websiteLink.get(".sr-only").text()).toBe("Website");
+    expect(websiteLink.text()).toContain("Website");
     expect(websiteLink.attributes("href")).toBe("/sites");
     expect(wrapper.get('[aria-label="Tasks"]').attributes("href")).toBe(
       "/tasks",
     );
-    expect(
-      wrapper.get('[aria-label="Assistant"] img').attributes("src"),
-    ).toBe("/me3-dog-head-emoji-smooth.png");
+    expect(wrapper.find('nav img').exists()).toBe(false);
+    expect(wrapper.get('[aria-label="Settings"]').attributes("href")).toBe("/settings");
     wrapper.unmount();
   });
 
   it("keeps Soulink out of side navigation", async () => {
-    const wrapper = await mountSideNav([]);
+    const wrapper = await mountProfileMenu([]);
 
     expect(wrapper.find('[aria-label="Join Soulink"]').exists()).toBe(false);
     expect(wrapper.find('[aria-label="Open Soulink chats"]').exists()).toBe(false);
@@ -130,7 +134,7 @@ describe("AppSideNav optional plugin links", () => {
   });
 
   it("hides Calendar when its navigation feature is disabled", async () => {
-    const wrapper = await mountSideNav(
+    const wrapper = await mountProfileMenu(
       [{ id: "me3.calendar", status: "installed", enabled: true }],
       {},
       [
@@ -144,7 +148,7 @@ describe("AppSideNav optional plugin links", () => {
   });
 
   it("shows Wheel of Life only when its navigation feature is enabled", async () => {
-    const wrapper = await mountSideNav(
+    const wrapper = await mountProfileMenu(
       [],
       {},
       [
@@ -161,14 +165,13 @@ describe("AppSideNav optional plugin links", () => {
     );
 
     const link = wrapper.get('[aria-label="Wheel of Life"]');
-    expect(link.attributes("title")).toBe("Wheel of Life");
     expect(link.attributes("href")).toBe("/wheel-of-life");
-    expect(link.find(".app-side-nav__emoji").text()).toBe("🛞");
+    expect(link.find(".profile-menu__emoji").text()).toBe("🛞");
     wrapper.unmount();
   });
 
   it("hides Socials and Accounts when both plugins are disabled", async () => {
-    const wrapper = await mountSideNav([
+    const wrapper = await mountProfileMenu([
       {
         id: "me3.social-publishing",
         status: "installed",
@@ -187,7 +190,7 @@ describe("AppSideNav optional plugin links", () => {
   });
 
   it("hides configurable workspaces while keeping enabled Accounts available", async () => {
-    const wrapper = await mountSideNav([
+    const wrapper = await mountProfileMenu([
       { id: "me3.journal", status: "installed", enabled: true },
       { id: "me3.mission-control", status: "installed", enabled: true },
       { id: "me3.social-publishing", status: "installed", enabled: true },
@@ -202,7 +205,7 @@ describe("AppSideNav optional plugin links", () => {
       { id: "accounts", visible: false },
     ]);
 
-    for (const label of ["Assistant", "Writing", "Tasks", "Email", "Files"]) {
+    for (const label of ["Chat", "Writing", "Tasks", "Email", "Files"]) {
       expect(wrapper.find(`[aria-label="${label}"]`).exists()).toBe(false);
     }
     expect(wrapper.find('[aria-label="Accounts"]').exists()).toBe(true);

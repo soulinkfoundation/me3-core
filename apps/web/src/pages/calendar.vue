@@ -3109,7 +3109,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ops-page calendar-spike">
-    <Teleport to="#app-side-nav-mobile-page-controls" defer>
+    <Teleport to="#app-page-controls" defer>
       <div
         v-if="isCompactCalendar && !initialCalendarLoading && !showCalendarUnavailable"
         class="cal-mobile-nav-controls"
@@ -4749,9 +4749,9 @@ onBeforeUnmount(() => {
   width: min(220px, calc(100vw - 32px));
 }
 
-:global(#app-side-nav-mobile-page-controls:has(.cal-mobile-nav-controls)) {
+:global(#app-page-controls:has(.cal-mobile-nav-controls)) {
   position: fixed;
-  top: 0;
+  top: var(--app-topbar-height);
   right: 0;
   left: 0;
   z-index: 45;
@@ -5483,7 +5483,7 @@ onBeforeUnmount(() => {
 @media (min-width: 1101px) {
   .cal-toolbar {
     position: sticky;
-    top: 0;
+    top: var(--app-topbar-height);
     z-index: 12;
     display: grid;
     grid-template-columns: minmax(260px, 1fr) auto minmax(260px, 1fr);

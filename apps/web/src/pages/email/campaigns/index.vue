@@ -343,7 +343,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="agent-page campaigns-page">
-    <Teleport to="#app-side-nav-mobile-page-controls" defer>
+    <Teleport to="#app-page-controls" defer>
       <form class="campaigns-mobile-nav" role="search" @submit.prevent>
         <label class="campaigns-mobile-nav__label" for="campaign-search-input-top">
           Search campaigns

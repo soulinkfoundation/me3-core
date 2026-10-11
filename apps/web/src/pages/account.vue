@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { definePage } from "unplugin-vue-router/runtime";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api";
 import { getEmailTestOperation, finishEmailTestOperation } from "../utils/emailTestOperation";
@@ -2334,20 +2334,7 @@ async function scrollToRouteHash() {
   });
 }
 
-onMounted(async () => {
-  await loadAccount();
-  void sites.ensureSites();
-  void loadMailbox();
-  void loadAiSettings();
-  void loadEmailProviderSettings();
-  void loadPlugins();
-  void loadNavigationFeatures();
-  void loadAppConnections();
-  void completeCoreGithubInstallFromRoute().then((completed) => {
-    if (!completed) void loadCoreGithubUpdater();
-  });
-  void loadCoreStorageStatus();
-  void completeStripeConnectReturn();
+function openRouteSection() {
   if (
     route.query.section === "connections" ||
     route.query.section === "app-connections"
@@ -2389,6 +2376,24 @@ onMounted(async () => {
   if (route.query.section === "timezone") {
     openSection.value.timezone = true;
   }
+}
+watch(() => route.query.section, openRouteSection);
+
+onMounted(async () => {
+  await loadAccount();
+  void sites.ensureSites();
+  void loadMailbox();
+  void loadAiSettings();
+  void loadEmailProviderSettings();
+  void loadPlugins();
+  void loadNavigationFeatures();
+  void loadAppConnections();
+  void completeCoreGithubInstallFromRoute().then((completed) => {
+    if (!completed) void loadCoreGithubUpdater();
+  });
+  void loadCoreStorageStatus();
+  void completeStripeConnectReturn();
+  openRouteSection();
   await scrollToRouteHash();
 });
 
@@ -2399,7 +2404,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="account-page">
-    <Teleport to="#app-side-nav-mobile-page-controls" defer disabled>
+    <Teleport to="#app-page-controls" defer disabled>
       <div class="account-mobile-nav">
         <h1 class="account-title account-mobile-nav__title">
           <span>Account</span>

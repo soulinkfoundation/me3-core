@@ -1656,7 +1656,7 @@ onBeforeUnmount(() => {
 .journal__topbar {
   flex-shrink: 0;
   position: sticky;
-  top: 0;
+  top: var(--app-topbar-height);
   z-index: 25;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -1752,7 +1752,7 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   padding: 0 24px 16px;
   box-sizing: border-box;
-  min-height: calc(100dvh - var(--workspace-topbar-height));
+  min-height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
 }
 
 .journal__workspace:has(.journal__archive) {
@@ -1781,8 +1781,8 @@ onBeforeUnmount(() => {
 .journal__tabs button:focus-visible, .journal__panel-action:focus-visible, .journal__assist-result button:focus-visible, .journal__status button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
 .journal__panel-action { width: 100%; text-align: left; color: var(--ui-accent-strong, var(--ui-accent)); }
 .journal__assist {
-  position: sticky; top: var(--workspace-topbar-height);
-  min-height: calc(100dvh - var(--workspace-topbar-height));
+  position: sticky; top: calc(var(--app-topbar-height) + var(--workspace-topbar-height));
+  min-height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
   border-left: 1px solid var(--ui-border, var(--color-border));
   padding-left: 14px; overflow-y: auto;
 }
@@ -1807,12 +1807,12 @@ onBeforeUnmount(() => {
 
 .journal__archive {
   position: sticky;
-  top: var(--workspace-topbar-height);
+  top: calc(var(--app-topbar-height) + var(--workspace-topbar-height));
   align-self: stretch;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-height: calc(100dvh - var(--workspace-topbar-height));
+  min-height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
   overflow-y: auto;
   border-right: 1px solid var(--ui-border, var(--color-border));
   padding-right: 14px;
@@ -1978,7 +1978,7 @@ onBeforeUnmount(() => {
   flex: 1;
   flex-direction: column;
   min-height: auto;
-  --tiptap-toolbar-offset: var(--workspace-topbar-height);
+  --tiptap-toolbar-offset: calc(var(--app-topbar-height) + var(--workspace-topbar-height));
 }
 
 .journal__editor-wrap.is-loading {
@@ -2018,7 +2018,7 @@ onBeforeUnmount(() => {
 
 .journal__editor-wrap :deep(.tiptap-editor--workspace .editor-content-wrapper .ProseMirror) {
   flex: 1;
-  min-height: max(200px, calc(100dvh - var(--workspace-topbar-height) - 132px));
+  min-height: max(200px, calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height) - 132px));
 }
 
 .journal__status {
@@ -2205,7 +2205,7 @@ onBeforeUnmount(() => {
 
   .journal__archive {
     position: static;
-    min-height: calc(100dvh - var(--workspace-topbar-height));
+    min-height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
     max-height: none;
     border-right: 0;
     border-bottom: 0;
