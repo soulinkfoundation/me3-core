@@ -1,8 +1,8 @@
 # Agent computer: browser and sandbox with owner takeover
 
-Status: **proposed design, awaiting owner review** (bead `me3-ahsk.18`). No code,
-bindings or deployment follow from this document until the owner approves it.
-Once approved, the durable parts move into the shared
+Status: **main rules and default limits approved by the owner on 2026-10-11**
+(bead `me3-ahsk.18`); spikes 1–3 done, spike 4 pending. No code, bindings or
+deployment follow until the build beads are filed. The durable parts then move into the shared
 [agent runtime](../../docs/projects/me3-agent-runtime.md) architecture and
 the build work becomes beads.
 
@@ -119,7 +119,9 @@ payment-card fields switches the job to payment mode: only `browser_read`,
    either button resumes the job; ME3 reads the page again and continues or
    reports. After a payment handoff, ME3 reads only the confirmation page.
 5. Web opens Live View in a new tab or panel. Native opens it full screen in an
-   in-app browser (spike below decides which works).
+   in-app browser, offered only for tap-only handoffs (`captcha`, `confirm`)
+   because typing does not work there on iOS. Handoffs that need typing ask the
+   owner to continue on a computer or switch to "finish on your device".
 
 ## Payments with this design
 
@@ -130,16 +132,18 @@ starts the payment takeover.
 
 Two consequences the payments decision did not account for:
 
-- **The owner pays inside a remote browser.** Their device's Apple Pay, Google
-  Pay and saved cards are not there; they type card details into Live View, or
-  pay with an account that is signed in during that takeover. Card digits never
-  pass through ME3 code, logs or the model, but they do travel through a Chrome
-  running in the installation's Cloudflare account. Recording stays off.
-- **"Finish on your phone" is the better path where available.** When the
-  merchant supports a shareable cart link (Shopify cart permalinks are the common
-  case), ME3 builds the cart without a browser session and the owner opens the
-  link on their own device and pays natively with Apple Pay, Google Pay or Shop
-  Pay. The approval card offers this first and falls back to remote takeover.
+- **"Finish on your device" is the primary path.** When the merchant supports a
+  shareable cart link (Shopify cart permalinks are the common case), ME3 builds
+  the cart and the owner opens the link on their own device and pays natively
+  with Apple Pay, Google Pay or Shop Pay. Otherwise ME3 hands over the merchant
+  and item details (link, options, quantity, total) so the owner completes the
+  purchase in their own browser or app.
+- **Remote payment takeover is desktop-only.** The owner's device wallets and
+  saved cards are not in the remote browser, and on iOS the keyboard does not
+  open in Live View (spike 1). On desktop the owner can type card details into
+  Live View; card digits never pass through ME3 code, logs or the model, but
+  they travel through a Chrome running in the installation's Cloudflare account.
+  Recording stays off.
 
 Receipts in both paths come from the confirmation page or the order email; the
 owner can confirm or correct them.
@@ -150,9 +154,8 @@ owner can confirm or correct them.
   checkouts (and some sign-ins) will refuse it even with a human in control.
   This may limit "any merchant" more than anything else in this design; the
   spike measures it.
-- **Mobile takeover.** Live View on a phone, with touch and an on-screen
-  keyboard, is undocumented. If it is unusable, payments fall back to
-  "finish on your phone" and desktop takeover.
+- **Mobile takeover.** Typing does not work in Live View on iOS (spike 1), so
+  phone owners rely on "finish on your device" for anything needing input.
 - **Prompt injection.** Pages can instruct the agent. Mitigations: untrusted
   marking, approval on every external effect, no sensitive input, payment mode,
   private-address blocking, and job limits.
@@ -163,7 +166,39 @@ owner can confirm or correct them.
 - **Cost.** Browsing is cheap ($0.09/h after included hours); model steps
   dominate. Snapshots over screenshots, step caps and the daily budget bound it.
 
-## Spikes before building
+## Spike results (2026-10-11)
+
+Run with a dedicated Browser Run token on synthetic pages and public sites; no
+owner data. Raw output was kept outside the repository.
+
+1. **Mobile takeover: fails for typing on iOS.** Scanning the Live View link on
+   an iPhone opens the session in Safari and taps reach the page, but the
+   on-screen keyboard never opens, so no field can be filled. The same flow
+   on a Mac worked end to end (typing, clicking Pay, pressing Done). Android not
+   yet tried. Consequence: mobile takeover is for taps only (CAPTCHAs,
+   confirmations, choosing options); typing and payment need desktop or the
+   owner's own device.
+2. **Read isolation: not provided by the platform.** While a handoff was
+   active, the automation connection read all 16 synthetic card digits and the
+   password length as they were typed, saw the Pay click, and kept taking
+   screenshots and accessibility snapshots. ME3 must enforce rule 4 itself by
+   detaching all page reads for the whole handoff; this needs an explicit test.
+   After Done, the test closed the browser, so the link could not reconnect;
+   the product regenerates a link per tap while a handoff is active.
+3. **Merchant reach: about two thirds reachable at the browsing stage.** Of 28
+   UK/IE merchants, 18 loaded their home and basket/search pages (Amazon UK,
+   Currys, M&S, IKEA IE, Harvey Norman IE, Dunnes, Ryanair, Trainline, Airbnb,
+   Eventbrite, Deliveroo, Just Eat, OpenTable, Fresha, Treatwell, Gymshark,
+   Allbirds, Huel). Blocked or failing: Argos, Tesco and ASOS (Akamai "Access
+   Denied"), Aer Lingus (Imperva "Pardon Our Interruption"), Etsy, Ticketmaster
+   IE and eBay's home page (403), Boots (403), Booking.com (challenge stub) and
+   John Lewis (timeouts). Only pages up to the basket were tested; add-to-cart and
+   checkout are usually stricter, so real checkout reach will be lower. Browser
+   Run identifies itself as `HeadlessChrome/128` on Linux. Four sites were on
+   Shopify (cart links possible). None published `/.well-known/poppy.json`.
+4. **Snapshot quality:** pending; needs AI Gateway credit for model calls.
+
+## Original spike plan
 
 All on disposable accounts and synthetic or public test pages; no owner data.
 
