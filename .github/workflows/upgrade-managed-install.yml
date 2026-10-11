@@ -154,6 +154,7 @@ jobs:
             --d1-id "$D1_ID" \
             --r2-name "$R2_NAME" \
             --queue-names "$QUEUE_NAMES" \
+            --release-tag "$ME3_MANAGED_CURRENT_RELEASE_TAG" \
             --durable-object-namespace-id "$DO_NAMESPACE_ID" \
             --public-origin "$PUBLIC_ORIGIN" \
             --canonical-hostname "$ME3_MANAGED_CANONICAL_HOSTNAME" \
@@ -241,7 +242,8 @@ jobs:
             --d1-name "$D1_NAME" \
             --d1-id "$D1_ID" \
             --r2-name "$R2_NAME" \
-            --queue-names "$QUEUE_NAMES"
+            --queue-names "$QUEUE_NAMES" \
+            --release-tag "$ME3_MANAGED_TARGET_RELEASE_TAG"
           node control/scripts/verify-managed-upgrade-config.mjs \
             --config source/wrangler.toml \
             --installation-id "$ME3_MANAGED_INSTALLATION_ID" \
@@ -250,6 +252,7 @@ jobs:
             --d1-id "$D1_ID" \
             --r2-name "$R2_NAME" \
             --queue-names "$QUEUE_NAMES" \
+            --release-tag "$ME3_MANAGED_TARGET_RELEASE_TAG" \
             --durable-object-namespace-id "$DO_NAMESPACE_ID" \
             --public-origin "$PUBLIC_ORIGIN"
 
@@ -356,6 +359,7 @@ jobs:
             --d1-id "$D1_ID" \
             --r2-name "$R2_NAME" \
             --queue-names "$QUEUE_NAMES" \
+            --release-tag "$ME3_MANAGED_TARGET_RELEASE_TAG" \
             --durable-object-namespace-id "$DO_NAMESPACE_ID" \
             --public-origin "$PUBLIC_ORIGIN" \
             --canonical-hostname "$ME3_MANAGED_CANONICAL_HOSTNAME" \
@@ -367,6 +371,16 @@ jobs:
             --public-origin "$PUBLIC_ORIGIN" \
             --canonical-hostname "$ME3_MANAGED_CANONICAL_HOSTNAME" \
             --expected-release-tag "$ME3_MANAGED_TARGET_RELEASE_TAG"
+
+      - name: Delete detached retired Assistant Jobs queues
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.ME3_MANAGED_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.ME3_MANAGED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          sha256sum --check "$RUNNER_TEMP/managed-upgrade-control.sha256"
+          node control/scripts/cleanup-retired-assistant-job-queues.mjs \
+            --worker-name "$WORKER_NAME" \
+            --release-tag "$ME3_MANAGED_TARGET_RELEASE_TAG"
 
       - name: Complete the exact upgrade attempt
         env:

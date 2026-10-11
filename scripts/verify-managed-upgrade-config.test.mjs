@@ -22,6 +22,11 @@ test("accepts only a deploy config bound to the complete frozen resources", () =
   writeFileSync(configPath, safeConfig);
   try {
     assert.equal(contract(configPath).d1Id, d1Id);
+    const historical = [...queueNames, `${workerName}-assistant-job-events`, `${workerName}-assistant-job-events-dlq`];
+    assert.deepEqual(contract(configPath, { queueNames: historical, releaseTag: "v0.1.214" }).queueNames, [...queueNames].sort());
+    assert.throws(() => contract(configPath, { queueNames: historical, releaseTag: "v0.1.213" }), /upgrade config is invalid/);
+    assert.throws(() => contract(configPath, { queueNames: [...historical, `${workerName}-foreign-events`], releaseTag: "v0.1.214" }), /upgrade config is invalid/);
+
 
     const unsafeConfigs = [
       safeConfig.replace(d1Id, "33333333-3333-4333-8333-333333333333"),
@@ -99,7 +104,7 @@ test("accepts the isolated agent runtime only with its exact binding and additiv
   }
 });
 
-function contract(configPath) {
+function contract(configPath, overrides = {}) {
   return verifyManagedUpgradeConfig({
     configPath,
     installationId,
@@ -110,6 +115,7 @@ function contract(configPath) {
     queueNames,
     durableObjectNamespaceId: "b".repeat(32),
     publicOrigin: "https://owner.me3.app",
+    ...overrides,
   });
 }
 

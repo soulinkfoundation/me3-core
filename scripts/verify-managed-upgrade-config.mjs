@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { readManagedResourceManifest } from "./managed-resource-manifest.mjs";
+import { managedQueueNamesForRelease, readManagedResourceManifest } from "./managed-resource-manifest.mjs";
 import { getTomlArrayBlocks, getTomlString } from "./wrangler-toml.mjs";
 
 const UUID_PATTERN =
@@ -24,10 +24,11 @@ export function verifyManagedUpgradeConfig({
   d1Id,
   r2Name,
   queueNames,
+  releaseTag,
   durableObjectNamespaceId,
   publicOrigin,
 }) {
-  const expectedQueues = normalizeQueueNames(queueNames);
+  const expectedQueues = managedQueueNamesForRelease(normalizeQueueNames(queueNames), workerName, releaseTag);
   if (
     !UUID_PATTERN.test(d1Id || "") ||
     !/^[0-9a-f]{32}$/.test(durableObjectNamespaceId || "") ||
@@ -202,6 +203,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         d1Id: required(args, "d1-id"),
         r2Name: required(args, "r2-name"),
         queueNames: required(args, "queue-names"),
+        releaseTag: args["release-tag"],
         durableObjectNamespaceId: required(
           args,
           "durable-object-namespace-id",

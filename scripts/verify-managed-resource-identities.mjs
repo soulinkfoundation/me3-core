@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { pathToFileURL } from "node:url";
+import { managedQueueNamesForRelease } from "./managed-resource-manifest.mjs";
 
 const API_ROOT = "https://api.cloudflare.com/client/v4";
 
@@ -30,7 +31,7 @@ export async function verifyManagedResourceIdentities(
     throw new Error("managed R2 identity does not match");
   }
 
-  for (const name of manifest.queueNames) {
+  for (const name of managedQueueNamesForRelease(manifest.queueNames, manifest.workerName, input.releaseTag)) {
     const query = new URLSearchParams({ name, page: "1", per_page: "100" });
     const queues = await api(`/accounts/${input.accountId}/queues?${query}`);
     const matches = Array.isArray(queues)
@@ -159,6 +160,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         d1Id: args["d1-id"],
         r2Name: args["r2-name"],
         queueNames: args["queue-names"],
+        releaseTag: args["release-tag"],
         durableObjectNamespaceId: args["durable-object-namespace-id"],
       }),
     ),

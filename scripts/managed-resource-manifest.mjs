@@ -8,6 +8,27 @@ const INSTALLATION_PATTERN = /^mi-[0-9a-f]{16}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+export const LEGACY_ASSISTANT_JOB_QUEUE_NAMES = [
+  "me3-assistant-job-events",
+  "me3-assistant-job-events-dlq",
+];
+
+export function retiredAssistantJobQueueNames(workerName) {
+  return LEGACY_ASSISTANT_JOB_QUEUE_NAMES.map((name) => `${workerName}-${name.slice(4)}`);
+}
+
+export function managedQueueNamesForRelease(queueNames, workerName, releaseTag) {
+  if (releaseTag === undefined) return queueNames;
+  if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(releaseTag)) {
+    throw new Error("managed release tag is invalid");
+  }
+  const [major, minor, patch] = releaseTag.slice(1).split(".").map(Number);
+  if (major === 0 && (minor < 1 || (minor === 1 && patch < 214))) return queueNames;
+  // Cloud keeps its frozen manifest; only the retired resources become optional.
+  const retired = retiredAssistantJobQueueNames(workerName);
+  return queueNames.filter((name) => !retired.includes(name));
+}
+
 export function readManagedResourceManifest({
   configPath,
   installationId,

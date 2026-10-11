@@ -50,6 +50,12 @@ test("binds the exact D1 id and rejects a queue subset that differs from the rel
       r2Name: `${workerName}-r2`,
       queueNames,
     });
+    const retired = [`${workerName}-assistant-job-events`, `${workerName}-assistant-job-events-dlq`];
+    const historical = { configPath, installationId, workerName, d1Name: `${workerName}-d1`,
+      d1Id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", r2Name: `${workerName}-r2`, queueNames: [...queueNames, ...retired] };
+    assert.deepEqual(bindManagedResourceManifest({ ...historical, releaseTag: "v0.1.214" }).queueNames, [...queueNames].sort());
+    assert.throws(() => bindManagedResourceManifest({ ...historical, releaseTag: "v0.1.213" }), /does not match the pinned release/);
+    assert.throws(() => bindManagedResourceManifest({ ...historical, releaseTag: "v0.1.214", queueNames: [...historical.queueNames, `${workerName}-foreign-events`] }), /does not match the pinned release/);
     assert.equal(manifest.d1Id, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
     assert.match(readFileSync(configPath, "utf8"), /database_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"/);
     assert.throws(

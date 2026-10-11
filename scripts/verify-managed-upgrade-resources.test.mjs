@@ -44,6 +44,25 @@ test("proves every frozen Cloudflare identity without mutation", async () => {
   assert.deepEqual(new Set(methods), new Set(["GET"]));
 });
 
+test("only allows the two retired Jobs queues to be absent from release v0.1.214 onwards", async () => {
+  const historical = { ...input, queueNames: [...queueNames,
+    `${workerName}-assistant-job-events`, `${workerName}-assistant-job-events-dlq`] };
+  const missingJobs = async (value) => {
+    const url = new URL(value);
+    if (url.pathname.endsWith("/queues") && url.searchParams.get("name").includes("assistant-job-events")) return apiResponse([]);
+    return cloudflareResponse(value);
+  };
+  const result = await verifyManagedUpgradeResources({ ...historical, releaseTag: "v0.1.214" }, missingJobs);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.queueNames, [...historical.queueNames].sort());
+  await assert.rejects(verifyManagedUpgradeResources({ ...historical, releaseTag: "v0.1.213" }, missingJobs), /queue identity does not match/);
+  await assert.rejects(verifyManagedUpgradeResources({ ...historical, releaseTag: "v0.1.214" }, async (value) => {
+    const url = new URL(value);
+    if (url.pathname.endsWith("/queues") && url.searchParams.get("name").endsWith("social-publish")) return apiResponse([]);
+    return missingJobs(value);
+  }), /queue identity does not match/);
+});
+
 test("rejects a canonical hostname assigned to another Worker", async () => {
   await assert.rejects(
     verifyManagedUpgradeResources(input, async (url) => {

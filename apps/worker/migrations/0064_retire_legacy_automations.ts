@@ -1,3 +1,5 @@
+// Upgraded tables retain legacy CHECK choices ('job' / 'assistant_job'); rows are normalized below.
+// No live writer uses those choices, so avoid rebuilding tables solely to match fresh-install CHECK lists.
 // Shared by the D1 migration and the runtime upgrade path.
 // The compatibility table lets fresh installs use the same state transfer.
 export const RETIRE_LEGACY_AUTOMATIONS_STATEMENTS = [

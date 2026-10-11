@@ -594,6 +594,64 @@ test("rejects conflicting or malformed Queue consumer identity aliases", async (
   assert.notEqual(fake.state.r2, null);
 });
 
+test("deletes retired dedicated Jobs queues even when a newer manifest omits them", async () => {
+  const fake = createCloudflareFixture();
+  const retired = [`${WORKER_NAME}-assistant-job-events`, `${WORKER_NAME}-assistant-job-events-dlq`];
+  for (const [index, name] of retired.entries()) {
+    fake.state.queues.set(name, {
+      queue_id: `legacy-job-${index}`, queue_name: name,
+      consumers: [{ consumer_id: `legacy-consumer-${index}`, type: "worker", script_name: WORKER_NAME }],
+    });
+    fake.state.producerBindings.add(name);
+  }
+  const result = await decommissionManagedInstall(contract(), {
+    request: fake.request,
+    deployTombstone: async () => { fake.state.producerBindings.clear(); fake.state.namespaces = []; },
+  });
+  assert.equal(result.ok, true);
+  for (const name of retired) assert.equal(fake.state.queues.has(name), false);
+  const deletes = fake.calls.filter(({ method, path }) => method === "DELETE" && /\/queues\/legacy-job-[01]$/.test(path));
+  assert.equal(deletes.length, 2);
+  assert.ok(deletes[0].path.endsWith("legacy-job-0"));
+  assert.ok(deletes[1].path.endsWith("legacy-job-1"));
+});
+
+test("accepts historical Jobs manifests when the retired queues are already absent", async () => {
+  const fake = createCloudflareFixture();
+  const result = await decommissionManagedInstall({
+    ...contract(), queueNames: [...contract().queueNames,
+      `${WORKER_NAME}-assistant-job-events`, `${WORKER_NAME}-assistant-job-events-dlq`,
+      "me3-assistant-job-events", "me3-assistant-job-events-dlq"],
+  }, {
+    request: fake.request,
+    deployTombstone: async () => { fake.state.producerBindings.clear(); fake.state.namespaces = []; },
+  });
+  assert.equal(result.ok, true);
+});
+
+test("deletes unused historical shared Jobs queues and preserves another Worker's consumers", async (t) => {
+  for (const otherWorker of [false, true]) await t.test(`other Worker: ${otherWorker}`, async () => {
+    const fake = createCloudflareFixture();
+    const retired = ["me3-assistant-job-events", "me3-assistant-job-events-dlq"];
+    for (const [index, name] of retired.entries()) fake.state.queues.set(name, {
+      queue_id: `shared-job-${index}`, queue_name: name,
+      consumers: [
+        { consumer_id: `managed-job-${index}`, type: "worker", script_name: WORKER_NAME },
+        ...(otherWorker ? [{ consumer_id: `other-job-${index}`, type: "worker", script_name: "unrelated-worker" }] : []),
+      ],
+    });
+    const result = await decommissionManagedInstall({ ...contract(), queueNames: [...contract().queueNames, ...retired] }, {
+      request: fake.request,
+      deployTombstone: async () => { fake.state.producerBindings.clear(); fake.state.namespaces = []; },
+    });
+    assert.equal(result.ok, true);
+    for (const name of retired) {
+      assert.equal(fake.state.queues.has(name), otherWorker);
+      if (otherWorker) assert.deepEqual(fake.state.queues.get(name).consumers.map(fixtureConsumerName), ["unrelated-worker"]);
+    }
+  });
+});
+
 test("orders source queues before dead-letter queues independently of manifest order", () => {
   assert.deepEqual(
     orderedDedicatedQueueNames(

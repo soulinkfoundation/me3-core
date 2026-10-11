@@ -2,7 +2,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { readManagedResourceManifest } from "./managed-resource-manifest.mjs";
+import { managedQueueNamesForRelease, readManagedResourceManifest } from "./managed-resource-manifest.mjs";
 import { getTomlArrayBlock, setTomlString } from "./wrangler-toml.mjs";
 
 export function bindManagedResourceManifest({
@@ -13,11 +13,12 @@ export function bindManagedResourceManifest({
   d1Id,
   r2Name,
   queueNames,
+  releaseTag,
 }) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(d1Id || "")) {
     throw new Error("managed D1 id is invalid");
   }
-  const expectedQueues = normalizeQueueNames(queueNames);
+  const expectedQueues = managedQueueNamesForRelease(normalizeQueueNames(queueNames), workerName, releaseTag);
   let config = readFileSync(configPath, "utf8");
   const database = getTomlArrayBlock(config, "d1_databases", "DB");
   if (!database) throw new Error("managed D1 binding is missing");
@@ -83,6 +84,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         d1Id: required(args, "d1-id"),
         r2Name: required(args, "r2-name"),
         queueNames: required(args, "queue-names"),
+        releaseTag: args["release-tag"],
       }),
     ),
   );

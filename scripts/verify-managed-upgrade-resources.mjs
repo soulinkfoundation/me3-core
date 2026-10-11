@@ -39,6 +39,7 @@ export async function verifyManagedUpgradeResources(
       d1Id: input.d1Id,
       r2Name: input.r2Name,
       queueNames: input.queueNames,
+      releaseTag: input.releaseTag,
       durableObjectNamespaceId: input.durableObjectNamespaceId,
     },
     request,
@@ -127,6 +128,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         d1Id: required(args, "d1-id"),
         r2Name: required(args, "r2-name"),
         queueNames: required(args, "queue-names"),
+        releaseTag: args["release-tag"],
         durableObjectNamespaceId: required(
           args,
           "durable-object-namespace-id",

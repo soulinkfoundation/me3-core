@@ -7,6 +7,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { sendManagedLifecycleWorkflowCallback } from "./managed-lifecycle-workflow-callback.mjs";
+import {
+  LEGACY_ASSISTANT_JOB_QUEUE_NAMES,
+  managedQueueNamesForRelease,
+  retiredAssistantJobQueueNames,
+} from "./managed-resource-manifest.mjs";
 
 const API_ROOT = "https://api.cloudflare.com/client/v4";
 const LEGACY_SHARED_QUEUES = new Set([
@@ -14,6 +19,7 @@ const LEGACY_SHARED_QUEUES = new Set([
   "me3-booking-reminders-dlq",
   "me3-social-publish",
   "me3-social-publish-dlq",
+  ...LEGACY_ASSISTANT_JOB_QUEUE_NAMES,
 ]);
 const QUEUE_DETACH_MAX_ATTEMPTS = 30;
 const QUEUE_DETACH_DELAY_MS = 1_000;
@@ -51,6 +57,11 @@ export async function decommissionManagedInstall(
   } = {},
 ) {
   const contract = validateContract(input);
+  // Older dedicated Jobs queues can outlive a manifest generated after retirement.
+  contract.queueNames = [...new Set([
+    ...contract.queueNames,
+    ...retiredAssistantJobQueueNames(contract.workerName),
+  ])].sort();
   validateExportDisposition(input, contract);
   validateR2DeletionPrecondition(input.r2EmptyListing, contract.exportWaived);
   const api = createCloudflareApi(
@@ -167,8 +178,19 @@ export async function decommissionManagedInstall(
   });
 
   for (const queueName of dedicatedQueueNames) {
+    await deleteManagedQueueIfPresent(api, input.accountId, queueName);
+  }
+  const legacySharedJobs = contract.queueNames.filter((name) =>
+    LEGACY_ASSISTANT_JOB_QUEUE_NAMES.includes(name),
+  );
+  for (const queueName of legacySharedJobs) {
     const queue = await findQueue(api, input.accountId, queueName);
-    if (queue) await deleteIfPresent(api, `/accounts/${input.accountId}/queues/${queue.queue_id}`);
+    // Shared historical queues may still serve another installation.
+    if (!queue || Number(queue.consumers_total_count) !== 0 || Number(queue.producers_total_count) !== 0) {
+      continue;
+    }
+    await waitForManagedQueueBindingsDetached(api, input.accountId, [queueName], { maxAttempts: 1 });
+    await deleteManagedQueueIfPresent(api, input.accountId, queueName);
   }
 
   // Preserve the existing monotonic callback contract. At this milestone the
@@ -218,6 +240,69 @@ export async function decommissionManagedInstall(
 
 export function validateManagedDecommissionContract(input) {
   return validateContract(input);
+}
+
+export async function deleteRetiredAssistantJobQueues(
+  input,
+  {
+    request = globalThis.fetch,
+    pause = delay,
+    queueDetachMaxAttempts = QUEUE_DETACH_MAX_ATTEMPTS,
+  } = {},
+) {
+  if (!/^me3-mi-[0-9a-f]{16}$/.test(input.workerName || "") || !input.releaseTag) {
+    throw new Error("managed Jobs cleanup contract is invalid");
+  }
+  const names = retiredAssistantJobQueueNames(input.workerName);
+  if (managedQueueNamesForRelease(names, input.workerName, input.releaseTag).length > 0) {
+    return { ok: true, deletedCount: 0 };
+  }
+  const api = createCloudflareApi(input, request);
+  const settings = await api(
+    `/accounts/${input.accountId}/workers/scripts/${input.workerName}/settings`,
+  );
+  if (!Array.isArray(settings?.bindings)) throw new Error("managed Worker bindings are invalid");
+  if (settings.bindings.some((binding) => binding.type === "queue" && (
+    binding.name === "ASSISTANT_JOB_EVENTS" || names.includes(binding.queue_name)
+  ))) {
+    throw new Error("managed Worker still has an Assistant Jobs producer binding");
+  }
+  const ownedConsumers = [];
+  for (const name of names) {
+    const queue = await findQueue(api, input.accountId, name);
+    if (!queue) continue;
+    if (settings.bindings.some((binding) => binding.type === "queue" && binding.queue_id === queue.queue_id)) {
+      throw new Error("managed Worker still has an Assistant Jobs producer binding");
+    }
+    const producers = queue.producers;
+    const producerCount = Number(queue.producers_total_count);
+    if (!Array.isArray(producers) || !Number.isSafeInteger(producerCount) || producers.length !== producerCount) {
+      throw new Error("Cloudflare queue producer evidence is incomplete");
+    }
+    if (producers.some((producer) => !isWorkerQueueProducer(producer) || producer.script !== input.workerName)) {
+      throw new Error("retired Jobs queue has another producer");
+    }
+    const consumers = await listQueueConsumers(api, input.accountId, queue);
+    if (consumers.some((consumer) => !isWorkerConsumer(consumer, input.workerName))) {
+      throw new Error("retired Jobs queue has another consumer");
+    }
+    ownedConsumers.push({ queue, consumers });
+  }
+  // Wrangler updates configured consumers but leaves removed consumers registered.
+  for (const { queue, consumers } of ownedConsumers) {
+    for (const consumer of consumers) {
+      await deleteIfPresent(api, `/accounts/${input.accountId}/queues/${queue.queue_id}/consumers/${encodeURIComponent(consumer.consumer_id)}`);
+    }
+  }
+  await waitForManagedQueueBindingsDetached(api, input.accountId, names, {
+    pause,
+    maxAttempts: queueDetachMaxAttempts,
+  });
+  let deletedCount = 0;
+  for (const name of names) {
+    if (await deleteManagedQueueIfPresent(api, input.accountId, name)) deletedCount += 1;
+  }
+  return { ok: true, deletedCount };
 }
 
 function validateContract(input) {
@@ -591,7 +676,20 @@ async function findQueue(api, accountId, name) {
   if (!Array.isArray(queues)) throw new Error("Cloudflare queue listing is invalid");
   const matches = queues.filter((queue) => queue?.queue_name === name);
   if (matches.length > 1) throw new Error(`Cloudflare queue identity is ambiguous: ${name}`);
+  if (matches.length && !/^[a-zA-Z0-9-]+$/.test(matches[0].queue_id || "")) {
+    throw new Error("Cloudflare queue id is invalid");
+  }
   return matches[0] || null;
+}
+
+async function deleteManagedQueueIfPresent(api, accountId, name) {
+  const queue = await findQueue(api, accountId, name);
+  if (!queue) return false;
+  await deleteIfPresent(api, `/accounts/${accountId}/queues/${queue.queue_id}`);
+  if (await findQueue(api, accountId, name)) {
+    throw new Error(`managed queue deletion was not verified: ${name}`);
+  }
+  return true;
 }
 
 async function listAllQueues(api, accountId) {

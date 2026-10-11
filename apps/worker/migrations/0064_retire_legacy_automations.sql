@@ -1,4 +1,6 @@
 -- Retire Assistant Jobs after preserving booking reminder state and owner review history.
+-- Upgraded tables retain legacy CHECK choices ('job' / 'assistant_job'); rows are normalized below.
+-- No live writer uses those choices, so avoid rebuilding tables solely to match fresh-install CHECK lists.
 ALTER TABLE sites ADD COLUMN booking_reminders_enabled INTEGER NOT NULL DEFAULT 1 CHECK (booking_reminders_enabled IN (0, 1));
 
 CREATE TABLE IF NOT EXISTS assistant_jobs (

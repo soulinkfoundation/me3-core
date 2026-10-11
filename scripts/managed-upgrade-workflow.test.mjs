@@ -53,7 +53,7 @@ test("checks out and verifies the immutable target before build or deployment", 
   assert.ok(workflow.indexOf(build) < workflow.indexOf(deploy));
 });
 
-test("reuses frozen resources and contains no first-install or destructive operation", () => {
+test("reuses frozen active resources without first-install or data deletion", () => {
   const binding = getStep("Bind only the frozen managed resources");
   assert.match(binding, /prepare-cloudflare-deploy\.mjs/);
   assert.match(binding, /configure-managed-upgrade-origin\.mjs/);
@@ -128,6 +128,19 @@ test("refuses stale state before migration and re-attests resources and live tar
   assert.ok(workflow.indexOf(deploy) < workflow.indexOf(targetRuntime));
   assert.ok(workflow.indexOf(targetResources) < workflow.indexOf(complete));
   assert.ok(workflow.indexOf(targetRuntime) < workflow.indexOf(complete));
+});
+
+test("cleans up only retired Jobs queues after the target passes live verification", () => {
+  const cleanup = getStep("Delete detached retired Assistant Jobs queues");
+  const liveTarget = getStep("Verify health and mobile at the live target origin");
+  const complete = getStep("Complete the exact upgrade attempt");
+  assert.match(cleanup, /cleanup-retired-assistant-job-queues\.mjs/);
+  assert.match(cleanup, /--worker-name "\$WORKER_NAME"/);
+  assert.match(cleanup, /--release-tag "\$ME3_MANAGED_TARGET_RELEASE_TAG"/);
+  assert.ok(workflow.indexOf(liveTarget) < workflow.indexOf(cleanup));
+  assert.ok(workflow.indexOf(cleanup) < workflow.indexOf(complete));
+  assert.match(getStep("Verify every current Cloudflare resource identity"), /--release-tag "\$ME3_MANAGED_CURRENT_RELEASE_TAG"/);
+  assert.match(getStep("Re-verify every frozen Cloudflare resource identity"), /--release-tag "\$ME3_MANAGED_TARGET_RELEASE_TAG"/);
 });
 
 test("reports attempt-correlated stages and only completes after live verification", () => {
