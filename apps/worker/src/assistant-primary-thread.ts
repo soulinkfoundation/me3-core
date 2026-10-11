@@ -4,7 +4,7 @@ export type AssistantThreadRow = {
   id: string;
   owner_id: string;
   title: string;
-  origin_surface: "assistant" | "launcher" | "soulink" | "job" | "system";
+  origin_surface: "assistant" | "launcher" | "soulink" | "system";
   project_id: string | null;
   status: "active" | "archived" | "deleted";
   pinned_at: string | null;

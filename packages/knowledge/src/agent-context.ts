@@ -2,7 +2,6 @@ export const ME3_AGENT_CONTEXT_SCHEMA_VERSION = "2026-05-16.v1";
 
 export type Me3AgentContextPurpose =
   | "chat_reply"
-  | "assistant_job"
   | "mission_review"
   | "memory_review"
   | "debug";
@@ -24,7 +23,6 @@ export type Me3AgentContextSourceKind =
   | "project"
   | "assistant_message"
   | "agent_skill"
-  | "agent_job"
   | "plugin"
   | "manual"
   | "unknown";
@@ -1228,7 +1226,6 @@ function sourceKindDisplayOrder(kind: Me3AgentContextSourceKind): number {
     "calendar_event",
     "assistant_message",
     "agent_skill",
-    "agent_job",
     "plugin",
     "manual",
     "unknown",
@@ -1269,8 +1266,6 @@ function manifestSourceKindLabel(kind: Me3AgentContextSourceKind, count: number)
       return plural ? "recent messages" : "recent message";
     case "agent_skill":
       return plural ? "agent skills" : "agent skill";
-    case "agent_job":
-      return plural ? "agent jobs" : "agent job";
     case "plugin":
       return plural ? "plugins" : "plugin";
     case "manual":

@@ -22,9 +22,9 @@ ME3 is a Cloudflare Worker app. The web app is built into Worker assets and mana
 | Component | ME3 use | Docs |
 | --- | --- | --- |
 | Workers | Main runtime, API, static assets, scheduled/queue/email handlers | [Workers](https://developers.cloudflare.com/workers/) |
-| D1 | Owner data, settings, plugin state, jobs, mailbox metadata | [D1](https://developers.cloudflare.com/d1/) |
+| D1 | Owner data, settings, plugin state, mailbox metadata | [D1](https://developers.cloudflare.com/d1/) |
 | R2 | Optional at install; required for mailbox attachments, assistant images, generated images, and larger site media | [R2](https://developers.cloudflare.com/r2/) |
-| Queues | Assistant job events, booking reminders, social publishing work | [Queues](https://developers.cloudflare.com/queues/) |
+| Queues | Booking reminders and social publishing work | [Queues](https://developers.cloudflare.com/queues/) |
 | Custom Domains | Public site host and `me3.<domain>` owner/admin host | [Worker Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/) |
 | Email Routing | Incoming mailbox mail routed to the Worker email handler | [Email Routing](https://developers.cloudflare.com/email-routing/get-started/enable-email-routing/) |
 | Email Service | Optional Cloudflare outbound email sender binding | [Email Sending](https://developers.cloudflare.com/email-service/get-started/send-emails/) |
@@ -579,24 +579,3 @@ Plugin boundaries:
 - Core owns install, auth, account, public profile, `me.json`, and shared runtime wiring.
 - Plugins own their domain routes, UI slots, permissions, data, tools, and setup state.
 - Hosted-only billing, quotas, managed OAuth bridges, and ME3 Cloud operations stay outside this Core repo.
-
-## Assistant Jobs
-
-Assistant Jobs live in the Assistant workspace. Use the Jobs modal to add starter jobs, pause/resume them, edit schedules, run them manually, duplicate them, or remove them.
-
-Current starter recipes:
-
-| Recipe | State | Purpose |
-| --- | --- | --- |
-| Weekly Review | Ready | Summarizes projects, tasks, approvals, and carry-over choices. |
-| Daily Briefing | Ready | Prepares a morning review of tasks, approvals, due items, and optional owner notification. |
-| Inbox Watch | Needs setup | Watches scoped email and creates review packets; provider adapters are still setup-dependent. |
-| Invoice and Receipt Triage | Needs setup | Extracts receipts/invoices from email and proposes Accounts ledger entries. |
-| Booking Reminder | Needs setup | Uses calendar booking events to prepare context and follow-up tasks. |
-
-Job rules for agents:
-
-- Creating a job draft is review-first; saving a confirmed job is an owner action.
-- Review packets and ledger entries can require owner review before becoming final.
-- If a recipe says `needs_setup`, explain the missing setup rather than claiming it will run.
-- Scheduled jobs use owner timezone settings where available; be explicit about dates and times.

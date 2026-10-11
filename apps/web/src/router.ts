@@ -209,24 +209,6 @@ router.beforeEach(async (to, _from, next) => {
     return;
   }
 
-  const jobDeepLinkPrefix = to.path.startsWith("/agent/jobs/")
-    ? "/agent/jobs/"
-    : to.path.startsWith("/assistant/jobs/")
-      ? "/assistant/jobs/"
-      : null;
-  if (jobDeepLinkPrefix) {
-    const jobSegment = to.path.slice(jobDeepLinkPrefix.length);
-    if (jobSegment.length > 0) {
-      next({
-        path: "/assistant",
-        query: { ...to.query, job: jobSegment },
-        hash: to.hash,
-        replace: true,
-      });
-      return;
-    }
-  }
-
   if (to.path === "/agent" || to.path === "/agent/") {
     next({
       path: "/assistant",

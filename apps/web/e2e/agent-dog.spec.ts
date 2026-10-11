@@ -25,8 +25,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       const data: Record<string, unknown> = {
         '/auth/me': { ok: true, user: { id: 'dog-owner', name: 'Demo Owner', username: 'demo' }, workspace: { hasProfileSite: true } },
         '/sites': { sites: [] }, '/plugins': { plugins: [] }, '/navigation-features': { features: [] },
-        '/assistant/threads/primary': { thread }, '/assistant/threads': { threads: [thread] }, '/assistant/threads/main/messages': { thread, messages: [] },
-        '/assistant/jobs': { jobs: [] }, '/assistant/jobs/recipes': { recipes: [] }, '/assistant/settings': { settings: { name: 'ME3' } },
+        '/assistant/threads/primary': { thread }, '/assistant/threads': { threads: [thread] }, '/assistant/threads/main/messages': { thread, messages: [] }, '/assistant/settings': { settings: { name: 'ME3' } },
         '/ai-settings': { deploymentMode: 'self_hosted', providers: [] }, '/managed-ai-billing-settings': { available: false },
         '/assistant/voice/transcribe': { text: 'Help me plan my day' },
         '/mission-control/tasks': { tasks: [] }, '/mission-control/projects': { projects: [] }, '/mission-control/approvals': { approvals: [] },

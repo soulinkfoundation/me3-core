@@ -19,8 +19,6 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       else if (path === '/assistant/threads/primary') data = { thread };
       else if (path === '/assistant/threads') data = { threads: [thread] };
       else if (path.endsWith('/messages') && path.startsWith('/assistant')) data = { thread, messages: [{ id: 'message', role: 'assistant', text: '- First item with enough text to wrap across lines on a narrow screen.\n  continuation\n  - Nested item\n- Second item' }] };
-      else if (path === '/assistant/jobs') data = { jobs: [] };
-      else if (path === '/assistant/jobs/recipes') data = { recipes: [] };
       else if (path === '/assistant/settings') data = { settings: { name: 'ME3' } };
       else if (path === '/ai-settings') data = { deploymentMode: 'self_hosted', providers: [] };
       else if (path === '/mission-control/projects') data = { projects: [] };

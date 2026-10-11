@@ -104,6 +104,8 @@ describe("Core runtime migrations", () => {
     expect(db.tables.has("drive_multipart_parts")).toBe(true);
     expect(db.tables.has("social_media_delivery_grants")).toBe(true);
     expect(db.columns.get("sites")?.has("site_role")).toBe(true);
+    expect(db.columns.get("sites")?.has("booking_reminders_enabled")).toBe(true);
+    expect(db.migrations.get("0064_retire_legacy_automations")).toBe("2026-10-11-retire-legacy-automations-v1");
     expect(db.columns.get("sites")?.has("profile_site_id")).toBe(true);
     expect(
       db.statements.some(
@@ -776,9 +778,7 @@ class RuntimeMigrationStatement {
     }
     if (this.sql.includes("ALTER TABLE sites")) {
       const columns = this.db.columns.get("sites");
-      const column = this.sql.includes("profile_site_id")
-        ? "profile_site_id"
-        : "site_role";
+      const column = this.sql.match(/ADD COLUMN (\w+)/)?.[1] || "site_role";
       if (columns?.has(column)) throw new Error(`duplicate column name: ${column}`);
       columns?.add(column);
       return { success: true };

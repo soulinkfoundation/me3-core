@@ -4,7 +4,7 @@ export const NAVIGATION_FEATURES = [
   {
     id: "assistant",
     name: "Assistant",
-    description: "Chat with ME3 and run assistant jobs.",
+    description: "Chat with ME3 and manage your assistant.",
   },
   {
     id: "calendar",

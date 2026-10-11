@@ -10,8 +10,6 @@ import { sendManagedLifecycleWorkflowCallback } from "./managed-lifecycle-workfl
 
 const API_ROOT = "https://api.cloudflare.com/client/v4";
 const LEGACY_SHARED_QUEUES = new Set([
-  "me3-assistant-job-events",
-  "me3-assistant-job-events-dlq",
   "me3-booking-reminders",
   "me3-booking-reminders-dlq",
   "me3-social-publish",

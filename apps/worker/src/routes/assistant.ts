@@ -5,11 +5,6 @@ import { assistantRuntimeNamespace } from "../assistant-runtime-binding";
 import { revalidateAgentImagePayload } from "../agent-image-projection";
 import { getSiteImageMetadata } from "../site-images";
 import { type Context } from "hono";
-import {
-  createAssistantJobBuilderAction,
-  type AssistantJobBuilderAction,
-} from "../assistant-jobs";
-import { registerAssistantJobsRoutes } from "./assistant-jobs";
 import { registerNewAgentRoutes } from "./new-agent";
 import { registerAssistantSkillsRoutes } from "./assistant-skills";
 import {
@@ -138,7 +133,6 @@ type AssistantChatRoutePerformance = {
   handlerPreStreamMs: number;
   replayLookupMs: number | null;
   threadResolutionMs: number | null;
-  jobBuilderCheckMs: number | null;
   siteScopeCheckMs: number | null;
   attachmentContextMs: number | null;
   turnRecordMs: number | null;
@@ -635,7 +629,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
   });
 
   registerAssistantSkillsRoutes(app, { requireOwner, unauthorized });
-  registerAssistantJobsRoutes(app, { requireOwner, unauthorized });
   registerNewAgentRoutes(app, { requireOwner, unauthorized });
 
   function parseAssistantChatTurnModelSelection(
@@ -776,22 +769,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     } catch {
       return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, attachments: [] };
     }
-  }
-
-  function assistantJobBuilderReplyText(action: AssistantJobBuilderAction) {
-    if (action.kind === "job_saved") {
-      return action.summary;
-    }
-    if (action.kind === "job_unsupported") {
-      return action.summary;
-    }
-
-    const setupText = action.validation.status === "needs_setup"
-      ? " It needs setup before it can activate."
-      : action.validation.status === "valid"
-        ? " You can save and activate it when ready."
-        : "";
-    return `Here is a draft job.${setupText}`;
   }
 
   async function persistAssistantTurnMessages(
@@ -1126,7 +1103,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       source: "tool",
       model: null,
       siteAction: null,
-      jobBuilderAction: null,
       emailAction: null,
       reminderAction: null,
       contentAction: null,
@@ -1393,7 +1369,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       source: action.source || "tool",
       model: action.model || null,
       siteAction: action.siteAction,
-      jobBuilderAction: null,
       emailAction: null,
       reminderAction: null,
       contentAction: null,
@@ -3253,37 +3228,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       return c.json({ ok: false, error: thread.error }, thread.status);
     }
 
-    const builderAction = c.env.ME3_ASSISTANT_RUNTIME === "agent" ? null : await createAssistantJobBuilderAction(c.env, ownerId, messageText);
-    if (builderAction) {
-      const replyText = assistantJobBuilderReplyText(builderAction);
-      await persistAssistantTurnMessages(
-        c.env,
-        ownerId,
-        thread.id,
-        displayMessageText,
-        replyText,
-        {},
-        userMessageMetadata,
-      );
-      await touchAssistantThread(c.env, ownerId, thread.id);
-      return c.json({
-        ok: true,
-        auditId: null,
-        turnId: null,
-        threadId: thread.id,
-        mode,
-        specialist: "core.job-builder",
-        replyText,
-        model: null,
-        source: "tool",
-        jobBuilderAction: builderAction,
-        emailAction: null,
-        reminderAction: null,
-        contentAction: null,
-        contactsChanged: false,
-      });
-    }
-
     if (siteToolsEnabled) {
       const scopeRequiredReply = siteScopeAllowed
         ? null
@@ -3499,7 +3443,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       handlerPreStreamMs: assistantRouteDurationMs(handlerStartedAt),
       replayLookupMs: null,
       threadResolutionMs: null,
-      jobBuilderCheckMs: null,
       siteScopeCheckMs: null,
       attachmentContextMs: null,
       turnRecordMs: null,
@@ -3567,43 +3510,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
           }
 
           send("thread", { threadId: thread.id });
-
-          const jobBuilderCheckStartedAt = performance.now();
-          const builderAction = c.env.ME3_ASSISTANT_RUNTIME === "agent" ? null : await createAssistantJobBuilderAction(c.env, ownerId, messageText);
-          routePerformance.jobBuilderCheckMs = assistantRouteDurationMs(
-            jobBuilderCheckStartedAt,
-          );
-          if (builderAction) {
-            const replyText = assistantJobBuilderReplyText(builderAction);
-            await persistAssistantTurnMessages(
-              c.env,
-              ownerId,
-              thread.id,
-              displayMessageText,
-              replyText,
-              {},
-              userMessageMetadata,
-            );
-            await touchAssistantThread(c.env, ownerId, thread.id);
-            await sendAssistantStreamText(send, replyText);
-            send("done", {
-              ok: true,
-              auditId: null,
-              turnId: null,
-              threadId: thread.id,
-              mode,
-              specialist: "core.job-builder",
-              replyText,
-              model: null,
-              source: "tool",
-              jobBuilderAction: builderAction,
-              emailAction: null,
-              reminderAction: null,
-              contentAction: null,
-              contactsChanged: false,
-            });
-            return;
-          }
 
           if (siteToolsEnabled) {
             const siteScopeCheckStartedAt = performance.now();

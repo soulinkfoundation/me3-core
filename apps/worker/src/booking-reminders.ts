@@ -13,6 +13,29 @@ import type {
 
 export const BOOKING_REMINDER_QUEUE_NAME = "me3-booking-reminders";
 
+export class BookingReminderInputError extends Error {
+  constructor(message: string, public readonly status: 400 | 404) {
+    super(message);
+  }
+}
+
+export async function getSiteBookingReminders(env: Env, userId: string, siteId: string) {
+  const row = await env.DB.prepare(
+    "SELECT booking_reminders_enabled FROM sites WHERE id = ? AND user_id = ?",
+  ).bind(siteId, userId).first<{ booking_reminders_enabled: number }>();
+  if (!row) throw new BookingReminderInputError("Site not found", 404);
+  return { enabled: row.booking_reminders_enabled !== 0 };
+}
+
+export async function updateSiteBookingReminders(env: Env, userId: string, siteId: string, enabled: unknown) {
+  if (typeof enabled !== "boolean") throw new BookingReminderInputError("Enabled must be a boolean", 400);
+  const result = await env.DB.prepare(
+    "UPDATE sites SET booking_reminders_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+  ).bind(enabled ? 1 : 0, siteId, userId).run();
+  if (!result.meta.changes) throw new BookingReminderInputError("Site not found", 404);
+  return { enabled };
+}
+
 type BookingReminderType = "booking_reminder_24h" | "booking_reminder_2h";
 type BookingReminderChannel = "email" | "telegram" | "soulink";
 type BookingReminderSettings = {
@@ -185,20 +208,12 @@ export async function isBookingRemindersEnabledForSite(
   siteId: string,
 ): Promise<boolean> {
   const row = await env.DB.prepare(
-    `SELECT aj.status
-     FROM sites s
-     LEFT JOIN assistant_jobs aj
-       ON aj.user_id = s.user_id
-      AND aj.recipe_id = 'booking-reminder'
-      AND aj.status != 'archived'
-     WHERE s.id = ?
-     ORDER BY aj.updated_at DESC
-     LIMIT 1`,
+    "SELECT booking_reminders_enabled FROM sites WHERE id = ?",
   )
     .bind(siteId)
-    .first<{ status: string | null }>();
+    .first<{ booking_reminders_enabled: number }>();
 
-  return row?.status !== "paused";
+  return row?.booking_reminders_enabled !== 0;
 }
 
 export function buildBookingReminderPlan(
@@ -299,13 +314,9 @@ export async function dispatchDueBookingReminders(
     `SELECT br.id
      FROM booking_reminders br
      JOIN sites s ON s.id = br.site_id
-     LEFT JOIN assistant_jobs aj
-       ON aj.user_id = s.user_id
-      AND aj.recipe_id = 'booking-reminder'
-      AND aj.status != 'archived'
      WHERE br.status = 'scheduled'
        AND br.scheduled_for <= ?
-       AND COALESCE(aj.status, 'active') != 'paused'
+       AND s.booking_reminders_enabled = 1
      ORDER BY br.scheduled_for ASC
      LIMIT ?`,
   )
@@ -366,7 +377,7 @@ export async function deliverBookingReminder(
 
   if (!(await isBookingRemindersEnabledForSite(env, reminder.site_id))) {
     await cancelPendingBookingReminders(env, reminder.booking_id);
-    return { status: "skipped", reason: "Booking reminders job is paused" };
+    return { status: "skipped", reason: "Booking reminders are disabled for this site" };
   }
 
   const claimed = await env.DB.prepare(

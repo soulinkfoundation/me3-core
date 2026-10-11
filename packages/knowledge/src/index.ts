@@ -232,7 +232,7 @@ export type Me3AgentCapabilitySchema = {
 };
 
 export type Me3AgentCapabilityHandler = {
-  surface: "chat" | "assistant_job" | "plugin_tool";
+  surface: "chat" | "plugin_tool";
   route: string;
 };
 

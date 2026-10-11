@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import worker from "./index";
 import { CAMPAIGN_DISPATCH_CRON, dispatchDueCampaignJobs, recoverManagedCampaignEvents } from "./campaign-delivery";
-import { dispatchDueScheduledAssistantJobs } from "./assistant-jobs";
+import { dispatchDueBookingReminders } from "./booking-reminders";
 import { beginManagedRuntimeWriteLease, releaseManagedRuntimeWriteLease } from "./managed-runtime-lifecycle";
 import type { Env } from "./types";
 
@@ -15,7 +15,7 @@ vi.mock("./campaign-delivery", async (original) => ({
   dispatchDueCampaignJobs: vi.fn(),
   recoverManagedCampaignEvents: vi.fn(),
 }));
-vi.mock("./assistant-jobs", () => ({ dispatchDueScheduledAssistantJobs: vi.fn() }));
+vi.mock("./booking-reminders", () => ({ dispatchDueBookingReminders: vi.fn() }));
 vi.mock("./managed-runtime-lifecycle", () => ({
   isManagedRuntime: () => true,
   getManagedInstallationId: () => "install-test",
@@ -33,7 +33,7 @@ beforeEach(() => {
 it("dispatches campaigns on the minute without running other background jobs", async () => {
   await worker.scheduled({ cron: CAMPAIGN_DISPATCH_CRON } as ScheduledEvent, {} as Env);
   expect(dispatchDueCampaignJobs).toHaveBeenCalledOnce();
-  expect(dispatchDueScheduledAssistantJobs).not.toHaveBeenCalled();
+  expect(dispatchDueBookingReminders).not.toHaveBeenCalled();
   expect(recoverManagedCampaignEvents).not.toHaveBeenCalled();
   expect(releaseManagedRuntimeWriteLease).toHaveBeenCalledOnce();
 });

@@ -17,8 +17,6 @@ export interface TierCapabilities {
   bookingsEnabled: boolean;
   bookingReminders: boolean;
   newsletterSignup: boolean;
-  agentJobs: boolean;
-  agentJobsLimit: number;
 }
 
 export const TIER_CAPABILITIES: Record<SubscriptionTier, TierCapabilities> = {
@@ -39,8 +37,6 @@ export const TIER_CAPABILITIES: Record<SubscriptionTier, TierCapabilities> = {
     bookingsEnabled: false,
     bookingReminders: false,
     newsletterSignup: false,
-    agentJobs: false,
-    agentJobsLimit: 0,
   },
   starter: {
     maxSites: 1,
@@ -59,8 +55,6 @@ export const TIER_CAPABILITIES: Record<SubscriptionTier, TierCapabilities> = {
     bookingsEnabled: true,
     bookingReminders: true,
     newsletterSignup: true,
-    agentJobs: false,
-    agentJobsLimit: 0,
   },
   pro: {
     maxSites: 4,
@@ -79,8 +73,6 @@ export const TIER_CAPABILITIES: Record<SubscriptionTier, TierCapabilities> = {
     bookingsEnabled: true,
     bookingReminders: true,
     newsletterSignup: true,
-    agentJobs: true,
-    agentJobsLimit: 5,
   },
 };
 

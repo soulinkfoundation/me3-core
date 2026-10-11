@@ -22,7 +22,7 @@
 
 ### 🖥️ What's in ME3
 
-- **🤖 An AI assistant/agent** you control and create jobs for to save you time. Pick any model from Open Source models to Claude.
+- **🤖 An AI assistant/agent** you control to save you time. Pick any model from Open Source models to Claude.
 - **Tasks and Projects** to organise work and keep priorities moving.
 - **🌐 A ME3 site/profile**: it's like a digital business card, built for humans and AI agents.
 - **📧 Email** for you or your 🤖, whatever allows you to spend less time on email.

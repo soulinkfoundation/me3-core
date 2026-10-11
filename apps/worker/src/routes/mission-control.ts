@@ -1,6 +1,6 @@
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { getAiGatewayUsageSummary } from "../ai-gateway";
-import { getLiveDailyBriefing } from "../assistant-jobs";
+import { getLiveDailyBriefing } from "../daily-briefing";
 import {
   MissionControlInputError,
   archiveMissionProject,

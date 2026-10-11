@@ -46,23 +46,12 @@ database_name = "me3-core-db"
 database_id = "00000000-0000-0000-0000-000000000000"
 
 [[queues.producers]]
-binding = "ASSISTANT_JOB_EVENTS"
-queue = "me3-assistant-job-events"
-
-[[queues.producers]]
 binding = "BOOKING_REMINDER_QUEUE"
 queue = "me3-booking-reminders"
 
 [[queues.producers]]
 binding = "SOCIAL_PUBLISH_QUEUE"
 queue = "me3-social-publish"
-
-[[queues.consumers]]
-queue = "me3-assistant-job-events"
-max_batch_size = 10
-max_batch_timeout = 5
-max_retries = 5
-dead_letter_queue = "me3-assistant-job-events-dlq"
 
 [[queues.consumers]]
 queue = "me3-booking-reminders"
@@ -77,12 +66,6 @@ max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 2
 dead_letter_queue = "me3-social-publish-dlq"
-
-[[queues.consumers]]
-queue = "me3-assistant-job-events-dlq"
-max_batch_size = 10
-max_batch_timeout = 5
-max_retries = 0
 
 [[queues.consumers]]
 queue = "me3-booking-reminders-dlq"

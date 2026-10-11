@@ -11,7 +11,6 @@
     "db:migrate:local": "wrangler d1 migrations apply me3-core-db --local --config wrangler.core.example.toml"
   },
   "dependencies": {
-    "@me3-core/assistant-jobs": "workspace:*",
     "@me3-core/plugin-agent-chat": "workspace:*",
     "@me3-core/plugin-calendar": "workspace:*",
     "@me3-core/plugin-email-campaigns": "workspace:*",

@@ -32,7 +32,6 @@ export type AgentChatMessage = {
   targetPresentation?: AgentTargetPresentation | null;
   emailDraftAction?: AgentChatEmailDraftAction | null;
   trace?: AgentChatTurnTrace | null;
-  jobBuilderAction?: any;
   inboxLink?: boolean;
   rolodexLink?: boolean;
   reminderLink?: boolean;

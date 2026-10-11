@@ -45,7 +45,7 @@
   "cloudflare": {
     "bindings": {
       "DB": {
-        "description": "ME3 stores owner data, settings, jobs, and plugin state here. Use + Create new for a new install; Cloudflare provisions the D1 database automatically."
+        "description": "ME3 stores owner data, settings, and plugin state here. Use + Create new for a new install; Cloudflare provisions the D1 database automatically."
       },
       "ME3_USER_AGENT": {
         "description": "Durable Object state for ME3's owner agent runtime. Cloudflare provisions this automatically."

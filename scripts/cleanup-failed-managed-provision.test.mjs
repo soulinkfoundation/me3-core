@@ -8,7 +8,7 @@ const WORKER_NAME = `me3-${INSTALLATION_ID}`;
 const OPERATION_ID = "11111111-1111-4111-8111-111111111111";
 const D1_ID = "22222222-2222-4222-8222-222222222222";
 const DO_ID = "d".repeat(32);
-const QUEUE_NAME = `${WORKER_NAME}-assistant-job-events`;
+const QUEUE_NAME = `${WORKER_NAME}-booking-reminders`;
 
 test("cleans an authorized never-public provision and verifies exact absence", async () => {
   const fake = createFixture();

@@ -20,7 +20,7 @@ const callbackEnv = {
   ME3_MANAGED_ORIGIN: "https://owner.me3.app",
   ME3_MANAGED_D1_ID: "11111111-1111-4111-8111-111111111111",
   ME3_MANAGED_QUEUE_NAMES:
-    '["me3-mi-1234567890abcdef-assistant-job-events"]',
+    '["me3-mi-1234567890abcdef-booking-reminders"]',
   ME3_MANAGED_DO_NAMESPACE_ID: "a".repeat(32),
 };
 
@@ -49,7 +49,7 @@ test("a rejected activation callback fails without exposing its response or secr
     status: "ready",
     origin: "https://owner.me3.app",
     d1Id: "11111111-1111-4111-8111-111111111111",
-    queueNames: ["me3-mi-1234567890abcdef-assistant-job-events"],
+    queueNames: ["me3-mi-1234567890abcdef-booking-reminders"],
     durableObjectNamespaceId: "a".repeat(32),
   });
 });

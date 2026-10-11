@@ -4,6 +4,8 @@ import {
   dispatchDueBookingReminders,
   processBookingReminderBatch,
   scheduleBookingRemindersForBooking,
+  getSiteBookingReminders,
+  updateSiteBookingReminders,
 } from "./booking-reminders";
 import {
   EmailProviderInputError,
@@ -48,7 +50,7 @@ type TestState = {
   booking: DbBooking;
   reminders: ReminderRow[];
   queuedMessages: unknown[];
-  assistantJobStatus: string | null;
+  siteEnabled: number;
 };
 
 const mockSendEmailWithProvider = vi.mocked(sendEmailWithProvider);
@@ -188,7 +190,7 @@ describe("booking reminders", () => {
   });
 
   it("does not schedule when booking reminders are paused", async () => {
-    const env = createEnv({ assistantJobStatus: "paused" });
+    const env = createEnv({ enabled: false });
 
     const scheduled = await scheduleBookingRemindersForBooking(env, {
       booking: env.__state.booking,
@@ -200,6 +202,48 @@ describe("booking reminders", () => {
     expect(scheduled).toBe(0);
     expect(env.__state.reminders).toHaveLength(0);
   });
+  it("persists the site switch and respects ownership and boolean input", async () => {
+    const env = createEnv();
+    expect(await getSiteBookingReminders(env, "owner", "site-1")).toEqual({ enabled: true });
+    expect(await updateSiteBookingReminders(env, "owner", "site-1", false)).toEqual({ enabled: false });
+    expect(await getSiteBookingReminders(env, "owner", "site-1")).toEqual({ enabled: false });
+    await expect(updateSiteBookingReminders(env, "other", "site-1", true)).rejects.toMatchObject({ status: 404 });
+    await expect(getSiteBookingReminders(env, "other", "site-1")).rejects.toMatchObject({ status: 404 });
+    await expect(updateSiteBookingReminders(env, "owner", "site-1", "false")).rejects.toMatchObject({ status: 400 });
+    expect(env.__state.siteEnabled).toBe(0);
+  });
+
+  it("holds due reminders while disabled and sends them after re-enabling without a queue", async () => {
+    const env = createEnv();
+    await scheduleBookingRemindersForBooking(env, {
+      booking: env.__state.booking, bookingTitle: "Session", timezone: "Europe/Dublin",
+      reminders: { enabled: true, reminder24h: true, reminder2h: false },
+    });
+    env.__state.reminders[0]!.scheduled_for = "2026-06-01T09:59:00Z";
+    await updateSiteBookingReminders(env, "owner", "site-1", false);
+    expect(await dispatchDueBookingReminders(env)).toEqual({ queued: 0, delivered: 0, skipped: 0 });
+    expect(mockSendEmailWithProvider).not.toHaveBeenCalled();
+    await updateSiteBookingReminders(env, "owner", "site-1", true);
+    expect(await dispatchDueBookingReminders(env)).toEqual({ queued: 0, delivered: 1, skipped: 0 });
+    expect(mockSendEmailWithProvider).toHaveBeenCalledTimes(2);
+    expect(env.__state.reminders[0]!.status).toBe("sent");
+  });
+
+  it("does not send an already queued reminder after the site switch is disabled", async () => {
+    const env = createEnv({ queue: true });
+    await scheduleBookingRemindersForBooking(env, {
+      booking: env.__state.booking, bookingTitle: "Session", timezone: "Europe/Dublin",
+      reminders: { enabled: true, reminder24h: true, reminder2h: false },
+    });
+    const reminder = env.__state.reminders[0]!;
+    reminder.status = "queued";
+    await updateSiteBookingReminders(env, "owner", "site-1", false);
+    const message = createQueueMessage(reminder.id);
+    await processBookingReminderBatch({ queue: BOOKING_REMINDER_QUEUE_NAME, messages: [message] } as never, env);
+    expect(mockSendEmailWithProvider).not.toHaveBeenCalled();
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(reminder.status).toBe("cancelled");
+  });
 });
 
 function createQueueMessage(reminderId: string) {
@@ -210,7 +254,7 @@ function createQueueMessage(reminderId: string) {
   };
 }
 
-function createEnv(options: { queue?: boolean; assistantJobStatus?: string | null } = {}) {
+function createEnv(options: { queue?: boolean; enabled?: boolean } = {}) {
   const state: TestState = {
     booking: {
       id: "booking-1",
@@ -237,7 +281,7 @@ function createEnv(options: { queue?: boolean; assistantJobStatus?: string | nul
     },
     reminders: [],
     queuedMessages: [],
-    assistantJobStatus: options.assistantJobStatus ?? null,
+    siteEnabled: options.enabled === false ? 0 : 1,
   };
 
   const db = {
@@ -284,8 +328,9 @@ function handleFirst(state: TestState, sql: string, values: unknown[]) {
       timezone: "Europe/Dublin",
     };
   }
-  if (sql.includes("FROM sites s") && sql.includes("LEFT JOIN assistant_jobs")) {
-    return { status: state.assistantJobStatus };
+  if (sql.includes("SELECT booking_reminders_enabled FROM sites")) {
+    if (values[0] !== "site-1" || (values.length > 1 && values[1] !== "owner")) return null;
+    return { booking_reminders_enabled: state.siteEnabled };
   }
   if (sql.includes("FROM agent_channel_connections")) return null;
   if (sql.includes("FROM booking_reminders WHERE id = ?")) {
@@ -300,7 +345,7 @@ function handleAll(state: TestState, sql: string, values: unknown[]) {
     const now = values[0] as string;
     const limit = values[1] as number;
     return state.reminders
-      .filter((row) => row.status === "scheduled" && row.scheduled_for <= now)
+      .filter((row) => state.siteEnabled !== 0 && row.status === "scheduled" && row.scheduled_for <= now)
       .slice(0, limit)
       .map((row) => ({ id: row.id }));
   }
@@ -309,7 +354,19 @@ function handleAll(state: TestState, sql: string, values: unknown[]) {
 
 function handleRun(state: TestState, sql: string, values: unknown[]) {
   let changes = 0;
-  if (sql.includes("INSERT OR IGNORE INTO booking_reminders")) {
+  if (sql.includes("UPDATE sites SET booking_reminders_enabled")) {
+    if (values[1] === "site-1" && values[2] === "owner") {
+      state.siteEnabled = values[0] as number;
+      changes = 1;
+    }
+  } else if (sql.includes("SET status = 'cancelled'")) {
+    for (const row of state.reminders) {
+      if (row.booking_id === values[0] && ["scheduled", "queued", "processing"].includes(row.status)) {
+        row.status = "cancelled";
+        changes += 1;
+      }
+    }
+  } else if (sql.includes("INSERT OR IGNORE INTO booking_reminders")) {
     const exists = state.reminders.some(
       (row) =>
         row.booking_id === values[1] &&

@@ -28,7 +28,7 @@ test("recovers an exact public Worker origin after deploy output was lost", asyn
       workerPublic: true,
       origin: ORIGIN,
       d1Id: D1_ID,
-      queueNames: [`${WORKER_NAME}-assistant-job-events`],
+      queueNames: [`${WORKER_NAME}-booking-reminders`],
       durableObjectNamespaceId: DO_ID,
     });
     assert.equal(
@@ -122,7 +122,7 @@ function createConfig() {
       `database_name = "${WORKER_NAME}-d1"`,
       `database_id = "${D1_ID}"`,
       "[[queues.producers]]",
-      `queue = "${WORKER_NAME}-assistant-job-events"`,
+      `queue = "${WORKER_NAME}-booking-reminders"`,
       "",
     ].join("\n"),
   );

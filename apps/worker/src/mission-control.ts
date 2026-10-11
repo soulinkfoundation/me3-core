@@ -1008,7 +1008,7 @@ export async function getMissionDailyBriefing(env: Env, userId: string, briefing
     `SELECT id, user_id, plugin_id, activity_type, title, summary, status,
             related_id, metadata_json, created_at
      FROM mission_plugin_activity
-     WHERE id = ? AND user_id = ? AND activity_type = 'assistant_job.review_packet'
+     WHERE id = ? AND user_id = ? AND activity_type = 'mission.review_packet'
      LIMIT 1`,
   )
     .bind(briefingId, userId)
@@ -1360,7 +1360,7 @@ async function getMissionControlDailyBriefing(env: Env, userId: string, date: st
             related_id, metadata_json, created_at
      FROM mission_plugin_activity
      WHERE user_id = ?
-       AND activity_type = 'assistant_job.review_packet'
+       AND activity_type = 'mission.review_packet'
      ORDER BY created_at DESC
      LIMIT 20`,
   )
@@ -1418,9 +1418,7 @@ async function getMissionControlWeeklyReview(env: Env, userId: string, date: str
       ...review,
       id: row.id,
       runId: row.id,
-      assistantJobRunId:
-        typeof result.assistantJobRunId === "string" ? result.assistantJobRunId : null,
-      title: row.title.replace(/^Assistant Job:\s*/, ""),
+      title: row.title,
       createdAt: row.finished_at || row.started_at || row.created_at,
     };
   }
@@ -1471,7 +1469,6 @@ export async function submitMissionWeeklyReviewTask(
   }
   const reviewRecord = isRecord(reviewMetadata) ? reviewMetadata : {};
   const runId =
-    normalizeNullableText(reviewRecord.assistantJobRunId) ||
     normalizeNullableText(reviewRecord.missionAgentRunId) ||
     task.source_ref ||
     task.id;
@@ -2575,7 +2572,7 @@ async function getLatestMissionDailyBriefing(env: Env, userId: string) {
             related_id, metadata_json, created_at
      FROM mission_plugin_activity
      WHERE user_id = ?
-       AND activity_type = 'assistant_job.review_packet'
+       AND activity_type = 'mission.review_packet'
      ORDER BY created_at DESC
      LIMIT 20`,
   )

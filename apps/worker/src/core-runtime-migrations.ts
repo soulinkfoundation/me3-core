@@ -1,3 +1,4 @@
+import { RETIRE_LEGACY_AUTOMATIONS_STATEMENTS } from "../migrations/0064_retire_legacy_automations";
 import { MAILBOX_ATTACHMENT_STAGING_SQL } from "./mailbox-attachment-staging";
 import { AGENT_SCHEMA_STATEMENTS } from "../../../packages/agent/src/store";
 import { AGENT_IMAGE_SCHEMA_STATEMENTS } from "./agent-image-schema";
@@ -485,6 +486,17 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-11-agent-presentations-v1",
     async apply(db) {
       for (const sql of AGENT_PRESENTATION_SCHEMA_STATEMENTS) await db.prepare(sql).run();
+    },
+  },
+  {
+    id: "0064_retire_legacy_automations",
+    checksum: "2026-10-11-retire-legacy-automations-v1",
+    async apply(db) {
+      if (await columnExists(db, "sites", "booking_reminders_enabled")) return;
+      await db.batch([
+        db.prepare("ALTER TABLE sites ADD COLUMN booking_reminders_enabled INTEGER NOT NULL DEFAULT 1 CHECK (booking_reminders_enabled IN (0, 1))"),
+        ...RETIRE_LEGACY_AUTOMATIONS_STATEMENTS.map(sql => db.prepare(sql)),
+      ]);
     },
   },
 ];

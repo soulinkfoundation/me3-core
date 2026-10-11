@@ -31,8 +31,8 @@ describe("Mission Control activity", () => {
       {
         id: "activity-1",
         user_id: "owner",
-        plugin_id: "me3.assistant-jobs",
-        activity_type: "assistant_job.review_packet",
+        plugin_id: "me3.mission-control",
+        activity_type: "mission.review_packet",
         title: "Result: Invoice and Receipt Triage",
         summary: "Created a Mission Control result.",
         status: "succeeded",

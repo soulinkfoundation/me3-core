@@ -7,7 +7,6 @@ export interface Env {
   IMAGES?: ImageTransformationsBinding;
   ASSETS?: Fetcher;
   SITE_ASSETS?: R2Bucket;
-  ASSISTANT_JOB_EVENTS?: Queue<AssistantJobEventQueueMessage>;
   BOOKING_REMINDER_QUEUE?: Queue<BookingReminderQueueMessage>;
   SOCIAL_PUBLISH_QUEUE?: Queue<SocialPublishQueueMessage>;
 
@@ -94,22 +93,6 @@ export interface ImageTransformationsPipeline {
     quality?: number;
   }): Promise<{ response(): Response }>;
 }
-
-export type AssistantJobIngressEventQueueMessage = {
-  kind?: "event";
-  eventId: string;
-  userId: string;
-};
-
-export type AssistantJobScheduledRunQueueMessage = {
-  kind: "scheduled_run";
-  runId: string;
-  userId: string;
-};
-
-export type AssistantJobEventQueueMessage =
-  | AssistantJobIngressEventQueueMessage
-  | AssistantJobScheduledRunQueueMessage;
 
 export type BookingReminderQueueMessage = {
   reminderId: string;

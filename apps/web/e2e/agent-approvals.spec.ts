@@ -29,8 +29,6 @@ async function fixture(page: Page, options: { pluginUnavailable?: boolean } = {}
       : path === "/mission-control/wheel" ? { snapshots: [], settings: { segments: [] } }
       : path === "/mission-control/dashboard" ? { settings: { goals: [] } }
       : path === "/mission-control/projects" ? { projects: [] }
-      : path === "/assistant/jobs" ? { jobs: [] }
-      : path === "/assistant/jobs/recipes" ? { recipes: [] }
       : path === "/sites" ? { sites: [] }
       : path === "/plugins" ? { plugins: [] }
       : path === "/navigation-features" ? { features: [] } : {};

@@ -9,7 +9,6 @@ import {
   type LocalExecutorLandingPolicy,
   type LocalExecutorProviderPresetId,
 } from "@me3-core/plugin-local-executor";
-import type { AssistantJobAction, AssistantJobDraft } from "@me3-core/assistant-jobs";
 import { isCorePluginEnabled } from "./plugins";
 import type { Env } from "./types";
 
@@ -32,7 +31,7 @@ type LocalExecutorRunStatus =
   | "failed"
   | "cancelled"
   | "denied";
-type LocalExecutorSourceKind = "manual" | "schedule" | "event" | "assistant_job";
+type LocalExecutorSourceKind = "manual" | "schedule" | "event";
 
 type LocalExecutorPairingRow = {
   id: string;
@@ -76,8 +75,6 @@ type LocalExecutorPolicyRow = {
 type LocalExecutorRunRow = {
   id: string;
   user_id: string;
-  assistant_job_id: string | null;
-  assistant_job_run_id: string | null;
   project_policy_id: string;
   prompt_summary: string;
   prompt_text: string;
@@ -136,25 +133,7 @@ type LocalExecutorRunCreateInput = {
   ownerDirected?: unknown;
   missionTaskId?: unknown;
   missionProjectId?: unknown;
-  assistantJobId?: string | null;
-  assistantJobRunId?: string | null;
   actionId?: string | null;
-};
-
-type AssistantJobActionInput = {
-  job: {
-    id: string;
-    name: string;
-    purpose: string;
-    project_id?: string | null;
-  };
-  run: {
-    id: string;
-    trigger_kind: string;
-  };
-  draft: AssistantJobDraft;
-  action: AssistantJobAction;
-  ownerDirected: boolean;
 };
 
 const DEFAULT_COMMAND_POLICY: LocalExecutorCommandPolicy =
@@ -534,33 +513,6 @@ export async function createLocalExecutorRun(
   input: unknown,
 ) {
   return createLocalExecutorRunInternal(env, userId, normalizeRunCreateInput(input));
-}
-
-export async function createLocalExecutorRunFromAssistantJobAction(
-  env: Env,
-  userId: string,
-  input: AssistantJobActionInput,
-) {
-  const actionInputs = input.action.inputs || {};
-  const prompt =
-    normalizeNullableText(actionInputs.prompt) ||
-    normalizeNullableText(actionInputs.task) ||
-    input.job.purpose ||
-    input.job.name;
-  const run = await createLocalExecutorRunInternal(env, userId, {
-    projectPolicyId: normalizeNullableText(actionInputs.projectPolicyId),
-    prompt,
-    promptSummary:
-      normalizeNullableText(actionInputs.promptSummary) ||
-      normalizeNullableText(actionInputs.taskSummary) ||
-      summarizePrompt(prompt),
-    sourceKind: "assistant_job",
-    ownerDirected: input.ownerDirected,
-    assistantJobId: input.job.id,
-    assistantJobRunId: input.run.id,
-    actionId: input.action.id,
-  });
-  return run;
 }
 
 export async function getLocalExecutorRun(env: Env, userId: string, runId: string) {
@@ -952,7 +904,7 @@ async function createLocalExecutorRunInternal(
   }
   const sourceKind = normalizeSourceKind(input.sourceKind) || "manual";
   const ownerDirected =
-    input.ownerDirected !== false && (sourceKind === "manual" || sourceKind === "assistant_job");
+    input.ownerDirected !== false && sourceKind === "manual";
   const approvalRequired = !ownerDirected;
   const runId = crypto.randomUUID();
   const missionAgentRunId = localExecutorMissionRunId(runId);
@@ -971,16 +923,14 @@ async function createLocalExecutorRunInternal(
 
   await env.DB.prepare(
     `INSERT INTO local_executor_runs
-       (id, user_id, assistant_job_id, assistant_job_run_id, project_policy_id,
+       (id, user_id, project_policy_id,
         prompt_summary, prompt_text, source_kind, status, provider, approval_id,
         mission_agent_run_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       runId,
       userId,
-      input.assistantJobId || null,
-      input.assistantJobRunId || null,
       policy.id,
       promptSummary,
       prompt,
@@ -1092,7 +1042,6 @@ async function upsertLocalExecutorMissionRun(
     changedFiles: parseJsonStringArray(input.run.changed_files_json),
     qualityGates: parseJsonArray(input.run.quality_gates_json),
     approvalId: input.run.approval_id,
-    assistantJobRunId: input.run.assistant_job_run_id,
   };
   await env.DB.prepare(
     `INSERT INTO mission_agent_runs
@@ -1418,8 +1367,6 @@ function serializePolicy(row: LocalExecutorPolicyRow) {
 function serializeRun(row: LocalExecutorRunRow) {
   return {
     id: row.id,
-    assistantJobId: row.assistant_job_id,
-    assistantJobRunId: row.assistant_job_run_id,
     projectPolicyId: row.project_policy_id,
     promptSummary: row.prompt_summary,
     sourceKind: row.source_kind,
@@ -1542,7 +1489,7 @@ function normalizePolicyStatus(value: unknown): LocalExecutorPolicyStatus | null
 }
 
 function normalizeSourceKind(value: unknown): LocalExecutorSourceKind | null {
-  return value === "manual" || value === "schedule" || value === "event" || value === "assistant_job"
+  return value === "manual" || value === "schedule" || value === "event"
     ? value
     : null;
 }

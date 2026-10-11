@@ -570,7 +570,7 @@ describe("ME3 agent context resolvers", () => {
       id: "resolved-active",
       generatedAt: "2026-05-16T10:00:00.000Z",
       ownerId: "owner",
-      purpose: "assistant_job",
+      purpose: "mission_review",
       requestText: "Run the project review.",
       activeScope: {
         emailThreadId: "thread-active",

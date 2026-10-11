@@ -22,6 +22,7 @@ import BookingAvailabilityEditor, {
   type BookingAvailability,
 } from "../booking/BookingAvailabilityEditor.vue";
 import TimezonePicker from "../booking/TimezonePicker.vue";
+import SiteBookingReminders from "../booking/SiteBookingReminders.vue";
 import UiIcon from "../UiIcon.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { api } from "../../api";
@@ -944,6 +945,8 @@ onMounted(() => {
       Add the kinds of bookings you want to offer, then configure each one with
       the simplest setup that fits.
     </p>
+
+    <SiteBookingReminders v-if="wizard.selectedSiteId" :site-id="wizard.selectedSiteId" />
 
     <div class="config-fields">
       <div class="section-heading">

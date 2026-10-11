@@ -14,7 +14,6 @@ type FakeDbState = {
   pluginInstallations: Array<Record<string, unknown>>;
   sites: Array<Record<string, unknown>>;
   siteFiles: Array<Record<string, unknown>>;
-  assistantJobs: Array<Record<string, unknown>>;
   contacts: Array<Record<string, unknown>>;
   mailboxAliases: Array<Record<string, unknown>>;
   mailboxMessages: Array<Record<string, unknown>>;
@@ -156,7 +155,6 @@ function createEnv(state: Partial<FakeDbState> = {}) {
     pluginInstallations: [],
     sites: [],
     siteFiles: [],
-    assistantJobs: [],
     contacts: [],
     mailboxAliases: [],
     mailboxMessages: [],
@@ -377,9 +375,6 @@ function createEnv(state: Partial<FakeDbState> = {}) {
           }
           if (sql.includes("FROM plugin_installations")) {
             return { results: dbState.pluginInstallations as T[] };
-          }
-          if (sql.includes("FROM assistant_jobs")) {
-            return { results: dbState.assistantJobs as T[] };
           }
           if (sql.includes("FROM contacts")) {
             return { results: dbState.contacts as T[] };
@@ -931,7 +926,6 @@ describe("Core chat native context", () => {
       loadDurationMs: expect.any(Number),
     });
     expect(response.trace?.context.characterCount).toBeGreaterThan(0);
-    expect(env.state.queries.some((sql) => sql.includes("FROM assistant_jobs"))).toBe(false);
     expect(env.state.queries.some((sql) => sql.includes("FROM calendar_sources"))).toBe(false);
     expect(env.state.queries.some((sql) => sql.includes("FROM plugin_installations"))).toBe(false);
   });
@@ -2287,9 +2281,6 @@ describe("Core chat native context", () => {
     expect(modelInput.messages[0]?.content).toContain(
       "Plugins: no optional plugin installs are recorded yet",
     );
-    expect(modelInput.messages[0]?.content).toContain(
-      "Jobs: no scheduled assistant jobs created yet",
-    );
     expect(modelInput.messages[0]?.content).toContain("Local daemon: not paired");
     expect(modelInput.messages[0]?.content).toContain(
       "Mission statement:\n- Help builders steer their work with calm, useful systems.",
@@ -2312,12 +2303,6 @@ describe("Core chat native context", () => {
         pluginInstallationRow("me3.calendar", "installed"),
         pluginInstallationRow("me3.telegram", "setup_required"),
         pluginInstallationRow("me3.local-executor", "disabled", 0),
-      ],
-      assistantJobs: [
-        assistantJobRow("job-active", "active"),
-        assistantJobRow("job-needs-setup", "needs_setup"),
-        assistantJobRow("job-paused", "paused"),
-        assistantJobRow("job-draft", "draft"),
       ],
       mailboxAliases: [mailboxAliasRow("mailbox-owner", "owner")],
       calendarSources: [calendarSourceRow("calendar-source")],
@@ -2348,9 +2333,6 @@ describe("Core chat native context", () => {
     expect(response.replyText).toContain("Soulink/Telegram: Soulink and Telegram are connected");
     expect(response.replyText).toContain("Mailbox: active alias configured");
     expect(response.replyText).toContain("Plugins: 1 enabled, 1 need setup, 1 disabled");
-    expect(response.replyText).toContain(
-      "Jobs: 1 active, 1 need setup or attention, 1 paused, 1 draft",
-    );
     expect(response.replyText).toContain("Updates: release/version metadata is available");
     expect(response.replyText).toContain("Local daemon: paired");
     expect(response.replyText).toContain("Good test prompts");
@@ -2804,7 +2786,6 @@ describe("Core chat native context", () => {
       due_at: "2026-07-15",
     });
     expect(env.state.queries.some((sql) => sql.includes("FROM contacts"))).toBe(false);
-    expect(env.state.queries.some((sql) => sql.includes("FROM assistant_jobs"))).toBe(false);
   });
 
   it("saves structured mailbox drafts through the shared model loop", async () => {
@@ -3766,19 +3747,6 @@ function pluginInstallationRow(
     enabled,
     status,
     installed_at: "2026-05-15T09:00:00Z",
-    updated_at: "2026-05-15T09:00:00Z",
-  };
-}
-
-function assistantJobRow(id: string, status: string): Record<string, unknown> {
-  return {
-    id,
-    user_id: "owner",
-    name: id,
-    purpose: "Test setup readiness.",
-    status,
-    archived_at: null,
-    created_at: "2026-05-15T09:00:00Z",
     updated_at: "2026-05-15T09:00:00Z",
   };
 }

@@ -86,6 +86,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0061_agent_image_operations", "2026-10-10-agent-image-operations-v1"],
   ["0062_agent_notifications", "2026-10-11-agent-notifications-v1"],
   ["0063_agent_presentations", "2026-10-11-agent-presentations-v1"],
+  ["0064_retire_legacy_automations", "2026-10-11-retire-legacy-automations-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -105,7 +106,6 @@ const EXCLUDED_TABLES = [
   "agent_tool_executions",
   "agent_turn_results",
   "ai_gateway_settings",
-  "assistant_job_ingress_events",
   "auth_rate_limits",
   "booking_holds",
   "calendar_push_dispatches",
@@ -161,12 +161,6 @@ const COPIED_TABLES = [
   "ai_provider_credentials",
   "ai_usage_events",
   "assistant_attachments",
-  "assistant_job_action_results",
-  "assistant_job_artifacts",
-  "assistant_job_run_events",
-  "assistant_job_runs",
-  "assistant_job_versions",
-  "assistant_jobs",
   "assistant_message_assets",
   "assistant_messages",
   "assistant_primary_threads",

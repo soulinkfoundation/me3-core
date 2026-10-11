@@ -21,14 +21,6 @@ import {
   updateAiGatewaySettings,
 } from "./ai-gateway";
 import {
-  createAssistantJobBuilderAction,
-  dispatchDueScheduledAssistantJobs,
-  ensureDefaultAssistantJobs,
-  markAssistantJobQueueMessageFailed,
-  processAssistantJobQueueMessage,
-  type AssistantJobBuilderAction,
-} from "./assistant-jobs";
-import {
   BOOKING_REMINDER_QUEUE_NAME,
   dispatchDueBookingReminders,
   processBookingReminderBatch,
@@ -96,7 +88,6 @@ import { registerCalendarSourceRoutes } from "./routes/calendar-sources";
 import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerChannelRoutes } from "./routes/channels";
 import { registerAgentSchedulingRoutes } from "./routes/agent-scheduling";
-import { registerAssistantJobsRoutes } from "./routes/assistant-jobs";
 import { registerAssistantSkillsRoutes } from "./routes/assistant-skills";
 import { registerContactsRoutes } from "./routes/contacts";
 import { registerCoreGithubUpdaterRoutes } from "./routes/core-github-updater";
@@ -215,7 +206,6 @@ import {
 } from "./sites";
 import { generateSiteHtml, type Me3SiteProfile } from "@me3-core/site-renderer";
 import type {
-  AssistantJobEventQueueMessage,
   BookingReminderQueueMessage,
   DbAgentChannelConnection,
   DbAgentChannelEvent,
@@ -797,7 +787,6 @@ app.post("/api/admin/bootstrap", async (c) => {
     .run();
 
   await getOrCreateInstallEncryptionKey(c.env);
-  await ensureDefaultAssistantJobs(c.env, owner.id);
   await clearAuthRateLimit(c.env, rateLimitScope);
   await setOwnerSession(c, owner.id);
 
@@ -2139,7 +2128,6 @@ async function upsertMe3ClaimedOwner(
     .run();
 
   await setStoredMe3CloudOwnerId(env, String(payload.sub));
-  await ensureDefaultAssistantJobs(env, "owner");
   if (typeof payload.core_update_token === "string" && payload.core_update_token.trim()) {
     await setStoredInstallSecret(
       env,

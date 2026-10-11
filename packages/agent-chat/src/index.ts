@@ -823,14 +823,6 @@ type CoreSetupPluginReadiness = {
   disabled: number;
 };
 
-type CoreSetupJobsReadiness = {
-  total: number;
-  active: number;
-  needsSetup: number;
-  paused: number;
-  draft: number;
-};
-
 type DbContactRow = {
   id: string;
   user_id: string;
@@ -6112,7 +6104,6 @@ async function loadCoreChatSetupReadiness(
     mailbox,
     profileSite,
     pluginInstallations,
-    jobs,
     hasCalendarSource,
     hasSoulink,
     hasTelegram,
@@ -6121,7 +6112,6 @@ async function loadCoreChatSetupReadiness(
     loadCoreSetupMailboxReadiness(env, ownerId),
     loadCoreSetupProfileSiteReadiness(env, ownerId),
     loadCorePluginInstallations(env),
-    loadCoreSetupJobsReadiness(env, ownerId),
     hasCoreSetupRow(
       env,
       `SELECT id FROM calendar_sources WHERE user_id = ? AND status = 'active' LIMIT 1`,
@@ -6181,7 +6171,6 @@ async function loadCoreChatSetupReadiness(
       `- Soulink/Telegram: ${messagingText}.`,
       mailboxLine,
       describeCoreSetupPlugins(plugins),
-      describeCoreSetupJobs(jobs),
       "- Updates: release/version metadata is available through the Updates flow; check updates before upgrading this installation.",
       `- Local daemon: ${localDaemonText}.`,
     ].join("\n"),
@@ -6243,33 +6232,6 @@ function summarizeCoreSetupPlugins(
   };
 }
 
-async function loadCoreSetupJobsReadiness(
-  env: Pick<CoreAgentChatEnv, "DB">,
-  ownerId: string,
-): Promise<CoreSetupJobsReadiness | null> {
-  try {
-    const rows = await env.DB.prepare(
-      `SELECT status
-       FROM assistant_jobs
-       WHERE user_id = ? AND archived_at IS NULL
-       LIMIT 100`,
-    )
-      .bind(ownerId)
-      .all<{ status: string | null }>();
-    const jobs = rows.results || [];
-    return {
-      total: jobs.length,
-      active: jobs.filter((job) => job.status === "active").length,
-      needsSetup: jobs.filter((job) => job.status === "needs_setup" || job.status === "failing")
-        .length,
-      paused: jobs.filter((job) => job.status === "paused").length,
-      draft: jobs.filter((job) => job.status === "draft").length,
-    };
-  } catch {
-    return null;
-  }
-}
-
 function describeCoreSetupProfileSite(
   site: DbCoreSetupProfileSiteRow | null,
   owner: OwnerProfileRow | null,
@@ -6310,18 +6272,6 @@ function describeCoreSetupPlugins(plugins: CoreSetupPluginReadiness | null): str
     plugins.disabled ? `${plugins.disabled} disabled` : null,
   ].filter(Boolean);
   return `- Plugins: ${parts.join(", ")}.`;
-}
-
-function describeCoreSetupJobs(jobs: CoreSetupJobsReadiness | null): string {
-  if (!jobs) return "- Jobs: setup state is unknown.";
-  if (jobs.total === 0) return "- Jobs: no scheduled assistant jobs created yet.";
-  const parts = [
-    `${jobs.active} active`,
-    jobs.needsSetup ? `${jobs.needsSetup} need setup or attention` : null,
-    jobs.paused ? `${jobs.paused} paused` : null,
-    jobs.draft ? `${jobs.draft} draft` : null,
-  ].filter(Boolean);
-  return `- Jobs: ${parts.join(", ")}.`;
 }
 
 async function loadCoreSetupMailboxReadiness(

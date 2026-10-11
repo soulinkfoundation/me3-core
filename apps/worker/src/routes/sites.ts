@@ -1,4 +1,5 @@
 import { getSiteImageMetadata, saveUploadedImageMetadata } from "../site-images";
+import { BookingReminderInputError, getSiteBookingReminders, updateSiteBookingReminders } from "../booking-reminders";
 import {
   LANDING_PAGES_PLUGIN_ID,
   buildLandingPageDocument,
@@ -165,6 +166,29 @@ type LandingPageGenerateBody = {
 };
 
 export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
+  app.get("/api/sites/:id/booking-reminders", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    try {
+      return c.json(await getSiteBookingReminders(c.env, ownerId, c.req.param("id")));
+    } catch (error) {
+      if (error instanceof BookingReminderInputError) return c.json({ error: error.message }, error.status);
+      throw error;
+    }
+  });
+
+  app.patch("/api/sites/:id/booking-reminders", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(await updateSiteBookingReminders(c.env, ownerId, c.req.param("id"), body?.enabled));
+    } catch (error) {
+      if (error instanceof BookingReminderInputError) return c.json({ error: error.message }, error.status);
+      throw error;
+    }
+  });
+
   app.get("/api/sites", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
