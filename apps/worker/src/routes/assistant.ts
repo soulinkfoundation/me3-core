@@ -1,3 +1,6 @@
+import { parseAgentTargetSelection, preflightAgentTargetSelection, persistAgentTargetSelectionInput } from "../agent-target-selection";
+import { revalidateAgentTargetPayload } from "../agent-target-projection";
+import type { AgentTargetPresentationCard } from "../../../../packages/agent/src/types";
 import { assistantRuntimeNamespace } from "../assistant-runtime-binding";
 import { revalidateAgentImagePayload } from "../agent-image-projection";
 import { getSiteImageMetadata } from "../site-images";
@@ -103,6 +106,7 @@ type AssistantRouteDeps = {
 
 type ChatBody = { message?: string };
 type AssistantChatTurnBody = {
+  targetSelection?: unknown;
   messageText?: unknown;
   mode?: unknown;
   requestId?: unknown;
@@ -720,34 +724,36 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       actionCards: metadata.actionCards.length ? metadata.actionCards : undefined,
       siteAction: metadata.siteAction || undefined,
       imageAction: metadata.imageAction || undefined,
+      targetPresentation: metadata.targetPresentation || undefined,
       attachments: metadata.attachments.length ? metadata.attachments : undefined,
     };
   }
 
   async function serializePrivateAssistantMessage(env: Env, ownerId: string, threadId: string, row: AssistantMessageRow) {
     const message = serializeAssistantMessage(row);
-    if (!message.imageAction) return message;
+    if (!message.imageAction && !message.targetPresentation) return message;
     let metadata: Record<string, unknown>;
     try { metadata = JSON.parse(row.metadata_json || "{}"); } catch { return message; }
-    if (metadata.runtime !== "agent" && metadata.specialist !== "core.agent") return message;
+    if (metadata.runtime !== "agent" && metadata.specialist !== "core.agent") { const { targetPresentation: _untrusted, ...rest } = message; return rest; }
     const turnId = metadata.turnId;
-    const { imageAction: _savedAction, ...rest } = message;
+    const { imageAction: _savedAction, targetPresentation: _savedTarget, ...rest } = message;
     if (typeof turnId !== "string" || !row.id.startsWith(`${turnId}:assistant:`)) return rest;
-    return revalidateAgentImagePayload(env, { ownerId, threadId, turnId }, message);
+    return revalidateAgentTargetPayload(env, { ownerId, threadId, turnId }, await revalidateAgentImagePayload(env, { ownerId, threadId, turnId }, message));
   }
 
   function parseAssistantMessageMetadata(metadataJson: string | null | undefined): {
     actionCards: AgentChatActionCard[];
+    targetPresentation: AgentTargetPresentationCard | null;
     imageAction: AgentChatImageAction | null;
     siteAction: AssistantSiteToolAction["siteAction"] | null;
     attachments: AssistantAttachmentAuditManifestItem[];
   } {
     if (!metadataJson)
-      return { actionCards: [], imageAction: null, siteAction: null, attachments: [] };
+      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, attachments: [] };
     try {
       const parsed = JSON.parse(metadataJson) as unknown;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return { actionCards: [], imageAction: null, siteAction: null, attachments: [] };
+        return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, attachments: [] };
       }
       const metadata = parsed as Record<string, unknown>;
       const cards = metadata.actionCards;
@@ -756,6 +762,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       const attachments = metadata.attachments;
       return {
         actionCards: Array.isArray(cards) ? (cards as AgentChatActionCard[]) : [],
+        targetPresentation: metadata.targetPresentation && typeof metadata.targetPresentation === "object" && !Array.isArray(metadata.targetPresentation) ? metadata.targetPresentation as AgentTargetPresentationCard : null,
         imageAction:
           imageAction && typeof imageAction === "object" && !Array.isArray(imageAction)
             ? (imageAction as AgentChatImageAction)
@@ -767,7 +774,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
         attachments: createAssistantAttachmentAuditManifest(attachments),
       };
     } catch {
-      return { actionCards: [], imageAction: null, siteAction: null, attachments: [] };
+      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, attachments: [] };
     }
   }
 
@@ -3198,7 +3205,16 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       return c.json({ ok: false, error: request.error }, 400);
     }
     const requestId = request.requestId;
-    const replay = await getAgentSandboxTurnResult(c.env, ownerId, requestId);
+    let targetSelection;
+    try { targetSelection = parseAgentTargetSelection(body.targetSelection); }
+    catch { return c.json({ ok: false, error: "Invalid target selection" }, 400); }
+    if (targetSelection) {
+      if (c.env.ME3_ASSISTANT_RUNTIME !== "agent" || !normalizeAssistantThreadId(body.threadId)) return c.json({ ok: false, error: "Target selection requires an explicit agent conversation" }, 400);
+      try { await preflightAgentTargetSelection(c.env, { userId: ownerId, threadId: normalizeAssistantThreadId(body.threadId)!, requestId, messageText: displayMessageText }, targetSelection); }
+      catch (error) { return c.json({ ok: false, error: error instanceof Error ? error.message : "Target selection is unavailable" }, 409); }
+    }
+    let replay = targetSelection ? null : await getAgentSandboxTurnResult(c.env, ownerId, requestId);
+    if (replay && c.env.ME3_ASSISTANT_RUNTIME === "agent" && replay.turnId && replay.threadId) replay = await revalidateAgentTargetPayload(c.env, { ownerId, threadId: replay.threadId, turnId: replay.turnId }, replay as unknown as Record<string, unknown>) as typeof replay;
     if (replay) return c.json({ mode, ...replay });
     const siteToolsEnabled = c.env.ME3_ASSISTANT_RUNTIME !== "agent" && assistantSiteToolsEnabled(c.env);
     const scopeParse = siteToolsEnabled
@@ -3360,6 +3376,26 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       },
     });
 
+    const dispatchInput = {
+      userId: ownerId,
+      requestId,
+      connectionId: turn.connection.id,
+      sourceEventId: turn.sourceEvent.id,
+      turnId: turn.turnId,
+      threadId: thread.id,
+      messageText: turn.messageText,
+      mode,
+      replyToMessageId: turn.replyToMessageId,
+      selectedModel,
+      attachments: attachmentManifest,
+      attachmentTextContext,
+      ...(targetSelection ? { targetSelection } : {}),
+    };
+    if (targetSelection) {
+      try { await persistAgentTargetSelectionInput(c.env, dispatchInput); }
+      catch (error) { return c.json({ ok: false, error: error instanceof Error ? error.message : "Target selection is unavailable" }, 409); }
+    }
+
     const id = runtime.idFromName(ownerId);
     const stub = runtime.get(id);
     const response = await stub.fetch(
@@ -3367,20 +3403,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: ownerId,
-          requestId,
-          connectionId: turn.connection.id,
-          sourceEventId: turn.sourceEvent.id,
-          turnId: turn.turnId,
-          threadId: thread.id,
-          messageText: turn.messageText,
-          mode,
-          replyToMessageId: turn.replyToMessageId,
-          selectedModel,
-          attachments: attachmentManifest,
-          attachmentTextContext,
-        }),
+        body: JSON.stringify(dispatchInput),
       },
     );
 
@@ -3438,6 +3461,14 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       return c.json({ ok: false, error: request.error }, 400);
     }
     const requestId = request.requestId;
+    let targetSelection;
+    try { targetSelection = parseAgentTargetSelection(body.targetSelection); }
+    catch { return c.json({ ok: false, error: "Invalid target selection" }, 400); }
+    if (targetSelection) {
+      if (c.env.ME3_ASSISTANT_RUNTIME !== "agent" || !normalizeAssistantThreadId(body.threadId)) return c.json({ ok: false, error: "Target selection requires an explicit agent conversation" }, 400);
+      try { await preflightAgentTargetSelection(c.env, { userId: ownerId, threadId: normalizeAssistantThreadId(body.threadId)!, requestId, messageText: displayMessageText }, targetSelection); }
+      catch (error) { return c.json({ ok: false, error: error instanceof Error ? error.message : "Target selection is unavailable" }, 409); }
+    }
     const siteToolsEnabled = c.env.ME3_ASSISTANT_RUNTIME !== "agent" && assistantSiteToolsEnabled(c.env);
     const scopeParse = siteToolsEnabled
       ? parseAssistantScopes(displayMessageText, body.scopes)
@@ -3500,7 +3531,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
             serverElapsedMs: assistantRouteDurationMs(handlerStartedAt),
           });
           const replayLookupStartedAt = performance.now();
-          const replay = await getAgentSandboxTurnResult(
+          let replay = targetSelection ? null : await getAgentSandboxTurnResult(
             c.env,
             ownerId,
             requestId,
@@ -3508,6 +3539,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
           routePerformance.replayLookupMs = assistantRouteDurationMs(
             replayLookupStartedAt,
           );
+          if (replay && c.env.ME3_ASSISTANT_RUNTIME === "agent" && replay.turnId && replay.threadId) replay = await revalidateAgentTargetPayload(c.env, { ownerId, threadId: replay.threadId, turnId: replay.turnId }, replay as unknown as Record<string, unknown>) as typeof replay;
           if (replay) {
             if (replay.threadId) send("thread", { threadId: replay.threadId });
             await sendAssistantStreamText(send, replay.replyText || "");
@@ -3693,6 +3725,26 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
             threadId: thread.id,
           };
 
+          const dispatchInput = {
+            userId: ownerId,
+            requestId,
+            connectionId: turn.connection.id,
+            sourceEventId: turn.sourceEvent.id,
+            turnId: turn.turnId,
+            threadId: thread.id,
+            messageText: turn.messageText,
+            mode,
+            replyToMessageId: turn.replyToMessageId,
+            selectedModel,
+            attachments: attachmentManifest,
+            attachmentTextContext,
+            ...(targetSelection ? { targetSelection } : {}),
+          };
+          if (targetSelection) {
+            try { await persistAgentTargetSelectionInput(c.env, dispatchInput); }
+            catch (error) { send("error", { ok: false, error: error instanceof Error ? error.message : "Target selection is unavailable", status: 409 }); return; }
+          }
+
           const id = runtime.idFromName(ownerId);
           const stub = runtime.get(id);
           const durableObjectHeadersStartedAt = performance.now();
@@ -3702,20 +3754,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
               method: "POST",
               headers: { "Content-Type": "application/json", ...(c.env.ME3_ASSISTANT_RUNTIME === "agent" && c.req.header("Last-Event-ID") ? {"Last-Event-ID":c.req.header("Last-Event-ID")!} : {}) },
               ...(c.env.ME3_ASSISTANT_RUNTIME === "agent" ? {} : { signal: c.req.raw.signal }),
-              body: JSON.stringify({
-                userId: ownerId,
-                requestId,
-                connectionId: turn.connection.id,
-                sourceEventId: turn.sourceEvent.id,
-                turnId: turn.turnId,
-                threadId: thread.id,
-                messageText: turn.messageText,
-                mode,
-                replyToMessageId: turn.replyToMessageId,
-                selectedModel,
-                attachments: attachmentManifest,
-                attachmentTextContext,
-              }),
+              body: JSON.stringify(dispatchInput),
             },
           );
           routePerformance.durableObjectHeadersMs = assistantRouteDurationMs(

@@ -55,6 +55,10 @@ let sourceR2;
 let cleanTarget;
 let archive;
 
+test("target presentations are a canonical portable runtime migration", () => {
+  assert.ok(RUNTIME_MIGRATIONS.some(([id, checksum]) => id === "0063_agent_presentations" && checksum === "2026-10-11-agent-presentations-v1"));
+});
+
 test("portable migration allowlist exactly matches Core runtime migrations", () => {
   const source = readFileSync(
     new URL("../apps/worker/src/core-runtime-migrations.ts", import.meta.url),
@@ -118,6 +122,11 @@ before(async () => {
      INSERT INTO me3_agent_selections
        (id, owner_id, thread_id, domain, candidates_json, read_turn_id, created_at)
      VALUES ('portable-agent-selection', 'owner', 'main-thread-1', 'reminder', '[{"option":1,"id":"portable-reminder"}]', 'portable-agent-turn', '2026-10-10T12:00:00Z');
+     INSERT INTO me3_agent_presentations
+       (id,owner_id,thread_id,domain,selection_id,ordinal,tool_name,arguments_json,candidates_json,created_turn_id,created_at,expires_at)
+     VALUES ('portable-agent-presentation','owner','main-thread-1','reminder','portable-agent-selection',7,'core_reminders_update',
+       '{"date":"2027-01-16","time":"09:30"}', '{"actionLabel":"Move reminder","idParameter":"reminderId","ownerTimezone":"UTC","changes":[{"label":"Date","value":"2027-01-16"}],"candidates":[{"id":"portable-reminder","option":1,"label":"Original","fields":[],"snapshot":{"id":"portable-reminder","title":"Original"}}]}',
+       'portable-agent-turn','2026-10-11T12:00:00Z','2026-10-12T12:00:00Z');
      INSERT INTO me3_agent_stream_events (owner_id, turn_id, event, data_json)
      VALUES ('owner', 'portable-agent-turn', 'approval_required', '{"id":"portable-agent-approval"}');
      INSERT INTO me3_agent_cancellations (owner_id, request_id, requested_at)
@@ -168,8 +177,11 @@ test("exports sanitized owner data and restores the exact identity, D1 rows, and
   assert.equal(queryScalar(target, "SELECT thread_id FROM assistant_primary_threads WHERE owner_id = 'owner';"), "main-thread-1");
   for (const table of [
     "me3_agent_turns", "me3_agent_stream_events", "me3_agent_tool_receipts",
-    "me3_agent_approvals", "me3_agent_targets", "me3_agent_selections", "me3_agent_cancellations", "me3_agent_request_aliases", "me3_agent_image_operations",
+    "me3_agent_approvals", "me3_agent_targets", "me3_agent_selections", "me3_agent_cancellations", "me3_agent_request_aliases", "me3_agent_image_operations", "me3_agent_presentations",
   ]) assert.equal(queryScalar(target, `SELECT COUNT(*) FROM ${table};`), "1", `${table} must survive transfer`);
+  assert.equal(queryScalar(target, "SELECT status || ':' || ordinal || ':' || tool_name FROM me3_agent_presentations WHERE id='portable-agent-presentation';"), "pending:7:core_reminders_update");
+  assert.equal(queryScalar(target, "SELECT json_extract(candidates_json, '$.candidates[0].snapshot.id') FROM me3_agent_presentations WHERE id='portable-agent-presentation';"), "portable-reminder");
+  assert.equal(queryScalar(target, "SELECT json_extract(arguments_json, '$.date') FROM me3_agent_presentations WHERE id='portable-agent-presentation';"), "2027-01-16");
   assert.equal(queryScalar(target, "SELECT status FROM me3_agent_approvals WHERE id = 'portable-agent-approval';"), "pending");
   assert.equal(queryScalar(target, "SELECT status || ':' || billing_managed || ':' || usage_event_id FROM me3_agent_image_operations WHERE id='portable-image-operation';"), "unknown:0:portable-image-usage");
   assert.equal(queryScalar(target, "SELECT json_extract(checkpoint_json, '$.approvalId') FROM me3_agent_turns WHERE turn_id = 'portable-agent-turn';"), "portable-agent-approval");

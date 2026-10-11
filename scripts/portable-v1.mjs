@@ -85,6 +85,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0060_mission_goal_links", "2026-10-10-mission-goal-links-v1"],
   ["0061_agent_image_operations", "2026-10-10-agent-image-operations-v1"],
   ["0062_agent_notifications", "2026-10-11-agent-notifications-v1"],
+  ["0063_agent_presentations", "2026-10-11-agent-presentations-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -155,6 +156,7 @@ const COPIED_TABLES = [
   "me3_agent_selections",
   "me3_agent_image_operations",
   "me3_agent_notifications",
+  "me3_agent_presentations",
   "ai_model_defaults",
   "ai_provider_credentials",
   "ai_usage_events",

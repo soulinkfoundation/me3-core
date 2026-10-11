@@ -24,7 +24,8 @@ const tool = (name: string) => { const result = createDomainTools().find(tool =>
 describe("new agent domain tools", () => {
   it("ports all 40 active tools and declares safe external and destructive policies", () => {
     const tools = createDomainTools();
-    expect(tools.filter(tool => tool.name !== "core_images_generate")).toHaveLength(42); // Preserve 40 active capabilities plus mailbox sending and stable scheduling read.
+    expect(tools.filter(tool => !["core_images_generate", "core_targets_present"].includes(tool.name))).toHaveLength(42); // Preserve 40 active capabilities plus mailbox sending and stable scheduling read.
+    expect(tool("core_targets_present")).toMatchObject({ effect: "read", approval: "none", endsTurn: true });
     expect(new Set(tools.map(tool => tool.name)).size).toBe(tools.length);
     for (const value of tools) {
       expect(value.parameters.additionalProperties).toBe(false);

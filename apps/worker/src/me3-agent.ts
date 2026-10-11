@@ -1,5 +1,7 @@
+import { persistAgentTargetSelectionInput } from "./agent-target-selection";
+import { revalidateAgentTargetPayload } from "./agent-target-projection";
 import { Agent, type FiberRecoveryContext } from "agents";
-import { AgentInputConflictError, appendAgentStreamEvent, createD1TurnStore, persistAgentApprovalReply, persistAgentInput, persistAgentRequestAlias, isAgentCancellationRequested, requestAgentCancellation } from "../../../packages/agent/src/store";
+import { AgentInputConflictError, appendAgentStreamEvent, createD1TurnStore, persistAgentApprovalReply, persistAgentRequestAlias, isAgentCancellationRequested, requestAgentCancellation } from "../../../packages/agent/src/store";
 import { executeNewAgentTurn, isNewAgentDispatchInput, type NewAgentDispatchInput } from "./agent-runtime";
 import { resolvePrimaryAssistantThread } from "./assistant-primary-thread";
 import { revalidateAgentImagePayload } from "./agent-image-projection";
@@ -45,8 +47,8 @@ export class Me3Agent extends Agent<Env> {
     const thread=await this.env.DB.prepare("SELECT id FROM assistant_threads WHERE owner_id=? AND id=? AND status='active'").bind(input.userId,input.threadId).first();
     if(!thread)return Response.json({error:"Conversation not found"},{status:404});
     try {
-      input=await this.resolveChatApproval(input);
-      await persistAgentInput(this.env.DB,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId},input);
+      if (!input.targetSelection) input=await this.resolveChatApproval(input);
+      await persistAgentTargetSelectionInput(this.env,input);
     }
     catch(error){if(error instanceof AgentInputConflictError)return Response.json({ok:false,error:error.message},{status:409});throw error;}
     // Retries cannot replace the first saved input, even before a checkpoint exists.
@@ -159,8 +161,8 @@ export class Me3Agent extends Agent<Env> {
     }
   }
   private async sendReplayed(subscriber:Subscriber,input:NewAgentDispatchInput,item:StreamEvent) {
-    const data=(item.event==="done"||item.event==="error")&&item.data.imageAction
-      ?await revalidateAgentImagePayload(this.env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId},item.data):item.data;
+    const data=(item.event==="done"||item.event==="error")
+      ?await this.visiblePayload(input,item.data):item.data;
     this.send(subscriber,item.event,data,item.seq);
   }
   private send(subscriber:Subscriber,event:string,data:Record<string,unknown>,seq:number) {
@@ -174,7 +176,12 @@ export class Me3Agent extends Agent<Env> {
   private loadTurn(ownerId:string,turnId:string) {return this.env.DB.prepare("SELECT * FROM me3_agent_turns WHERE owner_id=? AND turn_id=?").bind(ownerId,turnId).first<SavedTurn>();}
   private async readResponse(input:NewAgentDispatchInput) {
     const row=await this.loadTurn(input.userId,input.turnId);
-    return row?.response_json?revalidateAgentImagePayload(this.env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId},JSON.parse(row.response_json)):{ok:false,error:"Agent turn has not completed",turnId:input.turnId};
+    return row?.response_json?this.visiblePayload(input,JSON.parse(row.response_json)):{ok:false,error:"Agent turn has not completed",turnId:input.turnId};
+  }
+
+  private async visiblePayload(input:NewAgentDispatchInput,payload:Record<string,unknown>) {
+    const scope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId};
+    return revalidateAgentTargetPayload(this.env,scope,await revalidateAgentImagePayload(this.env,scope,payload));
   }
 
   private async cancel(body:Record<string,unknown>|null) {

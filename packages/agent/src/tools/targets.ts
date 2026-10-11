@@ -1,4 +1,5 @@
 import type { AgentToolContext, AgentToolResult } from "../types";
+import { selectedTargetSnapshot } from "../presentations";
 
 const MAX_RECEIPT_AGE_MS = 24 * 60 * 60 * 1000;
 type Target = { id: string };
@@ -19,11 +20,12 @@ export async function rememberTargets<T extends Target>(context: AgentToolContex
   await context.db.prepare(`INSERT INTO me3_agent_selections
     (id, owner_id, thread_id, domain, candidates_json, read_turn_id, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .bind(selectionId, context.ownerId, context.threadId, domain, JSON.stringify(records.map((record, index) => ({ option: index + 1, id: record.id, label: (label?.(record) || record.id).normalize("NFC").trim().toLowerCase().replace(/\s+/gu, " ") }))), context.turnId, readAt).run();
+    .bind(selectionId, context.ownerId, context.threadId, domain, JSON.stringify(records.map((record, index) => ({ option: index + 1, id: record.id, label: (label?.(record) || record.id).normalize("NFC").trim().toLowerCase().replace(/\s+/gu, " "), displayLabel: label?.(record) || `Option ${index + 1}`, snapshot: record }))), context.turnId, readAt).run();
   return { selectionId, candidates: records.map((record, index) => ({ option: index + 1, ...record })) };
 }
 
 export async function requireTarget<T>(context: AgentToolContext, domain: string, id: string): Promise<T> {
+  if (context.targetSelection) return selectedTargetSnapshot<T>(context, domain, id);
   const approvedTarget = context.approved ? context.approvalData?.target : undefined;
   if (context.approved) {
     if (!approvedTarget || typeof approvedTarget !== "object" || context.approvalData?.targetDomain !== domain) throw new Error("Approval does not contain the reviewed snapshot for this target domain.");

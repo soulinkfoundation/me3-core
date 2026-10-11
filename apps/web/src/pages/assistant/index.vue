@@ -13,6 +13,8 @@ import { api, ApiError, type ApiStreamEvent } from "../../api";
 import Button from "../../components/Button.vue";
 import HomePanels from "../../components/home/HomePanels.vue";
 import AssistantApprovalDialog from "../../components/AssistantApprovalDialog.vue";
+import AgentTargetChoices from "../../components/AgentTargetChoices.vue";
+import { normalizeAgentTargetPresentation, targetChoiceRequest, type AgentTargetChoice, type AgentTargetPresentation } from "../../utils/agentTargetChoices";
 import ComposerPrompt from "../../components/ComposerPrompt.vue";
 import { useAuthStore } from "../../stores/auth";
 import LandingGrids from "../../components/LandingGrids.vue";
@@ -447,6 +449,7 @@ type AgentSandboxResponse = {
   } | null;
   actionCards?: AgentChatActionCard[] | null;
   imageAction?: AgentChatImageAction | null;
+  targetPresentation?: AgentTargetPresentation | null;
   contentAction?: {
     kind: "previewed" | "saved";
     itemId?: string;
@@ -478,6 +481,7 @@ type AssistantThreadMessage = {
   attachments?: AgentChatMessageAttachment[] | null;
   actionCards?: AgentChatActionCard[] | null;
   imageAction?: AgentChatImageAction | null;
+  targetPresentation?: AgentTargetPresentation | null;
   siteAction?: AgentSandboxResponse["siteAction"];
   trace?: AgentChatTurnTrace | null;
 };
@@ -2181,6 +2185,7 @@ async function loadAssistantThreadFromRoute() {
         createdAt: string;
         actionCards: AgentChatActionCard[];
         imageAction: AgentChatImageAction | null;
+        targetPresentation: AgentTargetPresentation | null;
         emailDraftAction: AgentChatEmailDraftAction | null;
         attachments: AgentChatMessageAttachment[];
         actionHref: string | null;
@@ -2193,6 +2198,7 @@ async function loadAssistantThreadFromRoute() {
         attachments: normalizeAssistantMessageAttachments(message.attachments),
         actionCards: normalizeAgentActionCards(message.actionCards),
         imageAction: message.imageAction || null,
+        targetPresentation: normalizeAgentTargetPresentation(message.targetPresentation),
         emailDraftAction: null,
         actionHref: actionLink?.href || null,
         actionLabel: actionLink?.label || null,
@@ -2840,6 +2846,7 @@ async function submitAssistantText(
   attachments: ReadonlyArray<AgentChatMessageAttachment> =
     serializeAssistantAttachmentsForTurn(),
   turnModel = resolveAssistantTurnModel(attachments),
+  targetSelection?: AgentTargetChoice,
 ) {
   await showWorkspace(false);
   const normalized = text.trim();
@@ -2891,6 +2898,7 @@ async function submitAssistantText(
       {
         requestId,
         messageText: normalized,
+        ...(targetSelection ? { targetSelection } : {}),
         threadId: assistantThreadId.value,
         projectId: assistantThreadId.value ? undefined : routeProjectId(),
         attachments,
@@ -3080,6 +3088,16 @@ function assistantClientDurationMs(
     : Number((finishedAt - startedAt).toFixed(2));
 }
 
+async function chooseTarget(message: (typeof chatMessages.value)[number], candidateId: string) {
+  const card = message.targetPresentation;
+  const choice = targetChoiceRequest(card, candidateId);
+  const candidate = card?.candidates.find(candidate => candidate.id === candidateId);
+  if (!choice || !candidate || assistantSending.value || !assistantThreadId.value) return;
+  await submitAssistantText(`Choose option ${candidate.option}: ${candidate.label}`, [], undefined, choice);
+  if (!assistantError.value && card) card.status = "selected";
+  else await loadAssistantThreadFromRoute();
+}
+
 async function sendAssistantMessage() {
   if (!canSendAssistantMessage.value) return;
 
@@ -3143,6 +3161,7 @@ function applyAssistantResultToMessage(
     void sitesStore.fetchSites();
   }
   message.imageAction = result.imageAction || null;
+  message.targetPresentation = normalizeAgentTargetPresentation(result.targetPresentation);
   message.emailDraftAction = createAgentChatEmailDraftAction(
     message,
     previousUserTextForAssistantMessage(message),
@@ -5269,6 +5288,9 @@ function messageFromUnknown(err: unknown, fallback: string) {
             :data-assistant-message-id="message.id || undefined"
           >
             <div class="assistant-message__bubble">
+              <AgentTargetChoices v-if="message.targetPresentation"
+                :presentation="message.targetPresentation" :busy="assistantSending"
+                @choose="chooseTarget(message, $event)" />
               <div
                 v-if="message.attachments?.length"
                 class="assistant-message-attachments"

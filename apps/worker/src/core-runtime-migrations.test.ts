@@ -18,6 +18,8 @@ describe("Core runtime migrations", () => {
       "me3_agent_tool_receipts", "me3_agent_approvals", "me3_agent_targets", "me3_agent_selections", "me3_agent_cancellations", "me3_agent_request_aliases",
     ]) expect(db.tables.has(table), table).toBe(true);
     expect(db.migrations.get("0058_agent_turns")).toBe("2026-10-10-agent-turns-v3");
+    expect(db.migrations.get("0063_agent_presentations")).toBe("2026-10-11-agent-presentations-v1");
+    expect(db.statements.some(sql => sql.includes("CREATE TABLE IF NOT EXISTS me3_agent_presentations"))).toBe(true);
     expect(db.migrations.get("0059_agent_targets")).toBe("2026-10-10-agent-targets-v1");
     expect(db.migrations.get("0061_agent_image_operations")).toBe("2026-10-10-agent-image-operations-v1");
     const agentSql = db.statements.filter(sql => sql.includes("me3_agent_"));

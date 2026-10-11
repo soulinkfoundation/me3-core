@@ -1,6 +1,13 @@
 export type JsonSchema = Record<string, unknown>;
 export type AgentEffect = "read" | "write" | "external" | "destructive";
 export type AgentToolCall = { id: string; name: string; arguments: Record<string, unknown> };
+export type AgentTargetSelection = { presentationId: string; candidateId: string };
+export type AgentTargetMetadata = { domain: string; idParameter: string; actionLabel: string; unsupportedArguments?: readonly string[]; ownerTimezoneParameter?: string };
+export type AgentTargetPresentationCard = {
+  id: string; actionLabel: string; changes: Array<{ label: string; value: string }>;
+  candidates: Array<{ id: string; option: number; label: string; fields: Array<{ label: string; value: string }> }>;
+  expiresAt: string; status: "pending" | "selected" | "unavailable";
+};
 export type AgentImage = { url: string; mimeType?: string };
 export type AgentMessage = {
   role: "system" | "user" | "assistant" | "tool";
@@ -47,6 +54,8 @@ export interface AgentToolContext {
   services?: Record<string, unknown>;
   approved?: boolean;
   approvalData?: Record<string, unknown>;
+  targetSelection?: AgentTargetSelection;
+  toolCall?: AgentToolCall;
   signal: AbortSignal;
 }
 export interface AgentTool {
@@ -56,6 +65,8 @@ export interface AgentTool {
   effect: AgentEffect;
   approval: "none" | "required";
   pluginId?: string | null;
+  target?: AgentTargetMetadata;
+  endsTurn?: boolean;
   prepareApproval?(args: Record<string, unknown>, context: AgentToolContext): Promise<AgentToolResult>;
   idempotencyArguments?(args: Record<string, unknown>): Record<string, unknown>;
   execute(args: Record<string, unknown>, context: AgentToolContext): Promise<AgentToolResult>;
@@ -70,7 +81,7 @@ export type AgentTrace = {
   timeToFirstTokenMs: number | null;
   usage: AgentUsage;
 };
-export type AgentCheckpoint = { messages: AgentMessage[]; steps: number; trace: AgentTrace; pendingCalls?: AgentToolCall[]; nextCallIndex?: number; approvalId?: string; status: "running" | "needs_approval" | "complete" | "cancelled" | "failed" };
+export type AgentCheckpoint = { messages: AgentMessage[]; steps: number; trace: AgentTrace; pendingCalls?: AgentToolCall[]; nextCallIndex?: number; approvalId?: string; targetPresentation?: AgentTargetPresentationCard; status: "running" | "needs_approval" | "complete" | "cancelled" | "failed" };
 export interface AgentTurnStore {
   cancellationRequested?(): Promise<boolean>;
   load(): Promise<AgentCheckpoint | null>;
@@ -95,4 +106,4 @@ export type AgentTurnInput = {
   contextWindow?: import("./context").AgentContextLimits;
   onEvent?(event: AgentEvent): void | Promise<void>;
 };
-export type AgentTurnResult = { replyText: string; source: string; toolCalls: AgentTrace["toolCalls"]; usage: AgentUsage; modelRequestCount: number; trace: AgentTrace; status: AgentCheckpoint["status"]; approvalId?: string };
+export type AgentTurnResult = { replyText: string; source: string; toolCalls: AgentTrace["toolCalls"]; usage: AgentUsage; modelRequestCount: number; trace: AgentTrace; status: AgentCheckpoint["status"]; approvalId?: string; targetPresentation?: AgentTargetPresentationCard };

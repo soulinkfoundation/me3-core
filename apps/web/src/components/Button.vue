@@ -77,7 +77,7 @@ const root = computed(() => {
 const rootAttrs = computed(() => {
   const sharedAttrs = {
     title: props.title,
-    "aria-label": props.iconOnly ? props.ariaLabel : undefined,
+    "aria-label": props.ariaLabel,
   };
   if (props.to !== undefined) return { ...sharedAttrs, to: props.to };
   if (props.href !== undefined) return { ...sharedAttrs, href: props.href };

@@ -15,6 +15,8 @@ import {
 import { renderAssistantMarkdown } from "../utils/assistantMarkdown";
 import { ASSISTANT_AVATAR_SRC } from "../utils/assistantBranding";
 import UiIcon from "./UiIcon.vue";
+import AgentTargetChoices from "./AgentTargetChoices.vue";
+import { normalizeAgentTargetPresentation, targetChoiceRequest, type AgentTargetChoice, type AgentTargetPresentation } from "../utils/agentTargetChoices";
 
 type AgentSandboxResponse = {
   ok: boolean;
@@ -49,6 +51,7 @@ type AgentSandboxResponse = {
     remindAt?: string;
   } | null;
   actionCards?: AgentChatActionCard[] | null;
+  targetPresentation?: AgentTargetPresentation | null;
   contentAction?: {
     kind: "previewed" | "saved";
     itemId?: string;
@@ -102,7 +105,10 @@ async function loadPrimaryConversation() {
   );
   if (currentUserId.value !== ownerId) return;
   primaryThreadId.value = response.thread.id;
-  agentChat.replaceMessages(history.messages);
+  agentChat.replaceMessages(history.messages.map(message => ({
+    ...message,
+    targetPresentation: normalizeAgentTargetPresentation(message.targetPresentation),
+  })));
 }
 
 const showRuntimeMetadata = import.meta.env.DEV;
@@ -168,11 +174,21 @@ function autosizeComposer() {
   }
 }
 
-async function sendMessage() {
-  if (!canSend.value) return;
+async function chooseTarget(message: AgentChatMessage, candidateId: string) {
+  const card = message.targetPresentation;
+  const choice = targetChoiceRequest(card, candidateId);
+  const candidate = card?.candidates.find(candidate => candidate.id === candidateId);
+  if (!choice || !candidate || sending.value || !primaryThreadId.value) return;
+  await sendMessage(choice, `Choose option ${candidate.option}: ${candidate.label}`);
+  if (!error.value && card) card.status = "selected";
+  else await loadPrimaryConversation();
+}
 
-  const text = draft.value.trim();
-  draft.value = "";
+async function sendMessage(targetSelection?: AgentTargetChoice, suppliedText?: string) {
+  if (sending.value || (!suppliedText && !canSend.value)) return;
+
+  const text = suppliedText || draft.value.trim();
+  if (!suppliedText) draft.value = "";
   error.value = null;
   agentChat.appendMessage({
     role: "user",
@@ -186,6 +202,7 @@ async function sendMessage() {
     const result = await api.post<AgentSandboxResponse>("/assistant/chat/turn", {
       requestId: crypto.randomUUID(),
       messageText: text,
+      ...(targetSelection ? { targetSelection } : {}),
       threadId: primaryThreadId.value,
     });
 
@@ -197,6 +214,7 @@ async function sendMessage() {
       meta: formatMetadata(result),
       detail: formatDetail(result),
       actionCards: normalizeAgentActionCards(result.actionCards),
+      targetPresentation: normalizeAgentTargetPresentation(result.targetPresentation),
       inboxLink: result.emailAction?.kind === "drafted",
       rolodexLink: result.contactsChanged === true,
       reminderLink:
@@ -333,6 +351,9 @@ onMounted(async () => {
             <p v-if="message.detail" class="agent-message-detail">
               {{ message.detail }}
             </p>
+            <AgentTargetChoices v-if="message.targetPresentation"
+              :presentation="message.targetPresentation" :busy="sending"
+              @choose="chooseTarget(message, $event)" />
             <a
               v-if="message.inboxLink"
               href="/email"
@@ -390,7 +411,7 @@ onMounted(async () => {
               class="agent-send-circle"
               :disabled="!canSend"
               :aria-label="sending ? 'Sending' : 'Send message'"
-              @click="sendMessage"
+              @click="sendMessage()"
             >
               <UiIcon name="ArrowUp" :size="18" />
             </button>

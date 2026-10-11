@@ -15,10 +15,14 @@ import { createWebResearchToolServices } from "./web-research";
 import { listCorePluginRecords } from "./plugins";
 import { beginManagedRuntimeWriteLease, isManagedRuntime, releaseManagedRuntimeWriteLease } from "./managed-runtime-lifecycle";
 import type { Env, OwnerProfile } from "./types";
+import { loadAgentTargetPresentation, revalidateAgentTargetPayload } from "./agent-target-projection";
+import { parseAgentTargetSelection } from "./agent-target-selection";
+import type { AgentTargetSelection } from "../../../packages/agent/src/types";
 import { notifyAgentTurnFinished } from "./agent-notifications";
 
 export type NewAgentDispatchInput = {
   userId:string;threadId:string;turnId:string;requestId:string;messageText:string;
+  targetSelection?:AgentTargetSelection;
   selectedModel?:{providerId:string;model:string}|null;
   attachmentTextContext?:string|null;
   attachments?:AgentAttachmentInput[];
@@ -28,6 +32,7 @@ export type NewAgentDispatchInput = {
 export function isNewAgentDispatchInput(value:unknown):value is NewAgentDispatchInput {
   if(!value||typeof value!=="object"||Array.isArray(value))return false;
   const input=value as Record<string,unknown>;
+  try { parseAgentTargetSelection(input.targetSelection); } catch { return false; }
   return (input.threadId===undefined||(typeof input.threadId==="string"&&Boolean(input.threadId.trim())&&input.threadId.length<=500))&&["userId","turnId","requestId","messageText"].every(key=>typeof input[key]==="string"&&Boolean((input[key] as string).trim())&&(input[key] as string).length<=(key==="messageText"?100_000:500));
 }
 
@@ -116,7 +121,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     }
     const services=await newAgentServices(env,input.userId);
     const tools=createDomainTools().filter(tool=>isToolAvailable(tool.name,services));
-    const result=await runAgentTurn({model,backupModel:backup,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
+    const result=await runAgentTurn({model,backupModel:backup,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
       const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event.event,event.data);
       onEvent?.(event.event,event.data,seq);
     }});
@@ -125,9 +130,10 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
 }
 
 async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void) {
+  const targetPresentation=result.targetPresentation||input.targetSelection?await loadAgentTargetPresentation(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId}):null;
   const imageAction=await loadAgentGeneratedImageAction(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId});
   const messageId=`${input.turnId}:assistant:${result.status}:${result.approvalId||"final"}`;
-  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
+  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
   await env.DB.batch([
     env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)").bind(messageId,input.userId,input.threadId,result.replyText,JSON.stringify(payload)),
     env.DB.prepare("UPDATE me3_agent_turns SET response_json=?,trace_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND turn_id=?").bind(JSON.stringify(payload),JSON.stringify(result.trace),input.userId,input.turnId),
@@ -138,7 +144,7 @@ async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:
       .bind(`${messageId}:image:${asset.attachmentId}`,input.userId,input.threadId,messageId,asset.attachmentId,JSON.stringify(asset),asset.attachmentId,input.userId,input.threadId)),
   ]);
   await notifyAgentTurnFinished(env,input.userId,input.turnId);
-  const visiblePayload=await revalidateAgentImagePayload(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId},payload);
+  const visiblePayload=await revalidateAgentTargetPayload(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId},await revalidateAgentImagePayload(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId},payload));
   const event=result.status==="failed"?"error":"done";
   const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event,visiblePayload);
   onEvent?.(event,visiblePayload,seq);

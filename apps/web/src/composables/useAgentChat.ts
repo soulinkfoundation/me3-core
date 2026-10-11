@@ -1,4 +1,5 @@
 import { ref } from "vue";
+import type { AgentTargetPresentation } from "../utils/agentTargetChoices";
 import type {
   AgentChatActionCard,
   AgentChatEmailDraftAction,
@@ -28,6 +29,7 @@ export type AgentChatMessage = {
   attachments?: AgentChatMessageAttachment[];
   actionCards?: AgentChatActionCard[];
   imageAction?: AgentChatImageAction | null;
+  targetPresentation?: AgentTargetPresentation | null;
   emailDraftAction?: AgentChatEmailDraftAction | null;
   trace?: AgentChatTurnTrace | null;
   jobBuilderAction?: any;
