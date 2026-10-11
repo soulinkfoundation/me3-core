@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { api } from "../api";
 import { useAuthStore } from "../stores/auth";
 import { useAgentChat, type AgentChatMessage } from "../composables/useAgentChat";
+import { useAgentChatPresence } from "../composables/useAgentChatPresence";
 import {
   formatAgentRuntimeDetail,
   formatAgentRuntimeMetadata,
@@ -90,6 +91,7 @@ const error = ref<string | null>(null);
 const composerRef = ref<HTMLTextAreaElement | null>(null);
 const scrollerRef = ref<HTMLDivElement | null>(null);
 const primaryThreadId = ref<string | null>(null);
+useAgentChatPresence(primaryThreadId, computed(() => chatOpen.value && !launcherHidden.value && auth.isAuthenticated));
 
 async function loadPrimaryConversation() {
   const ownerId = currentUserId.value;

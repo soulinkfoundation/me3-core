@@ -53,6 +53,7 @@ export async function getPushNotificationDevice(
     dailyBriefingEnabled: preferences.dailyBriefingEnabled,
     calendarNotifications: preferences.calendarNotifications,
     paymentNotificationsEnabled: preferences.paymentNotificationsEnabled,
+    agentNotificationsEnabled: preferences.agentNotificationsEnabled,
   };
 }
 
@@ -75,10 +76,12 @@ export async function registerPushNotificationDevice(
   }
   const dailyBriefingEnabled = input.dailyBriefingEnabled !== false;
   const paymentNotificationsEnabled = input.paymentNotificationsEnabled !== false;
+  const agentNotificationsEnabled = input.agentNotificationsEnabled !== false;
   const calendarNotifications = normalizeCalendarPushPreferences(input.calendarNotifications);
   await upsertLocalPushPreferences(env, userId, deviceId, {
     dailyBriefingEnabled,
     paymentNotificationsEnabled,
+    agentNotificationsEnabled,
     calendarNotifications,
   });
   return relayRequest(env, "/api/push/devices", {
@@ -91,6 +94,7 @@ export async function registerPushNotificationDevice(
       environment: input.environment === "production" ? "production" : "sandbox",
       dailyBriefingEnabled,
       paymentNotificationsEnabled,
+      agentNotificationsEnabled,
       calendarNotifications,
     }),
   });
@@ -159,6 +163,14 @@ export async function notifyCalendarItemDue(env: Env, alert: CalendarPushAlert) 
   }
 }
 
+export async function notifyAgentTurnReady(env: Env, turn: { threadId: string; turnId: string; kind: "complete" | "needs_you" }): Promise<{ ok: boolean; retryable?: number }> {
+  try {
+    return await relayRequest(env, "/api/push/agent-turns", { method: "POST", body: JSON.stringify(turn), signal: AbortSignal.timeout(15_000) }) as { ok: boolean; retryable?: number };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export type WebsitePaymentPush = {
   sourceKind: "order" | "booking";
   sourceId: string;
@@ -203,18 +215,20 @@ async function upsertLocalPushPreferences(
   preferences: {
     dailyBriefingEnabled: boolean;
     paymentNotificationsEnabled: boolean;
+    agentNotificationsEnabled: boolean;
     calendarNotifications: CalendarPushPreferences;
   },
 ) {
   await env.DB.prepare(
     `INSERT INTO mobile_push_preferences
        (user_id, device_id, daily_briefing_enabled, calendar_notifications_json,
-        payment_notifications_enabled)
-     VALUES (?, ?, ?, ?, ?)
+        payment_notifications_enabled, agent_notifications_enabled)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id, device_id) DO UPDATE SET
        daily_briefing_enabled = excluded.daily_briefing_enabled,
        calendar_notifications_json = excluded.calendar_notifications_json,
        payment_notifications_enabled = excluded.payment_notifications_enabled,
+       agent_notifications_enabled = excluded.agent_notifications_enabled,
        updated_at = CURRENT_TIMESTAMP`,
   ).bind(
     userId,
@@ -222,17 +236,19 @@ async function upsertLocalPushPreferences(
     preferences.dailyBriefingEnabled ? 1 : 0,
     JSON.stringify(preferences.calendarNotifications),
     preferences.paymentNotificationsEnabled ? 1 : 0,
+    preferences.agentNotificationsEnabled ? 1 : 0,
   ).run();
 }
 
 async function getLocalPushPreferences(env: Env, userId: string, deviceId: string) {
   const row = await env.DB.prepare(
-    `SELECT daily_briefing_enabled, calendar_notifications_json, payment_notifications_enabled
+    `SELECT daily_briefing_enabled, calendar_notifications_json, payment_notifications_enabled, agent_notifications_enabled
      FROM mobile_push_preferences WHERE user_id = ? AND device_id = ?`,
   ).bind(userId, deviceId).first<{
     daily_briefing_enabled: number;
     calendar_notifications_json: string;
     payment_notifications_enabled: number;
+    agent_notifications_enabled: number;
   }>();
   let calendarNotifications = normalizeCalendarPushPreferences(null);
   if (row?.calendar_notifications_json) {
@@ -247,6 +263,7 @@ async function getLocalPushPreferences(env: Env, userId: string, deviceId: strin
   return {
     dailyBriefingEnabled: row ? row.daily_briefing_enabled === 1 : true,
     paymentNotificationsEnabled: row ? row.payment_notifications_enabled === 1 : true,
+    agentNotificationsEnabled: row ? row.agent_notifications_enabled === 1 : true,
     calendarNotifications,
   };
 }

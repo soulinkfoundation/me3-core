@@ -382,8 +382,9 @@ export const api = {
 
   subscribeMailboxEvents,
 
-  put<T>(endpoint: string, body?: unknown): Promise<T> {
+  put<T>(endpoint: string, body?: unknown, options: RequestInit = {}): Promise<T> {
     return request<T>(endpoint, {
+      ...options,
       method: 'PUT',
       body: JSON.stringify(body),
     })

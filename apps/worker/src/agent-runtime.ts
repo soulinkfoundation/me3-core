@@ -15,6 +15,7 @@ import { createWebResearchToolServices } from "./web-research";
 import { listCorePluginRecords } from "./plugins";
 import { beginManagedRuntimeWriteLease, isManagedRuntime, releaseManagedRuntimeWriteLease } from "./managed-runtime-lifecycle";
 import type { Env, OwnerProfile } from "./types";
+import { notifyAgentTurnFinished } from "./agent-notifications";
 
 export type NewAgentDispatchInput = {
   userId:string;threadId:string;turnId:string;requestId:string;messageText:string;
@@ -136,6 +137,7 @@ async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:
       SELECT ?,?,?,?,?, 'generated_output',? WHERE EXISTS(SELECT 1 FROM assistant_attachments WHERE id=? AND owner_id=? AND thread_id=? AND status='ready' AND kind='image')`)
       .bind(`${messageId}:image:${asset.attachmentId}`,input.userId,input.threadId,messageId,asset.attachmentId,JSON.stringify(asset),asset.attachmentId,input.userId,input.threadId)),
   ]);
+  await notifyAgentTurnFinished(env,input.userId,input.turnId);
   const visiblePayload=await revalidateAgentImagePayload(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId},payload);
   const event=result.status==="failed"?"error":"done";
   const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event,visiblePayload);

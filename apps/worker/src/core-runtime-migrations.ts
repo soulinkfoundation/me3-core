@@ -1,6 +1,7 @@
 import { MAILBOX_ATTACHMENT_STAGING_SQL } from "./mailbox-attachment-staging";
 import { AGENT_SCHEMA_STATEMENTS } from "../../../packages/agent/src/store";
 import { AGENT_IMAGE_SCHEMA_STATEMENTS } from "./agent-image-schema";
+import { AGENT_NOTIFICATION_SCHEMA } from "./agent-notifications";
 import type { Env } from "./types";
 
 type RuntimeMigration = {
@@ -468,6 +469,14 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-10-agent-image-operations-v1",
     async apply(db) {
       for (const sql of AGENT_IMAGE_SCHEMA_STATEMENTS) await db.prepare(sql).run();
+    },
+  },
+  {
+    id: "0062_agent_notifications",
+    checksum: "2026-10-11-agent-notifications-v1",
+    async apply(db) {
+      await addColumnIfMissing(db, "mobile_push_preferences", "agent_notifications_enabled", "INTEGER NOT NULL DEFAULT 1");
+      for (const sql of AGENT_NOTIFICATION_SCHEMA) await db.prepare(sql).run();
     },
   },
 ];

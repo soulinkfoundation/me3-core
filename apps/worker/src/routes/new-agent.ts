@@ -1,6 +1,7 @@
 import { decideAgentApproval } from "../../../../packages/agent/src/store";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import type { Env } from "../types";
+import { updateAgentChatPresence } from "../agent-notifications";
 
 type ApprovalRow={id:string;thread_id:string;turn_id:string;tool_name:string;card_json:string;status:string;created_at:string;decided_at:string|null};
 const approvalSelect="SELECT id,thread_id,turn_id,tool_name,card_json,status,created_at,decided_at FROM me3_agent_approvals";
@@ -28,6 +29,14 @@ export async function decideNewAgentApproval(c:AppContext,ownerId:string,id:stri
   return c.json({...turn,approval:approvalCard({...row,status:decision,decided_at:new Date().toISOString()})},response.ok?200:502);
 }
 export function registerNewAgentRoutes(app:AppHono,deps:OwnerRouteDeps) {
+  app.put("/api/assistant/threads/:threadId/presence", async c => {
+    const ownerId = await deps.requireOwner(c); if (!ownerId) return deps.unauthorized(c);
+    const body = await c.req.json().catch(() => null) as { clientId?: unknown; watching?: unknown } | null;
+    const threadId = c.req.param("threadId");
+    if (!threadId || threadId.length > 500 || typeof body?.clientId !== "string" || !/^[A-Za-z0-9._:-]{1,200}$/.test(body.clientId) || typeof body.watching !== "boolean") return c.json({ error: "Invalid Chat presence" }, 400);
+    if (!await updateAgentChatPresence(c.env, ownerId, threadId, body.clientId, body.watching)) return c.json({ error: "Conversation not found" }, 404);
+    return c.json({ ok: true });
+  });
   app.post("/api/assistant/chat/turn/abort",async c=>{
     const ownerId=await deps.requireOwner(c);if(!ownerId)return deps.unauthorized(c);
     if(c.env.ME3_ASSISTANT_RUNTIME!=="agent")return c.json({ok:true,cancelled:false});

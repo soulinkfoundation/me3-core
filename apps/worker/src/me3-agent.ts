@@ -4,6 +4,7 @@ import { executeNewAgentTurn, isNewAgentDispatchInput, type NewAgentDispatchInpu
 import { resolvePrimaryAssistantThread } from "./assistant-primary-thread";
 import { revalidateAgentImagePayload } from "./agent-image-projection";
 import type { Env } from "./types";
+import { notifyAgentTurnFinished } from "./agent-notifications";
 
 type StreamEvent={event:string;data:Record<string,unknown>;seq:number};
 type Subscriber={controller:ReadableStreamDefaultController<Uint8Array>;lastSeq:number;initializing:boolean;closed:boolean;remove():void;queued:StreamEvent[]};
@@ -67,7 +68,7 @@ export class Me3Agent extends Agent<Env> {
     const row=await this.loadTurn(snapshot.ownerId,snapshot.turnId);
     if(!row?.input_json)return {status:"error" as const,error:"Canonical turn is unavailable"};
     const input=JSON.parse(row.input_json) as NewAgentDispatchInput;
-    if(row.response_json&&["complete","failed","cancelled"].includes(row.status))return {status:"completed" as const};
+    if(row.response_json&&["complete","failed","cancelled"].includes(row.status)){await notifyAgentTurnFinished(this.env,input.userId,input.turnId);return {status:"completed" as const};}
     await this.prepareResume(input);
     await this.executeTurn(input,context.id);
     return {status:"completed" as const};
@@ -219,6 +220,7 @@ export class Me3Agent extends Agent<Env> {
     await this.env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)").bind(`${input.turnId}:assistant:${status}`,input.userId,input.threadId,replyText,JSON.stringify(payload)).run();
     const event=status==="failed"?"error":"done";
     this.broadcastTurn(input.turnId,event,payload,await appendAgentStreamEvent(this.env.DB,input.userId,input.turnId,event,payload));
+    await notifyAgentTurnFinished(this.env,input.userId,input.turnId);
   }
 
   private async resolveChatApproval(input:NewAgentDispatchInput):Promise<NewAgentDispatchInput> {

@@ -24,6 +24,7 @@ import {
   type AgentChatMessageAttachment,
 } from "../../composables/useAgentChat";
 import { useAppToast } from "../../composables/useAppToast";
+import { useAgentChatPresence } from "../../composables/useAgentChatPresence";
 import { useInboxDraftCount } from "../../composables/useInboxDraftCount";
 import { useVoiceDictation } from "../../composables/useVoiceDictation";
 import { useContactsStore, type Contact } from "../../stores/contacts";
@@ -732,6 +733,7 @@ const assistantSourceActionId = ref("");
 const assistantClearingActivity = ref(false);
 const copiedMessageKey = ref<string | null>(null);
 const homeMode = ref(route.query.view === "home" || (!route.query.thread && !route.query.new && !route.query.prompt && !route.query.project && route.query.view !== "chat"));
+useAgentChatPresence(assistantThreadId, computed(() => !homeMode.value && !configureJobsModalOpen.value && !detailModalOpen.value));
 async function showWorkspace(home: boolean) {
   homeMode.value = home;
   await router.replace({ query: { ...route.query, view: home ? "home" : "chat" } });
