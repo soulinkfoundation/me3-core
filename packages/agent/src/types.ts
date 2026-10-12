@@ -74,6 +74,7 @@ export interface AgentTool {
   approval: "none" | "required";
   pluginId?: string | null;
   target?: AgentTargetMetadata;
+  fastPath?: import("./fast-path").AgentFastPathTool;
   endsTurn?: boolean;
   prepareApproval?(args: Record<string, unknown>, context: AgentToolContext): Promise<AgentToolResult>;
   idempotencyArguments?(args: Record<string, unknown>): Record<string, unknown>;
@@ -82,6 +83,7 @@ export interface AgentTool {
 export type AgentEvent = { event: "status" | "tool" | "delta" | "step" | "approval_required"; data: Record<string, unknown> };
 export type AgentTrace = {
   model: string;
+  fastPath?: import("./fast-path").AgentFastPathTrace;
   targetIntentRequests?:Array<{receiptId:string;modelId:string;usageId?:string;uncertain:boolean}>;
   steps: number;
   toolCalls: Array<{ name: string; effect: AgentEffect; status: string; durationMs: number }>;
@@ -104,6 +106,7 @@ export interface AgentTurnStore {
 }
 export type AgentTurnInput = {
   model: AgentModel;
+  fastPath?: { mode: "off" | "shadow"; decider: import("./fast-path").AgentDecider };
   backupModel?: AgentModel;
   tools: readonly AgentTool[];
   messages: AgentMessage[];
@@ -116,6 +119,7 @@ export type AgentTurnInput = {
   onEvent?(event: AgentEvent): void | Promise<void>;
 };
 export type AgentTurnResult = { replyText: string; source: string; toolCalls: AgentTrace["toolCalls"]; usage: AgentUsage; modelRequestCount: number; trace: AgentTrace; status: AgentCheckpoint["status"]; approvalId?: string; targetPresentation?: AgentTargetPresentationCard };
+export type { AgentDecider, AgentFastPathDecision, AgentFastPathResult } from "./fast-path";
 
 export type AgentTargetIntentOwnerInput = { turnId: string; requestId: string; messageText: string };
 export type AgentTargetIntentInputReferences = { readTurnIds: string[]; presentationTurnId?: string };

@@ -1,4 +1,4 @@
-import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createD1TurnStore, runAgentTurn, type AgentMessage, type AgentModel, type AgentTurnResult } from "../../../packages/agent/src";
+import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createClefDecider, createD1TurnStore, runAgentTurn, type AgentDecider, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
 import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
@@ -54,18 +54,16 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     if(managed&&!managed.eligible)throw new Error(managed.ineligibleReason||"Managed AI is unavailable");
     const route=settings.defaults.chat;
     const modelName=input.selectedModel?providerModel(input.selectedModel.providerId,input.selectedModel.model):managed?.defaultModel||providerModel(route.providerId,route.model);
-    if(managed){await assertManagedCostsReconciled(env,input.userId,true);resolveManagedModel(managed,modelName);}
+    if(managed){await assertManagedCostsReconciled(env,input.userId,true,input.turnId);resolveManagedModel(managed,modelName);}
     const gateway=await getAiGatewayRuntimeConfig(env,input.userId);
     if(!env.AI)throw new Error("Cloudflare AI binding is not configured");
     const metadata={me3_runtime:"agent",me3_turn_id:input.turnId,me3_request_id:input.requestId,me3_thread_id:input.threadId};
     const imageScope={ownerId:input.userId,threadId:input.threadId};
     let usageIndex=0;
-    type ModelPurpose = {purpose:"target_intent";onAdmission(id:string):void};
-    const cloudflareModel=(selected:string,reportCount=0,purpose?:ModelPurpose):AgentModel=>({id:selected,async step(step){
-      step.signal.throwIfAborted();
-      if(step.messages.some(message=>message.images?.length)&&!bindingModelSupportsImageInput(selected))throw new Error("This model cannot read images. Choose an image-input model for this turn.");
-      const messages=await resolveAgentImageInputs(env,imageScope,step.messages,step.signal);
-      step.signal.throwIfAborted();
+    type ModelPurpose = {purpose:"target_intent"|"fast_path";onAdmission?(id:string):void};
+    let firstAdmission: (()=>void)|undefined;
+    const plannerAdmitted = new Promise<void>(resolve=>{firstAdmission=resolve;});
+    const admitModel=async(selected:string,reportCount=0,purpose?:ModelPurpose,shadow=false)=>{
       const usageId=`${input.turnId}:model:${crypto.randomUUID()}:${usageIndex++}`;
       const callMetadata={...metadata,...(purpose?{purpose:purpose.purpose}:{})};
       const receiptMetadata={...callMetadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0]};
@@ -77,33 +75,45 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
           AND json_extract(metadata_json,'$.me3_runtime')='agent'
           AND json_extract(metadata_json,'$.billingManaged')=1
           AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL
+          AND NOT (coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?
+            AND (?=1 OR coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'))
         ) AND ?=(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=?
           AND created_at >= datetime('now','start of month')
           AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
-        ))`).bind(usageId,input.userId,selected,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:null,costKnown:false,usageReported:false}),managed?1:0,input.userId,reportCount,input.userId).run();
+          AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path' AND json_extract(metadata_json,'$.me3_turn_id')=?)
+        ))`).bind(usageId,input.userId,selected,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:null,costKnown:false,usageReported:false}),managed?1:0,input.userId,input.turnId,shadow?1:0,reportCount,input.userId,input.turnId).run();
       if(managed&&!admitted.meta.changes){
-        await assertManagedCostsReconciled(env,input.userId,true);
+        if(!shadow)await assertManagedCostsReconciled(env,input.userId,true,input.turnId);
         throw new Error("Managed AI budget policy changed before model admission; retry this turn");
       }
-      purpose?.onAdmission(usageId);
-      return createCloudflareModel({ai:env.AI as never,model:selected,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:callMetadata,recordUsage:async usage=>{
-        const tokensKnown=[usage.inputTokens,usage.outputTokens,usage.cachedInputTokens,usage.cacheWriteInputTokens??0].every(value=>typeof value==="number"&&Number.isFinite(value)&&value>=0);
+      purpose?.onAdmission?.(usageId);
+      if(!purpose){firstAdmission?.();firstAdmission=undefined;}
+      return async(usage:AgentUsage)=>{
+        const tokensKnown=!(purpose?.purpose==="fast_path"&&usage.estimatedCostUsd===null)&&[usage.inputTokens,usage.outputTokens,usage.cachedInputTokens,usage.cacheWriteInputTokens??0].every(value=>typeof value==="number"&&Number.isFinite(value)&&value>=0);
         const baseCostUsd=usage.estimatedCostUsd;
         const billedCostUsd=baseCostUsd===null?null:baseCostUsd*(1+billingFeeRate);
         const costKnown=tokensKnown&&billedCostUsd!==null&&Number.isFinite(billedCostUsd)&&billedCostUsd>=0;
         await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,metadata_json=? WHERE id=?")
           .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
-      }}).step({...step,messages});
+      };
+    };
+    const cloudflareModel=(selected:string,reportCount=0,purpose?:ModelPurpose):AgentModel=>({id:selected,async step(step){
+      step.signal.throwIfAborted();
+      if(step.messages.some(message=>message.images?.length)&&!bindingModelSupportsImageInput(selected))throw new Error("This model cannot read images. Choose an image-input model for this turn.");
+      const messages=await resolveAgentImageInputs(env,imageScope,step.messages,step.signal);
+      step.signal.throwIfAborted();
+      const recordUsage=await admitModel(selected,reportCount,purpose);
+      return createCloudflareModel({ai:env.AI as never,model:selected,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
     }});
     const modelFor=(requested:string,purpose?:ModelPurpose):AgentModel=>{
       if(!managed)return cloudflareModel(canonicalNativeModel(requested),0,purpose);
       const model:AgentModel={id:resolveManagedModel(managed,requested),async step(step){
-        await assertManagedCostsReconciled(env,input.userId);
-        await syncManagedAiUsage(env);
-        const reportCount=await managedUsageReportCount(env,input.userId);
+        await assertManagedCostsReconciled(env,input.userId,false,input.turnId);
+        await syncManagedAiUsage(env,{deferFastPathTurnId:input.turnId});
+        const reportCount=await managedUsageReportCount(env,input.userId,input.turnId);
         const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
         model.id=resolveManagedModel(policy,requested);
-        await assertManagedCostsReconciled(env,input.userId,true);
+        await assertManagedCostsReconciled(env,input.userId,true,input.turnId);
         step.signal.throwIfAborted();
         return cloudflareModel(model.id,reportCount,purpose).step(step);
       }};
@@ -126,6 +136,24 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     }
     const services=await newAgentServices(env,input.userId);
     const tools=createDomainTools().filter(tool=>isToolAvailable(tool.name,services));
+    // Shadow waits for planner admission, never the other way round. Its receipt
+    // remains billable, but cannot change this turn's routing or admission.
+    const decider:AgentDecider={id:"@cf/cloudflare/clef",async decide(step){
+      let receipt:((usage:AgentUsage)=>Promise<void>)|undefined;
+      return createClefDecider({model:"clef",gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,purpose:"fast_path"},recordUsage:usage=>receipt?.(usage),ai:{async run(selected,payload,options){
+        await plannerAdmitted;
+        step.signal.throwIfAborted();
+        if(managed){
+          const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
+          if(!policy.available||!policy.eligible||policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)throw new Error("Shadow inference unavailable under managed policy");
+        }
+        const count=managed?await managedUsageReportCount(env,input.userId,input.turnId):0;
+        step.signal.throwIfAborted();
+        receipt=await admitModel(selected,count,{purpose:"fast_path"},true);
+        return env.AI!.run(selected as never,payload as never,options as never);
+      }}}).decide(step);
+    }};
+    const fastPath=env.ME3_AGENT_FAST_PATH==="shadow"&&!input.attachments?.length&&!input.attachmentTextContext?{mode:"shadow" as const,decider}:undefined;
     const intentTools=tools.filter(tool=>!tool.pluginId||enabledPluginIds.has(tool.pluginId));
     const intentScope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId};
     const loadIntentOwnerInputs=(references:Parameters<typeof loadTargetIntentOwnerInputs>[2],intentSignal:AbortSignal)=>
@@ -135,7 +163,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const verifier=modelFor(modelName,{purpose:"target_intent",onAdmission:id=>{usageId=id;}});
       return {model:verifier,usageId:()=>usageId};
     }});
-    const result=await runAgentTurn({model,backupModel:backup,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
+    const result=await runAgentTurn({model,backupModel:backup,fastPath,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
       const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event.event,event.data);
       onEvent?.(event.event,event.data,seq);
     }});
@@ -190,18 +218,20 @@ function canonicalNativeModel(model:string):string {
   const nativeModel=`@cf/${managedModelId(model)}`;
   return modelCapabilitiesFor("workers-ai",nativeModel).includes("text")?nativeModel:model;
 }
-async function managedUsageReportCount(env:Env,ownerId:string):Promise<number> {
+async function managedUsageReportCount(env:Env,ownerId:string,shadowTurnId:string):Promise<number> {
   const row=await env.DB.prepare(`SELECT COUNT(*) AS count FROM ai_usage_events WHERE user_id=?
     AND created_at >= datetime('now','start of month')
-    AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL`).bind(ownerId).first<{count:number}>();
+    AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
+    AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path' AND json_extract(metadata_json,'$.me3_turn_id')=?)`).bind(ownerId,shadowTurnId).first<{count:number}>();
   return row?.count??0;
 }
-async function assertManagedCostsReconciled(env:Env,ownerId:string,requireReported=false):Promise<void> {
+async function assertManagedCostsReconciled(env:Env,ownerId:string,requireReported=false,shadowTurnId=""):Promise<void> {
   const pending=await env.DB.prepare(`SELECT json_extract(metadata_json,'$.costKnown') AS costKnown FROM ai_usage_events WHERE user_id=?
     AND created_at >= datetime('now','start of month')
     AND json_extract(metadata_json,'$.me3_runtime')='agent'
     AND json_extract(metadata_json,'$.billingManaged')=1
-    AND ${requireReported?"json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL":"json_extract(metadata_json,'$.costKnown')=0"} LIMIT 1`).bind(ownerId).first<{costKnown:number}>();
+    AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path' AND json_extract(metadata_json,'$.me3_turn_id')=?)
+    AND ${requireReported?"json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL":"json_extract(metadata_json,'$.costKnown')=0"} LIMIT 1`).bind(ownerId,shadowTurnId).first<{costKnown:number}>();
   if(pending)throw new Error(`Managed AI ${pending.costKnown===0?"cost":"usage"} is awaiting reconciliation before another model call`);
 }
 function resolveManagedModel(policy:ManagedAiBillingSettings,requested:string):string {

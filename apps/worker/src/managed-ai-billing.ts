@@ -23,6 +23,8 @@ const MANAGED_FALLBACK_MODELS = ["zai-org/glm-4.7-flash"] as const;
 const MANAGED_BILLABLE_TEXT_MODELS = [...new Set<string>([
   ...MANAGED_MODELS,
   ...MANAGED_FALLBACK_MODELS,
+  "cloudflare/clef",
+  "cloudflare/clef-flash",
 ])];
 const MANAGED_IMAGE_MODELS = [
   "black-forest-labs/flux-2-klein-4b",
@@ -136,6 +138,7 @@ export async function updateManagedAiBillingSettings(
 
 export async function syncManagedAiUsage(
   env: Env,
+  options: { deferFastPathTurnId?: string } = {},
 ): Promise<ManagedAiBillingSettings | null> {
   if (!isManaged(env)) return null;
   const bridge = await getManagedCommerceBridgeConfig(env);
@@ -154,6 +157,8 @@ export async function syncManagedAiUsage(
          )
          AND created_at >= datetime('now', '-35 days')
          AND json_extract(metadata_json, '$.managedBillingReportedAt') IS NULL
+         AND NOT (coalesce(json_extract(metadata_json, '$.purpose'), '') = 'fast_path'
+                  AND coalesce(json_extract(metadata_json, '$.me3_turn_id'), '') = ?)
          AND coalesce(json_extract(metadata_json, '$.costKnown'), 1) != 0
          AND (coalesce(json_extract(metadata_json, '$.me3_runtime'), '') != 'agent'
               OR coalesce(json_extract(metadata_json, '$.billingManaged'), 1) != 0)
@@ -161,7 +166,7 @@ export async function syncManagedAiUsage(
        ORDER BY created_at ASC
        LIMIT 100`,
     )
-      .bind(...MANAGED_BILLABLE_TEXT_MODELS, ...MANAGED_IMAGE_MODELS)
+      .bind(...MANAGED_BILLABLE_TEXT_MODELS, ...MANAGED_IMAGE_MODELS, options.deferFastPathTurnId ?? "")
       .all<LocalUsageRow>();
     rows = (result.results || []).filter(row => {
       const metadata = parseMetadata(row.metadata_json);

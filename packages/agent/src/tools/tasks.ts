@@ -16,7 +16,7 @@ export function taskTools() {
       const projectId = resolveProject(projects, args);
       const tasks = await listAgentMissionTasks({ DB: context.db }, context.ownerId, { projectId, status: optionalString(args.status) });
       return ok({ tasks, projects, ...await rememberTargets(context, "task", tasks, task => task.title) });
-    }),
+    }, { fastPath: { mode: "arguments", candidates: "tasks" } }),
     domainTool("core.mission.task.read", async (args, context) => {
       const task = await getAgentMissionTask({ DB: context.db }, context.ownerId, requiredString(args.taskId, "Task ID"));
       if (!task) throw new Error("Task not found.");
@@ -27,7 +27,7 @@ export function taskTools() {
       context.signal.throwIfAborted();
       const task = resultOrThrow(await createAgentMissionTask({ DB: context.db }, context.ownerId, { ...args as CreateAgentMissionTaskInput, projectId, idempotencyKey: context.idempotencyKey }));
       await rememberTargets(context, "task", [task], value => value.title); return ok({ task });
-    }),
+    }, { fastPath: { mode: "tool_only" } }),
     domainTool("core.mission.task.update", async (args, context) => {
       const taskId = requiredString(args.taskId, "Task ID");
       const expected = await requireTarget<AgentMissionTask>(context, "task", taskId);

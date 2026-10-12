@@ -15,6 +15,7 @@
     "generate:llms": "node scripts/generate-llms.mjs",
     "eval:models": "node scripts/evaluate-models.mjs",
     "eval:agent": "node --import tsx scripts/evaluate-agent.mjs",
+    "eval:fast-path": "node --import tsx scripts/evaluate-fast-path.mjs",
     "eval:web-research": "node --import tsx scripts/evaluate-web-research.mjs",
     "update:check": "node scripts/check-updates.mjs",
     "update:core": "node scripts/update-core.mjs",

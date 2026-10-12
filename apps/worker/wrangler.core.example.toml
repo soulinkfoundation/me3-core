@@ -88,6 +88,7 @@ crons = ["*/15 * * * *", "* * * * *"]
 name = "EMAIL"
 
 [vars]
+ME3_AGENT_FAST_PATH = "off" # "off" (default) or "shadow": measurement only.
 ENVIRONMENT = "local"
 ME3_DEPLOYMENT_MODE = "self_hosted"
 # Set per installation after the seeded and live canary checks pass.

@@ -1,5 +1,7 @@
 export { runAgentTurn } from "./loop";
 export { createCloudflareModel } from "./model";
+export { createClefDecider } from "./clef";
+export { buildFastPathRequest, parseFastPathResponse, FAST_PATH_THRESHOLDS } from "./fast-path";
 export { buildAgentSystemPrompt } from "./prompt";
 export { compactAgentContext, AGENT_CONTEXT_LIMITS, type AgentContextLimits } from "./context";
 export { AGENT_SCHEMA_STATEMENTS, AgentInputConflictError, createD1TurnStore, decideAgentApproval, persistAgentInput, appendAgentStreamEvent, requestAgentCancellation, isAgentCancellationRequested } from "./store";

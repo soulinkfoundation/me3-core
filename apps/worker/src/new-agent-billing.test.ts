@@ -59,6 +59,48 @@ function completion(model: string, tool = false) {
 }
 
 describe("new agent managed billing boundary", () => {
+  it.each([undefined, "off", "active", "unexpected"])("makes no shadow call for mode %s", async mode => {
+    const { env, models } = fixture(); env.ME3_AGENT_FAST_PATH = mode;
+    await executeNewAgentTurn(env, input, new AbortController().signal);
+    expect(models).toEqual(["openai/gpt-5.5"]);
+  });
+  it("admits and reconciles a shadow receipt without changing the reply or LLM usage", async () => {
+    fixtureTools.value = [{ name: "core_reminders_list", description: "List reminders", parameters: { type: "object", properties: {} }, fastPath: { mode: "arguments", candidates: "reminders" }, effect: "read", approval: "none", async execute() { return { status: "ok" }; } }];
+    const { env, raw, events } = fixture(); env.ME3_AGENT_FAST_PATH = "shadow";
+    const planner = env.AI!.run.bind(env.AI); let clefCalls = 0;
+    env.AI!.run = (async (model: string, payload: any, options: any) => {
+      if (!model.includes("/clef")) { await new Promise(resolve => setTimeout(resolve, 10)); return planner(model as never, payload, options); }
+      clefCalls++; expect(options.gateway.metadata.purpose).toBe("fast_path");
+      const answers = Object.fromEntries(Object.entries(payload.questions).map(([id, q]: [string, any]) => [id, q.type === "noul" ? { type: "noul", noul: id === "single_command" ? 1 : 0 } : { type: "choice", choice: id === "tool" ? "core_reminders_list" : "all", confidence: 1, probabilities: Object.fromEntries(Object.keys(q.criteria).map(key => [key, key === (id === "tool" ? "core_reminders_list" : "all") ? 1 : 0])) }]));
+      return { model: "clef", answers, usage: { input_tokens: 100, output_tokens: 10 } };
+    }) as never;
+    const result = await executeNewAgentTurn(env, input, new AbortController().signal);
+    expect(result).toMatchObject({ status: "complete", replyText: "Read complete.", trace: { usage: { inputTokens: 100 }, fastPath: { status: "complete", usage: { inputTokens: 100, estimatedCostUsd: .000024 } } } });
+    expect(clefCalls).toBe(1);
+    const receipt = raw.prepare("SELECT * FROM ai_usage_events WHERE json_extract(metadata_json,'$.purpose')='fast_path'").get()!;
+    expect(JSON.parse(String(receipt.metadata_json))).toMatchObject({ costKnown: true, usageReported: true, billingManaged: true, billingFeeRate: 0, purpose: "fast_path" });
+    expect(Number(receipt.estimated_cost_usd)).toBeCloseTo(.000024, 10);
+    expect(JSON.parse(String(raw.prepare("SELECT trace_json FROM me3_agent_turns").get()!.trace_json)).fastPath).toBeTruthy();
+    await syncManagedAiUsage(env); expect(events.filter(event => event.id === receipt.id)).toHaveLength(1);
+    await syncManagedAiUsage(env); expect(events.filter(event => event.id === receipt.id)).toHaveLength(1);
+  });
+  it.each(["failure", "pending", "missing-usage", "denied"])("a %s shadow request cannot block later planner calls", async kind => {
+    fixtureTools.value = [{ name: "core_reminders_list", description: "List reminders", parameters: { type: "object", properties: {} }, fastPath: { mode: "arguments", candidates: "reminders" }, effect: "read", approval: "none", async execute() { return { status: "ok" }; } }];
+    const { env, models, raw } = fixture(settings(), (model, index) => completion(model, index === 0)); env.ME3_AGENT_FAST_PATH = "shadow";
+    const planner = env.AI!.run.bind(env.AI);
+    env.AI!.run = (async (model: string, payload: any, options: any) => {
+      if (!model.includes("/clef")) { await new Promise(resolve => setTimeout(resolve, 10)); return planner(model as never, payload, options); }
+      if (kind === "failure") throw new Error("Synthetic Clef transport failure");
+      if (kind === "pending") return new Promise(() => {});
+      return { model: "clef", answers: {} };
+    }) as never;
+    if (kind === "denied") raw.exec("CREATE TRIGGER test_deny_shadow BEFORE INSERT ON ai_usage_events WHEN json_extract(new.metadata_json,'$.purpose')='fast_path' BEGIN SELECT RAISE(IGNORE); END;");
+    const result = await executeNewAgentTurn(env, input, new AbortController().signal);
+    expect(result).toMatchObject({ status: "complete", replyText: "Read complete." });
+    expect(models).toEqual(["openai/gpt-5.5", "openai/gpt-5.5"]);
+    if (kind === "denied") expect(raw.prepare("SELECT COUNT(*) n FROM ai_usage_events WHERE json_extract(metadata_json,'$.purpose')='fast_path'").get()).toMatchObject({ n: 0 });
+    if (kind === "missing-usage") expect(JSON.parse(String(raw.prepare("SELECT metadata_json FROM ai_usage_events WHERE json_extract(metadata_json,'$.purpose')='fast_path'").get()!.metadata_json))).toMatchObject({ costKnown: false, usageReported: false });
+  });
   it.each([["openai", "openai/gpt-6.1-sol", "openai", 0.0003, 0.05], ["anthropic", "anthropic/claude-opus-5.5", "anthropic", 0.0006, 0.05], ["workers-ai", "@cf/zai-org/glm-5.3-flash", "zai-org", 0.00002, 0]] as const)("records %s model author separately from the Workers AI transport and preserves managed fees", async (providerId, model, modelAuthor, baseCostUsd, billingFeeRate) => {
     const policy = settings({ models: [{ id: model, label: model, description: "Synthetic", recommended: false }] });
     const { env, raw } = fixture(policy);

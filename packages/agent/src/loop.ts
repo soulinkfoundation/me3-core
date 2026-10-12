@@ -3,6 +3,7 @@ import { preflightTargetIntent, savedTargetIntentProgress, TargetIntentOrderMism
 import { canonicalJson, toolIdempotencyKey, validateArguments } from "./schema";
 import { compactAgentContext } from "./context";
 import { validateTargetSelection } from "./presentations";
+import { startFastPathShadow } from "./fast-path";
 import type { AgentCheckpoint, AgentModel, AgentTargetPresentationCard, AgentTool, AgentToolCall, AgentToolResult, AgentTurnInput, AgentTurnResult } from "./types";
 
 export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
@@ -21,6 +22,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     trace: { model: model.id, steps: 0, toolCalls: [], startedAt: new Date().toISOString(), totalDurationMs: 0, timeToFirstTokenMs: null, usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, estimatedCostUsd: 0 } },
   };
   const checkpoint = state;
+  let shadow: ReturnType<typeof startFastPathShadow>;
   const emit = async (event: Parameters<NonNullable<AgentTurnInput["onEvent"]>>[0]) => { await input.onEvent?.(event); };
   const save = () => input.store.save(checkpoint);
   const cancelled = async () => {
@@ -113,6 +115,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         await emit({event:"delta",data:{text,source:"model"}});
       } };
       let response;
+      if (freshTurn && !input.context.targetSelection && checkpoint.steps === 0) shadow = startFastPathShadow(input.fastPath, { messageText: input.context.messageText, recentMessages: checkpoint.messages, tools, ownerTimezone: input.context.ownerTimezone, now: new Date(), signal: controller.signal });
       try { response = await model.step(stepInput); }
       catch (error) {
         // A failed request can still be billable, with no complete usage receipt.
@@ -125,6 +128,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         response = await model.step(stepInput);
       }
       checkpoint.trace.model = model.id;
+      if (shadow && checkpoint.steps === 0) checkpoint.trace.fastPath = shadow.snapshot(response.toolCalls);
       checkpoint.steps++;
       checkpoint.trace.steps = checkpoint.steps;
       if (response.usage) {
@@ -153,6 +157,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     if (await cancelled()) return finish("cancelled", "The turn was cancelled before completion.");
     return finish("failed", `I couldn't complete this turn: ${error instanceof Error ? error.message : "agent failure"}`);
   } finally {
+    shadow?.close();
     clearTimeout(timeout);
     input.signal?.removeEventListener("abort", abort);
   }

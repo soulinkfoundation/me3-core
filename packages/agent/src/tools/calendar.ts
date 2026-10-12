@@ -8,7 +8,7 @@ export function calendarTools() {
     domainTool("core.calendar.events.list", async (args, context) => {
       const result = await readCalendarEventsForAgent(context.db, context.ownerId, context.ownerTimezone, args as CalendarAgentReadInput);
       return ok({ ...result, ...await rememberTargets(context, "calendar event", result.events, event => event.title) });
-    }),
+    }, { fastPath: { mode: "arguments", candidates: "calendar" } }),
     domainTool("core.calendar.availability", async (args, context) => {
       const service = services(context).scheduling?.availability;
       if (!service) throw new Error("Calendar availability is unavailable.");
@@ -19,7 +19,7 @@ export function calendarTools() {
       const event = await createCalendarEventForAgent(context.db, context.ownerId, context.ownerTimezone, args as CalendarAgentCreateInput, { idempotencyKey: context.idempotencyKey });
       await rememberTargets(context, "calendar event", [event], value => value.title);
       return ok({ event });
-    }),
+    }, { fastPath: { mode: "tool_only" } }),
     domainTool("core.calendar.event.reschedule", async (args, context) => {
       const id = requiredString(args.eventId, "Event ID");
       const expected = await requireTarget<CalendarAgentEvent>(context, "calendar event", id);
