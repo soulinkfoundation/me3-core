@@ -131,7 +131,17 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     rejectUpload = false; await page.getByRole('button', { name: 'Publish', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'You’re live', exact: true })).toBeVisible();
     expect(uploaded).toContain('"layout": "split"'); expect(uploaded).toContain('"theme": "meadow"');
+    const finish = page.locator('.wizard-finish');
+    await expect(finish).not.toContainText(/Soulink/i);
+    const copyLink = finish.getByRole('button', { name: 'Copy site link', exact: true });
+    await expect(copyLink).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Temporary storage error' })).toHaveCount(0, { timeout: 10_000 });
     await screenshot('editor-live');
+    const siteLink = await finish.getByRole('link', { name: 'View site', exact: true }).getAttribute('href');
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await copyLink.click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(siteLink);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
   });
 }

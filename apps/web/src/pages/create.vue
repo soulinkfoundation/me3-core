@@ -393,7 +393,7 @@ watch(
       <UiIcon name="CircleCheck" :size="72" class="wizard-finish__check" aria-hidden="true" />
       <h1 id="wizard-finish-title">{{ siteIsPublic ? "You’re live" : "Your site is saved" }}</h1>
       <p v-if="!siteIsPublic">Your profile is private. Make it public in Basics when you’re ready to share it.</p>
-      <button v-if="siteIsPublic" type="button" class="wizard-copy-link" @click="copySiteLink">{{ publishedSiteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}<UiIcon name="Copy" :size="16" /></button>
+      <button v-if="siteIsPublic" type="button" class="wizard-copy-link" aria-label="Copy site link" @click="copySiteLink">{{ publishedSiteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}<UiIcon name="Copy" :size="16" /></button>
       <div class="wizard-finish__preview"><GeneratedSitePreview viewport="mobile" compact /></div>
       <div class="wizard-finish__actions">
         <a v-if="siteIsPublic" :href="publishedSiteUrl" target="_blank" rel="noopener noreferrer"><UiIcon name="ExternalLink" :size="18" />View site</a>

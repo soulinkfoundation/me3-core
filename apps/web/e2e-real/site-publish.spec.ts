@@ -27,14 +27,20 @@ test("create, restore, publish, and read a public website", async ({ page }, tes
   await expect(page.locator("#name")).toHaveValue(name);
   await expect(page.locator("#handle")).toHaveValue(handle);
 
-  for (let step = 0; step < 10 && !(await page.locator(".step-name").innerText()).includes("Look"); step++) {
-    await page.locator(".nav-btn.next").click();
-  }
-  await expect(page.locator(".step-name")).toContainText("Look");
+  await page.getByRole("button", { name: /Show all steps/ }).click();
+  await page.getByRole("dialog", { name: "All editor steps" }).getByRole("button", { name: /Publish/ }).click();
+  await expect(page.locator(".step-name")).toContainText("Publish");
   await page.getByRole("radio", { name: "Split", exact: true }).check();
   await page.getByRole("button", { name: "Meadow theme", exact: true }).click();
-  await page.getByRole("button", { name: "Publish now" }).click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(page.getByRole("heading", { name: "You’re live", exact: true })).toBeVisible();
+  const finish = page.locator(".wizard-finish");
+  await expect(finish).not.toContainText(/Soulink/i);
+  const siteLink = await finish.getByRole("link", { name: "View site", exact: true }).getAttribute("href");
+  expect(siteLink).toBeTruthy();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await finish.getByRole("button", { name: "Copy site link", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(siteLink);
   await page.screenshot({ path: testInfo.outputPath("editor-live-real.png"), fullPage: true });
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/sites/${handle}(?:$|[/?])`));
@@ -56,7 +62,7 @@ test("create, restore, publish, and read a public website", async ({ page }, tes
   const publicContext = await page.context().browser()!.newContext();
   try {
     const publicPage = await publicContext.newPage();
-    await publicPage.goto("/");
+    await publicPage.goto(siteLink!);
     await expect(publicPage.getByRole("heading", { name })).toBeVisible();
     for (const path of ["/me.json", "/.well-known/me.json", "/me/me.json", `/site/${handle}/me.json`]) {
       const profile = await publicPage.request.get(path);
@@ -89,7 +95,7 @@ test("create, restore, publish, and read a public website", async ({ page }, tes
     await expect(publicPage.getByRole("heading", { name })).toBeVisible();
     await testInfo.attach("public-homepage", { body: await publicPage.screenshot(), contentType: "image/png" });
     await testInfo.attach("published-profile", {
-      body: JSON.stringify({ revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), command: "pnpm --filter @me3/web exec playwright test --config playwright.real.config.ts", reset: "start-worker.sh creates a fresh temporary D1 database per run", providers: "Cloud API unavailable on localhost:9999; password login and publishing use the real local Worker and D1", workingTreeChanges: true, editor: "Look selectors and success finish; real uploaded layout/theme persisted", handle, name, publicUrl: publicPage.url(), verified: ["published profile persists in a fresh browser session", "root and legacy me.json discovery", "legacy home redirects", "password login returns to private workspace", "authenticated root remains public"] }, null, 2),
+      body: JSON.stringify({ revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), command: "pnpm --filter @me3/web exec playwright test --config playwright.real.config.ts", reset: "start-worker.sh creates a fresh temporary D1 database per run", providers: "Cloud API unavailable on localhost:9999; password login and publishing use the real local Worker and D1", workingTreeChanges: true, editor: "Look selectors and success finish; real uploaded layout/theme persisted", handle, name, publicUrl: publicPage.url(), verified: ["copied site URL opens the published profile in a fresh browser session", "root and legacy me.json discovery", "legacy home redirects", "password login returns to private workspace", "authenticated root remains public"] }, null, 2),
       contentType: "application/json",
     });
   } finally {
