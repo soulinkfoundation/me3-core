@@ -458,6 +458,9 @@ const WIZARD_STEP_ID_ALIASES: Partial<Record<string, WizardStepId>> = {
   product: "offerings",
   products: "offerings",
   cta: "call-to-action",
+  buttons: "call-to-action",
+  photo: "avatar",
+  look: "publish",
 };
 
 export function normalizeWizardStepId(value: string): WizardStepId | null {
@@ -1580,7 +1583,7 @@ export const useWizardStore = defineStore("wizard", () => {
       { id: "basics", name: "Basics" },
       {
         id: "avatar",
-        name: siteRole.value === "organization" ? "Logo" : "Avatar",
+        name: siteRole.value === "organization" ? "Logo" : "Photo",
       },
       { id: "banner", name: "Banner" },
       {
@@ -1590,13 +1593,13 @@ export const useWizardStore = defineStore("wizard", () => {
       ...(siteRole.value === "organization"
         ? [{ id: "goals" as const, name: "Site goals" }]
         : []),
-      { id: "additional-features", name: "Additional Features" },
+      { id: "additional-features", name: "Features" },
     ];
 
     // Website features are selected on Additional Features, then appended here.
     if (linksEnabled.value) visibleSteps.push({ id: "links", name: "Links" });
     if (callToActionEnabled.value) {
-      visibleSteps.push({ id: "call-to-action", name: "Call-to-action" });
+      visibleSteps.push({ id: "call-to-action", name: "Buttons" });
     }
     visibleSteps.push({ id: "pages", name: "Pages" });
     if (newsletterEnabled.value) {
@@ -1613,7 +1616,7 @@ export const useWizardStore = defineStore("wizard", () => {
       visibleSteps.push({ id: "testimonials", name: "Testimonials" });
     }
 
-    visibleSteps.push({ id: "publish", name: "Publish" });
+    visibleSteps.push({ id: "publish", name: "Look" });
     return visibleSteps;
   });
 

@@ -268,7 +268,7 @@ const bioTextLength = computed(() =>
           v-else-if="handle.length >= 3 && wizard.isUsernameAvailable === false"
           class="taken"
         >
-          ✗ This {{ isOrganization ? "site address" : "username" }} is taken
+          This {{ isOrganization ? "site address" : "username" }} is taken
         </span>
         <span v-else-if="handle.length > 0 && handle.length < 3" class="hint">
           {{ isOrganization ? "Site address" : "Username" }} must be at least 3

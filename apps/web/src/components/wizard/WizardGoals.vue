@@ -49,7 +49,7 @@ function removeGoal(goalId: string) {
             "
             @change="saveGoals"
           />
-          <span class="goal-toggle-ui" />
+          <span class="goal-toggle-ui"><UiIcon v-if="goal.status === 'completed'" name="Check" :size="14" aria-hidden="true" /></span>
         </label>
         <input
           v-model="goal.title"
@@ -115,8 +115,9 @@ function removeGoal(goalId: string) {
   gap: 12px;
   padding: 14px 16px;
   border-radius: 12px;
-  border: 2px solid var(--color-border);
-  background: var(--color-bg);
+  border: 0;
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .goal-input {
@@ -165,18 +166,12 @@ function removeGoal(goalId: string) {
 .goal-toggle input:checked + .goal-toggle-ui {
   border-color: var(--color-text);
   background: var(--color-text);
+  color: var(--color-bg);
 }
 
 .goal-toggle input:focus-visible + .goal-toggle-ui {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
-}
-
-.goal-toggle input:checked + .goal-toggle-ui::after {
-  content: "✓";
-  color: var(--color-bg);
-  font-size: 14px;
-  font-weight: 700;
 }
 
 @media (max-width: 640px) {

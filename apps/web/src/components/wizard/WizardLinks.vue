@@ -13,6 +13,7 @@ import {
   type PlatformConfig,
 } from "../../utils/link-validation";
 import UiIcon from "../UiIcon.vue";
+import AppDialog from "../AppDialog.vue";
 import { isUiIconName, type UiIconName } from "../../utils/icons";
 
 const wizard = useWizardStore();
@@ -249,9 +250,11 @@ function addCustomLink() {
 // Helper Functions
 // ============================================================================
 
-function getPlatformIcon(key: string): string | UiIconName {
+function getPlatformIcon(key: string): UiIconName {
   const platform = getPlatformConfig(key);
-  return platform?.icon || "";
+  if (platform && isUiIconName(platform.icon)) return platform.icon;
+  const icons: Record<string, UiIconName> = { twitter: "Twitter", instagram: "Instagram", tiktok: "Music", youtube: "Youtube", linkedin: "Linkedin", github: "Github", email: "Mail", website: "Globe", substack: "FileText" };
+  return icons[key] || "Link";
 }
 
 function getPlatformLabel(key: string, customLabel?: string): string {
@@ -270,9 +273,6 @@ function getPlatformPlaceholder(key: string): string {
   return platform?.placeholder || "Enter value";
 }
 
-function isCustomLink(key: string): boolean {
-  return key.startsWith("custom_");
-}
 </script>
 
 <template>
@@ -299,52 +299,10 @@ function isCustomLink(key: string): boolean {
         >
           <div class="link-header">
             <button class="drag-handle" type="button" title="Drag to reorder">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"
-                  stroke-linecap="round"
-                />
-              </svg>
+              <UiIcon name="GripVertical" :size="18" aria-hidden="true" />
             </button>
 
-            <span class="link-icon" v-if="!isCustomLink(link.key)">
-              <template
-                v-if="
-                  (() => {
-                    const icon = getPlatformIcon(link.key);
-                    return isUiIconName(icon);
-                  })()
-                "
-              >
-                <UiIcon
-                  :name="getPlatformIcon(link.key) as UiIconName"
-                  :size="20"
-                />
-              </template>
-              <svg v-else viewBox="0 0 24 24" fill="currentColor">
-                <path :d="getPlatformIcon(link.key) as string" />
-              </svg>
-            </span>
-            <span class="link-icon custom-icon" v-else>
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
-                />
-                <path
-                  d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
-                />
-              </svg>
-            </span>
+            <span class="link-icon" aria-hidden="true"><UiIcon :name="getPlatformIcon(link.key) as UiIconName" :size="20" /></span>
 
             <span class="link-label">{{
               getPlatformLabel(link.key, link.label)
@@ -358,18 +316,7 @@ function isCustomLink(key: string): boolean {
                 title="Test link"
                 @click="testLink(link.key)"
               >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
-                  />
-                  <polyline points="15 3 21 3 21 9" />
-                  <line x1="10" y1="14" x2="21" y2="3" />
-                </svg>
+                <UiIcon name="ExternalLink" :size="18" aria-hidden="true" />
               </button>
               <button
                 class="action-btn remove-btn"
@@ -377,15 +324,7 @@ function isCustomLink(key: string): boolean {
                 title="Remove"
                 @click="removeLink(link.key)"
               >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
+                <UiIcon name="X" :size="18" aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -395,6 +334,7 @@ function isCustomLink(key: string): boolean {
               {{ getPlatformPrefix(link.key) }}
             </span>
             <input
+              :aria-label="`${getPlatformLabel(link.key, link.label)} link`"
               :value="wizard.profile.links[link.key] || ''"
               :placeholder="getPlatformPlaceholder(link.key)"
               :class="{ 'has-prefix': !!getPlatformPrefix(link.key) }"
@@ -408,28 +348,13 @@ function isCustomLink(key: string): boolean {
               "
               class="validation-icon valid"
             >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="3"
-              >
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+              <UiIcon name="Check" :size="18" aria-hidden="true" />
             </span>
             <span
               v-if="validationState[link.key]?.valid === false"
               class="validation-icon invalid"
             >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="3"
-              >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
+              <UiIcon name="X" :size="18" aria-hidden="true" />
             </span>
           </div>
 
@@ -451,14 +376,7 @@ function isCustomLink(key: string): boolean {
           @click="addPrimaryPlatform(platform)"
         >
           <span class="platform-btn-icon">
-            <UiIcon
-              v-if="isUiIconName(platform.icon)"
-              :name="platform.icon"
-              :size="16"
-            />
-            <svg v-else viewBox="0 0 24 24" fill="currentColor">
-              <path :d="platform.icon" />
-            </svg>
+            <UiIcon :name="getPlatformIcon(platform.key) as UiIconName" :size="22" />
           </span>
           <span class="platform-btn-label">{{ platform.label }}</span>
         </button>
@@ -470,16 +388,7 @@ function isCustomLink(key: string): boolean {
           @click="openMoreModal"
         >
           <span class="platform-btn-icon">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <circle cx="12" cy="12" r="1" />
-              <circle cx="19" cy="12" r="1" />
-              <circle cx="5" cy="12" r="1" />
-            </svg>
+            <UiIcon name="Ellipsis" :size="18" aria-hidden="true" />
           </span>
           <span class="platform-btn-label">More</span>
         </button>
@@ -494,24 +403,12 @@ function isCustomLink(key: string): boolean {
     </div>
 
     <!-- More Platforms Modal -->
-    <div
-      v-if="showMoreModal"
-      class="modal-overlay"
-      @click.self="closeMoreModal"
-    >
+    <AppDialog :open="showMoreModal" aria-label="Add a link" close-on-backdrop @close="closeMoreModal">
       <div class="modal">
         <div class="modal-header">
           <h3>Add a link</h3>
-          <button class="modal-close" type="button" @click="closeMoreModal">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+          <button class="modal-close" type="button" aria-label="Close link picker" @click="closeMoreModal">
+            <UiIcon name="X" :size="18" aria-hidden="true" />
           </button>
         </div>
 
@@ -571,14 +468,7 @@ function isCustomLink(key: string): boolean {
                   @click="addSecondaryPlatform(platform)"
                 >
                   <span class="modal-platform-icon">
-                    <UiIcon
-                      v-if="isUiIconName(platform.icon)"
-                      :name="platform.icon"
-                      :size="14"
-                    />
-                    <svg v-else viewBox="0 0 24 24" fill="currentColor">
-                      <path :d="platform.icon" />
-                    </svg>
+                    <UiIcon :name="getPlatformIcon(platform.key) as UiIconName" :size="22" />
                   </span>
                   <span>{{ platform.label }}</span>
                 </button>
@@ -599,21 +489,13 @@ function isCustomLink(key: string): boolean {
               type="button"
               @click="startCustomLink"
             >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
+              <UiIcon name="Plus" :size="18" aria-hidden="true" />
               Add custom link
             </button>
           </div>
         </template>
       </div>
-    </div>
+    </AppDialog>
   </div>
 </template>
 
@@ -1156,4 +1038,17 @@ function isCustomLink(key: string): boolean {
   background: var(--color-text-muted);
   color: var(--color-bg);
 }
+
+.platform-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.platform-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 78px; padding: 12px 6px; border: 0; border-radius: 18px; background: var(--ui-surface-muted); color: var(--ui-text); font-size: 13px; font-weight: 500; }
+.platform-btn-icon { display: grid; place-items: center; width: 24px; height: 24px; }
+.link-item { border: 0; border-radius: 18px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
+.link-input-wrapper { border: 0; background: var(--ui-surface-muted); border-radius: 14px; }
+.link-item .link-input-wrapper input { background: transparent; }
+.link-label { font-weight: 600; }
+
+.modal { border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-md); }
+.modal input:not([type="radio"]):not([type="checkbox"]) { box-sizing: border-box; border: 0; border-radius: 14px; background: var(--ui-surface-muted); color: var(--ui-text); padding: 13px 14px; font-size: 16px; }
+.modal .btn.primary { border: 0; background: var(--ui-primary); color: var(--ui-primary-contrast); }
+.modal input:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 </style>

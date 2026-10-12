@@ -437,6 +437,27 @@ describe("site generator", () => {
     );
   });
 
+  it("renders catalog icons and emoji in published CTA buttons", async () => {
+    const files = await generateSiteHtml(
+      {
+        name: "CTA icons",
+        buttons: [
+          { text: "Circle", url: "/circle", icon: "CircleDot" },
+          { text: "Meditate", url: "/meditate", icon: "🧘‍♀️" },
+        ],
+      },
+      [],
+    );
+    const html = files["index.html"];
+
+    expect(html).toContain(
+      '<span class="btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"',
+    );
+    expect(html).toContain('<circle cx="12" cy="12" r="10"');
+    expect(html).toContain('<span class="btn-icon">🧘‍♀️</span>');
+    expect(html).not.toContain('<span class="btn-icon">CircleDot</span>');
+  });
+
   it("uses WYSIWYG widgets for non-homepage placement and keeps defaults on the homepage", async () => {
     const files = await generateSiteHtml(
       {

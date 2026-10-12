@@ -453,7 +453,7 @@ defineExpose({
             title="Delete product"
             @click="deleteProduct(index)"
           >
-            ×
+            <UiIcon name="X" :size="16" />
           </button>
         </div>
       </div>

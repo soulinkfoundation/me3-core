@@ -90,7 +90,7 @@ const productsEnabled = computed({
 
 <template>
   <div class="step-additional-features">
-    <h2>Enable additional features</h2>
+    <h2>What does your site need?</h2>
     <p class="section-desc">
       {{
         isOrganization
@@ -118,7 +118,7 @@ const productsEnabled = computed({
           </div>
         </div>
         <label class="feature-toggle">
-          <input v-model="linksEnabled" type="checkbox" aria-label="Enable links" />
+          <input v-model="linksEnabled" type="checkbox" role="switch" aria-label="Enable links" />
           <span class="feature-toggle-ui" />
         </label>
       </div>
@@ -130,7 +130,7 @@ const productsEnabled = computed({
             <UiIcon name="ExternalLink" :size="18" />
           </span>
           <div class="feature-text">
-            <span class="feature-name">Call-to-action</span>
+            <span class="feature-name">Action buttons</span>
             <span class="feature-desc">
               Give visitors a clear next step with a prominent button.
             </span>
@@ -139,7 +139,7 @@ const productsEnabled = computed({
         <label class="feature-toggle">
           <input
             v-model="callToActionEnabled"
-            type="checkbox"
+            type="checkbox" role="switch"
             aria-label="Enable call-to-action"
           />
           <span class="feature-toggle-ui" />
@@ -160,7 +160,7 @@ const productsEnabled = computed({
           </div>
         </div>
         <label class="feature-toggle">
-          <input v-model="pagesEnabled" type="checkbox" aria-label="Enable pages" />
+          <input v-model="pagesEnabled" type="checkbox" role="switch" aria-label="Enable pages" />
           <span class="feature-toggle-ui" />
         </label>
       </div>
@@ -182,7 +182,7 @@ const productsEnabled = computed({
         <label class="feature-toggle">
           <input
             v-model="newsletterEnabled"
-            type="checkbox"
+            type="checkbox" role="switch"
             aria-label="Enable newsletter"
           />
           <span class="feature-toggle-ui" />
@@ -209,7 +209,7 @@ const productsEnabled = computed({
         <label class="feature-toggle">
           <input
             v-model="bookingsEnabled"
-            type="checkbox"
+            type="checkbox" role="switch"
             aria-label="Enable bookings"
           />
           <span class="feature-toggle-ui" />
@@ -231,7 +231,7 @@ const productsEnabled = computed({
           </div>
         </div>
         <label class="feature-toggle">
-          <input v-model="blogEnabled" type="checkbox" aria-label="Enable blog" />
+          <input v-model="blogEnabled" type="checkbox" role="switch" aria-label="Enable blog" />
           <span class="feature-toggle-ui" />
         </label>
       </div>
@@ -253,7 +253,7 @@ const productsEnabled = computed({
         <label class="feature-toggle">
           <input
             v-model="productsEnabled"
-            type="checkbox"
+            type="checkbox" role="switch"
             aria-label="Enable products"
           />
           <span class="feature-toggle-ui" />
@@ -277,7 +277,7 @@ const productsEnabled = computed({
         <label class="feature-toggle">
           <input
             v-model="testimonialsEnabled"
-            type="checkbox"
+            type="checkbox" role="switch"
             aria-label="Enable testimonials"
           />
           <span class="feature-toggle-ui" />
@@ -586,4 +586,15 @@ const productsEnabled = computed({
     background: linear-gradient(135deg, #1a1625 0%, #2d1f47 100%);
   }
 }
+
+.feature-cards { gap: 0; padding: 4px 16px; border-radius: 22px; background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
+.feature-card { min-height: 76px; padding: 12px 0; box-sizing: border-box; border: 0; border-radius: 0; background: transparent; }
+.feature-card-main { align-items: center; }.feature-icon { background: transparent; color: var(--ui-text-muted); width: 24px; }
+.feature-name { font-size: 16px; font-weight: 500; }.feature-desc { font-size: 13px; line-height: 1.4; }
+.feature-toggle { display: flex; align-items: center; min-width: 51px; min-height: 44px; }
+.feature-toggle-ui { border: 0; background: var(--ui-surface-muted); box-shadow: inset 0 0 0 1px var(--ui-border); }
+.feature-toggle input:checked + .feature-toggle-ui { background: var(--ui-accent); box-shadow: none; }.feature-toggle input:focus-visible + .feature-toggle-ui { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
+
+.feature-toggle input { inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; pointer-events: auto; cursor: pointer; }
+.feature-toggle-ui { width: 51px; height: 31px; pointer-events: none; }.feature-toggle-ui::after { top: 2px; left: 2px; width: 27px; height: 27px; }.feature-toggle input:checked + .feature-toggle-ui::after { transform: translateX(20px); }
 </style>

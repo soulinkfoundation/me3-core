@@ -489,7 +489,7 @@ describe("wizard store", () => {
       store.activateDraftContext({ role: "profile" });
       expect(store.stepIds).not.toContain("goals");
       expect(store.stepIds).not.toContain("wheel-of-life");
-      expect(store.stepNames).toContain("Avatar");
+      expect(store.stepNames).toContain("Photo");
       expect(store.stepNames).toContain("Who you help");
     });
   });
@@ -2281,12 +2281,12 @@ describe("wizard store", () => {
 
       expect(store.stepNames).toEqual([
         "Basics",
-        "Avatar",
+        "Photo",
         "Banner",
         "Who you help",
-        "Additional Features",
+        "Features",
         "Pages",
-        "Publish",
+        "Look",
       ]);
     });
 
@@ -2299,7 +2299,7 @@ describe("wizard store", () => {
       // Newsletter should come after Additional Features
       const newsletterIndex = names.indexOf("Newsletter");
       const pagesIndex = names.indexOf("Pages");
-      const additionalIndex = names.indexOf("Additional Features");
+      const additionalIndex = names.indexOf("Features");
       expect(newsletterIndex).toBeGreaterThan(additionalIndex);
       expect(pagesIndex).toBeLessThan(newsletterIndex);
     });
@@ -2320,7 +2320,7 @@ describe("wizard store", () => {
       expect(names).toContain("Blog");
       // Blog should come after Additional Features
       const blogIndex = names.indexOf("Blog");
-      const additionalIndex = names.indexOf("Additional Features");
+      const additionalIndex = names.indexOf("Features");
       expect(blogIndex).toBeGreaterThan(additionalIndex);
     });
 
@@ -2332,7 +2332,7 @@ describe("wizard store", () => {
       expect(names).toContain("Bookings");
       // Bookings should come after Additional Features
       const bookingsIndex = names.indexOf("Bookings");
-      const additionalIndex = names.indexOf("Additional Features");
+      const additionalIndex = names.indexOf("Features");
       expect(bookingsIndex).toBeGreaterThan(additionalIndex);
     });
 
@@ -2343,7 +2343,7 @@ describe("wizard store", () => {
       const names = store.stepNames;
       expect(names).toContain("Testimonials");
       const testimonialsIndex = names.indexOf("Testimonials");
-      const additionalIndex = names.indexOf("Additional Features");
+      const additionalIndex = names.indexOf("Features");
       expect(testimonialsIndex).toBeGreaterThan(additionalIndex);
     });
 
@@ -2355,7 +2355,7 @@ describe("wizard store", () => {
       const names = store.stepNames;
       expect(names).toContain("Products");
       const offeringsIndex = names.indexOf("Products");
-      const additionalIndex = names.indexOf("Additional Features");
+      const additionalIndex = names.indexOf("Features");
       expect(offeringsIndex).toBeGreaterThan(additionalIndex);
     });
 
@@ -2373,7 +2373,7 @@ describe("wizard store", () => {
       const bookingsIndex = names.indexOf("Bookings");
       const offeringsIndex = names.indexOf("Products");
       const testimonialsIndex = names.indexOf("Testimonials");
-      const publishIndex = names.indexOf("Publish");
+      const publishIndex = names.indexOf("Look");
 
       expect(newsletterIndex).toBeLessThan(bookingsIndex);
       expect(bookingsIndex).toBeLessThan(blogIndex);
@@ -2391,7 +2391,7 @@ describe("wizard store", () => {
       store.testimonialsEnabled = true;
 
       const names = store.stepNames;
-      expect(names[names.length - 1]).toBe("Publish");
+      expect(names[names.length - 1]).toBe("Look");
     });
 
     it("should update totalSteps when features are toggled", () => {

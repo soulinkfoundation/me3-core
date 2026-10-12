@@ -940,7 +940,7 @@ onMounted(() => {
 
 <template>
   <div class="step-bookings">
-    <h2>Accept Bookings</h2>
+    <h2>Let people book you</h2>
     <p class="section-desc">
       Add the kinds of bookings you want to offer, then configure each one with
       the simplest setup that fits.
@@ -985,7 +985,8 @@ onMounted(() => {
       </div>
 
       <template v-else>
-        <div class="booking-heading-fields">
+        <details class="booking-heading-fields booking-section-details">
+          <summary><UiIcon name="Pencil" :size="18" />Section title and intro</summary>
           <div class="form-group">
             <label for="booking-heading-title">Booking section title</label>
             <input
@@ -1005,7 +1006,7 @@ onMounted(() => {
               placeholder="Help people understand what these sessions are for"
             />
           </div>
-        </div>
+        </details>
 
         <div
           class="booking-type-tabs"
@@ -1229,7 +1230,7 @@ onMounted(() => {
                       autocomplete="off"
                       @change="selectDetailPage"
                     />
-                    <button v-if="activeOffer.pageSlug" type="button" class="offer-page-clear" aria-label="Remove offer page" @click="updateActiveOffer({ pageSlug: undefined })">×</button>
+                    <button v-if="activeOffer.pageSlug" type="button" class="offer-page-clear" aria-label="Remove offer page" @click="updateActiveOffer({ pageSlug: undefined })"><UiIcon name="X" :size="20" /></button>
                   </div>
                   <datalist id="booking-offer-pages">
                     <option v-for="page in detailPages" :key="page.slug" :value="pageOption(page)" />
@@ -1239,7 +1240,8 @@ onMounted(() => {
               </div>
             </div>
           </div>
-          <div class="booking-shared-settings">
+          <details class="booking-shared-settings booking-section-details">
+            <summary><UiIcon name="Settings" :size="18" />Default hours and display</summary>
             <div class="offer-setting-row">
               <div>
                 <strong>Default availability</strong>
@@ -1257,7 +1259,7 @@ onMounted(() => {
                 <button type="button" :aria-pressed="offerDisplayMode === 'dropdown'" :class="{ active: offerDisplayMode === 'dropdown' }" @click="offerDisplayMode = 'dropdown'">Dropdown</button>
               </div>
             </div>
-          </div>
+          </details>
         </div>
 
         <div
@@ -1766,7 +1768,8 @@ onMounted(() => {
           </button>
         </section>
 
-        <div class="confirmation-email-section">
+        <details class="confirmation-email-section">
+          <summary><UiIcon name="Mail" :size="18" />Confirmation emails</summary>
           <div class="confirmation-email-header">
             <div>
               <h3 class="confirmation-email-title">
@@ -1882,7 +1885,7 @@ onMounted(() => {
             >, <code>{{ hostName }}</code
             >, <code>{{ hostEmail }}</code>
           </p>
-        </div>
+        </details>
 
       </template>
     </div>
@@ -1893,7 +1896,7 @@ onMounted(() => {
           <h3 id="availability-dialog-title">{{ availabilityTarget === 'default' ? 'Default availability' : 'Offer availability' }}</h3>
           <p v-if="availabilityTarget !== 'default'">All times use {{ formatTimezoneLabel(bookingTimezone) }}.</p>
         </div>
-        <button type="button" class="availability-dialog-close" aria-label="Close availability" @click="availabilityDialog?.close()">×</button>
+        <button type="button" class="availability-dialog-close" aria-label="Close availability" @click="availabilityDialog?.close()"><UiIcon name="X" :size="20" /></button>
       </div>
       <div v-if="availabilityTarget !== 'default'" class="availability-choice" role="group" aria-label="Offer availability source">
         <button type="button" :aria-pressed="useDefaultAvailability" :class="{ active: useDefaultAvailability }" @click="useDefaultAvailability = true">Use default hours</button>
@@ -2498,4 +2501,15 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 }
+
+.booking-section-details { padding: 12px 16px; border: 0; border-radius: 18px; background: var(--ui-surface-muted); }
+.booking-section-details summary { display: flex; align-items: center; gap: 10px; min-height: 44px; color: var(--ui-text-muted); font-size: 14px; cursor: pointer; }
+.booking-section-details[open] summary { margin-bottom: 16px; }
+.confirmation-email-section { border: 0; border-radius: 20px; padding: 16px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
+.confirmation-email-section summary { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 15px; font-weight: 600; cursor: pointer; }
+.confirmation-email-section[open] summary { margin-bottom: 16px; }
+.offer-setting-row { border: 0; border-radius: 18px; background: var(--ui-surface-muted); }
+.booking-type-tabs, .offer-tabs { border: 0; }.offer-tab.active, .offer-tab-item.active .offer-tab { background: var(--ui-surface-muted); color: var(--ui-text); }
+.availability-dialog { border: 0; border-radius: 24px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
+.availability-dialog-close { display: grid; place-items: center; min-width: 44px; min-height: 44px; }
 </style>

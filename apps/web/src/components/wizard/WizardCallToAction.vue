@@ -3,6 +3,7 @@ import { ref, computed } from "vue";
 import draggable from "vuedraggable";
 import { useWizardStore, type Me3Button } from "../../stores/wizard";
 import UiIcon from "../UiIcon.vue";
+import AppDialog from "../AppDialog.vue";
 import IconPicker from "../IconPicker.vue";
 import { isUiIconName, type UiIconName } from "../../utils/icons";
 import { normalizeCtaUrl } from "../../utils/cta-url";
@@ -13,13 +14,11 @@ const wizard = useWizardStore();
 // Buttons Config
 // ============================================================================
 const suggestions: Array<{ icon: UiIconName; text: string; hint: string }> = [
-  { icon: "ShoppingCart", text: "View Shop", hint: "etsy.com, gumroad.com" },
-  {
-    icon: "GraduationCap",
-    text: "Join My Course",
-    hint: "teachable.com, thinkific.com",
-  },
-  { icon: "Infinity", text: "Join Community", hint: "circle.so, skool.com" },
+  { icon: "CalendarClock", text: "Book a session", hint: "Your booking link" },
+  { icon: "UsersRound", text: "Join Community", hint: "Your community link" },
+  { icon: "GraduationCap", text: "Join My Course", hint: "Your course link" },
+  { icon: "ShoppingCart", text: "View Shop", hint: "Your shop link" },
+  { icon: "Mail", text: "Email me", hint: "mailto:you@example.com" },
 ];
 
 // Form state
@@ -142,7 +141,7 @@ function buttonItemKey(button: Me3Button) {
 
 <template>
   <div class="step-cta">
-    <h2>Add call-to-action buttons</h2>
+    <h2>A clear next step</h2>
     <p class="section-desc">Prominent buttons for anything important.</p>
 
     <!-- Current buttons -->
@@ -162,17 +161,7 @@ function buttonItemKey(button: Me3Button) {
               type="button"
               title="Drag to reorder"
             >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"
-                  stroke-linecap="round"
-                />
-              </svg>
+              <UiIcon name="GripVertical" :size="18" aria-hidden="true" />
             </button>
 
           <span class="button-icon" v-if="button.icon" aria-hidden="true">
@@ -184,14 +173,7 @@ function buttonItemKey(button: Me3Button) {
             <span v-else class="emoji-icon">{{ button.icon }}</span>
           </span>
           <span class="button-icon placeholder-icon" v-else>
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            </svg>
+            <UiIcon name="Link" :size="18" aria-hidden="true" />
           </span>
 
           <span class="button-label">{{ button.text }}</span>
@@ -203,18 +185,7 @@ function buttonItemKey(button: Me3Button) {
               title="Test link"
               @click="testButton(button.url)"
             >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
-                />
-                <polyline points="15 3 21 3 21 9" />
-                <line x1="10" y1="14" x2="21" y2="3" />
-              </svg>
+              <UiIcon name="ExternalLink" :size="18" aria-hidden="true" />
             </button>
             <button
               class="action-btn remove-btn"
@@ -222,15 +193,7 @@ function buttonItemKey(button: Me3Button) {
               title="Remove"
               @click="deleteButton(index)"
             >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
+              <UiIcon name="X" :size="18" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -278,33 +241,26 @@ function buttonItemKey(button: Me3Button) {
           <span class="platform-btn-icon">
             <UiIcon name="Pencil" :size="16" aria-hidden="true" />
           </span>
-          <span class="platform-btn-label">Custom</span>
+          <span class="platform-btn-label">Custom link</span>
         </button>
       </div>
     </div>
 
     <!-- Button Form Modal -->
-    <div v-if="showForm" class="modal-overlay" @click.self="closeForm">
+    <AppDialog :open="showForm" aria-label="Edit action button" close-on-backdrop @close="closeForm">
       <div class="modal">
         <div class="modal-header">
           <h3>{{ editIndex !== null ? "Edit button" : "Add a button" }}</h3>
-          <button class="modal-close" type="button" @click="closeForm">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+          <button class="modal-close" type="button" aria-label="Close action button" @click="closeForm">
+            <UiIcon name="X" :size="18" aria-hidden="true" />
           </button>
         </div>
 
         <div class="modal-content">
           <div class="form-group">
-            <label>Button text</label>
+            <label for="cta-button-text">Button text</label>
             <input
+              id="cta-button-text"
               v-model="buttonText"
               type="text"
               placeholder="e.g. Shop"
@@ -322,8 +278,9 @@ function buttonItemKey(button: Me3Button) {
           </div>
 
           <div class="form-group">
-            <label>Link URL</label>
+            <label for="cta-button-url">Link URL</label>
             <input
+              id="cta-button-url"
               v-model="buttonUrl"
               type="text"
               inputmode="url"
@@ -372,7 +329,7 @@ function buttonItemKey(button: Me3Button) {
           </button>
         </div>
       </div>
-    </div>
+    </AppDialog>
   </div>
 </template>
 
@@ -1064,4 +1021,14 @@ function buttonItemKey(button: Me3Button) {
   font-size: 13px;
   color: var(--color-text-muted);
 }
+
+.platform-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.platform-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 78px; padding: 12px 6px; border: 0; border-radius: 18px; background: var(--ui-surface-muted); color: var(--ui-text); font-size: 13px; font-weight: 500; }
+.platform-btn-icon { display: grid; place-items: center; width: 24px; height: 24px; }
+.button-item { border: 0; border-radius: 18px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }.button-label { font-weight: 600; }
+
+.modal { border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-md); }
+.modal input:not([type="radio"]):not([type="checkbox"]) { box-sizing: border-box; border: 0; border-radius: 14px; background: var(--ui-surface-muted); color: var(--ui-text); padding: 13px 14px; font-size: 16px; }
+.modal .btn.primary { border: 0; background: var(--ui-primary); color: var(--ui-primary-contrast); }
+.modal input:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 </style>

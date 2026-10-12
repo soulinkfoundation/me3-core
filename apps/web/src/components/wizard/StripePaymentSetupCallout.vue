@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { api } from "../../api";
 import type { CommerceSettingsResponse } from "../../utils/commerce";
+import UiIcon from "../UiIcon.vue";
 
 withDefaults(
   defineProps<{
@@ -61,7 +62,7 @@ onMounted(() => {
   >
     <div class="stripe-status-row">
       <div class="connect-status">
-        <span class="status-icon">{{ configured ? "✓" : "!" }}</span>
+        <UiIcon :name="configured ? 'CircleCheck' : loading ? 'Clock' : 'CircleAlert'" :size="20" class="status-icon" aria-hidden="true" />
         <span class="status-text">{{ statusLabel }}</span>
       </div>
       <router-link
@@ -77,12 +78,7 @@ onMounted(() => {
       <p class="connect-hint">{{ setupHint }}</p>
       <div class="stripe-actions">
         <router-link class="connect-btn stripe" to="/account?section=payments">
-          <svg viewBox="0 0 24 24" width="18" height="18" class="stripe-icon">
-            <path
-              fill="currentColor"
-              d="M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .98-.84 1.545-2.354 1.545-1.875 0-4.965-.921-6.99-2.109l-.9 5.555C5.175 22.99 8.385 24 11.714 24c2.641 0 4.843-.624 6.328-1.813 1.664-1.305 2.525-3.236 2.525-5.732 0-4.128-2.471-5.747-6.591-7.305z"
-            />
-          </svg>
+          <UiIcon name="CreditCard" :size="18" />
           {{ managed ? "Connect Stripe" : "Set up Stripe" }}
         </router-link>
         <a
@@ -103,9 +99,10 @@ onMounted(() => {
 .stripe-payment-callout {
   margin-top: 14px;
   padding: 14px;
-  border: 1px solid var(--ui-border, var(--color-border));
+  border: 0;
   border-radius: var(--ui-radius-md, 12px);
   background: var(--ui-surface, var(--color-bg));
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .stripe-payment-callout--compact {
@@ -136,14 +133,13 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #f59e0b;
-  color: #fff;
+  color: var(--ui-text-muted);
   font-size: 12px;
   flex: 0 0 auto;
 }
 
 .stripe-payment-callout--connected .status-icon {
-  background: #22c55e;
+  color: var(--ui-accent-strong);
 }
 
 .status-text {
@@ -169,10 +165,10 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-height: 40px;
+  min-height: 44px;
   padding: 10px 16px;
   border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: var(--ui-radius-sm, 8px);
+  border-radius: 24px;
   color: var(--ui-text, var(--color-text));
   font-family: inherit;
   font-size: 14px;
@@ -186,12 +182,12 @@ onMounted(() => {
 
 .connect-btn.stripe {
   border: none;
-  background: #635bff;
-  color: #fff;
+  background: var(--ui-primary);
+  color: var(--ui-primary-contrast);
 }
 
 .connect-btn.stripe:hover {
-  background: #4f49cc;
+  background: var(--ui-primary-strong);
 }
 
 .disconnect-btn,
@@ -199,9 +195,9 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 32px;
+  min-height: 44px;
   padding: 6px 10px;
-  border: 1px solid var(--ui-text-muted, var(--color-text-muted));
+  border: 0;
   border-radius: var(--ui-radius-sm, 8px);
   color: var(--ui-text-muted, var(--color-text-muted));
   font-size: 13px;
@@ -215,8 +211,4 @@ onMounted(() => {
   color: var(--ui-text, var(--color-text));
 }
 
-.stripe-icon {
-  display: inline-flex;
-  flex-shrink: 0;
-}
 </style>

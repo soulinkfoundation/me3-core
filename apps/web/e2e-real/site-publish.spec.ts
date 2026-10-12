@@ -27,16 +27,23 @@ test("create, restore, publish, and read a public website", async ({ page }, tes
   await expect(page.locator("#name")).toHaveValue(name);
   await expect(page.locator("#handle")).toHaveValue(handle);
 
-  for (let step = 0; step < 10 && !(await page.locator(".step-name").innerText()).includes("Publish"); step++) {
+  for (let step = 0; step < 10 && !(await page.locator(".step-name").innerText()).includes("Look"); step++) {
     await page.locator(".nav-btn.next").click();
   }
-  await expect(page.locator(".step-name")).toContainText("Publish");
+  await expect(page.locator(".step-name")).toContainText("Look");
+  await page.getByRole("radio", { name: "Split", exact: true }).check();
+  await page.getByRole("button", { name: "Meadow theme", exact: true }).click();
   await page.getByRole("button", { name: "Publish now" }).click();
+  await expect(page.getByRole("heading", { name: "You’re live", exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("editor-live-real.png"), fullPage: true });
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/sites/${handle}(?:$|[/?])`));
 
   const content = await page.request.get(`/api/sites/${handle}/content`);
   expect(content.ok()).toBeTruthy();
   const sourceProfile = (await content.json()).profile;
+  expect(sourceProfile.extensions["me3.app/site"].layout).toBe("split");
+  expect(sourceProfile.extensions["me3.app/site"].theme).toBe("meadow");
   sourceProfile.avatar = "./files/avatar.png";
   const upload = new FormData();
   upload.append("files", new File([JSON.stringify(sourceProfile)], "me.json", { type: "application/json" }));
@@ -75,11 +82,14 @@ test("create, restore, publish, and read a public website", async ({ page }, tes
     await publicPage.getByPlaceholder("Password", { exact: true }).fill("local-e2e-password");
     await publicPage.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(publicPage).toHaveURL(/\/account$/);
+    await publicPage.goto(`/create?site=${handle}&step=look`);
+    await expect(publicPage.getByRole("radio", { name: "Split", exact: true })).toBeChecked();
+    await expect(publicPage.getByRole("button", { name: "Meadow theme", exact: true })).toHaveAttribute("aria-pressed", "true");
     await publicPage.goto("/");
     await expect(publicPage.getByRole("heading", { name })).toBeVisible();
     await testInfo.attach("public-homepage", { body: await publicPage.screenshot(), contentType: "image/png" });
     await testInfo.attach("published-profile", {
-      body: JSON.stringify({ revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), command: "pnpm --filter @me3/web exec playwright test --config playwright.real.config.ts", reset: "start-worker.sh creates a fresh temporary D1 database per run", providers: "Cloud API unavailable on localhost:9999; password login and publishing use the real local Worker and D1", handle, name, publicUrl: publicPage.url(), verified: ["published profile persists in a fresh browser session", "root and legacy me.json discovery", "legacy home redirects", "password login returns to private workspace", "authenticated root remains public"] }, null, 2),
+      body: JSON.stringify({ revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), command: "pnpm --filter @me3/web exec playwright test --config playwright.real.config.ts", reset: "start-worker.sh creates a fresh temporary D1 database per run", providers: "Cloud API unavailable on localhost:9999; password login and publishing use the real local Worker and D1", workingTreeChanges: true, editor: "Look selectors and success finish; real uploaded layout/theme persisted", handle, name, publicUrl: publicPage.url(), verified: ["published profile persists in a fresh browser session", "root and legacy me.json discovery", "legacy home redirects", "password login returns to private workspace", "authenticated root remains public"] }, null, 2),
       contentType: "application/json",
     });
   } finally {

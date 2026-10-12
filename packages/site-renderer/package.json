@@ -32,6 +32,9 @@
     "typescript": "^5.3.3",
     "vitest": "^4.1.9"
   },
+  "dependencies": {
+    "lucide": "0.515.0"
+  },
   "license": "MIT",
   "files": [
     "dist",

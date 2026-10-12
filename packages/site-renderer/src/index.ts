@@ -1,3 +1,5 @@
+import { icons } from "lucide";
+import type { IconNode } from "lucide";
 import type { ProductDelivery } from "./product-delivery.js";
 import { normalizeSiteTheme, siteThemes, type SiteColorMode, type SiteThemeId } from "./themes.js";
 import { modernSiteCss } from "./modern-css.js";
@@ -308,6 +310,10 @@ const ICONS: Record<string, string> = {
   helpcircle:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.82 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>',
 };
+
+const LUCIDE_ICON_NAMES = new Map(
+  Object.keys(icons).map((name) => [normalizeIconName(name), name]),
+);
 
 export async function generateSiteHtml(
   profile: Me3SiteProfile,
@@ -1024,7 +1030,29 @@ function iconMarkup(name?: string): string {
     xcom: "twitter",
     twitterx: "twitter",
   };
-  return ICONS[key] || ICONS[normalized] || ICONS[aliases[normalized]] || escapeHtml(key);
+  const curatedIcon = ICONS[key] || ICONS[normalized] || ICONS[aliases[normalized]];
+  if (curatedIcon) return curatedIcon;
+
+  const lucideName = LUCIDE_ICON_NAMES.get(normalized);
+  if (lucideName) return renderLucideIcon(icons[lucideName as keyof typeof icons]);
+
+  return escapeHtml(key);
+}
+
+function renderLucideIcon(icon: IconNode): string {
+  const elements = icon
+    .map(([tag, attrs]) => {
+      const attributes = Object.entries(attrs)
+        .map(([name, value]) => {
+          const attributeName = name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+          return `${attributeName}="${escapeHtml(String(value))}"`;
+        })
+        .join(" ");
+      return `<${tag}${attributes ? ` ${attributes}` : ""}/>`;
+    })
+    .join("");
+
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${elements}</svg>`;
 }
 
 function normalizeIconName(name: string): string {
