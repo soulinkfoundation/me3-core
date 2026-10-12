@@ -104,6 +104,15 @@ export type EmailProviderSendRequest = {
   metadata?: Record<string, unknown> | null;
   createdBy?: string | null;
   approvedByUserId?: string | null;
+  approvedDeliveryIdentity?: EmailDeliveryIdentity;
+};
+
+export type EmailDeliveryIdentity = {
+  providerId: EmailProviderId;
+  fromAddress: string;
+  fromName: string;
+  replyToAddress: string;
+  routeRevision: string;
 };
 
 export type EmailProviderAttachment = {
@@ -778,6 +787,41 @@ export async function getConfiguredEmailIdentity(
   return { id: `email-provider:${provider.id}`, address };
 }
 
+// Read-only: resolve the actual delivery identity without decrypting credentials
+// or creating an installation key. Only the opaque route revision is exposed.
+export async function getEmailDeliveryIdentity(
+  env: Env,
+  ownerId: string,
+  input: Pick<EmailProviderSendRequest, "providerId" | "fromAddress" | "fromName" | "replyToAddress"> = {},
+): Promise<EmailDeliveryIdentity> {
+  return deliveryIdentity(env, ownerId, input, await resolveReadyProviderConfig(env, ownerId, input.providerId || null));
+}
+
+async function deliveryIdentity(
+  env: Env, ownerId: string,
+  input: Pick<EmailProviderSendRequest, "fromAddress" | "fromName" | "replyToAddress">,
+  resolved: Omit<ResolvedEmailProvider, "secret">,
+): Promise<EmailDeliveryIdentity> {
+  const managed = resolved.providerId === MANAGED_EMAIL_PROVIDER_ID;
+  const fromAddress = (managed ? await getManagedEmailFromAddress(env, ownerId) : input.fromAddress || resolved.config.fromAddress).trim().toLowerCase();
+  const fromName = (input.fromName || (managed ? await getManagedEmailFromName(env, ownerId) : resolved.config.fromName) || "ME3").trim();
+  const replyToAddress = (managed ? fromAddress : input.replyToAddress || resolved.config.replyToAddress || "").trim().toLowerCase();
+  if (!isValidEmail(fromAddress) || fromAddress.endsWith("@me3.local")) throw new EmailProviderInputError("Configured sender email address is invalid", 503);
+  if (replyToAddress && !isValidEmail(replyToAddress)) throw new EmailProviderInputError("Configured reply-to email address is invalid", 503);
+  const routeRevision = await sha256Hex(new TextEncoder().encode(JSON.stringify({
+    providerId: resolved.providerId, source: resolved.source, config: resolved.config,
+    managedOrigin: managed ? env.ME3_MANAGED_EMAIL_GATEWAY_ORIGIN : undefined,
+    managedInstallationId: managed ? env.ME3_MANAGED_INSTALLATION_ID : undefined,
+    fromAddress, fromName, replyToAddress,
+  })));
+  return { providerId: resolved.providerId, fromAddress, fromName, replyToAddress, routeRevision };
+}
+
+function sameDeliveryIdentity(left: EmailDeliveryIdentity, right: EmailDeliveryIdentity) {
+  return left.providerId === right.providerId && left.fromAddress === right.fromAddress && left.fromName === right.fromName
+    && left.replyToAddress === right.replyToAddress && left.routeRevision === right.routeRevision;
+}
+
 export async function updateEmailProviderSettings(
   env: Env,
   ownerId: string,
@@ -870,7 +914,12 @@ export async function sendEmailWithProvider(
   ownerId: string,
   input: EmailProviderSendRequest,
 ): Promise<EmailProviderSendResponse> {
-  const resolved = await resolveReadyProvider(env, ownerId, input.providerId || null);
+  const configured = await resolveReadyProviderConfig(env, ownerId, input.providerId || null);
+  const identity = await deliveryIdentity(env, ownerId, input, configured);
+  if (input.approvedDeliveryIdentity && !sameDeliveryIdentity(identity, input.approvedDeliveryIdentity)) {
+    throw new EmailProviderInputError("Email sender or delivery route changed after review. Read and approve it again.", 409);
+  }
+  const resolved = { ...configured, secret: await resolveProviderSecret(env, configured.row) };
   const managedGateway = resolved.providerId === MANAGED_EMAIL_PROVIDER_ID;
   if (managedGateway && input.purpose !== "workflow" && !input.approvedByUserId) {
     throw new EmailProviderInputError(
@@ -885,25 +934,7 @@ export async function sendEmailWithProvider(
   const operationAuditId = managedGateway && !input.mailboxMessageId
     ? await managedEmailOperationAuditId(ownerId, input.purpose, operationId!)
     : null;
-  const fromAddress = (
-    managedGateway
-      ? await getManagedEmailFromAddress(env, ownerId)
-      : input.fromAddress || resolved.config.fromAddress
-  )
-    .trim()
-    .toLowerCase();
-  const fromName = (
-    input.fromName ||
-    (managedGateway ? await getManagedEmailFromName(env, ownerId) : resolved.config.fromName) ||
-    "ME3"
-  ).trim();
-  const replyToAddress = (
-    managedGateway
-      ? fromAddress
-      : input.replyToAddress || resolved.config.replyToAddress || ""
-  )
-    .trim()
-    .toLowerCase();
+  const { fromAddress, fromName, replyToAddress } = identity;
   const toAddress = input.toAddress.trim().toLowerCase();
   const subject = input.subject.trim() || "(no subject)";
   const attachments = input.attachments || [];
@@ -939,6 +970,9 @@ export async function sendEmailWithProvider(
           managedRequestFingerprint,
         )
       : null;
+  if (input.approvedDeliveryIdentity && pendingAudit) {
+    throw new EmailProviderDeliveryUnknownError();
+  }
   const auditId = operationAuditId || pendingAudit?.id || crypto.randomUUID();
   const message: EmailProviderSendMessage = {
     auditId,
@@ -1028,6 +1062,14 @@ export async function sendEmailWithProvider(
 
   let result: EmailProviderSendResult;
   try {
+    if (input.approvedDeliveryIdentity) {
+      let current;
+      try { current = await getEmailDeliveryIdentity(env, ownerId, input); }
+      catch { throw new EmailProviderInputError("Email sender or delivery route is no longer available. Read and approve it again.", 409); }
+      if (!sameDeliveryIdentity(current, identity)) {
+        throw new EmailProviderInputError("Email sender or delivery route changed after review. Read and approve it again.", 409);
+      }
+    }
     result = await resolved.adapter.send(
       env,
       resolved.config,
@@ -1196,6 +1238,21 @@ async function resolveReadyProvider(
   ownerId: string,
   requestedProviderId: EmailProviderId | null,
 ): Promise<ResolvedEmailProvider> {
+  const configured = await resolveReadyProviderConfig(env, ownerId, requestedProviderId);
+  return { ...configured, secret: await resolveProviderSecret(env, configured.row) };
+}
+
+async function resolveProviderSecret(env: Env, row: DbEmailProviderSetting | null) {
+  return row?.encrypted_secret
+    ? decryptProviderSecret(row.encrypted_secret, await getOrCreateInstallEncryptionKey(env))
+    : null;
+}
+
+async function resolveReadyProviderConfig(
+  env: Env,
+  ownerId: string,
+  requestedProviderId: EmailProviderId | null,
+): Promise<Omit<ResolvedEmailProvider, "secret">> {
   const settings = await listEmailProviderRows(env, ownerId);
   const providerId =
     requestedProviderId ||
@@ -1207,19 +1264,12 @@ async function resolveReadyProvider(
   if (!adapter.isConfigured(row, config, env)) {
     throw new EmailProviderInputError(`${adapter.label} is not ready to send yet`, 503);
   }
-  const secret = row?.encrypted_secret
-    ? await decryptProviderSecret(
-        row.encrypted_secret,
-        await getOrCreateInstallEncryptionKey(env),
-      )
-    : null;
   return {
     adapter,
     providerId,
     row,
     config,
     source: adapter.source(row, config, env),
-    secret,
   };
 }
 

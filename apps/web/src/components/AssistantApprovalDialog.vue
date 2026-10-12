@@ -7,8 +7,8 @@ import UiIcon from "./UiIcon.vue";
 const props = defineProps<{ approval: { title: string; summary?: string | null; payload?: Record<string, unknown> } | null; busy?: boolean; error?: string }>();
 const emit = defineEmits<{ close: []; decide: [decision: "approved" | "declined"] }>();
 const headingId = useId();
-const labels: Record<string, string> = { recipient: "To", body: "Body", bodyText: "Body", textBody: "Body", htmlBody: "HTML body", replacementBody: "Replacement body", target: "Reviewed item", startsAt: "Starts", endsAt: "Ends", remindAt: "Reminder time", requestedTimezone: "Requested timezone", request: "Meeting request", selectedSlot: "Selected time", scheduledFor: "Scheduled time" };
-const metadata = new Set(["title", "summary", "targetDomain", "id", "revision", "updatedAt", "createdAt", "requestedAt", "resolvedAt", "status", "pluginId", "actionId", "riskLevel", "readAt", "sourceKind", "sourceName", "peerNodeId", "threadKey", "direction", "kind", "folder", "unread", "createdBy", "preview", "rawHeadersJson", "rawMessage", "inReplyTo", "referencesHeader", "messageIdHeader"]);
+const labels: Record<string, string> = { recipient: "To", fromAddress: "From", fromName: "Sender name", replyToAddress: "Replies to", deliveryIdentity: "Sending details", body: "Body", bodyText: "Body", textBody: "Body", htmlBody: "HTML body", replacementBody: "Replacement body", target: "Reviewed item", startsAt: "Starts", endsAt: "Ends", remindAt: "Reminder time", requestedTimezone: "Requested timezone", request: "Meeting request", selectedSlot: "Selected time", scheduledFor: "Scheduled time" };
+const metadata = new Set(["title", "summary", "targetDomain", "id", "revision", "routeRevision", "storedFromAddress", "updatedAt", "createdAt", "requestedAt", "resolvedAt", "status", "pluginId", "actionId", "riskLevel", "readAt", "sourceKind", "sourceName", "peerNodeId", "threadKey", "direction", "kind", "folder", "unread", "createdBy", "preview", "rawHeadersJson", "rawMessage", "inReplyTo", "referencesHeader", "messageIdHeader"]);
 const fields = computed(() => {
   const rows: Array<{ label: string; value: string }> = [];
   const card = props.approval?.payload || {};
@@ -20,6 +20,7 @@ const fields = computed(() => {
     }
     if (value === null || value === undefined || metadata.has(key) && key !== "title" || /Id$/.test(key)) return;
     if (path.length === 1 && ["title", "summary"].includes(key)) return;
+    if (["fromAddress", "fromName"].includes(key) && path.includes("Sending details") && value === (card.target as Record<string, unknown> | undefined)?.[key]) return;
     if (path[0] === "Reviewed item" && ((["to", "toAddress"].includes(key) && card.recipient !== undefined) || key === "subject" && card.subject !== undefined || ["body", "bodyText", "textBody"].includes(key) && card.body !== undefined)) return;
     if (Array.isArray(value)) { value.forEach((entry, index) => visit(entry, [...path, String(index + 1)], "")); return; }
     if (typeof value === "object") {

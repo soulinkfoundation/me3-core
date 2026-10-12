@@ -44,6 +44,7 @@ export function mailboxTools(): AgentTool[] {
         const id = requiredString(args.draftId, "Draft ID");
         const expected = await requireTarget<MailboxRecord>(context, "mailbox message", id);
         const current = resultOrThrow(await service.read(id)).message;
+        if (current.deliveryIdentity === null) throw new Error("Configure an email sender before reviewing this draft for sending.");
         if (context.approved) {
           const immutable = (message: MailboxRecord) => Object.fromEntries(["to", "toAddress", "fromAddress", "subject", "bodyText", "textBody", "htmlBody", "inReplyTo", "referencesHeader", "messageIdHeader"].map(key => [key, message[key] ?? null]));
           assertUnchanged(immutable(expected), immutable(current), "Email draft");

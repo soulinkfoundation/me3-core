@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { executeNewAgentTurn, type NewAgentDispatchInput } from "./agent-runtime";
 import { persistAgentInput, decideAgentApproval } from "../../../packages/agent/src/store";
 import { createAgentMailboxServices } from "./agent-mailbox-services";
+import { getAgentMailboxMessage } from "../../../packages/agent/src/services/mailbox";
 import { EmailProviderInputError } from "./email-providers";
 import { canonicalJson, toolIdempotencyKey } from "../../../packages/agent/src/schema";
 import type { AgentDb, AgentTargetIntentEvidence } from "../../../packages/agent/src/types";
@@ -334,7 +335,12 @@ describe("safe terminal FAILED intervening owner history with an authoritative o
 
   it.each(["pending", "sent"] as const)("reconciles restored legacy raw-JSON claim %s without a provider retry", async status => {
     const f = fixture(), send = vi.fn(async () => ({ messageId: "must-not-send" }));
-    const { mailbox, draftId, created } = await nativeMailbox(f, send);
+    const { mailbox, draftId } = await nativeMailbox(f, send);
+    const native = await getAgentMailboxMessage(f.env, "owner", draftId);
+    if ("error" in native) throw new Error(native.error);
+    // Historical claims predate the effective-sender projection and bind the
+    // native stored alias, with no deliveryIdentity/storedFromAddress fields.
+    const created = { ...native.message, toAddress: native.message.toAddress || "", bodyText: native.message.body };
     const key = "restored-legacy-operation", operationId = "agent-mailbox-" + await sha256(JSON.stringify(["owner", key]));
     // A restored pre-canonicalization operation uses the old raw insertion order.
     // This is explicitly historical fixture state, not a fabricated provider red.

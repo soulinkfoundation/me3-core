@@ -1,7 +1,8 @@
 import type { WebContentFetcher, WebResearchService } from "@me3-core/web-research";
 import type { AgentLandingPageEnv } from "../../../agent-chat/src/landing-pages";
 
-export type MailboxRecord = { id: string; status?: string; to?: string | null; toAddress?: string | null; subject?: string | null; bodyText?: string | null; [key: string]: unknown };
+export type MailboxDeliveryIdentity = { providerId: string; fromAddress: string; fromName: string; replyToAddress: string; routeRevision: string };
+export type MailboxRecord = { id: string; status?: string; to?: string | null; toAddress?: string | null; subject?: string | null; bodyText?: string | null; fromAddress?: string | null; storedFromAddress?: string | null; deliveryIdentity?: MailboxDeliveryIdentity | null; [key: string]: unknown };
 export interface AgentMailboxServices {
   search(options: Record<string, unknown>): Promise<{ messages: MailboxRecord[]; total: number }>;
   read(messageId: string): Promise<{ message: MailboxRecord } | { error: string; status?: number }>;
