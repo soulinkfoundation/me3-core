@@ -1616,7 +1616,7 @@ export const useWizardStore = defineStore("wizard", () => {
       visibleSteps.push({ id: "testimonials", name: "Testimonials" });
     }
 
-    visibleSteps.push({ id: "publish", name: "Look" });
+    visibleSteps.push({ id: "publish", name: "Publish" });
     return visibleSteps;
   });
 

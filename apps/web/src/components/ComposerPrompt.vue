@@ -24,7 +24,7 @@ onBeforeUnmount(stop);
 </script>
 <template><span class="composer-prompt" :style="{ opacity }" aria-hidden="true">{{ prompts[index] || prompts[0] }}</span></template>
 <style scoped>
-.composer-prompt { position: absolute; inset: 0; display: flex; align-items: center; pointer-events: none; color: var(--ui-text-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; transition: opacity .6s ease-in-out; }
+.composer-prompt { position: absolute; inset: 0; display: flex; align-items: center; pointer-events: none; color: color-mix(in oklab, var(--ui-text-muted) 70%, transparent); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; transition: opacity .6s ease-in-out; }
 .composer-prompt[style*="opacity: 0"] { transition-duration: .5s; }
 @media (prefers-reduced-motion: reduce) { .composer-prompt { transition: none; } }
 </style>

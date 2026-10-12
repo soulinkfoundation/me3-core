@@ -10,12 +10,20 @@ import { ensurePluginAccess, invalidatePluginAccess } from "../utils/pluginAcces
 import { permanentPublicSiteUrl, resolvePublicProfileUrl } from "../utils/publicSiteUrl";
 import { useAppToast } from "../composables/useAppToast";
 import UiIcon from "./UiIcon.vue";
+import Button from "./Button.vue";
+import { useTheme, type ThemePreference } from "../composables/useTheme";
 
 const auth = useAuthStore();
 const sites = useSitesStore();
 const route = useRoute();
 const router = useRouter();
 const { toastFromUnknown } = useAppToast();
+const { themePreference, setThemePreference } = useTheme();
+const appearances = [
+  { id: "system", label: "System", icon: "Monitor" },
+  { id: "light", label: "Light", icon: "Sun" },
+  { id: "dark", label: "Dark", icon: "Moon" },
+] as const satisfies readonly { id: ThemePreference; label: string; icon: "Monitor" | "Sun" | "Moon" }[];
 const open = ref(false);
 const trigger = ref<HTMLButtonElement | null>(null);
 const menu = ref<HTMLElement | null>(null);
@@ -77,7 +85,7 @@ function keys(event: KeyboardEvent) {
   if (event.key === "Tab") { close(); return; }
   if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
   event.preventDefault();
-  const items = [...menu.value!.querySelectorAll<HTMLElement>("[role=menuitem]:not(:disabled)")];
+  const items = [...menu.value!.querySelectorAll<HTMLElement>("[role^=menuitem]:not(:disabled)")];
   const current = items.indexOf(document.activeElement as HTMLElement);
   const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
   items[next]?.focus();
@@ -132,6 +140,9 @@ onBeforeUnmount(() => {
         <RouterLink v-for="destination in destinations" :key="destination.path" :to="destination.path" class="profile-menu__row" role="menuitem" tabindex="-1" :aria-label="destination.label" :aria-current="route.fullPath === destination.path ? 'page' : undefined" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">{{ destination.emoji }}</span><span>{{ destination.label }}</span></RouterLink>
       </nav>
       <div class="profile-menu__settings">
+        <div class="profile-menu__appearance" role="group" aria-label="Appearance">
+          <Button v-for="option in appearances" :key="option.id" :color="themePreference === option.id ? 'primary' : 'ghost'" size="large" role="menuitemradio" :aria-checked="themePreference === option.id" :aria-label="`${option.label} appearance`" @click="setThemePreference(option.id)"><UiIcon :name="option.icon" :size="16" />{{ option.label }}</Button>
+        </div>
         <RouterLink to="/settings" class="profile-menu__row" aria-label="Settings" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Settings" :size="18" />Settings</RouterLink>
         <RouterLink to="/settings?section=connections" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Link" :size="18" />App connections</RouterLink>
         <RouterLink to="/settings?section=plugins" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Puzzle" :size="18" />Plugins</RouterLink>
@@ -157,6 +168,10 @@ onBeforeUnmount(() => {
 .profile-menu__row:hover, .profile-menu__row[aria-current="page"] { background: var(--ui-surface-muted); }
 .profile-menu__emoji { width: 22px; text-align: center; font: 20px/1 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
 .profile-menu__settings { padding-top: 8px; margin-top: 8px; box-shadow: 0 -1px var(--ui-border); }
+.profile-menu__appearance { display: flex; gap: 2px; margin: 4px 0 10px; padding: 3px; border-radius: 26px; background: var(--ui-surface-muted); }
+.profile-menu__appearance > button { flex: 1; min-width: 0; min-height: 44px; padding-inline: 8px; }
+.profile-menu__appearance :deep(.me3-btn__label) { display: flex; align-items: center; gap: 5px; }
+.profile-menu__appearance :deep(.me3-btn--primary svg) { color: inherit; }
 .profile-menu__settings svg, .profile-menu__logout svg { margin-inline: 2px; color: var(--ui-text-muted); }
 .profile-menu__logout { color: var(--ui-danger, #b42318); }
 .profile-menu__logout:disabled { opacity: .5; cursor: wait; }

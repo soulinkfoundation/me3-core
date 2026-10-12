@@ -37,6 +37,8 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       if (mobile) await page.screenshot({ path: testInfo.outputPath(`${name}-full.png`), fullPage: true, animations: 'disabled' });
     }
     await page.goto('/create?step=basics', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('.wizard-header').getByRole('button', { name: 'Publish', exact: true })).toHaveCount(0);
+    await expect(page.locator('.wizard-step-button small')).toHaveCount(0);
     await page.locator('#name').fill('Demo Owner'); await page.locator('#handle').fill('demo-site');
     await page.getByRole('checkbox', { name: 'Make my profile public' }).check();
     await expect(page.locator('.nav-btn.next')).toBeEnabled();
@@ -55,7 +57,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       await expect(page.locator('.step-name')).toContainText(name);
     }
     await jump('Features');
-    for (const label of ['Enable links', 'Enable call-to-action', 'Enable bookings', 'Enable newsletter']) await page.getByRole('switch', { name: label, exact: true }).check();
+    for (const label of ['Enable links', 'Enable call-to-action', 'Enable bookings', 'Enable newsletter', 'Enable testimonials', 'Enable blog']) await page.getByRole('switch', { name: label, exact: true }).check();
     await screenshot('editor-features');
     await jump('Links'); await page.getByRole('button', { name: 'Instagram', exact: true }).click();
     await page.getByRole('textbox', { name: 'Instagram link' }).fill('demo');
@@ -65,12 +67,57 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await action.getByRole('textbox', { name: 'Link URL', exact: true }).fill('#booking');
     await action.getByRole('button', { name: 'Add button', exact: true }).click();
     await expect(page.locator('.button-item')).toContainText('Book a session');
+    await expect(page.locator('.button-item .remove-btn, .button-item .drag-handle')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Edit Book a session', exact: true }).click();
+    await expect(action.getByRole('button', { name: 'Remove button', exact: true })).toBeVisible();
+    await action.getByRole('button', { name: 'Close action button', exact: true }).click();
+    await jump('Pages');
+    for (const title of ['First Review', 'Second Review']) {
+      await page.locator('.add-pages').first().getByRole('button', { name: 'Custom', exact: true }).click();
+      await page.locator('#page-title-input').fill(title);
+      await page.getByRole('button', { name: 'Back to pages' }).click();
+    }
+    const first = page.locator('.page-item').filter({ hasText: 'First Review' }).locator('.page-details');
+    const second = page.locator('.page-item').filter({ hasText: 'Second Review' }).locator('.page-details');
+    const a = await first.boundingBox(), b = await second.boundingBox(); expect(a && b).toBeTruthy();
+    await page.mouse.move(b!.x + 10, b!.y + b!.height / 2); await page.mouse.down();
+    await page.mouse.move(a!.x + 10, a!.y + 3, { steps: 12 }); await page.mouse.up();
+    await expect(page.locator('.page-title')).toHaveText(['Home', 'Second Review', 'First Review']);
+    await page.getByRole('button', { name: 'Edit home', exact: true }).click();
+    await expect(page.locator('#home-main-action')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Back to pages' }).click();
+    await screenshot('editor-pages');
+    await jump('Blog');
+    await page.getByRole('button', { name: 'Add a post', exact: true }).click();
+    await page.locator('#blog-title-input').fill('Review article');
+    await page.locator('[contenteditable="true"]').pressSequentially('![Review](/favicon.png)');
+    await page.getByRole('button', { name: 'Back to posts' }).click();
+    await expect(page.locator('.post-thumbnail')).toHaveAttribute('src', '/favicon.png');
+    await expect(page.locator('.post-item .remove-btn')).toHaveCount(0);
+    await screenshot('editor-blog');
     await jump('Bookings');
     await page.getByRole('button', { name: 'Add', exact: true }).click();
     await page.getByRole('button', { name: '1:1', exact: true }).click();
     await expect(page.getByText('Confirmation emails', { exact: true })).toBeVisible();
     await screenshot('editor-bookings');
-    await jump('Look');
+    await jump('Testimonials');
+    await page.getByRole('button', { name: 'Add testimonial', exact: true }).click();
+    const testimonialEditor = page.getByRole('dialog', { name: 'Edit testimonial', exact: true });
+    await testimonialEditor.getByRole('textbox', { name: 'Name', exact: true }).fill('Sam');
+    await testimonialEditor.getByRole('textbox', { name: 'Quote', exact: true }).fill('A thoughtful session.');
+    await testimonialEditor.getByRole('button', { name: 'Add testimonial', exact: true }).click();
+    await expect(page.locator('.testimonial-item')).not.toHaveAttribute('open');
+    await expect(page.getByRole('button', { name: 'Remove Sam', exact: true })).toHaveCount(0);
+    const row = page.locator('.swipe-row');
+    const rect = await row.boundingBox(); expect(rect).toBeTruthy();
+    await page.mouse.move(rect!.x + rect!.width - 80, rect!.y + 20); await page.mouse.down();
+    await page.mouse.move(rect!.x + 20, rect!.y + 20); await page.mouse.up();
+    await expect(page.getByRole('button', { name: 'Remove Sam', exact: true })).toBeVisible();
+    await expect(page.locator('.testimonial-item')).not.toHaveAttribute('open');
+    await screenshot('editor-testimonials');
+    await page.getByRole('button', { name: 'Remove Sam', exact: true }).click();
+    await expect(page.locator('.testimonial-item')).toHaveCount(0);
+    await jump('Publish');
     await page.getByRole('radio', { name: 'Split', exact: true }).check();
     await page.getByRole('button', { name: 'Meadow theme', exact: true }).click();
     await page.getByRole('radio', { name: 'Dark', exact: true }).check();
@@ -79,7 +126,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     // Publishing from a prior step uses the same pipeline and leaves the draft
     // editable on failure; it must not show the success finish prematurely.
     await jump('Basics'); await page.getByRole('button', { name: 'Publish', exact: true }).click();
-    await expect(page.getByRole('alert')).toContainText('Temporary storage error');
+    await expect(page.locator('[data-sonner-toast]')).toContainText('Temporary storage error');
     await expect(page.getByRole('heading', { name: 'You’re live', exact: true })).toHaveCount(0);
     rejectUpload = false; await page.getByRole('button', { name: 'Publish', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'You’re live', exact: true })).toBeVisible();

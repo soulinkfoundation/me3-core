@@ -80,6 +80,7 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
 };
 const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value)));
 const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id)));
+const addCards = computed(() => [...available.value].sort((a, b) => Number(visible.value.includes(b)) - Number(visible.value.includes(a))));
 const openTasks = computed(() => homeOpenTasks(tasks.value).slice(0, 6));
 const doneToday = computed(() => homeDoneToday(tasks.value));
 const activeGoals = computed(() => goals.value.filter(goal => goal.status !== "completed"));
@@ -348,13 +349,13 @@ onBeforeUnmount(() => {
             </template>
             <template v-else-if="card === 'mission'">
               <p v-if="mission" class="home-mission">{{ mission }}</p><p v-else class="home-muted">What do you want your life built around? Start there, then add goals.</p>
+              <p v-if="activeGoals.length > 1" class="home-muted home-goal-hint">{{ activeGoals.length }} goals · swipe to explore</p>
               <div v-if="activeGoals.length" class="home-goal-line" aria-label="Goals">
                 <button v-for="goal in activeGoals" :key="goal.id" type="button" :aria-pressed="selectedGoal?.id === goal.id" @click="pickedGoal = goal.id"><span><span aria-hidden="true">{{ areaFor(goal.areaId)?.emoji || '🎯' }}</span> {{ goal.title }}</span><span class="home-progress" aria-hidden="true"><i :style="{ width: `${goal.progress || 0}%` }" /></span></button>
               </div>
               <div v-if="selectedGoal" class="home-goal-tasks">
                 <p class="home-muted home-goal-meta">{{ selectedGoal.progress || 0 }}% there · {{ goalTasks.length }} {{ goalTasks.length === 1 ? 'task' : 'tasks' }}<span v-if="areaFor(selectedGoal.areaId)"> · <span aria-hidden="true">{{ areaFor(selectedGoal.areaId)?.emoji }}</span> {{ areaFor(selectedGoal.areaId)?.label }}</span></p>
                 <div v-for="task in goalTasks.slice(0, 3)" :key="task.id" class="home-line"><button type="button" class="home-task-check" :aria-label="`Complete ${task.title}`" :disabled="busy.includes(task.id)" @click="complete(task)"><UiIcon name="Circle" :size="20" /></button><RouterLink :to="`/tasks?task=${encodeURIComponent(task.id)}`">{{ task.title }}</RouterLink></div>
-                <p v-if="!goalTasks.length" class="home-muted">No open tasks for this goal.</p>
                 <div class="home-actions"><RouterLink v-if="goalTasks.length > 3" to="/tasks" class="home-quiet">{{ goalTasks.length - 3 }} more</RouterLink><button type="button" class="home-quiet" @click="emit('suggest', `Add a task to my goal “${selectedGoal.title}” (goal ${selectedGoal.id}).`)"><UiIcon name="Plus" :size="16" />Add a task</button></div>
               </div>
               <div v-else class="home-actions"><button v-if="!mission" type="button" class="home-quiet" @click="emit('suggest', 'Help me write my mission.')"><UiIcon name="Plus" :size="16" />Write your mission</button><button type="button" class="home-quiet" @click="addGoal()"><UiIcon name="Plus" :size="16" />Add a goal</button></div>
@@ -378,7 +379,7 @@ onBeforeUnmount(() => {
     <button type="button" class="home-add" @click="dialog = 'add'"><UiIcon name="Plus" :size="26" /><span>Add to Home</span></button>
     <AppDialog :open="dialog !== null" :aria-label="dialog === 'wheel' ? 'Wheel of Life' : 'Add to Home'" :close-on-backdrop="!wheelSaving" @close="!wheelSaving && (dialog = null)">
       <section class="home-dialog" :class="{ 'home-dialog--wheel': dialog === 'wheel' }"><header><h2>{{ dialog === 'wheel' ? '🛞 Wheel of Life' : 'Add to Home' }}</h2><button type="button" aria-label="Close Home editor" :disabled="wheelSaving" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>
-        <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in available" :key="card" type="button" :aria-label="cards[card].title" :aria-pressed="visible.includes(card)" class="home-add-tile" @click="visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
+        <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in addCards" :key="card" type="button" :aria-label="card === 'today' ? 'Calendar' : cards[card].title" :aria-pressed="visible.includes(card)" class="home-add-tile" @click="visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ card === 'today' ? 'Calendar' : cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
         <p v-if="dialog === 'add'" class="home-muted">Drag a card, or use its options menu to move or remove it.</p>
         <template v-if="dialog === 'wheel'"><div class="home-wheel-dialog"><HomeWheelChart :areas="dialogAreas" :selected="selectedArea?.id" interactive @select="pickedArea = $event" /><div class="home-wheel-rows"><template v-for="area in dialogAreas" :key="area.id"><button type="button" :aria-label="`Select ${area.label}`" :aria-pressed="selectedArea?.id === area.id" @click="pickedArea = area.id"><span class="home-emoji" aria-hidden="true">{{ area.emoji }}</span><span>{{ area.label }}</span><strong>{{ area.value ?? '—' }}</strong></button><label v-if="checkingIn" class="home-wheel-range"><span class="sr-only">{{ area.label }} score</span><input type="range" min="1" max="10" :value="area.value ?? 5" :disabled="wheelSaving" :aria-label="`${area.label} score`" @input="area.value = Number(($event.target as HTMLInputElement).value)" /><output>{{ area.value === null ? 'Not scored' : `${area.value}/10` }}</output></label></template></div></div>
           <div v-if="selectedArea && !checkingIn" class="home-wheel-goals"><h3>{{ selectedArea.emoji }} {{ selectedArea.label }}</h3><RouterLink v-for="goal in areaGoals(selectedArea.id)" :key="goal.id" to="/tasks?goals=1">{{ goal.title }} · {{ goal.progress || 0 }}%</RouterLink><button v-if="!areaGoals(selectedArea.id).length" type="button" class="home-quiet" @click="addGoal(selectedArea.id)"><UiIcon name="Plus" :size="16" />Add a goal</button></div>
@@ -444,8 +445,10 @@ p { margin: 4px 0; }
 .home-card__menu { position: absolute; right: 10px; top: 52px; z-index: 60; display: grid; width: 210px; padding: 6px; background: var(--ui-surface); border-radius: 16px; box-shadow: var(--ui-shadow-md); }
 .home-card__menu button { display: flex; gap: 10px; align-items: center; text-align: left; padding: 0 12px; font-size: 14px; }
 .home-danger { color: var(--ui-danger, #dc2626); }
-.home-mission { margin: 2px 0 12px; font-size: 17px; font-weight: 600; line-height: 1.35; }
-.home-goal-line { display: flex; gap: 18px; overflow-x: auto; scrollbar-width: thin; }
+.home-mission { margin: 8px 0 20px; font-family: var(--font-serif, Georgia, serif); font-size: 22px; font-weight: 500; line-height: 1.4; text-align: center; }
+.home-goal-hint { margin: 0 0 6px; font-size: 12px; }
+.home-goal-line { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: thin; }
+.home-goal-line button > span:first-child { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-goal-line button { flex-shrink: 0; display: grid; gap: 6px; min-width: 0; padding: 4px 0 0; min-height: 42px; border-radius: 0; color: var(--ui-text-muted); font-size: 15px; font-weight: 600; text-align: left; background: transparent; }
 .home-goal-line button[aria-pressed="true"] { color: var(--ui-text); }
 .home-progress { display: block; height: 3px; border-radius: 3px; background: var(--ui-surface-muted); opacity: 0; }
@@ -465,7 +468,7 @@ p { margin: 4px 0; }
 .home-stats { display: flex; gap: 8px; }
 .home-stats > div { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 16px; background: var(--ui-surface-muted); display: grid; }
 .home-stats strong { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
-.home-add { display: flex; flex-direction: column; align-items: center; justify-self: center; gap: 4px; margin: 20px auto 0; padding: 8px 16px; font-size: 12px; }
+.home-add { display: flex; flex-direction: column; align-items: center; justify-self: center; gap: 4px; margin: 36px auto 0; padding: 8px 16px; font-size: 12px; }
 .home-add span { color: var(--ui-text-muted); }
 .home-dialog { width: min(520px, 100%); max-height: 88dvh; overflow: auto; padding: 20px; border-radius: 28px; background: var(--ui-surface); box-sizing: border-box; box-shadow: var(--ui-shadow-md); }
 .home-dialog--wheel { width: min(760px, 100%); }

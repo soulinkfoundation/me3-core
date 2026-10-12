@@ -2286,7 +2286,7 @@ describe("wizard store", () => {
         "Who you help",
         "Features",
         "Pages",
-        "Look",
+        "Publish",
       ]);
     });
 
@@ -2373,7 +2373,7 @@ describe("wizard store", () => {
       const bookingsIndex = names.indexOf("Bookings");
       const offeringsIndex = names.indexOf("Products");
       const testimonialsIndex = names.indexOf("Testimonials");
-      const publishIndex = names.indexOf("Look");
+      const publishIndex = names.indexOf("Publish");
 
       expect(newsletterIndex).toBeLessThan(bookingsIndex);
       expect(bookingsIndex).toBeLessThan(blogIndex);
@@ -2391,7 +2391,7 @@ describe("wizard store", () => {
       store.testimonialsEnabled = true;
 
       const names = store.stepNames;
-      expect(names[names.length - 1]).toBe("Look");
+      expect(names[names.length - 1]).toBe("Publish");
     });
 
     it("should update totalSteps when features are toggled", () => {

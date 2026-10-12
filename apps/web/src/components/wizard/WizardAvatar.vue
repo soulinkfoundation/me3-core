@@ -4,6 +4,7 @@ import { Cropper } from "vue-advanced-cropper";
 import "vue-advanced-cropper/dist/style.css";
 import { useWizardStore } from "../../stores/wizard";
 import UiIcon from "../UiIcon.vue";
+import Button from "../Button.vue";
 
 const wizard = useWizardStore();
 const isOrganization = computed(() => wizard.siteRole === "organization");
@@ -14,8 +15,7 @@ const cropSessionSourceBlob = ref<Blob | null>(null);
 const tempImageUrl = ref<string | null>(null);
 const showCropper = ref(false);
 const isTouchLike = ref(false);
-const isLoadingRandomAvatar = ref(false);
-const randomAvatarError = ref<string | null>(null);
+const avatarError = ref<string | null>(null);
 
 const stencilProps = {
   aspectRatio: 1,
@@ -85,96 +85,9 @@ function cancelCrop() {
   showCropper.value = false;
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { signal: controller.signal });
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
-function randomSeed() {
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-async function loadRandomAvatar() {
-  if (isLoadingRandomAvatar.value) return;
-  isLoadingRandomAvatar.value = true;
-  randomAvatarError.value = null;
-
-  const styles = [
-    "adventurer",
-    "avataaars",
-    "bottts",
-    "fun-emoji",
-    "lorelei",
-    "notionists",
-    "pixel-art",
-  ] as const;
-
-  const style = styles[Math.floor(Math.random() * styles.length)];
-  const seed = randomSeed();
-  const url = `https://api.dicebear.com/9.x/${style}/svg?seed=${encodeURIComponent(
-    seed,
-  )}`;
-
-  try {
-    const res = await fetchWithTimeout(url, 10_000);
-    if (!res.ok) throw new Error(`Failed to fetch avatar (${res.status})`);
-    const svgText = await res.text();
-
-    const svgBlob = new Blob([svgText], { type: "image/svg+xml" });
-    const svgObjectUrl = URL.createObjectURL(svgBlob);
-
-    try {
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const image = new Image();
-        image.onload = () => resolve(image);
-        image.onerror = () =>
-          reject(new Error("Failed to decode avatar image"));
-        image.src = svgObjectUrl;
-      });
-
-      const outputCanvas = document.createElement("canvas");
-      outputCanvas.width = 400;
-      outputCanvas.height = 400;
-
-      const ctx = outputCanvas.getContext("2d");
-      if (!ctx) throw new Error("Failed to prepare image canvas");
-
-      // Ensure JPEG has an opaque background.
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, 400, 400);
-      ctx.drawImage(img, 0, 0, 400, 400);
-
-      const blob = await new Promise<Blob | null>((resolve) => {
-        outputCanvas.toBlob(resolve, "image/jpeg", 0.9);
-      });
-
-      const dataUrl = outputCanvas.toDataURL("image/jpeg", 0.9);
-
-      wizard.updateProfile({
-        avatar: dataUrl,
-        avatarBlob: blob,
-        avatarOriginalBlob: null,
-      });
-    } finally {
-      URL.revokeObjectURL(svgObjectUrl);
-    }
-  } catch (e) {
-    console.error(e);
-    randomAvatarError.value =
-      "Couldn't load a random avatar right now. Please try again.";
-  } finally {
-    isLoadingRandomAvatar.value = false;
-  }
-}
-
 async function startRecropAvatar() {
   if (!canRecropAvatar.value) return;
-  randomAvatarError.value = null;
+  avatarError.value = null;
   cropSessionSourceBlob.value = null;
 
   if (wizard.profile.avatarOriginalBlob) {
@@ -193,7 +106,7 @@ async function startRecropAvatar() {
       showCropper.value = true;
     } catch (e) {
       console.error(e);
-      randomAvatarError.value =
+      avatarError.value =
         "Couldn't open this image for cropping. Try uploading again.";
     }
   }
@@ -264,16 +177,8 @@ function removeAvatar() {
           <UiIcon name="User" :size="68" />
         </span>
 
-        <div
-          v-if="isLoadingRandomAvatar"
-          class="loading-overlay"
-          aria-hidden="true"
-        >
-          <div class="loading-pill">Loading…</div>
-        </div>
-
         <button
-          v-if="canRecropAvatar && !isLoadingRandomAvatar"
+          v-if="canRecropAvatar"
           class="crop-overlay"
           type="button"
           :aria-label="isOrganization ? 'Crop site logo' : 'Crop avatar'"
@@ -293,28 +198,10 @@ function removeAvatar() {
           />
         </label>
 
-        <button
-          class="random-btn"
-          type="button"
-          :disabled="isLoadingRandomAvatar"
-          @click="loadRandomAvatar"
-        >
-          Random
-          <span class="btn-icon" aria-hidden="true" style="font-size: 18px">
-            🎲
-          </span>
-        </button>
-
-        <button
-          v-if="wizard.profile.avatar"
-          class="remove-btn"
-          @click="removeAvatar"
-        >
-          Remove
-        </button>
+        <Button v-if="wizard.profile.avatar" color="ghost" size="large" icon-only aria-label="Remove avatar" @click="removeAvatar"><UiIcon name="Trash2" :size="20" /></Button>
       </div>
 
-      <p v-if="randomAvatarError" class="error-hint">{{ randomAvatarError }}</p>
+      <p v-if="avatarError" class="error-hint">{{ avatarError }}</p>
     </div>
 
     <!-- Cropper Modal -->
@@ -478,46 +365,6 @@ function removeAvatar() {
 
 .upload-btn input {
   display: none;
-}
-
-.random-btn {
-  padding: 12px 24px;
-  background: var(--color-border);
-  color: var(--color-text);
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.random-btn:hover {
-  opacity: 0.9;
-}
-
-.random-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.remove-btn {
-  padding: 12px 24px;
-  background: var(--color-border);
-  color: var(--color-text);
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.remove-btn:hover {
-  background: #ffcdd2;
-  color: #c62828;
 }
 
 .error-hint {

@@ -4,6 +4,7 @@ import { Cropper } from "vue-advanced-cropper";
 import "vue-advanced-cropper/dist/style.css";
 import { useWizardStore } from "../../stores/wizard";
 import UiIcon from "../UiIcon.vue";
+import Button from "../Button.vue";
 
 const wizard = useWizardStore();
 
@@ -197,25 +198,8 @@ function removeBanner() {
           />
         </label>
 
-        <button
-          class="random-btn"
-          type="button"
-          :disabled="isLoadingRandomBanner"
-          @click="loadRandomBanner"
-        >
-          Random
-          <span class="btn-icon" aria-hidden="true" style="font-size: 18px">
-            🎲
-          </span>
-        </button>
-
-        <button
-          v-if="wizard.profile.banner"
-          class="remove-btn"
-          @click="removeBanner"
-        >
-          Remove
-        </button>
+        <Button color="ghost" size="large" icon-only aria-label="Random banner" :disabled="isLoadingRandomBanner" @click="loadRandomBanner"><UiIcon name="Sparkles" :size="20" /></Button>
+        <Button v-if="wizard.profile.banner" color="ghost" size="large" icon-only aria-label="Remove banner" @click="removeBanner"><UiIcon name="Trash2" :size="20" /></Button>
       </div>
 
       <p v-if="randomBannerError" class="error-hint">{{ randomBannerError }}</p>
@@ -355,46 +339,6 @@ function removeBanner() {
 
 .upload-btn input {
   display: none;
-}
-
-.random-btn {
-  padding: 12px 24px;
-  background: var(--color-border);
-  color: var(--color-text);
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.random-btn:hover {
-  opacity: 0.9;
-}
-
-.random-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.remove-btn {
-  padding: 12px 24px;
-  background: var(--color-border);
-  color: var(--color-text);
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.remove-btn:hover {
-  background: #ffcdd2;
-  color: #c62828;
 }
 
 .error-hint {

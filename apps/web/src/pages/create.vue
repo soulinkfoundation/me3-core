@@ -13,6 +13,7 @@ import GeneratedSitePreview from "../components/GeneratedSitePreview.vue";
 import PageLoading from "../components/PageLoading.vue";
 import AppDialog from "../components/AppDialog.vue";
 import UiIcon from "../components/UiIcon.vue";
+import Button from "../components/Button.vue";
 import { resolvePublicSiteUrl } from "../utils/publicSiteUrl";
 import { useAppToast } from "../composables/useAppToast";
 
@@ -48,13 +49,16 @@ const sites = useSitesStore();
 const route = useRoute();
 const router = useRouter();
 const { isPublishing, publishError, publishNeedsStorage, publishProgress, publish } = usePublish();
-const { toastSuccess, toastFromUnknown } = useAppToast();
+const { toastSuccess, toastFromUnknown, toastError } = useAppToast();
 const stepsOpen = ref(false);
 const previewOpen = ref(false);
 const previewViewport = ref<"mobile" | "desktop">("mobile");
 const published = ref(false);
 const publishedSiteUrl = ref("");
 const publishValidationError = ref("");
+watch([publishError, publishValidationError], ([error, validation]) => {
+  if ((error || validation) && !publishNeedsStorage.value) toastError(error || validation);
+});
 const siteIsPublic = computed(() => wizard.siteRole === "organization" || wizard.profile.visibility === "public");
 const showIntroScreen = ref(false);
 const isOpeningWizard = ref(true);
@@ -399,15 +403,14 @@ watch(
     </section>
     <template v-else-if="!showIntroScreen">
       <header class="wizard-header">
-        <button type="button" class="exit-btn wizard-icon-button" aria-label="Close editor" @click="handleExit"><UiIcon name="X" :size="20" /></button>
-        <button type="button" class="wizard-step-button" :aria-label="`Step ${wizard.currentStep} of ${wizard.totalSteps}: ${wizard.currentStepName}. Show all steps`" aria-haspopup="dialog" :aria-expanded="stepsOpen" @click="stepsOpen = true"><span class="step-name">{{ wizard.currentStepName }}<UiIcon name="ChevronDown" :size="15" /></span><small>Step {{ wizard.currentStep }} of {{ wizard.totalSteps }}</small></button>
-        <button type="button" class="wizard-icon-button" aria-label="Preview your site" @click="previewOpen = true"><UiIcon name="Eye" :size="20" /></button>
-        <button type="button" class="wizard-publish" :disabled="isPublishing || wizard.isCheckingUsername" @click="handlePublish">{{ isPublishing ? 'Publishing…' : 'Publish' }}</button>
+        <Button color="ghost" size="large" icon-only class="exit-btn wizard-icon-button" aria-label="Close editor" @click="handleExit"><UiIcon name="X" :size="20" /></Button>
+        <button type="button" class="wizard-step-button" :aria-label="`Step ${wizard.currentStep} of ${wizard.totalSteps}: ${wizard.currentStepName}. Show all steps`" aria-haspopup="dialog" :aria-expanded="stepsOpen" @click="stepsOpen = true"><span class="step-name">{{ wizard.currentStepName }}<UiIcon name="ChevronDown" :size="15" /></span></button>
+        <Button color="ghost" size="large" icon-only class="wizard-icon-button" aria-label="Preview your site" @click="previewOpen = true"><UiIcon name="Eye" :size="20" /></Button>
       </header>
       <div class="wizard-progress" role="progressbar" aria-label="Site editor progress" :aria-valuenow="wizard.currentStep" :aria-valuemin="1" :aria-valuemax="wizard.totalSteps" :aria-valuetext="`${wizard.currentStepName}, step ${wizard.currentStep} of ${wizard.totalSteps}`"><span v-for="(step, index) in wizard.steps" :key="step.id" :class="{ filled: index < wizard.currentStep }" /></div>
       <div v-if="showImportedDraftRecovery" class="draft-recovery-banner"><div><strong>Imported draft saved locally.</strong><p>Imported from {{ importedDraftHost }}. Publish, keep editing or start over.</p></div><button type="button" @click="clearImportedDraft">Start over</button></div>
       <p v-if="publishProgress" class="wizard-publish-status" role="status">{{ publishProgress }}</p>
-      <p v-if="publishError || publishValidationError" class="wizard-publish-error" role="alert">{{ publishError || publishValidationError }}<RouterLink v-if="publishNeedsStorage" to="/settings?section=storage">Activate storage</RouterLink></p>
+      <p v-if="publishNeedsStorage" class="wizard-publish-error" role="alert">{{ publishError }}<RouterLink to="/settings?section=storage">Activate storage</RouterLink></p>
     </template>
     <main v-if="showIntroScreen && !published" class="wizard-intro">
       <section class="intro-panel" aria-labelledby="intro-title">
@@ -451,9 +454,9 @@ watch(
         <GeneratedSitePreview :active-view="previewActiveView || undefined" viewport="mobile" compact />
       </aside>
       <nav v-if="!isEditingPage" class="step-nav" aria-label="Editor steps">
-        <button class="nav-btn back" type="button" :disabled="isPublishing" @click="handleBack"><UiIcon name="ArrowLeft" :size="18" />{{ wizard.currentStep === 1 ? 'Cancel' : 'Back' }}</button>
-        <button v-if="wizard.currentStep < wizard.totalSteps" class="nav-btn next" type="button" :disabled="!wizard.canProceed || isPublishing" @click="handleNext">{{ wizard.currentStep === wizard.totalSteps - 1 ? 'Choose a look' : 'Next' }}<UiIcon name="ArrowRight" :size="18" /></button>
-        <button v-else class="nav-btn next" type="button" :disabled="isPublishing || wizard.isCheckingUsername" @click="handlePublish">{{ isPublishing ? 'Publishing…' : 'Publish now' }}<UiIcon name="Send" :size="18" /></button>
+        <Button class="nav-btn back" color="ghost" size="large" :disabled="isPublishing" @click="handleBack"><UiIcon name="ArrowLeft" :size="18" />{{ wizard.currentStep === 1 ? 'Cancel' : 'Back' }}</Button>
+        <Button v-if="wizard.currentStep < wizard.totalSteps" class="nav-btn next" color="secondary" size="large" :disabled="!wizard.canProceed || isPublishing" @click="handleNext">Next<UiIcon name="ArrowRight" :size="18" /></Button>
+        <Button v-if="wizard.needsPublish" class="nav-btn publish" color="primary" size="large" :disabled="isPublishing || wizard.isCheckingUsername" @click="handlePublish">{{ isPublishing ? 'Publishing…' : 'Publish' }}</Button>
       </nav>
     </main>
     <AppDialog :open="stepsOpen" aria-label="All editor steps" close-on-backdrop @close="stepsOpen = false">
@@ -472,12 +475,10 @@ watch(
 
 <style scoped>
 .wizard-page { min-height: calc(100dvh - var(--app-topbar-height)); padding-bottom: 110px; box-sizing: border-box; }
-.wizard-header { position: sticky; top: var(--app-topbar-height); z-index: 45; display: flex; align-items: center; gap: 8px; max-width: 1120px; margin: auto; padding: 10px 16px; box-sizing: border-box; background: var(--ui-bg); }
+.wizard-header { position: sticky; top: var(--app-topbar-height); z-index: 45; display: flex; align-items: center; gap: 8px; max-width: 1120px; margin: auto; padding: 16px 16px; box-sizing: border-box; background: var(--ui-bg); }
 .wizard-icon-button { display: grid; place-items: center; flex: 0 0 auto; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; color: var(--ui-text); background: transparent; cursor: pointer; }
 .wizard-step-button { display: grid; justify-items: center; flex: 1; min-width: 0; min-height: 44px; gap: 3px; border: 0; background: transparent; color: var(--ui-text); font: inherit; cursor: pointer; }
 .step-name { display: flex; align-items: center; gap: 4px; font-size: 16px; font-weight: 600; }
-.wizard-step-button small { font-size: 12px; color: var(--ui-text-muted); }
-.wizard-publish { min-height: 44px; padding: 0 4px; border: 0; background: transparent; color: var(--ui-accent-strong); font: 600 14px var(--font-sans); cursor: pointer; }
 .wizard-progress { display: flex; gap: 4px; max-width: 1120px; margin: 0 auto 10px; padding: 0 16px; box-sizing: border-box; }
 .wizard-progress span { flex: 1; height: 3px; border-radius: 2px; background: var(--ui-surface-muted); }
 .wizard-progress .filled { background: var(--ui-accent-strong); }
@@ -498,9 +499,9 @@ watch(
 .preview-panel :deep(.generated-site-preview) { width: 100%; height: min(680px, calc(100dvh - 230px)); min-height: 240px; border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-md); }
 .wizard-preview-label { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 13px; color: var(--ui-text-muted); }
 .wizard-preview-label button { margin-left: auto; min-height: 32px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.step-nav { position: fixed; bottom: 0; left: 50%; z-index: 44; display: flex; align-items: center; gap: 12px; width: min(620px, 100%); padding: 22px 16px max(24px, env(safe-area-inset-bottom)); box-sizing: border-box; transform: translateX(-50%); background: linear-gradient(transparent, var(--ui-bg) 30%); }
-.nav-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 50px; padding: 10px 22px; border: 0; border-radius: 26px; font: 600 16px var(--font-sans); cursor: pointer; }
-.nav-btn.back { background: transparent; color: var(--ui-text-muted); }.nav-btn.next { flex: 1; background: var(--ui-primary); color: var(--ui-primary-contrast); }
+.step-nav { position: fixed; bottom: 0; left: 50%; z-index: 44; display: flex; align-items: center; gap: 8px; width: min(620px, 100%); padding: 18px 16px max(16px, env(safe-area-inset-bottom)); box-sizing: border-box; transform: translateX(-50%); background: linear-gradient(transparent, var(--ui-bg) 30%); }
+.nav-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 24px; font: 600 15px var(--font-sans); cursor: pointer; }
+.nav-btn.back { margin-right: auto; background: transparent; color: var(--ui-text-muted); }
 button:disabled { opacity: .45; cursor: not-allowed; } button:focus-visible, a:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 .wizard-publish-error, .wizard-publish-status { max-width: 960px; margin: 16px auto; padding: 0 16px; font-size: 14px; }.wizard-publish-error { color: var(--ui-danger); }.wizard-publish-error a { display: block; color: inherit; }
 .draft-recovery-banner { display: flex; align-items: center; gap: 12px; max-width: 960px; margin: 16px auto; padding: 16px; border-radius: 18px; background: var(--ui-surface-muted); font-size: 14px; }.draft-recovery-banner p { margin: 4px 0 0; }.draft-recovery-banner button { min-height: 44px; border: 0; background: transparent; color: var(--ui-text); font: inherit; cursor: pointer; }

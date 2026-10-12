@@ -1,7 +1,7 @@
 /* me3 Global Styles */
 
 :root {
-  --brand-primary: #229874;
+  --brand-primary: #34836c;
   --brand-primary-strong: color-mix(in oklab, var(--brand-primary), black 10%);
   --brand-primary-soft: color-mix(in oklab, var(--brand-primary), white 85%);
   --color-bg: #ffffff;
@@ -62,13 +62,13 @@
     --color-text-muted: #a9a9b2;
     --color-border: rgba(255, 255, 255, 0.12);
     --color-border-strong: rgba(255, 255, 255, 0.18);
-    --color-accent: var(--brand-primary);
+    --color-accent: #77b6a1;
     --color-accent-contrast: #ffffff;
     --shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.28);
     --ui-primary: #ffffff;
     --ui-primary-strong: #e4efea;
     --ui-primary-contrast: #0b0d13;
-    --ui-accent-strong: #56c5a1;
+    --ui-accent-strong: #77b6a1;
     --ui-shadow-sm: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 30px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
@@ -97,13 +97,13 @@
   --color-text-muted: #a9a9b2;
   --color-border: rgba(255, 255, 255, 0.12);
   --color-border-strong: rgba(255, 255, 255, 0.18);
-  --color-accent: var(--brand-primary);
+  --color-accent: #77b6a1;
   --color-accent-contrast: #ffffff;
   --shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.28);
   --ui-primary: #ffffff;
   --ui-primary-strong: #e4efea;
   --ui-primary-contrast: #0b0d13;
-  --ui-accent-strong: #56c5a1;
+  --ui-accent-strong: #77b6a1;
   --ui-shadow-sm: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 30px rgba(0, 0, 0, 0.4);
   color-scheme: dark;
 }

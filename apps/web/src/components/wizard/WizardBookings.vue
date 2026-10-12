@@ -1155,11 +1155,11 @@ onMounted(() => {
                 <label :for="`booking-offer-meeting-${activeOffer.id}`">Meeting place</label>
                 <select :id="`booking-offer-meeting-${activeOffer.id}`" v-model="activeOfferMeetingProvider">
                   <option value="none">No online link</option>
-                  <option value="soulink" :disabled="!soulinkConnected">My Soulink call room</option>
+                  <option v-if="soulinkConnected" value="soulink">My Soulink call room</option>
                   <option value="external">Other video link (Zoom, etc.)</option>
                 </select>
                 <p v-if="!soulinkConnected && activeOfferMeetingProvider === 'soulink'" class="form-hint">Reconnect Soulink before taking new bookings for this offer.</p>
-                <p v-else-if="!soulinkConnected" class="form-hint">Connect Soulink in Settings to use your call room.</p>
+                <p v-else-if="!soulinkConnected" class="form-hint"><RouterLink to="/settings?section=connections">Connect Soulink</RouterLink> to use your call room.</p>
               </div>
               <div v-if="activeOfferMeetingProvider === 'external'" class="form-group">
                 <label :for="`booking-offer-meeting-url-${activeOffer.id}`">Video link</label>

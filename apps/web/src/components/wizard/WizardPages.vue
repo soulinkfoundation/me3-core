@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from "vue";
+import draggable from "vuedraggable";
 import {
   useWizardStore,
   type WizardContentAsset,
@@ -13,16 +14,11 @@ const wizard = useWizardStore();
 const editingHome = ref(false);
 const sectionLabels = { offers: "Offers", booking: "Booking calendar", writing: "Latest writing", testimonials: "Testimonials", newsletter: "Newsletter" } as const;
 
-const selectedAction = computed({
-  get: () => wizard.primaryAction ? `${wizard.primaryAction.kind}:${wizard.primaryAction.id || ""}` : "auto:",
-  set: (value: string) => {
-    if (value === "auto:") wizard.setPrimaryAction(undefined);
-    else {
-      const [kind, id] = value.split(":");
-      wizard.setPrimaryAction({ kind: kind as "offer" | "subscribe" | "button", id });
-    }
-  },
-});
+function reorderPages(rows: Array<{ page: WizardPage; index: number }>) {
+  const positions = rows.map(row => row.index).sort((a, b) => a - b);
+  rows.forEach((row, index) => wizard.movePage(wizard.pages.indexOf(row.page), positions[index]));
+}
+function pageRowKey(row: { page: WizardPage }) { return row.page.slug; }
 
 function moveHomeSection(index: number, direction: -1 | 1) {
   const sections = [...wizard.homeSections];
@@ -296,14 +292,11 @@ defineExpose({
   <div class="step-pages">
     <h2>Pages</h2>
     <div v-if="selectedPageIndex === null && !editingHome">
-      <div class="page-list"><div class="page-item home-page-item"><div class="page-header"><span class="page-icon" aria-hidden="true"><UiIcon name="LayoutGrid" :size="20" /></span><div class="page-details"><strong class="page-title">Home</strong><span class="page-slug">/ · Always first</span></div><button class="home-edit-button" type="button" @click="editingHome = true">Edit home</button></div></div></div>
+      <div class="page-list"><div class="page-item home-page-item"><div class="page-header"><span class="page-icon" aria-hidden="true"><UiIcon name="LayoutGrid" :size="20" /></span><div class="page-details"><strong class="page-title">Home</strong><span class="page-slug">/</span></div><button class="home-edit-button" type="button" @click="editingHome = true">Edit home</button></div></div></div>
       <!-- Page list -->
-      <div v-if="mainPages.length > 0" class="page-list">
-        <div
-          v-for="({ page, index }, displayIndex) in mainPages"
-          :key="page.slug"
-          class="page-item"
-        >
+      <draggable v-if="mainPages.length > 0" :model-value="mainPages" :item-key="pageRowKey" handle=".page-details,.page-icon" :animation="160" :delay="250" :delay-on-touch-only="true" class="page-list" @update:model-value="reorderPages">
+        <template #item="{ element: { page, index }, index: displayIndex }">
+        <div class="page-item">
           <div class="page-header">
             <span class="page-icon" aria-hidden="true">
               <UiIcon name="FileText" :size="18" aria-hidden="true" />
@@ -354,7 +347,8 @@ defineExpose({
             </div>
           </div>
         </div>
-      </div>
+        </template>
+      </draggable>
       <!-- Add page buttons -->
       <div v-if="canAddMore" class="add-pages">
         <div class="platform-buttons">
@@ -398,12 +392,9 @@ defineExpose({
             content.
           </p>
         </div>
-        <div v-if="adminPages.length > 0" class="page-list">
-          <div
-            v-for="({ page, index }, displayIndex) in adminPages"
-            :key="page.slug"
-            class="page-item"
-          >
+        <draggable v-if="adminPages.length > 0" :model-value="adminPages" :item-key="pageRowKey" handle=".page-details,.page-icon" :animation="160" :delay="250" :delay-on-touch-only="true" class="page-list" @update:model-value="reorderPages">
+          <template #item="{ element: { page, index }, index: displayIndex }">
+          <div class="page-item">
             <div class="page-header">
               <span class="page-icon" aria-hidden="true">
                 <UiIcon name="FileText" :size="18" aria-hidden="true" />
@@ -451,7 +442,8 @@ defineExpose({
               </div>
             </div>
           </div>
-        </div>
+          </template>
+        </draggable>
         <div v-if="canAddMore" class="add-pages admin-add-pages">
           <div class="platform-buttons">
             <button
@@ -489,25 +481,20 @@ defineExpose({
     <div v-if="editingHome" class="home-editor">
       <button class="editor-back-link" type="button" @click="closeEditor">← Back to pages</button>
       <h3>Home</h3>
-      <p>Your profile header stays at the top. Choose the main action and arrange the sections below it.</p>
-      <label class="home-action-label" for="home-main-action">Main action</label>
-      <select id="home-main-action" v-model="selectedAction">
-        <option value="auto:">Use the first available action</option>
-        <option v-if="wizard.profile.newsletter.enabled" value="subscribe:">Subscribe to newsletter</option>
-        <option v-for="(offer, index) in wizard.profile.booking.offers" :key="offer.id" :value="`offer:${offer.id || index}`">Book {{ offer.title }}</option>
-        <option v-for="(button, index) in wizard.profile.buttons" :key="index" :value="`button:${index}`">{{ button.text }}</option>
-      </select>
+      <p>Drag to arrange the sections below your profile header.</p>
       <h4>Homepage sections</h4>
-      <div class="home-section-list">
-        <div v-for="(section, index) in wizard.homeSections" :key="section.id" class="home-section-row">
-          <span>{{ sectionLabels[section.id] }}</span>
+      <draggable :model-value="wizard.homeSections" item-key="id" handle=".home-section-label" :animation="160" :delay="250" :delay-on-touch-only="true" class="home-section-list" @update:model-value="wizard.setHomeSections">
+        <template #item="{ element: section, index }">
+        <div class="home-section-row">
+          <span class="home-section-label">{{ sectionLabels[section.id as keyof typeof sectionLabels] }}</span>
           <div class="home-section-controls">
-            <button type="button" :disabled="index === 0" :aria-label="`Move ${sectionLabels[section.id]} up`" @click="moveHomeSection(index, -1)">↑</button>
-            <button type="button" :disabled="index === wizard.homeSections.length - 1" :aria-label="`Move ${sectionLabels[section.id]} down`" @click="moveHomeSection(index, 1)">↓</button>
+            <button type="button" :disabled="index === 0" :aria-label="`Move ${sectionLabels[section.id as keyof typeof sectionLabels]} up`" @click="moveHomeSection(index, -1)">↑</button>
+            <button type="button" :disabled="index === wizard.homeSections.length - 1" :aria-label="`Move ${sectionLabels[section.id as keyof typeof sectionLabels]} down`" @click="moveHomeSection(index, 1)">↓</button>
             <label><input type="checkbox" :checked="section.visible" @change="toggleHomeSection(index, ($event.target as HTMLInputElement).checked)" /> Show</label>
           </div>
         </div>
-      </div>
+        </template>
+      </draggable>
     </div>
 
     <!-- Editor view -->

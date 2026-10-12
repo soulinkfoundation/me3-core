@@ -3,6 +3,9 @@ import { ref, computed } from "vue";
 import { useWizardStore, type WizardTestimonial } from "../../stores/wizard";
 import TestimonialCard from "../TestimonialCard.vue";
 import UiIcon from "../UiIcon.vue";
+import Button from "../Button.vue";
+import AppDialog from "../AppDialog.vue";
+import SwipeActionRow from "../SwipeActionRow.vue";
 
 const wizard = useWizardStore();
 
@@ -42,7 +45,6 @@ const testimonialsTitle = computed({
   },
 });
 
-const canAddMore = computed(() => true);
 function openForm() {
   name.value = "";
   quote.value = "";
@@ -204,7 +206,7 @@ function clearAvatar() {
 
 <template>
   <div class="step-testimonials">
-    <h2>Add testimonials</h2>
+    <header class="testimonial-step-header"><h2>Testimonials</h2><Button color="ghost" size="large" icon-only aria-label="Add testimonial" @click="openForm"><UiIcon name="Plus" :size="24" /></Button></header>
     <p class="section-desc">
       Short quotes from clients or collaborators build trust fast.
       <span class="limit-hint">(No limit)</span>
@@ -225,11 +227,14 @@ function clearAvatar() {
     </div>
 
     <div v-if="wizard.testimonials.length > 0" class="testimonial-list">
-      <div
+      <SwipeActionRow
         v-for="(testimonial, index) in wizard.testimonials"
         :key="index"
-        class="testimonial-item"
+        :label="testimonial.name"
+        @remove="removeTestimonial(index)"
       >
+        <details class="testimonial-item">
+          <summary class="testimonial-summary"><img v-if="testimonial.avatar" :src="testimonial.avatar" alt="" /><span v-else class="testimonial-initial" aria-hidden="true">{{ testimonial.name.slice(0, 1).toUpperCase() }}</span><strong>{{ testimonial.name }}</strong><UiIcon name="ChevronDown" :size="18" /></summary>
         <div class="testimonial-preview">
           <TestimonialCard
             :name="testimonial.name"
@@ -248,52 +253,36 @@ function clearAvatar() {
           >
             <UiIcon name="Pencil" :size="16" />
           </button>
-          <button
-            class="action-btn remove-btn"
-            type="button"
-            title="Remove testimonial"
-            @click="removeTestimonial(index)"
-          >
-            <UiIcon name="Trash2" :size="16" />
-          </button>
         </div>
-      </div>
+        </details>
+      </SwipeActionRow>
     </div>
 
     <div v-else class="empty-state">
       No testimonials yet. Add your first one.
     </div>
 
-    <div class="add-row">
-      <button
-        v-if="canAddMore"
-        class="btn primary"
-        type="button"
-        @click="openForm"
-      >
-        Add testimonial
-      </button>
-    </div>
 
     <!-- Testimonial Form Modal -->
-    <div v-if="showForm" class="modal-overlay" @click.self="closeForm">
+    <AppDialog :open="showForm" aria-label="Edit testimonial" close-on-backdrop @close="closeForm">
       <div class="modal">
         <div class="modal-header">
           <h3>{{ editIndex !== null ? "Edit testimonial" : "Add testimonial" }}</h3>
-          <button class="modal-close" type="button" @click="closeForm">
+          <button class="modal-close" type="button" aria-label="Close testimonial editor" @click="closeForm">
             <UiIcon name="X" :size="18" aria-hidden="true" />
           </button>
         </div>
 
         <div class="modal-content">
           <div class="form-group">
-            <label>Name</label>
-            <input v-model="name" type="text" placeholder="Jordan Lee" />
+            <label for="testimonial-name">Name</label>
+            <input id="testimonial-name" v-model="name" type="text" placeholder="Jordan Lee" />
           </div>
 
           <div class="form-group">
-            <label>Quote</label>
+            <label for="testimonial-quote">Quote</label>
             <textarea
+              id="testimonial-quote"
               v-model="quote"
               rows="4"
               placeholder="A short quote about working with you..."
@@ -353,11 +342,19 @@ function clearAvatar() {
           </button>
         </div>
       </div>
-    </div>
+    </AppDialog>
   </div>
 </template>
 
 <style scoped>
+.testimonial-step-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.testimonial-step-header h2 { margin: 0; }
+.testimonial-item { display: block; }
+.testimonial-summary { display: flex; align-items: center; gap: 12px; min-height: 44px; list-style: none; cursor: pointer; }
+.testimonial-summary::-webkit-details-marker { display: none; }
+.testimonial-summary img, .testimonial-initial { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--ui-surface); }
+.testimonial-summary strong { flex: 1; font-weight: 600; }
+.testimonial-summary:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 .step-testimonials h2 {
   font-size: 28px;
   margin-bottom: 8px;
@@ -408,10 +405,9 @@ function clearAvatar() {
 }
 
 .testimonial-item {
-  border: 2px solid var(--color-border);
-  border-radius: 12px;
-  padding: 12px;
-  background: var(--color-bg);
+  border: 0;
+  padding: 4px;
+  background: transparent;
 }
 
 .testimonial-preview :deep(.testimonial-card) {

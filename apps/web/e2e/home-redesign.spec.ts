@@ -44,6 +44,15 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       await route.fulfill({ status: 200, json: data });
     });
     await page.goto('/assistant');
+    await page.locator('#assistant-console-input').fill('A longer draft that stays intact while adding a Home card.');
+    await expect(page.getByRole('button', { name: 'Dismiss keyboard', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Add a card to Home', exact: true }).click();
+    const addDialog = page.getByRole('dialog', { name: 'Add to Home', exact: true });
+    await expect(addDialog.getByRole('button', { name: 'Calendar', exact: true })).toBeVisible();
+    await expect(page.locator('#assistant-console-input')).not.toBeFocused();
+    await addDialog.getByRole('button', { name: 'Close Home editor', exact: true }).click();
+    await expect(page.locator('#assistant-console-input')).toHaveValue('A longer draft that stays intact while adding a Home card.');
+    await page.locator('#assistant-console-input').fill('');
     const mission = page.getByRole('article', { name: 'Mission', exact: true });
     await expect(mission).toContainText('60%'); await expect(mission).toContainText('Work');
     await expect(mission).toContainText('Send the intro deck'); await expect(mission).toContainText('Prep design review notes');
@@ -57,6 +66,12 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     const bounds = await page.locator('.home-card').evaluateAll(nodes => nodes.map(node => { const r = node.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y) }; }));
     expect(new Set(bounds.map(b => b.x)).size).toBe(mobile ? 1 : 2);
     await page.screenshot({ path: testInfo.outputPath('home.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Open profile menu', exact: true }).click();
+    await page.getByRole('menuitemradio', { name: 'Dark appearance', exact: true }).click();
+    await expect(page.getByRole('menuitemradio', { name: 'Dark appearance', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await page.getByRole('menuitemradio', { name: 'System appearance', exact: true }).click();
+    await page.screenshot({ path: testInfo.outputPath('profile-appearance.png'), fullPage: true });
+    await page.keyboard.press('Escape');
     await wheel.getByRole('button', { name: 'Open Wheel of Life', exact: true }).click();
     const fullWheel = page.getByRole('dialog', { name: 'Wheel of Life', exact: true });
     await expect(fullWheel).toBeVisible();

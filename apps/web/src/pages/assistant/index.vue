@@ -330,7 +330,7 @@ type AssistantThreadMessagesResponse = {
   messages: AssistantThreadMessage[];
 };
 
-const { toastSuccess, toastFromUnknown } = useAppToast();
+const { toastSuccess, toastFromUnknown, toastError } = useAppToast();
 const agentChat = useAgentChat();
 const assistantDisplayName = agentChat.assistantDisplayName;
 const contactsStore = useContactsStore();
@@ -410,6 +410,7 @@ const homePanels = ref<InstanceType<typeof HomePanels> | null>(null);
 const homeMode = ref(route.query.view === "home" || (!route.query.thread && !route.query.new && !route.query.prompt && !route.query.project && route.query.view !== "chat"));
 useAgentChatPresence(assistantThreadId, computed(() => !homeMode.value));
 async function showWorkspace(home: boolean) {
+  dismissComposer();
   homeMode.value = home;
   await router.replace({ query: { ...route.query, view: home ? "home" : "chat" } });
 }
@@ -421,6 +422,12 @@ function homeSuggestion(text: string) {
   void nextTick(() => { autosizeAssistantComposer(); assistantComposerRef.value?.focus(); });
 }
 const assistantComposerRef = ref<HTMLTextAreaElement | null>(null);
+function dismissComposer() { assistantComposerRef.value?.blur(); }
+async function openAddToHome() {
+  dismissComposer();
+  await nextTick();
+  homePanels.value?.openAddDialog();
+}
 const assistantScrollerRef = ref<HTMLDivElement | null>(null);
 const assistantAttachmentInputRef = ref<HTMLInputElement | null>(null);
 const assistantAttachments = ref<AssistantAttachmentDraft[]>([]);
@@ -451,6 +458,8 @@ const {
   },
   onTranscript: insertVoiceTranscript,
 });
+watch(assistantError, message => { if (message && !siteBuilderMode.value) toastError(message); });
+watch(voiceDictationStatusText, message => { if (message) toastError(message); });
 let assistantAbortController: AbortController | null = null;
 let assistantActiveRequestId: string | null = null;
 
@@ -3132,6 +3141,7 @@ function insertVoiceTranscript(text: string) {
 }
 
 function onAssistantComposerKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") { event.preventDefault(); dismissComposer(); return; }
   if (event.key !== "Enter" || event.shiftKey) return;
   event.preventDefault();
   void sendAssistantMessage();
@@ -3255,7 +3265,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
     <Teleport v-if="!siteBuilderMode" to="#app-top-bar-controls" defer>
       <div class="home-chat-header">
         <div class="home-chat-actions">
-          <button v-if="homeMode" type="button" class="home-nav-button" aria-label="Add a card to Home" @click="homePanels?.openAddDialog()"><UiIcon name="Plus" :size="24" /></button>
+          <Button v-if="homeMode" color="ghost" size="large" icon-only class="home-nav-button" aria-label="Add a card to Home" @click="openAddToHome"><UiIcon name="Plus" :size="24" /></Button>
           <button type="button" class="home-nav-button" aria-label="Open chat history" @click="assistantHistoryDrawerOpen = true"><UiIcon name="MessagesSquare" :size="20" /></button>
           <button v-if="!homeMode" type="button" class="home-nav-button" aria-label="New chat" @click="startNewAssistantChat(null)"><UiIcon name="Plus" :size="24" /></button>
         </div>
@@ -3553,7 +3563,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
     >
     <main class="assistant-main" aria-label="Assistant console">
       <section class="assistant-console" aria-label="Assistant conversation">
-        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" ref="homePanels" class="assistant-home" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" />
+        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" />
         <div
           v-show="!homeMode || siteBuilderMode"
           ref="assistantScrollerRef"
@@ -4276,6 +4286,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
               </div>
             </details>
             <div class="assistant-composer__right">
+              <Button v-if="composerFocused" color="ghost" size="large" icon-only aria-label="Dismiss keyboard" @pointerdown.prevent @click="dismissComposer"><UiIcon name="ChevronDown" :size="20" /></Button>
               <Button
                 v-if="voiceDictationState === 'listening' || voiceDictationState === 'processing' || (!assistantDraft.trim() && !assistantAttachments.length && !assistantSending)"
                 :color="
@@ -4333,11 +4344,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
               </Button>
             </div>
           </div>
-          <div v-if="voiceDictationStatusText" class="assistant-composer__meta">
-            <span class="assistant-composer__voice-status">
-              {{ voiceDictationStatusText }}
-            </span>
-          </div>
           <p v-if="assistantAttachmentIssue" class="assistant-error">
             {{ assistantAttachmentIssue }}
             <RouterLink
@@ -4346,9 +4352,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
             >
               Activate storage
             </RouterLink>
-          </p>
-          <p v-if="assistantError && !siteBuilderMode" class="assistant-error">
-            {{ assistantError }}
           </p>
         </footer>
       </section>
@@ -6379,6 +6382,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
   box-shadow: var(--ui-shadow-sm, 0 8px 24px rgba(15, 23, 42, 0.08));
   transform: translateX(-50%);
 }
+.assistant-composer::before { content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 22px; background: linear-gradient(transparent, var(--ui-bg)); pointer-events: none; border-radius: 28px 28px 0 0; }
 
 .assistant-composer--drag-active {
   border-color: color-mix(in oklab, var(--ui-accent) 65%, var(--ui-border));
@@ -6433,7 +6437,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
   resize: none;
   border: 0;
   border-radius: 12px;
-  padding: 6px 2px 2px;
+  padding: 6px 10px 2px;
   background: transparent;
   color: var(--ui-text);
   font: inherit;
@@ -7553,7 +7557,7 @@ button:disabled {
 .home-chat-header { display: flex; align-items: center; height: 44px; }
 .home-chat-actions { display: flex; align-items: center; }
 .home-chat-switcher { position: absolute; left: 50%; transform: translateX(-50%); display: flex; padding: 3px; border-radius: 28px; background: var(--ui-surface-muted); }
-.home-chat-switcher button { min-width: 68px; min-height: 38px; padding: 0 14px; border: 0; border-radius: 22px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
+.home-chat-switcher button { min-width: 68px; min-height: 44px; padding: 0 14px; border: 0; border-radius: 24px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
 .home-chat-switcher button[aria-pressed="true"] { color: var(--ui-primary-contrast); background: var(--ui-primary); font-weight: 600; }
 .assistant-home { height: calc(100dvh - var(--app-topbar-height)); overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 18px; align-content: start; box-sizing: border-box; }
 .home-nav-button { display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--ui-text-muted); border-radius: 50%; cursor: pointer; }

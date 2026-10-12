@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useWizardStore } from "../../stores/wizard";
 import { getUsernameAvailability, searchLocations, type LocationSearchResult } from "../../api";
 import InlineRichTextEditor from "./BookingOfferDescriptionEditor.vue";
+import { useSitesStore } from "../../stores/sites";
+import { resolvePublicSiteUrl } from "../../utils/publicSiteUrl";
 
 const wizard = useWizardStore();
 const isOrganization = computed(() => wizard.siteRole === "organization");
@@ -11,6 +13,16 @@ const name = ref(wizard.profile.name);
 const handle = ref(wizard.profile.handle || wizard.username);
 const location = ref(wizard.profile.location);
 const bio = ref(wizard.profile.bio);
+const sites = useSitesStore();
+const address = ref("");
+watch([handle, () => sites.sites], async ([username], _, onCleanup) => {
+  let current = true;
+  onCleanup(() => { current = false; });
+  if (!username) { address.value = ""; return; }
+  const site = sites.sites.find(site => site.id === wizard.selectedSiteId || site.username === username);
+  const url = await resolvePublicSiteUrl(username, site || { site_role: wizard.siteRole });
+  if (current) address.value = url;
+}, { immediate: true });
 const locationResults = ref<LocationSearchResult[]>([]);
 const isSearchingLocations = ref(false);
 const locationSearchError = ref("");
@@ -251,6 +263,7 @@ const bioTextLength = computed(() =>
           maxlength="30"
         />
       </div>
+      <p v-if="address" class="handle-help">{{ address.replace(/^https?:\/\//, '').replace(/\/$/, '') }}</p>
       <p v-if="isOrganization" class="handle-help">
         Used in this site's web address. You can connect a custom domain later.
       </p>

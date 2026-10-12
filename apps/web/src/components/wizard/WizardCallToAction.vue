@@ -3,6 +3,7 @@ import { ref, computed } from "vue";
 import draggable from "vuedraggable";
 import { useWizardStore, type Me3Button } from "../../stores/wizard";
 import UiIcon from "../UiIcon.vue";
+import Button from "../Button.vue";
 import AppDialog from "../AppDialog.vue";
 import IconPicker from "../IconPicker.vue";
 import { isUiIconName, type UiIconName } from "../../utils/icons";
@@ -125,7 +126,10 @@ const buttonsList = computed(() => wizard.profile.buttons);
 
 const dragOptions = {
   animation: 200,
-  handle: ".drag-handle",
+  delay: 250,
+  delayOnTouchOnly: true,
+  filter: "input,button,a",
+  preventOnFilter: false,
   ghostClass: "ghost",
 };
 
@@ -156,13 +160,6 @@ function buttonItemKey(button: Me3Button) {
       <template #item="{ element: button, index }">
         <div class="button-item">
           <div class="button-header">
-            <button
-              class="drag-handle"
-              type="button"
-              title="Drag to reorder"
-            >
-              <UiIcon name="GripVertical" :size="18" aria-hidden="true" />
-            </button>
 
           <span class="button-icon" v-if="button.icon" aria-hidden="true">
             <UiIcon
@@ -176,7 +173,7 @@ function buttonItemKey(button: Me3Button) {
             <UiIcon name="Link" :size="18" aria-hidden="true" />
           </span>
 
-          <span class="button-label">{{ button.text }}</span>
+          <Button color="ghost" size="large" class="button-label" :aria-label="`Edit ${button.text}`" @click="editButton(index)">{{ button.text }}</Button>
 
           <div class="button-actions">
             <button
@@ -186,14 +183,6 @@ function buttonItemKey(button: Me3Button) {
               @click="testButton(button.url)"
             >
               <UiIcon name="ExternalLink" :size="18" aria-hidden="true" />
-            </button>
-            <button
-              class="action-btn remove-btn"
-              type="button"
-              title="Remove"
-              @click="deleteButton(index)"
-            >
-              <UiIcon name="X" :size="18" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -321,6 +310,7 @@ function buttonItemKey(button: Me3Button) {
         </div>
 
         <div class="modal-footer">
+          <Button v-if="editIndex !== null" color="ghost" size="large" aria-label="Remove button" @click="deleteButton(editIndex); closeForm()"><UiIcon name="Trash2" :size="18" />Remove</Button>
           <button class="btn secondary" type="button" @click="closeForm">
             Cancel
           </button>

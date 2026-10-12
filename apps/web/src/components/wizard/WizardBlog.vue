@@ -9,8 +9,13 @@ import { useSitesStore } from "../../stores/sites";
 import { usePublish } from "../../composables/usePublish";
 import TiptapEditor from "../TiptapEditor.vue";
 import UiIcon from "../UiIcon.vue";
+import Button from "../Button.vue";
+import SwipeActionRow from "../SwipeActionRow.vue";
 
 const wizard = useWizardStore();
+function postThumbnail(post: WizardPost) {
+  return post.media?.thumbnail || new DOMParser().parseFromString(post.content, "text/html").querySelector("img")?.getAttribute("src") || post.content.match(/!\[[^\]]*\]\(([^\s)]+)(?:\s+[^)]*)?\)/)?.[1];
+}
 const sites = useSitesStore();
 const {
   publish,
@@ -382,7 +387,7 @@ onMounted(() => {
 
 <template>
   <div class="step-blog">
-    <h2>Blog</h2>
+    <header class="blog-step-header"><h2>Blog</h2><Button v-if="selectedPostIndex === null" color="ghost" size="large" icon-only aria-label="Add a post" :disabled="!canAddMore" @click="addNewPost('article')"><UiIcon name="Plus" :size="24" /></Button></header>
     <p>Add posts and optionally send them to email subscribers.</p>
 
     <div class="blog-menu-title">
@@ -405,7 +410,9 @@ onMounted(() => {
       v-if="wizard.posts.length > 0 && selectedPostIndex === null"
       class="post-list"
     >
-      <div v-for="post in sortedPosts" :key="post.slug" class="post-item">
+      <SwipeActionRow v-for="post in sortedPosts" :key="post.slug" :label="post.title || 'Untitled post'" @remove="deletePost(wizard.posts.findIndex(p => p.slug === post.slug))">
+        <div class="post-item">
+        <img v-if="postThumbnail(post)" :src="postThumbnail(post)" class="post-thumbnail" alt="" loading="lazy" />
         <div class="post-details">
           <span class="post-title">{{ post.title }}</span>
           <span v-if="post.draft" class="post-type draft-badge">Draft</span>
@@ -427,18 +434,9 @@ onMounted(() => {
           >
             <UiIcon name="Pencil" :size="16" />
           </button>
-          <button
-            class="action-btn remove-btn"
-            type="button"
-            title="Delete post"
-            @click="
-              deletePost(wizard.posts.findIndex((p) => p.slug === post.slug))
-            "
-          >
-            <UiIcon name="X" :size="16" />
-          </button>
         </div>
-      </div>
+        </div>
+      </SwipeActionRow>
     </div>
 
     <!-- Empty state -->
@@ -608,6 +606,9 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.blog-step-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.blog-step-header h2 { margin: 0; }
+.post-thumbnail { width: 64px; height: 64px; border-radius: 12px; object-fit: cover; flex-shrink: 0; }
 .editor-header-title-date {
   display: flex;
   gap: 12px;
@@ -716,13 +717,14 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  background: var(--color-bg);
+  padding: 4px;
+  border: 0;
+  background: transparent;
 }
 
 .post-details {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
