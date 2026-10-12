@@ -5,6 +5,7 @@ import { isPlainObject, isValidEmail, parseJsonRecord } from "../../../packages/
 import type { DbMailboxMessageRow } from "../../../packages/agent/src/services/mailbox-types";
 import type { AgentMailboxServices, MailboxRecord } from "../../../packages/agent/src/tools/services";
 import { EmailProviderInputError, sendEmailWithProvider, type EmailProviderAttachment } from "./email-providers";
+import { canonicalJson } from "../../../packages/agent/src/schema";
 import type { Env } from "./types";
 
 type SendClaim = { operationId: string; fingerprint: string; reviewedUpdatedAt: string };
@@ -43,14 +44,14 @@ async function sendReviewedDraft(env: Env, ownerId: string, draftId: string, key
   const row = await getAgentMailboxMessageById(env, mailbox.id, draftId);
   if (!row || row.direction !== "outbound" || expected.id !== draftId) return { error: "Draft not found", status: 404 };
   const operationId = `agent-mailbox-${await hash(JSON.stringify([ownerId, key]))}`;
-  const fingerprint = await hash(JSON.stringify(reviewedEnvelope(expected)));
+  const fingerprint = await hash(canonicalReviewedEnvelope(expected));
   const existingClaim = claimFrom(row);
   const current = mailboxRecord(serializeAgentMailboxMessage(row));
   if (existingClaim) current.updatedAt = existingClaim.reviewedUpdatedAt;
-  if (await hash(JSON.stringify(reviewedEnvelope(current))) !== fingerprint) return { error: "Email draft changed after review. Read and approve it again.", status: 409 };
+  if (await hash(canonicalReviewedEnvelope(current)) !== fingerprint) return { error: "Email draft changed after review. Read and approve it again.", status: 409 };
 
   if (existingClaim) {
-    if (existingClaim.operationId !== operationId || existingClaim.fingerprint !== fingerprint) return { error: "Draft belongs to another send operation.", status: 409 };
+    if (existingClaim.operationId !== operationId || !await matchesClaim(row, existingClaim)) return { error: "Draft belongs to another send operation.", status: 409 };
     return reconcileSend(env, ownerId, mailbox.id, row, existingClaim);
   }
   if (row.message_kind !== "draft" || !["pending_approval", "failed"].includes(row.status)) return { error: "Draft is not ready to send.", status: 409 };
@@ -123,6 +124,11 @@ function reviewedEnvelope(record: MailboxRecord) {
     from: record.fromAddress, htmlBody: record.htmlBody, sourceId: record.sourceId, threadKey: record.threadKey, metadata, updatedAt: record.updatedAt };
 }
 
+function canonicalReviewedEnvelope(record: MailboxRecord) {
+  // Preserve JSON omission/null/array semantics; normalize only object key order.
+  return canonicalJson(JSON.parse(JSON.stringify(reviewedEnvelope(record))));
+}
+
 function claimFrom(row: DbMailboxMessageRow): SendClaim | null {
   const claim = parseJsonRecord(row.metadata_json).agent_send;
   return isPlainObject(claim) && typeof claim.operationId === "string" && typeof claim.fingerprint === "string" && typeof claim.reviewedUpdatedAt === "string"
@@ -161,7 +167,8 @@ async function finishSend(env: Env, ownerId: string, mailboxId: string, id: stri
 async function matchesClaim(row: DbMailboxMessageRow, claim: SendClaim) {
   const record = mailboxRecord(serializeAgentMailboxMessage(row));
   record.updatedAt = claim.reviewedUpdatedAt;
-  return await hash(JSON.stringify(reviewedEnvelope(record))) === claim.fingerprint;
+  return await hash(canonicalReviewedEnvelope(record)) === claim.fingerprint
+    || await hash(JSON.stringify(reviewedEnvelope(record))) === claim.fingerprint;
 }
 
 async function loadAttachments(env: Env, mailboxId: string, row: DbMailboxMessageRow): Promise<EmailProviderAttachment[]> {

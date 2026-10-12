@@ -93,11 +93,34 @@ async function runNewEvalTurn(input) {
     },
   });
   const intentToolContracts = intentTools.filter(tool => tool.target).map(({ name, description, parameters, effect, approval, target }) => ({ name, description, parameters, effect, approval, target: { domain: target.domain, idParameter: target.idParameter } }));
-  const response = await runAgentTurn({ model, tools, messages: input.messages, store,
+  let messages=input.messages;
+  if(!await store.load()) {
+    const {loadAgentPlannerHistory}=await import("../apps/worker/src/agent-planner-history.ts");
+    const history=await loadAgentPlannerHistory(input.seed.db,intentScope,input.signal);
+    const current=input.messages.findLast(message=>message.role==="user"&&message.content===currentOwnerInput.messageText);
+    messages=[...input.messages.filter(message=>message.role==="system"),...history,{...current,role:"user",content:currentOwnerInput.messageText}];
+  }
+  const response = await runAgentTurn({ model, tools, messages, store,
     signal:input.signal, context: { db: input.seed.db, ownerId: input.ownerId, ...contextIds, ownerTimezone: input.ownerTimezone, messageText: currentOwnerInput.messageText, loadIntentOwnerInputs, intentToolContracts, verifyTargetIntent, enabledPluginIds: input.enabledPluginIds, services: input.services }, onEvent: async event => {
       await appendAgentStreamEvent(input.seed.db, input.ownerId, contextIds.turnId, event.event, event.data);
       await input.onEvent?.(event);
     } });
+  const {loadTargetPresentation,targetPresentationCard}=await import("../packages/agent/src/presentations.ts");
+  let targetPresentation;
+  if(response.targetPresentation) {
+    const current=await loadTargetPresentation(input.seed.db,{ownerId:input.ownerId,threadId:contextIds.threadId,presentationId:response.targetPresentation.id});
+    if(!current||current.createdTurnId!==contextIds.turnId)throw new Error("Runtime presentation lacks canonical current-turn provenance");
+    targetPresentation=targetPresentationCard(current);
+  }
+  const persisted={...response,ok:response.status==="complete"||response.status==="needs_approval",auditId:contextIds.turnId,runtime:"agent",specialist:"core.agent",turnId:contextIds.turnId,threadId:contextIds.threadId,model:response.trace.model,approvalId:response.approvalId||null,
+    streamMetrics:{timeToFirstTokenMs:response.trace.timeToFirstTokenMs,totalDurationMs:response.trace.totalDurationMs,modelRequestCount:response.modelRequestCount,toolCallCount:response.toolCalls.length},...(targetPresentation?{targetPresentation}:{})};
+  // Mirror the actual terminal response/assistant proof; caller fixture history cannot publish a card.
+  await input.seed.db.batch([
+    input.seed.db.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)")
+      .bind(`${contextIds.turnId}:assistant:${response.status}:${response.approvalId||"final"}`,input.ownerId,contextIds.threadId,response.replyText,JSON.stringify(persisted)),
+    input.seed.db.prepare("UPDATE me3_agent_turns SET response_json=? WHERE owner_id=? AND turn_id=? AND request_id=?")
+      .bind(JSON.stringify(persisted),input.ownerId,contextIds.turnId,contextIds.requestId),
+  ]);
   if (response.status === "needs_approval") paused.set(input.seed, { store, contextIds, approvalId: response.approvalId });
   else paused.delete(input.seed);
   const checkpoint = await store.load();
@@ -106,5 +129,5 @@ async function runNewEvalTurn(input) {
     const call = checkpoint.messages.flatMap((item) => item.toolCalls || []).find((call) => call.id === message.toolCallId);
     return { execution_id: `${contextIds.requestId}:${message.toolCallId}`, tool_name: call?.name || "unknown", arguments: call?.arguments, status: result.status === "error" ? "failed" : "succeeded", result_json: JSON.stringify({ result: result.data ?? result }), error_message: result.error || null };
   });
-  return { ...response, toolResults, toolContracts: tools.map(({ name, description, effect, approval }) => ({ name, description, effect, approval })) };
+  return { ...persisted, toolResults, toolContracts: tools.map(({ name, description, effect, approval }) => ({ name, description, effect, approval })) };
 }

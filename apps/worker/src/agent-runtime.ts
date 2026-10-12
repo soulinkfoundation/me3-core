@@ -20,6 +20,7 @@ import { parseAgentTargetSelection } from "./agent-target-selection";
 import type { AgentTargetSelection } from "../../../packages/agent/src/types";
 import { notifyAgentTurnFinished } from "./agent-notifications";
 import { createTargetIntentVerifier, loadTargetIntentOwnerInputs } from "./agent-target-intent";
+import { loadAgentPlannerHistory } from "./agent-planner-history";
 
 export type NewAgentDispatchInput = {
   userId:string;threadId:string;turnId:string;requestId:string;messageText:string;
@@ -115,8 +116,8 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     let messages:AgentMessage[]=[];
     if(!await store.load()) {
       const snapshot=await loadOwnerSnapshotContext({db:env.DB,ownerId:input.userId,owner:{id:owner.id,name:owner.name,username:owner.username,timezone,assistantName:owner.assistant_name||"ME3"},meJsonUrl:null});
-      const recent=await env.DB.prepare("SELECT role,content FROM assistant_messages WHERE owner_id=? AND thread_id=? ORDER BY created_at DESC,rowid DESC LIMIT 80").bind(input.userId,input.threadId).all<{role:"user"|"assistant"|"system";content:string}>();
-      messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt})},...(recent.results||[]).reverse().filter(message=>message.role!=="system")];
+      const recent=await loadAgentPlannerHistory(env.DB,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId},signal);
+      messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt})},...recent];
       const content=[input.messageText,input.attachmentTextContext].filter(Boolean).join("\n\n");
       const images=await prepareAgentImageInputs(env,imageScope,input.attachments||[],signal);
       messages.push({role:"user",content,...(images.length?{images}:{})});

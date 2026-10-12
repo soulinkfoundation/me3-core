@@ -1,6 +1,6 @@
 import type { AgentToolCall } from "./types";
 import type { AgentTargetIntentContext, AgentTargetIntentEvidence, AgentTargetIntentCandidate, AgentTargetIntentPresentation, AgentTargetIntentOwnerInput, AgentTargetIntentVerdict, AgentTargetIntentInference, AgentTargetIntentAction, AgentTargetIntentAuthorizedAction, AgentTargetIntentSourceRead } from "./types";
-type IntentRecord = {verdict?:AgentTargetIntentVerdict;inference?:AgentTargetIntentInference;authorizedActionKey?:string;authorizedActions?:AgentTargetIntentAuthorizedAction[];uncertain?:boolean};
+type IntentRecord = {verdict?:AgentTargetIntentVerdict;inference?:AgentTargetIntentInference;authorizedActionKey?:string;authorizedActions?:AgentTargetIntentAuthorizedAction[];uncertain?:boolean;previousReceiptId?:string;sourceReadProof?:string};
 type SelectionRow = {id:string;domain:string;read_turn_id:string;candidates_json:string;seq:number|null};
 type SelectionGroup = SelectionRow & {candidates:Array<{id:string;snapshot:Record<string,unknown>&{id:string}}>};
 type EvidenceScope = {selectionId?:string;domain?:string;recordId?:string};
@@ -158,36 +158,103 @@ function checkedVerdict(raw:unknown,evidence:AgentTargetIntentEvidence):{verdict
   return {verdict,...(inference!==undefined?{inference:inferenceMetadata(inference)}:{})};
 }
 async function observe(c:AgentTargetIntentContext,key:string,record:IntentRecord,cacheHit:boolean) { await c.onTargetIntentReceipt?.({receiptId:key,...record,cacheHit}); }
+type IntentRow = {idempotency_key:string;arguments_json:string;status:string;result_json:string|null};
+function knownClarification(record:IntentRecord) {
+  if(record.verdict?.decision!=='clarify'||record.uncertain)return false;
+  const inference=inferenceMetadata(record.inference);
+  return !!inference?.usage&&typeof inference.usage.estimatedCostUsd==='number'&&inference.usage.estimatedCostUsd>=0&&Number.isFinite(inference.usage.estimatedCostUsd);
+}
+function expandsEvidence(old:AgentTargetIntentEvidence,next:AgentTargetIntentEvidence) {
+  const fixed=({ownerInputs,targets,operations,sourceReads,...rest}:AgentTargetIntentEvidence)=>rest;
+  if(canonicalJson(fixed(old))!==canonicalJson(fixed(next)))return false;
+  let index=0;
+  for(const input of next.ownerInputs)if(canonicalJson(input)===canonicalJson(old.ownerInputs[index]))index++;
+  if(index!==old.ownerInputs.length)return false;
+  if(!old.operations.every(operation=>next.operations.some(value=>canonicalJson(value)===canonicalJson(operation))))return false;
+  if(!(old.sourceReads||[]).every(read=>(next.sourceReads||[]).some(value=>canonicalJson(value)===canonicalJson(read))))return false;
+  const oldSources=old.targets.flatMap(panel=>panel.candidates.map(candidate=>({domain:panel.domain,...candidate})));
+  const nextSources=next.targets.flatMap(panel=>panel.candidates.map(candidate=>({domain:panel.domain,...candidate})));
+  if(!oldSources.every(candidate=>nextSources.some(value=>value.domain===candidate.domain&&value.id===candidate.id&&canonicalJson(value.snapshot)===canonicalJson(candidate.snapshot))))return false;
+  return nextSources.some(candidate=>!oldSources.some(value=>value.domain===candidate.domain&&value.id===candidate.id));
+}
+async function sourceReadState(c:AgentTargetIntentContext,evidence:AgentTargetIntentEvidence) {
+  const sources=[],rows:Array<Pick<SelectionRow,'id'|'domain'|'read_turn_id'|'candidates_json'>>=[];
+  for(const read of [...(evidence.sourceReads||[])].sort((a,b)=>a.selectionId.localeCompare(b.selectionId))) {
+    const row=await c.db.prepare('SELECT domain,read_turn_id,candidates_json FROM me3_agent_selections WHERE owner_id=? AND thread_id=? AND id=?').bind(c.ownerId,c.threadId,read.selectionId).first<{domain:string;read_turn_id:string;candidates_json:string}>();
+    if(!row||row.domain!==read.domain||row.read_turn_id!==read.readTurnId)throw Error('Immutable source history changed.');
+    rows.push({id:read.selectionId,...row});
+    sources.push({...read,candidates:JSON.parse(row.candidates_json)});
+  }
+  return {proof:await toolIdempotencyKey(c.ownerId,c.requestId,INTERNAL_TOOL+':sources',{sources}),rows};
+}
+async function sourceReadProof(c:AgentTargetIntentContext,evidence:AgentTargetIntentEvidence) {return (await sourceReadState(c,evidence)).proof;}
+function latestIntent(rows:IntentRow[]) {
+  if(rows.length>2)throw Error('Multiple independent intent histories are ambiguous.');
+  const history=rows.map(row=>({row,evidence:JSON.parse(row.arguments_json) as AgentTargetIntentEvidence,record:row.result_json?JSON.parse(row.result_json) as IntentRecord:{}}));
+  if(history.length<2)return history[0];
+  const first=history.find(value=>!value.record.previousReceiptId),latest=history.find(value=>value.record.previousReceiptId);
+  if(!first||!latest||first.row.status!=='finished'||!knownClarification(first.record)||!first.record.sourceReadProof||latest.record.previousReceiptId!==first.row.idempotency_key||!expandsEvidence(first.evidence,latest.evidence))throw Error('Multiple independent intent histories are ambiguous.');
+  return latest;
+}
+async function noNativeEffects(c:AgentTargetIntentContext) {
+  const rows=await c.db.prepare('SELECT idempotency_key,tool_name,arguments_json,status FROM me3_agent_tool_receipts WHERE owner_id=? AND turn_id=? AND tool_name!=?').bind(c.ownerId,c.turnId,INTERNAL_TOOL).all<{idempotency_key:string;tool_name:string;arguments_json:string;status:string}>();
+  const native=rows.results||[];
+  const safe=native.every(row=>row.status==='not_admitted'||row.status==='running'&&c.effectReceiptClaimed===true&&row.idempotency_key===c.idempotencyKey&&row.tool_name===c.toolCall?.name&&canonicalJson(JSON.parse(row.arguments_json))===canonicalJson(c.toolCall.arguments));
+  return safe?{currentArgumentsJson:native.find(row=>row.idempotency_key===c.idempotencyKey&&row.status==='running')?.arguments_json}:null;
+}
 export async function verifyTargetIntent(c:AgentTargetIntentContext,scope:EvidenceScope={}):Promise<{receiptId:string;evidence:AgentTargetIntentEvidence;verdict:AgentTargetIntentVerdict;inference?:AgentTargetIntentInference;authorizedActionKey?:string;authorizedActions?:AgentTargetIntentAuthorizedAction[]}> {
   await active(c);
   if(typeof c.verifyTargetIntent!=='function')throw Error('Independent intent verification is unavailable; use a reviewed owner choice.');
-  // This request's first evidence is immutable across planner correction/read attempts.
-  const prior=await c.db.prepare('SELECT idempotency_key,arguments_json,status,result_json FROM me3_agent_tool_receipts WHERE owner_id=? AND turn_id=? AND tool_name=?').bind(c.ownerId,c.turnId,INTERNAL_TOOL).all<{idempotency_key:string;arguments_json:string;status:string;result_json:string|null}>();
-  if((prior.results||[]).length>1)throw Error('Multiple independent intent histories are ambiguous.');
-  let evidence:AgentTargetIntentEvidence,record:IntentRecord,key:string;
-  if(prior.results?.length) {
-    const row=prior.results[0]; evidence=JSON.parse(row.arguments_json); key=row.idempotency_key; record=row.result_json?JSON.parse(row.result_json):{};
+  const prior=await c.db.prepare('SELECT idempotency_key,arguments_json,status,result_json FROM me3_agent_tool_receipts WHERE owner_id=? AND turn_id=? AND tool_name=?').bind(c.ownerId,c.turnId,INTERNAL_TOOL).all<IntentRow>();
+  const history=prior.results||[],saved=latestIntent(history);
+  let evidence:AgentTargetIntentEvidence,record:IntentRecord,key:string,previous:IntentRow|undefined,currentArgumentsJson:string|undefined,previousSources:Array<Pick<SelectionRow,'id'|'domain'|'read_turn_id'|'candidates_json'>>=[];
+  if(saved) {
+    ({evidence,record}=saved);key=saved.row.idempotency_key;
     const domains=new Set(evidence.targets.map(panel=>panel.domain));
     const currentContracts=(c.intentToolContracts||[]).filter(tool=>domains.has(tool.target.domain)).map(({target,...tool})=>({...tool,target:{domain:target.domain,idParameter:target.idParameter}})).sort((a,b)=>a.name.localeCompare(b.name));
-    if(canonicalJson(currentContracts)!==canonicalJson(evidence.operations))throw Error("The authoritative operation contracts changed after independent verification.");
+    if(canonicalJson(currentContracts)!==canonicalJson(evidence.operations))throw Error('The authoritative operation contracts changed after independent verification.');
     const currentInputs=await ownerInputs(c,evidence.targets,evidence.presentation,evidence.sourceReads);
     if(evidence.ownerId!==c.ownerId||evidence.threadId!==c.threadId||evidence.turnId!==c.turnId||evidence.requestId!==c.requestId||evidence.ownerTimezone!==c.ownerTimezone||canonicalJson(evidence.ownerInputs)!==canonicalJson(currentInputs))throw Error('The cached independent intent context changed.');
     if(canonicalJson(evidence.presentation)!==canonicalJson(await shownPresentation(c)))throw Error('The shown source action changed after verification.');
-    if(row.status!=='finished'||!record.verdict) { if(record)await observe(c,key,record,true); throw Error('Independent inference has an uncertain saved outcome; do not replay or write.'); }
+    const sourceState=await sourceReadState(c,evidence);
+    if(record.sourceReadProof&&record.sourceReadProof!==sourceState.proof)throw Error('Immutable source history changed after verification.');
+    if(saved.row.status!=='finished'||!record.verdict) {await observe(c,key,record,true);throw Error('Independent inference has an uncertain saved outcome; do not replay or write.');}
+    const native=history.length===1&&knownClarification(record)&&record.sourceReadProof?await noNativeEffects(c):null;
+    if(native) {
+      const expanded=await buildEvidence(c,scope);
+      if(expandsEvidence(evidence,expanded)) {
+        previous=saved.row;previousSources=sourceState.rows;currentArgumentsJson=native.currentArgumentsJson;evidence=expanded;
+        record={previousReceiptId:key,sourceReadProof:await sourceReadProof(c,evidence)};
+        key=await toolIdempotencyKey(c.ownerId,c.requestId,INTERNAL_TOOL,{evidence});
+      }
+    }
   } else {
     evidence=await buildEvidence(c,scope);
     key=await toolIdempotencyKey(c.ownerId,c.requestId,INTERNAL_TOOL,{evidence});
-    const claim=await c.db.prepare("INSERT OR IGNORE INTO me3_agent_tool_receipts(owner_id,idempotency_key,turn_id,tool_name,arguments_json,status) VALUES(?,?,?,?,?,'running')").bind(c.ownerId,key,c.turnId,INTERNAL_TOOL,canonicalJson(evidence)).run();
+    record={sourceReadProof:await sourceReadProof(c,evidence)};
+  }
+  if(!saved||previous) {
+    // One correction may add immutable missing sources. Keep both priced receipts;
+    // allow, deny, uncertainty, changed evidence and repeated reads never reroll.
+    const claim=previous?await c.db.prepare(`INSERT OR IGNORE INTO me3_agent_tool_receipts(owner_id,idempotency_key,turn_id,tool_name,arguments_json,status,result_json)
+      SELECT ?,?,?,?,?,'running',? WHERE EXISTS(SELECT 1 FROM me3_agent_tool_receipts WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND status='finished' AND arguments_json=? AND result_json=?)
+      AND (SELECT COUNT(*) FROM me3_agent_tool_receipts WHERE owner_id=? AND turn_id=? AND tool_name=?)=1
+      AND NOT EXISTS(SELECT 1 FROM json_each(?) p WHERE NOT EXISTS(SELECT 1 FROM me3_agent_selections s WHERE s.owner_id=? AND s.thread_id=?
+        AND s.id=json_extract(p.value,'$.id') AND s.domain=json_extract(p.value,'$.domain') AND s.read_turn_id=json_extract(p.value,'$.read_turn_id') AND s.candidates_json=json_extract(p.value,'$.candidates_json')))
+      AND NOT EXISTS(SELECT 1 FROM me3_agent_tool_receipts WHERE owner_id=? AND turn_id=? AND tool_name!=?
+        AND NOT(status='not_admitted' OR(status='running' AND idempotency_key=? AND tool_name=? AND arguments_json=? AND ?=1)))`)
+      .bind(c.ownerId,key,c.turnId,INTERNAL_TOOL,canonicalJson(evidence),canonicalJson(record),c.ownerId,previous.idempotency_key,c.turnId,previous.arguments_json,previous.result_json,c.ownerId,c.turnId,INTERNAL_TOOL,JSON.stringify(previousSources),c.ownerId,c.threadId,c.ownerId,c.turnId,INTERNAL_TOOL,c.idempotencyKey,c.toolCall?.name||'',currentArgumentsJson||'',c.effectReceiptClaimed===true&&currentArgumentsJson!==undefined?1:0).run()
+      :await c.db.prepare("INSERT OR IGNORE INTO me3_agent_tool_receipts(owner_id,idempotency_key,turn_id,tool_name,arguments_json,status,result_json) VALUES(?,?,?,?,?,'running',?)").bind(c.ownerId,key,c.turnId,INTERNAL_TOOL,canonicalJson(evidence),canonicalJson(record)).run();
     if(!claim.meta?.changes)throw Error('Independent intent admission raced another attempt.');
     await active(c);
     let raw;
-    try { raw=await c.verifyTargetIntent(structuredClone(evidence),c.signal); }
+    try {raw=await c.verifyTargetIntent(structuredClone(evidence),c.signal);}
     catch(error) {
-      if(error&&typeof error==="object"&&"inference" in error) { record={inference:inferenceMetadata(error.inference),uncertain:true}; await observe(c,key,record,false); await c.db.prepare("UPDATE me3_agent_tool_receipts SET result_json=? WHERE owner_id=? AND idempotency_key=? AND status='running'").bind(canonicalJson(record),c.ownerId,key).run(); }
+      if(error&&typeof error==='object'&&'inference' in error) {record={...record,inference:inferenceMetadata(error.inference),uncertain:true};await observe(c,key,record,false);await c.db.prepare("UPDATE me3_agent_tool_receipts SET result_json=? WHERE owner_id=? AND idempotency_key=? AND status='running'").bind(canonicalJson(record),c.ownerId,key).run();}
       throw error;
     }
-    try { record=checkedVerdict(raw,evidence); }
-    catch(error) { record={verdict:{decision:"deny",reason:error instanceof Error?error.message:"Invalid independent verdict"},...(raw&&typeof raw==="object"&&"inference" in raw?{inference:inferenceMetadata(raw.inference)}:{})}; }
+    try {record={...record,...checkedVerdict(raw,evidence)};}
+    catch(error) {record={...record,verdict:{decision:'deny',reason:error instanceof Error?error.message:'Invalid independent verdict'},...(raw&&typeof raw==='object'&&'inference' in raw?{inference:inferenceMetadata(raw.inference)}:{})};}
     if(record.inference&&(!record.inference.usage||record.inference.usage.estimatedCostUsd===null))record.verdict={decision:'deny',reason:'Independent usage is incomplete; effect admission is blocked.'};
     if(c.signal.aborted||await isAgentCancellationRequested(c.db,c.ownerId,c.requestId))record.verdict={decision:'deny',reason:'Owner cancelled after verification.'};
     if(record.verdict?.decision==='allow') {
@@ -202,9 +269,9 @@ export async function verifyTargetIntent(c:AgentTargetIntentContext,scope:Eviden
     const stored=await c.db.prepare("UPDATE me3_agent_tool_receipts SET status='finished',result_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND status='running'").bind(canonicalJson(record),c.ownerId,key,c.turnId).run();
     if(!stored.meta?.changes)throw Error('Independent verdict could not be durably finished.');
   }
-  if(!record.verdict)throw Error("Independent verdict is incomplete.");
+  if(!record.verdict)throw Error('Independent verdict is incomplete.');
   checkedVerdict({...record.verdict,...(record.inference?{inference:record.inference}:{})},evidence);
-  await observe(c,key,record,true); await active(c);
+  await observe(c,key,record,true);await active(c);
   return {receiptId:key,evidence,...record,verdict:record.verdict};
 }
 type VerifiedIntent = Awaited<ReturnType<typeof verifyTargetIntent>>;
@@ -236,9 +303,7 @@ export async function savedTargetIntentProgress(c:AgentTargetIntentContext) {
   const rows=await c.db.prepare('SELECT idempotency_key,arguments_json,status,result_json FROM me3_agent_tool_receipts WHERE owner_id=? AND turn_id=? AND tool_name=?')
     .bind(c.ownerId,c.turnId,INTERNAL_TOOL).all<{idempotency_key:string;arguments_json:string;status:string;result_json:string|null}>();
   if(!rows.results?.length)return undefined;
-  if(rows.results.length!==1)throw Error('Independent action history is ambiguous and unfinished.');
-  const row=rows.results[0],record:IntentRecord=row.result_json?JSON.parse(row.result_json):{};
-  const evidence:AgentTargetIntentEvidence=JSON.parse(row.arguments_json);
+  const {row,record,evidence}=latestIntent(rows.results)!
   if(evidence.ownerId!==c.ownerId||evidence.threadId!==c.threadId||evidence.turnId!==c.turnId||evidence.requestId!==c.requestId
     ||row.status!=='finished'||!record.verdict||record.uncertain)throw Error('Independent verification remains unfinished or uncertain.');
   checkedVerdict({...record.verdict,...(record.inference?{inference:record.inference}:{})},evidence);
@@ -258,6 +323,7 @@ export async function nextTargetIntentAction(c:AgentTargetIntentContext,verified
 export async function preflightTargetIntent(c:AgentTargetIntentContext,domain:string,id:string,call:AgentToolCall|undefined=c.toolCall) {
   if(!call||typeof call.name!=='string')throw Error('The complete proposed operation is unavailable.');
   const verified=await verifyTargetIntent(c,{domain,recordId:id});
+  if(knownClarification(verified))throw new TargetIntentOrderMismatch(`Owner target intent requires clarification: ${verified.verdict.decision==='clarify'?verified.verdict.reason:''}`,{verificationReceiptId:verified.receiptId,actionApplied:false,requiresSourceRead:true});
   const progress=await planProgress(c,verified);
   const planned=progress.actions[progress.index];
   const exact=progress.actions.findIndex(action=>canonicalJson(action.authorizedCall)===canonicalJson({name:call.name,arguments:call.arguments}));

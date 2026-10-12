@@ -11,20 +11,20 @@ import { createTargetIntentVerifier, loadTargetIntentOwnerInputs } from "../apps
 
 const beforeFingerprint = sourceFingerprint();
 const fixtures = [
-  { id: "calendar-pronoun-move", domain: "calendar event", table: "user_calendar_events", recordId: "eval-planning", timeField: "starts_at", expectedUtc: "2026-10-12T15:00:00.000Z",
+  { id: "calendar-pronoun-move", domain: "calendar event", table: "user_calendar_events", recordId: "eval-planning", timeField: "starts_at", expectedUtc: "2027-10-12T15:00:00.000Z",
     priorText: "What's the planning session tomorrow?", currentText: "Move it to 4pm.",
-    read: { name: "core_calendar_events_list", arguments: { dateFrom: "2026-10-12", dateTo: "2026-10-12" } },
-    authorized: { name: "core_calendar_event_reschedule", arguments: { eventId: "eval-planning", startDate: "2026-10-12", startTime: "16:00", startTimezone: "Europe/Dublin" } } },
-  { id: "reminder-pronoun-move", domain: "reminder", table: "user_reminders", recordId: "eval-reminder", timeField: "remind_at", expectedUtc: "2026-10-12T09:00:00.000Z",
+    read: { name: "core_calendar_events_list", arguments: { dateFrom: "2027-10-12", dateTo: "2027-10-12" } },
+    authorized: { name: "core_calendar_event_reschedule", arguments: { eventId: "eval-planning", startDate: "2027-10-12", startTime: "16:00", startTimezone: "Europe/Dublin" } } },
+  { id: "reminder-pronoun-move", domain: "reminder", table: "user_reminders", recordId: "eval-reminder", timeField: "remind_at", expectedUtc: "2027-10-12T09:00:00.000Z",
     priorText: "Show my reminders.", currentText: "Move it to tomorrow at 10am.",
     read: { name: "core_reminders_list", arguments: { query: "Call Sam" } },
-    authorized: { name: "core_reminders_update", arguments: { reminderId: "eval-reminder", date: "2026-10-12", time: "10:00", timezone: "Europe/Dublin" } } },
+    authorized: { name: "core_reminders_update", arguments: { reminderId: "eval-reminder", date: "2027-10-12", time: "10:00", timezone: "Europe/Dublin" } } },
 ];
 const cases = [];
 const usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, estimatedCostUsd: 0 };
 
 for (const fixture of fixtures) test(fixture.id, async () => {
-  const seed = createSeededAgentEvalInstallation("2026-10-11");
+  const seed = createSeededAgentEvalInstallation("2027-10-11");
   try {
     const baseScope = { ownerId: seed.ownerId, threadId: "eval-thread" };
     const prior = { ...baseScope, turnId: `${fixture.id}-prior`, requestId: `${fixture.id}-prior-request` };
@@ -39,11 +39,20 @@ for (const fixture of fixtures) test(fixture.id, async () => {
     const snapshot = () => seed.raw.prepare(`SELECT * FROM ${fixture.table} ORDER BY id`).all().map(row => ({ ...row }));
     const before = snapshot();
     seed.raw.exec(`CREATE TABLE pronoun_effects(seq INTEGER PRIMARY KEY AUTOINCREMENT,record_id TEXT); CREATE TRIGGER pronoun_effect AFTER UPDATE ON ${fixture.table} BEGIN INSERT INTO pronoun_effects(record_id) VALUES(new.id); END;`);
+    // Fixed future fixture dates and canonical request/read timestamps avoid an
+    // expired source while preserving the exact relative prompts and assertions.
+    const fixtureTime = `${seed.baseDate} 12:00:00`;
+    const savedEvent = async (scope, event) => {
+      await appendAgentStreamEvent(seed.db, scope.ownerId, scope.turnId, event.event, event.data);
+      await seed.db.prepare("UPDATE me3_agent_selections SET created_at=? WHERE owner_id=? AND read_turn_id=?").bind(fixtureTime,scope.ownerId,scope.turnId).run();
+    };
     const recordOwnerInput = async (scope, text) => {
       await persistAgentInput(seed.db, scope, { userId: scope.ownerId, threadId: scope.threadId, turnId: scope.turnId, requestId: scope.requestId, messageText: text });
       seed.raw.prepare("INSERT INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)")
         .run(`${scope.turnId}:user`, scope.ownerId, scope.threadId, text, JSON.stringify({ runtime: "agent", requestId: scope.requestId }));
-      await appendAgentStreamEvent(seed.db, scope.ownerId, scope.turnId, "status", { state: "running" });
+      seed.raw.prepare("UPDATE me3_agent_turns SET created_at=? WHERE owner_id=? AND turn_id=?").run(fixtureTime,scope.ownerId,scope.turnId);
+      seed.raw.prepare("UPDATE assistant_messages SET created_at=? WHERE id=?").run(fixtureTime,`${scope.turnId}:user`);
+      await savedEvent(scope, {event:"status",data:{state:"running"}});
     };
     const priorStore = createD1TurnStore(seed.db, prior);
     await recordOwnerInput(prior, fixture.priorText);
@@ -55,7 +64,7 @@ for (const fixture of fixtures) test(fixture.id, async () => {
         const text = fixture.domain === "reminder" ? "Your sole reminder is Call Sam, tomorrow." : "Your planning session is tomorrow, lasting one hour.";
         await onDelta(text); return { text, toolCalls: [], usage };
       } },
-      onEvent: event => appendAgentStreamEvent(seed.db, prior.ownerId, prior.turnId, event.event, event.data),
+      onEvent: event => savedEvent(prior,event),
     });
     assert.equal(priorResult.status, "complete");
     const priorMessages = (await priorStore.load()).messages;
@@ -92,7 +101,7 @@ for (const fixture of fixtures) test(fixture.id, async () => {
         const text = "The requested move could not be completed without its earlier owner context.";
         await onDelta(text); return { text, toolCalls: [], usage };
       } },
-      onEvent: async event => { events.push(structuredClone(event)); await appendAgentStreamEvent(seed.db, current.ownerId, current.turnId, event.event, event.data); },
+      onEvent: async event => { events.push(structuredClone(event)); await savedEvent(current,event); },
     });
     seed.reopen();
     const after = snapshot();

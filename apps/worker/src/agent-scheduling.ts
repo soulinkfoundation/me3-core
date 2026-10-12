@@ -135,12 +135,13 @@ export function createAgentSchedulingToolServices(
           ? item.durationMinutes === input.durationMinutes
           : true);
       if (!timeType) throw new Error("No matching booking time type is configured.");
+      const resultLimit = normalizeCandidateLimit(input.limit);
       const slots = await generateSchedulingCandidateSlots(env, ownerId, {
         timeType,
         dateRange: range,
-        limit: normalizeCandidateLimit(input.limit),
+        limit: resultLimit,
       });
-      return { timeTypeName: timeType.title, timezone: timeType.timezone, slots };
+      return { timeTypeName: timeType.title, timezone: timeType.timezone, slots, resultLimit, limitReached: slots.length === resultLimit };
     },
     searchContacts: async (input) => {
       await ensureSoulinkContactsFresh(env, ownerId);

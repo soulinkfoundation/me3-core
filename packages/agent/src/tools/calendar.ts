@@ -13,7 +13,7 @@ export function calendarTools() {
       const service = services(context).scheduling?.availability;
       if (!service) throw new Error("Calendar availability is unavailable.");
       return ok(await service(args as Parameters<typeof service>[0]));
-    }),
+    }, { description: "Find bounded free-slot suggestions using booking time types, events and buffers. Slots can overlap. If limitReached is true, later slots may be omitted; disclose that bound. This read neither lists existing bookings nor creates a booking." }),
     domainTool("core.calendar.event.create", async (args, context) => {
       context.signal.throwIfAborted();
       const event = await createCalendarEventForAgent(context.db, context.ownerId, context.ownerTimezone, args as CalendarAgentCreateInput, { idempotencyKey: context.idempotencyKey });
