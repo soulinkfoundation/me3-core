@@ -57,6 +57,10 @@ export type Contact = {
   updatedAt: string;
   bookingCount: number;
   lastBookingAt: string | null;
+  isClose: boolean;
+  closeSince: string | null;
+  isClient: boolean;
+  lastInTouchAt: string | null;
 };
 
 export type ContactSummary = {
@@ -154,6 +158,25 @@ export const useContactsStore = defineStore("contacts", () => {
     }
   }
 
+  async function markInTouch(contactId: string): Promise<Contact | null> {
+    error.value = null;
+    try {
+      const response = await api.post<{ ok: boolean; contact: Contact }>(
+        `/contacts/${contactId}/in-touch`,
+      );
+      replaceContact(response.contact);
+      return response.contact;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : "Failed to save";
+      return null;
+    }
+  }
+
+  function replaceContact(contact: Contact) {
+    const index = contacts.value.findIndex((entry) => entry.id === contact.id);
+    if (index >= 0) contacts.value.splice(index, 1, { ...contacts.value[index], ...contact });
+  }
+
   return {
     contacts,
     summary,
@@ -163,5 +186,6 @@ export const useContactsStore = defineStore("contacts", () => {
     fetchContacts,
     createContact,
     updateContact,
+    markInTouch,
   };
 });

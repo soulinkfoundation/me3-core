@@ -1,4 +1,5 @@
 import {
+  laterInteractionTimestamp,
   listAgentContacts,
   upsertAgentContact,
 } from "../agent-chat";
@@ -82,6 +83,8 @@ type SoulinkLinkContextRecord = {
   soulinkChatUrl?: unknown;
   chatUrl?: unknown;
   lastActiveAt?: unknown;
+  lastMessageAt?: unknown;
+  lastCallAt?: unknown;
   label?: unknown;
 };
 type TelegramUser = {
@@ -897,8 +900,13 @@ async function soulinkLinkToContactInput(
     null;
   const context = link.context && typeof link.context === "object" ? link.context : null;
   const soulinkChatUrl = buildSoulinkContactChatUrl(soulinkOrigin, link, context);
+  // Message and call times are metadata only; Soulink never sends content here.
   const lastActiveAt =
-    stringValue(context?.lastActiveAt) ||
+    laterInteractionTimestamp(
+      stringValue(context?.lastActiveAt),
+      stringValue(context?.lastMessageAt),
+      stringValue(context?.lastCallAt),
+    ) ||
     stringValue(link.updatedAt) ||
     stringValue(link.createdAt);
   const socialHandles: Record<string, string> = {};

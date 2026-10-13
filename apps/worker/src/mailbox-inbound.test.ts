@@ -107,6 +107,18 @@ describe("inbound MIME and attachment persistence", () => {
     expect(db.prepare("SELECT * FROM mailbox_attachment_staging").all()).toHaveLength(0);
   });
 
+  it("marks the sending contact as in touch without copying the email", async () => {
+    const { db, env } = setup();
+    db.exec(`INSERT INTO contacts (id, user_id, name, email, last_interaction_at) VALUES
+      ('sender', 'owner', 'Sender', 'Sender@Example.com', '2026-01-01T00:00:00.000Z'),
+      ('other', 'owner', 'Other', 'other@example.com', NULL)`);
+    expect((await deliverInboundEmail(message(), env, { managedDelivery })).status).toBe("accepted");
+    const rows = db.prepare("SELECT id, last_interaction_at, notes, metadata FROM contacts ORDER BY id").all() as Array<Record<string, string | null>>;
+    expect(Date.now() - Date.parse(String(rows[1].last_interaction_at))).toBeLessThan(60_000);
+    expect(rows[0].last_interaction_at).toBeNull();
+    expect(JSON.stringify(rows)).not.toContain("Plain body");
+  });
+
   it("retains cleanup work when R2 deletion fails and reconciles it later", async () => {
     const { db, env, objects, state } = setup(); state.failBatch = state.failDelete = true;
     await deliverInboundEmail(message(), env, { managedDelivery });

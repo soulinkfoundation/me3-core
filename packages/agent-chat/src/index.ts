@@ -84,6 +84,20 @@ import {
   type CoreWebResearchToolServices,
 } from "./core-agent-runtime";
 import { loadOwnerSnapshotContext } from "./owner-snapshot";
+import {
+  CONTACT_IS_CLIENT_SQL,
+  isCloseCloseness,
+  laterInteractionTimestamp,
+  normalizeInteractionTimestamp,
+  refreshContactInteractionsFromBookings,
+  touchContactInteraction,
+} from "./contact-people";
+export {
+  isCloseCloseness,
+  laterInteractionTimestamp,
+  refreshContactInteractionsFromBookings,
+  touchContactInteraction,
+} from "./contact-people";
 import type { AgentModelUsage } from "./tool-runtime";
 
 export {
@@ -602,6 +616,10 @@ export type AgentContact = {
   updatedAt: string;
   bookingCount: number;
   lastBookingAt: string | null;
+  isClose: boolean;
+  closeSince: string | null;
+  isClient: boolean;
+  lastInTouchAt: string | null;
 };
 
 export type AgentContactsSummary = {
@@ -839,6 +857,7 @@ type DbContactRow = {
   updated_at: string;
   booking_count?: number | string | null;
   last_booking_at?: string | null;
+  is_client?: number | string | null;
 };
 
 type DbMailboxAliasRow = {
@@ -1168,13 +1187,15 @@ export async function listAgentContacts(
   env: Pick<CoreAgentChatEnv, "DB">,
   userId: string,
 ): Promise<{ contacts: AgentContact[]; summary: AgentContactsSummary }> {
+  await refreshContactInteractionsFromBookings(env, userId);
   const rows = await env.DB.prepare(
     `SELECT c.id, c.user_id, c.name, c.email, c.phone, c.source, c.source_ref,
             c.relationship, c.status, c.notes, c.tags, c.last_interaction_at,
             c.next_followup_at, c.outreach_status, c.social_handles, c.metadata,
             c.created_at, c.updated_at,
             COUNT(b.id) AS booking_count,
-            MAX(b.starts_at) AS last_booking_at
+            MAX(b.starts_at) AS last_booking_at,
+            ${CONTACT_IS_CLIENT_SQL} AS is_client
      FROM contacts c
      LEFT JOIN bookings b ON b.guest_email = c.email
        AND b.site_id IN (SELECT s.id FROM sites s WHERE s.user_id = c.user_id)
@@ -1203,7 +1224,7 @@ export async function createAgentContact(
   }
 
   const id = crypto.randomUUID();
-  const metadata = normalizeContactMetadata(input);
+  const metadata = withCloseSince(normalizeContactMetadata(input), {});
   try {
     await env.DB.prepare(
       `INSERT INTO contacts (
@@ -1296,7 +1317,10 @@ export async function upsertAgentContact(
     status: existing.status,
     notes: existing.notes,
     tags: existing.tags,
-    lastInteractionAt: input.lastInteractionAt || existing.lastInteractionAt,
+    lastInteractionAt: laterInteractionTimestamp(
+      input.lastInteractionAt,
+      existing.lastInteractionAt,
+    ),
     nextFollowupAt: existing.nextFollowupAt,
     outreachStatus: existing.outreachStatus,
     socialHandles: {
@@ -1342,7 +1366,15 @@ export async function updateAgentContact(
       input.closeness ??
       (parseJsonRecord(existing.metadata).closeness as AgentContactCloseness),
   };
-  const metadata = normalizeContactMetadata(merged);
+  if (isPlainObject(value) && "closeness" in value && !input.closeness) {
+    merged.closeness = null;
+    merged.metadata = { ...(merged.metadata || {}) };
+    delete merged.metadata.closeness;
+  }
+  const metadata = withCloseSince(
+    normalizeContactMetadata(merged),
+    parseJsonRecord(existing.metadata),
+  );
   if (
     merged.email &&
     (await contactEmailExists(env, userId, merged.email, contactId))
@@ -1383,6 +1415,19 @@ export async function updateAgentContact(
     throw error;
   }
 
+  const contact = await getAgentContact(env, userId, contactId);
+  return contact || { error: "Contact not found", status: 404 };
+}
+
+export async function markAgentContactInTouch(
+  env: Pick<CoreAgentChatEnv, "DB">,
+  userId: string,
+  contactId: string,
+): Promise<AgentContact | { error: string; status: 404 }> {
+  if (!(await getAgentContactRow(env, userId, contactId))) {
+    return { error: "Contact not found", status: 404 };
+  }
+  await touchContactInteraction(env, userId, { contactId });
   const contact = await getAgentContact(env, userId, contactId);
   return contact || { error: "Contact not found", status: 404 };
 }
@@ -1856,6 +1901,9 @@ export async function markAgentMailboxDraftSent(
     .run();
 
   const sent = await getAgentMailboxMessageById(env, mailbox.id, draftId);
+  if ((result.meta?.changes || 0) > 0 && sent?.to_address) {
+    await touchContactInteraction(env, userId, { emails: [sent.to_address] }, input.sentAt);
+  }
   if ((result.meta?.changes || 0) === 0) {
     if (!sent) return { error: "Draft not found", status: 404 };
     if (sent.message_kind !== "email" || sent.status !== "sent") {
@@ -2017,6 +2065,13 @@ export function serializeAgentContact(row: DbContactRow): AgentContact {
     updatedAt: row.updated_at,
     bookingCount: Number(row.booking_count || 0),
     lastBookingAt: row.last_booking_at || null,
+    isClose: isCloseCloseness(metadata.closeness),
+    closeSince:
+      isCloseCloseness(metadata.closeness) && typeof metadata.closeSince === "string"
+        ? metadata.closeSince
+        : null,
+    isClient: row.relationship === "client" || Number(row.is_client || 0) > 0,
+    lastInTouchAt: normalizeInteractionTimestamp(row.last_interaction_at),
   };
 }
 
@@ -3330,9 +3385,10 @@ async function getAgentContactRow(
     `SELECT id, user_id, name, email, phone, source, source_ref,
             relationship, status, notes, tags, last_interaction_at,
             next_followup_at, outreach_status, social_handles, metadata,
-            created_at, updated_at, 0 AS booking_count, NULL AS last_booking_at
-     FROM contacts
-     WHERE user_id = ? AND id = ?`,
+            created_at, updated_at, 0 AS booking_count, NULL AS last_booking_at,
+            ${CONTACT_IS_CLIENT_SQL} AS is_client
+     FROM contacts c
+     WHERE c.user_id = ? AND c.id = ?`,
   )
     .bind(userId, contactId)
     .first<DbContactRow>();
@@ -4063,6 +4119,22 @@ function normalizeContactMetadata(
   const metadata = { ...(input.metadata || {}) };
   if (input.closeness) metadata.closeness = input.closeness;
   return Object.keys(metadata).length > 0 ? metadata : null;
+}
+
+// Close people are ranked by when they were starred, so keep that moment.
+function withCloseSince(
+  metadata: Record<string, unknown> | null,
+  previous: Record<string, unknown>,
+): Record<string, unknown> | null {
+  if (!metadata) return null;
+  if (!isCloseCloseness(metadata.closeness)) {
+    const { closeSince: _closeSince, ...rest } = metadata;
+    return Object.keys(rest).length > 0 ? rest : null;
+  }
+  const closeSince = isCloseCloseness(previous.closeness)
+    ? previous.closeSince || metadata.closeSince
+    : null;
+  return { ...metadata, closeSince: closeSince || new Date().toISOString() };
 }
 
 function normalizeEmail(value: unknown): string | null {

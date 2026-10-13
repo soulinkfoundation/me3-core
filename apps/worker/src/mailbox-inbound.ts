@@ -1,5 +1,5 @@
 import { stageMailboxAttachmentKeys, finishMailboxAttachmentStaging, cleanMailboxAttachmentStaging } from "./mailbox-attachment-staging";
-import type { AgentMailboxMessage } from "./agent-chat";
+import { touchContactInteraction, type AgentMailboxMessage } from "./agent-chat";
 import type { EmailProviderAttachment } from "./email-providers";
 import { publishMailboxMessageReceived } from "./mailbox-events";
 import { resolveMailboxThreadKey } from "./mailbox-threads";
@@ -147,6 +147,10 @@ export async function deliverInboundEmail(
       parsed.attachments,
     );
     const envelopeTo = options.recipient || message.to;
+    const fromAddress =
+      parseEmailAddressHeader(parsed.headers.from)?.address ||
+      normalizeEmail(message.from) ||
+      normalizeEmailHeaderValue(parsed.headers.from);
 
     const messageStatement = env.DB.prepare(
       `INSERT INTO mailbox_messages (
@@ -167,9 +171,7 @@ export async function deliverInboundEmail(
         threadKey,
         providerId,
         providerMessageId,
-        parseEmailAddressHeader(parsed.headers.from)?.address ||
-          normalizeEmail(message.from) ||
-          normalizeEmailHeaderValue(parsed.headers.from),
+        fromAddress,
         parseEmailAddressHeader(parsed.headers.to)?.address ||
           normalizeEmail(envelopeTo) ||
           normalizeEmailHeaderValue(parsed.headers.to),
@@ -228,6 +230,10 @@ export async function deliverInboundEmail(
       await env.DB.batch([messageStatement, finishMailboxAttachmentStaging(env, rowId)]);
     }
     stagedMessageId = null;
+
+    // People: an email from a contact counts as being in touch (address only).
+    await touchContactInteraction(env, mailbox.user_id, { emails: [fromAddress] }, now)
+      .catch((error) => console.error("Contact last-in-touch update failed", error));
 
     await publishMailboxMessageReceived(env, {
       ownerId: mailbox.user_id,

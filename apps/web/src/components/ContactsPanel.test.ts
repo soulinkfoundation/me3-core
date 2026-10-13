@@ -40,6 +40,10 @@ const soulinkContact = {
   updatedAt: "2026-08-18T10:00:00Z",
   bookingCount: 0,
   lastBookingAt: null,
+  isClose: false,
+  closeSince: null,
+  isClient: false,
+  lastInTouchAt: null,
 };
 
 describe("ContactsPanel", () => {

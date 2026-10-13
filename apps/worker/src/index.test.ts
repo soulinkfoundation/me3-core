@@ -2300,6 +2300,13 @@ function createEnv(): Env & {
               return { success: true };
             },
             async first<T>() {
+              if (sql.includes("FROM contacts c") && sql.includes("AS is_client")) {
+                return (
+                  state.contacts.find(
+                    (contact) => contact.user_id === values[0] && contact.id === values[1],
+                  ) || null
+                ) as T | null;
+              }
               if (sql.includes("COUNT(*) AS count") && sql.includes("FROM mailbox_messages")) {
                 const mailboxId = values[0] as string;
                 return {
@@ -2829,6 +2836,13 @@ function createEnv(): Env & {
               return null;
             },
             async all<T>() {
+              if (sql.includes("FROM contacts c") && sql.includes("AS is_client")) {
+                return {
+                  results: state.contacts.filter(
+                    (contact) => contact.user_id === values[0],
+                  ) as T[],
+                };
+              }
               if (sql.includes("FROM assistant_threads")) {
                 const searchValue =
                   sql.includes("LIKE") && typeof values[2] === "string"
