@@ -47,6 +47,7 @@ function person(id: string, name: string, extra: Partial<Contact> = {}): Contact
     closeSince: null,
     isClient: false,
     lastInTouchAt: null,
+    reminderAt: null,
     ...extra,
   };
 }
@@ -99,6 +100,7 @@ describe("People page", () => {
     vi.mocked(api.get).mockReset();
     vi.mocked(api.post).mockReset();
     vi.mocked(api.put).mockReset();
+    vi.mocked(api.delete).mockReset();
     vi.mocked(api.get).mockImplementation(async (path: string) => {
       if (path === "/contacts") return { contacts, summary: {} };
       if (path === "/soulink/status") return { connection: null };
@@ -234,5 +236,58 @@ describe("People page", () => {
 
     expect(api.post).not.toHaveBeenCalledWith("/contacts", expect.anything());
     expect(router.currentRoute.value.query.person).toBe("c-ann");
+  });
+
+  it("sets a reminder from a preset, shows it with Remove, and removes it", async () => {
+    await mountPeople("/people?person=c-erum");
+    const sheet = () => document.querySelector(".person-sheet") as HTMLElement;
+    const button = (text: string) =>
+      Array.from(sheet().querySelectorAll("button")).find((entry) => entry.textContent?.trim() === text) as HTMLButtonElement;
+
+    const nextWeek = new Date();
+    nextWeek.setHours(0, 0, 0, 0);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    const dayKey = `${nextWeek.getFullYear()}-${String(nextWeek.getMonth() + 1).padStart(2, "0")}-${String(nextWeek.getDate()).padStart(2, "0")}`;
+    vi.mocked(api.put).mockResolvedValue({ ok: true, reminderAt: `${dayKey}T09:00:00.000Z` });
+    button("Next week").click();
+    await flushPromises();
+
+    expect(api.put).toHaveBeenCalledWith("/contacts/c-erum/reminder", {
+      date: dayKey,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    expect(toasts.success).toHaveBeenCalledWith("Added to your calendar");
+    expect(sheet().textContent).toContain("On your calendar · “Get in touch with Erum”");
+    expect(button("Next week")).toBeUndefined();
+
+    vi.mocked(api.delete).mockResolvedValue({ ok: true });
+    button("Remove").click();
+    await flushPromises();
+    expect(api.delete).toHaveBeenCalledWith("/contacts/c-erum/reminder");
+    expect(button("Next week")).toBeDefined();
+  });
+
+  it("picks a later date from the calendar but not a past one", async () => {
+    await mountPeople("/people?person=c-dad");
+    const sheet = document.querySelector(".person-sheet") as HTMLElement;
+    (sheet.querySelector('button[aria-label="Pick a date"]') as HTMLButtonElement).click();
+    await flushPromises();
+
+    const days = Array.from(sheet.querySelectorAll(".contact-reminder__grid button")) as HTMLButtonElement[];
+    const today = new Date().getDate();
+    expect(days[today - 1].disabled).toBe(true);
+    (sheet.querySelector('button[aria-label="Next month"]') as HTMLButtonElement).click();
+    await flushPromises();
+    vi.mocked(api.put).mockResolvedValue({ ok: true, reminderAt: "2099-01-01T09:00:00.000Z" });
+    const firstNextMonth = sheet.querySelector(".contact-reminder__grid button") as HTMLButtonElement;
+    expect(firstNextMonth.disabled).toBe(false);
+    firstNextMonth.click();
+    await flushPromises();
+
+    const next = new Date();
+    const expected = new Date(next.getFullYear(), next.getMonth() + 1, 1);
+    expect(api.put).toHaveBeenCalledWith("/contacts/c-dad/reminder", expect.objectContaining({
+      date: `${expected.getFullYear()}-${String(expected.getMonth() + 1).padStart(2, "0")}-01`,
+    }));
   });
 });

@@ -342,7 +342,7 @@ watch(
           >
             <dt>{{ line.label }}</dt>
             <dd>
-              <a v-if="line.href" :href="line.href" target="_blank" rel="noopener noreferrer">
+              <a v-if="line.href" :href="line.href" :target="line.href.startsWith('/') ? undefined : '_blank'" rel="noopener noreferrer">
                 {{ line.value }}
               </a>
               <template v-else>{{ line.value }}</template>
@@ -494,7 +494,7 @@ watch(
             >
               <dt>{{ line.label }}</dt>
               <dd>
-                <a v-if="line.href" :href="line.href" target="_blank" rel="noopener noreferrer">
+                <a v-if="line.href" :href="line.href" :target="line.href.startsWith('/') ? undefined : '_blank'" rel="noopener noreferrer">
                   {{ line.value }}
                 </a>
                 <template v-else>{{ line.value }}</template>

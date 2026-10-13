@@ -61,6 +61,7 @@ export type Contact = {
   closeSince: string | null;
   isClient: boolean;
   lastInTouchAt: string | null;
+  reminderAt: string | null;
 };
 
 export type ContactSummary = {
@@ -172,6 +173,38 @@ export const useContactsStore = defineStore("contacts", () => {
     }
   }
 
+  async function setReminder(contactId: string, date: string, timezone: string): Promise<boolean> {
+    error.value = null;
+    try {
+      const response = await api.put<{ ok: boolean; reminderAt: string }>(
+        `/contacts/${contactId}/reminder`,
+        { date, timezone },
+      );
+      patchContact(contactId, { reminderAt: response.reminderAt });
+      return true;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : "Failed to add reminder";
+      return false;
+    }
+  }
+
+  async function clearReminder(contactId: string): Promise<boolean> {
+    error.value = null;
+    try {
+      await api.delete<{ ok: boolean }>(`/contacts/${contactId}/reminder`);
+      patchContact(contactId, { reminderAt: null });
+      return true;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : "Failed to remove reminder";
+      return false;
+    }
+  }
+
+  function patchContact(contactId: string, patch: Partial<Contact>) {
+    const index = contacts.value.findIndex((entry) => entry.id === contactId);
+    if (index >= 0) contacts.value.splice(index, 1, { ...contacts.value[index], ...patch });
+  }
+
   function replaceContact(contact: Contact) {
     const index = contacts.value.findIndex((entry) => entry.id === contact.id);
     if (index >= 0) contacts.value.splice(index, 1, { ...contacts.value[index], ...contact });
@@ -187,5 +220,7 @@ export const useContactsStore = defineStore("contacts", () => {
     createContact,
     updateContact,
     markInTouch,
+    setReminder,
+    clearReminder,
   };
 });

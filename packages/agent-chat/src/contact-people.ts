@@ -1,4 +1,4 @@
-import type { ReminderDb } from "./reminders";
+import { parseAgentReminderInput, type ReminderDb } from "./reminders";
 
 // People v1: the derived fields behind "Close", "Client" and "last in touch".
 // Close is metadata.closeness (also the close_contact scheduling tier); Client
@@ -128,5 +128,71 @@ export async function refreshContactInteractionsFromBookings(
      )`,
   )
     .bind(now, userId, userId)
+    .run();
+}
+
+// "Remind me to get in touch": one calendar reminder per contact, at 09:00 on
+// the chosen day in the owner's timezone. It stays relevant until the owner is
+// next in touch with that person or removes it.
+export const CONTACT_REMINDER_SQL = `(
+  SELECT r.remind_at FROM user_reminders r
+  WHERE r.user_id = c.user_id AND r.context_type = 'contact' AND r.context_id = c.id
+    AND r.status IN ('pending', 'delivered')
+    AND (c.last_interaction_at IS NULL
+         OR COALESCE(julianday(c.last_interaction_at), 0) < julianday(r.remind_at))
+  ORDER BY r.remind_at DESC LIMIT 1
+)`;
+
+const CONTACT_REMINDER_TIME = "09:00";
+
+export async function setContactReminder(
+  env: ContactPeopleEnv,
+  userId: string,
+  contactId: string,
+  input: { date?: unknown; timezone?: unknown },
+): Promise<{ remindAt: string } | { error: string; status: 400 | 404 }> {
+  const contact = await env.DB.prepare(
+    "SELECT id, name FROM contacts WHERE user_id = ? AND id = ?",
+  )
+    .bind(userId, contactId)
+    .first<{ id: string; name: string }>();
+  if (!contact) return { error: "Contact not found", status: 404 };
+
+  const firstName = contact.name.trim().split(/\s+/)[0] || contact.name;
+  const parsed = parseAgentReminderInput({
+    title: `Get in touch with ${firstName}`,
+    date: input.date,
+    time: CONTACT_REMINDER_TIME,
+    timezone: input.timezone,
+  });
+  if ("error" in parsed) return { error: parsed.error, status: 400 };
+  if (Date.parse(parsed.remindAt) <= Date.now()) {
+    return { error: "Pick a day after today", status: 400 };
+  }
+
+  await clearContactReminder(env, userId, contactId);
+  await env.DB.prepare(
+    `INSERT INTO user_reminders
+       (id, user_id, title, remind_at, timezone, context_type, context_id,
+        context_label, status, created_via)
+     VALUES (?, ?, ?, ?, ?, 'contact', ?, ?, 'pending', 'owner')`,
+  )
+    .bind(crypto.randomUUID(), userId, parsed.title, parsed.remindAt, parsed.timezone, contactId, contact.name)
+    .run();
+  return { remindAt: parsed.remindAt };
+}
+
+export async function clearContactReminder(
+  env: ContactPeopleEnv,
+  userId: string,
+  contactId: string,
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE user_reminders
+     SET status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = ? AND context_type = 'contact' AND context_id = ?
+       AND status IN ('pending', 'delivered', 'failed')`,
+  )
+    .bind(userId, contactId)
     .run();
 }

@@ -954,9 +954,15 @@ function mapReminderToCalendarEvent(
       ...(reminder.timezone
         ? [{ label: "Timezone", value: reminder.timezone }]
         : []),
-      ...(reminder.contextLabel
-        ? [{ label: "Context", value: reminder.contextLabel }]
-        : []),
+      ...(reminder.contextType === "contact" && reminder.contextId
+        ? [{
+            label: "Person",
+            value: reminder.contextLabel || "Open in People",
+            href: `/people?person=${encodeURIComponent(reminder.contextId)}`,
+          }]
+        : reminder.contextLabel
+          ? [{ label: "Context", value: reminder.contextLabel }]
+          : []),
     ],
     notes: reminder.notes,
     actionLabel: "Edit reminder",

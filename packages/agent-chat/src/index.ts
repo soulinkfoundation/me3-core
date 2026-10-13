@@ -86,6 +86,7 @@ import {
 import { loadOwnerSnapshotContext } from "./owner-snapshot";
 import {
   CONTACT_IS_CLIENT_SQL,
+  CONTACT_REMINDER_SQL,
   isCloseCloseness,
   laterInteractionTimestamp,
   normalizeInteractionTimestamp,
@@ -93,8 +94,10 @@ import {
   touchContactInteraction,
 } from "./contact-people";
 export {
+  clearContactReminder,
   isCloseCloseness,
   laterInteractionTimestamp,
+  setContactReminder,
   refreshContactInteractionsFromBookings,
   touchContactInteraction,
 } from "./contact-people";
@@ -620,6 +623,7 @@ export type AgentContact = {
   closeSince: string | null;
   isClient: boolean;
   lastInTouchAt: string | null;
+  reminderAt: string | null;
 };
 
 export type AgentContactsSummary = {
@@ -858,6 +862,7 @@ type DbContactRow = {
   booking_count?: number | string | null;
   last_booking_at?: string | null;
   is_client?: number | string | null;
+  reminder_at?: string | null;
 };
 
 type DbMailboxAliasRow = {
@@ -1195,7 +1200,8 @@ export async function listAgentContacts(
             c.created_at, c.updated_at,
             COUNT(b.id) AS booking_count,
             MAX(b.starts_at) AS last_booking_at,
-            ${CONTACT_IS_CLIENT_SQL} AS is_client
+            ${CONTACT_IS_CLIENT_SQL} AS is_client,
+            ${CONTACT_REMINDER_SQL} AS reminder_at
      FROM contacts c
      LEFT JOIN bookings b ON b.guest_email = c.email
        AND b.site_id IN (SELECT s.id FROM sites s WHERE s.user_id = c.user_id)
@@ -2072,6 +2078,7 @@ export function serializeAgentContact(row: DbContactRow): AgentContact {
         : null,
     isClient: row.relationship === "client" || Number(row.is_client || 0) > 0,
     lastInTouchAt: normalizeInteractionTimestamp(row.last_interaction_at),
+    reminderAt: row.reminder_at || null,
   };
 }
 
@@ -3386,7 +3393,8 @@ async function getAgentContactRow(
             relationship, status, notes, tags, last_interaction_at,
             next_followup_at, outreach_status, social_handles, metadata,
             created_at, updated_at, 0 AS booking_count, NULL AS last_booking_at,
-            ${CONTACT_IS_CLIENT_SQL} AS is_client
+            ${CONTACT_IS_CLIENT_SQL} AS is_client,
+            ${CONTACT_REMINDER_SQL} AS reminder_at
      FROM contacts c
      WHERE c.user_id = ? AND c.id = ?`,
   )

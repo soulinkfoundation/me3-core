@@ -1,8 +1,10 @@
 import {
+  clearContactReminder,
   createAgentContact,
   deleteAgentContact,
   listAgentContacts,
   markAgentContactInTouch,
+  setContactReminder,
   updateAgentContact,
 } from "../agent-chat";
 import type { AppContext, AppHono } from "../http/types";
@@ -54,11 +56,33 @@ export function registerContactsRoutes(app: AppHono, deps: ContactsRouteDeps) {
     return c.json({ ok: true, contact });
   });
 
+  // "Remind me to get in touch": one reminder per person on the owner's calendar.
+  app.put("/api/contacts/:id/reminder", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+
+    const body = await c.req
+      .json<{ date?: unknown; timezone?: unknown }>()
+      .catch((): { date?: unknown; timezone?: unknown } => ({}));
+    const result = await setContactReminder(c.env, ownerId, c.req.param("id"), body);
+    if ("error" in result) return c.json({ error: result.error }, result.status);
+    return c.json({ ok: true, reminderAt: result.remindAt });
+  });
+
+  app.delete("/api/contacts/:id/reminder", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+
+    await clearContactReminder(c.env, ownerId, c.req.param("id"));
+    return c.json({ ok: true });
+  });
+
   app.delete("/api/contacts/:id", async (c) => {
     const ownerId = await requireOwner(c);
     if (!ownerId) return unauthorized(c);
 
     const result = await deleteAgentContact(c.env, ownerId, c.req.param("id"));
+    if (!("error" in result)) await clearContactReminder(c.env, ownerId, c.req.param("id"));
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
     return c.json(result);
   });

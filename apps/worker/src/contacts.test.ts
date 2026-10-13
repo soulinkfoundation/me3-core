@@ -253,3 +253,86 @@ describe("People data", () => {
     expect(unstarred.metadata?.closeSince).toBeUndefined();
   });
 });
+
+describe("contact reminders", () => {
+  function routes(env: Env) {
+    const app = new Hono() as unknown as AppHono;
+    registerContactsRoutes(app, {
+      requireOwner: async () => "alice",
+      unauthorized: (c) => c.json({ error: "Unauthorized" }, 401),
+    });
+    const send = (path: string, method: string, body?: unknown) =>
+      app.request(path, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }, env);
+    return { send };
+  }
+  const nextWeek = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const pending = (raw: DatabaseSync) =>
+    raw.prepare("SELECT title, remind_at, timezone, context_type, context_id, context_label FROM user_reminders WHERE status = 'pending'").all();
+
+  it("keeps one reminder per person on the calendar and removes it", async () => {
+    const { raw, env, addContact } = fixture();
+    addContact("c-erum", "alice", "Erum Shah", null);
+    const { send } = routes(env);
+    const date = nextWeek();
+
+    const first = await send("/api/contacts/c-erum/reminder", "PUT", { date, timezone: "Europe/Dublin" });
+    expect(first.status).toBe(200);
+    const { reminderAt } = await first.json() as { reminderAt: string };
+    expect(pending(raw)).toEqual([{
+      title: "Get in touch with Erum",
+      remind_at: reminderAt,
+      timezone: "Europe/Dublin",
+      context_type: "contact",
+      context_id: "c-erum",
+      context_label: "Erum Shah",
+    }]);
+    expect(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Dublin", hour: "2-digit", minute: "2-digit" })
+      .format(new Date(reminderAt))).toBe("09:00");
+
+    const later = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    expect((await send("/api/contacts/c-erum/reminder", "PUT", { date: later, timezone: "UTC" })).status).toBe(200);
+    expect(pending(raw)).toHaveLength(1);
+    expect((pending(raw)[0] as { remind_at: string }).remind_at).toBe(`${later}T09:00:00.000Z`);
+    expect((await listAgentContacts(env, "alice")).contacts[0].reminderAt).toBe(`${later}T09:00:00.000Z`);
+
+    expect((await send("/api/contacts/c-erum/reminder", "DELETE")).status).toBe(200);
+    expect(pending(raw)).toEqual([]);
+    expect((await listAgentContacts(env, "alice")).contacts[0].reminderAt).toBeNull();
+  });
+
+  it("stops showing a reminder once the owner was in touch after it", async () => {
+    const { raw, env, addContact } = fixture();
+    addContact("c-erum", "alice", "Erum", null);
+    raw.exec(`INSERT INTO user_reminders (id, user_id, title, remind_at, context_type, context_id, status)
+      VALUES ('r-1', 'alice', 'Get in touch with Erum', '2026-10-01T09:00:00.000Z', 'contact', 'c-erum', 'delivered')`);
+    expect((await listAgentContacts(env, "alice")).contacts[0].reminderAt).toBe("2026-10-01T09:00:00.000Z");
+
+    raw.exec("UPDATE contacts SET last_interaction_at = '2026-10-02T12:00:00.000Z' WHERE id = 'c-erum'");
+    expect((await listAgentContacts(env, "alice")).contacts[0].reminderAt).toBeNull();
+  });
+
+  it("refuses past days and other owners' contacts", async () => {
+    const { raw, env, addContact } = fixture();
+    addContact("c-erum", "alice", "Erum", null);
+    addContact("c-bob", "bob", "Bob's friend", null);
+    const { send } = routes(env);
+
+    expect((await send("/api/contacts/c-erum/reminder", "PUT", { date: "2020-01-01" })).status).toBe(400);
+    expect((await send("/api/contacts/c-bob/reminder", "PUT", { date: nextWeek() })).status).toBe(404);
+    expect(pending(raw)).toEqual([]);
+  });
+
+  it("cancels the reminder when the person is deleted", async () => {
+    const { raw, env, addContact } = fixture();
+    addContact("c-erum", "alice", "Erum", null);
+    const { send } = routes(env);
+    await send("/api/contacts/c-erum/reminder", "PUT", { date: nextWeek() });
+
+    expect((await send("/api/contacts/c-erum", "DELETE")).status).toBe(200);
+    expect(pending(raw)).toEqual([]);
+  });
+});

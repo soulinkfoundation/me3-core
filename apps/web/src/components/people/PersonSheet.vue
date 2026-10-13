@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import AppDialog from "../AppDialog.vue";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
+import ContactReminder from "./ContactReminder.vue";
 import PersonAvatar from "./PersonAvatar.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { useContactsStore, type Contact } from "../../stores/contacts";
@@ -137,7 +138,7 @@ async function weTalked() {
         </a>
       </div>
 
-      <slot name="reminder" :person="person" />
+      <ContactReminder :contact="person" />
 
       <div class="person-sheet__footer">
         <button type="button" class="person-sheet__quiet" :disabled="markingInTouch" @click="weTalked">
