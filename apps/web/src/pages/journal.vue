@@ -346,6 +346,8 @@ function articleEditedLabel(value: string) {
 function htmlToPlainText(value: string): string {
   if (!value) return "";
   const doc = new DOMParser().parseFromString(value, "text/html");
+  doc.querySelectorAll("p, li, h1, h2, h3, h4, h5, h6, blockquote, pre, div, br")
+    .forEach((node) => node.append(" "));
   return (doc.body.textContent || "")
     .replace(/\u00a0/g, " ")
     .replace(/\s+/g, " ")
@@ -667,7 +669,7 @@ function updateSelectionToolbar() {
     (rect) => rect.width > 0 && rect.height > 0,
   );
   const rect = rects[rects.length - 1] || range.getBoundingClientRect();
-  const toolbarWidth = 86;
+  const toolbarWidth = 76;
   const toolbarHeight = 38;
   const left =
     rect.right + toolbarWidth + 12 <= window.innerWidth
@@ -1462,6 +1464,9 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="journal__status" aria-live="polite">
+          <span v-if="!loading">
+            {{ wordCount.toLocaleString() }} {{ wordCount === 1 ? 'word' : 'words' }}<template v-if="saveStatusText"> · {{ saveStatusText }}</template>
+          </span>
           <span v-if="loading">Loading</span>
           <span v-else-if="voiceDictationState === 'listening'">
             Recording {{ voiceRecordingElapsedLabel }}
@@ -1477,8 +1482,6 @@ onBeforeUnmount(() => {
           <span v-else-if="voiceDictationStatusText">
             {{ voiceDictationStatusText }}
           </span>
-          <span v-else>{{ saveStatusText }}</span>
-          <span v-if="!loading"> · {{ wordCount.toLocaleString() }} {{ wordCount === 1 ? 'word' : 'words' }}</span>
         </div>
       </section>
       <aside v-if="assistOpen" class="journal__assist" aria-label="Writing Assist">
@@ -2022,6 +2025,11 @@ onBeforeUnmount(() => {
 }
 
 .journal__status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   flex-shrink: 0;
   min-height: 22px;
   padding-top: 12px;
@@ -2091,7 +2099,7 @@ onBeforeUnmount(() => {
   gap: 2px;
   border: 1px solid var(--ui-border, var(--color-border));
   border-radius: var(--ui-radius-sm, 8px);
-  padding: 3px;
+  padding: 0;
   background: var(--ui-surface, var(--color-surface));
   box-shadow: var(--ui-shadow-md, 0 14px 32px rgba(15, 23, 42, 0.16));
 }
