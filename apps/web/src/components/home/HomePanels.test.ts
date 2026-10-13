@@ -31,10 +31,43 @@ beforeEach(() => {
   vi.mocked(api.post).mockImplementation(async endpoint => { if (endpoint.includes("/approvals/")) pending = []; return { ok: true } as never; });
 });
 afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ""; });
-function render() { return mount(HomePanels, { attachTo: document.body, global: { stubs: { RouterLink: { template: "<a><slot /></a>" }, UiIcon: true } } }); }
+function render(props: { active?: boolean } = {}) { return mount(HomePanels, { props, attachTo: document.body, global: { stubs: { RouterLink: { template: "<a><slot /></a>" }, UiIcon: true } } }); }
 function button(text: string) { return [...document.body.querySelectorAll("button")].find(node => node.textContent?.trim() === text); }
 
 describe("Home Core approval review", () => {
+  // The hidden Home stays mounted while Chat runs. Its initial empty list must
+  // not hide a later durable approval, retain a resolved one, or win a read race.
+  it("discovers a newly pending approval when returning from Chat to Home", async () => {
+    pending = []; const wrapper = render({ active: false }); await flushPromises();
+    expect(button("Review")).toBeUndefined();
+    pending = [core]; await wrapper.setProps({ active: true }); await flushPromises();
+    expect(button("Review")).toBeTruthy(); button("Review")!.click(); await flushPromises();
+    expect(document.body.querySelector("dialog[open]")?.textContent).toContain(body);
+    expect(api.post).not.toHaveBeenCalled();
+  });
+  it("refreshes pending and resolved approvals after a terminal Chat result", async () => {
+    pending = []; const wrapper = render({ active: false }); await flushPromises();
+    const home = wrapper.vm as unknown as { refreshToday: () => Promise<void> };
+    pending = [core]; await home.refreshToday(); await flushPromises();
+    expect(button("Review")).toBeTruthy();
+    pending = []; await home.refreshToday(); await flushPromises();
+    expect(button("Review")).toBeUndefined(); expect(api.post).not.toHaveBeenCalled();
+  });
+  it("does not restore an approval from a delayed older refresh", async () => {
+    pending = []; const wrapper = render({ active: false }); await flushPromises();
+    const home = wrapper.vm as unknown as { refreshToday: () => Promise<void> };
+    const originalGet = vi.mocked(api.get).getMockImplementation()!;
+    let finishOld!: (value: unknown) => void; let reads = 0;
+    vi.mocked(api.get).mockImplementation(endpoint => {
+      if (endpoint.startsWith("/mission-control/approvals") && reads++ === 0) {
+        return new Promise(resolve => { finishOld = resolve; }) as never;
+      }
+      return originalGet(endpoint);
+    });
+    const older = home.refreshToday(); await flushPromises();
+    await home.refreshToday(); finishOld({ approvals: [core] }); await older; await flushPromises();
+    expect(button("Review")).toBeUndefined(); expect(api.post).not.toHaveBeenCalled();
+  });
   it("shows the complete escaped email before making an approval decision", async () => {
     render(); await flushPromises();
     expect(button("Review")).toBeTruthy(); button("Review")!.click(); await flushPromises();

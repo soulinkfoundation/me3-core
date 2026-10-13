@@ -2613,6 +2613,7 @@ function applyAssistantResultToMessage(
   messageId: string,
   result: AgentSandboxResponse,
 ) {
+  void homePanels.value?.refreshToday();
   const message = chatMessages.value.find((item) => item.id === messageId);
   if (!message) return;
   if (!message.text.trim()) {
@@ -3563,7 +3564,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
     >
     <main class="assistant-main" aria-label="Assistant console">
       <section class="assistant-console" aria-label="Assistant conversation">
-        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" />
+        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" :active="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" />
         <div
           v-show="!homeMode || siteBuilderMode"
           ref="assistantScrollerRef"

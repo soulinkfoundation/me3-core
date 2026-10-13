@@ -11,6 +11,7 @@ import { useAppToast } from "../../composables/useAppToast";
 import UiIcon from "../UiIcon.vue";
 import { HOME_CARDS, emptyHomeLayout, homeDateLabel, homeDoneToday, homeGoalTasks, homeOpenTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeTask, type HomeGoal } from "../../utils/homeSummary";
 const emit = defineEmits<{ suggest: [text: string]; approvalResolved: [] }>();
+const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
 const auth = useAuthStore();
 const storageKey = computed(() => `me3.home.${location.origin}.${API_BASE}.${auth.user?.id || "owner"}`);
 const layout = ref<HomeLayout>(emptyHomeLayout());
@@ -64,7 +65,7 @@ let resizeObserver: ResizeObserver | undefined;
 const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 const reducedMotion = ref(motionPreference?.matches ?? false);
 function updateMotionPreference() { reducedMotion.value = motionPreference?.matches ?? false; }
-defineExpose({ openAddDialog: () => { dialog.value = "add"; } });
+defineExpose({ openAddDialog: () => { dialog.value = "add"; }, refreshToday: loadToday });
 const menu = ref<HomeCard | null>(null);
 const day = ref(localDateKey(new Date()));
 const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = {
@@ -287,6 +288,7 @@ async function decideCoreApproval(decision: "approved" | "declined") {
   finally { busy.value = busy.value.filter(id => id !== approval.id); }
 }
 watch(day, loadToday);
+watch(() => props.active, active => { if (active) void loadToday(); });
 onMounted(() => {
   motionPreference?.addEventListener("change", updateMotionPreference);
   resizeObserver = new ResizeObserver(entries => {
