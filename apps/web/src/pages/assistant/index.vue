@@ -163,7 +163,6 @@ type AgentSandboxResponse = {
     pending?: boolean;
     published?: boolean;
   } | null;
-  contactsChanged?: boolean;
   error?: string;
 };
 type AssistantThreadMessage = {
@@ -2642,7 +2641,6 @@ function applyAssistantResultToMessage(
   );
   hydrateAssistantEmailDraftMessage(message);
   message.inboxLink = result.emailAction?.kind === "drafted";
-  message.rolodexLink = result.contactsChanged === true;
   message.reminderLink =
     result.reminderAction?.kind === "created" ||
     result.reminderAction?.kind === "updated";
@@ -2821,7 +2819,7 @@ function assistantDraftContactNames(contact: Contact): string[] {
         (alias): alias is string => typeof alias === "string",
       )
     : [];
-  return [contact.name, ...aliases, ...contact.tags];
+  return [contact.name, ...aliases];
 }
 
 function normalizeAssistantDraftRecipientName(value: unknown) {

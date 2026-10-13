@@ -1106,7 +1106,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       emailAction: null,
       reminderAction: null,
       contentAction: null,
-      contactsChanged: false,
       trace: { assistantScopeDecision: scopeDecision },
     };
   }
@@ -1372,7 +1371,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       emailAction: null,
       reminderAction: null,
       contentAction: null,
-      contactsChanged: false,
       trace: scopeDecision ? { assistantScopeDecision: scopeDecision } : undefined,
     };
   }

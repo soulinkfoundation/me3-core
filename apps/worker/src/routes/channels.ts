@@ -1,6 +1,4 @@
 import {
-  convertAgentContactToClient,
-  deleteAgentContact,
   listAgentContacts,
   upsertAgentContact,
 } from "../agent-chat";

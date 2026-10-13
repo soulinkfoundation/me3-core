@@ -11,7 +11,7 @@ import WorkspaceTabs from "../components/WorkspaceTabs.vue";
 import { API_BASE, api } from "../api";
 import { useAppToast } from "../composables/useAppToast";
 import { useAuthStore } from "../stores/auth";
-import { useContactsStore, type Contact } from "../stores/contacts";
+import { useContactsStore } from "../stores/contacts";
 import {
   mailboxCacheScope,
   useMailboxCacheStore,
@@ -582,13 +582,6 @@ const allMessagesOnPageSelected = computed(
 const someMessagesOnPageSelected = computed(() =>
   messageIdsOnPage.value.some((id) => selectedMessageIds.value.has(id)),
 );
-const followUpDraftCount = computed(
-  () =>
-    messages.value.filter(
-      (message) =>
-        message.status === "pending_approval" && isLikelyFollowUpDraft(message),
-    ).length,
-);
 const selectedThreadSummary = computed(() =>
   selectedThreadId.value
     ? threadSummaries.value.find(
@@ -707,52 +700,6 @@ function getVisibleFolderCount(tab: EmailTab): number | null {
 
 async function loadFolderCounts(force = true) {
   await mailboxCache.loadFolderCounts(force);
-}
-
-function normalizeEmail(value: string | null): string | null {
-  const normalized = value?.trim().toLowerCase();
-  return normalized || null;
-}
-
-function getRelatedContact(message: InboxMessage): Contact | null {
-  if (message.metadata?.contactId) {
-    const byId = contacts.value.find(
-      (contact) => contact.id === message.metadata?.contactId,
-    );
-    if (byId) return byId;
-  }
-  const targetEmail = normalizeEmail(
-    message.direction === "inbound" ? message.fromAddress : message.toAddress,
-  );
-  if (!targetEmail) return null;
-  return (
-    contacts.value.find(
-      (contact) => normalizeEmail(contact.email) === targetEmail,
-    ) || null
-  );
-}
-
-function isContactDueForFollowUp(contact: Contact | null): boolean {
-  if (!contact || !contact.nextFollowupAt || contact.status === "archived") {
-    return false;
-  }
-  const nextFollowup = new Date(contact.nextFollowupAt);
-  return (
-    !Number.isNaN(nextFollowup.getTime()) &&
-    nextFollowup.getTime() <= Date.now()
-  );
-}
-
-function isLikelyFollowUpDraft(message: InboxMessage): boolean {
-  if (message.metadata?.category === "rolodex_follow_up") {
-    return true;
-  }
-
-  return (
-    message.direction === "outbound" &&
-    message.status === "pending_approval" &&
-    isContactDueForFollowUp(getRelatedContact(message))
-  );
 }
 
 function getCounterpartyAddress(message: InboxMessage): string {
@@ -3167,15 +3114,6 @@ onBeforeUnmount(() => {
       </div>
 
       <template v-else>
-        <div
-          v-if="activeTab === 'drafts' && followUpDraftCount > 0"
-          class="state-card state-card--info"
-        >
-          {{ followUpDraftCount }}
-          {{ followUpDraftCount === 1 ? "draft looks" : "drafts look" }}
-          like rolodex follow-ups that are due now.
-        </div>
-
         <div
           v-if="
             activeTab !== 'telegram' &&
@@ -6143,10 +6081,6 @@ onBeforeUnmount(() => {
 
 .state-card--error {
   color: #b33b2e;
-}
-
-.state-card--info {
-  color: var(--color-text);
 }
 
 .state-sub {

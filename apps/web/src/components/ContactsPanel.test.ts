@@ -28,10 +28,7 @@ const soulinkContact = {
   closeness: null,
   status: "active" as const,
   notes: null,
-  tags: [],
   lastInteractionAt: null,
-  nextFollowupAt: null,
-  outreachStatus: null,
   socialHandles: {},
   metadata: {
     avatarUrl: "https://cdn.test/missing-avatar.jpg",

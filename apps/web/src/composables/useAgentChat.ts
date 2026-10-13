@@ -33,7 +33,6 @@ export type AgentChatMessage = {
   emailDraftAction?: AgentChatEmailDraftAction | null;
   trace?: AgentChatTurnTrace | null;
   inboxLink?: boolean;
-  rolodexLink?: boolean;
   reminderLink?: boolean;
   actionHref?: string | null;
   actionLabel?: string | null;

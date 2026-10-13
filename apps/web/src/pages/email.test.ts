@@ -113,29 +113,7 @@ function threadSummaryFor(
 }
 
 function emptyContactSummary() {
-  const outreach = Object.fromEntries(
-    [
-      "new",
-      "drafted",
-      "sent",
-      "replied",
-      "booked",
-      "converted",
-      "not_interested",
-      "no_response",
-    ].map((key) => [key, 0]),
-  );
-  return {
-    total: 0,
-    clients: 0,
-    prospects: 0,
-    contacts: 0,
-    active: 0,
-    dormant: 0,
-    archived: 0,
-    needsFollowUp: 0,
-    outreach,
-  };
+  return { total: 0, clients: 0, contacts: 0, active: 0, archived: 0 };
 }
 
 function mailboxResponseFor(endpoint: string) {

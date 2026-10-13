@@ -71,7 +71,6 @@ type AgentSandboxResponse = {
     pending?: boolean;
     published?: boolean;
   } | null;
-  contactsChanged?: boolean;
   error?: string;
 };
 type AssistantSettingsResponse = {
@@ -216,7 +215,6 @@ async function sendMessage(targetSelection?: AgentTargetChoice, suppliedText?: s
       actionCards: normalizeAgentActionCards(result.actionCards),
       targetPresentation: normalizeAgentTargetPresentation(result.targetPresentation),
       inboxLink: result.emailAction?.kind === "drafted",
-      rolodexLink: result.contactsChanged === true,
       reminderLink:
         result.reminderAction?.kind === "created" ||
         result.reminderAction?.kind === "updated",

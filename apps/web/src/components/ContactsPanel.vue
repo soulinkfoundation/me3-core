@@ -105,7 +105,6 @@ function searchableContactText(contact: Contact): string {
     contact.metadata?.soulinkContextLabel,
     contact.metadata?.soulinkSourceChatTitle,
     contact.metadata?.soulinkOrigin,
-    contact.tags.join(" "),
     Object.values(contact.socialHandles).join(" "),
   ]
     .filter(Boolean)

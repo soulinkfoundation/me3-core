@@ -137,7 +137,6 @@ export async function runModelTurn(
           reminderAction: null,
           actionCards: null,
           contentAction: null,
-          contactsChanged: false,
           modelAttempts,
         };
       }
@@ -257,7 +256,6 @@ function modelFallbackResponse(
     reminderAction: null,
     actionCards: null,
     contentAction: null,
-    contactsChanged: false,
     modelAttempts,
   };
 }

@@ -603,12 +603,12 @@ export const ME3_CAPABILITIES: readonly Me3Capability[] = [
   },
   {
     id: "contacts.relationships",
-    title: "Contacts and relationships",
+    title: "People",
     category: "contacts",
     summary:
-      "ME3 can store contacts, relationship status, outreach status, notes, social handles, follow-up dates, and booking links.",
+      "ME3 keeps one list of the owner's people: names, email, phone, notes, who is Close, who is a client, Soulink Links, and when they were last in touch.",
     agentSummary:
-      "ME3 can help maintain owner-scoped contacts and relationship context. Treat updates as private workspace writes.",
+      "ME3 can help maintain owner-scoped contacts and relationship context. Treat updates as private workspace writes. ME3 reminds the owner to get in touch; it never drafts or sends check-ins on its own.",
     surfaces: ["core", "hosted"],
     lifecycle: "available",
     pluginId: "me3.agent-chat",
@@ -619,9 +619,9 @@ export const ME3_CAPABILITIES: readonly Me3Capability[] = [
     appRoutes: ["/api/contacts"],
     boundaries: [
       "Do not expose private contact notes in public profile output.",
-      "Be careful with outreach status and follow-up claims.",
+      "Remind the owner to reach out; do not draft or send check-ins unless the owner asks.",
     ],
-    tags: ["contacts", "crm", "outreach"],
+    tags: ["contacts", "people", "relationships"],
   },
   {
     id: "content.social_publishing",

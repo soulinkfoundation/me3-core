@@ -91,6 +91,7 @@ import { registerChannelRoutes } from "./routes/channels";
 import { registerAgentSchedulingRoutes } from "./routes/agent-scheduling";
 import { registerAssistantSkillsRoutes } from "./routes/assistant-skills";
 import { registerContactsRoutes } from "./routes/contacts";
+import { registerLocationsRoutes } from "./routes/locations";
 import { registerCoreGithubUpdaterRoutes } from "./routes/core-github-updater";
 import { registerFilesRoutes } from "./routes/files";
 import { registerJournalRoutes } from "./routes/journal";
@@ -132,16 +133,12 @@ import {
 } from "@me3/knowledge";
 import {
   activateAgentMailbox,
-  convertAgentContactToClient,
   createAgentMailboxDraft,
   createAgentSandboxTurnRecord,
-  createAgentContact,
-  deleteAgentContact,
   getAgentMailboxDraftForApproval,
   getAgentMailboxOutboundHeaders,
   getAgentMailboxOverview,
   listAgentMailboxMessages,
-  listAgentContacts,
   markAgentMailboxDraftFailed,
   markAgentMailboxDraftSent,
   moveAgentMailboxMessage,
@@ -151,9 +148,6 @@ import {
   setAgentMailboxMessageReadState,
   trashAgentMailboxMessage,
   updateAgentMailboxDraft,
-  updateAgentContact,
-  updateAgentContactOutreachStatus,
-  upsertAgentContact,
   upsertAgentMailbox,
   type AgentMailboxMessage,
   type AgentSandboxDispatchResponse,
@@ -166,7 +160,6 @@ import {
   insertProviderChannelEvent,
   insertProviderChannelEventOnce,
 } from "./agent-channels";
-import { searchLocationQuery } from "./location-search";
 import {
   createEmptyPublishManifest,
   deleteSiteFile,
@@ -1428,6 +1421,7 @@ registerCalendarRoutes(app, { requireOwner, unauthorized });
 registerCalendarSourceRoutes(app, { requireOwner, unauthorized });
 
 registerContactsRoutes(app, { requireOwner, unauthorized });
+registerLocationsRoutes(app, { requireOwner, unauthorized });
 
 registerCoreGithubUpdaterRoutes(app, { requireOwner, unauthorized });
 

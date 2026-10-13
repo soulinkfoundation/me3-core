@@ -2809,6 +2809,16 @@ function createEnv(): Env & {
                   ? (state.telegramSettings as T)
                   : null;
               }
+              if (sql.includes("FROM contacts") && sql.includes("LOWER(TRIM(email))")) {
+                return (
+                  state.contacts.find(
+                    (contact) =>
+                      contact.user_id === values[0] &&
+                      contact.email?.trim().toLowerCase() === values[1] &&
+                      contact.id !== values[2],
+                  ) || null
+                ) as T | null;
+              }
               if (sql.includes("FROM contacts")) {
                 return (
                   state.contacts.find(
@@ -6208,7 +6218,6 @@ describe("ME3 Worker auth", () => {
         emailAction: null,
         reminderAction: null,
         contentAction: null,
-        contactsChanged: false,
       });
     });
 
@@ -6373,7 +6382,6 @@ describe("ME3 Worker auth", () => {
         emailAction: null,
         reminderAction: null,
         contentAction: null,
-        contactsChanged: false,
       });
     });
     env.ME3_USER_AGENT = {
@@ -6431,7 +6439,6 @@ describe("ME3 Worker auth", () => {
         emailAction: null,
         reminderAction: null,
         contentAction: null,
-        contactsChanged: false,
       });
     });
 
@@ -6545,7 +6552,6 @@ describe("ME3 Worker auth", () => {
         emailAction: null,
         reminderAction: null,
         contentAction: null,
-        contactsChanged: false,
       }),
     );
     env.ME3_USER_AGENT = {
@@ -7507,7 +7513,6 @@ describe("ME3 Worker auth", () => {
         emailAction: null,
         reminderAction: null,
         contentAction: null,
-        contactsChanged: false,
         performance: {
           version: 1,
           resultSource: "fresh",
@@ -7640,7 +7645,6 @@ describe("ME3 Worker auth", () => {
         emailAction: null,
         reminderAction: null,
         contentAction: null,
-        contactsChanged: false,
       }),
     );
     env.ME3_USER_AGENT = {
@@ -8400,7 +8404,6 @@ describe("ME3 Worker auth", () => {
         emailAction: null,
         reminderAction: null,
         contentAction: null,
-        contactsChanged: false,
       }),
     );
 
@@ -13835,7 +13838,6 @@ describe("ME3 Worker auth", () => {
         emailAction: null,
         reminderAction: null,
         contentAction: null,
-        contactsChanged: false,
       }),
     );
     env.ME3_USER_AGENT = {
@@ -14084,7 +14086,6 @@ describe("ME3 Worker auth", () => {
         emailAction: null,
         reminderAction: null,
         contentAction: null,
-        contactsChanged: false,
       }),
     );
     env.ME3_USER_AGENT = {
@@ -14319,7 +14320,6 @@ describe("ME3 Worker auth", () => {
       emailAction: null,
       reminderAction: null,
       contentAction: null,
-      contactsChanged: false,
     };
     const runtimeFetch = vi
       .fn()

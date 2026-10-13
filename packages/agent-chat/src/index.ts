@@ -424,7 +424,6 @@ export type AgentSandboxDispatchResponse = {
     postId: string;
     platforms: Array<"x" | "linkedin" | "instagram" | "instagram_business" | "youtube" | "tiktok">;
   } | null;
-  contactsChanged?: boolean;
   modelAttempts?: AgentChatModelAttemptTrace[] | null;
   streamMetrics?: AgentChatStreamMetrics | null;
   performance?: AgentChatPerformanceMetrics | null;
@@ -608,13 +607,9 @@ export type AgentContact = {
 export type AgentContactsSummary = {
   total: number;
   clients: number;
-  prospects: number;
   contacts: number;
   active: number;
-  dormant: number;
   archived: number;
-  needsFollowUp: number;
-  outreach: Record<Exclude<AgentContactOutreachStatus, null>, number>;
 };
 
 export type AgentMailboxUpdateInput = {
@@ -1404,48 +1399,6 @@ export async function deleteAgentContact(
     return { error: "Contact not found", status: 404 };
   }
   return { ok: true };
-}
-
-export async function updateAgentContactOutreachStatus(
-  env: Pick<CoreAgentChatEnv, "DB">,
-  userId: string,
-  contactId: string,
-  input: { outreachStatus?: unknown; nextFollowupAt?: unknown },
-): Promise<AgentContact | { error: string; status: 404 }> {
-  const outreachStatus = normalizeContactOutreachStatus(input.outreachStatus);
-  const result = (await env.DB.prepare(
-    `UPDATE contacts
-     SET outreach_status = ?, next_followup_at = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE user_id = ? AND id = ?`,
-  )
-    .bind(outreachStatus, normalizeNullableText(input.nextFollowupAt), userId, contactId)
-    .run()) as D1RunResultLike;
-  if ((result.meta?.changes || 0) === 0) {
-    return { error: "Contact not found", status: 404 };
-  }
-
-  const contact = await getAgentContact(env, userId, contactId);
-  return contact || { error: "Contact not found", status: 404 };
-}
-
-export async function convertAgentContactToClient(
-  env: Pick<CoreAgentChatEnv, "DB">,
-  userId: string,
-  contactId: string,
-): Promise<AgentContact | { error: string; status: 404 }> {
-  const result = (await env.DB.prepare(
-    `UPDATE contacts
-     SET relationship = 'client', outreach_status = 'converted', updated_at = CURRENT_TIMESTAMP
-     WHERE user_id = ? AND id = ?`,
-  )
-    .bind(userId, contactId)
-    .run()) as D1RunResultLike;
-  if ((result.meta?.changes || 0) === 0) {
-    return { error: "Contact not found", status: 404 };
-  }
-
-  const contact = await getAgentContact(env, userId, contactId);
-  return contact || { error: "Contact not found", status: 404 };
 }
 
 export async function getAgentMailboxOverview(
@@ -2397,7 +2350,6 @@ export async function dispatchAgentSandboxTurn(
       reminderAction: null,
       actionCards: null,
       contentAction: null,
-      contactsChanged: false,
     };
   } else if (imageInputError) {
     response = blockedImageInputResponse({
@@ -2760,7 +2712,6 @@ async function maybeHandleAssistantImageTurn(
           assets: generated.assets,
         },
         contentAction: null,
-        contactsChanged: false,
       },
     };
   } catch (error) {
@@ -2837,7 +2788,6 @@ function blockedImageResponse(input: {
       assets: [],
     },
     contentAction: null,
-    contactsChanged: false,
   };
 }
 
@@ -2862,7 +2812,6 @@ function blockedImageInputResponse(input: {
     reminderAction: null,
     actionCards: null,
     contentAction: null,
-    contactsChanged: false,
   };
 }
 
@@ -2898,7 +2847,6 @@ function failedImageResponse(input: {
       assets: [],
     },
     contentAction: null,
-    contactsChanged: false,
   };
 }
 
@@ -3298,7 +3246,6 @@ function toolResponse(
     reminderAction: options.reminderAction ?? null,
     actionCards: options.actionCards ?? null,
     contentAction: null,
-    contactsChanged: false,
   };
 }
 
@@ -3392,33 +3339,12 @@ async function getAgentContactRow(
 }
 
 function summarizeAgentContacts(contacts: AgentContact[]): AgentContactsSummary {
-  const outreach: AgentContactsSummary["outreach"] = {
-    new: 0,
-    drafted: 0,
-    sent: 0,
-    replied: 0,
-    booked: 0,
-    converted: 0,
-    not_interested: 0,
-    no_response: 0,
-  };
-  for (const contact of contacts) {
-    if (contact.outreachStatus && contact.outreachStatus in outreach) {
-      outreach[contact.outreachStatus] += 1;
-    }
-  }
   return {
     total: contacts.length,
     clients: contacts.filter((contact) => contact.relationship === "client").length,
-    prospects: contacts.filter((contact) => contact.relationship === "prospect").length,
     contacts: contacts.filter((contact) => contact.relationship === "contact").length,
     active: contacts.filter((contact) => contact.status === "active").length,
-    dormant: contacts.filter((contact) => contact.status === "dormant").length,
     archived: contacts.filter((contact) => contact.status === "archived").length,
-    needsFollowUp: contacts.filter(
-      (contact) => contact.nextFollowupAt && contact.status === "active",
-    ).length,
-    outreach,
   };
 }
 
@@ -4151,12 +4077,14 @@ async function contactEmailExists(
   email: string,
   exceptContactId?: string,
 ): Promise<boolean> {
-  const { contacts } = await listAgentContacts(env, userId);
-  return contacts.some(
-    (contact) =>
-      contact.id !== exceptContactId &&
-      contact.email?.trim().toLowerCase() === email,
-  );
+  const row = await env.DB.prepare(
+    `SELECT id FROM contacts
+     WHERE user_id = ? AND LOWER(TRIM(email)) = ? AND id != ?
+     LIMIT 1`,
+  )
+    .bind(userId, email.trim().toLowerCase(), exceptContactId || "")
+    .first<{ id: string }>();
+  return Boolean(row);
 }
 
 function duplicateContactEmailError() {
@@ -4307,19 +4235,13 @@ function contactAliases(row: DbContactRow): string[] {
     : [];
   return uniqueStrings([
     ...aliases,
-    ...parseJsonArray(row.tags),
     row.email || "",
     ...Object.values(stringRecord(parseJsonRecord(row.social_handles))),
   ]);
 }
 
 function summarizeContactRow(row: DbContactRow): string {
-  const parts = [
-    row.notes,
-    row.outreach_status ? `Outreach: ${row.outreach_status}.` : null,
-    row.next_followup_at ? `Next follow-up: ${row.next_followup_at}.` : null,
-  ].filter((part): part is string => Boolean(part));
-  return parts.join(" ");
+  return row.notes?.trim() || "";
 }
 
 function summarizeMailboxRow(row: DbMailboxMessageRow): string {
