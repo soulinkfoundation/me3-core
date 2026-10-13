@@ -39,10 +39,12 @@ async function assertActiveScope(env: Env, ownerId: string, input: Parameters<Ag
   if (!scope) throw new Error("Image generation conversation or request is unavailable");
   input.signal.throwIfAborted();
 }
+// Shadow receipts are excluded so an in-flight or unpriced shadow cannot block images.
 async function managedAdmission(env: Env, ownerId: string, signal: AbortSignal): Promise<number> {
   await syncManagedAiUsage(env);
   const snapshot = await env.DB.prepare(`SELECT COUNT(*) AS count FROM ai_usage_events WHERE user_id=?
-    AND created_at >= datetime('now','start of month') AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL`).bind(ownerId).first<{ count: number }>();
+    AND created_at >= datetime('now','start of month') AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
+    AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'`).bind(ownerId).first<{ count: number }>();
   const policy = await getManagedAiBillingSettings(env, { syncUsage: false });
   signal.throwIfAborted();
   if (!policy.available || !policy.eligible || policy.fallbackActive || policy.currentMonthUsageMicrousd >= policy.effectiveMaximumCents * 10_000) throw new Error(policy.ineligibleReason || "Managed image generation is unavailable at the current budget");
@@ -87,8 +89,10 @@ export function createAgentImageGenerationServices(env: Env, ownerId: string): A
           AND NOT EXISTS(SELECT 1 FROM ai_usage_events WHERE id=?)
           AND NOT EXISTS(SELECT 1 FROM me3_agent_cancellations WHERE owner_id=? AND request_id=?)
           AND (?=0 OR (NOT EXISTS(SELECT 1 FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month')
-            AND json_extract(metadata_json,'$.me3_runtime')='agent' AND json_extract(metadata_json,'$.billingManaged')=1 AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL)
-            AND ?=(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month') AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL)))`)
+            AND json_extract(metadata_json,'$.me3_runtime')='agent' AND json_extract(metadata_json,'$.billingManaged')=1 AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL
+            AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path')
+            AND ?=(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month') AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
+            AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path')))`)
           .bind(id, ownerId, input.threadId, input.turnId, input.requestId, input.idempotencyKey, prompt, model, managed ? 1 : 0, usageId, ownerId, input.turnId, usageId, ownerId, input.requestId, managed ? 1 : 0, ownerId, reportCount, ownerId),
         env.DB.prepare(`INSERT OR IGNORE INTO ai_usage_events(id,user_id,kind,provider,model,successful_request_count,metadata_json)
           SELECT ?,?,'image','workers-ai',?,0,? WHERE EXISTS(SELECT 1 FROM me3_agent_image_operations WHERE id=? AND status='admitted')`).bind(usageId, ownerId, model, JSON.stringify(metadata), id),

@@ -55,7 +55,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     if(managed&&!managed.eligible)throw new Error(managed.ineligibleReason||"Managed AI is unavailable");
     const route=settings.defaults.chat;
     const modelName=input.selectedModel?providerModel(input.selectedModel.providerId,input.selectedModel.model):managed?.defaultModel||providerModel(route.providerId,route.model);
-    if(managed){await assertManagedCostsReconciled(env,input.userId,true,input.turnId);resolveManagedModel(managed,modelName);}
+    if(managed){await assertManagedCostsReconciled(env,input.userId,true);resolveManagedModel(managed,modelName);}
     const gateway=await getAiGatewayRuntimeConfig(env,input.userId);
     if(!env.AI)throw new Error("Cloudflare AI binding is not configured");
     const metadata={me3_runtime:"agent",me3_turn_id:input.turnId,me3_request_id:input.requestId,me3_thread_id:input.threadId};
@@ -70,21 +70,25 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const receiptMetadata={...callMetadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0]};
       const billingFeeRate=managed&&!selected.startsWith("@cf/")?0.05:0;
       // An interrupted or unpriced paid request must remain visibly unreconciled.
+      // Planner calls ignore shadow receipts from every turn, so a late or unpriced
+      // shadow can only stop later shadows, never the owner's own turns.
       const admitted=await env.DB.prepare(`INSERT INTO ai_usage_events(id,user_id,kind,provider,model,tokens_in,tokens_out,estimated_cost_usd,metadata_json)
         SELECT ?,?,'text','workers-ai',?,0,0,0,? WHERE ?=0 OR (NOT EXISTS(
           SELECT 1 FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month')
           AND json_extract(metadata_json,'$.me3_runtime')='agent'
           AND json_extract(metadata_json,'$.billingManaged')=1
           AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL
-          AND NOT (coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?
-            AND (?=1 OR coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'))
+          AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'
+            AND (?=0 OR coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?))
+          AND NOT (?=1 AND coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?)
         ) AND ?=(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=?
           AND created_at >= datetime('now','start of month')
           AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
-          AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path' AND json_extract(metadata_json,'$.me3_turn_id')=?)
-        ))`).bind(usageId,input.userId,selected,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:null,costKnown:false,usageReported:false}),managed?1:0,input.userId,input.turnId,shadow?1:0,reportCount,input.userId,input.turnId).run();
+          AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'
+            AND (?=0 OR coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?))
+        ))`).bind(usageId,input.userId,selected,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:null,costKnown:false,usageReported:false}),managed?1:0,input.userId,shadow?1:0,input.turnId,shadow?1:0,input.turnId,reportCount,input.userId,shadow?1:0,input.turnId).run();
       if(managed&&!admitted.meta.changes){
-        if(!shadow)await assertManagedCostsReconciled(env,input.userId,true,input.turnId);
+        if(!shadow)await assertManagedCostsReconciled(env,input.userId,true);
         throw new Error("Managed AI budget policy changed before model admission; retry this turn");
       }
       purpose?.onAdmission?.(usageId);
@@ -110,12 +114,12 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const modelFor=(requested:string,purpose?:ModelPurpose):AgentModel=>{
       if(!managed)return cloudflareModel(canonicalNativeModel(requested),0,purpose);
       const model:AgentModel={id:resolveManagedModel(managed,requested),async step(step){
-        await assertManagedCostsReconciled(env,input.userId,false,input.turnId);
+        await assertManagedCostsReconciled(env,input.userId,false);
         await syncManagedAiUsage(env,{deferFastPathTurnId:input.turnId});
-        const reportCount=await managedUsageReportCount(env,input.userId,input.turnId);
+        const reportCount=await managedUsageReportCount(env,input.userId,input.turnId,true);
         const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
         model.id=resolveManagedModel(policy,requested);
-        await assertManagedCostsReconciled(env,input.userId,true,input.turnId);
+        await assertManagedCostsReconciled(env,input.userId,true);
         step.signal.throwIfAborted();
         return cloudflareModel(model.id,reportCount,purpose).step(step);
       }};
@@ -233,20 +237,22 @@ function canonicalNativeModel(model:string):string {
   const nativeModel=`@cf/${managedModelId(model)}`;
   return modelCapabilitiesFor("workers-ai",nativeModel).includes("text")?nativeModel:model;
 }
-async function managedUsageReportCount(env:Env,ownerId:string,shadowTurnId:string):Promise<number> {
+async function managedUsageReportCount(env:Env,ownerId:string,shadowTurnId:string,planner=false):Promise<number> {
   const row=await env.DB.prepare(`SELECT COUNT(*) AS count FROM ai_usage_events WHERE user_id=?
     AND created_at >= datetime('now','start of month')
     AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
-    AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path' AND json_extract(metadata_json,'$.me3_turn_id')=?)`).bind(ownerId,shadowTurnId).first<{count:number}>();
+    AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'
+      AND (?=1 OR coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?))`).bind(ownerId,planner?1:0,shadowTurnId).first<{count:number}>();
   return row?.count??0;
 }
-async function assertManagedCostsReconciled(env:Env,ownerId:string,requireReported=false,shadowTurnId=""):Promise<void> {
+// Only planner admission uses this gate; shadow receipts never block it.
+async function assertManagedCostsReconciled(env:Env,ownerId:string,requireReported=false):Promise<void> {
   const pending=await env.DB.prepare(`SELECT json_extract(metadata_json,'$.costKnown') AS costKnown FROM ai_usage_events WHERE user_id=?
     AND created_at >= datetime('now','start of month')
     AND json_extract(metadata_json,'$.me3_runtime')='agent'
     AND json_extract(metadata_json,'$.billingManaged')=1
-    AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path' AND json_extract(metadata_json,'$.me3_turn_id')=?)
-    AND ${requireReported?"json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL":"json_extract(metadata_json,'$.costKnown')=0"} LIMIT 1`).bind(ownerId,shadowTurnId).first<{costKnown:number}>();
+    AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'
+    AND ${requireReported?"json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL":"json_extract(metadata_json,'$.costKnown')=0"} LIMIT 1`).bind(ownerId).first<{costKnown:number}>();
   if(pending)throw new Error(`Managed AI ${pending.costKnown===0?"cost":"usage"} is awaiting reconciliation before another model call`);
 }
 function resolveManagedModel(policy:ManagedAiBillingSettings,requested:string):string {

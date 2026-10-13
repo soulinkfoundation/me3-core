@@ -168,6 +168,15 @@ describe("new agent managed billing boundary", () => {
     if (kind === "denied") expect(raw.prepare("SELECT COUNT(*) n FROM ai_usage_events WHERE json_extract(metadata_json,'$.purpose')='fast_path'").get()).toMatchObject({ n: 0 });
     if (kind === "missing-usage") expect(JSON.parse(String(raw.prepare("SELECT metadata_json FROM ai_usage_events WHERE json_extract(metadata_json,'$.purpose')='fast_path'").get()!.metadata_json))).toMatchObject({ costKnown: false, usageReported: false });
   });
+  it("an unpriced shadow from an earlier turn stops later shadows but never the planner", async () => {
+    fixtureTools.value = [{ name: "core_reminders_list", description: "List reminders", parameters: { type: "object", properties: {} }, fastPath: { mode: "arguments", candidates: "reminders" }, effect: "read", approval: "none", async execute() { return { status: "ok" }; } }];
+    const { env, models, raw } = fixture(); env.ME3_AGENT_FAST_PATH = "shadow";
+    raw.prepare("INSERT INTO ai_usage_events(id,user_id,kind,provider,model,tokens_in,tokens_out,estimated_cost_usd,metadata_json) VALUES('earlier:model:shadow','owner','text','workers-ai','@cf/cloudflare/clef',0,0,0,?)")
+      .run(JSON.stringify({ me3_runtime: "agent", me3_turn_id: "earlier", purpose: "fast_path", billingManaged: true, costKnown: false, usageReported: false }));
+    const result = await executeNewAgentTurn(env, input, new AbortController().signal);
+    expect(result).toMatchObject({ status: "complete", replyText: "Read complete." });
+    expect(models).toEqual(["openai/gpt-5.5"]);
+  });
   it.each([["openai", "openai/gpt-6.1-sol", "openai", 0.0003, 0.05], ["anthropic", "anthropic/claude-opus-5.5", "anthropic", 0.0006, 0.05], ["workers-ai", "@cf/zai-org/glm-5.3-flash", "zai-org", 0.00002, 0]] as const)("records %s model author separately from the Workers AI transport and preserves managed fees", async (providerId, model, modelAuthor, baseCostUsd, billingFeeRate) => {
     const policy = settings({ models: [{ id: model, label: model, description: "Synthetic", recommended: false }] });
     const { env, raw } = fixture(policy);
