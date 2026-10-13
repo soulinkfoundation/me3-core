@@ -4,6 +4,7 @@ import { AGENT_SCHEMA_STATEMENTS } from "../../../packages/agent/src/store";
 import { AGENT_IMAGE_SCHEMA_STATEMENTS } from "./agent-image-schema";
 import { AGENT_PRESENTATION_SCHEMA_STATEMENTS } from "../../../packages/agent/src/presentations";
 import { AGENT_NOTIFICATION_SCHEMA } from "./agent-notifications";
+import { MORNING_CALENDAR_PUSH_SCHEMA } from "./morning-calendar-push";
 import type { Env } from "./types";
 
 type RuntimeMigration = {
@@ -497,6 +498,14 @@ const runtimeMigrations: RuntimeMigration[] = [
         db.prepare("ALTER TABLE sites ADD COLUMN booking_reminders_enabled INTEGER NOT NULL DEFAULT 1 CHECK (booking_reminders_enabled IN (0, 1))"),
         ...RETIRE_LEGACY_AUTOMATIONS_STATEMENTS.map(sql => db.prepare(sql)),
       ]);
+    },
+  },
+  {
+    id: "0065_morning_calendar_push",
+    checksum: "2026-10-13-morning-calendar-push-v1",
+    async apply(db) {
+      await addColumnIfMissing(db, "owner_profile", "daily_briefing_time", "TEXT NOT NULL DEFAULT '07:30'");
+      for (const sql of MORNING_CALENDAR_PUSH_SCHEMA) await db.prepare(sql).run();
     },
   },
 ];

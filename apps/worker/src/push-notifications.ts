@@ -115,10 +115,11 @@ export async function unregisterPushNotificationDevice(
 }
 
 export type DailyBriefingPushSummary = {
-  ownerName: string | null;
+  birthdayNames: string[];
   counts: {
+    birthdays: number;
+    events: number;
     reminders: number;
-    tasks: number;
     bookings: number;
   };
 };
@@ -127,7 +128,7 @@ export async function notifyDailyBriefingReady(
   env: Env,
   briefingId: string,
   summary?: DailyBriefingPushSummary | null,
-) {
+): Promise<Record<string, unknown>> {
   try {
     return await relayRequest(
       env,
@@ -135,6 +136,7 @@ export async function notifyDailyBriefingReady(
       {
         method: "POST",
         body: summary ? JSON.stringify(summary) : undefined,
+        signal: AbortSignal.timeout(15_000),
       },
     );
   } catch (error) {

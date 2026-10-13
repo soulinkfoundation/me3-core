@@ -87,8 +87,8 @@ describe("push notification relay client", () => {
       envWithSecrets(linkedSecrets()),
       "briefing-123",
       {
-        ownerName: "Kieran",
-        counts: { reminders: 1, tasks: 3, bookings: 2 },
+        birthdayNames: ["Dad"],
+        counts: { birthdays: 1, events: 3, reminders: 1, bookings: 2 },
       },
     );
     const calls = fetchMock.mock.calls as unknown as Array<[URL, RequestInit]>;
@@ -98,8 +98,8 @@ describe("push notification relay client", () => {
       "https://api.me3.app/api/push/daily-briefings/briefing-123",
     );
     expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
-      ownerName: "Kieran",
-      counts: { reminders: 1, tasks: 3, bookings: 2 },
+      birthdayNames: ["Dad"],
+      counts: { birthdays: 1, events: 3, reminders: 1, bookings: 2 },
     });
   });
 });

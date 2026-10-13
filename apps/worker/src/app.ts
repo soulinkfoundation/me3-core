@@ -2,6 +2,7 @@ import { registerWheelOfLifeRoutes } from "./routes/wheel-of-life";
 import { registerGoalRoutes } from "./routes/goals";
 import { registerNavigationFeatureRoutes } from "./routes/navigation-features";
 import { Hono, type Context } from "hono";
+import { normalizeDailyBriefingTime } from "./morning-calendar-push";
 import { cors } from "hono/cors";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { Me3UserAgent } from "./user-agent";
@@ -285,7 +286,7 @@ type Me3AppConnectionDetails = {
   meJsonUrl: string;
   meJsonSource: "core_install" | "hosted_profile";
 };
-type AccountUpdateBody = { timezone?: unknown; locale?: unknown };
+type AccountUpdateBody = { timezone?: unknown; locale?: unknown; dailyBriefingTime?: unknown };
 type SessionPayload = { sub: string; iat: number; exp: number };
 type OwnerRecord = OwnerProfile & { password_hash: string | null };
 type AuthRateLimitPolicy = {
@@ -1348,8 +1349,8 @@ app.put("/api/account", async (c) => {
   if (!ownerId) return unauthorized(c);
 
   const body = await c.req.json<AccountUpdateBody>().catch((): AccountUpdateBody => ({}));
-  if (body.timezone === undefined && body.locale === undefined) {
-    return c.json({ error: "timezone or locale is required" }, 400);
+  if (body.timezone === undefined && body.locale === undefined && body.dailyBriefingTime === undefined) {
+    return c.json({ error: "timezone, locale or dailyBriefingTime is required" }, 400);
   }
 
   const timezone = body.timezone === undefined ? undefined : normalizeTimeZone(body.timezone);
@@ -1361,6 +1362,8 @@ app.put("/api/account", async (c) => {
   if (body.locale !== undefined && body.locale !== null && body.locale !== "" && !locale) {
     return c.json({ error: "Invalid locale" }, 400);
   }
+  const dailyBriefingTime = body.dailyBriefingTime === undefined ? undefined : normalizeDailyBriefingTime(body.dailyBriefingTime);
+  if (dailyBriefingTime === null) return c.json({ error: "Invalid morning calendar time (use HH:MM)" }, 400);
 
   const updates = ["updated_at = CURRENT_TIMESTAMP"];
   const values: Array<string | null> = [];
@@ -1371,6 +1374,10 @@ app.put("/api/account", async (c) => {
   if (locale !== undefined) {
     updates.push("locale = ?");
     values.push(locale);
+  }
+  if (dailyBriefingTime !== undefined) {
+    updates.push("daily_briefing_time = ?");
+    values.push(dailyBriefingTime);
   }
 
   await c.env.DB.prepare(
@@ -1840,6 +1847,7 @@ function serializeAccountOwner(owner: OwnerRecord) {
     timezone: storedTimezone,
     locale: explicitLocale || inferLocaleFromTimeZone(effectiveTimezone),
     localeSource: explicitLocale ? "explicit" : "inferred",
+    dailyBriefingTime: normalizeDailyBriefingTime(owner.daily_briefing_time) || "07:30",
   };
 }
 
@@ -1853,7 +1861,7 @@ function inferLocaleFromTimeZone(timezone: string): string {
 
 async function getOwnerProfile(env: Env, ownerId: string): Promise<OwnerRecord | null> {
   const result = await env.DB.prepare(
-    "SELECT id, email, name, username, bio, avatar_url, timezone, locale, assistant_name, password_hash FROM owner_profile WHERE id = ?",
+    "SELECT id, email, name, username, bio, avatar_url, timezone, locale, assistant_name, daily_briefing_time, password_hash FROM owner_profile WHERE id = ?",
   )
     .bind(ownerId)
     .first<OwnerRecord>();

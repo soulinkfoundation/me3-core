@@ -3,6 +3,7 @@ import { reconcileMailboxAttachmentStaging } from "./mailbox-attachment-staging"
 import app from "./app";
 import { dispatchDueCalendarSourceRefreshes } from "./calendar-sources";
 import { dispatchDueCalendarPushNotifications } from "./calendar-push-notifications";
+import { dispatchDueMorningCalendarPushes } from "./morning-calendar-push";
 import { retryAgentTurnNotifications } from "./agent-notifications";
 import {
   BOOKING_REMINDER_QUEUE_NAME,
@@ -78,6 +79,7 @@ const worker = {
       }
       await reconcileProductOrders(env);
       await reconcileMailboxAttachmentStaging(env);
+      await dispatchDueMorningCalendarPushes(env);
       await dispatchDueCalendarPushNotifications(env);
       await retryAgentTurnNotifications(env);
       await dispatchDueBookingReminders(env);

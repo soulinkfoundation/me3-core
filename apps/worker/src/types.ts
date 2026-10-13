@@ -116,6 +116,7 @@ export interface OwnerProfile {
   timezone: string | null;
   locale?: string | null;
   assistant_name?: string | null;
+  daily_briefing_time?: string | null;
 }
 
 export type SiteRole = "profile" | "organization";

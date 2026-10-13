@@ -59,6 +59,7 @@ type AccountResponse = {
     timezone: string | null;
     locale: string;
     localeSource: "explicit" | "inferred";
+    dailyBriefingTime?: string;
   };
 };
 
@@ -370,6 +371,8 @@ const { toastFromUnknown, toastSuccess } = useAppToast();
 const loading = ref(false);
 const saving = ref(false);
 const timezoneInput = ref("");
+const dailyBriefingTimeInput = ref("07:30");
+const savedDailyBriefingTime = ref("07:30");
 const savedTimezoneInput = ref("");
 const error = ref<string | null>(null);
 const supportedTimeZones = listSupportedTimeZones();
@@ -493,7 +496,8 @@ const saveDisabled = computed(
     saving.value ||
     !timezoneInput.value ||
     !isValidTimeZone(timezoneInput.value) ||
-    timezoneInput.value === savedTimezoneInput.value,
+    !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(dailyBriefingTimeInput.value) ||
+    (timezoneInput.value === savedTimezoneInput.value && dailyBriefingTimeInput.value === savedDailyBriefingTime.value),
 );
 
 const mailboxAliasNormalized = computed(() =>
@@ -1168,6 +1172,8 @@ function syncAccount(response: AccountResponse) {
   });
   timezoneInput.value = response.user.timezone || "";
   savedTimezoneInput.value = timezoneInput.value;
+  dailyBriefingTimeInput.value = response.user.dailyBriefingTime || "07:30";
+  savedDailyBriefingTime.value = dailyBriefingTimeInput.value;
 }
 
 async function ensureBrowserTimezoneSaved(response: AccountResponse) {
@@ -1221,6 +1227,7 @@ async function saveSettings() {
     const response = await api.put<AccountResponse>("/account", {
       timezone: timezoneInput.value,
       locale: null,
+      dailyBriefingTime: dailyBriefingTimeInput.value,
     });
     syncAccount(response);
     toastSuccess("Regional settings updated.");
@@ -4078,7 +4085,7 @@ onBeforeUnmount(() => {
             @click="openSection.timezone = !openSection.timezone"
           >
             <span class="accordion-title-wrap accordion-title-flex">
-              <h2>Timezone</h2>
+              <h2>Timezone and morning calendar</h2>
             </span>
             <span class="accordion-chevron" aria-hidden="true">▼</span>
           </button>
@@ -4132,6 +4139,14 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
+              <label class="field">
+                <span>Morning calendar time</span>
+                <input v-model="dailyBriefingTimeInput" class="input" type="time" aria-describedby="morning-calendar-hint" />
+              </label>
+              <p id="morning-calendar-hint" class="hint">
+                A daily push with birthdays, events, bookings and reminders at this local time.
+                Turn it off using Daily Briefing in your phone's notification settings.
+              </p>
               <p v-if="error" class="error">{{ error }}</p>
             </div>
           </div>

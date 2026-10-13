@@ -71,47 +71,8 @@ async function loadCalendarPushCandidates(
 ): Promise<CalendarPushCandidate[]> {
   const queryStart = new Date(now.getTime() - QUERY_PADDING_MS).toISOString();
   const queryEnd = new Date(now.getTime() + QUERY_PADDING_MS).toISOString();
-  const [events, recurringEvents, bookings, reminders, importedEvents, tasks] = await Promise.all([
-    env.DB.prepare(
-      `SELECT id, user_id, title, notes, location, starts_at, ends_at, timezone,
-              all_day, kind, recurrence_rule, created_at
-       FROM user_calendar_events
-       WHERE user_id = ? AND recurrence_rule IS NULL
-         AND ends_at > ? AND starts_at < ?`,
-    ).bind(owner.id, queryStart, queryEnd).all<DbUserCalendarEvent>(),
-    env.DB.prepare(
-      `SELECT id, user_id, title, notes, location, starts_at, ends_at, timezone,
-              all_day, kind, recurrence_rule, created_at
-       FROM user_calendar_events
-       WHERE user_id = ? AND recurrence_rule IS NOT NULL`,
-    ).bind(owner.id).all<DbUserCalendarEvent>(),
-    env.DB.prepare(
-      `SELECT b.* FROM bookings b
-       JOIN sites s ON s.id = b.site_id
-       WHERE s.user_id = ? AND b.status = 'confirmed'
-         AND b.starts_at >= ? AND b.starts_at < ?`,
-    ).bind(owner.id, queryStart, queryEnd).all<DbBooking>(),
-    env.DB.prepare(
-      `SELECT id, user_id, title, notes, remind_at, timezone, recurrence_rule,
-              context_type, context_id, context_label, status, delivered_at,
-              dismissed_at, created_at
-       FROM user_reminders
-       WHERE user_id = ? AND status IN ('pending', 'failed')
-         AND remind_at >= ? AND remind_at < ?`,
-    ).bind(owner.id, queryStart, queryEnd).all<DbUserReminder>(),
-    env.DB.prepare(
-      `SELECT cse.id, cse.source_id, cse.external_key, cse.external_uid,
-              cse.title, cse.notes, cse.location, cse.starts_at, cse.ends_at,
-              cse.timezone, cse.all_day, cse.is_busy, cse.created_at
-       FROM calendar_source_events cse
-       JOIN calendar_sources cs ON cs.id = cse.source_id
-       WHERE cs.user_id = ? AND cs.status = 'active'
-         AND cse.ends_at > ? AND cse.starts_at < ?
-         AND NOT EXISTS (
-           SELECT 1 FROM calendar_source_event_dismissals d
-           WHERE d.source_id = cse.source_id AND d.external_key = cse.external_key
-         )`,
-    ).bind(owner.id, queryStart, queryEnd).all<DbCalendarSourceEvent>(),
+  const [items, tasks] = await Promise.all([
+    loadCalendarPushItems(env, owner.id, queryStart, queryEnd),
     env.DB.prepare(
       `SELECT id, title, due_at, scheduled_for FROM mission_tasks
        WHERE user_id = ? AND archived_at IS NULL
@@ -119,19 +80,10 @@ async function loadCalendarPushCandidates(
          AND (due_at IS NOT NULL OR scheduled_for IS NOT NULL)`,
     ).bind(owner.id).all<MissionTaskRow>(),
   ]);
-
-  const expandedEvents = [
-    ...(events.results || []),
-    ...expandRecurringCalendarEvents(
-      recurringEvents.results || [],
-      queryStart,
-      queryEnd,
-    ),
-  ];
   const ownerTimezone = normalizeTimeZone(owner.timezone) || "UTC";
   return [
-    ...expandedEvents.map((event) => eventCandidate(owner.id, event, ownerTimezone)),
-    ...(bookings.results || []).map((booking) => timedCandidate(
+    ...items.events.map((event) => eventCandidate(owner.id, event, ownerTimezone)),
+    ...items.bookings.map((booking) => timedCandidate(
       owner.id,
       "bookings",
       booking.id,
@@ -141,7 +93,7 @@ async function loadCalendarPushCandidates(
       booking.starts_at,
       EVENT_ALERT_OFFSET_MINUTES,
     )),
-    ...(reminders.results || []).map((reminder) => timedCandidate(
+    ...items.reminders.map((reminder) => timedCandidate(
       owner.id,
       "reminders",
       reminder.id,
@@ -149,7 +101,7 @@ async function loadCalendarPushCandidates(
       reminder.remind_at,
       0,
     )),
-    ...(importedEvents.results || []).map((event) => eventLikeCandidate(
+    ...items.importedEvents.map((event) => eventLikeCandidate(
       owner.id,
       "subscribed_calendars",
       event.id,
@@ -165,6 +117,59 @@ async function loadCalendarPushCandidates(
       return [taskCandidate(owner.id, task.id, task.title, due, ownerTimezone)];
     }),
   ];
+}
+
+export async function loadCalendarPushItems(env: Env, userId: string, queryStart: string, queryEnd: string) {
+  const [events, recurringEvents, bookings, reminders, importedEvents] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, user_id, title, notes, location, starts_at, ends_at, timezone,
+              all_day, kind, recurrence_rule, created_at
+       FROM user_calendar_events
+       WHERE user_id = ? AND recurrence_rule IS NULL
+         AND ends_at > ? AND starts_at < ?`,
+    ).bind(userId, queryStart, queryEnd).all<DbUserCalendarEvent>(),
+    env.DB.prepare(
+      `SELECT id, user_id, title, notes, location, starts_at, ends_at, timezone,
+              all_day, kind, recurrence_rule, created_at
+       FROM user_calendar_events
+       WHERE user_id = ? AND recurrence_rule IS NOT NULL`,
+    ).bind(userId).all<DbUserCalendarEvent>(),
+    env.DB.prepare(
+      `SELECT b.* FROM bookings b
+       JOIN sites s ON s.id = b.site_id
+       WHERE s.user_id = ? AND b.status = 'confirmed'
+         AND b.ends_at > ? AND b.starts_at < ?`,
+    ).bind(userId, queryStart, queryEnd).all<DbBooking>(),
+    env.DB.prepare(
+      `SELECT id, user_id, title, notes, remind_at, timezone, recurrence_rule,
+              context_type, context_id, context_label, status, delivered_at,
+              dismissed_at, created_at
+       FROM user_reminders
+       WHERE user_id = ? AND status IN ('pending', 'failed')
+         AND remind_at >= ? AND remind_at < ?`,
+    ).bind(userId, queryStart, queryEnd).all<DbUserReminder>(),
+    env.DB.prepare(
+      `SELECT cse.id, cse.source_id, cse.external_key, cse.external_uid,
+              cse.title, cse.notes, cse.location, cse.starts_at, cse.ends_at,
+              cse.timezone, cse.all_day, cse.is_busy, cse.created_at
+       FROM calendar_source_events cse
+       JOIN calendar_sources cs ON cs.id = cse.source_id
+       WHERE cs.user_id = ? AND cs.status = 'active'
+         AND cse.ends_at > ? AND cse.starts_at < ?
+         AND NOT EXISTS (
+           SELECT 1 FROM calendar_source_event_dismissals d
+           WHERE d.source_id = cse.source_id AND d.external_key = cse.external_key
+         )`,
+    ).bind(userId, queryStart, queryEnd).all<DbCalendarSourceEvent>(),
+  ]);
+
+  return {
+    events: [...(events.results || []), ...expandRecurringCalendarEvents(recurringEvents.results || [], queryStart, queryEnd)]
+      .sort((a, b) => a.starts_at.localeCompare(b.starts_at) || a.id.localeCompare(b.id)),
+    bookings: bookings.results || [],
+    reminders: reminders.results || [],
+    importedEvents: importedEvents.results || [],
+  };
 }
 
 function eventCandidate(

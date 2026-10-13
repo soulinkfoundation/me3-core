@@ -487,6 +487,7 @@ function createEnv(): Env & {
     },
     prepare(sql: string) {
       const runtimeTableNames = new Set([
+        "owner_profile",
         "mission_tasks",
         "journal_entries",
         "commerce_settings",
@@ -625,6 +626,10 @@ function createEnv(): Env & {
                 }
                 if (sql.includes("locale = ?")) {
                   state.owner.locale = values[valueIndex] as string | null;
+                  valueIndex += 1;
+                }
+                if (sql.includes("daily_briefing_time = ?")) {
+                  state.owner.daily_briefing_time = values[valueIndex] as string;
                 }
               }
 
@@ -12745,6 +12750,20 @@ describe("ME3 Worker auth", () => {
     expect(body.user.timezone).toBe("Europe/Dublin");
     expect(body.user.locale).toBe("en-IE");
     expect(body.user.localeSource).toBe("explicit");
+  });
+
+  // Failure modes: invalid local time stored, setting not owner-scoped or not returned.
+  it("saves and validates the owner's morning calendar time", async () => {
+    const env = createEnv();
+    const session = cookieHeader(await bootstrap(env));
+    const update = (dailyBriefingTime: unknown) => app.fetch(new Request("http://localhost/api/account", {
+      method: "PUT", headers: { "Content-Type": "application/json", Cookie: session },
+      body: JSON.stringify({ dailyBriefingTime }),
+    }), env);
+    const response = await update("09:15");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ user: { dailyBriefingTime: "09:15" } });
+    for (const time of ["24:00", "7:30", "07:60", null]) expect((await update(time)).status).toBe(400);
   });
 
   it("creates and updates Core mailbox settings", async () => {
