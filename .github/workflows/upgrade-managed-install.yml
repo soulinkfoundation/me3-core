@@ -90,7 +90,6 @@ jobs:
       ME3_MANAGED_CANONICAL_HOSTNAME: ${{ inputs.canonical_hostname }}
       ME3_MANAGED_ZONE_ID: ${{ inputs.zone_id }}
       ME3_MANAGED_RECOVERY_PLAN: ${{ inputs.recovery_plan }}
-      ME3_MANAGED_RECOVERY_FILE: ${{ runner.temp }}/managed-upgrade-recovery.json
       ME3_MANAGED_FAILURE_STAGE: validating
       ME3_MANAGED_EMAIL_GATEWAY_ORIGIN: https://api.me3.app
       WORKER_NAME: ${{ inputs.worker_name }}
@@ -292,6 +291,7 @@ jobs:
       - name: Pause writes and persist the private paired recovery point
         if: inputs.recovery_plan != ''
         env:
+          ME3_MANAGED_RECOVERY_FILE: ${{ runner.temp }}/managed-upgrade-recovery.json
           CLOUDFLARE_API_TOKEN: ${{ secrets.ME3_MANAGED_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.ME3_MANAGED_CLOUDFLARE_ACCOUNT_ID }}
           ME3_MANAGED_UPGRADE_CALLBACK_SECRET: ${{ secrets.ME3_MANAGED_UPGRADE_CALLBACK_SECRET }}

@@ -194,3 +194,15 @@ test('requires quiesced private recovery capture before migrations and keeps pri
   assert.match(getStep('Delete detached retired Assistant Jobs queues'), /if: inputs.recovery_plan == ''/);
   assert.doesNotMatch(workflow,/upload-artifact/);
 });
+
+test("uses the runner temp directory only after the upgrade job starts", () => {
+  const jobEnv = workflow.slice(
+    workflow.indexOf("    env:\n"),
+    workflow.indexOf("\n    steps:\n"),
+  );
+  assert.doesNotMatch(jobEnv, /\$\{\{\s*runner\./);
+  assert.match(
+    getStep("Pause writes and persist the private paired recovery point"),
+    /ME3_MANAGED_RECOVERY_FILE: \$\{\{ runner\.temp \}\}\/managed-upgrade-recovery\.json/,
+  );
+});
