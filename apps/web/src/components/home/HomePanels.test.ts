@@ -11,8 +11,11 @@ const body = `First paragraph.\n${"The owner must see this complete text. ".repe
 const core = { id: "approval-1", pluginId: "me3.core", title: "Send email", summary: "Review the launch email", payload: { recipient: "ada@example.test", subject: "Launch confirmation", body, target: { id: "draft-1", toAddress: "ada@example.test", subject: "Launch confirmation", bodyText: body } } };
 let calendarUnavailable = false;
 let pending: object[];
+let people: object[] = [];
+const daysAgo = (days: number) => new Date(Date.now() - days * 864e5).toISOString();
+const contact = (id: string, name: string, extra: object = {}) => ({ id, name, status: "active", source: "manual", socialHandles: {}, metadata: null, isClose: true, closeness: "close", closeSince: daysAgo(100), isClient: false, lastInTouchAt: null, reminderAt: null, ...extra });
 beforeEach(() => {
-  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core];
+  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = [];
   vi.spyOn(HTMLDialogElement.prototype, "showModal").mockImplementation(function (this: HTMLDialogElement) { this.setAttribute("open", ""); });
   vi.spyOn(HTMLDialogElement.prototype, "close").mockImplementation(function (this: HTMLDialogElement) { this.removeAttribute("open"); });
   vi.mocked(api.get).mockImplementation(async endpoint => {
@@ -26,6 +29,7 @@ beforeEach(() => {
     if (endpoint.startsWith("/journal/archive")) return { entries: [] } as never;
     if (endpoint === "/mission-control/wheel") return { snapshots: [], settings: { segments: [] } } as never;
     if (endpoint === "/plugins") return { plugins: [] } as never;
+    if (endpoint === "/contacts") return { contacts: people, summary: {} } as never;
     return {} as never;
   });
   vi.mocked(api.post).mockImplementation(async endpoint => { if (endpoint.includes("/approvals/")) pending = []; return { ok: true } as never; });
@@ -89,5 +93,33 @@ describe("Home Core approval review", () => {
     render(); await flushPromises(); expect(button("Another time")).toBeTruthy();
     button("Confirm")!.click(); await flushPromises();
     expect(api.post).toHaveBeenCalledWith("/mission-control/approvals/plugin-1", { decision: "approved" });
+  });
+});
+
+describe("Home People card", () => {
+  const card = () => document.body.querySelector('[aria-label="People"]');
+  it("is hidden until someone is Close", async () => {
+    people = [contact("c-1", "Brian Lynch", { isClose: false, closeness: null, lastInTouchAt: daysAgo(60) })];
+    render(); await flushPromises();
+    expect(card()).toBeNull();
+  });
+  it("lists up to three Close people with time since last in touch and opens the person sheet", async () => {
+    people = [
+      contact("c-erum", "Erum Shah", { lastInTouchAt: daysAgo(42) }),
+      contact("c-dad", "Dad", { lastInTouchAt: daysAgo(12) }),
+      contact("c-mam", "Mam", { lastInTouchAt: daysAgo(2) }),
+      contact("c-dara", "Dara Kelly", { lastInTouchAt: null }),
+      contact("c-sis", "Saoirse Lynch", { lastInTouchAt: daysAgo(20) }),
+    ];
+    render(); await flushPromises();
+    const rows = [...card()!.querySelectorAll(".home-person")].map(row => row.textContent?.replace(/\s+/g, " ").trim());
+    expect(rows).toEqual(["DKDaraNot yet", "ESErum6w ago", "SLSaoirse2w ago"]);
+    (card()!.querySelector(".home-person") as HTMLButtonElement).click(); await flushPromises();
+    expect(document.body.querySelector(".person-sheet")?.textContent).toContain("Dara Kelly");
+  });
+  it("says all caught up when every Close person was in touch this week", async () => {
+    people = [contact("c-mam", "Mam", { lastInTouchAt: daysAgo(2) })];
+    render(); await flushPromises();
+    expect(card()?.textContent).toContain("All caught up.");
   });
 });

@@ -112,8 +112,8 @@ export const useContactsStore = defineStore("contacts", () => {
 
     try {
       const response = await api.get<ContactsResponse>("/contacts");
-      contacts.value = response.contacts;
-      summary.value = response.summary;
+      contacts.value = response.contacts || [];
+      summary.value = response.summary || emptySummary();
     } catch (err) {
       error.value = err instanceof Error ? err.message : "Failed to load contacts";
     } finally {

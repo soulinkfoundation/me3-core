@@ -10,10 +10,15 @@ import AppDialog from "../AppDialog.vue";
 import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import UiIcon from "../UiIcon.vue";
+import PersonAvatar from "../people/PersonAvatar.vue";
+import PersonSheet from "../people/PersonSheet.vue";
+import { useContactsStore } from "../../stores/contacts";
+import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
 import { HOME_CARDS, emptyHomeLayout, homeDateLabel, homeDoneToday, homeGoalTasks, homeOpenTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeTask, type HomeGoal } from "../../utils/homeSummary";
 const emit = defineEmits<{ suggest: [text: string]; approvalResolved: [] }>();
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
 const auth = useAuthStore();
+const contactsStore = useContactsStore();
 const storageKey = computed(() => `me3.home.${location.origin}.${API_BASE}.${auth.user?.id || "owner"}`);
 const layout = ref<HomeLayout>(emptyHomeLayout());
 const tasks = ref<HomeTask[]>([]);
@@ -71,6 +76,7 @@ const menu = ref<HomeCard | null>(null);
 const day = ref(localDateKey(new Date()));
 const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = {
   today: { title: "Today", href: "/calendar", emoji: "🗓️" },
+  people: { title: "People", href: "/people", emoji: "🫶" },
   gratitude: { title: "Gratitude", href: "/journal", emoji: "🌅" },
   inbox: { title: "Inbox", href: "/email", emoji: "📧" },
   mission: { title: "Mission", href: "/tasks?goals=1", emoji: "🚀" },
@@ -81,7 +87,11 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
   goals: { title: "Goals", href: "/tasks?goals=1", emoji: "🎯" },
   files: { title: "Files", href: "/files", emoji: "📂" },
 };
-const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value)));
+// People appears once someone is Close (People v1).
+const peopleCard = computed(() => rankHomePeople(contactsStore.contacts, contact => contact.reminderAt));
+const openPersonId = ref<string | null>(null);
+const openPerson = computed(() => contactsStore.contacts.find(contact => contact.id === openPersonId.value) || null);
+const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value) && (id !== "people" || peopleCard.value.state !== "hidden")));
 const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id)));
 const addCards = computed(() => [...available.value].sort((a, b) => Number(visible.value.includes(b)) - Number(visible.value.includes(a))));
 const openTasks = computed(() => homeOpenTasks(tasks.value).slice(0, 6));
@@ -230,6 +240,7 @@ async function refresh() {
         soulink.value = (result.recentEvents || []).filter(e => e.direction === "inbound").map(e => ({ ...e, outcome: result.recentEvents?.find(reply => e.providerEventId && reply.direction === "outbound" && reply.providerEventId === `${e.providerEventId}:reply`)?.textBody }));
       } catch (error) { if (!(error instanceof ApiError && error.status === 404)) throw error; }
     }),
+    resource("people", async () => { await contactsStore.fetchContacts(); if (contactsStore.error) throw new Error(contactsStore.error); }),
     resource("tasks", async () => {
       const all: HomeTask[] = []; const seen = new Set<string>(); let cursor: string | undefined;
       do {
@@ -374,6 +385,7 @@ onBeforeUnmount(() => {
               <div class="home-wheel"><button type="button" class="home-wheel-open" aria-label="Open Wheel of Life" @click="openWheel"><HomeWheelChart :areas="wheel" :selected="lowestArea?.id" /></button><div v-if="lowestArea" class="home-wheel-summary"><strong><span aria-hidden="true">{{ lowestArea.emoji }}</span> {{ lowestArea.label }}</strong><span class="home-wheel-score">{{ lowestArea.value }}<small>/ 10</small></span><RouterLink v-for="goal in areaGoals(lowestArea.id).slice(0, 2)" :key="goal.id" to="/tasks?goals=1" class="home-area-goal">{{ goal.title }}</RouterLink><template v-if="!areaGoals(lowestArea.id).length"><span class="home-muted">Your lowest area. No goal for it yet.</span><button type="button" class="home-quiet" @click="addGoal(lowestArea.id)"><UiIcon name="Plus" :size="16" />Add a goal</button></template></div><div v-else><p class="home-muted">Score the areas of your life.</p><button type="button" class="home-quiet" @click="openWheel(); startCheckIn()"><UiIcon name="Plus" :size="16" />Check in</button></div></div>
             </template>
             <template v-else-if="card === 'accounts'"><div v-if="accountSummary" class="home-stats"><div><span class="home-muted">Income this month</span><strong>{{ accountSummary.income }}</strong></div><div><span class="home-muted">Expenses this month</span><strong>{{ accountSummary.expense }}</strong></div></div><RouterLink v-else to="/accounts" class="home-quiet">Open Accounts<UiIcon name="ArrowRight" :size="16" /></RouterLink></template>
+            <template v-else-if="card === 'people'"><template v-if="peopleCard.state === 'people'"><button v-for="person in peopleCard.people" :key="person.id" type="button" class="home-person" @click="openPersonId = person.id"><PersonAvatar :contact="person" :size="40" /><strong>{{ firstName(person.name) }}</strong><span class="home-muted home-person__since">{{ formatSinceShort(person.lastInTouchAt) || 'Not yet' }}</span></button></template><p v-else class="home-muted">All caught up.</p></template>
             <template v-else-if="card === 'tasks'"><div v-for="task in openTasks" :key="task.id" class="home-line"><button type="button" class="home-task-check" :aria-label="`Complete ${task.title}`" :disabled="busy.includes(task.id)" @click="complete(task)"><UiIcon name="Circle" :size="20" /></button><RouterLink :to="`/tasks?task=${encodeURIComponent(task.id)}`">{{ task.title }}</RouterLink></div><p v-if="!openTasks.length" class="home-muted">No open tasks.</p><p v-if="doneToday" class="home-muted">{{ doneToday }} done today</p></template>
             <template v-else-if="card === 'goals'"><RouterLink v-for="goal in activeGoals.slice(0, 3)" :key="goal.id" to="/tasks?goals=1" class="home-line"><span aria-hidden="true">{{ areaFor(goal.areaId)?.emoji || '🎯' }}</span><span>{{ goal.title }}</span></RouterLink><button v-if="!activeGoals.length" type="button" class="home-quiet" @click="addGoal()"><UiIcon name="Plus" :size="16" />Add a goal</button></template>
             <RouterLink v-else to="/files" class="home-quiet">Open your files<UiIcon name="ArrowRight" :size="16" /></RouterLink>
@@ -393,6 +405,7 @@ onBeforeUnmount(() => {
       </section>
     </AppDialog>
     <GoalsDialog v-if="goalEditor" :initial-area-id="goalArea" @close="goalEditor = false; refresh()" />
+    <PersonSheet :contact="openPerson" @close="openPersonId = null" />
     <AssistantApprovalDialog :approval="reviewApproval" :busy="Boolean(reviewApproval && busy.includes(reviewApproval.id))" :error="approvalError" @close="reviewApproval = null" @decide="decideCoreApproval" />
   </div>
 </template>
@@ -431,6 +444,8 @@ p { margin: 4px 0; }
 .home-entry strong { flex: 0 1 auto; font-size: 14px; font-weight: 600; }
 .home-entry span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-entry svg { flex-shrink: 0; align-self: center; }
+.home-person { display: flex; gap: 12px; align-items: center; width: 100%; min-height: 52px; padding: 0; border: 0; background: transparent; color: var(--ui-text); font: inherit; font-size: 16px; text-align: left; cursor: pointer; }
+.home-person__since { margin-left: auto; font-size: 13.5px; font-variant-numeric: tabular-nums; }
 .home-line { display: flex; gap: 8px; align-items: center; min-height: 40px; color: var(--ui-text); text-decoration: none; }
 .home-line > a { color: inherit; text-decoration: none; flex: 1; min-width: 0; }
 .home-event { min-height: 32px; }
