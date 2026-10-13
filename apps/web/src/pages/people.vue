@@ -4,6 +4,7 @@ import { storeToRefs } from "pinia";
 import { definePage } from "unplugin-vue-router/runtime";
 import { useRoute, useRouter } from "vue-router";
 import UiIcon from "../components/UiIcon.vue";
+import AddSomeoneSheet from "../components/people/AddSomeoneSheet.vue";
 import NewPersonSheet from "../components/people/NewPersonSheet.vue";
 import PersonAvatar from "../components/people/PersonAvatar.vue";
 import PersonSheet from "../components/people/PersonSheet.vue";
@@ -40,6 +41,7 @@ const loaded = ref(contacts.value.length > 0);
 const filter = ref<Filter>("all");
 const query = ref("");
 const addOpen = ref(false);
+const newPersonOpen = ref(false);
 const soulinkConnected = ref<boolean | null>(null);
 const pullEl = ref<HTMLElement | null>(null);
 const headEl = ref<HTMLElement | null>(null);
@@ -111,8 +113,13 @@ function jumpTo(letter: string) {
   document.getElementById(`person-row-${target.id}`)?.scrollIntoView({ block: "start" });
 }
 
-function onAdded(contact: Contact, created: boolean) {
+function addByHand() {
   addOpen.value = false;
+  newPersonOpen.value = true;
+}
+
+function onAdded(contact: Contact, created: boolean) {
+  newPersonOpen.value = false;
   if (created) toastSuccess(`Added ${firstName(contact.name)}`);
   openPerson(contact);
 }
@@ -262,7 +269,8 @@ watch(filter, () => { now.value = Date.now(); });
     </div>
 
     <PersonSheet :contact="openContact" @close="closePerson" />
-    <NewPersonSheet :open="addOpen" @close="addOpen = false" @saved="onAdded" />
+    <AddSomeoneSheet :open="addOpen" @close="addOpen = false" @add-by-hand="addByHand" />
+    <NewPersonSheet :open="newPersonOpen" @close="newPersonOpen = false" @saved="onAdded" />
   </main>
 </template>
 

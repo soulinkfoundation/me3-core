@@ -9,7 +9,7 @@ import {
   updateAgentContact,
 } from "./agent-chat";
 import { registerContactsRoutes } from "./routes/contacts";
-import { syncSoulinkContacts } from "./routes/channels";
+import { getSoulinkPersonalInviteLink, syncSoulinkContacts } from "./routes/channels";
 import type { AppHono } from "./http/types";
 import type { Env } from "./types";
 
@@ -334,5 +334,52 @@ describe("contact reminders", () => {
 
     expect((await send("/api/contacts/c-erum", "DELETE")).status).toBe(200);
     expect(pending(raw)).toEqual([]);
+  });
+});
+
+describe("Soulink invite link", () => {
+  function connected() {
+    const f = fixture();
+    f.raw.exec(`INSERT INTO agent_channel_connections (id, user_id, channel, status, setup_token, provider_user_id, provider_metadata_json)
+      VALUES ('conn-1', 'alice', 'soulink', 'active', 'token', 'node-alice', '{"ownerNodeId":"node-alice"}')`);
+    (f.env as Env & { SOULINK_API_ORIGIN: string }).SOULINK_API_ORIGIN = "https://soulink.test";
+    return f;
+  }
+
+  it("asks Soulink for the owner's personal invite link with the Core token", async () => {
+    const { env } = connected();
+    const fetchMock = vi.fn(async () => Response.json({ code: "invite_abc", url: "https://soulink.test/i/invite_abc" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await getSoulinkPersonalInviteLink(env, "alice")).toEqual({ ok: true, url: "https://soulink.test/i/invite_abc" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://soulink.test/api/me3/personal-invite?ownerNodeId=node-alice",
+      expect.objectContaining({ method: "POST", headers: expect.objectContaining({ Authorization: "Bearer token" }) }),
+    );
+  });
+
+  it("explains when Soulink is not connected or cannot share invites yet", async () => {
+    const { env } = fixture();
+    expect(await getSoulinkPersonalInviteLink(env, "alice")).toMatchObject({ ok: false, status: 409 });
+
+    const linked = connected();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Not found", { status: 404 })));
+    expect(await getSoulinkPersonalInviteLink(linked.env, "alice")).toMatchObject({ ok: false, status: 501 });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ url: "javascript:alert(1)" })));
+    expect(await getSoulinkPersonalInviteLink(linked.env, "alice")).toMatchObject({ ok: false, status: 502 });
+  });
+});
+
+describe("adding someone by hand", () => {
+  it("stores name, phone and email as a manual contact and refuses a duplicate email", async () => {
+    const { raw, env } = fixture();
+    const created = await createAgentContact(env, "alice", {
+      name: "Ruth Keane", phone: "087 111 2222", email: "Ruth@Example.com", source: "manual",
+    });
+    expect(created).toMatchObject({ name: "Ruth Keane", phone: "087 111 2222", email: "ruth@example.com", source: "manual" });
+    expect(raw.prepare("SELECT source, phone FROM contacts").all()).toEqual([{ source: "manual", phone: "087 111 2222" }]);
+
+    expect(await createAgentContact(env, "alice", { name: "Ruth", email: "ruth@example.com" }))
+      .toMatchObject({ status: 409 });
   });
 });

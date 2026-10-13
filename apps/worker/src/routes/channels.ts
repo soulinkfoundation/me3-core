@@ -419,6 +419,16 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
     return c.json(result);
   });
 
+  // People "Invite a friend": the owner's Soulink personal invite link.
+  app.get("/api/soulink/invite-link", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+
+    const result = await getSoulinkPersonalInviteLink(c.env, ownerId);
+    if (!result.ok) return c.json(result, result.status as any);
+    return c.json(result);
+  });
+
   app.get("/api/me3/links", async (c) => {
     const result = await listSoulinkLinksForConnectedCore(
       c.env,
@@ -668,6 +678,37 @@ export async function syncSoulinkContacts(env: Env, ownerId: string) {
     contacts: contacts.contacts,
     summary: contacts.summary,
   };
+}
+
+// Soulink issues one personal invite per person; when a friend joins with it
+// they are Linked and show up in People with the Soulink badge.
+export async function getSoulinkPersonalInviteLink(env: Env, ownerId: string) {
+  const config = getSoulinkConnectorConfig(env);
+  const connection = await getSoulinkConnection(env, ownerId);
+  if (!config.configured || !connection || connection.status !== "active") {
+    return { ok: false as const, status: 409, error: "Connect Soulink to invite friends" };
+  }
+
+  const metadata = parseJsonRecord(connection.provider_metadata_json);
+  const ownerNodeId = stringValue(metadata.ownerNodeId) || stringValue(connection.provider_user_id);
+  const url = new URL("/api/me3/personal-invite", config.apiOrigin);
+  if (ownerNodeId) url.searchParams.set("ownerNodeId", ownerNodeId);
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: { Accept: "application/json", Authorization: `Bearer ${connection.setup_token}` },
+  }).catch(() => null);
+  const payload = (await response?.json().catch(() => null)) as { url?: unknown } | null;
+  const inviteUrl = stringValue(payload?.url);
+  if (response?.ok && inviteUrl && /^https:\/\//.test(inviteUrl)) {
+    return { ok: true as const, url: inviteUrl };
+  }
+  if (response && [401, 403].includes(response.status)) {
+    return { ok: false as const, status: 409, error: "Connect Soulink to invite friends" };
+  }
+  if (response?.status === 404) {
+    return { ok: false as const, status: 501, error: "This Soulink connector can't share invite links yet" };
+  }
+  return { ok: false as const, status: 502, error: "Soulink couldn't create an invite link" };
 }
 
 export async function ensureSoulinkContactsFresh(
