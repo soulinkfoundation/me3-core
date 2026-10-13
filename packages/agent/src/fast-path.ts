@@ -6,13 +6,16 @@ export type AgentFastPathDecision = (
   | { kind: "fallthrough"; reason: string; probabilities?: Record<string, number>; gates?: Record<string, number>; confidence?: number }
 ) & { toolChoice?: string };
 export type AgentDeciderInput = { messageText: string; recentMessages: readonly AgentMessage[]; tools: readonly AgentTool[]; ownerTimezone: string; now: Date; signal: AbortSignal };
-export type AgentFastPathResult = AgentFastPathDecision & { usage?: AgentUsage; durationMs: number };
+export type AgentFastPathRequestMeasurement = { stage: "fanout" | "routing" | "arguments"; offsetMs?: number; durationMs: number; usage: AgentUsage; status: "complete" | "error"; decision?: AgentFastPathDecision };
+export type AgentFastPathResult = AgentFastPathDecision & { usage?: AgentUsage; durationMs: number; requests?: AgentFastPathRequestMeasurement[]; argumentMode?: "fanout" | "conditional" };
 export interface AgentDecider { id: string; decide(input: AgentDeciderInput): Promise<AgentFastPathResult> }
 export type AgentFastPathTool = { mode: "tool_only" } | { mode: "arguments"; candidates: "reminders" | "tasks" | "calendar" };
 export type FastPathThresholds = { toolProbability: number; argumentProbability: number; historyProbability: number };
 // Phase-1 Clef calibration: score shadow predictions, never authorize execution.
 export const FAST_PATH_THRESHOLDS: FastPathThresholds = { toolProbability: .56, argumentProbability: .84, historyProbability: .09 };
+export const FLASH_FAST_PATH_THRESHOLDS: FastPathThresholds = { toolProbability: .85, argumentProbability: .68, historyProbability: .17 };
 export type AgentFastPathTrace = { decider: string; status: "complete" | "error" | "timeout" | "skipped"; decision?: AgentFastPathDecision; durationMs: number; usage?: AgentUsage;
+  models?: AgentFastPathTrace[]; sampleRate?: number; state?: Record<string, unknown>; argumentMode?: "fanout" | "conditional"; requests?: AgentFastPathRequestMeasurement[];
   comparison?: { llmFirstCalls: string[]; toolMatch: boolean; argsMatch: boolean | null } };
 type ChoiceQuestion = { type: "choice"; instructions: string; criteria: Record<string, unknown> };
 type Question = ChoiceQuestion | { type: "noul"; instructions: string };
@@ -23,7 +26,14 @@ export function eligibleFastPathTools(tools: readonly AgentTool[]): AgentTool[] 
   return tools.filter(tool => tool.fastPath && (tool.fastPath.mode === "tool_only" || tool.effect === "read"));
 }
 
-export function buildFastPathRequest(input: AgentDeciderInput): FastPathRequest {
+export function sampleFastPathTurn(turnId: string, rate: number): boolean {
+  if (!Number.isFinite(rate) || rate < 0 || rate > 1) return false;
+  let hash = 2166136261;
+  for (const char of turnId) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
+  return hash / 4294967296 < rate;
+}
+
+export function buildFastPathRequest(input: AgentDeciderInput, argumentTool?: string | null): FastPathRequest {
   const tools = eligibleFastPathTools(input.tools);
   const recent = input.recentMessages.filter(message => message.role !== "system" && message.role !== "tool");
   if (recent.at(-1)?.role === "user" && recent.at(-1)?.content === input.messageText) recent.pop();
@@ -34,7 +44,7 @@ export function buildFastPathRequest(input: AgentDeciderInput): FastPathRequest 
   };
   if (recent.length) questions.refers_to_history = { type: "noul", instructions: "Does `latest_request` require `recent_messages` to identify the requested action, target or arguments? Independent requests do not. Pronouns such as that one or the second usually do." };
   for (const tool of tools) {
-    if (tool.fastPath?.mode !== "arguments") continue;
+    if (tool.fastPath?.mode !== "arguments" || (argumentTool !== undefined && tool.name !== argumentTool)) continue;
     const options = listCandidates(tool.fastPath.candidates, input);
     candidates[tool.name] = Object.fromEntries(Object.entries(options).filter(([, candidate]) => !validateArguments(tool.parameters, candidate.arguments)));
     questions[`args_${tool.name}`] = { type: "choice", instructions: `If the action is ${tool.name}, which candidate represents the requested arguments? Dates are inclusive owner-local dates. An unfiltered list uses the all candidate when available. Match every explicit constraint. Choose none_of_these for an unsupported filter, an unspecified calendar range, an open-ended range, or a range absent from the candidates.`,
@@ -116,6 +126,7 @@ export function parseFastPathResponse(value: unknown, request: FastPathRequest, 
   const tool = request.tools.find(tool => tool.name === name);
   if (!tool) return fallthrough("unavailable_tool");
   if (tool.fastPath?.mode === "tool_only") return fallthrough("tool_only");
+  if (!request.questions[`args_${name}`]) return fallthrough("needs_arguments");
   const answer = record(answers[`args_${name}`]);
   const question = request.questions[`args_${name}`];
   if (!answer || answer.type !== "choice" || question?.type !== "choice" || !validChoice(answer, question.criteria)) return fallthrough("malformed_response");
@@ -137,28 +148,37 @@ function validChoice(answer: Record<string, unknown>, criteria: Record<string, u
 export function record(value: unknown): Record<string, unknown> | null { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
 export function probability(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1; }
 
-export function startFastPathShadow(config: { mode: "off" | "shadow"; decider: AgentDecider } | undefined, input: AgentDeciderInput) {
+export function startFastPathShadow(config: { mode: "off" | "shadow"; decider: AgentDecider; additionalDeciders?: AgentDecider[]; sampleRate?: number } | undefined, input: AgentDeciderInput) {
   if (config?.mode !== "shadow") return undefined;
+  const runs = [config.decider, ...(config.additionalDeciders ?? [])].map(decider => startSingleShadow(decider, input));
+  return { close() { runs.forEach(run => run.close()); }, snapshot(calls: readonly AgentToolCall[]): AgentFastPathTrace {
+    const models = runs.map(run => run.snapshot(calls));
+    const request = buildFastPathRequest(input, null);
+    return { ...models[0], models, sampleRate: config.sampleRate ?? 1, state: { ...request.state, available_tools: request.tools.map(tool => tool.name) } };
+  } };
+}
+
+function startSingleShadow(decider: AgentDecider, input: AgentDeciderInput) {
   const started = performance.now(), controller = new AbortController();
   let settled: AgentFastPathTrace | undefined;
   const abort = () => controller.abort(input.signal.reason);
   input.signal.addEventListener("abort", abort, { once: true });
   const close = () => { clearTimeout(timer); input.signal.removeEventListener("abort", abort); controller.abort(); };
-  const trace = (status: AgentFastPathTrace["status"], reason: string): AgentFastPathTrace => ({ decider: config.decider.id, status, durationMs: performance.now() - started, decision: { kind: "fallthrough", reason } });
+  const trace = (status: AgentFastPathTrace["status"], reason: string): AgentFastPathTrace => ({ decider: decider.id, status, durationMs: performance.now() - started, decision: { kind: "fallthrough", reason } });
   const timer = setTimeout(() => { settled ??= trace("timeout", "timeout"); close(); }, 2000);
   if (input.recentMessages.some(message => message.images?.length)) { settled = trace("skipped", "attachments"); close(); }
   else void Promise.resolve().then(async () => {
     try {
-      const raw = await config.decider.decide({ ...input, recentMessages: structuredClone(input.recentMessages), signal: controller.signal });
+      const raw = await decider.decide({ ...input, recentMessages: structuredClone(input.recentMessages), signal: controller.signal });
       const result = JSON.parse(JSON.stringify(raw)) as typeof raw;
       if (!record(result) || !Number.isFinite(result.durationMs) || result.durationMs < 0 || !["execute", "fallthrough"].includes(result.kind)
         || (result.kind === "execute" ? !record(result.call?.arguments) || typeof result.call?.name !== "string" || !probability(result.confidence) : typeof result.reason !== "string")) throw new Error("Invalid decision");
-      const { durationMs, usage, ...decision } = result;
-      settled ??= { decider: config.decider.id, status: "complete", decision, durationMs, ...(usage ? { usage } : {}) };
+      const { durationMs, usage, requests, argumentMode, ...decision } = result;
+      settled ??= { decider: decider.id, status: "complete", decision, durationMs, ...(usage ? { usage } : {}), ...(requests ? { requests } : {}), ...(argumentMode ? { argumentMode } : {}) };
     } catch { settled ??= trace("error", "decider_error"); }
   });
   return { close, snapshot(calls: readonly AgentToolCall[]): AgentFastPathTrace {
-    const snapshot = settled ?? trace("timeout", "timeout"); close();
+    const snapshot = settled ?? trace("timeout", "first_model_finished"); close();
     const decision = snapshot.decision;
     if (snapshot.status !== "complete" || !decision) return snapshot;
     const chosen = decision.kind === "execute" ? decision.call.name : decision.toolChoice;

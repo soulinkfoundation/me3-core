@@ -17,7 +17,7 @@ export type AgentMessage = {
   images?: AgentImage[];
 };
 export type AgentUsage = { inputTokens: number; outputTokens: number; cachedInputTokens: number; cacheWriteInputTokens?: number; estimatedCostUsd: number | null };
-export type AgentModelResponse = { text: string; toolCalls: AgentToolCall[]; usage?: AgentUsage };
+export type AgentModelResponse = { text: string; toolCalls: AgentToolCall[]; usage?: AgentUsage; billingUsageId?: string };
 export interface AgentModel {
   id: string;
   step(input: { messages: readonly AgentMessage[]; tools: readonly AgentTool[]; signal: AbortSignal; onDelta(text: string): Promise<void> }): Promise<AgentModelResponse>;
@@ -84,6 +84,7 @@ export type AgentEvent = { event: "status" | "tool" | "delta" | "step" | "approv
 export type AgentTrace = {
   model: string;
   fastPath?: import("./fast-path").AgentFastPathTrace;
+  modelSteps?: Array<{ step: number; model: string; status: "complete" | "error"; durationMs: number; usage?: AgentUsage; billingUsageId?: string; toolCalls: Array<Pick<AgentToolCall, "name" | "arguments">> }>;
   targetIntentRequests?:Array<{receiptId:string;modelId:string;usageId?:string;uncertain:boolean}>;
   steps: number;
   toolCalls: Array<{ name: string; effect: AgentEffect; status: string; durationMs: number }>;
@@ -106,7 +107,7 @@ export interface AgentTurnStore {
 }
 export type AgentTurnInput = {
   model: AgentModel;
-  fastPath?: { mode: "off" | "shadow"; decider: import("./fast-path").AgentDecider };
+  fastPath?: { mode: "off" | "shadow"; decider: import("./fast-path").AgentDecider; additionalDeciders?: import("./fast-path").AgentDecider[]; sampleRate?: number };
   backupModel?: AgentModel;
   tools: readonly AgentTool[];
   messages: AgentMessage[];

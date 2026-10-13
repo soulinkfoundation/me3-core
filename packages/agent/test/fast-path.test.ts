@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { buildFastPathRequest, parseFastPathResponse, FAST_PATH_THRESHOLDS } from "../src/fast-path.ts";
 import { createClefDecider } from "../src/clef.ts";
 import { createDomainTools } from "../src/tools/index.ts";
+import { sampleFastPathTurn } from "../src/fast-path.ts";
 
 const tools = createDomainTools();
 const input = (messageText = "What's on my calendar tomorrow?") => ({ messageText, recentMessages: [], tools,
@@ -18,6 +19,43 @@ function response(request: ReturnType<typeof buildFastPathRequest>, tool = "core
 
 // Failure modes: incomplete/invalid answers; unsafe gates; uncovered arguments;
 // write argument generation; timezone/DST drift; transport and usage failures.
+test("sampling is stable, bounded and independent of message text", () => {
+  assert.equal(sampleFastPathTurn("turn", 0), false); assert.equal(sampleFastPathTurn("turn", 1), true);
+  for (const rate of [NaN, -1, 2]) assert.equal(sampleFastPathTurn("turn", rate), false);
+  assert.equal(sampleFastPathTurn("turn", .1), sampleFastPathTurn("turn", .1));
+  const selected = Array.from({ length: 1000 }, (_, i) => sampleFastPathTurn(`synthetic-${i}`, .1)).filter(Boolean).length;
+  assert.ok(selected > 50 && selected < 150);
+});
+test("conditional reads ask only routing, then only the chosen arguments and reconcile both receipts", async () => {
+  const stages: any[] = [], payloads: any[] = [];
+  const decider = createClefDecider({ model: "clef", argumentMode: "conditional", recordUsage: (usage: any, measurement: any) => { stages.push({ usage, measurement }); }, ai: { async run(_model: string, payload: any) {
+    payloads.push(payload);
+    if (payloads.length === 1) {
+      assert.deepEqual(Object.keys(payload.questions), ["tool"]);
+      return response({ ...buildFastPathRequest(input()), questions: payload.questions });
+    }
+    assert.deepEqual(Object.keys(payload.questions), ["args_core_calendar_events_list"]);
+    return response({ ...buildFastPathRequest(input()), questions: payload.questions });
+  } } } as any);
+  const result = await decider.decide(input());
+  assert.equal(result.kind, "execute"); assert.equal(payloads.length, 2);
+  assert.deepEqual(stages.map(s => s.measurement.stage), ["routing", "arguments"]);
+  assert.equal(result.usage?.inputTokens, 200); assert.equal(result.usage?.estimatedCostUsd, .000048);
+});
+test("conditional creates never request arguments; weak routing never starts a second call", async () => {
+  for (const weak of [false, true]) {
+    let calls = 0;
+    const decider = createClefDecider({ model: "clef", argumentMode: "conditional", ai: { async run(_model: string, payload: any) {
+      calls++; assert.equal(Object.keys(payload.questions).some(id => id.startsWith("args_")), false);
+      const r = response({ ...buildFastPathRequest(input()), questions: payload.questions }, "core_reminders_create");
+      if (weak) { (r.answers.tool as any).probabilities.core_reminders_create = .5; (r.answers.tool as any).probabilities.none = .5; }
+      return r;
+    } } } as any);
+    const result = await decider.decide(input());
+    assert.equal(calls, 1); assert.equal((result as any).reason, weak ? "tool_threshold" : "tool_only");
+    assert.equal("call" in result, false);
+  }
+});
 test("routing has no duplicate gates; history is checked only when supplied", () => {
   const plain = buildFastPathRequest(input());
   assert.deepEqual(Object.values(plain.questions).filter(q => q.type === "noul"), []);
@@ -97,7 +135,7 @@ test("Clef makes one request with gateway metadata, text-only state and a separa
   let calls = 0, usage: any;
   const decider = createClefDecider({ model: "clef", gatewayId: "synthetic", metadata: { purpose: "fast_path" }, recordUsage: value => { usage = value; }, ai: { async run(model, payload, options) {
     calls++; assert.equal(model, "@cf/cloudflare/clef"); assert.equal(payload.model, "clef");
-    assert.deepEqual(options?.gateway, { id: "synthetic", metadata: { purpose: "fast_path" } });
+    assert.deepEqual(options?.gateway, { id: "synthetic", metadata: { purpose: "fast_path", fast_path_stage: "fanout", fast_path_arguments: "fanout" } });
     assert.deepEqual(Object.keys(payload.state as object), ["latest_request", "recent_messages", "owner_timezone", "now_iso"]);
     return response(buildFastPathRequest(input()));
   } } });

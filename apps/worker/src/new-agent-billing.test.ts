@@ -59,6 +59,73 @@ function completion(model: string, tool = false) {
 }
 
 describe("new agent managed billing boundary", () => {
+  it("pairs both frozen models on a sampled turn and keeps each receipt and measurement local", async () => {
+    fixtureTools.value = [{ name: "core_reminders_list", description: "List reminders", parameters: { type: "object", properties: {} }, fastPath: { mode: "arguments", candidates: "reminders" }, effect: "read", approval: "none", async execute() { return { status: "ok" }; } }];
+    const f = fixture(); f.env.ME3_AGENT_FAST_PATH = "shadow"; (f.env as any).ME3_AGENT_FAST_PATH_SAMPLE_RATE = "1";
+    const planner = f.env.AI!.run.bind(f.env.AI);
+    f.env.AI!.run = (async (model: string, payload: any, options: any) => {
+      if (!model.includes("/clef")) { await new Promise(resolve => setTimeout(resolve, 20)); return planner(model as never, payload, options); }
+      return { model: payload.model, usage: { input_tokens: 100, output_tokens: 0 }, answers: Object.fromEntries(Object.entries(payload.questions).map(([id, q]: [string, any]) => {
+        const choice = id === "tool" ? "core_reminders_list" : "all";
+        return [id, q.type === "noul" ? { type: "noul", noul: 0 } : { type: "choice", choice, confidence: 1, probabilities: Object.fromEntries(Object.keys(q.criteria).map(key => [key, key === choice ? 1 : 0])) }];
+      })) };
+    }) as never;
+    const result = await executeNewAgentTurn(f.env, input, new AbortController().signal);
+    expect((result.trace as any).fastPath.models.map((r: any) => r.decider).sort()).toEqual(["@cf/cloudflare/clef", "@cf/cloudflare/clef-flash"]);
+    expect((result.trace as any).modelSteps[0].usage.inputTokens).toBe(100);
+    expect((result.trace as any).modelSteps[0].billingUsageId).toEqual(expect.any(String));
+    const receipts = f.raw.prepare("SELECT model,metadata_json FROM ai_usage_events WHERE json_extract(metadata_json,'$.purpose')='fast_path'").all();
+    expect(receipts).toHaveLength(2);
+    for (const row of receipts) expect(JSON.parse(String(row.metadata_json)).shadowRequest.durationMs).toBeGreaterThanOrEqual(0);
+    await syncManagedAiUsage(f.env);
+    for (const event of f.events) expect(event).not.toHaveProperty("shadowRequest");
+  });
+  it("a zero sample rate makes no shadow request", async () => {
+    fixtureTools.value = [{ name: "core_reminders_list", description: "List reminders", parameters: { type: "object", properties: {} }, fastPath: { mode: "arguments", candidates: "reminders" }, effect: "read", approval: "none", async execute() { return { status: "ok" }; } }];
+    const f = fixture(); f.env.ME3_AGENT_FAST_PATH = "shadow"; (f.env as any).ME3_AGENT_FAST_PATH_SAMPLE_RATE = "0";
+    const run = f.env.AI!.run.bind(f.env.AI);
+    f.env.AI!.run = (async (...args: any[]) => { await new Promise(resolve => setTimeout(resolve, 20)); return (run as any)(...args); }) as never;
+    await executeNewAgentTurn(f.env, input, new AbortController().signal);
+    expect(f.models).toEqual(["openai/gpt-5.5"]);
+  });
+  it("unfinished sampled calls stay alive and reconcile after the reply finishes", async () => {
+    fixtureTools.value = [{ name: "core_reminders_list", description: "List reminders", parameters: { type: "object", properties: {} }, fastPath: { mode: "arguments", candidates: "reminders" }, effect: "read", approval: "none", async execute() { return { status: "ok" }; } }];
+    const f = fixture(); f.env.ME3_AGENT_FAST_PATH = "shadow";
+    const background: Promise<unknown>[] = [];
+    let releasePlanner!: () => void, releaseShadows!: () => void;
+    const entered = new Promise<void>(resolve => { releasePlanner = resolve; });
+    const pending = new Promise<void>(resolve => { releaseShadows = resolve; });
+    f.env.AI!.run = (async (model: string, payload: any) => {
+      if (!model.includes("/clef")) { await entered; await new Promise(resolve => setTimeout(resolve, 10)); return completion(model); }
+      releasePlanner(); await pending;
+      return { model: payload.model, usage: { input_tokens: 100, output_tokens: 0 }, answers: Object.fromEntries(Object.entries(payload.questions).map(([id, q]: [string, any]) => {
+        const choice = id === "tool" ? "core_reminders_list" : "all";
+        return [id, q.type === "noul" ? { type: "noul", noul: 0 } : { type: "choice", choice, confidence: 1, probabilities: Object.fromEntries(Object.keys(q.criteria).map(key => [key, key === choice ? 1 : 0])) }];
+      })) };
+    }) as never;
+    try {
+      const result = await (executeNewAgentTurn as any)(f.env, input, new AbortController().signal, undefined, (work: Promise<unknown>) => background.push(work));
+      expect(result).toMatchObject({ status: "complete", replyText: "Read complete." });
+      expect(background).toHaveLength(2);
+    } finally { releasePlanner(); releaseShadows(); await Promise.allSettled(background); }
+    const receipts = f.raw.prepare("SELECT metadata_json FROM ai_usage_events WHERE json_extract(metadata_json,'$.purpose')='fast_path'").all();
+    expect(receipts).toHaveLength(2);
+    for (const row of receipts) expect(JSON.parse(String(row.metadata_json))).toMatchObject({ costKnown: true, shadowRequest: { status: "complete" } });
+  });
+  it("an unadmitted planner cannot leave background shadows waiting", async () => {
+    fixtureTools.value = [{ name: "core_reminders_list", description: "List reminders", parameters: { type: "object", properties: {} }, fastPath: { mode: "arguments", candidates: "reminders" }, effect: "read", approval: "none", async execute() { return { status: "ok" }; } }];
+    const f = fixture(); f.env.ME3_AGENT_FAST_PATH = "shadow";
+    f.raw.exec("CREATE TRIGGER deny_planner BEFORE INSERT ON ai_usage_events WHEN coalesce(json_extract(new.metadata_json,'$.purpose'),'')<>'fast_path' BEGIN SELECT RAISE(IGNORE); END;");
+    const background: Promise<void>[] = [];
+    const result = await executeNewAgentTurn(f.env, input, new AbortController().signal, undefined, work => background.push(work));
+    expect(result.status).toBe("failed"); expect(background).toHaveLength(2);
+    let timer: ReturnType<typeof setTimeout>;
+    try {
+      const settled = await Promise.race([Promise.all(background).then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), 50); })]);
+      expect(settled).toBe(true);
+    } finally { clearTimeout(timer!); }
+    expect(f.models).toEqual([]);
+  });
   it.each([undefined, "off", "active", "unexpected"])("makes no shadow call for mode %s", async mode => {
     const { env, models } = fixture(); env.ME3_AGENT_FAST_PATH = mode;
     await executeNewAgentTurn(env, input, new AbortController().signal);
@@ -72,12 +139,12 @@ describe("new agent managed billing boundary", () => {
       if (!model.includes("/clef")) { await new Promise(resolve => setTimeout(resolve, 10)); return planner(model as never, payload, options); }
       clefCalls++; expect(options.gateway.metadata.purpose).toBe("fast_path");
       const answers = Object.fromEntries(Object.entries(payload.questions).map(([id, q]: [string, any]) => [id, q.type === "noul" ? { type: "noul", noul: id === "single_command" ? 1 : 0 } : { type: "choice", choice: id === "tool" ? "core_reminders_list" : "all", confidence: 1, probabilities: Object.fromEntries(Object.keys(q.criteria).map(key => [key, key === (id === "tool" ? "core_reminders_list" : "all") ? 1 : 0])) }]));
-      return { model: "clef", answers, usage: { input_tokens: 100, output_tokens: 10 } };
+      return { model: payload.model, answers, usage: { input_tokens: 100, output_tokens: 10 } };
     }) as never;
     const result = await executeNewAgentTurn(env, input, new AbortController().signal);
     expect(result).toMatchObject({ status: "complete", replyText: "Read complete.", trace: { usage: { inputTokens: 100 }, fastPath: { status: "complete", usage: { inputTokens: 100, estimatedCostUsd: .000024 } } } });
-    expect(clefCalls).toBe(1);
-    const receipt = raw.prepare("SELECT * FROM ai_usage_events WHERE json_extract(metadata_json,'$.purpose')='fast_path'").get()!;
+    expect(clefCalls).toBe(2);
+    const receipt = raw.prepare("SELECT * FROM ai_usage_events WHERE json_extract(metadata_json,'$.purpose')='fast_path' AND model='@cf/cloudflare/clef'").get()!;
     expect(JSON.parse(String(receipt.metadata_json))).toMatchObject({ costKnown: true, usageReported: true, billingManaged: true, billingFeeRate: 0, purpose: "fast_path" });
     expect(Number(receipt.estimated_cost_usd)).toBeCloseTo(.000024, 10);
     expect(JSON.parse(String(raw.prepare("SELECT trace_json FROM me3_agent_turns").get()!.trace_json)).fastPath).toBeTruthy();

@@ -16,6 +16,43 @@ function fixture(kind = "tool") {
   return { input, events, effects: () => effects };
 }
 const decider: AgentDecider = { id: "fake", async decide() { return { kind: "execute", call: { name: "read", arguments: { b: 2, a: 1 } }, confidence: 1, probabilities: { read: 1 }, gates: {}, durationMs: 1, usage: { inputTokens: 20, outputTokens: 0, cachedInputTokens: 0, estimatedCostUsd: .01 } }; } };
+test("paired models share the first-call comparison but settle and fail independently", async () => {
+  const f = fixture();
+  const result = await runAgentTurn({ ...f.input, fastPath: { mode: "shadow", decider, additionalDeciders: [{ id: "failed-flash", async decide() { throw new Error("private"); } }], sampleRate: .1 } as any });
+  const measured = (result.trace.fastPath as any).models;
+  assert.equal(measured.length, 2); assert.equal(measured[0].comparison.toolMatch, true); assert.equal(measured[1].status, "error");
+  assert.equal((result.trace.fastPath as any).sampleRate, .1);
+  assert.equal(result.replyText, "Complete");
+});
+test("a failed first model keeps the shadow observation and its expense", async () => {
+  const f = fixture("text");
+  f.input.model = { id: "failed", async step() { await new Promise(resolve => setImmediate(resolve)); throw new Error("provider failed"); } };
+  const result = await runAgentTurn({ ...f.input, fastPath: { mode: "shadow", decider } });
+  assert.equal(result.status, "failed");
+  assert.equal(result.trace.fastPath?.models?.[0].usage?.estimatedCostUsd, .01);
+  assert.deepEqual(result.trace.fastPath?.models?.[0].comparison?.llmFirstCalls, []);
+  assert.equal(result.trace.modelSteps?.[0].status, "error");
+});
+test("per-model-call measurements preserve each step and failed fallback attempts", async () => {
+  const f = fixture();
+  const result = await runAgentTurn(f.input);
+  assert.equal((result.trace as any).modelSteps.length, 2);
+  assert.deepEqual((result.trace as any).modelSteps[0].toolCalls, [{ name: "read", arguments: { a: 1, b: 2 } }]);
+  assert.equal((result.trace as any).modelSteps[0].usage.inputTokens, 10);
+  assert.ok((result.trace as any).modelSteps[0].durationMs >= 0);
+  const failed = fixture("text");
+  failed.input.backupModel = failed.input.model;
+  failed.input.model = { id: "failed", async step() { throw new Error("provider failed"); } };
+  const fallback = await runAgentTurn(failed.input);
+  assert.deepEqual((fallback.trace as any).modelSteps.map((s: any) => s.status), ["error", "complete"]);
+  assert.equal((fallback.trace as any).modelSteps[0].usage, undefined);
+});
+test("the recorded first call stays unchanged when tool execution mutates arguments", async () => {
+  const f = fixture();
+  f.input.tools[0].execute = async args => { args.a = 99; return { status: "ok" }; };
+  const result = await runAgentTurn(f.input);
+  assert.deepEqual(result.trace.modelSteps![0].toolCalls[0].arguments, { a: 1, b: 2 });
+});
 test("shadow preserves serialized results, events, approvals and effects across all turn kinds", async t => {
   t.mock.method(performance, "now", () => 0); t.mock.timers.enable({ apis: ["Date"], now: 0 });
   for (const kind of ["tool", "text", "approval", "cancelled"]) {

@@ -102,7 +102,7 @@ export class Me3Agent extends Agent<Env> {
     const controller=new AbortController(),active={fiberId,controller};
     const cancel=()=>controller.abort(signal?.reason);signal?.addEventListener("abort",cancel,{once:true});if(signal?.aborted)cancel();
     this.active.set(input.turnId,active);
-    try {await executeNewAgentTurn(this.env,input,controller.signal,(event,data,seq)=>this.broadcastTurn(input.turnId,event,data,seq));}
+    try {await executeNewAgentTurn(this.env,input,controller.signal,(event,data,seq)=>this.broadcastTurn(input.turnId,event,data,seq),work=>this.ctx.waitUntil(work));}
     catch(error){await this.persistTerminal(input,controller.signal.aborted?"cancelled":"failed",error instanceof Error?error.message:"Agent turn failed");}
     finally {signal?.removeEventListener("abort",cancel);if(controller.signal.aborted)await this.declinePending(input.userId,input.turnId);if(this.active.get(input.turnId)===active)this.active.delete(input.turnId);}
   }

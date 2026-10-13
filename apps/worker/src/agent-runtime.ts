@@ -1,4 +1,5 @@
-import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createClefDecider, createD1TurnStore, runAgentTurn, type AgentDecider, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
+import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createClefDecider, createD1TurnStore, runAgentTurn, sampleFastPathTurn, type AgentDecider, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
+import type { AgentFastPathRequestMeasurement } from "../../../packages/agent/src/fast-path";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
 import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
@@ -38,7 +39,7 @@ export function isNewAgentDispatchInput(value:unknown):value is NewAgentDispatch
   return (input.threadId===undefined||(typeof input.threadId==="string"&&Boolean(input.threadId.trim())&&input.threadId.length<=500))&&["userId","turnId","requestId","messageText"].every(key=>typeof input[key]==="string"&&Boolean((input[key] as string).trim())&&(input[key] as string).length<=(key==="messageText"?100_000:500));
 }
 
-export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,signal:AbortSignal,onEvent?:(event:string,data:Record<string,unknown>,seq:number)=>void):Promise<Record<string,unknown>> {
+export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,signal:AbortSignal,onEvent?:(event:string,data:Record<string,unknown>,seq:number)=>void,waitUntil?:(work:Promise<void>)=>void):Promise<Record<string,unknown>> {
   const lease=await beginManagedRuntimeWriteLease(env,"POST","assistant_agent");
   if(isManagedRuntime(env)&&!lease)throw new Error("Managed runtime is not accepting agent writes");
   try {
@@ -60,12 +61,12 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const metadata={me3_runtime:"agent",me3_turn_id:input.turnId,me3_request_id:input.requestId,me3_thread_id:input.threadId};
     const imageScope={ownerId:input.userId,threadId:input.threadId};
     let usageIndex=0;
-    type ModelPurpose = {purpose:"target_intent"|"fast_path";onAdmission?(id:string):void};
+    type ModelPurpose = {purpose:"target_intent"|"fast_path";onAdmission?(id:string):void;shadow?:{stage:string;argumentMode:string;sampleRate:number}};
     let firstAdmission: (()=>void)|undefined;
     const plannerAdmitted = new Promise<void>(resolve=>{firstAdmission=resolve;});
     const admitModel=async(selected:string,reportCount=0,purpose?:ModelPurpose,shadow=false)=>{
       const usageId=`${input.turnId}:model:${crypto.randomUUID()}:${usageIndex++}`;
-      const callMetadata={...metadata,...(purpose?{purpose:purpose.purpose}:{})};
+      const callMetadata={...metadata,...(purpose?{purpose:purpose.purpose}:{}),...(purpose?.shadow?{shadowRequest:purpose.shadow}:{})};
       const receiptMetadata={...callMetadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0]};
       const billingFeeRate=managed&&!selected.startsWith("@cf/")?0.05:0;
       // An interrupted or unpriced paid request must remain visibly unreconciled.
@@ -88,14 +89,14 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       }
       purpose?.onAdmission?.(usageId);
       if(!purpose){firstAdmission?.();firstAdmission=undefined;}
-      return async(usage:AgentUsage)=>{
+      return Object.assign(async(usage:AgentUsage,measurement?:AgentFastPathRequestMeasurement)=>{
         const tokensKnown=!(purpose?.purpose==="fast_path"&&usage.estimatedCostUsd===null)&&[usage.inputTokens,usage.outputTokens,usage.cachedInputTokens,usage.cacheWriteInputTokens??0].every(value=>typeof value==="number"&&Number.isFinite(value)&&value>=0);
         const baseCostUsd=usage.estimatedCostUsd;
         const billedCostUsd=baseCostUsd===null?null:baseCostUsd*(1+billingFeeRate);
         const costKnown=tokensKnown&&billedCostUsd!==null&&Number.isFinite(billedCostUsd)&&billedCostUsd>=0;
         await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,metadata_json=? WHERE id=?")
-          .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
-      };
+          .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,...(measurement?{shadowRequest:{...purpose?.shadow,...measurement}}:{}),billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
+      },{usageId});
     };
     const cloudflareModel=(selected:string,reportCount=0,purpose?:ModelPurpose):AgentModel=>({id:selected,async step(step){
       step.signal.throwIfAborted();
@@ -103,7 +104,8 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const messages=await resolveAgentImageInputs(env,imageScope,step.messages,step.signal);
       step.signal.throwIfAborted();
       const recordUsage=await admitModel(selected,reportCount,purpose);
-      return createCloudflareModel({ai:env.AI as never,model:selected,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
+      const response=await createCloudflareModel({ai:env.AI as never,model:selected,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
+      return {...response,billingUsageId:recordUsage.usageId};
     }});
     const modelFor=(requested:string,purpose?:ModelPurpose):AgentModel=>{
       if(!managed)return cloudflareModel(canonicalNativeModel(requested),0,purpose);
@@ -138,10 +140,19 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const tools=createDomainTools().filter(tool=>isToolAvailable(tool.name,services));
     // Shadow waits for planner admission, never the other way round. Its receipt
     // remains billable, but cannot change this turn's routing or admission.
-    const decider:AgentDecider={id:"@cf/cloudflare/clef",async decide(step){
-      let receipt:((usage:AgentUsage)=>Promise<void>)|undefined;
-      return createClefDecider({model:"clef",gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,purpose:"fast_path"},recordUsage:usage=>receipt?.(usage),ai:{async run(selected,payload,options){
-        await plannerAdmitted;
+    const sampleRate=env.ME3_AGENT_FAST_PATH_SAMPLE_RATE===undefined?1:Number(env.ME3_AGENT_FAST_PATH_SAMPLE_RATE);
+    const until=env.ME3_AGENT_FAST_PATH_UNTIL;
+    const pilotActive=!until||Date.now()<Date.parse(until);
+    const makeDecider=(variant:"clef"|"clef-flash"):AgentDecider=>({id:`@cf/cloudflare/${variant}`,async decide(step){
+      let receipt:((usage:AgentUsage,measurement?:AgentFastPathRequestMeasurement)=>Promise<void>)|undefined;
+      const argumentMode=variant==="clef"&&env.ME3_AGENT_FAST_PATH_ARGUMENTS==="conditional"?"conditional":"fanout";
+      const work=createClefDecider({model:variant,argumentMode,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,purpose:"fast_path"},recordUsage:(usage,measurement)=>receipt?.(usage,measurement),ai:{async run(selected,payload,options){
+        receipt=undefined;
+        await new Promise<void>(resolve=>{
+          const done=()=>{step.signal.removeEventListener("abort",done);resolve();};
+          step.signal.addEventListener("abort",done,{once:true});
+          if(step.signal.aborted)done();else void plannerAdmitted.then(done);
+        });
         step.signal.throwIfAborted();
         if(managed){
           const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
@@ -149,11 +160,15 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
         }
         const count=managed?await managedUsageReportCount(env,input.userId,input.turnId):0;
         step.signal.throwIfAborted();
-        receipt=await admitModel(selected,count,{purpose:"fast_path"},true);
+        const questions=(payload as {questions:Record<string,unknown>}).questions;
+        const stage=questions.tool?(Object.keys(questions).some(id=>id.startsWith("args_"))?"fanout":"routing"):"arguments";
+        receipt=await admitModel(selected,count,{purpose:"fast_path",shadow:{stage,argumentMode,sampleRate}},true);
         return env.AI!.run(selected as never,payload as never,options as never);
       }}}).decide(step);
-    }};
-    const fastPath=env.ME3_AGENT_FAST_PATH==="shadow"&&!input.attachments?.length&&!input.attachmentTextContext?{mode:"shadow" as const,decider}:undefined;
+      waitUntil?.(work.then(()=>{},()=>{}));
+      return work;
+    }});
+    const fastPath=env.ME3_AGENT_FAST_PATH==="shadow"&&pilotActive&&sampleFastPathTurn(input.turnId,sampleRate)&&!input.attachments?.length&&!input.attachmentTextContext?{mode:"shadow" as const,decider:makeDecider("clef"),additionalDeciders:[makeDecider("clef-flash")],sampleRate}:undefined;
     const intentTools=tools.filter(tool=>!tool.pluginId||enabledPluginIds.has(tool.pluginId));
     const intentScope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId};
     const loadIntentOwnerInputs=(references:Parameters<typeof loadTargetIntentOwnerInputs>[2],intentSignal:AbortSignal)=>

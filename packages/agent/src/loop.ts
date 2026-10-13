@@ -22,6 +22,17 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     trace: { model: model.id, steps: 0, toolCalls: [], startedAt: new Date().toISOString(), totalDurationMs: 0, timeToFirstTokenMs: null, usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, estimatedCostUsd: 0 } },
   };
   const checkpoint = state;
+  const measureModel = async (selected: AgentModel, step: Parameters<AgentModel["step"]>[0]) => {
+    const began = performance.now();
+    try {
+      const response = await selected.step(step);
+      (checkpoint.trace.modelSteps ??= []).push({ step: checkpoint.steps + 1, model: selected.id, status: "complete", durationMs: performance.now() - began, ...(response.usage ? { usage: response.usage } : {}), ...(response.billingUsageId ? { billingUsageId: response.billingUsageId } : {}), toolCalls: response.toolCalls.map(({ name, arguments: args }) => ({ name, arguments: structuredClone(args) })) });
+      return response;
+    } catch (error) {
+      (checkpoint.trace.modelSteps ??= []).push({ step: checkpoint.steps + 1, model: selected.id, status: "error", durationMs: performance.now() - began, toolCalls: [] });
+      throw error;
+    }
+  };
   let shadow: ReturnType<typeof startFastPathShadow>;
   const emit = async (event: Parameters<NonNullable<AgentTurnInput["onEvent"]>>[0]) => { await input.onEvent?.(event); };
   const save = () => input.store.save(checkpoint);
@@ -30,6 +41,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     return controller.signal.aborted;
   };
   const finish = async (status: AgentCheckpoint["status"], text?: string) => {
+    if (shadow && !checkpoint.trace.fastPath) checkpoint.trace.fastPath = shadow.snapshot([]);
     checkpoint.status = status;
     if (text) checkpoint.messages.push({role:"assistant",content:text});
     checkpoint.trace.totalDurationMs += performance.now() - started;
@@ -116,7 +128,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       } };
       let response;
       if (freshTurn && !input.context.targetSelection && checkpoint.steps === 0) shadow = startFastPathShadow(input.fastPath, { messageText: input.context.messageText, recentMessages: checkpoint.messages, tools, ownerTimezone: input.context.ownerTimezone, now: new Date(), signal: controller.signal });
-      try { response = await model.step(stepInput); }
+      try { response = await measureModel(model, stepInput); }
       catch (error) {
         // A failed request can still be billable, with no complete usage receipt.
         checkpoint.trace.usage.estimatedCostUsd = null;
@@ -125,7 +137,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         model = input.backupModel;
         checkpoint.trace.model = model.id;
         if (emittedText) await emit({event:"status",data:{state:"retrying",replaceText:true}});
-        response = await model.step(stepInput);
+        response = await measureModel(model, stepInput);
       }
       checkpoint.trace.model = model.id;
       if (shadow && checkpoint.steps === 0) checkpoint.trace.fastPath = shadow.snapshot(response.toolCalls);
