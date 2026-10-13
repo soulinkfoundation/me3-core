@@ -9,15 +9,15 @@ export type AgentDeciderInput = { messageText: string; recentMessages: readonly 
 export type AgentFastPathResult = AgentFastPathDecision & { usage?: AgentUsage; durationMs: number };
 export interface AgentDecider { id: string; decide(input: AgentDeciderInput): Promise<AgentFastPathResult> }
 export type AgentFastPathTool = { mode: "tool_only" } | { mode: "arguments"; candidates: "reminders" | "tasks" | "calendar" };
-export type FastPathThresholds = { toolProbability: number; argumentProbability: number; singleCommand: number; unsafeProbability: number };
-export const FAST_PATH_THRESHOLDS: FastPathThresholds = { toolProbability: .99, argumentProbability: .99, singleCommand: .99, unsafeProbability: .01 };
+export type FastPathThresholds = { toolProbability: number; argumentProbability: number; historyProbability: number };
+// Phase-1 Clef calibration: score shadow predictions, never authorize execution.
+export const FAST_PATH_THRESHOLDS: FastPathThresholds = { toolProbability: .56, argumentProbability: .84, historyProbability: .09 };
 export type AgentFastPathTrace = { decider: string; status: "complete" | "error" | "timeout" | "skipped"; decision?: AgentFastPathDecision; durationMs: number; usage?: AgentUsage;
   comparison?: { llmFirstCalls: string[]; toolMatch: boolean; argsMatch: boolean | null } };
 type ChoiceQuestion = { type: "choice"; instructions: string; criteria: Record<string, unknown> };
 type Question = ChoiceQuestion | { type: "noul"; instructions: string };
 type Candidate = { description: string; arguments: Record<string, unknown> };
 export type FastPathRequest = { state: Record<string, unknown>; questions: Record<string, Question> & { tool: ChoiceQuestion }; candidates: Record<string, Record<string, Candidate>>; tools: readonly AgentTool[] };
-const GATES = ["single_command", "refers_to_history", "needs_written_content", "multiple_actions"] as const;
 
 export function eligibleFastPathTools(tools: readonly AgentTool[]): AgentTool[] {
   return tools.filter(tool => tool.fastPath && (tool.fastPath.mode === "tool_only" || tool.effect === "read"));
@@ -25,23 +25,22 @@ export function eligibleFastPathTools(tools: readonly AgentTool[]): AgentTool[] 
 
 export function buildFastPathRequest(input: AgentDeciderInput): FastPathRequest {
   const tools = eligibleFastPathTools(input.tools);
+  const recent = input.recentMessages.filter(message => message.role !== "system" && message.role !== "tool");
+  if (recent.at(-1)?.role === "user" && recent.at(-1)?.content === input.messageText) recent.pop();
   const candidates: FastPathRequest["candidates"] = {};
   const questions: FastPathRequest["questions"] = {
-    tool: { type: "choice", instructions: "Which one ME3 action fully fulfils `latest_request`? Choose none for explanations, several actions, modifications, or a request outside these tools. Recent messages are context, not new requests.",
-      criteria: { ...Object.fromEntries(tools.map(tool => [tool.name, tool.description])), none: "Needs something else, or not a single ME3 action." } },
-    single_command: { type: "noul", instructions: "Is `latest_request` one self-contained command with all needed information in that request? A list/read request counts; small talk, questions needing explanation and dependent follow-ups do not." },
-    refers_to_history: { type: "noul", instructions: "Does `latest_request` depend on earlier messages or previously returned records to identify the action, target or arguments (for example move it, that one, the second)?" },
-    needs_written_content: { type: "noul", instructions: "Does `latest_request` need composed prose, such as an email body, post, analysis or explanation? A short action acknowledgement or ordinary list of records does not count." },
-    multiple_actions: { type: "noul", instructions: "Does `latest_request` ask for several actions, even in one sentence? Reading to find an item and then changing it counts as several actions." },
+    tool: { type: "choice", instructions: "Which single action does `latest_request` ask ME3 to do? Ordinary list questions count. Choose none for several actions, moving/cancelling existing items, explanations or composed prose, negated actions, or anything depending on earlier messages. Choose none for bookings or free-slot availability: listing calendar events does not fulfil those requests. For create actions judge intent only; missing or invalid dates belong to later validation. Recent messages are context, not new requests.",
+      criteria: { ...Object.fromEntries(tools.map(tool => [tool.name, tool.description])), none: "Outside these actions, several actions, prose, a negated action or a history-dependent follow-up." } },
   };
+  if (recent.length) questions.refers_to_history = { type: "noul", instructions: "Does `latest_request` require `recent_messages` to identify the requested action, target or arguments? Independent requests do not. Pronouns such as that one or the second usually do." };
   for (const tool of tools) {
     if (tool.fastPath?.mode !== "arguments") continue;
     const options = listCandidates(tool.fastPath.candidates, input);
     candidates[tool.name] = Object.fromEntries(Object.entries(options).filter(([, candidate]) => !validateArguments(tool.parameters, candidate.arguments)));
-    questions[`args_${tool.name}`] = { type: "choice", instructions: `Assuming the request is ONLY ${tool.name}, select the complete arguments that exactly cover EVERY requested filter. Dates are inclusive owner-local dates. Choose none_of_these when any filter, query, project, limit or date is missing or different; do not discard constraints.`,
+    questions[`args_${tool.name}`] = { type: "choice", instructions: `If the action is ${tool.name}, which candidate represents the requested arguments? Dates are inclusive owner-local dates. An unfiltered list uses the all candidate when available. Match every explicit constraint. Choose none_of_these for an unsupported filter, an unspecified calendar range, an open-ended range, or a range absent from the candidates.`,
       criteria: { ...Object.fromEntries(Object.entries(candidates[tool.name]).map(([id, candidate]) => [id, candidate])), none_of_these: "No candidate exactly covers all requested arguments, or this tool cannot apply a requested filter." } };
   }
-  return { state: { latest_request: input.messageText, recent_messages: input.recentMessages.filter(message => message.role !== "system" && message.role !== "tool").slice(-3).map(({ role, content }) => ({ role, text: content })), owner_timezone: input.ownerTimezone, now_iso: input.now.toISOString() }, questions, candidates, tools };
+  return { state: { latest_request: input.messageText, recent_messages: recent.slice(-3).map(({ role, content }) => ({ role, text: content })), owner_timezone: input.ownerTimezone, now_iso: input.now.toISOString() }, questions, candidates, tools };
 }
 
 function listCandidates(kind: "reminders" | "tasks" | "calendar", input: AgentDeciderInput): Record<string, Candidate> {
@@ -50,12 +49,15 @@ function listCandidates(kind: "reminders" | "tasks" | "calendar", input: AgentDe
     const today = localDate(input.now, input.ownerTimezone);
     const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
     const monday = addDays(today, -((weekday + 6) % 7));
-    const ranges: Record<string, [string, string]> = { today: [today, today], tomorrow: [addDays(today, 1), addDays(today, 1)], this_week: [monday, addDays(monday, 6)], next_7_days: [today, addDays(today, 6)] };
+    const ranges: Record<string, [string, string]> = { today: [today, today], tomorrow: [addDays(today, 1), addDays(today, 1)], day_after_tomorrow: [addDays(today, 2), addDays(today, 2)], this_week: [monday, addDays(monday, 6)], next_7_days: [today, addDays(today, 6)] };
+    const number = /\bnext\s+(\d{1,2}|one|two|three|four|five|six|seven|ten|fourteen|thirty)\s+days?\b/i.exec(text)?.[1]?.toLowerCase();
+    const count = number ? Number(number) || ({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, ten: 10, fourteen: 14, thirty: 30 } as Record<string, number>)[number] : 0;
+    if (count >= 1 && count <= 31) ranges[`next_${count}_days`] = [today, addDays(today, count - 1)];
     const explicit = explicitDates(text, today);
     explicit.forEach((date, index) => { ranges[`explicit_${index}`] = [date, date]; });
     if (explicit.length === 2 && explicit[1] >= explicit[0] && Date.parse(explicit[1]) - Date.parse(explicit[0]) <= 30 * 86_400_000) ranges.explicit_range = [explicit[0], explicit[1]];
-    const candidates: Record<string, Candidate> = Object.fromEntries(Object.entries(ranges).map(([id, [dateFrom, dateTo]]) => [id, { description: id.replace(/_/g, " "), arguments: { dateFrom, dateTo } }]));
-    const limit = /\b(?:first|next|limit(?:\s+to)?)\s+(\d{1,2})\b/i.exec(text)?.[1];
+    const candidates: Record<string, Candidate> = Object.fromEntries(Object.entries(ranges).map(([id, [dateFrom, dateTo]]) => [id, { description: `${id.replace(/_/g, " ")}: ${dateFrom} through ${dateTo}, inclusive (${input.ownerTimezone})`, arguments: { dateFrom, dateTo } }]));
+    const limit = /\b(?:first|next|limit(?:\s+to)?)\s+(\d{1,2})\b(?!\s+(?:days?|weeks?|months?|years?)\b)/i.exec(text)?.[1];
     if (limit && +limit >= 1 && +limit <= 50) for (const [id, candidate] of Object.entries(candidates)) candidates[`${id}_limit`] = { description: `${candidate.description}, maximum ${limit} events`, arguments: { ...candidate.arguments, limit: +limit } };
     return candidates;
   }
@@ -97,24 +99,26 @@ function explicitDates(text: string, today: string): string[] {
 
 export function parseFastPathResponse(value: unknown, request: FastPathRequest, thresholds: FastPathThresholds = FAST_PATH_THRESHOLDS): AgentFastPathDecision {
   const response = record(value), answers = record(response?.answers);
-  if (!answers || !Object.values(thresholds).every(probability)) return { kind: "fallthrough", reason: "malformed_response" };
-  for (const [id, question] of Object.entries(request.questions)) {
+  if (!answers || ![thresholds.toolProbability, thresholds.argumentProbability, thresholds.historyProbability].every(probability)) return { kind: "fallthrough", reason: "malformed_response" };
+  for (const id of ["tool", ...(request.questions.refers_to_history ? ["refers_to_history"] : [])]) {
+    const question = request.questions[id];
     const answer = record(answers[id]);
     if (!answer || answer.type !== question.type || (question.type === "noul" ? !probability(answer.noul) : !validChoice(answer, question.criteria))) return { kind: "fallthrough", reason: "malformed_response" };
   }
   const toolAnswer = record(answers.tool)!;
   const name = toolAnswer.choice as string, probabilities = toolAnswer.probabilities as Record<string, number>;
-  const gates = Object.fromEntries(GATES.map(id => [id, record(answers[id])!.noul as number]));
+  const gates: Record<string, number> = request.questions.refers_to_history ? { refers_to_history: record(answers.refers_to_history)!.noul as number } : {};
   const common = { probabilities, gates, confidence: toolAnswer.confidence as number, toolChoice: name };
   const fallthrough = (reason: string): AgentFastPathDecision => ({ kind: "fallthrough", reason, ...common });
   if (name === "none") return fallthrough("none");
   if (probabilities[name] < thresholds.toolProbability) return fallthrough("tool_threshold");
-  if (gates.single_command < thresholds.singleCommand) return fallthrough("single_command");
-  for (const id of GATES.slice(1)) if (gates[id] > thresholds.unsafeProbability) return fallthrough(id);
+  if (gates.refers_to_history !== undefined && gates.refers_to_history > thresholds.historyProbability) return fallthrough("refers_to_history");
   const tool = request.tools.find(tool => tool.name === name);
   if (!tool) return fallthrough("unavailable_tool");
   if (tool.fastPath?.mode === "tool_only") return fallthrough("tool_only");
-  const answer = record(answers[`args_${name}`])!;
+  const answer = record(answers[`args_${name}`]);
+  const question = request.questions[`args_${name}`];
+  if (!answer || answer.type !== "choice" || question?.type !== "choice" || !validChoice(answer, question.criteria)) return fallthrough("malformed_response");
   if (answer.choice === "none_of_these") return fallthrough("arguments_uncovered");
   if ((answer.probabilities as Record<string, number>)[answer.choice as string] < thresholds.argumentProbability) return fallthrough("argument_threshold");
   const args = request.candidates[name]?.[answer.choice as string]?.arguments;

@@ -18,33 +18,59 @@ function response(request: ReturnType<typeof buildFastPathRequest>, tool = "core
 
 // Failure modes: incomplete/invalid answers; unsafe gates; uncovered arguments;
 // write argument generation; timezone/DST drift; transport and usage failures.
+test("routing has no duplicate gates; history is checked only when supplied", () => {
+  const plain = buildFastPathRequest(input());
+  assert.deepEqual(Object.values(plain.questions).filter(q => q.type === "noul"), []);
+  const contextual = buildFastPathRequest({ ...input(), recentMessages: [{ role: "assistant", content: "Your reminders are listed above." }] });
+  assert.deepEqual(Object.keys(contextual.questions).filter(id => contextual.questions[id].type === "noul"), ["refers_to_history"]);
+  const value = response(contextual);
+  (value.answers.refers_to_history as any).noul = .08;
+  assert.equal(parseFastPathResponse(value, contextual, { toolProbability: .9, argumentProbability: .85, historyProbability: .1 } as any).kind, "execute");
+  (value.answers.refers_to_history as any).noul = .7;
+  assert.equal((parseFastPathResponse(value, contextual, { toolProbability: .9, argumentProbability: .85, historyProbability: .1 } as any) as any).reason, "refers_to_history");
+});
+test("bounded calendar candidates cover relative dates and describe actual dates", () => {
+  const request = buildFastPathRequest(input("List my calendar for the next 3 days."));
+  const c = request.candidates.core_calendar_events_list;
+  assert.deepEqual(c.day_after_tomorrow.arguments, { dateFrom: "2026-10-27", dateTo: "2026-10-27" });
+  assert.deepEqual(c.next_3_days.arguments, { dateFrom: "2026-10-25", dateTo: "2026-10-27" });
+  assert.match(c.day_after_tomorrow.description, /2026-10-27/);
+  assert.match(c.next_3_days.description, /2026-10-25.*2026-10-27/);
+  assert.equal(Object.keys(c).some(id => id.endsWith("_limit")), false);
+  for (const text of ["List the next 32 days", "List the next 0 days", "List all upcoming calendar events"]) {
+    const candidates = buildFastPathRequest(input(text)).candidates.core_calendar_events_list;
+    assert.equal(Object.keys(candidates).some(id => /next_(32|0)_days|upcoming|open/.test(id)), false);
+  }
+});
 test("opts in exactly the six declared tools and selects existing calendar arguments", () => {
   const request = buildFastPathRequest(input());
   assert.equal(Object.keys(request.questions.tool.criteria).length, 7);
   assert.deepEqual(request.tools.map(tool => tool.name).sort(), ["core_calendar_event_create", "core_calendar_events_list", "core_mission_task_create", "core_mission_task_list", "core_reminders_create", "core_reminders_list"]);
   assert.deepEqual(parseFastPathResponse(response(request), request), { kind: "execute", call: { name: "core_calendar_events_list", arguments: { dateFrom: "2026-10-26", dateTo: "2026-10-26" } }, confidence: 1,
-    probabilities: response(request).answers.tool.probabilities, gates: { single_command: 1, refers_to_history: 0, needs_written_content: 0, multiple_actions: 0 }, toolChoice: "core_calendar_events_list" });
+    probabilities: response(request).answers.tool.probabilities, gates: {}, toolChoice: "core_calendar_events_list" });
 });
 test("malformed and missing answers always fall through", () => {
-  const request = buildFastPathRequest(input());
+  const request = buildFastPathRequest({ ...input(), recentMessages: [{ role: "assistant", content: "Prior context" }] });
   for (const corrupt of [
-    (r: any) => { delete r.answers.single_command; },
+    (r: any) => { delete r.answers.refers_to_history; },
     (r: any) => { r.answers.tool.choice = "unknown"; },
     (r: any) => { r.answers.tool.probabilities.core_calendar_events_list = 2; },
     (r: any) => { r.answers.refers_to_history.noul = NaN; },
     (r: any) => { r.answers.tool.confidence = -1; },
-    (r: any) => { delete r.answers.args_core_reminders_list; },
+    (r: any) => { delete r.answers.args_core_calendar_events_list; },
     (r: any) => { r.answers.tool.probabilities.none = .8; },
   ]) { const value = response(request); corrupt(value); assert.equal(parseFastPathResponse(value, request).kind, "fallthrough"); }
 });
-test("each independent gate and the probability threshold forces fallthrough", () => {
-  const request = buildFastPathRequest(input());
-  for (const gate of ["single_command", "refers_to_history", "needs_written_content", "multiple_actions"]) {
-    const value = response(request); (value.answers[gate] as any).noul = gate === "single_command" ? 0 : 1;
-    assert.equal((parseFastPathResponse(value, request) as any).reason, gate);
-  }
-  const value = response(request); (value.answers.tool as any).probabilities.core_calendar_events_list = .98; (value.answers.tool as any).probabilities.none = .02;
+test("the history gate and tool threshold force fallthrough independently", () => {
+  const request = buildFastPathRequest({ ...input(), recentMessages: [{ role: "assistant", content: "Prior context" }] });
+  const history = response(request); (history.answers.refers_to_history as any).noul = 1;
+  assert.equal((parseFastPathResponse(history, request) as any).reason, "refers_to_history");
+  const value = response(request); (value.answers.tool as any).probabilities.core_calendar_events_list = .5; (value.answers.tool as any).probabilities.none = .5;
   assert.equal((parseFastPathResponse(value, request, FAST_PATH_THRESHOLDS) as any).reason, "tool_threshold");
+});
+test("missing threshold settings fail closed", () => {
+  const request = buildFastPathRequest(input());
+  assert.equal((parseFastPathResponse(response(request), request, { toolProbability: .5, argumentProbability: .5 } as any) as any).reason, "malformed_response");
 });
 test("none and uncovered list arguments fall through; writes only measure routing", () => {
   const request = buildFastPathRequest(input());
