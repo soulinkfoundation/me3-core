@@ -1182,7 +1182,7 @@ export async function listAgentContacts(
             MAX(b.starts_at) AS last_booking_at
      FROM contacts c
      LEFT JOIN bookings b ON b.guest_email = c.email
-     LEFT JOIN sites s ON s.id = b.site_id AND s.user_id = c.user_id
+       AND b.site_id IN (SELECT s.id FROM sites s WHERE s.user_id = c.user_id)
      WHERE c.user_id = ?
      GROUP BY c.id
      ORDER BY COALESCE(c.last_interaction_at, c.updated_at, c.created_at) DESC`,
