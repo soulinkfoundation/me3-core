@@ -34,6 +34,7 @@ declare module 'vue-router/auto-routes' {
     '/login': RouteRecordInfo<'/login', '/login', Record<never, never>, Record<never, never>>,
     '/mission-control-wheel-of-life': RouteRecordInfo<'/mission-control-wheel-of-life', '/mission-control/wheel-of-life', Record<never, never>, Record<never, never>>,
     '/mobile/pair/[pairingId]': RouteRecordInfo<'/mobile/pair/[pairingId]', '/mobile/pair/:pairingId', { pairingId: ParamValue<true> }, { pairingId: ParamValue<false> }>,
+    '/people': RouteRecordInfo<'/people', '/people', Record<never, never>, Record<never, never>>,
     '/sites/': RouteRecordInfo<'/sites/', '/sites', Record<never, never>, Record<never, never>>,
     '/sites/[username]': RouteRecordInfo<'/sites/[username]', '/sites/:username', { username: ParamValue<true> }, { username: ParamValue<false> }>,
     '/sites/[username]/build': RouteRecordInfo<'/sites/[username]/build', '/sites/:username/build', { username: ParamValue<true> }, { username: ParamValue<false> }>,

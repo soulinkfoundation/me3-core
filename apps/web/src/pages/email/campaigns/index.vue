@@ -95,7 +95,6 @@ const campaignMailboxTabs = computed<Array<{
   { id: "sent", label: "Sent", icon: "Send" },
   { id: "archive", label: "Archive", icon: "Archive" },
   { id: "trash", label: "Trash", icon: "Trash2" },
-  { id: "contacts", label: "Contacts", icon: "UsersRound" },
 ]);
 
 const hasActiveCampaigns = computed(() =>
@@ -121,10 +120,6 @@ const billingReturn = computed(() =>
 
 function switchCampaignMailboxTab(tabId: string) {
   if (tabId === "campaigns") return;
-  if (tabId === "contacts") {
-    void router.push("/contacts");
-    return;
-  }
   void router.push({
     path: "/email",
     query: tabId === "inbox" ? {} : { tab: tabId },

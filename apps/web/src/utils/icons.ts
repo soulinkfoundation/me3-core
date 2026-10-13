@@ -119,6 +119,13 @@ import {
   UsersRound,
   WifiOff,
   X,
+  CalendarCheck,
+  Lock,
+  PenLine,
+  Phone,
+  Share2,
+  UserPlus,
+  Video,
 } from "lucide";
 import type { IconNode } from "lucide";
 
@@ -254,6 +261,13 @@ export const UI_ICONS = {
   UserRound,
   UsersRound,
   WifiOff,
+  CalendarCheck,
+  Lock,
+  PenLine,
+  Phone,
+  Share2,
+  UserPlus,
+  Video,
   UserStar: USER_STAR_ICON,
   X,
 } as const satisfies Record<string, IconNode>;

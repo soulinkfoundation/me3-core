@@ -54,6 +54,7 @@ function installed(id: string) { return plugins.value.some(plugin => plugin.id =
 // Wheel, Email and Files are Core features. No hosted entitlement is inferred here.
 const destinations = computed(() => [
   { label: "Calendar", path: "/calendar", emoji: APP_FEATURE_ICONS.calendar, visible: installed("me3.calendar") && features.value.calendar },
+  { label: "People", path: "/people", emoji: APP_FEATURE_ICONS.people, visible: true },
   { label: "Email", path: "/email", emoji: APP_FEATURE_ICONS.email, visible: features.value.email },
   { label: "Writing", path: "/journal", emoji: APP_FEATURE_ICONS.journal, visible: installed("me3.journal") && features.value.journal },
   { label: "Tasks", path: "/tasks", emoji: "✅", visible: installed("me3.mission-control") && features.value.tasks },

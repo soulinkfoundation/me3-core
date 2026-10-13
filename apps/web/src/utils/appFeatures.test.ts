@@ -22,6 +22,8 @@ describe("app feature utilities", () => {
     );
     expect(appFeatureForPath("/sites/kieran/build")).toBe("sites");
     expect(appFeatureForPath("/create")).toBe("sites");
+    expect(appFeatureForPath("/people")).toBe("people");
+    expect(appFeatureForPath("/contacts")).toBe("people");
   });
 
   it("keeps account and accounts routes distinct", () => {

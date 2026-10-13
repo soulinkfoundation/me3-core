@@ -268,7 +268,6 @@ describe("EmailPage", () => {
       "sent",
       "archive",
       "trash",
-      "contacts",
     ]);
     expect(wrapper.text()).not.toContain("More");
   });

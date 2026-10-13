@@ -6,6 +6,7 @@ export type AppFeatureId =
   | "journal"
   | "wheel-of-life"
   | "calendar"
+  | "people"
   | "email"
   | "files"
   | "sites"
@@ -19,6 +20,7 @@ export const APP_FEATURE_ICONS: Record<AppFeatureId, string> = {
   journal: pluginNavEmojiById("me3.journal"),
   "wheel-of-life": "🛞",
   calendar: pluginNavEmojiById("me3.calendar"),
+  people: "🫶",
   email: "📧",
   files: "📂",
   sites: pluginNavEmojiById("me3.landing-pages"),
@@ -50,6 +52,11 @@ const APP_FEATURE_MATCHERS: AppFeatureMatcher[] = [
     matches: (path) => matchesPathPrefix(path, "/wheel-of-life"),
   },
   { id: "calendar", matches: (path) => matchesPathPrefix(path, "/calendar") },
+  {
+    id: "people",
+    matches: (path) =>
+      matchesPathPrefix(path, "/people") || matchesPathPrefix(path, "/contacts"),
+  },
   { id: "email", matches: (path) => matchesPathPrefix(path, "/email") },
   { id: "files", matches: (path) => matchesPathPrefix(path, "/files") },
   {

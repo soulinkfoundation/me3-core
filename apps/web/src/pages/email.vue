@@ -463,7 +463,7 @@ const emailTabIcons: Record<EmailTab, UiIconName> = {
 };
 const mailFolderTabs = computed(() => {
   const tabs: Array<{
-    id: Tab | "contacts" | "campaigns";
+    id: Tab | "campaigns";
     label: string;
     icon: UiIconName;
     count?: number | null;
@@ -483,18 +483,11 @@ const mailFolderTabs = computed(() => {
       ariaLabel: emailTabConfig[key].label,
     })),
   ];
-  tabs.push({
-    id: "contacts",
-    label: "Contacts",
-    icon: "UsersRound",
-    count: contacts.value.length > 0 ? contacts.value.length : null,
-    ariaLabel: "Contacts",
-  });
   return tabs;
 });
 
-function isEmailTab(tab: Tab | "contacts" | "campaigns"): tab is EmailTab {
-  return tab !== "telegram" && tab !== "contacts" && tab !== "campaigns";
+function isEmailTab(tab: Tab | "campaigns"): tab is EmailTab {
+  return tab !== "telegram" && tab !== "campaigns";
 }
 
 const activeFolderLabel = computed(() =>
@@ -1668,10 +1661,6 @@ function switchTab(tab: Tab) {
 }
 
 function switchMailFolderTab(tabId: string) {
-  if (tabId === "contacts") {
-    void router.push("/contacts");
-    return;
-  }
   if (tabId === "campaigns") {
     void router.push("/email/campaigns");
     return;
