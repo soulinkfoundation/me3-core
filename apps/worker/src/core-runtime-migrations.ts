@@ -5,6 +5,8 @@ import { AGENT_IMAGE_SCHEMA_STATEMENTS } from "./agent-image-schema";
 import { AGENT_PRESENTATION_SCHEMA_STATEMENTS } from "../../../packages/agent/src/presentations";
 import { AGENT_NOTIFICATION_SCHEMA } from "./agent-notifications";
 import { MORNING_CALENDAR_PUSH_SCHEMA } from "./morning-calendar-push";
+import { QUOTES_SCHEMA } from "./quotes-schema";
+import { GRATITUDE_SETTINGS_SCHEMA, CARD_REMINDERS_SCHEMA } from "./gratitude-schema";
 import type { Env } from "./types";
 
 type RuntimeMigration = {
@@ -506,6 +508,21 @@ const runtimeMigrations: RuntimeMigration[] = [
     async apply(db) {
       await addColumnIfMissing(db, "owner_profile", "daily_briefing_time", "TEXT NOT NULL DEFAULT '07:30'");
       for (const sql of MORNING_CALENDAR_PUSH_SCHEMA) await db.prepare(sql).run();
+    },
+  },
+  {
+    id: "0067_quotes",
+    checksum: "2026-10-13-quotes-v1",
+    async apply(db) {
+      await db.batch(QUOTES_SCHEMA.map(sql => db.prepare(sql)));
+    },
+  },
+  {
+    id: "0068_gratitude",
+    checksum: "2026-10-13-gratitude-v1",
+    async apply(db) {
+      const table = await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user_reminders'").first<{ sql: string }>();
+      await db.batch([...GRATITUDE_SETTINGS_SCHEMA, ...(!table?.sql.includes("'card'") ? CARD_REMINDERS_SCHEMA : [])].map(sql => db.prepare(sql)));
     },
   },
 ];

@@ -36,6 +36,8 @@ export type CalendarPushAlert = {
   occurrenceId: string;
   alertOffsetMinutes: number;
   title: string;
+  contextType?: "card";
+  contextId?: string;
 };
 
 export async function getPushNotificationDevice(
@@ -115,6 +117,8 @@ export async function unregisterPushNotificationDevice(
 }
 
 export type DailyBriefingPushSummary = {
+  // The hosted relay can ignore the quote until its push wording supports it.
+  quote?: { text: string; author: string };
   birthdayNames: string[];
   counts: {
     birthdays: number;

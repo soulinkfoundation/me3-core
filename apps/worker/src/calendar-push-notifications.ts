@@ -146,6 +146,7 @@ export async function loadCalendarPushItems(env: Env, userId: string, queryStart
               dismissed_at, created_at
        FROM user_reminders
        WHERE user_id = ? AND status IN ('pending', 'failed')
+         AND (context_type IS NULL OR context_type != 'card')
          AND remind_at >= ? AND remind_at < ?`,
     ).bind(userId, queryStart, queryEnd).all<DbUserReminder>(),
     env.DB.prepare(
@@ -255,7 +256,7 @@ function timedCandidate(
   };
 }
 
-async function dispatchCalendarPushCandidate(env: Env, candidate: CalendarPushCandidate) {
+export async function dispatchCalendarPushCandidate(env: Env, candidate: CalendarPushCandidate) {
   const inserted = await env.DB.prepare(
     `INSERT OR IGNORE INTO calendar_push_dispatches
        (id, user_id, category, item_id, occurrence_id, alert_offset_minutes,

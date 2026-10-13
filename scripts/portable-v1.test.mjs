@@ -94,6 +94,12 @@ before(async () => {
   sourceR2 = join(root, "source-r2");
   archive = join(root, "snapshot.me3-portable");
   seedProofInstallation(source, sourceR2);
+  runSqlite(source, `
+    INSERT INTO quotes(id,user_id,text,author,origin,saved_at) VALUES('portable-quote','owner','Owner-supplied words','Owner','owner','2026-10-13');
+    INSERT INTO daily_quotes(user_id,date_key,quote_id,seen_json) VALUES('owner','2026-10-13','portable-quote','["portable-quote"]');
+    INSERT INTO gratitude_settings(user_id,quote_in_briefing) VALUES('owner',0);
+    UPDATE journal_entries SET metadata_json=json_set(metadata_json,'$.gratitude',json('["Tea"]'),'$.goodThings',json('["A walk"]')) WHERE user_id='owner';
+  `);
   runSqlite(
     source,
     `INSERT INTO managed_runtime_state
@@ -151,6 +157,14 @@ after(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("rejects saved or changed Core seed quotes on a restore target", () => {
+  for (const [name, update] of [["saved-quote-target", "saved_at = '2026-10-13'"], ["changed-quote-target", "text = 'Private replacement'"]]) {
+    const target = freshTarget(name);
+    runSqlite(target, `UPDATE quotes SET ${update} WHERE id = 'q216';`);
+    assert.throws(() => restorePortableV1({ archive, targetDatabase: target, targetR2Directory: join(root, `${name}-r2`), passphrase: PROOF_PASSPHRASE }), error => error.code === "TARGET_NOT_CLEAN");
+  }
+});
+
 test("exports sanitized owner data and restores the exact identity, D1 rows, and R2 objects", async () => {
   const target = freshTarget("round-trip");
   const targetR2 = join(root, "round-trip-r2");
@@ -191,6 +205,10 @@ test("exports sanitized owner data and restores the exact identity, D1 rows, and
   assert.equal(queryScalar(target, "SELECT turn_id FROM me3_agent_request_aliases WHERE owner_id = 'owner' AND request_id = 'portable-alias-request';"), "portable-agent-turn");
   assert.equal(queryScalar(target, "SELECT json_extract(input_json, '$.messageText') FROM me3_agent_request_aliases WHERE owner_id = 'owner' AND request_id = 'portable-alias-request';"), "approve");
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM mission_tasks;"), "1");
+  assert.equal(queryScalar(target, "SELECT text FROM quotes WHERE id='portable-quote';"), "Owner-supplied words");
+  assert.equal(queryScalar(target, "SELECT quote_id FROM daily_quotes WHERE user_id='owner';"), "portable-quote");
+  assert.equal(queryScalar(target, "SELECT quote_in_briefing FROM gratitude_settings WHERE user_id='owner';"), "0");
+  assert.equal(queryScalar(target, "SELECT json_extract(metadata_json,'$.gratitude[0]') FROM journal_entries WHERE user_id='owner';"), "Tea");
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM journal_entries;"), "1");
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM email_campaigns;"), "1");
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM email_campaign_revisions;"), "1");

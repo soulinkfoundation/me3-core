@@ -1,6 +1,7 @@
 import type { Env } from "./types";
+import { getBriefingQuote } from "./quotes";
 
-const DEFAULT_DAILY_BRIEFING_MESSAGE_TEMPLATE = "{{calendar.summary}}\n\n{{calendar.events}}\n{{calendar.reminders}}\n{{mission.tasks}}\n\nI'll keep an eye on the day from here.";
+const DEFAULT_DAILY_BRIEFING_MESSAGE_TEMPLATE = "{{calendar.summary}}\n\n{{calendar.events}}\n{{calendar.reminders}}\n{{mission.tasks}}\n\n{{quote.today}}\n\nI'll keep an eye on the day from here.";
 
 type DailyBriefingReminderRow = {
   id: string;
@@ -19,6 +20,7 @@ type DailyBriefingRenderContext = {
   calendarEvents: string;
   calendarReminders: string;
   missionTasks: string;
+  quote: string;
   sections: DailyBriefingSection[];
 };
 
@@ -91,11 +93,12 @@ async function buildDailyBriefingRenderContext(
   const dateKey = dateKeyInTimezone(now, timezone);
   const dateLabel = formatFriendlyDate(dateKey, timezone);
   const { start, end } = utcWindowForLocalDate(dateKey, timezone);
-  const [events, bookings, reminders, tasks] = await Promise.all([
+  const [events, bookings, reminders, tasks, quote] = await Promise.all([
     loadDailyBriefingEvents(env, userId, start, end),
     loadDailyBriefingBookings(env, userId, start, end, timezone),
     loadDailyBriefingReminders(env, userId, start, end),
     loadDailyBriefingTasks(env, userId),
+    getBriefingQuote(env, userId, now),
   ]);
   const calendarEvents = [...events, ...bookings].sort((a, b) => a.starts_at.localeCompare(b.starts_at));
   return {
@@ -106,6 +109,7 @@ async function buildDailyBriefingRenderContext(
     calendarEvents: formatDailyCalendarEvents(calendarEvents, timezone),
     calendarReminders: formatDailyReminders(reminders, timezone),
     missionTasks: formatDailyTasks(tasks, dateKey),
+    quote: quote ? `“${quote.text}”${quote.author ? `\n— ${quote.author}` : ""}` : "",
     sections: buildDailyBriefingSections(
       calendarEvents,
       reminders,
@@ -175,6 +179,7 @@ function renderDailyBriefingMessage(context: DailyBriefingRenderContext, templat
     "calendar.events": context.calendarEvents,
     "calendar.reminders": context.calendarReminders,
     "mission.tasks": context.missionTasks,
+    "quote.today": context.quote,
   };
   const rendered = template.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, key: string) => {
     return values[key] ?? "";

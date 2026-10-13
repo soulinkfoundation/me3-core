@@ -42,6 +42,7 @@ export interface AgentImageGenerationServices {
   }): Promise<AgentImageGenerationResult>;
 }
 export interface AgentDomainServices {
+  quotes?: { save(input: Record<string, unknown>): Promise<unknown> };
   mailbox?: AgentMailboxServices;
   scheduling?: AgentSchedulingServices;
   people?: AgentPeopleServices;

@@ -4,6 +4,7 @@ import { api, ApiError, API_BASE } from "../../api";
 import { useAuthStore } from "../../stores/auth";
 import draggable from "vuedraggable";
 import HomeWheelChart, { type HomeWheelArea } from "./HomeWheelChart.vue";
+import GratitudeCard from "./GratitudeCard.vue";
 import GoalsDialog from "../tasks/GoalsDialog.vue";
 import AppDialog from "../AppDialog.vue";
 import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
@@ -70,6 +71,7 @@ const menu = ref<HomeCard | null>(null);
 const day = ref(localDateKey(new Date()));
 const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = {
   today: { title: "Today", href: "/calendar", emoji: "🗓️" },
+  gratitude: { title: "Gratitude", href: "/journal", emoji: "🌅" },
   inbox: { title: "Inbox", href: "/email", emoji: "📧" },
   mission: { title: "Mission", href: "/tasks?goals=1", emoji: "🚀" },
   journal: { title: "Writing", href: "/journal", emoji: "✍️" },
@@ -185,7 +187,7 @@ async function loadToday() {
   const generation = ++todayGeneration;
   await resource("today", async () => {
     const start = new Date(`${day.value}T00:00:00`); const end = new Date(start); end.setDate(end.getDate() + 1);
-    type Event = { id: string; title?: string; startsAt?: string; endsAt?: string; remindAt?: string; dueAt?: string; scheduledFor?: string; allDay?: boolean; status?: string; archivedAt?: string; starts_at?: string; ends_at?: string; guest_name?: string };
+    type Event = { id: string; title?: string; contextType?: string; startsAt?: string; endsAt?: string; remindAt?: string; dueAt?: string; scheduledFor?: string; allDay?: boolean; status?: string; archivedAt?: string; starts_at?: string; ends_at?: string; guest_name?: string };
     const [feedResult, pendingResult, sitesResult] = await Promise.allSettled([
       api.get<{ events?: Event[]; importedEvents?: Event[]; bookings?: Event[]; reminders?: Event[]; tasks?: Event[]; sources?: unknown[] }>(`/calendar/feed?${new URLSearchParams({ start: start.toISOString(), end: end.toISOString() })}`),
       api.get<{ approvals: typeof approvals.value }>("/mission-control/approvals?status=pending"),
@@ -197,7 +199,7 @@ async function loadToday() {
     if (sitesResult.status === "rejected") throw sitesResult.reason;
     const feed = feedResult.value; const sites = sitesResult.value;
     const bookingSites = sites.sites.filter(s => s.bookings_enabled || s.bookingsEnabled).map(s => s.username);
-    events.value = [...(feed.events || []), ...(feed.importedEvents || []), ...(feed.reminders || []), ...(feed.tasks || []).filter(t => !t.archivedAt && !["done", "cancelled"].includes(t.status || "")), ...(feed.bookings || []).filter(b => bookingSites.includes((b as Event & { username: string }).username))]
+    events.value = [...(feed.events || []), ...(feed.importedEvents || []), ...(feed.reminders || []).filter(r => r.contextType !== "card"), ...(feed.tasks || []).filter(t => !t.archivedAt && !["done", "cancelled"].includes(t.status || "")), ...(feed.bookings || []).filter(b => bookingSites.includes((b as Event & { username: string }).username))]
       .flatMap(e => {
         const raw = e.startsAt || e.starts_at || e.remindAt || e.dueAt || e.scheduledFor;
         if (!raw) return [];
@@ -322,7 +324,7 @@ onBeforeUnmount(() => {
     <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__drag" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
       <template #item="{ element: card }: { element: HomeCard }">
         <article :ref="el => setCardElement(card, el)" class="home-card" :style="positions[card]" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
-          <header class="home-card__header">
+          <header v-if="card !== 'gratitude'" class="home-card__header">
             <button v-if="card === 'wheel'" type="button" class="home-card__title" @click="openWheel"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></button>
             <RouterLink v-else :to="cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
             <label v-if="card === 'today'" class="home-day"><span>{{ new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) }}</span><input v-model="day" type="date" aria-label="Choose Home calendar day" /></label>
@@ -337,7 +339,8 @@ onBeforeUnmount(() => {
             <button type="button" role="menuitem" :disabled="visible.indexOf(card) === visible.length - 1" @click="move(card, 1)"><UiIcon name="ArrowDown" :size="16" />Move down</button>
             <button type="button" role="menuitem" class="home-danger" @click="remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
           </div>
-          <div class="home-card__body">
+          <GratitudeCard v-if="card === 'gratitude'" :active="active" @unavailable="unavailable.push('gratitude')" />
+          <div v-else class="home-card__body">
             <template v-if="card === 'today'">
               <div v-for="approval in approvals.slice(0, 3)" :key="approval.id" class="home-approval"><strong>{{ approval.title }}</strong><p v-if="approval.summary" class="home-muted">{{ journalPreview(approval.summary) }}</p><div class="home-actions"><template v-if="approval.pluginId === 'me3.core'"><button type="button" :disabled="busy.includes(approval.id)" @click="reviewApproval = approval; approvalError = ''">Review</button></template><template v-else><button type="button" :disabled="busy.includes(approval.id)" @click="confirm(approval.id)">Confirm</button><button type="button" @click="emit('suggest', `Help me find another time for: ${approval.title}`)">Another time</button></template></div></div>
               <RouterLink v-for="event in events.slice(0, 5)" :key="event.id" to="/calendar" class="home-line home-event"><span class="home-muted home-time">{{ event.allDay ? 'All day' : new Date(event.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }}</span><span>{{ event.title }}</span></RouterLink>

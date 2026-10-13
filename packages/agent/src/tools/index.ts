@@ -1,6 +1,7 @@
 import type { AgentTargetMetadata, AgentTool } from "../types";
 import { calendarTools } from "./calendar";
 import { journalTools } from "./journal";
+import { quoteTools } from "./quotes";
 import { imageTools } from "./images";
 import { mailboxTools } from "./mailbox";
 import { reminderTools } from "./reminders";
@@ -29,7 +30,7 @@ const targetContracts: Record<string, AgentTargetMetadata> = {
 };
 
 export function createDomainTools(): AgentTool[] {
-  const tools = [...calendarTools(), ...journalTools(), ...mailboxTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...taskTools(), ...webTools(), ...imageTools()];
+  const tools = [...calendarTools(), ...journalTools(), ...quoteTools(), ...mailboxTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...taskTools(), ...webTools(), ...imageTools()];
   for (const tool of tools) {
     tool.target = targetContracts[tool.name];
     if (tool.approval === "required") {

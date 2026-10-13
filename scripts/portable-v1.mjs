@@ -87,6 +87,9 @@ export const RUNTIME_MIGRATIONS = [
   ["0062_agent_notifications", "2026-10-11-agent-notifications-v1"],
   ["0063_agent_presentations", "2026-10-11-agent-presentations-v1"],
   ["0064_retire_legacy_automations", "2026-10-11-retire-legacy-automations-v1"],
+  ["0065_morning_calendar_push", "2026-10-13-morning-calendar-push-v1"],
+  ["0067_quotes", "2026-10-13-quotes-v1"],
+  ["0068_gratitude", "2026-10-13-gratitude-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -109,6 +112,7 @@ const EXCLUDED_TABLES = [
   "auth_rate_limits",
   "booking_holds",
   "calendar_push_dispatches",
+  "morning_calendar_push_dispatches",
   "drive_multipart_parts",
   "drive_multipart_uploads",
   "local_executor_audit_events",
@@ -146,6 +150,9 @@ const TRANSFORMED_TABLES = [
   "social_suggestions",
 ];
 const COPIED_TABLES = [
+  "quotes",
+  "daily_quotes",
+  "gratitude_settings",
   "me3_agent_cancellations",
   "me3_agent_request_aliases",
   "me3_agent_turns",
@@ -771,6 +778,7 @@ export function restorePortableV1({
     const restoreSql = [
       "PRAGMA defer_foreign_keys=TRUE;",
       "BEGIN TRANSACTION;",
+      "DELETE FROM quotes;",
       validated.sql,
       ...secretStatements,
       "COMMIT;",
@@ -779,6 +787,7 @@ export function restorePortableV1({
     // atomic transaction and rejects explicit BEGIN/COMMIT statements.
     const importSql = [
       "PRAGMA defer_foreign_keys=TRUE;",
+      "DELETE FROM quotes;",
       validated.sql,
       ...secretStatements,
     ].join("\n");
@@ -1498,6 +1507,14 @@ function assertCleanTarget(database) {
   const occupied = [];
   for (const [table, policy] of TABLE_POLICIES) {
     if (policy === "verify" || policy === "derived") continue;
+    if (table === "quotes") {
+      const seed = JSON.parse(readFileSync(join(REPO_ROOT, "apps/worker/src/data/quotes-core-seed.json"), "utf8"));
+      const pristine = new Map(seed.map(quote => [quote.id, { id: quote.id, user_id: null, text: quote.text, author: quote.author, source: quote.source, source_url: null, areas: JSON.stringify(quote.areas), origin: "core", saved_at: null, archived_at: null }]));
+      const rows = sqliteJson(database, "SELECT * FROM quotes;");
+      if (rows.every(row => stableJson(row) === stableJson(pristine.get(row.id)))) continue;
+      occupied.push({ table, rows: rows.length });
+      continue;
+    }
     const rows = Number(sqliteScalar(database, `SELECT COUNT(*) FROM ${identifier(table)};`));
     if (rows > 0) occupied.push({ table, rows });
   }

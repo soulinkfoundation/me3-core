@@ -1,6 +1,7 @@
 import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createClefDecider, createD1TurnStore, runAgentTurn, sampleFastPathTurn, type AgentDecider, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import type { AgentFastPathRequestMeasurement } from "../../../packages/agent/src/fast-path";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
+import { saveOwnerQuote } from "./quotes";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
 import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
 import { getAiSettings } from "./ai-providers";
@@ -214,6 +215,7 @@ async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:
 
 async function newAgentServices(env:Env,ownerId:string):Promise<AgentDomainServices> {
   return {
+    quotes: { save: input => saveOwnerQuote(env, ownerId, input, "agent") },
     scheduling:createStableAgentSchedulingServices(env,ownerId),
     mailbox:createAgentMailboxServices(env,ownerId),
     images:createAgentImageGenerationServices(env,ownerId),
@@ -222,6 +224,7 @@ async function newAgentServices(env:Env,ownerId:string):Promise<AgentDomainServi
   };
 }
 function isToolAvailable(name:string,services:AgentDomainServices):boolean {
+  if(name==="core_quotes_save")return Boolean(services.quotes);
   if(name==="core_images_generate")return Boolean(services.images);
   if(name.startsWith("core_mailbox_"))return Boolean(services.mailbox);
   if(name==="core_scheduling_request_read")return Boolean(services.scheduling?.getRequest);

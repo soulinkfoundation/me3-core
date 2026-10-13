@@ -4,14 +4,14 @@ export type HomeTask = {
   goalId?: string | null; projectId?: string | null;
 };
 export type HomeGoal = { id: string; title: string; status: "active" | "completed"; areaId?: string | null; progress?: number; taskIds?: string[]; projectIds?: string[] };
-export const HOME_CARDS = ["today", "inbox", "mission", "journal", "wheel", "accounts", "tasks", "goals", "files"] as const;
+export const HOME_CARDS = ["today", "gratitude", "inbox", "mission", "journal", "wheel", "accounts", "tasks", "goals", "files"] as const;
 export type HomeCard = typeof HOME_CARDS[number];
 export type HomeLayout = { order: string[]; hidden: string[]; pinned: string[]; earned: string[] };
 export const emptyHomeLayout = (): HomeLayout => ({ order: [], hidden: [], pinned: [], earned: [] });
 export function visibleHomeCards(layout: HomeLayout): HomeCard[] {
   return [...new Set([...layout.order, ...HOME_CARDS])].filter((id): id is HomeCard =>
     HOME_CARDS.includes(id as HomeCard) && !layout.hidden.includes(id) &&
-    (["today", "inbox", "mission", "journal", "wheel", "accounts"].includes(id) || layout.pinned.includes(id) || layout.earned.includes(id)),
+    (["today", "gratitude", "inbox", "mission", "journal", "wheel", "accounts"].includes(id) || layout.pinned.includes(id) || layout.earned.includes(id)),
   );
 }
 export function localDateKey(date: Date): string {

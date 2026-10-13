@@ -2,6 +2,7 @@ import { addDaysToDateString, getUtcMsForLocalTime, normalizeTimeZone } from "./
 import { loadCalendarPushItems } from "./calendar-push-notifications";
 import { notifyDailyBriefingReady, type DailyBriefingPushSummary } from "./push-notifications";
 import type { Env } from "./types";
+import { getBriefingQuote } from "./quotes";
 
 export const MORNING_CALENDAR_PUSH_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS morning_calendar_push_dispatches (
@@ -50,7 +51,9 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
       };
       const items = await loadCalendarPushItems(env, owner.id, midnight(dateKey), midnight(addDaysToDateString(dateKey, 1)));
       const birthdays = items.events.filter(event => event.kind === "birthday");
+      const quote = await getBriefingQuote(env, owner.id, now);
       const summary: DailyBriefingPushSummary = {
+        ...(quote ? { quote: { text: quote.text, author: quote.author } } : {}),
         birthdayNames: birthdays.map(event => event.title.replace(/['’]s birthday$/i, "").trim()),
         counts: {
           birthdays: birthdays.length,

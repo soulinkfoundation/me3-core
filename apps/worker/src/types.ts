@@ -277,7 +277,7 @@ export interface DbUserReminder {
   timezone: string | null;
   recurrence_rule: string | null;
   source_dispatch_id?: string | null;
-  context_type: "contact" | "booking" | null;
+  context_type: "contact" | "booking" | "card" | null;
   context_id: string | null;
   context_label: string | null;
   status: "pending" | "delivered" | "dismissed" | "cancelled" | "failed";

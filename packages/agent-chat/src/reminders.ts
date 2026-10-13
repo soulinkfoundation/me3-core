@@ -21,7 +21,7 @@ export type AgentReminder = {
   remindAt: string;
   timezone: string | null;
   recurrenceRule: string | null;
-  contextType?: "contact" | "booking" | null;
+  contextType?: "contact" | "booking" | "card" | null;
   contextId?: string | null;
   contextLabel?: string | null;
   status: "pending" | "delivered" | "dismissed" | "cancelled" | "failed";
@@ -59,7 +59,7 @@ type DbReminderRow = {
   remind_at: string;
   timezone: string | null;
   recurrence_rule: string | null;
-  context_type?: "contact" | "booking" | null;
+  context_type?: "contact" | "booking" | "card" | null;
   context_id?: string | null;
   context_label?: string | null;
   status: "pending" | "delivered" | "dismissed" | "cancelled" | "failed";

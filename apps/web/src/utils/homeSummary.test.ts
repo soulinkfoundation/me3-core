@@ -33,7 +33,7 @@ describe("Home summaries", () => {
     expect(homeDateLabel("2026-10-06", now, "en-GB")).toBe("Tue 6 Oct");
   });
   it("restores hidden cards and keeps a deduplicated saved order", () => {
-    expect(visibleHomeCards({ order: ["journal", "journal", "today"], hidden: ["inbox"], pinned: ["files"], earned: ["journal"] })).toEqual(["journal", "today", "mission", "wheel", "accounts", "files"]);
+    expect(visibleHomeCards({ order: ["journal", "journal", "today"], hidden: ["inbox"], pinned: ["files"], earned: ["journal"] })).toEqual(["journal", "today", "gratitude", "mission", "wheel", "accounts", "files"]);
   });
   // Goal tasks must include direct and project links, exclude other goals and closed work,
   // and deduplicate a task that is linked both ways without deriving goal progress from tasks.

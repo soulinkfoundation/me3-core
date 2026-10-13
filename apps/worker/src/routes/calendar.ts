@@ -70,7 +70,7 @@ export function registerCalendarRoutes(app: AppHono, deps: OwnerRouteDeps) {
                   dismissed_at, created_at
            FROM user_reminders
            WHERE user_id = ? AND status IN ('pending', 'failed')
-             AND remind_at >= ? AND remind_at < ?
+             AND (context_type = 'card' OR (remind_at >= ? AND remind_at < ?))
            ORDER BY remind_at ASC`,
         )
           .bind(ownerId, window.start, window.end)

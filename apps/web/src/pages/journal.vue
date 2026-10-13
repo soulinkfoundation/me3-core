@@ -21,6 +21,7 @@ import { findInlineTextMatch } from "../utils/inlineJournalChips";
 import { parseJournalReminderCapture } from "../utils/journalReminderCapture";
 import { journalBodyForEditor } from "../utils/journalContent";
 import { reorderJournalBlocks } from "../utils/journalWriting";
+import { writtenGratitude } from "../utils/gratitude";
 
 definePage({
   meta: {
@@ -34,6 +35,7 @@ definePage({
 });
 
 type JournalEntry = {
+  metadata?: Record<string, unknown>;
   id: string;
   date: string;
   title: string | null;
@@ -107,6 +109,7 @@ const datePickerMonth = ref(monthKey(selectedDate.value));
 const title = ref("");
 const description = ref("");
 const loadedEntry = ref<JournalEntry | null>(null);
+const dailyGratitude = computed(() => writtenGratitude(loadedEntry.value?.metadata));
 const archiveEntries = ref<JournalArchiveEntry[]>([]);
 const archiveOpen = ref(false);
 const archiveMobileDetailOpen = ref(false);
@@ -398,11 +401,12 @@ function taskLinkHref(link: JournalProjectLink): string {
   return missionTaskHref(link.projectId, link.createdTaskId || "");
 }
 
-function entryHasContent(entry: Pick<JournalArchiveEntry, "title" | "body" | "preview">): boolean {
+function entryHasContent(entry: Pick<JournalArchiveEntry, "title" | "body" | "preview" | "metadata">): boolean {
   return Boolean(
     entry.title?.trim() ||
       entry.preview?.trim() ||
-      htmlToPlainText(entry.body).length > 0,
+      htmlToPlainText(entry.body).length > 0 ||
+      writtenGratitude(entry.metadata).gratitude.length || writtenGratitude(entry.metadata).goodThings.length,
   );
 }
 
@@ -1432,6 +1436,10 @@ onBeforeUnmount(() => {
           class="journal__editor-wrap"
           :class="{ 'is-loading': loading }"
         >
+          <div v-if="!currentArticle && (dailyGratitude.gratitude.length || dailyGratitude.goodThings.length)" class="journal__gratitude" aria-label="Gratitude and three good things">
+            <section><h3>🌅 Grateful for</h3><ol><li v-for="(line, index) in dailyGratitude.gratitude" :key="index">{{ line }}</li></ol></section>
+            <section><h3>🌙 Three good things</h3><ol><li v-for="(line, index) in dailyGratitude.goodThings" :key="index">{{ line }}</li></ol></section>
+          </div>
           <TiptapEditor
             ref="editorRef"
             v-model="description"
@@ -1647,6 +1655,9 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.journal__gratitude { display: grid; gap: 12px; padding: 12px 14px; border-radius: 18px; background: var(--ui-surface-muted); margin: 6px 0 20px; }
+.journal__gratitude h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ui-text-muted); }
+.journal__gratitude ol { margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.5; }
 .journal {
   display: flex;
   flex-direction: column;

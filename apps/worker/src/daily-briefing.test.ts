@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLiveDailyBriefing } from "./daily-briefing";
 import type { Env } from "./types";
 
+vi.mock("./quotes", () => ({ getBriefingQuote: vi.fn(async () => null) }));
+
 afterEach(() => vi.useRealTimers());
 
 describe("live Daily Briefing", () => {

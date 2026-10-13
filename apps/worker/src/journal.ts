@@ -6,6 +6,7 @@ import {
   type JournalEntryRow,
 } from "@me3-core/plugin-journal";
 import type { Env } from "./types";
+import { parseJsonRecord } from "./workspace-input";
 
 export { JournalInputError, JournalConflictError, getJournalDay, updateJournalDay } from "@me3-core/plugin-journal";
 
@@ -91,7 +92,8 @@ function journalBodyPreview(body: string): string {
 }
 
 function rowHasJournalContent(row: JournalEntryRow): boolean {
-  return Boolean((row.title || "").trim() || journalBodyPreview(row.body));
+  const metadata = parseJsonRecord(row.metadata_json);
+  return Boolean((row.title || "").trim() || journalBodyPreview(row.body) || [metadata.gratitude, metadata.goodThings].some(lines => Array.isArray(lines) && lines.some(line => typeof line === "string" && line.trim())));
 }
 
 function serializeArchiveEntry(row: JournalEntryRow) {

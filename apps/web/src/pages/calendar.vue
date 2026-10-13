@@ -96,7 +96,7 @@ interface CalendarReminderRow {
   remindAt: string;
   timezone: string | null;
   recurrenceRule: string | null;
-  contextType: "contact" | "booking" | null;
+  contextType: "contact" | "booking" | "card" | null;
   contextId: string | null;
   contextLabel: string | null;
   status: "pending" | "delivered" | "dismissed" | "cancelled" | "failed";
@@ -1241,7 +1241,7 @@ function calendarFeedAgendaEvents(
     ...(response.bookings || []).map(mapBookingToCalendarEvent),
     ...(response.events || []).map(mapEventToCalendarEvent),
     ...(response.importedEvents || []).map(mapEventToCalendarEvent),
-    ...(response.reminders || []).map(mapReminderToCalendarEvent),
+    ...(response.reminders || []).filter(reminder => reminder.contextType !== "card").map(mapReminderToCalendarEvent),
     ...(response.tasks || []).map(mapTaskToCalendarEvent),
     ...(response.socialPublishing?.ready
       ? response.socialPublishing.publications || []
@@ -3453,6 +3453,13 @@ onBeforeUnmount(() => {
         {{ error }}
       </div>
       <template v-else>
+        <section v-if="reminders.some(reminder => reminder.contextType === 'card')" class="cal-card-reminders" aria-label="Card reminders">
+          <h3>Reminders</h3>
+          <div v-for="reminder in reminders.filter(item => item.contextType === 'card')" :key="reminder.id" class="cal-card-reminder">
+            <RouterLink to="/assistant?view=home&amp;card=gratitude"><span>🌙 {{ reminder.title }}</span><small>{{ new Date(reminder.remindAt).toLocaleTimeString([], { timeZone: reminder.timezone || 'UTC', hour: '2-digit', minute: '2-digit', hour12: false }) }}</small></RouterLink>
+            <button type="button" :aria-label="`Cancel ${reminder.title} reminder`" :disabled="updatingReminderId === reminder.id" @click="cancelReminder(reminder.id)"><UiIcon name="X" :size="16" /></button>
+          </div>
+        </section>
         <div
           class="cal-shell"
           :class="{
@@ -4682,6 +4689,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.cal-card-reminders { margin: 8px 0 18px; padding: 0 16px; }
+.cal-card-reminders h3 { font-size: 13px; font-weight: 600; color: var(--ui-text-muted); margin: 0 0 8px; }
+.cal-card-reminder { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.cal-card-reminder a { display: flex; flex: 1; flex-direction: column; gap: 3px; color: var(--ui-text); text-decoration: none; }
+.cal-card-reminder small { color: var(--ui-text-muted); }
+.cal-card-reminder button { display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--ui-text-muted); cursor: pointer; }
 :global(body) {
   background: var(--color-bg);
 }

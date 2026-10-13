@@ -1,4 +1,6 @@
 import { registerWheelOfLifeRoutes } from "./routes/wheel-of-life";
+import { registerQuoteRoutes } from "./routes/quotes";
+import { registerGratitudeRoutes } from "./routes/gratitude";
 import { registerGoalRoutes } from "./routes/goals";
 import { registerNavigationFeatureRoutes } from "./routes/navigation-features";
 import { Hono, type Context } from "hono";
@@ -1050,6 +1052,8 @@ app.post("/api/plugins/:pluginId/deactivate", async (c) => {
 registerAccountsRoutes(app, { requireOwner, unauthorized });
 registerFilesRoutes(app, { requireOwner, unauthorized });
 registerJournalRoutes(app, { requireOwner, unauthorized });
+registerQuoteRoutes(app, { requireOwner, unauthorized });
+registerGratitudeRoutes(app, { requireOwner, unauthorized });
 registerMissionControlRoutes(app, { requireOwner, unauthorized });
 registerWheelOfLifeRoutes(app, { requireOwner, unauthorized });
 registerGoalRoutes(app, { requireOwner, unauthorized });
