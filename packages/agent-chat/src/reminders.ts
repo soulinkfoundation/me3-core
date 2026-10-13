@@ -126,7 +126,7 @@ export function parseAgentReminderInput(
 export async function listPendingAgentReminders(
   env: ReminderEnv,
   userId: string,
-  input: { query?: string; limit?: number } = {},
+  input: { query?: string; limit?: number; includeOverdue?: boolean } = {},
 ): Promise<AgentReminder[]> {
   const query = normalizeNullableText(input.query);
   const limit = input.limit ?? 8;
@@ -136,12 +136,13 @@ export async function listPendingAgentReminders(
     `SELECT id, title, notes, remind_at, timezone, recurrence_rule, context_type,
             context_id, context_label, status, delivered_at, dismissed_at, created_at
      FROM user_reminders
-     WHERE user_id = ? AND status IN ('pending', 'failed') AND remind_at >= ?
+     WHERE user_id = ? AND status IN ('pending', 'failed')
+       ${input.includeOverdue ? "" : "AND remind_at >= ?"}
        ${query ? "AND INSTR(LOWER(title), LOWER(?)) > 0" : ""}
      ORDER BY remind_at ASC
      LIMIT ${limit}`,
   )
-    .bind(userId, now, ...(query ? [query] : []))
+    .bind(userId, ...(input.includeOverdue ? [] : [now]), ...(query ? [query] : []))
     .all<DbReminderRow>();
   return (rows.results || []).map(serializeAgentReminder);
 }

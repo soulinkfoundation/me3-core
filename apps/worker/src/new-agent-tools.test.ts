@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDomainTools } from "../../../packages/agent/src/tools/index";
 import { rememberTargets as rememberDomainTargets } from "../../../packages/agent/src/tools/targets";
 import { AGENT_SCHEMA_STATEMENTS, AGENT_PRESENTATION_SCHEMA_STATEMENTS } from "../../../packages/agent/src/index";
+import { listPendingAgentReminders } from "../../../packages/agent-chat/src/reminders";
 import type { AgentDb, AgentStatement, AgentToolContext, AgentTool, AgentTargetIntentVerdict } from "../../../packages/agent/src/types";
 
 const databases: DatabaseSync[] = [];
@@ -77,6 +78,50 @@ describe("new agent domain tools", () => {
   it("does not expose disabled plugin data through execution", async () => {
     const ctx = context();
     expect(await tool("core_calendar_events_list").execute({ dateFrom: "2099-10-11", dateTo: "2099-10-11" }, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/enabled/i) });
+  });
+
+  // Named changes must not lose an eligible overdue source, while an ordinary
+  // upcoming list, owner/status bounds, native snapshots and future writes stay strict.
+  it("finds owner overdue pending and failed reminders only for a nonempty title search", async () => {
+    const ctx = context();
+    ctx.raw.exec(`UPDATE user_reminders SET remind_at='2000-01-01T09:00:00.000Z',notes='Keep overdue notes',recurrence_rule='weekly:fri' WHERE id='r1';
+      INSERT INTO user_reminders(id,user_id,title,remind_at,timezone,status) VALUES
+      ('old-failed','owner','Call Ada','1999-01-01T09:00:00.000Z','Europe/Dublin','failed'),
+      ('delivered','owner','Call Ada','1998-01-01T09:00:00.000Z','Europe/Dublin','delivered'),
+      ('dismissed','owner','Call Ada','1998-02-01T09:00:00.000Z','Europe/Dublin','dismissed'),
+      ('cancelled','owner','Call Ada','1997-01-01T09:00:00.000Z','Europe/Dublin','cancelled'),
+      ('foreign','other-owner','Call Ada','1996-01-01T09:00:00.000Z','Europe/Dublin','pending');`);
+    const before = JSON.stringify(ctx.raw.prepare("SELECT * FROM user_reminders ORDER BY id").all());
+    expect(await tool("core_reminders_list").execute({}, ctx)).toMatchObject({ data: { reminders: [{ id: "r2" }] } });
+    expect(await listPendingAgentReminders({ DB: ctx.db }, ctx.ownerId, { query: "Call Ada" })).toMatchObject([{ id: "r2" }]);
+    expect(await tool("core_reminders_list").execute({ query: "  CALL ADA  " }, ctx)).toMatchObject({ data: { reminders: [
+      { id: "old-failed", status: "failed" },
+      { id: "r1", remindAt: "2000-01-01T09:00:00.000Z", notes: "Keep overdue notes", recurrenceRule: "weekly:fri" },
+      { id: "r2" },
+    ] } });
+    expect(JSON.stringify(ctx.raw.prepare("SELECT * FROM user_reminders ORDER BY id").all())).toBe(before);
+  });
+  it("keeps empty and whitespace title queries on the upcoming list", async () => {
+    const ctx = context(); ctx.raw.exec("UPDATE user_reminders SET remind_at='2000-01-01T09:00:00.000Z' WHERE id='r1'");
+    expect(await tool("core_reminders_list").execute({ query: "" }, ctx)).toMatchObject({ data: { reminders: [{ id: "r2" }] } });
+    expect(await tool("core_reminders_list").execute({ query: "  " }, ctx)).toMatchObject({ data: { reminders: [{ id: "r2" }] } });
+  });
+  it("keeps the title search page bounded and does not expand a missing title", async () => {
+    const ctx = context();
+    for (let index = 0; index < 60; index++) ctx.raw.prepare("INSERT INTO user_reminders(id,user_id,title,remind_at,status) VALUES(?, 'owner','Call Ada',?,'pending')")
+      .run(`past-${index}`, `2000-01-${String(index % 28 + 1).padStart(2, "0")}T09:00:00.000Z`);
+    const result = await tool("core_reminders_list").execute({ query: "Call Ada" }, ctx);
+    expect((result.data as { reminders: unknown[] }).reminders).toHaveLength(50);
+    expect(await tool("core_reminders_list").execute({ query: "No matching reminder" }, ctx)).toMatchObject({ data: { reminders: [] } });
+  });
+  it("still rejects a past destination after reading an overdue reminder", async () => {
+    const ctx = context(); ctx.raw.exec("UPDATE user_reminders SET remind_at='2000-01-01T09:00:00.000Z' WHERE id='r1'");
+    ctx.messageText = "Move reminder r1 to 2 January 2000 at 10am.";
+    authorize(ctx, { reminderId: "r1", date: "2000-01-02", time: "10:00" });
+    await tool("core_reminders_list").execute({ query: "Call Ada" }, ctx);
+    expect(await tool("core_reminders_update").execute({ reminderId: "r1", date: "2000-01-02", time: "10:00" }, ctx))
+      .toMatchObject({ status: "error", error: expect.stringMatching(/future/i) });
+    expect(ctx.raw.prepare("SELECT remind_at FROM user_reminders WHERE id='r1'").get()).toMatchObject({ remind_at: "2000-01-01T09:00:00.000Z" });
   });
 
   it("filters Mission tasks before the bounded result page", async () => {
