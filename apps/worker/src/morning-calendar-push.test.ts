@@ -89,6 +89,15 @@ describe("morning calendar push with real SQLite", () => {
     await f.dispatch(); await f.dispatch(); await f.dispatch(); expect(f.fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a recurring birthday on one local date across a short DST day", async () => {
+    const f = fixture();
+    f.raw.exec(`INSERT INTO user_calendar_events VALUES('dad','owner','Dad',NULL,NULL,
+      '2025-03-29T00:00:00.000Z','2025-03-30T00:00:00.000Z','Europe/Dublin',1,'birthday','FREQ=YEARLY','2025-01-01');`);
+    await f.dispatch("2026-03-29T06:30:00Z"); await f.dispatch("2026-03-30T06:30:00Z");
+    expect(JSON.parse(String(f.fetch.mock.calls[0][1]?.body)).counts.birthdays).toBe(1);
+    expect(JSON.parse(String(f.fetch.mock.calls[1][1]?.body)).counts.birthdays).toBe(0);
+  });
+
   it("uses complete calendar counts, recurring birthdays, and subscribed events without sending other titles", async () => {
     const f = fixture();
     f.raw.exec(`
@@ -115,11 +124,14 @@ describe("morning calendar push with real SQLite", () => {
   });
 
   it.each([
-    ["2026-03-29", "2026-03-29T00:00:00.000Z", "2026-03-29T23:00:00.000Z", "2026-03-29T06:30:00Z"],
-    ["2026-10-25", "2026-10-24T23:00:00.000Z", "2026-10-26T00:00:00.000Z", "2026-10-25T07:30:00Z"],
-  ])("counts within the actual DST day %s", async (_date, start, end, now) => {
-    const f = fixture();
-    for (const [id, instant] of [["start", start], ["last", new Date(Date.parse(end) - 1).toISOString()], ["end", end]]) {
+    ["2026-03-29", "2026-03-29T00:00:00.000Z", "2026-03-29T23:00:00.000Z", "2026-03-29T06:30:00Z", "Europe/Dublin"],
+    ["2026-10-25", "2026-10-24T23:00:00.000Z", "2026-10-26T00:00:00.000Z", "2026-10-25T07:30:00Z", "Europe/Dublin"],
+    ["2026-09-27", "2026-09-26T12:00:00.000Z", "2026-09-27T11:00:00.000Z", "2026-09-26T18:30:00Z", "Pacific/Auckland"],
+    ["2026-04-05", "2026-04-04T11:00:00.000Z", "2026-04-05T12:00:00.000Z", "2026-04-04T19:30:00Z", "Pacific/Auckland"],
+    ["2026-03-29", "2026-03-28T22:00:00.000Z", "2026-03-29T21:00:00.000Z", "2026-03-29T04:30:00Z", "Asia/Beirut"],
+  ])("counts within the actual DST day %s", async (_date, start, end, now, timezone) => {
+    const f = fixture(timezone);
+    for (const [id, instant] of [["before", new Date(Date.parse(start) - 1).toISOString()], ["start", start], ["last", new Date(Date.parse(end) - 1).toISOString()], ["end", end]]) {
       f.raw.prepare("INSERT INTO user_reminders VALUES(?,'owner','Private reminder',NULL,?,NULL,NULL,NULL,NULL,NULL,'pending',NULL,NULL,'2026-01-01')").run(id, instant);
     }
     await f.dispatch(now);

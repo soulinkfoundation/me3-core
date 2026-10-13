@@ -1,12 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createJournalArticle, deleteJournalArticle, getJournalArticle, listJournalArticles, updateJournalArticle } from "./journal-articles";
 import { validateJournalAssistResult } from "./journal-assist";
 import type { Env } from "./types";
 
 const databases: DatabaseSync[] = [];
-afterEach(() => databases.splice(0).forEach((db) => db.close()));
+afterEach(() => { databases.splice(0).forEach((db) => db.close()); vi.useRealTimers(); });
 
 function fixture() {
   const db = new DatabaseSync(":memory:");
@@ -23,7 +23,10 @@ function fixture() {
 describe("journal articles", () => {
   it("creates owner-scoped articles, lists newest first, rejects stale patches, and deletes", async () => {
     const { env } = fixture();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-13T07:00:00Z"));
     const first = (await createJournalArticle(env, "alice", { title: "First", body: "<p>One</p>" })).article;
+    vi.setSystemTime(new Date("2026-10-13T07:00:01Z"));
     const second = (await createJournalArticle(env, "alice", { title: "Second", body: "<p>Two</p>" })).article;
     expect((await listJournalArticles(env, "alice")).articles.map((item) => item.id)).toEqual([second.id, first.id]);
     expect((await listJournalArticles(env, "bob")).articles).toEqual([]);

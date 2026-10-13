@@ -1883,7 +1883,7 @@ async function hasOwnerProfileSite(env: Env, ownerId: string): Promise<boolean> 
 
 async function getOwnerByEmail(env: Env, email: string): Promise<OwnerRecord | null> {
   const result = await env.DB.prepare(
-    "SELECT id, email, name, username, bio, avatar_url, timezone, locale, assistant_name, password_hash FROM owner_profile WHERE lower(email) = ?",
+    "SELECT id, email, name, username, bio, avatar_url, timezone, locale, assistant_name, daily_briefing_time, password_hash FROM owner_profile WHERE lower(email) = ?",
   )
     .bind(email)
     .first<OwnerRecord>();

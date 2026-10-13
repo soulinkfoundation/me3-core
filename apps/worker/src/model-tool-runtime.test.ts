@@ -135,88 +135,16 @@ describe("live agent tool model adapters", () => {
     expect(result.toolCalls[0]).toMatchObject({ id: "anthropic-unified-1" });
   });
 
-  it("calls OpenAI Chat Completions with strict sequential tools", async () => {
-    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({
-        choices: [
-          {
-            message: {
-              tool_calls: [
-                {
-                  id: "openai-1",
-                  function: { name: "core_reminders_list", arguments: "{}" },
-                },
-              ],
-            },
-          },
-        ],
-      }),
-    );
-    vi.stubGlobal("fetch", fetch);
-
-    const result = await runAgentToolModelStep(
-      route("openai", { apiKey: "openai-key" }),
+  it.each(["openai", "anthropic"] as const)("rejects the retired direct %s route without provider work", async provider => {
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    await expect(runAgentToolModelStep(
+      route(provider, { apiKey: "test-key" }),
       [{ role: "user", content: "List reminders" }],
       TOOLS,
-    );
-    const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
-
-    expect(body).toMatchObject({
-      model: "test-model",
-      parallel_tool_calls: true,
-      tools: [{ type: "function", function: { strict: true } }],
-    });
-    expect(result.toolCalls[0]).toMatchObject({ id: "openai-1" });
+    )).rejects.toThrow("Direct model routes are disabled; use Cloudflare AI Gateway.");
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("runs direct GPT-5.4 mini with reasoning disabled", async () => {
-    const fetch = vi.fn(
-      async (_input: RequestInfo | URL, _init?: RequestInit) =>
-        Response.json({
-          choices: [{ message: { content: "Done" } }],
-        }),
-    );
-    vi.stubGlobal("fetch", fetch);
-
-    await runAgentToolModelStep(
-      route("openai", { model: "gpt-5.4-mini", apiKey: "openai-key" }),
-      [{ role: "user", content: "List reminders" }],
-      TOOLS,
-    );
-    const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
-
-    expect(body.reasoning_effort).toBe("none");
-  });
-
-  it("calls Anthropic Messages with native tool-use schemas", async () => {
-    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({
-        content: [
-          {
-            type: "tool_use",
-            id: "anthropic-1",
-            name: "core_reminders_list",
-            input: {},
-          },
-        ],
-      }),
-    );
-    vi.stubGlobal("fetch", fetch);
-
-    const result = await runAgentToolModelStep(
-      route("anthropic", { apiKey: "anthropic-key" }),
-      [{ role: "user", content: "List reminders" }],
-      TOOLS,
-    );
-    const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
-
-    expect(body).toMatchObject({
-      model: "test-model",
-      tools: [{ name: "core_reminders_list" }],
-    });
-    expect(body.tools[0]).not.toHaveProperty("strict");
-    expect(result.toolCalls[0]).toMatchObject({ id: "anthropic-1" });
-  });
 });
 
 function route(

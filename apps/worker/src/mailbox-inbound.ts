@@ -2,8 +2,9 @@ import { stageMailboxAttachmentKeys, finishMailboxAttachmentStaging, cleanMailbo
 import { touchContactInteraction, type AgentMailboxMessage } from "./agent-chat";
 import type { EmailProviderAttachment } from "./email-providers";
 import { publishMailboxMessageReceived } from "./mailbox-events";
+import { triageInboundInvoiceEmail } from "./accounts-email-triage";
 import { resolveMailboxThreadKey } from "./mailbox-threads";
-import { normalizeEmail } from "./sites";
+import { normalizeEmail, sha256Text } from "./sites";
 import type { DbMailboxAlias, Env } from "./types";
 import {
   decodeMimeHeaderValue,
@@ -107,6 +108,7 @@ export async function deliverInboundEmail(
           reason: "Delivery ID was already used for different message content.",
         };
       }
+      await triageInboundInvoiceEmail(env, existingDelivery.mailbox_id, existingDelivery.mailbox_message_id);
       return {
         status: "duplicate",
         mailboxId: existingDelivery.mailbox_id,
@@ -136,7 +138,7 @@ export async function deliverInboundEmail(
     const providerMessageId =
       normalizeEmailHeaderValue(parsed.headers["message-id"]) ||
       options.providerDeliveryId ||
-      crypto.randomUUID();
+      await sha256Text(rawMessage);
     const threadKey = resolveMailboxThreadKey(parsed.headers, providerMessageId);
     const rowId = crypto.randomUUID();
     stagedMessageId = rowId;
@@ -217,6 +219,7 @@ export async function deliverInboundEmail(
       } catch (error) {
         const racedDelivery = await getManagedInboundDelivery(env, delivery.deliveryId);
         if (racedDelivery && managedInboundDeliveryMatches(racedDelivery, delivery)) {
+          await triageInboundInvoiceEmail(env, racedDelivery.mailbox_id, racedDelivery.mailbox_message_id);
           return {
             status: "duplicate",
             mailboxId: racedDelivery.mailbox_id,
@@ -241,6 +244,7 @@ export async function deliverInboundEmail(
       messageId: rowId,
       receivedAt: now,
     });
+    await triageInboundInvoiceEmail(env, mailbox.id, rowId);
 
     if (
       options.allowNativeForwarding !== false &&

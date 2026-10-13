@@ -117,7 +117,7 @@ export async function unregisterPushNotificationDevice(
 }
 
 export type DailyBriefingPushSummary = {
-  // The hosted relay can ignore the quote until its push wording supports it.
+  // Local quote metadata is excluded from the hosted morning push payload.
   quote?: { text: string; author: string };
   birthdayNames: string[];
   counts: {
@@ -139,7 +139,15 @@ export async function notifyDailyBriefingReady(
       `/api/push/daily-briefings/${encodeURIComponent(briefingId)}`,
       {
         method: "POST",
-        body: summary ? JSON.stringify(summary) : undefined,
+        body: summary ? JSON.stringify({
+          birthdayNames: summary.birthdayNames,
+          counts: {
+            birthdays: summary.counts.birthdays,
+            events: summary.counts.events,
+            bookings: summary.counts.bookings,
+            reminders: summary.counts.reminders,
+          },
+        }) : undefined,
         signal: AbortSignal.timeout(15_000),
       },
     );

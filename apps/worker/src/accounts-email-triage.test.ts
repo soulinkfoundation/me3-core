@@ -1,0 +1,143 @@
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
+import { Hono } from "hono";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA, triageInboundInvoiceEmail } from "./accounts-email-triage";
+import { deliverInboundEmail, handleInboundEmail, type ForwardableEmailMessageLike } from "./mailbox-inbound";
+import { registerAccountsRoutes } from "./routes/accounts";
+import type { AppHono, OwnerRouteDeps } from "./http/types";
+import type { Env } from "./types";
+
+// Failure modes: direct/managed replays or concurrent delivery double-file,
+// non-invoice mail or another mailbox is scanned, disabled plugin/toggle still writes,
+// medium-confidence/unpaid invoices auto-pay, MIME subjects fail scoring,
+// ledger failure loses accepted email or cannot recover on a managed duplicate.
+const databases: DatabaseSync[] = [];
+afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMocks(); });
+
+function fixture() {
+  const raw = new DatabaseSync(":memory:"); databases.push(raw);
+  raw.exec(readFileSync(new URL("../migrations/0001_initial_public_schema.sql", import.meta.url), "utf8"));
+  for (const name of ["0021_managed_email_inbound_deliveries", "0048_mailbox_attachment_staging"]) {
+    raw.exec(readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), "utf8"));
+  }
+  for (const sql of ACCOUNTS_EMAIL_TRIAGE_SCHEMA) raw.exec(sql);
+  raw.exec(`INSERT INTO owner_profile(id) VALUES('owner'),('other');
+    INSERT INTO mailbox_aliases(id,user_id,alias_local_part,forwarding_email,status) VALUES('mailbox','owner','owner','','active');
+    INSERT INTO plugin_installations(plugin_id,version,enabled,status) VALUES('me3.accounts','0.1.0',1,'installed');`);
+  const state = { failLedger: false };
+  const prepare = (sql: string) => {
+    const query = raw.prepare(sql); let values: unknown[] = [];
+    const statement = { bind(...args: unknown[]) { values = args; return statement; },
+      async first() { return query.get(...values as never[]) ?? null; },
+      async all() { return { results: query.all(...values as never[]) }; },
+      async run() {
+        if (state.failLedger && sql.includes("INSERT OR IGNORE INTO financial_entries")) throw new Error("Synthetic ledger failure");
+        return { meta: { changes: Number(query.run(...values as never[]).changes) } };
+      },
+    }; return statement;
+  };
+  const env = { DB: { prepare, async batch(statements: ReturnType<typeof prepare>[]) { for (const statement of statements) await statement.run(); } } } as unknown as Env;
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const entries = () => raw.prepare("SELECT * FROM financial_entries").all();
+  return { raw, env, state, entries };
+}
+
+function mail(subject = "Receipt", body = "EUR 24.50", from = "shop@example.test", id: string | null = "receipt-1"): ForwardableEmailMessageLike {
+  const bytes = new TextEncoder().encode([
+    `From: ${from}`, "To: owner@me3.test", `Subject: ${subject}`,
+    ...(id ? [`Message-ID: <${id}@example.test>`] : []), "Content-Type: text/plain; charset=utf-8", "", body,
+  ].join("\r\n"));
+  return { from, to: "owner@me3.test", rawSize: bytes.length, headers: new Headers(),
+    raw: new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } }),
+    canBeForwarded: false, forward: vi.fn(), setReject: vi.fn(),
+  };
+}
+
+const managedDelivery = { deliveryId: "receipt-delivery", managedInstallationId: "test-managed", coreInstallId: "test-install", recipient: "owner@me3.test", bodySha256: "a".repeat(64) };
+
+describe("Accounts invoice hook on the agent mailbox with real SQLite", () => {
+  it("files one medium-confidence receipt for review directly from handleInboundEmail", async () => {
+    const f = fixture(); const incoming = mail(); await handleInboundEmail(incoming, f.env);
+    expect(incoming.setReject).not.toHaveBeenCalled();
+    const message = f.raw.prepare("SELECT id FROM mailbox_messages").get()!;
+    expect(f.entries()).toEqual([expect.objectContaining({
+      user_id: "owner", entry_type: "expense", description: "Receipt", amount_cents: 2450,
+      currency: "EUR", source: "email_triage", status: "needs_review",
+      source_ref: `email:${message.id}`, source_email_id: message.id,
+    })]);
+  });
+
+  it.each([false, true])("deduplicates concurrent deliveries and retries (managed=%s)", async managed => {
+    const f = fixture(); const deliver = () => deliverInboundEmail(mail(), f.env, managed ? { managedDelivery } : {});
+    await Promise.all([deliver(), deliver()]); await deliver();
+    expect(f.entries()).toHaveLength(1);
+  });
+
+  it("deduplicates direct retries even when the provider omits Message-ID", async () => {
+    const f = fixture();
+    await deliverInboundEmail(mail("Receipt", "EUR 24.50", "shop@example.test", null), f.env);
+    await deliverInboundEmail(mail("Receipt", "EUR 24.50", "shop@example.test", null), f.env);
+    expect(f.entries()).toHaveLength(1);
+  });
+
+  it.each([
+    ["Lunch tomorrow", "See you at noon", "friend@example.test"],
+    ["Payment platform update", "Introducing a new feature. For example, total EUR 99.00. Learn more.", "billing@stripe.test"],
+    ["Invoice attachment", "Please see the attached file", "billing@example.test"],
+  ])("ignores non-transactional or unextractable mail: %s", async (subject, body, from) => {
+    const f = fixture(); await deliverInboundEmail(mail(subject, body, from), f.env); expect(f.entries()).toHaveLength(0);
+  });
+
+  it.each(["missing", "disabled", "setup_required", "toggle"])("does not triage when %s", async condition => {
+    const f = fixture();
+    if (condition === "missing") f.raw.exec("DELETE FROM plugin_installations");
+    if (condition === "disabled") f.raw.exec("UPDATE plugin_installations SET enabled=0,status='disabled'");
+    if (condition === "setup_required") f.raw.exec("UPDATE plugin_installations SET status='setup_required'");
+    if (condition === "toggle") f.raw.exec("INSERT INTO accounts_email_triage_settings(user_id,enabled) VALUES('owner',0)");
+    expect((await deliverInboundEmail(mail(), f.env)).status).toBe("accepted"); expect(f.entries()).toHaveLength(0);
+  });
+
+  it("never reads outbound mail or a message outside the requested agent mailbox", async () => {
+    const f = fixture(); f.raw.exec(`INSERT INTO mailbox_messages(id,mailbox_id,direction,message_kind,status,subject,text_body)
+      VALUES('outbound','mailbox','outbound','email','sent','Receipt','EUR 24.50');`);
+    expect(await triageInboundInvoiceEmail(f.env, "mailbox", "outbound")).toBe(false);
+    const delivery = await deliverInboundEmail(mail(), f.env);
+    if (delivery.status !== "accepted") throw new Error("Expected accepted synthetic email");
+    expect(await triageInboundInvoiceEmail(f.env, "another-mailbox", delivery.messageId)).toBe(false);
+    expect(f.entries()).toHaveLength(1);
+  });
+
+  it.each([
+    ["Receipt", "Grand total EUR 49.00. Thank you for your payment.", "billing@hosting.test", "paid", "expense"],
+    ["Invoice", "Amount due EUR 49.00. Unpaid invoice.", "billing@hosting.test", "needs_review", "expense"],
+    ["Invoice", "Total EUR 49.00. Not paid.", "billing@hosting.test", "needs_review", "expense"],
+    ["Payment received", "Payment received EUR 49.00. Thank you for your payment.", "billing@stripe.test", "paid", "income"],
+    ["=?UTF-8?Q?Receipt_for_software?=", "EUR 24.50", "shop@example.test", "needs_review", "expense"],
+  ])("uses confidence and payment evidence for %s", async (subject, body, from, status, entryType) => {
+    const f = fixture(); await deliverInboundEmail(mail(subject, body, from), f.env);
+    expect(f.entries()).toEqual([expect.objectContaining({ status, entry_type: entryType })]);
+  });
+
+  it("retries a ledger failure on a managed duplicate without losing the saved email", async () => {
+    const f = fixture(); f.state.failLedger = true;
+    expect((await deliverInboundEmail(mail(), f.env, { managedDelivery })).status).toBe("unavailable");
+    expect(f.raw.prepare("SELECT id FROM mailbox_messages").all()).toHaveLength(1);
+    f.state.failLedger = false;
+    expect((await deliverInboundEmail(mail(), f.env, { managedDelivery })).status).toBe("duplicate");
+    expect(f.entries()).toHaveLength(1);
+  });
+
+  it("saves an owner-scoped toggle through the authenticated Accounts route", async () => {
+    const f = fixture(); const app = new Hono() as AppHono;
+    let ownerId: string | null = "owner";
+    registerAccountsRoutes(app, { requireOwner: async () => ownerId, unauthorized: () => Response.json({}, { status: 401 }) } as unknown as OwnerRouteDeps);
+    const update = (enabled: unknown) => app.request("/api/accounts/email-triage", { method: "PUT", body: JSON.stringify({ enabled }), headers: { "Content-Type": "application/json" } }, f.env);
+    expect((await update(false)).status).toBe(200);
+    await deliverInboundEmail(mail(), f.env); expect(f.entries()).toHaveLength(0);
+    ownerId = "other";
+    expect(await (await app.request("/api/accounts/email-triage", {}, f.env)).json()).toEqual({ enabled: true });
+    expect((await update("false")).status).toBe(400);
+    ownerId = null; expect((await update(true)).status).toBe(401);
+  });
+});

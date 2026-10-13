@@ -36,6 +36,29 @@ describe("Accounts page", () => {
     route.query = {};
   });
 
+  // Failure modes: toggle cannot be changed, a failed save leaves the wrong setting visible.
+  it("saves the agent mailbox triage toggle and rolls it back after a failed save", async () => {
+    vi.mocked(api.get).mockImplementation(async endpoint => {
+      if (endpoint === "/accounts/email-triage") return { enabled: true };
+      if (endpoint.startsWith("/accounts/entries?")) return { entries: [], total: 0 };
+      if (endpoint.startsWith("/accounts/categories?")) return { categories: [] };
+      if (endpoint.startsWith("/accounts/stats?")) return { stats: { defaultCurrency: "EUR" } };
+      if (endpoint === "/accounts/stripe/status") return { connected: false };
+      if (endpoint === "/mission-control/projects") return { projects: [] };
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    });
+    vi.mocked(api.put).mockResolvedValueOnce({ enabled: false });
+    const wrapper = mountPage(); await flushPromises();
+    const toggle = wrapper.get<HTMLInputElement>("#accounts-email-triage");
+    expect(toggle.element.checked).toBe(true);
+    await toggle.setValue(false); await flushPromises();
+    expect(api.put).toHaveBeenCalledWith("/accounts/email-triage", { enabled: false });
+    expect(toggle.element.checked).toBe(false);
+    vi.mocked(api.put).mockRejectedValueOnce(new Error("Synthetic save failure"));
+    await toggle.setValue(true); await flushPromises();
+    expect(toggle.element.checked).toBe(false);
+  });
+
   it("keeps the selected customer view when an older income request finishes", async () => {
     const entries = deferred<{ entries: unknown[]; total: number }>();
     const categories = deferred<{ categories: unknown[] }>();

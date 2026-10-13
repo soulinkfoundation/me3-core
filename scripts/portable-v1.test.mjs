@@ -100,6 +100,11 @@ before(async () => {
     INSERT INTO gratitude_settings(user_id,quote_in_briefing) VALUES('owner',0);
     UPDATE journal_entries SET metadata_json=json_set(metadata_json,'$.gratitude',json('["Tea"]'),'$.goodThings',json('["A walk"]')) WHERE user_id='owner';
   `);
+  runSqlite(source, `
+    UPDATE owner_profile SET daily_briefing_time='08:45' WHERE id='owner';
+    INSERT INTO accounts_email_triage_settings(user_id,enabled) VALUES('owner',0);
+    INSERT INTO morning_calendar_push_dispatches(user_id,date_key,status,claimed_at) VALUES('owner','2026-10-13','sent',1);
+  `);
   runSqlite(
     source,
     `INSERT INTO managed_runtime_state
@@ -189,6 +194,9 @@ test("exports sanitized owner data and restores the exact identity, D1 rows, and
   assert.equal(result.requiresClientRepair, true);
   assert.equal(queryScalar(target, "SELECT COUNT(*) FROM assistant_messages;"), "1");
   assert.equal(queryScalar(target, "SELECT thread_id FROM assistant_primary_threads WHERE owner_id = 'owner';"), "main-thread-1");
+  assert.equal(queryScalar(target, "SELECT daily_briefing_time FROM owner_profile WHERE id='owner';"), "08:45");
+  assert.equal(queryScalar(target, "SELECT enabled FROM accounts_email_triage_settings WHERE user_id='owner';"), "0");
+  assert.equal(queryScalar(target, "SELECT COUNT(*) FROM morning_calendar_push_dispatches;"), "0");
   for (const table of [
     "me3_agent_turns", "me3_agent_stream_events", "me3_agent_tool_receipts",
     "me3_agent_approvals", "me3_agent_targets", "me3_agent_selections", "me3_agent_cancellations", "me3_agent_request_aliases", "me3_agent_image_operations", "me3_agent_presentations",

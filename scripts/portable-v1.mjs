@@ -88,6 +88,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0063_agent_presentations", "2026-10-11-agent-presentations-v1"],
   ["0064_retire_legacy_automations", "2026-10-11-retire-legacy-automations-v1"],
   ["0065_morning_calendar_push", "2026-10-13-morning-calendar-push-v1"],
+  ["0066_accounts_email_triage", "2026-10-13-accounts-email-triage-v1"],
   ["0067_quotes", "2026-10-13-quotes-v1"],
   ["0068_gratitude", "2026-10-13-gratitude-v1"],
 ];
@@ -153,6 +154,7 @@ const COPIED_TABLES = [
   "quotes",
   "daily_quotes",
   "gratitude_settings",
+  "accounts_email_triage_settings",
   "me3_agent_cancellations",
   "me3_agent_request_aliases",
   "me3_agent_turns",

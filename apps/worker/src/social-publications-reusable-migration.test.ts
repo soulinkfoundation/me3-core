@@ -18,7 +18,7 @@ const initialSchema = readFileSync(new URL("../migrations/0001_initial_public_sc
 // These historical-ledger fixtures still need the real prerequisites of later migrations.
 const runtimePrerequisites = [
   readFileSync(new URL("../migrations/0036_calendar_push_notifications.sql", import.meta.url), "utf8"),
-  ...["owner_profile", "sites", "assistant_threads", "mission_plugin_activity", "mission_agent_runs", "mission_approvals", "local_executor_runs", "mission_tasks"].map(table => {
+  ...["owner_profile", "sites", "assistant_threads", "mission_plugin_activity", "mission_agent_runs", "mission_approvals", "local_executor_runs", "mission_tasks", "user_reminders"].map(table => {
     const statement = initialSchema.match(new RegExp(`^CREATE TABLE ${table} \\([\\s\\S]+?^\\);`, "m"))?.[0];
     if (!statement) throw new Error(`Missing initial fixture schema for ${table}`);
     return statement;

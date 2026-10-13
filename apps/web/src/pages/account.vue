@@ -1225,8 +1225,7 @@ async function saveSettings() {
   error.value = null;
   try {
     const response = await api.put<AccountResponse>("/account", {
-      timezone: timezoneInput.value,
-      locale: null,
+      ...(timezoneInput.value !== savedTimezoneInput.value ? { timezone: timezoneInput.value, locale: null } : {}),
       dailyBriefingTime: dailyBriefingTimeInput.value,
     });
     syncAccount(response);

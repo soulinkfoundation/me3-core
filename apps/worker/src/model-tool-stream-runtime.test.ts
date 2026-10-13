@@ -155,26 +155,12 @@ function route(
   events: string[],
   workersRun = vi.fn(async () => sseStream(events)),
 ): AgentChatAiRoute {
-  if (provider === "workers-ai") {
-    return {
-      providerId: provider,
-      model: "workers-stream-model",
-      backupModel: null,
-      apiKey: null,
-      ai: { run: workersRun },
-      aiGateway: null,
-      configured: true,
-    };
-  }
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(sseStream(events), {
-    headers: { "Content-Type": "text/event-stream" },
-  })));
   return {
-    providerId: provider,
-    model: `${provider}-stream-model`,
+    providerId: "workers-ai",
+    model: provider === "workers-ai" ? "workers-stream-model" : `${provider}/stream-model`,
     backupModel: null,
-    apiKey: "test-key",
-    ai: null,
+    apiKey: null,
+    ai: { run: workersRun },
     aiGateway: null,
     configured: true,
   };

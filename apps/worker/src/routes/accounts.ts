@@ -18,8 +18,26 @@ import {
 } from "../accounts";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { isCorePluginEnabled } from "../plugins";
+import { getAccountsEmailTriageSettings, updateAccountsEmailTriageSettings } from "../accounts-email-triage";
 
 export function registerAccountsRoutes(app: AppHono, deps: OwnerRouteDeps) {
+  app.get("/api/accounts/email-triage", async c => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireAccountsPlugin(c);
+    if (blocked) return blocked;
+    return c.json(await getAccountsEmailTriageSettings(c.env, ownerId));
+  });
+  app.put("/api/accounts/email-triage", async c => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireAccountsPlugin(c);
+    if (blocked) return blocked;
+    try {
+      const body = await c.req.json<{ enabled?: unknown }>().catch(() => ({} as { enabled?: unknown }));
+      return c.json(await updateAccountsEmailTriageSettings(c.env, ownerId, body.enabled));
+    } catch (error) { return accountsErrorResponse(c, error); }
+  });
   app.post("/api/accounts/orders/:id/manual-payment", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);

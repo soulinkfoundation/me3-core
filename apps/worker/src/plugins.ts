@@ -914,7 +914,7 @@ const ACCOUNTS_PLUGIN: CorePluginManifestSummary = {
   installMode: "enabled_by_owner_config",
   defaultEnabled: false,
   implementationStatus: "bundled",
-  capabilityIds: ["workspace.accounts", "finance.ledger", "finance.invoice_receipt_triage_context"],
+  capabilityIds: ["workspace.accounts", "finance.ledger"],
   permissions: [
     {
       id: "accounts.entries.manage",
@@ -930,6 +930,12 @@ const ACCOUNTS_PLUGIN: CorePluginManifestSummary = {
     },
   ],
   routes: [
+    {
+      id: "accounts.email_triage.api",
+      path: "/api/accounts/email-triage",
+      methods: ["GET", "PUT"],
+      auth: "owner",
+    },
     {
       id: "accounts.customers.api",
       path: "/api/accounts/customers",
@@ -1042,7 +1048,7 @@ const ACCOUNTS_PLUGIN: CorePluginManifestSummary = {
   notes: [
     "Accounts is optional because not every Core owner wants finance records in their install.",
     "The plugin stores only owner-scoped ledger and category rows; Stripe secrets stay in Account commerce settings.",
-    "Invoice and receipt triage jobs should write low-confidence items as needs_review entries.",
+    "Invoice and receipt triage runs only on inbound agent mailbox email, with an owner toggle and needs_review for uncertain entries.",
   ],
 };
 

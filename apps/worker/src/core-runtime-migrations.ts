@@ -7,6 +7,7 @@ import { AGENT_NOTIFICATION_SCHEMA } from "./agent-notifications";
 import { MORNING_CALENDAR_PUSH_SCHEMA } from "./morning-calendar-push";
 import { QUOTES_SCHEMA } from "./quotes-schema";
 import { GRATITUDE_SETTINGS_SCHEMA, CARD_REMINDERS_SCHEMA } from "./gratitude-schema";
+import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import type { Env } from "./types";
 
 type RuntimeMigration = {
@@ -508,6 +509,13 @@ const runtimeMigrations: RuntimeMigration[] = [
     async apply(db) {
       await addColumnIfMissing(db, "owner_profile", "daily_briefing_time", "TEXT NOT NULL DEFAULT '07:30'");
       for (const sql of MORNING_CALENDAR_PUSH_SCHEMA) await db.prepare(sql).run();
+    },
+  },
+  {
+    id: "0066_accounts_email_triage",
+    checksum: "2026-10-13-accounts-email-triage-v1",
+    async apply(db) {
+      for (const sql of ACCOUNTS_EMAIL_TRIAGE_SCHEMA) await db.prepare(sql).run();
     },
   },
   {

@@ -165,19 +165,25 @@ export function getUtcMsForLocalTime(
     parts.minute,
     parts.second || 0,
   );
-  const actual = localDateParts(new Date(utcGuess).toISOString(), timezone);
-  const deltaMinutes =
-    (Date.UTC(
+  let instant = utcGuess;
+  let previousInstant = instant;
+  // A UTC guess can land after a DST change while the requested local time is before it.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const actual = localDateParts(new Date(instant).toISOString(), timezone);
+    const delta = Date.UTC(
       actual.year,
       actual.month - 1,
       actual.day,
       actual.hour,
       actual.minute,
-      0,
-    ) -
-      utcGuess) /
-    60_000;
-  return utcGuess - deltaMinutes * 60_000;
+      parts.second || 0,
+    ) - utcGuess;
+    if (delta === 0) return instant;
+    previousInstant = instant;
+    instant -= delta;
+  }
+  // A skipped wall time resolves forward to the first valid time after the gap.
+  return Math.max(instant, previousInstant);
 }
 
 export async function createCalendarEventForAgent(
@@ -583,6 +589,8 @@ export function expandRecurringCalendarEvents<T extends CalendarEventLike>(
       1,
       new Date(event.ends_at).getTime() - new Date(event.starts_at).getTime(),
     );
+    const end = localDateParts(event.ends_at, timezone);
+    const allDayDays = Math.max(1, Math.round((Date.UTC(end.year, end.month - 1, end.day) - Date.UTC(start.year, start.month - 1, start.day)) / 86_400_000));
 
     const addOccurrence = (year: number, month: number, day: number) => {
       const startsAt = new Date(
@@ -598,7 +606,13 @@ export function expandRecurringCalendarEvents<T extends CalendarEventLike>(
           timezone,
         ),
       );
-      const endsAt = new Date(startsAt.getTime() + durationMs);
+      const endDate = new Date(Date.UTC(year, month - 1, day + allDayDays));
+      const endsAt = event.all_day === 1
+        ? new Date(getUtcMsForLocalTime({
+            year: endDate.getUTCFullYear(), month: endDate.getUTCMonth() + 1,
+            day: endDate.getUTCDate(), hour: 0, minute: 0,
+          }, timezone))
+        : new Date(startsAt.getTime() + durationMs);
 
       if (
         startsAt.getTime() < originalStartMs ||

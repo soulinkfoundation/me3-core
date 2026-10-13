@@ -120,6 +120,9 @@ const loading = ref(true);
 const saving = ref(false);
 const importing = ref(false);
 const syncing = ref(false);
+const emailTriageEnabled = ref(true);
+const emailTriageLoading = ref(true);
+const emailTriageSaving = ref(false);
 const entryDialogOpen = ref(false);
 const estimateInfo = ref<{ estimate: CurrencyEstimate; totals: MoneyTotal[]; title: string } | null>(null);
 const filtersOpen = ref(false);
@@ -244,6 +247,25 @@ async function loadStripeStatus() {
   } catch {
     stripeConfigured.value = false;
   }
+}
+
+async function loadEmailTriageSettings() {
+  try {
+    const settings = await api.get<{ enabled: boolean }>("/accounts/email-triage");
+    emailTriageEnabled.value = settings.enabled;
+    emailTriageLoading.value = false;
+  } catch (error) { toastFromUnknown(error, "Invoice triage settings could not load"); }
+}
+
+async function saveEmailTriageSettings() {
+  emailTriageSaving.value = true;
+  const enabled = emailTriageEnabled.value;
+  try {
+    await api.put("/accounts/email-triage", { enabled });
+  } catch (error) {
+    emailTriageEnabled.value = !enabled;
+    toastFromUnknown(error, "Invoice triage settings could not save");
+  } finally { emailTriageSaving.value = false; }
 }
 
 async function loadProjects() {
@@ -575,7 +597,7 @@ watch(visibleEntryColumns, (columns) => {
 
 onMounted(() => {
   loadEntryColumnVisibility();
-  void Promise.all([loadAccounts(), loadProjects(), loadStripeStatus()]);
+  void Promise.all([loadAccounts(), loadProjects(), loadStripeStatus(), loadEmailTriageSettings()]);
 });
 </script>
 
@@ -609,12 +631,22 @@ onMounted(() => {
                   <span>{{ column.label }}</span>
                 </label>
               </fieldset>
+              <fieldset class="accounts-columns">
+                <legend>Agent mailbox</legend>
+                <label>
+                  <input id="accounts-email-triage" v-model="emailTriageEnabled" type="checkbox"
+                    :disabled="emailTriageLoading || emailTriageSaving" @change="saveEmailTriageSettings"
+                    aria-describedby="accounts-email-triage-hint" />
+                  <span>Triage invoices and receipts</span>
+                </label>
+                <p id="accounts-email-triage-hint" class="hint">Forward invoices to the agent mailbox. Uncertain entries need review.</p>
+              </fieldset>
               <button type="button" :disabled="syncing || !stripeConfigured" @click="syncStripe"><UiIcon name="RefreshCw" :size="15" />{{ syncing ? "Syncing Stripe" : "Sync Stripe" }}</button>
               <button type="button" :disabled="importing" @click="chooseImportFile"><UiIcon name="Upload" :size="15" />{{ importing ? "Importing CSV" : "Import CSV" }}</button>
               <button type="button" @click="exportCsv"><UiIcon name="Download" :size="15" />Export CSV</button>
             </div>
           </details>
-          <input ref="importInput" type="file" accept=".csv,text/csv" class="visually-hidden" @change="importCsv" />
+          <input ref="importInput" type="file" accept=".csv,text/csv" hidden @change="importCsv" />
         </div>
       </header>
 
@@ -806,6 +838,7 @@ onMounted(() => {
 .accounts-columns label { display: flex; min-height: 30px; align-items: center; gap: 8px; padding: 0 6px; border-radius: var(--ui-radius-sm); color: var(--ui-text); font-size: 13px; cursor: pointer; }
 .accounts-columns label:hover { background: var(--ui-surface-muted); }
 .accounts-columns input { width: 14px; height: 14px; accent-color: var(--ui-accent); }
+.accounts-columns .hint { margin: 4px 6px 0; color: var(--ui-text-muted); font-size: 12px; line-height: 1.4; }
 .accounts-summary { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 18px; }
 .accounts-summary div { display: grid; gap: 4px; min-width: 0; padding: 2px 0 8px; }
 .accounts-summary span, .accounts-pagination span { color: var(--ui-text-muted); font-size: 12px; }
@@ -820,7 +853,7 @@ onMounted(() => {
 .accounts-import-feedback summary { width: fit-content; cursor: pointer; }
 .accounts-import-feedback ul { margin: 8px 0 0; padding-left: 20px; }
 .accounts-workspace > section { display: grid; min-width: 0; gap: 14px; }
-.accounts-table-wrap { min-width: 0; overflow-x: auto; }
+.accounts-table-wrap { position: relative; min-width: 0; overflow-x: auto; }
 .accounts-table { width: 100%; min-width: 920px; table-layout: fixed; border-collapse: collapse; border-top: 1px solid var(--ui-border); color: var(--ui-text-muted); font-size: 13px; }
 .accounts-table th, .accounts-table td { overflow: hidden; padding: 10px 10px 10px 0; border-bottom: 1px solid var(--ui-border); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .accounts-table thead th { color: var(--ui-text-muted); font-size: 12px; font-weight: 700; }

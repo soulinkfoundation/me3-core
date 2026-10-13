@@ -102,6 +102,26 @@ describe("push notification relay client", () => {
       counts: { birthdays: 1, events: 3, reminders: 1, bookings: 2 },
     });
   });
+
+  it("sends only birthday names and calendar counts even when local metadata grows", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    const summary = {
+      birthdayNames: ["Dad"],
+      counts: { birthdays: 1, events: 2, bookings: 3, reminders: 4, tasks: 5 },
+      quote: { text: "Private owner quote", author: "Private author" },
+      ownerName: "Private owner",
+      eventTitles: ["Private appointment"],
+    };
+
+    await notifyDailyBriefingReady(envWithSecrets(linkedSecrets()), "daily:2026-10-13", summary);
+
+    const calls = fetchMock.mock.calls as unknown as Array<[URL, RequestInit]>;
+    expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
+      birthdayNames: ["Dad"],
+      counts: { birthdays: 1, events: 2, bookings: 3, reminders: 4 },
+    });
+  });
 });
 
 function linkedSecrets() {
