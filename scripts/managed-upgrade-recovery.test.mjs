@@ -142,7 +142,8 @@ async () => {
     }));
     assert.ok(calls.findIndex(x => x.endsWith('/deployments')) < calls.findIndex(x => x.endsWith(
       '/time_travel/restore')));
-    assert.equal(calls.at(-1), 'resume:v0.1.212');
+    assert.ok(calls.indexOf('status:v0.1.212') < calls.findIndex(x => x.endsWith('/time_travel/restore')));
+  assert.equal(calls.at(-1), 'resume:v0.1.212');
     await assert.rejects(restoreManagedUpgradeRecovery(env, {
       ...point,
       resources: {

@@ -134,6 +134,17 @@ export async function restoreManagedUpgradeRecovery(env, point, request = global
       percentage: 100
     }]
   });
+  let sourceReady = false;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    try {
+      const source = await runtimeControl(env, 'status', 'v0.1.212');
+      sourceReady = source.runtime.state === 'quiesced' && source.runtime.activeWrites === 0 &&
+        source.runtime.releaseVersion === '0.1.212';
+    } catch { /* The previous Worker may still be propagating. */ }
+    if (sourceReady) break;
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  if (!sourceReady) throw Error('previous Worker is not live; database restore was not started');
   await mutate(`d1/database/${contract.d1Id}/time_travel/restore`, {
     bookmark: point.bookmark
   });
