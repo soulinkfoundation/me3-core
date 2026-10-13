@@ -183,3 +183,14 @@ function getStep(name) {
   const end = workflow.indexOf("\n      - name: ", start + 1);
   return workflow.slice(start, end === -1 ? undefined : end);
 }
+
+test('requires quiesced private recovery capture before migrations and keeps prior queues for paired recovery', () => {
+  const capture = getStep('Pause writes and persist the private paired recovery point');
+  const migrate = getStep('Apply migrations to the frozen D1 database');
+  const resume = getStep('Resume writes after verifying the recovery-backed target');
+  assert.ok(workflow.indexOf(capture) < workflow.indexOf(migrate));
+  assert.match(migrate,/prepare-d1-migrations\.mjs/);
+  assert.ok(workflow.indexOf(getStep('Verify health and mobile at the live target origin')) < workflow.indexOf(resume));
+  assert.match(getStep('Delete detached retired Assistant Jobs queues'), /if: inputs.recovery_plan == ''/);
+  assert.doesNotMatch(workflow,/upload-artifact/);
+});

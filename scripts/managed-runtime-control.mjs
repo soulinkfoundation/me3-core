@@ -47,6 +47,10 @@ export async function callManagedRuntimeControl(
       "runtime_control_configuration_invalid",
     );
   }
+  const brokerUrl = input.brokerUrl || BROKER_URL;
+  if (![BROKER_URL, "https://api.me3.app/api/managed-install/upgrade/control-token"].includes(brokerUrl)) {
+    throw new ManagedRuntimeControlError("untrusted managed runtime broker", "runtime_control_configuration_invalid");
+  }
   const expectedReleaseTag = normalizeReleaseTag(input.expectedReleaseTag);
   if (input.expectedReleaseTag && !expectedReleaseTag) {
     throw new ManagedRuntimeControlError(
@@ -58,6 +62,7 @@ export async function callManagedRuntimeControl(
   const call = (requestedAction, requestedId, expectedGeneration = null) =>
     callManagedRuntimeControlOnce(
       {
+        brokerUrl,
         installationId,
         operationId,
         attemptId,
@@ -97,7 +102,7 @@ async function callManagedRuntimeControlOnce(input, request) {
     requestId: input.requestId,
     ...(mutating ? { expectedGeneration: input.expectedGeneration } : {}),
   };
-  const broker = await request(BROKER_URL, {
+  const broker = await request(input.brokerUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${input.callbackSecret}`,
