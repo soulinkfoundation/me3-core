@@ -48,9 +48,21 @@ async function runNewEvalTurn(input) {
       await appendAgentStreamEvent(input.seed.db,input.ownerId,value.turnId,"owner_input",{source:"independent-synthetic-input"});
   }
   let model;
-  if (input.modelRoute.model === "scripted-fixture") {
+  if (input.modelRoute.model === "scripted-fixture" || input.guardProbe === true) {
     const outputs = input.approve && pending ? [] : [...input.fixtureCalls];
-    model = { id: "scripted-fixture", async step({ onDelta }) {
+    let corrected = false;
+    model = { id: input.guardProbe ? "scripted-guard-probe" : "scripted-fixture", async step({ messages, onDelta }) {
+      if (input.guardProbe && !corrected) {
+        const last = messages.at(-1);
+        let correction; try { correction = last?.role === "tool" ? JSON.parse(last.content).data?.authorizedCall : null; } catch {}
+        if (correction) {
+          const { quoteCallMatchesOracle } = await import("./agent-eval-quote-scenarios.mjs");
+          if (quoteCallMatchesOracle(correction, input.guardProbeOracle)) {
+            outputs.splice(0, outputs.length, structuredClone(correction), structuredClone(correction));
+            corrected = true;
+          }
+        }
+      }
       const call = outputs.shift();
       if (call) {
         const args = { ...call.arguments };
@@ -64,11 +76,11 @@ async function runNewEvalTurn(input) {
         }
         if (args.messageId === "$draftId") args.messageId = input.seed.raw.prepare("SELECT id FROM mailbox_messages WHERE mailbox_id = 'eval-mailbox' AND message_kind = 'draft' ORDER BY rowid DESC LIMIT 1").get()?.id || "missing-draft";
         if (args.reminderId === "$createdReminderId") args.reminderId = input.seed.raw.prepare("SELECT id FROM user_reminders WHERE user_id = ? AND title = 'Call Ada' ORDER BY rowid DESC LIMIT 1").get(input.ownerId)?.id || "missing-reminder";
-        return { text: "", toolCalls: [{ id: crypto.randomUUID(), name: call.name, arguments: args }] };
+        return { text: "", toolCalls: [{ id: crypto.randomUUID(), name: call.name, arguments: args }], ...(input.guardProbe ? { usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, estimatedCostUsd: 0 } } : {}) };
       }
       const text = input.fixtureReply || "The requested action is complete.";
       await onDelta(text);
-      return { text, toolCalls: [] };
+      return { text, toolCalls: [], ...(input.guardProbe ? { usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, estimatedCostUsd: 0 } } : {}) };
     } };
   } else model = createCloudflareModel({ ai: input.modelRoute.ai, model: input.modelRoute.model, gatewayId: input.modelRoute.aiGateway.gatewayId, recordUsage: (usage) => input.modelRoute.recordUsage({ usage }) });
   const tools = createDomainTools();
@@ -78,7 +90,7 @@ async function runNewEvalTurn(input) {
   const currentOwnerInput = input.canonicalOwnerInputs.find(value => value.turnId === contextIds.turnId && value.requestId === contextIds.requestId);
   if (!currentOwnerInput) throw new Error("Eval current canonical owner input is missing");
   const fixtureVerdicts = [...(input.intentFixtureVerdicts || [])];
-  const verifyTargetIntent = createTargetIntentVerifier({ db: input.seed.db, scope: intentScope, ownerTimezone: input.ownerTimezone, tools: intentTools,
+  const verifyTargetIntent = createTargetIntentVerifier({ db: input.seed.db, scope: intentScope, ownerTimezone: input.ownerTimezone, tools: intentTools, requireReferenceEvidence: true,
     admit: () => {
       let usageId;
       const ai={run:(model,request,options)=>input.modelRoute.ai.run(model,request,{...options,onAdmission:id=>{usageId=id;}})};
@@ -93,6 +105,9 @@ async function runNewEvalTurn(input) {
     },
   });
   const intentToolContracts = intentTools.filter(tool => tool.target).map(({ name, description, parameters, effect, approval, target }) => ({ name, description, parameters, effect, approval, target: { domain: target.domain, idParameter: target.idParameter } }));
+  const { createEvalOwnerCreateVerifier } = await import("./agent-eval-owner-create.mjs");
+  const verifyOwnerCreateIntent = createEvalOwnerCreateVerifier({ db: input.seed.db, scope: { ...intentScope, ownerTimezone: input.ownerTimezone }, tools: intentTools, route: input.modelRoute, fixtureVerdicts: input.ownerCreateFixtureVerdicts });
+  const intentReadToolContracts = intentTools.filter(tool => tool.effect === "read" && !tool.endsTurn).map(({ name, parameters }) => ({ name, parameters }));
   let messages=input.messages;
   if(!await store.load()) {
     const {loadAgentPlannerHistory}=await import("../apps/worker/src/agent-planner-history.ts");
@@ -101,7 +116,7 @@ async function runNewEvalTurn(input) {
     messages=[...input.messages.filter(message=>message.role==="system"),...history,{...current,role:"user",content:currentOwnerInput.messageText}];
   }
   const response = await runAgentTurn({ model, tools, messages, store,
-    signal:input.signal, context: { db: input.seed.db, ownerId: input.ownerId, ...contextIds, ownerTimezone: input.ownerTimezone, messageText: currentOwnerInput.messageText, loadIntentOwnerInputs, intentToolContracts, verifyTargetIntent, enabledPluginIds: input.enabledPluginIds, services: input.services }, onEvent: async event => {
+    signal:input.signal, context: { db: input.seed.db, ownerId: input.ownerId, ...contextIds, ownerTimezone: input.ownerTimezone, messageText: currentOwnerInput.messageText, loadIntentOwnerInputs, intentToolContracts, intentReadToolContracts, verifyTargetIntent, verifyOwnerCreateIntent, enabledPluginIds: input.enabledPluginIds, services: input.services }, onEvent: async event => {
       await appendAgentStreamEvent(input.seed.db, input.ownerId, contextIds.turnId, event.event, event.data);
       await input.onEvent?.(event);
     } });
@@ -121,6 +136,23 @@ async function runNewEvalTurn(input) {
     input.seed.db.prepare("UPDATE me3_agent_turns SET response_json=? WHERE owner_id=? AND turn_id=? AND request_id=?")
       .bind(JSON.stringify(persisted),input.ownerId,contextIds.turnId,contextIds.requestId),
   ]);
+  const terminalEvent = response.status === "failed" ? "error" : "done";
+  const published = await input.seed.db.prepare("SELECT data_json FROM me3_agent_stream_events WHERE owner_id=? AND turn_id=? AND event=? ORDER BY seq DESC LIMIT 1").bind(input.ownerId, contextIds.turnId, terminalEvent).first();
+  let publish = !published;
+  if (published) {
+    const { canonicalJson } = await import("../packages/agent/src/schema.ts");
+    const previous = JSON.parse(published.data_json);
+    if (canonicalJson(previous) !== canonicalJson(persisted)) {
+      const approved = input.approve && pending && previous.status === "needs_approval" && previous.approvalId === pending.approvalId
+        && await input.seed.db.prepare("SELECT id FROM me3_agent_approvals WHERE id=? AND owner_id=? AND turn_id=? AND status='approved'").bind(pending.approvalId, input.ownerId, contextIds.turnId).first();
+      if (!approved) throw Error("Eval terminal publication conflicts with the saved runtime result.");
+      publish = true;
+    }
+  }
+  if (publish) {
+    await appendAgentStreamEvent(input.seed.db, input.ownerId, contextIds.turnId, terminalEvent, persisted);
+    await input.onEvent?.({ event: terminalEvent, data: persisted });
+  }
   if (response.status === "needs_approval") paused.set(input.seed, { store, contextIds, approvalId: response.approvalId });
   else paused.delete(input.seed);
   const checkpoint = await store.load();
@@ -129,5 +161,5 @@ async function runNewEvalTurn(input) {
     const call = checkpoint.messages.flatMap((item) => item.toolCalls || []).find((call) => call.id === message.toolCallId);
     return { execution_id: `${contextIds.requestId}:${message.toolCallId}`, tool_name: call?.name || "unknown", arguments: call?.arguments, status: result.status === "error" ? "failed" : "succeeded", result_json: JSON.stringify({ result: result.data ?? result }), error_message: result.error || null };
   });
-  return { ...persisted, toolResults, toolContracts: tools.map(({ name, description, effect, approval }) => ({ name, description, effect, approval })) };
+  return { ...persisted, ownerCreateModelResponses: verifyOwnerCreateIntent.modelResponses, toolResults, toolContracts: tools.map(({ name, description, effect, approval }) => ({ name, description, effect, approval })) };
 }

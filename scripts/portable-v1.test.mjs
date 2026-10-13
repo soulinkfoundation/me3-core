@@ -170,6 +170,27 @@ test("rejects saved or changed Core seed quotes on a restore target", () => {
   }
 });
 
+test("transfers independent quote bookmarks while retaining the pristine shared seed", async () => {
+  const quoteSource = createMigratedDatabase(join(root, "quote-bookmark-source"));
+  const quoteR2 = join(root, "quote-bookmark-r2");
+  const quoteArchive = join(root, "quote-bookmarks.me3-portable");
+  seedProofInstallation(quoteSource, quoteR2);
+  runSqlite(quoteSource, `
+    INSERT INTO owner_profile(id,username) VALUES('quote-other-owner','quote-other-owner');
+    INSERT INTO quote_bookmarks(user_id,quote_id,saved_at) VALUES('owner','q216','2026-10-13T08:00:00Z'),('quote-other-owner','q216','2026-10-13T09:00:00Z');
+    INSERT INTO daily_quotes(user_id,date_key,quote_id,seen_json) VALUES('owner','2026-10-13','q216','["q216"]');
+  `);
+  await exportPortableV1({ database: quoteSource, r2Directory: quoteR2, output: quoteArchive, passphrase: PROOF_PASSPHRASE });
+  const target = freshTarget("quote-bookmark-roundtrip");
+  restorePortableV1({ archive: quoteArchive, targetDatabase: target, targetR2Directory: join(root, "quote-bookmark-target-r2"), passphrase: PROOF_PASSPHRASE });
+  assert.equal(queryScalar(target, "SELECT COUNT(*) FROM quote_bookmarks WHERE quote_id='q216';"), "2");
+  assert.equal(queryScalar(target, "SELECT saved_at FROM quote_bookmarks WHERE user_id='owner' AND quote_id='q216';"), "2026-10-13T08:00:00Z");
+  assert.equal(queryScalar(target, "SELECT user_id IS NULL AND saved_at IS NULL AND archived_at IS NULL FROM quotes WHERE id='q216';"), "1");
+  assert.equal(queryScalar(target, "SELECT quote_id FROM daily_quotes WHERE user_id='owner';"), "q216");
+  runSqlite(target, "DELETE FROM quote_bookmarks WHERE user_id='quote-other-owner' AND quote_id='q216';");
+  assert.equal(queryScalar(target, "SELECT COUNT(*) FROM quote_bookmarks WHERE user_id='owner' AND quote_id='q216';"), "1");
+});
+
 test("exports sanitized owner data and restores the exact identity, D1 rows, and R2 objects", async () => {
   const target = freshTarget("round-trip");
   const targetR2 = join(root, "round-trip-r2");

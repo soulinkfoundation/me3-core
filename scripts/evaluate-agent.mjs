@@ -2,7 +2,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
-import { createAgentEvalScenarios, snapshotEvalState, auditEvalWrites } from "./agent-eval-scenarios.mjs";
+import { snapshotEvalState, auditEvalWrites } from "./agent-eval-scenarios.mjs";
+import { createAgentEvalCorpus, assertQuoteCorpusOptions } from "./agent-eval-corpus.mjs";
+import { snapshotQuoteEvalState, auditQuoteEvalWrites, quoteGuardProbeEvidence } from "./agent-eval-quote-scenarios.mjs";
 import { createRuntimeAdapter, createEvalStreamTiming } from "./agent-eval-adapters.mjs";
 import { createSeededEvalServices } from "./agent-eval-services.mjs";
 import { createGatewayRoute, gradeAgentReply, resolveGraderModel, graderOutputProvenance } from "./agent-eval-gateway.mjs";
@@ -12,7 +14,7 @@ import { buildAgentSystemPrompt } from "../packages/agent/src/prompt.ts";
 import { sourceFingerprint } from "./agent-eval-source.mjs";
 
 const args = process.argv.slice(2).filter((arg) => arg !== "--");
-const allowedFlags = new Set(["runtime", "model", "repeat", "date", "limit", "scenarios", "pricing", "report", "report-only", "max-cost-usd", "grader-model"]);
+const allowedFlags = new Set(["runtime", "model", "repeat", "date", "limit", "scenarios", "pricing", "report", "report-only", "max-cost-usd", "grader-model", "supplement"]);
 for (const arg of args) if (!arg.startsWith("--") || !allowedFlags.has(arg.slice(2).split("=")[0])) throw new Error(`Unknown eval option: ${arg}`);
 const value = (name, fallback) => args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3) ?? fallback;
 const graderModel = resolveGraderModel(value("grader-model", GRADER_MODEL));
@@ -24,7 +26,10 @@ if (live && !/^(openai|anthropic|workers-ai):[^\s]+$/.test(modelChoice)) throw n
 const repeat = Number(value("repeat", "3"));
 if (!Number.isInteger(repeat) || repeat < 1 || repeat > 20) throw new Error("--repeat must be an integer from 1 to 20.");
 const baseDate = value("date", new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Dublin", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()));
-const allScenarios = createAgentEvalScenarios(baseDate);
+const corpus = createAgentEvalCorpus(baseDate, value("supplement", ""));
+assertQuoteCorpusOptions(corpus.supplement, repeat, args);
+if (corpus.supplement && runtime !== "new") throw Error("Quote probes require the new runtime.");
+const allScenarios = corpus.scenarios;
 const limit = Number(value("limit", String(allScenarios.length)));
 if (!Number.isInteger(limit) || limit < 1 || limit > allScenarios.length) throw new Error(`--limit must be an integer from 1 to ${allScenarios.length}.`);
 const selectedIds = value("scenarios", "").split(",").filter(Boolean);
@@ -48,6 +53,10 @@ const markdownPath = reportPath.replace(/\.json$/, "") + ".md";
 mkdirSync(dirname(reportPath), { recursive: true });
 const config = {
   runtime, model: modelChoice, graderModel, graderOutput: graderOutputProvenance(graderModel), live, repeat, scenarioCount: scenarios.length, totalScenarioCount: allScenarios.length, baseDate,
+  supplement: corpus.supplement, scenarioContractVersion: corpus.version, originalScenarioCount: corpus.originalCount, supplementScenarioCount: corpus.supplementCount,
+  evaluationPurposes: { candidateScenarios: corpus.originalCount, mandatoryOwnerCreateProbeScenarios: corpus.supplementCount,
+    probePlanner: "deterministic adversarial fixture; independently checked against authored truth", probeVerifier: live ? "actual live native owner-create model" : "explicit independent scripted verdict fixture",
+    probeGrader: "not applicable; no candidate-quality or provider-timing claim" },
   scenarioSubsets: Object.fromEntries([...new Set(allScenarios.map(item => item.suite))].map(suite => [suite, allScenarios.filter(item => item.suite === suite).length])),
   commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   workingTreeDirty: Boolean(execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim()),
@@ -79,7 +88,8 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
     activeScenario = { id: scenario.id, repeat: iteration, stage: "candidate" };
     const seed = createSeededAgentEvalInstallation(baseDate);
     const started = performance.now();
-    const row = { id: scenario.id, suite: scenario.suite, repeat: iteration, simpleAction: Boolean(scenario.simpleAction), passed: false, stateCheckPassed: false,
+    const guardProbe = scenario.evaluationKind === "owner-create-guard-probe";
+    const row = { id: scenario.id, suite: scenario.suite, evaluationKind: guardProbe ? "owner-create-guard-probe" : "candidate-quality", repeat: iteration, simpleAction: Boolean(scenario.simpleAction), passed: false, stateCheckPassed: false,
       providerFailure: false, safety: { duplicateWrites: 0, unauthorizedWrites: 0, wrongRecordWrites: 0 }, turns: [], turnTtftMs: [], toolCalls: [], usage: null, grader: null, graderUsage: null, costUsd: null, graderCostUsd: null };
     const toolResults = new Map();
     const toolContracts = new Map();
@@ -89,9 +99,11 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
     try {
       scenario.setup?.(seed);
       const initialState = snapshotEvalState(seed);
+      const initialQuoteState = snapshotQuoteEvalState(seed);
       const services = createSeededEvalServices(seed);
       const enabledPluginIds = new Set(seed.raw.prepare("SELECT plugin_id FROM plugin_installations WHERE enabled = 1 AND status = 'installed'").all().map((row) => row.plugin_id));
       let intermediatePassed = true;
+      let lastResponse;
       for (const [turnIndex, turn] of scenario.turns.entries()) {
         if (turnIndex > 0) seed.reopen();
         const turnStarted = performance.now();
@@ -100,7 +112,7 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
         // Separate authenticated synthetic instruction source, not assistant/checkpoint/model messages.
         canonicalOwnerInputs.push({ turnId: `eval-${scenario.id}-${iteration}-${turnIndex}`, requestId: `eval-${scenario.id}-${iteration}-${turnIndex}`, messageText: turn.prompt });
         const fixtureOutputs = turn.calls.map((call, index) => ({ tool_calls: [{ id: `fixture-${iteration}-${turnIndex}-${index}`, name: call.name, arguments: { ...call.arguments } }] }));
-        const fixtureReply = scenario.id === "web-research-cited" ? "Cloudflare AI Gateway provides observability and rate limiting. [Cloudflare documentation](https://developers.cloudflare.com/ai-gateway/)." : "The requested action is complete.";
+        const fixtureReply = scenario.fixtureReply ?? (scenario.id === "web-research-cited" ? "Cloudflare AI Gateway provides observability and rate limiting. [Cloudflare documentation](https://developers.cloudflare.com/ai-gateway/)." : "The requested action is complete.");
         fixtureOutputs.push({ response: fixtureReply });
         if (!live) route.ai.run = async () => {
           const next = fixtureOutputs.shift();
@@ -111,19 +123,24 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
         };
         const response = await adapter.runTurn({ seed, ownerId: seed.ownerId, messages: [...messages], requestId: `eval-${scenario.id}-${iteration}-${turnIndex}`, turnId: `eval-${scenario.id}-${iteration}-${turnIndex}`,
           ownerTimezone: "Europe/Dublin", canonicalOwnerInputs: [...canonicalOwnerInputs], intentFixtureVerdicts: typeof turn.intentVerdicts === "function" ? turn.intentVerdicts(seed) : turn.intentVerdicts || [], modelRoute: route, services, enabledPluginIds, fixtureCalls: turn.calls, fixtureReply, approve: turn.approve,
+          ownerCreateFixtureVerdicts: turn.ownerCreateVerdicts, guardProbe, guardProbeOracle: scenario.quoteExpectation?.expectedArguments,
           onEvent: streamTiming.onEvent });
+        lastResponse = response;
         messages.push({ role: "assistant", content: response.replyText });
         for (const result of response.toolResults || []) toolResults.set(result.execution_id, result);
         for (const contract of response.toolContracts || []) toolContracts.set(contract.name, contract);
         row.providerFailure ||= response.source === "fallback" || response.status === "failed";
         const turnSafety = auditEvalWrites(initialState, snapshotEvalState(seed), { ...scenario, allowedWrites: turn.allowedWrites ?? scenario.allowedWrites });
+        const quoteSafety = auditQuoteEvalWrites(initialQuoteState, snapshotQuoteEvalState(seed), seed.ownerId, scenario.quoteExpectation);
+        for (const name of Object.keys(turnSafety)) turnSafety[name] += quoteSafety[name];
         // Maximum observed counts retain failures even when a later turn restores state.
         for (const name of Object.keys(row.safety)) row.safety[name] = Math.max(row.safety[name], turnSafety[name]);
         intermediatePassed &&= !turn.check || Boolean(turn.check(seed, [...toolResults.values()], messages.filter((message) => message.role === "assistant").map((message) => message.content)));
         const timing = streamTiming.snapshot(response.trace);
-        row.turnTtftMs.push(live ? timing.ttftMs : null);
+        row.turnTtftMs.push(live && !guardProbe ? timing.ttftMs : null);
         row.turns.push({ prompt: turn.prompt, reply: response.replyText, status: response.status || response.source, elapsedMs: Math.round(performance.now() - turnStarted),
-          firstDeltaMs: timing.firstDeltaMs, firstDeltaSource: timing.firstDeltaSource, ttftMs: row.turnTtftMs.at(-1), providerTtftMs: live ? timing.providerTtftMs : null, modelRequests: response.modelRequestCount });
+          firstDeltaMs: timing.firstDeltaMs, firstDeltaSource: timing.firstDeltaSource, ttftMs: row.turnTtftMs.at(-1), providerTtftMs: live && !guardProbe ? timing.providerTtftMs : null, modelRequests: response.modelRequestCount,
+          ...(guardProbe ? { timingPurpose: "fixture planner; not provider timing", actualNativeJudgmentRequests: live ? route.requestCount : null } : {}) });
       }
       seed.reopen();
       row.persistedVerification = { freshConnection: true, reopenCount: seed.reopenCount };
@@ -137,7 +154,11 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
       row.usage = sumUsage(route.usageSamples);
       row.usageComplete = live && route.usageComplete;
       row.costUsd = row.usageComplete ? estimateCost(row.usage, pricing[modelChoice]) : null;
-      if (live) {
+      if (guardProbe) {
+        row.guardProbe = await quoteGuardProbeEvidence(seed, scenario.quoteExpectation, lastResponse, route, live);
+        row.providerFailure ||= live && !route.usageComplete;
+      }
+      if (live && !guardProbe) {
         activeScenario.stage = "grader";
         try {
           const graded = await gradeAgentReply({ scenario, messages, toolResults: row.toolResults, toolContracts: row.toolContracts, stateCheckPassed: row.stateCheckPassed, graderModel, route: createGatewayRoute(graderModel, { budget }) });
@@ -149,7 +170,7 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
           row.graderCostUsd = estimateCost(row.graderUsage, pricing[graderModel]);
         }
       }
-      row.passed = row.stateCheckPassed && Object.values(row.safety).every((count) => count === 0) && !row.providerFailure && (!live || row.grader?.passed === true);
+      row.passed = row.stateCheckPassed && Object.values(row.safety).every((count) => count === 0) && !row.providerFailure && (guardProbe ? row.guardProbe.passed : !live || row.grader?.passed === true);
     } catch (error) { row.error = String(error); row.elapsedMs = Math.round(performance.now() - started); }
     finally { seed.close(); }
     results.push(row);

@@ -2,6 +2,7 @@ import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, c
 import type { AgentFastPathRequestMeasurement } from "../../../packages/agent/src/fast-path";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { saveOwnerQuote } from "./quotes";
+import { createOwnerCreateIntentVerifier } from "./agent-owner-create-intent";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
 import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
 import { getAiSettings } from "./ai-providers";
@@ -62,7 +63,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const metadata={me3_runtime:"agent",me3_turn_id:input.turnId,me3_request_id:input.requestId,me3_thread_id:input.threadId};
     const imageScope={ownerId:input.userId,threadId:input.threadId};
     let usageIndex=0;
-    type ModelPurpose = {purpose:"target_intent"|"fast_path";onAdmission?(id:string):void;shadow?:{stage:string;argumentMode:string;sampleRate:number}};
+    type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"fast_path";onAdmission?(id:string):void;shadow?:{stage:string;argumentMode:string;sampleRate:number}};
     let firstAdmission: (()=>void)|undefined;
     const plannerAdmitted = new Promise<void>(resolve=>{firstAdmission=resolve;});
     const admitModel=async(selected:string,reportCount=0,purpose?:ModelPurpose,shadow=false)=>{
@@ -178,12 +179,17 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const intentScope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId};
     const loadIntentOwnerInputs=(references:Parameters<typeof loadTargetIntentOwnerInputs>[2],intentSignal:AbortSignal)=>
       loadTargetIntentOwnerInputs(env.DB,intentScope,references,intentSignal);
-    const verifyTargetIntent=createTargetIntentVerifier({db:env.DB,scope:intentScope,ownerTimezone:timezone,tools:intentTools,admit:()=>{
+    const verifyTargetIntent=createTargetIntentVerifier({db:env.DB,scope:intentScope,ownerTimezone:timezone,tools:intentTools,requireReferenceEvidence:true,admit:()=>{
       let usageId:string|undefined;
       const verifier=modelFor(modelName,{purpose:"target_intent",onAdmission:id=>{usageId=id;}});
       return {model:verifier,usageId:()=>usageId};
     }});
-    const result=await runAgentTurn({model,backupModel:backup,fastPath,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
+    const verifyOwnerCreateIntent=createOwnerCreateIntentVerifier({db:env.DB,scope:{...intentScope,ownerTimezone:timezone},tools:intentTools,admit:()=>{
+      let usageId:string|undefined;
+      const verifier=modelFor(modelName,{purpose:"owner_create_intent",onAdmission:id=>{usageId=id;}});
+      return {model:verifier,usageId:()=>usageId};
+    }});
+    const result=await runAgentTurn({model,backupModel:backup,fastPath,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
       const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event.event,event.data);
       onEvent?.(event.event,event.data,seq);
     }});
@@ -215,7 +221,7 @@ async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:
 
 async function newAgentServices(env:Env,ownerId:string):Promise<AgentDomainServices> {
   return {
-    quotes: { save: input => saveOwnerQuote(env, ownerId, input, "agent") },
+    quotes: { save: (input, options) => saveOwnerQuote(env, ownerId, input, "agent", options?.signal, options?.authorization) },
     scheduling:createStableAgentSchedulingServices(env,ownerId),
     mailbox:createAgentMailboxServices(env,ownerId),
     images:createAgentImageGenerationServices(env,ownerId),

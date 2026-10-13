@@ -7,6 +7,7 @@ type EvidenceScope = {selectionId?:string;domain?:string;recordId?:string};
 import { canonicalJson, toolIdempotencyKey, validateArguments } from './schema';
 import { isAgentCancellationRequested } from './store';
 import { loadTargetPresentation } from './presentations';
+import { loadIntentReferenceEvidence } from './intent-references';
 // Independent intent is reconstructed outside the planner, then bound to an exact effect.
 const INTERNAL_TOOL = '__me3_target_intent_v1';
 const verdictBase = { type:'object', additionalProperties:false };
@@ -39,7 +40,7 @@ async function shownPresentation(c:AgentTargetIntentContext):Promise<AgentTarget
   if(origin?.status!=='complete' || ![origin.checkpoint_json,origin.response_json].filter((value):value is string=>Boolean(value)).some(value=>JSON.parse(value).targetPresentation?.id===p.id))return undefined;
   return {id:p.id,ordinal:p.ordinal,createdTurnId:p.createdTurnId,selectionId:p.selectionId,domain:p.domain,action:{name:p.toolName,arguments:p.arguments},candidates:p.candidates.map(({id,option,snapshot})=>({id,option,snapshot:snapshot as Record<string,unknown>&{id:string}}))};
 }
-async function ownerInputs(c:AgentTargetIntentContext,targets:AgentTargetIntentEvidence["targets"],presentation?:AgentTargetIntentPresentation,sourceReads?:AgentTargetIntentSourceRead[]):Promise<AgentTargetIntentOwnerInput[]> {
+async function ownerInputs(c:AgentTargetIntentContext,targets:AgentTargetIntentEvidence["targets"],presentation?:AgentTargetIntentPresentation,sourceReads?:AgentTargetIntentSourceRead[],referenceEvidence?:AgentTargetIntentEvidence["referenceEvidence"]):Promise<AgentTargetIntentOwnerInput[]> {
   if(sourceReads!==undefined) {
     if(!Array.isArray(sourceReads)||sourceReads.length>64||new Set(sourceReads.map(read=>read.selectionId)).size!==sourceReads.length)throw Error('Invalid retained source-read origins.');
     for(const read of sourceReads) {
@@ -50,7 +51,7 @@ async function ownerInputs(c:AgentTargetIntentContext,targets:AgentTargetIntentE
       if(!row||row.domain!==read.domain||row.read_turn_id!==read.readTurnId||!panel||!Array.isArray(candidates)||!candidates.some(candidate=>panel.candidates.some(value=>value.id===candidate.id)))throw Error('Retained source-read origin changed or is unrelated.');
     }
   }
-  const refs={readTurnIds:[...new Set([...targets.flatMap(panel=>panel.candidates.map(value=>value.readTurnId)),...(sourceReads||[]).map(read=>read.readTurnId)])].sort(),...(presentation?{presentationTurnId:presentation.createdTurnId}:{})};
+  const refs={readTurnIds:[...new Set([...targets.flatMap(panel=>panel.candidates.map(value=>value.readTurnId)),...(sourceReads||[]).map(read=>read.readTurnId),...(referenceEvidence?.reads||[]).map(read=>read.turnId),...(referenceEvidence?.displays||[]).map(display=>display.turnId)])].sort(),...(presentation?{presentationTurnId:presentation.createdTurnId}:{})};
   const inputs=c.loadIntentOwnerInputs?await c.loadIntentOwnerInputs(refs,c.signal):c.intentOwnerInputs;
   if(!Array.isArray(inputs)||!inputs.length||inputs.length>80)throw Error('The complete necessary owner history is unavailable or too large.');
   const last=inputs.at(-1);
@@ -116,8 +117,9 @@ async function buildEvidence(c:AgentTargetIntentContext,{selectionId,domain:sour
   if(!targets.length)throw Error('Read the source candidates before verification.');
   const domains=new Set(targets.map(panel=>panel.domain));
   const operations=contracts.filter(tool=>domains.has(tool.target.domain)).map(({target,...tool})=>({...tool,target:{domain:target.domain,idParameter:target.idParameter}})).sort((a,b)=>a.name.localeCompare(b.name));
-  const inputs=await ownerInputs(c,targets,presentation,sourceReads);
-  const evidence:AgentTargetIntentEvidence={version:1,ownerId:c.ownerId,threadId:c.threadId,turnId:c.turnId,requestId:c.requestId,ownerTimezone:c.ownerTimezone,ownerInputs:inputs,targets,operations,sourceReads,...(presentation?{presentation}:{})};
+  const referenceEvidence=c.intentReadToolContracts? (await loadIntentReferenceEvidence(c.db,c,c.intentReadToolContracts,[...new Set(sourceReads.map(read=>read.readTurnId))])).evidence:undefined;
+  const inputs=await ownerInputs(c,targets,presentation,sourceReads,referenceEvidence);
+  const evidence:AgentTargetIntentEvidence={version:1,ownerId:c.ownerId,threadId:c.threadId,turnId:c.turnId,requestId:c.requestId,ownerTimezone:c.ownerTimezone,ownerInputs:inputs,targets,operations,sourceReads,...(referenceEvidence?{referenceEvidence}:{}),...(presentation?{presentation}:{})};
   if(canonicalJson(evidence).length>64000)throw Error('Complete necessary intent evidence is too large; use a reviewed choice.');
   return evidence;
 }
@@ -165,11 +167,12 @@ function knownClarification(record:IntentRecord) {
   return !!inference?.usage&&typeof inference.usage.estimatedCostUsd==='number'&&inference.usage.estimatedCostUsd>=0&&Number.isFinite(inference.usage.estimatedCostUsd);
 }
 function expandsEvidence(old:AgentTargetIntentEvidence,next:AgentTargetIntentEvidence) {
-  const fixed=({ownerInputs,targets,operations,sourceReads,...rest}:AgentTargetIntentEvidence)=>rest;
+  const fixed=({ownerInputs,targets,operations,sourceReads,referenceEvidence,...rest}:AgentTargetIntentEvidence)=>rest;
   if(canonicalJson(fixed(old))!==canonicalJson(fixed(next)))return false;
   let index=0;
   for(const input of next.ownerInputs)if(canonicalJson(input)===canonicalJson(old.ownerInputs[index]))index++;
   if(index!==old.ownerInputs.length)return false;
+  if(old.referenceEvidence&&(!next.referenceEvidence||!old.referenceEvidence.reads.every(read=>next.referenceEvidence!.reads.some(value=>canonicalJson(value)===canonicalJson(read)))||!old.referenceEvidence.displays.every(display=>next.referenceEvidence!.displays.some(value=>canonicalJson(value)===canonicalJson(display)))))return false;
   if(!old.operations.every(operation=>next.operations.some(value=>canonicalJson(value)===canonicalJson(operation))))return false;
   if(!(old.sourceReads||[]).every(read=>(next.sourceReads||[]).some(value=>canonicalJson(value)===canonicalJson(read))))return false;
   const oldSources=old.targets.flatMap(panel=>panel.candidates.map(candidate=>({domain:panel.domain,...candidate})));
@@ -185,7 +188,8 @@ async function sourceReadState(c:AgentTargetIntentContext,evidence:AgentTargetIn
     rows.push({id:read.selectionId,...row});
     sources.push({...read,candidates:JSON.parse(row.candidates_json)});
   }
-  return {proof:await toolIdempotencyKey(c.ownerId,c.requestId,INTERNAL_TOOL+':sources',{sources}),rows};
+  const references=evidence.referenceEvidence?await loadIntentReferenceEvidence(c.db,c,c.intentReadToolContracts||[],[],evidence.referenceEvidence):undefined;
+  return {proof:await toolIdempotencyKey(c.ownerId,c.requestId,INTERNAL_TOOL+':sources',{sources,...(references?{references:references.proof}:{})}),rows,references};
 }
 async function sourceReadProof(c:AgentTargetIntentContext,evidence:AgentTargetIntentEvidence) {return (await sourceReadState(c,evidence)).proof;}
 function latestIntent(rows:IntentRow[]) {
@@ -210,10 +214,11 @@ export async function verifyTargetIntent(c:AgentTargetIntentContext,scope:Eviden
   let evidence:AgentTargetIntentEvidence,record:IntentRecord,key:string,previous:IntentRow|undefined,currentArgumentsJson:string|undefined,previousSources:Array<Pick<SelectionRow,'id'|'domain'|'read_turn_id'|'candidates_json'>>=[];
   if(saved) {
     ({evidence,record}=saved);key=saved.row.idempotency_key;
+    if(Object.keys(evidence).some(key=>!['version','ownerId','threadId','turnId','requestId','ownerTimezone','ownerInputs','targets','operations','sourceReads','referenceEvidence','presentation'].includes(key)))throw Error('Cached independent evidence contains unsupported fields.');
     const domains=new Set(evidence.targets.map(panel=>panel.domain));
     const currentContracts=(c.intentToolContracts||[]).filter(tool=>domains.has(tool.target.domain)).map(({target,...tool})=>({...tool,target:{domain:target.domain,idParameter:target.idParameter}})).sort((a,b)=>a.name.localeCompare(b.name));
     if(canonicalJson(currentContracts)!==canonicalJson(evidence.operations))throw Error('The authoritative operation contracts changed after independent verification.');
-    const currentInputs=await ownerInputs(c,evidence.targets,evidence.presentation,evidence.sourceReads);
+    const currentInputs=await ownerInputs(c,evidence.targets,evidence.presentation,evidence.sourceReads,evidence.referenceEvidence);
     if(evidence.ownerId!==c.ownerId||evidence.threadId!==c.threadId||evidence.turnId!==c.turnId||evidence.requestId!==c.requestId||evidence.ownerTimezone!==c.ownerTimezone||canonicalJson(evidence.ownerInputs)!==canonicalJson(currentInputs))throw Error('The cached independent intent context changed.');
     if(canonicalJson(evidence.presentation)!==canonicalJson(await shownPresentation(c)))throw Error('The shown source action changed after verification.');
     const sourceState=await sourceReadState(c,evidence);
@@ -236,15 +241,17 @@ export async function verifyTargetIntent(c:AgentTargetIntentContext,scope:Eviden
   if(!saved||previous) {
     // One correction may add immutable missing sources. Keep both priced receipts;
     // allow, deny, uncertainty, changed evidence and repeated reads never reroll.
+    const referenceState=evidence.referenceEvidence?await loadIntentReferenceEvidence(c.db,c,c.intentReadToolContracts||[],[],evidence.referenceEvidence):undefined;
+    const referenceGuard=referenceState?.guard||{sql:"1=1",values:[]};
     const claim=previous?await c.db.prepare(`INSERT OR IGNORE INTO me3_agent_tool_receipts(owner_id,idempotency_key,turn_id,tool_name,arguments_json,status,result_json)
       SELECT ?,?,?,?,?,'running',? WHERE EXISTS(SELECT 1 FROM me3_agent_tool_receipts WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND status='finished' AND arguments_json=? AND result_json=?)
       AND (SELECT COUNT(*) FROM me3_agent_tool_receipts WHERE owner_id=? AND turn_id=? AND tool_name=?)=1
       AND NOT EXISTS(SELECT 1 FROM json_each(?) p WHERE NOT EXISTS(SELECT 1 FROM me3_agent_selections s WHERE s.owner_id=? AND s.thread_id=?
         AND s.id=json_extract(p.value,'$.id') AND s.domain=json_extract(p.value,'$.domain') AND s.read_turn_id=json_extract(p.value,'$.read_turn_id') AND s.candidates_json=json_extract(p.value,'$.candidates_json')))
       AND NOT EXISTS(SELECT 1 FROM me3_agent_tool_receipts WHERE owner_id=? AND turn_id=? AND tool_name!=?
-        AND NOT(status='not_admitted' OR(status='running' AND idempotency_key=? AND tool_name=? AND arguments_json=? AND ?=1)))`)
-      .bind(c.ownerId,key,c.turnId,INTERNAL_TOOL,canonicalJson(evidence),canonicalJson(record),c.ownerId,previous.idempotency_key,c.turnId,previous.arguments_json,previous.result_json,c.ownerId,c.turnId,INTERNAL_TOOL,JSON.stringify(previousSources),c.ownerId,c.threadId,c.ownerId,c.turnId,INTERNAL_TOOL,c.idempotencyKey,c.toolCall?.name||'',currentArgumentsJson||'',c.effectReceiptClaimed===true&&currentArgumentsJson!==undefined?1:0).run()
-      :await c.db.prepare("INSERT OR IGNORE INTO me3_agent_tool_receipts(owner_id,idempotency_key,turn_id,tool_name,arguments_json,status,result_json) VALUES(?,?,?,?,?,'running',?)").bind(c.ownerId,key,c.turnId,INTERNAL_TOOL,canonicalJson(evidence),canonicalJson(record)).run();
+        AND NOT(status='not_admitted' OR(status='running' AND idempotency_key=? AND tool_name=? AND arguments_json=? AND ?=1))) AND (${referenceGuard.sql})`)
+      .bind(c.ownerId,key,c.turnId,INTERNAL_TOOL,canonicalJson(evidence),canonicalJson(record),c.ownerId,previous.idempotency_key,c.turnId,previous.arguments_json,previous.result_json,c.ownerId,c.turnId,INTERNAL_TOOL,JSON.stringify(previousSources),c.ownerId,c.threadId,c.ownerId,c.turnId,INTERNAL_TOOL,c.idempotencyKey,c.toolCall?.name||'',currentArgumentsJson||'',c.effectReceiptClaimed===true&&currentArgumentsJson!==undefined?1:0,...referenceGuard.values).run()
+      :await c.db.prepare(`INSERT OR IGNORE INTO me3_agent_tool_receipts(owner_id,idempotency_key,turn_id,tool_name,arguments_json,status,result_json) SELECT ?,?,?,?,?,'running',? WHERE (${referenceGuard.sql})`).bind(c.ownerId,key,c.turnId,INTERNAL_TOOL,canonicalJson(evidence),canonicalJson(record),...referenceGuard.values).run();
     if(!claim.meta?.changes)throw Error('Independent intent admission raced another attempt.');
     await active(c);
     let raw;
@@ -266,8 +273,17 @@ export async function verifyTargetIntent(c:AgentTargetIntentContext,scope:Eviden
       if(!('actions' in record.verdict))record.authorizedActionKey=record.authorizedActions[0].actionKey;
     }
     await observe(c,key,record,false);
-    const stored=await c.db.prepare("UPDATE me3_agent_tool_receipts SET status='finished',result_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND status='running'").bind(canonicalJson(record),c.ownerId,key,c.turnId).run();
-    if(!stored.meta?.changes)throw Error('Independent verdict could not be durably finished.');
+    let finalGuard={sql:'1=1',values:[] as unknown[]};
+    if(record.verdict?.decision==='allow'&&evidence.referenceEvidence){try{finalGuard=(await loadIntentReferenceEvidence(c.db,c,c.intentReadToolContracts||[],[],evidence.referenceEvidence)).guard;}catch{record.verdict={decision:'deny',reason:'Read/display references changed before durable authorization.'};delete record.authorizedActions;delete record.authorizedActionKey;}}
+    const stored=await c.db.prepare(`UPDATE me3_agent_tool_receipts SET status='finished',result_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND status='running' AND (${finalGuard.sql})`).bind(canonicalJson(record),c.ownerId,key,c.turnId,...finalGuard.values).run();
+    if(!stored.meta?.changes) {
+      // A complete priced response remains audited even when the last admission
+      // snapshot refuses authorization. Never overwrite another settled receipt.
+      record.verdict={decision:'deny',reason:'Read/display references changed at durable authorization.'};
+      delete record.authorizedActions;delete record.authorizedActionKey;
+      await c.db.prepare("UPDATE me3_agent_tool_receipts SET status='finished',result_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND status='running'").bind(canonicalJson(record),c.ownerId,key,c.turnId).run();
+      throw Error('Independent verdict could not be durably authorized. No action was admitted.');
+    }
   }
   if(!record.verdict)throw Error('Independent verdict is incomplete.');
   checkedVerdict({...record.verdict,...(record.inference?{inference:record.inference}:{})},evidence);

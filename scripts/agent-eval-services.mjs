@@ -1,6 +1,7 @@
 import { createAgentSchedulingToolServices } from "../apps/worker/src/agent-scheduling.ts";
 import { createAgentMailboxDraft, getAgentMailboxMessage, listAgentMailboxMessages } from "../packages/agent/src/services/mailbox.ts";
 import { createSeededImageServices } from "./agent-eval-images.mjs";
+import { saveOwnerQuote } from "../apps/worker/src/quotes.ts";
 
 // Synthetic provider adapters retain real D1 rows, but never send mail, relay a
 // Soulink message, or query the public web. Tool safety remains in the runtime.
@@ -9,6 +10,7 @@ export function createSeededEvalServices(seed, options = {}) {
   const env = { DB: seed.db };
   const message = (record) => ({ ...record, toAddress: record.toAddress || "", bodyText: record.body });
   return {
+    quotes: { save: (input, options) => saveOwnerQuote(env, seed.ownerId, input, "agent", options?.signal, options?.authorization) },
     images: createSeededImageServices(seed, options),
     scheduling: { ...scheduling, async searchContacts({ query = "", limit = 5 }) {
       const rows = seed.raw.prepare("SELECT id, name, relationship FROM contacts WHERE user_id = ? AND status = 'active' AND name LIKE ? ORDER BY name LIMIT ?").all(seed.ownerId, `%${query}%`, Math.min(10, Math.max(1, limit)));

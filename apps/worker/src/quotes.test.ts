@@ -67,4 +67,91 @@ describe("quotes with real SQLite", () => {
     expect(f.raw.prepare("SELECT COUNT(*) count FROM quotes").get()).toMatchObject({ count: 31 });
     await expect(setQuoteSaved(f.env, "owner", original.id, true)).resolves.toMatchObject({ id: original.id });
   });
+
+  it("keeps a Core quote pristine and saves it independently for two owners", async () => {
+    const f = fixture();
+    f.raw.prepare("INSERT INTO owner_profile(id,username,timezone) VALUES('another-owner','other-synthetic','Europe/Dublin')").run();
+    const before = f.raw.prepare("SELECT * FROM quotes WHERE id='q216'").get();
+    await setQuoteSaved(f.env, "owner", "q216", true);
+    await setQuoteSaved(f.env, "another-owner", "q216", true);
+    expect((await listMyQuotes(f.env, "owner")).quotes.map(q => q.id)).toEqual(["q216"]);
+    expect((await listMyQuotes(f.env, "another-owner")).quotes.map(q => q.id)).toEqual(["q216"]);
+    expect(f.raw.prepare("SELECT * FROM quotes WHERE id='q216'").get()).toEqual(before);
+  });
+
+  it("unsaves only the requesting owner's Core bookmark and keeps daily selection scoped", async () => {
+    const f = fixture();
+    f.raw.prepare("INSERT INTO owner_profile(id,username,timezone) VALUES('another-owner','other-synthetic','Europe/Dublin')").run();
+    await setQuoteSaved(f.env, "owner", "q216", true);
+    await setQuoteSaved(f.env, "another-owner", "q216", true);
+    await setQuoteSaved(f.env, "another-owner", "q216", false);
+    expect((await listMyQuotes(f.env, "owner")).quotes.map(q => q.id)).toEqual(["q216"]);
+    expect((await listMyQuotes(f.env, "another-owner")).quotes).toEqual([]);
+    f.raw.prepare("INSERT INTO daily_quotes(user_id,date_key,quote_id,seen_json) VALUES('owner','2026-10-13','q216','[\"q216\"]')").run();
+    f.raw.prepare("INSERT INTO daily_quotes(user_id,date_key,quote_id,seen_json) VALUES('another-owner','2026-10-13','q216','[\"q216\"]')").run();
+    expect(await getTodayQuote(f.env, "owner", now)).toMatchObject({ id: "q216", savedAt: expect.any(String) });
+    expect(await getTodayQuote(f.env, "another-owner", now)).toMatchObject({ id: "q216", savedAt: null });
+  });
+
+  it("refuses explicit conflicting metadata instead of silently returning a seeded quote", async () => {
+    const f = fixture();
+    const original = seed.find(quote => quote.id === "q216")!;
+    const before = f.raw.prepare("SELECT * FROM quotes WHERE id='q216'").get();
+    await expect(saveOwnerQuote(f.env, "owner", { ...original, source: "A different supplied source", sourceUrl: "https://example.invalid/different-source" }, "owner")).rejects.toThrow("different metadata");
+    expect(f.raw.prepare("SELECT * FROM quotes WHERE id='q216'").get()).toEqual(before);
+    expect((await listMyQuotes(f.env, "owner")).quotes).toEqual([]);
+  });
+
+  it("rejects conflicting owner metadata and preserves metadata when omitted on a repeat save", async () => {
+    const f = fixture();
+    const original = { text: "An owner quotation", author: "Owner", source: "Original source", sourceUrl: "https://example.invalid/original", areas: ["work"] };
+    const saved = await saveOwnerQuote(f.env, "owner", original, "owner");
+    const before = f.raw.prepare("SELECT * FROM quotes WHERE id=?").get(saved.id);
+    await expect(saveOwnerQuote(f.env, "owner", { ...original, areas: ["joy"] }, "owner")).rejects.toThrow("different metadata");
+    expect(f.raw.prepare("SELECT * FROM quotes WHERE id=?").get(saved.id)).toEqual(before);
+    expect(await saveOwnerQuote(f.env, "owner", { text: original.text, author: original.author }, "owner")).toMatchObject({ id: saved.id, source: original.source, sourceUrl: original.sourceUrl, areas: original.areas });
+  });
+
+  it.each([
+    { source: "Concurrent source", source_url: "https://example.invalid/original", areas: '["work"]' },
+    { source: "Original source", source_url: "https://example.invalid/concurrent", areas: '["work"]' },
+    { source: "Original source", source_url: "https://example.invalid/original", areas: '["joy"]' },
+  ])("rejects a conflicting same-owner insert raced between lookup and save: %j", async metadata => {
+    const f = fixture();
+    const input = { text: "A concurrently inserted quotation", author: "Owner", source: "Original source", sourceUrl: "https://example.invalid/original", areas: ["work"] };
+    f.raw.prepare("INSERT INTO owner_profile(id,username,timezone) VALUES('another-owner','other-synthetic','Europe/Dublin')").run();
+    f.raw.prepare("INSERT INTO quotes(id,user_id,text,author,source,areas,origin) VALUES('other-quote','another-owner',?,?,'Other owner source','[]','owner')").run(input.text, input.author);
+    const otherBefore = f.raw.prepare("SELECT * FROM quotes WHERE id='other-quote'").get();
+    const coreBefore = f.raw.prepare("SELECT * FROM quotes WHERE origin='core' ORDER BY id").all();
+    let racedBefore: unknown;
+    const batch = f.env.DB.batch.bind(f.env.DB);
+    vi.spyOn(f.env.DB, "batch").mockImplementationOnce(async statements => {
+      f.raw.prepare("INSERT INTO quotes(id,user_id,text,author,source,source_url,areas,origin,archived_at) VALUES('raced-quote','owner',?,?,?,?,?,'owner','2026-10-12T08:00:00Z')")
+        .run(input.text, input.author, metadata.source, metadata.source_url, metadata.areas);
+      racedBefore = f.raw.prepare("SELECT * FROM quotes WHERE id='raced-quote'").get();
+      return batch(statements);
+    });
+    const outcome = await saveOwnerQuote(f.env, "owner", input, "owner").catch(error => error);
+    expect(f.raw.prepare("SELECT * FROM quotes WHERE id='raced-quote'").get()).toEqual(racedBefore);
+    expect(f.raw.prepare("SELECT * FROM quote_bookmarks WHERE quote_id='raced-quote'").all()).toEqual([]);
+    expect(f.raw.prepare("SELECT * FROM quotes WHERE id='other-quote'").get()).toEqual(otherBefore);
+    expect(f.raw.prepare("SELECT * FROM quotes WHERE origin='core' ORDER BY id").all()).toEqual(coreBefore);
+    expect(outcome).toBeInstanceOf(Error);
+    expect(outcome.message).toContain("different metadata");
+  });
+
+  it.each([true, false])("reuses a matching raced insert and retains omitted metadata (explicit=%s)", async explicit => {
+    const f = fixture();
+    const input = { text: "A matching concurrent quotation", author: "Owner", source: "Original source", sourceUrl: "https://example.invalid/original", areas: ["work"] };
+    const batch = f.env.DB.batch.bind(f.env.DB);
+    vi.spyOn(f.env.DB, "batch").mockImplementationOnce(async statements => {
+      f.raw.prepare("INSERT INTO quotes(id,user_id,text,author,source,source_url,areas,origin,archived_at) VALUES('raced-quote','owner',?,?,?,?,?,'owner','2026-10-12T08:00:00Z')")
+        .run(input.text, input.author, input.source, input.sourceUrl, JSON.stringify(input.areas));
+      return batch(statements);
+    });
+    expect(await saveOwnerQuote(f.env, "owner", explicit ? input : { text: input.text, author: input.author }, "owner"))
+      .toMatchObject({ id: "raced-quote", source: input.source, sourceUrl: input.sourceUrl, areas: input.areas, savedAt: expect.any(String) });
+    expect(f.raw.prepare("SELECT archived_at FROM quotes WHERE id='raced-quote'").get()).toEqual({ archived_at: null });
+    expect((await listMyQuotes(f.env, "owner")).quotes).toHaveLength(1);
+  });
 });

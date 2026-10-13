@@ -1,3 +1,5 @@
+// Compatibility-only low-level fixture: no Worker terminal publication/read-contract wiring.
+// Native read/display admission is separately exercised through executeNewAgentTurn.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
@@ -23,7 +25,7 @@ async function fixture({extraTools=[]}={}) {
   let calls=0;const requests=[];
   let output={text:"",toolCalls:[{id:"verdict",name:"core_target_intent_verdict",arguments:allow}],usage};
   let effect=async()=>{};
-  const verify=createTargetIntentVerifier({db:seed.db,scope,ownerTimezone:"Europe/Dublin",tools:[tool,...extraTools],admit:()=>({model:{id:"openai/gpt-6.1-sol",async step(request){calls++;requests.push(request);await effect();return output;}},usageId:()=>"admitted-usage"})});
+  const verify=createTargetIntentVerifier({ requireReferenceEvidence:false,db:seed.db,scope,ownerTimezone:"Europe/Dublin",tools:[tool,...extraTools],admit:()=>({model:{id:"openai/gpt-6.1-sol",async step(request){calls++;requests.push(request);await effect();return output;}},usageId:()=>"admitted-usage"})});
   return {seed,scope,evidence,verify,requests,get calls(){return calls;},output(value){output=value;},effect(value){effect=value;}};
 }
 

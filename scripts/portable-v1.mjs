@@ -91,6 +91,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0066_accounts_email_triage", "2026-10-13-accounts-email-triage-v1"],
   ["0067_quotes", "2026-10-13-quotes-v1"],
   ["0068_gratitude", "2026-10-13-gratitude-v1"],
+  ["0069_quote_bookmarks", "2026-10-13-quote-bookmarks-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -152,6 +153,7 @@ const TRANSFORMED_TABLES = [
 ];
 const COPIED_TABLES = [
   "quotes",
+  "quote_bookmarks",
   "daily_quotes",
   "gratitude_settings",
   "accounts_email_triage_settings",

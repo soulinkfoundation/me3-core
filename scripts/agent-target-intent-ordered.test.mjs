@@ -1,3 +1,5 @@
+// Compatibility-only low-level fixture: no Worker terminal publication/read-contract wiring.
+// Native read/display admission is separately exercised through executeNewAgentTurn.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -74,7 +76,7 @@ for (const fixture of cases) test(fixture.id, async () => {
     let judgeCalls = 0, plannerSteps = 0, crashInjected = false, lastPreProgressCheckpoint = null;
     const judgeEvidence = [], events = [], phases = [];
     const store = createD1TurnStore(seed.db, scope);
-    const verifier = createTargetIntentVerifier({ db: seed.db, scope, ownerTimezone: "Europe/Dublin", tools, admit: () => ({
+    const verifier = createTargetIntentVerifier({ requireReferenceEvidence:false, db: seed.db, scope, ownerTimezone: "Europe/Dublin", tools, admit: () => ({
       usageId: () => `${fixture.id}-simulated-native-verifier`,
       model: { id: "simulated-independent-ordered-judge", async step(request) {
         judgeCalls++;

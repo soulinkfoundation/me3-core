@@ -1,3 +1,5 @@
+// Compatibility-only low-level fixture: no Worker terminal publication/read-contract wiring.
+// Native read/display admission is separately exercised through executeNewAgentTurn.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
@@ -45,7 +47,7 @@ async function fixture({ subset = false, inspect }, body) {
     current.intentToolContracts = tools.filter(value => value.target && (!value.pluginId || current.enabledPluginIds.has(value.pluginId)))
       .map(({ name, description, parameters, effect, approval, target }) => ({ name, description, parameters, effect, approval, target: { domain: target.domain, idParameter: target.idParameter } }));
     let calls = 0;
-    current.verifyTargetIntent = createTargetIntentVerifier({ db: seed.db, scope, ownerTimezone: current.ownerTimezone, tools: tools.filter(value => !value.pluginId || current.enabledPluginIds.has(value.pluginId)), admit: () => ({
+    current.verifyTargetIntent = createTargetIntentVerifier({ requireReferenceEvidence:false, db: seed.db, scope, ownerTimezone: current.ownerTimezone, tools: tools.filter(value => !value.pluginId || current.enabledPluginIds.has(value.pluginId)), admit: () => ({
       usageId: () => "simulated-presented-usage", model: { id: "simulated-independent-judge", async step(request) {
         calls++; const evidence = JSON.parse(request.messages[1].content); inspect(evidence);
         assert.equal("proposedCall" in evidence, false);

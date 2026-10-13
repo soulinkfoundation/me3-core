@@ -1,3 +1,5 @@
+// Compatibility-only low-level fixture: no Worker terminal publication/read-contract wiring.
+// Native read/display admission is separately exercised through executeNewAgentTurn.
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -39,7 +41,7 @@ for (const id of ["loop-dual-guard", "direct-preexisting-running-denial"]) test(
     seed.reopen();
     let judgeCalls = 0, plannerSteps = 0;
     const judgeEvidence = [], nativeAtJudge = [];
-    const verifier = createTargetIntentVerifier({ db: observedDb, scope, ownerTimezone: "Europe/Dublin", tools, admit: () => ({
+    const verifier = createTargetIntentVerifier({ requireReferenceEvidence:false, db: observedDb, scope, ownerTimezone: "Europe/Dublin", tools, admit: () => ({
       usageId: () => `${id}-simulated-native-admission`,
       model: { id: "simulated-independent-admission-judge", async step(request) {
         judgeCalls++;

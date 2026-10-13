@@ -6,6 +6,7 @@ import { AGENT_PRESENTATION_SCHEMA_STATEMENTS } from "../../../packages/agent/sr
 import { AGENT_NOTIFICATION_SCHEMA } from "./agent-notifications";
 import { MORNING_CALENDAR_PUSH_SCHEMA } from "./morning-calendar-push";
 import { QUOTES_SCHEMA } from "./quotes-schema";
+import { QUOTE_BOOKMARKS_SCHEMA } from "./quote-bookmarks-schema";
 import { GRATITUDE_SETTINGS_SCHEMA, CARD_REMINDERS_SCHEMA } from "./gratitude-schema";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import type { Env } from "./types";
@@ -531,6 +532,13 @@ const runtimeMigrations: RuntimeMigration[] = [
     async apply(db) {
       const table = await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user_reminders'").first<{ sql: string }>();
       await db.batch([...GRATITUDE_SETTINGS_SCHEMA, ...(!table?.sql.includes("'card'") ? CARD_REMINDERS_SCHEMA : [])].map(sql => db.prepare(sql)));
+    },
+  },
+  {
+    id: "0069_quote_bookmarks",
+    checksum: "2026-10-13-quote-bookmarks-v1",
+    async apply(db) {
+      await db.batch(QUOTE_BOOKMARKS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];

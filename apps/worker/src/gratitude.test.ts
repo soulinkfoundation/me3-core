@@ -34,12 +34,12 @@ describe("Gratitude persistence and reminders", () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it("lets the agent save owner-supplied words and rejects invented quotes", async () => {
+  it("refuses direct agent saves without canonical independent authorization", async () => {
     const f = fixture(); const tool = createDomainTools().find(t => t.name === "core_quotes_save")!;
     const context = { db: f.env.DB, ownerId: "owner", messageText: 'Save this quote: "A small thing, in my own words."', signal: new AbortController().signal, enabledPluginIds: new Set(), services: { quotes: { save: (input: unknown) => saveOwnerQuote(f.env, "owner", input, "agent") } } } as unknown as AgentToolContext;
-    expect((await tool.execute({ text: "A small thing, in my own words.", author: "Owner" }, context)).status).toBe("ok");
+    expect((await tool.execute({ text: "A small thing, in my own words." }, context)).status).toBe("error");
     expect((await tool.execute({ text: "An invented line." }, context)).status).toBe("error");
-    expect(f.raw.prepare("SELECT COUNT(*) count FROM quotes WHERE origin='agent'").get()).toMatchObject({ count: 1 });
+    expect(f.raw.prepare("SELECT COUNT(*) count FROM quotes WHERE origin='agent'").get()).toMatchObject({ count: 0 });
   });
   it("preserves owner writing and metadata, counts either list, and uses the owner date", async () => {
     const f = fixture("Pacific/Auckland");

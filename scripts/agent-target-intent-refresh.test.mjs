@@ -1,3 +1,5 @@
+// Compatibility-only low-level fixture: no Worker terminal publication/read-contract wiring.
+// Native read/display admission is separately exercised through executeNewAgentTurn.
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -36,7 +38,7 @@ function fixture(id,notes) {
   async function run({calls,mode='missing',mutate,text=ownerText,scope:s=scope}) {
     await input(s,text);
     let plannerSteps=0,judgeCalls=0; const evidence=[],nativeBeforeJudge=[];
-    const verifyTargetIntent=createTargetIntentVerifier({db:seed.db,scope:s,ownerTimezone:'Europe/Dublin',tools,admit:()=>({
+    const verifyTargetIntent=createTargetIntentVerifier({ requireReferenceEvidence:false,db:seed.db,scope:s,ownerTimezone:'Europe/Dublin',tools,admit:()=>({
       usageId:()=>`${id}:independent:${judgeCalls}`,
       model:{id:'simulated-independent-judge',async step(request){
         judgeCalls++; const observed=JSON.parse(request.messages[1].content); evidence.push(observed); nativeBeforeJudge.push(effects());
@@ -135,7 +137,7 @@ for(const panelMode of ['sole','broad-narrow','oversized'])test(`canonical prono
     await runAgentTurn({context:{...prior,db:f.seed.db,ownerTimezone:'Europe/Dublin',messageText:'Show my reminders.',enabledPluginIds:new Set(['me3.calendar'])},tools:f.tools,store:createD1TurnStore(f.seed.db,prior),messages:[{role:'user',content:'Show my reminders.'}],model:{id:'simulated-prior-read',async step({onDelta}){if(++step===1)return {text:'',toolCalls:[{id:'prior',...read(undefined)}],usage:plannerUsage};await onDelta('You have one reminder, Call Sam.');return {text:'You have one reminder, Call Sam.',toolCalls:[],usage:plannerUsage};}},onEvent:event=>appendAgentStreamEvent(f.seed.db,prior.ownerId,prior.turnId,event.event,event.data)});
     f.seed.reopen(); await f.input(current,'Move it to 16 January 2027 at 9:30am Dublin time.');
     let judged=0,planner=0,admissions=0;const seen=[];
-    const verifier=createTargetIntentVerifier({db:f.seed.db,scope:current,ownerTimezone:'Europe/Dublin',tools:f.tools,admit:()=>{admissions++;return {usageId:()=>`pronoun-admission-${judged}`,model:{id:'simulated-panel-dependent-judge',async step(request){judged++;const evidence=JSON.parse(request.messages[1].content);seen.push(evidence);
+    const verifier=createTargetIntentVerifier({ requireReferenceEvidence:false,db:f.seed.db,scope:current,ownerTimezone:'Europe/Dublin',tools:f.tools,admit:()=>{admissions++;return {usageId:()=>`pronoun-admission-${judged}`,model:{id:'simulated-panel-dependent-judge',async step(request){judged++;const evidence=JSON.parse(request.messages[1].content);seen.push(evidence);
       const old=evidence.immutableSourceReads?.find(panel=>panel.readTurnId===prior.turnId);
       const valid=old?.candidates.length===1&&old.candidates[0].id===A.selectedCandidateId&&old.candidates[0].snapshot.title==='Call Sam';
       return {text:'',toolCalls:[{id:'pronoun-verdict',name:'core_target_intent_verdict',arguments:valid?{decision:'allow',...A}:{decision:'clarify',reason:'The authoritative prior panel is absent; it cannot resolve this pronoun.'}}],usage};}}};}});

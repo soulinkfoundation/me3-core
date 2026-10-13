@@ -206,6 +206,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     const toolStarted = performance.now();
     await emit({event:"tool",data:{state:"running",name:tool.name,toolName:tool.name,callId:call.id}});
     const context = {...input.context,messages:checkpoint.messages,toolCall:call,toolCallId:call.id,idempotencyKey:key,effectReceiptClaimed:tool.effect!=="read",approved,approvalData,signal:controller.signal,
+      ...(input.context.intentReadToolContracts?{intentReadToolContracts: tools.filter(value=>value.effect==="read" && !value.endsTurn).map(({name,parameters})=>({name,parameters}))}:{}),
       intentToolContracts: tools.filter(value=>value.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),
       onTargetIntentReceipt: async (record: AgentTargetIntentReceipt) => {
         if (!record.inference) return;

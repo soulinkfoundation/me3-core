@@ -61,7 +61,9 @@ export interface AgentToolContext {
   loadIntentOwnerInputs?(references:AgentTargetIntentInputReferences,signal:AbortSignal):Promise<AgentTargetIntentOwnerInput[]>;
   intentOwnerInputs?:AgentTargetIntentOwnerInput[];
   intentToolContracts?:AgentTargetIntentOperation[];
+  intentReadToolContracts?:AgentTargetIntentReadContract[];
   verifyTargetIntent?(evidence:AgentTargetIntentEvidence,signal:AbortSignal):Promise<AgentTargetIntentVerdictResult>;
+  verifyOwnerCreateIntent?: import("./owner-create-intent").OwnerCreateVerifier;
   onTargetIntentReceipt?(receipt:AgentTargetIntentReceipt):void|Promise<void>;
 
   signal: AbortSignal;
@@ -128,7 +130,9 @@ export type AgentTargetIntentOperation = Pick<AgentTool,"name"|"description"|"pa
 export type AgentTargetIntentCandidate = { id:string; selectionId:string; readTurnId:string; snapshot:Record<string,unknown> & {id:string} };
 export type AgentTargetIntentSourceRead = { selectionId:string; domain:string; readTurnId:string };
 export type AgentTargetIntentPresentation = { id:string; ordinal:number; createdTurnId:string; selectionId:string; domain:string; action:{name:string;arguments:Record<string,unknown>}; candidates:Array<{id:string;option:number;snapshot:Record<string,unknown>&{id:string}}> };
-export type AgentTargetIntentEvidence = { version:1; ownerId:string; threadId:string; turnId:string; requestId:string; ownerTimezone:string; ownerInputs:AgentTargetIntentOwnerInput[]; targets:Array<{domain:string;candidates:AgentTargetIntentCandidate[]}>; operations:AgentTargetIntentOperation[]; sourceReads?:AgentTargetIntentSourceRead[]; presentation?:AgentTargetIntentPresentation };
+export type AgentTargetIntentReadContract = Pick<AgentTool,"name"|"parameters">;
+export type AgentTargetIntentReferenceEvidence = { reads:Array<{turnId:string;requestId:string;seq:number;callId:string;name:string;arguments:Record<string,unknown>;result:{status:"ok";data:unknown}}>; displays:Array<{turnId:string;requestId:string;seq:number;replyText:string}> };
+export type AgentTargetIntentEvidence = { version:1; ownerId:string; threadId:string; turnId:string; requestId:string; ownerTimezone:string; ownerInputs:AgentTargetIntentOwnerInput[]; targets:Array<{domain:string;candidates:AgentTargetIntentCandidate[]}>; operations:AgentTargetIntentOperation[]; sourceReads?:AgentTargetIntentSourceRead[]; referenceEvidence?:AgentTargetIntentReferenceEvidence; presentation?:AgentTargetIntentPresentation };
 export type AgentTargetIntentAction = {selectedCandidateId:string;authorizedCall:{name:string;arguments:Record<string,unknown>}};
 export type AgentTargetIntentVerdict = ({decision:"allow"} & (AgentTargetIntentAction | {actions:AgentTargetIntentAction[]})) | {decision:"deny"|"clarify";reason:string};
 export type AgentTargetIntentAuthorizedAction = AgentTargetIntentAction & {domain:string;actionKey:string};
