@@ -395,12 +395,14 @@ jobs:
             --canonical-hostname "$ME3_MANAGED_CANONICAL_HOSTNAME" \
             --zone-id "$ME3_MANAGED_ZONE_ID"
 
-      - name: Verify health and mobile at the live target origin
+      - name: Verify paused target health before resuming writes
+        if: inputs.recovery_plan != ''
         run: |
           node control/scripts/verify-managed-upgrade-runtime.mjs \
             --public-origin "$PUBLIC_ORIGIN" \
             --canonical-hostname "$ME3_MANAGED_CANONICAL_HOSTNAME" \
-            --expected-release-tag "$ME3_MANAGED_TARGET_RELEASE_TAG"
+            --expected-release-tag "$ME3_MANAGED_TARGET_RELEASE_TAG" \
+            --health-only true
 
       - name: Resume writes after verifying the recovery-backed target
         if: inputs.recovery_plan != ''
@@ -409,6 +411,13 @@ jobs:
         run: |
           sha256sum --check "$RUNNER_TEMP/managed-upgrade-control.sha256"
           node control/scripts/managed-upgrade-recovery.mjs resume
+
+      - name: Verify health and mobile at the live target origin
+        run: |
+          node control/scripts/verify-managed-upgrade-runtime.mjs \
+            --public-origin "$PUBLIC_ORIGIN" \
+            --canonical-hostname "$ME3_MANAGED_CANONICAL_HOSTNAME" \
+            --expected-release-tag "$ME3_MANAGED_TARGET_RELEASE_TAG"
 
       - name: Delete detached retired Assistant Jobs queues
         if: inputs.recovery_plan == ''

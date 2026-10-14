@@ -8,6 +8,31 @@ const input = {
   expectedReleaseTag: "v0.1.109",
 };
 
+test("checks target health while recovery keeps API reads paused", async () => {
+  const paths = [];
+  const result = await verifyManagedUpgradeRuntime(input, async (value) => {
+    const path = new URL(value).pathname;
+    paths.push(path);
+    if (path !== "/health") return new Response(null, { status: 423 });
+    return runtimeResponse(path);
+  }, { attempts: 1, delayMs: 0, healthOnly: true });
+  assert.deepEqual(paths, ["/health"]);
+  assert.equal(result.version, "0.1.109");
+  assert.equal(result.coreInstallId, undefined);
+});
+
+test("paused health verification still rejects stale releases and missing bindings", async () => {
+  for (const failure of ["release", "binding"]) {
+    await assert.rejects(verifyManagedUpgradeRuntime(input, async (value) => {
+      const response = runtimeResponse(new URL(value).pathname, failure === "release" ? "0.1.108" : "0.1.109");
+      const body = await response.json();
+      if (failure === "binding") body.bindings.db = false;
+      return json(body);
+    }, { attempts: 1, delayMs: 0, healthOnly: true }),
+    failure === "release" ? /health release/ : /health bindings \(db\)/);
+  }
+});
+
 test("attests health, mobile, and version through the exact live origin", async () => {
   const paths = [];
   const result = await verifyManagedUpgradeRuntime(

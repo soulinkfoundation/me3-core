@@ -9,6 +9,18 @@ const workflow = readFileSync(
   "utf8",
 );
 
+test("verifies paused target health before resume and the full contract afterward", () => {
+  const health = getStep("Verify paused target health before resuming writes");
+  const resume = getStep("Resume writes after verifying the recovery-backed target");
+  const full = getStep("Verify health and mobile at the live target origin");
+  assert.match(health, /if: inputs\.recovery_plan != ''/);
+  assert.match(health, /--health-only true/);
+  assert.match(health, /--expected-release-tag "\$ME3_MANAGED_TARGET_RELEASE_TAG"/);
+  assert.ok(workflow.indexOf(health) < workflow.indexOf(resume));
+  assert.ok(workflow.indexOf(resume) < workflow.indexOf(full));
+  assert.doesNotMatch(full, /--health-only/);
+});
+
 test("requires the exact attempt, releases, commit, and complete frozen identities", () => {
   for (const input of [
     "attempt_id",
@@ -190,7 +202,7 @@ test('requires quiesced private recovery capture before migrations and keeps pri
   const resume = getStep('Resume writes after verifying the recovery-backed target');
   assert.ok(workflow.indexOf(capture) < workflow.indexOf(migrate));
   assert.match(migrate,/prepare-d1-migrations\.mjs/);
-  assert.ok(workflow.indexOf(getStep('Verify health and mobile at the live target origin')) < workflow.indexOf(resume));
+  assert.ok(workflow.indexOf(getStep('Verify paused target health before resuming writes')) < workflow.indexOf(resume));
   assert.match(getStep('Delete detached retired Assistant Jobs queues'), /if: inputs.recovery_plan == ''/);
   assert.doesNotMatch(workflow,/upload-artifact/);
 });

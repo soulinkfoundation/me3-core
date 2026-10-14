@@ -23,10 +23,11 @@ export async function verifyManagedUpgradeRuntime(
   }
   const attempts = positiveInteger(options.attempts, 15);
   const delayMs = nonNegativeInteger(options.delayMs, 2_000);
+  const healthOnly = options.healthOnly === true;
   const version = expectedReleaseTag.slice(1);
   let lastFailure = "runtime response did not satisfy the release contract";
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const probe = await probeRuntime(publicOrigin, request);
+    const probe = await probeRuntime(publicOrigin, request, healthOnly);
     if (probe.ok) {
       const { health, mobile, core } = probe;
       const mismatches = runtimeMismatches({
@@ -36,6 +37,7 @@ export async function verifyManagedUpgradeRuntime(
         version,
         publicOrigin,
         canonicalHostname,
+        healthOnly,
       });
       if (mismatches.length === 0) {
         return {
@@ -44,7 +46,7 @@ export async function verifyManagedUpgradeRuntime(
           version,
           publicOrigin,
           canonicalHostname,
-          coreInstallId: mobile.installId,
+          ...(healthOnly ? {} : { coreInstallId: mobile.installId }),
         };
       }
       lastFailure = `contract mismatch: ${mismatches.join(", ")}`;
@@ -58,12 +60,13 @@ export async function verifyManagedUpgradeRuntime(
   throw new Error(`managed upgrade live runtime does not match (${lastFailure})`);
 }
 
-async function probeRuntime(publicOrigin, request) {
+async function probeRuntime(publicOrigin, request, healthOnly) {
   const endpoints = [
     ["health", `${publicOrigin}/health`],
     ["mobile", `${publicOrigin}/api/mobile/config`],
     ["core", `${publicOrigin}/api/core/version`],
   ];
+  if (healthOnly) endpoints.splice(1);
   const results = await Promise.allSettled(
     endpoints.map(([, url]) => fetchJson(url, request)),
   );
@@ -76,8 +79,8 @@ async function probeRuntime(publicOrigin, request) {
   return {
     ok: true,
     health: results[0].value,
-    mobile: results[1].value,
-    core: results[2].value,
+    mobile: results[1]?.value,
+    core: results[2]?.value,
   };
 }
 
@@ -88,6 +91,7 @@ function runtimeMismatches({
   version,
   publicOrigin,
   canonicalHostname,
+  healthOnly,
 }) {
   const mismatches = [];
   if (health?.ok !== true || health?.service !== "me3-core") {
@@ -111,6 +115,7 @@ function runtimeMismatches({
   ) {
     mismatches.push("health hosts");
   }
+  if (healthOnly) return mismatches;
   if (
     !/^core_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
       mobile?.installId || "",
@@ -203,11 +208,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const args = parseArgs(process.argv.slice(2));
   console.log(
     JSON.stringify(
-      await verifyManagedUpgradeRuntime({
-        publicOrigin: required(args, "public-origin"),
-        canonicalHostname: required(args, "canonical-hostname"),
-        expectedReleaseTag: required(args, "expected-release-tag"),
-      }),
+      await verifyManagedUpgradeRuntime(
+        {
+          publicOrigin: required(args, "public-origin"),
+          canonicalHostname: required(args, "canonical-hostname"),
+          expectedReleaseTag: required(args, "expected-release-tag"),
+        },
+        undefined,
+        { healthOnly: args["health-only"] === "true" },
+      ),
     ),
   );
 }
