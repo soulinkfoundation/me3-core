@@ -26,7 +26,6 @@ import {
   ensureCoreRuntimeMigrationsForRequest,
 } from "./core-runtime-migrations";
 import { Me3UserAgent } from "./user-agent";
-import { Me3SdkUserAgent } from "./sdk-user-agent";
 import { Me3Agent } from "./me3-agent";
 import { syncManagedAiUsage } from "./managed-ai-billing";
 import { syncDueSoulinkContacts } from "./routes/channels";
@@ -47,7 +46,7 @@ import type {
   SocialPublishQueueMessage,
 } from "./types";
 
-export { Me3UserAgent, Me3SdkUserAgent, Me3Agent };
+export { Me3UserAgent, Me3Agent };
 export { getMe3CloudUsernamePublishBlockReason } from "./sites";
 
 const worker = {

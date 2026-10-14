@@ -42,10 +42,10 @@ function fixture() {
     if(calls===2){const read=JSON.parse([...input.messages].reverse().find(message=>message.role==="tool")!.content);return tool("core_targets_present",{selectionId:read.data.selectionId,toolName:"core_reminders_update",arguments:{date:"2027-01-16",time:"09:30",timezone:"Europe/Dublin"}});}
     return{response:"Moved the exact selected reminder.",usage};
   });
-  const env={DB:db,AI:{run},ME3_DEPLOYMENT_MODE:"self_hosted",ME3_ASSISTANT_RUNTIME:"agent"} as unknown as Env;
+  const env={DB:db,AI:{run},ME3_DEPLOYMENT_MODE:"self_hosted"} as unknown as Env;
   const input:NewAgentDispatchInput={userId:"owner",threadId:"thread",turnId:"origin",requestId:"origin-request",messageText:"Move one of my same-title reminders"};
   const persist=async(value=input)=>persistAgentInput(db,{ownerId:value.userId,threadId:value.threadId,turnId:value.turnId,requestId:value.requestId},value);
-  const request=(value=input,stream=false)=>new Request(`https://agent.internal/dispatch/sandbox${stream?"/stream":""}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(value)});
+  const request=(value=input,stream=false)=>new Request(`https://agent.internal/turn${stream?"/stream":""}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(value)});
   return{env,db,run,input,persist,request,raw:()=>raw,reopen(){raw.close();raw=new DatabaseSync(file);}};
 }
 

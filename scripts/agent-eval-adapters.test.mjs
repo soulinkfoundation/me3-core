@@ -66,7 +66,9 @@ test("actual reopened selection streams one measured runtime delta while termina
   } finally { seed.close(); }
 });
 
-test("normalized tool receipts retain the actual requested limit for grader verification", async () => {
+test("normalized tool receipts retain the actual requested limit for grader verification", async (context) => {
+  // This control has an authored seed date; its future slots must not age out.
+  context.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-10T12:00:00Z") });
   const seed = createSeededAgentEvalInstallation("2026-10-10");
   try {
     const args = { dateFrom: "2026-10-13", dateTo: "2026-10-13", durationMinutes: 30, limit: 3 };

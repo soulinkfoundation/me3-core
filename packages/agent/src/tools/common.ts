@@ -1,6 +1,7 @@
 import { CORE_CHAT_CAPABILITIES } from "../../../agent-chat/src/capabilities";
 import type { AgentTool, AgentToolContext, AgentToolResult, JsonSchema } from "../types";
 import type { AgentDomainServices } from "./services";
+import { requireEnabledPlugin } from "../plugin-authorization";
 
 export function domainTool(id: string, execute: AgentTool["execute"], overrides: Partial<Omit<AgentTool, "name" | "execute">> = {}): AgentTool {
   const capability = CORE_CHAT_CAPABILITIES.find(capability => capability.id === id);
@@ -12,7 +13,7 @@ export function domainTool(id: string, execute: AgentTool["execute"], overrides:
     ...overrides,
     async execute(args, context) {
       try {
-        if (tool.pluginId && !context.enabledPluginIds.has(tool.pluginId)) throw new Error(`Plugin ${tool.pluginId} must be installed and enabled.`);
+        await requireEnabledPlugin(context, tool.pluginId);
         const properties = tool.parameters.properties as Record<string, unknown>;
         for (const key of Object.keys(args)) if (!(key in properties)) throw new Error(`Undeclared argument ${key}.`);
         if (context.signal.aborted) throw new Error("Turn cancelled.");

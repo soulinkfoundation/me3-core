@@ -12,10 +12,6 @@ name = "ME3_USER_AGENT"
 class_name = "Me3UserAgent"
 
 [[durable_objects.bindings]]
-name = "ME3_SDK_USER_AGENT"
-class_name = "Me3SdkUserAgent"
-
-[[durable_objects.bindings]]
 name = "ME3_AGENT"
 class_name = "Me3Agent"
 
@@ -30,6 +26,10 @@ new_sqlite_classes = ["Me3SdkUserAgent"]
 [[migrations]]
 tag = "2026-10-10-me3-agent"
 new_sqlite_classes = ["Me3Agent"]
+
+[[migrations]]
+tag = "2026-10-12-retire-sdk-user-agent"
+deleted_classes = ["Me3SdkUserAgent"]
 
 # Workers AI is the default Core chat provider. Wrangler connects this binding
 # to Cloudflare's remote AI runtime during local development.
@@ -95,8 +95,6 @@ ME3_AGENT_FAST_PATH = "off" # "off" (default) or "shadow": measurement only.
 # ME3_AGENT_FAST_PATH_ARGUMENTS = "conditional" # Clef routes first, then asks only selected read arguments; Flash stays fanout.
 ENVIRONMENT = "local"
 ME3_DEPLOYMENT_MODE = "self_hosted"
-# Set per installation after the seeded and live canary checks pass.
-# ME3_ASSISTANT_RUNTIME = "sdk"
 # Managed-fleet provisioning sets both values below. Self-hosted installs must
 # leave them unset; managed email then reuses the linked install's stored
 # ME3_CORE_INSTALL_ID and ME3_CLOUD_CORE_TOKEN rather than provider credentials.

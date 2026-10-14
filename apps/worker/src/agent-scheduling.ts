@@ -2,7 +2,7 @@ import { sameSchedulingRequest, schedulingRequestPrecondition, schedulingRequest
 import type {
   CoreSchedulingOption,
   CoreSchedulingToolServices,
-} from "./agent-chat";
+} from "@me3-core/plugin-agent-chat";
 import { formatUtcInstantInTimeZone } from "./booking";
 import { resolvePrimaryAssistantThread } from "./assistant-primary-thread";
 import { addDaysToDateString, resolveTimeZone } from "./calendar";

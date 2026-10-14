@@ -2,12 +2,12 @@ import {
   laterInteractionTimestamp,
   listAgentContacts,
   upsertAgentContact,
-} from "../agent-chat";
+} from "@me3-core/plugin-agent-chat";
 import {
   dispatchAgentChannelTurn,
   insertProviderChannelEventOnce,
 } from "../agent-channels";
-import type { AgentSandboxDispatchResponse } from "../agent-chat";
+import type { AgentSandboxDispatchResponse } from "@me3-core/plugin-agent-chat";
 import type { AppContext, AppHono } from "../http/types";
 import {
   getTelegramSettings,

@@ -1,4 +1,4 @@
-import { normalizeMe3DeploymentMode } from "./agent-chat";
+import { normalizeMe3DeploymentMode } from "@me3-core/plugin-agent-chat";
 import { ME3_CORE_VERSION } from "./core-version";
 import type { Env } from "./types";
 
@@ -555,7 +555,7 @@ async function purgeManagedRuntimeStorage(
   }
   await requireManagedRuntimeDrain(env, installationId);
 
-  for (const agentNamespace of [env.ME3_USER_AGENT, env.ME3_SDK_USER_AGENT, env.ME3_AGENT]) {
+  for (const agentNamespace of [env.ME3_USER_AGENT, env.ME3_AGENT]) {
     if (!agentNamespace) continue;
     const objectId = agentNamespace.idFromName("owner");
     const response = await agentNamespace.get(objectId).fetch(

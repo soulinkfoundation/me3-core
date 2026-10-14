@@ -1,8 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  runCoreAgentToolTurn,
-  type AgentToolMessage,
-} from "@me3-core/plugin-agent-chat";
+import { describe, expect, it } from "vitest";
 import {
   readJournalEntriesForAgent,
 } from "@me3-core/plugin-journal";
@@ -17,17 +13,6 @@ type JournalRow = {
   updated_at: string;
   revision: number;
   archived_at: string | null;
-};
-
-type ToolExecution = {
-  id: string;
-  user_id: string;
-  request_id: string;
-  tool_call_id: string;
-  tool_name: string;
-  status: "running" | "succeeded" | "failed";
-  result_json: string | null;
-  error_message: string | null;
 };
 
 describe("Journal Agent read contract", () => {
@@ -91,66 +76,6 @@ describe("Journal Agent read contract", () => {
   });
 });
 
-describe("Journal Agent Runtime v2 tool", () => {
-  it("returns Journal data through the general read capability", async () => {
-    const database = createJournalDb([
-      journalRow("2026-07-28", "Today", "<p>Grounded Journal text.</p>"),
-    ]);
-    const aiRun = vi.fn()
-      .mockResolvedValueOnce({
-        tool_calls: [
-          {
-            id: "journal-read-1",
-            name: "core_journal_read",
-            arguments: {
-              mode: "date",
-              date: "2026-07-28",
-            },
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        response: "Your Journal entry says: Grounded Journal text.",
-      });
-
-    const response = await runCoreAgentToolTurn({
-      db: database.db,
-      userId: "owner",
-      requestId: "journal-read-request",
-      turnId: "journal-read-turn",
-      ownerTimezone: "Europe/Dublin",
-      route: {
-        providerId: "workers-ai",
-        model: "workers-test-model",
-        backupModel: null,
-        apiKey: null,
-        ai: { run: aiRun },
-        aiGateway: null,
-        configured: true,
-      } as never,
-      messages: baseMessages("Read my Journal entry for today."),
-    });
-
-    expect(response).toMatchObject({
-      specialist: "core.journal.read",
-      replyText: "Your Journal entry says: Grounded Journal text.",
-      sourceReference: {
-        sourceType: "journal",
-        sourceId: "journal-2026-07-28",
-      },
-    });
-    expect(database.executions).toHaveLength(1);
-    expect(database.executions[0]?.result_json).toContain("Grounded Journal text.");
-  });
-});
-
-function baseMessages(message: string): AgentToolMessage[] {
-  return [
-    { role: "system", content: "You are ME3." },
-    { role: "user", content: message },
-  ];
-}
-
 function journalRow(
   date: string,
   title: string,
@@ -170,71 +95,12 @@ function journalRow(
 }
 
 function createJournalDb(initialRows: JournalRow[]) {
-  const rows = initialRows.map((row) => ({ ...row }));
-  const executions: ToolExecution[] = [];
-  const db = {
-    prepare(sql: string) {
-      return {
-        bind(...values: unknown[]) {
-          return {
-            async first<T>() {
-              if (sql.includes("FROM agent_tool_executions")) {
-                return (executions.find(
-                  (execution) =>
-                    execution.user_id === values[0] &&
-                    execution.request_id === values[1] &&
-                    execution.tool_call_id === values[2],
-                ) || null) as T;
-              }
-              return null as T;
-            },
-            async all<T>() {
-              if (sql.includes("FROM journal_entries")) {
-                return {
-                  results: selectJournalRows(rows, sql, values) as T[],
-                };
-              }
-              return { results: [] as T[] };
-            },
-            async run() {
-              if (sql.includes("INSERT OR IGNORE INTO agent_tool_executions")) {
-                if (!executions.some(
-                  (execution) =>
-                    execution.user_id === values[1] &&
-                    execution.request_id === values[2] &&
-                    execution.tool_call_id === values[3],
-                )) {
-                  executions.push({
-                    id: values[0] as string,
-                    user_id: values[1] as string,
-                    request_id: values[2] as string,
-                    tool_call_id: values[3] as string,
-                    tool_name: values[4] as string,
-                    status: "running",
-                    result_json: null,
-                    error_message: null,
-                  });
-                }
-              }
-              if (sql.includes("UPDATE agent_tool_executions")) {
-                const execution = executions.find((item) => item.id === values[1]);
-                if (execution && sql.includes("status = 'succeeded'")) {
-                  execution.status = "succeeded";
-                  execution.result_json = values[0] as string;
-                }
-                if (execution && sql.includes("status = 'failed'")) {
-                  execution.status = "failed";
-                  execution.error_message = values[0] as string;
-                }
-              }
-              return { meta: { changes: 1 } };
-            },
-          };
-        },
-      };
-    },
-  };
-  return { db, rows, executions };
+  const rows = initialRows.map(row => ({ ...row }));
+  return { db: { prepare(sql: string) { return { bind(...values: unknown[]) { return {
+    async all<T>() { return { results: selectJournalRows(rows, sql, values) as T[] }; },
+    async first<T>() { return null as T | null; },
+    async run() { throw new Error("Journal read must not write"); },
+  }; } }; } } };
 }
 
 function selectJournalRows(

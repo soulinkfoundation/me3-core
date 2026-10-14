@@ -11,7 +11,7 @@ function fixture(enabled = false) {
   f.raw.exec(`INSERT INTO plugin_installations(plugin_id,version,enabled,status)
     VALUES ('me3.mission-control','0.1.0',${enabled ? 1 : 0},'${enabled ? "installed" : "disabled"}');`);
   let resumes = 0;
-  const env = { ...f.env, ME3_ASSISTANT_RUNTIME: "agent", ME3_AGENT: {
+  const env = { ...f.env, ME3_AGENT: {
     idFromName: () => "alice", get: () => ({ fetch: async (_url: string, init: RequestInit) => {
       resumes++; expect(JSON.parse(String(init.body))).toEqual({ userId: "alice", turnId: "turn" });
       return Response.json({ ok: true, turnId: "turn" });

@@ -12,6 +12,7 @@ afterEach(() => { for (const db of databases.splice(0)) db.close(); vi.useRealTi
 type TestContext = AgentToolContext & { raw:DatabaseSync; intentVerdict?:AgentTargetIntentVerdict };
 function context(): TestContext {
   const raw = new DatabaseSync(":memory:"); databases.push(raw);
+  raw.exec("CREATE TABLE plugin_installations(plugin_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL, status TEXT NOT NULL)");
   for (const sql of [...AGENT_SCHEMA_STATEMENTS,...AGENT_PRESENTATION_SCHEMA_STATEMENTS]) raw.exec(sql);
   raw.exec(`CREATE TABLE assistant_messages(id TEXT PRIMARY KEY,owner_id TEXT,thread_id TEXT,role TEXT,content TEXT,metadata_json TEXT);`);
   raw.exec(readFileSync(new URL("../migrations/0059_agent_targets.sql", import.meta.url), "utf8"));

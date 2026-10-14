@@ -1,5 +1,5 @@
 import { assistantRuntimeNamespace } from "./assistant-runtime-binding";
-import type { AgentSandboxDispatchResponse } from "./agent-chat";
+import type { AgentSandboxDispatchResponse } from "@me3-core/plugin-agent-chat";
 import type { DbAgentChannelConnection, DbAgentChannelEvent, Env } from "./types";
 
 const AGENT_CHANNEL_DISPATCH_LEASE_MS = 130_000;
@@ -243,7 +243,7 @@ export async function dispatchAgentChannelTurn(
       replyText: null,
       model: null,
       source: null,
-      error: "Agent chat runtime is not configured",
+      error: "Agent runtime is unavailable",
     };
   }
 
@@ -251,7 +251,7 @@ export async function dispatchAgentChannelTurn(
   const stub = runtime.get(id);
   let response: Response;
   try {
-    response = await stub.fetch("https://me3-core-user-agent.internal/dispatch/sandbox", {
+    response = await stub.fetch("https://me3-agent/turn", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

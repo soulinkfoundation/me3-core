@@ -1,7 +1,7 @@
 import {
   listAgentMailboxThreadMessages,
   type AgentMailboxMessage,
-} from "./agent-chat";
+} from "@me3-core/plugin-agent-chat";
 import type { Env } from "./types";
 import { decodeMimeHeaderValue } from "../../../shared/email-headers";
 

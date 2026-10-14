@@ -362,21 +362,13 @@ export function registerMissionControlRoutes(app: AppHono, deps: OwnerRouteDeps)
   app.get("/api/mission-control/approvals", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
-    if (c.env.ME3_ASSISTANT_RUNTIME === "agent") {
+    try {
       const coreApprovals = await listNewAgentApprovals(c.env, ownerId, c.req.query("status"));
       const pluginApprovals = await isCorePluginEnabled(c.env, "me3.mission-control")
         ? await listMissionApprovals(c.env, ownerId, c.req.query("status")) : [];
       const approvals = [...coreApprovals, ...pluginApprovals];
       approvals.sort((a, b) => Date.parse(b.requestedAt) - Date.parse(a.requestedAt));
       return c.json({ approvals: approvals.slice(0, 100) });
-    }
-    const blocked = await requireMissionControlPlugin(c);
-    if (blocked) return blocked;
-
-    try {
-      return c.json({
-        approvals: await listMissionApprovals(c.env, ownerId, c.req.query("status")),
-      });
     } catch (error) {
       return missionControlErrorResponse(c, error);
     }
@@ -385,7 +377,7 @@ export function registerMissionControlRoutes(app: AppHono, deps: OwnerRouteDeps)
   app.post("/api/mission-control/approvals/:id", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
-    if (c.env.ME3_ASSISTANT_RUNTIME === "agent") {
+    {
       const approval = await c.env.DB.prepare("SELECT id FROM me3_agent_approvals WHERE id = ? AND owner_id = ?")
         .bind(c.req.param("id"), ownerId).first();
       if (approval) {

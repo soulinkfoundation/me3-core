@@ -3,25 +3,29 @@ import { createAgentSocialPost, createAgentSocialSuggestions, readAgentSocialSou
 import { domainTool, idProperty, objectSchema, ok, optionalString, requiredString } from "./common";
 import { approval, assertUnchanged, rememberTargets, requireTarget } from "./targets";
 import type { AgentToolContext } from "../types";
+import { requireEnabledPlugin } from "../plugin-authorization";
 
-function sourcePlugin(context: AgentToolContext, sourceType: unknown): AgentSocialSourceType {
+async function sourcePlugin(context: AgentToolContext, sourceType: unknown): Promise<AgentSocialSourceType> {
   if (sourceType !== "journal" && sourceType !== "mission_task") throw new Error("Social source must be journal or mission_task.");
   const plugin = sourceType === "journal" ? "me3.journal" : "me3.mission-control";
-  if (!context.enabledPluginIds.has(plugin)) throw new Error(`Source plugin ${plugin} must be installed and enabled.`);
+  await requireEnabledPlugin(context, plugin);
+  context.signal.throwIfAborted();
   return sourceType;
 }
 async function reviewedSource(args: Record<string, unknown>, context: AgentToolContext) {
-  const sourceType = sourcePlugin(context, args.sourceType); const sourceId = requiredString(args.sourceId, "Source ID");
+  const sourceType = await sourcePlugin(context, args.sourceType); const sourceId = requiredString(args.sourceId, "Source ID");
   const expected = await requireTarget<{ id: string; source: AgentSocialSource }>(context, "social source", `${sourceType}:${sourceId}`);
   const current = await readAgentSocialSource(context.db, context.ownerId, sourceType, sourceId, context.ownerTimezone);
   assertUnchanged(expected.source, current, "Social source");
+  await sourcePlugin(context, sourceType);
   return expected.source;
 }
 export function socialTools() {
   return [
     domainTool("core.social.source.read", async (args, context) => {
-      const sourceType = sourcePlugin(context, args.sourceType); const sourceId = requiredString(args.sourceId, "Source ID");
+      const sourceType = await sourcePlugin(context, args.sourceType); const sourceId = requiredString(args.sourceId, "Source ID");
       const source = await readAgentSocialSource(context.db, context.ownerId, sourceType, sourceId, context.ownerTimezone);
+      await sourcePlugin(context, sourceType);
       await rememberTargets(context, "social source", [{ id: `${sourceType}:${sourceId}`, source }, { id: `${sourceType}:${source.id}`, source }].filter((record, index, all) => all.findIndex(candidate => candidate.id === record.id) === index));
       return ok({ source });
     }),

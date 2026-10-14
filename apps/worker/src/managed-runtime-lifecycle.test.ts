@@ -289,7 +289,7 @@ describe("managed runtime lifecycle", () => {
     const purgeSdk = vi.fn(async () => new Response(null, { status: 204 }));
     const purgeAgent = vi.fn(async () => new Response(null, { status: 204 }));
     env.ME3_USER_AGENT = { idFromName: () => "legacy", get: () => ({ fetch: purgeLegacy }) } as unknown as DurableObjectNamespace;
-    env.ME3_SDK_USER_AGENT = { idFromName: () => "sdk", get: () => ({ fetch: purgeSdk }) } as unknown as DurableObjectNamespace;
+    Object.assign(env, { ME3_SDK_USER_AGENT: { idFromName: () => "sdk", get: () => ({ fetch: purgeSdk }) } });
     env.ME3_AGENT = { idFromName: () => "agent", get: () => ({ fetch: purgeAgent }) } as unknown as DurableObjectNamespace;
     await applyManagedRuntimeAction(env, {
       installationId: INSTALLATION_ID,
@@ -331,7 +331,7 @@ describe("managed runtime lifecycle", () => {
     });
     expect(bucket.keys).toHaveLength(0);
     expect(purgeLegacy).toHaveBeenCalledTimes(1);
-    expect(purgeSdk).toHaveBeenCalledTimes(1);
+    expect(purgeSdk).not.toHaveBeenCalled();
     expect(purgeAgent).toHaveBeenCalledTimes(1);
     expect(purged.storagePurgedAt).toBeTruthy();
     expect(purged.exportReady).toBe(false);

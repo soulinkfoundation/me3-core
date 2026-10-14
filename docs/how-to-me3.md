@@ -215,25 +215,14 @@ printf '%s\n' "your-gateway-id" | pnpm exec wrangler secret put CLOUDFLARE_AI_GA
 pnpm exec wrangler secret put CLOUDFLARE_API_TOKEN --config wrangler.toml
 ```
 
-#### Internal Live Model Evaluation
+#### Internal Agent Evaluation
 
-The fixed 39-task evaluator is for explicitly internal evaluation only. It sends synthetic tasks
-through Core's existing provider-neutral model and tool runtime, can incur provider charges, and
-prints a metadata-only report without prompts, responses, tool arguments, owner context, or keys.
-Normal tests and builds never dispatch these live requests.
-
-Set Workers AI credentials in the shell, optionally select a comma-separated subset with
-`ME3_MODEL_EVAL_CANDIDATES`, then acknowledge the live provider cost before running:
-
-```bash
-export CLOUDFLARE_ACCOUNT_ID="your-account-id"
-read -rs CLOUDFLARE_API_TOKEN && export CLOUDFLARE_API_TOKEN
-ME3_MODEL_EVAL_CONFIRM=I_UNDERSTAND_LIVE_PROVIDER_COSTS pnpm eval:models
-```
-
-The default candidates are Gemma 4 26B and GLM 4.7 Flash for Everyday plus GLM 5.2 for Advanced.
-The optional OpenAI and Anthropic candidates use the same Cloudflare credentials
-and require explicit inclusion in `ME3_MODEL_EVAL_CANDIDATES`.
+Use `pnpm eval:agent -- --runtime=new --model=scripted-fixture --repeat=3` for
+disposable seeded checks without model charges. The old fixed-model benchmark
+has been retired. See [agent evaluation](agent-evaluation.md) for the complete
+corpus, model grading, approved live budgets and JSON/Markdown evidence. Live
+runs use synthetic data and the installation's Cloudflare AI Gateway; normal
+tests and builds do not dispatch them.
 
 ## Portable Snapshot And Clean Restore
 

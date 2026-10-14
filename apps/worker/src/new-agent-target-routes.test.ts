@@ -9,15 +9,13 @@ import { registerAssistantRoutes } from "./routes/assistant";
 import type { AgentDb, AgentStatement } from "../../../packages/agent/src/types";
 import type { Env } from "./types";
 
-const transport = vi.hoisted(() => ({ replay: null as Record<string, unknown> | null }));
 vi.mock("./plugins", () => ({ isCorePluginEnabled: async () => true, listCorePluginRecords: async () => [{ id: "me3.calendar", enabled: true, status: "installed" }] }));
-vi.mock("./agent-chat", async importOriginal => ({
+vi.mock("@me3-core/plugin-agent-chat", async importOriginal => ({
   ...await importOriginal<Record<string, unknown>>(),
-  getAgentSandboxTurnResult: async () => transport.replay,
   createAgentSandboxTurnRecord: async (_env: Env, input: { requestId: string; messageText: string }) => ({ turnId: `turn-${input.requestId}`, messageText: input.messageText, replyToMessageId: null, connection: { id: "connection" }, sourceEvent: { id: `event-${input.requestId}` } }),
 }));
 const close: Array<() => void> = [];
-afterEach(() => { for (const fn of close.splice(0)) fn(); vi.restoreAllMocks(); transport.replay = null; });
+afterEach(() => { for (const fn of close.splice(0)) fn(); vi.restoreAllMocks(); });
 function fixture() {
   const file = join(mkdtempSync(join(tmpdir(), "me3-target-route-")), "installation.sqlite");
   let raw = new DatabaseSync(file); close.push(() => raw.close());
@@ -28,7 +26,7 @@ function fixture() {
   let beforeBatch: (() => void) | undefined;
   const db: AgentDb = { prepare(sql) { let values: unknown[] = []; const statement = { bind(...args: unknown[]) { values = args; return statement; }, async first<T>() { return (raw.prepare(sql).get(...values as never[]) ?? null) as T | null; }, async all<T>() { return { results: raw.prepare(sql).all(...values as never[]) as T[] }; }, async run() { return { meta: { changes: Number(raw.prepare(sql).run(...values as never[]).changes) } }; } }; executions.set(statement, () => ({meta:{changes:Number(raw.prepare(sql).run(...values as never[]).changes)}})); return statement; }, async batch(statements) { beforeBatch?.(); beforeBatch = undefined; raw.exec("BEGIN IMMEDIATE"); try { const result = statements.map(statement => executions.get(statement)!()); raw.exec("COMMIT"); return result; } catch (error) { raw.exec("ROLLBACK"); throw error; } } };
   const dispatch = vi.fn(async (_url: string, options: { body: string }) => { const input = JSON.parse(options.body); return Response.json({ ok: true, status: "complete", threadId: input.threadId, turnId: input.turnId, replyText: "Synthetic selection accepted." }); });
-  const env = { DB: db, ME3_ASSISTANT_RUNTIME: "agent", ME3_DEPLOYMENT_MODE: "self_hosted", ME3_AGENT: { idFromName: (owner: string) => owner, get: () => ({ fetch: dispatch }) } } as unknown as Env;
+  const env = { DB: db, ME3_DEPLOYMENT_MODE: "self_hosted", ME3_AGENT: { idFromName: (owner: string) => owner, get: () => ({ fetch: dispatch }) } } as unknown as Env;
   const app = new Hono<{ Bindings: Env }>();
   registerAssistantRoutes(app, { requireOwner: async c => c.req.header("Authorization") === "Bearer synthetic-owner" ? "owner" : null, unauthorized: () => Response.json({ error: "Unauthorized" }, { status: 401 }), getSessionOwnerId: async () => "owner", getSetupRequired: async () => [] });
   const post = (targetSelection: unknown, options: { requestId?: string; threadId?: string; authorized?: boolean; stream?: boolean } = {}) => app.request(`/api/assistant/chat/turn${options.stream ? "/stream" : ""}`, { method: "POST", headers: { "Content-Type": "application/json", ...(options.authorized === false ? {} : { Authorization: "Bearer synthetic-owner" }) }, body: JSON.stringify({ requestId: options.requestId || "request", threadId: options.threadId || "thread", messageText: "Choose this exact saved target.", targetSelection, userId: "other-owner" }) }, env);
@@ -107,10 +105,6 @@ describe("authenticated target selection before new agent dispatch", () => {
   it.each(["alias","archived"])("rejects %s between preflight and input admission", async reason => {
     const f=fixture();const selection=menu(f);f.race(()=>f.raw().exec(reason==="alias"?"INSERT INTO me3_agent_request_aliases(owner_id,request_id,turn_id,input_json) VALUES('owner','request','origin','{}')":"UPDATE assistant_threads SET status='archived' WHERE id='thread'"));
     expect((await f.post(selection)).status).toBe(409);expect(f.dispatch).not.toHaveBeenCalled();expect(f.raw().prepare("SELECT COUNT(*) count FROM me3_agent_turns WHERE request_id='request'").get()).toMatchObject({count:0});
-  });
-  it.each([false,true])("route cached replay revalidates a stale card before %s stream delivery", async stream => {
-    const f=fixture();menu(f);menu(f,"newer",2);transport.replay={ok:true,turnId:"origin",threadId:"thread",replyText:"Choose",targetPresentation:{id:"menu",status:"pending"}};
-    const response=await f.post(undefined,{stream});expect(response.status).toBe(200);const text=await response.text();expect(text).toContain('"status":"unavailable"');expect(text).not.toContain('"id":"newer"');expect(f.dispatch).not.toHaveBeenCalled();
   });
 
   it("does not claim a partially restored exact input if its request becomes an approval alias during admission", async () => {

@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { executeNewAgentTurn, type NewAgentDispatchInput } from "./agent-runtime";
-import { appendAgentStreamEvent, persistAgentInput } from "../../../packages/agent/src";
-import { prepareTargetPresentation, targetPresentationCard } from "../../../packages/agent/src/presentations";
+import { appendAgentStreamEvent, createD1TurnStore, persistAgentInput, runAgentTurn } from "../../../packages/agent/src";
+import { loadTargetPresentation } from "../../../packages/agent/src/presentations";
 import { createDomainTools } from "../../../packages/agent/src/tools";
-import type { AgentDb, AgentMessage, AgentToolContext } from "../../../packages/agent/src/types";
+import type { AgentDb, AgentMessage, AgentModel, AgentToolContext } from "../../../packages/agent/src/types";
 import type { Env } from "./types";
 
 vi.mock("./ai-providers", () => ({ getAiSettings: async () => ({ defaults: { chat: { providerId: "openai", model: "gpt-5.5" } } }) }));
@@ -81,15 +81,27 @@ function fixture() {
     await appendAgentStreamEvent(db, "owner", turnId, "status", { state: "running" });
     raw.prepare("INSERT INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)")
       .run(`${turnId}:user`, "owner", "thread", originalText, JSON.stringify({ requestId, runtime: "agent" }));
-    const result = await createDomainTools().find(tool => tool.name === "core_reminders_list")!.execute({ query: "Call Alex" }, c);
-    const selectionId = (result.data as { selectionId: string }).selectionId;
-    const presentation = await prepareTargetPresentation(c, { selectionId, toolName: "core_reminders_update", arguments: changes }, createDomainTools());
-    const card = targetPresentationCard(presentation);
-    const payload = { runtime: "agent", turnId, auditId: turnId, threadId: "thread", status: "complete", replyText: "Choose a record to continue with the proposed action.", targetPresentation: card };
+    // Publish the actual loop's read/card/checkpoint evidence; a handmade card
+    // alone cannot authorize a later reference-read inference.
+    const tools = createDomainTools();
+    const model: AgentModel = { id: "synthetic-history", async step({ messages }) {
+      const read = messages.find(message => message.role === "tool" && message.toolCallId === "read");
+      return { text: "", toolCalls: [read
+        ? { id: "present", name: "core_targets_present", arguments: { selectionId: JSON.parse(read.content).data.selectionId, toolName: "core_reminders_update", arguments: changes } }
+        : { id: "read", name: "core_reminders_list", arguments: { query: "Call Alex" } }] };
+    } };
+    const result = await runAgentTurn({ model, tools, store: createD1TurnStore(db, c), context: c,
+      messages: [{ role: "user", content: originalText }], signal: c.signal,
+      onEvent: async event => { await appendAgentStreamEvent(db, "owner", turnId, event.event, event.data); } });
+    expect(result.status).toBe("complete"); expect(result.targetPresentation?.status).toBe("pending");
+    const presentation = await loadTargetPresentation(db, { ownerId: "owner", threadId: "thread", presentationId: result.targetPresentation!.id });
+    expect(presentation).not.toBeNull();
+    const payload = { runtime: "agent", turnId, auditId: turnId, threadId: "thread", status: result.status, replyText: result.replyText, targetPresentation: result.targetPresentation };
     raw.prepare("UPDATE me3_agent_turns SET status='complete',response_json=? WHERE turn_id=?").run(JSON.stringify(payload), turnId);
     raw.prepare("INSERT INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)")
       .run(`${turnId}:assistant:complete:final`, "owner", "thread", payload.replyText, JSON.stringify(payload));
-    return { ...presentation, assistantId: `${turnId}:assistant:complete:final` };
+    await appendAgentStreamEvent(db, "owner", turnId, "done", payload);
+    return { ...presentation!, assistantId: `${turnId}:assistant:complete:final` };
   }
   return { db, env, requests, context, seedCard, raw: () => raw, reopen() { raw.close(); raw = new DatabaseSync(file); }, setCalls(value: typeof calls) { calls = value; } };
 }

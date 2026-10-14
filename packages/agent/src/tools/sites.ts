@@ -5,6 +5,7 @@ import { listAgentMissionProjects } from "@me3-core/plugin-mission-control";
 import { domainTool, ok, optionalString, requiredString, services } from "./common";
 import { rememberTargets, requireTarget } from "./targets";
 import { resolveProject } from "./tasks";
+import { requireEnabledPlugin } from "../plugin-authorization";
 
 export function siteTools() {
   return [
@@ -41,8 +42,16 @@ export function siteTools() {
       if (sourceType === "journal" && !journalEnabled || sourceType === "mission_task" && !tasksEnabled || !journalEnabled && !tasksEnabled) throw new Error("Requested content plugin must be installed and enabled.");
       if (sourceType === "all" && !journalEnabled) sourceType = "mission_task";
       if (sourceType === "all" && !tasksEnabled) sourceType = "journal";
+      const dependencies = sourceType === "all" ? ["me3.journal", "me3.mission-control"] : [sourceType === "journal" ? "me3.journal" : "me3.mission-control"];
+      if ((args.projectId || args.projectName) && !dependencies.includes("me3.mission-control")) dependencies.push("me3.mission-control");
+      const requireSources = async () => {
+        for (const plugin of dependencies) await requireEnabledPlugin(context, plugin);
+        context.signal.throwIfAborted();
+      };
+      await requireSources();
       const projectId = args.projectId || args.projectName ? resolveProject(await listAgentMissionProjects({ DB: context.db }, context.ownerId), args) : undefined;
       const result = await searchAgentOwnerContent(context.db, context.ownerId, { ...args as AgentOwnerContentSearchInput, sourceType, projectId });
+      await requireSources();
       const selection = await rememberTargets(context, "owner content", result.results.map(record => ({ ...record, id: `${record.sourceType}:${record.sourceId}` })));
       return { status: result.ambiguous ? "needs_selection" : "ok", data: { ...result, ...selection } };
     }),

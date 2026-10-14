@@ -6,7 +6,7 @@ import {
   markAgentContactInTouch,
   setContactReminder,
   updateAgentContact,
-} from "../agent-chat";
+} from "@me3-core/plugin-agent-chat";
 import type { AppContext, AppHono } from "../http/types";
 
 type ContactsRouteDeps = {

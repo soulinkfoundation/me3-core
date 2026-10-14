@@ -1,5 +1,5 @@
 import { stageMailboxAttachmentKeys, finishMailboxAttachmentStaging, cleanMailboxAttachmentStaging } from "./mailbox-attachment-staging";
-import { touchContactInteraction, type AgentMailboxMessage } from "./agent-chat";
+import { touchContactInteraction, type AgentMailboxMessage } from "@me3-core/plugin-agent-chat";
 import type { EmailProviderAttachment } from "./email-providers";
 import { publishMailboxMessageReceived } from "./mailbox-events";
 import { triageInboundInvoiceEmail } from "./accounts-email-triage";

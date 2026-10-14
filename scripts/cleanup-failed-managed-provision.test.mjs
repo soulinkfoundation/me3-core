@@ -90,6 +90,42 @@ test("failed provision cleanup deletes the SDK Durable Object namespace too", as
   assert.equal(deletedSdk, true);
 });
 
+test("already-retired SDK cleanup leaves foreign SDK namespaces untouched", async () => {
+  const fake = createFixture();
+  const foreign = { id: "e".repeat(32), script: "unrelated-worker", class: "Me3SdkUserAgent" };
+  fake.state.namespaces.push(foreign);
+  await cleanupFailedManagedProvision(contract(), {
+    request: fake.request,
+    reportStage: async () => {},
+    emptyR2: async () => { fake.state.r2Objects = []; },
+    deployTombstone: async ({ deleteSdkDurableObject }) => {
+      assert.equal(deleteSdkDurableObject, false);
+      fake.state.producerBindings.clear();
+      fake.state.namespaces = [foreign];
+    },
+  });
+  assert.deepEqual(fake.state.namespaces, [foreign]);
+});
+
+test("duplicate or shared optional SDK namespaces refuse before failed-provision cleanup", async (t) => {
+  for (const shared of [false, true]) {
+    await t.test(shared ? "shared namespace id" : "duplicate SDK class", async () => {
+      const fake = createFixture();
+      fake.state.namespaces.push({ id: "e".repeat(32), script: WORKER_NAME, class: "Me3SdkUserAgent" });
+      fake.state.namespaces.push({ id: shared ? "e".repeat(32) : "f".repeat(32), script: shared ? "unrelated-worker" : WORKER_NAME, class: "Me3SdkUserAgent" });
+      let emptied = false;
+      await assert.rejects(cleanupFailedManagedProvision(contract(), {
+        request: fake.request,
+        reportStage: async () => {},
+        emptyR2: async () => { emptied = true; fake.state.r2Objects = []; },
+        deployTombstone: async () => { throw new Error("late tombstone admission"); },
+      }), /Durable Object namespace identity does not match/);
+      assert.equal(emptied, false);
+      assert.equal(fake.calls.some(({ method }) => method === "DELETE"), false);
+    });
+  }
+});
+
 test("failed provision cleanup deletes the new agent namespace and verifies it before deleting D1", async () => {
   for (const keepAgent of [false, true]) {
     const fake = createFixture();

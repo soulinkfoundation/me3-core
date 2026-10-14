@@ -7,7 +7,7 @@ import {
   listAgentContacts,
   markAgentMailboxDraftSent,
   updateAgentContact,
-} from "./agent-chat";
+} from "@me3-core/plugin-agent-chat";
 import { registerContactsRoutes } from "./routes/contacts";
 import { getSoulinkPersonalInviteLink, syncSoulinkContacts } from "./routes/channels";
 import type { AppHono } from "./http/types";

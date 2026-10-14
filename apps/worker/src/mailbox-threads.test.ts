@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   listAgentMailboxThreadMessages,
   type AgentMailboxMessage,
-} from "./agent-chat";
+} from "@me3-core/plugin-agent-chat";
 import {
   listMailboxThreads,
   listMailboxThreadMessages,

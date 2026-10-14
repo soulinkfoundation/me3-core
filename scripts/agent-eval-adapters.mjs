@@ -1,6 +1,5 @@
 export function createRuntimeAdapter(runtime) {
-  if (runtime === "sdk") return { runTurn: async (input) => (await import("./agent-eval-adapter-sdk.mjs")).runSdkEvalTurn(input) };
-  if (runtime !== "new") throw new Error("Use --runtime=new or --runtime=sdk; the SDK is informational only.");
+  if (runtime !== "new") throw new Error("Use --runtime=new; the legacy and SDK runtimes have been retired.");
   return { runTurn: runNewEvalTurn };
 }
 

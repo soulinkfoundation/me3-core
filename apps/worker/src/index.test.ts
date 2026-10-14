@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-vi.mock("./sdk-user-agent", () => ({ Me3SdkUserAgent: class {} }));
 vi.mock("./me3-agent", () => ({ Me3Agent: class {} }));
 import Stripe from "stripe";
 import { validateMe3KnowledgeAgainstPlugins } from "@me3/knowledge";
@@ -3424,14 +3423,8 @@ function addAssistantEditableSite(
   options: {
     blogEnabled?: boolean;
     publishedAt?: string | null;
-    assistantSiteToolsEnabled?: boolean;
   } = {},
 ) {
-  if (options.assistantSiteToolsEnabled === false) {
-    delete env.ME3_ASSISTANT_SITE_TOOLS_ENABLED;
-  } else {
-    env.ME3_ASSISTANT_SITE_TOOLS_ENABLED = "1";
-  }
   env.sites.push({
     id: "site-assistant",
     user_id: "owner",
@@ -6023,6 +6016,8 @@ describe("ME3 Worker auth", () => {
 
   it("allows owner-only assistant requests with a valid session", async () => {
     const env = createEnv();
+    const runtimeFetch = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ ok: true, replyText: "Authenticated current reply." }));
+    env.ME3_AGENT = { idFromName: (name: string) => name, get: () => ({ fetch: runtimeFetch }) } as unknown as DurableObjectNamespace;
     const session = cookieHeader(await bootstrap(env));
 
     const response = await app.fetch(
@@ -6038,7 +6033,9 @@ describe("ME3 Worker auth", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(env.messages).toMatchObject([{ ownerId: "owner", content: "Hello" }]);
+    expect(await response.json()).toMatchObject({ ok: true, reply: "Authenticated current reply." });
+    expect(runtimeFetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(runtimeFetch.mock.calls[0]?.[1]?.body))).toMatchObject({ userId: "owner", messageText: "Hello" });
   });
 
   it("uploads typed assistant text attachments with extracted text", async () => {
@@ -6235,7 +6232,7 @@ describe("ME3 Worker auth", () => {
       });
     });
 
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -6398,7 +6395,7 @@ describe("ME3 Worker auth", () => {
         contentAction: null,
       });
     });
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -6456,7 +6453,7 @@ describe("ME3 Worker auth", () => {
       });
     });
 
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -6545,12 +6542,11 @@ describe("ME3 Worker auth", () => {
     });
   });
 
-  it("routes site-looking prompts through agent chat when assistant site tools are disabled", async () => {
+  it("routes site-looking prompts through the current runtime without route-side writes", async () => {
     const env = createEnv();
     const session = cookieHeader(await bootstrap(env));
     addAssistantEditableSite(env, {
       blogEnabled: true,
-      assistantSiteToolsEnabled: false,
     });
     const runtimeFetch = vi.fn(async () =>
       Response.json({
@@ -6568,7 +6564,7 @@ describe("ME3 Worker auth", () => {
         contentAction: null,
       }),
     );
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -6627,7 +6623,7 @@ describe("ME3 Worker auth", () => {
         replyText: "Advanced runtime reply.",
       });
     });
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -6660,72 +6656,6 @@ describe("ME3 Worker auth", () => {
     expect(siteFileText(env, "site-assistant", "src/me.json")).not.toContain(
       "This should not be written.",
     );
-  });
-
-  it("requires @site again before publishing a pending assistant site draft", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env, { blogEnabled: true });
-    env.AI = {
-      run: vi.fn(async () => ({
-        response: JSON.stringify({
-          bio: "Scoped draft bio.",
-        }),
-      })),
-    } as unknown as Ai;
-
-    const draftResponse = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          messageText: '@site update my site bio to "Scoped draft bio."',
-        }),
-      }),
-      env,
-    );
-    const draftPayload = (await draftResponse.json()) as Record<string, unknown>;
-    const threadId = String(draftPayload.threadId);
-
-    const publishResponse = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          threadId,
-          messageText: "publish it",
-        }),
-      }),
-      env,
-    );
-    const publishPayload = (await publishResponse.json()) as Record<string, unknown>;
-
-    expect(draftResponse.status).toBe(200);
-    expect(publishResponse.status).toBe(200);
-    expect(publishPayload).toMatchObject({
-      ok: true,
-      specialist: "core.assistant-scopes",
-      siteAction: null,
-    });
-    expect(String(publishPayload.replyText)).toContain("Add @site");
-    expect(env.sites.find((site) => site.id === "site-assistant")?.published_at).toBeNull();
-    expect(siteFileText(env, "site-assistant", "public/me.json") || "").not.toContain(
-      "Scoped draft bio.",
-    );
-    expect(
-      env.siteFiles.some(
-        (file) =>
-          file.site_id === "site-assistant" &&
-          file.path.startsWith("assistant/site-update-drafts/") &&
-          file.path.endsWith(`${threadId}.json`),
-      ),
-    ).toBe(true);
   });
 
   it("saves and clears the assistant display name", async () => {
@@ -6796,48 +6726,6 @@ describe("ME3 Worker auth", () => {
     expect(env.owner?.assistant_name).toBeNull();
   });
 
-  it.each(["Update my site bio", "publish it", "Update @missing site bio"])(
-    "does not choose a site for an ambiguous or unknown request: %s",
-    async (message) => {
-      const env = createEnv();
-      const session = cookieHeader(await bootstrap(env));
-      addAssistantEditableSite(env);
-      env.sites.push({ ...env.sites[0]!, id: "studio", username: "studio", site_role: "organization" });
-      const before = env.siteFiles.map((file) => ({ ...file }));
-      const response = await app.fetch(new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Cookie: session },
-        body: JSON.stringify({ messageText: `@site ${message}` }),
-      }), env);
-      expect(response.status).toBe(200);
-      const payload = await response.json() as { replyText: string; siteAction: { siteId: string | null } };
-      expect(payload.replyText).toContain(message.includes("@missing") ? "could not find @missing" : "Which site");
-      expect(payload.siteAction.siteId).toBeNull();
-      expect(env.siteFiles).toEqual(before);
-    },
-  );
-
-  it("does not publish a personal draft when approval names a different site", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env);
-    env.sites.push({ ...env.sites[0]!, id: "studio", username: "studio", site_role: "organization" });
-    const send = (messageText: string, threadId?: string) => app.fetch(new Request("http://localhost/api/assistant/chat/turn", {
-      method: "POST", headers: { "Content-Type": "application/json", Cookie: session },
-      body: JSON.stringify({ messageText, threadId }),
-    }), env);
-    const drafted = await send('@site Update @owner short bio field to say "Personal update."');
-    expect(drafted.status).toBe(200);
-    const payload = await drafted.json() as { threadId: string; siteAction: { siteId: string } };
-    expect(payload.siteAction.siteId).toBe("site-assistant");
-    const before = env.siteFiles.map((file) => ({ ...file }));
-    const approval = await send("@site publish @studio", payload.threadId);
-    expect(approval.status).toBe(200);
-    expect(await approval.json()).toMatchObject({ replyText: expect.stringContaining("no pending draft for @studio") });
-    expect(env.siteFiles).toEqual(before);
-    expect(env.sites.every((site) => !site.published_at)).toBe(true);
-  });
-
   it.each([["profile", "publish"], ["organization", "publish"], ["profile", "upload"], ["organization", "upload"]] as const)(
     "only syncs the personal directory for a %s site via %s",
     async (role, method) => {
@@ -6863,646 +6751,6 @@ describe("ME3 Worker auth", () => {
       }
     },
   );
-
-  it("drafts and publishes profile site updates from assistant approval", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env, { blogEnabled: true });
-    const aiRun = vi.fn(async () => ({
-      response: JSON.stringify({
-        aboutParagraph:
-          "Model-written about paragraph for a public site that feels specific, useful, and alive.",
-        blogPost: {
-          title: "Personal AI Assistants in Practice",
-          bodyMarkdown:
-            "# Personal AI Assistants in Practice\n\nModel-written blog copy about practical personal AI assistants, context, and momentum.",
-          excerpt: "Model-written blog copy about practical personal AI assistants.",
-        },
-      }),
-    }));
-    env.AI = { run: aiRun } as unknown as Ai;
-
-    const draftResponse = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          messageText:
-            "@site Update my site, add a made up paragraph to my about page and add a blog post about 'personal ai assistants'. make it all up, do your best :)",
-        }),
-      }),
-      env,
-    );
-    const draftPayload = (await draftResponse.json()) as Record<string, unknown>;
-    const threadId = String(draftPayload.threadId);
-    const draftFile = env.siteFiles.find(
-      (file) =>
-        file.site_id === "site-assistant" &&
-        file.path.startsWith("assistant/site-update-drafts/") &&
-        file.path.endsWith(`${threadId}.json`),
-    );
-
-    expect(draftResponse.status).toBe(200);
-    expect(draftPayload).toMatchObject({
-      ok: true,
-      source: "workers-ai",
-      specialist: "core.sites.update_draft",
-      model: DEFAULT_WORKERS_AI_TEXT_MODEL,
-    });
-    expect(env.assistantThreads[0]?.title).not.toContain("@site");
-    expect(aiRun).toHaveBeenCalledOnce();
-    expect(String(draftPayload.replyText)).toContain("Reply `publish`");
-    expect(String(draftPayload.replyText)).toContain(`Generated with ${DEFAULT_WORKERS_AI_TEXT_MODEL}`);
-    expect(String((draftPayload.siteAction as Record<string, unknown>).url)).toContain(
-      "/sites/owner?edit=blog",
-    );
-    const persistedAssistantMessage = env.messages.find(
-      (message) =>
-        message.threadId === threadId &&
-        message.role === "assistant" &&
-        message.content.includes("Draft saved"),
-    );
-    const persistedUserMessage = env.messages.find(
-      (message) => message.threadId === threadId && message.role === "user",
-    );
-    expect(persistedUserMessage?.content).toContain("@site Update my site");
-    expect(JSON.parse(persistedUserMessage?.metadata_json || "{}")).toMatchObject({
-      assistantScopes: ["site"],
-      assistantScopeTokens: ["@site"],
-    });
-    const persistedMetadata = JSON.parse(
-      persistedAssistantMessage?.metadata_json || "{}",
-    ) as Record<string, any>;
-    expect(persistedMetadata.siteAction).toMatchObject({
-      kind: "draft_created",
-      postTitle: "Personal AI Assistants in Practice",
-      url: expect.stringContaining("/sites/owner?edit=blog"),
-    });
-    expect(draftFile).toBeTruthy();
-    const savedDraft = JSON.parse(new TextDecoder().decode(draftFile?.content)) as {
-      changes: { postDraft?: boolean };
-      sourceFiles: Record<string, string>;
-    };
-    const savedDraftProfile = JSON.parse(savedDraft.sourceFiles["me.json"]) as {
-      posts?: Array<{ slug?: string; draft?: boolean; publishedAt?: string }>;
-    };
-    expect(savedDraft.changes.postDraft).toBe(true);
-    expect(savedDraftProfile.posts?.[0]).toMatchObject({
-      slug: "personal-ai-assistants-in-practice",
-      draft: true,
-    });
-    expect(savedDraftProfile.posts?.[0]?.publishedAt).toBeUndefined();
-    expect(siteFileText(env, "site-assistant", "src/about.md")).toContain(
-      "Model-written about paragraph",
-    );
-    expect(env.sites.find((site) => site.id === "site-assistant")?.published_at).toBeNull();
-
-    const publishResponse = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          threadId,
-          messageText: "@site yes publish them",
-        }),
-      }),
-      env,
-    );
-    const publishPayload = (await publishResponse.json()) as Record<string, unknown>;
-
-    expect(publishResponse.status).toBe(200);
-    expect(publishPayload).toMatchObject({
-      ok: true,
-      source: "tool",
-      specialist: "core.sites.publish",
-    });
-    expect(String(publishPayload.replyText)).toContain("Published");
-    expect(String(publishPayload.replyText)).toContain("I updated your site");
-    expect(String(publishPayload.replyText)).toContain(
-      'Blog title: "Personal AI Assistants in Practice"',
-    );
-    expect(String(publishPayload.replyText)).toContain("Open your site dashboard");
-    expect(String(publishPayload.replyText)).toContain("/sites/owner?edit=blog");
-    expect(String((publishPayload.siteAction as Record<string, unknown>).url)).toContain(
-      "/sites/owner?edit=blog",
-    );
-    expect(String(publishPayload.replyText)).not.toContain("@owner");
-    expect(env.sites.find((site) => site.id === "site-assistant")?.published_at).toBeTruthy();
-    const publishedProfile = JSON.parse(
-      siteFileText(env, "site-assistant", "src/me.json") || "{}",
-    ) as { posts?: Array<{ slug?: string; draft?: boolean; publishedAt?: string }> };
-    const publishedPost = publishedProfile.posts?.find(
-      (post) => post.slug === "personal-ai-assistants-in-practice",
-    );
-    expect(publishedPost).toMatchObject({ draft: false });
-    expect(publishedPost?.publishedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(siteFileText(env, "site-assistant", "src/about.md")).toContain(
-      "Model-written about paragraph",
-    );
-    expect(
-      siteFileText(
-        env,
-        "site-assistant",
-        "src/blog/personal-ai-assistants-in-practice.md",
-      ),
-    ).toContain("Model-written blog copy");
-    expect(
-      siteFileText(
-        env,
-        "site-assistant",
-        "public/blog/personal-ai-assistants-in-practice.html",
-      ),
-    ).toContain("Model-written blog copy");
-    expect(siteFileText(env, "site-assistant", "public/me.json")).toContain(
-      "personal-ai-assistants-in-practice",
-    );
-    expect(
-      env.siteFiles.find(
-        (file) =>
-          file.site_id === "site-assistant" &&
-          file.path.startsWith("assistant/site-update-drafts/") &&
-          file.path.endsWith(`${threadId}.json`),
-      ),
-    ).toBeUndefined();
-  });
-
-  it("drafts profile bio updates into me.json instead of the about page", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env);
-    env.AI = {
-      run: vi.fn(async () => ({
-        response: JSON.stringify({
-          bio: "I build useful AI systems for everyday creative momentum.",
-        }),
-      })),
-    } as unknown as Ai;
-
-    const response = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          messageText:
-            '@site update @owner short bio field to say "I build useful AI systems for everyday creative momentum."',
-        }),
-      }),
-      env,
-    );
-    const payload = (await response.json()) as Record<string, unknown>;
-    const profile = JSON.parse(siteFileText(env, "site-assistant", "src/me.json") || "{}") as {
-      bio?: string;
-    };
-
-    expect(response.status).toBe(200);
-    expect(payload).toMatchObject({
-      ok: true,
-      specialist: "core.sites.update_draft",
-      siteAction: { kind: "draft_created", pending: true, published: false },
-    });
-    expect(String(payload.replyText)).toContain("Bio: updated the short profile bio");
-    expect(String(payload.replyText)).not.toContain("About page");
-    expect(profile.bio).toBe("I build useful AI systems for everyday creative momentum.");
-    expect(siteFileText(env, "site-assistant", "src/about.md")).toBe("# About\n\nOriginal about.");
-    expect(env.sites.find((site) => site.id === "site-assistant")?.published_at).toBeNull();
-  });
-
-  it("publishes assistant drafts for already-published local sites without Cloud username blocking", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env, {
-      publishedAt: "2026-06-04T10:00:00Z",
-    });
-    env.ME3_CLOUD_API_ORIGIN = "https://api.me3.example";
-    env.installSecrets.set("ME3_CLOUD_OWNER_ID", "user123");
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ available: false }), {
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    env.AI = {
-      run: vi.fn(async () => ({
-        response: JSON.stringify({
-          bio: "Published local site bio.",
-        }),
-      })),
-    } as unknown as Ai;
-
-    const draftResponse = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          messageText: '@site Update my site short bio field to say "Published local site bio."',
-        }),
-      }),
-      env,
-    );
-    const draftPayload = (await draftResponse.json()) as Record<string, unknown>;
-    const threadId = String(draftPayload.threadId);
-
-    const publishResponse = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          threadId,
-          messageText: "@site publish it",
-        }),
-      }),
-      env,
-    );
-    const publishPayload = (await publishResponse.json()) as Record<string, unknown>;
-
-    expect(draftResponse.status).toBe(200);
-    expect(publishResponse.status).toBe(200);
-    expect(publishPayload).toMatchObject({
-      ok: true,
-      specialist: "core.sites.publish",
-      siteAction: { kind: "published", published: true },
-    });
-    expect(String(publishPayload.replyText)).not.toContain("username is already taken");
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(siteFileText(env, "site-assistant", "public/me.json")).toContain(
-      "Published local site bio.",
-    );
-
-    fetchMock.mockRestore();
-  });
-
-  it("rejects assistant blog post drafts when the site blog feature is disabled", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env);
-
-    const response = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          messageText: "@site Update my site, draft a blog post about personal ai assistants.",
-        }),
-      }),
-      env,
-    );
-    const payload = (await response.json()) as Record<string, unknown>;
-
-    expect(response.status).toBe(200);
-    expect(payload).toMatchObject({
-      ok: true,
-      source: "tool",
-      specialist: "core.sites.update_draft",
-      siteAction: {
-        kind: "unsupported_feature",
-        siteId: "site-assistant",
-        username: "owner",
-        pending: false,
-        published: false,
-        files: [],
-      },
-    });
-    expect(String((payload.siteAction as Record<string, unknown>).url)).toContain(
-      "/sites/owner?edit=additional-features",
-    );
-    expect(String(payload.replyText)).toContain("Blog is not enabled");
-    expect(String(payload.replyText)).toContain("Additional features");
-    expect(
-      env.siteFiles.some(
-        (file) =>
-          file.site_id === "site-assistant" &&
-          file.path.startsWith("assistant/site-update-drafts/"),
-      ),
-    ).toBe(false);
-    expect(
-      env.siteFiles.some(
-        (file) =>
-          file.site_id === "site-assistant" &&
-          file.path.startsWith("src/blog/"),
-      ),
-    ).toBe(false);
-  });
-
-  it("retries a disabled blog request as a draft after Blog is enabled", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env);
-
-    const blockedResponse = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          messageText:
-            "@site For my site, draft and save an outline for a blog post on the benefits of an open source personal ai assistant.",
-        }),
-      }),
-      env,
-    );
-    const blockedPayload = (await blockedResponse.json()) as Record<string, unknown>;
-    const threadId = String(blockedPayload.threadId);
-    const meJsonFile = env.siteFiles.find(
-      (file) => file.site_id === "site-assistant" && file.path === "src/me.json",
-    );
-    expect(meJsonFile).toBeTruthy();
-    if (!meJsonFile) throw new Error("Missing assistant site me.json fixture");
-    const meJson = JSON.parse(new TextDecoder().decode(meJsonFile.content)) as Record<
-      string,
-      unknown
-    >;
-    meJson.blogEnabled = true;
-    meJson.blogTitle = "Blog";
-    const nextContent = new TextEncoder().encode(JSON.stringify(meJson, null, 2));
-    if (meJsonFile) {
-      meJsonFile.content = nextContent;
-      meJsonFile.size = nextContent.byteLength;
-    }
-
-    const retryResponse = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          threadId,
-          messageText: "@site Ok I enabled it, please try again",
-        }),
-      }),
-      env,
-    );
-    const retryPayload = (await retryResponse.json()) as Record<string, unknown>;
-
-    expect(blockedResponse.status).toBe(200);
-    expect(String(blockedPayload.replyText)).toContain("Blog is not enabled");
-    expect(retryResponse.status).toBe(200);
-    expect(retryPayload).toMatchObject({
-      ok: true,
-      source: "fallback",
-      specialist: "core.sites.update_draft",
-      siteAction: {
-        kind: "draft_created",
-        siteId: "site-assistant",
-        username: "owner",
-        pending: true,
-        published: false,
-      },
-    });
-    expect(String(retryPayload.replyText)).toContain("Draft saved");
-    expect(String(retryPayload.replyText)).toContain("Blog draft title");
-    expect(String(retryPayload.replyText)).toContain("Review it in your site dashboard");
-    expect(String(retryPayload.replyText)).not.toContain("Published");
-    expect(env.sites.find((site) => site.id === "site-assistant")?.published_at).toBeNull();
-    expect(
-      env.siteFiles.some(
-        (file) =>
-          file.site_id === "site-assistant" &&
-          file.path.startsWith("assistant/site-update-drafts/") &&
-          file.path.endsWith(`${threadId}.json`),
-      ),
-    ).toBe(true);
-  });
-
-  it("keeps save-draft follow-ups in the assistant site update flow", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env, { blogEnabled: true });
-
-    const draftResponse = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          messageText: "@site Update my site, draft a blog post about personal ai assistants.",
-        }),
-      }),
-      env,
-    );
-    const draftPayload = (await draftResponse.json()) as Record<string, unknown>;
-    const threadId = String(draftPayload.threadId);
-
-    const saveResponse = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          threadId,
-          messageText: "@site can you save it as a draft?",
-        }),
-      }),
-      env,
-    );
-    const savePayload = (await saveResponse.json()) as Record<string, unknown>;
-
-    expect(draftResponse.status).toBe(200);
-    expect(saveResponse.status).toBe(200);
-    expect(savePayload).toMatchObject({
-      ok: true,
-      source: "tool",
-      specialist: "core.sites.approval_status",
-      siteAction: {
-        kind: "approval_status",
-        siteId: "site-assistant",
-        username: "owner",
-        pending: true,
-        published: false,
-      },
-    });
-    expect(String(savePayload.replyText)).toContain("already saved as a pending draft");
-    expect(String(savePayload.replyText)).not.toContain("email");
-  });
-
-  it("trims outline-only instructions out of fallback blog titles", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env, { blogEnabled: true });
-
-    const response = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          messageText:
-            "@site Update my site, draft a humorous blog post about bees, just the outline will do I will write it myself.",
-        }),
-      }),
-      env,
-    );
-    const payload = (await response.json()) as Record<string, unknown>;
-    const replyText = String(payload.replyText);
-
-    expect(response.status).toBe(200);
-    expect(replyText).toContain('Blog draft title: "The Rise of Bees"');
-    expect(replyText).not.toContain("Outline Will Do");
-    expect(replyText).not.toContain("I Will Write It Myself");
-  });
-
-  it("lists profile site blog posts from assistant chat", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env, { blogEnabled: true });
-    const meJson = JSON.parse(siteFileText(env, "site-assistant", "src/me.json") || "{}");
-    meJson.posts = [
-      {
-        slug: "published-note",
-        title: "Published Note",
-        file: "blog/published-note.md",
-        publishedAt: "2026-06-01",
-        draft: false,
-      },
-      {
-        slug: "draft-note",
-        title: "Draft Note",
-        file: "blog/draft-note.md",
-        draft: true,
-      },
-    ];
-    addSiteFileText(
-      env,
-      "site-assistant",
-      "src/me.json",
-      JSON.stringify(meJson, null, 2),
-      "application/json",
-    );
-
-    const response = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          messageText: "@site list all blog posts",
-        }),
-      }),
-      env,
-    );
-    const payload = (await response.json()) as Record<string, unknown>;
-
-    expect(response.status).toBe(200);
-    expect(payload).toMatchObject({
-      ok: true,
-      source: "tool",
-      specialist: "core.sites.approval_status",
-      siteAction: {
-        kind: "listed_blog_posts",
-        siteId: "site-assistant",
-        username: "owner",
-      },
-    });
-    expect(String((payload.siteAction as Record<string, unknown>).url)).toContain(
-      "/sites/owner?edit=blog",
-    );
-    expect(String(payload.replyText)).toContain("Published Note");
-    expect(String(payload.replyText)).toContain("published, 2026-06-01");
-    expect(String(payload.replyText)).toContain("Draft Note");
-    expect(String(payload.replyText)).toContain("draft");
-  });
-
-  it("publishes a prior plain-text assistant site draft when the user approves it", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env, { blogEnabled: true });
-    env.assistantThreads.push({
-      id: "thread-legacy-site-draft",
-      owner_id: "owner",
-      title: "Update my site",
-      origin_surface: "assistant",
-      project_id: null,
-      status: "active",
-      pinned_at: null,
-      archived_at: null,
-      deleted_at: null,
-      last_message_at: "2026-06-05T09:10:00Z",
-      created_at: "2026-06-05T09:10:00Z",
-      updated_at: "2026-06-05T09:10:00Z",
-    });
-    env.messages.push(
-      {
-        id: "message-user-site-request",
-        ownerId: "owner",
-        role: "user",
-        content:
-          "Update my site, add a made up paragraph to my about page and add a blog post about 'personal ai assistants'.",
-        threadId: "thread-legacy-site-draft",
-        created_at: "2026-06-05T09:11:00Z",
-      },
-      {
-        id: "message-assistant-site-draft",
-        ownerId: "owner",
-        role: "assistant",
-        content:
-          "About Page Paragraph: \"Welcome to my world of innovation and transformation! This site is a place for imaginary experiments, generous curiosity, and practical AI companions.\"\n\nBlog Post: 'The Rise of Personal AI Assistants': \"In today's fast-paced world, personal AI assistants are becoming trusted creative partners. They help people capture ideas, make plans, and keep momentum visible.\"",
-        threadId: "thread-legacy-site-draft",
-        created_at: "2026-06-05T09:12:00Z",
-      },
-    );
-
-    const response = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          threadId: "thread-legacy-site-draft",
-          messageText: "@site just do it",
-        }),
-      }),
-      env,
-    );
-    const payload = (await response.json()) as Record<string, unknown>;
-
-    expect(response.status).toBe(200);
-    expect(payload).toMatchObject({
-      ok: true,
-      source: "tool",
-      specialist: "core.sites.publish",
-    });
-    expect(siteFileText(env, "site-assistant", "src/about.md")).toContain(
-      "Welcome to my world of innovation and transformation",
-    );
-    expect(
-      siteFileText(
-        env,
-        "site-assistant",
-        "src/blog/the-rise-of-personal-ai-assistants.md",
-      ),
-    ).toContain("In today's fast-paced world");
-    expect(env.sites.find((site) => site.id === "site-assistant")?.published_at).toBeTruthy();
-  });
 
   it("streams owner assistant chat turns through server-sent events", async () => {
     const env = createEnv();
@@ -7557,7 +6805,7 @@ describe("ME3 Worker auth", () => {
       });
     });
 
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -7589,7 +6837,7 @@ describe("ME3 Worker auth", () => {
     expect(streamText).toContain("event: done");
     expect(streamText).toContain('"mode":"advanced"');
     expect(streamText).toContain(env.assistantThreads[0]?.id);
-    expect(runtimeFetch.mock.calls[0]?.[0]).toContain("/dispatch/sandbox/stream");
+    expect(runtimeFetch.mock.calls[0]?.[0]).toContain("/turn/stream");
     expect(JSON.parse(String(runtimeFetch.mock.calls[0]?.[1]?.body))).toMatchObject({
       mode: "advanced",
     });
@@ -7641,56 +6889,6 @@ describe("ME3 Worker auth", () => {
     });
   });
 
-  it("requires @site on streaming assistant site update turns", async () => {
-    const env = createEnv();
-    const session = cookieHeader(await bootstrap(env));
-    addAssistantEditableSite(env);
-    const runtimeFetch = vi.fn(async () =>
-      Response.json({
-        ok: true,
-        auditId: null,
-        turnId: "turn-stream-agent",
-        specialist: "core.agent-chat",
-        replyText: "Agent chat reply.",
-        model: "test-model",
-        source: "fallback",
-        fallbackReason: null,
-        debugError: null,
-        emailAction: null,
-        reminderAction: null,
-        contentAction: null,
-      }),
-    );
-    env.ME3_USER_AGENT = {
-      idFromName: vi.fn((name: string) => name),
-      get: vi.fn(() => ({ fetch: runtimeFetch })),
-    } as unknown as DurableObjectNamespace;
-
-    const response = await app.fetch(
-      new Request("http://localhost/api/assistant/chat/turn/stream", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: session,
-        },
-        body: JSON.stringify({
-          messageText: 'Update my site short bio field to say "Streaming unsafe write."',
-        }),
-      }),
-      env,
-    );
-    const streamText = await response.text();
-
-    expect(response.status).toBe(200);
-    expect(streamText).toContain("event: delta");
-    expect(streamText).toContain("Add @site");
-    expect(streamText).toContain("core.assistant-scopes");
-    expect(runtimeFetch).not.toHaveBeenCalled();
-    expect(siteFileText(env, "site-assistant", "src/me.json")).not.toContain(
-      "Streaming unsafe write.",
-    );
-  });
-
   it("records stopped owner assistant streams in sandbox audit metadata", async () => {
     const env = createEnv();
     const session = cookieHeader(await bootstrap(env));
@@ -7700,7 +6898,7 @@ describe("ME3 Worker auth", () => {
       throw new DOMException("The operation was aborted.", "AbortError");
     });
 
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -8219,6 +7417,7 @@ describe("ME3 Worker auth", () => {
     ["streaming", "/api/assistant/chat/turn/stream"],
   ])("rejects invalid assistant modes on the %s endpoint", async (_kind, path) => {
     const env = createEnv();
+    env.ME3_AGENT = { idFromName: () => { throw new Error("Invalid input must not dispatch"); } } as unknown as DurableObjectNamespace;
     const session = cookieHeader(await bootstrap(env));
 
     const response = await app.fetch(
@@ -8250,6 +7449,7 @@ describe("ME3 Worker auth", () => {
     "rejects managed raw model overrides on %s in %s mode",
     async (path, mode) => {
       const env = createEnv();
+    env.ME3_AGENT = { idFromName: () => { throw new Error("Invalid input must not dispatch"); } } as unknown as DurableObjectNamespace;
       env.ME3_DEPLOYMENT_MODE = "managed";
       const session = cookieHeader(await bootstrap(env));
 
@@ -8293,7 +7493,7 @@ describe("ME3 Worker auth", () => {
         replyText: "Evaluation reply.",
       });
     });
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -8341,7 +7541,7 @@ describe("ME3 Worker auth", () => {
         replyText: "Owner AI reply.",
       });
     });
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -8376,6 +7576,7 @@ describe("ME3 Worker auth", () => {
 
   it("rejects unsupported assistant chat model selections", async () => {
     const env = createEnv();
+    env.ME3_AGENT = { idFromName: () => { throw new Error("Invalid input must not dispatch"); } } as unknown as DurableObjectNamespace;
     const session = cookieHeader(await bootstrap(env));
 
     const response = await app.fetch(
@@ -8421,7 +7622,7 @@ describe("ME3 Worker auth", () => {
       }),
     );
 
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -13854,7 +13055,7 @@ describe("ME3 Worker auth", () => {
         contentAction: null,
       }),
     );
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -14102,7 +13303,7 @@ describe("ME3 Worker auth", () => {
         contentAction: null,
       }),
     );
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;
@@ -14341,7 +13542,7 @@ describe("ME3 Worker auth", () => {
         Response.json({ ok: false, error: "Temporary agent runtime failure" }, { status: 503 }),
       )
       .mockResolvedValue(Response.json(successfulRuntimeResponse));
-    env.ME3_USER_AGENT = {
+    env.ME3_AGENT = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => ({ fetch: runtimeFetch })),
     } as unknown as DurableObjectNamespace;

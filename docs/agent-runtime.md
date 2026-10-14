@@ -6,11 +6,14 @@ in the shared ecosystem docs. Execution criteria and checkpoints live in bead
 
 The implementation is in `packages/agent`, with Worker integration in
 `apps/worker/src/me3-agent.ts`, `agent-runtime.ts` and `routes/new-agent.ts`.
-The opt-in switch `ME3_ASSISTANT_RUNTIME=agent` selects the new `ME3_AGENT`
-Durable Object; the old runtime remains available until the live and client
-acceptance gates pass. The example Wrangler config declares the new binding and
-additive Durable Object migration. D1 migrations `0058` and `0059` create portable
+Every chat entry point uses the `ME3_AGENT` Durable Object. A missing binding
+returns an explicit unavailable response. There is no runtime selector or legacy
+dispatcher. `ME3_USER_AGENT` retains mailbox events and installation cleanup.
+The Wrangler configs retain historical class migrations and retire only the SDK
+wrapper with a `deleted_classes` migration. D1 migrations `0058` and `0059` create portable
 turn, receipt, approval, target, selection, cancellation and request-alias state.
+The `agent-chat` package now contains retained domain services and wire contracts;
+the loop and domain tools live in `packages/agent`.
 
 Run `pnpm build` for workspace typechecks and the web build. Check the final
 Worker without deploying:

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
 import { runAgentTurn } from "../../../packages/agent/src/loop";
 import type { AgentCheckpoint, AgentEvent, AgentModel, AgentTool, AgentToolResult, AgentTurnStore } from "../../../packages/agent/src/types";
 
@@ -23,6 +24,36 @@ function fixture() {
 }
 
 describe("from scratch agent loop", () => {
+  it.each(["queued", "approved", "approval-preparation", "unavailable-status", "unreadable-state"])("rechecks persisted plugin authority for %s without executing or approving", async (kind) => {
+    const f = fixture(), raw = new DatabaseSync(":memory:");
+    let effects = 0, approvals = 0;
+    try {
+      if (kind !== "unreadable-state") raw.exec("CREATE TABLE plugin_installations(plugin_id TEXT PRIMARY KEY, enabled INTEGER, status TEXT); INSERT INTO plugin_installations VALUES('enabled',1,'installed')");
+      f.context.db = { prepare: (sql: string) => ({ bind: (...args: never[]) => ({ first: async () => raw.prepare(sql).get(...args) ?? null }) }) } as never;
+      f.tool.pluginId = "enabled";
+      f.tool.execute = async () => { effects++; return { status: "ok" }; };
+      const input = { ...f, tools: [f.tool], messages: [], model: f.model([{ text: "", toolCalls: [f.call()] }, { text: "Unavailable", toolCalls: [] }]) };
+      if (kind === "approved") {
+        f.tool.approval = "required";
+        expect((await runAgentTurn(input)).status).toBe("needs_approval");
+        f.approve();
+      }
+      if (kind === "approval-preparation") {
+        f.tool.approval = "required";
+        f.tool.prepareApproval = async () => {
+          raw.exec("UPDATE plugin_installations SET enabled=0,status='disabled'");
+          return { status: "needs_approval", approval: { title: "Save", summary: "Review" } };
+        };
+        f.store.requestApproval = async () => { approvals++; return "approval"; };
+      } else if (kind !== "unreadable-state") {
+        raw.exec(kind === "unavailable-status" ? "UPDATE plugin_installations SET status='setup_required'" : "UPDATE plugin_installations SET enabled=0,status='disabled'");
+      }
+      const result = await runAgentTurn(input);
+      expect(effects).toBe(0);
+      expect(approvals).toBe(0);
+      expect(result.toolCalls.at(-1)?.status).toBe("error");
+    } finally { raw.close(); }
+  });
   it.each(["selection", "step-limit", "cancelled", "approval"])("streams the actual %s reply without fabricating a provider token", async (kind) => {
     const f = fixture(), events: AgentEvent[] = [];
     f.tool.effect = kind === "approval" ? "external" : "read";

@@ -4,7 +4,7 @@ import {
   serializeAgentReminder,
   updateAgentReminder,
   type AgentReminderInput,
-} from "../agent-chat";
+} from "@me3-core/plugin-agent-chat";
 import {
   addDaysToDateString,
   expandRecurringCalendarEvents,

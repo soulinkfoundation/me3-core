@@ -70,6 +70,7 @@ export function verifyManagedUpgradeConfig({
     config,
     "durable_objects.bindings",
   );
+  const sdkRetired = getTomlArrayBlocks(config, "migrations", "2026-10-12-retire-sdk-user-agent", "tag").length > 0;
   if (
     !/^workers_dev\s*=\s*false$/m.test(config) ||
     !hasExactTomlString(config, "CORE_WEB_ORIGIN", publicOrigin) ||
@@ -90,8 +91,10 @@ export function verifyManagedUpgradeConfig({
     (sdkDurableObjectBlocks.length === 1 && getTomlString(sdkDurableObjectBlocks[0], "class_name") !== "Me3SdkUserAgent") ||
     agentDurableObjectBlocks.length > 1 ||
     (agentDurableObjectBlocks.length === 1 && getTomlString(agentDurableObjectBlocks[0], "class_name") !== "Me3Agent") ||
-    (/^ME3_ASSISTANT_RUNTIME\s*=\s*"sdk"$/m.test(config) && sdkDurableObjectBlocks.length !== 1) ||
-    (/^ME3_ASSISTANT_RUNTIME\s*=\s*"agent"$/m.test(config) && agentDurableObjectBlocks.length !== 1) ||
+    (sdkRetired && (sdkDurableObjectBlocks.length !== 0 || agentDurableObjectBlocks.length !== 1)) ||
+    [...durableObjectBlocks, ...sdkDurableObjectBlocks, ...agentDurableObjectBlocks].some((block) =>
+      /^\s*["']?(?:script_name|environment|namespace_id)["']?\s*=/m.test(block)) ||
+    /^\s*["']?ME3_(?:ASSISTANT_RUNTIME|JEV_ROUTER_MODE)["']?\s*=/m.test(config) ||
     hasUnexpectedArrayTable(config) ||
     hasUnsafeDurableObjectMigration(config) ||
     hasRouteDeclaration(config)
@@ -119,15 +122,29 @@ function hasUnexpectedArrayTable(config) {
 }
 
 function hasUnsafeDurableObjectMigration(config) {
-  if (
-    /^\s*(?:renamed_classes|deleted_classes|transferred_classes)\s*=/m.test(
-      config,
-    )
-  ) {
+  let durableObjectTable = false;
+  for (const line of config.split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) durableObjectTable = /^\s*\[\[\s*(?:migrations|durable_objects\.bindings)\s*\]\]/.test(line);
+    // Quoted TOML keys can decode escapes into otherwise forbidden mutations.
+    if (durableObjectTable && /^\s*(?:"(?:[^"\\]|\\.)*"|'[^']*')\s*=/.test(line)) return true;
+  }
+  if (/^\s*["']?(?:renamed_classes|transferred_classes)["']?\s*=/m.test(config)) {
     return true;
   }
+  const retirements = getTomlArrayBlocks(config, "migrations", "2026-10-12-retire-sdk-user-agent", "tag");
+  const deletionCount = (config.match(/^\s*["']?deleted_classes["']?\s*=/gm) || []).length;
+  if (deletionCount || retirements.length) {
+    // Only this one SDK tombstone may mutate a namespace during an upgrade.
+    const lines = retirements[0]?.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+    if (retirements.length !== 1 || deletionCount !== 1 || lines?.length !== 3 ||
+      lines[0] !== "[[migrations]]" ||
+      !/^tag\s*=\s*"2026-10-12-retire-sdk-user-agent"\s*(?:#.*)?$/.test(lines[1]) ||
+      !/^deleted_classes\s*=\s*\[\s*(["'])Me3SdkUserAgent\1\s*\]\s*(?:#.*)?$/.test(lines[2])) {
+      return true;
+    }
+  }
   for (const match of config.matchAll(
-    /^\s*(?:new_classes|new_sqlite_classes)\s*=\s*\[([^\]]*)\]/gm,
+    /^\s*["']?(?:new_classes|new_sqlite_classes)["']?\s*=\s*\[([^\]]*)\]/gm,
   )) {
     const classNames = [...match[1].matchAll(/["']([^"']+)["']/g)].map(
       (item) => item[1],

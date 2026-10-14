@@ -65,7 +65,7 @@ function fixture(model: AgentModel = { id: "fixture", async step() { return { te
     emit(event, payload, await appendAgentStreamEvent(db, request.userId, request.turnId, event, payload));
     return payload;
   });
-  const dispatch = (value = input, stream = false, cursor?: number) => agent.onRequest(new Request(`https://agent/dispatch/sandbox${stream ? "/stream" : ""}`, { method: "POST", headers: { "Content-Type": "application/json", ...(cursor === undefined ? {} : { "Last-Event-ID": String(cursor) }) }, body: JSON.stringify(value) }));
+  const dispatch = (value = input, stream = false, cursor?: number) => agent.onRequest(new Request(`https://agent/turn${stream ? "/stream" : ""}`, { method: "POST", headers: { "Content-Type": "application/json", ...(cursor === undefined ? {} : { "Last-Event-ID": String(cursor) }) }, body: JSON.stringify(value) }));
   const cancel = () => agent.onRequest(new Request("https://agent/turn/cancel", { method: "POST", body: JSON.stringify({ userId: input.userId, turnId: input.turnId }) }));
   const row = () => db.prepare("SELECT status,response_json FROM me3_agent_turns WHERE turn_id='turn'").first<{ status: string; response_json: string | null }>();
   return { agent, db, raw, env, dispatch, cancel, row };
@@ -94,6 +94,19 @@ async function savedImage(f: ReturnType<typeof fixture>, status = "complete", na
 }
 
 describe("D1-backed agent Durable Object execution and stream replay", () => {
+  it("accepts only current turn endpoints and rejects the retired sandbox route before admission", async () => {
+    const f = fixture();
+    for (const path of ["/dispatch/sandbox", "/dispatch/sandbox/stream"]) {
+      const response = await f.agent.onRequest(new Request(`https://agent${path}`, { method: "POST", body: JSON.stringify(input) }));
+      expect(response.status).toBe(404);
+    }
+    expect(runtime.execute).not.toHaveBeenCalled();
+    expect(f.raw.prepare("SELECT COUNT(*) n FROM me3_agent_turns").get()?.n).toBe(0);
+    const current = await f.agent.onRequest(new Request("https://agent/turn", { method: "POST", body: JSON.stringify(input) }));
+    expect(current.status).toBe(200);
+    expect(await current.json()).toMatchObject({ status: "complete", turnId: "turn", replyText: "Completed." });
+    expect(runtime.execute).toHaveBeenCalledOnce();
+  });
   it("does not render a forged image in a cached HTTP response without an authoritative native operation", async () => {
     const f = fixture(); await savedImage(f, "complete", false);
     const result = await (await f.dispatch()).json() as Record<string, unknown>;

@@ -39,7 +39,6 @@ export function registerNewAgentRoutes(app:AppHono,deps:OwnerRouteDeps) {
   });
   app.post("/api/assistant/chat/turn/abort",async c=>{
     const ownerId=await deps.requireOwner(c);if(!ownerId)return deps.unauthorized(c);
-    if(c.env.ME3_ASSISTANT_RUNTIME!=="agent")return c.json({ok:true,cancelled:false});
     const body=await c.req.json().catch(()=>null) as {requestId?:unknown}|null;
     if(typeof body?.requestId!=="string"||!body.requestId||body.requestId.length>500)return c.json({ok:false,error:"requestId is required"},400);
     const namespace=c.env.ME3_AGENT;if(!namespace)return c.json({ok:false,error:"Agent runtime is unavailable"},503);

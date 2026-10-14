@@ -27,7 +27,9 @@ test("three ordered cases are additive to the original82 with independently auth
   }
 });
 
-async function runOrdered(id, changeCalls) {
+async function runOrdered(id, changeCalls, context) {
+  // Keep the unchanged authored corpus in its own clock, like the scripted CLI.
+  context.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-11T12:00:00Z") });
   const scenario = cases().find(item => item.id === id);
   assert.ok(scenario, id);
   const seed = createSeededAgentEvalInstallation("2026-10-11");
@@ -68,12 +70,12 @@ async function runOrdered(id, changeCalls) {
   } finally { seed.close(); }
 }
 
-for (const id of ids) test(`${id}: native domain effects remain exact and ordered after actual connection reopen/retry`, async () => {
-  await runOrdered(id);
+for (const id of ids) test(`${id}: native domain effects remain exact and ordered after actual connection reopen/retry`, async context => {
+  await runOrdered(id, undefined, context);
 });
 
-test("only-two fixture rejects unrequested and premature planner calls without changing its fixed verdict", async () => {
-  const result = await runOrdered("ordered-only-two-of-three");
+test("only-two fixture rejects unrequested and premature planner calls without changing its fixed verdict", async context => {
+  const result = await runOrdered("ordered-only-two-of-three", undefined, context);
   const writes = result.initialResponse.toolResults.filter(row => row.tool_name === "core_reminders_update");
   assert.equal(writes.filter(row => row.status === "failed").length, 3);
   assert.ok(writes.filter(row => row.status === "failed").some(row => row.arguments.reminderId === "eval-ordered-alex"));

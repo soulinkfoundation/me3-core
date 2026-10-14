@@ -290,6 +290,15 @@ async function inspectResources(api, accountId, contract) {
   }
 
   const namespaces = await listDurableObjectNamespaces(api, accountId);
+  for (const className of ["Me3UserAgent", "Me3SdkUserAgent", "Me3Agent"]) {
+    const matches = namespaces.filter((item) => item.script === contract.workerName && item.class === className);
+    if (matches.length > 1 || matches.some((item) =>
+      !/^[0-9a-f]{32}$/.test(namespaceId(item)) ||
+      namespaces.filter((other) => namespaceId(other) === namespaceId(item)).length !== 1 ||
+      (className === "Me3UserAgent" && namespaceId(item) !== contract.durableObjectNamespaceId))) {
+      throw new Error("failed provision Durable Object namespace identity does not match");
+    }
+  }
   const managedNamespaces = namespaces.filter(
     (namespace) =>
       namespace?.script === contract.workerName && namespace?.class === "Me3UserAgent",

@@ -5,12 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./model-capabilities": "./src/model-capabilities.ts",
-    "./model-evaluation": "./src/model-evaluation.ts"
+    "./model-capabilities": "./src/model-capabilities.ts"
   },
   "scripts": {
-    "build": "node ../../scripts/check-agent-chat-index-size.mjs && tsc --noEmit",
-    "typecheck": "node ../../scripts/check-agent-chat-index-size.mjs && tsc --noEmit"
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@me3/knowledge": "workspace:*",

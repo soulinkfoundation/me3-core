@@ -11,7 +11,7 @@ describe("owner approval and abort route integration",()=>{
   it("explicit stop resolves the authenticated request to its original turn",async()=>{
     const db=database();await db.prepare("INSERT INTO me3_agent_turns(turn_id,owner_id,thread_id,request_id) VALUES('turn','owner','thread','request')").run();
     let cancelled:unknown;const app=new Hono<AppBindings>();registerNewAgentRoutes(app,{requireOwner:async()=>"owner",unauthorized:c=>c.json({error:"Unauthorized"},401)});
-    const env={DB:db,ME3_ASSISTANT_RUNTIME:"agent",ME3_AGENT:{idFromName:()=>"owner",get:()=>({fetch:async(_url:string,init:RequestInit)=>{cancelled=JSON.parse(init.body as string);return Response.json({ok:true});}})}};
+    const env={DB:db,ME3_AGENT:{idFromName:()=>"owner",get:()=>({fetch:async(_url:string,init:RequestInit)=>{cancelled=JSON.parse(init.body as string);return Response.json({ok:true});}})}};
     const response=await app.request("/api/assistant/chat/turn/abort",{method:"POST",headers:{"Content-Type":"application/json"},body:'{"requestId":"request"}'},env);
     expect(response.status).toBe(200);expect(cancelled).toEqual({userId:"owner",requestId:"request"});
     const hidden=await app.request("/api/assistant/chat/turn/abort",{method:"POST",headers:{"Content-Type":"application/json"},body:'{"requestId":"other-owner-request"}'},env);expect(hidden.status).toBe(200);expect(cancelled).toEqual({userId:"owner",requestId:"other-owner-request"});
@@ -21,7 +21,7 @@ describe("owner approval and abort route integration",()=>{
     const store=createD1TurnStore(db,{ownerId:"owner",threadId:"thread",turnId:"original",requestId:"req"});
     const id=await store.requestApproval("key",{id:"call",name:"send",arguments:{id:"draft"}},{title:"Send",summary:"Review",target:{id:"draft",body:"exact"}});
     const app=new Hono<AppBindings>();registerNewAgentRoutes(app,{requireOwner:async()=>"owner",unauthorized:c=>c.json({error:"Unauthorized"},401)});
-    const env={DB:db,ME3_ASSISTANT_RUNTIME:"agent",ME3_AGENT:{idFromName:()=>"owner",get:()=>({fetch:async(_url:string,init:RequestInit)=>{resumes++;resumed=JSON.parse(init.body as string);return Response.json({ok:true,turnId:"original"});}})}};
+    const env={DB:db,ME3_AGENT:{idFromName:()=>"owner",get:()=>({fetch:async(_url:string,init:RequestInit)=>{resumes++;resumed=JSON.parse(init.body as string);return Response.json({ok:true,turnId:"original"});}})}};
     const first=await app.request(`/api/assistant/approvals/${id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:'{"decision":"approved"}'},env);
     expect(first.status).toBe(200);expect(resumed).toEqual({userId:"owner",turnId:"original"});
     const second=await app.request(`/api/assistant/approvals/${id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:'{"decision":"declined"}'},env);
@@ -31,7 +31,7 @@ describe("owner approval and abort route integration",()=>{
     const db=database();let calls=0;const store=createD1TurnStore(db,{ownerId:"other",threadId:"thread",turnId:"turn",requestId:"req"});
     const id=await store.requestApproval("key",{id:"call",name:"delete",arguments:{}},{title:"Delete",summary:"Private"});
     const app=new Hono<AppBindings>();registerNewAgentRoutes(app,{requireOwner:async()=>"owner",unauthorized:c=>c.json({error:"Unauthorized"},401)});
-    const env={DB:db,ME3_ASSISTANT_RUNTIME:"agent",ME3_AGENT:{idFromName:()=>"owner",get:()=>({fetch:async()=>{calls++;return Response.json({ok:true});}})}};
+    const env={DB:db,ME3_AGENT:{idFromName:()=>"owner",get:()=>({fetch:async()=>{calls++;return Response.json({ok:true});}})}};
     const list=await app.request("/api/assistant/approvals",{},env);expect((await list.json() as {approvals:unknown[]}).approvals).toHaveLength(0);
     const hidden=await app.request(`/api/assistant/approvals/${id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:'{"decision":"approved"}'},env);expect(hidden.status).toBe(404);
     const invalid=await app.request(`/api/assistant/approvals/${id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:'{"confirmed":true}'},env);expect(invalid.status).toBe(400);expect(calls).toBe(0);

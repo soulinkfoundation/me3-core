@@ -155,7 +155,7 @@ import {
   type AgentSandboxDispatchResponse,
   type AgentMailboxDraftInput,
   type AgentMailboxUpdateInput,
-} from "./agent-chat";
+} from "@me3-core/plugin-agent-chat";
 import {
   dispatchAgentChannelTurn,
   getAgentChannelEventByProviderEventId,

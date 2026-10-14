@@ -157,6 +157,41 @@ test("decommission deletes the SDK Durable Object namespace too", async () => {
   assert.equal(deletedSdk, true);
 });
 
+test("retired SDK absence does not select another Worker's SDK namespace", async () => {
+  const fake = createCloudflareFixture();
+  const foreign = { id: "e".repeat(32), script: "unrelated-worker", class: "Me3SdkUserAgent" };
+  fake.state.namespaces.push(foreign);
+  await decommissionManagedInstall(contract(), {
+    request: fake.request,
+    reportStage: async () => {},
+    deployTombstone: async ({ deleteSdkDurableObject }) => {
+      assert.equal(deleteSdkDurableObject, false);
+      fake.state.producerBindings.clear();
+      fake.state.namespaces = [foreign];
+    },
+  });
+  assert.deepEqual(fake.state.namespaces, [foreign]);
+});
+
+test("duplicate or shared optional SDK namespaces refuse before any provider deletion", async (t) => {
+  for (const shared of [false, true]) {
+    await t.test(shared ? "shared namespace id" : "duplicate SDK class", async () => {
+      const fake = createCloudflareFixture();
+      fake.state.namespaces.push({ id: "e".repeat(32), script: WORKER_NAME, class: "Me3SdkUserAgent" });
+      fake.state.namespaces.push({ id: shared ? "e".repeat(32) : "f".repeat(32), script: shared ? "unrelated-worker" : WORKER_NAME, class: "Me3SdkUserAgent" });
+      let tombstones = 0;
+      await assert.rejects(decommissionManagedInstall(contract(), {
+        request: fake.request,
+        reportStage: async () => {},
+        deployTombstone: async () => { tombstones++; throw new Error("late tombstone admission"); },
+      }), /Durable Object namespace identity does not match/);
+      assert.equal(tombstones, 0);
+      assert.equal(fake.calls.some(({ method }) => method === "DELETE"), false);
+      assert.notEqual(fake.state.r2, null);
+    });
+  }
+});
+
 test("decommission deletes the new agent namespace and verifies it before deleting D1", async () => {
   for (const keepAgent of [false, true]) {
     const fake = createCloudflareFixture();

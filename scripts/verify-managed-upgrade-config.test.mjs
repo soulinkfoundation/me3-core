@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -51,13 +51,10 @@ test("accepts only a deploy config bound to the complete frozen resources", () =
   }
 });
 
-test("accepts an optional isolated SDK agent binding when the SDK runtime is enabled", () => {
+test("accepts historical SDK binding and creation metadata without a runtime selector", () => {
   const directory = mkdtempSync(join(tmpdir(), "me3-sdk-upgrade-config-"));
   const configPath = join(directory, "wrangler.toml");
   const sdkConfig = config().replace(
-    'ME3_DEPLOYMENT_MODE = "managed"',
-    'ME3_DEPLOYMENT_MODE = "managed"\nME3_ASSISTANT_RUNTIME = "sdk"',
-  ).replace(
     '[[migrations]]',
     '[[durable_objects.bindings]]\nname = "ME3_SDK_USER_AGENT"\nclass_name = "Me3SdkUserAgent"\n[[migrations]]',
   ).replace(
@@ -78,9 +75,6 @@ test("accepts the isolated agent runtime only with its exact binding and additiv
   const directory = mkdtempSync(join(tmpdir(), "me3-agent-upgrade-config-"));
   const configPath = join(directory, "wrangler.toml");
   const agentConfig = config().replace(
-    'ME3_DEPLOYMENT_MODE = "managed"',
-    'ME3_DEPLOYMENT_MODE = "managed"\nME3_ASSISTANT_RUNTIME = "agent"',
-  ).replace(
     '[[migrations]]',
     '[[durable_objects.bindings]]\nname = "ME3_AGENT"\nclass_name = "Me3Agent"\n[[migrations]]',
   ).replace(
@@ -101,6 +95,78 @@ test("accepts the isolated agent runtime only with its exact binding and additiv
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("accepts only the exact SDK retirement while retaining both live namespace identities", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "me3-sdk-retirement-"));
+  const configPath = join(directory, "wrangler.toml");
+  const tag = "2026-10-12-retire-sdk-user-agent";
+  const deletion = `[[migrations]]\ntag = "${tag}"\ndeleted_classes = ["Me3SdkUserAgent"]\n`;
+  const retired = config().replace(
+    '[[migrations]]',
+    '[[durable_objects.bindings]]\nname = "ME3_AGENT"\nclass_name = "Me3Agent"\n[[migrations]]',
+  ) + '\n[[migrations]]\ntag = "2026-10-01-me3-sdk-user-agent"\nnew_sqlite_classes = ["Me3SdkUserAgent"]\n'
+    + '\n[[migrations]]\ntag = "2026-10-10-me3-agent"\nnew_sqlite_classes = ["Me3Agent"]\n' + deletion;
+  try {
+    await t.test("exact SDK-only migration is accepted after retirement and on replay", () => {
+      writeFileSync(configPath, retired);
+      assert.equal(contract(configPath).durableObjectNamespaceId, "b".repeat(32));
+      assert.equal(contract(configPath).d1Id, d1Id);
+    });
+    for (const [name, unsafe] of [
+      ["wrong tag", retired.replace(tag, "other-retirement")],
+      ["normal namespace deletion", retired.replace('deleted_classes = ["Me3SdkUserAgent"]', 'deleted_classes = ["Me3UserAgent"]')],
+      ["new agent deletion", retired.replace('deleted_classes = ["Me3SdkUserAgent"]', 'deleted_classes = ["Me3Agent"]')],
+      ["extra class deletion", retired.replace('deleted_classes = ["Me3SdkUserAgent"]', 'deleted_classes = ["Me3SdkUserAgent", "ForeignAgent"]')],
+      ["duplicate migration", retired + deletion],
+      ["duplicate deletion key", retired + 'deleted_classes = ["Me3SdkUserAgent"]\n'],
+      ["rename", retired + 'renamed_classes = [{ from = "Me3UserAgent", to = "Other" }]\n'],
+      ["transfer", retired + 'transferred_classes = [{ from = "Me3UserAgent", from_script = "foreign", to = "Other" }]\n'],
+      ["mixed class creation", retired + 'new_sqlite_classes = ["Me3SdkUserAgent"]\n'],
+      ["retired class still bound", retired.replace('[[migrations]]', '[[durable_objects.bindings]]\nname = "ME3_SDK_USER_AGENT"\nclass_name = "Me3SdkUserAgent"\n[[migrations]]')],
+      ["missing new namespace", retired.replace('name = "ME3_AGENT"', 'name = "MISSING_AGENT"')],
+      ["normal namespace rebound", retired.replace('class_name = "Me3UserAgent"', 'class_name = "Me3Agent"')],
+      ["foreign normal namespace", retired.replace('class_name = "Me3UserAgent"', 'class_name = "Me3UserAgent"\nscript_name = "foreign-worker"')],
+      ["foreign new namespace", retired.replace('class_name = "Me3Agent"', 'class_name = "Me3Agent"\nenvironment = "foreign"')],
+      ["quoted foreign deletion", retired + '\n[[migrations]]\ntag = "foreign"\n"deleted_classes" = ["Me3UserAgent"]\n'],
+      ["quoted rename", retired + '\n[[migrations]]\ntag = "foreign"\n"renamed_classes" = [{ from = "Me3UserAgent", to = "Other" }]\n'],
+      ["quoted transfer", retired + '\n[[migrations]]\ntag = "foreign"\n\'transferred_classes\' = [{ from = "Me3UserAgent", from_script = "foreign", to = "Other" }]\n'],
+      ["quoted foreign creation", retired + '\n[[migrations]]\ntag = "foreign"\n"new_sqlite_classes" = ["ForeignAgent"]\n'],
+      ["escaped normal deletion key", retired + '\n[[migrations]]\ntag = "foreign"\n"deleted_\\u0063lasses" = ["Me3UserAgent"]\n'],
+      ["escaped rename key", retired + '\n[[migrations]]\ntag = "foreign"\n"renamed_\\u0063lasses" = [{ from = "Me3UserAgent", to = "Other" }]\n'],
+      ["escaped transfer key", retired + '\n[[migrations]]\ntag = "foreign"\n"transferred_\\u0063lasses" = [{ from = "Me3UserAgent", from_script = "foreign", to = "Other" }]\n'],
+      ["escaped foreign creation key", retired + '\n[[migrations]]\ntag = "foreign"\n"new_sqlite_\\u0063lasses" = ["ForeignAgent"]\n'],
+      ["escaped foreign namespace key", retired.replace('class_name = "Me3UserAgent"', 'class_name = "Me3UserAgent"\n"script_\\u006eame" = "foreign-worker"')],
+      ["obsolete SDK runtime selector", retired.replace('ME3_DEPLOYMENT_MODE = "managed"', 'ME3_DEPLOYMENT_MODE = "managed"\nME3_ASSISTANT_RUNTIME = "sdk"')],
+      ["obsolete agent runtime selector", retired.replace('ME3_DEPLOYMENT_MODE = "managed"', 'ME3_DEPLOYMENT_MODE = "managed"\nME3_ASSISTANT_RUNTIME = "agent"')],
+      ["obsolete Jev selector", retired.replace('ME3_DEPLOYMENT_MODE = "managed"', 'ME3_DEPLOYMENT_MODE = "managed"\nME3_JEV_ROUTER_MODE = "off"')],
+    ]) {
+      await t.test(name, () => {
+        writeFileSync(configPath, unsafe);
+        assert.throws(() => contract(configPath), name === "normal namespace rebound"
+          ? /managed Durable Object binding is invalid/
+          : /upgrade config is invalid/);
+      });
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("both shipped configs retain normal namespace history and deploy only the new chat agent", async (t) => {
+  for (const relative of ["../wrangler.toml", "../apps/worker/wrangler.core.example.toml"]) {
+    await t.test(relative, () => {
+      const value = readFileSync(new URL(relative, import.meta.url), "utf8");
+      assert.match(value, /name = "ME3_USER_AGENT"\s+class_name = "Me3UserAgent"/);
+      assert.match(value, /name = "ME3_AGENT"\s+class_name = "Me3Agent"/);
+      assert.doesNotMatch(value, /name = "ME3_SDK_USER_AGENT"/);
+      assert.match(value, /tag = "2026-05-11-me3-core-user-agent"\s+new_sqlite_classes = \["Me3UserAgent"\]/);
+      assert.match(value, /tag = "2026-10-01-me3-sdk-user-agent"\s+new_sqlite_classes = \["Me3SdkUserAgent"\]/);
+      assert.match(value, /tag = "2026-10-10-me3-agent"\s+new_sqlite_classes = \["Me3Agent"\]/);
+      assert.match(value, /tag = "2026-10-12-retire-sdk-user-agent"\s+deleted_classes = \["Me3SdkUserAgent"\]/);
+      assert.doesNotMatch(value, /^\s*(?:#\s*)?ME3_(?:ASSISTANT_RUNTIME|JEV_ROUTER_MODE)\s*=/m);
+    });
   }
 });
 

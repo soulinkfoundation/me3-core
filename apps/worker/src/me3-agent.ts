@@ -41,7 +41,8 @@ export class Me3Agent extends Agent<Env> {
       await this.startTurn(input,true);
       return Response.json(await this.readResponse(input));
     }
-    if(!["/dispatch/sandbox","/dispatch/sandbox/stream"].includes(url.pathname)||!isNewAgentDispatchInput(body))return Response.json({error:"Invalid agent dispatch payload"},{status:400});
+    if(!["/turn","/turn/stream"].includes(url.pathname))return Response.json({error:"Not found"},{status:404});
+    if(!isNewAgentDispatchInput(body))return Response.json({error:"Invalid agent dispatch payload"},{status:400});
     let input=body;
     if(!input.threadId)input={...input,threadId:(await resolvePrimaryAssistantThread(this.env,input.userId)).id};
     const thread=await this.env.DB.prepare("SELECT id FROM assistant_threads WHERE owner_id=? AND id=? AND status='active'").bind(input.userId,input.threadId).first();

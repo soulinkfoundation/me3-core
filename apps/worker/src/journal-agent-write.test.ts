@@ -2,7 +2,9 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { runCoreAgentToolTurn } from "@me3-core/plugin-agent-chat";
+import { runAgentTurn, createD1TurnStore, decideAgentApproval } from "../../../packages/agent/src/index";
+import { createDomainTools } from "../../../packages/agent/src/tools/index";
+import type { AgentEvent, AgentModel } from "../../../packages/agent/src/types";
 import { registerJournalRoutes } from "./routes/journal";
 import { getJournalDay, updateJournalDay } from "./journal";
 import type { Env } from "./types";
@@ -11,7 +13,7 @@ import type { AppContext } from "./http/types";
 const databases: DatabaseSync[] = [];
 afterEach(() => databases.splice(0).forEach(db => db.close()));
 
-function fixture(runtime: "sdk" | "legacy") {
+function fixture() {
   const raw = new DatabaseSync(":memory:");
   databases.push(raw);
   const migrations = new URL("../migrations/", import.meta.url);
@@ -46,14 +48,25 @@ function fixture(runtime: "sdk" | "legacy") {
   const save = (args: Record<string, unknown>) => call("core_journal_save", {
     date: "2026-10-08", mode: "create", body: "ME3 QA reflection.", expectedRevision: null, ...args,
   });
-  const send = (requestId = "journal-save") => runCoreAgentToolTurn({
-    db: env.DB, userId: "alice", requestId, turnId: requestId, runtime, ownerTimezone: "Europe/Dublin",
-    route: { providerId: "workers-ai", model: "scripted-fixture", configured: true,
-      backupModel: null, apiKey: null, aiGateway: null, ai: { run } },
-    messages: [{ role: "user", content: "Save or update my Journal for 8 October 2026 as requested." }],
+  const enabledPluginIds = new Set(["me3.journal"]);
+  const model: AgentModel = { id: "scripted-fixture", async step({ onDelta }) {
+    const next = await run() as { response?: string; tool_calls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }> };
+    if (next.response) await onDelta(next.response);
+    return { text: next.response || "", toolCalls: next.tool_calls || [], usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, estimatedCostUsd: 0 } };
+  } };
+  const input = (requestId: string) => ({ model, tools: createDomainTools(),
+    store: createD1TurnStore(env.DB, { ownerId: "alice", threadId: "journal-thread", turnId: requestId, requestId }),
+    context: { db: env.DB, ownerId: "alice", threadId: "journal-thread", turnId: requestId, requestId, ownerTimezone: "Europe/Dublin", enabledPluginIds,
+      messageText: "Save or update my Journal for 8 October 2026 as requested." },
+    messages: [{ role: "user" as const, content: "Save or update my Journal for 8 October 2026 as requested." }],
   });
+  const send = (requestId = "journal-save", onEvent?: (event: AgentEvent) => void) => runAgentTurn({ ...input(requestId), onEvent });
+  const approve = async (approvalId: string, requestId = "journal-save") => {
+    await decideAgentApproval(env.DB, "alice", approvalId, "approved");
+    return send(requestId);
+  };
   const snapshot = () => raw.prepare("SELECT * FROM journal_entries ORDER BY user_id, entry_date").all();
-  return { raw, env, app, outputs, call, read, save, send, run, snapshot };
+  return { raw, env, app, outputs, call, read, save, send, approve, run, snapshot };
 }
 
 describe("native conditional Journal writes with search-index triggers", () => {
@@ -61,7 +74,7 @@ describe("native conditional Journal writes with search-index triggers", () => {
   const headers = { "X-Test-Owner": "alice", "Content-Type": "application/json" };
 
   it("creates a missing day successfully and rejects a duplicate without changing it", async () => {
-    const f = fixture("sdk");
+    const f = fixture();
     await updateJournalDay(f.env, "bob", "2026-10-08", { body: "Other owner writing" });
     const other = f.snapshot();
     const missing = await f.app.request(path, { headers }, f.env);
@@ -80,7 +93,7 @@ describe("native conditional Journal writes with search-index triggers", () => {
   });
 
   it("edits a current day successfully and rejects stale edits and deletes", async () => {
-    const f = fixture("sdk");
+    const f = fixture();
     await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Original" });
     const input = { method: "PATCH", headers: { ...headers, "If-Match": '"journal-1"' }, body: JSON.stringify({ body: "Saved edit" }) };
     const edited = await f.app.request(path, input, f.env);
@@ -95,7 +108,7 @@ describe("native conditional Journal writes with search-index triggers", () => {
   });
 
   it("archives a current day successfully and restores it with the missing validator", async () => {
-    const f = fixture("sdk");
+    const f = fixture();
     await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Original" });
     const deleted = await f.app.request(path, { method: "DELETE", headers: { ...headers, "If-Match": '"journal-1"' } }, f.env);
     expect(deleted.status).toBe(200);
@@ -108,9 +121,9 @@ describe("native conditional Journal writes with search-index triggers", () => {
   });
 });
 
-describe.each(["sdk", "legacy"] as const)("%s daily Journal agent writes through Core and native API", runtime => {
+describe("daily Journal writes through the new agent and native API", () => {
   it("creates one owner day, exposes it through the native API, and replays without a second save", async () => {
-    const f = fixture(runtime);
+    const f = fixture();
     await updateJournalDay(f.env, "bob", "2026-10-08", { body: "Other owner writing" });
     const other = f.snapshot();
     f.outputs.push(f.save({ title: "ME3 QA reflection" }), { response: "Saved." });
@@ -126,7 +139,7 @@ describe.each(["sdk", "legacy"] as const)("%s daily Journal agent writes through
   });
 
   it.each(["plain_text", "markdown", "html"])("appends to %s without replacing prior body, title, format or metadata", async format => {
-    const f = fixture(runtime);
+    const f = fixture();
     const original = format === "html" ? '<p>Original writing.</p><img src="/api/journal/media/photo.png">' : "Original writing.";
     await updateJournalDay(f.env, "alice", "2026-10-08", { title: "Keep title", body: original, bodyFormat: format });
     f.raw.exec(`UPDATE journal_entries SET metadata_json = '{"ownerNote":"keep"}'`);
@@ -142,15 +155,18 @@ describe.each(["sdk", "legacy"] as const)("%s daily Journal agent writes through
   });
 
   it("replaces explicitly after a current read while preserving the title when omitted", async () => {
-    const f = fixture(runtime);
+    const f = fixture();
     await updateJournalDay(f.env, "alice", "2026-10-08", { title: "Keep", body: "Old content", bodyFormat: "html" });
     f.outputs.push(f.read(), f.save({ mode: "replace", body: "Replacement content", expectedRevision: 1 }), { response: "Replaced." });
-    await f.send();
+    const pending = await f.send();
+    expect(pending.status).toBe("needs_approval");
+    expect((await getJournalDay(f.env, "alice", "2026-10-08")).entry?.body).toBe("Old content");
+    await f.approve(pending.approvalId!);
     expect((await getJournalDay(f.env, "alice", "2026-10-08")).entry).toMatchObject({ title: "Keep", body: "Replacement content", bodyFormat: "plain_text", revision: 2 });
   });
 
   it("does not re-append the same writing when a model retry changes the call ID and revision", async () => {
-    const f = fixture(runtime);
+    const f = fixture();
     await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Original", bodyFormat: "plain_text" });
     const args = { date: "2026-10-08", mode: "append", body: "One reflection", expectedRevision: 1 };
     f.outputs.push(f.read(), f.call("core_journal_save", args, "first-save"), f.read(),
@@ -159,8 +175,8 @@ describe.each(["sdk", "legacy"] as const)("%s daily Journal agent writes through
     expect((await getJournalDay(f.env, "alice", "2026-10-08")).entry).toMatchObject({ body: "Original\n\nOne reflection", revision: 2 });
   });
 
-  if (runtime === "sdk") it("replays an earlier append after another append in the same request", async () => {
-    const f = fixture(runtime);
+  it("replays an earlier append after another append in the same request", async () => {
+    const f = fixture();
     await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Original", bodyFormat: "plain_text" });
     const first = { date: "2026-10-08", mode: "append", body: "First reflection", expectedRevision: 1 };
     f.outputs.push(f.read(), f.call("core_journal_save", first, "first"), f.read(),
@@ -171,28 +187,29 @@ describe.each(["sdk", "legacy"] as const)("%s daily Journal agent writes through
   });
 
   it("rejects a guessed revision without an owner-scoped read in the current turn", async () => {
-    const f = fixture(runtime);
+    const f = fixture();
     await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Keep this writing" });
     const before = f.snapshot();
     f.outputs.push(f.save({ mode: "replace", expectedRevision: 1 }), { response: "Please read it first." });
     await f.send();
     expect(f.snapshot()).toEqual(before);
-    expect(f.raw.prepare("SELECT error_message FROM agent_tool_executions WHERE tool_name = 'core_journal_save'").get()?.error_message).toContain("Read");
+    expect(f.raw.prepare("SELECT json_extract(result_json, '$.error') AS error_message FROM me3_agent_tool_receipts WHERE tool_name = 'core_journal_save'").get()?.error_message).toContain("Read");
   });
 
-  it("allows a corrected retry after a missing-read failure and retains the failed attempt", async () => {
-    const f = fixture(runtime);
+  it("allows a new request after a missing-read failure and retains the failed attempt", async () => {
+    const f = fixture();
     await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Original", bodyFormat: "plain_text" });
     const args = { date: "2026-10-08", mode: "append", body: "One reflection", expectedRevision: 1 };
-    f.outputs.push(f.call("core_journal_save", args, "save-before-read"), f.read(),
-      f.call("core_journal_save", args, "corrected-save"), { response: "Saved after reading." });
-    await f.send();
+    f.outputs.push(f.call("core_journal_save", args, "save-before-read"), { response: "Read first." });
+    await f.send("missing-read");
+    f.outputs.push(f.read(), f.call("core_journal_save", args, "corrected-save"), { response: "Saved after reading." });
+    await f.send("corrected-request");
     expect((await getJournalDay(f.env, "alice", "2026-10-08")).entry).toMatchObject({ body: "Original\n\nOne reflection", revision: 2 });
-    expect(f.raw.prepare("SELECT status FROM agent_tool_executions WHERE tool_name = 'core_journal_save' ORDER BY rowid").all()).toEqual([{ status: "failed" }, { status: "succeeded" }]);
+    expect(f.raw.prepare("SELECT json_extract(result_json, '$.status') AS status FROM me3_agent_tool_receipts WHERE tool_name = 'core_journal_save' ORDER BY rowid").all()).toEqual([{ status: "error" }, { status: "ok" }]);
   });
 
   it("rejects an edit when a native client saves after the agent's read", async () => {
-    const f = fixture(runtime);
+    const f = fixture();
     await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Original" });
     f.run.mockImplementationOnce(async () => f.read()).mockImplementationOnce(async () => {
       await updateJournalDay(f.env, "alice", "2026-10-08", { title: "Native edit", body: "Concurrent owner writing" }, 1);
@@ -203,26 +220,26 @@ describe.each(["sdk", "legacy"] as const)("%s daily Journal agent writes through
   });
 
   it.each(["existing", "archived"])("does not overwrite an %s day during create", async status => {
-    const f = fixture(runtime);
+    const f = fixture();
     await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Original writing" });
     if (status === "archived") f.raw.exec("UPDATE journal_entries SET archived_at = CURRENT_TIMESTAMP");
     const before = f.snapshot();
     f.outputs.push(f.save({}), { response: "No save." });
     await f.send();
     expect(f.snapshot()).toEqual(before);
-    expect(f.raw.prepare("SELECT status FROM agent_tool_executions WHERE tool_name = 'core_journal_save'").get()?.status).toBe("failed");
+    expect(f.raw.prepare("SELECT json_extract(result_json, '$.status') AS status FROM me3_agent_tool_receipts WHERE tool_name = 'core_journal_save'").get()?.status).toBe("error");
   });
 
   it("rejects an impossible calendar date without saving", async () => {
-    const f = fixture(runtime);
+    const f = fixture();
     f.outputs.push(f.save({ date: "2027-02-30" }), { response: "Invalid date." });
     await f.send();
     expect(f.snapshot()).toEqual([]);
-    expect(f.raw.prepare("SELECT status FROM agent_tool_executions WHERE tool_name = 'core_journal_save'").get()?.status).toBe("failed");
+    expect(f.raw.prepare("SELECT json_extract(result_json, '$.status') AS status FROM me3_agent_tool_receipts WHERE tool_name = 'core_journal_save'").get()?.status).toBe("error");
   });
 
   it("blocks a queued save after Journal is disabled, preserving existing data", async () => {
-    const f = fixture(runtime);
+    const f = fixture();
     await updateJournalDay(f.env, "alice", "2026-10-07", { body: "Keep earlier writing" });
     const before = f.snapshot();
     f.run.mockImplementationOnce(async () => {
@@ -231,6 +248,47 @@ describe.each(["sdk", "legacy"] as const)("%s daily Journal agent writes through
     });
     await f.send();
     expect(f.snapshot()).toEqual(before);
-    expect(f.raw.prepare("SELECT error_message FROM agent_tool_executions WHERE tool_name = 'core_journal_save'").get()?.error_message).toContain("disabled");
+    expect(f.raw.prepare("SELECT json_extract(result_json, '$.error') AS error_message FROM me3_agent_tool_receipts WHERE tool_name = 'core_journal_save'").get()?.error_message).toContain("disabled");
+  });
+
+  it("does not replace an approved day after Journal is disabled before the saved call resumes", async () => {
+    const f = fixture();
+    await updateJournalDay(f.env, "alice", "2026-10-08", { title: "Keep", body: "Original writing" });
+    f.outputs.push(f.read(), f.save({ mode: "replace", body: "Replacement", expectedRevision: 1 }), { response: "The plugin is disabled." });
+    const pending = await f.send();
+    expect(pending.status).toBe("needs_approval");
+    const before = f.snapshot();
+    f.raw.exec("INSERT INTO plugin_installations(plugin_id,version,enabled,status) VALUES('me3.journal','test',0,'disabled')");
+    await f.approve(pending.approvalId!);
+    expect(f.snapshot()).toEqual(before);
+    expect(f.raw.prepare("SELECT status FROM me3_agent_approvals WHERE id=?").get(pending.approvalId!)?.status).toBe("approved");
+    expect(f.raw.prepare("SELECT status AS receipt_status, json_extract(result_json, '$.status') status, json_extract(result_json, '$.error') error FROM me3_agent_tool_receipts WHERE tool_name='core_journal_save'").get()).toMatchObject({ receipt_status: "finished", status: "error", error: expect.stringContaining("disabled") });
+    const calls = f.run.mock.calls.length;
+    await f.send();
+    expect(f.snapshot()).toEqual(before);
+    expect(f.run.mock.calls.length).toBe(calls);
+  });
+
+  it.each(["waiting", "running"])("settles only its owned waiting approval receipt after disable, preserving %s outcomes", async (receiptState) => {
+    const f = fixture();
+    await updateJournalDay(f.env, "alice", "2026-10-08", { body: "Original writing" });
+    const before = f.snapshot();
+    f.outputs.push(f.read(), f.save({ mode: "replace", body: "Replacement", expectedRevision: 1 }), { response: "The plugin is disabled." });
+    let interrupted: unknown;
+    await f.send("journal-save", event => {
+      if (event.event !== "tool" || event.data.state !== "complete" || event.data.toolName !== "core_journal_save" || (event.data.result as {status?: string})?.status !== "needs_approval") return;
+      f.raw.exec("INSERT INTO plugin_installations(plugin_id,version,enabled,status) VALUES('me3.journal','test',0,'disabled')");
+      if (receiptState === "running") {
+        f.raw.exec("UPDATE me3_agent_tool_receipts SET status='running', result_json=NULL WHERE tool_name='core_journal_save'");
+        interrupted = f.raw.prepare("SELECT * FROM me3_agent_tool_receipts WHERE tool_name='core_journal_save'").get();
+      }
+    });
+    expect(f.snapshot()).toEqual(before);
+    expect(f.raw.prepare("SELECT COUNT(*) AS count FROM me3_agent_approvals").get()?.count).toBe(0);
+    if (receiptState === "running") {
+      expect(f.raw.prepare("SELECT * FROM me3_agent_tool_receipts WHERE tool_name='core_journal_save'").get()).toEqual(interrupted);
+    } else {
+      expect(f.raw.prepare("SELECT status AS receipt_status,json_extract(result_json,'$.status') status,json_extract(result_json,'$.error') error FROM me3_agent_tool_receipts WHERE tool_name='core_journal_save'").get()).toMatchObject({ receipt_status: "finished", status: "error", error: expect.stringContaining("disabled") });
+    }
   });
 });

@@ -5,7 +5,7 @@ import {
   getAgentMailboxMessage,
   listAgentMailboxMessages,
 } from "../../../packages/agent/src/services/mailbox";
-import { listAgentContacts } from "./agent-chat";
+import { listAgentContacts } from "@me3-core/plugin-agent-chat";
 import { createAgentMailboxServices } from "./agent-mailbox-services";
 import type { Env } from "./types";
 

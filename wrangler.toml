@@ -11,9 +11,25 @@ head_sampling_rate = 1
 name = "ME3_USER_AGENT"
 class_name = "Me3UserAgent"
 
+[[durable_objects.bindings]]
+name = "ME3_AGENT"
+class_name = "Me3Agent"
+
 [[migrations]]
 tag = "2026-05-11-me3-core-user-agent"
 new_sqlite_classes = ["Me3UserAgent"]
+
+[[migrations]]
+tag = "2026-10-01-me3-sdk-user-agent"
+new_sqlite_classes = ["Me3SdkUserAgent"]
+
+[[migrations]]
+tag = "2026-10-10-me3-agent"
+new_sqlite_classes = ["Me3Agent"]
+
+[[migrations]]
+tag = "2026-10-12-retire-sdk-user-agent"
+deleted_classes = ["Me3SdkUserAgent"]
 
 [ai]
 binding = "AI"

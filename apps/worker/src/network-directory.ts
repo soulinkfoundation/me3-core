@@ -2,7 +2,7 @@ import type {
   CorePeopleSearchOffering,
   CorePeopleSearchResult,
   CorePeopleSearchToolServices,
-} from "./agent-chat";
+} from "@me3-core/plugin-agent-chat";
 import { ensureSoulinkContactsFresh } from "./routes/channels";
 import { getMe3CloudApiOrigin } from "./sites";
 import type { DbContact, Env } from "./types";

@@ -499,6 +499,15 @@ async function assertExistingResourceIdentities(api, contract) {
     if (queue) await listQueueConsumers(api, api.accountId, queue);
   }
   const namespaces = await listDurableObjectNamespaces(api, api.accountId);
+  for (const className of ["Me3UserAgent", "Me3SdkUserAgent", "Me3Agent"]) {
+    const matches = namespaces.filter((item) => item.script === contract.workerName && item.class === className);
+    if (matches.length > 1 || matches.some((item) =>
+      !/^[0-9a-f]{32}$/.test(namespaceId(item)) ||
+      namespaces.filter((other) => namespaceId(other) === namespaceId(item)).length !== 1 ||
+      (className === "Me3UserAgent" && namespaceId(item) !== contract.durableObjectNamespaceId))) {
+      throw new Error("Durable Object namespace identity does not match the managed install");
+    }
+  }
   const namespace = namespaces.find(
     (item) => namespaceId(item) === contract.durableObjectNamespaceId,
   );

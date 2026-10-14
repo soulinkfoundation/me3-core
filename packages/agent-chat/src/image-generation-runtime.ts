@@ -1,4 +1,4 @@
-import type { AgentChatAiRoute } from "./model-runtime";
+import type { AgentChatAiRoute } from "./contracts";
 
 export const DEFAULT_ASSISTANT_IMAGE_QUALITY = "medium";
 

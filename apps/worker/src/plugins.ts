@@ -1,5 +1,5 @@
 import type { Env } from "./types";
-import { AGENT_CHAT_RUNTIME } from "./agent-chat";
+import { AGENT_CHAT_RUNTIME } from "@me3-core/plugin-agent-chat";
 import { CALENDAR_RUNTIME } from "./calendar";
 import { ACCOUNTS_PLUGIN_ID } from "./accounts";
 import { JOURNAL_PLUGIN_ID, JOURNAL_RUNTIME } from "@me3-core/plugin-journal";
@@ -1125,9 +1125,9 @@ const AGENT_CHAT_PLUGIN: CorePluginManifestSummary = {
   ],
   queuesAndCrons: [],
   notes: [
-    "Bundled through @me3-core/plugin-agent-chat as a first-party Core package.",
+    "Chat runs through @me3-core/agent; @me3-core/plugin-agent-chat supplies retained domain services and contracts.",
     "Enabled by default because chat is part of the baseline ME3 experience, while plugin packaging keeps future tools portable.",
-    "Current runtime supports general chat through configured Core AI routes; richer tool actions should be added behind this package boundary.",
+    "Core AI routes use the installation's AI Gateway; tools enforce their owning plugin, approval and persistence contracts.",
   ],
 };
 

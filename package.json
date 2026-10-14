@@ -13,7 +13,6 @@
     "uninstall:cloudflare": "node scripts/uninstall-cloudflare.mjs",
     "destroy:cloudflare": "node scripts/uninstall-cloudflare.mjs",
     "generate:llms": "node scripts/generate-llms.mjs",
-    "eval:models": "node scripts/evaluate-models.mjs",
     "eval:agent": "node --import tsx scripts/evaluate-agent.mjs",
     "eval:fast-path": "node --import tsx scripts/evaluate-fast-path.mjs",
     "eval:fast-path:shadow": "node --import tsx scripts/evaluate-fast-path-shadow.mjs",
@@ -51,7 +50,10 @@
         "description": "ME3 stores owner data, settings, and plugin state here. Use + Create new for a new install; Cloudflare provisions the D1 database automatically."
       },
       "ME3_USER_AGENT": {
-        "description": "Durable Object state for ME3's owner agent runtime. Cloudflare provisions this automatically."
+        "description": "Durable Object coordination for mailbox events and installation cleanup. Cloudflare provisions this automatically."
+      },
+      "ME3_AGENT": {
+        "description": "Durable execution for ME3 owner chat. Portable conversation, approval and receipt state stays in D1."
       },
       "AI": {
         "description": "Workers AI binding used by ME3's default assistant and voice features. You can add other model providers inside ME3 later."

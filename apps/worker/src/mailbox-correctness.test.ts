@@ -9,7 +9,7 @@ import {
   rejectAgentMailboxDraft,
   updateAgentMailboxDraft,
   upsertAgentMailbox,
-} from "./agent-chat";
+} from "@me3-core/plugin-agent-chat";
 import { registerMailboxRoutes } from "./routes/mailbox";
 
 type MailboxMessageRow = {

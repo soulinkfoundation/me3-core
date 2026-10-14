@@ -4,6 +4,7 @@ import { canonicalJson, toolIdempotencyKey, validateArguments } from "./schema";
 import { compactAgentContext } from "./context";
 import { validateTargetSelection } from "./presentations";
 import { startFastPathShadow } from "./fast-path";
+import { requireEnabledPlugin } from "./plugin-authorization";
 import type { AgentCheckpoint, AgentModel, AgentTargetPresentationCard, AgentTool, AgentToolCall, AgentToolResult, AgentTurnInput, AgentTurnResult } from "./types";
 
 export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
@@ -177,6 +178,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   async function execute(call: AgentToolCall, tool?: AgentTool): Promise<AgentToolResult> {
     if (await cancelled()) return {status:"error",error:"Turn cancelled"};
     if (!tool) return {status:"error",error:`Tool ${call.name} is unavailable`};
+    const pluginId = tool.pluginId;
     const reject = (error: string): AgentToolResult => {
       checkpoint.trace.toolCalls.push({name:tool.name,effect:tool.effect,status:"error",durationMs:0});
       return {status:"error",error};
@@ -237,6 +239,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
           throw error;
         }
       }
+      await requireEnabledPlugin(context, pluginId);
       if (await cancelled()) output={status:"error",error:"Turn cancelled before the tool started"};
       else if (needsApproval && !approved) {
         const prepared=await tool.prepareApproval?.(call.arguments,context);
@@ -250,6 +253,13 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     return output;
 
     async function pause(card: NonNullable<AgentToolResult["approval"]>): Promise<AgentToolResult> {
+      if (await cancelled()) return reject("Turn cancelled");
+      try { await requireEnabledPlugin(context, pluginId); }
+      catch (error) {
+        const denied = reject(error instanceof Error ? error.message : "Plugin authorization is unavailable");
+        if (context.effectReceiptClaimed && await input.store.claimReceipt(key, call)) await input.store.finishReceipt(key, denied);
+        return denied;
+      }
       if (await cancelled()) return reject("Turn cancelled");
       checkpoint.approvalId = await input.store.requestApproval(key, call, card);
       if (await cancelled()) return reject("Turn cancelled");
