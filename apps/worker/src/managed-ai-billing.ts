@@ -3,7 +3,7 @@ import type { Env } from "./types";
 
 export const MANAGED_AI_BILLING_POLICY_SECRET = "ME3_MANAGED_AI_BILLING_POLICY";
 const INCLUDED_MONTHLY_CENTS = 500;
-const DEFAULT_MANAGED_MODEL = "openai/gpt-5.4-mini";
+const DEFAULT_MANAGED_MODEL = "openai/gpt-6.1-sol";
 const MANAGED_MODELS = [
   "openai/gpt-5.4-mini",
   "openai/gpt-5.4-nano",
@@ -16,6 +16,7 @@ const MANAGED_MODELS = [
   "openai/gpt-6-astra",
   "anthropic/claude-opus-5.5",
   "anthropic/claude-sonnet-5.5",
+  "anthropic/claude-haiku-5.5",
   "zai-org/glm-5.3-flash",
 ] as const;
 export const MANAGED_AI_FALLBACK_MODEL = "@cf/zai-org/glm-4.7-flash";

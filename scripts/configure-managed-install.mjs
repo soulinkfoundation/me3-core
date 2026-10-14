@@ -64,7 +64,7 @@ const routes = {
   ME3_MANAGED_EMAIL_GATEWAY_ORIGIN: managedEmailGatewayUrl.origin,
   ME3_SOCIAL_OAUTH_ORIGIN: "https://api.me3.app",
   ME3_AI_CHAT_PROVIDER: "workers-ai",
-  ME3_AI_CHAT_MODEL: "openai/gpt-5.4-mini",
+  ME3_AI_CHAT_MODEL: "openai/gpt-6.1-sol",
   ME3_AI_CHAT_BACKUP_MODEL: "@cf/zai-org/glm-4.7-flash",
   ME3_WEB_SEARCH_MODEL: "openai/gpt-5.4-mini",
   ME3_AI_REASONING_PROVIDER: "workers-ai",

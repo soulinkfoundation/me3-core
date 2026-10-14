@@ -43,7 +43,7 @@ test("configures a private managed Worker without raw model selection", () => {
     assert.match(output, /^CORE_WEB_ORIGIN = "https:\/\/owner\.me3\.app"$/m);
     assert.match(output, /^CORE_API_ORIGIN = "https:\/\/owner\.me3\.app"$/m);
     assert.match(output, /^ME3_AI_CHAT_PROVIDER = "workers-ai"$/m);
-    assert.match(output, /^ME3_AI_CHAT_MODEL = "openai\/gpt-5.4-mini"$/m);
+    assert.match(output, /^ME3_AI_CHAT_MODEL = "openai\/gpt-6.1-sol"$/m);
     assert.match(output, /^ME3_WEB_SEARCH_MODEL = "openai\/gpt-5.4-mini"$/m);
     assert.doesNotMatch(output, /ME3_AI_IMAGE_GENERATION_PROVIDER/);
     assert.doesNotMatch(output, /ME3_AI_IMAGE_GENERATION_MODEL/);
