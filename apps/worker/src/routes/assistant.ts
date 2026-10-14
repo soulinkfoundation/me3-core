@@ -827,20 +827,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     return Boolean(row);
   }
 
-  async function touchAssistantThread(env: Env, ownerId: string, threadId: string) {
-    try {
-      await env.DB.prepare(
-        `UPDATE assistant_threads
-         SET last_message_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND owner_id = ?`,
-      )
-        .bind(threadId, ownerId)
-        .run();
-    } catch {
-      // Thread timestamps should not break the chat turn if persistence is degraded.
-    }
-  }
-
   app.get("/api/assistant/threads", async (c) => {
     const ownerId = await requireOwner(c);
     if (!ownerId) return unauthorized(c);
@@ -1220,7 +1206,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       );
     }
 
-    await touchAssistantThread(c.env, ownerId, thread.id);
     return c.json({ ...payload, mode, threadId: thread.id });
   }
 
@@ -1456,7 +1441,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
                 latency,
               }),
             );
-            await touchAssistantThread(c.env, ownerId, thread.id);
             await insertAssistantChatStreamAuditEvent(c.env, {
               ownerId,
               connectionId: turn.connection.id,
@@ -1509,7 +1493,6 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
             return;
           }
 
-          await touchAssistantThread(c.env, ownerId, thread.id);
           const replyText = typeof payload.replyText === "string" ? payload.replyText : "";
           await sendAssistantStreamText(send, replyText);
           await insertAssistantChatStreamAuditEvent(c.env, {

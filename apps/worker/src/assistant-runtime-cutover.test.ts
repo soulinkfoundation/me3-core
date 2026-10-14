@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { createD1TurnStore } from "../../../packages/agent/src/store";
+import { createD1TurnStore, persistAgentInput } from "../../../packages/agent/src/store";
 import { dispatchAgentChannelTurn } from "./agent-channels";
+import { executeNewAgentTurn, type NewAgentDispatchInput } from "./agent-runtime";
 import { registerAssistantRoutes } from "./routes/assistant";
 import { registerMissionControlRoutes } from "./routes/mission-control";
 import { mailboxFixture } from "./test-utils/agent-mailbox-fixture";
@@ -31,7 +32,87 @@ function fixture(obsolete?: string, bound = true) {
   return { ...f, app, env, fetch, retired, post };
 }
 
+async function savedReplay() {
+  const f = fixture();
+  const primary = await (await f.post("/api/assistant/threads/primary", {})).json() as { thread: { id: string } };
+  const body = { requestId: "saved-request", threadId: primary.thread.id, messageText: "Read my saved reminders." };
+  let payload: Record<string, unknown> = {};
+  // The simulated DO persists a completed canonical turn; route admission and SQLite are real.
+  f.fetch.mockImplementationOnce(async (_url, init) => {
+    const input = JSON.parse(String(init.body)) as NewAgentDispatchInput;
+    payload = { ok: true, status: "complete", turnId: input.turnId, threadId: input.threadId, replyText: "Saved current runtime reply." };
+    await persistAgentInput(f.env.DB, { ownerId: input.userId, threadId: input.threadId, turnId: input.turnId, requestId: input.requestId }, input);
+    f.raw.prepare("UPDATE me3_agent_turns SET status='complete',response_json=? WHERE turn_id=?").run(JSON.stringify(payload), input.turnId);
+    return Response.json(payload);
+  });
+  expect((await f.post("/api/assistant/chat/turn", body)).status).toBe(200);
+  f.raw.prepare("UPDATE assistant_threads SET last_message_at='2000-01-01 00:00:00',updated_at='2000-01-02 00:00:00' WHERE owner_id='alice' AND id=?").run(primary.thread.id);
+  const thread = () => f.raw.prepare("SELECT * FROM assistant_threads WHERE owner_id='alice' AND id=?").get(primary.thread.id);
+  const canonical = () => f.raw.prepare("SELECT * FROM me3_agent_turns WHERE owner_id='alice' AND request_id=?").get(body.requestId);
+  return { ...f, body, payload, thread, canonical };
+}
+
 describe("one current Worker chat runtime", () => {
+  // Replaying an old answer must not promote conversation recency. Failed,
+  // incomplete or aborted forwarding must not write timestamps either; only a
+  // genuinely fresh runtime result owns the timestamp update.
+  it.each(["http-json", "sse", "sse-json-fallback"])("keeps completed replay timestamps and canonical state unchanged (%s)", async transport => {
+    const f = await savedReplay();
+    const before = f.thread(), canonical = f.canonical();
+    f.fetch.mockImplementationOnce(async () => transport === "sse"
+      ? new Response(`event: done\ndata: ${JSON.stringify(f.payload)}\n\n`, { headers: { "Content-Type": "text/event-stream" } })
+      : Response.json(f.payload));
+    const response = await f.post(`/api/assistant/chat/turn${transport === "http-json" ? "" : "/stream"}`, f.body);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Saved current runtime reply.");
+    expect(f.thread()).toEqual(before);
+    expect(f.canonical()).toEqual(canonical);
+    expect(f.raw.prepare("SELECT COUNT(*) n FROM ai_usage_events").get()?.n).toBe(0);
+    expect(f.raw.prepare("SELECT COUNT(*) n FROM me3_agent_tool_receipts").get()?.n).toBe(0);
+  });
+
+  it.each(["http-error", "sse-error", "sse-incomplete", "sse-aborted"])("does not touch conversation recency when replay forwarding fails (%s)", async failure => {
+    const f = await savedReplay();
+    const before = f.thread(), canonical = f.canonical(), controller = new AbortController();
+    f.fetch.mockImplementationOnce(async () => {
+      if (failure === "http-error") return Response.json({ ok: false, error: "Saved transport unavailable" }, { status: 503 });
+      if (failure === "sse-aborted") controller.abort();
+      const event = failure === "sse-error" ? 'event: error\ndata: {"error":"Saved transport unavailable"}\n\n' : 'event: delta\ndata: {"text":"Partial saved answer"}\n\n';
+      return new Response(event, { headers: { "Content-Type": "text/event-stream" } });
+    });
+    const response = await f.app.request(`/api/assistant/chat/turn${failure === "http-error" ? "" : "/stream"}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f.body), signal: controller.signal }, f.env);
+    await response.text();
+    expect(f.thread()).toEqual(before);
+    expect(f.canonical()).toEqual(canonical);
+    expect(f.raw.prepare("SELECT COUNT(*) n FROM ai_usage_events").get()?.n).toBe(0);
+  });
+
+  it("persists fresh result timestamps once through the actual runtime", async () => {
+    const f = fixture();
+    const primary = await (await f.post("/api/assistant/threads/primary", {})).json() as { thread: { id: string } };
+    f.raw.prepare("UPDATE assistant_threads SET last_message_at='2000-01-01 00:00:00',updated_at='2000-01-02 00:00:00' WHERE id=?").run(primary.thread.id);
+    f.raw.exec("CREATE TABLE test_thread_timestamp_writes(id INTEGER PRIMARY KEY); CREATE TRIGGER test_thread_timestamp_write AFTER UPDATE OF updated_at,last_message_at ON assistant_threads BEGIN INSERT INTO test_thread_timestamp_writes(id) VALUES(NULL); END;");
+    const run = vi.fn(async () => ({ response: "Fresh runtime reply.", usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }));
+    Object.assign(f.env, { AI: { run }, CLOUDFLARE_AI_GATEWAY_ID: "synthetic", ME3_AGENT_FAST_PATH: "off" });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No external providers in this fixture"));
+    try {
+      f.fetch.mockImplementationOnce(async (_url, init) => {
+        const input = JSON.parse(String(init.body)) as NewAgentDispatchInput;
+        await persistAgentInput(f.env.DB, { ownerId: input.userId, threadId: input.threadId, turnId: input.turnId, requestId: input.requestId }, input);
+        return Response.json(await executeNewAgentTurn(f.env, input, new AbortController().signal));
+      });
+      const response = await f.post("/api/assistant/chat/turn", { requestId: "fresh-request", threadId: primary.thread.id, messageText: "Say hello.", model: { providerId: "workers-ai", model: "@cf/zai-org/glm-4.7-flash" } });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ status: "complete", replyText: "Fresh runtime reply." });
+      const thread = f.raw.prepare("SELECT last_message_at,updated_at FROM assistant_threads WHERE id=?").get(primary.thread.id);
+      expect(thread?.last_message_at).not.toBe("2000-01-01 00:00:00");
+      expect(thread?.updated_at).toBe(thread?.last_message_at);
+      expect(f.raw.prepare("SELECT COUNT(*) n FROM test_thread_timestamp_writes").get()?.n).toBe(1);
+      expect(run).toHaveBeenCalledOnce();
+      expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); }
+  });
+
   it("preserves the older message API shape while executing in the same primary conversation", async () => {
     const f = fixture();
     const response = await f.post("/api/assistant/chat", { message: "Read my saved reminders." });
