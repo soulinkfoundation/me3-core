@@ -10,7 +10,6 @@ import { saveOwnerQuote } from "./quotes";
 import { gratitudeFixture } from "./test-utils/gratitude-fixture";
 import { deleteJournalDay } from "./journal";
 import { cancelAgentReminder, getPendingAgentReminder, listPendingAgentReminders, updateAgentReminder } from "../../../packages/agent-chat/src/reminders";
-import { loadAgentReminderTitleChoices } from "../../../packages/agent-chat/src/reminder-selection";
 
 vi.mock("./push-notifications", () => ({ notifyCalendarItemDue: vi.fn(async () => ({ ok: true, matched: 1, sent: 1 })), notifyDailyBriefingReady: vi.fn(async () => ({ ok: true, matched: 1, sent: 1, retryable: 0 })) }));
 // Failure modes: clobbering writing/metadata, empty lines counting, device/owner
@@ -129,7 +128,7 @@ describe("Gratitude persistence and reminders", () => {
       const env = { DB: f.env.DB } as never;
       expect((await listPendingAgentReminders(env, "owner", { includeOverdue: true })).map(r => r.title)).toEqual(["Call Mam"]);
       expect(await getPendingAgentReminder(env, "owner", card)).toBeNull();
-      expect(await loadAgentReminderTitleChoices(f.env.DB as never, "owner", "Three good things")).toEqual([]);
+      expect(await listPendingAgentReminders(env, "owner", { query: "Three good things", includeOverdue: true })).toEqual([]);
       expect(await updateAgentReminder(env, "owner", card, { title: "Three good things", remindAt: "2026-10-13T18:00:00.000Z" })).toMatchObject({ status: 404 });
       expect(f.raw.prepare("SELECT remind_at FROM user_reminders WHERE id = ?").get(card)!.remind_at).toBe("2026-10-13T20:00:00.000Z");
 
