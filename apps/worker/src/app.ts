@@ -739,9 +739,31 @@ app.post("/api/admin/bootstrap", async (c) => {
     return c.json({ ok: false, error: "Owner auth is not configured" }, 503);
   }
 
-  if (body.bootstrapCode !== setupPassword) {
+  if (
+    typeof body.bootstrapCode !== "string" ||
+    !constantTimeEqual(body.bootstrapCode, setupPassword)
+  ) {
     await recordAuthRateLimitAttempt(c.env, AUTH_RATE_LIMITS.bootstrap, rateLimitScope);
     return c.json({ ok: false, error: "Invalid setup password" }, 401);
+  }
+
+  // Bootstrap creates the owner once. After a password exists, the setup
+  // password must not be able to replace the owner's email and password;
+  // recovery goes through the dedicated password-reset route instead.
+  const existingOwner = await c.env.DB.prepare(
+    "SELECT id, password_hash FROM owner_profile WHERE id = ? LIMIT 1",
+  )
+    .bind("owner")
+    .first<{ id: string; password_hash: string | null }>();
+  if (existingOwner?.password_hash) {
+    return c.json(
+      {
+        ok: false,
+        error: "This ME3 is already set up. Sign in, or use password recovery.",
+        code: "owner_already_configured",
+      },
+      409,
+    );
   }
 
   const password = body.password?.trim();
@@ -832,7 +854,10 @@ app.post("/api/auth/password-reset/bootstrap", async (c) => {
     return c.json({ ok: false, error: "Owner recovery is not configured" }, 503);
   }
 
-  if (body.bootstrapCode !== setupPassword) {
+  if (
+    typeof body.bootstrapCode !== "string" ||
+    !constantTimeEqual(body.bootstrapCode, setupPassword)
+  ) {
     await recordAuthRateLimitAttempt(c.env, AUTH_RATE_LIMITS.passwordReset, rateLimitScope);
     return c.json({ ok: false, error: "Invalid setup password" }, 401);
   }

@@ -5729,6 +5729,31 @@ describe("ME3 Worker auth", () => {
     }
   });
 
+  it("refuses to re-run bootstrap once the owner has a password", async () => {
+    const env = createEnv();
+    await bootstrap(env);
+    const ownerBefore = env.owner;
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/admin/bootstrap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bootstrapCode: "owner-code",
+          email: "attacker@example.com",
+          name: "Attacker",
+          username: "attacker",
+          password: "attacker-password-123",
+        }),
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(env.owner).toEqual(ownerBefore);
+  });
+
   it("requires a password during bootstrap", async () => {
     const env = createEnv();
 

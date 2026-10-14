@@ -74,7 +74,8 @@
       "js-cookie": "3.0.8",
       "brace-expansion": "2.1.4",
       "nanoid": "3.3.18",
-      "postcss": "8.5.26"
+      "postcss": "8.5.26",
+      "hono@<4.13.13": "4.13.13"
     }
   }
 }

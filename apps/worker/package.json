@@ -24,7 +24,7 @@
     "@me3-core/web-research": "workspace:*",
     "@me3/knowledge": "workspace:*",
     "agents": "^0.24.0",
-    "hono": "^4.12.34",
+    "hono": "^4.13.13",
     "ical.js": "^2.2.1",
     "me3-protocol": "github:soulinkfoundation/me3-protocol#v4.1.0",
     "stripe": "^17.0.0",
