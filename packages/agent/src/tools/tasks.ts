@@ -2,6 +2,10 @@ import { archiveAgentMissionTask, createAgentMissionTask, getAgentMissionTask, l
 import { domainTool, ok, optionalString, requiredString, resultOrThrow } from "./common";
 import { approval, rememberTargets, requireTarget } from "./targets";
 
+// Mission tasks clamp priority to 1-5 and sort ascending, so 1 is most urgent.
+// Stating it keeps replies from guessing (or being graded as inventing) the scale.
+export const TASK_PRIORITY_SCALE = "1 (highest) to 5 (lowest)";
+
 export function resolveProject(projects: AgentMissionProject[], args: Record<string, unknown>): string | undefined {
   const id = optionalString(args.projectId); const name = optionalString(args.projectName)?.trim().toLocaleLowerCase();
   if (!id && !name) return undefined;
@@ -15,12 +19,12 @@ export function taskTools() {
       const projects = await listAgentMissionProjects({ DB: context.db }, context.ownerId);
       const projectId = resolveProject(projects, args);
       const tasks = await listAgentMissionTasks({ DB: context.db }, context.ownerId, { projectId, status: optionalString(args.status) });
-      return ok({ tasks, projects, ...await rememberTargets(context, "task", tasks, task => task.title) });
+      return ok({ tasks, projects, priorityScale: TASK_PRIORITY_SCALE, ...await rememberTargets(context, "task", tasks, task => task.title) });
     }, { fastPath: { mode: "arguments", candidates: "tasks" } }),
     domainTool("core.mission.task.read", async (args, context) => {
       const task = await getAgentMissionTask({ DB: context.db }, context.ownerId, requiredString(args.taskId, "Task ID"));
       if (!task) throw new Error("Task not found.");
-      await rememberTargets(context, "task", [task], value => value.title); return ok({ task });
+      await rememberTargets(context, "task", [task], value => value.title); return ok({ task, priorityScale: TASK_PRIORITY_SCALE });
     }),
     domainTool("core.mission.task.create", async (args, context) => {
       const projectId = resolveProject(await listAgentMissionProjects({ DB: context.db }, context.ownerId), args);

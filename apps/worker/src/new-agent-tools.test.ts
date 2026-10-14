@@ -132,7 +132,7 @@ describe("new agent domain tools", () => {
       INSERT INTO mission_projects(id,user_id,name,slug,status) VALUES ('launch','owner','Launch','launch','active'),('other','owner','Other','other','active');
       INSERT INTO mission_tasks(id,user_id,title,project_id,status,priority,updated_at) VALUES ('target','owner','Older launch task','launch','backlog',3,'2000-01-01');`);
     for (let index = 0; index < 101; index++) ctx.raw.prepare("INSERT INTO mission_tasks(id,user_id,title,project_id,status,priority,updated_at) VALUES (?,?,?,?,?,?,?)").run(`new-${index}`, "owner", `New ${index}`, "other", "backlog", 3, "2099-01-01");
-    expect(await tool("core_mission_task_list").execute({ projectId: "launch", status: "backlog" }, ctx)).toMatchObject({ status: "ok", data: { tasks: [expect.objectContaining({ id: "target" })] } });
+    expect(await tool("core_mission_task_list").execute({ projectId: "launch", status: "backlog" }, ctx)).toMatchObject({ status: "ok", data: { tasks: [expect.objectContaining({ id: "target" })], priorityScale: "1 (highest) to 5 (lowest)" } });
   });
 
   it("refuses invented target IDs and stale durable snapshots", async () => {
@@ -411,7 +411,7 @@ describe("new agent domain tools", () => {
       INSERT INTO mission_tasks(id,user_id,title,project_id,status,priority,updated_at) VALUES ('t1','owner','Launch review','launch','backlog',3,'2099-01-01'),('t2','owner',' launch REVIEW ','launch','backlog',3,'2099-01-01');`);
     ctx.messageText = "Mark Launch review complete";
     expect((await tool("core_mission_task_list").execute({}, ctx)).status).toBe("ok");
-    expect((await tool("core_mission_task_read").execute({ taskId: "t1" }, ctx)).status).toBe("ok");
+    expect(await tool("core_mission_task_read").execute({ taskId: "t1" }, ctx)).toMatchObject({ status: "ok", data: { priorityScale: "1 (highest) to 5 (lowest)" } });
     expect(await tool("core_mission_task_update").execute({ taskId: "t1", status: "done" }, ctx)).toMatchObject({ status: "error", error: expect.stringMatching(/same label|ambiguous/i) });
     expect(ctx.raw.prepare("SELECT id,status FROM mission_tasks ORDER BY id").all()).toEqual([{ id: "t1", status: "backlog" }, { id: "t2", status: "backlog" }]);
   });
