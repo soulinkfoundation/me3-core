@@ -49,3 +49,39 @@ test("pins a stable tag to its immutable commit and matching Core metadata", () 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("accepts the stale notes link only in the exact published v0.1.217 commit", () => {
+  const directory = mkdtempSync(join(tmpdir(), "me3-upgrade-217-"));
+  const metadataPath = join(directory, "me3-core.json");
+  const sha = "e9706e7ba72db265e519fa087c8f507b34e5995d";
+  const metadata = {
+    schemaVersion: 1,
+    version: "0.1.217",
+    releaseChannel: "stable",
+    releaseNotesUrl: "https://github.com/soulinkfoundation/me3-core/releases/tag/v0.1.216",
+  };
+  const input = {
+    metadataPath,
+    targetReleaseTag: "v0.1.217",
+    targetReleaseSha: sha,
+    actualReleaseSha: sha,
+  };
+  try {
+    writeFileSync(metadataPath, JSON.stringify(metadata));
+    assert.deepEqual(verifyManagedUpgradeRelease(input), {
+      tag: "v0.1.217", version: "0.1.217", commitSha: sha,
+    });
+    assert.throws(() => verifyManagedUpgradeRelease({
+      ...input, targetReleaseSha: "b".repeat(40), actualReleaseSha: "b".repeat(40),
+    }), /release metadata is invalid/);
+    for (const releaseNotesUrl of [
+      "https://example.test/releases/tag/v0.1.216",
+      "https://github.com/soulinkfoundation/me3-core/releases/tag/v0.1.215",
+    ]) {
+      writeFileSync(metadataPath, JSON.stringify({ ...metadata, releaseNotesUrl }));
+      assert.throws(() => verifyManagedUpgradeRelease(input), /release metadata is invalid/);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

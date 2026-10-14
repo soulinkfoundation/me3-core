@@ -18,6 +18,11 @@ export function verifyManagedUpgradeRelease({
   } catch {
     throw new Error("managed upgrade release metadata is invalid");
   }
+  // The published v0.1.217 commit retained v0.1.216's notes URL.
+  const published217Notes = tag === "v0.1.217" &&
+    expectedSha === "e9706e7ba72db265e519fa087c8f507b34e5995d" &&
+    metadata?.releaseNotesUrl ===
+      "https://github.com/soulinkfoundation/me3-core/releases/tag/v0.1.216";
   if (
     !/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag) ||
     !/^[0-9a-f]{40}$/.test(expectedSha) ||
@@ -25,8 +30,8 @@ export function verifyManagedUpgradeRelease({
     metadata?.schemaVersion !== 1 ||
     metadata?.releaseChannel !== "stable" ||
     metadata?.version !== tag.slice(1) ||
-    metadata?.releaseNotesUrl !==
-      `https://github.com/soulinkfoundation/me3-core/releases/tag/${tag}`
+    (!published217Notes && metadata?.releaseNotesUrl !==
+      `https://github.com/soulinkfoundation/me3-core/releases/tag/${tag}`)
   ) {
     throw new Error("managed upgrade release metadata is invalid");
   }
