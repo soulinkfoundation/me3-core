@@ -17,10 +17,11 @@ function atNine(date: string, timezone: string) {
 
 export async function getGratitudeSettings(env: Env, userId: string) {
   const [setting, reminder] = await Promise.all([
-    env.DB.prepare("SELECT quote_in_briefing FROM gratitude_settings WHERE user_id = ?").bind(userId).first<{ quote_in_briefing: number }>(),
+    env.DB.prepare("SELECT quote_in_briefing, in_today FROM gratitude_settings WHERE user_id = ?").bind(userId).first<{ quote_in_briefing: number; in_today: number }>(),
     env.DB.prepare("SELECT status FROM user_reminders WHERE user_id = ? AND context_type = 'card' AND context_id = 'gratitude'").bind(userId).first<{ status: string }>(),
   ]);
-  return { quoteInBriefing: setting?.quote_in_briefing !== 0, eveningReminder: !!reminder && ["pending", "failed"].includes(reminder.status) };
+  // inToday: Gratitude shows as a section of the Home Today card. Off by default.
+  return { quoteInBriefing: setting?.quote_in_briefing !== 0, eveningReminder: !!reminder && ["pending", "failed"].includes(reminder.status), inToday: setting?.in_today === 1 };
 }
 
 export async function getGratitudeState(env: Env, userId: string, now = new Date()) {
@@ -68,9 +69,12 @@ export async function updateGratitudeLines(env: Env, userId: string, input: unkn
 }
 
 export async function updateGratitudeSettings(env: Env, userId: string, input: unknown, now = new Date()) {
-  if (!isRecord(input) || Object.keys(input).some(key => !["quoteInBriefing", "eveningReminder"].includes(key) || typeof input[key] !== "boolean")) throw new JournalInputError("Reminder settings are invalid");
+  if (!isRecord(input) || Object.keys(input).some(key => !["quoteInBriefing", "eveningReminder", "inToday"].includes(key) || typeof input[key] !== "boolean")) throw new JournalInputError("Reminder settings are invalid");
   if (typeof input.quoteInBriefing === "boolean") {
     await env.DB.prepare("INSERT INTO gratitude_settings(user_id, quote_in_briefing) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET quote_in_briefing = excluded.quote_in_briefing").bind(userId, Number(input.quoteInBriefing)).run();
+  }
+  if (typeof input.inToday === "boolean") {
+    await env.DB.prepare("INSERT INTO gratitude_settings(user_id, in_today) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET in_today = excluded.in_today").bind(userId, Number(input.inToday)).run();
   }
   if (typeof input.eveningReminder === "boolean") {
     if (input.eveningReminder) {

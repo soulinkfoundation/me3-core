@@ -92,6 +92,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0067_quotes", "2026-10-13-quotes-v1"],
   ["0068_gratitude", "2026-10-13-gratitude-v1"],
   ["0069_quote_bookmarks", "2026-10-13-quote-bookmarks-v1"],
+  ["0070_gratitude_in_today", "2026-10-14-gratitude-in-today-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];

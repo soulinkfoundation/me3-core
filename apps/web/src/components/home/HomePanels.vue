@@ -14,7 +14,7 @@ import PersonAvatar from "../people/PersonAvatar.vue";
 import PersonSheet from "../people/PersonSheet.vue";
 import { useContactsStore } from "../../stores/contacts";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
-import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, gratitudeInToday, homeDateLabel, homeDoneToday, homeGoalTasks, homeOpenTasks, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeTask, type HomeGoal } from "../../utils/homeSummary";
+import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDateLabel, homeDoneToday, homeGoalTasks, homeOpenTasks, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeTask, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
 import TodayFocusLine from "../today/TodayFocusLine.vue";
 import TodaySection from "../today/TodaySection.vue";
@@ -99,15 +99,19 @@ const openTasks = computed(() => homeOpenTasks(tasks.value).slice(0, 6));
 const doneToday = computed(() => homeDoneToday(tasks.value));
 const todayTasks = computed(() => homeTodayTasks(tasks.value));
 const focus = computed(() => plan.focus.value);
-const showGratitude = computed(() => gratitudeInToday(layout.value) && !unavailable.value.includes("gratitude"));
+// Server setting (gratitude_settings.in_today), so it follows the owner across web and the apps.
+const gratitudeOn = ref(false);
+const showGratitude = computed(() => gratitudeOn.value && !unavailable.value.includes("gratitude"));
+const backlogCount = computed(() => homeOpenTasks(tasks.value).length - todayTasks.value.length);
 // Upcoming events only; an event drops off an hour after it starts.
 const upcomingEvents = computed(() => { const cutoff = Date.now() - 3_600_000; return events.value.filter(event => event.allDay || new Date(event.start).getTime() >= cutoff).slice(0, 3); });
 const todayPage = computed(() => journal.value[0]?.date?.slice(0, 10) === day.value ? journal.value[0] : null);
 const todayLabel = computed(() => new Date(`${day.value}T12:00:00`).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }));
-function toggleGratitude() {
-  if (gratitudeInToday(layout.value)) layout.value.pinned = layout.value.pinned.filter(id => id !== "gratitude");
-  else { layout.value.hidden = layout.value.hidden.filter(id => id !== "gratitude"); layout.value.pinned.push("gratitude"); }
-  save();
+async function toggleGratitude() {
+  const next = !gratitudeOn.value;
+  gratitudeOn.value = next;
+  try { await api.patch("/gratitude/settings", { inToday: next }); }
+  catch (error) { gratitudeOn.value = !next; toastFromUnknown(error, "Couldn't change Gratitude"); }
 }
 async function addTask(title: string, done: () => void) {
   try { await plan.addTask(title); delete errors.value.tasks; }
@@ -243,6 +247,7 @@ async function refresh() {
         soulink.value = (result.recentEvents || []).filter(e => e.direction === "inbound").map(e => ({ ...e, outcome: result.recentEvents?.find(reply => e.providerEventId && reply.direction === "outbound" && reply.providerEventId === `${e.providerEventId}:reply`)?.textBody }));
       } catch (error) { if (!(error instanceof ApiError && error.status === 404)) throw error; }
     }),
+    resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed) gratitudeOn.value = Boolean(state.settings?.inToday); }),
     resource("people", async () => { await contactsStore.fetchContacts(); if (contactsStore.error) throw new Error(contactsStore.error); }),
     resource("tasks", plan.loadTasks),
     resource("journal", async () => {
@@ -347,11 +352,12 @@ onBeforeUnmount(() => {
               <TodayFocusLine :goal="focus" :has-goals="activeGoals.length > 0" />
               <TodaySection title="Calendar" to="/calendar" label="Open Calendar">
                 <RouterLink v-for="event in upcomingEvents" :key="event.id" to="/calendar" class="home-line home-event"><span class="home-muted home-time">{{ event.allDay ? 'All day' : new Date(event.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }}</span><span>{{ event.title }}</span></RouterLink>
-                <p v-if="!upcomingEvents.length" class="home-muted">{{ events.length ? 'Nothing else today.' : 'Your day is clear.' }}</p>
+                <!-- Empty: one quiet line; without a connected calendar, only the way to connect one. -->
                 <RouterLink v-if="!calendarConnected && !events.length" to="/calendar" class="home-quiet"><UiIcon name="Plus" :size="16" />Connect a calendar</RouterLink>
+                <p v-else-if="!upcomingEvents.length" class="home-muted">{{ events.length ? 'Nothing else today.' : 'Nothing scheduled today.' }}</p>
               </TodaySection>
               <GratitudeCard v-if="showGratitude" section :active="active" @unavailable="unavailable.push('gratitude')" />
-              <TodayTasks :tasks="todayTasks" :focus-goal-id="focus?.id" :busy="busy" :limit="4" @complete="complete" @add="addTask" />
+              <TodayTasks :tasks="todayTasks" :focus-goal-id="focus?.id" :busy="busy" :limit="4" :backlog-count="backlogCount" @complete="complete" @add="addTask" />
               <TodaySection title="Notes" to="/journal" label="Open today's page">
                 <RouterLink v-if="todayPage" to="/journal" class="home-writing home-muted">{{ journalPreview(todayPage.body || todayPage.preview || '') }}</RouterLink>
                 <RouterLink to="/journal" class="home-quiet">{{ todayPage ? 'Keep writing' : 'Write on today’s page' }}</RouterLink>

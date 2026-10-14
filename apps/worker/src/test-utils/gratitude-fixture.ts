@@ -4,7 +4,7 @@ import type { Env } from "../types";
 
 export function gratitudeFixture(timezone = "Europe/Dublin") {
   const raw = new DatabaseSync(":memory:");
-  for (const name of ["0001_initial_public_schema", "0028_journal_entry_revision", "0035_calendar_source_event_dismissals", "0036_calendar_push_notifications", "0065_morning_calendar_push", "0067_quotes", "0068_gratitude", "0069_quote_bookmarks"]) {
+  for (const name of ["0001_initial_public_schema", "0028_journal_entry_revision", "0035_calendar_source_event_dismissals", "0036_calendar_push_notifications", "0065_morning_calendar_push", "0067_quotes", "0068_gratitude", "0069_quote_bookmarks", "0070_gratitude_in_today"]) {
     raw.exec(readFileSync(new URL(`../../migrations/${name}.sql`, import.meta.url), "utf8"));
   }
   raw.prepare("INSERT INTO owner_profile(id, username, timezone) VALUES('owner', 'synthetic', ?)").run(timezone);

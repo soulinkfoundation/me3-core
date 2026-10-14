@@ -14,10 +14,11 @@ let pending: object[];
 let people: object[] = [];
 let tasks: object[] = [];
 let goals: object[] = [];
+let gratitudeInToday = false;
 const daysAgo = (days: number) => new Date(Date.now() - days * 864e5).toISOString();
 const contact = (id: string, name: string, extra: object = {}) => ({ id, name, status: "active", source: "manual", socialHandles: {}, metadata: null, isClose: true, closeness: "close", closeSince: daysAgo(100), isClient: false, lastInTouchAt: null, reminderAt: null, ...extra });
 beforeEach(() => {
-  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = []; tasks = []; goals = [];
+  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = []; tasks = []; goals = []; gratitudeInToday = false;
   vi.spyOn(HTMLDialogElement.prototype, "showModal").mockImplementation(function (this: HTMLDialogElement) { this.setAttribute("open", ""); });
   vi.spyOn(HTMLDialogElement.prototype, "close").mockImplementation(function (this: HTMLDialogElement) { this.removeAttribute("open"); });
   vi.mocked(api.get).mockImplementation(async endpoint => {
@@ -29,7 +30,7 @@ beforeEach(() => {
     if (endpoint === "/soulink/status") return { recentEvents: [] } as never;
     if (endpoint.startsWith("/mission-control/tasks")) return { tasks } as never;
     if (endpoint === "/tasks/goals") return { goals } as never;
-    if (endpoint === "/gratitude") return { date: "2026-10-14", timezone: "UTC", quote: null, gratitude: [], goodThings: [], days: [], settings: { quoteInBriefing: true, eveningReminder: false } } as never;
+    if (endpoint === "/gratitude") return { date: "2026-10-14", timezone: "UTC", quote: null, gratitude: [], goodThings: [], days: [], settings: { quoteInBriefing: true, eveningReminder: false, inToday: gratitudeInToday } } as never;
     if (endpoint.startsWith("/journal/archive")) return { entries: [] } as never;
     if (endpoint === "/mission-control/wheel") return { snapshots: [], settings: { segments: [] } } as never;
     if (endpoint === "/plugins") return { plugins: [] } as never;
@@ -150,6 +151,25 @@ describe("Home Today card", () => {
     expect(text).not.toContain("Someday idea");
     expect(today().querySelector('[aria-label="Focus goal"]')).toBeTruthy();
   });
+  it("shows the server's Gratitude setting", async () => {
+    gratitudeInToday = true; render(); await flushPromises();
+    expect(gratitude()).toBeTruthy();
+  });
+  it("shows one quiet line for an empty calendar and task list, with a way into the backlog", async () => {
+    tasks = [{ id: "t-someday", title: "Someday idea", status: "backlog" }];
+    vi.mocked(api.get).mockImplementation((original => async (endpoint: string) => endpoint.startsWith("/calendar/feed") ? { events: [], sources: [{ id: "google" }] } as never : original(endpoint))(vi.mocked(api.get).getMockImplementation()!));
+    render(); await flushPromises();
+    expect(today().textContent).toContain("Nothing scheduled today.");
+    expect(today().textContent).toContain("Nothing for today.");
+    expect(today().textContent).toContain("Pick from backlog");
+    expect(today().textContent).not.toContain("Connect a calendar");
+  });
+  it("offers only the way to connect when no calendar is connected", async () => {
+    render(); await flushPromises();
+    expect(today().textContent).toContain("Connect a calendar");
+    expect(today().textContent).not.toContain("Nothing scheduled today.");
+    expect(today().textContent).not.toContain("Pick from backlog");
+  });
   it("adds a quick task to Now", async () => {
     render(); await flushPromises();
     const input = today().querySelector<HTMLInputElement>('input[aria-label="Add a task"]')!;
@@ -166,6 +186,6 @@ describe("Home Today card", () => {
     expect(items[0].getAttribute("aria-checked")).toBe("false");
     (items[0] as HTMLButtonElement).click(); await flushPromises();
     expect(gratitude()).toBeTruthy();
-    expect(JSON.parse(Object.values(localStorage).find(value => value.includes("pinned")) || "{}").pinned).toContain("gratitude");
+    expect(api.patch).toHaveBeenCalledWith("/gratitude/settings", { inToday: true });
   });
 });

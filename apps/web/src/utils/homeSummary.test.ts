@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, focusGoal, goalsWithFocus, gratitudeInToday } from "./homeSummary";
+import { homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, focusGoal, goalsWithFocus } from "./homeSummary";
 
 describe("Home summaries", () => {
   // Failure modes: board order hides due work, archived/done work leaks into open tasks,
@@ -37,10 +37,7 @@ describe("Home summaries", () => {
   });
   it("defaults Home to Today and People, keeping gratitude inside Today", () => {
     expect(visibleHomeCards(emptyHomeLayout())).toEqual(["today", "people", "accounts"]);
-    const withGratitude = { ...emptyHomeLayout(), pinned: ["gratitude"] };
-    expect(visibleHomeCards(withGratitude)).not.toContain("gratitude");
-    expect(gratitudeInToday(withGratitude)).toBe(true);
-    expect(gratitudeInToday(emptyHomeLayout())).toBe(false);
+    expect(visibleHomeCards({ ...emptyHomeLayout(), pinned: ["gratitude"] })).not.toContain("gratitude");
   });
   it("treats the first active goal as the focus and moves a new focus to the front", () => {
     const goals = [{ id: "a", status: "completed" as const }, { id: "b", status: "active" as const }, { id: "c", status: "active" as const }];

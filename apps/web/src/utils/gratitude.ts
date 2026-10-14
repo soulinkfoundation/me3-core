@@ -1,5 +1,5 @@
 export type Quote = { id: string; text: string; author: string; source: string | null; sourceUrl: string | null; savedAt: string | null };
-export type GratitudeSettings = { quoteInBriefing: boolean; eveningReminder: boolean };
+export type GratitudeSettings = { quoteInBriefing: boolean; eveningReminder: boolean; inToday?: boolean };
 export type GratitudeState = {
   date: string; timezone: string; quote: Quote | null; gratitude: string[]; goodThings: string[];
   days: { date: string; written: boolean }[]; settings: GratitudeSettings;

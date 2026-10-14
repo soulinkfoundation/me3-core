@@ -541,6 +541,15 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.batch(QUOTE_BOOKMARKS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
+  // Gratitude as a section of the Home Today card; off until the owner switches it on.
+  {
+    id: "0070_gratitude_in_today",
+    checksum: "2026-10-14-gratitude-in-today-v1",
+    async apply(db) {
+      await db.batch(GRATITUDE_SETTINGS_SCHEMA.map(sql => db.prepare(sql)));
+      if (await tableExists(db, "gratitude_settings")) await addColumnIfMissing(db, "gratitude_settings", "in_today", "INTEGER NOT NULL DEFAULT 0 CHECK (in_today IN (0, 1))");
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

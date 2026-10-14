@@ -59,7 +59,7 @@ describe("Gratitude persistence and reminders", () => {
 
   it("defaults briefing quotes on and the evening reminder off, and honours both switches", async () => {
     const f = fixture();
-    expect((await getGratitudeState(f.env, "owner", morning)).settings).toEqual({ quoteInBriefing: true, eveningReminder: false });
+    expect((await getGratitudeState(f.env, "owner", morning)).settings).toEqual({ quoteInBriefing: true, eveningReminder: false, inToday: false });
     expect(await getBriefingQuote(f.env, "owner", morning)).toBeTruthy();
     await updateGratitudeSettings(f.env, "owner", { quoteInBriefing: false, eveningReminder: true }, morning);
     expect(await getBriefingQuote(f.env, "owner", morning)).toBeNull();
@@ -67,6 +67,14 @@ describe("Gratitude persistence and reminders", () => {
     await updateGratitudeSettings(f.env, "owner", { eveningReminder: false }, morning);
     await dispatchDueGratitudeReminders(f.env, evening);
     expect(notifyCalendarItemDue).not.toHaveBeenCalled();
+  });
+
+  it("keeps Gratitude off the Today card until switched on, without touching the other switches", async () => {
+    const f = fixture();
+    expect((await updateGratitudeSettings(f.env, "owner", { inToday: true }, morning)).settings).toEqual({ quoteInBriefing: true, eveningReminder: false, inToday: true });
+    expect((await getGratitudeState(f.env, "owner", morning)).settings.inToday).toBe(true);
+    expect((await updateGratitudeSettings(f.env, "owner", { inToday: false }, morning)).settings.inToday).toBe(false);
+    await expect(updateGratitudeSettings(f.env, "owner", { inToday: "yes" }, morning)).rejects.toThrow();
   });
 
   it("sends once at 21:00, advances locally, and skips if any good thing is already written", async () => {

@@ -16,9 +16,8 @@ export function visibleHomeCards(layout: HomeLayout): HomeCard[] {
   ).filter(id => !HOME_INSIDE_TODAY.includes(id));
 }
 export const HOME_DEFAULT_CARDS: HomeCard[] = ["today", "people", "accounts"];
-// Gratitude is a section of the Today card, switched on from its menu, never a card of its own.
+// Gratitude is a section of the Today card, switched on from its menu (server setting inToday), never a card of its own.
 export const HOME_INSIDE_TODAY: HomeCard[] = ["gratitude"];
-export const gratitudeInToday = (layout: HomeLayout) => layout.pinned.includes("gratitude") && !layout.hidden.includes("gratitude");
 // The focus goal is the first active goal; making a goal the focus moves it to the front of the list.
 export function focusGoal<T extends Pick<HomeGoal, "status">>(goals: T[]): T | null {
   return goals.find(goal => goal.status !== "completed") || null;
