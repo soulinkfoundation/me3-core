@@ -35,16 +35,20 @@ const PRICING: Record<string, {input:number;output:number;cachedInput?:number;ca
 export function createCloudflareModel(options: CloudflareModelOptions): AgentModel {
   const model = options.model;
   const anthropic = model.startsWith("anthropic/");
-  const responses = model.startsWith("openai/gpt-6");
+  // OpenAI reasoning models reject function tools with reasoning_effort on
+  // /chat/completions (Cloudflare code 7003), so tool steps use Responses.
+  const reasoningOpenAi = /^openai\/(?:gpt-[5-9]|o\d)/.test(model);
   if (/^(openai|anthropic)\//.test(model) && !options.gatewayId) throw new Error("External models require the installation's AI Gateway");
   return {
     id: model,
     async step({messages,tools,signal,onDelta}): Promise<AgentModelResponse> {
       signal.throwIfAborted();
+      const responses = model.startsWith("openai/gpt-6") || (reasoningOpenAi && tools.length > 0);
       const request = anthropic ? anthropicRequest(messages, tools, options.maxOutputTokens ?? 4096) : responses ? responsesRequest(messages,tools,options.maxOutputTokens??4096) : openAiRequest(messages, tools, options.maxOutputTokens ?? 4096, model);
       const result = await options.ai.run(model, {...request,stream:true}, options.gatewayId ? {gateway:{id:options.gatewayId,metadata:options.metadata ?? {},requestTimeoutMs:60_000,retries:{maxAttempts:1}}} : undefined);
       signal.throwIfAborted();
       const response = isStream(result) ? await consumeStream(result, anthropic, onDelta, signal) : parseResponse(result, anthropic);
+      if (anthropic) response.toolCalls = unwrapAnthropicToolCalls(response.toolCalls, tools);
       if (!isStream(result) && response.text) await onDelta(response.text);
       if (response.usage) {
         response.usage.estimatedCostUsd = estimateCost(model, response.usage, options.pricing);
@@ -78,7 +82,25 @@ function openAiRequest(messages: readonly AgentMessage[], tools: readonly AgentT
   };
 }
 
+// Anthropic rejects tool input schemas with anyOf/oneOf/allOf at the top level,
+// so those schemas (the intent verdicts) travel wrapped in one object property.
+const ANTHROPIC_WRAPPED_INPUT = "value";
+function needsAnthropicWrap(schema: unknown): boolean {
+  const value = record(schema);
+  return ["anyOf", "oneOf", "allOf"].some(key => key in value);
+}
+function anthropicInputSchema(tool: AgentTool): unknown {
+  return needsAnthropicWrap(tool.parameters)
+    ? {type:"object",additionalProperties:false,required:[ANTHROPIC_WRAPPED_INPUT],properties:{[ANTHROPIC_WRAPPED_INPUT]:tool.parameters}}
+    : tool.parameters;
+}
+function unwrapAnthropicToolCalls(calls: AgentToolCall[], tools: readonly AgentTool[]): AgentToolCall[] {
+  const wrapped = new Set(tools.filter(tool=>needsAnthropicWrap(tool.parameters)).map(tool=>tool.name));
+  return calls.map(call => wrapped.has(call.name) ? {...call, arguments: record(record(call.arguments)[ANTHROPIC_WRAPPED_INPUT])} : call);
+}
+
 function anthropicRequest(messages: readonly AgentMessage[], tools: readonly AgentTool[], maxTokens: number): Record<string, unknown> {
+  const wrapped = new Set(tools.filter(tool=>needsAnthropicWrap(tool.parameters)).map(tool=>tool.name));
   const history: Array<{role:"user"|"assistant";content:unknown[]}> = [];
   for (const message of messages.filter(message=>message.role!=="system")) {
     const role = message.role === "assistant" ? "assistant" : "user";
@@ -88,7 +110,7 @@ function anthropicRequest(messages: readonly AgentMessage[], tools: readonly Age
         const match = /^data:([^;]+);base64,(.*)$/.exec(image.url);
         return {type:"image",source:match?{type:"base64",media_type:match[1],data:match[2]}:{type:"url",url:image.url}};
       }) ?? []),
-      ...(message.toolCalls?.map(call=>({type:"tool_use",id:call.id,name:call.name,input:call.arguments})) ?? []),
+      ...(message.toolCalls?.map(call=>({type:"tool_use",id:call.id,name:call.name,input:wrapped.has(call.name)?{[ANTHROPIC_WRAPPED_INPUT]:call.arguments}:call.arguments})) ?? []),
     ];
     if (!content.length) continue;
     if (history.at(-1)?.role === role) history.at(-1)!.content.push(...content);
@@ -97,7 +119,7 @@ function anthropicRequest(messages: readonly AgentMessage[], tools: readonly Age
   return {
     system: messages.filter(message=>message.role==="system").map(message=>message.content).join("\n\n"),
     messages:history,
-    ...(tools.length?{tools:tools.map((tool,index)=>({name:tool.name,description:tool.description,input_schema:tool.parameters,...(index===tools.length-1?{cache_control:{type:"ephemeral"}}:{})}))}:{}),
+    ...(tools.length?{tools:tools.map((tool,index)=>({name:tool.name,description:tool.description,input_schema:anthropicInputSchema(tool),...(index===tools.length-1?{cache_control:{type:"ephemeral"}}:{})}))}:{}),
     max_tokens:maxTokens,
   };
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { chatView } from "../apps/worker/src/test-utils/chat-view.ts";
 import { test } from "node:test";
 import { createRuntimeAdapter } from "./agent-eval-adapters.mjs";
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
@@ -112,7 +113,7 @@ test("native evaluator routes isolated verification through the same reserved bu
     const correct={reminderId:"source",date:"2027-01-16",time:"09:30",timezone:"Europe/Dublin"};
     const budget=createEvalBudget(1,DEFAULT_EVAL_PRICING);let planner=0;const requests=[];
     const route=createGatewayRoute("openai:gpt-5.5",{accountId:"synthetic-account",apiToken:"synthetic-token",gatewayId:"synthetic-gateway",budget,fetch:async(url,options)=>{
-      const input=JSON.parse(options.body);const intent=input.tools?.length===1&&input.tools[0].function?.name==="core_target_intent_verdict";requests.push({url,input,intent});
+      const input=chatView(JSON.parse(options.body));const intent=input.tools?.length===1&&input.tools[0].function?.name==="core_target_intent_verdict";requests.push({url,input,intent});
       let name,args;if(intent){name="core_target_intent_verdict";args={decision:"allow",selectedCandidateId:"source",authorizedCall:{name:"core_reminders_update",arguments:correct}};}else{planner++;if(planner===1){name="core_reminders_list";args={query:"Same title"};}if(planner===2){name="core_reminders_update";args=correct;}}
       const delta=name?{tool_calls:[{index:0,id:`call-${requests.length}`,type:"function",function:{name,arguments:JSON.stringify(args)}}]}:{content:"Synthetic action completed."};
       const event={choices:[{delta,finish_reason:name?"tool_calls":"stop"}],usage:{prompt_tokens:100,completion_tokens:10,total_tokens:110}};
@@ -123,7 +124,7 @@ test("native evaluator routes isolated verification through the same reserved bu
     assert.equal(route.requestCount,4);assert.equal(route.usageComplete,true);assert.equal(route.usageSamples.filter(usage=>usage.purpose==="target_intent").length,1);
     assert.equal(typeof response.trace.targetIntentRequests[0].usageId,"string");
     assert.equal(budget.summary().reservedUsd,0);assert.ok(Math.abs(budget.summary().chargedUsd-.0032)<1e-12);
-    assert.ok(requests.every(request=>request.url==="https://api.cloudflare.com/client/v4/accounts/synthetic-account/ai/v1/chat/completions"));
+    assert.ok(requests.every(request=>request.url==="https://api.cloudflare.com/client/v4/accounts/synthetic-account/ai/v1/responses"));
     seed.reopen();assert.equal(seed.raw.prepare("SELECT remind_at FROM user_reminders WHERE id='source'").get().remind_at,"2027-01-16T09:30:00.000Z");
   }finally{seed.close();}
 });
@@ -139,7 +140,7 @@ test("accepted verifier without usage retains its original budget reservation an
     const args={reminderId:"source",date:"2027-01-16",time:"09:30",timezone:"Europe/Dublin"};
     const budget=createEvalBudget(1,DEFAULT_EVAL_PRICING);let planner=0;let verifierCalls=0;
     const route=createGatewayRoute("openai:gpt-5.5",{accountId:"synthetic",apiToken:"synthetic",gatewayId:"synthetic",budget,fetch:async(_url,options)=>{
-      const input=JSON.parse(options.body);const intent=input.tools?.length===1&&input.tools[0].function?.name==="core_target_intent_verdict";
+      const input=chatView(JSON.parse(options.body));const intent=input.tools?.length===1&&input.tools[0].function?.name==="core_target_intent_verdict";
       let name,argumentsValue;
       if(intent){verifierCalls++;name="core_target_intent_verdict";argumentsValue={decision:"allow",selectedCandidateId:"source",authorizedCall:{name:"core_reminders_update",arguments:args}};}
       else{planner++;if(planner===1){name="core_reminders_list";argumentsValue={query:"Same title"};}if(planner===2){name="core_reminders_update";argumentsValue=args;}}

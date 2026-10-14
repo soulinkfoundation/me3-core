@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { chatView } from "../apps/worker/src/test-utils/chat-view.ts";
 import test from "node:test";
 import { createRuntimeAdapter } from "./agent-eval-adapters.mjs";
 import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
@@ -55,7 +56,7 @@ for (const unknown of [false, true]) test(`native owner-create verifier shares r
   try {
     const route = createGatewayRoute("openai:gpt-5.5", { accountId: "synthetic-account", apiToken: "synthetic-token", gatewayId: "synthetic-gateway", budget,
       fetch: async (url, options) => {
-        const request = JSON.parse(options.body), judge = request.tools?.length === 1 && request.tools[0].function?.name === "core_owner_create_intent_verdict";
+        const request = chatView(JSON.parse(options.body)), judge = request.tools?.length === 1 && request.tools[0].function?.name === "core_owner_create_intent_verdict";
         requests.push({ url, request, judge });
         let name, args;
         if (judge) { name = "core_owner_create_intent_verdict"; args = scenario.ownerCreateVerdicts[0]; }
@@ -70,7 +71,7 @@ for (const unknown of [false, true]) test(`native owner-create verifier shares r
     const judge = requests.find(r => r.judge), evidence = JSON.parse(judge.request.messages[1].content);
     assert.deepEqual(evidence.ownerInputs, args.canonicalOwnerInputs);
     assert.equal(Object.hasOwn(evidence, "proposedCall"), false);
-    assert.ok(requests.every(r => r.url === "https://api.cloudflare.com/client/v4/accounts/synthetic-account/ai/v1/chat/completions"));
+    assert.ok(requests.every(r => r.url === "https://api.cloudflare.com/client/v4/accounts/synthetic-account/ai/v1/responses"));
     const receipt = seed.raw.prepare("SELECT status,result_json FROM me3_agent_tool_receipts WHERE tool_name='__me3_owner_create_intent_v1'").get();
     assert.equal(typeof JSON.parse(receipt.result_json).data.inference.usageId, "string");
     assert.equal(response.trace.targetIntentRequests.length, 1);
@@ -110,7 +111,7 @@ for (const scenario of createQuoteEvalScenarios()) test(`forced planner probe wi
     const verdict = structuredClone(scenario.ownerCreateVerdicts[0]);
     if (verdict.decision === "allow" && verdict.authorizedCall.arguments.areas) verdict.authorizedCall.arguments.areas.reverse();
     const route = createGatewayRoute("openai:gpt-5.5", { accountId: "synthetic", apiToken: "synthetic", gatewayId: "synthetic", budget, fetch: async (_url, options) => {
-      calls++; const request = JSON.parse(options.body);
+      calls++; const request = chatView(JSON.parse(options.body));
       assert.equal(request.tools.length, 1); assert.equal(request.tools[0].function.name, "core_owner_create_intent_verdict", "no paid/frontier planner or grader request in a guard probe");
       const event = { choices: [{ delta: { tool_calls: [{ index: 0, id: "synthetic-verdict", type: "function", function: { name: "core_owner_create_intent_verdict", arguments: JSON.stringify(verdict) } }] }, finish_reason: "tool_calls" }], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } };
       return new Response(`data: ${JSON.stringify(event)}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });

@@ -1,3 +1,4 @@
+import { chatView } from "./test-utils/chat-view";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -68,7 +69,8 @@ function fixture() {
   } };
   const requests: Array<{ messages: AgentMessage[]; intent: boolean }> = [];
   let calls: Array<{ name: string; arguments: Record<string, unknown> }> = [];
-  const env = { DB: db, ME3_DEPLOYMENT_MODE: "self_hosted", AI: { async run(_model: string, input: { messages: AgentMessage[]; tools: Array<{ function: { name: string } }> }) {
+  const env = { DB: db, ME3_DEPLOYMENT_MODE: "self_hosted", AI: { async run(_model: string, rawInput: unknown) {
+    const input = chatView(rawInput) as unknown as { messages: AgentMessage[]; tools: Array<{ function: { name: string } }> };
     const intent = input.tools?.length === 1 && input.tools[0].function.name === "core_target_intent_verdict";
     requests.push({ messages: input.messages, intent });
     const call = intent ? { name: "core_target_intent_verdict", arguments: { decision: "deny", reason: "The authenticated owner forbids changes." } } : calls.shift();

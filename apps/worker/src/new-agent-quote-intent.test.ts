@@ -83,8 +83,8 @@ describe("independent quote creation with real SQLite and simulated providers", 
     await f.run(); f.reopen(); expect(f.quotes()).toEqual([{ text, author: "", source: null, source_url: null, areas: "[]" }]);
     const inferred = f.requests.filter(r => r.intent); expect(inferred).toHaveLength(1);
     expect(JSON.stringify(inferred[0].payload)).not.toContain("Unprovided Author");
-    const messages = inferred[0].payload.messages as Array<{ role: string; content: string }>;
-    expect(JSON.parse(messages.find(message => message.role === "user")!.content).ownerInputs).toEqual([{ turnId: f.input.turnId, requestId: f.input.requestId, messageText: omittedMessage }]);
+    const messages = inferred[0].payload.input as Array<{ role: string; content: Array<{ text: string }> }>;
+    expect(JSON.parse(messages.find(message => message.role === "user")!.content[0].text).ownerInputs).toEqual([{ turnId: f.input.turnId, requestId: f.input.requestId, messageText: omittedMessage }]);
   });
   it("keeps incomplete verifier usage pending without a quote or second inference after reopen", async () => {
     const f = fixture(omittedMessage, [{ text }, { text }], allow({ text }), { unknown: true });

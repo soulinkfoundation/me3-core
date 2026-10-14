@@ -1,3 +1,4 @@
+import { chatView } from "./test-utils/chat-view";
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -66,7 +67,8 @@ function fixture() {
   } };
   const journeys = new Map<string, Journey>(), steps = new Map<string, number>();
   const evidence: Array<{ turnId: string; evidence: AgentTargetIntentEvidence }> = [];
-  const run = vi.fn(async (_model: string, input: Record<string, unknown>, options: { gateway: { metadata: { me3_turn_id: string; purpose?: string } } }) => {
+  const run = vi.fn(async (_model: string, rawInput: Record<string, unknown>, options: { gateway: { metadata: { me3_turn_id: string; purpose?: string } } }) => {
+    const input = chatView(rawInput);
     const turnId = options.gateway.metadata.me3_turn_id, journey = journeys.get(turnId)!;
     const tool = (name: string, args: unknown) => ({ choices: [{ message: { content: "", tool_calls: [{ id: `${turnId}:call:${run.mock.calls.length}`, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: "tool_calls" }], usage: { prompt_tokens: 100, completion_tokens: 10 } });
     if (options.gateway.metadata.purpose === "target_intent") {

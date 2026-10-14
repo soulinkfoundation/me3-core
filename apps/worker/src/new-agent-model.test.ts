@@ -9,6 +9,24 @@ function stream(events: unknown[], done = true) {
   return new ReadableStream<Uint8Array>({start(c){for(let i=0;i<bytes.length;i+=7)c.enqueue(bytes.slice(i,i+7));c.close();}});
 }
 describe("new agent Cloudflare model transport", () => {
+  it("wraps top-level anyOf tool schemas for Anthropic and unwraps the call", async () => {
+    const verdict: AgentTool = {name:"core_target_intent_verdict",description:"Verdict",effect:"read",approval:"none",
+      parameters:{type:"object",anyOf:[{type:"object",properties:{decision:{enum:["deny"]}},required:["decision"]}]},execute:async()=>({status:"ok"})};
+    let request: Record<string, unknown> = {};
+    const model = createCloudflareModel({model:"anthropic/claude-haiku-5.5",gatewayId:"test",ai:{run:async(_,input)=>{request=input;return stream([
+      {type:"message_start",message:{usage:{input_tokens:10,output_tokens:0}}},
+      {type:"content_block_start",index:0,content_block:{type:"tool_use",id:"v",name:"core_target_intent_verdict",input:{}}},
+      {type:"content_block_delta",index:0,delta:{type:"input_json_delta",partial_json:'{"value":{"decision":"deny","reason":"no"}}'}},
+      {type:"message_delta",usage:{output_tokens:5}},{type:"message_stop"},
+    ]);}}});
+    const result = await model.step({messages:[{role:"assistant",content:"",toolCalls:[{id:"old",name:"core_target_intent_verdict",arguments:{decision:"deny"}}]},{role:"tool",toolCallId:"old",content:"{}"}],tools:[verdict,tool],signal:new AbortController().signal,onDelta:async()=>{}});
+    const schemas = (request.tools as Array<{name:string;input_schema:Record<string,unknown>}>);
+    expect(schemas[0].input_schema).toMatchObject({type:"object",required:["value"],properties:{value:verdict.parameters}});
+    expect(schemas[0].input_schema).not.toHaveProperty("anyOf");
+    expect(schemas[1].input_schema).toEqual(tool.parameters);
+    expect(JSON.stringify(request.messages)).toContain('"input":{"value":{"decision":"deny"}}');
+    expect(result.toolCalls).toEqual([{id:"v",name:"core_target_intent_verdict",arguments:{decision:"deny",reason:"no"}}]);
+  });
   it("keeps Anthropic initial usage provisional until final output usage arrives", async () => {
     for (const final of [undefined, {}, {output_tokens: null}, {output_tokens: -1}]) {
       let recorded = false;
