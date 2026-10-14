@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "0.1.216",
+  "version": "0.1.217",
   "releaseChannel": "stable",
   "updateManifestUrl": "https://raw.githubusercontent.com/soulinkfoundation/me3-core/main/updates/stable.json",
   "releaseNotesUrl": "https://github.com/soulinkfoundation/me3-core/releases/tag/v0.1.216"
