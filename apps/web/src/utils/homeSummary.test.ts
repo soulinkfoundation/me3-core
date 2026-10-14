@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, homeDateLabel, visibleHomeCards } from "./homeSummary";
+import { homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, focusGoal, goalsWithFocus, gratitudeInToday } from "./homeSummary";
 
 describe("Home summaries", () => {
   // Failure modes: board order hides due work, archived/done work leaks into open tasks,
@@ -33,7 +33,31 @@ describe("Home summaries", () => {
     expect(homeDateLabel("2026-10-06", now, "en-GB")).toBe("Tue 6 Oct");
   });
   it("restores hidden cards and keeps a deduplicated saved order", () => {
-    expect(visibleHomeCards({ order: ["journal", "journal", "today"], hidden: ["inbox"], pinned: ["files"], earned: ["journal"] })).toEqual(["journal", "today", "people", "gratitude", "mission", "wheel", "accounts", "files"]);
+    expect(visibleHomeCards({ order: ["journal", "journal", "today"], hidden: ["inbox"], pinned: ["files"], earned: ["journal"] })).toEqual(["journal", "today", "people", "accounts", "files"]);
+  });
+  it("defaults Home to Today and People, keeping gratitude inside Today", () => {
+    expect(visibleHomeCards(emptyHomeLayout())).toEqual(["today", "people", "accounts"]);
+    const withGratitude = { ...emptyHomeLayout(), pinned: ["gratitude"] };
+    expect(visibleHomeCards(withGratitude)).not.toContain("gratitude");
+    expect(gratitudeInToday(withGratitude)).toBe(true);
+    expect(gratitudeInToday(emptyHomeLayout())).toBe(false);
+  });
+  it("treats the first active goal as the focus and moves a new focus to the front", () => {
+    const goals = [{ id: "a", status: "completed" as const }, { id: "b", status: "active" as const }, { id: "c", status: "active" as const }];
+    expect(focusGoal(goals)?.id).toBe("b");
+    expect(goalsWithFocus(goals, "c").map(goal => goal.id)).toEqual(["c", "a", "b"]);
+    expect(focusGoal(goalsWithFocus(goals, "c"))?.id).toBe("c");
+  });
+  it("lists Now tasks and work due today or earlier, but not undated backlog", () => {
+    const tasks = [
+      { id: "now", title: "Now", status: "in_progress" },
+      { id: "due", title: "Due", status: "backlog", dueAt: "2026-10-08" },
+      { id: "late", title: "Overdue", status: "backlog", scheduledFor: "2026-10-01" },
+      { id: "later", title: "Later", status: "backlog", dueAt: "2026-10-20" },
+      { id: "someday", title: "Someday", status: "backlog" },
+      { id: "done", title: "Done", status: "done", dueAt: "2026-10-08" },
+    ];
+    expect(homeTodayTasks(tasks, now).map(task => task.id).sort()).toEqual(["due", "late", "now"]);
   });
   it("leaves Inbox off Home unless it is added", () => {
     expect(visibleHomeCards({ order: [], hidden: [], pinned: [], earned: [] })).not.toContain("inbox");

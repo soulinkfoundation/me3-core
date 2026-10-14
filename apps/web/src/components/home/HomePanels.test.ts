@@ -12,10 +12,12 @@ const core = { id: "approval-1", pluginId: "me3.core", title: "Send email", summ
 let calendarUnavailable = false;
 let pending: object[];
 let people: object[] = [];
+let tasks: object[] = [];
+let goals: object[] = [];
 const daysAgo = (days: number) => new Date(Date.now() - days * 864e5).toISOString();
 const contact = (id: string, name: string, extra: object = {}) => ({ id, name, status: "active", source: "manual", socialHandles: {}, metadata: null, isClose: true, closeness: "close", closeSince: daysAgo(100), isClient: false, lastInTouchAt: null, reminderAt: null, ...extra });
 beforeEach(() => {
-  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = [];
+  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = []; tasks = []; goals = [];
   vi.spyOn(HTMLDialogElement.prototype, "showModal").mockImplementation(function (this: HTMLDialogElement) { this.setAttribute("open", ""); });
   vi.spyOn(HTMLDialogElement.prototype, "close").mockImplementation(function (this: HTMLDialogElement) { this.removeAttribute("open"); });
   vi.mocked(api.get).mockImplementation(async endpoint => {
@@ -25,14 +27,20 @@ beforeEach(() => {
     if (endpoint === "/mailbox") return { mailbox: {} } as never;
     if (endpoint.startsWith("/mailbox/messages")) return { messages: [] } as never;
     if (endpoint === "/soulink/status") return { recentEvents: [] } as never;
-    if (endpoint.startsWith("/mission-control/tasks")) return { tasks: [] } as never;
+    if (endpoint.startsWith("/mission-control/tasks")) return { tasks } as never;
+    if (endpoint === "/tasks/goals") return { goals } as never;
+    if (endpoint === "/gratitude") return { date: "2026-10-14", timezone: "UTC", quote: null, gratitude: [], goodThings: [], days: [], settings: { quoteInBriefing: true, eveningReminder: false } } as never;
     if (endpoint.startsWith("/journal/archive")) return { entries: [] } as never;
     if (endpoint === "/mission-control/wheel") return { snapshots: [], settings: { segments: [] } } as never;
     if (endpoint === "/plugins") return { plugins: [] } as never;
     if (endpoint === "/contacts") return { contacts: people, summary: {} } as never;
     return {} as never;
   });
-  vi.mocked(api.post).mockImplementation(async endpoint => { if (endpoint.includes("/approvals/")) pending = []; return { ok: true } as never; });
+  vi.mocked(api.post).mockImplementation(async (endpoint, payload) => {
+    if (endpoint.includes("/approvals/")) pending = [];
+    if (endpoint === "/mission-control/tasks") return { task: { id: "new", status: "in_progress", ...(payload as object) } } as never;
+    return { ok: true } as never;
+  });
 });
 afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ""; });
 function render(props: { active?: boolean } = {}) { return mount(HomePanels, { props, attachTo: document.body, global: { stubs: { RouterLink: { template: "<a><slot /></a>" }, UiIcon: true } } }); }
@@ -124,14 +132,40 @@ describe("Home People card", () => {
   });
 });
 
-describe("Home Gratitude card", () => {
-  it("keeps the reorder and options controls so the card can be moved or removed", async () => {
+describe("Home Today card", () => {
+  const today = () => document.body.querySelector('article[aria-label="Today"]')!;
+  const gratitude = () => today().querySelector('[aria-label="Gratitude"], [aria-label="Three good things"]');
+  it("folds the focus goal, calendar and today's tasks into one card", async () => {
+    goals = [{ id: "done", title: "Old goal", status: "completed" }, { id: "ship", title: "Ship People v1", status: "active" }];
+    tasks = [
+      { id: "t-now", title: "Finish the person sheet", status: "in_progress", goalId: "ship" },
+      { id: "t-someday", title: "Someday idea", status: "backlog" },
+    ];
     render(); await flushPromises();
-    const card = document.body.querySelector('[aria-label="Gratitude"]')!;
-    expect(card.querySelector('[aria-label="Drag Gratitude to reorder"]')).toBeTruthy();
-    (card.querySelector('[aria-label="Gratitude options"]') as HTMLButtonElement).click(); await flushPromises();
-    expect(button("Remove from Home")).toBeTruthy();
-    button("Remove from Home")!.click(); await flushPromises();
-    expect(document.body.querySelector('[aria-label="Gratitude"]')).toBeNull();
+    expect(document.body.querySelectorAll("article.home-card")).toHaveLength(1);
+    const text = today().textContent!;
+    expect(text).toContain("Ship People v1");
+    expect(text).toContain("Calendar");
+    expect(text).toContain("Finish the person sheet");
+    expect(text).not.toContain("Someday idea");
+    expect(today().querySelector('[aria-label="Focus goal"]')).toBeTruthy();
+  });
+  it("adds a quick task to Now", async () => {
+    render(); await flushPromises();
+    const input = today().querySelector<HTMLInputElement>('input[aria-label="Add a task"]')!;
+    input.value = "Book the dentist"; input.dispatchEvent(new Event("input")); input.form!.dispatchEvent(new Event("submit")); await flushPromises();
+    expect(api.post).toHaveBeenCalledWith("/mission-control/tasks", { title: "Book the dentist", status: "in_progress" });
+    expect(today().textContent).toContain("Book the dentist");
+  });
+  it("keeps gratitude off until it is switched on from the Today menu, which holds only that switch", async () => {
+    render(); await flushPromises();
+    expect(gratitude()).toBeNull();
+    (today().querySelector('[aria-label="Today options"]') as HTMLButtonElement).click(); await flushPromises();
+    const items = [...today().querySelectorAll('[role="menu"] button')];
+    expect(items.map(item => item.textContent?.replace("🌅", "").trim())).toEqual(["Gratitude"]);
+    expect(items[0].getAttribute("aria-checked")).toBe("false");
+    (items[0] as HTMLButtonElement).click(); await flushPromises();
+    expect(gratitude()).toBeTruthy();
+    expect(JSON.parse(Object.values(localStorage).find(value => value.includes("pinned")) || "{}").pinned).toContain("gratitude");
   });
 });

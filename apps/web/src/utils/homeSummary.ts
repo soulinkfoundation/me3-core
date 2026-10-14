@@ -11,9 +11,21 @@ export const emptyHomeLayout = (): HomeLayout => ({ order: [], hidden: [], pinne
 export function visibleHomeCards(layout: HomeLayout): HomeCard[] {
   return [...new Set([...layout.order, ...HOME_CARDS])].filter((id): id is HomeCard =>
     HOME_CARDS.includes(id as HomeCard) && !layout.hidden.includes(id) &&
-    // Inbox is opt-in: email shows on the person it is about (People v1).
-    (["today", "people", "gratitude", "mission", "journal", "wheel", "accounts"].includes(id) || layout.pinned.includes(id) || layout.earned.includes(id)),
-  );
+    // Today holds the day (calendar, tasks, notes, optional gratitude); other cards are opt-in.
+    (HOME_DEFAULT_CARDS.includes(id as HomeCard) || layout.pinned.includes(id) || layout.earned.includes(id)),
+  ).filter(id => !HOME_INSIDE_TODAY.includes(id));
+}
+export const HOME_DEFAULT_CARDS: HomeCard[] = ["today", "people", "accounts"];
+// Gratitude is a section of the Today card, switched on from its menu, never a card of its own.
+export const HOME_INSIDE_TODAY: HomeCard[] = ["gratitude"];
+export const gratitudeInToday = (layout: HomeLayout) => layout.pinned.includes("gratitude") && !layout.hidden.includes("gratitude");
+// The focus goal is the first active goal; making a goal the focus moves it to the front of the list.
+export function focusGoal<T extends Pick<HomeGoal, "status">>(goals: T[]): T | null {
+  return goals.find(goal => goal.status !== "completed") || null;
+}
+export function goalsWithFocus<T extends Pick<HomeGoal, "id">>(goals: T[], id: string): T[] {
+  const goal = goals.find(item => item.id === id);
+  return goal ? [goal, ...goals.filter(item => item.id !== id)] : goals;
 }
 export function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -33,6 +45,11 @@ export function homeOpenTasks(tasks: HomeTask[], now = new Date()): HomeTask[] {
   return tasks.filter(t => !t.archivedAt && !["done", "cancelled", "canceled", "archived"].includes((t.status || "").toLowerCase()))
     .sort((a, b) => Number(date(a) >= end.getTime()) - Number(date(b) >= end.getTime()) ||
       (date(a) === date(b) ? 0 : date(a) - date(b)) || (a.priority ?? 2) - (b.priority ?? 2) || a.id.localeCompare(b.id));
+}
+// Today's list: tasks in Now, plus anything due or scheduled today or earlier. Backlog without a date stays in Tasks.
+export function homeTodayTasks(tasks: HomeTask[], now = new Date()): HomeTask[] {
+  const end = new Date(now); end.setHours(24, 0, 0, 0);
+  return homeOpenTasks(tasks, now).filter(t => t.status === "in_progress" || Math.min(taskDate(t.dueAt), taskDate(t.scheduledFor)) < end.getTime());
 }
 export function homeDoneToday(tasks: HomeTask[], now = new Date()): number {
   // The task contract has updatedAt rather than completedAt; match the native Home summary.

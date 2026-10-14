@@ -58,6 +58,7 @@ const destinations = computed(() => [
   { label: "Email", path: "/email", emoji: APP_FEATURE_ICONS.email, visible: features.value.email },
   { label: "Writing", path: "/journal", emoji: APP_FEATURE_ICONS.journal, visible: installed("me3.journal") && features.value.journal },
   { label: "Tasks", path: "/tasks", emoji: "✅", visible: installed("me3.mission-control") && features.value.tasks },
+  { label: "Mission", path: "/mission", emoji: "🚀", visible: installed("me3.mission-control") },
   { label: "Files", path: "/files", emoji: APP_FEATURE_ICONS.files, visible: features.value.files },
   { label: "Socials", path: "/social", emoji: APP_FEATURE_ICONS.social, visible: installed("me3.social-publishing") },
   { label: "Accounts", path: "/accounts", emoji: APP_FEATURE_ICONS.accounts, visible: installed("me3.accounts") },

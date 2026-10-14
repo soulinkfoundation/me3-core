@@ -14,14 +14,20 @@ import PersonAvatar from "../people/PersonAvatar.vue";
 import PersonSheet from "../people/PersonSheet.vue";
 import { useContactsStore } from "../../stores/contacts";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
-import { HOME_CARDS, emptyHomeLayout, homeDateLabel, homeDoneToday, homeGoalTasks, homeOpenTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeTask, type HomeGoal } from "../../utils/homeSummary";
+import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, gratitudeInToday, homeDateLabel, homeDoneToday, homeGoalTasks, homeOpenTasks, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeTask, type HomeGoal } from "../../utils/homeSummary";
+import { useTodayPlan } from "../../composables/useTodayPlan";
+import TodayFocusLine from "../today/TodayFocusLine.vue";
+import TodaySection from "../today/TodaySection.vue";
+import TodayTasks from "../today/TodayTasks.vue";
 const emit = defineEmits<{ suggest: [text: string]; approvalResolved: [] }>();
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
 const auth = useAuthStore();
 const contactsStore = useContactsStore();
 const storageKey = computed(() => `me3.home.${location.origin}.${API_BASE}.${auth.user?.id || "owner"}`);
 const layout = ref<HomeLayout>(emptyHomeLayout());
-const tasks = ref<HomeTask[]>([]);
+// Today's tasks and goals come from the shared plan so the daily page and Mission stay in step.
+const plan = useTodayPlan();
+const { tasks, goals } = plan;
 const journal = ref<{ id: string; date: string; title?: string | null; body?: string; preview?: string }[]>([]);
 const articles = ref<{ id: string; title?: string | null; body: string }[]>([]);
 const mail = ref<{ id: string; subject: string; fromName?: string; fromAddress?: string; preview?: string; agentSummary?: string }[]>([]);
@@ -31,7 +37,6 @@ const reviewApproval = ref<(typeof approvals.value)[number] | null>(null);
 const approvalError = ref("");
 const { toastFromUnknown, toastSuccess } = useAppToast();
 const events = ref<{ id: string; title: string; start: string; allDay?: boolean }[]>([]);
-const goals = ref<HomeGoal[]>([]);
 const defaultAreas: HomeWheelArea[] = [
   { id: "health", label: "Health", color: "#ff3b30", emoji: "❤️", value: null },
   { id: "spirituality", label: "Spirituality", color: "#34c759", emoji: "🌿", value: null },
@@ -71,7 +76,7 @@ defineExpose({ openAddDialog: () => { dialog.value = "add"; }, refreshToday: loa
 const menu = ref<HomeCard | null>(null);
 const day = ref(localDateKey(new Date()));
 const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = {
-  today: { title: "Today", href: "/calendar", emoji: "🗓️" },
+  today: { title: "Today", href: "/journal", emoji: "🗓️" },
   people: { title: "People", href: "/people", emoji: "🫶" },
   gratitude: { title: "Gratitude", href: "/journal", emoji: "🌅" },
   inbox: { title: "Inbox", href: "/email", emoji: "📧" },
@@ -89,9 +94,26 @@ const openPersonId = ref<string | null>(null);
 const openPerson = computed(() => contactsStore.contacts.find(contact => contact.id === openPersonId.value) || null);
 const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value) && (id !== "people" || peopleCard.value.state !== "hidden")));
 const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id)));
-const addCards = computed(() => [...available.value].sort((a, b) => Number(visible.value.includes(b)) - Number(visible.value.includes(a))));
+const addCards = computed(() => available.value.filter(id => !HOME_INSIDE_TODAY.includes(id)).sort((a, b) => Number(visible.value.includes(b)) - Number(visible.value.includes(a))));
 const openTasks = computed(() => homeOpenTasks(tasks.value).slice(0, 6));
 const doneToday = computed(() => homeDoneToday(tasks.value));
+const todayTasks = computed(() => homeTodayTasks(tasks.value));
+const focus = computed(() => plan.focus.value);
+const showGratitude = computed(() => gratitudeInToday(layout.value) && !unavailable.value.includes("gratitude"));
+// Upcoming events only; an event drops off an hour after it starts.
+const upcomingEvents = computed(() => { const cutoff = Date.now() - 3_600_000; return events.value.filter(event => event.allDay || new Date(event.start).getTime() >= cutoff).slice(0, 3); });
+const todayPage = computed(() => journal.value[0]?.date?.slice(0, 10) === day.value ? journal.value[0] : null);
+const todayLabel = computed(() => new Date(`${day.value}T12:00:00`).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }));
+function toggleGratitude() {
+  if (gratitudeInToday(layout.value)) layout.value.pinned = layout.value.pinned.filter(id => id !== "gratitude");
+  else { layout.value.hidden = layout.value.hidden.filter(id => id !== "gratitude"); layout.value.pinned.push("gratitude"); }
+  save();
+}
+async function addTask(title: string, done: () => void) {
+  try { await plan.addTask(title); delete errors.value.tasks; }
+  catch (error) { toastFromUnknown(error, "Couldn't add task"); }
+  finally { done(); }
+}
 const activeGoals = computed(() => goals.value.filter(goal => goal.status !== "completed"));
 const selectedGoal = computed(() => activeGoals.value.find(goal => goal.id === pickedGoal.value) || activeGoals.value[0]);
 const goalTasks = computed(() => selectedGoal.value ? homeGoalTasks(tasks.value, selectedGoal.value) : []);
@@ -222,16 +244,7 @@ async function refresh() {
       } catch (error) { if (!(error instanceof ApiError && error.status === 404)) throw error; }
     }),
     resource("people", async () => { await contactsStore.fetchContacts(); if (contactsStore.error) throw new Error(contactsStore.error); }),
-    resource("tasks", async () => {
-      const all: HomeTask[] = []; const seen = new Set<string>(); let cursor: string | undefined;
-      do {
-        const page = await api.get<{ tasks: HomeTask[]; nextCursor?: string }>(`/mission-control/tasks?${new URLSearchParams({ active: "1", limit: "100", ...(cursor ? { cursor } : {}) })}`);
-        all.push(...page.tasks); cursor = page.nextCursor || undefined;
-        if (cursor && seen.has(cursor)) throw new Error("Couldn't finish loading tasks. Try again.");
-        if (cursor) seen.add(cursor);
-      } while (cursor && !disposed);
-      if (!disposed) { tasks.value = all; }
-    }),
+    resource("tasks", plan.loadTasks),
     resource("journal", async () => {
       const [data, drafts] = await Promise.all([api.get<{ entries: typeof journal.value }>("/journal/archive?limit=1"), api.get<{ articles: typeof articles.value }>("/journal/articles")]);
       if (!disposed) { journal.value = data.entries || []; articles.value = drafts.articles || []; }
@@ -282,7 +295,11 @@ async function decideCoreApproval(decision: "approved" | "declined") {
   finally { busy.value = busy.value.filter(id => id !== approval.id); }
 }
 watch(day, loadToday);
-watch(() => props.active, active => { if (active) void loadToday(); });
+watch(() => props.active, active => {
+  if (!active) return;
+  const today = localDateKey(new Date());
+  if (day.value !== today) day.value = today; else void loadToday();
+});
 onMounted(() => {
   motionPreference?.addEventListener("change", updateMotionPreference);
   window.addEventListener("online", reconnect); window.addEventListener("offline", reconnect);
@@ -305,36 +322,40 @@ onBeforeUnmount(() => {
     <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__drag" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
       <template #item="{ element: card }: { element: HomeCard }">
         <article :ref="el => setCardElement(card, el)" class="home-card" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
-          <header v-if="card !== 'gratitude'" class="home-card__header">
+          <header class="home-card__header">
             <button v-if="card === 'wheel'" type="button" class="home-card__title" @click="openWheel"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></button>
             <RouterLink v-else :to="cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
-            <label v-if="card === 'today'" class="home-day"><span>{{ new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) }}</span><input v-model="day" type="date" aria-label="Choose Home calendar day" /></label>
+            <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
             <span v-else-if="card === 'journal' && journal[0]" class="home-card__detail">{{ homeDateLabel(journal[0].date) }}</span>
             <div class="home-card__controls">
               <button type="button" class="home-card__drag" :aria-label="`Drag ${cards[card].title} to reorder`" title="Drag to reorder, or use the options menu"><UiIcon name="GripVertical" :size="16" /></button>
               <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-haspopup="menu" :aria-expanded="menu === card" @click="menu === card ? closeMenu(card) : openMenu(card)"><UiIcon name="Ellipsis" :size="20" /></button>
             </div>
           </header>
-          <div v-if="menu === card" class="home-card__menu" role="menu" :aria-label="`${cards[card].title} options`" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
+          <!-- Today's menu holds only the Gratitude switch; reorder by dragging. -->
+          <div v-if="menu === card && card === 'today'" class="home-card__menu" role="menu" aria-label="Today options" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
+            <button type="button" role="menuitemcheckbox" :aria-checked="showGratitude" @click="toggleGratitude"><span class="home-emoji home-emoji--menu" aria-hidden="true">🌅</span>Gratitude<span class="home-switch" :class="{ 'is-on': showGratitude }" aria-hidden="true" /></button>
+          </div>
+          <div v-else-if="menu === card" class="home-card__menu" role="menu" :aria-label="`${cards[card].title} options`" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
             <button type="button" role="menuitem" :disabled="visible.indexOf(card) === 0" @click="move(card, -1)"><UiIcon name="ArrowUp" :size="16" />Move up</button>
             <button type="button" role="menuitem" :disabled="visible.indexOf(card) === visible.length - 1" @click="move(card, 1)"><UiIcon name="ArrowDown" :size="16" />Move down</button>
             <button type="button" role="menuitem" class="home-danger" @click="remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
           </div>
-          <GratitudeCard v-if="card === 'gratitude'" :active="active" @unavailable="unavailable.push('gratitude')">
-            <!-- The card draws its own header; keep the same reorder and options controls in it. -->
-            <template #controls>
-              <div class="home-card__controls home-card__controls--gratitude">
-                <button type="button" class="home-card__drag" :aria-label="`Drag ${cards[card].title} to reorder`" title="Drag to reorder, or use the options menu"><UiIcon name="GripVertical" :size="16" /></button>
-                <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-haspopup="menu" :aria-expanded="menu === card" @click="menu === card ? closeMenu(card) : openMenu(card)"><UiIcon name="Ellipsis" :size="20" /></button>
-              </div>
-            </template>
-          </GratitudeCard>
-          <div v-else class="home-card__body">
+          <div class="home-card__body">
             <template v-if="card === 'today'">
               <div v-for="approval in approvals.slice(0, 3)" :key="approval.id" class="home-approval"><strong>{{ approval.title }}</strong><p v-if="approval.summary" class="home-muted">{{ journalPreview(approval.summary) }}</p><div class="home-actions"><template v-if="approval.pluginId === 'me3.core'"><button type="button" :disabled="busy.includes(approval.id)" @click="reviewApproval = approval; approvalError = ''">Review</button></template><template v-else><button type="button" :disabled="busy.includes(approval.id)" @click="confirm(approval.id)">Confirm</button><button type="button" @click="emit('suggest', `Help me find another time for: ${approval.title}`)">Another time</button></template></div></div>
-              <RouterLink v-for="event in events.slice(0, 5)" :key="event.id" to="/calendar" class="home-line home-event"><span class="home-muted home-time">{{ event.allDay ? 'All day' : new Date(event.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }}</span><span>{{ event.title }}</span></RouterLink>
-              <p v-if="!events.length && !approvals.length" class="home-muted">Your day is clear.</p>
-              <RouterLink v-if="!calendarConnected && !events.length" to="/calendar" class="home-quiet"><UiIcon name="Plus" :size="16" />Connect a calendar</RouterLink>
+              <TodayFocusLine :goal="focus" :has-goals="activeGoals.length > 0" />
+              <TodaySection title="Calendar" to="/calendar" label="Open Calendar">
+                <RouterLink v-for="event in upcomingEvents" :key="event.id" to="/calendar" class="home-line home-event"><span class="home-muted home-time">{{ event.allDay ? 'All day' : new Date(event.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }}</span><span>{{ event.title }}</span></RouterLink>
+                <p v-if="!upcomingEvents.length" class="home-muted">{{ events.length ? 'Nothing else today.' : 'Your day is clear.' }}</p>
+                <RouterLink v-if="!calendarConnected && !events.length" to="/calendar" class="home-quiet"><UiIcon name="Plus" :size="16" />Connect a calendar</RouterLink>
+              </TodaySection>
+              <GratitudeCard v-if="showGratitude" section :active="active" @unavailable="unavailable.push('gratitude')" />
+              <TodayTasks :tasks="todayTasks" :focus-goal-id="focus?.id" :busy="busy" :limit="4" @complete="complete" @add="addTask" />
+              <TodaySection title="Notes" to="/journal" label="Open today's page">
+                <RouterLink v-if="todayPage" to="/journal" class="home-writing home-muted">{{ journalPreview(todayPage.body || todayPage.preview || '') }}</RouterLink>
+                <RouterLink to="/journal" class="home-quiet">{{ todayPage ? 'Keep writing' : 'Write on today’s page' }}</RouterLink>
+              </TodaySection>
             </template>
             <template v-else-if="card === 'inbox'">
               <RouterLink v-for="event in soulink.slice(0, 3)" :key="event.id" to="/email" class="home-entry"><strong>{{ journalPreview(event.textBody || 'New request') }}</strong><span v-if="event.outcome" class="home-muted">{{ journalPreview(event.outcome) }}</span></RouterLink>
@@ -374,7 +395,7 @@ onBeforeUnmount(() => {
     <button type="button" class="home-add" @click="dialog = 'add'"><UiIcon name="Plus" :size="26" /><span>Add to Home</span></button>
     <AppDialog :open="dialog !== null" :aria-label="dialog === 'wheel' ? 'Wheel of Life' : 'Add to Home'" :close-on-backdrop="!wheelSaving" @close="!wheelSaving && (dialog = null)">
       <section class="home-dialog" :class="{ 'home-dialog--wheel': dialog === 'wheel' }"><header><h2>{{ dialog === 'wheel' ? '🛞 Wheel of Life' : 'Add to Home' }}</h2><button type="button" aria-label="Close Home editor" :disabled="wheelSaving" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>
-        <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in addCards" :key="card" type="button" :aria-label="card === 'today' ? 'Calendar' : cards[card].title" :aria-pressed="visible.includes(card)" class="home-add-tile" @click="visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ card === 'today' ? 'Calendar' : cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
+        <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in addCards" :key="card" type="button" :aria-label="cards[card].title" :aria-pressed="visible.includes(card)" class="home-add-tile" @click="visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
         <p v-if="dialog === 'add'" class="home-muted">Drag a card, or use its options menu to move or remove it.</p>
         <template v-if="dialog === 'wheel'"><div class="home-wheel-dialog"><HomeWheelChart :areas="dialogAreas" :selected="selectedArea?.id" interactive @select="pickedArea = $event" /><div class="home-wheel-rows"><template v-for="area in dialogAreas" :key="area.id"><button type="button" :aria-label="`Select ${area.label}`" :aria-pressed="selectedArea?.id === area.id" @click="pickedArea = area.id"><span class="home-emoji" aria-hidden="true">{{ area.emoji }}</span><span>{{ area.label }}</span><strong>{{ area.value ?? '—' }}</strong></button><label v-if="checkingIn" class="home-wheel-range"><span class="sr-only">{{ area.label }} score</span><input type="range" min="1" max="10" :value="area.value ?? 5" :disabled="wheelSaving" :aria-label="`${area.label} score`" @input="area.value = Number(($event.target as HTMLInputElement).value)" /><output>{{ area.value === null ? 'Not scored' : `${area.value}/10` }}</output></label></template></div></div>
           <div v-if="selectedArea && !checkingIn" class="home-wheel-goals"><h3>{{ selectedArea.emoji }} {{ selectedArea.label }}</h3><RouterLink v-for="goal in areaGoals(selectedArea.id)" :key="goal.id" to="/tasks?goals=1">{{ goal.title }} · {{ goal.progress || 0 }}%</RouterLink><button v-if="!areaGoals(selectedArea.id).length" type="button" class="home-quiet" @click="addGoal(selectedArea.id)"><UiIcon name="Plus" :size="16" />Add a goal</button></div>
@@ -401,7 +422,7 @@ onBeforeUnmount(() => {
 .home-card__title { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 40px; color: var(--ui-text); font-size: 15px; font-weight: 600; text-decoration: none; padding: 0; white-space: nowrap; }
 .home-card__title:hover { background: transparent; text-decoration: underline; text-underline-offset: 3px; }
 .home-emoji { font-size: 20px; line-height: 1; font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
-.home-card__detail, .home-day { color: var(--ui-text-muted); font-size: 12px; white-space: nowrap; }
+.home-card__detail { color: var(--ui-text-muted); font-size: 12px; white-space: nowrap; }
 .home-card__controls { display: flex; margin-left: auto; }
 button { cursor: pointer; font: inherit; color: var(--ui-text); background: transparent; border: 0; min-width: 44px; min-height: 44px; border-radius: 12px; }
 button:hover { background: var(--ui-surface-muted); }
@@ -436,12 +457,14 @@ p { margin: 4px 0; }
 .home-actions button:first-child:not(.home-quiet) { color: var(--ui-primary-contrast); background: var(--ui-primary); padding: 0 16px; border-radius: 24px; }
 .home-quiet { display: inline-flex; align-items: center; gap: 5px; color: var(--ui-text-muted); font-size: 14px; font-weight: 500; min-height: 44px; text-decoration: none; padding: 0; text-align: left; }
 .home-quiet:hover { color: var(--ui-text); background: transparent; }
-.home-day { position: relative; min-height: 36px; display: flex; align-items: center; }
-.home-day:focus-within { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
-.home-day input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
 .home-card__menu { position: absolute; right: 10px; top: 52px; z-index: 60; display: grid; width: 210px; padding: 6px; background: var(--ui-surface); border-radius: 16px; box-shadow: var(--ui-shadow-md); }
 .home-card__menu button { display: flex; gap: 10px; align-items: center; text-align: left; padding: 0 12px; font-size: 14px; }
 .home-danger { color: var(--ui-danger, #dc2626); }
+.home-emoji--menu { font-size: 16px; }
+.home-switch { position: relative; width: 40px; height: 24px; margin-left: auto; border-radius: 999px; background: var(--ui-surface-muted); box-shadow: inset 0 0 0 1px var(--ui-border); flex-shrink: 0; }
+.home-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / 25%); transition: left .15s; }
+.home-switch.is-on { background: var(--ui-accent); box-shadow: none; }
+.home-switch.is-on::after { left: 18px; }
 .home-mission { margin: 8px 0 20px; font-family: var(--font-serif, Georgia, serif); font-size: 22px; font-weight: 500; line-height: 1.4; text-align: center; }
 .home-goal-hint { margin: 0 0 6px; font-size: 12px; }
 .home-goal-line { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: thin; }
@@ -491,15 +514,10 @@ p { margin: 4px 0; }
 .home-wheel-range output { width: 66px; font-size: 12px; color: var(--ui-text-muted); }
 .home-wheel-goals > a { display: block; min-height: 36px; text-decoration: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-@media (max-width: 400px) {
-  /* The week ticks leave no room for both controls; Move up/down stay in the options menu. */
-  .home-card__controls--gratitude .home-card__drag { display: none; }
-}
 @media (max-width: 640px) {
   .home-panels { padding-inline: 2px; }
   .home-card__controls > button { min-width: 44px; width: 44px; }
   .home-card__header { flex-wrap: wrap; gap: 0 6px; }
-  .home-day { font-size: 11px; }
   .home-wheel { gap: 10px; }
   .home-wheel-open :deep(svg) { width: 135px; height: 135px; }
   .home-dialog { width: 100%; border-radius: 28px 28px 0 0; padding: 16px; }

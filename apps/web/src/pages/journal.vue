@@ -8,7 +8,7 @@ import {
   watch,
 } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import type { Editor } from "@tiptap/core";
 import { ApiError, api } from "../api";
 import Button from "../components/Button.vue";
@@ -22,6 +22,11 @@ import { parseJournalReminderCapture } from "../utils/journalReminderCapture";
 import { journalBodyForEditor } from "../utils/journalContent";
 import { reorderJournalBlocks } from "../utils/journalWriting";
 import { writtenGratitude } from "../utils/gratitude";
+import TodayFocusLine from "../components/today/TodayFocusLine.vue";
+import TodayTasks from "../components/today/TodayTasks.vue";
+import { useAppToast } from "../composables/useAppToast";
+import { useTodayPlan } from "../composables/useTodayPlan";
+import { homeTodayTasks, type HomeTask } from "../utils/homeSummary";
 
 definePage({
   meta: {
@@ -102,6 +107,22 @@ type TiptapEditorExpose = {
 };
 
 const route = useRoute();
+const router = useRouter();
+// Today's page shows the focus goal and today's tasks above your notes, like the Home Today card.
+const plan = useTodayPlan();
+const planReady = ref(false);
+const planTasks = computed(() => homeTodayTasks(plan.tasks.value));
+const { toastFromUnknown: toastPlanError } = useAppToast();
+async function loadPlan() {
+  try { await Promise.all([plan.loadTasks(), plan.loadGoals()]); planReady.value = true; }
+  catch { planReady.value = false; }
+}
+async function completePlanTask(task: HomeTask) {
+  try { await plan.complete(task); } catch (error) { toastPlanError(error, "Couldn't complete task"); }
+}
+async function addPlanTask(title: string, done: () => void) {
+  try { await plan.addTask(title); } catch (error) { toastPlanError(error, "Couldn't add task"); } finally { done(); }
+}
 const auth = useAuthStore();
 const selectedDate = ref(normalizeLocalDateInput(rawDateQuery(route.query.date)) || todayKey());
 const datePickerOpen = ref(false);
@@ -1176,6 +1197,7 @@ watch([entryLinks, description, projects], scheduleInlineJournalChips, {
 
 onMounted(() => {
   void loadDay(selectedDate.value);
+  void loadPlan();
   window.addEventListener("click", handleWindowClick);
   window.addEventListener("keydown", handleWindowKeydown);
   document.addEventListener("selectionchange", updateSelectionToolbar);
@@ -1260,6 +1282,18 @@ onBeforeUnmount(() => {
         />
       </div>
       <div class="journal__topbar-actions">
+        <Button
+          color="ghost"
+          shape="soft"
+          size="compact"
+          icon-only
+          aria-label="Open Calendar"
+          title="Calendar"
+          type="button"
+          @click="router.push('/calendar')"
+        >
+          <UiIcon name="Calendar" :size="16" />
+        </Button>
         <Button
           :color="voiceDictationState === 'listening' ? 'accent' : 'ghost'"
           shape="soft"
@@ -1438,10 +1472,12 @@ onBeforeUnmount(() => {
           class="journal__editor-wrap"
           :class="{ 'is-loading': loading }"
         >
+          <TodayFocusLine v-if="!currentArticle && currentDateIsToday && planReady" :goal="plan.focus.value" :has-goals="plan.goals.value.some(goal => goal.status !== 'completed')" class="journal__focus" />
           <div v-if="!currentArticle && (dailyGratitude.gratitude.length || dailyGratitude.goodThings.length)" class="journal__gratitude" aria-label="Gratitude and three good things">
-            <section><h3>🌅 Grateful for</h3><ol><li v-for="(line, index) in dailyGratitude.gratitude" :key="index">{{ line }}</li></ol></section>
-            <section><h3>🌙 Three good things</h3><ol><li v-for="(line, index) in dailyGratitude.goodThings" :key="index">{{ line }}</li></ol></section>
+            <section v-if="dailyGratitude.gratitude.length"><h3>Grateful for</h3><ol><li v-for="(line, index) in dailyGratitude.gratitude" :key="index">{{ line }}</li></ol></section>
+            <section v-if="dailyGratitude.goodThings.length"><h3>Three good things</h3><ol><li v-for="(line, index) in dailyGratitude.goodThings" :key="index">{{ line }}</li></ol></section>
           </div>
+          <TodayTasks v-if="!currentArticle && currentDateIsToday && planReady" :tasks="planTasks" :focus-goal-id="plan.focus.value?.id" :busy="plan.busy.value" class="journal__tasks" @complete="completePlanTask" @add="addPlanTask" />
           <TiptapEditor
             ref="editorRef"
             v-model="description"
@@ -1657,7 +1693,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.journal__gratitude { display: grid; gap: 12px; padding: 12px 14px; border-radius: 18px; background: var(--ui-surface-muted); margin: 6px 0 20px; }
+.journal__focus { margin: 6px 0 4px; }
+.journal__tasks { margin: 4px 0 20px; }
+/* Same plain section titles as the Today card. */
+.journal__gratitude { display: grid; gap: 12px; margin: 10px 0 4px; }
 .journal__gratitude h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ui-text-muted); }
 .journal__gratitude ol { margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.5; }
 .journal {

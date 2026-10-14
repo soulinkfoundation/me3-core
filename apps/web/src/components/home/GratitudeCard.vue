@@ -7,7 +7,8 @@ import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import { gratitudeLines, type GratitudeState, type GratitudeSettings, type Quote } from "../../utils/gratitude";
 
-const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
+// section: drawn inside the Today card with a plain section title, no week ticks or own padding.
+const props = withDefaults(defineProps<{ active?: boolean; section?: boolean }>(), { active: true, section: false });
 const emit = defineEmits<{ unavailable: [] }>();
 const { toastFromUnknown } = useAppToast();
 const state = ref<GratitudeState | null>(null);
@@ -118,8 +119,9 @@ defineExpose({ refresh: load });
 </script>
 
 <template>
-  <section class="gratitude-content" :aria-label="title">
-    <header class="gratitude-header">
+  <section class="gratitude-content" :class="{ 'gratitude-content--section': section }" :aria-label="title">
+    <button v-if="section" type="button" class="gratitude-section-title" :aria-label="`${title} quote and reminders`" @click="openSheet">{{ title }}</button>
+    <header v-else class="gratitude-header">
       <button type="button" class="gratitude-title" :aria-label="`${title} quote and reminders`" @click="openSheet"><span aria-hidden="true">{{ evening ? '🌙' : '🌅' }}</span>{{ title }}</button>
       <div class="gratitude-week" aria-label="Last 7 days">
         <span v-for="day in state?.days || []" :key="day.date" class="gratitude-day" :class="{ 'is-today': day.date === state?.date, 'is-written': tickWritten(day) }" :aria-label="`${dayLabel(day.date)}: ${tickWritten(day) ? 'Written' : 'Nothing written'}`">
@@ -159,6 +161,14 @@ defineExpose({ refresh: load });
 
 <style scoped>
 .gratitude-content { padding: 10px 18px 16px; color: var(--ui-text); }
+.gratitude-content--section { padding: 0; margin-top: 10px; }
+.gratitude-content--section .gratitude-quote { padding: 12px 16px; }
+.gratitude-content--section .quote-text { font-size: 15px; }
+.gratitude-content--section .gratitude-lines { margin-top: 4px; }
+.gratitude-content--section .gratitude-line, .gratitude-content--section .gratitude-line input { min-height: 40px; }
+/* Same title style as the other Today sections (TodaySection). */
+.gratitude-section-title { display: block; margin: 0 0 4px; padding: 0; min-height: 24px; border: 0; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 13px; font-weight: 600; line-height: 1.4; text-align: left; }
+.gratitude-section-title:hover { color: var(--ui-text); }
 .gratitude-header { display: flex; align-items: center; gap: 8px; min-height: 40px; position: relative; margin-bottom: 8px; }
 .gratitude-title { display: flex; align-items: center; gap: 8px; padding: 0; font: inherit; font-size: 15px; font-weight: 600; color: inherit; background: transparent; border: 0; min-height: 44px; text-align: left; }
 .gratitude-title > span { font-size: 20px; }

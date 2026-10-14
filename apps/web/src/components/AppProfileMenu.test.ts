@@ -109,6 +109,7 @@ describe("AppProfileMenu optional plugin links", () => {
       "Email",
       "Writing",
       "Tasks",
+      "Mission",
       "Files",
       "Socials",
       "Accounts",
