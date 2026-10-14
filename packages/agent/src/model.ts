@@ -13,6 +13,7 @@ export interface CloudflareModelOptions {
 // Catalog prices per million tokens, excluding infrastructure and Gateway fees.
 // https://developers.cloudflare.com/ai/models/openai/gpt-6-astra/
 // https://developers.cloudflare.com/ai/models/anthropic/claude-sonnet-5.5/
+// https://developers.cloudflare.com/ai/models/anthropic/claude-haiku-5.5/
 // https://developers.cloudflare.com/ai/models/anthropic/claude-sonnet-5/
 // https://developers.cloudflare.com/ai/models/anthropic/claude-sonnet-4.6/
 // https://developers.cloudflare.com/ai/models/moonshotai/kimi-k3/
@@ -29,6 +30,8 @@ const PRICING: Record<string, {input:number;output:number;cachedInput?:number;ca
   "openai/gpt-5.5": {input:5,output:30,cachedInput:0.5},
   "anthropic/claude-opus-5.5": {input:4,output:20,cachedInput:0.2,cacheWriteInput:5},
   "anthropic/claude-sonnet-5.5": {input:2,output:10,cachedInput:0.2,cacheWriteInput:2.5},
+  // Cache rates follow Anthropic's standard 0.1x read / 1.25x write multipliers.
+  "anthropic/claude-haiku-5.5": {input:0.1,output:0.5,cachedInput:0.01,cacheWriteInput:0.125},
   "@cf/zai-org/glm-5.3-flash": {input:0.15,output:0.5,cachedInput:0.03},
 };
 
