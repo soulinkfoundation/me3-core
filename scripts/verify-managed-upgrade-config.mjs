@@ -92,6 +92,8 @@ export function verifyManagedUpgradeConfig({
     agentDurableObjectBlocks.length > 1 ||
     (agentDurableObjectBlocks.length === 1 && getTomlString(agentDurableObjectBlocks[0], "class_name") !== "Me3Agent") ||
     (sdkRetired && (sdkDurableObjectBlocks.length !== 0 || agentDurableObjectBlocks.length !== 1)) ||
+    // Managed Workers never created the SDK class; creating it unbound fails at deploy.
+    (createsSdkClass(config) && sdkDurableObjectBlocks.length !== 1) ||
     [...durableObjectBlocks, ...sdkDurableObjectBlocks, ...agentDurableObjectBlocks].some((block) =>
       /^\s*["']?(?:script_name|environment|namespace_id)["']?\s*=/m.test(block)) ||
     /^\s*["']?ME3_(?:ASSISTANT_RUNTIME|JEV_ROUTER_MODE)["']?\s*=/m.test(config) ||
@@ -102,6 +104,11 @@ export function verifyManagedUpgradeConfig({
     throw new Error("managed upgrade config is invalid");
   }
   return { ...manifest, durableObjectNamespaceId, publicOrigin };
+}
+
+function createsSdkClass(config) {
+  return [...config.matchAll(/^\s*["']?(?:new_classes|new_sqlite_classes)["']?\s*=\s*\[([^\]]*)\]/gm)]
+    .some((match) => /["']Me3SdkUserAgent["']/.test(match[1]));
 }
 
 function hasExactTomlString(config, key, expected) {

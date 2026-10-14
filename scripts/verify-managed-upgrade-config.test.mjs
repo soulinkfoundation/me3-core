@@ -109,8 +109,12 @@ test("accepts only the exact SDK retirement while retaining both live namespace 
   ) + '\n[[migrations]]\ntag = "2026-10-01-me3-sdk-user-agent"\nnew_sqlite_classes = ["Me3SdkUserAgent"]\n'
     + '\n[[migrations]]\ntag = "2026-10-10-me3-agent"\nnew_sqlite_classes = ["Me3Agent"]\n' + deletion;
   try {
-    await t.test("exact SDK-only migration is accepted after retirement and on replay", () => {
+    await t.test("unbound SDK creation is rejected because managed Workers never exported it", () => {
       writeFileSync(configPath, retired);
+      assert.throws(() => contract(configPath), /upgrade config is invalid/);
+    });
+    await t.test("exact SDK tombstone is accepted without recreating the class", () => {
+      writeFileSync(configPath, retired.replace('\n[[migrations]]\ntag = "2026-10-01-me3-sdk-user-agent"\nnew_sqlite_classes = ["Me3SdkUserAgent"]\n', ""));
       assert.equal(contract(configPath).durableObjectNamespaceId, "b".repeat(32));
       assert.equal(contract(configPath).d1Id, d1Id);
     });
@@ -162,9 +166,14 @@ test("both shipped configs retain normal namespace history and deploy only the n
       assert.match(value, /name = "ME3_AGENT"\s+class_name = "Me3Agent"/);
       assert.doesNotMatch(value, /name = "ME3_SDK_USER_AGENT"/);
       assert.match(value, /tag = "2026-05-11-me3-core-user-agent"\s+new_sqlite_classes = \["Me3UserAgent"\]/);
-      assert.match(value, /tag = "2026-10-01-me3-sdk-user-agent"\s+new_sqlite_classes = \["Me3SdkUserAgent"\]/);
       assert.match(value, /tag = "2026-10-10-me3-agent"\s+new_sqlite_classes = \["Me3Agent"\]/);
-      assert.match(value, /tag = "2026-10-12-retire-sdk-user-agent"\s+deleted_classes = \["Me3SdkUserAgent"\]/);
+      if (relative === "../wrangler.toml") {
+        // Deployed root installs never created the SDK class (me3 v0.1.219 upgrade failure).
+        assert.doesNotMatch(value, /Me3SdkUserAgent/);
+      } else {
+        assert.match(value, /tag = "2026-10-01-me3-sdk-user-agent"\s+new_sqlite_classes = \["Me3SdkUserAgent"\]/);
+        assert.match(value, /tag = "2026-10-12-retire-sdk-user-agent"\s+deleted_classes = \["Me3SdkUserAgent"\]/);
+      }
       assert.doesNotMatch(value, /^\s*(?:#\s*)?ME3_(?:ASSISTANT_RUNTIME|JEV_ROUTER_MODE)\s*=/m);
     });
   }
