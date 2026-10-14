@@ -44,6 +44,9 @@ export interface Env {
   ME3_AGENT_FAST_PATH_SAMPLE_RATE?: string;
   ME3_AGENT_FAST_PATH_ARGUMENTS?: string;
   ME3_AGENT_FAST_PATH_UNTIL?: string;
+  /** "on" sends confident conversation-only turns to ME3_AGENT_FAST_MODEL. */
+  ME3_AGENT_ROUTING?: string;
+  ME3_AGENT_FAST_MODEL?: string;
   ME3_AI_REASONING_PROVIDER?: string;
   ME3_AI_REASONING_MODEL?: string;
   ME3_AI_EXTRACTION_PROVIDER?: string;

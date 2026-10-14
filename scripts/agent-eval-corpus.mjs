@@ -1,9 +1,15 @@
 import { createAgentEvalScenarios } from "./agent-eval-scenarios.mjs";
+import { createConversationEvalScenarios } from "./agent-eval-conversation.mjs";
 import { createQuoteEvalScenarios, snapshotQuoteEvalState, checkQuoteEvalState } from "./agent-eval-quote-scenarios.mjs";
 
 export function createAgentEvalCorpus(baseDate, supplement = "") {
-  if (!["", "quotes"].includes(supplement)) throw Error("Unknown eval supplement; use --supplement=quotes or omit it.");
-  const originals = createAgentEvalScenarios(baseDate), quotes = supplement ? createQuoteEvalScenarios() : [];
+  if (!["", "quotes", "conversation"].includes(supplement)) throw Error("Unknown eval supplement; use --supplement=quotes, --supplement=conversation or omit it.");
+  const originals = createAgentEvalScenarios(baseDate), quotes = supplement === "quotes" ? createQuoteEvalScenarios() : [];
+  if (supplement === "conversation") {
+    const conversation = createConversationEvalScenarios();
+    return { scenarios: [...originals, ...conversation], originalIds: originals.map(s => s.id), probeIds: [], supplement,
+      version: "original85-plus-conversation10-v1", originalCount: originals.length, supplementCount: conversation.length };
+  }
   const states = new WeakMap();
   const probes = quotes.map(quote => ({ id: `quotes/${quote.id}`, suite: quote.suite, evaluationKind: "owner-create-guard-probe", quoteExpectation: quote,
     setup(seed) { states.set(seed, snapshotQuoteEvalState(seed)); },

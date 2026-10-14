@@ -1,6 +1,7 @@
 export { runAgentTurn } from "./loop";
 export { createCloudflareModel } from "./model";
-export { createClefDecider } from "./clef";
+export { createClefDecider, createClefRouter } from "./clef";
+export { decideRoute, parseRouterAnswers, routerState, ROUTER_QUESTIONS, DEFAULT_MAX_NEEDS_TOOLS, DEFAULT_ROUTER_TIMEOUT_MS, type AgentRouter, type AgentRouteDecision, type AgentRouterAnswer, type AgentRouterInput } from "./router";
 export { buildFastPathRequest, parseFastPathResponse, sampleFastPathTurn, FAST_PATH_THRESHOLDS, FLASH_FAST_PATH_THRESHOLDS } from "./fast-path";
 export { buildAgentSystemPrompt } from "./prompt";
 export { compactAgentContext, AGENT_CONTEXT_LIMITS, type AgentContextLimits } from "./context";

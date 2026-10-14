@@ -1,4 +1,4 @@
-import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createClefDecider, createD1TurnStore, runAgentTurn, sampleFastPathTurn, type AgentDecider, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
+import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createClefDecider, createClefRouter, createD1TurnStore, runAgentTurn, sampleFastPathTurn, type AgentDecider, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import type { AgentFastPathRequestMeasurement } from "../../../packages/agent/src/fast-path";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { saveOwnerQuote } from "./quotes";
@@ -189,7 +189,24 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const verifier=modelFor(modelName,{purpose:"owner_create_intent",onAdmission:id=>{usageId=id;}});
       return {model:verifier,usageId:()=>usageId};
     }});
-    const result=await runAgentTurn({model,backupModel:backup,fastPath,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
+    // Routing uses the same unreconciled-receipt exclusions as fast-path
+    // decisions, so a late or timed-out routing call never blocks the planner.
+    const fastName=env.ME3_AGENT_FAST_MODEL?.trim()||"anthropic/claude-haiku-5.5";
+    const fastAllowed=!managed||managed.models.some(item=>managedModelId(item.id)===managedModelId(fastName));
+    let routingReceipt:((usage:AgentUsage)=>Promise<void>)|undefined;
+    const router=env.ME3_AGENT_ROUTING?.trim()==="on"&&fastAllowed&&managedModelId(fastName)!==managedModelId(model.id)?createClefRouter({model:"clef-flash",fastModel:modelFor(fastName),
+      gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,purpose:"routing"},recordUsage:usage=>routingReceipt?.(usage),
+      ai:{async run(selected,payload,options){
+        routingReceipt=undefined;
+        if(managed){
+          const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
+          if(!policy.available||!policy.eligible||policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)throw new Error("Routing unavailable under managed policy");
+        }
+        const count=managed?await managedUsageReportCount(env,input.userId,input.turnId):0;
+        routingReceipt=await admitModel(selected,count,{purpose:"fast_path",shadow:{stage:"routing",argumentMode:"route",sampleRate:1}},true);
+        return env.AI!.run(selected as never,payload as never,options as never);
+      }}}):undefined;
+    const result=await runAgentTurn({model,backupModel:backup,fastPath,router,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
       const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event.event,event.data);
       onEvent?.(event.event,event.data,seq);
     }});

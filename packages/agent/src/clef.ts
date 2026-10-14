@@ -1,6 +1,7 @@
 import { buildFastPathRequest, parseFastPathResponse, record, FAST_PATH_THRESHOLDS, FLASH_FAST_PATH_THRESHOLDS, type AgentDecider, type FastPathThresholds, type FastPathRequest, type AgentFastPathDecision, type AgentFastPathRequestMeasurement } from "./fast-path";
 import type { CloudflareModelOptions } from "./model";
-import type { AgentUsage } from "./types";
+import type { AgentModel, AgentUsage } from "./types";
+import { parseRouterAnswers, ROUTER_QUESTIONS, routerState, type AgentRouter } from "./router";
 
 // Published Workers AI input/output schemas; do not use chat-completion shapes.
 // https://developers.cloudflare.com/workers-ai/models/clef/schema-output.json
@@ -53,5 +54,18 @@ export function createClefDecider(options: Pick<CloudflareModelOptions, "ai" | "
     const usage = requests.reduce<AgentUsage>((sum, request) => ({ inputTokens: sum.inputTokens + request.usage.inputTokens, outputTokens: sum.outputTokens + request.usage.outputTokens,
       cachedInputTokens: 0, estimatedCostUsd: sum.estimatedCostUsd === null || request.usage.estimatedCostUsd === null ? null : sum.estimatedCostUsd + request.usage.estimatedCostUsd }), { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, estimatedCostUsd: 0 });
     return { ...decision, usage, requests, argumentMode, durationMs: performance.now() - started };
+  } };
+}
+
+export function createClefRouter(options: Pick<CloudflareModelOptions, "ai" | "gatewayId" | "metadata"> & { model: "clef" | "clef-flash"; fastModel: AgentModel; timeoutMs?: number; maxNeedsTools?: number; recordUsage?(usage: AgentUsage): void | Promise<void> }): AgentRouter {
+  return { id: `@cf/cloudflare/${options.model}`, fastModel: options.fastModel, timeoutMs: options.timeoutMs, maxNeedsTools: options.maxNeedsTools, async ask(input) {
+    input.signal.throwIfAborted();
+    const value = await options.ai.run(`@cf/cloudflare/${options.model}`, { model: options.model, state: routerState(input), questions: ROUTER_QUESTIONS },
+      options.gatewayId ? { gateway: { id: options.gatewayId, metadata: { ...options.metadata, purpose: "routing" } } } : undefined);
+    const usage = clefUsage(value, options.model);
+    await options.recordUsage?.(usage);
+    const answers = record(value)?.model === options.model ? parseRouterAnswers(value) : null;
+    if (!answers) throw new Error("Malformed router response");
+    return { ...answers, usage };
   } };
 }

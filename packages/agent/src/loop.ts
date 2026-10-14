@@ -4,8 +4,9 @@ import { canonicalJson, toolIdempotencyKey, validateArguments } from "./schema";
 import { compactAgentContext } from "./context";
 import { validateTargetSelection } from "./presentations";
 import { startFastPathShadow } from "./fast-path";
+import { decideRoute } from "./router";
 import { requireEnabledPlugin } from "./plugin-authorization";
-import type { AgentCheckpoint, AgentModel, AgentTargetPresentationCard, AgentTool, AgentToolCall, AgentToolResult, AgentTurnInput, AgentTurnResult } from "./types";
+import type { AgentCheckpoint, AgentModel, AgentModelResponse, AgentTargetPresentationCard, AgentTool, AgentToolCall, AgentToolResult, AgentTurnInput, AgentTurnResult } from "./types";
 
 export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
   const started = performance.now();
@@ -129,8 +130,34 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       } };
       let response;
       if (freshTurn && !input.context.targetSelection && checkpoint.steps === 0) shadow = startFastPathShadow(input.fastPath, { messageText: input.context.messageText, recentMessages: checkpoint.messages, tools, ownerTimezone: input.context.ownerTimezone, now: new Date(), signal: controller.signal });
-      try { response = await measureModel(model, stepInput); }
+      // Routing happens once, before the first model call of a fresh turn.
+      let active = model;
+      if (freshTurn && !input.context.targetSelection && checkpoint.steps === 0 && input.router && !checkpoint.trace.route) {
+        checkpoint.trace.route = await decideRoute(input.router, { messageText: input.context.messageText, recentMessages: checkpoint.messages, signal: controller.signal, hasImages: checkpoint.messages.some(message => message.images?.length) });
+        if (checkpoint.trace.route.route === "fast") active = input.router.fastModel;
+      }
+      try {
+        if (active === model) response = await measureModel(model, stepInput);
+        else {
+          const fast = await fastStep(active, stepInput);
+          if (fast.handedBack) {
+            addUsage(fast.response.usage);
+            checkpoint.trace.route = { ...checkpoint.trace.route!, route: "main", reason: "needs_tools" };
+            active = model;
+            response = await measureModel(model, stepInput);
+          } else response = fast.response;
+        }
+      }
       catch (error) {
+        if (active !== model) {
+          // The fast route never retries itself: the main model takes the turn.
+          checkpoint.trace.usage.estimatedCostUsd = null;
+          if (await cancelled()) return finish("cancelled", "The turn was cancelled before completion.");
+          checkpoint.trace.route = { ...checkpoint.trace.route!, route: "main", reason: "error" };
+          active = model;
+          if (emittedText) await emit({event:"status",data:{state:"retrying",replaceText:true}});
+          response = await measureModel(model, stepInput);
+        } else {
         // A failed request can still be billable, with no complete usage receipt.
         checkpoint.trace.usage.estimatedCostUsd = null;
         if (await cancelled()) return finish("cancelled", "The turn was cancelled before completion.");
@@ -139,18 +166,14 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         checkpoint.trace.model = model.id;
         if (emittedText) await emit({event:"status",data:{state:"retrying",replaceText:true}});
         response = await measureModel(model, stepInput);
+        active = model;
+        }
       }
-      checkpoint.trace.model = model.id;
+      checkpoint.trace.model = active.id;
       if (shadow && checkpoint.steps === 0) checkpoint.trace.fastPath = shadow.snapshot(response.toolCalls);
       checkpoint.steps++;
       checkpoint.trace.steps = checkpoint.steps;
-      if (response.usage) {
-        checkpoint.trace.usage.inputTokens += response.usage.inputTokens;
-        checkpoint.trace.usage.outputTokens += response.usage.outputTokens;
-        checkpoint.trace.usage.cachedInputTokens += response.usage.cachedInputTokens;
-        checkpoint.trace.usage.cacheWriteInputTokens = (checkpoint.trace.usage.cacheWriteInputTokens ?? 0) + (response.usage.cacheWriteInputTokens ?? 0);
-        checkpoint.trace.usage.estimatedCostUsd = response.usage.estimatedCostUsd === null || checkpoint.trace.usage.estimatedCostUsd === null ? null : checkpoint.trace.usage.estimatedCostUsd + response.usage.estimatedCostUsd;
-      } else checkpoint.trace.usage.estimatedCostUsd = null;
+      addUsage(response.usage);
       if (await cancelled()) return finish("cancelled", "The turn was cancelled before completion.");
       if (!response.toolCalls.length && response.text.trim()) {
         try { const unfinished = await unfinishedPlan(); if (unfinished) return unfinished; }
@@ -160,7 +183,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       checkpoint.pendingCalls = response.toolCalls;
       checkpoint.nextCallIndex = 0;
       await save();
-      await emit({event:"step",data:{step:checkpoint.steps,model:model.id}});
+      await emit({event:"step",data:{step:checkpoint.steps,model:active.id}});
       if (!response.toolCalls.length) {
         if (!response.text.trim()) return finish("failed", "The model returned no answer. No completion is claimed.");
         return finish("complete");
@@ -173,6 +196,31 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     shadow?.close();
     clearTimeout(timeout);
     input.signal?.removeEventListener("abort", abort);
+  }
+
+  function addUsage(usage: AgentModelResponse["usage"]) {
+    if (!usage) { checkpoint.trace.usage.estimatedCostUsd = null; return; }
+    checkpoint.trace.usage.inputTokens += usage.inputTokens;
+    checkpoint.trace.usage.outputTokens += usage.outputTokens;
+    checkpoint.trace.usage.cachedInputTokens += usage.cachedInputTokens;
+    checkpoint.trace.usage.cacheWriteInputTokens = (checkpoint.trace.usage.cacheWriteInputTokens ?? 0) + (usage.cacheWriteInputTokens ?? 0);
+    checkpoint.trace.usage.estimatedCostUsd = usage.estimatedCostUsd === null || checkpoint.trace.usage.estimatedCostUsd === null ? null : checkpoint.trace.usage.estimatedCostUsd + usage.estimatedCostUsd;
+  }
+
+  /** Runs a tool-free fast step; `handedBack` means the main model must answer. */
+  async function fastStep(fast: AgentModel, step: Parameters<AgentModel["step"]>[0]) {
+    let held = "", released = false, handedBack = false;
+    const response = await measureModel(fast, { ...step, tools: [], messages: [...step.messages, { role: "system", content: FAST_ROUTE_RULE }], onDelta: async (text: string) => {
+      if (released) return step.onDelta(text);
+      held += text;
+      if (held.length < FAST_ROUTE_SENTINEL.length && FAST_ROUTE_SENTINEL.startsWith(held.trimStart())) return;
+      if (held.trimStart().startsWith(FAST_ROUTE_SENTINEL)) { handedBack = true; return; }
+      released = true;
+      await step.onDelta(held);
+    } });
+    if (handedBack || response.text.trimStart().startsWith(FAST_ROUTE_SENTINEL)) return { response, handedBack: true };
+    if (!released && held) await step.onDelta(held);
+    return { response, handedBack: false };
   }
 
   async function execute(call: AgentToolCall, tool?: AgentTool): Promise<AgentToolResult> {
@@ -275,3 +323,6 @@ function result(state: AgentCheckpoint): AgentTurnResult {
   const replyText = state.status === "needs_approval" ? "This action needs your approval before I can continue." : [...state.messages].reverse().find(message => message.role === "assistant" && !message.toolCalls?.length)?.content ?? "";
   return {replyText,source:"agent",toolCalls:state.trace.toolCalls,usage:state.trace.usage,modelRequestCount:state.steps+(state.trace.targetIntentRequests?.length??0),trace:state.trace,status:state.status,...(state.approvalId?{approvalId:state.approvalId}:{}),...(state.targetPresentation?{targetPresentation:state.targetPresentation}:{})};
 }
+
+const FAST_ROUTE_SENTINEL = "NEEDS_TOOLS";
+const FAST_ROUTE_RULE = `No tools are available for this reply. Never claim to have read, checked, changed, sent, saved or scheduled anything. If answering needs the owner's records, an action, an image or current web information, reply with exactly ${FAST_ROUTE_SENTINEL} and nothing else.`;

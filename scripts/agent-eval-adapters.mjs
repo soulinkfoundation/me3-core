@@ -114,7 +114,16 @@ async function runNewEvalTurn(input) {
     const current=input.messages.findLast(message=>message.role==="user"&&message.content===currentOwnerInput.messageText);
     messages=[...input.messages.filter(message=>message.role==="system"),...history,{...current,role:"user",content:currentOwnerInput.messageText}];
   }
-  const response = await runAgentTurn({ model, tools, messages, store,
+  // Optional live routing: Clef decides, the fast route answers tool-free turns.
+  let router;
+  if (input.routing) {
+    const { createClefRouter } = await import("../packages/agent/src/clef.ts");
+    const fast = input.routing.fastRoute;
+    router = createClefRouter({ model: "clef-flash", ai: input.routing.clefAi, gatewayId: fast.aiGateway.gatewayId, metadata: { purpose: "routing" },
+      recordUsage: usage => input.routing.recordRouterUsage?.(usage),
+      fastModel: createCloudflareModel({ ai: fast.ai, model: fast.model, gatewayId: fast.aiGateway.gatewayId, recordUsage: usage => fast.recordUsage({ usage }) }) });
+  }
+  const response = await runAgentTurn({ model, router, tools, messages, store,
     signal:input.signal, context: { db: input.seed.db, ownerId: input.ownerId, ...contextIds, ownerTimezone: input.ownerTimezone, messageText: currentOwnerInput.messageText, loadIntentOwnerInputs, intentToolContracts, intentReadToolContracts, verifyTargetIntent, verifyOwnerCreateIntent, enabledPluginIds: input.enabledPluginIds, services: input.services }, onEvent: async event => {
       await appendAgentStreamEvent(input.seed.db, input.ownerId, contextIds.turnId, event.event, event.data);
       await input.onEvent?.(event);
@@ -127,7 +136,7 @@ async function runNewEvalTurn(input) {
     targetPresentation=targetPresentationCard(current);
   }
   const persisted={...response,ok:response.status==="complete"||response.status==="needs_approval",auditId:contextIds.turnId,runtime:"agent",specialist:"core.agent",turnId:contextIds.turnId,threadId:contextIds.threadId,model:response.trace.model,approvalId:response.approvalId||null,
-    streamMetrics:{timeToFirstTokenMs:response.trace.timeToFirstTokenMs,totalDurationMs:response.trace.totalDurationMs,modelRequestCount:response.modelRequestCount,toolCallCount:response.toolCalls.length},...(targetPresentation?{targetPresentation}:{})};
+    ...(response.trace.route?{route:response.trace.route}:{}),streamMetrics:{timeToFirstTokenMs:response.trace.timeToFirstTokenMs,totalDurationMs:response.trace.totalDurationMs,modelRequestCount:response.modelRequestCount,toolCallCount:response.toolCalls.length},...(targetPresentation?{targetPresentation}:{})};
   // Mirror the actual terminal response/assistant proof; caller fixture history cannot publish a card.
   await input.seed.db.batch([
     input.seed.db.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)")

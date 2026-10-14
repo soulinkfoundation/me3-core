@@ -86,6 +86,7 @@ export type AgentEvent = { event: "status" | "tool" | "delta" | "step" | "approv
 export type AgentTrace = {
   model: string;
   fastPath?: import("./fast-path").AgentFastPathTrace;
+  route?: import("./router").AgentRouteDecision;
   modelSteps?: Array<{ step: number; model: string; status: "complete" | "error"; durationMs: number; usage?: AgentUsage; billingUsageId?: string; toolCalls: Array<Pick<AgentToolCall, "name" | "arguments">> }>;
   targetIntentRequests?:Array<{receiptId:string;modelId:string;usageId?:string;uncertain:boolean}>;
   steps: number;
@@ -111,6 +112,8 @@ export type AgentTurnInput = {
   model: AgentModel;
   fastPath?: { mode: "off" | "shadow"; decider: import("./fast-path").AgentDecider; additionalDeciders?: import("./fast-path").AgentDecider[]; sampleRate?: number };
   backupModel?: AgentModel;
+  /** Sends confident conversation-only fresh turns to a fast, tool-free model. */
+  router?: import("./router").AgentRouter;
   tools: readonly AgentTool[];
   messages: AgentMessage[];
   context: Omit<AgentToolContext, "toolCallId" | "idempotencyKey" | "effectReceiptClaimed" | "signal" | "messages">;
