@@ -3261,7 +3261,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
       aria-label="Close chat history"
       @click="assistantHistoryDrawerOpen = false"
     />
-    <Teleport v-if="!siteBuilderMode" to="#app-top-bar-controls" defer>
+    <Teleport v-if="!siteBuilderMode" to="#app-page-controls" defer>
       <div class="home-chat-header">
         <div class="home-chat-actions">
           <Button v-if="homeMode" color="ghost" size="large" icon-only class="home-nav-button" aria-label="Add a card to Home" @click="openAddToHome"><UiIcon name="Plus" :size="24" /></Button>

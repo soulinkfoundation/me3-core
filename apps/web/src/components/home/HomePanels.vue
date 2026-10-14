@@ -60,14 +60,10 @@ const loading = ref(true);
 const busy = ref<string[]>([]);
 const dialog = ref<"add" | "wheel" | null>(null);
 const panels = ref<HTMLElement | null>(null);
-const wide = ref(false);
-const heights = ref<Partial<Record<HomeCard, number>>>({});
 const unavailable = ref<HomeCard[]>([]);
 const offline = ref(!navigator.onLine);
 const lastRefresh = ref("");
 const orderAnnouncement = ref("");
-const cardElements = new Map<HomeCard, HTMLElement>();
-let resizeObserver: ResizeObserver | undefined;
 const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 const reducedMotion = ref(motionPreference?.matches ?? false);
 function updateMotionPreference() { reducedMotion.value = motionPreference?.matches ?? false; }
@@ -103,23 +99,8 @@ const lowestArea = computed(() => [...wheel.value].filter(area => area.value !==
 const selectedArea = computed(() => wheel.value.find(area => area.id === pickedArea.value) || lowestArea.value || wheel.value[0]);
 const areaGoals = (id: string) => activeGoals.value.filter(goal => goal.areaId === id);
 const areaFor = (id?: string | null) => wheel.value.find(area => area.id === id);
-const positions = computed(() => {
-  const bottoms = [0, 0];
-  return Object.fromEntries(visible.value.map(card => {
-    const column = wide.value && bottoms[1] < bottoms[0] ? 1 : 0;
-    const height = Math.ceil(heights.value[card] || 180);
-    const style = { gridColumn: String(column + 1), gridRow: `${bottoms[column] + 1} / span ${height}` };
-    bottoms[column] += height + 16;
-    return [card, style];
-  }));
-});
-function setCardElement(card: HomeCard, element: unknown) {
-  const previous = cardElements.get(card);
-  if (previous === element) return;
-  if (previous) resizeObserver?.unobserve(previous);
-  if (element instanceof HTMLElement) { cardElements.set(card, element); resizeObserver?.observe(element); }
-  else cardElements.delete(card);
-}
+const cardElements = new Map<HomeCard, HTMLElement>();
+function setCardElement(card: HomeCard, element: unknown) { if (element instanceof HTMLElement) cardElements.set(card, element); else cardElements.delete(card); }
 let disposed = false;
 let todayGeneration = 0;
 let pressTimer: ReturnType<typeof setTimeout> | undefined;
@@ -304,23 +285,12 @@ watch(day, loadToday);
 watch(() => props.active, active => { if (active) void loadToday(); });
 onMounted(() => {
   motionPreference?.addEventListener("change", updateMotionPreference);
-  resizeObserver = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      if (entry.target === panels.value) { if (entry.contentRect.width > 0) wide.value = entry.contentRect.width >= 1000; }
-      else {
-        const card = [...cardElements].find(([, el]) => el === entry.target)?.[0];
-        if (card && (entry.target as HTMLElement).offsetHeight > 0) heights.value[card] = (entry.target as HTMLElement).offsetHeight;
-      }
-    }
-  });
-  if (panels.value) resizeObserver.observe(panels.value);
-  cardElements.forEach(element => resizeObserver!.observe(element));
   window.addEventListener("online", reconnect); window.addEventListener("offline", reconnect);
   document.addEventListener("pointerdown", dismissMenu);
   void refresh();
 });
 onBeforeUnmount(() => {
-  disposed = true; cancelPress(); resizeObserver?.disconnect();
+  disposed = true; cancelPress();
   motionPreference?.removeEventListener("change", updateMotionPreference);
   window.removeEventListener("online", reconnect); window.removeEventListener("offline", reconnect);
   document.removeEventListener("pointerdown", dismissMenu);
@@ -328,13 +298,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="panels" class="home-panels" :class="{ 'home-panels--wide': wide }" aria-label="Home panels" :aria-busy="loading">
+  <div ref="panels" class="home-panels" aria-label="Home panels" :aria-busy="loading">
     <p class="sr-only" role="status">{{ orderAnnouncement }}</p>
     <p v-if="offline || Object.keys(errors).length" class="home-offline" role="status"><UiIcon name="WifiOff" :size="16" /><span>{{ offline ? 'You’re offline.' : 'Home couldn’t fully refresh.' }} {{ lastRefresh ? `Showing the last available data · ${lastRefresh}.` : 'Connect to refresh Home.' }}</span><button type="button" :disabled="loading" @click="refresh">Try again</button></p>
     <p v-else-if="loading" class="home-status" role="status">Refreshing Home…</p>
     <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__drag" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
       <template #item="{ element: card }: { element: HomeCard }">
-        <article :ref="el => setCardElement(card, el)" class="home-card" :style="positions[card]" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
+        <article :ref="el => setCardElement(card, el)" class="home-card" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header v-if="card !== 'gratitude'" class="home-card__header">
             <button v-if="card === 'wheel'" type="button" class="home-card__title" @click="openWheel"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></button>
             <RouterLink v-else :to="cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
@@ -420,8 +390,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .home-panels { padding: 18px 10px 120px; }
-.home-grid { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: 1px; column-gap: 16px; width: min(620px, 100%); margin: 0 auto; align-items: start; }
-.home-panels--wide .home-grid { width: min(1120px, 100%); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.home-grid { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 16px; width: min(620px, 100%); margin: 0 auto; align-items: start; }
 .home-status, .home-offline { width: min(1120px, 100%); margin: 0 auto 12px; font-size: 14px; color: var(--ui-text-muted); }
 .home-offline { display: flex; align-items: center; gap: 8px; }
 .home-offline span { flex: 1; }

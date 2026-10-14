@@ -558,6 +558,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="tasks-page">
+    <Teleport to="#app-page-controls" defer>
     <header class="tasks-topbar">
       <div aria-hidden="true" />
 
@@ -623,6 +624,7 @@ onBeforeUnmount(() => {
         </Button>
       </div>
     </header>
+    </Teleport>
 
     <GoalsDialog v-if="goalsOpen" @close="closeGoals" />
 
@@ -964,17 +966,12 @@ onBeforeUnmount(() => {
   color: var(--ui-text);
 }
 
+/* Lives in the app top bar, so the page has no second header row. */
 .tasks-topbar {
-  position: sticky;
-  top: var(--app-topbar-height);
-  z-index: 20;
   display: grid;
   grid-template-columns: 80px minmax(0, 1fr) 80px;
   align-items: center;
-  min-height: var(--workspace-topbar-height);
-  padding: var(--workspace-topbar-padding-block) 24px;
-  background: color-mix(in oklab, var(--ui-bg), transparent 4%);
-  backdrop-filter: blur(16px);
+  width: 100%;
 }
 
 .tasks-topbar-actions {
@@ -1525,14 +1522,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
-}
-
-@media (max-width: 959px) {
-  .tasks-topbar {
-    padding-right: 14px;
-    padding-left: var(--app-shell-mobile-nav-leading-padding);
-  }
-
 }
 
 @media (max-width: 640px) {

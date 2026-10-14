@@ -1206,6 +1206,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="journal">
+    <Teleport to="#app-page-controls" defer>
     <header class="journal__topbar">
       <div class="journal__topbar-spacer" />
       <div v-if="currentArticle" class="journal__day-switcher" aria-label="Article">Article</div>
@@ -1314,6 +1315,7 @@ onBeforeUnmount(() => {
         </Button>
       </div>
     </header>
+    </Teleport>
 
     <div
       class="journal__workspace"
@@ -1659,6 +1661,7 @@ onBeforeUnmount(() => {
 .journal__gratitude h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ui-text-muted); }
 .journal__gratitude ol { margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.5; }
 .journal {
+  --workspace-topbar-height: 0px;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
@@ -1667,27 +1670,13 @@ onBeforeUnmount(() => {
   color: var(--ui-text, var(--color-text));
 }
 
+/* Lives in the app top bar, so the page has no second header row. */
 .journal__topbar {
-  flex-shrink: 0;
-  position: sticky;
-  top: var(--app-topbar-height);
-  z-index: 25;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 16px;
-  box-sizing: border-box;
-  min-height: var(--workspace-topbar-height);
-  padding: var(--workspace-topbar-padding-block)
-    var(--workspace-topbar-padding-inline);
-  border-bottom: none;
-  box-shadow: none;
-  background: color-mix(
-    in srgb,
-    var(--ui-bg, var(--color-bg)) 92%,
-    transparent
-  );
-  backdrop-filter: blur(14px);
+  width: 100%;
 }
 
 .journal__topbar-spacer {
@@ -2193,8 +2182,6 @@ onBeforeUnmount(() => {
 @media (max-width: 900px) {
   .journal__topbar {
     grid-template-columns: auto 1fr auto;
-    padding: var(--workspace-topbar-padding-block) 14px;
-    padding-left: var(--app-shell-mobile-nav-leading-padding);
   }
 
   .journal__topbar-spacer {

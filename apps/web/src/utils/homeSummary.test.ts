@@ -35,6 +35,10 @@ describe("Home summaries", () => {
   it("restores hidden cards and keeps a deduplicated saved order", () => {
     expect(visibleHomeCards({ order: ["journal", "journal", "today"], hidden: ["inbox"], pinned: ["files"], earned: ["journal"] })).toEqual(["journal", "today", "people", "gratitude", "mission", "wheel", "accounts", "files"]);
   });
+  it("leaves Inbox off Home unless it is added", () => {
+    expect(visibleHomeCards({ order: [], hidden: [], pinned: [], earned: [] })).not.toContain("inbox");
+    expect(visibleHomeCards({ order: [], hidden: [], pinned: ["inbox"], earned: [] })).toContain("inbox");
+  });
   // Goal tasks must include direct and project links, exclude other goals and closed work,
   // and deduplicate a task that is linked both ways without deriving goal progress from tasks.
   it("shows only the selected goal's open direct and project tasks", () => {

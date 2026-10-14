@@ -4282,8 +4282,8 @@ onBeforeUnmount(() => {
 }
 
 .agent-page--with-mobile-controls {
-  height: calc(100vh - var(--app-topbar-height) - var(--app-shell-mobile-nav-height));
-  height: calc(100dvh - var(--app-topbar-height) - var(--app-shell-mobile-nav-height));
+  height: calc(100vh - var(--app-topbar-height));
+  height: calc(100dvh - var(--app-topbar-height));
 }
 
 .agent-main {

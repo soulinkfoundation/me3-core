@@ -613,7 +613,18 @@ const activeToolbarTitle = computed(() => {
   return monthToolbarTitle.value;
 });
 
-const mobileToolbarTitle = computed(() => activeToolbarTitle.value);
+// The phone title shares the app top bar with the back link, so keep it to months.
+const mobileToolbarTitle = computed(() => {
+  if (rangeMode.value === "schedule") {
+    const { start, end } = calendarWindow.value;
+    const lastDay = new Date(end);
+    lastDay.setDate(lastDay.getDate() - 1);
+    const month = new Intl.DateTimeFormat("en-GB", { month: "short" });
+    return start.getMonth() === lastDay.getMonth() ? month.format(start) : `${month.format(start)} – ${month.format(lastDay)}`;
+  }
+  if (rangeMode.value === "month") return new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric" }).format(monthCursor.value);
+  return activeToolbarTitle.value;
+});
 
 const calendarPickerSelectedDate = computed(() => {
   if (rangeMode.value === "day") return dayKeyFormatter.value.format(dayCursor.value);
@@ -3275,6 +3286,7 @@ onBeforeUnmount(() => {
     </Teleport>
 
     <main class="main">
+      <Teleport to="#app-page-controls" defer>
       <div
         v-if="!initialCalendarLoading && !showCalendarUnavailable"
         class="cal-toolbar"
@@ -3443,6 +3455,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+      </Teleport>
 
       <PageLoading v-if="initialCalendarLoading" label="Loading calendar..." />
       <div
@@ -4732,15 +4745,16 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px 44px 44px;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   width: 100%;
   min-width: 0;
 }
 
-.cal-period-switcher--mobile {
-  grid-template-columns: 44px auto 44px;
+.cal-period-switcher.cal-period-switcher--mobile {
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  gap: 0;
   justify-self: start;
-  width: max-content;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
 }
@@ -4753,9 +4767,13 @@ onBeforeUnmount(() => {
 }
 
 .cal-period-switcher--mobile .cal-period-title {
+  display: block;
+  overflow: hidden;
   min-height: 44px;
-  max-width: min(220px, calc(100vw - 220px));
-  padding-inline: 6px;
+  line-height: 32px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-inline: 2px;
   font-size: 14px;
 }
 
@@ -4766,23 +4784,6 @@ onBeforeUnmount(() => {
   right: calc(100% + 8px);
   left: auto;
   width: min(220px, calc(100vw - 32px));
-}
-
-:global(#app-page-controls:has(.cal-mobile-nav-controls)) {
-  position: fixed;
-  top: var(--app-topbar-height);
-  right: 0;
-  left: 0;
-  z-index: 45;
-  min-height: var(--app-shell-mobile-nav-height);
-  height: var(--app-shell-mobile-nav-height);
-  overflow: visible;
-  padding: var(--workspace-topbar-padding-block) 8px
-    var(--workspace-topbar-padding-block)
-    var(--app-shell-mobile-nav-leading-padding);
-  border-bottom: 1px solid var(--ui-border, var(--color-border));
-  background: var(--ui-bg, var(--color-bg));
-  box-sizing: border-box;
 }
 
 .cal-toolbar-left {
@@ -5453,10 +5454,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1100px) {
-  :global(.app-root:has(.cal-mobile-nav-controls) .calendar-spike) {
-    padding-top: var(--app-shell-mobile-nav-height);
-  }
-
   .cal-shell {
     grid-template-columns: 1fr;
   }
@@ -5501,24 +5498,11 @@ onBeforeUnmount(() => {
 
 @media (min-width: 1101px) {
   .cal-toolbar {
-    position: sticky;
-    top: var(--app-topbar-height);
-    z-index: 12;
     display: grid;
-    grid-template-columns: minmax(260px, 1fr) auto minmax(260px, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
     gap: 16px;
-    min-height: 60px;
-    padding: 8px 0;
-    background: var(--ui-bg, var(--color-bg));
-    border-bottom: 1px solid var(--ui-border, var(--color-border));
-  }
-
-  .cal-toolbar-left {
-    padding-inline-start: calc(
-      var(--app-shell-mobile-nav-leading-padding) -
-        var(--workspace-topbar-padding-inline) + 8px
-    );
+    width: 100%;
   }
 }
 

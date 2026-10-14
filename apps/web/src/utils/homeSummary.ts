@@ -11,7 +11,8 @@ export const emptyHomeLayout = (): HomeLayout => ({ order: [], hidden: [], pinne
 export function visibleHomeCards(layout: HomeLayout): HomeCard[] {
   return [...new Set([...layout.order, ...HOME_CARDS])].filter((id): id is HomeCard =>
     HOME_CARDS.includes(id as HomeCard) && !layout.hidden.includes(id) &&
-    (["today", "people", "gratitude", "inbox", "mission", "journal", "wheel", "accounts"].includes(id) || layout.pinned.includes(id) || layout.earned.includes(id)),
+    // Inbox is opt-in: email shows on the person it is about (People v1).
+    (["today", "people", "gratitude", "mission", "journal", "wheel", "accounts"].includes(id) || layout.pinned.includes(id) || layout.earned.includes(id)),
   );
 }
 export function localDateKey(date: Date): string {

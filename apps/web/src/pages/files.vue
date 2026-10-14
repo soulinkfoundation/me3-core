@@ -1158,7 +1158,7 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: calc(100dvh - var(--app-topbar-height) - var(--app-shell-mobile-nav-height));
+  min-height: calc(100dvh - var(--app-topbar-height));
   overflow: hidden;
 }
 
