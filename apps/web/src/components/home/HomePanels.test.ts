@@ -123,3 +123,15 @@ describe("Home People card", () => {
     expect(card()?.textContent).toContain("All caught up.");
   });
 });
+
+describe("Home Gratitude card", () => {
+  it("keeps the reorder and options controls so the card can be moved or removed", async () => {
+    render(); await flushPromises();
+    const card = document.body.querySelector('[aria-label="Gratitude"]')!;
+    expect(card.querySelector('[aria-label="Drag Gratitude to reorder"]')).toBeTruthy();
+    (card.querySelector('[aria-label="Gratitude options"]') as HTMLButtonElement).click(); await flushPromises();
+    expect(button("Remove from Home")).toBeTruthy();
+    button("Remove from Home")!.click(); await flushPromises();
+    expect(document.body.querySelector('[aria-label="Gratitude"]')).toBeNull();
+  });
+});

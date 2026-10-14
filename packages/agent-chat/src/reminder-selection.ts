@@ -8,6 +8,7 @@ export async function loadAgentReminderTitleChoices(db: ReminderDb, userId: stri
   const rows = await db.prepare(
     `SELECT id, title, remind_at, timezone, status FROM user_reminders
      WHERE user_id = ? AND lower(trim(title)) = lower(trim(?)) AND status IN ('pending', 'failed')
+       AND (context_type IS NULL OR context_type != 'card')
      ORDER BY remind_at, id LIMIT 51`,
   ).bind(userId, title).all<{
     id: string; title: string; remind_at: string; timezone: string | null; status: AgentReminder["status"];

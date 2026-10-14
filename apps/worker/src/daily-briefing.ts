@@ -275,6 +275,7 @@ async function loadDailyBriefingReminders(
     `SELECT id, title, notes, remind_at, timezone, status
      FROM user_reminders
      WHERE user_id = ? AND status = 'pending' AND remind_at >= ? AND remind_at < ?
+       AND (context_type IS NULL OR context_type != 'card')
      ORDER BY remind_at ASC
      LIMIT 12`,
   )

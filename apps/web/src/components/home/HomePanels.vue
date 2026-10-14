@@ -350,7 +350,15 @@ onBeforeUnmount(() => {
             <button type="button" role="menuitem" :disabled="visible.indexOf(card) === visible.length - 1" @click="move(card, 1)"><UiIcon name="ArrowDown" :size="16" />Move down</button>
             <button type="button" role="menuitem" class="home-danger" @click="remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
           </div>
-          <GratitudeCard v-if="card === 'gratitude'" :active="active" @unavailable="unavailable.push('gratitude')" />
+          <GratitudeCard v-if="card === 'gratitude'" :active="active" @unavailable="unavailable.push('gratitude')">
+            <!-- The card draws its own header; keep the same reorder and options controls in it. -->
+            <template #controls>
+              <div class="home-card__controls home-card__controls--gratitude">
+                <button type="button" class="home-card__drag" :aria-label="`Drag ${cards[card].title} to reorder`" title="Drag to reorder, or use the options menu"><UiIcon name="GripVertical" :size="16" /></button>
+                <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-haspopup="menu" :aria-expanded="menu === card" @click="menu === card ? closeMenu(card) : openMenu(card)"><UiIcon name="Ellipsis" :size="20" /></button>
+              </div>
+            </template>
+          </GratitudeCard>
           <div v-else class="home-card__body">
             <template v-if="card === 'today'">
               <div v-for="approval in approvals.slice(0, 3)" :key="approval.id" class="home-approval"><strong>{{ approval.title }}</strong><p v-if="approval.summary" class="home-muted">{{ journalPreview(approval.summary) }}</p><div class="home-actions"><template v-if="approval.pluginId === 'me3.core'"><button type="button" :disabled="busy.includes(approval.id)" @click="reviewApproval = approval; approvalError = ''">Review</button></template><template v-else><button type="button" :disabled="busy.includes(approval.id)" @click="confirm(approval.id)">Confirm</button><button type="button" @click="emit('suggest', `Help me find another time for: ${approval.title}`)">Another time</button></template></div></div>
@@ -514,6 +522,10 @@ p { margin: 4px 0; }
 .home-wheel-range output { width: 66px; font-size: 12px; color: var(--ui-text-muted); }
 .home-wheel-goals > a { display: block; min-height: 36px; text-decoration: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 400px) {
+  /* The week ticks leave no room for both controls; Move up/down stay in the options menu. */
+  .home-card__controls--gratitude .home-card__drag { display: none; }
+}
 @media (max-width: 640px) {
   .home-panels { padding-inline: 2px; }
   .home-card__controls > button { min-width: 44px; width: 44px; }

@@ -137,6 +137,7 @@ export async function listPendingAgentReminders(
             context_id, context_label, status, delivered_at, dismissed_at, created_at
      FROM user_reminders
      WHERE user_id = ? AND status IN ('pending', 'failed')
+       AND (context_type IS NULL OR context_type != 'card')
        ${input.includeOverdue ? "" : "AND remind_at >= ?"}
        ${query ? "AND INSTR(LOWER(title), LOWER(?)) > 0" : ""}
      ORDER BY remind_at ASC
@@ -157,6 +158,7 @@ export async function getPendingAgentReminder(
             context_id, context_label, status, delivered_at, dismissed_at, created_at
      FROM user_reminders
      WHERE id = ? AND user_id = ? AND status IN ('pending', 'failed')
+       AND (context_type IS NULL OR context_type != 'card')
      LIMIT 1`,
   )
     .bind(reminderId, userId)
@@ -234,6 +236,7 @@ export async function updateAgentReminder(
      SET title = ?, notes = ?, remind_at = ?, timezone = ?, recurrence_rule = ?,
          error_message = NULL, updated_at = datetime('now')
      WHERE id = ? AND user_id = ? AND status IN ('pending', 'failed')
+       AND (context_type IS NULL OR context_type != 'card')
        ${expected ? "AND title = ? AND remind_at = ? AND notes IS ? AND timezone IS ? AND recurrence_rule IS ?" : ""}`,
   )
     .bind(

@@ -126,6 +126,7 @@ defineExpose({ refresh: load });
           <span aria-hidden="true">{{ dayLetter(day.date) }}</span><i aria-hidden="true"><UiIcon v-if="tickWritten(day)" name="Check" :size="10" /></i>
         </span>
       </div>
+      <slot name="controls" />
     </header>
     <button v-if="!evening && state?.quote" type="button" class="gratitude-quote" aria-label="Today's quote" @click="openSheet"><span class="quote-text">“{{ state.quote.text }}”</span><span v-if="state.quote.author" class="quote-author">— {{ state.quote.author }}</span></button>
     <div class="gratitude-lines">
@@ -162,6 +163,7 @@ defineExpose({ refresh: load });
 .gratitude-title { display: flex; align-items: center; gap: 8px; padding: 0; font: inherit; font-size: 15px; font-weight: 600; color: inherit; background: transparent; border: 0; min-height: 44px; text-align: left; }
 .gratitude-title > span { font-size: 20px; }
 .gratitude-week { display: flex; gap: 4px; margin-left: auto; flex-shrink: 0; }
+.gratitude-header > :slotted(*) { margin-left: 0; margin-right: -8px; flex-shrink: 0; }
 .gratitude-day { display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--ui-text-muted); font-size: 9px; font-weight: 600; }
 .gratitude-day i { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 0 0 1.4px var(--ui-border); }
 .gratitude-day.is-written i { background: var(--ui-surface-muted); box-shadow: none; }

@@ -53,11 +53,16 @@ export async function updateGratitudeLines(env: Env, userId: string, input: unkn
     jsonArgs.push(JSON.stringify(gratitudeLines(value).map(line => line.trim())));
   }
   // json_set changes just these lists atomically; the owner's writing is untouched.
+  // A page the owner deleted (archived) starts over, so its old writing stays deleted.
   const paths = keys.map(key => `, '$.${key}', json(?)`).join("");
+  const deleted = "journal_entries.archived_at IS NOT NULL";
   await env.DB.prepare(`INSERT INTO journal_entries(id, user_id, entry_date, body, body_format, metadata_json, updated_at, revision)
     VALUES (?, ?, ?, '', 'html', json_set('{}'${paths}), ?, 1)
     ON CONFLICT(user_id, entry_date) DO UPDATE SET
-      metadata_json = json_set(journal_entries.metadata_json${paths}),
+      title = CASE WHEN ${deleted} THEN NULL ELSE journal_entries.title END,
+      body = CASE WHEN ${deleted} THEN '' ELSE journal_entries.body END,
+      body_format = CASE WHEN ${deleted} THEN 'html' ELSE journal_entries.body_format END,
+      metadata_json = json_set(CASE WHEN ${deleted} THEN '{}' ELSE journal_entries.metadata_json END${paths}),
       archived_at = NULL, updated_at = excluded.updated_at, revision = journal_entries.revision + 1`).bind(crypto.randomUUID(), userId, date, ...jsonArgs, now.toISOString(), ...jsonArgs).run();
   return { ok: true };
 }

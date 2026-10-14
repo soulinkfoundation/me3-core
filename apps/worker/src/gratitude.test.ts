@@ -8,6 +8,9 @@ import { createDomainTools } from "../../../packages/agent/src/tools";
 import type { AgentToolContext } from "../../../packages/agent/src/types";
 import { saveOwnerQuote } from "./quotes";
 import { gratitudeFixture } from "./test-utils/gratitude-fixture";
+import { deleteJournalDay } from "./journal";
+import { cancelAgentReminder, getPendingAgentReminder, listPendingAgentReminders, updateAgentReminder } from "../../../packages/agent-chat/src/reminders";
+import { loadAgentReminderTitleChoices } from "../../../packages/agent-chat/src/reminder-selection";
 
 vi.mock("./push-notifications", () => ({ notifyCalendarItemDue: vi.fn(async () => ({ ok: true, matched: 1, sent: 1 })), notifyDailyBriefingReady: vi.fn(async () => ({ ok: true, matched: 1, sent: 1, retryable: 0 })) }));
 // Failure modes: clobbering writing/metadata, empty lines counting, device/owner
@@ -89,5 +92,50 @@ describe("Gratitude persistence and reminders", () => {
     await dispatchDueGratitudeReminders(f.env, new Date("2026-10-24T20:00:00Z"));
     expect(notifyCalendarItemDue).toHaveBeenCalledTimes(1);
     expect(f.raw.prepare("SELECT remind_at FROM user_reminders").get()!.remind_at).toBe("2026-10-25T21:00:00.000Z");
+  });
+
+  it("starts a deleted journal page over instead of restoring its writing", async () => {
+    const f = fixture();
+    f.raw.exec(`INSERT INTO journal_entries(id, user_id, entry_date, title, body, body_format, metadata_json, revision)
+      VALUES ('j1', 'owner', '2026-10-13', 'Private', '<p>secret diary</p>', 'html', '{"goodThings":["old","",""]}', 1)`);
+    await deleteJournalDay(f.env, "owner", "2026-10-13");
+    await updateGratitudeLines(f.env, "owner", { date: "2026-10-13", gratitude: ["coffee"] }, morning);
+
+    const row = f.raw.prepare("SELECT title, body, archived_at, metadata_json FROM journal_entries").get()!;
+    expect(row).toMatchObject({ title: null, body: "", archived_at: null });
+    expect(JSON.parse(String(row.metadata_json))).toEqual({ gratitude: ["coffee", "", ""] });
+
+    // A live page keeps its writing.
+    f.raw.exec("UPDATE journal_entries SET title = 'Kept', body = '<p>today</p>'");
+    await updateGratitudeLines(f.env, "owner", { date: "2026-10-13", goodThings: ["sun"] }, morning);
+    expect(f.raw.prepare("SELECT title, body, metadata_json FROM journal_entries").get()).toMatchObject({
+      title: "Kept", body: "<p>today</p>", metadata_json: JSON.stringify({ gratitude: ["coffee", "", ""], goodThings: ["sun", "", ""] }),
+    });
+  });
+
+  it("keeps the evening reminder out of the briefing and the agent's reminder tools", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(morning);
+    try {
+      const f = fixture();
+      await updateGratitudeSettings(f.env, "owner", { eveningReminder: true }, morning);
+      f.raw.exec(`INSERT INTO user_reminders(id, user_id, title, remind_at, timezone, status)
+        VALUES ('r-call', 'owner', 'Call Mam', '2026-10-13T17:00:00.000Z', 'Europe/Dublin', 'pending')`);
+      const card = f.raw.prepare("SELECT id FROM user_reminders WHERE context_type = 'card'").get()!.id as string;
+
+      const message = (await getLiveDailyBriefing(f.env, "owner")).message;
+      expect(message).toContain("Call Mam");
+      expect(message).not.toContain("Three good things");
+
+      const env = { DB: f.env.DB } as never;
+      expect((await listPendingAgentReminders(env, "owner", { includeOverdue: true })).map(r => r.title)).toEqual(["Call Mam"]);
+      expect(await getPendingAgentReminder(env, "owner", card)).toBeNull();
+      expect(await loadAgentReminderTitleChoices(f.env.DB as never, "owner", "Three good things")).toEqual([]);
+      expect(await updateAgentReminder(env, "owner", card, { title: "Three good things", remindAt: "2026-10-13T18:00:00.000Z" })).toMatchObject({ status: 404 });
+      expect(f.raw.prepare("SELECT remind_at FROM user_reminders WHERE id = ?").get(card)!.remind_at).toBe("2026-10-13T20:00:00.000Z");
+
+      // The calendar's Reminders row can still turn it off, which the card settings reflect.
+      expect(await cancelAgentReminder(env, "owner", card)).toEqual({ ok: true });
+      expect((await getGratitudeState(f.env, "owner", morning)).settings.eveningReminder).toBe(false);
+    } finally { vi.useRealTimers(); }
   });
 });
