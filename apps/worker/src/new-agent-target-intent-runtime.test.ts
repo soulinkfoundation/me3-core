@@ -50,7 +50,10 @@ function fixture({managed=true,verdict=allowed,unknownUsage=false,plannerCalls=[
     const intent=tools?.length===1&&(tools[0].function?.name??tools[0].name)==="core_target_intent_verdict";
     const request={model,input,options,intent};requests.push(request);await onRequest?.(request);
     const usage={prompt_tokens:100,completion_tokens:10,total_tokens:110};
-    const tool=(name:string,args:unknown)=>({choices:[{message:{content:"",tool_calls:[{id:`call-${requests.length}`,type:"function",function:{name,arguments:JSON.stringify(args)}}]},finish_reason:"tool_calls"}],...(!(intent&&unknownUsage)?{usage}:{})});
+    // Anthropic models (the Haiku fallback) answer in Messages format, with intent verdicts wrapped in {value}.
+    const tool=(name:string,args:unknown)=>model.startsWith("anthropic/")
+      ?{content:[{type:"tool_use",id:`call-${requests.length}`,name,input:name==="core_target_intent_verdict"?{value:args}:args}],stop_reason:"tool_use",...(!(intent&&unknownUsage)?{usage:{input_tokens:100,output_tokens:10}}:{})}
+      :{choices:[{message:{content:"",tool_calls:[{id:`call-${requests.length}`,type:"function",function:{name,arguments:JSON.stringify(args)}}]},finish_reason:"tool_calls"}],...(!(intent&&unknownUsage)?{usage}:{})};
     if(intent)return tool("core_target_intent_verdict",verdict);
     planner++;
     if(plannerCalls[planner-1])return tool(plannerCalls[planner-1].name,plannerCalls[planner-1].arguments);
@@ -131,8 +134,8 @@ describe("new Worker independent target verification through actual admission",(
   it("rechecks actual hosted budget fallback before isolated verifier admission",async()=>{
     const f=fixture();await f.persist();f.onRequest(request=>{if(!request.intent&&f.requests.length===2)f.policy.fallbackActive=true;});
     const result=await executeNewAgentTurn(f.env,cleanInput,new AbortController().signal);
-    expect(result.status).toBe("complete");expect(f.requests.find(request=>request.intent)?.model).toBe("@cf/zai-org/glm-4.7-flash");
-    expect(f.receipts().find(row=>row.metadata.purpose==="target_intent")).toMatchObject({model:"@cf/zai-org/glm-4.7-flash",metadata:{modelAuthor:"zai-org",billingFeeRate:0,costKnown:true}});
+    expect(result.status).toBe("complete");expect(f.requests.find(request=>request.intent)?.model).toBe("anthropic/claude-haiku-5.5");
+    expect(f.receipts().find(row=>row.metadata.purpose==="target_intent")).toMatchObject({model:"anthropic/claude-haiku-5.5",metadata:{modelAuthor:"anthropic",billingFeeRate:0.05,costKnown:true}});
   });
   it("never exports self-hosted verifier receipts as managed charges after deployment transfer",async()=>{
     const f=fixture({managed:false});await f.persist();await executeNewAgentTurn(f.env,cleanInput,new AbortController().signal);

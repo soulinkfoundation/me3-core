@@ -102,7 +102,7 @@ describe("getAiGatewayUsageSummary", () => {
       configured: true,
       setupRequired: false,
       displayMode: "managed_allowance",
-      allowanceUsedPercent: 20,
+      allowanceUsedPercent: 10,
       totalRequests: 1,
     });
   });
