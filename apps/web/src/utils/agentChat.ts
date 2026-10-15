@@ -27,6 +27,15 @@ export function shouldSendAssistantModelOverride(
   return deploymentMode === "self_hosted";
 }
 
+/** Server-authored notice that this reply ran on the lighter model after the monthly AI allowance. */
+export type AgentChatAllowanceNotice = {
+  kind: "allowance_used";
+  title: string;
+  message: string;
+  resetsOn: string;
+  action: { kind: "enable_overages" | "subscribe"; label: string } | null;
+};
+
 export type AgentChatImageAction = {
   kind: "generated" | "edited" | "blocked";
   status: "complete" | "failed" | "blocked";

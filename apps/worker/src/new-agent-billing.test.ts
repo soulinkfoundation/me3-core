@@ -212,6 +212,23 @@ describe("new agent managed billing boundary", () => {
     await executeNewAgentTurn(env, input, new AbortController().signal);
     expect(models).toEqual([fallback]);
   });
+  it.each([
+    ["stripe", true, false, { kind: "enable_overages", label: "Turn on extra usage" }],
+    ["trial", false, false, { kind: "subscribe", label: "Subscribe" }],
+    ["complimentary", false, false, { kind: "subscribe", label: "Subscribe" }],
+    ["storekit", false, false, null],
+    ["internal", false, false, null],
+    ["stripe", true, true, null],
+  ] as const)("tells a %s owner the allowance is used (eligible=%s, overages=%s)", async (billingSource, eligible, overagesEnabled, action) => {
+    const { env } = fixture(settings({ fallbackActive: true, billingSource, eligible, overagesEnabled } as never));
+    const payload = await executeNewAgentTurn(env, input, new AbortController().signal) as { allowanceNotice?: unknown };
+    expect(payload.allowanceNotice).toMatchObject({ kind: "allowance_used", title: "This month's AI allowance is used", message: expect.stringMatching(/^Replies now use a lighter model until \d{1,2} \w+\.$/), resetsOn: expect.stringMatching(/^\d{4}-\d{2}-01$/), action });
+  });
+  it("adds no allowance notice while the owner is within the allowance", async () => {
+    const { env } = fixture(settings());
+    const payload = await executeNewAgentTurn(env, input, new AbortController().signal) as { allowanceNotice?: unknown };
+    expect(payload).not.toHaveProperty("allowanceNotice");
+  });
   it("syncs the first receipt and checks the hosted maximum before the next model step", async () => {
     fixtureTools.value = [{ name: "fixture_read", description: "Read synthetic", parameters: { type: "object" }, effect: "read", approval: "none", async execute() { return { status: "ok", data: { title: "Synthetic" } }; } }];
     const { env, models, events } = fixture(settings({ currentMonthUsageMicrousd: 4_999_999 }), (model, index) => completion(model, index === 0));

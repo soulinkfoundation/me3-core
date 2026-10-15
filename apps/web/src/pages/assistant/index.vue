@@ -41,6 +41,7 @@ import {
   type AgentChatEmailDraftAction,
   type AgentChatActionCard,
   type AgentChatImageAction,
+  type AgentChatAllowanceNotice,
   type AgentChatTurnTrace,
 } from "../../utils/agentChat";
 import { renderAssistantMarkdown } from "../../utils/assistantMarkdown";
@@ -144,6 +145,7 @@ type AgentSandboxResponse = {
   actionCards?: AgentChatActionCard[] | null;
   imageAction?: AgentChatImageAction | null;
   targetPresentation?: AgentTargetPresentation | null;
+  allowanceNotice?: AgentChatAllowanceNotice | null;
   contentAction?: {
     kind: "previewed" | "saved";
     itemId?: string;
@@ -174,6 +176,7 @@ type AssistantThreadMessage = {
   actionCards?: AgentChatActionCard[] | null;
   imageAction?: AgentChatImageAction | null;
   targetPresentation?: AgentTargetPresentation | null;
+  allowanceNotice?: AgentChatAllowanceNotice | null;
   siteAction?: AgentSandboxResponse["siteAction"];
   trace?: AgentChatTurnTrace | null;
 };
@@ -589,6 +592,14 @@ const selectedModelTitle = computed(() => {
     .filter(Boolean)
     .join(" · ");
 });
+
+// Every reply on the lighter model carries the notice; show it once per month.
+function isFirstAllowanceNotice(index: number): boolean {
+  const resetsOn = assistantConsoleMessages.value[index]?.allowanceNotice?.resetsOn;
+  return Boolean(resetsOn) && !assistantConsoleMessages.value
+    .slice(0, index)
+    .some((message) => message.allowanceNotice?.resetsOn === resetsOn);
+}
 
 const assistantConsoleMessages = computed(() =>
   chatMessages.value.filter((message) => message.id !== "assistant-ready"),
@@ -1658,6 +1669,7 @@ async function loadAssistantThreadFromRoute() {
         actionCards: AgentChatActionCard[];
         imageAction: AgentChatImageAction | null;
         targetPresentation: AgentTargetPresentation | null;
+        allowanceNotice: AgentChatAllowanceNotice | null;
         emailDraftAction: AgentChatEmailDraftAction | null;
         attachments: AgentChatMessageAttachment[];
         actionHref: string | null;
@@ -1671,6 +1683,7 @@ async function loadAssistantThreadFromRoute() {
         actionCards: normalizeAgentActionCards(message.actionCards),
         imageAction: message.imageAction || null,
         targetPresentation: normalizeAgentTargetPresentation(message.targetPresentation),
+        allowanceNotice: message.allowanceNotice || null,
         emailDraftAction: null,
         actionHref: actionLink?.href || null,
         actionLabel: actionLink?.label || null,
@@ -2635,6 +2648,7 @@ function applyAssistantResultToMessage(
   }
   message.imageAction = result.imageAction || null;
   message.targetPresentation = normalizeAgentTargetPresentation(result.targetPresentation);
+  message.allowanceNotice = result.allowanceNotice || null;
   message.emailDraftAction = createAgentChatEmailDraftAction(
     message,
     previousUserTextForAssistantMessage(message),
@@ -3682,6 +3696,26 @@ function messageFromUnknown(err: unknown, fallback: string) {
                 class="assistant-message__content"
                 v-html="renderAssistantMarkdown(assistantMessageDisplayText(message))"
               ></div>
+              <aside
+                v-if="message.allowanceNotice && isFirstAllowanceNotice(index)"
+                class="assistant-allowance-notice"
+                role="note"
+              >
+                <strong>{{ message.allowanceNotice.title }}</strong>
+                <span>{{ message.allowanceNotice.message }}</span>
+                <RouterLink
+                  v-if="message.allowanceNotice.action?.kind === 'enable_overages'"
+                  class="assistant-allowance-notice__action"
+                  :to="{ path: '/account', query: { section: 'ai' } }"
+                >{{ message.allowanceNotice.action.label }}</RouterLink>
+                <a
+                  v-else-if="message.allowanceNotice.action?.kind === 'subscribe'"
+                  class="assistant-allowance-notice__action"
+                  href="https://me3.app/pricing"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >{{ message.allowanceNotice.action.label }}</a>
+              </aside>
               <div
                 v-if="message.imageAction?.assets?.length"
                 class="assistant-image-assets"
@@ -5830,6 +5864,32 @@ function messageFromUnknown(err: unknown, fallback: string) {
   height: 1px;
   border: 0;
   background: var(--ui-border);
+}
+
+.assistant-allowance-notice {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.assistant-allowance-notice strong {
+  color: var(--ui-text);
+  font-weight: 600;
+}
+
+.assistant-allowance-notice__action {
+  justify-self: start;
+  margin-top: 2px;
+  color: var(--ui-accent);
+  font-weight: 600;
+  text-underline-offset: 3px;
 }
 
 .assistant-image-assets {

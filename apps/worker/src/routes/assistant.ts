@@ -1,3 +1,4 @@
+import { readManagedAllowanceNotice, type ManagedAllowanceNotice } from "../managed-ai-billing";
 import { parseAgentTargetSelection, preflightAgentTargetSelection, persistAgentTargetSelectionInput } from "../agent-target-selection";
 import { revalidateAgentTargetPayload } from "../agent-target-projection";
 import type { AgentTargetPresentationCard } from "../../../../packages/agent/src/types";
@@ -661,6 +662,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       siteAction: metadata.siteAction || undefined,
       imageAction: metadata.imageAction || undefined,
       targetPresentation: metadata.targetPresentation || undefined,
+      allowanceNotice: metadata.allowanceNotice || undefined,
       attachments: metadata.attachments.length ? metadata.attachments : undefined,
     };
   }
@@ -682,14 +684,15 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     targetPresentation: AgentTargetPresentationCard | null;
     imageAction: AgentChatImageAction | null;
     siteAction: Record<string, unknown> | null;
+    allowanceNotice: ManagedAllowanceNotice | null;
     attachments: AssistantAttachmentAuditManifestItem[];
   } {
     if (!metadataJson)
-      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, attachments: [] };
+      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, attachments: [] };
     try {
       const parsed = JSON.parse(metadataJson) as unknown;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, attachments: [] };
+        return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, attachments: [] };
       }
       const metadata = parsed as Record<string, unknown>;
       const cards = metadata.actionCards;
@@ -707,10 +710,12 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
           siteAction && typeof siteAction === "object" && !Array.isArray(siteAction)
             ? (siteAction as Record<string, unknown>)
             : null,
+        // Only the agent runtime authors allowance notices.
+        allowanceNotice: metadata.runtime === "agent" ? readManagedAllowanceNotice(metadata.allowanceNotice) : null,
         attachments: createAssistantAttachmentAuditManifest(attachments),
       };
     } catch {
-      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, attachments: [] };
+      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, attachments: [] };
     }
   }
 

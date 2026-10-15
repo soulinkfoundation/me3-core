@@ -7,7 +7,7 @@ import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner
 import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
 import { getAiSettings } from "./ai-providers";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
-import { getManagedAiBillingSettings, syncManagedAiUsage, MANAGED_AI_FALLBACK_MODEL, type ManagedAiBillingSettings } from "./managed-ai-billing";
+import { getManagedAiBillingSettings, managedAllowanceNotice, syncManagedAiUsage, MANAGED_AI_FALLBACK_MODEL, type ManagedAiBillingSettings, type ManagedAllowanceNotice } from "./managed-ai-billing";
 import { createStableAgentSchedulingServices } from "./agent-domain-scheduling";
 import { createAgentMailboxServices } from "./agent-mailbox-services";
 import { prepareAgentImageInputs, resolveAgentImageInputs, loadAgentAttachmentManifest, type AgentAttachmentInput } from "./agent-image-input";
@@ -116,6 +116,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const response=await createCloudflareModel({ai:env.AI as never,model:selected,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
       return {...response,billingUsageId:recordUsage.usageId};
     }});
+    let allowanceFallbackUsed=false;
     const modelFor=(requested:string,purpose?:ModelPurpose):AgentModel=>{
       if(!managed)return cloudflareModel(canonicalNativeModel(requested),0,purpose);
       const model:AgentModel={id:resolveManagedModel(managed,requested),async step(step){
@@ -124,6 +125,8 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
         const reportCount=await managedUsageReportCount(env,input.userId,input.turnId,true);
         const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
         model.id=resolveManagedModel(policy,requested);
+        // Haiku also answers routed chat turns; only a budget switch counts here.
+        if(managedModelId(model.id)===managedModelId(MANAGED_AI_FALLBACK_MODEL)&&managedModelId(requested)!==managedModelId(model.id))allowanceFallbackUsed=true;
         await assertManagedCostsReconciled(env,input.userId,true);
         step.signal.throwIfAborted();
         return cloudflareModel(model.id,reportCount,purpose).step(step);
@@ -213,15 +216,16 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event.event,event.data);
       onEvent?.(event.event,event.data,seq);
     }});
-    return persistNewAgentResult(env,input,result,onEvent);
+    const allowanceNotice=managed&&allowanceFallbackUsed?managedAllowanceNotice(await getManagedAiBillingSettings(env,{syncUsage:false})):null;
+    return persistNewAgentResult(env,input,result,onEvent,allowanceNotice);
   } finally {await releaseManagedRuntimeWriteLease(env,lease);}
 }
 
-async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void) {
+async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void,allowanceNotice:ManagedAllowanceNotice|null=null) {
   const targetPresentation=result.targetPresentation||input.targetSelection?await loadAgentTargetPresentation(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId}):null;
   const imageAction=await loadAgentGeneratedImageAction(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId});
   const messageId=`${input.turnId}:assistant:${result.status}:${result.approvalId||"final"}`;
-  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
+  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(allowanceNotice?{allowanceNotice}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
   await env.DB.batch([
     env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)").bind(messageId,input.userId,input.threadId,result.replyText,JSON.stringify(payload)),
     env.DB.prepare("UPDATE me3_agent_turns SET response_json=?,trace_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND turn_id=?").bind(JSON.stringify(payload),JSON.stringify(result.trace),input.userId,input.turnId),

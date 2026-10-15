@@ -5,6 +5,7 @@ import type {
   AgentChatEmailDraftAction,
   AgentChatImageAction,
   AgentChatTurnTrace,
+  AgentChatAllowanceNotice,
 } from "../utils/agentChat";
 
 export type AgentChatMessageAttachment = {
@@ -30,6 +31,7 @@ export type AgentChatMessage = {
   actionCards?: AgentChatActionCard[];
   imageAction?: AgentChatImageAction | null;
   targetPresentation?: AgentTargetPresentation | null;
+  allowanceNotice?: AgentChatAllowanceNotice | null;
   emailDraftAction?: AgentChatEmailDraftAction | null;
   trace?: AgentChatTurnTrace | null;
   inboxLink?: boolean;

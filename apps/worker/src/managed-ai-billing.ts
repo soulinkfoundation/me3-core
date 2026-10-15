@@ -47,7 +47,8 @@ export type ManagedAiBillingSettings = {
   available: boolean;
   managed: boolean;
   currency: "usd";
-  billingSource: "internal" | "storekit" | "stripe" | null;
+  // ME3 Cloud reports the owner's entitlement source.
+  billingSource: "internal" | "storekit" | "stripe" | "google_play" | "trial" | "complimentary" | null;
   defaultModel: string;
   models: ManagedAiModelOption[];
   eligible: boolean;
@@ -293,6 +294,48 @@ function unavailableSettings(
 
 function isManaged(env: Env): boolean {
   return env.ME3_DEPLOYMENT_MODE?.trim().toLowerCase() === "managed";
+}
+
+export type ManagedAllowanceNotice = {
+  kind: "allowance_used";
+  title: string;
+  message: string;
+  resetsOn: string;
+  action: { kind: "enable_overages" | "subscribe"; label: string } | null;
+};
+
+/**
+ * Shown under a reply that ran on the fallback model because the monthly
+ * allowance is spent. Stripe owners can enable overages; trial and
+ * complimentary owners can subscribe; App Store and internal (demo) owners
+ * only get the notice.
+ */
+export function managedAllowanceNotice(policy: ManagedAiBillingSettings, now = new Date()): ManagedAllowanceNotice {
+  const reset = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const resetsOn = reset.toISOString().slice(0, 10);
+  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "UTC" }).format(reset);
+  const action = policy.billingSource === "stripe" && policy.eligible && !policy.overagesEnabled
+    ? { kind: "enable_overages" as const, label: "Turn on extra usage" }
+    : policy.billingSource === "trial" || policy.billingSource === "complimentary"
+      ? { kind: "subscribe" as const, label: "Subscribe" }
+      : null;
+  return {
+    kind: "allowance_used",
+    title: "This month's AI allowance is used",
+    message: `Replies now use a lighter model until ${day}.`,
+    resetsOn,
+    action,
+  };
+}
+
+/** Accepts only the server-authored notice shape when replaying saved messages. */
+export function readManagedAllowanceNotice(value: unknown): ManagedAllowanceNotice | null {
+  const root = asRecord(value);
+  if (!root || root.kind !== "allowance_used" || typeof root.title !== "string" || typeof root.message !== "string" || typeof root.resetsOn !== "string") return null;
+  const action = asRecord(root.action);
+  const kind = action?.kind;
+  if (root.action !== null && !(action && (kind === "enable_overages" || kind === "subscribe") && typeof action.label === "string")) return null;
+  return { kind: "allowance_used", title: root.title, message: root.message, resetsOn: root.resetsOn, action: action ? { kind: kind as "enable_overages" | "subscribe", label: action.label as string } : null };
 }
 
 function isManagedAiBillingSettings(value: unknown): value is ManagedAiBillingSettings {
