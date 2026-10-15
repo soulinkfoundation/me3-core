@@ -2,7 +2,7 @@ import { getManagedCommerceBridgeConfig } from "./commerce-bridge";
 import type { Env } from "./types";
 
 export const MANAGED_AI_BILLING_POLICY_SECRET = "ME3_MANAGED_AI_BILLING_POLICY";
-const INCLUDED_MONTHLY_CENTS = 500;
+const INCLUDED_MONTHLY_CENTS = 1000;
 const DEFAULT_MANAGED_MODEL = "openai/gpt-6.1-sol";
 const MANAGED_MODELS = [
   "openai/gpt-5.4-mini",
@@ -278,7 +278,7 @@ function unavailableSettings(
     overagesEnabled: false,
     includedMonthlyCents: INCLUDED_MONTHLY_CENTS,
     monthlyMaximumCents: INCLUDED_MONTHLY_CENTS,
-    minimumMonthlyMaximumCents: 600,
+    minimumMonthlyMaximumCents: 1100,
     maximumMonthlyMaximumCents: 50_000,
     currentMonth: month,
     currentMonthUsageMicrousd: 0,
