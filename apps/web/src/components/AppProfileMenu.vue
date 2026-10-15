@@ -145,6 +145,7 @@ onBeforeUnmount(() => {
         <div class="profile-menu__appearance" role="group" aria-label="Appearance">
           <Button v-for="option in appearances" :key="option.id" :color="themePreference === option.id ? 'primary' : 'ghost'" size="large" role="menuitemradio" :aria-checked="themePreference === option.id" :aria-label="`${option.label} appearance`" @click="setThemePreference(option.id)"><UiIcon :name="option.icon" :size="16" />{{ option.label }}</Button>
         </div>
+        <RouterLink to="/assistant?view=chat&settings=context" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Brain" :size="18" />Your agent</RouterLink>
         <RouterLink to="/settings" class="profile-menu__row" aria-label="Settings" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Settings" :size="18" />Settings</RouterLink>
         <RouterLink to="/settings?section=connections" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Link" :size="18" />App connections</RouterLink>
         <RouterLink to="/settings?section=plugins" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Puzzle" :size="18" />Plugins</RouterLink>

@@ -202,20 +202,6 @@ type AssistantThread = {
   createdAt: string;
   updatedAt: string;
 };
-type AssistantThreadsResponse = {
-  threads: AssistantThread[];
-};
-type MissionProject = {
-  id: string;
-  name: string;
-  slug: string;
-  status: "active" | "paused" | "archived";
-  color: string | null;
-  icon: string | null;
-};
-type MissionProjectsResponse = {
-  projects: MissionProject[];
-};
 type MissionApproval = {
   id: string;
   pluginId: string;
@@ -291,11 +277,6 @@ type AssistantActivityViewItem = {
   createdAt: string;
   approval?: MissionApproval;
 };
-type AssistantThreadExportResponse = {
-  thread: AssistantThread;
-  messages: AssistantThreadMessage[];
-  exportedAt: string;
-};
 type AssistantAttachmentKind = "text" | "image" | "unsupported";
 type AssistantAttachmentDraft = {
   id: string;
@@ -367,22 +348,6 @@ const assistantTurnStatusText = ref("");
 const assistantError = ref<string | null>(null);
 const assistantThreadId = ref<string | null>(null);
 const assistantThreadLoading = ref(Boolean(route.query.thread));
-const assistantThreads = ref<AssistantThread[]>([]);
-const assistantThreadsLoading = ref(false);
-const assistantThreadsError = ref("");
-const archivedThreadsModalOpen = ref(false);
-const archivedAssistantThreads = ref<AssistantThread[]>([]);
-const archivedAssistantThreadsLoading = ref(false);
-const archivedAssistantThreadsDeleting = ref(false);
-const archivedAssistantThreadsError = ref("");
-const assistantProjects = ref<MissionProject[]>([]);
-const assistantProjectsLoading = ref(false);
-const assistantProjectsError = ref("");
-const assistantThreadActionId = ref<string | null>(null);
-const assistantHistoryCollapsed = ref(false);
-const assistantHistoryDrawerOpen = ref(false);
-const assistantChatsCollapsed = ref(false);
-const collapsedAssistantProjectIds = ref(new Set<string>());
 const assistantSettingsModalOpen = ref(false);
 const assistantSettingsSection = ref<AssistantSettingsSection>("context");
 const assistantSettingsError = ref("");
@@ -726,23 +691,6 @@ const assistantAttachmentNeedsStorage = computed(() =>
 const assistantComposerDragActive = computed(
   () => assistantComposerDragDepth.value > 0,
 );
-const assistantProjectThreadGroups = computed(() =>
-  assistantProjects.value.map((project) => ({
-    project,
-    threads: assistantThreads.value.filter(
-      (thread) => thread.projectId === project.id,
-    ),
-  })),
-);
-const assistantUngroupedThreads = computed(() =>
-  assistantThreads.value.filter((thread) => !thread.projectId),
-);
-const assistantThreadListEmpty = computed(
-  () =>
-    !assistantThreadsLoading.value &&
-    assistantThreads.value.length === 0 &&
-    !assistantThreadsError.value,
-);
 const assistantSourceRows = computed<AssistantSourceViewItem[]>(() =>
   assistantSources.value
     .map((source) => {
@@ -922,50 +870,8 @@ async function loadPage() {
         "Assistant settings could not load.",
       );
     }),
-    loadAssistantProjects(),
-    loadAssistantThreads(),
     loadAssistantThreadFromRoute(),
   ]);
-}
-
-async function loadAssistantThreads() {
-  assistantThreadsLoading.value = true;
-  assistantThreadsError.value = "";
-  try {
-    const params = new URLSearchParams({
-      status: "active",
-      limit: "80",
-    });
-    const response = await api.get<AssistantThreadsResponse>(
-      `/assistant/threads?${params.toString()}`,
-    );
-    assistantThreads.value = response.threads || [];
-  } catch (err) {
-    assistantThreadsError.value = messageFromUnknown(
-      err,
-      "Chats could not load.",
-    );
-  } finally {
-    assistantThreadsLoading.value = false;
-  }
-}
-
-async function loadAssistantProjects() {
-  assistantProjectsLoading.value = true;
-  assistantProjectsError.value = "";
-  try {
-    const response = await api.get<MissionProjectsResponse>(
-      "/mission-control/projects",
-    );
-    assistantProjects.value = response.projects || [];
-  } catch (err) {
-    assistantProjectsError.value = messageFromUnknown(
-      err,
-      "Projects could not load.",
-    );
-  } finally {
-    assistantProjectsLoading.value = false;
-  }
 }
 
 function routeThreadId() {
@@ -974,166 +880,34 @@ function routeThreadId() {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function routeProjectId() {
-  const value = route.query.project;
-  if (Array.isArray(value)) return value[0]?.trim() || null;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
 async function setRouteThreadId(threadId: string) {
   if (routeThreadId() === threadId) return;
-  const thread = assistantThreads.value.find((item) => item.id === threadId);
   await router.replace({
     query: {
       ...route.query,
       thread: threadId,
       view: homeMode.value ? "home" : "chat",
-      project: thread?.projectId || undefined,
+      project: undefined,
       new: undefined,
     },
   });
 }
 
-async function startNewAssistantChat(
-  projectId: string | null = null,
-  options: { closeHistory?: boolean } = {},
-) {
-  homeMode.value = false;
-  assistantThreadId.value = null;
-  assistantError.value = null;
-  if (options.closeHistory !== false) {
-    assistantHistoryDrawerOpen.value = false;
-  }
-  agentChat.resetMessages();
-  await router.replace({
-    query: {
-      ...route.query,
-      thread: undefined,
-      project: projectId || undefined,
-      new: "1",
-      view: "chat",
-      prompt: undefined,
-      send: undefined,
-    },
-  });
-  await nextTick();
-  assistantComposerRef.value?.focus();
-}
-
-async function selectAssistantThread(threadId: string) {
-  await showWorkspace(false);
-  assistantHistoryDrawerOpen.value = false;
-  if (!threadId || assistantThreadId.value === threadId) {
-    return;
-  }
-  await setRouteThreadId(threadId);
-}
-
-function toggleAssistantHistoryCollapsed() {
-  assistantHistoryCollapsed.value = !assistantHistoryCollapsed.value;
-}
-
-function assistantProjectExpanded(projectId: string) {
-  return !collapsedAssistantProjectIds.value.has(projectId);
-}
-
-function toggleAssistantProject(projectId: string) {
-  const next = new Set(collapsedAssistantProjectIds.value);
-  if (next.has(projectId)) next.delete(projectId);
-  else next.add(projectId);
-  collapsedAssistantProjectIds.value = next;
-}
-
-async function archiveAssistantThread(thread: AssistantThread) {
-  if (assistantThreadActionId.value) return;
-  assistantThreadActionId.value = thread.id;
-  const nextStatus = thread.status === "archived" ? "active" : "archived";
+// Chat is one conversation shared with iOS, Android and Soulink. Start fresh archives it and resolves a
+// new main thread; the old one stays archived on the installation and is never revived.
+async function startFresh() {
+  const threadId = assistantThreadId.value;
+  if (!threadId || assistantSending.value) return;
+  if (!window.confirm("Start a fresh conversation? This one is archived and kept on your ME3. Your notes, tasks, files and ME3's memory stay.")) return;
   try {
-    const response = await api.patch<{ thread: AssistantThread }>(
-      `/assistant/threads/${encodeURIComponent(thread.id)}`,
-      { status: nextStatus },
-    );
-    assistantThreads.value = assistantThreads.value.filter(
-      (item) => item.id !== thread.id,
-    );
-    if (assistantThreadId.value === thread.id && nextStatus === "archived") {
-      await startNewAssistantChat(null, { closeHistory: false });
-    }
-    if (nextStatus === "active") {
-      upsertAssistantThread(response.thread);
-      archivedAssistantThreads.value = archivedAssistantThreads.value.filter(
-        (item) => item.id !== response.thread.id,
-      );
-    } else {
-      archivedAssistantThreads.value = [
-        response.thread,
-        ...archivedAssistantThreads.value.filter(
-          (item) => item.id !== response.thread.id,
-        ),
-      ];
-    }
+    await api.patch(`/assistant/threads/${encodeURIComponent(threadId)}`, { status: "archived" });
+    assistantThreadId.value = null;
+    agentChat.resetMessages();
+    await router.replace({ query: { ...route.query, thread: undefined, project: undefined, new: undefined, view: "chat" } });
+    await loadAssistantThreadFromRoute();
   } catch (err) {
-    assistantThreadsError.value = messageFromUnknown(
-      err,
-      "Chat could not update.",
-    );
-  } finally {
-    assistantThreadActionId.value = null;
+    toastFromUnknown(err, "Couldn't start fresh.");
   }
-}
-
-async function deleteAssistantThread(thread: AssistantThread) {
-  if (assistantThreadActionId.value) return false;
-  const confirmed = window.confirm(
-    `Delete "${threadTitle(thread)}"? This removes transcript text.`,
-  );
-  if (!confirmed) return false;
-  assistantThreadActionId.value = thread.id;
-  try {
-    await api.delete(`/assistant/threads/${encodeURIComponent(thread.id)}`);
-    assistantThreads.value = assistantThreads.value.filter(
-      (item) => item.id !== thread.id,
-    );
-    if (assistantThreadId.value === thread.id) {
-      await startNewAssistantChat(null, { closeHistory: false });
-    }
-    return true;
-  } catch (err) {
-    assistantThreadsError.value = messageFromUnknown(
-      err,
-      "Chat could not be deleted.",
-    );
-    return false;
-  } finally {
-    assistantThreadActionId.value = null;
-  }
-}
-
-async function loadArchivedAssistantThreads() {
-  archivedAssistantThreadsLoading.value = true;
-  archivedAssistantThreadsError.value = "";
-  try {
-    const response = await api.get<AssistantThreadsResponse>(
-      "/assistant/threads?status=archived&limit=80",
-    );
-    archivedAssistantThreads.value = response.threads || [];
-  } catch (err) {
-    archivedAssistantThreadsError.value = messageFromUnknown(
-      err,
-      "Archived chats could not load.",
-    );
-  } finally {
-    archivedAssistantThreadsLoading.value = false;
-  }
-}
-
-async function openArchivedThreadsModal() {
-  archivedThreadsModalOpen.value = true;
-  await loadArchivedAssistantThreads();
-}
-
-function closeArchivedThreadsModal() {
-  archivedThreadsModalOpen.value = false;
 }
 
 function routeAssistantSettingsSection(): AssistantSettingsSection | null {
@@ -1162,7 +936,6 @@ async function openAssistantSettings(
 ) {
   assistantSettingsSection.value = section;
   assistantSettingsModalOpen.value = true;
-  assistantHistoryDrawerOpen.value = false;
   assistantSettingsError.value = "";
   if (
     options.updateRoute !== false &&
@@ -1449,140 +1222,6 @@ async function clearAssistantActivity() {
   }
 }
 
-async function restoreArchivedAssistantThread(thread: AssistantThread) {
-  await archiveAssistantThread(thread);
-}
-
-async function deleteArchivedAssistantThread(thread: AssistantThread) {
-  const deleted = await deleteAssistantThread(thread);
-  if (!deleted) return;
-  archivedAssistantThreads.value = archivedAssistantThreads.value.filter(
-    (item) => item.id !== thread.id,
-  );
-}
-
-async function deleteAllArchivedAssistantThreads() {
-  if (
-    archivedAssistantThreadsLoading.value ||
-    archivedAssistantThreadsDeleting.value ||
-    archivedAssistantThreads.value.length === 0
-  ) {
-    return;
-  }
-  const archivedThreadIds = new Set(
-    archivedAssistantThreads.value.map((thread) => thread.id),
-  );
-  const confirmed = window.confirm(
-    `Delete all archived chats? This removes transcript text from ${archivedAssistantThreads.value.length} archived chats.`,
-  );
-  if (!confirmed) return;
-
-  archivedAssistantThreadsDeleting.value = true;
-  archivedAssistantThreadsError.value = "";
-  try {
-    await api.delete("/assistant/threads?status=archived");
-    archivedAssistantThreads.value = [];
-    if (
-      assistantThreadId.value &&
-      archivedThreadIds.has(assistantThreadId.value)
-    ) {
-      await startNewAssistantChat(null, { closeHistory: false });
-    }
-    toastSuccess("Archived chats deleted");
-  } catch (err) {
-    archivedAssistantThreadsError.value = messageFromUnknown(
-      err,
-      "Archived chats could not be deleted.",
-    );
-  } finally {
-    archivedAssistantThreadsDeleting.value = false;
-  }
-}
-
-async function exportAssistantThread(thread: AssistantThread) {
-  if (assistantThreadActionId.value) return;
-  assistantThreadActionId.value = thread.id;
-  try {
-    const response = await api.get<AssistantThreadExportResponse>(
-      `/assistant/threads/${encodeURIComponent(thread.id)}/export`,
-    );
-    const transcript = [
-      `# ${threadTitle(response.thread)}`,
-      "",
-      `Exported: ${response.exportedAt}`,
-      response.thread.projectId
-        ? `Project: ${projectName(response.thread.projectId)}`
-        : "Project: None",
-      "",
-      ...response.messages.flatMap((message) => [
-        `## ${message.role === "user" ? "You" : "ME3"} - ${message.createdAt}`,
-        "",
-        message.text || "",
-        "",
-      ]),
-    ].join("\n");
-    const blob = new Blob([transcript], {
-      type: "text/markdown;charset=utf-8",
-    });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${slugifyFilename(threadTitle(response.thread)) || "assistant-chat"}.md`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
-  } catch (err) {
-    assistantThreadsError.value = messageFromUnknown(
-      err,
-      "Chat could not export.",
-    );
-  } finally {
-    assistantThreadActionId.value = null;
-  }
-}
-
-function upsertAssistantThread(thread: AssistantThread) {
-  assistantThreads.value = [
-    thread,
-    ...assistantThreads.value.filter((item) => item.id !== thread.id),
-  ];
-}
-
-function projectName(projectId: string | null) {
-  if (!projectId) return "Chats";
-  return (
-    assistantProjects.value.find((project) => project.id === projectId)?.name ||
-    "Project"
-  );
-}
-
-function slugifyFilename(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-}
-
-function formatAssistantThreadTime(value: string | null) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const thatDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const diffDays = Math.round(
-    (today.getTime() - thatDay.getTime()) / 86_400_000,
-  );
-  if (diffDays === 0) {
-    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  }
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7) return date.toLocaleDateString([], { weekday: "short" });
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
 function formatAssistantMessageTime(value: string | null | undefined) {
   if (!value) return "";
   const date = new Date(value);
@@ -1609,20 +1248,15 @@ function visibleAssistantActionCards(message: {
     : cards;
 }
 
-function threadTitle(thread: AssistantThread) {
-  return thread.title?.trim() || "New chat";
-}
-
 async function loadAssistantThreadFromRoute() {
   let threadId = routeThreadId();
-  if (!threadId && !routeProjectId() && !siteBuilderMode.value && route.query.new !== "1") {
+  if (!threadId && !siteBuilderMode.value) {
     try {
       const response = await api.post<{ thread: AssistantThread }>("/assistant/threads/primary", {});
-      // A project or history selection made while resolving takes precedence.
-      if (routeThreadId() || routeProjectId() || route.query.new === "1") return;
+      // A thread opened from a notification while resolving takes precedence.
+      if (routeThreadId()) return;
       threadId = response.thread.id;
       assistantThreadId.value = threadId;
-      upsertAssistantThread(response.thread);
       await setRouteThreadId(threadId);
     } catch (err) {
       assistantError.value = messageFromUnknown(err, "Your main conversation could not load.");
@@ -1643,18 +1277,6 @@ async function loadAssistantThreadFromRoute() {
       `/assistant/threads/${encodeURIComponent(threadId)}/messages`,
     );
     if (assistantThreadId.value !== threadId) return;
-    if (response.thread) {
-      if (response.thread.status === "active") {
-        upsertAssistantThread(response.thread);
-      } else {
-        archivedAssistantThreads.value = [
-          response.thread,
-          ...archivedAssistantThreads.value.filter(
-            (item) => item.id !== response.thread.id,
-          ),
-        ];
-      }
-    }
     let previousUserText = "";
     const mappedMessages = response.messages.map((message) => {
       const actionLink = resolveAgentMessageActionLink({
@@ -2385,7 +2007,6 @@ async function submitAssistantText(
         messageText: normalized,
         ...(targetSelection ? { targetSelection } : {}),
         threadId: assistantThreadId.value,
-        projectId: assistantThreadId.value ? undefined : routeProjectId(),
         attachments,
         scopes: siteBuilderMode.value ? ["site"] : undefined,
         model: turnModel
@@ -2525,7 +2146,6 @@ async function submitAssistantText(
     if (completedResult.threadId) {
       assistantThreadId.value = completedResult.threadId;
       await setRouteThreadId(completedResult.threadId);
-      void loadAssistantThreads();
     }
   } catch (err) {
     assistantAwaitingResponse.value = false;
@@ -3263,24 +2883,13 @@ function messageFromUnknown(err: unknown, fallback: string) {
   <div
     class="assistant-page"
     :class="{
-      'assistant-page--history-collapsed': assistantHistoryCollapsed,
-      'assistant-page--history-open': assistantHistoryDrawerOpen,
       'assistant-page--site-builder': siteBuilderMode,
     }"
   >
-    <button
-      v-if="!siteBuilderMode && assistantHistoryDrawerOpen"
-      type="button"
-      class="assistant-history-backdrop"
-      aria-label="Close chat history"
-      @click="assistantHistoryDrawerOpen = false"
-    />
     <Teleport v-if="!siteBuilderMode" to="#app-page-controls" defer>
       <div class="home-chat-header">
         <div class="home-chat-actions">
           <Button v-if="homeMode" color="ghost" size="large" icon-only class="home-nav-button" aria-label="Add a card to Home" @click="openAddToHome"><UiIcon name="Plus" :size="24" /></Button>
-          <button type="button" class="home-nav-button" aria-label="Open chat history" @click="assistantHistoryDrawerOpen = true"><UiIcon name="MessagesSquare" :size="20" /></button>
-          <button v-if="!homeMode" type="button" class="home-nav-button" aria-label="New chat" @click="startNewAssistantChat(null)"><UiIcon name="Plus" :size="24" /></button>
         </div>
         <div class="home-chat-switcher" role="group" aria-label="Workspace view">
           <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
@@ -3288,287 +2897,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
         </div>
       </div>
     </Teleport>
-    <aside
-      v-if="!siteBuilderMode"
-      class="assistant-history"
-      :inert="!assistantHistoryDrawerOpen"
-      :aria-hidden="!assistantHistoryDrawerOpen"
-      :class="{
-        'assistant-history--collapsed': assistantHistoryCollapsed,
-        'assistant-history--open': assistantHistoryDrawerOpen,
-      }"
-      aria-label="Assistant chat history"
-    >
-      <header class="assistant-history__header">
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          class="assistant-history__collapse"
-          :aria-label="
-            assistantHistoryCollapsed
-              ? 'Expand chat history'
-              : 'Collapse chat history'
-          "
-          :title="
-            assistantHistoryCollapsed
-              ? 'Expand chat history'
-              : 'Collapse chat history'
-          "
-          type="button"
-          @click="toggleAssistantHistoryCollapsed"
-        >
-          <UiIcon
-            :name="assistantHistoryCollapsed ? 'ChevronRight' : 'ChevronLeft'"
-            :size="16"
-            aria-hidden="true"
-          />
-        </Button>
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          class="assistant-history__close"
-          aria-label="Close chat history"
-          title="Close"
-          type="button"
-          @click="assistantHistoryDrawerOpen = false"
-        >
-          <UiIcon name="X" :size="16" aria-hidden="true" />
-        </Button>
-      </header>
-
-      <div v-if="!assistantHistoryCollapsed" class="assistant-history__body">
-        <p v-if="assistantThreadsError" class="assistant-history__message">
-          {{ assistantThreadsError }}
-        </p>
-        <p
-          v-else-if="assistantProjectsError"
-          class="assistant-history__message"
-        >
-          {{ assistantProjectsError }}
-        </p>
-        <section class="assistant-history__section">
-          <div
-            v-if="assistantProjectsLoading && assistantProjects.length === 0"
-            class="assistant-history__message"
-          >
-            Loading projects...
-          </div>
-          <div
-            v-for="group in assistantProjectThreadGroups"
-            :key="group.project.id"
-            class="assistant-history__project-group"
-          >
-            <button
-              type="button"
-              class="assistant-history__project-row"
-              :class="{
-                'is-active':
-                  routeProjectId() === group.project.id && !assistantThreadId,
-              }"
-              :aria-expanded="assistantProjectExpanded(group.project.id)"
-              :aria-controls="`assistant-project-${group.project.id}-chats`"
-              @click="toggleAssistantProject(group.project.id)"
-            >
-              <UiIcon
-                :name="
-                  assistantProjectExpanded(group.project.id)
-                    ? 'ChevronDown'
-                    : 'ChevronRight'
-                "
-                :size="14"
-                aria-hidden="true"
-              />
-              <UiIcon name="Folder" :size="15" aria-hidden="true" />
-              <span>{{ group.project.name }}</span>
-            </button>
-            <button
-              type="button"
-              class="assistant-history__project-add"
-              :aria-label="`Start a new chat in ${group.project.name}`"
-              :title="`Start a new chat in ${group.project.name}`"
-              @click="startNewAssistantChat(group.project.id)"
-            >
-              <UiIcon name="Plus" :size="14" aria-hidden="true" />
-            </button>
-            <nav
-              v-if="
-                group.threads.length &&
-                assistantProjectExpanded(group.project.id)
-              "
-              :id="`assistant-project-${group.project.id}-chats`"
-              class="assistant-history__list assistant-history__list--nested"
-              :aria-label="`${group.project.name} chats`"
-            >
-              <div
-                v-for="thread in group.threads"
-                :key="thread.id"
-                class="assistant-history__thread-row"
-                :class="{ 'is-active': assistantThreadId === thread.id }"
-              >
-                <button
-                  type="button"
-                  class="assistant-history__thread"
-                  :aria-current="
-                    assistantThreadId === thread.id ? 'page' : undefined
-                  "
-                  @click="selectAssistantThread(thread.id)"
-                >
-                  <span class="assistant-history__thread-main">
-                    <span class="assistant-history__thread-title">
-                      {{ threadTitle(thread) }}
-                    </span>
-                    <span class="assistant-history__thread-meta">
-                      {{
-                        formatAssistantThreadTime(
-                          thread.lastMessageAt || thread.updatedAt,
-                        )
-                      }}
-                    </span>
-                  </span>
-                </button>
-                <div
-                  class="assistant-history__thread-actions"
-                  aria-label="Chat controls"
-                >
-                  <button
-                    type="button"
-                    title="Archive chat"
-                    aria-label="Archive chat"
-                    :disabled="assistantThreadActionId === thread.id"
-                    @click="archiveAssistantThread(thread)"
-                  >
-                    <UiIcon name="Archive" :size="14" aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-            </nav>
-          </div>
-        </section>
-
-        <section class="assistant-history__section">
-          <button
-            type="button"
-            class="assistant-history__section-toggle"
-            :aria-expanded="!assistantChatsCollapsed"
-            aria-controls="assistant-ungrouped-chats"
-            @click="assistantChatsCollapsed = !assistantChatsCollapsed"
-          >
-            <UiIcon
-              :name="assistantChatsCollapsed ? 'ChevronRight' : 'ChevronDown'"
-              :size="14"
-              aria-hidden="true"
-            />
-            <span>Chats</span>
-          </button>
-          <nav
-            v-if="!assistantChatsCollapsed"
-            id="assistant-ungrouped-chats"
-            class="assistant-history__list"
-            aria-label="Chats outside projects"
-          >
-            <p
-              v-if="assistantThreadsLoading && assistantThreads.length === 0"
-              class="assistant-history__message"
-            >
-              Loading chats...
-            </p>
-            <div
-              v-for="thread in assistantUngroupedThreads"
-              :key="thread.id"
-              class="assistant-history__thread-row"
-              :class="{ 'is-active': assistantThreadId === thread.id }"
-            >
-              <button
-                type="button"
-                class="assistant-history__thread"
-                :aria-current="
-                  assistantThreadId === thread.id ? 'page' : undefined
-                "
-                @click="selectAssistantThread(thread.id)"
-              >
-                <span class="assistant-history__thread-main">
-                  <span class="assistant-history__thread-title">
-                    {{ threadTitle(thread) }}
-                  </span>
-                  <span class="assistant-history__thread-meta">
-                    {{
-                      formatAssistantThreadTime(
-                        thread.lastMessageAt || thread.updatedAt,
-                      )
-                    }}
-                  </span>
-                </span>
-              </button>
-              <div
-                class="assistant-history__thread-actions"
-                aria-label="Chat controls"
-              >
-                <button
-                  type="button"
-                  title="Archive chat"
-                  aria-label="Archive chat"
-                  :disabled="assistantThreadActionId === thread.id"
-                  @click="archiveAssistantThread(thread)"
-                >
-                  <UiIcon name="Archive" :size="14" aria-hidden="true" />
-                </button>
-              </div>
-            </div>
-            <p
-              v-if="assistantThreadListEmpty"
-              class="assistant-history__message"
-            >
-              No saved chats yet.
-            </p>
-            <p
-              v-else-if="
-                !assistantThreadsLoading &&
-                assistantUngroupedThreads.length === 0
-              "
-              class="assistant-history__message"
-            >
-              No chats outside projects.
-            </p>
-          </nav>
-        </section>
-
-        <div class="assistant-history__footer">
-          <button
-            type="button"
-            class="assistant-history__footer-icon"
-            aria-label="Archived chats"
-            title="Archived chats"
-            @click="openArchivedThreadsModal"
-          >
-            <UiIcon name="Archive" :size="18" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            class="assistant-history__footer-icon"
-            aria-label="Assistant settings"
-            title="Assistant settings"
-            @click="openAssistantSettings('context')"
-          >
-            <UiIcon name="Brain" :size="18" aria-hidden="true" />
-          </button>
-          <span class="assistant-history__footer-spacer" aria-hidden="true" />
-          <button
-            type="button"
-            class="assistant-history__footer-chat"
-            aria-label="New chat"
-            title="New chat"
-            @click="startNewAssistantChat(null)"
-          >
-            <UiIcon name="Plus" :size="18" aria-hidden="true" />
-            <span>Chat</span>
-          </button>
-        </div>
-      </div>
-    </aside>
 
     <div
       class="assistant-workspace"
@@ -4276,6 +3604,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
               <summary aria-label="Message options"><UiIcon name="Plus" :size="22" aria-hidden="true" /></summary>
               <div class="composer-options__menu">
                 <button type="button" :disabled="assistantSending" @click="openAssistantAttachmentPicker(); composerMenu?.removeAttribute('open')"><UiIcon name="Paperclip" :size="18" /> Attach files</button>
+                <button v-if="!siteBuilderMode && assistantThreadId" type="button" :disabled="assistantSending" @click="composerMenu?.removeAttribute('open'); startFresh()"><UiIcon name="SquarePen" :size="18" /> Start fresh</button>
               <div
                 v-if="
                   voiceDictationState !== 'listening' &&
@@ -4451,146 +3780,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
       </aside>
     </div>
 
-    <Teleport to="body">
-      <div
-        v-if="archivedThreadsModalOpen"
-        class="assistant-modal"
-        @click.self="closeArchivedThreadsModal"
-      >
-        <section
-          class="assistant-modal__dialog"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="archived-chats-title"
-        >
-          <header class="assistant-modal__header">
-            <div class="assistant-modal__header-copy">
-              <h2 id="archived-chats-title">Archived Chats</h2>
-              <p>Download, restore, or delete archived chats.</p>
-            </div>
-            <div class="assistant-modal__header-actions">
-              <Button
-                v-if="
-                  !archivedAssistantThreadsLoading &&
-                  archivedAssistantThreads.length > 0
-                "
-                color="danger"
-                shape="soft"
-                size="compact"
-                type="button"
-                :disabled="archivedAssistantThreadsDeleting"
-                @click="deleteAllArchivedAssistantThreads"
-              >
-                <template #icon>
-                  <UiIcon name="Trash2" :size="15" aria-hidden="true" />
-                </template>
-                {{
-                  archivedAssistantThreadsDeleting
-                    ? "Deleting..."
-                    : "Delete all"
-                }}
-              </Button>
-              <Button
-                color="ghost"
-                shape="soft"
-                size="compact"
-                icon-only
-                type="button"
-                aria-label="Close"
-                @click="closeArchivedThreadsModal"
-              >
-                <UiIcon name="X" :size="20" />
-              </Button>
-            </div>
-          </header>
-
-          <p
-            v-if="archivedAssistantThreadsError"
-            class="assistant-history__message"
-          >
-            {{ archivedAssistantThreadsError }}
-          </p>
-          <p
-            v-else-if="archivedAssistantThreadsLoading"
-            class="assistant-history__message"
-          >
-            Loading archived chats...
-          </p>
-          <div v-else class="assistant-archived-list" role="list">
-            <article
-              v-for="thread in archivedAssistantThreads"
-              :key="thread.id"
-              class="assistant-archived-thread"
-              role="listitem"
-            >
-              <button
-                type="button"
-                class="assistant-archived-thread__main"
-                :disabled="archivedAssistantThreadsDeleting"
-                @click="
-                  selectAssistantThread(thread.id);
-                  closeArchivedThreadsModal();
-                "
-              >
-                <UiIcon name="MessageSquare" :size="16" aria-hidden="true" />
-                <span>
-                  <strong>{{ threadTitle(thread) }}</strong>
-                  <small>{{
-                    formatAssistantThreadTime(
-                      thread.lastMessageAt || thread.updatedAt,
-                    )
-                  }}</small>
-                </span>
-              </button>
-              <div class="assistant-archived-thread__actions">
-                <button
-                  type="button"
-                  title="Export transcript"
-                  aria-label="Export transcript"
-                  :disabled="
-                    archivedAssistantThreadsDeleting ||
-                    assistantThreadActionId === thread.id
-                  "
-                  @click="exportAssistantThread(thread)"
-                >
-                  <UiIcon name="Download" :size="15" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  title="Restore chat"
-                  aria-label="Restore chat"
-                  :disabled="
-                    archivedAssistantThreadsDeleting ||
-                    assistantThreadActionId === thread.id
-                  "
-                  @click="restoreArchivedAssistantThread(thread)"
-                >
-                  <UiIcon name="ArchiveRestore" :size="15" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  title="Delete chat"
-                  aria-label="Delete chat"
-                  :disabled="
-                    archivedAssistantThreadsDeleting ||
-                    assistantThreadActionId === thread.id
-                  "
-                  @click="deleteArchivedAssistantThread(thread)"
-                >
-                  <UiIcon name="Trash2" :size="15" aria-hidden="true" />
-                </button>
-              </div>
-            </article>
-            <p
-              v-if="archivedAssistantThreads.length === 0"
-              class="assistant-history__message"
-            >
-              No archived chats.
-            </p>
-          </div>
-        </section>
-      </div>
-    </Teleport>
 
     <Teleport to="body">
       <div
@@ -4963,10 +4152,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
   color: var(--ui-text);
 }
 
-.assistant-page--history-collapsed {
-  display: block;
-}
-
 .assistant-workspace {
   min-height: inherit;
 }
@@ -5152,334 +4337,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
   color: var(--ui-text-muted);
   font-size: 13px;
   line-height: 1.5;
-}
-
-
-.assistant-history {
-  position: fixed;
-  inset: 0 auto 0 0;
-  z-index: 90;
-  display: flex;
-  flex-direction: column;
-  width: min(300px, calc(100vw - var(--app-shell-mobile-nav-leading-padding)));
-  max-width: min(
-    300px,
-    calc(100vw - var(--app-shell-mobile-nav-leading-padding))
-  );
-  min-width: 0;
-  height: 100dvh;
-  max-height: 100dvh;
-  border-right: 1px solid var(--ui-border);
-  padding: 14px 10px;
-  background: var(--ui-surface-muted);
-  overflow: hidden;
-  transform: translateX(-102%);
-  transition: transform 0.18s ease;
-  box-shadow: var(--ui-shadow-md);
-}
-
-.assistant-history--open {
-  transform: translateX(0);
-}
-
-.assistant-history--collapsed {
-  width: min(300px, calc(100vw - var(--app-shell-mobile-nav-leading-padding)));
-}
-
-.assistant-history--collapsed .assistant-history__body {
-  display: flex;
-}
-
-.assistant-history__header {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.assistant-history__nav-row:hover,
-.assistant-history__project-row:hover,
-.assistant-history__thread:hover {
-  background: color-mix(in oklab, var(--ui-surface) 64%, transparent);
-  color: var(--ui-text);
-}
-
-
-.assistant-history__collapse {
-  display: none;
-}
-
-.assistant-history__close {
-  display: inline-flex;
-  margin-left: auto;
-}
-
-.assistant-history__body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-  height: 100%;
-  padding-top: 10px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-
-.assistant-history__topnav,
-.assistant-history__section {
-  display: grid;
-  gap: 4px;
-}
-
-.assistant-history__nav-row,
-.assistant-history__project-row,
-.assistant-history__thread {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  min-width: 0;
-  min-height: 32px;
-  border: 1px solid transparent;
-  border-radius: var(--ui-radius-sm);
-  padding: 4px 6px;
-  background: transparent;
-  color: var(--ui-text);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 400;
-  text-align: left;
-  cursor: pointer;
-}
-
-.assistant-history__thread-actions button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid transparent;
-  border-radius: var(--ui-radius-sm);
-  background: transparent;
-  color: var(--ui-text-muted);
-  cursor: pointer;
-}
-
-.assistant-history__section h2 {
-  margin: 0;
-  color: color-mix(in oklab, var(--ui-text-muted) 76%, transparent);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.assistant-history__section-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 28px;
-  border: 1px solid transparent;
-  border-radius: var(--ui-radius-sm);
-  padding: 2px 0;
-  background: transparent;
-  color: color-mix(in oklab, var(--ui-text-muted) 76%, transparent);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  text-align: left;
-  cursor: pointer;
-}
-
-.assistant-history__section-toggle:hover,
-.assistant-history__section-toggle:focus-visible {
-  color: var(--ui-text);
-}
-
-.assistant-history__thread-actions button:hover:not(:disabled) {
-  background: var(--ui-surface);
-  color: var(--ui-text);
-}
-
-.assistant-history__list {
-  display: grid;
-  gap: 2px;
-}
-
-.assistant-history__list--nested {
-  grid-column: 1 / -1;
-  margin-left: 12px;
-}
-
-.assistant-history__project-group {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  gap: 2px;
-}
-
-.assistant-history__project-row {
-  color: var(--ui-text-muted);
-  gap: 9px;
-  padding-left: 0;
-}
-
-.assistant-history__project-add {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  min-height: 32px;
-  border: 1px solid transparent;
-  border-radius: var(--ui-radius-sm);
-  padding: 0;
-  background: transparent;
-  color: var(--ui-text-muted);
-  cursor: pointer;
-  opacity: 0.72;
-  transition: opacity 0.14s ease;
-}
-
-.assistant-history__project-group:hover .assistant-history__project-add,
-.assistant-history__project-group:focus-within .assistant-history__project-add,
-.assistant-history__project-add:hover,
-.assistant-history__project-add:focus-visible {
-  opacity: 1;
-  background: color-mix(in oklab, var(--ui-surface) 64%, transparent);
-  color: var(--ui-text);
-}
-
-.assistant-history__project-row.is-active,
-.assistant-history__thread-row.is-active {
-  background: var(--ui-surface);
-  color: var(--ui-text);
-}
-
-.assistant-history__thread-main {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  width: 100%;
-}
-
-.assistant-history__thread-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  border-radius: var(--ui-radius-sm);
-}
-
-.assistant-history__thread-row .assistant-history__thread {
-  flex: 1 1 auto;
-}
-
-.assistant-history__thread-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex: 0 0 auto;
-  padding-right: 2px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease;
-}
-
-.assistant-history__thread-row:hover .assistant-history__thread-actions,
-.assistant-history__thread-row:focus-within .assistant-history__thread-actions,
-.assistant-history__thread-row.is-active .assistant-history__thread-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.assistant-history__thread-title,
-.assistant-history__thread-meta {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.assistant-history__thread-title {
-  flex: 1 1 auto;
-  color: inherit;
-  font-size: 11px;
-  font-weight: 450;
-  line-height: 1.25;
-}
-
-.assistant-history__thread-meta {
-  flex: 0 0 auto;
-}
-
-.assistant-history__thread-meta,
-.assistant-history__message {
-  color: var(--ui-text-muted);
-  font-size: 10px;
-  line-height: 1.35;
-}
-
-.assistant-history__message {
-  margin: 0;
-  padding: 8px;
-}
-
-.assistant-history__footer {
-  position: sticky;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: auto;
-  padding: 8px 0 0;
-  border-top: 1px solid var(--ui-border);
-  background: var(--ui-surface-muted);
-}
-
-.assistant-history__footer-icon,
-.assistant-history__footer-chat {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 48px;
-  border: 1px solid transparent;
-  border-radius: var(--ui-radius-sm);
-  padding: 0;
-  background: transparent;
-  color: var(--ui-text-muted);
-  font: inherit;
-  cursor: pointer;
-}
-
-.assistant-history__footer-icon {
-  flex: 0 0 48px;
-  width: 48px;
-}
-
-.assistant-history__footer-chat {
-  flex: 0 0 auto;
-  padding: 0 8px;
-  font-size: 14px;
-  font-weight: 650;
-}
-
-.assistant-history__footer-spacer {
-  flex: 1 1 auto;
-}
-
-.assistant-history__footer-icon:hover,
-.assistant-history__footer-chat:hover {
-  background: var(--ui-surface);
-  color: var(--ui-text);
-}
-
-.assistant-history-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  border: 0;
-  background: color-mix(in oklab, var(--ui-bg) 42%, transparent);
 }
 
 .assistant-main {
@@ -7489,7 +6346,6 @@ button:disabled {
     font-size: max(16px, 1em);
   }
 
-
   .assistant-timeline {
     padding-top: var(--assistant-header-clearance);
   }
@@ -7608,7 +6464,6 @@ button:disabled {
     overflow-x: auto;
   }
 }
-
 
 </style>
 
