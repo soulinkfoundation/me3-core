@@ -22,7 +22,7 @@ vi.mock("./managed-runtime-lifecycle", () => ({ isManagedRuntime: (env: Env) => 
 
 const databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); vi.unstubAllGlobals(); fixtureTools.value = []; fixtureSnapshot.calls = 0; fixtureSnapshot.gate = undefined; fixtureSnapshot.entered = undefined; });
-const fallback = "@cf/zai-org/glm-4.7-flash";
+const fallback = "anthropic/claude-haiku-5.5";
 const input: NewAgentDispatchInput = { userId: "owner", threadId: "thread", turnId: "turn", requestId: "request", messageText: "Read the synthetic record" };
 function settings(overrides: Partial<ManagedAiBillingSettings> = {}): ManagedAiBillingSettings {
   return { available: true, managed: true, currency: "usd", billingSource: "internal", defaultModel: "openai/gpt-5.5", models: ["openai/gpt-5.5", "openai/gpt-6.1-sol", "anthropic/claude-opus-5.5", "zai-org/glm-5.3-flash"].map(id => ({ id, label: id, description: "Synthetic", recommended: false })), eligible: true, ineligibleReason: null, overagesEnabled: false, includedMonthlyCents: 500, monthlyMaximumCents: 500, minimumMonthlyMaximumCents: 600, maximumMonthlyMaximumCents: 50_000, currentMonth: new Date().toISOString().slice(0, 7), currentMonthUsageMicrousd: 0, currentMonthBillableMicrousd: 0, effectiveMaximumCents: 500, fallbackActive: false, ...overrides };

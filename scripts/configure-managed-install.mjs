@@ -65,7 +65,7 @@ const routes = {
   ME3_SOCIAL_OAUTH_ORIGIN: "https://api.me3.app",
   ME3_AI_CHAT_PROVIDER: "workers-ai",
   ME3_AI_CHAT_MODEL: "openai/gpt-6.1-sol",
-  ME3_AI_CHAT_BACKUP_MODEL: "@cf/zai-org/glm-4.7-flash",
+  ME3_AI_CHAT_BACKUP_MODEL: "anthropic/claude-haiku-5.5",
   // Clef sends confident conversation-only turns to Haiku (14 Oct 2026 eval: 10/10 chat turns, 0 tool turns misrouted).
   ME3_AGENT_ROUTING: "on",
   ME3_AGENT_FAST_MODEL: "anthropic/claude-haiku-5.5",

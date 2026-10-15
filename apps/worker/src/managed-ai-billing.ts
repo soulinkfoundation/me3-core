@@ -19,8 +19,11 @@ const MANAGED_MODELS = [
   "anthropic/claude-haiku-5.5",
   "zai-org/glm-5.3-flash",
 ] as const;
-export const MANAGED_AI_FALLBACK_MODEL = "@cf/zai-org/glm-4.7-flash";
-const MANAGED_FALLBACK_MODELS = ["zai-org/glm-4.7-flash"] as const;
+// Used once the monthly allowance is spent. The 15 Oct 2026 fallback eval had
+// GLM 4.7 Flash create an unrequested calendar event; Haiku made no unsafe writes.
+export const MANAGED_AI_FALLBACK_MODEL = "anthropic/claude-haiku-5.5";
+// GLM stays billable so usage reported by older installs still reconciles.
+const MANAGED_FALLBACK_MODELS = ["anthropic/claude-haiku-5.5", "zai-org/glm-4.7-flash"] as const;
 const MANAGED_BILLABLE_TEXT_MODELS = [...new Set<string>([
   ...MANAGED_MODELS,
   ...MANAGED_FALLBACK_MODELS,
