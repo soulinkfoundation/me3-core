@@ -226,9 +226,15 @@ describe("new agent managed billing boundary", () => {
     await executeNewAgentTurn(env, input, new AbortController().signal);
     expect(models).toEqual([fallback]);
   });
-  it("fails closed before a later model call if hosted eligibility is revoked", async () => {
+  it("lets trial and App Store owners without Stripe overages use the included allowance", async () => {
+    const policy = { ...settings(), eligible: false, ineligibleReason: "An active Stripe-managed subscription is required for AI overages", billingSource: null };
+    const { env, models } = fixture(policy);
+    expect(await executeNewAgentTurn(env, input, new AbortController().signal)).toMatchObject({ status: "complete" });
+    expect(models).toEqual(["openai/gpt-5.5"]);
+  });
+  it("fails closed before a later model call if hosted availability is revoked", async () => {
     fixtureTools.value = [{ name: "fixture_read", description: "Read synthetic", parameters: { type: "object" }, effect: "read", approval: "none", async execute() { return { status: "ok" }; } }];
-    const policy = settings(); const { env, models } = fixture(policy, (model, index) => { if (index === 0) { policy.eligible = false; policy.ineligibleReason = "Synthetic policy revoked"; } return completion(model, true); });
+    const policy = settings(); const { env, models } = fixture(policy, (model, index) => { if (index === 0) { policy.available = false; policy.ineligibleReason = "Synthetic policy revoked"; } return completion(model, true); });
     expect(await executeNewAgentTurn(env, input, new AbortController().signal)).toMatchObject({ status: "failed", replyText: expect.stringContaining("Synthetic policy revoked") });
     expect(models).toEqual(["openai/gpt-5.5"]);
   });

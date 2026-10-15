@@ -54,7 +54,10 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const enabledPluginIds=new Set(plugins.filter(plugin=>plugin.enabled&&plugin.status==="installed").map(plugin=>plugin.id));
     const settings=await getAiSettings(env,input.userId);
     const managed=isManagedRuntime(env)?await getManagedAiBillingSettings(env):null;
-    if(managed&&!managed.eligible)throw new Error(managed.ineligibleReason||"Managed AI is unavailable");
+    // `eligible` only says whether paid Stripe overages can be enabled. Trial,
+    // App Store and complimentary owners use the included allowance, and
+    // effectiveMaximumCents plus the fallback model still cap every owner's spend.
+    if(managed&&!managed.available)throw new Error(managed.ineligibleReason||"Managed AI is unavailable");
     const route=settings.defaults.chat;
     const modelName=input.selectedModel?providerModel(input.selectedModel.providerId,input.selectedModel.model):managed?.defaultModel||providerModel(route.providerId,route.model);
     if(managed){await assertManagedCostsReconciled(env,input.userId,true);resolveManagedModel(managed,modelName);}
@@ -162,7 +165,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
         step.signal.throwIfAborted();
         if(managed){
           const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
-          if(!policy.available||!policy.eligible||policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)throw new Error("Shadow inference unavailable under managed policy");
+          if(!policy.available||policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)throw new Error("Shadow inference unavailable under managed policy");
         }
         const count=managed?await managedUsageReportCount(env,input.userId,input.turnId):0;
         step.signal.throwIfAborted();
@@ -200,7 +203,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
         routingReceipt=undefined;
         if(managed){
           const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
-          if(!policy.available||!policy.eligible||policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)throw new Error("Routing unavailable under managed policy");
+          if(!policy.available||policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)throw new Error("Routing unavailable under managed policy");
         }
         const count=managed?await managedUsageReportCount(env,input.userId,input.turnId):0;
         routingReceipt=await admitModel(selected,count,{purpose:"fast_path",shadow:{stage:"routing",argumentMode:"route",sampleRate:1}},true);
@@ -282,7 +285,7 @@ async function assertManagedCostsReconciled(env:Env,ownerId:string,requireReport
   if(pending)throw new Error(`Managed AI ${pending.costKnown===0?"cost":"usage"} is awaiting reconciliation before another model call`);
 }
 function resolveManagedModel(policy:ManagedAiBillingSettings,requested:string):string {
-  if(!policy.available||!policy.eligible)throw new Error(policy.ineligibleReason||"Managed AI is unavailable");
+  if(!policy.available)throw new Error(policy.ineligibleReason||"Managed AI is unavailable");
   if(!policy.models.some(model=>managedModelId(model.id)===managedModelId(requested)))throw new Error("Selected model is not permitted by this installation's managed policy");
   if(policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)return MANAGED_AI_FALLBACK_MODEL;
   return canonicalNativeModel(requested);

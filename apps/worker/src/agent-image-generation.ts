@@ -47,7 +47,7 @@ async function managedAdmission(env: Env, ownerId: string, signal: AbortSignal):
     AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'`).bind(ownerId).first<{ count: number }>();
   const policy = await getManagedAiBillingSettings(env, { syncUsage: false });
   signal.throwIfAborted();
-  if (!policy.available || !policy.eligible || policy.fallbackActive || policy.currentMonthUsageMicrousd >= policy.effectiveMaximumCents * 10_000) throw new Error(policy.ineligibleReason || "Managed image generation is unavailable at the current budget");
+  if (!policy.available || policy.fallbackActive || policy.currentMonthUsageMicrousd >= policy.effectiveMaximumCents * 10_000) throw new Error(policy.ineligibleReason || "Managed image generation is unavailable at the current budget");
   return snapshot?.count || 0;
 }
 
