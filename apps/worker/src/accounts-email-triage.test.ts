@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA, triageInboundInvoiceEmail } from "./accounts-email-triage";
+import { MAIL_TRIAGE_SCHEMA, retryPendingMailTriage } from "./mailbox-triage";
 import { deliverInboundEmail, handleInboundEmail, type ForwardableEmailMessageLike } from "./mailbox-inbound";
 import { registerAccountsRoutes } from "./routes/accounts";
 import type { AppHono, OwnerRouteDeps } from "./http/types";
@@ -21,7 +22,7 @@ function fixture() {
   for (const name of ["0021_managed_email_inbound_deliveries", "0048_mailbox_attachment_staging"]) {
     raw.exec(readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), "utf8"));
   }
-  for (const sql of ACCOUNTS_EMAIL_TRIAGE_SCHEMA) raw.exec(sql);
+  for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...MAIL_TRIAGE_SCHEMA]) raw.exec(sql);
   raw.exec(`INSERT INTO owner_profile(id) VALUES('owner'),('other');
     INSERT INTO mailbox_aliases(id,user_id,alias_local_part,forwarding_email,status) VALUES('mailbox','owner','owner','','active');
     INSERT INTO plugin_installations(plugin_id,version,enabled,status) VALUES('me3.accounts','0.1.0',1,'installed');`);
@@ -37,7 +38,7 @@ function fixture() {
       },
     }; return statement;
   };
-  const env = { DB: { prepare, async batch(statements: ReturnType<typeof prepare>[]) { for (const statement of statements) await statement.run(); } } } as unknown as Env;
+  const env = { ME3_MAIL_AVATARS: "off", DB: { prepare, async batch(statements: ReturnType<typeof prepare>[]) { for (const statement of statements) await statement.run(); } } } as unknown as Env;
   vi.spyOn(console, "error").mockImplementation(() => {});
   const entries = () => raw.prepare("SELECT * FROM financial_entries").all();
   return { raw, env, state, entries };
@@ -119,13 +120,17 @@ describe("Accounts invoice hook on the agent mailbox with real SQLite", () => {
     expect(f.entries()).toEqual([expect.objectContaining({ status, entry_type: entryType })]);
   });
 
-  it("retries a ledger failure on a managed duplicate without losing the saved email", async () => {
+  it("keeps the saved email on a ledger failure and files the receipt on the triage retry", async () => {
     const f = fixture(); f.state.failLedger = true;
-    expect((await deliverInboundEmail(mail(), f.env, { managedDelivery })).status).toBe("unavailable");
+    expect((await deliverInboundEmail(mail(), f.env, { managedDelivery })).status).toBe("accepted");
     expect(f.raw.prepare("SELECT id FROM mailbox_messages").all()).toHaveLength(1);
+    expect(f.raw.prepare("SELECT status FROM mailbox_triage").get()).toEqual({ status: "failed" });
+    expect(f.entries()).toHaveLength(0);
     f.state.failLedger = false;
     expect((await deliverInboundEmail(mail(), f.env, { managedDelivery })).status).toBe("duplicate");
+    await retryPendingMailTriage(f.env, { olderThanMs: 0 });
     expect(f.entries()).toHaveLength(1);
+    expect(f.raw.prepare("SELECT status, handled_kind FROM mailbox_triage").get()).toEqual({ status: "done", handled_kind: "receipt" });
   });
 
   it("saves an owner-scoped toggle through the authenticated Accounts route", async () => {

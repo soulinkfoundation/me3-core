@@ -2,7 +2,7 @@ import { stageMailboxAttachmentKeys, finishMailboxAttachmentStaging, cleanMailbo
 import { touchContactInteraction, type AgentMailboxMessage } from "@me3-core/plugin-agent-chat";
 import type { EmailProviderAttachment } from "./email-providers";
 import { publishMailboxMessageReceived } from "./mailbox-events";
-import { triageInboundInvoiceEmail } from "./accounts-email-triage";
+import { enqueueMailTriage } from "./mailbox-triage";
 import { resolveMailboxThreadKey } from "./mailbox-threads";
 import { normalizeEmail, sha256Text } from "./sites";
 import type { DbMailboxAlias, Env } from "./types";
@@ -44,6 +44,8 @@ export type InboundEmailDeliveryOptions = {
   providerDeliveryId?: string | null;
   recipient?: string | null;
   allowNativeForwarding?: boolean;
+  /** Lets triage (receipts, the Brief) finish after the inbound handler returns. */
+  waitUntil?: (work: Promise<unknown>) => void;
   managedDelivery?: {
     deliveryId: string;
     managedInstallationId: string;
@@ -97,8 +99,9 @@ type MailboxUnsubscribeAction =
 export async function handleInboundEmail(
   message: ForwardableEmailMessageLike,
   env: Env,
+  options: Pick<InboundEmailDeliveryOptions, "waitUntil"> = {},
 ): Promise<void> {
-  const result = await deliverInboundEmail(message, env);
+  const result = await deliverInboundEmail(message, env, options);
   if (result.status !== "accepted" && result.status !== "duplicate" && result.status !== "forwarded") {
     message.setReject(result.reason);
   }
@@ -121,7 +124,7 @@ export async function deliverInboundEmail(
           reason: "Delivery ID was already used for different message content.",
         };
       }
-      await triageInboundInvoiceEmail(env, existingDelivery.mailbox_id, existingDelivery.mailbox_message_id);
+      await enqueueMailTriage(env, { mailboxId: existingDelivery.mailbox_id, messageId: existingDelivery.mailbox_message_id }, { waitUntil: options.waitUntil });
       return {
         status: "duplicate",
         mailboxId: existingDelivery.mailbox_id,
@@ -234,7 +237,7 @@ export async function deliverInboundEmail(
       } catch (error) {
         const racedDelivery = await getManagedInboundDelivery(env, delivery.deliveryId);
         if (racedDelivery && managedInboundDeliveryMatches(racedDelivery, delivery)) {
-          await triageInboundInvoiceEmail(env, racedDelivery.mailbox_id, racedDelivery.mailbox_message_id);
+          await enqueueMailTriage(env, { mailboxId: racedDelivery.mailbox_id, messageId: racedDelivery.mailbox_message_id }, { waitUntil: options.waitUntil });
           return {
             status: "duplicate",
             mailboxId: racedDelivery.mailbox_id,
@@ -259,7 +262,8 @@ export async function deliverInboundEmail(
       messageId: rowId,
       receivedAt: now,
     });
-    await triageInboundInvoiceEmail(env, mailbox.id, rowId);
+    // One triage pass per message: owner rules, receipts and other signals first, then a small model call.
+    await enqueueMailTriage(env, { mailboxId: mailbox.id, messageId: rowId }, { waitUntil: options.waitUntil });
 
     if (
       options.allowNativeForwarding !== false &&

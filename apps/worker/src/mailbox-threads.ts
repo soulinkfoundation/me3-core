@@ -347,7 +347,7 @@ function compactSnippet(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 280);
 }
 
-function mailboxCanonicalThreadKeySql(alias: string): string {
+export function mailboxCanonicalThreadKeySql(alias: string): string {
   const metadata = `${alias}.metadata_json`;
   const headers = `${alias}.raw_headers_json`;
   const replyReference = `COALESCE(

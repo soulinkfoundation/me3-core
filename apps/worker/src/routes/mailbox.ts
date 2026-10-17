@@ -34,6 +34,24 @@ import {
   type StoredMailboxAttachment,
 } from "../mailbox-inbound";
 import { subscribeToMailboxEvents } from "../mailbox-events";
+import {
+  assistMailboxDraft,
+  createMailboxRule,
+  deleteMailboxRule,
+  draftBriefReply,
+  getMailboxBrief,
+  listMailboxRules,
+  resolveBriefItem,
+  resolveMailboxTriageForDraft,
+  snoozeBriefItem,
+  undoHandledAction,
+} from "../mailbox-brief";
+import {
+  decorateMailboxMessages,
+  decorateMailboxThreads,
+  readSenderAvatar,
+  verifySenderAvatarSignature,
+} from "../mailbox-sender-identity";
 export {
   handleInboundEmail,
   type ForwardableEmailMessageLike,
@@ -66,12 +84,24 @@ type MailboxRouteDeps = {
   unauthorized(c: AppContext): Response;
 };
 
+function backgroundWork(c: AppContext): ((work: Promise<unknown>) => void) | undefined {
+  try {
+    const ctx = c.executionCtx;
+    return (work) => ctx.waitUntil(work);
+  } catch {
+    return undefined;
+  }
+}
+
 export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
   const { requireOwner, unauthorized } = deps;
 
   app.post(MANAGED_EMAIL_INBOUND_PATH, (c) =>
-    receiveManagedEmailInbound(c.req.raw, c.env),
+    receiveManagedEmailInbound(c.req.raw, c.env, { waitUntil: backgroundWork(c) }),
   );
+
+  /** Absolute URLs for signed sender avatars so native clients can load them directly. */
+  const apiOrigin = (c: AppContext) => new URL(c.req.url).origin;
 
   const deliveryUnknownResponse = async (
     c: AppContext,
@@ -163,7 +193,10 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
         sentAt: result.sentAt,
         approvedByUserId: ownerId,
       });
-      if (!("error" in sent)) return c.json(sent);
+      if (!("error" in sent)) {
+        await resolveMailboxTriageForDraft(c.env, ownerId, draftId);
+        return c.json(sent);
+      }
     } catch {
       // The provider accepted the message and its sent audit is durable. Reconcile below.
     }
@@ -255,7 +288,7 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     const ownerId = await requireOwner(c);
     if (!ownerId) return unauthorized(c);
 
-    return c.json(await listAgentMailboxMessages(c.env, ownerId, {
+    const result = await listAgentMailboxMessages(c.env, ownerId, {
       limit: c.req.query("limit"),
       offset: c.req.query("offset"),
       status: c.req.query("status") || "",
@@ -264,7 +297,107 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
       folder: c.req.query("folder") || "",
       query: c.req.query("q") || "",
       unread: c.req.query("unread") || "",
-    }));
+    });
+    return c.json({
+      ...result,
+      messages: await decorateMailboxMessages(c.env, ownerId, result.messages, apiOrigin(c)),
+    });
+  });
+
+  // --- The Brief: what needs the owner, what ME3 handled, what is left. ---
+
+  app.get("/api/mailbox/brief", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    return c.json(await getMailboxBrief(c.env, ownerId, { apiOrigin: apiOrigin(c) }));
+  });
+
+  app.post("/api/mailbox/brief/:messageId/snooze", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const body = await c.req.json<{ until?: string | null }>().catch((): { until?: string | null } => ({}));
+    const result = await snoozeBriefItem(c.env, ownerId, c.req.param("messageId"), body.until);
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
+  });
+
+  app.post("/api/mailbox/brief/:messageId/done", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const result = await resolveBriefItem(c.env, ownerId, c.req.param("messageId"));
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
+  });
+
+  app.post("/api/mailbox/brief/:messageId/draft", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const body = await c.req.json<{ intent?: string }>().catch((): { intent?: string } => ({}));
+    try {
+      const result = await draftBriefReply(c.env, ownerId, c.req.param("messageId"), { intent: body.intent });
+      if ("error" in result) return c.json({ error: result.error }, result.status as any);
+      return c.json(result, 201);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "ME3 could not write a reply this time." }, 502);
+    }
+  });
+
+  app.post("/api/mailbox/handled/:actionId/undo", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const result = await undoHandledAction(c.env, ownerId, c.req.param("actionId"));
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
+  });
+
+  app.get("/api/mailbox/rules", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    return c.json(await listMailboxRules(c.env, ownerId));
+  });
+
+  app.post("/api/mailbox/rules", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const body = await c.req.json<Record<string, unknown>>().catch((): Record<string, unknown> => ({}));
+    const result = await createMailboxRule(c.env, ownerId, body);
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result, 201);
+  });
+
+  app.delete("/api/mailbox/rules/:ruleId", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const result = await deleteMailboxRule(c.env, ownerId, c.req.param("ruleId"));
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
+  });
+
+  // Signed and cacheable: the Worker fetched the logo once, so clients never contact the sender.
+  app.get("/api/mailbox/sender-avatars/:domain", async (c) => {
+    const domain = c.req.param("domain").toLowerCase();
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain) || !(await verifySenderAvatarSignature(c.env, domain, c.req.query("sig")))) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    const avatar = await readSenderAvatar(c.env, domain);
+    if (!avatar) return c.json({ error: "Not found" }, 404);
+    return new Response(avatar.body, {
+      headers: {
+        "Content-Type": avatar.contentType,
+        "Cache-Control": "public, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+      },
+    });
+  });
+
+  app.post("/api/mailbox/drafts/assist", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const body = await c.req.json<Record<string, unknown>>().catch((): Record<string, unknown> => ({}));
+    const result = await assistMailboxDraft(c.env, ownerId, body);
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
   });
 
   app.get("/api/mailbox/threads", async (c) => {
@@ -278,7 +411,10 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
       cursor: c.req.query("cursor"),
     });
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
-    return c.json(result);
+    return c.json({
+      ...result,
+      threads: await decorateMailboxThreads(c.env, ownerId, result.threads, apiOrigin(c)),
+    });
   });
 
   app.get("/api/mailbox/threads/:threadId", async (c) => {
@@ -290,7 +426,7 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
     return c.json({
       thread: summarizeMailboxThread(threadId, result.messages),
-      messages: result.messages,
+      messages: await decorateMailboxMessages(c.env, ownerId, result.messages, apiOrigin(c)),
     });
   });
 
@@ -333,7 +469,8 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
 
     const result = await getAgentMailboxMessage(c.env, ownerId, c.req.param("messageId"));
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
-    return c.json(result);
+    const [message] = await decorateMailboxMessages(c.env, ownerId, [result.message], apiOrigin(c));
+    return c.json({ message });
   });
 
   app.get("/api/mailbox/messages/:messageId/attachments/:attachmentIndex", async (c) => {

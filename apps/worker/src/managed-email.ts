@@ -58,6 +58,7 @@ type ManagedEmailRuntimeIdentity = {
 export async function receiveManagedEmailInbound(
   request: Request,
   env: Env,
+  options: { waitUntil?: (work: Promise<unknown>) => void } = {},
 ): Promise<Response> {
   if (!isManagedEmailDeployment(env)) {
     return jsonResponse({ error: "not_found" }, 404);
@@ -144,6 +145,7 @@ export async function receiveManagedEmailInbound(
       providerDeliveryId: deliveryId,
       recipient,
       allowNativeForwarding: false,
+      waitUntil: options.waitUntil,
       managedDelivery: {
         deliveryId,
         managedInstallationId: identity.managedInstallationId,

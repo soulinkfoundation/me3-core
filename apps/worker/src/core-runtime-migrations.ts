@@ -10,6 +10,7 @@ import { QUOTE_BOOKMARKS_SCHEMA } from "./quote-bookmarks-schema";
 import { GRATITUDE_SETTINGS_SCHEMA, CARD_REMINDERS_SCHEMA } from "./gratitude-schema";
 import { HOME_LAYOUT_SCHEMA } from "./home-layout";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
+import { MAIL_TRIAGE_SCHEMA } from "./mailbox-triage";
 import type { Env } from "./types";
 
 type RuntimeMigration = {
@@ -557,6 +558,14 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-17-home-layout-v1",
     async apply(db) {
       await db.batch(HOME_LAYOUT_SCHEMA.map(sql => db.prepare(sql)));
+    },
+  },
+  // Agent-first Email: triage records, the handled log, owner rules and sender avatars.
+  {
+    id: "0072_mailbox_triage",
+    checksum: "2026-10-17-mailbox-triage-v1",
+    async apply(db) {
+      await db.batch(MAIL_TRIAGE_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];

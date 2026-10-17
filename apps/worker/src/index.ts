@@ -5,6 +5,7 @@ import { dispatchDueCalendarSourceRefreshes } from "./calendar-sources";
 import { dispatchDueCalendarPushNotifications } from "./calendar-push-notifications";
 import { dispatchDueMorningCalendarPushes } from "./morning-calendar-push";
 import { dispatchDueGratitudeReminders } from "./gratitude";
+import { retryPendingMailTriage } from "./mailbox-triage";
 import { retryAgentTurnNotifications } from "./agent-notifications";
 import {
   BOOKING_REMINDER_QUEUE_NAME,
@@ -63,7 +64,9 @@ const worker = {
       return;
     }
     try {
-      return await handleInboundEmail(message, env);
+      return await handleInboundEmail(message, env, {
+        waitUntil: _ctx ? (work) => _ctx.waitUntil(work) : undefined,
+      });
     } finally {
       await releaseManagedRuntimeWriteLease(env, lease);
     }
@@ -79,6 +82,7 @@ const worker = {
       }
       await reconcileProductOrders(env);
       await reconcileMailboxAttachmentStaging(env);
+      await retryPendingMailTriage(env).catch((error) => console.error("Mail triage retry failed", error));
       await dispatchDueMorningCalendarPushes(env);
       await dispatchDueGratitudeReminders(env);
       await dispatchDueCalendarPushNotifications(env);

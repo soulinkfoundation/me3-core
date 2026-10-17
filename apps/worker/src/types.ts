@@ -56,6 +56,8 @@ export interface Env {
   ME3_VOICE_TRANSCRIPTION_PROVIDER?: string;
   ME3_VOICE_TRANSCRIPTION_MODEL?: string;
   ME3_EMAIL_DEFAULT_PROVIDER?: string;
+  /** "off" skips brand avatar fetches for mail senders (tests, air-gapped installs). */
+  ME3_MAIL_AVATARS?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
