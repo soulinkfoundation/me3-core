@@ -15,7 +15,8 @@ import {
   parseMe3Json,
   type Me3CompatibleProfile,
 } from "me3-protocol";
-import { buildPublicMe3Profile } from "./public-me-profile";
+import { AGENT_CHECKOUT_EXTENSION, buildPublicMe3Profile, withoutAgentCheckout } from "./public-me-profile";
+import { getAgentCheckoutEnabled } from "./agent-commerce-store";
 import type { DbSite, Env, OwnerProfile } from "./types";
 
 const ME3_CLOUD_OWNER_SECRET_NAME = "ME3_CLOUD_OWNER_ID";
@@ -582,10 +583,21 @@ async function siteMeJsonResponse(env: Env, requestedSite: DbSite, origin: strin
   const storedPublic = await getSiteFileText(env, site.id, "public/me.json");
   if (site.published_at && storedPublic) {
     const parsed = parseMe3Json(storedPublic);
-    if (parsed.valid && parsed.profile) return publicMeJsonResponse({
-      ...parsed.profile,
-      ...(canonicalBase ? { id: `${canonicalBase}/me.json`, url: `${canonicalBase}/` } : {}),
-    });
+    if (parsed.valid && parsed.profile) {
+      let profile = parsed.profile;
+      // The owner's agent checkout switch applies without a republish.
+      if (
+        "visibility" in profile && profile.visibility === "public" &&
+        profile.extensions?.[AGENT_CHECKOUT_EXTENSION] &&
+        !(await getAgentCheckoutEnabled(env, site.user_id))
+      ) {
+        profile = withoutAgentCheckout(profile);
+      }
+      return publicMeJsonResponse({
+        ...profile,
+        ...(canonicalBase ? { id: `${canonicalBase}/me.json`, url: `${canonicalBase}/` } : {}),
+      });
+    }
   }
 
   const legacySource = await getSiteFileText(env, site.id, "src/me.json");

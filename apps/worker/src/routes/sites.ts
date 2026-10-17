@@ -10,7 +10,9 @@ import {
 } from "@me3-core/plugin-landing-pages";
 import { isCorePluginEnabled } from "../plugins";
 import { generateSiteHtml, markdownToHtml, type Me3SiteProfile } from "@me3-core/site-renderer";
+import type { Me3Profile } from "me3-protocol";
 import { buildPublicMe3Profile } from "../public-me-profile";
+import { applyAgentCheckoutSetting, resolveAgentCheckoutPublication } from "../agent-commerce";
 import {
   removePublishedProfileFromSoulinkDirectory,
   syncPublishedProfileToSoulinkDirectory,
@@ -1386,7 +1388,12 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
               Array.from(sourceFiles.entries()).map(([name, content]) => ({ name, content })),
               undefined, { baseUrl: await getPublishedSiteBaseUrl(c.env, site), images: await getSiteImageMetadata(c.env, site, [...sourceFiles.values()]) },
             );
-        networkProfile = buildPublicMe3Profile(profile, await getPublishedSiteBaseUrl(c.env, site));
+        const publishedBaseUrl = await getPublishedSiteBaseUrl(c.env, site);
+        networkProfile = buildPublicMe3Profile(profile, publishedBaseUrl, {
+          agentCheckout: isPrivateProfile
+            ? null
+            : await resolveAgentCheckoutPublication(c.env, site, profile, publishedBaseUrl),
+        });
         generatedFiles["me.json"] = JSON.stringify(networkProfile, null, 2);
         for (const [name, content] of Object.entries(generatedFiles)) {
           await putSiteFile(
@@ -2086,9 +2093,12 @@ function queueNetworkDirectoryProfileSync(c: AppContext, site: DbSite, profile: 
     return;
   }
   executionCtx.waitUntil(
-    syncPublishedProfileToSoulinkDirectory(c.env, profile).catch((error) => {
-      console.error("Failed to sync the published profile to Soulink:", error);
-    }),
+    // The directory sees what /me.json serves, including the agent checkout switch.
+    applyAgentCheckoutSetting(c.env, site.user_id, profile as Me3Profile)
+      .then((served) => syncPublishedProfileToSoulinkDirectory(c.env, served))
+      .catch((error) => {
+        console.error("Failed to sync the published profile to Soulink:", error);
+      }),
   );
 }
 

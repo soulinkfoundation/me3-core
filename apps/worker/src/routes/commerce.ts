@@ -14,8 +14,12 @@ import {
   ManagedCommerceBridgeError,
 } from "../commerce-bridge";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
-import type { Env } from "../types";
+import type { DbSite, Env } from "../types";
 import { requestCountry } from "../../../../shared/regional-pricing";
+import { parseMe3Json, type Me3Profile } from "me3-protocol";
+import { applyAgentCheckoutSetting } from "../agent-commerce";
+import { syncPublishedProfileToSoulinkDirectory } from "../network-directory";
+import { getSiteFileText } from "../sites";
 
 type CommerceRouteDeps = OwnerRouteDeps & {
   getCoreWebOrigin(env: Env, requestUrl?: string): string;
@@ -38,7 +42,11 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
 
     const body = await c.req.json().catch(() => ({}));
     try {
-      return c.json(await updateCommerceSettings(c.env, ownerId, body));
+      const settings = await updateCommerceSettings(c.env, ownerId, body);
+      if (body && typeof body === "object" && "agentCheckoutEnabled" in body) {
+        queueAgentCheckoutDirectorySync(c, ownerId);
+      }
+      return c.json(settings);
     } catch (error) {
       return commerceSettingsErrorResponse(c, error);
     }
@@ -123,6 +131,35 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
       throw error;
     }
   });
+}
+
+// The network directory should stop (or resume) advertising agent checkout as
+// soon as the owner flips the switch, not at the next publish.
+function queueAgentCheckoutDirectorySync(c: AppContext, ownerId: string): void {
+  let executionCtx: { waitUntil(promise: Promise<unknown>): void };
+  try {
+    executionCtx = c.executionCtx;
+  } catch {
+    return;
+  }
+  executionCtx.waitUntil(
+    (async () => {
+      const site = await c.env.DB.prepare(
+        `SELECT * FROM sites
+         WHERE user_id = ? AND site_role = 'profile' AND published_at IS NOT NULL
+         ORDER BY created_at ASC LIMIT 1`,
+      )
+        .bind(ownerId)
+        .first<DbSite>();
+      const stored = site ? await getSiteFileText(c.env, site.id, "public/me.json") : null;
+      const parsed = stored ? parseMe3Json(stored) : null;
+      if (!site || !parsed?.valid || !parsed.profile) return;
+      await syncPublishedProfileToSoulinkDirectory(
+        c.env,
+        await applyAgentCheckoutSetting(c.env, ownerId, parsed.profile as Me3Profile),
+      );
+    })().catch((error) => console.error("Failed to sync agent checkout to the directory:", error)),
+  );
 }
 
 function commerceSettingsErrorResponse(c: AppContext, error: unknown) {

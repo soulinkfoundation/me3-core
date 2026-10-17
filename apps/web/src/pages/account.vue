@@ -1982,6 +1982,29 @@ async function saveCommerceSettings() {
   }
 }
 
+async function onAgentCheckoutChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  if (commerceSaving.value) return;
+  commerceSaving.value = true;
+  try {
+    const response = await api.put<CommerceSettingsResponse>(
+      "/commerce/settings",
+      { agentCheckoutEnabled: input.checked },
+    );
+    if (commerceSettings.value) {
+      commerceSettings.value = { ...commerceSettings.value, agentCheckout: response.agentCheckout };
+    }
+    toastSuccess(response.agentCheckout.enabled
+      ? "AI agents can now book and buy from your site."
+      : "Agent checkout is off. Agents will send people to your site.");
+  } catch (error) {
+    input.checked = !input.checked;
+    toastFromUnknown(error, "Failed to change agent checkout.");
+  } finally {
+    commerceSaving.value = false;
+  }
+}
+
 async function clearCommerceStripeKey() {
   commerceSaving.value = true;
   commerceError.value = null;
@@ -4070,6 +4093,23 @@ onBeforeUnmount(() => {
                   >
                     Remove stored key
                   </Button>
+                </div>
+
+                <div v-if="commerceSettings?.agentCheckout" class="agent-checkout-setting">
+                  <label class="checkbox-row">
+                    <input
+                      type="checkbox"
+                      :checked="commerceSettings.agentCheckout.enabled"
+                      :disabled="commerceSaving"
+                      @change="onAgentCheckoutChange"
+                    />
+                    <span>Let AI agents book and buy</span>
+                  </label>
+                  <p class="field-hint">
+                    Assistants can check your live prices and times and start a
+                    checkout that their person pays for. When this is off, your
+                    offerings stay listed and agents send people to your site.
+                  </p>
                 </div>
 
                 <p v-if="commerceError" class="error">{{ commerceError }}</p>
@@ -6607,6 +6647,7 @@ h1 {
     color: #c8e6c9;
   }
 }
+.agent-checkout-setting { margin-top: 16px; }
 .agent-payments-link { display: flex; flex-direction: column; gap: 2px; margin-bottom: 16px; padding: 12px 14px; border-radius: var(--ui-radius-md); background: var(--ui-surface-muted); color: var(--ui-text); font-weight: 600; text-decoration: none; }
 .agent-payments-link small { color: var(--ui-text-muted); font-size: 13px; font-weight: 400; }
 </style>

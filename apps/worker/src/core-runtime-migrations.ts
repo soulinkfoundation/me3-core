@@ -13,6 +13,7 @@ import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { AGENT_PAYMENTS_SCHEMA } from "./agent-payments";
 import { AGENT_COMPUTER_SCHEMA } from "./agent-computer";
+import { AGENT_COMMERCE_SCHEMA } from "./agent-commerce-store";
 import { MAIL_TRIAGE_SCHEMA } from "./mailbox-triage";
 import type { Env } from "./types";
 
@@ -593,6 +594,14 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-17-agent-computer-v1",
     async apply(db) {
       await db.batch(AGENT_COMPUTER_SCHEMA.map(sql => db.prepare(sql)));
+    },
+  },
+  // Agent commerce: seller checkouts for buying agents, their rate limits and the owner switch.
+  {
+    id: "0076_agent_commerce",
+    checksum: "2026-10-17-agent-commerce-v1",
+    async apply(db) {
+      await db.batch(AGENT_COMMERCE_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];

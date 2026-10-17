@@ -240,6 +240,13 @@ export function resolveOneToOneBookingOffer(
 export function listOneToOneBookingOffers(
   book: CoreBookIntent,
 ): ResolvedOneToOneBookingOffer[] {
+  return listOneToOneBookingSources(book).map((entry) => entry.offer);
+}
+
+/** Resolved one-to-one offers with the published offer each came from. */
+export function listOneToOneBookingSources(
+  book: CoreBookIntent,
+): Array<{ source: CoreBookingOffer; offer: ResolvedOneToOneBookingOffer }> {
   const oneToOneType = Array.isArray(book.bookingTypes)
     ? book.bookingTypes.find((type) => type?.type === "one_to_one")
     : null;
@@ -258,7 +265,7 @@ export function listOneToOneBookingOffers(
             },
           ];
 
-  return rawOffers.map((offer) => {
+  return rawOffers.map((offer: CoreBookingOffer) => {
     const duration =
       typeof offer.duration === "number" && Number.isFinite(offer.duration)
         ? Math.max(15, Math.min(24 * 60, Math.round(offer.duration)))
@@ -267,16 +274,19 @@ export function listOneToOneBookingOffers(
         : 30;
 
     return {
-      id: offer.id || slugifyBookingOfferId(offer.title || "book-session") || "book-session",
-      title: offer.title || book.title || "Book a session",
-      ...(offer.description ? { description: offer.description } : {}),
-      duration,
-      pricing: offer.pricing,
-      meetingProvider: offer.meetingProvider,
-      meetingUrl: offer.meetingUrl,
-      availability: offer.availability?.windows
-        ? { timezone: availability.timezone, windows: offer.availability.windows }
-        : availability,
+      source: offer,
+      offer: {
+        id: offer.id || slugifyBookingOfferId(offer.title || "book-session") || "book-session",
+        title: offer.title || book.title || "Book a session",
+        ...(offer.description ? { description: offer.description } : {}),
+        duration,
+        pricing: offer.pricing,
+        meetingProvider: offer.meetingProvider,
+        meetingUrl: offer.meetingUrl,
+        availability: offer.availability?.windows
+          ? { timezone: availability.timezone, windows: offer.availability.windows }
+          : availability,
+      },
     };
   });
 }
@@ -468,6 +478,15 @@ export function formatUtcInstantInTimeZone(
   }
 }
 
+export type AvailableBookingSlot = {
+  slotStart: string;
+  slotEnd: string;
+  startsAt: string;
+  endsAt: string;
+  localDate: string;
+  localTime: string;
+};
+
 export async function generateAvailableBookingSlots(
   env: Env,
   input: {
@@ -476,77 +495,107 @@ export async function generateAvailableBookingSlots(
     localDate: string;
     timezone: string;
   },
-): Promise<
-  Array<{
-    slotStart: string;
-    slotEnd: string;
-    startsAt: string;
-    endsAt: string;
-    localDate: string;
-    localTime: string;
-  }>
-> {
+): Promise<AvailableBookingSlot[]> {
+  return listAvailableBookingSlots(env, {
+    siteId: input.siteId,
+    offer: input.offer,
+    localDates: [input.localDate],
+    timezone: input.timezone,
+  });
+}
+
+// Busy bookings and holds for the whole range load in two queries, so a
+// multi-day lookup costs the same as a single day.
+export async function listAvailableBookingSlots(
+  env: Env,
+  input: {
+    siteId: string;
+    offer: ResolvedOneToOneBookingOffer;
+    localDates: string[];
+    timezone: string;
+  },
+): Promise<AvailableBookingSlot[]> {
   const windows = input.offer.availability.windows || {};
-  const weekday = weekdayForDate(input.localDate);
-  if (!weekday) return [];
-  const dayWindows = Array.isArray(windows[weekday]) ? windows[weekday] : [];
-  const slots: Array<{
-    slotStart: string;
-    slotEnd: string;
-    startsAt: string;
-    endsAt: string;
-    localDate: string;
-    localTime: string;
-  }> = [];
+  const candidates: AvailableBookingSlot[] = [];
 
-  for (const window of dayWindows) {
-    const [windowStart, windowEnd] = String(window).split("-").map((part) => part.trim());
-    const windowStartMinutes = timeToMinutes(windowStart);
-    const windowEndMinutes = timeToMinutes(windowEnd);
-    if (windowStartMinutes === null || windowEndMinutes === null) continue;
+  for (const localDate of input.localDates) {
+    const weekday = weekdayForDate(localDate);
+    if (!weekday) continue;
+    const dayWindows = Array.isArray(windows[weekday]) ? windows[weekday] : [];
+    for (const window of dayWindows) {
+      const [windowStart, windowEnd] = String(window).split("-").map((part) => part.trim());
+      const windowStartMinutes = timeToMinutes(windowStart);
+      const windowEndMinutes = timeToMinutes(windowEnd);
+      if (windowStartMinutes === null || windowEndMinutes === null) continue;
 
-    for (
-      let startMinutes = windowStartMinutes;
-      startMinutes + input.offer.duration <= windowEndMinutes;
-      startMinutes += 15
-    ) {
-      const localTime = minutesToTime(startMinutes);
-      const slot = resolveBookingSlot({
-        localDate: input.localDate,
-        localTime,
-        durationMinutes: input.offer.duration,
-        timezone: input.timezone,
-      });
-      if (!slot || slot.startsAtMs <= Date.now() + 5 * 60_000) continue;
-
-      const overlap = await findConfirmedBookingOverlap(env, {
-        siteId: input.siteId,
-        offerId: input.offer.id,
-        startsAt: slot.startsAt,
-        endsAt: slot.endsAt,
-      });
-      if (overlap) continue;
-
-      const activeHold = await findActiveBookingHoldOverlap(env, {
-        siteId: input.siteId,
-        offerId: input.offer.id,
-        startsAt: slot.startsAt,
-        endsAt: slot.endsAt,
-      });
-      if (activeHold) continue;
-
-      slots.push({
-        slotStart: slot.startsAt,
-        slotEnd: slot.endsAt,
-        startsAt: slot.startsAt,
-        endsAt: slot.endsAt,
-        localDate: input.localDate,
-        localTime,
-      });
+      for (
+        let startMinutes = windowStartMinutes;
+        startMinutes + input.offer.duration <= windowEndMinutes;
+        startMinutes += 15
+      ) {
+        const localTime = minutesToTime(startMinutes);
+        const slot = resolveBookingSlot({
+          localDate,
+          localTime,
+          durationMinutes: input.offer.duration,
+          timezone: input.timezone,
+        });
+        if (!slot || slot.startsAtMs <= Date.now() + 5 * 60_000) continue;
+        candidates.push({
+          slotStart: slot.startsAt,
+          slotEnd: slot.endsAt,
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+          localDate,
+          localTime,
+        });
+      }
     }
   }
+  if (candidates.length === 0) return [];
 
-  return slots;
+  const busy = await listBusyOneToOneIntervals(env, {
+    siteId: input.siteId,
+    offerId: input.offer.id,
+    startsAt: candidates.reduce((min, slot) => (slot.startsAt < min ? slot.startsAt : min), candidates[0].startsAt),
+    endsAt: candidates.reduce((max, slot) => (slot.endsAt > max ? slot.endsAt : max), candidates[0].endsAt),
+  });
+  return candidates.filter(
+    (slot) => !busy.some((interval) => interval.busy_start < slot.endsAt && interval.busy_end > slot.startsAt),
+  );
+}
+
+async function listBusyOneToOneIntervals(
+  env: Env,
+  input: { siteId: string; offerId: string; startsAt: string; endsAt: string },
+): Promise<Array<{ busy_start: string; busy_end: string }>> {
+  // Same predicates as findConfirmedBookingOverlap and findActiveBookingHoldOverlap.
+  const [bookings, holds] = await Promise.all([
+    env.DB.prepare(
+      `SELECT starts_at AS busy_start, ends_at AS busy_end
+       FROM bookings
+       WHERE site_id = ?
+         AND status = 'confirmed'
+         AND (booking_type = 'one_to_one' OR (? IS NULL OR offer_id = ?))
+         AND starts_at < ?
+         AND ends_at > ?`,
+    )
+      .bind(input.siteId, input.offerId, input.offerId, input.endsAt, input.startsAt)
+      .all<{ busy_start: string; busy_end: string }>(),
+    env.DB.prepare(
+      `SELECT slot_start AS busy_start, slot_end AS busy_end
+       FROM booking_holds
+       WHERE site_id = ?
+         AND status = 'active'
+         AND datetime(expires_at) > datetime('now')
+         AND (booking_type = 'one_to_one' OR (? IS NULL OR offer_id = ?))
+         AND slot_start < ?
+         AND slot_end > ?`,
+    )
+      .bind(input.siteId, input.offerId, input.offerId, input.endsAt, input.startsAt)
+      .all<{ busy_start: string; busy_end: string }>(),
+  ]);
+  return [...(bookings.results || []), ...(holds.results || [])];
 }
 
 export function minutesToTime(minutes: number): string {
@@ -751,7 +800,7 @@ export async function findActiveBookingHoldOverlap(
        FROM booking_holds
        WHERE site_id = ?
          AND status = 'active'
-         AND expires_at > datetime('now')
+         AND datetime(expires_at) > datetime('now')
          AND (booking_type = 'one_to_one' OR (? IS NULL OR offer_id = ?))
          AND slot_start < ?
          AND slot_end > ?
@@ -773,14 +822,16 @@ export async function findActiveBookingHoldByToken(
        FROM booking_holds
        WHERE hold_token = ?
          AND status = 'active'
-         AND expires_at > datetime('now')`,
+         AND datetime(expires_at) > datetime('now')`,
     )
       .bind(holdToken)
       .first<BookingHoldRecord>()) || null
   );
 }
 
-export async function createBookingHold(
+// Atomic variant used by checkout: inserts the hold only while the slot is still
+// free, so two concurrent checkouts cannot both hold the same time.
+export async function claimOneToOneBookingHold(
   env: Env,
   input: {
     siteId: string;
@@ -790,12 +841,22 @@ export async function createBookingHold(
     endsAt: string;
     expiresAt: string;
   },
-): Promise<void> {
-  await env.DB.prepare(
+): Promise<boolean> {
+  const result = await env.DB.prepare(
     `INSERT INTO booking_holds
      (id, site_id, booking_id, offer_id, booking_type, hold_token, slot_start, slot_end,
       status, expires_at, created_at, updated_at)
-     VALUES (?, ?, NULL, ?, 'one_to_one', ?, ?, ?, 'active', ?, datetime('now'), datetime('now'))`,
+     SELECT ?, ?, NULL, ?, 'one_to_one', ?, ?, ?, 'active', ?, datetime('now'), datetime('now')
+     WHERE NOT EXISTS (
+         SELECT 1 FROM booking_holds
+         WHERE site_id = ? AND status = 'active' AND datetime(expires_at) > datetime('now')
+           AND (booking_type = 'one_to_one' OR offer_id = ?)
+           AND slot_start < ? AND slot_end > ?)
+       AND NOT EXISTS (
+         SELECT 1 FROM bookings
+         WHERE site_id = ? AND status = 'confirmed'
+           AND (booking_type = 'one_to_one' OR offer_id = ?)
+           AND starts_at < ? AND ends_at > ?)`,
   )
     .bind(
       crypto.randomUUID(),
@@ -805,8 +866,17 @@ export async function createBookingHold(
       input.startsAt,
       input.endsAt,
       input.expiresAt,
+      input.siteId,
+      input.offerId,
+      input.endsAt,
+      input.startsAt,
+      input.siteId,
+      input.offerId,
+      input.endsAt,
+      input.startsAt,
     )
     .run();
+  return Number(result.meta.changes || 0) > 0;
 }
 
 export async function releaseBookingHold(env: Env, holdToken: string): Promise<void> {

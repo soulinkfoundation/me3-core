@@ -86,6 +86,7 @@ import { authenticateMobileOwner } from "./mobile-pairing";
 import { verifyMe3CloudJwt } from "./me3-cloud-jwt";
 import { registerAccountsRoutes } from "./routes/accounts";
 import { registerAssistantRoutes } from "./routes/assistant";
+import { registerAgentCommerceRoutes } from "./routes/agent-commerce";
 import { registerBookingRoutes } from "./routes/booking";
 import { registerEventBookingRoutes } from "./routes/event-booking";
 import { registerCommerceRoutes } from "./routes/commerce";
@@ -415,8 +416,20 @@ app.use("*", async (c, next) => {
     return c.redirect(requestUrl.toString(), 301);
   }
 
+  const agentCommerce = requestUrl.pathname.startsWith("/api/agent-commerce/");
+  if (agentCommerce && c.req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, ME3-Buyer-Install",
+        "Access-Control-Max-Age": "600",
+      },
+    });
+  }
   await next();
-  if (isPublicMeJsonPath(requestUrl.pathname)) {
+  if (agentCommerce || isPublicMeJsonPath(requestUrl.pathname)) {
     c.res.headers.set("Access-Control-Allow-Origin", "*");
     c.res.headers.delete("Access-Control-Allow-Credentials");
   }
@@ -619,6 +632,7 @@ app.get("/api/core/version", (c) => {
 
 registerBookingRoutes(app, { requireOwner, unauthorized });
 registerEventBookingRoutes(app);
+registerAgentCommerceRoutes(app);
 registerCommerceRoutes(app, { requireOwner, unauthorized, getCoreWebOrigin });
 registerUsernameRoutes(app);
 

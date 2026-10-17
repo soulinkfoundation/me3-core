@@ -38,6 +38,17 @@ function id(value: unknown, prefix = ""): string | undefined {
   return normalized ? `${prefix}${normalized}`.slice(0, 120) : undefined;
 }
 
+/** The `services[].id` me.json publishes for a booking offer, class or retreat. */
+export function publicServiceId(offer: { id?: unknown; title?: unknown }): string | undefined {
+  const sourceId = id(offer.id || offer.title);
+  return sourceId ? `service:${sourceId}` : undefined;
+}
+
+/** The `products[].id` me.json publishes for a product slug. */
+export function publicProductId(slug: unknown): string | undefined {
+  return id(slug, "product:");
+}
+
 function publicAsset(value: unknown): string | undefined {
   const normalized = text(value, 2048);
   return normalized && /^(?:https:\/\/|\.\/|\/)/.test(normalized)
@@ -205,10 +216,9 @@ function bookingServices(profile: Me3SiteProfile): Me3Service[] {
   const services = new Map<string, Me3Service>();
 
   for (const offer of offers) {
-    const sourceId = id(offer.id || offer.title);
+    const serviceId = publicServiceId(offer);
     const title = text(offer.title, 160);
-    if (!sourceId || !title) continue;
-    const serviceId = `service:${sourceId}`;
+    if (!serviceId || !title) continue;
     const price = serviceMoney(offer.pricing);
     services.set(serviceId, {
       id: serviceId,
@@ -246,9 +256,21 @@ function bookingServices(profile: Me3SiteProfile): Me3Service[] {
   return Array.from(services.values());
 }
 
+export const AGENT_CHECKOUT_EXTENSION = "me3.app/agent-checkout";
+export const AGENT_CHECKOUT_OPERATION_ID = "createCheckout";
+
+export type PublicAgentCheckout = {
+  /** HTTPS OpenAPI document for the site's agent commerce API. */
+  specUrl: string;
+  /** Offerings an agent can check out through the API. */
+  offeringIds: string[];
+  holdMinutes: number;
+};
+
 export function buildPublicMe3Profile(
   source: Me3SiteProfile,
   siteOrigin?: string,
+  options: { agentCheckout?: PublicAgentCheckout | null } = {},
 ): Me3Profile {
   const origin = publicOrigin(siteOrigin);
   const profileName = text(source.name, 100) || text(source.handle, 100) || "ME3 owner";
@@ -275,7 +297,7 @@ export function buildPublicMe3Profile(
   const products = (source.products || [])
     .filter((product) => product.slug && product.title)
     .map((product) => ({
-      id: id(product.slug, "product:") || "product:unknown",
+      id: publicProductId(product.slug) || "product:unknown",
       title: text(product.title, 160) || product.slug || "Product",
       ...(text(product.excerpt, 1000) ? { description: text(product.excerpt, 1000) } : {}),
       url: `./${sectionPaths.shop}/${product.slug}.html`,
@@ -336,6 +358,8 @@ export function buildPublicMe3Profile(
     };
   }
 
+  const agentCheckout = projectAgentCheckout(actions, services, products, options.agentCheckout);
+
   const profile: Me3PublicProfile = {
     $schema: ME3_SCHEMA_URL,
     version: ME3_VERSION,
@@ -395,6 +419,7 @@ export function buildPublicMe3Profile(
     ...(services.length > 0 ? { services } : {}),
     ...(Object.keys(actions).length > 0 ? { actions } : {}),
     ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
+    ...(agentCheckout ? { extensions: { [AGENT_CHECKOUT_EXTENSION]: agentCheckout } } : {}),
   };
 
   const result = validateProfile(profile);
@@ -402,4 +427,65 @@ export function buildPublicMe3Profile(
     throw new Error(`Invalid public me.json: ${JSON.stringify(result.errors)}`);
   }
   return result.profile;
+}
+
+// Agents get `book` and `purchase` as operations in the site's agent commerce
+// OpenAPI document; people and older clients keep the same flows as
+// `book-link` and `purchase-link`. The protocol has no agent checkout version
+// field yet, so the version travels in an extension.
+function projectAgentCheckout(
+  actions: Record<string, Me3ActionDefinition>,
+  services: Me3Service[],
+  products: Array<{ id: string }>,
+  agentCheckout: PublicAgentCheckout | null | undefined,
+) {
+  if (!agentCheckout || !/^https:\/\//.test(agentCheckout.specUrl)) return null;
+  const agentIds = new Set(agentCheckout.offeringIds);
+  const bookIds = services.map((service) => service.id).filter((offeringId) => agentIds.has(offeringId));
+  const purchaseIds = products.map((product) => product.id).filter((offeringId) => agentIds.has(offeringId));
+  const offeringIds: string[] = [];
+  for (const [action, ids, description] of [
+    ["book", bookIds, "Book through this site's agent commerce API: list offerings, check availability, then create a checkout the buyer pays on their own device."],
+    ["purchase", purchaseIds, "Buy through this site's agent commerce API: list offerings, then create a checkout the buyer pays on their own device."],
+  ] as const) {
+    const link = actions[action];
+    if (ids.length === 0 || link?.type !== "link") continue;
+    actions[`${action}-link`] = link;
+    actions[action] = {
+      type: "openapi",
+      spec: agentCheckout.specUrl,
+      operationId: AGENT_CHECKOUT_OPERATION_ID,
+      description,
+    };
+    offeringIds.push(...ids);
+  }
+  if (offeringIds.length === 0) return null;
+  return {
+    version: "1",
+    spec: agentCheckout.specUrl,
+    offeringIds,
+    holdMinutes: agentCheckout.holdMinutes,
+  };
+}
+
+/** The same public profile with agent checkout withdrawn: human links only. */
+export function withoutAgentCheckout(profile: Me3Profile): Me3Profile {
+  if (profile.visibility !== "public" || !profile.extensions?.[AGENT_CHECKOUT_EXTENSION]) {
+    return profile;
+  }
+  const actions = { ...(profile.actions || {}) };
+  for (const action of ["book", "purchase"]) {
+    const link = actions[`${action}-link`];
+    if (actions[action]?.type === "openapi" && link?.type === "link") {
+      actions[action] = link;
+      delete actions[`${action}-link`];
+    }
+  }
+  const { [AGENT_CHECKOUT_EXTENSION]: _withdrawn, ...extensions } = profile.extensions;
+  const { extensions: _extensions, ...rest } = profile;
+  return {
+    ...rest,
+    actions,
+    ...(Object.keys(extensions).length > 0 ? { extensions } : {}),
+  };
 }

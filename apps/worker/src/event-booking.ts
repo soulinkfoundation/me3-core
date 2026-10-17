@@ -1,6 +1,7 @@
 import type Stripe from "stripe";
 import { scheduleBookingRemindersForBooking } from "./booking-reminders";
 import {
+  appendQueryParams,
   loadSiteProfileForCommerce,
   normalizeLongText,
   resolveBookingSlot,
@@ -9,6 +10,8 @@ import {
   type CoreBookIntent,
   type CoreBookingPricing,
 } from "./booking";
+import { BOOKING_PAYMENTS_UNAVAILABLE_MESSAGE, type CheckoutProvider } from "./booking-checkout";
+import { getManagedCommerceBridgeConfig } from "./commerce-bridge";
 import { getUtcMsForLocalTime, resolveTimeZone } from "./calendar";
 import {
   bookingDetailsFromBooking,
@@ -100,19 +103,43 @@ export function isEventBookingType(value: unknown): value is EventBookingType {
   return value === "class" || value === "retreat";
 }
 
+function rawEventOffers(
+  book: CoreBookIntent,
+  bookingType: EventBookingType,
+): EventBookingOfferBase[] {
+  const eventBook = book as EventBookIntent;
+  const explicitType = Array.isArray(eventBook.bookingTypes)
+    ? eventBook.bookingTypes.find((entry) => entry?.type === bookingType)
+    : undefined;
+  return bookingType === "class"
+    ? explicitType?.classes || eventBook.classes || []
+    : explicitType?.retreats || eventBook.retreats || [];
+}
+
+/** Resolvable classes and retreats with the published offer each came from. */
+export function listEventBookingSources(
+  book: CoreBookIntent,
+): Array<{ source: { id?: string; title?: string }; offer: ResolvedEventBookingOffer }> {
+  const entries: Array<{ source: { id?: string; title?: string }; offer: ResolvedEventBookingOffer }> = [];
+  for (const bookingType of ["class", "retreat"] as const) {
+    rawEventOffers(book, bookingType).forEach((raw, index) => {
+      const offer = resolveEventBookingOffer(
+        book,
+        bookingType,
+        normalizeOfferId(raw.id, raw.title, bookingType, index),
+      );
+      if (offer) entries.push({ source: raw, offer });
+    });
+  }
+  return entries;
+}
+
 export function resolveEventBookingOffer(
   book: CoreBookIntent,
   bookingType: EventBookingType,
   offerId: string,
 ): ResolvedEventBookingOffer | null {
-  const eventBook = book as EventBookIntent;
-  const explicitType = Array.isArray(eventBook.bookingTypes)
-    ? eventBook.bookingTypes.find((entry) => entry?.type === bookingType)
-    : undefined;
-  const rawOffers =
-    bookingType === "class"
-      ? explicitType?.classes || eventBook.classes || []
-      : explicitType?.retreats || eventBook.retreats || [];
+  const rawOffers = rawEventOffers(book, bookingType);
   const raw = rawOffers.find((entry, index) => {
     const id = normalizeOfferId(entry.id, entry.title, bookingType, index);
     return id === offerId;
@@ -432,6 +459,174 @@ export async function createEventBookingHold(
     )
     .run();
   return Boolean(result.meta.changes);
+}
+
+export async function startPaidEventCheckout(
+  env: Env,
+  input: {
+    site: DbSite;
+    provider: CheckoutProvider;
+    offer: ResolvedEventBookingOffer;
+    occurrence: EventOccurrence;
+    quantity: number;
+    amount: { amountCents: number; currency: string };
+    guestName: string;
+    guestEmail: string;
+    notes: string;
+    pageId: string;
+    actionId: string;
+    campaign: string;
+    returnUrl: string;
+    holdExpiresAt: string;
+    /** Direct Stripe Checkout expiry; Stripe requires 30 minutes to 24 hours. */
+    sessionExpiresAtSeconds: number;
+    /** Sent to managed commerce only when set; ME3 Cloud otherwise applies its default. */
+    managedSessionExpiresAt?: string;
+  },
+): Promise<
+  | { ok: true; url: string | null; sessionId: string; holdToken: string }
+  | { ok: false; error: string; status: 409 | 503 }
+> {
+  const { site, offer, occurrence, quantity } = input;
+  const holdToken = crypto.randomUUID();
+  const held = await createEventBookingHold(env, {
+    siteId: site.id,
+    offer,
+    occurrence,
+    quantity,
+    holdToken,
+    expiresAt: input.holdExpiresAt,
+  });
+  if (!held) {
+    return { ok: false, error: "There are not enough spaces left for that booking", status: 409 };
+  }
+
+  const pendingReturnUrl = appendQueryParams(input.returnUrl, {
+    event_booking_pending: `${offer.bookingType}:${offer.id}`,
+  });
+  const successUrl = appendQueryParams(pendingReturnUrl, {
+    event_booking: "success",
+    session_id: "{CHECKOUT_SESSION_ID}",
+  });
+  const cancelUrl = appendQueryParams(pendingReturnUrl, { event_booking: "cancelled" });
+  const metadata = {
+    purchase_kind: "booking",
+    site_id: site.id,
+    offer_id: offer.id,
+    booking_type: offer.bookingType,
+    hold_token: holdToken,
+    guest_name: input.guestName,
+    guest_email: input.guestEmail,
+    notes: input.notes,
+    starts_at: occurrence.startsAt,
+    ends_at: occurrence.endsAt,
+    duration_minutes: String(occurrence.durationMinutes),
+    quantity: String(quantity),
+    page_id: input.pageId,
+    action_id: input.actionId,
+    campaign: input.campaign,
+  };
+
+  try {
+    const session = input.provider.stripe
+      ? await input.provider.stripe.checkout.sessions.create({
+          mode: "payment",
+          customer_email: input.guestEmail,
+          line_items: [
+            {
+              price_data: {
+                currency: input.amount.currency,
+                product_data: {
+                  name: offer.title,
+                  description: eventCheckoutDescription(offer.bookingType, occurrence),
+                },
+                unit_amount: input.amount.amountCents,
+              },
+              quantity,
+            },
+          ],
+          payment_intent_data: { metadata },
+          metadata,
+          success_url: successUrl,
+          cancel_url: cancelUrl,
+          expires_at: input.sessionExpiresAtSeconds,
+        })
+      : await createManagedEventCheckout(env, {
+          site,
+          offerId: offer.id,
+          offerTitle: offer.title,
+          totalAmount: input.amount.amountCents * quantity,
+          currency: input.amount.currency,
+          guestName: input.guestName,
+          guestEmail: input.guestEmail,
+          metadata,
+          returnUrl: pendingReturnUrl,
+          expiresAt: input.managedSessionExpiresAt,
+        });
+    return { ok: true, url: session.url, sessionId: session.id, holdToken };
+  } catch (error) {
+    await releaseEventBookingHold(env, holdToken);
+    console.error("Paid event booking checkout failed:", error);
+    return { ok: false, error: BOOKING_PAYMENTS_UNAVAILABLE_MESSAGE, status: 503 };
+  }
+}
+
+async function createManagedEventCheckout(
+  env: Env,
+  input: {
+    site: DbSite;
+    offerId: string;
+    offerTitle: string;
+    totalAmount: number;
+    currency: string;
+    guestName: string;
+    guestEmail: string;
+    metadata: Record<string, string>;
+    returnUrl: string;
+    expiresAt?: string;
+  },
+): Promise<{ id: string; url: string }> {
+  const bridge = await getManagedCommerceBridgeConfig(env);
+  if (!bridge) throw new Error("Managed commerce bridge is not configured");
+  const response = await fetch(
+    `${bridge.origin.replace(/\/+$/, "")}/v1/commerce/checkout-sessions`,
+    {
+      method: "POST",
+      headers: { ...bridge.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        referenceId: input.metadata.hold_token,
+        kind: "booking",
+        siteId: input.site.id,
+        ownerId: input.site.user_id,
+        product: {
+          id: input.offerId,
+          name: input.offerTitle,
+          amount: input.totalAmount,
+          currency: input.currency,
+        },
+        customer: { name: input.guestName, email: input.guestEmail },
+        metadata: input.metadata,
+        returnUrl: input.returnUrl,
+        ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+      }),
+    },
+  );
+  const data = (await response.json()) as {
+    url?: string;
+    sessionId?: string;
+    error?: string;
+  };
+  if (!response.ok || !data.url || !data.sessionId) {
+    throw new Error(data.error || "Managed event checkout is unavailable");
+  }
+  return { id: data.sessionId, url: data.url };
+}
+
+function eventCheckoutDescription(
+  bookingType: EventBookingType,
+  occurrence: { localDate: string; localTime: string },
+): string {
+  return `${bookingType === "class" ? "Class" : "Retreat"} · ${occurrence.localDate} ${occurrence.localTime}`;
 }
 
 export async function releaseEventBookingHold(env: Env, holdToken: string): Promise<void> {

@@ -18,6 +18,7 @@ export type CommerceSettingsResponse = {
     payoutsEnabled: boolean;
     requirementsDue: string[];
   };
+  agentCheckout: { enabled: boolean };
 };
 
 export const COMMERCE_CURRENCY_OPTIONS = [

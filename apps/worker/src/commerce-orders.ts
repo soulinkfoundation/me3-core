@@ -54,6 +54,13 @@ type ProductRecord = {
   confirmationEmail?: ProductPurchaseConfirmationEmail;
 };
 
+export type ProductCheckoutOptions = {
+  /** Direct Stripe Checkout expiry; Stripe requires 30 minutes to 24 hours. */
+  sessionExpiresAtSeconds?: number;
+  /** Sent to managed commerce only when set. */
+  managedSessionExpiresAt?: string;
+};
+
 export class CommerceOrderInputError extends Error {
   constructor(
     message: string,
@@ -71,6 +78,7 @@ export async function createProductCheckout(
   body: ProductCheckoutBody,
   requestUrl: string,
   country: string | null = null,
+  options: ProductCheckoutOptions = {},
 ): Promise<{
   paymentMethod: "stripe" | "manual";
   orderId: string;
@@ -90,7 +98,7 @@ export async function createProductCheckout(
   const pricingError = regionalPricingError(sourceProduct);
   if (pricingError) throw new CommerceOrderInputError(pricingError, 409);
   const product = localizeRegionalPrices(sourceProduct, country);
-  if ((body.expectedCurrency !== undefined && body.expectedCurrency !== product.currency) || (body.expectedAmount !== undefined && body.expectedAmount !== product.price)) {
+  if ((body.expectedCurrency !== undefined && String(body.expectedCurrency).toUpperCase() !== String(product.currency).toUpperCase()) || (body.expectedAmount !== undefined && body.expectedAmount !== product.price)) {
     throw new CommerceOrderInputError("The price has changed for your location. Reload the page before paying.", 409);
   }
   const deliveryError = productDeliveryError(product.delivery);
@@ -239,6 +247,7 @@ export async function createProductCheckout(
           actionId,
           campaign,
           returnUrl,
+          expiresAtSeconds: options.sessionExpiresAtSeconds,
         })
       : await createManagedCheckout(env, {
           orderId,
@@ -253,6 +262,7 @@ export async function createProductCheckout(
           actionId,
           campaign,
           returnUrl,
+          managedExpiresAt: options.managedSessionExpiresAt,
         });
     await env.DB.prepare(
       `UPDATE commerce_orders
@@ -427,7 +437,7 @@ type CheckoutInput = {
 
 async function createDirectCheckout(
   stripe: Stripe,
-  input: CheckoutInput,
+  input: CheckoutInput & { expiresAtSeconds?: number },
 ): Promise<{ url: string; sessionId: string }> {
   const successUrl = appendQueryParams(input.returnUrl, {
     purchase: "success",
@@ -460,6 +470,7 @@ async function createDirectCheckout(
     payment_intent_data: { metadata },
     success_url: successUrl,
     cancel_url: cancelUrl,
+    ...(input.expiresAtSeconds ? { expires_at: input.expiresAtSeconds } : {}),
   });
   if (!session.url) throw new Error("Stripe checkout URL missing");
   return { url: session.url, sessionId: session.id };
@@ -467,7 +478,7 @@ async function createDirectCheckout(
 
 async function createManagedCheckout(
   env: Env,
-  input: CheckoutInput,
+  input: CheckoutInput & { managedExpiresAt?: string },
 ): Promise<{ url: string; sessionId: string }> {
   const bridge = await getManagedCommerceBridgeConfig(env);
   if (!bridge) {
@@ -504,6 +515,7 @@ async function createManagedCheckout(
           campaign: input.campaign,
         },
         returnUrl: input.returnUrl,
+        ...(input.managedExpiresAt ? { expiresAt: input.managedExpiresAt } : {}),
       }),
     },
   );

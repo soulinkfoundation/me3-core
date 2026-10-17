@@ -8,6 +8,7 @@ import {
   getManagedCommerceConnectionStatus,
   type ManagedCommerceConnectionStatus,
 } from "./commerce-bridge";
+import { getAgentCheckoutEnabled, setAgentCheckoutEnabled } from "./agent-commerce-store";
 
 type CommerceSettingsRow = {
   user_id: string;
@@ -40,6 +41,8 @@ export type CommerceSettingsResponse = {
     payoutsEnabled: boolean;
     requirementsDue: string[];
   };
+  /** Buying agents can book and buy through the agent commerce API. */
+  agentCheckout: { enabled: boolean };
 };
 
 type StripeProviderPreference = "auto" | "direct" | "managed";
@@ -124,6 +127,7 @@ export async function getCommerceSettings(
       payoutsEnabled: managedStatus?.payoutsEnabled === true,
       requirementsDue: managedStatus?.requirementsDue || [],
     },
+    agentCheckout: { enabled: await getAgentCheckoutEnabled(env, ownerId) },
   };
 }
 
@@ -181,12 +185,20 @@ export async function updateCommerceSettings(
     throw new CommerceSettingsInputError("Choose direct or managed Stripe payments.");
   }
 
+  const hasAgentCheckoutInput = Object.prototype.hasOwnProperty.call(body, "agentCheckoutEnabled");
+  if (hasAgentCheckoutInput && typeof body.agentCheckoutEnabled !== "boolean") {
+    throw new CommerceSettingsInputError("Turn agent checkout on or off.");
+  }
+
   if (
     !stripeSecretKey &&
     !clearStripeSecretKey &&
     !hasDefaultCurrencyInput &&
     !hasPreferredProviderInput
   ) {
+    if (hasAgentCheckoutInput) {
+      await setAgentCheckoutEnabled(env, ownerId, body.agentCheckoutEnabled as boolean);
+    }
     return getCommerceSettings(env, ownerId);
   }
 
@@ -275,6 +287,9 @@ export async function updateCommerceSettings(
       defaultCurrency,
     )
     .run();
+  if (hasAgentCheckoutInput) {
+    await setAgentCheckoutEnabled(env, ownerId, body.agentCheckoutEnabled as boolean);
+  }
 
   return getCommerceSettings(env, ownerId);
 }

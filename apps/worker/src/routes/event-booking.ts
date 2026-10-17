@@ -1,7 +1,6 @@
 import { requestCountry } from "../../../../shared/regional-pricing";
 import Stripe from "stripe";
 import {
-  appendQueryParams,
   getSiteByUsername,
   getStripe,
   loadSiteProfileForCommerce,
@@ -12,23 +11,22 @@ import {
   normalizeShortText,
   type CoreBookIntent,
 } from "../booking";
+import { BOOKING_PAYMENTS_UNAVAILABLE_MESSAGE, resolveCheckoutProvider } from "../booking-checkout";
 import { getManagedCommerceBridgeConfig } from "../commerce-bridge";
-import { isCommerceReady } from "../commerce-settings";
 import {
   createConfirmedEventBooking,
-  createEventBookingHold,
   finalizePaidEventBookingCheckout,
   getEventOccurrenceAvailability,
   isEventBookingType,
   normalizeAttendeeQuantity,
-  releaseEventBookingHold,
   resolveEventBookingOffer,
   resolveEventOccurrence,
   serializePublicEventOffer,
+  startPaidEventCheckout,
   type EventBookingType,
 } from "../event-booking";
 import type { AppHono } from "../http/types";
-import type { DbSite, Env } from "../types";
+import type { Env } from "../types";
 
 type EventBookingBody = {
   localDate?: unknown;
@@ -43,9 +41,6 @@ type EventBookingBody = {
   actionId?: unknown;
   campaign?: unknown;
 };
-
-const PAYMENTS_UNAVAILABLE_MESSAGE =
-  "Payments are not available for this booking right now. Please contact the site owner.";
 
 export function registerEventBookingRoutes(app: AppHono) {
   app.get("/api/book/:username/events/:bookingType/:offerId/availability", async (c) => {
@@ -169,97 +164,32 @@ export function registerEventBookingRoutes(app: AppHono) {
       const amount = normalizeBookingAmount(body.amount, context.offer.pricing, body.currency);
       if (!amount.ok) return c.json({ error: amount.error }, 400);
 
-      const stripe = await getStripe(c.env, context.site.user_id);
-      const managedCommerce =
-        !stripe && (await isCommerceReady(c.env, context.site.user_id));
-      if (!stripe && !managedCommerce) {
-        return c.json({ error: PAYMENTS_UNAVAILABLE_MESSAGE }, 503);
+      const provider = await resolveCheckoutProvider(c.env, context.site.user_id);
+      if (!provider) {
+        return c.json({ error: BOOKING_PAYMENTS_UNAVAILABLE_MESSAGE }, 503);
       }
 
-      const holdToken = crypto.randomUUID();
-      const held = await createEventBookingHold(c.env, {
-        siteId: context.site.id,
+      const result = await startPaidEventCheckout(c.env, {
+        site: context.site,
+        provider,
         offer: context.offer,
         occurrence: context.occurrence,
         quantity,
-        holdToken,
-        expiresAt: new Date(
-          Date.now() + (stripe ? 60 * 60_000 : 24 * 60 * 60_000),
-        ).toISOString(),
-      });
-      if (!held) {
-        return c.json({ error: "There are not enough spaces left for that booking" }, 409);
-      }
-
-      const baseReturnUrl = normalizeSiteCheckoutReturnUrl(body.returnUrl, c.req.url, c.env, context.site);
-      const pendingReturnUrl = appendQueryParams(baseReturnUrl, {
-        event_booking_pending: `${context.offer.bookingType}:${context.offer.id}`,
-      });
-      const successUrl = appendQueryParams(pendingReturnUrl, {
-        event_booking: "success",
-        session_id: "{CHECKOUT_SESSION_ID}",
-      });
-      const cancelUrl = appendQueryParams(pendingReturnUrl, { event_booking: "cancelled" });
-      const notes = normalizeLongText(body.notes, 2000);
-      const metadata = {
-        purchase_kind: "booking",
-        site_id: context.site.id,
-        offer_id: context.offer.id,
-        booking_type: context.offer.bookingType,
-        hold_token: holdToken,
-        guest_name: guestName,
-        guest_email: guestEmail,
-        notes,
-        starts_at: context.occurrence.startsAt,
-        ends_at: context.occurrence.endsAt,
-        duration_minutes: String(context.occurrence.durationMinutes),
-        quantity: String(quantity),
-        page_id: normalizeShortText(body.pageId, 100),
-        action_id: normalizeShortText(body.actionId, 100),
+        amount,
+        guestName,
+        guestEmail,
+        notes: normalizeLongText(body.notes, 2000),
+        pageId: normalizeShortText(body.pageId, 100),
+        actionId: normalizeShortText(body.actionId, 100),
         campaign: normalizeShortText(body.campaign, 160),
-      };
-
-      try {
-        const session = stripe
-          ? await stripe.checkout.sessions.create({
-              mode: "payment",
-              customer_email: guestEmail,
-              line_items: [
-                {
-                  price_data: {
-                    currency: amount.currency,
-                    product_data: {
-                      name: context.offer.title,
-                      description: eventCheckoutDescription(context.offer.bookingType, context.occurrence),
-                    },
-                    unit_amount: amount.amountCents,
-                  },
-                  quantity,
-                },
-              ],
-              payment_intent_data: { metadata },
-              metadata,
-              success_url: successUrl,
-              cancel_url: cancelUrl,
-              expires_at: Math.floor(Date.now() / 1000) + 60 * 60,
-            })
-          : await createManagedEventCheckout(c.env, {
-              site: context.site,
-              offerId: context.offer.id,
-              offerTitle: context.offer.title,
-              totalAmount: amount.amountCents * quantity,
-              currency: amount.currency,
-              guestName,
-              guestEmail,
-              metadata,
-              returnUrl: pendingReturnUrl,
-            });
-        return c.json({ url: session.url, sessionId: session.id });
-      } catch (error) {
-        await releaseEventBookingHold(c.env, holdToken);
-        console.error("Paid event booking checkout failed:", error);
-        return c.json({ error: PAYMENTS_UNAVAILABLE_MESSAGE }, 503);
-      }
+        returnUrl: normalizeSiteCheckoutReturnUrl(body.returnUrl, c.req.url, c.env, context.site),
+        holdExpiresAt: new Date(
+          Date.now() + (provider.stripe ? 60 * 60_000 : 24 * 60 * 60_000),
+        ).toISOString(),
+        sessionExpiresAtSeconds: Math.floor(Date.now() / 1000) + 60 * 60,
+      });
+      if (!result.ok) return c.json({ error: result.error }, result.status);
+      return c.json({ url: result.url, sessionId: result.sessionId });
     },
   );
 
@@ -330,55 +260,6 @@ async function resolveEventRequest(
   return { site, profile, bookIntent, offer, occurrence };
 }
 
-async function createManagedEventCheckout(
-  env: Env,
-  input: {
-    site: DbSite;
-    offerId: string;
-    offerTitle: string;
-    totalAmount: number;
-    currency: string;
-    guestName: string;
-    guestEmail: string;
-    metadata: Record<string, string>;
-    returnUrl: string;
-  },
-): Promise<{ id: string; url: string }> {
-  const bridge = await getManagedCommerceBridgeConfig(env);
-  if (!bridge) throw new Error("Managed commerce bridge is not configured");
-  const response = await fetch(
-    `${bridge.origin.replace(/\/+$/, "")}/v1/commerce/checkout-sessions`,
-    {
-      method: "POST",
-      headers: { ...bridge.headers, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        referenceId: input.metadata.hold_token,
-        kind: "booking",
-        siteId: input.site.id,
-        ownerId: input.site.user_id,
-        product: {
-          id: input.offerId,
-          name: input.offerTitle,
-          amount: input.totalAmount,
-          currency: input.currency,
-        },
-        customer: { name: input.guestName, email: input.guestEmail },
-        metadata: input.metadata,
-        returnUrl: input.returnUrl,
-      }),
-    },
-  );
-  const data = (await response.json()) as {
-    url?: string;
-    sessionId?: string;
-    error?: string;
-  };
-  if (!response.ok || !data.url || !data.sessionId) {
-    throw new Error(data.error || "Managed event checkout is unavailable");
-  }
-  return { id: data.sessionId, url: data.url };
-}
-
 async function retrieveManagedEventCheckout(
   env: Env,
   sessionId: string,
@@ -410,13 +291,6 @@ async function retrieveManagedEventCheckout(
     currency: data.currency || null,
     metadata: data.metadata,
   } as Stripe.Checkout.Session;
-}
-
-function eventCheckoutDescription(
-  bookingType: EventBookingType,
-  occurrence: { localDate: string; localTime: string },
-): string {
-  return `${bookingType === "class" ? "Class" : "Retreat"} · ${occurrence.localDate} ${occurrence.localTime}`;
 }
 
 function serializeEventBooking(booking: {

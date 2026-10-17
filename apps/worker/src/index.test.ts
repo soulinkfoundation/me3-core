@@ -1656,6 +1656,7 @@ function createEnv(): Env & {
                   created_at: "2026-05-31T22:30:00Z",
                   updated_at: "2026-05-31T22:30:00Z",
                 });
+                return { success: true, meta: { changes: 1 } };
               }
 
               if (
@@ -2835,6 +2836,32 @@ function createEnv(): Env & {
               return null;
             },
             async all<T>() {
+              if (sql.includes("AS busy_start")) {
+                const [siteId, offerId, , endsAt, startsAt] = values as string[];
+                const intervals = sql.includes("FROM booking_holds")
+                  ? state.bookingHolds
+                      .filter(
+                        (hold) =>
+                          hold.site_id === siteId &&
+                          hold.status === "active" &&
+                          new Date(hold.expires_at).getTime() > Date.now() &&
+                          (!offerId || hold.offer_id === offerId) &&
+                          hold.slot_start < endsAt &&
+                          hold.slot_end > startsAt,
+                      )
+                      .map((hold) => ({ busy_start: hold.slot_start, busy_end: hold.slot_end }))
+                  : state.bookings
+                      .filter(
+                        (booking) =>
+                          booking.site_id === siteId &&
+                          booking.status === "confirmed" &&
+                          (!offerId || booking.offer_id === offerId) &&
+                          booking.starts_at < endsAt &&
+                          booking.ends_at > startsAt,
+                      )
+                      .map((booking) => ({ busy_start: booking.starts_at, busy_end: booking.ends_at }));
+                return { results: intervals as T[] };
+              }
               if (sql.includes("FROM contacts c") && sql.includes("AS is_client")) {
                 return {
                   results: state.contacts.filter(

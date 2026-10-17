@@ -1,8 +1,10 @@
 # Network commerce: ME3 agents buying from ME3 sites
 
-Status: **proposed design, awaiting owner review** (bead `me3-2gdu.11`). Spans
-ME3 Core, ME3 Cloud and ME3 Protocol. Durable parts move into the shared docs
-once approved; build work becomes beads.
+Status: **approved by the owner on 2026-10-17** (bead `me3-2gdu.11`), including
+15-minute booking holds and a seller switch for agent checkout (on by default
+when commerce is enabled). Spans ME3 Core, ME3 Cloud and ME3 Protocol. Durable
+parts move into the shared docs; build work is in beads. Step 1, the Core seller
+API, is built (`me3-2gdu.13`); see "Seller agent commerce API (Core)".
 
 ## Goal
 
@@ -61,7 +63,10 @@ buyer path, and listing is limited to Soulink members.
 
 Served by every installation with commerce enabled, under
 `/api/agent-commerce/v1`, unauthenticated like the public checkout today, with
-rate limits per IP and per buyer installation.
+rate limits per IP and per buyer installation. Each site has its own base,
+`/api/agent-commerce/v1/sites/{username}`, so organization sites on the same
+installation are addressed separately; the endpoints below are relative to it
+and described by its OpenAPI document at `.../openapi.json`.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -74,6 +79,61 @@ Booking holds expire after 15 minutes so an unpaid agent checkout cannot block a
 slot. A buyer installation identifies itself with a signed header (its Cloud
 install identity) so sellers can rate-limit and later trust-tier, but anonymous
 human-style checkout keeps working.
+
+As built (`me3-2gdu.13`):
+
+- **Wraps the site's own checkout.** One-to-one bookings, classes and retreats
+  use the same offer resolution, availability windows, holds, Stripe Connect or
+  managed commerce sessions, confirmation emails, reminders and payment
+  notifications as the site's booking pages (`booking-checkout.ts`,
+  `event-booking.ts`); products go through `createProductCheckout` with its
+  `expectedAmount`/`expectedCurrency` guard. Free offerings confirm at once.
+  Pay-separately (manual) offers, physical products that need an address and
+  bookings on an external booking page stay human-only. Agent bookings and
+  orders carry the `agent-commerce` campaign attribution.
+- **Offering ids are the `me.json` ids** (`service:…`, `product:…`). Amounts are
+  integers in minor units; `expectedAmount` is the approved total (unit amount
+  times quantity). A different live price is refused with `409 price_changed`
+  and the current total.
+- **Holds and payment.** `POST /checkouts` holds the slot for 15 minutes and
+  returns `payUrl`, a link on the seller's own API that redirects to the Stripe
+  page. Stripe sessions must stay open at least 30 minutes, so the link refuses
+  after the hold: an unopened checkout can never be paid once its slot is free.
+  Opening it inside the hold keeps the slot until the Stripe session closes (32
+  minutes after creation) plus a 5-minute confirmation grace.
+- **Idempotent retries.** `idempotencyKey` is scoped to the buyer installation
+  (or anonymous) and bound to the request; a retry returns the same checkout and
+  status secret, a reused key with a different request is `409
+  idempotency_conflict`, and a failed attempt releases the key.
+- **Status secret.** Returned at creation and derived from the installation's
+  encryption key, never stored. `GET /checkouts/:id` needs it as a bearer token;
+  a wrong secret reads as not found. Status reads settle with Stripe or managed
+  commerce when the payment link was opened, so receipts work without webhooks.
+  `cancelled` means the seller cancelled the booking or refunded the order.
+- **Buyer installation header.** `ME3-Buyer-Install` carries an ME3 Cloud-signed
+  JWT (`aud` `me3-agent-commerce`, `install_id`, at most 15 minutes). Verified
+  callers get their own rate-limit bucket (Workers share egress IPs); a header
+  that fails verification is refused, and Cloud key outages fall back to
+  anonymous limits.
+- **Rate limits.** Reads 120 per minute per IP (240 per verified installation);
+  checkouts 10 per 15 minutes per IP (30 per verified installation).
+- **Seller switch.** Settings → Payments, "Let AI agents book and buy" (on by
+  default). Off: offerings, availability and new checkouts answer `403
+  agent_checkout_disabled`, served `me.json` drops the agent actions without a
+  republish, and the directory is re-synced; existing checkouts stay readable
+  and payable.
+- **`me.json`.** When commerce is ready and the site has agent-ready offerings,
+  publishing turns `book` and `purchase` into `openapi` actions
+  (`operationId: createCheckout`) on the site's spec, keeps the human flows as
+  `book-link` and `purchase-link`, and adds
+  `extensions["me3.app/agent-checkout"] = { version: "1", spec, offeringIds,
+  holdMinutes: 15 }`.
+
+Follow-ups outside Core: ME3 Protocol needs an additive `agentCheckout` version
+field on capabilities to replace the extension (`soulinkfoundation/me3-protocol`);
+ME3 Cloud needs to issue buyer-installation tokens, honour `expiresAt` on managed
+checkout sessions (until then a managed session opened late can outlive its
+hold), and index the extension.
 
 ## Buyer flow (Core agent)
 
@@ -155,6 +215,6 @@ Steps 1 and 2 can run in parallel; 3 needs both.
 2. Should the agent ever choose an ME3 seller automatically when only one fits,
    or always show alternatives? (Recommended: always show the card; mention
    alternatives when they exist.)
-3. Is a 15-minute booking hold right?
+3. Is a 15-minute booking hold right? **Approved: 15 minutes.**
 4. Should sellers be able to turn agent checkout off while staying listed?
-   (Recommended: yes, default on for sellers with commerce enabled.)
+   **Approved: yes, default on for sellers with commerce enabled.**
