@@ -24,13 +24,13 @@ describe("published product checkout", () => {
       expect(html).not.toContain("<script>");
     }
   });
-  it("submits buyer details once and never submits client prices", async () => {
+  it("submits buyer details once with the displayed price only as a server-checked stale-price guard", async () => {
     let resolve!: (value: unknown) => void;
     const request = vi.fn((_path: string, _options: RequestInit) => new Promise(r => {resolve = r}));
     vi.stubGlobal("fetch", request); mount(); submit(); submit();
     expect(request).toHaveBeenCalledTimes(1);
     expect(request.mock.calls[0][0]).toBe("/api/shop/test/book/order");
-    expect(JSON.parse(request.mock.calls[0][1].body as string)).toEqual({buyerName:"Test Buyer",buyerEmail:"test@example.com",returnUrl: window.location.href});
+    expect(JSON.parse(request.mock.calls[0][1].body as string)).toEqual({buyerName:"Test Buyer",buyerEmail:"test@example.com",expectedAmount:100,expectedCurrency:"EUR",returnUrl: window.location.href});
     resolve({ok:true,json:async()=>({paymentMethod:"manual",message:"Check your email."})});
     await vi.waitFor(() => expect((document.querySelector("[data-product-details]") as HTMLElement).hidden).toBe(true));
   });
