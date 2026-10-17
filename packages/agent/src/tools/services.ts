@@ -49,6 +49,7 @@ export interface AgentPaymentServices {
   recordReceipt(input: Record<string, unknown>): Promise<PaymentProposalRecord>;
   list(options: { status?: string; limit?: number }): Promise<{ payments: PaymentProposalRecord[] }>;
   limits(currency: string): Promise<Record<string, unknown>>;
+  shopifyCart?(input: { productUrl: unknown; options?: unknown; quantity?: unknown }): Promise<Record<string, unknown>>;
 }
 export interface AgentDomainServices {
   quotes?: { save(input: Record<string, unknown>, options?: { signal?: AbortSignal; authorization?: import("../owner-create-intent").OwnerCreateAuthorization }): Promise<unknown> };

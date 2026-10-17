@@ -394,5 +394,64 @@ export function createAgentPaymentServices(env: Env, ownerId: string): AgentPaym
     recordReceipt: async input => record(await recordPaymentReceipt(env, ownerId, input as Parameters<typeof recordPaymentReceipt>[2], "email")),
     list: async options => { const result = await listPayments(env, ownerId, options); return { payments: result.payments.map(record) }; },
     limits: currency => getPaymentLimits(env, ownerId, currency),
+    shopifyCart: input => shopifyCartLink(input),
+  };
+}
+
+const SHOPIFY_FETCH_TIMEOUT_MS = 8000;
+const SHOPIFY_MAX_BYTES = 2_000_000;
+type ShopifyVariant = { id: number; title: string; price: number; available: boolean; option1?: string | null; option2?: string | null; option3?: string | null };
+type ShopifyProduct = { title: string; handle: string; vendor?: string; options: Array<{ name: string; values: string[] }>; variants: ShopifyVariant[] };
+
+async function fetchPublicJson(url: URL, fetcher: typeof fetch): Promise<unknown> {
+  const response = await fetcher(url.toString(), { headers: { accept: "application/json" }, redirect: "follow", signal: AbortSignal.timeout(SHOPIFY_FETCH_TIMEOUT_MS) });
+  // A redirect must not lead the Worker to a private or non-https address.
+  if (response.url) publicHttpsUrl(response.url, "Store address");
+  if (!response.ok) throw new PaymentError(`The store returned HTTP ${response.status}.`, 404);
+  const text = await response.text();
+  if (text.length > SHOPIFY_MAX_BYTES) throw new PaymentError("The store's product data is too large to read.", 404);
+  try { return JSON.parse(text); } catch { throw new PaymentError("This store does not publish Shopify product data.", 404); }
+}
+
+function parseShopifyProduct(value: unknown): ShopifyProduct {
+  const product = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+  const valid = variants.every(variant => variant && typeof variant === "object" && Number.isSafeInteger((variant as ShopifyVariant).id) && Number.isSafeInteger((variant as ShopifyVariant).price) && typeof (variant as ShopifyVariant).available === "boolean");
+  if (typeof product.title !== "string" || typeof product.handle !== "string" || !variants.length || !valid || !Array.isArray(product.options)) throw new PaymentError("This store does not publish Shopify product data.", 404);
+  return product as unknown as ShopifyProduct;
+}
+
+/**
+ * Builds a Shopify cart permalink from the store's own product data, so the variant,
+ * availability and price come from the merchant rather than the model. Read-only.
+ */
+export async function shopifyCartLink(input: { productUrl: unknown; options?: unknown; quantity?: unknown }, fetcher: typeof fetch = fetch) {
+  const url = publicHttpsUrl(input.productUrl, "Product URL");
+  const match = /^(.*?)(?:\/collections\/[^/]+)?\/products\/([^/?#]+)/.exec(url.pathname);
+  if (!match) throw new PaymentError("Use the product page URL, which contains /products/.");
+  const prefix = match[1].replace(/\/$/, ""), handle = decodeURIComponent(match[2]).replace(/\.(?:js|json)$/, "");
+  const quantity = input.quantity === undefined ? 1 : input.quantity;
+  if (typeof quantity !== "number" || !Number.isInteger(quantity) || quantity < 1 || quantity > 99) throw new PaymentError("Quantity must be a whole number from 1 to 99.");
+  const product = parseShopifyProduct(await fetchPublicJson(new URL(`${prefix}/products/${encodeURIComponent(handle)}.js`, url.origin), fetcher));
+  const wanted = input.options && typeof input.options === "object" && !Array.isArray(input.options) ? input.options as Record<string, unknown> : {};
+  const normalize = (text: unknown) => String(text ?? "").trim().toLowerCase();
+  const optionIndex = (name: string) => product.options.findIndex(option => normalize(option.name) === normalize(name));
+  const unknownOption = Object.keys(wanted).find(name => optionIndex(name) < 0);
+  const choices = { product: product.title, options: product.options.map(option => ({ name: option.name, values: option.values })), variants: product.variants.map(variant => ({ title: variant.title, available: variant.available, price: variant.price })) };
+  if (unknownOption) return { status: "choose" as const, reason: `This product has no option called ${unknownOption}.`, ...choices };
+  const candidates = product.variants.filter(variant => Object.entries(wanted).every(([name, value]) => normalize((variant as Record<string, unknown>)[`option${optionIndex(name) + 1}`]) === normalize(value)));
+  if (candidates.length !== 1) return { status: "choose" as const, reason: candidates.length ? "Choose a value for every option." : "No variant matches those options.", ...choices };
+  const variant = candidates[0];
+  if (!variant.available) return { status: "unavailable" as const, reason: `${product.title} (${variant.title}) is sold out.`, ...choices };
+  // The store's currency comes from a fresh, cookie-less cart.
+  let currency: string | null = null;
+  try { const cart = await fetchPublicJson(new URL("/cart.js", url.origin), fetcher) as { currency?: unknown }; currency = typeof cart.currency === "string" ? normalizeCurrency(cart.currency) : null; } catch { currency = null; }
+  const productUrl = new URL(`${prefix}/products/${encodeURIComponent(handle)}`, url.origin).toString();
+  const format = (minor: number) => currency ? formatMinorUnits(minor, currency) : null;
+  return {
+    status: "ready" as const, merchantUrl: productUrl, store: url.hostname.replace(/^www\./, ""), product: product.title, variant: variant.title, quantity,
+    unitPrice: format(variant.price), itemsTotal: format(variant.price * quantity), currency,
+    cartUrl: new URL(`/cart/${variant.id}:${quantity}`, url.origin).toString(),
+    note: currency ? "Prices come from the store. Delivery and tax may be added at checkout; include them in the proposed total only if the store shows them." : "The store's currency could not be confirmed; check it on the product page before proposing.",
   };
 }

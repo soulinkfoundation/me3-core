@@ -7,7 +7,7 @@ import { paymentTools } from "../../../packages/agent/src/tools/payments";
 import type { AgentToolContext } from "../../../packages/agent/src/types";
 import {
   AGENT_PAYMENTS_SCHEMA, PAYMENT_PROPOSE_TOOL, createAgentPaymentServices, formatMinorUnits, getPayment, getPaymentLimits, handOverApprovedPayment,
-  listPayments, markPaymentNotPaid, paymentApprovalAuth, proposePayment, recordPaymentDecision, recordPaymentReceipt, savePaymentLimits, toMinorUnits,
+  listPayments, markPaymentNotPaid, paymentApprovalAuth, proposePayment, recordPaymentDecision, recordPaymentReceipt, savePaymentLimits, shopifyCartLink, toMinorUnits,
 } from "./agent-payments";
 import { registerNewAgentRoutes } from "./routes/new-agent";
 import { registerPaymentRoutes } from "./routes/payments";
@@ -247,5 +247,43 @@ describe("payment routes", () => {
     const confirmed = await routes.request(`/api/payments/${proposal.id}/receipt`, { amount: "50.00", orderReference: "R-1" });
     expect(await confirmed.json()).toMatchObject({ payment: { status: "paid", receipt: { ownerConfirmed: true, orderReference: "R-1" } } });
     expect((await routes.request("/api/payments/missing")).status).toBe(404);
+  });
+});
+
+describe("Shopify cart links", () => {
+  const product = { title: "Tree Runner", handle: "tree-runner", options: [{ name: "Size", values: ["UK 8", "UK 9"] }], variants: [
+    { id: 101, title: "UK 8", option1: "UK 8", price: 11000, available: false },
+    { id: 102, title: "UK 9", option1: "UK 9", price: 11000, available: true },
+  ] };
+  function store(overrides: Record<string, unknown> = {}) {
+    const requested: string[] = [];
+    const fetcher = (async (url: string) => {
+      requested.push(url);
+      const body = url.endsWith("/cart.js") ? { currency: "GBP" } : url.includes("/products/tree-runner.js") ? { ...product, ...overrides } : null;
+      return { ok: body !== null, status: body ? 200 : 404, url, text: async () => JSON.stringify(body) } as unknown as Response;
+    }) as unknown as typeof fetch;
+    return { fetcher, requested };
+  }
+
+  it("builds a cart link from the store's own variant, stock and price", async () => {
+    const { fetcher, requested } = store();
+    const result = await shopifyCartLink({ productUrl: "https://shop.example.com/en-ie/collections/men/products/tree-runner?variant=1", options: { size: "uk 9" }, quantity: 2 }, fetcher);
+    expect(result).toMatchObject({ status: "ready", cartUrl: "https://shop.example.com/cart/102:2", unitPrice: "110.00", itemsTotal: "220.00", currency: "GBP", merchantUrl: "https://shop.example.com/en-ie/products/tree-runner" });
+    expect(requested[0]).toBe("https://shop.example.com/en-ie/products/tree-runner.js");
+  });
+
+  it("asks for a choice or reports stock instead of guessing", async () => {
+    const { fetcher } = store();
+    expect(await shopifyCartLink({ productUrl: "https://shop.example.com/products/tree-runner" }, fetcher)).toMatchObject({ status: "choose" });
+    expect(await shopifyCartLink({ productUrl: "https://shop.example.com/products/tree-runner", options: { Colour: "Red" } }, fetcher)).toMatchObject({ status: "choose", reason: expect.stringMatching(/no option called Colour/) });
+    expect(await shopifyCartLink({ productUrl: "https://shop.example.com/products/tree-runner", options: { Size: "UK 8" } }, fetcher)).toMatchObject({ status: "unavailable" });
+  });
+
+  it("refuses non-Shopify data, private redirects and non-product URLs", async () => {
+    const { fetcher } = store({ variants: "nope" });
+    await expect(shopifyCartLink({ productUrl: "https://shop.example.com/products/tree-runner", options: { Size: "UK 9" } }, fetcher)).rejects.toThrow(/Shopify product data/);
+    await expect(shopifyCartLink({ productUrl: "https://shop.example.com/about" }, store().fetcher)).rejects.toThrow(/\/products\//);
+    const redirecting = (async () => ({ ok: true, status: 200, url: "https://127.0.0.1/products/x.js", text: async () => "{}" })) as unknown as typeof fetch;
+    await expect(shopifyCartLink({ productUrl: "https://shop.example.com/products/tree-runner" }, redirecting)).rejects.toThrow(/public https/);
   });
 });

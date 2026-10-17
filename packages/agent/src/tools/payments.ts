@@ -99,5 +99,21 @@ export function paymentTools(): AgentTool[] {
     },
   });
 
-  return [propose, recordReceipt, list];
+  const shopifyCart = paymentTool({
+    name: "core_payments_shopify_cart",
+    description: "For a Shopify store's product page, read the store's own product data to pick the exact variant, confirm it is in stock and its price, and build a cart link the owner can open to pay. Use before core_payments_propose when the store is on Shopify.",
+    parameters: objectSchema({
+      productUrl: { type: "string", description: "The https product page URL containing /products/." },
+      options: { type: "object", additionalProperties: { type: "string" }, description: "Chosen option values by option name, e.g. {\"Size\": \"UK 9\"}." },
+      quantity: { type: "integer", minimum: 1, maximum: 99 },
+    }, ["productUrl"]),
+    effect: "read", approval: "none", pluginId: null,
+    async run(args, context) {
+      const payments = services(context).payments!;
+      if (!payments.shopifyCart) throw new Error("Shopify cart links are unavailable.");
+      return ok(await payments.shopifyCart({ productUrl: args.productUrl, options: args.options, quantity: args.quantity }));
+    },
+  });
+
+  return [propose, recordReceipt, list, shopifyCart];
 }
