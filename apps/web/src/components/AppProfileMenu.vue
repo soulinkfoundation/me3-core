@@ -10,7 +10,6 @@ import { ensurePluginAccess, invalidatePluginAccess } from "../utils/pluginAcces
 import { permanentPublicSiteUrl, resolvePublicProfileUrl } from "../utils/publicSiteUrl";
 import { useAppToast } from "../composables/useAppToast";
 import UiIcon from "./UiIcon.vue";
-import Button from "./Button.vue";
 import { useTheme, type ThemePreference } from "../composables/useTheme";
 
 const auth = useAuthStore();
@@ -20,9 +19,9 @@ const router = useRouter();
 const { toastFromUnknown } = useAppToast();
 const { themePreference, setThemePreference } = useTheme();
 const appearances = [
-  { id: "system", label: "System", icon: "Monitor" },
-  { id: "light", label: "Light", icon: "Sun" },
-  { id: "dark", label: "Dark", icon: "Moon" },
+  { id: "light", label: "Light appearance", icon: "Sun" },
+  { id: "dark", label: "Dark appearance", icon: "Moon" },
+  { id: "system", label: "Match system appearance", icon: "Monitor" },
 ] as const satisfies readonly { id: ThemePreference; label: string; icon: "Monitor" | "Sun" | "Moon" }[];
 const open = ref(false);
 const trigger = ref<HTMLButtonElement | null>(null);
@@ -50,21 +49,19 @@ const editSite = computed(() => {
   return { path: "/create", query: { site: site.username, siteId: site.id, return: "/assistant" } };
 });
 function installed(id: string) { return plugins.value.some(plugin => plugin.id === id && plugin.enabled && plugin.status === "installed"); }
-// These are the drawer's existing gates. Socials/Accounts are plugin-owned; the
-// Wheel, Email and Files are Core features. No hosted entitlement is inferred here.
+// One Go to list shared with iOS (ProfileMenu.swift), ordered by likely use. Socials/Accounts are
+// plugin-owned; Email and Files are Core features. Wheel of Life lives in Mission, Edit site is in the
+// header and Chat is the top switch, so none of them repeat here. No hosted entitlement is inferred.
 const destinations = computed(() => [
   { label: "Calendar", path: "/calendar", emoji: APP_FEATURE_ICONS.calendar, visible: installed("me3.calendar") && features.value.calendar },
+  { label: "Writing", path: "/journal", emoji: APP_FEATURE_ICONS.journal, visible: installed("me3.journal") && features.value.journal },
   { label: "People", path: "/people", emoji: APP_FEATURE_ICONS.people, visible: true },
   { label: "Email", path: "/email", emoji: APP_FEATURE_ICONS.email, visible: features.value.email },
-  { label: "Writing", path: "/journal", emoji: APP_FEATURE_ICONS.journal, visible: installed("me3.journal") && features.value.journal },
-  { label: "Tasks", path: "/tasks", emoji: "✅", visible: installed("me3.mission-control") && features.value.tasks },
   { label: "Mission", path: "/mission", emoji: "🚀", visible: installed("me3.mission-control") },
+  { label: "Tasks", path: "/tasks", emoji: "✅", visible: installed("me3.mission-control") && features.value.tasks },
+  { label: "Accounts", path: "/accounts", emoji: APP_FEATURE_ICONS.accounts, visible: installed("me3.accounts") },
   { label: "Files", path: "/files", emoji: APP_FEATURE_ICONS.files, visible: features.value.files },
   { label: "Socials", path: "/social", emoji: APP_FEATURE_ICONS.social, visible: installed("me3.social-publishing") },
-  { label: "Accounts", path: "/accounts", emoji: APP_FEATURE_ICONS.accounts, visible: installed("me3.accounts") },
-  { label: "Wheel of Life", path: "/wheel-of-life", emoji: "🛞", visible: features.value["wheel-of-life"] },
-  { label: "Website", path: "/sites", emoji: APP_FEATURE_ICONS.sites, visible: true },
-  { label: "Chat", path: "/assistant?view=chat", emoji: "🤖", visible: features.value.assistant },
 ].filter(destination => destination.visible));
 
 async function loadNavigation() {
@@ -138,19 +135,19 @@ onBeforeUnmount(() => {
         <span v-else class="profile-menu__initial" aria-hidden="true">{{ name.slice(0, 1).toUpperCase() }}</span>
         <div><strong>{{ name }}</strong><a :href="publicUrl" role="menuitem" tabindex="-1" target="_blank" rel="noopener noreferrer">{{ publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}<UiIcon name="ArrowUpRight" :size="14" /></a><RouterLink :to="editSite" role="menuitem" tabindex="-1" @click="close()">Edit site<UiIcon name="Pencil" :size="14" /></RouterLink></div>
       </header>
-      <nav aria-label="Go to"><h2>Go to</h2>
+      <nav aria-label="Go to">
         <RouterLink v-for="destination in destinations" :key="destination.path" :to="destination.path" class="profile-menu__row" role="menuitem" tabindex="-1" :aria-label="destination.label" :aria-current="route.fullPath === destination.path ? 'page' : undefined" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">{{ destination.emoji }}</span><span>{{ destination.label }}</span></RouterLink>
       </nav>
       <div class="profile-menu__settings">
-        <div class="profile-menu__appearance" role="group" aria-label="Appearance">
-          <Button v-for="option in appearances" :key="option.id" :color="themePreference === option.id ? 'primary' : 'ghost'" size="large" role="menuitemradio" :aria-checked="themePreference === option.id" :aria-label="`${option.label} appearance`" @click="setThemePreference(option.id)"><UiIcon :name="option.icon" :size="16" />{{ option.label }}</Button>
-        </div>
         <RouterLink to="/assistant?view=chat&settings=context" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Brain" :size="18" />Your agent</RouterLink>
         <RouterLink to="/settings" class="profile-menu__row" aria-label="Settings" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Settings" :size="18" />Settings</RouterLink>
-        <RouterLink to="/settings?section=connections" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Link" :size="18" />App connections</RouterLink>
-        <RouterLink to="/settings?section=plugins" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Puzzle" :size="18" />Plugins</RouterLink>
       </div>
-      <button type="button" class="profile-menu__row profile-menu__logout" role="menuitem" tabindex="-1" :disabled="loggingOut" @click="logOut"><UiIcon name="LogOut" :size="18" />{{ loggingOut ? 'Logging out…' : 'Log out' }}</button>
+      <div class="profile-menu__footer">
+        <div class="profile-menu__appearance" role="group" aria-label="Appearance">
+          <button v-for="option in appearances" :key="option.id" type="button" :class="{ 'is-active': themePreference === option.id }" role="menuitemradio" tabindex="-1" :aria-checked="themePreference === option.id" :aria-label="option.label" :title="option.label" @click="setThemePreference(option.id)"><UiIcon :name="option.icon" :size="16" /></button>
+        </div>
+        <button type="button" class="profile-menu__row profile-menu__logout" role="menuitem" tabindex="-1" :disabled="loggingOut" @click="logOut"><UiIcon name="LogOut" :size="18" />{{ loggingOut ? 'Logging out…' : 'Log out' }}</button>
+      </div>
     </section>
   </Teleport>
 </template>
@@ -171,12 +168,14 @@ onBeforeUnmount(() => {
 .profile-menu__row:hover, .profile-menu__row[aria-current="page"] { background: var(--ui-surface-muted); }
 .profile-menu__emoji { width: 22px; text-align: center; font: 20px/1 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
 .profile-menu__settings { padding-top: 8px; margin-top: 8px; box-shadow: 0 -1px var(--ui-border); }
-.profile-menu__appearance { display: flex; gap: 2px; margin: 4px 0 10px; padding: 3px; border-radius: 26px; background: var(--ui-surface-muted); }
-.profile-menu__appearance > button { flex: 1; min-width: 0; min-height: 44px; padding-inline: 8px; }
-.profile-menu__appearance :deep(.me3-btn__label) { display: flex; align-items: center; gap: 5px; }
-.profile-menu__appearance :deep(.me3-btn--primary svg) { color: inherit; }
+.profile-menu__footer { display: flex; align-items: center; gap: 8px; padding: 6px 0 0 4px; }
+.profile-menu__appearance { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
+.profile-menu__appearance > button { display: grid; place-items: center; width: 40px; height: 36px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--ui-text-muted); cursor: pointer; }
+.profile-menu__appearance > button.is-active { background: var(--ui-surface); color: var(--ui-text); box-shadow: var(--ui-shadow-sm, 0 1px 3px rgba(0, 0, 0, .12)); }
+.profile-menu__appearance > button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .profile-menu__settings svg, .profile-menu__logout svg { margin-inline: 2px; color: var(--ui-text-muted); }
-.profile-menu__logout { color: var(--ui-danger, #b42318); }
+.profile-menu__logout { width: auto; margin-left: auto; color: var(--ui-danger, #b42318); }
+.profile-menu__logout svg { color: inherit; }
 .profile-menu__logout:disabled { opacity: .5; cursor: wait; }
 .profile-trigger:focus-visible, .profile-menu [role="menuitem"]:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 </style>

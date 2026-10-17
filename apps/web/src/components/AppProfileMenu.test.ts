@@ -105,25 +105,39 @@ describe("AppProfileMenu optional plugin links", () => {
         .map((link) => link.attributes("aria-label")),
     ).toEqual([
       "Calendar",
+      "Writing",
       "People",
       "Email",
-      "Writing",
-      "Tasks",
       "Mission",
+      "Tasks",
+      "Accounts",
       "Files",
       "Socials",
-      "Accounts",
-      "Website",
-      "Chat",
     ]);
-    const websiteLink = wrapper.get('[aria-label="Website"]');
-    expect(websiteLink.text()).toContain("Website");
-    expect(websiteLink.attributes("href")).toBe("/sites");
+    // Edit site is in the header and Chat is the top switch, so neither repeats in Go to.
+    expect(wrapper.find('nav [aria-label="Website"]').exists()).toBe(false);
+    expect(wrapper.find('nav [aria-label="Chat"]').exists()).toBe(false);
+    expect(wrapper.find("nav h2").exists()).toBe(false);
     expect(wrapper.get('[aria-label="Tasks"]').attributes("href")).toBe(
       "/tasks",
     );
     expect(wrapper.find('nav img').exists()).toBe(false);
     expect(wrapper.get('[aria-label="Settings"]').attributes("href")).toBe("/settings");
+    expect(wrapper.find('[aria-label="App connections"]').exists()).toBe(false);
+    expect(wrapper.find('[aria-label="Plugins"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("uses a small icon-only appearance switch", async () => {
+    const wrapper = await mountProfileMenu([]);
+
+    const options = wrapper.findAll('[role="group"][aria-label="Appearance"] button');
+    expect(options.map((option) => option.attributes("aria-label"))).toEqual([
+      "Light appearance",
+      "Dark appearance",
+      "Match system appearance",
+    ]);
+    expect(options.every((option) => option.text() === "")).toBe(true);
     wrapper.unmount();
   });
 
@@ -149,7 +163,7 @@ describe("AppProfileMenu optional plugin links", () => {
     wrapper.unmount();
   });
 
-  it("shows Wheel of Life only when its navigation feature is enabled", async () => {
+  it("never lists Wheel of Life, which lives in Mission", async () => {
     const wrapper = await mountProfileMenu(
       [],
       {},
@@ -166,9 +180,7 @@ describe("AppProfileMenu optional plugin links", () => {
       ],
     );
 
-    const link = wrapper.get('[aria-label="Wheel of Life"]');
-    expect(link.attributes("href")).toBe("/wheel-of-life");
-    expect(link.find(".profile-menu__emoji").text()).toBe("🛞");
+    expect(wrapper.find('[aria-label="Wheel of Life"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
