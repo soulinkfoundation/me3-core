@@ -200,6 +200,15 @@ describe("D1-backed agent Durable Object execution and stream replay", () => {
     expect(await db.prepare('SELECT status FROM me3_agent_approvals').first()).toMatchObject({ status });
     expect(effect).toHaveBeenCalledTimes(effectCount);
   });
+  it.each([['Yes.', 'pending'], ['No.', 'declined']] as const)("never approves a payment from a typed reply %s", async (messageText, status) => {
+    const effect = vi.fn(async () => ({ status: 'ok' as const })); let step = 0;
+    const payment = { name: 'core_payments_propose', description: 'Propose payment', parameters: { type: 'object' }, effect: 'external' as const, approval: 'required' as const, execute: effect };
+    const { dispatch, db } = fixture({ id: 'fixture', async step() { return step++ === 0 ? { text: '', toolCalls: [{ id: 'pay', name: 'core_payments_propose', arguments: {} }] } : { text: 'Handled.', toolCalls: [] }; } }, [payment]);
+    await dispatch();
+    await dispatch({ ...input, turnId: 'reply-turn', requestId: 'reply-request', messageText });
+    expect(await db.prepare('SELECT status FROM me3_agent_approvals').first()).toMatchObject({ status });
+    expect(effect).not.toHaveBeenCalled();
+  });
   it("accepts Stop before input persistence and cancels only the matching owner request", async () => {
     const { agent, dispatch, db } = fixture();
     const stop = (userId: string) => agent.onRequest(new Request("https://agent/turn/cancel", { method: "POST", body: JSON.stringify({ userId, requestId: input.requestId }) }));

@@ -57,6 +57,7 @@ const MAX_ASSISTANT_NAME_LENGTH = 48;
 
 type AssistantRouteDeps = {
   requireOwner(c: AppContext): Promise<string | null>;
+  ownerSessionIssuedAt?(c: AppContext): Promise<number | null>;
   unauthorized(c: AppContext): Response;
   getSessionOwnerId(c: AppContext): Promise<string | null>;
   getSetupRequired(env: Env, ownerId?: string): Promise<string[]>;
@@ -574,7 +575,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
   });
 
   registerAssistantSkillsRoutes(app, { requireOwner, unauthorized });
-  registerNewAgentRoutes(app, { requireOwner, unauthorized });
+  registerNewAgentRoutes(app, { requireOwner, unauthorized, ownerSessionIssuedAt: deps.ownerSessionIssuedAt });
 
   function parseAssistantChatTurnModelSelection(
     value: unknown,

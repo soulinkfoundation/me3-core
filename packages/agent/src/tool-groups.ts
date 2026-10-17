@@ -8,6 +8,7 @@ import type { AgentMessage, AgentTool } from "./types";
 export const TOOL_LOADER_NAME = "core_tools_load";
 export const DEFERRED_TOOL_GROUPS: Record<string, { prefix: string; summary: string }> = {
   sites: { prefix: "core_sites_", summary: "create, update or list landing pages on the owner's websites, and read site blog posts" },
+  payments: { prefix: "core_payments_", summary: "propose a purchase for the owner to approve and pay on their own device, record receipts from order emails, and list payments" },
   social: { prefix: "core_social_", summary: "save social post drafts and post suggestions from a journal entry or task, search the social library, and plan or schedule posts. Use it whenever the owner asks for a social post or draft" },
 };
 

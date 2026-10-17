@@ -2,6 +2,10 @@ import { decideAgentApproval } from "../../../../packages/agent/src/store";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import type { Env } from "../types";
 import { updateAgentChatPresence } from "../agent-notifications";
+import { PAYMENT_PROPOSE_TOOL, PaymentError, paymentApprovalAuth, recordPaymentDecision } from "../agent-payments";
+
+/** How the owner proved they are present: a web session's sign-in time, or a native device unlock. */
+export type ApprovalAuthEvidence={sessionIssuedAt:number|null;deviceAuthentication?:unknown};
 
 type ApprovalRow={id:string;thread_id:string;turn_id:string;tool_name:string;card_json:string;status:string;created_at:string;decided_at:string|null};
 const approvalSelect="SELECT id,thread_id,turn_id,tool_name,card_json,status,created_at,decided_at FROM me3_agent_approvals";
@@ -17,9 +21,19 @@ export async function listNewAgentApprovals(env:Env,ownerId:string,status?:strin
     .bind(...(requested?[ownerId,requested]:[ownerId])).all<ApprovalRow>();
   return (rows.results||[]).map(approvalCard);
 }
-export async function decideNewAgentApproval(c:AppContext,ownerId:string,id:string,decision:"approved"|"declined"):Promise<Response> {
+export async function decideNewAgentApproval(c:AppContext,ownerId:string,id:string,decision:"approved"|"declined",evidence?:ApprovalAuthEvidence):Promise<Response> {
   const row=await c.env.DB.prepare(`${approvalSelect} WHERE id=? AND owner_id=?`).bind(id,ownerId).first<ApprovalRow>();
   if(!row)return c.json({ok:false,error:"Approval not found"},404);
+  if(row.tool_name===PAYMENT_PROPOSE_TOOL) {
+    // Payments need a fresh sign-in, bound to the proposal before the agent can resume.
+    try {
+      const auth=decision==="approved"?paymentApprovalAuth({channel:evidence?.sessionIssuedAt!=null?"web":"mobile",sessionIssuedAt:evidence?.sessionIssuedAt,deviceAuthentication:evidence?.deviceAuthentication}):undefined;
+      await recordPaymentDecision(c.env,ownerId,row,decision,auth);
+    } catch(error) {
+      if(!(error instanceof PaymentError))throw error;
+      return c.json({ok:false,error:error.message,code:error.status===403?"fresh_authentication_required":"payment_conflict"},error.status as 403|409);
+    }
+  }
   const namespace=c.env.ME3_AGENT;
   if(!namespace)return c.json({ok:false,error:"Agent runtime is unavailable"},503);
   if(!await decideAgentApproval(c.env.DB,ownerId,id,decision))return c.json({ok:false,error:"Approval already has a different decision"},409);
@@ -29,6 +43,7 @@ export async function decideNewAgentApproval(c:AppContext,ownerId:string,id:stri
   return c.json({...turn,approval:approvalCard({...row,status:decision,decided_at:new Date().toISOString()})},response.ok?200:502);
 }
 export function registerNewAgentRoutes(app:AppHono,deps:OwnerRouteDeps) {
+  const evidence=async(c:AppContext,body:{deviceAuthentication?:unknown}|null):Promise<ApprovalAuthEvidence>=>({sessionIssuedAt:await deps.ownerSessionIssuedAt?.(c)??null,deviceAuthentication:body?.deviceAuthentication});
   app.put("/api/assistant/threads/:threadId/presence", async c => {
     const ownerId = await deps.requireOwner(c); if (!ownerId) return deps.unauthorized(c);
     const body = await c.req.json().catch(() => null) as { clientId?: unknown; watching?: unknown } | null;
@@ -50,9 +65,9 @@ export function registerNewAgentRoutes(app:AppHono,deps:OwnerRouteDeps) {
   });
   app.post("/api/assistant/approvals/:id",async c=>{
     const ownerId=await deps.requireOwner(c);if(!ownerId)return deps.unauthorized(c);
-    const body=await c.req.json().catch(()=>null) as {decision?:unknown}|null;
+    const body=await c.req.json().catch(()=>null) as {decision?:unknown;deviceAuthentication?:unknown}|null;
     if(body?.decision!=="approved"&&body?.decision!=="declined")return c.json({ok:false,error:"decision must be approved or declined"},400);
-    return decideNewAgentApproval(c,ownerId,c.req.param("id"),body.decision);
+    return decideNewAgentApproval(c,ownerId,c.req.param("id"),body.decision,await evidence(c,body));
   });
   app.post("/api/assistant/turns/:turnId/cancel",async c=>{
     const ownerId=await deps.requireOwner(c);if(!ownerId)return deps.unauthorized(c);

@@ -41,12 +41,22 @@ export interface AgentImageGenerationServices {
     idempotencyKey: string; threadId: string; turnId: string; requestId: string; signal: AbortSignal;
   }): Promise<AgentImageGenerationResult>;
 }
+/** Payment proposal records; Core never charges. See apps/worker/src/agent-payments.ts. */
+export type PaymentProposalRecord = { id: string; status: string; proposalHash: string; amount: string; currency: string; merchant: { name: string; url: string }; [key: string]: unknown };
+export interface AgentPaymentServices {
+  propose(input: Record<string, unknown>, scope: { threadId: string; turnId: string; idempotencyKey: string }): Promise<PaymentProposalRecord>;
+  handOver(proposalId: string, proposalHash: string): Promise<{ proposal: PaymentProposalRecord; handOver: { openUrl: string; instructions: string } }>;
+  recordReceipt(input: Record<string, unknown>): Promise<PaymentProposalRecord>;
+  list(options: { status?: string; limit?: number }): Promise<{ payments: PaymentProposalRecord[] }>;
+  limits(currency: string): Promise<Record<string, unknown>>;
+}
 export interface AgentDomainServices {
   quotes?: { save(input: Record<string, unknown>, options?: { signal?: AbortSignal; authorization?: import("../owner-create-intent").OwnerCreateAuthorization }): Promise<unknown> };
   mailbox?: AgentMailboxServices;
   scheduling?: AgentSchedulingServices;
   people?: AgentPeopleServices;
   images?: AgentImageGenerationServices;
+  payments?: AgentPaymentServices;
   web?: { search: WebResearchService["search"]; open: WebContentFetcher["open"] };
   landingPageEnv?: AgentLandingPageEnv;
 }

@@ -2,6 +2,7 @@ import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, c
 import type { AgentFastPathRequestMeasurement } from "../../../packages/agent/src/fast-path";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { saveOwnerQuote } from "./quotes";
+import { createAgentPaymentServices } from "./agent-payments";
 import { createOwnerCreateIntentVerifier } from "./agent-owner-create-intent";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
 import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
@@ -251,6 +252,7 @@ async function newAgentServices(env:Env,ownerId:string):Promise<AgentDomainServi
     scheduling:createStableAgentSchedulingServices(env,ownerId),
     mailbox:createAgentMailboxServices(env,ownerId),
     images:createAgentImageGenerationServices(env,ownerId),
+    payments:createAgentPaymentServices(env,ownerId),
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
     web:createWebResearchToolServices(env,ownerId),landingPageEnv:env as never,
   };
@@ -259,6 +261,7 @@ function isToolAvailable(name:string,services:AgentDomainServices):boolean {
   if(name==="core_quotes_save")return Boolean(services.quotes);
   if(name==="core_images_generate")return Boolean(services.images);
   if(name.startsWith("core_mailbox_"))return Boolean(services.mailbox);
+  if(name.startsWith("core_payments_"))return Boolean(services.payments);
   if(name==="core_scheduling_request_read")return Boolean(services.scheduling?.getRequest);
   if(name==="core_scheduling_request")return Boolean(services.scheduling?.request);
   if(name==="core_scheduling_request_profile")return Boolean(services.scheduling?.requestNetwork);

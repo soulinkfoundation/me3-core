@@ -1,6 +1,7 @@
 import { persistAgentTargetSelectionInput } from "./agent-target-selection";
 import { revalidateAgentTargetPayload } from "./agent-target-projection";
 import { Agent, type FiberRecoveryContext } from "agents";
+import { PAYMENT_PROPOSE_TOOL, recordPaymentDecision } from "./agent-payments";
 import { AgentInputConflictError, appendAgentStreamEvent, createD1TurnStore, persistAgentApprovalReply, persistAgentRequestAlias, isAgentCancellationRequested, requestAgentCancellation } from "../../../packages/agent/src/store";
 import { executeNewAgentTurn, isNewAgentDispatchInput, type NewAgentDispatchInput } from "./agent-runtime";
 import { resolvePrimaryAssistantThread } from "./assistant-primary-thread";
@@ -244,10 +245,15 @@ export class Me3Agent extends Agent<Env> {
     const reply=input.messageText.trim().toLowerCase().replace(/[.!]+$/u, "").trim();
     const decision=["approve","approved","yes","confirm"].includes(reply)?"approved":["decline","no","cancel"].includes(reply)?"declined":null;
     if(!decision)return input;
-    const rows=await this.env.DB.prepare(`SELECT a.id,t.* FROM me3_agent_approvals a JOIN me3_agent_turns t ON t.turn_id=a.turn_id AND t.owner_id=a.owner_id
-      WHERE a.owner_id=? AND a.thread_id=? AND a.status='pending' AND t.status='needs_approval' ORDER BY a.created_at DESC LIMIT 2`).bind(input.userId,input.threadId).all<SavedTurn&{id:string}>();
+    const rows=await this.env.DB.prepare(`SELECT a.id,a.tool_name AS approval_tool_name,a.card_json AS approval_card_json,t.* FROM me3_agent_approvals a JOIN me3_agent_turns t ON t.turn_id=a.turn_id AND t.owner_id=a.owner_id
+      WHERE a.owner_id=? AND a.thread_id=? AND a.status='pending' AND t.status='needs_approval' ORDER BY a.created_at DESC LIMIT 2`).bind(input.userId,input.threadId).all<SavedTurn&{id:string;approval_tool_name:string;approval_card_json:string}>();
     if(rows.results?.length!==1)return input;
     const row=rows.results[0];
+    if(row.approval_tool_name===PAYMENT_PROPOSE_TOOL) {
+      // A typed "yes" cannot approve a payment: that needs the approval card and a fresh sign-in.
+      if(decision==="approved")return input;
+      await recordPaymentDecision(this.env,input.userId,{id:row.id,tool_name:row.approval_tool_name,card_json:row.approval_card_json},"declined");
+    }
     const recorded=await persistAgentApprovalReply(this.env.DB,input.userId,input.requestId,row.turn_id,input,row.id,decision);
     if(await isAgentCancellationRequested(this.env.DB,input.userId,input.requestId)) {
       await requestAgentCancellation(this.env.DB,input.userId,row.request_id);

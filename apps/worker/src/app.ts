@@ -2,6 +2,7 @@ import { registerWheelOfLifeRoutes } from "./routes/wheel-of-life";
 import { registerQuoteRoutes } from "./routes/quotes";
 import { registerGratitudeRoutes } from "./routes/gratitude";
 import { registerHomeRoutes } from "./routes/home";
+import { registerPaymentRoutes } from "./routes/payments";
 import { registerGoalRoutes } from "./routes/goals";
 import { registerNavigationFeatureRoutes } from "./routes/navigation-features";
 import { Hono, type Context } from "hono";
@@ -917,7 +918,7 @@ app.post("/api/auth/logout", (c) => {
   return c.json({ ok: true });
 });
 
-registerAssistantRoutes(app, { requireOwner, unauthorized, getSessionOwnerId, getSetupRequired });
+registerAssistantRoutes(app, { requireOwner, unauthorized, getSessionOwnerId, getSetupRequired, ownerSessionIssuedAt });
 registerOnboardingRoutes(app, { requireOwner, unauthorized });
 registerNavigationFeatureRoutes(app, { requireOwner, unauthorized });
 
@@ -1081,7 +1082,8 @@ registerJournalRoutes(app, { requireOwner, unauthorized });
 registerQuoteRoutes(app, { requireOwner, unauthorized });
 registerGratitudeRoutes(app, { requireOwner, unauthorized });
 registerHomeRoutes(app, { requireOwner, unauthorized });
-registerMissionControlRoutes(app, { requireOwner, unauthorized });
+registerPaymentRoutes(app, { requireOwner, unauthorized });
+registerMissionControlRoutes(app, { requireOwner, unauthorized, ownerSessionIssuedAt });
 registerWheelOfLifeRoutes(app, { requireOwner, unauthorized });
 registerGoalRoutes(app, { requireOwner, unauthorized });
 registerLocalExecutorRoutes(app, { requireOwner, unauthorized, getCoreApiOrigin });
@@ -2240,6 +2242,15 @@ function clearOwnerSession(c: AppContext) {
     secure: shouldUseSecureCookie(c.env),
     sameSite: "Lax",
   });
+}
+
+/** Issue time of a valid owner web session; payment approvals require a recent one. */
+async function ownerSessionIssuedAt(c: AppContext): Promise<number | null> {
+  const token = getCookie(c, SESSION_COOKIE_NAME);
+  if (!token) return null;
+  const payload = await verifySessionToken(token, await getOrCreateInstallSessionSecret(c.env));
+  if (!payload || payload.exp <= currentUnixTime() || payload.sub !== "owner") return null;
+  return payload.iat;
 }
 
 async function getSessionOwnerId(c: AppContext): Promise<string | null> {

@@ -381,12 +381,12 @@ export function registerMissionControlRoutes(app: AppHono, deps: OwnerRouteDeps)
       const approval = await c.env.DB.prepare("SELECT id FROM me3_agent_approvals WHERE id = ? AND owner_id = ?")
         .bind(c.req.param("id"), ownerId).first();
       if (approval) {
-        const body = await c.req.json<{ decision?: unknown; status?: unknown; action?: unknown }>().catch(() => null);
+        const body = await c.req.json<{ decision?: unknown; status?: unknown; action?: unknown; deviceAuthentication?: unknown }>().catch(() => null);
         const value = body?.decision ?? body?.status ?? body?.action;
         const decision = value === "approved" || value === "approve" ? "approved"
           : value === "rejected" || value === "declined" || value === "reject" || value === "cancelled" ? "declined" : null;
         if (!decision) return c.json({ ok: false, error: "Decision is required" }, 400);
-        return decideNewAgentApproval(c, ownerId, c.req.param("id"), decision);
+        return decideNewAgentApproval(c, ownerId, c.req.param("id"), decision, { sessionIssuedAt: await deps.ownerSessionIssuedAt?.(c) ?? null, deviceAuthentication: body?.deviceAuthentication });
       }
     }
     const blocked = await requireMissionControlPlugin(c);

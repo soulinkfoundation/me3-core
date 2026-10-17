@@ -4,6 +4,7 @@ import { journalTools } from "./journal";
 import { quoteTools } from "./quotes";
 import { imageTools } from "./images";
 import { mailboxTools } from "./mailbox";
+import { paymentTools } from "./payments";
 import { reminderTools } from "./reminders";
 import { schedulingTools } from "./scheduling";
 import { siteTools } from "./sites";
@@ -31,7 +32,7 @@ const targetContracts: Record<string, AgentTargetMetadata> = {
 };
 
 export function createDomainTools(): AgentTool[] {
-  const tools = [...calendarTools(), ...journalTools(), ...quoteTools(), ...mailboxTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...taskTools(), ...webTools(), ...imageTools()];
+  const tools = [...calendarTools(), ...journalTools(), ...quoteTools(), ...mailboxTools(), ...paymentTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...taskTools(), ...webTools(), ...imageTools()];
   for (const tool of tools) {
     tool.target = targetContracts[tool.name];
     tool.group = toolGroupFor(tool.name);
@@ -43,4 +44,4 @@ export function createDomainTools(): AgentTool[] {
   tools.push(targetPresentationTool(tools));
   return tools;
 }
-export type { AgentDomainServices, AgentMailboxServices, AgentSchedulingServices, AgentPeopleServices, AgentImageGenerationServices, AgentImageGenerationResult, AgentGeneratedImageAction, AgentGeneratedImageAsset, MailboxRecord, SchedulingContact, SchedulingRequest } from "./services";
+export type { AgentDomainServices, AgentMailboxServices, AgentPaymentServices, PaymentProposalRecord, AgentSchedulingServices, AgentPeopleServices, AgentImageGenerationServices, AgentImageGenerationResult, AgentGeneratedImageAction, AgentGeneratedImageAsset, MailboxRecord, SchedulingContact, SchedulingRequest } from "./services";
