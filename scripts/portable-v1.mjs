@@ -93,6 +93,8 @@ export const RUNTIME_MIGRATIONS = [
   ["0068_gratitude", "2026-10-13-gratitude-v1"],
   ["0069_quote_bookmarks", "2026-10-13-quote-bookmarks-v1"],
   ["0070_gratitude_in_today", "2026-10-14-gratitude-in-today-v1"],
+  ["0071_home_layout", "2026-10-17-home-layout-v1"],
+  ["0072_mailbox_triage", "2026-10-17-mailbox-triage-v1"],
   ["0073_agent_payments", "2026-10-17-agent-payments-v1"],
   ["0074_accounts_removals", "2026-10-17-accounts-removals-v1"],
 ];
@@ -126,6 +128,8 @@ const EXCLUDED_TABLES = [
   "local_executor_run_events",
   "local_executor_runs",
   "managed_email_inbound_deliveries",
+  // Cache of public BIMI/favicon logos keyed by sender domain; its R2 keys are host-bound and rows refetch lazily.
+  "mailbox_sender_avatars",
   "email_campaign_transport_state",
   "managed_runtime_control_requests",
   "managed_runtime_state",
@@ -159,6 +163,7 @@ const COPIED_TABLES = [
   "quote_bookmarks",
   "daily_quotes",
   "gratitude_settings",
+  "home_layout",
   "accounts_email_triage_settings",
   "financial_entry_removals",
   "account_customer_removals",
@@ -213,6 +218,10 @@ const COPIED_TABLES = [
   "journal_articles",
   "journal_project_links",
   "mailbox_messages",
+  // Agent-first Email owner state: triage decisions (resolved/snoozed/drafts), the handled log and owner rules.
+  "mailbox_triage",
+  "mailbox_handled_actions",
+  "mailbox_rules",
   "mailbox_attachment_staging",
   "mission_agent_run_events",
   "mission_agent_runs",
