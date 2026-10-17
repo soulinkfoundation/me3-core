@@ -5,7 +5,6 @@ import { useAuthStore } from "../../stores/auth";
 import draggable from "vuedraggable";
 import HomeWheelChart, { type HomeWheelArea } from "./HomeWheelChart.vue";
 import GratitudeCard from "./GratitudeCard.vue";
-import GoalsDialog from "../tasks/GoalsDialog.vue";
 import AppDialog from "../AppDialog.vue";
 import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
 import { useAppToast } from "../../composables/useAppToast";
@@ -14,11 +13,8 @@ import PersonAvatar from "../people/PersonAvatar.vue";
 import PersonSheet from "../people/PersonSheet.vue";
 import { useContactsStore } from "../../stores/contacts";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
-import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDateLabel, homeGoalTasks, homeOpenTasks, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeTask, type HomeGoal } from "../../utils/homeSummary";
+import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDateLabel, homeDoneToday, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
-import TodayFocusLine from "../today/TodayFocusLine.vue";
-import TodaySection from "../today/TodaySection.vue";
-import TodayTasks from "../today/TodayTasks.vue";
 const emit = defineEmits<{ suggest: [text: string]; approvalResolved: [] }>();
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
 const auth = useAuthStore();
@@ -36,7 +32,7 @@ const approvals = ref<{ id: string; pluginId?: string; title: string; summary?: 
 const reviewApproval = ref<(typeof approvals.value)[number] | null>(null);
 const approvalError = ref("");
 const { toastFromUnknown, toastSuccess } = useAppToast();
-const events = ref<{ id: string; title: string; start: string; allDay?: boolean }[]>([]);
+const events = ref<{ id: string; title: string; start: string; end?: string | null; allDay?: boolean }[]>([]);
 const defaultAreas: HomeWheelArea[] = [
   { id: "health", label: "Health", color: "#ff3b30", emoji: "❤️", value: null },
   { id: "spirituality", label: "Spirituality", color: "#34c759", emoji: "🌿", value: null },
@@ -46,15 +42,6 @@ const defaultAreas: HomeWheelArea[] = [
   { id: "joy", label: "Joy", color: "#af52de", emoji: "🤗", value: null },
 ];
 const wheel = ref<HomeWheelArea[]>(defaultAreas.map(area => ({ ...area })));
-const wheelDate = ref("");
-const pickedGoal = ref("");
-const pickedArea = ref("");
-const checkingIn = ref(false);
-const wheelSaving = ref(false);
-const wheelDraft = ref<HomeWheelArea[]>([]);
-const dialogAreas = computed(() => checkingIn.value ? wheelDraft.value : wheel.value);
-const goalEditor = ref(false);
-const goalArea = ref<string | null>(null);
 const mission = ref("");
 const agentAddress = ref("");
 const calendarConnected = ref(false);
@@ -65,7 +52,7 @@ type HomeResource = HomeCard | "tasks" | "wheel";
 const errors = ref<Partial<Record<HomeResource, string>>>({});
 const loading = ref(true);
 const busy = ref<string[]>([]);
-const dialog = ref<"add" | "wheel" | null>(null);
+const dialog = ref<"add" | null>(null);
 const panels = ref<HTMLElement | null>(null);
 const unavailable = ref<HomeResource[]>([]);
 const offline = ref(!navigator.onLine);
@@ -82,7 +69,7 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
   people: { title: "People", href: "/people", emoji: "🫶" },
   gratitude: { title: "Gratitude", href: "/journal", emoji: "🌅" },
   inbox: { title: "Inbox", href: "/email", emoji: "📧" },
-  mission: { title: "Mission", href: "/tasks?goals=1", emoji: "🚀" },
+  mission: { title: "Mission", href: "/mission", emoji: "🚀" },
   journal: { title: "Writing", href: "/journal", emoji: "✍️" },
   accounts: { title: "Accounts", href: "/accounts", emoji: "💰" },
 };
@@ -94,14 +81,29 @@ const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.incl
 const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id)));
 const addCards = computed(() => available.value.filter(id => !HOME_INSIDE_TODAY.includes(id)).sort((a, b) => Number(visible.value.includes(b)) - Number(visible.value.includes(a))));
 const todayTasks = computed(() => homeTodayTasks(tasks.value));
-const focus = computed(() => plan.focus.value);
 // Server setting (gratitude_settings.in_today), so it follows the owner across web and the apps.
 const gratitudeOn = ref(false);
 const showGratitude = computed(() => gratitudeOn.value && !unavailable.value.includes("gratitude"));
-const backlogCount = computed(() => homeOpenTasks(tasks.value).length - todayTasks.value.length);
 // Upcoming events only; an event drops off an hour after it starts.
-const upcomingEvents = computed(() => { const cutoff = Date.now() - 3_600_000; return events.value.filter(event => event.allDay || new Date(event.start).getTime() >= cutoff).slice(0, 3); });
-const todayPage = computed(() => journal.value[0]?.date?.slice(0, 10) === day.value ? journal.value[0] : null);
+// Today is the calendar at a glance: finished events fade, the current one is marked, and an
+// event without an end counts as an hour long.
+function eventState(event: { start: string; end?: string | null; allDay?: boolean }) {
+  if (event.allDay) return "";
+  const start = new Date(event.start).getTime(); const end = event.end ? new Date(event.end).getTime() : start + 3_600_000; const now = Date.now();
+  return end <= now ? "is-past" : start <= now ? "is-now" : "";
+}
+const todayEvents = computed(() => events.value.slice(0, 6));
+const dayOver = computed(() => events.value.length > 0 && events.value.every(event => eventState(event) === "is-past"));
+const tomorrowKey = computed(() => { const date = new Date(`${day.value}T12:00:00`); date.setDate(date.getDate() + 1); return localDateKey(date); });
+// One line into today's journal page, where tasks are added and ticked off.
+const doneToday = computed(() => homeDoneToday(tasks.value));
+const tasksLine = computed(() => {
+  const open = todayTasks.value.length; const done = doneToday.value; const total = open + done;
+  const text = !total ? "No tasks today" : !open ? "All done today" : !done ? `${open} ${open === 1 ? "task" : "tasks"} today` : `${open} of ${total} left`;
+  return { open, done, total, text, label: total ? `${open} of ${total} tasks left. Open today's page` : "No tasks today. Open today's page" };
+});
+const missionPage = ref(0);
+function onMissionScroll(event: Event) { const pager = event.currentTarget as HTMLElement; missionPage.value = Math.round(pager.scrollLeft / Math.max(pager.clientWidth, 1)); }
 const todayLabel = computed(() => new Date(`${day.value}T12:00:00`).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }));
 async function toggleGratitude() {
   const next = !gratitudeOn.value;
@@ -109,17 +111,8 @@ async function toggleGratitude() {
   try { await api.patch("/gratitude/settings", { inToday: next }); }
   catch (error) { gratitudeOn.value = !next; toastFromUnknown(error, "Couldn't change Gratitude"); }
 }
-async function addTask(title: string, done: () => void) {
-  try { await plan.addTask(title); delete errors.value.tasks; }
-  catch (error) { toastFromUnknown(error, "Couldn't add task"); }
-  finally { done(); }
-}
 const activeGoals = computed(() => goals.value.filter(goal => goal.status !== "completed"));
-const selectedGoal = computed(() => activeGoals.value.find(goal => goal.id === pickedGoal.value) || activeGoals.value[0]);
-const goalTasks = computed(() => selectedGoal.value ? homeGoalTasks(tasks.value, selectedGoal.value) : []);
 const lowestArea = computed(() => [...wheel.value].filter(area => area.value !== null).sort((a, b) => a.value! - b.value!)[0]);
-const selectedArea = computed(() => wheel.value.find(area => area.id === pickedArea.value) || lowestArea.value || wheel.value[0]);
-const areaGoals = (id: string) => activeGoals.value.filter(goal => goal.areaId === id);
 const areaFor = (id?: string | null) => wheel.value.find(area => area.id === id);
 const cardElements = new Map<HomeCard, HTMLElement>();
 function setCardElement(card: HomeCard, element: unknown) { if (element instanceof HTMLElement) cardElements.set(card, element); else cardElements.delete(card); }
@@ -189,19 +182,6 @@ function menuKeys(event: KeyboardEvent) {
   buttons[next]?.focus();
 }
 function dismissMenu(event: PointerEvent) { if (!(event.target as HTMLElement).closest(".home-card__menu,.home-card__more")) menu.value = null; }
-function startCheckIn() { wheelDraft.value = wheel.value.map(area => ({ ...area })); checkingIn.value = true; }
-async function saveCheckIn() {
-  if (wheelSaving.value || wheelDraft.value.some(area => area.value === null)) return;
-  wheelSaving.value = true;
-  try {
-    const result = await api.post<{ snapshot: { createdAt: string; segments: HomeWheelArea[] } }>("/journal/wheel/snapshots", { segments: wheelDraft.value, notes: {} });
-    wheel.value = result.snapshot.segments; wheelDate.value = result.snapshot.createdAt;
-    checkingIn.value = false; dialog.value = null; toastSuccess("Check-in saved");
-  } catch (error) { toastFromUnknown(error, "Couldn't save your check-in"); }
-  finally { wheelSaving.value = false; }
-}
-function openWheel() { pickedArea.value = lowestArea.value?.id || wheel.value[0]?.id || ""; checkingIn.value = false; dialog.value = "wheel"; }
-function addGoal(areaId: string | null = null) { dialog.value = null; goalArea.value = areaId; goalEditor.value = true; }
 function reconnect() { offline.value = !navigator.onLine; if (!offline.value) void refresh(); }
 function cancelPress() { clearTimeout(pressTimer); pressOrigin = null; }
 function beginPress(event: PointerEvent, card: HomeCard) {
@@ -241,7 +221,7 @@ async function loadToday() {
         const time = new Date(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00` : raw);
         const finish = e.endsAt || e.ends_at;
         if (time >= end || (finish ? new Date(finish) <= start : time < start)) return [];
-        return [{ id: e.id, title: e.title || `Meeting with ${e.guest_name || "a guest"}`, start: time.toISOString(), allDay: e.allDay }];
+        return [{ id: e.id, title: e.title || `Meeting with ${e.guest_name || "a guest"}`, start: time.toISOString(), end: finish ? new Date(finish).toISOString() : null, allDay: e.allDay }];
       }).sort((a, b) => a.start.localeCompare(b.start));
     calendarConnected.value = Boolean(feed.sources?.length);
     if (pendingResult.status === "rejected") throw pendingResult.reason;
@@ -280,7 +260,6 @@ async function refresh() {
     resource("wheel", async () => {
       const data = await api.get<{ snapshots: { createdAt: string; segments: HomeWheelArea[] }[]; settings: { segments: HomeWheelArea[] } }>("/journal/wheel");
       if (disposed) return;
-      wheelDate.value = data.snapshots?.[0]?.createdAt || "";
       const areas = data.snapshots?.[0]?.segments || data.settings?.segments || [];
       wheel.value = (areas.length ? areas : defaultAreas).map(area => ({ ...area, emoji: area.emoji && !/^[a-z]/i.test(area.emoji) ? area.emoji : defaultAreas.find(a => a.id === area.id)?.emoji || "🙂" }));
     }),
@@ -294,17 +273,22 @@ async function refresh() {
   ]);
   if (!disposed) { loading.value = false; if (!Object.keys(errors.value).length) lastRefresh.value = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
 }
-async function complete(task: HomeTask) {
-  if (busy.value.includes(task.id)) return; busy.value.push(task.id);
-  try { const result = await api.patch<{ task: HomeTask }>(`/mission-control/tasks/${encodeURIComponent(task.id)}`, { status: "done" }); tasks.value = tasks.value.map(t => t.id === task.id ? { ...task, ...result.task } : t); delete errors.value.tasks; }
-  catch (error) { toastFromUnknown(error, "Couldn't complete task"); }
-  finally { busy.value = busy.value.filter(id => id !== task.id); }
-}
 async function confirm(id: string) {
   if (busy.value.includes(id)) return; busy.value.push(id);
   try { await api.post(`/mission-control/approvals/${encodeURIComponent(id)}`, { decision: "approved" }); approvals.value = approvals.value.filter(a => a.id !== id); delete errors.value.today; }
   catch (error) { toastFromUnknown(error, "Couldn't confirm"); }
   finally { busy.value = busy.value.filter(item => item !== id); }
+}
+// Dismiss declines it: saved email drafts are assistant proposals, the rest Mission Control approvals.
+async function dismiss(approval: (typeof approvals.value)[number]) {
+  if (busy.value.includes(approval.id)) return; busy.value.push(approval.id);
+  try {
+    const path = approval.pluginId === "me3.core" ? `/assistant/approvals/${encodeURIComponent(approval.id)}` : `/mission-control/approvals/${encodeURIComponent(approval.id)}`;
+    await api.post(path, { decision: "declined" });
+    approvals.value = approvals.value.filter(item => item.id !== approval.id); delete errors.value.today;
+    if (approval.pluginId === "me3.core") emit("approvalResolved");
+  } catch (error) { toastFromUnknown(error, "Couldn't dismiss"); }
+  finally { busy.value = busy.value.filter(id => id !== approval.id); }
 }
 async function decideCoreApproval(decision: "approved" | "declined") {
   const approval = reviewApproval.value;
@@ -348,7 +332,7 @@ onBeforeUnmount(() => {
       <template #item="{ element: card }: { element: HomeCard }">
         <article :ref="el => setCardElement(card, el)" class="home-card" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header class="home-card__header">
-            <RouterLink :to="cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
+            <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
             <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
             <span v-else-if="card === 'journal' && journal[0]" class="home-card__detail">{{ homeDateLabel(journal[0].date) }}</span>
             <div class="home-card__controls">
@@ -367,20 +351,24 @@ onBeforeUnmount(() => {
           </div>
           <div class="home-card__body">
             <template v-if="card === 'today'">
-              <div v-for="approval in approvals.slice(0, 3)" :key="approval.id" class="home-approval"><strong>{{ approval.title }}</strong><p v-if="approval.summary" class="home-muted">{{ journalPreview(approval.summary) }}</p><div class="home-actions"><template v-if="approval.pluginId === 'me3.core'"><button type="button" :disabled="busy.includes(approval.id)" @click="reviewApproval = approval; approvalError = ''">Review</button></template><template v-else><button type="button" :disabled="busy.includes(approval.id)" @click="confirm(approval.id)">Confirm</button><button type="button" @click="emit('suggest', `Help me find another time for: ${approval.title}`)">Another time</button></template></div></div>
-              <TodayFocusLine :goal="focus" :has-goals="activeGoals.length > 0" />
-              <TodaySection title="Calendar" to="/calendar" label="Open Calendar">
-                <RouterLink v-for="event in upcomingEvents" :key="event.id" to="/calendar" class="home-line home-event"><span class="home-muted home-time">{{ event.allDay ? 'All day' : new Date(event.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }}</span><span>{{ event.title }}</span></RouterLink>
-                <!-- Empty: one quiet line; without a connected calendar, only the way to connect one. -->
-                <RouterLink v-if="!calendarConnected && !events.length" to="/calendar" class="home-quiet"><UiIcon name="Plus" :size="16" />Connect a calendar</RouterLink>
-                <p v-else-if="!upcomingEvents.length" class="home-muted">{{ events.length ? 'Nothing else today.' : 'Nothing scheduled today.' }}</p>
-              </TodaySection>
+              <div v-for="approval in approvals.slice(0, 3)" :key="approval.id" class="home-approval">
+                <span class="home-approval__what"><strong>{{ approval.title }}</strong><span v-if="approval.summary" class="home-muted"> · {{ journalPreview(approval.summary) }}</span></span>
+                <button v-if="approval.pluginId === 'me3.core'" type="button" class="home-approval__go" :disabled="busy.includes(approval.id)" @click="reviewApproval = approval; approvalError = ''">Review</button>
+                <button v-else type="button" class="home-approval__go" :disabled="busy.includes(approval.id)" @click="confirm(approval.id)">Confirm</button>
+                <button type="button" class="home-approval__x" :aria-label="`Dismiss ${approval.title}`" :disabled="busy.includes(approval.id)" @click="dismiss(approval)"><UiIcon name="X" :size="16" /></button>
+              </div>
+              <RouterLink v-if="!calendarConnected && !events.length" to="/calendar" class="home-quiet"><UiIcon name="Plus" :size="16" />Connect a calendar</RouterLink>
+              <template v-else>
+                <RouterLink v-for="event in todayEvents" :key="event.id" :to="`/calendar?date=${day}`" class="home-line home-event" :class="eventState(event)"><span class="home-time">{{ event.allDay ? 'All day' : new Date(event.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</span><i class="home-event__bar" aria-hidden="true" /><span class="home-event__title">{{ event.title }}<template v-if="eventState(event) === 'is-now'"> · now</template></span></RouterLink>
+                <p v-if="!events.length" class="home-empty-line">Nothing scheduled · <RouterLink :to="`/calendar?date=${day}`">Open calendar</RouterLink></p>
+                <p v-else-if="dayOver" class="home-empty-line">Nothing else today · <RouterLink :to="`/calendar?date=${tomorrowKey}`" aria-label="Open tomorrow in Calendar">Tomorrow</RouterLink></p>
+              </template>
               <GratitudeCard v-if="showGratitude" section :active="active" @unavailable="unavailable.push('gratitude')" />
-              <TodayTasks :tasks="todayTasks" :focus-goal-id="focus?.id" :busy="busy" :limit="4" :backlog-count="backlogCount" @complete="complete" @add="addTask" />
-              <TodaySection title="Notes" to="/journal" label="Open today's page">
-                <RouterLink v-if="todayPage" to="/journal" class="home-writing home-muted">{{ journalPreview(todayPage.body || todayPage.preview || '') }}</RouterLink>
-                <RouterLink to="/journal" class="home-quiet">{{ todayPage ? 'Keep writing' : 'Write on today’s page' }}</RouterLink>
-              </TodaySection>
+              <RouterLink to="/journal" class="home-tasksline" :aria-label="tasksLine.label">
+                <span v-if="tasksLine.total" class="home-dots" aria-hidden="true"><i v-for="index in Math.min(tasksLine.total, 5)" :key="index" :class="{ 'is-done': index <= tasksLine.done }" /></span>
+                <strong>{{ tasksLine.text }}</strong>
+                <UiIcon name="ChevronRight" :size="16" class="home-tasksline__go" />
+              </RouterLink>
             </template>
             <template v-else-if="card === 'inbox'">
               <RouterLink v-for="event in soulink.slice(0, 3)" :key="event.id" to="/email" class="home-entry"><strong>{{ journalPreview(event.textBody || 'New request') }}</strong><span v-if="event.outcome" class="home-muted">{{ journalPreview(event.outcome) }}</span></RouterLink>
@@ -388,19 +376,20 @@ onBeforeUnmount(() => {
               <template v-if="!mail.length && !soulink.length"><p class="home-muted">{{ agentAddress ? 'ME3 will keep incoming requests and replies here.' : 'Give ME3 its own email. CC it on anything. It never sees your inbox.' }}</p><RouterLink v-if="!agentAddress" to="/settings?section=mailbox" class="home-quiet"><UiIcon name="Plus" :size="16" />Set up agent email</RouterLink></template>
             </template>
             <template v-else-if="card === 'mission'">
-              <p v-if="mission" class="home-mission">{{ mission }}</p><p v-else class="home-muted">What do you want your life built around? Start there, then add goals.</p>
-              <p v-if="activeGoals.length > 1" class="home-muted home-goal-hint">{{ activeGoals.length }} goals · swipe to explore</p>
-              <div v-if="activeGoals.length" class="home-goal-line" aria-label="Goals">
-                <button v-for="goal in activeGoals" :key="goal.id" type="button" :aria-pressed="selectedGoal?.id === goal.id" @click="pickedGoal = goal.id"><span><span aria-hidden="true">{{ areaFor(goal.areaId)?.emoji || '🎯' }}</span> {{ goal.title }}</span><span class="home-progress" aria-hidden="true"><i :style="{ width: `${goal.progress || 0}%` }" /></span></button>
+              <!-- A read-only reminder: the mission, then goals, then the Wheel. Mission is where they're edited. -->
+              <div class="home-pager" aria-label="Mission, goals and Wheel of Life" @scroll.passive="onMissionScroll">
+                <RouterLink to="/mission" class="home-page home-page--mission"><p class="home-mission" :class="{ 'home-muted': !mission }">{{ mission || 'What do you want your life built around?' }}</p></RouterLink>
+                <RouterLink to="/mission" class="home-page" aria-label="Goals. Open Mission">
+                  <div v-for="goal in activeGoals.slice(0, 3)" :key="goal.id" class="home-goal"><span aria-hidden="true">{{ areaFor(goal.areaId)?.emoji || '🎯' }}</span><span class="home-goal__text">{{ goal.title }}<span class="home-progress" aria-hidden="true"><i :style="{ width: `${goal.progress || 0}%` }" /></span></span><span class="home-muted home-goal__pc">{{ goal.progress || 0 }}%</span></div>
+                  <p v-if="activeGoals.length > 3" class="home-muted">{{ activeGoals.length - 3 }} more in Mission</p>
+                  <p v-if="!activeGoals.length" class="home-muted">No goals yet. Add one in Mission.</p>
+                </RouterLink>
+                <RouterLink to="/mission" class="home-page" aria-label="Wheel of Life. Open Mission">
+                  <div v-if="lowestArea" class="home-wheel"><HomeWheelChart :areas="wheel" :selected="lowestArea.id" /><div class="home-wheel-summary"><strong><span aria-hidden="true">{{ lowestArea.emoji }}</span> {{ lowestArea.label }}</strong><span class="home-wheel-score">{{ lowestArea.value }}<small>/ 10</small></span><span class="home-muted">Your lowest area</span></div></div>
+                  <p v-else class="home-muted">How are you doing across the areas of your life? Check in from Mission.</p>
+                </RouterLink>
               </div>
-              <div v-if="selectedGoal" class="home-goal-tasks">
-                <p class="home-muted home-goal-meta">{{ selectedGoal.progress || 0 }}% there · {{ goalTasks.length }} {{ goalTasks.length === 1 ? 'task' : 'tasks' }}<span v-if="areaFor(selectedGoal.areaId)"> · <span aria-hidden="true">{{ areaFor(selectedGoal.areaId)?.emoji }}</span> {{ areaFor(selectedGoal.areaId)?.label }}</span></p>
-                <div v-for="task in goalTasks.slice(0, 3)" :key="task.id" class="home-line"><button type="button" class="home-task-check" :aria-label="`Complete ${task.title}`" :disabled="busy.includes(task.id)" @click="complete(task)"><UiIcon name="Circle" :size="20" /></button><RouterLink :to="`/tasks?task=${encodeURIComponent(task.id)}`">{{ task.title }}</RouterLink></div>
-                <div class="home-actions"><RouterLink v-if="goalTasks.length > 3" to="/tasks" class="home-quiet">{{ goalTasks.length - 3 }} more</RouterLink><button type="button" class="home-quiet" @click="emit('suggest', `Add a task to my goal “${selectedGoal.title}” (goal ${selectedGoal.id}).`)"><UiIcon name="Plus" :size="16" />Add a task</button></div>
-              </div>
-              <div v-else class="home-actions"><button v-if="!mission" type="button" class="home-quiet" @click="emit('suggest', 'Help me write my mission.')"><UiIcon name="Plus" :size="16" />Write your mission</button><button type="button" class="home-quiet" @click="addGoal()"><UiIcon name="Plus" :size="16" />Add a goal</button></div>
-              <!-- The Wheel of Life lives in Mission now; the Mission redesign (me3-l59x.4) gives it a page of its own. -->
-              <button type="button" class="home-quiet" @click="openWheel"><span aria-hidden="true">🛞</span>Wheel of life</button>
+              <div class="home-pager-dots" aria-hidden="true"><i v-for="index in 3" :key="index" :class="{ 'is-on': missionPage === index - 1 }" /></div>
             </template>
             <template v-else-if="card === 'journal'">
               <RouterLink v-if="journal[0]" :to="`/journal?date=${journal[0].date}`" class="home-writing"><strong v-if="journal[0].title">{{ journal[0].title }}.</strong> <span class="home-muted">{{ journalPreview(journal[0].body || journal[0].preview || '') }}</span></RouterLink>
@@ -414,17 +403,12 @@ onBeforeUnmount(() => {
       </template>
     </draggable>
     <button type="button" class="home-add" @click="dialog = 'add'"><UiIcon name="Plus" :size="26" /><span>Add to Home</span></button>
-    <AppDialog :open="dialog !== null" :aria-label="dialog === 'wheel' ? 'Wheel of Life' : 'Add to Home'" :close-on-backdrop="!wheelSaving" @close="!wheelSaving && (dialog = null)">
-      <section class="home-dialog" :class="{ 'home-dialog--wheel': dialog === 'wheel' }"><header><h2>{{ dialog === 'wheel' ? '🛞 Wheel of Life' : 'Add to Home' }}</h2><button type="button" aria-label="Close Home editor" :disabled="wheelSaving" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>
+    <AppDialog :open="dialog !== null" aria-label="Add to Home" @close="dialog = null">
+      <section class="home-dialog"><header><h2>Add to Home</h2><button type="button" aria-label="Close Home editor" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>
         <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in addCards" :key="card" type="button" :aria-label="cards[card].title" :aria-pressed="visible.includes(card)" class="home-add-tile" @click="visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
         <p v-if="dialog === 'add'" class="home-muted">Drag a card, or use its options menu to move or remove it.</p>
-        <template v-if="dialog === 'wheel'"><div class="home-wheel-dialog"><HomeWheelChart :areas="dialogAreas" :selected="selectedArea?.id" interactive @select="pickedArea = $event" /><div class="home-wheel-rows"><template v-for="area in dialogAreas" :key="area.id"><button type="button" :aria-label="`Select ${area.label}`" :aria-pressed="selectedArea?.id === area.id" @click="pickedArea = area.id"><span class="home-emoji" aria-hidden="true">{{ area.emoji }}</span><span>{{ area.label }}</span><strong>{{ area.value ?? '—' }}</strong></button><label v-if="checkingIn" class="home-wheel-range"><span class="sr-only">{{ area.label }} score</span><input type="range" min="1" max="10" :value="area.value ?? 5" :disabled="wheelSaving" :aria-label="`${area.label} score`" @input="area.value = Number(($event.target as HTMLInputElement).value)" /><output>{{ area.value === null ? 'Not scored' : `${area.value}/10` }}</output></label></template></div></div>
-          <div v-if="selectedArea && !checkingIn" class="home-wheel-goals"><h3>{{ selectedArea.emoji }} {{ selectedArea.label }}</h3><RouterLink v-for="goal in areaGoals(selectedArea.id)" :key="goal.id" to="/tasks?goals=1">{{ goal.title }} · {{ goal.progress || 0 }}%</RouterLink><button v-if="!areaGoals(selectedArea.id).length" type="button" class="home-quiet" @click="addGoal(selectedArea.id)"><UiIcon name="Plus" :size="16" />Add a goal</button></div>
-          <footer><button v-if="checkingIn" type="button" class="home-primary" :disabled="wheelSaving || wheelDraft.some(area => area.value === null)" @click="saveCheckIn">{{ wheelSaving ? 'Saving…' : 'Save check-in' }}</button><button v-else type="button" class="home-primary" @click="startCheckIn">Check in</button><span class="home-muted">{{ wheelDate ? `Last check-in ${new Date(wheelDate).toLocaleDateString([], { day: 'numeric', month: 'short' })}.` : 'A private check-in with the areas of your life.' }}</span></footer>
-        </template>
       </section>
     </AppDialog>
-    <GoalsDialog v-if="goalEditor" :initial-area-id="goalArea" @close="goalEditor = false; refresh()" />
     <PersonSheet :contact="openPerson" @close="openPersonId = null" />
     <AssistantApprovalDialog :approval="reviewApproval" :busy="Boolean(reviewApproval && busy.includes(reviewApproval.id))" :error="approvalError" @close="reviewApproval = null" @decide="decideCoreApproval" />
   </div>
@@ -471,7 +455,33 @@ p { margin: 4px 0; }
 .home-event > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-time { min-width: 50px; font-variant-numeric: tabular-nums; }
 .home-task-check { display: grid; place-items: center; min-width: 36px; width: 36px; margin-left: -8px; flex-shrink: 0; color: var(--ui-text-muted); }
-.home-approval { padding: 10px 12px; margin-bottom: 8px; background: var(--ui-accent-soft); border-radius: 16px; }
+.home-approval { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 2px 0 12px; margin: 2px 0 6px; background: var(--ui-accent-soft); border-radius: 14px; font-size: 14px; }
+.home-approval__what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-approval__go { min-width: 0; min-height: 32px; padding: 0 12px; border-radius: 999px; background: var(--ui-primary); color: var(--ui-primary-contrast); font-size: 13px; font-weight: 600; }
+.home-approval__x { display: grid; place-items: center; min-width: 36px; color: var(--ui-text-muted); }
+.home-event { display: grid; grid-template-columns: 48px 3px minmax(0, 1fr); gap: 10px; align-items: center; min-height: 34px; color: var(--ui-text); text-decoration: none; }
+.home-event__bar { height: 18px; border-radius: 3px; background: var(--ui-accent); }
+.home-event__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-event.is-past { opacity: .45; }
+.home-event.is-now, .home-event.is-now .home-time { color: var(--ui-accent); font-weight: 600; }
+.home-empty-line { min-height: 36px; display: flex; align-items: center; gap: 4px; margin: 0; color: var(--ui-text-muted); font-size: 14px; }
+.home-empty-line a { color: var(--ui-accent); font-weight: 600; text-decoration: none; }
+.home-tasksline { display: flex; align-items: center; gap: 8px; min-height: 40px; margin-top: 6px; padding: 0 12px; border-radius: 12px; background: var(--ui-surface-muted); color: var(--ui-text); font-size: 14px; text-decoration: none; }
+.home-tasksline strong { font-weight: 600; }
+.home-tasksline__go { margin-left: auto; color: var(--ui-text-muted); }
+.home-dots { display: flex; gap: 3px; }
+.home-dots i { width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ui-text-muted); }
+.home-dots i.is-done { background: var(--ui-accent); box-shadow: none; }
+.home-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+.home-pager::-webkit-scrollbar { display: none; }
+.home-page { flex: 0 0 100%; min-height: 150px; display: flex; flex-direction: column; justify-content: center; scroll-snap-align: start; color: var(--ui-text); text-decoration: none; }
+.home-page--mission { align-items: center; }
+.home-goal { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; font-size: 15px; line-height: 1.35; }
+.home-goal__text { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.home-goal__pc { font-size: 13px; font-variant-numeric: tabular-nums; }
+.home-pager-dots { display: flex; justify-content: center; gap: 6px; padding-top: 6px; }
+.home-pager-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--ui-surface-muted); }
+.home-pager-dots i.is-on { background: var(--ui-text); }
 .home-approval strong { font-size: 14px; font-weight: 600; }
 .home-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .home-actions button { padding: 0 4px; }
@@ -486,21 +496,12 @@ p { margin: 4px 0; }
 .home-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / 25%); transition: left .15s; }
 .home-switch.is-on { background: var(--ui-accent); box-shadow: none; }
 .home-switch.is-on::after { left: 18px; }
-.home-mission { margin: 8px 0 20px; font-family: var(--font-serif, Georgia, serif); font-size: 22px; font-weight: 500; line-height: 1.4; text-align: center; }
-.home-goal-hint { margin: 0 0 6px; font-size: 12px; }
-.home-goal-line { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: thin; }
-.home-goal-line button > span:first-child { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.home-goal-line button { flex-shrink: 0; display: grid; gap: 6px; min-width: 0; padding: 4px 0 0; min-height: 42px; border-radius: 0; color: var(--ui-text-muted); font-size: 15px; font-weight: 600; text-align: left; background: transparent; }
-.home-goal-line button[aria-pressed="true"] { color: var(--ui-text); }
-.home-progress { display: block; height: 3px; border-radius: 3px; background: var(--ui-surface-muted); opacity: 0; }
+.home-mission { margin: 8px 6px; font-family: var(--font-serif, Georgia, serif); font-size: 22px; font-weight: 500; line-height: 1.4; text-align: center; }
+.home-progress { display: block; height: 4px; border-radius: 4px; background: var(--ui-surface-muted); }
 .home-progress i { display: block; height: 100%; border-radius: inherit; background: var(--ui-accent); }
-.home-goal-line button[aria-pressed="true"] .home-progress { opacity: 1; }
-.home-goal-tasks { margin: 8px 0 0 10px; padding-left: 16px; box-shadow: inset 2px 0 var(--ui-accent-soft); }
-.home-goal-meta { font-size: 12px; }
 .home-writing { display: block; margin: 2px 0 6px; color: var(--ui-text); text-decoration: none; }
 .home-writing strong { font-weight: 600; }
 .home-wheel { display: flex; align-items: center; gap: 18px; padding: 6px 0; }
-.home-wheel-open { padding: 0; border-radius: 50%; flex: 0 0 auto; }
 .home-wheel-summary { display: grid; gap: 4px; min-width: 0; }
 .home-wheel-summary strong { font-weight: 600; }
 .home-wheel-score { font-size: 30px; line-height: 1.15; font-weight: 600; }
@@ -512,7 +513,6 @@ p { margin: 4px 0; }
 .home-add { display: flex; flex-direction: column; align-items: center; justify-self: center; gap: 4px; margin: 36px auto 0; padding: 8px 16px; font-size: 12px; }
 .home-add span { color: var(--ui-text-muted); }
 .home-dialog { width: min(520px, 100%); max-height: 88dvh; overflow: auto; padding: 20px; border-radius: 28px; background: var(--ui-surface); box-sizing: border-box; box-shadow: var(--ui-shadow-md); }
-.home-dialog--wheel { width: min(760px, 100%); }
 .home-dialog header, .home-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .home-dialog h2 { margin: 0; font-size: 20px; font-weight: 600; }
 .home-dialog h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
@@ -524,26 +524,13 @@ p { margin: 4px 0; }
 .home-add-tile .home-emoji { font-size: 32px; }
 .home-add-tile[aria-pressed="true"] { background: var(--ui-accent-soft); }
 .home-add-tile__check { position: absolute; top: 8px; right: 8px; color: var(--ui-accent-strong); }
-.home-wheel-dialog { display: flex; gap: 24px; align-items: center; margin: 12px 0; }
-.home-wheel-dialog > :deep(svg) { width: 260px; height: 260px; }
-.home-wheel-rows { flex: 1; min-width: 0; }
-.home-wheel-rows > button { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; }
-.home-wheel-rows > button[aria-pressed="true"] { background: var(--ui-surface-muted); font-weight: 600; }
-.home-wheel-rows > button strong { margin-left: auto; font-variant-numeric: tabular-nums; }
-.home-wheel-range { display: flex; align-items: center; gap: 10px; padding: 0 10px; }
-.home-wheel-range input { flex: 1; min-width: 0; accent-color: var(--ui-accent); }
-.home-wheel-range output { width: 66px; font-size: 12px; color: var(--ui-text-muted); }
-.home-wheel-goals > a { display: block; min-height: 36px; text-decoration: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 640px) {
   .home-panels { padding-inline: 2px; }
   .home-card__controls > button { min-width: 44px; width: 44px; }
   .home-card__header { flex-wrap: wrap; gap: 0 6px; }
   .home-wheel { gap: 10px; }
-  .home-wheel-open :deep(svg) { width: 135px; height: 135px; }
   .home-dialog { width: 100%; border-radius: 28px 28px 0 0; padding: 16px; }
-  .home-wheel-dialog { flex-direction: column; }
-  .home-wheel-rows { width: 100%; }
   .home-dialog footer { flex-wrap: wrap; }
 }
 </style>

@@ -2158,9 +2158,10 @@ watch(
   { deep: true },
 );
 
+let openedOnLinkedDay = false;
 function applyInitialCalendarViewport(matches: boolean) {
   isCompactCalendar.value = matches;
-  if (matches) rangeMode.value = "schedule";
+  if (matches && !openedOnLinkedDay) rangeMode.value = "schedule";
 }
 
 function onMobileCalendarChange(event: MediaQueryListEvent) {
@@ -3078,6 +3079,15 @@ function handleWindowResize() {
 }
 
 onMounted(async () => {
+  // Home links open a given day: /calendar?date=YYYY-MM-DD shows that day.
+  const linkedDay = new URLSearchParams(window.location.search).get("date");
+  if (linkedDay && /^\d{4}-\d{2}-\d{2}$/.test(linkedDay)) {
+    const day = new Date(`${linkedDay}T12:00:00`);
+    if (!Number.isNaN(day.getTime())) {
+      openedOnLinkedDay = true; rangeMode.value = "day"; dayCursor.value = day; monthCursor.value = new Date(day);
+      focusedDayKey.value = dayKeyFormatter.value.format(day);
+    }
+  }
   const soulinkFeed = new URLSearchParams(window.location.hash.slice(1)).get("soulink_calendar_feed");
   if (soulinkFeed) {
     window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);

@@ -47,6 +47,10 @@ const props = withDefaults(
     titlePlaceholder?: string;
     titleMaxLength?: number;
     titleDisabled?: boolean;
+    /** Shows the title placeholder as real text (a daily page's date is its title until you write one). */
+    titlePrefilled?: boolean;
+    /** "emit" hands the task button to the page, which turns the line or selection into a real task. */
+    taskButton?: "list" | "emit";
     uploadImage?: (input: {
       blob: Blob;
       id: string;
@@ -62,6 +66,8 @@ const props = withDefaults(
     titlePlaceholder: "Untitled",
     titleMaxLength: 180,
     titleDisabled: false,
+    titlePrefilled: false,
+    taskButton: "list",
   },
 );
 
@@ -75,6 +81,7 @@ const emit = defineEmits<{
     image: { id: string; blob: Blob; mimeType: string; ext: string }
   ): void;
   (e: "imageRemoved", imageId: string): void;
+  (e: "taskCommand"): void;
 }>();
 
 const isSectionVariant = computed(() => props.variant === "section");
@@ -1750,8 +1757,8 @@ defineExpose({
         v-if="variant !== 'campaign' && !isSectionVariant"
         type="button"
         class="toolbar-btn"
-        :class="{ active: editor?.isActive('taskList') }"
-        @click="toggleTaskList"
+        :class="{ active: taskButton === 'list' && editor?.isActive('taskList') }"
+        @click="taskButton === 'emit' ? emit('taskCommand') : toggleTaskList()"
         title="Task list"
         aria-label="Task list"
       >
@@ -1839,13 +1846,16 @@ defineExpose({
         :value="title"
         type="text"
         class="editor-title-input"
+        :class="{ 'is-prefilled': titlePrefilled }"
         :placeholder="titlePlaceholder"
         :maxlength="titleMaxLength"
         :disabled="titleDisabled"
         aria-label="Title"
         @input="emit('update:title', ($event.target as HTMLInputElement).value)"
       />
+      <slot name="title-meta" />
     </div>
+    <slot name="after-title" />
 
     <p v-if="imageError" class="editor-error">{{ imageError }}</p>
 
@@ -2472,11 +2482,21 @@ defineExpose({
   }
 }
 
+.editor-title-input.is-prefilled::placeholder {
+  color: var(--ui-text);
+  opacity: 1;
+}
+
 .editor-title-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
 }
 
 .editor-title-input {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   box-sizing: border-box;
   border: 0;

@@ -22,11 +22,10 @@ import { parseJournalReminderCapture } from "../utils/journalReminderCapture";
 import { journalBodyForEditor } from "../utils/journalContent";
 import { reorderJournalBlocks } from "../utils/journalWriting";
 import { writtenGratitude } from "../utils/gratitude";
-import TodayFocusLine from "../components/today/TodayFocusLine.vue";
-import TodayTasks from "../components/today/TodayTasks.vue";
+import JournalDayPlan from "../components/today/JournalDayPlan.vue";
 import { useAppToast } from "../composables/useAppToast";
 import { useTodayPlan } from "../composables/useTodayPlan";
-import { homeTodayTasks, plainPreview, type HomeTask } from "../utils/homeSummary";
+import { plainPreview, type HomeTask } from "../utils/homeSummary";
 
 definePage({
   meta: {
@@ -111,7 +110,6 @@ const router = useRouter();
 // Today's page shows the focus goal and today's tasks above your notes, like the Home Today card.
 const plan = useTodayPlan();
 const planReady = ref(false);
-const planTasks = computed(() => homeTodayTasks(plan.tasks.value));
 const { toastFromUnknown: toastPlanError } = useAppToast();
 async function loadPlan() {
   try { await Promise.all([plan.loadTasks(), plan.loadGoals()]); planReady.value = true; }
@@ -120,8 +118,46 @@ async function loadPlan() {
 async function completePlanTask(task: HomeTask) {
   try { await plan.complete(task); } catch (error) { toastPlanError(error, "Couldn't complete task"); }
 }
-async function addPlanTask(title: string, done: () => void) {
-  try { await plan.addTask(title); } catch (error) { toastPlanError(error, "Couldn't add task"); } finally { done(); }
+async function focusPlanGoal(id: string) {
+  try { await plan.makeFocus(id); } catch (error) { toastPlanError(error, "Couldn't change your focus goal"); }
+}
+// Today's page: the focus goal and tasks sit between the title and your notes.
+const showsDayPlan = computed(() => !currentArticle.value && currentDateIsToday.value && planReady.value);
+const dayTitle = computed(() => new Date(`${selectedDate.value}T12:00:00`).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" }));
+// Task moves text out of your notes and into today's tasks, so nothing is written twice. Undo puts it back.
+const movedTask = ref<{ id: string; previous: string } | null>(null);
+let movedTimer: ReturnType<typeof setTimeout> | undefined;
+function taskTitleFrom(text: string) {
+  return text.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s*)?(?:\[[ xX]\]\s*)?/gm, "").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+async function moveToTask() {
+  const editor = editorRef.value?.editor;
+  if (!editor) return;
+  hideSelectionToolbar();
+  let { from, to } = editor.state.selection;
+  // Nothing selected: the task button takes the whole line the cursor is on.
+  if (from === to) { const $from = editor.state.selection.$from; from = $from.start(); to = $from.end(); }
+  const title = taskTitleFrom(editor.state.doc.textBetween(from, to, " "));
+  if (!title) { error.value = "Write the task on a line, then use the task button."; return; }
+  const previous = description.value;
+  editor.chain().focus().deleteRange({ from, to }).run();
+  try {
+    const result = await api.post<{ task: HomeTask }>("/mission-control/tasks", { title, status: "in_progress" });
+    plan.tasks.value = [...plan.tasks.value, result.task];
+    clearTimeout(movedTimer);
+    movedTask.value = { id: result.task.id, previous };
+    movedTimer = setTimeout(() => { movedTask.value = null; }, 5000);
+  } catch (cause) {
+    description.value = previous;
+    toastPlanError(cause, "Couldn't create the task");
+  }
+}
+async function undoMove() {
+  const moved = movedTask.value; if (!moved) return;
+  movedTask.value = null; clearTimeout(movedTimer);
+  description.value = moved.previous;
+  plan.tasks.value = plan.tasks.value.filter(task => task.id !== moved.id);
+  try { await api.delete(`/mission-control/tasks/${encodeURIComponent(moved.id)}`); } catch (cause) { toastPlanError(cause, "Couldn't remove the task"); }
 }
 const auth = useAuthStore();
 const selectedDate = ref(normalizeLocalDateInput(rawDateQuery(route.query.date)) || todayKey());
@@ -1472,24 +1508,33 @@ onBeforeUnmount(() => {
           class="journal__editor-wrap"
           :class="{ 'is-loading': loading }"
         >
-          <TodayFocusLine v-if="!currentArticle && currentDateIsToday && planReady" :goal="plan.focus.value" :has-goals="plan.goals.value.some(goal => goal.status !== 'completed')" class="journal__focus" />
           <div v-if="!currentArticle && (dailyGratitude.gratitude.length || dailyGratitude.goodThings.length)" class="journal__gratitude" aria-label="Gratitude and three good things">
             <section v-if="dailyGratitude.gratitude.length"><h3>Grateful for</h3><ol><li v-for="(line, index) in dailyGratitude.gratitude" :key="index">{{ line }}</li></ol></section>
             <section v-if="dailyGratitude.goodThings.length"><h3>Three good things</h3><ol><li v-for="(line, index) in dailyGratitude.goodThings" :key="index">{{ line }}</li></ol></section>
           </div>
-          <TodayTasks v-if="!currentArticle && currentDateIsToday && planReady" :tasks="planTasks" :focus-goal-id="plan.focus.value?.id" :busy="plan.busy.value" class="journal__tasks" @complete="completePlanTask" @add="addPlanTask" />
           <TiptapEditor
             ref="editorRef"
             v-model="description"
             v-model:title="title"
             show-title-field
             variant="workspace"
-            :title-placeholder="currentArticle ? 'Untitled article' : 'Untitled note'"
+            :title-placeholder="currentArticle ? 'Untitled article' : dayTitle"
+            :title-prefilled="!currentArticle"
             :title-max-length="180"
             :title-disabled="loading"
+            :task-button="showsDayPlan ? 'emit' : 'list'"
             :upload-image="uploadJournalImage"
             :placeholder="currentArticle ? 'Write your article here...' : 'Write your note here...'"
-          />
+            @task-command="moveToTask"
+          >
+            <template #title-meta>
+              <span v-if="!loading" class="journal__title-meta">{{ wordCount.toLocaleString() }} {{ wordCount === 1 ? 'word' : 'words' }}<template v-if="saveStatusText"> · <strong>{{ saveStatusText }}</strong></template></span>
+            </template>
+            <template #after-title>
+              <JournalDayPlan v-if="showsDayPlan" :tasks="plan.tasks.value" :goals="plan.goals.value" :busy="plan.busy.value" @complete="completePlanTask" @focus="focusPlanGoal" />
+            </template>
+          </TiptapEditor>
+          <div v-if="movedTask" class="journal__moved" role="status">Moved to tasks<button type="button" @click="undoMove">Undo</button></div>
         </div>
 
         <div
@@ -1510,9 +1555,6 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="journal__status" aria-live="polite">
-          <span v-if="!loading">
-            {{ wordCount.toLocaleString() }} {{ wordCount === 1 ? 'word' : 'words' }}<template v-if="saveStatusText"> · {{ saveStatusText }}</template>
-          </span>
           <span v-if="loading">Loading</span>
           <span v-else-if="voiceDictationState === 'listening'">
             Recording {{ voiceRecordingElapsedLabel }}
@@ -1604,7 +1646,7 @@ onBeforeUnmount(() => {
         aria-label="Create task from highlighted text"
         title="Create task"
         type="button"
-        @click="openCapture('task')"
+        @click="showsDayPlan ? moveToTask() : openCapture('task')"
       >
         <UiIcon name="CircleCheckBig" :size="16" />
       </Button>
@@ -2063,6 +2105,10 @@ onBeforeUnmount(() => {
   min-height: max(200px, calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height) - 132px));
 }
 
+.journal__title-meta { flex-shrink: 0; color: var(--ui-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.journal__title-meta strong { font-weight: 600; }
+.journal__moved { position: sticky; bottom: 16px; z-index: 5; display: flex; align-items: center; gap: 14px; width: max-content; margin: 8px auto 0; padding: 8px 8px 8px 16px; border-radius: 999px; background: var(--ui-text); color: var(--ui-surface); font-size: 14px; font-weight: 600; }
+.journal__moved button { min-height: 32px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--ui-accent); font: inherit; font-weight: 700; cursor: pointer; }
 .journal__status {
   display: flex;
   align-items: center;

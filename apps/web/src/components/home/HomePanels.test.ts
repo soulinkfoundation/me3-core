@@ -97,11 +97,22 @@ describe("Home Core approval review", () => {
     button("Decline")!.click(); await flushPromises();
     expect(api.post).toHaveBeenCalledWith("/assistant/approvals/approval-1", { decision: "declined" });
   });
-  it("preserves existing plugin confirmation and rescheduling actions", async () => {
-    pending = [{ id: "plugin-1", pluginId: "me3.mission-control", title: "Meeting request", summary: "Tomorrow" }];
-    render(); await flushPromises(); expect(button("Another time")).toBeTruthy();
+  // Failure modes: two actions per row again, dismiss hitting the wrong approval store.
+  it("gives each approval one action and a dismiss icon", async () => {
+    pending = [{ id: "plugin-1", pluginId: "me3.mission-control", title: "Meeting request", summary: "Tomorrow" }, core];
+    render(); await flushPromises();
+    expect(button("Another time")).toBeUndefined();
     button("Confirm")!.click(); await flushPromises();
     expect(api.post).toHaveBeenCalledWith("/mission-control/approvals/plugin-1", { decision: "approved" });
+    (document.body.querySelector('[aria-label="Dismiss Send email"]') as HTMLButtonElement).click(); await flushPromises();
+    expect(api.post).toHaveBeenCalledWith("/assistant/approvals/approval-1", { decision: "declined" });
+  });
+  it("dismisses a plugin approval through Mission Control", async () => {
+    pending = [{ id: "plugin-1", pluginId: "me3.mission-control", title: "Meeting request" }];
+    render(); await flushPromises();
+    (document.body.querySelector('[aria-label="Dismiss Meeting request"]') as HTMLButtonElement).click(); await flushPromises();
+    expect(api.post).toHaveBeenCalledWith("/mission-control/approvals/plugin-1", { decision: "declined" });
+    expect(document.body.textContent).not.toContain("Meeting request");
   });
 });
 
@@ -136,46 +147,49 @@ describe("Home People card", () => {
 describe("Home Today card", () => {
   const today = () => document.body.querySelector('article[aria-label="Today"]')!;
   const gratitude = () => today().querySelector('[aria-label="Gratitude"], [aria-label="Three good things"]');
-  it("folds the focus goal, calendar and today's tasks into one card", async () => {
-    goals = [{ id: "done", title: "Old goal", status: "completed" }, { id: "ship", title: "Ship People v1", status: "active" }];
+  const feed = (events: object[], sources: object[] = [{ id: "google" }]) => vi.mocked(api.get).mockImplementation((original => async (endpoint: string) => endpoint.startsWith("/calendar/feed") ? { events, sources } as never : original(endpoint))(vi.mocked(api.get).getMockImplementation()!));
+  // Failure modes: tasks, notes or the focus goal creeping back into Today; the tasks line
+  // miscounting or not opening the journal; the title not opening the calendar on today.
+  it("is the calendar at a glance, with one line into today's page for tasks", async () => {
+    goals = [{ id: "ship", title: "Ship People v1", status: "active" }];
     tasks = [
       { id: "t-now", title: "Finish the person sheet", status: "in_progress", goalId: "ship" },
+      { id: "t-done", title: "Done earlier", status: "done", updatedAt: new Date().toISOString() },
       { id: "t-someday", title: "Someday idea", status: "backlog" },
     ];
     render(); await flushPromises();
-    expect(document.body.querySelectorAll("article.home-card")).toHaveLength(1);
     const text = today().textContent!;
-    expect(text).toContain("Ship People v1");
-    expect(text).toContain("Calendar");
-    expect(text).toContain("Finish the person sheet");
-    expect(text).not.toContain("Someday idea");
-    expect(today().querySelector('[aria-label="Focus goal"]')).toBeTruthy();
+    expect(text).not.toContain("Ship People v1");
+    expect(text).not.toContain("Finish the person sheet");
+    expect(text).not.toContain("Notes");
+    expect(today().querySelector('input[aria-label="Add a task"]')).toBeNull();
+    const line = today().querySelector('a[aria-label^="1 of 2 tasks left"]')!;
+    expect(line.getAttribute("href") ?? line.getAttribute("to")).toBe("/journal");
+    expect(today().querySelector(".home-card__title")!.getAttribute("to")).toMatch(/^\/calendar\?date=\d{4}-\d{2}-\d{2}$/);
   });
   it("shows the server's Gratitude setting", async () => {
     gratitudeInToday = true; render(); await flushPromises();
     expect(gratitude()).toBeTruthy();
   });
-  it("shows one quiet line for an empty calendar and task list, with a way into the backlog", async () => {
-    tasks = [{ id: "t-someday", title: "Someday idea", status: "backlog" }];
-    vi.mocked(api.get).mockImplementation((original => async (endpoint: string) => endpoint.startsWith("/calendar/feed") ? { events: [], sources: [{ id: "google" }] } as never : original(endpoint))(vi.mocked(api.get).getMockImplementation()!));
-    render(); await flushPromises();
-    expect(today().textContent).toContain("Nothing scheduled today.");
-    expect(today().textContent).toContain("Nothing for today.");
-    expect(today().textContent).toContain("Pick from backlog");
+  it("keeps a way into the calendar when nothing is scheduled", async () => {
+    feed([]); render(); await flushPromises();
+    expect(today().textContent).toContain("Nothing scheduled");
+    expect(today().textContent).toContain("Open calendar");
     expect(today().textContent).not.toContain("Connect a calendar");
   });
   it("offers only the way to connect when no calendar is connected", async () => {
     render(); await flushPromises();
     expect(today().textContent).toContain("Connect a calendar");
-    expect(today().textContent).not.toContain("Nothing scheduled today.");
-    expect(today().textContent).not.toContain("Pick from backlog");
+    expect(today().textContent).not.toContain("Nothing scheduled");
   });
-  it("adds a quick task to Now", async () => {
+  it("fades finished events and points to tomorrow once the day's schedule is over", async () => {
+    const start = new Date(); start.setHours(0, 30, 0, 0); const end = new Date(start.getTime() + 15 * 60_000);
+    if (end.getTime() > Date.now()) return; // Just after midnight there is nothing finished yet.
+    feed([{ id: "e1", title: "Early run", startsAt: start.toISOString(), endsAt: end.toISOString() }]);
     render(); await flushPromises();
-    const input = today().querySelector<HTMLInputElement>('input[aria-label="Add a task"]')!;
-    input.value = "Book the dentist"; input.dispatchEvent(new Event("input")); input.form!.dispatchEvent(new Event("submit")); await flushPromises();
-    expect(api.post).toHaveBeenCalledWith("/mission-control/tasks", { title: "Book the dentist", status: "in_progress" });
-    expect(today().textContent).toContain("Book the dentist");
+    expect(today().querySelector(".home-event.is-past")?.textContent).toContain("Early run");
+    expect(today().textContent).toContain("Nothing else today");
+    expect(today().querySelector('a[aria-label="Open tomorrow in Calendar"]')).toBeTruthy();
   });
   it("keeps gratitude off until it is switched on from the Today menu, which holds only that switch", async () => {
     render(); await flushPromises();
