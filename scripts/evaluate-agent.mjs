@@ -104,6 +104,8 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
     const route = live ? createGatewayRoute(modelChoice, { budget }) : { model: "scripted-fixture", providerId: "workers-ai", configured: true, usageSamples: [], recordUsage() {}, ai: { async run() { throw new Error("Fixture provider not initialized"); } }, aiGateway: null };
     try {
       scenario.setup?.(seed);
+      // Memory scenarios build the real owner snapshot from the seeded installation.
+      if (scenario.ownerSnapshot) messages[0].content = buildAgentSystemPrompt({ ownerName: "Eval Owner", timezone: "Europe/Dublin", now: new Date(`${baseDate}T12:00:00Z`), ownerSnapshot: await scenario.ownerSnapshot(seed) });
       const initialState = snapshotEvalState(seed);
       const initialQuoteState = snapshotQuoteEvalState(seed);
       const services = createSeededEvalServices(seed);
