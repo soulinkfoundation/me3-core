@@ -97,6 +97,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0072_mailbox_triage", "2026-10-17-mailbox-triage-v1"],
   ["0073_agent_payments", "2026-10-17-agent-payments-v1"],
   ["0074_accounts_removals", "2026-10-17-accounts-removals-v1"],
+  ["0075_agent_computer", "2026-10-17-agent-computer-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -182,6 +183,10 @@ const COPIED_TABLES = [
   "agent_payment_receipts",
   "agent_payment_limits",
   "agent_payment_events",
+  "me3_agent_computer_jobs",
+  "me3_agent_computer_steps",
+  "me3_agent_computer_artifacts",
+  "me3_agent_computer_settings",
   "ai_model_defaults",
   "ai_provider_credentials",
   "ai_usage_events",

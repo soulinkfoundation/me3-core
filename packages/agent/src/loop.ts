@@ -103,6 +103,12 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
             const output = outputs[i];
             if (output.status === "needs_approval") return finish("needs_approval");
             checkpoint.messages.push({role:"tool",toolCallId:calls[i].id,content:JSON.stringify(output)});
+            // A finishing tool (computer_finish) supplies the final reply itself, saving a model step.
+            if (output.status === "ok" && output.endTurn === true && typeof output.replyText === "string" && output.replyText.trim()) {
+              checkpoint.pendingCalls = undefined;
+              checkpoint.nextCallIndex = undefined;
+              return finish("complete", output.replyText);
+            }
             if (output.status === "needs_selection" && tools.find(tool => tool.name === calls[i].name)?.endsTurn) {
               checkpoint.targetPresentation = (output.data as { targetPresentation: AgentTargetPresentationCard }).targetPresentation;
               checkpoint.pendingCalls = undefined;

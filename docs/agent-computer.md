@@ -1,10 +1,33 @@
 # Agent computer: browser and sandbox with owner takeover
 
 Status: **main rules and default limits approved by the owner on 2026-10-11**
-(bead `me3-ahsk.18`); spikes 1–3 done, spike 4 pending. No code, bindings or
-deployment follow until the build beads are filed. The durable parts then move into the shared
-[agent runtime](../../docs/projects/me3-agent-runtime.md) architecture and
-the build work becomes beads.
+(bead `me3-ahsk.18`); spikes 1–3 done, spike 4 pending. Build step 1 (background
+jobs with read-only browsing, `me3-ahsk.40`) is implemented; takeover (`.41`) and
+page actions (`.42`) follow. The durable architecture lives in the shared
+[agent runtime](../../docs/projects/me3-agent-runtime.md#agent-computer) doc; this
+file keeps the design record, spike results and contributor notes.
+
+## Code map (build step 1)
+
+- `packages/agent/src/computer`: browser contract and fake driver, address
+  policy, masked snapshot formatter, limits, D1 job store, chat and job tools,
+  and `runComputerJob`, which runs the job on the shared agent loop with its own
+  checkpoint, step cap and browsing timer.
+- `apps/worker/src/agent-computer.ts`: availability gate (`BROWSER` binding),
+  owner limits under the `ME3_AGENT_COMPUTER_LIMITS` ceiling, chat services,
+  private screenshot attachments, result posting and the background-result push.
+- `apps/worker/src/agent-computer-runner.ts` and `browser-run-driver.ts`: model
+  admission shared with chat turns, and the Browser Run driver
+  (`@cloudflare/puppeteer`, fresh incognito context, request interception).
+- `apps/worker/src/me3-agent.ts`: one `computer-job` fiber per job; recovery starts
+  a new attempt; `/computer/cancel` records Stop durably and aborts the live run.
+- `apps/worker/src/routes/computer.ts`: `GET /api/computer`, `PUT
+  /api/computer/settings`, `GET /api/computer/jobs[/:id]`, `POST
+  /api/computer/jobs/:id/cancel`. Migration `0075_agent_computer`.
+- Tests: `agent-computer-job.test.ts` (fake driver lifecycle, limits, session
+  loss, cancel, recovery), `agent-computer.test.ts` (publishing, notifications,
+  routes, Browser Run tree conversion), `agent-computer-do.test.ts` (fibers).
+  No test calls Browser Run.
 
 ## Goal
 

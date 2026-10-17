@@ -3,6 +3,8 @@ import type { AgentFastPathRequestMeasurement } from "../../../packages/agent/sr
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { saveOwnerQuote } from "./quotes";
 import { createAgentPaymentServices } from "./agent-payments";
+import { computerAvailability, createComputerChatServices, type ComputerJobHost } from "./agent-computer";
+import { computerChatTools } from "../../../packages/agent/src/computer/tools";
 import { createOwnerCreateIntentVerifier } from "./agent-owner-create-intent";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
 import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
@@ -43,7 +45,7 @@ export function isNewAgentDispatchInput(value:unknown):value is NewAgentDispatch
   return (input.threadId===undefined||(typeof input.threadId==="string"&&Boolean(input.threadId.trim())&&input.threadId.length<=500))&&["userId","turnId","requestId","messageText"].every(key=>typeof input[key]==="string"&&Boolean((input[key] as string).trim())&&(input[key] as string).length<=(key==="messageText"?100_000:500));
 }
 
-export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,signal:AbortSignal,onEvent?:(event:string,data:Record<string,unknown>,seq:number)=>void,waitUntil?:(work:Promise<void>)=>void):Promise<Record<string,unknown>> {
+export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,signal:AbortSignal,onEvent?:(event:string,data:Record<string,unknown>,seq:number)=>void,waitUntil?:(work:Promise<void>)=>void,computerHost?:ComputerJobHost):Promise<Record<string,unknown>> {
   const lease=await beginManagedRuntimeWriteLease(env,"POST","assistant_agent");
   if(isManagedRuntime(env)&&!lease)throw new Error("Managed runtime is not accepting agent writes");
   try {
@@ -54,90 +56,8 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const timezone=owner.timezone||"UTC";
     const plugins=await listCorePluginRecords(env);
     const enabledPluginIds=new Set(plugins.filter(plugin=>plugin.enabled&&plugin.status==="installed").map(plugin=>plugin.id));
-    const settings=await getAiSettings(env,input.userId);
-    const managed=isManagedRuntime(env)?await getManagedAiBillingSettings(env):null;
-    // `eligible` only says whether paid Stripe overages can be enabled. Trial,
-    // App Store and complimentary owners use the included allowance, and
-    // effectiveMaximumCents plus the fallback model still cap every owner's spend.
-    if(managed&&!managed.available)throw new Error(managed.ineligibleReason||"Managed AI is unavailable");
-    const route=settings.defaults.chat;
-    const modelName=input.selectedModel?providerModel(input.selectedModel.providerId,input.selectedModel.model):managed?.defaultModel||providerModel(route.providerId,route.model);
-    if(managed){await assertManagedCostsReconciled(env,input.userId,true);resolveManagedModel(managed,modelName);}
-    const gateway=await getAiGatewayRuntimeConfig(env,input.userId);
-    if(!env.AI)throw new Error("Cloudflare AI binding is not configured");
-    const metadata={me3_runtime:"agent",me3_turn_id:input.turnId,me3_request_id:input.requestId,me3_thread_id:input.threadId};
+    const {managed,modelName,gateway,metadata,admitModel,plannerAdmitted,modelFor,model,backup,allowanceFallbackUsed}=await createAgentModels(env,input);
     const imageScope={ownerId:input.userId,threadId:input.threadId};
-    let usageIndex=0;
-    type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"fast_path";onAdmission?(id:string):void;shadow?:{stage:string;argumentMode:string;sampleRate:number}};
-    let firstAdmission: (()=>void)|undefined;
-    const plannerAdmitted = new Promise<void>(resolve=>{firstAdmission=resolve;});
-    const admitModel=async(selected:string,reportCount=0,purpose?:ModelPurpose,shadow=false)=>{
-      const usageId=`${input.turnId}:model:${crypto.randomUUID()}:${usageIndex++}`;
-      const callMetadata={...metadata,...(purpose?{purpose:purpose.purpose}:{}),...(purpose?.shadow?{shadowRequest:purpose.shadow}:{})};
-      const receiptMetadata={...callMetadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0]};
-      const billingFeeRate=managed&&!selected.startsWith("@cf/")?0.05:0;
-      // An interrupted or unpriced paid request must remain visibly unreconciled.
-      // Planner calls ignore shadow receipts from every turn, so a late or unpriced
-      // shadow can only stop later shadows, never the owner's own turns.
-      const admitted=await env.DB.prepare(`INSERT INTO ai_usage_events(id,user_id,kind,provider,model,tokens_in,tokens_out,estimated_cost_usd,metadata_json)
-        SELECT ?,?,'text','workers-ai',?,0,0,0,? WHERE ?=0 OR (NOT EXISTS(
-          SELECT 1 FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month')
-          AND json_extract(metadata_json,'$.me3_runtime')='agent'
-          AND json_extract(metadata_json,'$.billingManaged')=1
-          AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL
-          AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'
-            AND (?=0 OR coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?))
-          AND NOT (?=1 AND coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?)
-        ) AND ?=(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=?
-          AND created_at >= datetime('now','start of month')
-          AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
-          AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'
-            AND (?=0 OR coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?))
-        ))`).bind(usageId,input.userId,selected,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:null,costKnown:false,usageReported:false}),managed?1:0,input.userId,shadow?1:0,input.turnId,shadow?1:0,input.turnId,reportCount,input.userId,shadow?1:0,input.turnId).run();
-      if(managed&&!admitted.meta.changes){
-        if(!shadow)await assertManagedCostsReconciled(env,input.userId,true);
-        throw new Error("Managed AI budget policy changed before model admission; retry this turn");
-      }
-      purpose?.onAdmission?.(usageId);
-      if(!purpose){firstAdmission?.();firstAdmission=undefined;}
-      return Object.assign(async(usage:AgentUsage,measurement?:AgentFastPathRequestMeasurement)=>{
-        const tokensKnown=!(purpose?.purpose==="fast_path"&&usage.estimatedCostUsd===null)&&[usage.inputTokens,usage.outputTokens,usage.cachedInputTokens,usage.cacheWriteInputTokens??0].every(value=>typeof value==="number"&&Number.isFinite(value)&&value>=0);
-        const baseCostUsd=usage.estimatedCostUsd;
-        const billedCostUsd=baseCostUsd===null?null:baseCostUsd*(1+billingFeeRate);
-        const costKnown=tokensKnown&&billedCostUsd!==null&&Number.isFinite(billedCostUsd)&&billedCostUsd>=0;
-        await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,metadata_json=? WHERE id=?")
-          .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,...(measurement?{shadowRequest:{...purpose?.shadow,...measurement}}:{}),billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
-      },{usageId});
-    };
-    const cloudflareModel=(selected:string,reportCount=0,purpose?:ModelPurpose):AgentModel=>({id:selected,async step(step){
-      step.signal.throwIfAborted();
-      if(step.messages.some(message=>message.images?.length)&&!bindingModelSupportsImageInput(selected))throw new Error("This model cannot read images. Choose an image-input model for this turn.");
-      const messages=await resolveAgentImageInputs(env,imageScope,step.messages,step.signal);
-      step.signal.throwIfAborted();
-      const recordUsage=await admitModel(selected,reportCount,purpose);
-      const response=await createCloudflareModel({ai:env.AI as never,model:selected,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
-      return {...response,billingUsageId:recordUsage.usageId};
-    }});
-    let allowanceFallbackUsed=false;
-    const modelFor=(requested:string,purpose?:ModelPurpose):AgentModel=>{
-      if(!managed)return cloudflareModel(canonicalNativeModel(requested),0,purpose);
-      const model:AgentModel={id:resolveManagedModel(managed,requested),async step(step){
-        await assertManagedCostsReconciled(env,input.userId,false);
-        await syncManagedAiUsage(env,{deferFastPathTurnId:input.turnId});
-        const reportCount=await managedUsageReportCount(env,input.userId,input.turnId,true);
-        const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
-        model.id=resolveManagedModel(policy,requested);
-        // Haiku also answers routed chat turns; only a budget switch counts here.
-        if(managedModelId(model.id)===managedModelId(MANAGED_AI_FALLBACK_MODEL)&&managedModelId(requested)!==managedModelId(model.id))allowanceFallbackUsed=true;
-        await assertManagedCostsReconciled(env,input.userId,true);
-        step.signal.throwIfAborted();
-        return cloudflareModel(model.id,reportCount,purpose).step(step);
-      }};
-      return model;
-    };
-    const model=modelFor(modelName);
-    const backupName=env.ME3_AI_CHAT_BACKUP_MODEL;
-    const backup=backupName&&(!managed||managed.models.some(model=>managedModelId(model.id)===managedModelId(backupName)))?modelFor(backupName):undefined;
     const store=createD1TurnStore(env.DB,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId});
     let messages:AgentMessage[]=[];
     if(!await store.load()) {
@@ -150,8 +70,8 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const attachments=await loadAgentAttachmentManifest(env,imageScope,input.attachments||[]);
       await env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").bind(`${input.turnId}:user`,input.userId,input.threadId,input.messageText,JSON.stringify({requestId:input.requestId,runtime:"agent",...(attachments.length?{attachments}:{})})).run();
     }
-    const services=await newAgentServices(env,input.userId);
-    const tools=createDomainTools().filter(tool=>isToolAvailable(tool.name,services));
+    const services=await newAgentServices(env,input.userId,computerHost);
+    const tools=[...createDomainTools(),...computerChatTools()].filter(tool=>isToolAvailable(tool.name,services));
     // Shadow waits for planner admission, never the other way round. Its receipt
     // remains billable, but cannot change this turn's routing or admission.
     const sampleRate=env.ME3_AGENT_FAST_PATH_SAMPLE_RATE===undefined?1:Number(env.ME3_AGENT_FAST_PATH_SAMPLE_RATE);
@@ -218,9 +138,104 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event.event,event.data);
       onEvent?.(event.event,event.data,seq);
     }});
-    const allowanceNotice=managed&&allowanceFallbackUsed?managedAllowanceNotice(await getManagedAiBillingSettings(env,{syncUsage:false})):null;
+    const allowanceNotice=managed&&allowanceFallbackUsed()?managedAllowanceNotice(await getManagedAiBillingSettings(env,{syncUsage:false})):null;
     return persistNewAgentResult(env,input,result,onEvent,allowanceNotice);
   } finally {await releaseManagedRuntimeWriteLease(env,lease);}
+}
+
+type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"fast_path";onAdmission?(id:string):void;shadow?:{stage:string;argumentMode:string;sampleRate:number}};
+export type AgentModelScope = Pick<NewAgentDispatchInput,"userId"|"threadId"|"turnId"|"requestId"|"selectedModel">;
+
+/**
+ * Builds the planner model with usage receipts, managed admission and the
+ * allowance fallback. Chat turns and background computer jobs share it, so a
+ * job's model steps are billed and capped exactly like a turn's.
+ */
+export async function createAgentModels(env:Env,scope:AgentModelScope) {
+  const settings=await getAiSettings(env,scope.userId);
+  const managed=isManagedRuntime(env)?await getManagedAiBillingSettings(env):null;
+  // `eligible` only says whether paid Stripe overages can be enabled. Trial,
+  // App Store and complimentary owners use the included allowance, and
+  // effectiveMaximumCents plus the fallback model still cap every owner's spend.
+  if(managed&&!managed.available)throw new Error(managed.ineligibleReason||"Managed AI is unavailable");
+  const route=settings.defaults.chat;
+  const modelName=scope.selectedModel?providerModel(scope.selectedModel.providerId,scope.selectedModel.model):managed?.defaultModel||providerModel(route.providerId,route.model);
+  if(managed){await assertManagedCostsReconciled(env,scope.userId,true);resolveManagedModel(managed,modelName);}
+  const gateway=await getAiGatewayRuntimeConfig(env,scope.userId);
+  if(!env.AI)throw new Error("Cloudflare AI binding is not configured");
+  const metadata={me3_runtime:"agent",me3_turn_id:scope.turnId,me3_request_id:scope.requestId,me3_thread_id:scope.threadId};
+  const imageScope={ownerId:scope.userId,threadId:scope.threadId};
+  let usageIndex=0;
+  let firstAdmission: (()=>void)|undefined;
+  const plannerAdmitted = new Promise<void>(resolve=>{firstAdmission=resolve;});
+  const admitModel=async(selected:string,reportCount=0,purpose?:ModelPurpose,shadow=false)=>{
+    const usageId=`${scope.turnId}:model:${crypto.randomUUID()}:${usageIndex++}`;
+    const callMetadata={...metadata,...(purpose?{purpose:purpose.purpose}:{}),...(purpose?.shadow?{shadowRequest:purpose.shadow}:{})};
+    const receiptMetadata={...callMetadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0]};
+    const billingFeeRate=managed&&!selected.startsWith("@cf/")?0.05:0;
+    // An interrupted or unpriced paid request must remain visibly unreconciled.
+    // Planner calls ignore shadow receipts from every turn, so a late or unpriced
+    // shadow can only stop later shadows, never the owner's own turns.
+    const admitted=await env.DB.prepare(`INSERT INTO ai_usage_events(id,user_id,kind,provider,model,tokens_in,tokens_out,estimated_cost_usd,metadata_json)
+      SELECT ?,?,'text','workers-ai',?,0,0,0,? WHERE ?=0 OR (NOT EXISTS(
+        SELECT 1 FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month')
+        AND json_extract(metadata_json,'$.me3_runtime')='agent'
+        AND json_extract(metadata_json,'$.billingManaged')=1
+        AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL
+        AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'
+          AND (?=0 OR coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?))
+        AND NOT (?=1 AND coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?)
+      ) AND ?=(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=?
+        AND created_at >= datetime('now','start of month')
+        AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
+        AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'
+          AND (?=0 OR coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?))
+      ))`).bind(usageId,scope.userId,selected,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:null,costKnown:false,usageReported:false}),managed?1:0,scope.userId,shadow?1:0,scope.turnId,shadow?1:0,scope.turnId,reportCount,scope.userId,shadow?1:0,scope.turnId).run();
+    if(managed&&!admitted.meta.changes){
+      if(!shadow)await assertManagedCostsReconciled(env,scope.userId,true);
+      throw new Error("Managed AI budget policy changed before model admission; retry this turn");
+    }
+    purpose?.onAdmission?.(usageId);
+    if(!purpose){firstAdmission?.();firstAdmission=undefined;}
+    return Object.assign(async(usage:AgentUsage,measurement?:AgentFastPathRequestMeasurement)=>{
+      const tokensKnown=!(purpose?.purpose==="fast_path"&&usage.estimatedCostUsd===null)&&[usage.inputTokens,usage.outputTokens,usage.cachedInputTokens,usage.cacheWriteInputTokens??0].every(value=>typeof value==="number"&&Number.isFinite(value)&&value>=0);
+      const baseCostUsd=usage.estimatedCostUsd;
+      const billedCostUsd=baseCostUsd===null?null:baseCostUsd*(1+billingFeeRate);
+      const costKnown=tokensKnown&&billedCostUsd!==null&&Number.isFinite(billedCostUsd)&&billedCostUsd>=0;
+      await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,metadata_json=? WHERE id=?")
+        .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,...(measurement?{shadowRequest:{...purpose?.shadow,...measurement}}:{}),billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
+    },{usageId});
+  };
+  const cloudflareModel=(selected:string,reportCount=0,purpose?:ModelPurpose):AgentModel=>({id:selected,async step(step){
+    step.signal.throwIfAborted();
+    if(step.messages.some(message=>message.images?.length)&&!bindingModelSupportsImageInput(selected))throw new Error("This model cannot read images. Choose an image-input model for this turn.");
+    const messages=await resolveAgentImageInputs(env,imageScope,step.messages,step.signal);
+    step.signal.throwIfAborted();
+    const recordUsage=await admitModel(selected,reportCount,purpose);
+    const response=await createCloudflareModel({ai:env.AI as never,model:selected,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
+    return {...response,billingUsageId:recordUsage.usageId};
+  }});
+  let allowanceFallbackUsed=false;
+  const modelFor=(requested:string,purpose?:ModelPurpose):AgentModel=>{
+    if(!managed)return cloudflareModel(canonicalNativeModel(requested),0,purpose);
+    const model:AgentModel={id:resolveManagedModel(managed,requested),async step(step){
+      await assertManagedCostsReconciled(env,scope.userId,false);
+      await syncManagedAiUsage(env,{deferFastPathTurnId:scope.turnId});
+      const reportCount=await managedUsageReportCount(env,scope.userId,scope.turnId,true);
+      const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
+      model.id=resolveManagedModel(policy,requested);
+      // Haiku also answers routed chat turns; only a budget switch counts here.
+      if(managedModelId(model.id)===managedModelId(MANAGED_AI_FALLBACK_MODEL)&&managedModelId(requested)!==managedModelId(model.id))allowanceFallbackUsed=true;
+      await assertManagedCostsReconciled(env,scope.userId,true);
+      step.signal.throwIfAborted();
+      return cloudflareModel(model.id,reportCount,purpose).step(step);
+    }};
+    return model;
+  };
+  const model=modelFor(modelName);
+  const backupName=env.ME3_AI_CHAT_BACKUP_MODEL;
+  const backup=backupName&&(!managed||managed.models.some(model=>managedModelId(model.id)===managedModelId(backupName)))?modelFor(backupName):undefined;
+  return {managed,modelName,gateway,metadata,admitModel,plannerAdmitted,modelFor,model,backup,allowanceFallbackUsed:()=>allowanceFallbackUsed};
 }
 
 async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void,allowanceNotice:ManagedAllowanceNotice|null=null) {
@@ -246,8 +261,10 @@ async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:
   return visiblePayload;
 }
 
-async function newAgentServices(env:Env,ownerId:string):Promise<AgentDomainServices> {
+async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJobHost):Promise<AgentDomainServices> {
   return {
+    // Hidden unless the installation has Browser Run and the turn runs in the owner's agent instance.
+    computer:computerHost&&computerAvailability(env).available?createComputerChatServices(env,ownerId,computerHost):undefined,
     quotes: { save: (input, options) => saveOwnerQuote(env, ownerId, input, "agent", options?.signal, options?.authorization) },
     scheduling:createStableAgentSchedulingServices(env,ownerId),
     mailbox:createAgentMailboxServices(env,ownerId),
@@ -262,6 +279,7 @@ function isToolAvailable(name:string,services:AgentDomainServices):boolean {
   if(name==="core_images_generate")return Boolean(services.images);
   if(name.startsWith("core_mailbox_"))return Boolean(services.mailbox);
   if(name.startsWith("core_payments_"))return Boolean(services.payments);
+  if(name.startsWith("core_computer_"))return Boolean(services.computer);
   if(name==="core_scheduling_request_read")return Boolean(services.scheduling?.getRequest);
   if(name==="core_scheduling_request")return Boolean(services.scheduling?.request);
   if(name==="core_scheduling_request_profile")return Boolean(services.scheduling?.requestNetwork);
@@ -299,7 +317,7 @@ function resolveManagedModel(policy:ManagedAiBillingSettings,requested:string):s
   if(policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)return MANAGED_AI_FALLBACK_MODEL;
   return canonicalNativeModel(requested);
 }
-function bindingModelSupportsImageInput(model:string):boolean {
+export function bindingModelSupportsImageInput(model:string):boolean {
   if(modelSupportsImageInput("workers-ai",model))return true;
   if(model.startsWith("openai/"))return modelSupportsImageInput("openai",model.slice("openai/".length));
   if(model.startsWith("anthropic/"))return modelSupportsImageInput("anthropic",model.slice("anthropic/".length));

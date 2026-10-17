@@ -12,6 +12,7 @@ import { HOME_LAYOUT_SCHEMA } from "./home-layout";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { AGENT_PAYMENTS_SCHEMA } from "./agent-payments";
+import { AGENT_COMPUTER_SCHEMA } from "./agent-computer";
 import { MAIL_TRIAGE_SCHEMA } from "./mailbox-triage";
 import type { Env } from "./types";
 
@@ -584,6 +585,14 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-17-accounts-removals-v1",
     async apply(db) {
       await db.batch(ACCOUNTS_REMOVALS_SCHEMA.map(sql => db.prepare(sql)));
+    },
+  },
+  // Agent computer: background browser jobs, steps, screenshot artifacts and owner limits.
+  {
+    id: "0075_agent_computer",
+    checksum: "2026-10-17-agent-computer-v1",
+    async apply(db) {
+      await db.batch(AGENT_COMPUTER_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];

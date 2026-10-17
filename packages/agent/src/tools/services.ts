@@ -58,6 +58,8 @@ export interface AgentDomainServices {
   people?: AgentPeopleServices;
   images?: AgentImageGenerationServices;
   payments?: AgentPaymentServices;
+  /** Background browser jobs; present only when the installation has Browser Run. */
+  computer?: import("../computer/tools").ComputerChatServices;
   web?: { search: WebResearchService["search"]; open: WebContentFetcher["open"] };
   landingPageEnv?: AgentLandingPageEnv;
 }

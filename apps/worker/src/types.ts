@@ -6,6 +6,8 @@ export interface Env {
   IMAGES?: ImageTransformationsBinding;
   ASSETS?: Fetcher;
   SITE_ASSETS?: R2Bucket;
+  /** Browser Run binding for the agent computer; absent means the feature is hidden. */
+  BROWSER?: Fetcher;
   BOOKING_REMINDER_QUEUE?: Queue<BookingReminderQueueMessage>;
   SOCIAL_PUBLISH_QUEUE?: Queue<SocialPublishQueueMessage>;
 
@@ -39,6 +41,8 @@ export interface Env {
   ME3_WEB_SEARCH_MODEL?: string;
   ME3_AI_CHAT_PROVIDER?: string;
   ME3_AI_CHAT_MODEL?: string;
+  /** Installation ceiling for agent computer limits (JSON); managed plans set it, self-hosted uses the defaults. */
+  ME3_AGENT_COMPUTER_LIMITS?: string;
   ME3_AI_CHAT_BACKUP_MODEL?: string;
   ME3_AGENT_FAST_PATH?: string;
   ME3_AGENT_FAST_PATH_SAMPLE_RATE?: string;

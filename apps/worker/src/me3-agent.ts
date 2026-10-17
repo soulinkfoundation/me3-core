@@ -8,6 +8,8 @@ import { resolvePrimaryAssistantThread } from "./assistant-primary-thread";
 import { revalidateAgentImagePayload } from "./agent-image-projection";
 import type { Env } from "./types";
 import { notifyAgentTurnFinished } from "./agent-notifications";
+import { executeComputerJob } from "./agent-computer-runner";
+import { requestComputerJobCancel, type ComputerJobHost } from "./agent-computer";
 
 type StreamEvent={event:string;data:Record<string,unknown>;seq:number};
 type Subscriber={controller:ReadableStreamDefaultController<Uint8Array>;lastSeq:number;initializing:boolean;closed:boolean;remove():void;queued:StreamEvent[]};
@@ -19,6 +21,8 @@ export class Me3Agent extends Agent<Env> {
   static override options={fiberRecoveryHookTimeoutMs:330_000};
   private readonly subscribers=new Map<string,Set<Subscriber>>();
   private readonly active=new Map<string,{fiberId:string;controller:AbortController}>();
+  /** Live computer jobs in this instance; D1 owns their state and the browser is disposable. */
+  private readonly jobs=new Map<string,AbortController>();
 
   override async onRequest(request:Request):Promise<Response> {
     const url=new URL(request.url);
@@ -26,13 +30,18 @@ export class Me3Agent extends Agent<Env> {
     if(request.method==="POST"&&url.pathname==="/managed-lifecycle/purge-storage") {
       const installation=request.headers.get("X-ME3-Managed-Installation");
       if(!installation||!/^mi-[0-9a-f]{16}$/.test(installation)||installation!==this.env.ME3_MANAGED_INSTALLATION_ID)return Response.json({ok:false,error:"Not found"},{status:404});
-      if(this.active.size)return Response.json({ok:false,error:"Agent turns are still active"},{status:409});
+      if(this.active.size||this.jobs.size)return Response.json({ok:false,error:"Agent turns are still active"},{status:409});
       await this.ctx.storage.deleteAll();
       return Response.json({ok:true,purged:(await this.ctx.storage.list({limit:1})).size===0});
     }
     if(request.method!=="POST")return Response.json({error:"Not found"},{status:404});
     const body=await request.json().catch(()=>null) as Record<string,unknown>|null;
     if(url.pathname==="/turn/cancel")return this.cancel(body);
+    if(url.pathname==="/computer/cancel") {
+      if(typeof body?.userId!=="string"||typeof body.jobId!=="string")return Response.json({error:"Invalid job identity"},{status:400});
+      await this.computerHost(body.userId).cancel(body.jobId);
+      return Response.json({ok:true,jobId:body.jobId});
+    }
     if(url.pathname==="/turn/resume") {
       if(typeof body?.userId!=="string"||typeof body.turnId!=="string")return Response.json({error:"Invalid turn identity"},{status:400});
       const row=await this.loadTurn(body.userId,body.turnId);
@@ -66,6 +75,13 @@ export class Me3Agent extends Agent<Env> {
   }
 
   override async onFiberRecovered(context:FiberRecoveryContext) {
+    if(context.name==="computer-job") {
+      // A job can outlive the recovery hook deadline, so recovery starts a new attempt and returns.
+      const job=(context.snapshot??context.metadata) as {ownerId?:string;jobId?:string}|null;
+      if(!job?.ownerId||!job.jobId)return {status:"error" as const,error:"Missing computer job identity"};
+      await this.startComputerJob(job.ownerId,job.jobId);
+      return {status:"completed" as const};
+    }
     // Managed fibers can be evicted after the ledger insert but before stash().
     const snapshot=(context.snapshot??context.metadata) as {ownerId?:string;turnId?:string}|null;
     if(!snapshot?.ownerId||!snapshot.turnId)return {status:"error" as const,error:"Missing D1 turn identity"};
@@ -96,6 +112,37 @@ export class Me3Agent extends Agent<Env> {
     },{fiberId,idempotencyKey:fiberId,metadata:{ownerId:input.userId,turnId:input.turnId},waitForCompletion});
   }
 
+  /** Chat tools reach the owner's job host through this instance. */
+  private computerHost(ownerId:string):ComputerJobHost {
+    return {
+      start:jobId=>this.startComputerJob(ownerId,jobId),
+      cancel:async jobId=>{
+        await requestComputerJobCancel(this.env,ownerId,jobId);
+        const live=this.jobs.get(jobId);
+        // A live run notices the durable request; without one, a run settles the cancelled job and posts it.
+        if(live)live.abort("Owner cancelled");else await this.startComputerJob(ownerId,jobId);
+      },
+    };
+  }
+
+  private async startComputerJob(ownerId:string,jobId:string) {
+    if(this.jobs.has(jobId))return;
+    const row=await this.env.DB.prepare("SELECT attempts,status,published_at FROM me3_agent_computer_jobs WHERE owner_id=? AND id=?").bind(ownerId,jobId).first<{attempts:number;status:string;published_at:string|null}>();
+    if(!row||row.status!=="running"&&row.published_at)return;
+    const fiberId=`computer:${jobId}:${row.attempts}`;
+    const controller=new AbortController();
+    this.jobs.set(jobId,controller);
+    try {
+      await this.startFiber("computer-job",async context=>{
+        context.stash({ownerId,jobId});
+        const forward=()=>controller.abort(context.signal.reason);
+        context.signal.addEventListener("abort",forward,{once:true});
+        try {await executeComputerJob(this.env,ownerId,jobId,controller.signal);}
+        finally {context.signal.removeEventListener("abort",forward);if(this.jobs.get(jobId)===controller)this.jobs.delete(jobId);}
+      },{fiberId,idempotencyKey:fiberId,metadata:{ownerId,jobId},waitForCompletion:false});
+    } catch(error){if(this.jobs.get(jobId)===controller)this.jobs.delete(jobId);throw error;}
+  }
+
   private store(input:NewAgentDispatchInput) {return createD1TurnStore(this.env.DB,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId});}
   private async executeTurn(input:NewAgentDispatchInput,fiberId:string,signal?:AbortSignal) {
     if(await this.stopRequested(input))return;
@@ -104,7 +151,7 @@ export class Me3Agent extends Agent<Env> {
     const controller=new AbortController(),active={fiberId,controller};
     const cancel=()=>controller.abort(signal?.reason);signal?.addEventListener("abort",cancel,{once:true});if(signal?.aborted)cancel();
     this.active.set(input.turnId,active);
-    try {await executeNewAgentTurn(this.env,input,controller.signal,(event,data,seq)=>this.broadcastTurn(input.turnId,event,data,seq),work=>this.ctx.waitUntil(work));}
+    try {await executeNewAgentTurn(this.env,input,controller.signal,(event,data,seq)=>this.broadcastTurn(input.turnId,event,data,seq),work=>this.ctx.waitUntil(work),this.computerHost(input.userId));}
     catch(error){await this.persistTerminal(input,controller.signal.aborted?"cancelled":"failed",error instanceof Error?error.message:"Agent turn failed");}
     finally {signal?.removeEventListener("abort",cancel);if(controller.signal.aborted)await this.declinePending(input.userId,input.turnId);if(this.active.get(input.turnId)===active)this.active.delete(input.turnId);}
   }

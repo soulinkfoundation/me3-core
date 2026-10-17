@@ -3,6 +3,7 @@ import { registerQuoteRoutes } from "./routes/quotes";
 import { registerGratitudeRoutes } from "./routes/gratitude";
 import { registerHomeRoutes } from "./routes/home";
 import { registerPaymentRoutes } from "./routes/payments";
+import { registerComputerRoutes } from "./routes/computer";
 import { registerGoalRoutes } from "./routes/goals";
 import { registerNavigationFeatureRoutes } from "./routes/navigation-features";
 import { Hono, type Context } from "hono";
@@ -550,6 +551,7 @@ app.get("/health", async (c) => {
       userAgent: Boolean(c.env.ME3_USER_AGENT),
       workersAi: Boolean(c.env.AI),
       siteAssets: Boolean(c.env.SITE_ASSETS),
+      browserRun: Boolean(c.env.BROWSER),
     },
     hosts: {
       admin: getAdminHost(c.env, c.req.url),
@@ -1083,6 +1085,7 @@ registerQuoteRoutes(app, { requireOwner, unauthorized });
 registerGratitudeRoutes(app, { requireOwner, unauthorized });
 registerHomeRoutes(app, { requireOwner, unauthorized });
 registerPaymentRoutes(app, { requireOwner, unauthorized });
+registerComputerRoutes(app, { requireOwner, unauthorized });
 registerMissionControlRoutes(app, { requireOwner, unauthorized, ownerSessionIssuedAt });
 registerWheelOfLifeRoutes(app, { requireOwner, unauthorized });
 registerGoalRoutes(app, { requireOwner, unauthorized });

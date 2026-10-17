@@ -40,6 +40,12 @@ remote = true
 [images]
 binding = "IMAGES"
 
+# Agent computer (background browser jobs) needs Browser Run on Workers Paid.
+# It stays hidden until this binding exists. Each job uses a fresh incognito
+# browser; limits are owner settings under an optional ME3_AGENT_COMPUTER_LIMITS ceiling.
+# [browser]
+# binding = "BROWSER"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "me3-core-db"
