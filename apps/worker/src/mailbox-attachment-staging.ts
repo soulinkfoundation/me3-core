@@ -8,9 +8,13 @@ export const MAILBOX_ATTACHMENT_STAGING_SQL = `CREATE TABLE IF NOT EXISTS mailbo
 
 // Record every intended key before the first R2 write, including writes whose
 // response may be lost. The message transaction removes this record on commit.
+// A later call for the same message replaces the list, so pass every key.
 export async function stageMailboxAttachmentKeys(env: Env, messageId: string, keys: string[]) {
   if (!keys.length) return;
-  await env.DB.prepare(`INSERT INTO mailbox_attachment_staging (message_id, storage_keys_json, created_at) VALUES (?, ?, ?)`)
+  await env.DB.prepare(
+    `INSERT INTO mailbox_attachment_staging (message_id, storage_keys_json, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(message_id) DO UPDATE SET storage_keys_json = excluded.storage_keys_json`,
+  )
     .bind(messageId, JSON.stringify(keys), new Date().toISOString()).run();
 }
 

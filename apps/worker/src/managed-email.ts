@@ -6,7 +6,8 @@ import {
 } from "./me3-cloud-jwt";
 import {
   deliverInboundEmail,
-  MAX_INBOUND_EMAIL_BYTES,
+  maxInboundEmailBytes,
+  recordOversizedInboundEmail,
   type ForwardableEmailMessageLike,
 } from "./mailbox-inbound";
 import { normalizeEmail } from "./sites";
@@ -77,15 +78,6 @@ export async function receiveManagedEmailInbound(
         "unsupported_media_type",
       );
     }
-    const contentLength = Number(request.headers.get("content-length") || "0");
-    if (Number.isFinite(contentLength) && contentLength > MAX_INBOUND_EMAIL_BYTES) {
-      throw new ManagedInboundRequestError(
-        "Message is too large for this ME3 mailbox",
-        413,
-        "too_large",
-      );
-    }
-
     const identity = await getManagedEmailRuntimeIdentity(env);
     const deliveryId = requiredHeader(request, "X-ME3-Delivery-ID");
     const managedInstallationId = requiredHeader(request, "X-ME3-Install-ID");
@@ -114,7 +106,29 @@ export async function receiveManagedEmailInbound(
       recipient,
       bodySha256: expectedBodySha256,
     });
-    const rawBytes = await readRequestBytes(request, MAX_INBOUND_EMAIL_BYTES);
+    // Size is checked after authentication so only a genuine delivery can leave
+    // an oversized-message stub in the mailbox. Managed delivery cannot forward
+    // natively, so the stub plus the 413 is how the owner and gateway learn.
+    const maxBytes = maxInboundEmailBytes(env);
+    const contentLength = Number(request.headers.get("content-length") || "0");
+    const tooLarge = async (rawSize: number) => {
+      await recordOversizedInboundEmail(env, {
+        headers: new Headers(),
+        envelopeFrom: "",
+        envelopeTo: recipient,
+        rawSize,
+        maxBytes,
+        providerId: MANAGED_EMAIL_PROVIDER_ID,
+        providerDeliveryId: deliveryId,
+        forwardedTo: null,
+      });
+      return jsonResponse({ error: "Message is too large for this ME3 mailbox", code: "too_large" }, 413);
+    };
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      return await tooLarge(contentLength);
+    }
+    const rawBytes = await readRequestBytes(request, maxBytes);
+    if (!rawBytes) return await tooLarge(maxBytes + 1);
     const actualBodySha256 = await sha256Hex(rawBytes);
     if (actualBodySha256 !== claims.body_sha256) {
       throw new ManagedInboundRequestError(
@@ -156,6 +170,10 @@ export async function receiveManagedEmailInbound(
     }
     if (result.status === "paused") {
       return jsonResponse({ status: "paused", error: result.reason }, 409);
+    }
+    if (result.status === "forwarded") {
+      // Unreachable today: managed delivery disables native forwarding.
+      return jsonResponse({ status: "forwarded", deliveryId, messageId: result.messageId }, 202);
     }
     if (result.status === "too_large") {
       return jsonResponse({ status: "too_large", error: result.reason }, 413);
@@ -257,20 +275,20 @@ function rawMimeMessage(
   bytes: Uint8Array,
   recipient: string,
 ): ForwardableEmailMessageLike {
-  const rawCopy = bytes.slice();
   return {
     from: "",
     to: recipient,
     headers: new Headers(),
-    raw: new Blob([rawCopy.buffer as ArrayBuffer]).stream(),
-    rawSize: rawCopy.byteLength,
+    raw: new Blob([bytes as Uint8Array<ArrayBuffer>]).stream(),
+    rawBytes: bytes,
+    rawSize: bytes.byteLength,
     canBeForwarded: false,
     setReject() {},
     async forward() {},
   };
 }
 
-async function readRequestBytes(request: Request, maxBytes: number): Promise<Uint8Array> {
+async function readRequestBytes(request: Request, maxBytes: number): Promise<Uint8Array | null> {
   if (!request.body) return new Uint8Array();
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -281,11 +299,7 @@ async function readRequestBytes(request: Request, maxBytes: number): Promise<Uin
     total += chunk.value.byteLength;
     if (total > maxBytes) {
       await reader.cancel().catch(() => undefined);
-      throw new ManagedInboundRequestError(
-        "Message is too large for this ME3 mailbox",
-        413,
-        "too_large",
-      );
+      return null;
     }
     chunks.push(chunk.value);
   }
@@ -352,8 +366,7 @@ async function getInstallSecret(env: Env, name: string): Promise<string> {
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const copy = bytes.slice();
-  const digest = await crypto.subtle.digest("SHA-256", copy.buffer as ArrayBuffer);
+  const digest = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>);
   return Array.from(new Uint8Array(digest), (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");

@@ -12,9 +12,19 @@ import {
 } from "../../../shared/email-headers";
 
 const DIRECT_INBOUND_EMAIL_PROVIDER_ID = "cloudflare-email-routing";
-// Raw MIME and parsed bodies currently share one D1 row. Keep this conservative
-// until raw message storage moves to R2; the gateway must honor a 413 response.
-export const MAX_INBOUND_EMAIL_BYTES = 1024 * 1024;
+// Cloudflare Email Routing accepts messages up to 25 MiB. Raw MIME and
+// attachments live in R2 and D1 keeps size-capped parsed bodies. Without an R2
+// bucket the raw message stays in the D1 row, so the old 1 MiB limit applies.
+// The managed gateway must honor a 413 response.
+export const MAX_INBOUND_EMAIL_BYTES = 25 * 1024 * 1024;
+export const MAX_INLINE_INBOUND_EMAIL_BYTES = 1024 * 1024;
+// D1 rows top out at 2 MB, so parsed bodies are capped; raw MIME keeps the rest.
+const MAX_STORED_TEXT_BODY_BYTES = 256 * 1024;
+const MAX_STORED_HTML_BODY_BYTES = 768 * 1024;
+
+export function maxInboundEmailBytes(env: Pick<Env, "SITE_ASSETS">): number {
+  return env.SITE_ASSETS ? MAX_INBOUND_EMAIL_BYTES : MAX_INLINE_INBOUND_EMAIL_BYTES;
+}
 
 export type ForwardableEmailMessageLike = {
   readonly from: string;
@@ -23,6 +33,8 @@ export type ForwardableEmailMessageLike = {
   readonly raw: ReadableStream<Uint8Array>;
   readonly rawSize: number;
   readonly canBeForwarded: boolean;
+  // Already-buffered raw bytes (managed gateway) so delivery skips a second copy.
+  readonly rawBytes?: Uint8Array;
   setReject(reason: string): void;
   forward(rcptTo: string, headers?: Headers): Promise<void>;
 };
@@ -44,6 +56,7 @@ export type InboundEmailDeliveryOptions = {
 export type InboundEmailDeliveryResult =
   | { status: "accepted"; mailboxId: string; messageId: string }
   | { status: "duplicate"; mailboxId: string; messageId: string }
+  | { status: "forwarded"; mailboxId: string; messageId: string | null; forwardedTo: string }
   | { status: "conflict"; reason: string }
   | { status: "paused"; reason: string }
   | { status: "too_large"; reason: string }
@@ -86,7 +99,7 @@ export async function handleInboundEmail(
   env: Env,
 ): Promise<void> {
   const result = await deliverInboundEmail(message, env);
-  if (result.status !== "accepted" && result.status !== "duplicate") {
+  if (result.status !== "accepted" && result.status !== "duplicate" && result.status !== "forwarded") {
     message.setReject(result.reason);
   }
 }
@@ -124,76 +137,78 @@ export async function deliverInboundEmail(
       };
     }
 
-    if (message.rawSize > MAX_INBOUND_EMAIL_BYTES) {
-      return {
-        status: "too_large",
-        reason: "Message is too large for this ME3 mailbox.",
-      };
+    const maxBytes = maxInboundEmailBytes(env);
+    if (message.rawSize > maxBytes) {
+      return await handleOversizedInboundEmail(message, env, mailbox, options, maxBytes);
     }
 
-    const rawMessage = await readEmailRawText(message.raw, MAX_INBOUND_EMAIL_BYTES);
+    const providerId = options.providerId || DIRECT_INBOUND_EMAIL_PROVIDER_ID;
+    const rowId = crypto.randomUUID();
+    let rawBytes: Uint8Array | null = message.rawBytes || await readEmailRawBytes(message.raw, maxBytes);
+    const rawMessage = new TextDecoder().decode(rawBytes);
+    let rawStorageKey: string | null = null;
+    if (env.SITE_ASSETS) {
+      rawStorageKey = `mailbox/${mailbox.id}/messages/${rowId}/raw.eml`;
+      stagedMessageId = rowId;
+      await stageMailboxAttachmentKeys(env, rowId, [rawStorageKey]);
+      await env.SITE_ASSETS.put(rawStorageKey, rawBytes, {
+        httpMetadata: { contentType: "message/rfc822" },
+        customMetadata: { mailboxId: mailbox.id, messageId: rowId },
+      });
+    }
+    rawBytes = null;
     const parsed = parseInboundEmail(rawMessage, message.headers);
     const now = new Date().toISOString();
-    const providerId = options.providerId || DIRECT_INBOUND_EMAIL_PROVIDER_ID;
     const providerMessageId =
       normalizeEmailHeaderValue(parsed.headers["message-id"]) ||
       options.providerDeliveryId ||
       await sha256Text(rawMessage);
     const threadKey = resolveMailboxThreadKey(parsed.headers, providerMessageId);
-    const rowId = crypto.randomUUID();
     stagedMessageId = rowId;
     const storedAttachments = await storeInboundEmailAttachments(
       env,
       mailbox.id,
       rowId,
       parsed.attachments,
+      rawStorageKey ? [rawStorageKey] : [],
     );
+    const textBody = truncateUtf8(parsed.textBody || parsed.htmlBody || "", MAX_STORED_TEXT_BODY_BYTES);
+    const htmlBodyFits = !parsed.htmlBody || utf8ByteLength(parsed.htmlBody) <= MAX_STORED_HTML_BODY_BYTES;
     const envelopeTo = options.recipient || message.to;
     const fromAddress =
       parseEmailAddressHeader(parsed.headers.from)?.address ||
       normalizeEmail(message.from) ||
       normalizeEmailHeaderValue(parsed.headers.from);
 
-    const messageStatement = env.DB.prepare(
-      `INSERT INTO mailbox_messages (
-         id, mailbox_id, direction, message_kind, status, thread_key,
-         provider_id, provider_message_id, from_address, to_address, subject,
-         text_body, html_body, raw_headers_json, raw_message, metadata_json,
-         folder, created_by, received_at, created_at, updated_at
-       )
-       VALUES (
-         ?, ?, 'inbound', 'email', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-         'inbox', ?, ?, ?, ?
-       )`,
-    )
-      .bind(
-        rowId,
-        mailbox.id,
-        "received",
-        threadKey,
-        providerId,
-        providerMessageId,
-        fromAddress,
+    const messageStatement = buildInboundMessageStatement(env, {
+      id: rowId,
+      mailboxId: mailbox.id,
+      status: "received",
+      threadKey,
+      providerId,
+      providerMessageId,
+      fromAddress,
+      toAddress:
         parseEmailAddressHeader(parsed.headers.to)?.address ||
-          normalizeEmail(envelopeTo) ||
-          normalizeEmailHeaderValue(parsed.headers.to),
-        parsed.subject || "(no subject)",
-        parsed.textBody || parsed.htmlBody || "",
-        parsed.htmlBody,
-        JSON.stringify(parsed.headers),
-        rawMessage,
-        JSON.stringify({
-          rawSize: message.rawSize,
-          envelopeFrom: message.from,
-          envelopeTo,
-          attachmentCount: storedAttachments.length,
-          attachments: storedAttachments,
-        }),
-        providerId,
-        now,
-        now,
-        now,
-      );
+        normalizeEmail(envelopeTo) ||
+        normalizeEmailHeaderValue(parsed.headers.to),
+      subject: parsed.subject || "(no subject)",
+      textBody: textBody.value,
+      htmlBody: htmlBodyFits ? parsed.htmlBody : null,
+      rawHeadersJson: JSON.stringify(parsed.headers),
+      rawMessage: rawStorageKey ? null : rawMessage,
+      metadata: {
+        rawSize: message.rawSize,
+        envelopeFrom: message.from,
+        envelopeTo,
+        ...(rawStorageKey ? { rawStorageKey } : {}),
+        ...(textBody.truncated ? { textBodyTruncated: true } : {}),
+        ...(htmlBodyFits ? {} : { htmlBodyOmitted: true }),
+        attachmentCount: storedAttachments.length,
+        attachments: storedAttachments,
+      },
+      now,
+    });
 
     if (options.managedDelivery) {
       const delivery = options.managedDelivery;
@@ -295,6 +310,222 @@ function managedInboundDeliveryMatches(
     row.recipient.toLowerCase() === delivery.recipient.toLowerCase() &&
     row.body_sha256 === delivery.bodySha256
   );
+}
+
+type InboundMessageRow = {
+  id: string;
+  mailboxId: string;
+  status: "received" | "forwarded" | "dropped";
+  threadKey: string | null;
+  providerId: string;
+  providerMessageId: string;
+  fromAddress: string;
+  toAddress: string;
+  subject: string;
+  textBody: string;
+  htmlBody: string | null;
+  rawHeadersJson: string;
+  rawMessage: string | null;
+  metadata: Record<string, unknown>;
+  forwardedTo?: string | null;
+  errorMessage?: string | null;
+  now: string;
+};
+
+function buildInboundMessageStatement(env: Env, row: InboundMessageRow) {
+  return env.DB.prepare(
+    `INSERT INTO mailbox_messages (
+       id, mailbox_id, direction, message_kind, status, thread_key,
+       provider_id, provider_message_id, from_address, to_address, subject,
+       text_body, html_body, raw_headers_json, raw_message, metadata_json,
+       folder, created_by, received_at, created_at, updated_at,
+       forwarded_to, error_message
+     )
+     VALUES (
+       ?, ?, 'inbound', 'email', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       'inbox', ?, ?, ?, ?, ?, ?
+     )`,
+  ).bind(
+    row.id,
+    row.mailboxId,
+    row.status,
+    row.threadKey,
+    row.providerId,
+    row.providerMessageId,
+    row.fromAddress,
+    row.toAddress,
+    row.subject,
+    row.textBody,
+    row.htmlBody,
+    row.rawHeadersJson,
+    row.rawMessage,
+    JSON.stringify(row.metadata),
+    row.providerId,
+    row.now,
+    row.now,
+    row.now,
+    row.forwardedTo ?? null,
+    row.errorMessage ?? null,
+  );
+}
+
+// Oversized mail never silently bounces: forward it to the owner's forwarding
+// address when native forwarding is available, and always leave a stub row so
+// the owner can see what happened.
+async function handleOversizedInboundEmail(
+  message: ForwardableEmailMessageLike,
+  env: Env,
+  mailbox: DbMailboxAlias,
+  options: InboundEmailDeliveryOptions,
+  maxBytes: number,
+): Promise<InboundEmailDeliveryResult> {
+  const forwardingEmail =
+    options.allowNativeForwarding !== false &&
+    mailbox.forwarding_enabled &&
+    mailbox.forwarding_email &&
+    message.canBeForwarded
+      ? mailbox.forwarding_email
+      : null;
+  if (forwardingEmail) {
+    try {
+      await message.forward(forwardingEmail);
+      const messageId = await recordOversizedInboundEmail(env, {
+        mailbox,
+        headers: message.headers,
+        envelopeFrom: message.from,
+        envelopeTo: options.recipient || message.to,
+        rawSize: message.rawSize,
+        maxBytes,
+        providerId: options.providerId || DIRECT_INBOUND_EMAIL_PROVIDER_ID,
+        providerDeliveryId: options.providerDeliveryId || null,
+        forwardedTo: forwardingEmail,
+      });
+      return { status: "forwarded", mailboxId: mailbox.id, messageId, forwardedTo: forwardingEmail };
+    } catch (error) {
+      console.error("Oversized inbound email forwarding failed", error);
+    }
+  }
+  await recordOversizedInboundEmail(env, {
+    mailbox,
+    headers: message.headers,
+    envelopeFrom: message.from,
+    envelopeTo: options.recipient || message.to,
+    rawSize: message.rawSize,
+    maxBytes,
+    providerId: options.providerId || DIRECT_INBOUND_EMAIL_PROVIDER_ID,
+    providerDeliveryId: options.providerDeliveryId || null,
+    forwardedTo: null,
+  });
+  return {
+    status: "too_large",
+    reason: `Message is larger than this ME3 mailbox accepts (${formatMegabytes(maxBytes)} MB).`,
+  };
+}
+
+export async function recordOversizedInboundEmail(
+  env: Env,
+  input: {
+    mailbox?: DbMailboxAlias | null;
+    headers: Headers;
+    envelopeFrom: string;
+    envelopeTo: string;
+    rawSize: number;
+    maxBytes: number;
+    providerId: string;
+    providerDeliveryId: string | null;
+    forwardedTo: string | null;
+  },
+): Promise<string | null> {
+  try {
+    const mailbox = input.mailbox ?? await getActiveMailboxForInbound(env);
+    if (!mailbox) return null;
+    const headers = headersToRecord(input.headers);
+    const providerMessageId =
+      normalizeEmailHeaderValue(headers["message-id"]) || input.providerDeliveryId || crypto.randomUUID();
+    const existing = await env.DB.prepare(
+      `SELECT id FROM mailbox_messages
+       WHERE mailbox_id = ? AND provider_id = ? AND provider_message_id = ?
+       LIMIT 1`,
+    )
+      .bind(mailbox.id, input.providerId, providerMessageId)
+      .first<{ id: string }>();
+    if (existing) return existing.id;
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const size = `${formatMegabytes(input.rawSize)} MB`;
+    const limit = `${formatMegabytes(input.maxBytes)} MB`;
+    const outcome = input.forwardedTo
+      ? `It was forwarded to ${input.forwardedTo} instead.`
+      : "It was returned to the sender. Ask them to share a link or send smaller attachments.";
+    await buildInboundMessageStatement(env, {
+      id,
+      mailboxId: mailbox.id,
+      status: input.forwardedTo ? "forwarded" : "dropped",
+      threadKey: resolveMailboxThreadKey(headers, providerMessageId),
+      providerId: input.providerId,
+      providerMessageId,
+      fromAddress:
+        parseEmailAddressHeader(headers.from)?.address ||
+        normalizeEmail(input.envelopeFrom) ||
+        normalizeEmailHeaderValue(headers.from),
+      toAddress:
+        parseEmailAddressHeader(headers.to)?.address ||
+        normalizeEmail(input.envelopeTo) ||
+        normalizeEmailHeaderValue(headers.to),
+      subject: decodeMimeHeaderValue(normalizeEmailHeaderValue(headers.subject)) || "(no subject)",
+      textBody: `This email (${size}) was larger than the ${limit} ME3 can store. ${outcome}`,
+      htmlBody: null,
+      rawHeadersJson: JSON.stringify(headers),
+      rawMessage: null,
+      metadata: {
+        oversized: true,
+        rawSize: input.rawSize,
+        maxBytes: input.maxBytes,
+        envelopeFrom: input.envelopeFrom,
+        envelopeTo: input.envelopeTo,
+        attachmentCount: 0,
+        attachments: [],
+      },
+      forwardedTo: input.forwardedTo,
+      errorMessage: input.forwardedTo ? null : `Message too large (${size}); limit is ${limit}.`,
+      now,
+    }).run();
+    console.warn("Oversized inbound email recorded", {
+      mailboxId: mailbox.id,
+      messageId: id,
+      rawSize: input.rawSize,
+      forwarded: Boolean(input.forwardedTo),
+    });
+    await publishMailboxMessageReceived(env, {
+      ownerId: mailbox.user_id,
+      mailboxId: mailbox.id,
+      messageId: id,
+      receivedAt: now,
+    }).catch((error) => console.error("Oversized inbound email event failed", error));
+    return id;
+  } catch (error) {
+    console.error("Oversized inbound email stub failed", { rawSize: input.rawSize, error });
+    return null;
+  }
+}
+
+function formatMegabytes(bytes: number): string {
+  return (Math.ceil((bytes / (1024 * 1024)) * 10) / 10).toString();
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
+  // Each UTF-16 code unit encodes to at most 3 UTF-8 bytes.
+  if (value.length * 3 <= maxBytes || utf8ByteLength(value) <= maxBytes) {
+    return { value, truncated: false };
+  }
+  const bytes = new TextEncoder().encode(value).subarray(0, maxBytes);
+  // Drop a trailing partial character rather than emitting U+FFFD.
+  return { value: new TextDecoder().decode(bytes).replace(/\uFFFD$/, ""), truncated: true };
 }
 
 export function resolveMailboxUnsubscribeAction(
@@ -435,10 +666,10 @@ async function markInboundEmailForwarded(
     .run();
 }
 
-async function readEmailRawText(
+async function readEmailRawBytes(
   raw: ReadableStream<Uint8Array>,
   maxBytes: number,
-): Promise<string> {
+): Promise<Uint8Array> {
   const reader = raw.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -453,13 +684,14 @@ async function readEmailRawText(
     chunks.push(chunk.value);
   }
 
+  if (chunks.length === 1) return chunks[0];
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(bytes);
+  return bytes;
 }
 
 function parseInboundEmail(
@@ -472,12 +704,11 @@ function parseInboundEmail(
   htmlBody: string | null;
   attachments: ParsedInboundEmailAttachment[];
 } {
-  const [rawHeaderText, ...bodyParts] = rawMessage.split(/\r?\n\r?\n/);
+  const [rawHeaderText, body] = splitMimeHeaders(rawMessage);
   const headers = {
     ...headersToRecord(envelopeHeaders),
-    ...parseRawEmailHeaders(rawHeaderText || ""),
+    ...parseRawEmailHeaders(rawHeaderText),
   };
-  const body = bodyParts.join("\n\n");
   const contentType = headers["content-type"] || "";
   const parsedBody = parseEmailBody(body, contentType, headers["content-transfer-encoding"]);
 
@@ -567,12 +798,10 @@ function parseEmailBody(
     if (parts[index - 1] === "--") break;
     const part = parts[index];
     if (!part.trim()) continue;
-    const [partHeadersText, ...partBodyParts] = part
-      .replace(/^(\r?\n)/, "")
-      .split(/\r?\n\r?\n/);
-    const partHeaders = parseRawEmailHeaders(partHeadersText || "");
+    const [partHeadersText, rawPartBody] = splitMimeHeaders(part.replace(/^(\r?\n)/, ""));
+    const partHeaders = parseRawEmailHeaders(partHeadersText);
     const partContentType = partHeaders["content-type"] || "";
-    const partBody = partBodyParts.join("\n\n").replace(/\r?\n--$/, "");
+    const partBody = rawPartBody.replace(/\r?\n--$/, "");
     const partDisposition = partHeaders["content-disposition"] || "";
     const filename = extractMimeFilename(partContentType, partDisposition);
     const isAttachment =
@@ -616,6 +845,13 @@ function parseEmailBody(
   };
 }
 
+// Split at the first blank line without copying the (possibly large) body.
+function splitMimeHeaders(value: string): [string, string] {
+  const match = /\r?\n\r?\n/.exec(value);
+  if (!match) return [value, ""];
+  return [value.slice(0, match.index), value.slice(match.index + match[0].length)];
+}
+
 function extractMimeBoundary(contentType: string): string | null {
   const match = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType);
   return (match?.[1] || match?.[2] || "").trim() || null;
@@ -629,8 +865,7 @@ function decodeEmailBodyBytes(body: string, transferEncoding: string | undefined
   const encoding = (transferEncoding || "").trim().toLowerCase();
   if (encoding === "base64") {
     try {
-      const binary = atob(body.replace(/\s/g, ""));
-      return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      return decodeBase64Chunked(body);
     } catch {
       return new TextEncoder().encode(body);
     }
@@ -644,6 +879,28 @@ function decodeEmailBodyBytes(body: string, transferEncoding: string | undefined
     return Uint8Array.from(decoded, (char) => char.charCodeAt(0) & 0xff);
   }
   return new TextEncoder().encode(body);
+}
+
+// Decode in bounded slices so a 25 MB attachment never needs a full-size
+// whitespace-free copy plus a full-size binary string at once.
+function decodeBase64Chunked(body: string): Uint8Array {
+  const output = new Uint8Array(Math.floor((body.length * 3) / 4) + 3);
+  let length = 0;
+  let pending = "";
+  const sliceSize = 1024 * 1024;
+  for (let offset = 0; offset < body.length; offset += sliceSize) {
+    const cleaned = pending + body.slice(offset, offset + sliceSize).replace(/\s/g, "");
+    const done = offset + sliceSize >= body.length;
+    const usable = done ? cleaned.length : cleaned.length - (cleaned.length % 4);
+    pending = cleaned.slice(usable);
+    const binary = atob(cleaned.slice(0, usable));
+    for (let index = 0; index < binary.length; index += 1) {
+      output[length] = binary.charCodeAt(index);
+      length += 1;
+    }
+    if (done) break;
+  }
+  return output.subarray(0, length);
 }
 
 function extractMimeFilename(contentType: string, contentDisposition: string): string | null {
@@ -678,6 +935,7 @@ async function storeInboundEmailAttachments(
   mailboxId: string,
   messageId: string,
   attachments: ParsedInboundEmailAttachment[],
+  stagedKeys: string[] = [],
 ): Promise<StoredMailboxAttachment[]> {
   if (!env.SITE_ASSETS || attachments.length === 0) return [];
 
@@ -690,7 +948,7 @@ async function storeInboundEmailAttachments(
       contentId: attachment.contentId, sourceMessageId: messageId,
     };
   });
-  await stageMailboxAttachmentKeys(env, messageId, stored.map((attachment) => attachment.storageKey));
+  await stageMailboxAttachmentKeys(env, messageId, [...stagedKeys, ...stored.map((attachment) => attachment.storageKey)]);
   for (const [index, attachment] of stored.entries()) {
     await env.SITE_ASSETS.put(attachment.storageKey, attachments[index].content, {
       httpMetadata: { contentType: attachment.mimeType },

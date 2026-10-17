@@ -73,6 +73,12 @@ export async function getAgentMailboxMessageById(
   );
 }
 
+// Inbound raw MIME lives in R2 beside the attachments (see mailbox-inbound.ts).
+export function getMailboxRawStorageKey(row: DbMailboxMessageRow): string {
+  const key = parseJsonRecord(row.metadata_json).rawStorageKey;
+  return typeof key === "string" ? key : "";
+}
+
 export function getMailboxAttachmentMetadata(row: DbMailboxMessageRow): AgentMailboxAttachmentMetadata[] {
   const metadata = parseJsonRecord(row.metadata_json);
   const rawAttachments = Array.isArray(metadata.attachments)

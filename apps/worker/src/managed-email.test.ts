@@ -197,6 +197,64 @@ describe("managed email inbound contract", () => {
     expect(db.mailboxMessages).toHaveLength(0);
   });
 
+  it("returns 413 for oversized authenticated mail and leaves the owner a stub", async () => {
+    const db = new ManagedEmailTestDb();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubJwks();
+    // No R2 bucket: the inline 1 MB limit applies.
+    const raw = rawEmail("Too big inline", "x".repeat(1024 * 1024));
+    const request = await signedInboundRequest(raw);
+    request.headers.set("Content-Length", String(new TextEncoder().encode(raw).byteLength));
+    const response = await receiveManagedEmailInbound(request, managedEnv(db));
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({ code: "too_large" });
+    expect(db.mailboxMessages).toHaveLength(1);
+    expect(db.mailboxMessages[0]).toMatchObject({
+      status: "dropped",
+      provider_id: "managed_gateway",
+      provider_message_id: DELIVERY_ID,
+      to_address: RECIPIENT,
+      raw_message: null,
+    });
+    expect(db.mailboxMessages[0].text_body).toContain("returned to the sender");
+    expect(db.deliveries.size).toBe(0);
+  });
+
+  it("does not record a stub for an oversized delivery that fails authentication", async () => {
+    const db = new ManagedEmailTestDb();
+    stubJwks();
+    const request = await signedInboundRequest(
+      rawEmail("Forged", "x".repeat(1024 * 1024)),
+      { aud: "wrong-audience" },
+    );
+    const response = await receiveManagedEmailInbound(request, managedEnv(db));
+
+    expect(response.status).toBe(401);
+    expect(db.mailboxMessages).toHaveLength(0);
+  });
+
+  it("accepts multi-megabyte mail when R2 holds the raw MIME", async () => {
+    const db = new ManagedEmailTestDb();
+    const objects = new Map<string, Uint8Array>();
+    stubJwks();
+    const raw = rawEmail("Signed contract", "y".repeat(3 * 1024 * 1024));
+    const response = await receiveManagedEmailInbound(await signedInboundRequest(raw), {
+      ...managedEnv(db),
+      SITE_ASSETS: {
+        async put(key: string, content: Uint8Array) { objects.set(key, content); },
+        async delete() {},
+      } as unknown as R2Bucket,
+    });
+
+    expect(response.status).toBe(201);
+    expect(db.mailboxMessages).toHaveLength(1);
+    expect(db.mailboxMessages[0]).toMatchObject({ subject: "Signed contract", raw_message: null });
+    const metadata = JSON.parse(db.mailboxMessages[0].metadata_json);
+    expect(objects.get(metadata.rawStorageKey)?.byteLength).toBe(new TextEncoder().encode(raw).byteLength);
+    expect(new TextEncoder().encode(db.mailboxMessages[0].text_body).byteLength).toBeLessThanOrEqual(256 * 1024);
+  });
+
   it("does not expose the internal route on self-hosted installations", async () => {
     const db = new ManagedEmailTestDb();
     const response = await receiveManagedEmailInbound(

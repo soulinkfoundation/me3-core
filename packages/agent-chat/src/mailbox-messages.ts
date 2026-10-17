@@ -1,6 +1,6 @@
 import { type CoreAgentChatEnv, clampNumber, normalizeNullableText } from "./domain-store";
 import { type AgentMailboxMessageListOptions, type AgentMailboxMessage, type DbMailboxMessageRow } from "./mailbox-types";
-import { getAgentMailboxRow, agentMailboxMessageSelectSql, getAgentMailboxMessageById, normalizeFolder, getMailboxAttachmentMetadata } from "./mailbox-store";
+import { getAgentMailboxRow, agentMailboxMessageSelectSql, getAgentMailboxMessageById, normalizeFolder, getMailboxAttachmentMetadata, getMailboxRawStorageKey } from "./mailbox-store";
 import { serializeAgentMailboxMessage } from "./mailbox-format";
 
 export async function listAgentMailboxMessages(
@@ -172,9 +172,10 @@ export async function deleteAgentMailboxMessage(
   if ((result.meta?.changes || 0) === 0) return { error: "Message not found", status: 404 };
 
   if (env.SITE_ASSETS) {
-    const storageKeys = getMailboxAttachmentMetadata(message)
-      .map((attachment) => attachment.storageKey || "")
-      .filter((key) => key.startsWith(`mailbox/${mailbox.id}/`));
+    const storageKeys = [
+      ...getMailboxAttachmentMetadata(message).map((attachment) => attachment.storageKey || ""),
+      getMailboxRawStorageKey(message),
+    ].filter((key) => key.startsWith(`mailbox/${mailbox.id}/`));
     const unreferenced: string[] = [];
     for (const storageKey of new Set(storageKeys)) {
       const reference = await env.DB.prepare(
