@@ -1,7 +1,7 @@
 /* me3 Global Styles */
 
 :root {
-  --brand-primary: #34836c;
+  --brand-primary: #229874;
   --brand-primary-strong: color-mix(in oklab, var(--brand-primary), black 10%);
   --brand-primary-soft: color-mix(in oklab, var(--brand-primary), white 85%);
   --color-bg: #ffffff;
@@ -22,7 +22,7 @@
   --ui-text-muted: var(--color-text-muted);
   --ui-border: var(--color-border);
   --ui-border-strong: var(--color-border-strong);
-  --ui-primary: #1b4d3e;
+  --ui-primary: var(--brand-primary);
   --ui-primary-strong: color-mix(in oklab, var(--ui-primary), black 10%);
   --ui-primary-soft: var(--brand-primary-soft);
   --ui-primary-contrast: var(--color-accent-contrast);
@@ -30,7 +30,7 @@
   --ui-secondary-strong: var(--color-bg-muted);
   --ui-secondary-contrast: var(--color-text);
   --ui-accent: var(--color-accent);
-  --ui-accent-strong: #1b4d3e;
+  --ui-accent-strong: var(--brand-primary-strong);
   --ui-accent-soft: var(--brand-primary-soft);
   --ui-accent-contrast: var(--color-accent-contrast);
   --ui-radius-sm: 6px;
@@ -62,13 +62,15 @@
     --color-text-muted: #a9a9b2;
     --color-border: rgba(255, 255, 255, 0.12);
     --color-border-strong: rgba(255, 255, 255, 0.18);
-    --color-accent: #77b6a1;
+    --color-accent: var(--brand-primary);
     --color-accent-contrast: #ffffff;
     --shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.28);
     --ui-primary: #ffffff;
     --ui-primary-strong: #e4efea;
     --ui-primary-contrast: #0b0d13;
-    --ui-accent-strong: #77b6a1;
+    --ui-accent-strong: color-mix(in oklab, var(--brand-primary), white 40%);
+    --ui-accent-soft: color-mix(in srgb, var(--brand-primary) 18%, transparent);
+    --ui-primary-soft: var(--ui-accent-soft);
     --ui-shadow-sm: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 30px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
@@ -97,13 +99,15 @@
   --color-text-muted: #a9a9b2;
   --color-border: rgba(255, 255, 255, 0.12);
   --color-border-strong: rgba(255, 255, 255, 0.18);
-  --color-accent: #77b6a1;
+  --color-accent: var(--brand-primary);
   --color-accent-contrast: #ffffff;
   --shadow-soft: 0 18px 42px rgba(0, 0, 0, 0.28);
   --ui-primary: #ffffff;
   --ui-primary-strong: #e4efea;
   --ui-primary-contrast: #0b0d13;
-  --ui-accent-strong: #77b6a1;
+  --ui-accent-strong: color-mix(in oklab, var(--brand-primary), white 40%);
+  --ui-accent-soft: color-mix(in srgb, var(--brand-primary) 18%, transparent);
+  --ui-primary-soft: var(--ui-accent-soft);
   --ui-shadow-sm: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 30px rgba(0, 0, 0, 0.4);
   color-scheme: dark;
 }
