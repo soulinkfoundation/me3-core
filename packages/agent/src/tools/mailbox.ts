@@ -26,7 +26,14 @@ export function mailboxTools(): AgentTool[] {
         assertUnchanged(source, resultOrThrow(await service.read(replyToMessageId)).message, "Reply source");
       }
       context.signal.throwIfAborted();
-      const result = resultOrThrow(await service.createDraft({ to: requiredString(args.to, "Recipient"), subject: requiredString(args.subject, "Subject"), body: requiredString(args.body, "Body"), replyToMessageId }, context.idempotencyKey));
+      const to = optionalString(args.to)?.trim();
+      if (!to) {
+        // No address known: nothing is saved. Chat shows the draft as a card that asks the owner for it.
+        return ok({ saved: false, draft: { id: null, toAddress: "", recipientName: optionalString(args.recipientName) ?? null, contactId: optionalString(args.contactId) ?? null,
+          subject: requiredString(args.subject, "Subject"), body: requiredString(args.body, "Body"), replyToMessageId: replyToMessageId ?? null },
+          next: "Tell the owner the draft card needs their recipient's email address; nothing was saved or sent." });
+      }
+      const result = resultOrThrow(await service.createDraft({ to, subject: requiredString(args.subject, "Subject"), body: requiredString(args.body, "Body"), replyToMessageId }, context.idempotencyKey));
       await rememberTargets(context, "mailbox message", [result.draft], message => message.subject); return ok(result);
     }),
   ];

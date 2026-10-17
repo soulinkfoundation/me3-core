@@ -117,6 +117,17 @@ export type AgentChatEmailDraft = {
   displayText: string;
 };
 
+/** The draft ME3 wrote in a turn (server-authored). `draftId` is null when no address was known. */
+export type AgentChatServerEmailDraft = {
+  draftId: string | null;
+  to: string;
+  recipientName: string | null;
+  contactId: string | null;
+  subject: string;
+  body: string;
+  replyToMessageId: string | null;
+};
+
 export type AgentChatEmailDraftAction = AgentChatEmailDraft & {
   id: string;
   to: string;

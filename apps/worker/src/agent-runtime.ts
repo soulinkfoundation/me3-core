@@ -7,6 +7,7 @@ import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner
 import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
 import { getAiSettings } from "./ai-providers";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
+import { loadAgentEmailDraft } from "./agent-email-draft";
 import { getManagedAiBillingSettings, managedAllowanceNotice, syncManagedAiUsage, MANAGED_AI_FALLBACK_MODEL, type ManagedAiBillingSettings, type ManagedAllowanceNotice } from "./managed-ai-billing";
 import { createStableAgentSchedulingServices } from "./agent-domain-scheduling";
 import { createAgentMailboxServices } from "./agent-mailbox-services";
@@ -224,8 +225,9 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
 async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void,allowanceNotice:ManagedAllowanceNotice|null=null) {
   const targetPresentation=result.targetPresentation||input.targetSelection?await loadAgentTargetPresentation(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId}):null;
   const imageAction=await loadAgentGeneratedImageAction(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId});
+  const emailDraft=await loadAgentEmailDraft(env,{ownerId:input.userId,turnId:input.turnId});
   const messageId=`${input.turnId}:assistant:${result.status}:${result.approvalId||"final"}`;
-  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(allowanceNotice?{allowanceNotice}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
+  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(allowanceNotice?{allowanceNotice}:{}),...(emailDraft?{emailDraft}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
   await env.DB.batch([
     env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)").bind(messageId,input.userId,input.threadId,result.replyText,JSON.stringify(payload)),
     env.DB.prepare("UPDATE me3_agent_turns SET response_json=?,trace_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND turn_id=?").bind(JSON.stringify(payload),JSON.stringify(result.trace),input.userId,input.turnId),

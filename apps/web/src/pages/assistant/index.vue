@@ -42,6 +42,7 @@ import {
   type AgentChatActionCard,
   type AgentChatImageAction,
   type AgentChatAllowanceNotice,
+  type AgentChatServerEmailDraft,
   type AgentChatTurnTrace,
 } from "../../utils/agentChat";
 import { renderAssistantMarkdown } from "../../utils/assistantMarkdown";
@@ -146,6 +147,7 @@ type AgentSandboxResponse = {
   imageAction?: AgentChatImageAction | null;
   targetPresentation?: AgentTargetPresentation | null;
   allowanceNotice?: AgentChatAllowanceNotice | null;
+  emailDraft?: AgentChatServerEmailDraft | null;
   contentAction?: {
     kind: "previewed" | "saved";
     itemId?: string;
@@ -177,6 +179,7 @@ type AssistantThreadMessage = {
   imageAction?: AgentChatImageAction | null;
   targetPresentation?: AgentTargetPresentation | null;
   allowanceNotice?: AgentChatAllowanceNotice | null;
+  emailDraft?: AgentChatServerEmailDraft | null;
   siteAction?: AgentSandboxResponse["siteAction"];
   trace?: AgentChatTurnTrace | null;
 };
@@ -1311,10 +1314,9 @@ async function loadAssistantThreadFromRoute() {
         actionLabel: actionLink?.label || null,
       };
       if (message.role === "assistant") {
-        mappedMessage.emailDraftAction = createAgentChatEmailDraftAction(
-          message,
-          previousUserText,
-        );
+        mappedMessage.emailDraftAction = message.emailDraft
+          ? createServerAgentChatEmailDraftAction(message, message.emailDraft)
+          : createAgentChatEmailDraftAction(message, previousUserText);
       } else {
         previousUserText = message.text;
       }
@@ -2269,10 +2271,9 @@ function applyAssistantResultToMessage(
   message.imageAction = result.imageAction || null;
   message.targetPresentation = normalizeAgentTargetPresentation(result.targetPresentation);
   message.allowanceNotice = result.allowanceNotice || null;
-  message.emailDraftAction = createAgentChatEmailDraftAction(
-    message,
-    previousUserTextForAssistantMessage(message),
-  );
+  message.emailDraftAction = result.emailDraft
+    ? createServerAgentChatEmailDraftAction(message, result.emailDraft)
+    : createAgentChatEmailDraftAction(message, previousUserTextForAssistantMessage(message));
   hydrateAssistantEmailDraftMessage(message);
   message.inboxLink = result.emailAction?.kind === "drafted";
   message.reminderLink =
@@ -2308,6 +2309,27 @@ function createAgentChatEmailDraftAction(
     status: "draft",
     statusLabel: isValidEmailAddress(to) ? "Ready" : "Needs recipient's email",
     savedDraftId: null,
+    busy: null,
+    error: null,
+  };
+}
+
+// The draft the agent actually wrote; older replies without one fall back to text inference.
+function createServerAgentChatEmailDraftAction(
+  message: { id?: string; text: string },
+  draft: AgentChatServerEmailDraft,
+): AgentChatEmailDraftAction {
+  return {
+    id: `email-draft:${message.id || draft.draftId || draft.subject}`,
+    toName: draft.recipientName,
+    toAddress: draft.to || null,
+    subject: draft.subject,
+    body: draft.body,
+    displayText: message.text,
+    to: draft.to,
+    status: draft.draftId ? "saved" : "draft",
+    statusLabel: draft.draftId ? "Saved draft" : isValidEmailAddress(draft.to) ? "Ready" : "Needs recipient's email",
+    savedDraftId: draft.draftId,
     busy: null,
     error: null,
   };

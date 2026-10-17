@@ -244,6 +244,14 @@ describe("new agent domain tools", () => {
     expect(ctx.raw.prepare("SELECT * FROM user_reminders WHERE id!='season-second' ORDER BY id").all()).toEqual(before);
   });
 
+  it("returns an unsaved draft card instead of guessing when no recipient address is known", async () => {
+    const ctx = context(); let created = 0;
+    ctx.services = { mailbox: { createDraft: async () => { created++; return { draft: { id: "x" } }; } } };
+    const result = await tool("core_mailbox_draft").execute({ recipientName: "Erum Hayat", contactId: "c-erum", subject: "Session next week", body: "Hi Erum, are you free next week?" }, ctx);
+    expect(result).toMatchObject({ status: "ok", data: { saved: false, draft: { id: null, toAddress: "", recipientName: "Erum Hayat", contactId: "c-erum", subject: "Session next week" } } });
+    expect(created).toBe(0);
+  });
+
   it("keeps the original approved draft snapshot when a later turn reads a changed draft", async () => {
     const ctx = context(); authorize(ctx,{draftId:"draft-1"},"core_mailbox_send","draft-1"); let sends = 0;
     let message = { id: "draft-1", status: "draft", to: "ada@example.test", subject: "Launch", bodyText: "Ready" };

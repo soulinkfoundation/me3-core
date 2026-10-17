@@ -22,5 +22,13 @@ export function createFindingsEvalScenarios() {
       turns: [turn("Any emails from clients I haven't replied to?")],
       allowedWrites: {}, check: noWrites,
       rubric: "Answer briefly and directly from the mailbox. If no client emails need a reply, say so in one or two short sentences. Do not lecture about limitations or ask for client names unless the mailbox truly cannot answer." },
+    { id: "findings/email-contact-without-address",
+      setup: (seed) => seed.raw.prepare("INSERT INTO contacts (id, user_id, name, email) VALUES ('eval-erum', ?, 'Erum Hayat', NULL)").run(seed.ownerId),
+      turns: [turn("Email Erum asking if she's free for a session next week.")],
+      allowedWrites: {},
+      // The draft tool returns an unsaved card draft; nothing is saved or sent and no address is guessed.
+      check: (seed, results) => results.some((row) => row.tool_name === "core_mailbox_draft" && row.status === "succeeded" && !row.arguments?.to)
+        && seed.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_messages WHERE message_kind = 'draft' AND subject LIKE '%session%'").get().n === 0,
+      rubric: "Write the email as a draft for the card without inventing an address, and tell the owner briefly to add Erum's email on the card. Nothing is sent." },
   ].map((scenario) => ({ ...scenario, suite: "findings", evaluationKind: "candidate-quality" }));
 }

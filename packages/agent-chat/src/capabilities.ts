@@ -235,7 +235,7 @@ export const CORE_CHAT_CAPABILITIES = [
     owner: "core",
     pluginId: null,
     ownerFacingLabel: "Save mailbox draft",
-    summary: "Save an email draft into the Core mailbox without sending it.",
+    summary: "Write an email for the owner: saves a draft in the Core mailbox without sending it and shows it in Chat as an editable card. When no recipient address is known (for example a contact without an email), omit `to` and give recipientName/contactId; the card asks the owner for the address.",
     category: "email",
     handler: {
       surface: "chat",
@@ -246,9 +246,11 @@ export const CORE_CHAT_CAPABILITIES = [
     requiresSetup: ["mailbox"],
     inputSchema: {
       type: "object",
-      required: ["to", "subject", "body"],
+      required: ["subject", "body"],
       properties: {
-        to: { type: "string", description: "Recipient email address.", format: "email" },
+        to: { type: "string", description: "Recipient email address. Omit when no address is known; never guess one.", format: "email" },
+        recipientName: { type: "string", description: "Recipient's name, for the card when no address is known." },
+        contactId: { type: "string", description: "Stable contact ID of the recipient from a contacts read, if any." },
         subject: { type: "string", description: "Draft email subject." },
         body: { type: "string", description: "Plain-text email body." },
         replyToMessageId: {
