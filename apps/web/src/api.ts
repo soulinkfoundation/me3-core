@@ -56,7 +56,9 @@ function sanitizeErrorMessage(raw: unknown, fallback: string): string {
 export class ApiError extends Error {
   constructor(
     message: string,
-    public status: number
+    public status: number,
+    /** Machine-readable reason from the server, such as `fresh_authentication_required`. */
+    public code?: string
   ) {
     super(message)
     this.name = 'ApiError'
@@ -124,7 +126,8 @@ async function request<T>(
   if (!response.ok) {
     throw new ApiError(
       sanitizeErrorMessage(data.error, 'Request failed'),
-      response.status
+      response.status,
+      typeof data.code === 'string' ? data.code : undefined
     )
   }
 

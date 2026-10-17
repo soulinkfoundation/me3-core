@@ -312,6 +312,12 @@ async function decideCoreApproval(decision: "approved" | "declined") {
   } catch (error) { approvalError.value = error instanceof Error ? error.message : "Couldn't save this decision. Try again."; toastFromUnknown(error, "Couldn't save approval"); }
   finally { busy.value = busy.value.filter(id => id !== approval.id); }
 }
+// A payment card stays open after approval to show the hand-over; the list behind it refreshes.
+function paymentResolved() {
+  const approval = reviewApproval.value;
+  if (approval) approvals.value = approvals.value.filter(item => item.id !== approval.id);
+  emit("approvalResolved");
+}
 watch(day, loadToday);
 watch(() => props.active, active => {
   if (!active) return;
@@ -424,7 +430,7 @@ onBeforeUnmount(() => {
       </section>
     </AppDialog>
     <PersonSheet :contact="openPerson" @close="openPersonId = null" />
-    <AssistantApprovalDialog :approval="reviewApproval" :busy="Boolean(reviewApproval && busy.includes(reviewApproval.id))" :error="approvalError" @close="reviewApproval = null" @decide="decideCoreApproval" />
+    <AssistantApprovalDialog :approval="reviewApproval" :busy="Boolean(reviewApproval && busy.includes(reviewApproval.id))" :error="approvalError" @close="reviewApproval = null" @decide="decideCoreApproval" @resolved="paymentResolved" />
   </div>
 </template>
 

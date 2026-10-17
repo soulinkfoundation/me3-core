@@ -119,7 +119,8 @@ router.beforeEach(async (to, _from, next) => {
   // Resume the originally requested app route after authentication. This guard
   // runs before the login page mounts, so dropping its redirect here would send
   // an authenticated callback to the default app page instead.
-  if (to.path === "/login" && auth.isAuthenticated) {
+  // A payment approval needs a recent sign-in, so a signed-in owner may sign in again.
+  if (to.path === "/login" && auth.isAuthenticated && to.query.reauth !== "payment") {
     const redirect = resolveAuthenticatedLoginRedirect(to.query.redirect, {
       origin: window.location.origin,
       hostname: window.location.hostname,

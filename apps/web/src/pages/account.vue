@@ -3855,6 +3855,10 @@ onBeforeUnmount(() => {
             aria-labelledby="account-trigger-payments"
             :hidden="!openSection.payments"
           >
+            <RouterLink to="/settings/payments" class="agent-payments-link">
+              <span>Purchases ME3 makes for you</span>
+              <small>Spend limits, approvals and receipts. You always pay on your own device.</small>
+            </RouterLink>
             <div class="advanced-subsection">
               <PageLoading
                 v-if="commerceLoading"
@@ -6603,4 +6607,6 @@ h1 {
     color: #c8e6c9;
   }
 }
+.agent-payments-link { display: flex; flex-direction: column; gap: 2px; margin-bottom: 16px; padding: 12px 14px; border-radius: var(--ui-radius-md); background: var(--ui-surface-muted); color: var(--ui-text); font-weight: 600; text-decoration: none; }
+.agent-payments-link small { color: var(--ui-text-muted); font-size: 13px; font-weight: 400; }
 </style>

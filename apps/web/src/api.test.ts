@@ -55,6 +55,16 @@ describe('api client', () => {
         expect((error as ApiError).status).toBe(404)
       }
     })
+
+    it('keeps a machine-readable error code so callers can branch on it', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        mockJsonResponse({ ok: false, error: 'Sign in again to approve this payment.', code: 'fresh_authentication_required' }, { ok: false, status: 403 })
+      )
+
+      const error = await api.post('/assistant/approvals/a1', { decision: 'approved' }).catch(caught => caught)
+      expect(error).toBeInstanceOf(ApiError)
+      expect(error).toMatchObject({ status: 403, code: 'fresh_authentication_required', message: 'Sign in again to approve this payment.' })
+    })
   })
 
   describe('credentials handling', () => {

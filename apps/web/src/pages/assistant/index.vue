@@ -59,6 +59,7 @@ import {
 } from "../../utils/aiModelCatalog";
 import type { UiIconName } from "../../utils/icons";
 import AgentDog from "../../components/AgentDog.vue";
+import ChatPayments from "../../components/payments/ChatPayments.vue";
 
 definePage({
   meta: {
@@ -653,6 +654,8 @@ watch(
   },
 );
 let assistantApprovalHistoryRefreshPending = false;
+// Bumped after each turn and thread load so payment approvals in Chat stay current.
+const assistantPaymentsRefresh = ref(0);
 async function refreshAssistantAfterApproval() {
   if (assistantSending.value) { assistantApprovalHistoryRefreshPending = true; return; }
   assistantApprovalHistoryRefreshPending = false;
@@ -837,6 +840,7 @@ async function loadAssistantThreadFromRoute() {
   } finally {
     if (assistantThreadId.value === threadId) {
       assistantThreadLoading.value = false;
+      assistantPaymentsRefresh.value++;
     }
   }
 }
@@ -1748,6 +1752,7 @@ function applyAssistantResultToMessage(
   result: AgentSandboxResponse,
 ) {
   void homePanels.value?.refreshToday();
+  assistantPaymentsRefresh.value++;
   const message = chatMessages.value.find((item) => item.id === messageId);
   if (!message) return;
   if (!message.text.trim()) {
@@ -2915,6 +2920,14 @@ function messageFromUnknown(err: unknown, fallback: string) {
               </button>
             </div>
           </article>
+
+          <ChatPayments
+            v-if="!siteBuilderMode"
+            class="assistant-message assistant-message--assistant"
+            :thread-id="assistantThreadId"
+            :refresh-key="assistantPaymentsRefresh"
+            @decided="refreshAssistantAfterApproval"
+          />
 
           <article
             v-if="assistantSending"

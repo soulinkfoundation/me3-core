@@ -225,6 +225,14 @@ onMounted(load);
         </RouterLink>
       </section>
 
+      <section class="agent-card" aria-label="Payments">
+        <RouterLink to="/settings/payments" class="agent-row">
+          <UiIcon name="CreditCard" :size="20" class="agent-row__icon" />
+          <span class="agent-row__text"><small>Payments</small>Spend limits and receipts</span>
+          <UiIcon name="ChevronRight" :size="18" class="agent-row__chev" />
+        </RouterLink>
+      </section>
+
       <section class="agent-section" aria-labelledby="agent-memory-title">
         <h2 id="agent-memory-title">How {{ displayName }} works with you</h2>
         <div class="agent-card">
@@ -283,7 +291,7 @@ onMounted(load);
 
       <p class="agent-footer">To change how {{ displayName }} works, ask it in <RouterLink :to="{ path: '/assistant', query: { view: 'chat' } }">Chat</RouterLink>.</p>
     </div>
-    <AssistantApprovalDialog :approval="reviewing" :busy="approvalBusy" :error="approvalError" @close="reviewing = null" @decide="decide" />
+    <AssistantApprovalDialog :approval="reviewing" :busy="approvalBusy" :error="approvalError" @close="reviewing = null" @decide="decide" @resolved="load" />
   </main>
 </template>
 

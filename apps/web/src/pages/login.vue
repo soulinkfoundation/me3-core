@@ -51,7 +51,8 @@ const setupRequired = ref<string[]>([]);
 const resetMode = ref(false);
 const showAdvancedSetup = ref(false);
 const error = ref("");
-const notice = ref("");
+// Payment approvals send a signed-in owner here to prove they are present (see agentPayments.ts).
+const notice = ref(route.query.reauth === "payment" ? "Sign in again to approve your payment. You'll go straight back to it." : "");
 const passwordMinLength = 8;
 
 const isSetupMode = computed(() => !ownerAuthConfigured.value);

@@ -3,10 +3,14 @@ import { computed, useId } from "vue";
 import AppDialog from "./AppDialog.vue";
 import Button from "./Button.vue";
 import UiIcon from "./UiIcon.vue";
+import PaymentApprovalCard from "./payments/PaymentApprovalCard.vue";
+import { paymentApprovalView, type PaymentApprovalLike } from "../utils/agentPayments";
 
-const props = defineProps<{ approval: { title: string; summary?: string | null; payload?: Record<string, unknown> } | null; busy?: boolean; error?: string }>();
-const emit = defineEmits<{ close: []; decide: [decision: "approved" | "declined"] }>();
+const props = defineProps<{ approval: { id?: string; title: string; summary?: string | null; payload?: Record<string, unknown> } | null; busy?: boolean; error?: string }>();
+// Payment cards decide for themselves (fresh sign-in, hand-over) and report `resolved` instead of `decide`.
+const emit = defineEmits<{ close: []; decide: [decision: "approved" | "declined"]; resolved: [decision: "approved" | "declined"] }>();
 const headingId = useId();
+const payment = computed(() => props.approval?.id && paymentApprovalView(props.approval as PaymentApprovalLike) ? props.approval as PaymentApprovalLike : null);
 const labels: Record<string, string> = { recipient: "To", fromAddress: "From", fromName: "Sender name", replyToAddress: "Replies to", deliveryIdentity: "Sending details", body: "Body", bodyText: "Body", textBody: "Body", htmlBody: "HTML body", replacementBody: "Replacement body", target: "Reviewed item", startsAt: "Starts", endsAt: "Ends", remindAt: "Reminder time", requestedTimezone: "Requested timezone", request: "Meeting request", selectedSlot: "Selected time", scheduledFor: "Scheduled time" };
 const metadata = new Set(["title", "summary", "targetDomain", "id", "revision", "routeRevision", "storedFromAddress", "updatedAt", "createdAt", "requestedAt", "resolvedAt", "status", "pluginId", "actionId", "riskLevel", "readAt", "sourceKind", "sourceName", "peerNodeId", "threadKey", "direction", "kind", "folder", "unread", "createdBy", "preview", "rawHeadersJson", "rawMessage", "inReplyTo", "referencesHeader", "messageIdHeader"]);
 const fields = computed(() => {
@@ -37,7 +41,11 @@ function close() { if (!props.busy) emit("close"); }
 
 <template>
   <AppDialog :open="Boolean(approval)" :labelled-by="headingId" @close="close">
-    <section v-if="approval" class="approval-review">
+    <section v-if="payment" class="approval-review approval-review--payment">
+      <Button class="approval-review__close" color="ghost" shape="soft" size="large" icon-only aria-label="Close approval review" @click="emit('close')"><UiIcon name="X" :size="20" /></Button>
+      <PaymentApprovalCard :approval="payment" :heading-id="headingId" @resolved="emit('resolved', $event)" />
+    </section>
+    <section v-else-if="approval" class="approval-review">
       <header>
         <h2 :id="headingId">{{ approval.title }}</h2>
         <Button color="ghost" shape="soft" size="large" icon-only aria-label="Close approval review" :disabled="busy" @click="close"><UiIcon name="X" :size="20" /></Button>
@@ -67,5 +75,9 @@ dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px;
 .approval-review__actions { display: flex; justify-content: flex-end; gap: 12px; padding-top: 8px; }
 .approval-review__actions :deep(.me3-btn) { min-height: 44px; }
 .approval-review__error { color: var(--ui-danger); }
+.approval-review--payment { position: relative; padding: 0; max-height: min(88vh, 900px); overflow-y: auto; border: 0; }
+.approval-review--payment :deep(.pay-card) { box-shadow: none; padding: 20px; }
+.approval-review--payment :deep(.pay-card__head) { padding-right: 44px; }
+.approval-review__close { position: absolute; top: 12px; right: 12px; z-index: 1; }
 @media (max-width: 640px) { .approval-review { border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0; padding: 18px; } }
 </style>
