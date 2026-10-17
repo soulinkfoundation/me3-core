@@ -7,8 +7,8 @@ import type { AgentMessage, AgentTool } from "./types";
  */
 export const TOOL_LOADER_NAME = "core_tools_load";
 export const DEFERRED_TOOL_GROUPS: Record<string, { prefix: string; summary: string }> = {
-  sites: { prefix: "core_sites_", summary: "the owner's websites: landing pages (list, designs, create, update) and site blog posts" },
-  social: { prefix: "core_social_", summary: "social publishing: read a source, search the social library, drafts, post suggestions and posting plans" },
+  sites: { prefix: "core_sites_", summary: "create, update or list landing pages on the owner's websites, and read site blog posts" },
+  social: { prefix: "core_social_", summary: "save social post drafts and post suggestions from a journal entry or task, search the social library, and plan or schedule posts. Use it whenever the owner asks for a social post or draft" },
 };
 
 export function toolGroupFor(name: string): string | undefined {
