@@ -9,6 +9,28 @@ import { decodeMimeHeaderValue } from "../../../shared/email-headers";
 
 export const ACCOUNTS_PLUGIN_ID = "me3.accounts";
 
+// Deleting a synced entry or removing a customer leaves a tombstone, so the next
+// website, Stripe or email sync does not bring it back.
+export const ACCOUNTS_REMOVALS_SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS financial_entry_removals (
+    user_id TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    payment_intent_id TEXT,
+    removed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, source_ref),
+    FOREIGN KEY (user_id) REFERENCES owner_profile(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_financial_entry_removals_payment_intent
+    ON financial_entry_removals(user_id, payment_intent_id)`,
+  `CREATE TABLE IF NOT EXISTS account_customer_removals (
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    removed_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, email),
+    FOREIGN KEY (user_id) REFERENCES owner_profile(id) ON DELETE CASCADE
+  )`,
+] as const;
+
 export type EntryType = "income" | "expense";
 type EntryStatus = "pending" | "paid" | "overdue" | "cancelled" | "needs_review";
 type EntrySource = "manual" | "email_triage" | "stripe" | "csv_import" | "website";
@@ -256,6 +278,9 @@ export async function listAccountCustomers(env: Env, userId: string, query: URLS
       .bind(userId)
       .all<AccountCustomerContactRow>(),
   ]);
+  const removals = await env.DB.prepare("SELECT email, removed_at FROM account_customer_removals WHERE user_id = ?")
+    .bind(userId)
+    .all<{ email: string; removed_at: string }>();
 
   return buildAccountCustomers(
     activityResult.results || [],
@@ -265,6 +290,7 @@ export async function listAccountCustomers(env: Env, userId: string, query: URLS
       item: query.get("item")?.trim() || "",
       limit,
       offset,
+      removedAt: new Map((removals.results || []).map((row) => [row.email, row.removed_at])),
     },
   );
 }
@@ -272,7 +298,7 @@ export async function listAccountCustomers(env: Env, userId: string, query: URLS
 export function buildAccountCustomers(
   rows: AccountCustomerSourceRow[],
   contacts: AccountCustomerContactRow[],
-  options: { search?: string; item?: string; limit?: number; offset?: number } = {},
+  options: { search?: string; item?: string; limit?: number; offset?: number; removedAt?: Map<string, string> } = {},
 ) {
   const contactByEmail = new Map<string, AccountCustomerContactRow>();
   for (const contact of contacts) {
@@ -311,6 +337,8 @@ export function buildAccountCustomers(
   for (const row of rows) {
     const email = normalizeCustomerEmail(row.customer_email);
     if (!email) continue;
+    const removedAt = options.removedAt?.get(email);
+    if (removedAt && !isAfter(row.activity_at, removedAt)) continue;
     const contact = contactByEmail.get(email);
     const customer = customersByEmail.get(email) || {
       id: email,
@@ -508,13 +536,57 @@ export async function updateFinancialEntry(
 }
 
 export async function deleteFinancialEntry(env: Env, userId: string, entryId: string) {
-  const result = await env.DB.prepare("DELETE FROM financial_entries WHERE id = ? AND user_id = ?")
-    .bind(entryId, userId)
-    .run();
-  if (!result.success || (result.meta.changes ?? 0) === 0) {
-    throw new AccountsInputError("Entry not found", 404);
-  }
+  const entry = await env.DB.prepare(
+    "SELECT id, source_ref, payment_intent_id FROM financial_entries WHERE id = ? AND user_id = ?",
+  ).bind(entryId, userId).first<{ id: string; source_ref: string | null; payment_intent_id: string | null }>();
+  if (!entry) throw new AccountsInputError("Entry not found", 404);
+  await removeEntries(env, userId, [entry]);
   return { ok: true };
+}
+
+/** Removes a customer from Accounts; with includeIncome, their income entries go too. New activity brings them back. */
+export async function removeAccountCustomer(env: Env, userId: string, emailValue: string, includeIncome: boolean) {
+  const email = normalizeCustomerEmail(emailValue);
+  if (!email) throw new AccountsInputError("A customer email is required");
+  let removedEntries = 0;
+  if (includeIncome) {
+    await syncWebsiteIncomeEntries(env, userId);
+    const entries = await env.DB.prepare(
+      `SELECT id, source_ref, payment_intent_id FROM financial_entries
+       WHERE user_id = ? AND entry_type = 'income' AND LOWER(customer_email) = ?`,
+    ).bind(userId, email).all<{ id: string; source_ref: string | null; payment_intent_id: string | null }>();
+    removedEntries = await removeEntries(env, userId, entries.results || []);
+  }
+  await env.DB.prepare(
+    `INSERT INTO account_customer_removals (user_id, email, removed_at) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, email) DO UPDATE SET removed_at = excluded.removed_at`,
+  ).bind(userId, email, new Date().toISOString()).run();
+  return { ok: true, removedEntries };
+}
+
+async function removeEntries(
+  env: Env,
+  userId: string,
+  entries: Array<{ id: string; source_ref: string | null; payment_intent_id: string | null }>,
+) {
+  if (!entries.length) return 0;
+  await env.DB.batch(entries.flatMap((entry) => [
+    ...(entry.source_ref
+      ? [env.DB.prepare(
+          `INSERT OR REPLACE INTO financial_entry_removals (user_id, source_ref, payment_intent_id)
+           VALUES (?, ?, ?)`,
+        ).bind(userId, entry.source_ref, entry.payment_intent_id)]
+      : []),
+    env.DB.prepare("DELETE FROM financial_entries WHERE id = ? AND user_id = ?").bind(entry.id, userId),
+  ]));
+  return entries.length;
+}
+
+export async function isFinancialEntryRemoved(env: Env, userId: string, sourceRef: string, paymentIntentId: string | null = null) {
+  return Boolean(await env.DB.prepare(
+    `SELECT 1 AS removed FROM financial_entry_removals
+     WHERE user_id = ? AND (source_ref = ? OR (? IS NOT NULL AND payment_intent_id = ?)) LIMIT 1`,
+  ).bind(userId, sourceRef, paymentIntentId, paymentIntentId).first());
 }
 
 export async function listFinancialCategories(
@@ -873,6 +945,7 @@ async function upsertWebsiteIncomeEntry(
     source.payment_intent_id,
     sourceRef,
   ).first<{ id: string }>();
+  if (!existing && await isFinancialEntryRemoved(env, userId, sourceRef, source.payment_intent_id)) return false;
   if (existing) {
     await env.DB.prepare(
       `UPDATE financial_entries
@@ -1154,6 +1227,8 @@ export async function syncAccountsStripe(env: Env, userId: string) {
           )
           .run();
         chargesUpdated++;
+      } else if (await isFinancialEntryRemoved(env, userId, sourceRef, payment.paymentIntentId)) {
+        chargesSkipped++;
       } else {
         const inserted = await env.DB.prepare(
           `INSERT OR IGNORE INTO financial_entries
@@ -1267,6 +1342,12 @@ function parseCurrency(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toUpperCase();
   return CURRENCY_REGEX.test(normalized) ? normalized : null;
+}
+
+/** Compares timestamps as instants; SQLite's CURRENT_TIMESTAMP form is UTC without a zone. */
+function isAfter(value: string, reference: string) {
+  const parse = (text: string) => Date.parse(text.includes(" ") ? `${text.replace(" ", "T")}Z` : text);
+  return parse(value) > parse(reference);
 }
 
 function normalizeCustomerEmail(value: unknown): string | null {

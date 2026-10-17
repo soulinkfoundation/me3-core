@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA, triageInboundInvoiceEmail } from "./accounts-email-triage";
 import { MAIL_TRIAGE_SCHEMA, retryPendingMailTriage } from "./mailbox-triage";
 import { deliverInboundEmail, handleInboundEmail, type ForwardableEmailMessageLike } from "./mailbox-inbound";
@@ -22,7 +23,7 @@ function fixture() {
   for (const name of ["0021_managed_email_inbound_deliveries", "0048_mailbox_attachment_staging"]) {
     raw.exec(readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), "utf8"));
   }
-  for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...MAIL_TRIAGE_SCHEMA]) raw.exec(sql);
+  for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...ACCOUNTS_REMOVALS_SCHEMA, ...MAIL_TRIAGE_SCHEMA]) raw.exec(sql);
   raw.exec(`INSERT INTO owner_profile(id) VALUES('owner'),('other');
     INSERT INTO mailbox_aliases(id,user_id,alias_local_part,forwarding_email,status) VALUES('mailbox','owner','owner','','active');
     INSERT INTO plugin_installations(plugin_id,version,enabled,status) VALUES('me3.accounts','0.1.0',1,'installed');`);
@@ -115,6 +116,9 @@ describe("Accounts invoice hook on the agent mailbox with real SQLite", () => {
     ["Invoice", "Total EUR 49.00. Not paid.", "billing@hosting.test", "needs_review", "expense"],
     ["Payment received", "Payment received EUR 49.00. Thank you for your payment.", "billing@stripe.test", "paid", "income"],
     ["=?UTF-8?Q?Receipt_for_software?=", "EUR 24.50", "shop@example.test", "needs_review", "expense"],
+    ["Your upcoming invoice", "Invoice total EUR 49.00 will be charged on 3 November. Invoice number 42.", "billing@hosting.test", "pending", "expense"],
+    ["Invoice reminder", "Invoice #42 for EUR 49.00 is due. Grand total EUR 49.00. It will be paid automatically.", "billing@hosting.test", "pending", "expense"],
+    ["Receipt", "Grand total EUR 49.00. Thank you for your payment. Your plan renews on 3 December.", "billing@hosting.test", "paid", "expense"],
   ])("uses confidence and payment evidence for %s", async (subject, body, from, status, entryType) => {
     const f = fixture(); await deliverInboundEmail(mail(subject, body, from), f.env);
     expect(f.entries()).toEqual([expect.objectContaining({ status, entry_type: entryType })]);

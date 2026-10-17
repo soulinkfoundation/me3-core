@@ -1,5 +1,5 @@
 import { decodeMimeHeaderValue } from "../../../shared/email-headers";
-import { ACCOUNTS_PLUGIN_ID, AccountsInputError, getOrCreateCategoryByName } from "./accounts";
+import { ACCOUNTS_PLUGIN_ID, AccountsInputError, getOrCreateCategoryByName, isFinancialEntryRemoved } from "./accounts";
 import { getDefaultCommerceCurrency } from "./commerce-settings";
 import { isCorePluginEnabled } from "./plugins";
 import { sha256Text } from "./sites";
@@ -32,7 +32,7 @@ type InvoiceExtraction = {
   amountCents: number;
   currency: string;
   date: string;
-  status: "paid" | "needs_review";
+  status: "paid" | "pending" | "needs_review";
   categoryHint: string;
   confidence: "high" | "medium";
   sourceRef: string;
@@ -75,6 +75,8 @@ export async function triageInboundInvoiceEmail(env: Env, mailboxId: string, mes
 }
 
 async function insertInvoiceFinancialEntry(env: Env, userId: string, entryId: string, extraction: InvoiceExtraction) {
+  // The owner deleted this entry once already; a triage retry must not file it again.
+  if (await isFinancialEntryRemoved(env, userId, extraction.sourceRef)) return false;
   const category = await getOrCreateCategoryByName(env, userId, extraction.entryType, extraction.categoryHint);
   const result = await env.DB.prepare(
     `INSERT OR IGNORE INTO financial_entries
@@ -127,7 +129,8 @@ function extractInvoiceFromMessage(message: InvoiceMessage, score: number, defau
     description: subject,
     ...amount,
     date: (message.received_at || message.created_at).slice(0, 10),
-    status: confidence === "high" && looksPaid(combined) ? "paid" : "needs_review",
+    // A notice of a charge still to come is a bill, never money already spent.
+    status: looksUpcoming(combined) ? "pending" : confidence === "high" && looksPaid(combined) ? "paid" : "needs_review",
     categoryHint: inferInvoiceCategory(message),
     confidence,
     sourceRef: `email:${message.id}`,
@@ -149,6 +152,16 @@ function parseInvoiceAmount(text: string, defaultCurrency: string) {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return null;
   const currency = ({ "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY" } as Record<string, string>)[match?.[1] || ""] || match?.[3]?.toUpperCase() || defaultCurrency;
   return { amountCents, currency };
+}
+
+// "Your invoice will be paid automatically on 3 Nov", "upcoming renewal", "payment due by", "reminder".
+const INVOICE_UPCOMING_PATTERN = /\b(upcoming|will\s+be\s+(?:charged|billed|paid|debited|collected|taken)|we\s+will\s+(?:charge|bill|collect)|(?:renews?|renewal|due|scheduled)\s+(?:on|by|for|date)|payment\s+reminder|reminder|due\s+soon|due\s+in\s+\d+\s+days?|is\s+due|auto-?renew)/i;
+
+// Receipts often mention the next renewal, so clear evidence of a completed payment wins.
+const INVOICE_PAYMENT_MADE_PATTERN = /\b(thank\s+you\s+for\s+your\s+payment|payment\s+(?:received|confirmation|successful)|successful\s+payment|we(?:'ve|\s+have)?\s+received\s+your\s+payment|amount\s+paid|paid\s+on|you\s+paid|has\s+been\s+paid|was\s+charged|have\s+been\s+charged)\b/i;
+
+function looksUpcoming(text: string) {
+  return INVOICE_UPCOMING_PATTERN.test(text) && !INVOICE_PAYMENT_MADE_PATTERN.test(text);
 }
 
 function looksPaid(text: string) {

@@ -733,7 +733,7 @@ onMounted(() => {
                 <td class="accounts-table__actions-column">
                   <div class="accounts-table__row-actions">
                     <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Edit entry" @click="openEditEntry(entry)"><UiIcon name="Pencil" :size="15" /></Button>
-                    <Button v-if="!['stripe', 'website'].includes(entry.source)" color="ghost" shape="soft" size="compact" icon-only aria-label="Delete entry" @click="deleteEntry(entry)"><UiIcon name="Trash2" :size="15" /></Button>
+                    <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Delete entry" @click="deleteEntry(entry)"><UiIcon name="Trash2" :size="15" /></Button>
                   </div>
                 </td>
               </tr>

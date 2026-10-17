@@ -94,6 +94,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0069_quote_bookmarks", "2026-10-13-quote-bookmarks-v1"],
   ["0070_gratitude_in_today", "2026-10-14-gratitude-in-today-v1"],
   ["0073_agent_payments", "2026-10-17-agent-payments-v1"],
+  ["0074_accounts_removals", "2026-10-17-accounts-removals-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -159,6 +160,8 @@ const COPIED_TABLES = [
   "daily_quotes",
   "gratitude_settings",
   "accounts_email_triage_settings",
+  "financial_entry_removals",
+  "account_customer_removals",
   "me3_agent_cancellations",
   "me3_agent_request_aliases",
   "me3_agent_turns",

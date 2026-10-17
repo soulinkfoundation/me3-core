@@ -13,6 +13,7 @@ import {
   listAccountCustomers,
   listFinancialCategories,
   listFinancialEntries,
+  removeAccountCustomer,
   syncAccountsStripe,
   updateFinancialEntry,
 } from "../accounts";
@@ -64,6 +65,20 @@ export function registerAccountsRoutes(app: AppHono, deps: OwnerRouteDeps) {
 
     try {
       return c.json(await listAccountCustomers(c.env, ownerId, new URL(c.req.url).searchParams));
+    } catch (error) {
+      return accountsErrorResponse(c, error);
+    }
+  });
+
+  app.delete("/api/accounts/customers/:email", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireAccountsPlugin(c);
+    if (blocked) return blocked;
+
+    try {
+      const includeIncome = c.req.query("includeIncome") === "true";
+      return c.json(await removeAccountCustomer(c.env, ownerId, c.req.param("email"), includeIncome));
     } catch (error) {
       return accountsErrorResponse(c, error);
     }

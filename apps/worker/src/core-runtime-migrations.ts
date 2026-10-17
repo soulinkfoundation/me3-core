@@ -10,6 +10,7 @@ import { QUOTE_BOOKMARKS_SCHEMA } from "./quote-bookmarks-schema";
 import { GRATITUDE_SETTINGS_SCHEMA, CARD_REMINDERS_SCHEMA } from "./gratitude-schema";
 import { HOME_LAYOUT_SCHEMA } from "./home-layout";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
+import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { AGENT_PAYMENTS_SCHEMA } from "./agent-payments";
 import { MAIL_TRIAGE_SCHEMA } from "./mailbox-triage";
 import type { Env } from "./types";
@@ -575,6 +576,14 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-17-agent-payments-v1",
     async apply(db) {
       await db.batch(AGENT_PAYMENTS_SCHEMA.map(sql => db.prepare(sql)));
+    },
+  },
+  // Accounts removals: deleted synced entries and removed customers stay removed.
+  {
+    id: "0074_accounts_removals",
+    checksum: "2026-10-17-accounts-removals-v1",
+    async apply(db) {
+      await db.batch(ACCOUNTS_REMOVALS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];
