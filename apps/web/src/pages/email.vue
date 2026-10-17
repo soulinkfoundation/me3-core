@@ -7,7 +7,10 @@ import AppDialog from "../components/AppDialog.vue";
 import Button from "../components/Button.vue";
 import PageLoading from "../components/PageLoading.vue";
 import UiIcon from "../components/UiIcon.vue";
-import WorkspaceTabs from "../components/WorkspaceTabs.vue";
+import EmailBrief from "../components/email/EmailBrief.vue";
+import EmailRulesDialog from "../components/email/EmailRulesDialog.vue";
+import EmailSenderAvatar from "../components/email/EmailSenderAvatar.vue";
+import type { MailSenderIdentity, MailTriageTag, MailboxBriefItem } from "../components/email/brief";
 import { API_BASE, api } from "../api";
 import { useAppToast } from "../composables/useAppToast";
 import { useAuthStore } from "../stores/auth";
@@ -105,6 +108,10 @@ type InboxMessage = {
     threadSummary?: MailboxThreadSummary;
   } | null;
   unsubscribeAction?: MailboxUnsubscribeAction | null;
+  /** Core 0.1.227+: resolved sender, clean preview and ME3's triage tag. */
+  sender?: MailSenderIdentity | null;
+  cleanPreview?: string;
+  triage?: MailTriageTag | null;
   createdBy: string;
   approvedByUserId: string | null;
   approvedAt: string | null;
@@ -129,6 +136,9 @@ type MailboxThreadSummary = {
   unreadCount: number;
   attachmentCount: number;
   lastActivity: string;
+  sender?: MailSenderIdentity | null;
+  cleanSnippet?: string;
+  triage?: MailTriageTag | null;
 };
 
 type MailboxThreadsResponse = {
@@ -222,7 +232,7 @@ type ClearTelegramHistoryResponse = {
 };
 
 type EmailTab = "inbox" | "drafts" | "sent" | "archive" | "trash";
-type Tab = EmailTab | "telegram";
+type Tab = EmailTab | "telegram" | "brief";
 
 type TelegramChatBubble = {
   id: string;
@@ -253,7 +263,7 @@ const deliveryResolutionPending = ref<string | null>(null);
 const deliveryRetryConfirmId = ref<string | null>(null);
 const deliveryStatuses = ref<Record<string, MailboxDeliveryStatus>>({});
 const total = ref(0);
-const activeTab = ref<Tab>("inbox");
+const activeTab = ref<Tab>("brief");
 const mailboxAddress = ref<string | null>(null);
 const expandedId = ref<string | null>(null);
 const mobileThreadOpen = ref(false);
@@ -288,6 +298,25 @@ const composeForm = ref({
   subject: "",
   textBody: "",
 });
+const briefRef = ref<InstanceType<typeof EmailBrief> | null>(null);
+const briefCount = ref<number | null>(null);
+const rulesOpen = ref(false);
+const selectMode = ref(false);
+const mobileMenuOpen = ref(false);
+const threadMoreOpen = ref(false);
+const expandedMessageIds = ref<Set<string>>(new Set());
+const replyOpen = ref(false);
+const replyTarget = ref<InboxMessage | null>(null);
+const replyForm = ref({ textBody: "" });
+const replyQuotedOpen = ref(false);
+const replyAttachments = ref<MailboxAttachment[]>([]);
+const replyUploading = ref(false);
+const replySending = ref(false);
+const replyAssisting = ref(false);
+const replyError = ref("");
+const replyTextareaRef = ref<HTMLTextAreaElement | null>(null);
+const lastUpdatedAt = ref<number | null>(null);
+let phoneLayoutQuery: MediaQueryList | null = null;
 const offset = ref(0);
 const limit = 50;
 const TELEGRAM_PAGE_LIMIT = 50;
@@ -463,17 +492,18 @@ const emailTabIcons: Record<EmailTab, UiIconName> = {
 };
 const mailFolderTabs = computed(() => {
   const tabs: Array<{
-    id: Tab | "campaigns";
+    id: Tab;
     label: string;
     icon: UiIconName;
     count?: number | null;
     ariaLabel?: string;
   }> = [
     {
-      id: "campaigns",
-      label: "Campaigns",
-      icon: "Send",
-      ariaLabel: "Campaigns",
+      id: "brief",
+      label: "Brief",
+      icon: "Sparkles",
+      count: briefCount.value && briefCount.value > 0 ? briefCount.value : null,
+      ariaLabel: "Brief",
     },
     ...emailTabOrder.map((key) => ({
       id: key,
@@ -486,15 +516,34 @@ const mailFolderTabs = computed(() => {
   return tabs;
 });
 
-function isEmailTab(tab: Tab | "campaigns"): tab is EmailTab {
-  return tab !== "telegram" && tab !== "campaigns";
+function isEmailTab(tab: Tab | "campaigns" | "rules"): tab is EmailTab {
+  return tab !== "telegram" && tab !== "campaigns" && tab !== "brief" && tab !== "rules";
+}
+
+function isMailTab(tab: Tab): boolean {
+  return tab !== "telegram";
 }
 
 const activeFolderLabel = computed(() =>
   isEmailTab(activeTab.value)
     ? emailTabConfig[activeTab.value].label
-    : "Mailbox",
+    : activeTab.value === "brief"
+      ? "Brief"
+      : "Mailbox",
 );
+const activeTabLabel = computed(() => activeFolderLabel.value);
+const listStatusLine = computed(() => {
+  const parts: string[] = [];
+  if (lastUpdatedAt.value) {
+    const seconds = (Date.now() - lastUpdatedAt.value) / 1000;
+    parts.push(seconds < 90 ? "Updated just now" : seconds < 3600 ? `Updated ${Math.round(seconds / 60)} min ago` : `Updated ${formatRelativeDate(new Date(lastUpdatedAt.value).toISOString())}`);
+  }
+  if (activeTab.value === "inbox") {
+    const unread = folderCounts.value.inbox;
+    if (unread !== null) parts.push(unread === 0 ? "no unread" : `${unread} unread`);
+  }
+  return parts.join(" · ");
+});
 const searchLabel = computed(() => `Search ${activeFolderLabel.value}`);
 
 /** Show setup hint in empty states (not the top status strip). */
@@ -789,7 +838,9 @@ function threadSummaryToMessage(
     subject: thread.subject,
     body: "",
     htmlBody: null,
-    preview: thread.latestSnippet,
+    preview: thread.cleanSnippet || thread.latestSnippet,
+    sender: thread.sender || null,
+    triage: thread.triage || null,
     folder: emailTabConfig[tab].folderParam,
     readAt: thread.unreadCount > 0 ? null : thread.lastActivity,
     unread: thread.unreadCount > 0,
@@ -822,7 +873,7 @@ function syncSelectedMessages(nextMessages: InboxMessage[]) {
 }
 
 function isDesktopMailLayout(): boolean {
-  return window.matchMedia("(min-width: 641px)").matches;
+  return window.matchMedia("(min-width: 1024px)").matches;
 }
 
 function getMessageAttachments(message: InboxMessage): MailboxAttachment[] {
@@ -1062,6 +1113,10 @@ function clearOpenConversation() {
   threadDetailLoading.value = false;
   threadDetailError.value = "";
   mobileThreadOpen.value = false;
+  replyOpen.value = false;
+  replyTarget.value = null;
+  threadMoreOpen.value = false;
+  expandedMessageIds.value = new Set();
 }
 
 function currentThreadPageKey(): string {
@@ -1232,7 +1287,10 @@ async function loadMessages() {
         err instanceof Error ? err.message : "Failed to load messages";
     }
   } finally {
-    if (requestId === messageRequestId) loading.value = false;
+    if (requestId === messageRequestId) {
+      loading.value = false;
+      if (messagesLoaded.value && !error.value) lastUpdatedAt.value = Date.now();
+    }
   }
 }
 
@@ -1359,6 +1417,10 @@ async function refreshMailboxMessage(id: string): Promise<InboxMessage | null> {
 async function openMessageFromRoute() {
   const id = typeof route.query.message === "string" ? route.query.message.trim() : "";
   if (!id) return;
+  if (!isEmailTab(activeTab.value)) {
+    switchTab("inbox");
+    await loadMessages();
+  }
   if (!messages.value.some((message) => message.id === id)) {
     try {
       const data = await api.get<{ message: InboxMessage }>(
@@ -1650,26 +1712,34 @@ function switchTab(tab: Tab) {
   resetThreadPagination();
   clearOpenConversation();
   clearSelectedMessages();
+  selectMode.value = false;
   error.value = "";
   telegramError.value = "";
   telegramMoreError.value = "";
   if (tab === "telegram") {
     void loadTelegramHistory();
+  } else if (tab === "brief") {
+    void briefRef.value?.refresh();
   } else {
     void loadMessages();
   }
 }
 
 function switchMailFolderTab(tabId: string) {
+  mobileMenuOpen.value = false;
   if (tabId === "campaigns") {
     void router.push("/email/campaigns");
     return;
   }
-  if (emailTabOrder.includes(tabId as EmailTab)) {
+  if (tabId === "rules") {
+    rulesOpen.value = true;
+    return;
+  }
+  if (tabId === "brief" || emailTabOrder.includes(tabId as EmailTab)) {
     if (activeTab.value === tabId) return;
     void router.replace({
       path: "/email",
-      query: tabId === "inbox" ? {} : { tab: tabId },
+      query: tabId === "brief" ? {} : { tab: tabId },
     });
     switchTab(tabId as Tab);
   }
@@ -1678,6 +1748,8 @@ function switchMailFolderTab(tabId: string) {
 async function refreshMessagesPage() {
   if (activeTab.value === "telegram") {
     await loadTelegramHistory();
+  } else if (activeTab.value === "brief") {
+    await briefRef.value?.refresh();
   } else {
     await loadMessages();
     await Promise.all([loadMailboxHealth(), loadFolderCounts()]);
@@ -1707,7 +1779,6 @@ async function selectMessage(id: string) {
 async function approveMessage(msg: InboxMessage) {
   if (inboxBusy.value) return;
   actionPending.value = msg.id;
-  error.value = "";
   const previousMessages = messages.value;
   const previousTotal = total.value;
   const previousExpandedId = expandedId.value;
@@ -1727,7 +1798,7 @@ async function approveMessage(msg: InboxMessage) {
     syncSelectedMessages(previousMessages);
     cacheActiveMessages();
     await refreshDraftDeliveryState(msg.id);
-    error.value = err instanceof Error ? err.message : "Failed to approve";
+    toast.error(err instanceof Error ? err.message : "Failed to approve");
   } finally {
     actionPending.value = null;
   }
@@ -1736,7 +1807,6 @@ async function approveMessage(msg: InboxMessage) {
 async function rejectMessage(msg: InboxMessage) {
   if (inboxBusy.value) return;
   actionPending.value = msg.id;
-  error.value = "";
   const previousMessages = messages.value;
   const previousTotal = total.value;
   const previousExpandedId = expandedId.value;
@@ -1755,7 +1825,7 @@ async function rejectMessage(msg: InboxMessage) {
     mobileThreadOpen.value = previousMobileThreadOpen;
     syncSelectedMessages(previousMessages);
     cacheActiveMessages();
-    error.value = err instanceof Error ? err.message : "Failed to reject";
+    toast.error(err instanceof Error ? err.message : "Failed to reject");
   } finally {
     actionPending.value = null;
   }
@@ -1767,7 +1837,6 @@ async function moveMessage(
 ) {
   if (inboxBusy.value) return;
   deletePending.value = msg.id;
-  error.value = "";
   const previousMessages = messages.value;
   const previousTotal = total.value;
   const previousExpandedId = expandedId.value;
@@ -1775,11 +1844,11 @@ async function moveMessage(
   const previousSelectedMessageIds = new Set(selectedMessageIds.value);
   const previousFolder =
     msg.folder ||
-    (activeTab.value === "telegram"
+    (!isEmailTab(activeTab.value)
       ? "inbox"
       : emailTabConfig[activeTab.value].folderParam);
   const targetIsCurrentTab =
-    activeTab.value !== "telegram" &&
+    isEmailTab(activeTab.value) &&
     emailTabConfig[activeTab.value].folderParam === folder;
   ignorePendingMessageResponses();
   messages.value = targetIsCurrentTab
@@ -1808,7 +1877,7 @@ async function moveMessage(
     syncSelectedMessages(previousMessages);
     selectedMessageIds.value = previousSelectedMessageIds;
     cacheActiveMessages();
-    error.value = err instanceof Error ? err.message : "Failed to move message";
+    toast.error(err instanceof Error ? err.message : "Failed to move message");
   } finally {
     deletePending.value = null;
   }
@@ -1840,7 +1909,6 @@ async function moveConversation(
   }
   if (inboxBusy.value) return;
   deletePending.value = message.id;
-  error.value = "";
   try {
     const previousFolder = emailTabConfig[activeTab.value as EmailTab].folderParam;
     const previousMessages = messages.value;
@@ -1877,7 +1945,7 @@ async function moveConversation(
       selectedMessageIds.value = previousSelectedIds;
       mobileThreadOpen.value = previousMobileThreadOpen;
       await loadMessages();
-      error.value = "This conversation could not be moved. The folder was refreshed.";
+      toast.error("This conversation could not be moved. The folder was refreshed.");
       return;
     }
     showThreadMoveToast(folder, [{ id: thread.id, folder: previousFolder }]);
@@ -1894,7 +1962,6 @@ async function moveSelectedThreads(folder: "inbox" | "archive" | "trash") {
   const selected = selectedMessages.value;
   if (inboxBusy.value || selected.length === 0) return;
   bulkActionPending.value = true;
-  error.value = "";
   try {
     const previousFolder = emailTabConfig[activeTab.value as EmailTab].folderParam;
     const selectedLatestIds = new Set(selected.map((message) => message.id));
@@ -1931,7 +1998,7 @@ async function moveSelectedThreads(folder: "inbox" | "archive" | "trash") {
     );
     if (results.some((result) => result.status === "rejected")) {
       await loadMessages();
-      error.value = "Some conversations could not be moved. The folder was refreshed.";
+      toast.error("Some conversations could not be moved. The folder was refreshed.");
     }
     if (successfulMoves.length) showThreadMoveToast(folder, successfulMoves);
     await loadFolderCounts();
@@ -1950,7 +2017,6 @@ async function moveSelectedMessages(folder: "inbox" | "archive" | "trash") {
   }
   if (inboxBusy.value || selectedMessages.value.length === 0) return;
   bulkActionPending.value = true;
-  error.value = "";
   const previousMessages = messages.value;
   const selected = selectedMessages.value;
   const ids = new Set(selected.map((message) => message.id));
@@ -1958,12 +2024,12 @@ async function moveSelectedMessages(folder: "inbox" | "archive" | "trash") {
     id: message.id,
     folder:
       message.folder ||
-      (activeTab.value === "telegram"
+      (!isEmailTab(activeTab.value)
         ? ("inbox" as const)
         : emailTabConfig[activeTab.value].folderParam),
   }));
   const targetIsCurrentTab =
-    activeTab.value !== "telegram" &&
+    isEmailTab(activeTab.value) &&
     emailTabConfig[activeTab.value].folderParam === folder;
   ignorePendingMessageResponses();
   messages.value = targetIsCurrentTab
@@ -1995,9 +2061,9 @@ async function moveSelectedMessages(folder: "inbox" | "archive" | "trash") {
   const failedCount = results.length - successfulMoves.length;
   if (failedCount > 0) {
     await loadMessages();
-    error.value = `${failedCount} ${
+    toast.error(`${failedCount} ${
       failedCount === 1 ? "message" : "messages"
-    } could not be moved. The folder was refreshed.`;
+    } could not be moved. The folder was refreshed.`);
   }
   await loadFolderCounts();
   if (successfulMoves.length > 0) showMoveToast(folder, successfulMoves);
@@ -2015,7 +2081,7 @@ async function deleteSelectedMessagesPermanently() {
     );
     if (!confirmed) return;
     bulkActionPending.value = true;
-    error.value = "";
+    toast.error("");
     try {
       const groups = await Promise.all(
         selected.map((message) => getConversationActionMessages(message)),
@@ -2071,7 +2137,6 @@ async function deleteSelectedMessagesPermanently() {
   if (!confirmed) return;
 
   bulkActionPending.value = true;
-  error.value = "";
   const ids = new Set(selectedMessages.value.map((message) => message.id));
   ignorePendingMessageResponses();
   messages.value = messages.value.filter((message) => !ids.has(message.id));
@@ -2088,9 +2153,9 @@ async function deleteSelectedMessagesPermanently() {
   ).length;
   if (failedCount > 0) {
     await loadMessages();
-    error.value = `${failedCount} ${
+    toast.error(`${failedCount} ${
       failedCount === 1 ? "message" : "messages"
-    } could not be deleted. Trash was refreshed.`;
+    } could not be deleted. Trash was refreshed.`);
   }
   await loadFolderCounts();
   bulkActionPending.value = false;
@@ -2109,7 +2174,7 @@ async function restoreMessageReadStates(states: PreviousReadState[]) {
   );
   if (results.some((result) => result.status === "rejected")) {
     await loadMessages();
-    error.value = "Some read states could not be restored. The folder was refreshed.";
+    toast.error("Some read states could not be restored. The folder was refreshed.");
   } else {
     cacheActiveMessages();
     toastSuccess("Read state restored.");
@@ -2121,7 +2186,6 @@ async function restoreMessageReadStates(states: PreviousReadState[]) {
 async function markMessageRead(msg: InboxMessage, read = true) {
   if (inboxBusy.value) return;
   actionPending.value = msg.id;
-  error.value = "";
   const targets =
     selectedMessage.value?.id === msg.id ? selectedThreadMessages.value : [msg];
   const previousStates = targets.map(({ id, readAt, unread }) => ({
@@ -2143,7 +2207,7 @@ async function markMessageRead(msg: InboxMessage, read = true) {
   );
   if (results.some((result) => result.status === "rejected")) {
     await loadMessages();
-    error.value = "Some messages could not be updated. The folder was refreshed.";
+    toast.error("Some messages could not be updated. The folder was refreshed.");
   } else {
     cacheActiveMessages();
     if (selectedThreadId.value) {
@@ -2177,7 +2241,6 @@ async function markConversationRead(message: InboxMessage, read: boolean) {
   }
   if (inboxBusy.value) return;
   actionPending.value = message.id;
-  error.value = "";
   try {
     await api.post(
       `/mailbox/threads/${encodeURIComponent(thread.id)}/read`,
@@ -2212,7 +2275,6 @@ async function markConversationRead(message: InboxMessage, read: boolean) {
 async function unsubscribeFromMessage(message: InboxMessage) {
   if (!message.unsubscribeAction || inboxBusy.value) return;
   unsubscribePending.value = message.id;
-  error.value = "";
   try {
     const response = await api.post<MailboxUnsubscribeResponse>(
       `/mailbox/messages/${message.id}/unsubscribe`,
@@ -2236,8 +2298,314 @@ function getDisplayText(value: string | null | undefined): string {
 }
 
 function getMessagePreview(message: InboxMessage): string {
-  return getDisplayText(message.preview || message.body);
+  return getDisplayText(message.cleanPreview || message.preview || message.body);
 }
+
+function getRowSenderName(message: InboxMessage): string {
+  return message.sender?.name || getThreadSummary(message)?.sender?.name || getConversationParticipants(message);
+}
+
+function getRowAvatar(message: InboxMessage): string | null {
+  return message.sender?.avatarUrl || getThreadSummary(message)?.sender?.avatarUrl || null;
+}
+
+function getRowTag(message: InboxMessage): { label: string; tone: "accent" | "danger" | "muted" } | null {
+  if (isDraftMessage(message)) {
+    const label = message.createdBy === "agent" && message.status === "pending_approval" ? "Draft ready" : draftStatusLabel(message);
+    return { label, tone: message.status === "failed" ? "danger" : label === "Draft ready" ? "accent" : "muted" };
+  }
+  const label = message.triage?.label || getThreadSummary(message)?.triage?.label;
+  return label ? { label, tone: "accent" } : null;
+}
+
+const threadSummaryLine = computed(() => {
+  const summarised = [...selectedThreadMessages.value]
+    .reverse()
+    .find((message) => message.direction === "inbound" && message.triage?.summary);
+  return summarised?.triage?.summary || "";
+});
+
+const latestEmailMessage = computed(() =>
+  [...selectedThreadMessages.value].reverse().find((message) => message.kind === "email") || null,
+);
+
+const latestInboundMessage = computed(() =>
+  [...selectedThreadMessages.value].reverse().find((message) => message.kind === "email" && message.direction === "inbound") || null,
+);
+
+function isAgentDraft(message: InboxMessage): boolean {
+  return message.kind === "draft" && message.status === "pending_approval" && message.createdBy === "agent";
+}
+
+function isCollapsedMessage(message: InboxMessage, index: number): boolean {
+  return (
+    index < selectedThreadMessages.value.length - 1 &&
+    !isDraftMessage(message) &&
+    !expandedMessageIds.value.has(message.id)
+  );
+}
+
+function expandMessage(id: string) {
+  expandedMessageIds.value = new Set([...expandedMessageIds.value, id]);
+}
+
+function messageSenderName(message: InboxMessage): string {
+  if (message.direction === "outbound") return "You";
+  return message.sender?.name || getCounterpartyAddress(message);
+}
+
+function messageAvatar(message: InboxMessage): string | null {
+  return message.direction === "outbound" ? null : message.sender?.avatarUrl || null;
+}
+
+function messageRecipientLine(message: InboxMessage): string {
+  if (message.direction === "outbound") {
+    const to = message.sender?.name || getDisplayText(message.toAddress);
+    return to ? `to ${to}` : "";
+  }
+  const address = message.sender?.address || getDisplayText(message.fromAddress);
+  return address && address !== message.sender?.name ? `to you · ${address}` : "to you";
+}
+
+function exitSelectMode() {
+  selectMode.value = false;
+  clearSelectedMessages();
+}
+
+async function openThreadFromBrief(threadId: string, messageId: string) {
+  switchMailFolderTab("inbox");
+  await loadMessages();
+  const thread = threadSummaries.value.find((candidate) => candidate.id === threadId);
+  if (thread) {
+    await selectMessage(thread.latestMessageId);
+    return;
+  }
+  clearDeliveryStatusRefreshes();
+  expandedId.value = messageId;
+  mobileThreadOpen.value = true;
+  selectedThreadId.value = threadId;
+  loadedThreadId.value = null;
+  loadedThreadMessages.value = [];
+  await loadSelectedThread(stubThreadSummary(threadId, messageId));
+}
+
+function stubThreadSummary(threadId: string, messageId = ""): MailboxThreadSummary {
+  return {
+    id: threadId,
+    subject: "",
+    participants: [],
+    latestSnippet: "",
+    latestMessageId: messageId,
+    messageCount: 1,
+    unreadCount: 0,
+    attachmentCount: 0,
+    lastActivity: new Date().toISOString(),
+  };
+}
+
+async function reloadOpenThread() {
+  const threadId = selectedThreadId.value;
+  if (!threadId) return;
+  await loadSelectedThread(selectedThreadSummary.value || stubThreadSummary(threadId, expandedId.value || ""));
+}
+
+async function editDraftFromBrief(draftId: string, _item: MailboxBriefItem) {
+  try {
+    const data = await api.get<{ message: InboxMessage }>(`/mailbox/messages/${encodeURIComponent(draftId)}`);
+    openComposeModal(data.message);
+  } catch (err) {
+    toastFromUnknown(err, "The draft could not be opened");
+  }
+}
+
+async function approveAgentDraft(message: InboxMessage) {
+  await approveMessage(message);
+  await reloadOpenThread();
+  void briefRef.value?.refresh();
+}
+
+async function discardAgentDraft(message: InboxMessage) {
+  await rejectMessage(message);
+  await reloadOpenThread();
+}
+
+async function alwaysArchiveSender(message: InboxMessage) {
+  threadMoreOpen.value = false;
+  try {
+    await api.post("/mailbox/rules", { kind: "archive_sender", messageId: message.id });
+    toastSuccess(`Mail from ${message.sender?.name || getDisplayText(message.fromAddress)} will be archived from now on.`);
+    clearOpenConversation();
+    await loadMessages();
+    void loadFolderCounts();
+  } catch (err) {
+    toastFromUnknown(err, "The rule could not be saved");
+  }
+}
+
+// --- Inline reply at the end of the thread (Re:, quoted text collapsed, Cmd+Enter sends).
+
+const replyRecipient = computed(() => {
+  const target = replyTarget.value;
+  if (!target) return "";
+  return getDisplayText(target.direction === "inbound" ? target.fromAddress : target.toAddress);
+});
+
+const replySubject = computed(() => {
+  const subject = replyTarget.value ? getMessageSubject(replyTarget.value) : "";
+  return /^re:\s*/i.test(subject) ? subject : `Re: ${subject.replace(/^fwd?:\s*/i, "")}`;
+});
+
+const replyQuoted = computed(() => {
+  const target = replyTarget.value;
+  if (!target) return "";
+  const when = formatDateTimePart(parseApiDate(target.createdAt), {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: auth.user?.timezone || undefined,
+  });
+  const who = target.direction === "outbound" ? "you" : messageSenderName(target);
+  return `On ${when}, ${who} wrote:\n${getMessageTextBody(target).split("\n").map((line) => `> ${line}`).join("\n")}`;
+});
+
+function startInlineReply(message?: InboxMessage) {
+  const target = message || latestEmailMessage.value;
+  if (!target) return;
+  void Promise.all([loadProviderSettings(), loadContactsForCompose()]);
+  replyTarget.value = target;
+  replyForm.value = { textBody: "" };
+  replyAttachments.value = [];
+  replyError.value = "";
+  replyQuotedOpen.value = false;
+  replyOpen.value = true;
+  void nextTick(() => {
+    replyTextareaRef.value?.focus();
+    replyTextareaRef.value?.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function cancelInlineReply() {
+  replyOpen.value = false;
+  replyTarget.value = null;
+  replyError.value = "";
+}
+
+function handleReplyKeydown(event: KeyboardEvent) {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && replyForm.value.textBody.trim() && !replySending.value) {
+    event.preventDefault();
+    void sendInlineReply(true);
+  }
+}
+
+async function sendInlineReply(sendNow: boolean) {
+  const target = replyTarget.value;
+  if (!target || replySending.value) return;
+  if (!replyForm.value.textBody.trim()) {
+    replyError.value = "Write a reply first.";
+    return;
+  }
+  replySending.value = true;
+  replyError.value = "";
+  try {
+    const fromAddress =
+      outboundSenderOptions.value.find((option) => option.address === target.toAddress)?.address ||
+      outboundSenderOptions.value[0]?.address ||
+      undefined;
+    const response = await api.post<{ draft: InboxMessage | null }>("/mailbox/drafts", {
+      fromAddress,
+      to: replyRecipient.value,
+      subject: replySubject.value,
+      textBody: `${replyForm.value.textBody.trim()}\n\n${replyQuoted.value}`,
+      source: "user",
+      replyToMessageId: target.id,
+      uploadedAttachments: replyAttachments.value,
+    });
+    if (!response.draft) throw new Error("The draft could not be saved.");
+    if (sendNow) await api.post(`/mailbox/drafts/${response.draft.id}/approve`);
+    cancelInlineReply();
+    toastSuccess(sendNow ? "Reply sent." : "Draft saved.");
+    await reloadOpenThread();
+    void loadFolderCounts();
+    void briefRef.value?.refresh();
+  } catch (err) {
+    replyError.value = err instanceof Error ? err.message : "The reply could not be sent.";
+  } finally {
+    replySending.value = false;
+  }
+}
+
+async function uploadReplyAttachments(event: Event) {
+  const input = event.target as HTMLInputElement | null;
+  const files = Array.from(input?.files || []);
+  if (input) input.value = "";
+  if (files.length === 0 || replyUploading.value) return;
+  replyUploading.value = true;
+  replyError.value = "";
+  try {
+    const formData = new FormData();
+    for (const file of files) formData.append("attachments", file);
+    const response = await api.upload<MailboxAttachmentUploadResponse>("/mailbox/attachments", formData);
+    replyAttachments.value = [...replyAttachments.value, ...(response.attachments || [])];
+  } catch (err) {
+    replyError.value = err instanceof Error ? err.message : "Failed to upload attachment";
+  } finally {
+    replyUploading.value = false;
+  }
+}
+
+function removeReplyAttachment(index: number) {
+  replyAttachments.value = replyAttachments.value.filter((_, currentIndex) => currentIndex !== index);
+}
+
+async function askMe3ToImproveReply() {
+  const target = replyTarget.value;
+  if (!target || replyAssisting.value) return;
+  const instruction = window.prompt(
+    "What should ME3 do with this reply?",
+    replyForm.value.textBody.trim() ? "Make it clearer, warmer and shorter." : "Write a short, friendly reply.",
+  );
+  if (instruction === null) return;
+  replyAssisting.value = true;
+  replyError.value = "";
+  try {
+    const result = await api.post<{ subject: string; body: string }>("/mailbox/drafts/assist", {
+      to: replyRecipient.value,
+      subject: replySubject.value,
+      body: replyForm.value.textBody,
+      instruction,
+      replyToMessageId: target.id,
+    });
+    replyForm.value.textBody = result.body;
+    void nextTick(() => replyTextareaRef.value?.focus());
+  } catch (err) {
+    toastFromUnknown(err, "ME3 could not help with this reply");
+  } finally {
+    replyAssisting.value = false;
+  }
+}
+
+const composeRecipientChip = computed(() => {
+  const address = composeForm.value.to.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) return "";
+  const contact = contactRecipientOptions.value.find((candidate) => candidate.email.toLowerCase() === address.toLowerCase());
+  return contact?.name || address;
+});
+
+function clearComposeRecipient() {
+  composeForm.value.to = "";
+  composeToFocused.value = true;
+  void nextTick(() => document.getElementById("compose-to")?.focus());
+}
+
+/** Keeps Back working after a desktop-to-phone resize with a thread open. */
+function syncMobileThreadOpen() {
+  if (!phoneLayoutQuery) return;
+  if (!phoneLayoutQuery.matches) mobileThreadOpen.value = false;
+  else if (selectedMessage.value) mobileThreadOpen.value = true;
+}
+
 
 function getMessageTextBody(message: InboxMessage): string {
   return getDisplayText(message.body || message.preview);
@@ -2370,9 +2738,9 @@ function openComposeModal(
       composeForm.value = {
         fromAddress: replyFromAddress,
         to: replyTo || "",
-        subject: /^(re|fwd):\s*/i.test(getMessageSubject(message))
+        subject: /^re:\s*/i.test(getMessageSubject(message))
           ? getMessageSubject(message)
-          : `Re: ${getMessageSubject(message)}`,
+          : `Re: ${getMessageSubject(message).replace(/^fwd?:\s*/i, "")}`,
         textBody: "",
       };
     }
@@ -2578,14 +2946,7 @@ function getComposeTitle(): string {
   if (composeMode.value === "edit") return "Edit draft";
   if (composeMode.value === "reply") return "Reply";
   if (composeMode.value === "forward") return "Forward";
-  return "Compose";
-}
-
-function getComposePrimaryDraftLabel(): string {
-  if (composeMode.value === "edit") return "Save draft";
-  if (composeMode.value === "forward") return "Create forward";
-  if (composeMode.value === "reply") return "Create reply";
-  return "Create draft";
+  return "New message";
 }
 
 function getMojibakeScore(value: string): number {
@@ -2748,8 +3109,10 @@ function renderRichEmailDocument(
   const frameStyle = `<base target="_blank">
 ${getEmailFrameSecurityMeta(allowExternalContent)}
 <style>
-html, body { margin: 0; overflow: visible; background: #fff; }
-img { max-width: 100%; height: auto; }
+html, body { margin: 0; overflow: visible; background: #fff; color: #1b1f22; }
+body { overflow-wrap: anywhere; word-break: break-word; }
+img, table { max-width: 100% !important; height: auto; }
+pre { white-space: pre-wrap; }
 </style>`;
 
   if (/<html[\s>]/i.test(safeBody)) {
@@ -2856,17 +3219,15 @@ function formatRelativeDate(value: string): string {
       timeZone,
     });
   }
-  if (diffDays < 7) {
-    return formatDateTimePart(date, {
-      month: "short",
-      day: "numeric",
-      timeZone,
-    });
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays > 1 && diffDays < 7) {
+    return formatDateTimePart(date, { weekday: "short", timeZone });
   }
+  const sameYear = date.getFullYear() === new Date().getFullYear();
   return formatDateTimePart(date, {
     month: "short",
     day: "numeric",
-    year: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
     timeZone,
   });
 }
@@ -2997,12 +3358,21 @@ async function resolveUnconfirmedDelivery(
 
 onMounted(() => {
   const routeTab = typeof route.query.tab === "string" ? route.query.tab : "";
+  const routeMessage = typeof route.query.message === "string" ? route.query.message.trim() : "";
   if (emailTabOrder.includes(routeTab as EmailTab)) {
     activeTab.value = routeTab as EmailTab;
+  } else if (routeMessage) {
+    activeTab.value = "inbox";
+  } else {
+    activeTab.value = "brief";
   }
+  phoneLayoutQuery = window.matchMedia("(max-width: 1023px)");
+  phoneLayoutQuery.addEventListener("change", syncMobileThreadOpen);
   void (async () => {
-    await loadMessages();
-    await openMessageFromRoute();
+    if (isEmailTab(activeTab.value)) {
+      await loadMessages();
+      await openMessageFromRoute();
+    }
     void Promise.all([loadMailboxHealth(), loadFolderCounts(false)]);
   })();
 });
@@ -3026,6 +3396,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  phoneLayoutQuery?.removeEventListener("change", syncMobileThreadOpen);
   clearDeliveryStatusRefreshes();
   for (const observer of activeEmailFrameObservers) {
     observer.disconnect();
@@ -3039,36 +3410,62 @@ onBeforeUnmount(() => {
   <div
     v-else
     class="agent-page"
-    :class="{ 'agent-page--with-mobile-controls': isEmailTab(activeTab) }"
+    :class="{ 'agent-page--with-mobile-controls': isMailTab(activeTab) }"
   >
     <Teleport to="#app-page-controls" defer>
-      <form
-        v-if="isEmailTab(activeTab)"
-        class="mail-search mail-search--mobile-nav"
-        role="search"
-        @submit.prevent="applyMobileSearch"
-      >
-        <label
-          class="mail-search__label"
-          for="mail-search-input-mobile-nav"
+      <div v-if="isMailTab(activeTab)" class="mail-mobile-nav">
+        <!-- Phone width: a small centred title menu replaces the rail and folder tabs. -->
+        <div class="mail-title-menu" @keydown.esc="mobileMenuOpen = false">
+          <button
+            type="button"
+            class="mail-title-menu__button"
+            aria-haspopup="menu"
+            :aria-expanded="mobileMenuOpen"
+            @click="mobileMenuOpen = !mobileMenuOpen"
+          >
+            <span>{{ activeTabLabel }}</span>
+            <UiIcon name="ChevronDown" :size="15" aria-hidden="true" />
+          </button>
+          <div v-if="mobileMenuOpen" class="mail-title-menu__list" role="menu" aria-label="Mailbox folders">
+            <button
+              v-for="tab in mailFolderTabs"
+              :key="tab.id"
+              type="button"
+              role="menuitem"
+              class="mail-title-menu__item"
+              :class="{ 'mail-title-menu__item--active': activeTab === tab.id }"
+              @click="switchMailFolderTab(tab.id)"
+            >
+              <UiIcon :name="tab.icon" :size="16" aria-hidden="true" />
+              <span>{{ tab.label }}</span>
+              <span v-if="tab.count" class="mail-title-menu__count">{{ tab.count }}</span>
+            </button>
+            <hr />
+            <button type="button" role="menuitem" class="mail-title-menu__item" data-menu-folder="campaigns" @click="switchMailFolderTab('campaigns')">
+              <UiIcon name="Send" :size="16" aria-hidden="true" /><span>Campaigns</span>
+            </button>
+            <button type="button" role="menuitem" class="mail-title-menu__item" @click="switchMailFolderTab('rules')">
+              <UiIcon name="Sparkles" :size="16" aria-hidden="true" /><span>How ME3 handles mail</span>
+            </button>
+          </div>
+        </div>
+        <form
+          v-if="isEmailTab(activeTab)"
+          class="mail-search mail-search--mobile-nav"
+          role="search"
+          @submit.prevent="applyMobileSearch"
         >
-          {{ searchLabel }}
-        </label>
-        <input
-          id="mail-search-input-mobile-nav"
-          v-model="searchQuery"
-          class="mail-search__input"
-          type="search"
-          :placeholder="searchLabel"
-          @search="!searchQuery && applyMobileSearch()"
-        />
-        <Button color="ghost" shape="soft" size="compact" icon-only class="mail-mobile-icon-btn" type="submit"
-          :disabled="loading"
-          :aria-label="searchLabel"
-          title="Search"
-        >
-          <UiIcon name="Search" :size="18" aria-hidden="true" />
-        </Button>
+          <label class="mail-search__label" for="mail-search-input-mobile-nav">{{ searchLabel }}</label>
+          <input
+            id="mail-search-input-mobile-nav"
+            v-model="searchQuery"
+            class="mail-search__input"
+            type="search"
+            :placeholder="searchLabel"
+            @search="!searchQuery && applyMobileSearch()"
+          />
+        </form>
+        <span v-else class="mail-mobile-nav__spacer" />
         <Button
           color="ghost"
           shape="soft"
@@ -3082,15 +3479,7 @@ onBeforeUnmount(() => {
         >
           <UiIcon name="SquarePen" :size="18" aria-hidden="true" />
         </Button>
-        <Button color="ghost" shape="soft" size="compact" icon-only class="mail-mobile-icon-btn" type="button"
-          :disabled="loading"
-          aria-label="Refresh conversations"
-          title="Refresh"
-          @click="refreshMessagesPage"
-        >
-          <UiIcon name="RefreshCw" :size="18" aria-hidden="true" />
-        </Button>
-      </form>
+      </div>
     </Teleport>
 
     <main class="agent-main">
@@ -3104,20 +3493,8 @@ onBeforeUnmount(() => {
 
       <template v-else>
         <div
-          v-if="
-            activeTab !== 'telegram' &&
-            messagesLoaded &&
-            error &&
-            error !== 'pro_required'
-          "
-          class="state-card state-card--error"
-          role="alert"
-        >
-          {{ error }}
-        </div>
-        <div
           class="inbox-panel"
-          :class="{ 'inbox-panel--with-mobile-controls': isEmailTab(activeTab) }"
+          :class="{ 'inbox-panel--with-mobile-controls': isMailTab(activeTab) }"
         >
           <template v-if="activeTab === 'telegram'">
             <PageLoading
@@ -3211,803 +3588,618 @@ onBeforeUnmount(() => {
           <template v-else>
             <div
               class="mail-workspace"
-              :class="{ 'mail-workspace--has-thread': selectedMessage }"
+              :class="{
+                'mail-workspace--has-thread': isEmailTab(activeTab) && selectedMessage,
+                'mail-workspace--brief': activeTab === 'brief',
+              }"
             >
-              <aside class="mail-rail">
-                <WorkspaceTabs
-                  class="mail-folder-tabs"
-                  :tabs="mailFolderTabs"
-                  :model-value="activeTab"
-                  aria-label="Mailbox folders"
-                  semantics="navigation"
-                  @update:model-value="switchMailFolderTab"
-                  @change="switchMailFolderTab"
-                />
+              <aside class="mail-rail" aria-label="Mailbox">
+                <Button color="primary" shape="pill" size="compact" type="button" class="mail-rail__compose" @click="openComposeModal()">
+                  <UiIcon name="SquarePen" :size="16" aria-hidden="true" />
+                  Compose
+                </Button>
+                <nav class="mail-rail__folders" aria-label="Folders">
+                  <button
+                    v-for="tab in mailFolderTabs"
+                    :key="tab.id"
+                    type="button"
+                    class="mail-rail__folder"
+                    :data-folder="tab.id"
+                    :class="{ 'mail-rail__folder--active': activeTab === tab.id }"
+                    :aria-current="activeTab === tab.id ? 'page' : undefined"
+                    @click="switchMailFolderTab(tab.id)"
+                  >
+                    <UiIcon :name="tab.icon" :size="16" aria-hidden="true" />
+                    <span class="mail-rail__label">{{ tab.label }}</span>
+                    <span v-if="tab.count" class="mail-rail__count">{{ tab.count }}</span>
+                  </button>
+                </nav>
+                <div class="mail-rail__secondary">
+                  <router-link to="/email/campaigns" class="mail-rail__folder" data-folder="campaigns">
+                    <UiIcon name="Send" :size="16" aria-hidden="true" />
+                    <span class="mail-rail__label">Campaigns</span>
+                  </router-link>
+                  <button type="button" class="mail-rail__folder" @click="rulesOpen = true">
+                    <UiIcon name="Sparkles" :size="16" aria-hidden="true" />
+                    <span class="mail-rail__label">How ME3 handles mail</span>
+                  </button>
+                </div>
+                <p v-if="visibleMailboxAddress" class="mail-rail__identity">
+                  <strong>{{ visibleMailboxAddress }}</strong>
+                  <span>Routed to ME3</span>
+                </p>
               </aside>
 
-              <section
-                ref="conversationScrollRef"
-                class="conversation-list"
-                :class="{
-                  'conversation-list--mobile-hidden': mobileThreadOpen,
-                }"
-                aria-label="Conversations"
-                aria-keyshortcuts="J K ArrowDown ArrowUp X E U R Delete #"
-              >
-                <PageLoading
-                  v-if="loading"
-                  compact
-                  class="conversation-loading"
-                  label="Loading messages..."
-                />
+              <EmailBrief
+                v-if="activeTab === 'brief'"
+                ref="briefRef"
+                class="mail-brief"
+                :active="activeTab === 'brief'"
+                :format-time="formatRelativeDate"
+                @open-thread="openThreadFromBrief"
+                @open-inbox="switchMailFolderTab('inbox')"
+                @open-rules="rulesOpen = true"
+                @edit-draft="editDraftFromBrief"
+                @count-changed="briefCount = $event"
+              />
 
-                <template v-else-if="hasMessagesOnPage">
-                  <div class="bulk-mail-toolbar">
-                    <label class="bulk-select">
-                      <input
-                        type="checkbox"
-                        :checked="allMessagesOnPageSelected"
-                        :indeterminate="
-                          someMessagesOnPageSelected &&
-                          !allMessagesOnPageSelected
-                        "
-                        :aria-checked="
-                          allMessagesOnPageSelected
-                            ? 'true'
-                            : someMessagesOnPageSelected
-                              ? 'mixed'
-                              : 'false'
-                        "
-                        :disabled="inboxBusy"
-                        aria-label="Select all conversations on this page"
-                        @change="
-                          setAllMessagesOnPageSelected(
-                            ($event.target as HTMLInputElement).checked,
-                          )
-                        "
-                      />
-                      <span>{{ selectedMessageCount || "Select" }}</span>
-                    </label>
-                    <div
-                      v-if="selectedMessageCount > 0"
-                      class="bulk-mail-actions"
-                    >
-                      <Button color="outline" shape="soft" size="compact" type="button"
-                        v-if="activeTab === 'archive' || activeTab === 'trash'"
-                        :disabled="inboxBusy"
-                        title="Restore selected"
-                        @click="moveSelectedMessages('inbox')"
-                      >
-                        <UiIcon name="Inbox" :size="14" aria-hidden="true" />
-                        Restore
-                      </Button>
-                      <Button color="outline" shape="soft" size="compact" type="button"
-                        v-else
-                        :disabled="inboxBusy"
-                        title="Archive selected"
-                        @click="moveSelectedMessages('archive')"
-                      >
-                        <UiIcon name="Archive" :size="14" aria-hidden="true" />
-                        Archive
-                      </Button>
-                      <Button color="danger" shape="soft" size="compact" type="button"
-                        :disabled="inboxBusy"
-                        :title="
-                          activeTab === 'trash'
-                            ? 'Delete selected forever'
-                            : 'Move selected to trash'
-                        "
-                        @click="
-                          activeTab === 'trash'
-                            ? deleteSelectedMessagesPermanently()
-                            : moveSelectedMessages('trash')
-                        "
-                      >
-                        <UiIcon name="Trash2" :size="14" aria-hidden="true" />
-                        {{ activeTab === "trash" ? "Delete" : "Trash" }}
-                      </Button>
-                      <Button color="outline" shape="soft" size="compact" type="button"
-                        :disabled="inboxBusy"
-                        @click="clearSelectedMessages"
-                      >
-                        Clear
-                      </Button>
-                    </div>
-                  </div>
-                  <div class="conversation-scroll">
-                  <article
-                    v-for="message in messages"
-                    :key="message.id"
-                    :data-message-id="message.id"
-                    class="conversation-item"
-                    :class="{
-                      'conversation-item--active':
-                        selectedMessage?.id === message.id,
-                      'conversation-item--unread': message.unread,
-                      'conversation-item--selected':
-                        selectedMessageIds.has(message.id),
-                    }"
-                  >
-                    <label class="conversation-select">
-                      <input
-                        type="checkbox"
-                        :checked="selectedMessageIds.has(message.id)"
-                        :disabled="inboxBusy"
-                        :aria-label="`Select ${getMessageSubject(message)}`"
-                        @change="
-                          toggleMessageSelected(
-                            message.id,
-                            ($event.target as HTMLInputElement).checked,
-                          )
-                        "
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      class="conversation-open"
-                      :aria-current="selectedMessage?.id === message.id ? 'true' : undefined"
-                      @click="selectMessage(message.id)"
-                    >
-                      <span v-if="message.unread" class="sr-only">Unread.</span>
-                      <div class="conversation-item__content">
-                        <div class="conversation-item__meta">
-                          <strong>{{ getConversationParticipants(message) }}</strong>
-                        </div>
-                        <p class="conversation-item__summary">
-                          <span class="conversation-item__subject">
-                            {{ getMessageSubject(message) }}
-                          </span>
-                          <span class="conversation-item__separator">-</span>
-                          <span
-                            v-if="
-                              !threadMode &&
-                              message.direction === 'inbound' &&
-                              message.toAddress
-                            "
-                            class="conversation-item__recipient"
-                          >
-                            To {{ message.toAddress }}
-                          </span>
-                          <span class="conversation-item__preview">
-                            {{ getMessagePreview(message) }}
-                          </span>
-                        </p>
+              <template v-else>
+                <section
+                  ref="conversationScrollRef"
+                  class="conversation-list"
+                  :class="{ 'conversation-list--mobile-hidden': mobileThreadOpen }"
+                  aria-label="Conversations"
+                  aria-keyshortcuts="J K ArrowDown ArrowUp X E U R Delete #"
+                >
+                  <form class="mail-search mail-search--desktop" role="search" @submit.prevent="applySearch">
+                    <label class="mail-search__label" for="mail-search-input">{{ searchLabel }}</label>
+                    <UiIcon name="Search" :size="16" class="mail-search__icon" aria-hidden="true" />
+                    <input
+                      id="mail-search-input"
+                      v-model="searchQuery"
+                      class="mail-search__input"
+                      type="search"
+                      :placeholder="searchLabel"
+                      @search="!searchQuery && applySearch()"
+                    />
+                  </form>
+
+                  <div v-if="hasMessagesOnPage || selectMode" class="mail-list-head">
+                    <template v-if="selectMode">
+                      <label class="bulk-select">
+                        <input
+                          type="checkbox"
+                          :checked="allMessagesOnPageSelected"
+                          :indeterminate="someMessagesOnPageSelected && !allMessagesOnPageSelected"
+                          :aria-checked="allMessagesOnPageSelected ? 'true' : someMessagesOnPageSelected ? 'mixed' : 'false'"
+                          :disabled="inboxBusy"
+                          aria-label="Select all conversations on this page"
+                          @change="setAllMessagesOnPageSelected(($event.target as HTMLInputElement).checked)"
+                        />
+                        <span>{{ selectedMessageCount || "Select all" }}</span>
+                      </label>
+                      <div v-if="selectedMessageCount > 0" class="bulk-mail-actions">
+                        <Button color="outline" shape="soft" size="compact" type="button"
+                          v-if="activeTab === 'archive' || activeTab === 'trash'"
+                          :disabled="inboxBusy"
+                          title="Restore selected"
+                          @click="moveSelectedMessages('inbox')"
+                        >
+                          <UiIcon name="Inbox" :size="14" aria-hidden="true" />
+                          Restore
+                        </Button>
+                        <Button color="outline" shape="soft" size="compact" type="button"
+                          v-else
+                          :disabled="inboxBusy"
+                          title="Archive selected"
+                          @click="moveSelectedMessages('archive')"
+                        >
+                          <UiIcon name="Archive" :size="14" aria-hidden="true" />
+                          Archive
+                        </Button>
+                        <Button color="danger" shape="soft" size="compact" type="button"
+                          :disabled="inboxBusy"
+                          :title="activeTab === 'trash' ? 'Delete selected forever' : 'Move selected to trash'"
+                          @click="activeTab === 'trash' ? deleteSelectedMessagesPermanently() : moveSelectedMessages('trash')"
+                        >
+                          <UiIcon name="Trash2" :size="14" aria-hidden="true" />
+                          {{ activeTab === "trash" ? "Delete" : "Trash" }}
+                        </Button>
                       </div>
-                      <span class="conversation-item__trailing">
-                        <span
-                          v-if="isDraftMessage(message)"
-                          class="thread-count"
-                        >
-                          {{ draftStatusLabel(message) }}
-                        </span>
-                        <span
-                          v-if="getConversationMessageCount(message) > 1"
-                          class="conversation-cue"
-                          :aria-label="`${getConversationMessageCount(message)} messages`"
-                          title="Messages in conversation"
-                        >
-                          {{ getConversationMessageCount(message) }}
-                        </span>
-                        <span
-                          v-if="getConversationUnreadCount(message) > 1"
-                          class="conversation-cue conversation-cue--unread"
-                          :aria-label="`${getConversationUnreadCount(message)} unread messages`"
-                        >
-                          {{ getConversationUnreadCount(message) }} unread
-                        </span>
-                        <UiIcon
-                          v-if="getConversationAttachmentCount(message) > 0"
-                          class="conversation-attachment-cue"
-                          name="Paperclip"
-                          :size="14"
-                          :aria-label="`${getConversationAttachmentCount(message)} attachments`"
-                        />
-                        <time class="conversation-item__date">
-                          {{ formatRelativeDate(message.createdAt) }}
-                        </time>
-                      </span>
-                    </button>
-                    <div
-                      v-if="!isDraftMessage(message)"
-                      class="conversation-quick-actions"
-                      aria-label="Conversation actions"
+                      <button type="button" class="mail-quiet" @click="exitSelectMode">Done</button>
+                    </template>
+                    <template v-else>
+                      <button type="button" class="mail-list-head__status" title="Refresh" :disabled="loading" @click="refreshMessagesPage">
+                        <UiIcon name="RefreshCw" :size="12" aria-hidden="true" />
+                        {{ listStatusLine || "Refresh" }}
+                      </button>
+                      <button type="button" class="mail-quiet" data-testid="mail-select-mode" @click="selectMode = true">Select</button>
+                    </template>
+                  </div>
+
+                  <div v-if="loading && !hasMessagesOnPage" class="mail-skeleton" aria-busy="true" aria-label="Loading conversations">
+                    <div v-for="index in 6" :key="index" class="mail-skeleton__row">
+                      <span class="mail-skeleton__avatar" />
+                      <span class="mail-skeleton__lines"><i /><i /><i /></span>
+                    </div>
+                  </div>
+
+                  <div v-else-if="hasMessagesOnPage" class="conversation-scroll">
+                    <article
+                      v-for="message in messages"
+                      :key="message.id"
+                      :data-message-id="message.id"
+                      class="mail-row"
+                      :class="{
+                        'mail-row--active': selectedMessage?.id === message.id,
+                        'mail-row--unread': message.unread,
+                        'mail-row--selected': selectedMessageIds.has(message.id),
+                        'mail-row--select-mode': selectMode,
+                      }"
                     >
-                      <Button
-                        color="ghost"
-                        shape="soft"
-                        size="small"
-                        icon-only
-                        type="button"
-                        :aria-label="
-                          activeTab === 'archive' || activeTab === 'trash'
-                            ? 'Restore conversation to Inbox'
-                            : 'Archive conversation'
-                        "
-                        :title="
-                          activeTab === 'archive' || activeTab === 'trash'
-                            ? 'Restore to Inbox'
-                            : 'Archive'
-                        "
-                        :aria-keyshortcuts="
-                          activeTab === 'archive' || activeTab === 'trash'
-                            ? undefined
-                            : 'E'
-                        "
-                        :disabled="inboxBusy"
-                        @click.stop="
-                          moveConversation(
-                            message,
-                            activeTab === 'archive' || activeTab === 'trash'
-                              ? 'inbox'
-                              : 'archive',
-                          )
-                        "
-                      >
-                        <UiIcon
-                          :name="
-                            activeTab === 'archive' || activeTab === 'trash'
-                              ? 'Inbox'
-                              : 'Archive'
-                          "
-                          :size="15"
-                          aria-hidden="true"
+                      <label v-if="selectMode" class="conversation-select">
+                        <input
+                          type="checkbox"
+                          :checked="selectedMessageIds.has(message.id)"
+                          :disabled="inboxBusy"
+                          :aria-label="`Select ${getMessageSubject(message)}`"
+                          @change="toggleMessageSelected(message.id, ($event.target as HTMLInputElement).checked)"
                         />
-                      </Button>
-                      <Button
-                        v-if="activeTab !== 'trash'"
-                        color="ghost"
-                        shape="soft"
-                        size="small"
-                        icon-only
+                      </label>
+                      <button
                         type="button"
-                        :aria-label="
-                          getConversationUnreadCount(message) > 0
-                            ? 'Mark conversation as read'
-                            : 'Mark conversation as unread'
-                        "
-                        :title="
-                          getConversationUnreadCount(message) > 0
-                            ? 'Mark read'
-                            : 'Mark unread'
-                        "
-                        aria-keyshortcuts="U"
-                        :disabled="inboxBusy"
-                        @click.stop="
-                          markConversationRead(
-                            message,
-                            getConversationUnreadCount(message) > 0,
-                          )
-                        "
+                        class="mail-row__open"
+                        :aria-current="selectedMessage?.id === message.id ? 'true' : undefined"
+                        @click="selectMode ? toggleMessageSelected(message.id, !selectedMessageIds.has(message.id)) : selectMessage(message.id)"
                       >
-                        <UiIcon name="Mail" :size="15" aria-hidden="true" />
+                        <span v-if="message.unread" class="sr-only">Unread.</span>
+                        <span v-if="getRowTag(message)" class="sr-only">{{ getRowTag(message)?.label }}.</span>
+                        <EmailSenderAvatar :name="getRowSenderName(message)" :avatar-url="getRowAvatar(message)" :size="40" />
+                        <span class="mail-row__content">
+                          <span class="mail-row__line">
+                            <strong class="mail-row__sender">{{ getRowSenderName(message) }}</strong>
+                            <span v-if="getConversationMessageCount(message) > 1" class="mail-row__count" :aria-label="`${getConversationMessageCount(message)} messages`">{{ getConversationMessageCount(message) }}</span>
+                            <UiIcon v-if="getConversationAttachmentCount(message) > 0" name="Paperclip" :size="13" class="mail-row__clip" :aria-label="`${getConversationAttachmentCount(message)} attachments`" />
+                            <time class="mail-row__time">{{ formatRelativeDate(message.createdAt) }}</time>
+                          </span>
+                          <span class="mail-row__line">
+                            <span class="mail-row__subject">{{ getMessageSubject(message) }}</span>
+                            <span v-if="getRowTag(message)" class="mail-tag" :class="`mail-tag--${getRowTag(message)?.tone}`">{{ getRowTag(message)?.label }}</span>
+                          </span>
+                          <span class="mail-row__preview">{{ getMessagePreview(message) }}</span>
+                        </span>
+                      </button>
+                      <div v-if="!isDraftMessage(message) && !selectMode" class="mail-row__actions" aria-label="Conversation actions">
+                        <Button color="ghost" shape="soft" size="small" icon-only type="button"
+                          :aria-label="activeTab === 'archive' || activeTab === 'trash' ? 'Restore conversation to Inbox' : 'Archive conversation'"
+                          :title="activeTab === 'archive' || activeTab === 'trash' ? 'Restore to Inbox' : 'Archive (E)'"
+                          :disabled="inboxBusy"
+                          @click.stop="moveConversation(message, activeTab === 'archive' || activeTab === 'trash' ? 'inbox' : 'archive')"
+                        >
+                          <UiIcon :name="activeTab === 'archive' || activeTab === 'trash' ? 'Inbox' : 'Archive'" :size="15" aria-hidden="true" />
+                        </Button>
+                        <Button v-if="activeTab !== 'trash'" color="ghost" shape="soft" size="small" icon-only type="button"
+                          :aria-label="getConversationUnreadCount(message) > 0 ? 'Mark conversation as read' : 'Mark conversation as unread'"
+                          :title="getConversationUnreadCount(message) > 0 ? 'Mark read (U)' : 'Mark unread (U)'"
+                          :disabled="inboxBusy"
+                          @click.stop="markConversationRead(message, getConversationUnreadCount(message) > 0)"
+                        >
+                          <UiIcon :name="getConversationUnreadCount(message) > 0 ? 'MailOpen' : 'Mail'" :size="15" aria-hidden="true" />
+                        </Button>
+                        <Button color="ghost" shape="soft" size="small" icon-only type="button"
+                          aria-label="Move conversation to Trash"
+                          title="Move to Trash (#)"
+                          :disabled="inboxBusy"
+                          @click.stop="moveConversation(message, 'trash')"
+                        >
+                          <UiIcon name="Trash2" :size="15" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </article>
+                  </div>
+
+                  <div v-else-if="messagesLoaded" class="empty-state empty-state--inline">
+                    <div class="empty-state__stack">
+                      <template v-if="searchQuery.trim()">
+                        <p>No results in {{ activeFolderLabel }}.</p>
+                        <p class="empty-state__sub">Search is limited to the current folder.</p>
+                        <button type="button" class="mail-quiet empty-state__action" @click="clearSearch">Clear search</button>
+                      </template>
+                      <template v-else-if="activeTab === 'inbox'">
+                        <p>Nothing in Inbox.</p>
+                        <p v-if="mailNeedsSetupHint" class="empty-hint">
+                          Mail needs a custom-domain address routed to this Worker.
+                          <router-link to="/account" class="empty-hint-link">Configure in account settings</router-link>
+                        </p>
+                        <p v-else-if="visibleMailboxAddress" class="empty-state__sub">
+                          Messages sent to {{ visibleMailboxAddress }} land here. ME3 reads them first and tells you what needs you.
+                        </p>
+                        <button v-if="!mailNeedsSetupHint" type="button" class="mail-quiet empty-state__action" @click="switchMailFolderTab('brief')">See the Brief</button>
+                      </template>
+                      <template v-else-if="activeTab === 'drafts'">
+                        <p>No drafts.</p>
+                        <p class="empty-state__sub">Drafts you or ME3 write wait here for your OK.</p>
+                      </template>
+                      <template v-else-if="activeTab === 'sent'">
+                        <p>Nothing sent yet.</p>
+                        <p class="empty-state__sub">Mail you send shows up here.</p>
+                      </template>
+                      <template v-else-if="activeTab === 'archive'">
+                        <p>Nothing archived.</p>
+                        <p class="empty-state__sub">Archived conversations stay searchable here.</p>
+                      </template>
+                      <template v-else-if="activeTab === 'trash'">
+                        <p>Trash is empty.</p>
+                        <p class="empty-state__sub">Deleted mail waits here until you clear it.</p>
+                      </template>
+                    </div>
+                  </div>
+                  <div v-else class="empty-state empty-state--inline">
+                    <div class="empty-state__stack">
+                      <p>{{ error || "Unable to load messages." }}</p>
+                      <button type="button" class="mail-quiet empty-state__action" @click="loadMessages">Try again</button>
+                    </div>
+                  </div>
+
+                  <div v-if="!loading && totalPages > 1" class="pagination pagination--split">
+                    <div class="pagination-nav">
+                      <Button color="ghost" shape="soft" size="small" icon-only type="button"
+                        :disabled="!hasPreviousPage"
+                        aria-label="Previous page"
+                        @click="prevPage"
+                      >
+                        <UiIcon name="ChevronLeft" :size="18" aria-hidden="true" />
                       </Button>
-                      <Button
-                        color="ghost"
-                        shape="soft"
-                        size="small"
-                        icon-only
-                        type="button"
-                        aria-label="Move conversation to Trash"
-                        title="Move to Trash"
-                        aria-keyshortcuts="# Delete"
-                        :disabled="inboxBusy"
-                        @click.stop="moveConversation(message, 'trash')"
+                      <span class="page-label">
+                        <template v-if="threadMode">Page {{ currentPage }} · {{ pageRangeStart }}–{{ pageRangeEnd }}</template>
+                        <template v-else>{{ pageRangeStart }}–{{ pageRangeEnd }} of {{ total }}</template>
+                      </span>
+                      <Button color="ghost" shape="soft" size="small" icon-only type="button"
+                        :disabled="!hasNextPage"
+                        aria-label="Next page"
+                        @click="nextPage"
                       >
-                        <UiIcon name="Trash2" :size="15" aria-hidden="true" />
+                        <UiIcon name="ChevronRight" :size="18" aria-hidden="true" />
                       </Button>
                     </div>
-                  </article>
                   </div>
-                </template>
-                <div
-                  v-else-if="messagesLoaded"
-                  class="empty-state empty-state--inline"
+                </section>
+
+                <section
+                  v-if="selectedMessage"
+                  class="thread-pane"
+                  :class="{ 'thread-pane--mobile-open': mobileThreadOpen }"
                 >
-                  <div class="empty-state__stack">
-                    <template v-if="searchQuery.trim()">
-                      <p>No results in {{ activeFolderLabel }}.</p>
-                      <p class="empty-state__sub">
-                        Search is limited to the current folder.
-                      </p>
-                      <Button
-                        color="outline"
-                        shape="soft"
-                        size="compact"
-                        type="button"
-                        class="empty-state__action"
-                        @click="clearSearch"
-                      >
-                        Clear search
-                      </Button>
-                    </template>
-                    <template v-else-if="activeTab === 'inbox'">
-                      <p>No inbound email yet.</p>
-                      <p v-if="mailNeedsSetupHint" class="empty-hint">
-                        Mail needs a custom-domain address routed to this Worker.
-                        <router-link to="/account" class="empty-hint-link">
-                          Configure in account settings
-                        </router-link>
-                      </p>
-                      <p v-else-if="visibleMailboxAddress" class="empty-state__sub">
-                        Messages sent to {{ visibleMailboxAddress }} will appear here.
-                      </p>
-                      <p v-else class="empty-state__sub">
-                        Messages sent to your custom-domain address will appear here.
-                      </p>
-                    </template>
-                    <template v-else-if="activeTab === 'drafts'">
-                      <p>No drafts awaiting action.</p>
-                      <p class="empty-state__sub">
-                        When the assistant composes an email it will appear
-                        here.
-                      </p>
-                    </template>
-                    <template v-else-if="activeTab === 'sent'">
-                      <p>No sent messages yet.</p>
-                      <p class="empty-state__sub">
-                        Messages you send will appear here.
-                      </p>
-                    </template>
-                    <template v-else-if="activeTab === 'archive'">
-                      <p>No archived messages yet.</p>
-                      <p class="empty-state__sub">
-                        Messages you archive from the thread view will appear
-                        here.
-                      </p>
-                    </template>
-                    <template v-else-if="activeTab === 'trash'">
-                      <p>No trashed messages yet.</p>
-                      <p class="empty-state__sub">
-                        Deleted messages will appear here until they are
-                        cleared.
-                      </p>
-                    </template>
-                  </div>
-                </div>
-                <div v-else class="state-card state-card--error" role="alert">
-                  <p>{{ error || "Unable to load messages." }}</p>
-                  <Button
-                    color="outline"
-                    shape="soft"
-                    size="compact"
-                    type="button"
-                    @click="loadMessages"
-                  >
-                    Try again
-                  </Button>
-                </div>
-
-                <div
-                  v-if="!loading && totalPages > 1"
-                  class="pagination pagination--split"
-                >
-                  <div class="pagination-nav">
-                    <Button color="ghost" shape="soft" size="small" icon-only type="button"
-                      :disabled="!hasPreviousPage"
-                      aria-label="Previous page"
-                      @click="prevPage"
-                    >
-                      ◂
-                    </Button>
-                    <span class="page-label">
-                      <template v-if="threadMode">
-                        Page {{ currentPage }} · {{ pageRangeStart }}–{{ pageRangeEnd }}
-                      </template>
-                      <template v-else>
-                        {{ pageRangeStart }}–{{ pageRangeEnd }} of {{ total }}
-                      </template>
-                    </span>
-                    <Button color="ghost" shape="soft" size="small" icon-only type="button"
-                      :disabled="!hasNextPage"
-                      aria-label="Next page"
-                      @click="nextPage"
-                    >
-                      ▸
-                    </Button>
-                  </div>
-                </div>
-              </section>
-
-              <section
-                v-if="selectedMessage"
-                class="thread-pane"
-                :class="{ 'thread-pane--mobile-open': mobileThreadOpen }"
-              >
-                <header class="thread-toolbar">
-                  <Button
-                    class="thread-back-btn"
-                    color="ghost"
-                    shape="soft"
-                    size="compact"
-                    icon-only
-                    type="button"
-                    title="Back"
-                    aria-label="Back to message list"
-                    @click="mobileThreadOpen = false"
-                  >
-                    <UiIcon name="ArrowLeft" :size="17" aria-hidden="true" />
-                  </Button>
-                  <div class="thread-actions">
-                    <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-                      title="Reply"
-                      aria-label="Reply"
-                      aria-keyshortcuts="R"
-                      :disabled="
-                        inboxBusy ||
-                        selectedThreadDetailUnavailable ||
-                        isDraftMessage(selectedMessage)
-                      "
-                      @click="openComposeModal(selectedMessage)"
-                    >
-                      <UiIcon name="Reply" :size="16" aria-hidden="true" />
-                    </Button>
-                    <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-                      title="Forward"
-                      aria-label="Forward"
-                      :disabled="
-                        inboxBusy ||
-                        selectedThreadDetailUnavailable ||
-                        isDraftMessage(selectedMessage)
-                      "
-                      @click="openComposeModal(selectedMessage, 'forward')"
-                    >
-                      <UiIcon name="Forward" :size="16" aria-hidden="true" />
-                    </Button>
-                    <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-                      v-if="
-                        selectedMessage.folder === 'archive' ||
-                        selectedMessage.folder === 'trash'
-                      "
-                      title="Restore to inbox"
-                      aria-label="Restore to inbox"
-                      :disabled="inboxBusy || isDraftMessage(selectedMessage)"
-                      @click="moveConversation(selectedMessage, 'inbox')"
-                    >
-                      <UiIcon name="Inbox" :size="16" aria-hidden="true" />
-                    </Button>
-                    <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-                      v-else
-                      title="Archive"
-                      aria-label="Archive"
-                      aria-keyshortcuts="E"
-                      :disabled="inboxBusy || isDraftMessage(selectedMessage)"
-                      @click="moveConversation(selectedMessage, 'archive')"
-                    >
-                      <UiIcon name="Archive" :size="16" aria-hidden="true" />
-                    </Button>
-                    <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-                      :title="
-                        selectedThreadIsUnread ? 'Mark read' : 'Mark unread'
-                      "
-                      :aria-label="
-                        selectedThreadIsUnread ? 'Mark read' : 'Mark unread'
-                      "
-                      aria-keyshortcuts="U"
-                      :disabled="inboxBusy || isDraftMessage(selectedMessage)"
-                      @click="
-                        markConversationRead(selectedMessage, selectedThreadIsUnread)
-                      "
-                    >
-                      <UiIcon name="Mail" :size="16" aria-hidden="true" />
-                    </Button>
-                    <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-                      title="Move to trash"
-                      aria-label="Move to trash"
-                      aria-keyshortcuts="# Delete"
-                      :disabled="
-                        inboxBusy ||
-                        isDraftMessage(selectedMessage) ||
-                        selectedMessage.folder === 'trash'
-                      "
-                      @click="moveConversation(selectedMessage, 'trash')"
-                    >
-                      <UiIcon name="Trash2" :size="16" aria-hidden="true" />
-                    </Button>
-                  </div>
-                </header>
-
-                <div class="thread-heading">
-                  <h2>
-                    {{ selectedThreadSummary?.subject || getMessageSubject(selectedMessage) }}
-                  </h2>
-                  <p>
-                    {{ selectedThreadSummary?.messageCount || selectedThreadMessages.length }}
-                    {{
-                      (selectedThreadSummary?.messageCount || selectedThreadMessages.length) === 1
-                        ? "message"
-                        : "messages"
-                    }}
-                    in this thread
-                  </p>
-                </div>
-
-                <div class="thread-scroll">
-                  <PageLoading
-                    v-if="threadDetailLoading"
-                    compact
-                    class="thread-detail-loading"
-                    label="Loading conversation..."
-                  />
-                  <div
-                    v-else-if="threadDetailError"
-                    class="state-card state-card--error thread-detail-error"
-                    role="alert"
-                  >
-                    <p>{{ threadDetailError }}</p>
+                  <header class="thread-toolbar">
                     <Button
-                      v-if="selectedThreadSummary"
-                      color="outline"
+                      class="thread-back-btn"
+                      color="ghost"
                       shape="soft"
                       size="compact"
+                      icon-only
                       type="button"
-                      @click="loadSelectedThread(selectedThreadSummary)"
+                      title="Back"
+                      aria-label="Back to message list"
+                      @click="mobileThreadOpen = false"
                     >
-                      Try again
+                      <UiIcon name="ArrowLeft" :size="17" aria-hidden="true" />
                     </Button>
-                  </div>
-                  <template v-else>
-                  <article
-                    v-for="message in selectedThreadMessages"
-                    :key="message.id"
-                    class="message-card"
-                    :class="{
-                      'message-card--draft':
-                        isDraftMessage(message),
-                    }"
-                  >
-                    <div class="message-card__avatar">
-                      {{
-                        getCounterpartyAddress(message)
-                          .slice(0, 1)
-                          .toUpperCase()
-                      }}
-                    </div>
-                    <div class="message-card__body">
-                      <div class="message-card__header">
-                        <div>
-                          <strong>
-                            {{
-                              isDraftMessage(message)
-                                ? message.status === "approved"
-                                  ? "Sending draft"
-                                  : message.status === "failed"
-                                    ? "Failed draft"
-                                    : "Draft reply"
-                                : getCounterpartyAddress(message)
-                            }}
-                          </strong>
-                          <span
-                            v-if="isDraftMessage(message)"
-                            class="status-pill"
-                          >
-                            {{ draftStatusLabel(message) }}
-                          </span>
-                          <p>
-                            {{
-                              message.direction === "outbound" ? "To" : "From"
-                            }}:
-                            {{
-                              message.direction === "outbound"
-                                ? message.toAddress || "—"
-                                : formatSenderValue(message)
-                            }}
-                          </p>
-                          <p
-                            v-if="message.direction === 'inbound'"
-                            class="message-card__recipient"
-                          >
-                            To: {{ formatRecipientValue(message) }}
-                          </p>
-                        </div>
-                        <div class="message-card__header-actions">
-                          <span>{{ formatRelativeDate(message.createdAt) }}</span>
-                          <Button color="outline" shape="soft" size="compact" type="button"
-                            v-if="message.unsubscribeAction"
+                    <div class="thread-actions">
+                      <Button color="ghost" shape="soft" size="compact" type="button" class="thread-action"
+                        title="Reply (R)"
+                        aria-label="Reply"
+                        aria-keyshortcuts="R"
+                        :disabled="inboxBusy || selectedThreadDetailUnavailable || isDraftMessage(selectedMessage)"
+                        @click="startInlineReply()"
+                      >
+                        <UiIcon name="Reply" :size="16" aria-hidden="true" />
+                        <span class="thread-action__label">Reply</span>
+                      </Button>
+                      <Button color="ghost" shape="soft" size="compact" type="button" class="thread-action"
+                        title="Forward"
+                        aria-label="Forward"
+                        :disabled="inboxBusy || selectedThreadDetailUnavailable || isDraftMessage(selectedMessage)"
+                        @click="openComposeModal(selectedMessage, 'forward')"
+                      >
+                        <UiIcon name="Forward" :size="16" aria-hidden="true" />
+                        <span class="thread-action__label">Forward</span>
+                      </Button>
+                      <Button color="ghost" shape="soft" size="compact" type="button" class="thread-action"
+                        v-if="selectedMessage.folder === 'archive' || selectedMessage.folder === 'trash'"
+                        title="Restore to Inbox"
+                        aria-label="Restore to Inbox"
+                        :disabled="inboxBusy || isDraftMessage(selectedMessage)"
+                        @click="moveConversation(selectedMessage, 'inbox')"
+                      >
+                        <UiIcon name="Inbox" :size="16" aria-hidden="true" />
+                        <span class="thread-action__label">Inbox</span>
+                      </Button>
+                      <Button color="ghost" shape="soft" size="compact" type="button" class="thread-action"
+                        v-else
+                        title="Archive (E)"
+                        aria-label="Archive"
+                        aria-keyshortcuts="E"
+                        :disabled="inboxBusy || isDraftMessage(selectedMessage)"
+                        @click="moveConversation(selectedMessage, 'archive')"
+                      >
+                        <UiIcon name="Archive" :size="16" aria-hidden="true" />
+                        <span class="thread-action__label">Archive</span>
+                      </Button>
+                      <Button color="ghost" shape="soft" size="compact" type="button" class="thread-action"
+                        :title="selectedThreadIsUnread ? 'Mark read (U)' : 'Mark unread (U)'"
+                        :aria-label="selectedThreadIsUnread ? 'Mark read' : 'Mark unread'"
+                        aria-keyshortcuts="U"
+                        :disabled="inboxBusy || isDraftMessage(selectedMessage)"
+                        @click="markConversationRead(selectedMessage, selectedThreadIsUnread)"
+                      >
+                        <UiIcon :name="selectedThreadIsUnread ? 'MailOpen' : 'Mail'" :size="16" aria-hidden="true" />
+                        <span class="thread-action__label">{{ selectedThreadIsUnread ? "Read" : "Unread" }}</span>
+                      </Button>
+                      <Button color="ghost" shape="soft" size="compact" type="button" class="thread-action"
+                        title="Move to Trash (#)"
+                        aria-label="Move to trash"
+                        aria-keyshortcuts="# Delete"
+                        :disabled="inboxBusy || isDraftMessage(selectedMessage) || selectedMessage.folder === 'trash'"
+                        @click="moveConversation(selectedMessage, 'trash')"
+                      >
+                        <UiIcon name="Trash2" :size="16" aria-hidden="true" />
+                        <span class="thread-action__label">Trash</span>
+                      </Button>
+                      <div class="thread-more" @keydown.esc="threadMoreOpen = false">
+                        <Button color="ghost" shape="soft" size="compact" icon-only type="button"
+                          title="More"
+                          aria-label="More actions"
+                          aria-haspopup="menu"
+                          :aria-expanded="threadMoreOpen"
+                          @click="threadMoreOpen = !threadMoreOpen"
+                        >
+                          <UiIcon name="Ellipsis" :size="16" aria-hidden="true" />
+                        </Button>
+                        <div v-if="threadMoreOpen" class="thread-more__menu" role="menu">
+                          <button type="button" role="menuitem" :disabled="inboxBusy" @click="threadMoreOpen = false; markConversationRead(selectedMessage, false)">Mark as unread</button>
+                          <button
+                            v-if="latestInboundMessage?.unsubscribeAction"
+                            type="button"
+                            role="menuitem"
                             :disabled="inboxBusy"
-                            @click="unsubscribeFromMessage(message)"
+                            @click="threadMoreOpen = false; unsubscribeFromMessage(latestInboundMessage)"
                           >
-                            <UiIcon name="Mail" :size="13" aria-hidden="true" />
-                            {{
-                              unsubscribePending === message.id
-                                ? "Unsubscribing..."
-                                : "Unsubscribe"
-                            }}
-                          </Button>
+                            {{ unsubscribePending === latestInboundMessage?.id ? "Unsubscribing…" : "Unsubscribe" }}
+                          </button>
+                          <button v-if="latestInboundMessage" type="button" role="menuitem" :disabled="inboxBusy" @click="alwaysArchiveSender(latestInboundMessage)">
+                            Always archive {{ latestInboundMessage.sender?.name || "this sender" }}
+                          </button>
                         </div>
-                      </div>
-
-                      <section
-                        v-if="isDeliveryUnknown(message)"
-                        class="delivery-unconfirmed"
-                        aria-label="Delivery needs confirmation"
-                        aria-live="polite"
-                      >
-                        <div>
-                          <strong>Delivery could not be confirmed</strong>
-                          <p>
-                            This email may already have arrived. Mark it as sent
-                            if you verified delivery, or retry only if you accept
-                            the risk of a duplicate.
-                          </p>
-                        </div>
-                        <div class="delivery-unconfirmed__actions">
-                          <Button
-                            color="outline"
-                            shape="soft"
-                            size="compact"
-                            type="button"
-                            :disabled="
-                              Boolean(deliveryResolutionPending) ||
-                              !deliveryStatuses[message.id]?.canMarkSent
-                            "
-                            @click="resolveUnconfirmedDelivery(message, 'mark-sent')"
-                          >
-                            {{
-                              deliveryResolutionPending === message.id
-                                ? "Working…"
-                                : "Mark as sent"
-                            }}
-                          </Button>
-                          <Button
-                            v-if="deliveryRetryConfirmId !== message.id"
-                            color="danger"
-                            shape="soft"
-                            size="compact"
-                            type="button"
-                            :disabled="
-                              Boolean(deliveryResolutionPending) ||
-                              !deliveryStatuses[message.id]?.canRetryAnyway
-                            "
-                            @click="deliveryRetryConfirmId = message.id"
-                          >
-                            Retry anyway
-                          </Button>
-                          <template v-else>
-                            <Button
-                              color="outline"
-                              shape="soft"
-                              size="compact"
-                              type="button"
-                              :disabled="Boolean(deliveryResolutionPending)"
-                              @click="deliveryRetryConfirmId = null"
-                            >
-                              Cancel retry
-                            </Button>
-                            <Button
-                              color="danger"
-                              shape="soft"
-                              size="compact"
-                              type="button"
-                              :disabled="Boolean(deliveryResolutionPending)"
-                              @click="
-                                resolveUnconfirmedDelivery(
-                                  message,
-                                  'retry-anyway',
-                                )
-                              "
-                            >
-                              {{
-                                deliveryResolutionPending === message.id
-                                  ? "Retrying…"
-                                  : "Confirm retry"
-                              }}
-                            </Button>
-                          </template>
-                        </div>
-                      </section>
-
-                      <div
-                        v-if="
-                          !isDraftMessage(message) &&
-                          message.htmlBody &&
-                          hasExternalEmailContent(message) &&
-                          !externalContentAllowedIds.has(message.id)
-                        "
-                        class="external-content-notice"
-                        role="status"
-                      >
-                        <span>External content is blocked for your privacy.</span>
-                        <Button
-                          color="outline"
-                          shape="soft"
-                          size="compact"
-                          type="button"
-                          @click="allowExternalEmailContent(message.id)"
-                        >
-                          Load external content
-                        </Button>
-                      </div>
-                      <iframe
-                        v-if="!isDraftMessage(message)"
-                        class="message-html-frame"
-                        :title="`Email body: ${getMessageSubject(message)}`"
-                        scrolling="no"
-                        sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
-                        referrerpolicy="no-referrer"
-                        :style="{ height: getEmailFrameHeight(message.id) }"
-                        :srcdoc="
-                          message.htmlBody
-                            ? renderEmailHtml(message)
-                            : renderMarkdownEmailHtml(message)
-                        "
-                        @load="resizeEmailFrame($event, message.id)"
-                      />
-                      <pre v-else class="message-body">{{
-                        getMessageTextBody(message)
-                      }}</pre>
-
-                      <div
-                        v-if="getMessageAttachments(message).length > 0"
-                        class="message-attachments"
-                      >
-                        <a
-                          v-for="(attachment, attachmentIndex) in getMessageAttachments(message)"
-                          :key="`${message.id}-${attachmentIndex}`"
-                          class="attachment-chip"
-                          :href="
-                            getAttachmentDownloadUrl(message, attachmentIndex)
-                          "
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <UiIcon
-                            name="Paperclip"
-                            :size="14"
-                            aria-hidden="true"
-                          />
-                          <span>{{
-                            formatAttachmentName(
-                              attachment,
-                              attachmentIndex,
-                            )
-                          }}</span>
-                          <small v-if="formatAttachmentSize(attachment.size)">
-                            {{ formatAttachmentSize(attachment.size) }}
-                          </small>
-                        </a>
-                      </div>
-
-                      <div
-                        v-if="
-                          isEditableDraft(message) &&
-                          message.folder !== 'trash'
-                        "
-                        class="message-card__actions"
-                      >
-                        <Button color="primary" shape="soft" size="compact" type="button"
-                          :disabled="inboxBusy"
-                          @click="approveMessage(message)"
-                        >
-                          <UiIcon name="Send" :size="14" aria-hidden="true" />
-                          {{
-                            actionPending === message.id ? "Sending…" : "Send"
-                          }}
-                        </Button>
-                        <Button color="outline" shape="soft" size="compact" type="button"
-                          :disabled="inboxBusy"
-                          @click="openComposeModal(message)"
-                        >
-                          Edit
-                        </Button>
-                        <Button color="outline" shape="soft" size="compact" type="button"
-                          :disabled="inboxBusy"
-                          @click="rejectMessage(message)"
-                        >
-                          Reject
-                        </Button>
                       </div>
                     </div>
-                  </article>
-                  </template>
-                </div>
-              </section>
-              <section v-else class="thread-pane thread-pane--empty">
-                <div class="empty-state empty-state--inline">
-                  <div class="empty-state__stack">
-                    <p>Select a conversation.</p>
+                  </header>
+
+                  <div class="thread-scroll">
+                    <div class="thread-heading">
+                      <h2>{{ selectedThreadSummary?.subject || getMessageSubject(selectedMessage) }}</h2>
+                      <p v-if="threadSummaryLine" class="thread-summary">
+                        <UiIcon name="Sparkles" :size="14" aria-hidden="true" />
+                        <span><span class="sr-only">ME3 summary: </span>ME3: {{ threadSummaryLine }}</span>
+                      </p>
+                      <p v-else-if="selectedThreadMessages.length > 1">{{ selectedThreadMessages.length }} messages</p>
+                    </div>
+
+                    <div v-if="threadDetailLoading" class="thread-detail-loading mail-skeleton" aria-busy="true" aria-label="Loading conversation">
+                      <div v-for="index in 2" :key="index" class="mail-skeleton__row">
+                        <span class="mail-skeleton__avatar" />
+                        <span class="mail-skeleton__lines"><i /><i /><i /></span>
+                      </div>
+                    </div>
+                    <div v-else-if="threadDetailError" class="state-card state-card--error thread-detail-error" role="alert">
+                      <p>{{ threadDetailError }}</p>
+                      <button v-if="selectedThreadSummary" type="button" class="mail-quiet" @click="loadSelectedThread(selectedThreadSummary)">Try again</button>
+                    </div>
+                    <template v-else>
+                      <template v-for="(message, index) in selectedThreadMessages" :key="message.id">
+                        <section v-if="isAgentDraft(message)" class="agent-draft-card" aria-label="ME3 drafted a reply">
+                          <p class="agent-draft-card__title">
+                            <UiIcon name="Sparkles" :size="14" aria-hidden="true" />
+                            ME3 drafted a reply · waiting for your OK
+                          </p>
+                          <pre class="agent-draft-card__body">{{ getMessageTextBody(message) }}</pre>
+                          <section v-if="isDeliveryUnknown(message)" class="delivery-unconfirmed" aria-label="Delivery needs confirmation" aria-live="polite">
+                            <div>
+                              <strong>Delivery could not be confirmed</strong>
+                              <p>This email may already have arrived. Mark it as sent if you verified delivery, or retry only if you accept the risk of a duplicate.</p>
+                            </div>
+                            <div class="delivery-unconfirmed__actions">
+                              <Button color="outline" shape="soft" size="compact" type="button" :disabled="Boolean(deliveryResolutionPending) || !deliveryStatuses[message.id]?.canMarkSent" @click="resolveUnconfirmedDelivery(message, 'mark-sent')">{{ deliveryResolutionPending === message.id ? "Working…" : "Mark as sent" }}</Button>
+                              <Button color="danger" shape="soft" size="compact" type="button" :disabled="Boolean(deliveryResolutionPending) || !deliveryStatuses[message.id]?.canRetryAnyway" @click="resolveUnconfirmedDelivery(message, 'retry-anyway')">Retry anyway</Button>
+                            </div>
+                          </section>
+                          <div class="agent-draft-card__actions">
+                            <Button color="primary" shape="soft" size="compact" type="button" :disabled="inboxBusy" @click="approveAgentDraft(message)">
+                              <UiIcon name="Send" :size="14" aria-hidden="true" />
+                              {{ actionPending === message.id ? "Sending…" : "Send" }}
+                            </Button>
+                            <button type="button" class="mail-quiet" :disabled="inboxBusy" @click="openComposeModal(message)">Edit</button>
+                            <button type="button" class="mail-quiet mail-quiet--muted" :disabled="inboxBusy" @click="discardAgentDraft(message)">Discard</button>
+                          </div>
+                        </section>
+
+                        <button
+                          v-else-if="isCollapsedMessage(message, index)"
+                          type="button"
+                          class="message-collapsed"
+                          :aria-label="`${messageSenderName(message)}: ${getMessagePreview(message)}. Expand`"
+                          @click="expandMessage(message.id)"
+                        >
+                          <EmailSenderAvatar :name="messageSenderName(message)" :avatar-url="messageAvatar(message)" :size="28" />
+                          <span class="message-collapsed__text">
+                            <strong>{{ messageSenderName(message) }}</strong>
+                            <span>{{ getMessagePreview(message) }}</span>
+                          </span>
+                          <time>{{ formatRelativeDate(message.createdAt) }}</time>
+                        </button>
+
+                        <article v-else class="message-card" :class="{ 'message-card--draft': isDraftMessage(message) }">
+                          <EmailSenderAvatar :name="messageSenderName(message)" :avatar-url="messageAvatar(message)" :size="36" class="message-card__avatar" />
+                          <div class="message-card__body">
+                            <div class="message-card__header">
+                              <div class="message-card__who">
+                                <strong>
+                                  {{ isDraftMessage(message) ? (message.status === "approved" ? "Sending draft" : message.status === "failed" ? "Failed draft" : "Draft") : messageSenderName(message) }}
+                                </strong>
+                                <span v-if="isDraftMessage(message)" class="mail-tag mail-tag--muted">{{ draftStatusLabel(message) }}</span>
+                                <p>{{ messageRecipientLine(message) }}</p>
+                                <p v-if="message.sender?.isForward && message.sender.originalSender" class="message-card__forward">
+                                  Forwarded · originally from {{ message.sender.originalSender.name }}
+                                </p>
+                              </div>
+                              <time class="message-card__time">{{ formatRelativeDate(message.createdAt) }}</time>
+                            </div>
+
+                            <section v-if="isDeliveryUnknown(message)" class="delivery-unconfirmed" aria-label="Delivery needs confirmation" aria-live="polite">
+                              <div>
+                                <strong>Delivery could not be confirmed</strong>
+                                <p>This email may already have arrived. Mark it as sent if you verified delivery, or retry only if you accept the risk of a duplicate.</p>
+                              </div>
+                              <div class="delivery-unconfirmed__actions">
+                                <Button color="outline" shape="soft" size="compact" type="button"
+                                  :disabled="Boolean(deliveryResolutionPending) || !deliveryStatuses[message.id]?.canMarkSent"
+                                  @click="resolveUnconfirmedDelivery(message, 'mark-sent')"
+                                >
+                                  {{ deliveryResolutionPending === message.id ? "Working…" : "Mark as sent" }}
+                                </Button>
+                                <Button v-if="deliveryRetryConfirmId !== message.id" color="danger" shape="soft" size="compact" type="button"
+                                  :disabled="Boolean(deliveryResolutionPending) || !deliveryStatuses[message.id]?.canRetryAnyway"
+                                  @click="deliveryRetryConfirmId = message.id"
+                                >
+                                  Retry anyway
+                                </Button>
+                                <template v-else>
+                                  <Button color="outline" shape="soft" size="compact" type="button" :disabled="Boolean(deliveryResolutionPending)" @click="deliveryRetryConfirmId = null">Cancel retry</Button>
+                                  <Button color="danger" shape="soft" size="compact" type="button" :disabled="Boolean(deliveryResolutionPending)" @click="resolveUnconfirmedDelivery(message, 'retry-anyway')">
+                                    {{ deliveryResolutionPending === message.id ? "Retrying…" : "Confirm retry" }}
+                                  </Button>
+                                </template>
+                              </div>
+                            </section>
+
+                            <div
+                              v-if="!isDraftMessage(message) && message.htmlBody && hasExternalEmailContent(message) && !externalContentAllowedIds.has(message.id)"
+                              class="external-content-notice"
+                              role="status"
+                            >
+                              <span>Images hidden for privacy.</span>
+                              <button type="button" class="mail-quiet" @click="allowExternalEmailContent(message.id)">Show</button>
+                            </div>
+                            <iframe
+                              v-if="!isDraftMessage(message)"
+                              class="message-html-frame"
+                              :title="`Email body: ${getMessageSubject(message)}`"
+                              scrolling="no"
+                              sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+                              referrerpolicy="no-referrer"
+                              :style="{ height: getEmailFrameHeight(message.id) }"
+                              :srcdoc="message.htmlBody ? renderEmailHtml(message) : renderMarkdownEmailHtml(message)"
+                              @load="resizeEmailFrame($event, message.id)"
+                            />
+                            <pre v-else class="message-body">{{ getMessageTextBody(message) }}</pre>
+
+                            <div v-if="getMessageAttachments(message).length > 0" class="message-attachments">
+                              <a
+                                v-for="(attachment, attachmentIndex) in getMessageAttachments(message)"
+                                :key="`${message.id}-${attachmentIndex}`"
+                                class="attachment-chip"
+                                :href="getAttachmentDownloadUrl(message, attachmentIndex)"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
+                                <span>{{ formatAttachmentName(attachment, attachmentIndex) }}</span>
+                                <small v-if="formatAttachmentSize(attachment.size)">{{ formatAttachmentSize(attachment.size) }}</small>
+                              </a>
+                            </div>
+
+                            <div v-if="isEditableDraft(message) && message.folder !== 'trash'" class="message-card__actions">
+                              <Button color="primary" shape="soft" size="compact" type="button" :disabled="inboxBusy" @click="approveMessage(message)">
+                                <UiIcon name="Send" :size="14" aria-hidden="true" />
+                                {{ actionPending === message.id ? "Sending…" : "Send" }}
+                              </Button>
+                              <button type="button" class="mail-quiet" :disabled="inboxBusy" @click="openComposeModal(message)">Edit</button>
+                              <button type="button" class="mail-quiet mail-quiet--muted" :disabled="inboxBusy" @click="rejectMessage(message)">Discard</button>
+                            </div>
+                          </div>
+                        </article>
+                      </template>
+
+                      <section v-if="replyOpen && replyTarget" class="inline-reply" aria-label="Reply">
+                        <div class="inline-reply__meta">
+                          <span><b>To:</b> {{ replyRecipient }}</span>
+                          <span><b>Subject:</b> {{ replySubject }}</span>
+                        </div>
+                        <textarea
+                          ref="replyTextareaRef"
+                          v-model="replyForm.textBody"
+                          class="inline-reply__body"
+                          rows="6"
+                          placeholder="Write your reply…"
+                          aria-label="Reply"
+                          @keydown="handleReplyKeydown"
+                        />
+                        <button type="button" class="inline-reply__quote-toggle" :aria-expanded="replyQuotedOpen" @click="replyQuotedOpen = !replyQuotedOpen">
+                          <UiIcon name="Ellipsis" :size="14" aria-hidden="true" />
+                          {{ replyQuotedOpen ? "Hide quoted text" : "Quoted text" }}
+                        </button>
+                        <pre v-if="replyQuotedOpen" class="inline-reply__quoted">{{ replyQuoted }}</pre>
+                        <div v-if="replyAttachments.length || replyUploading" class="compose-attachment-list">
+                          <span v-for="(attachment, index) in replyAttachments" :key="`${attachment.storageKey || index}`" class="compose-attachment-chip">
+                            <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
+                            <span>{{ formatAttachmentName(attachment, index) }}</span>
+                            <small v-if="formatAttachmentSize(attachment.size)">{{ formatAttachmentSize(attachment.size) }}</small>
+                            <Button color="ghost" shape="pill" size="small" icon-only class="compose-attachment-remove" type="button" :aria-label="`Remove ${formatAttachmentName(attachment, index)}`" @click="removeReplyAttachment(index)">
+                              <UiIcon name="X" :size="13" aria-hidden="true" />
+                            </Button>
+                          </span>
+                          <span v-if="replyUploading" class="inline-reply__uploading">Uploading…</span>
+                        </div>
+                        <p v-if="replyError" class="compose-error" role="alert">{{ replyError }}</p>
+                        <footer class="inline-reply__actions">
+                          <label class="compose-attach" :class="{ 'is-disabled': replyUploading }" title="Attach files">
+                            <UiIcon name="Paperclip" :size="16" aria-hidden="true" />
+                            <span class="sr-only">Attach files</span>
+                            <input type="file" multiple :disabled="replyUploading" @change="uploadReplyAttachments" />
+                          </label>
+                          <button type="button" class="mail-quiet" :disabled="replyAssisting" @click="askMe3ToImproveReply">
+                            <UiIcon name="Sparkles" :size="14" aria-hidden="true" />
+                            {{ replyAssisting ? "ME3 is writing…" : "Ask ME3 to improve" }}
+                          </button>
+                          <span class="inline-reply__spacer" />
+                          <button type="button" class="mail-quiet mail-quiet--muted" :disabled="replySending" @click="cancelInlineReply">Cancel</button>
+                          <Button color="outline" shape="soft" size="compact" type="button" :disabled="replySending || replyUploading || !replyForm.textBody.trim()" @click="sendInlineReply(false)">Save draft</Button>
+                          <Button color="primary" shape="soft" size="compact" type="button" :disabled="replySending || replyUploading || !replyForm.textBody.trim()" title="Send (⌘↵)" aria-keyshortcuts="Meta+Enter Control+Enter" @click="sendInlineReply(true)">
+                            <UiIcon name="Send" :size="14" aria-hidden="true" />
+                            {{ replySending ? "Sending…" : "Send" }}
+                          </Button>
+                        </footer>
+                      </section>
+                      <div v-else-if="latestEmailMessage" class="inline-reply-cta">
+                        <button type="button" class="mail-quiet" @click="startInlineReply()">
+                          <UiIcon name="Reply" :size="14" aria-hidden="true" />
+                          Reply
+                        </button>
+                        <button type="button" class="mail-quiet" @click="openComposeModal(latestEmailMessage, 'forward')">
+                          <UiIcon name="Forward" :size="14" aria-hidden="true" />
+                          Forward
+                        </button>
+                      </div>
+                    </template>
                   </div>
-                </div>
-              </section>
+                </section>
+                <section v-else class="thread-pane thread-pane--empty">
+                  <div class="empty-state empty-state--inline">
+                    <div class="empty-state__stack">
+                      <p>Select a conversation.</p>
+                    </div>
+                  </div>
+                </section>
+              </template>
             </div>
           </template>
         </div>
@@ -4035,184 +4227,91 @@ onBeforeUnmount(() => {
             <UiIcon name="X" :size="16" aria-hidden="true" />
           </Button>
         </header>
-        <label
-          v-if="outboundSenderOptions.length > 1"
-          class="compose-field"
-        >
-          <span>From</span>
-          <select v-model="composeForm.fromAddress">
-            <option
-              v-for="option in outboundSenderOptions"
-              :key="option.address"
-              :value="option.address"
-            >
-              {{ option.label }}
-            </option>
-          </select>
-        </label>
-        <div class="compose-field compose-field--recipient">
-          <label for="compose-to">To</label>
-          <input
-            id="compose-to"
-            v-model="composeForm.to"
-            type="email"
-            autocomplete="email"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-controls="compose-recipient-list"
-            :aria-expanded="showComposeRecipientSuggestions"
-            :aria-activedescendant="
-              showComposeRecipientSuggestions
-                ? `compose-recipient-${composeToActiveIndex}`
-                : undefined
-            "
-            @focus="composeToFocused = true"
-            @input="handleComposeToInput"
-            @blur="handleComposeToBlur"
-            @keydown="handleComposeToKeydown"
-          />
-          <div
-            v-if="showComposeRecipientSuggestions"
-            id="compose-recipient-list"
-            class="compose-recipient-list"
-            role="listbox"
-          >
-            <button
-              v-for="(contact, index) in composeRecipientSuggestions"
-              :key="contact.id"
-              :id="`compose-recipient-${index}`"
-              type="button"
-              class="compose-recipient-option"
-              :class="{ 'is-active': index === composeToActiveIndex }"
-              role="option"
-              :aria-selected="index === composeToActiveIndex"
-              @mousedown.prevent="selectComposeRecipient(contact)"
-            >
-              <span class="compose-recipient-option__name">
-                {{ contact.name }}
-              </span>
-              <span class="compose-recipient-option__email">
-                {{ contact.email }}
-              </span>
-            </button>
-          </div>
-        </div>
-        <label class="compose-field">
-          <span>Subject</span>
-          <input
-            id="compose-subject"
-            v-model="composeForm.subject"
-            type="text"
-          />
-        </label>
-        <label class="compose-field compose-field--body">
-          <span>Message</span>
-          <textarea v-model="composeForm.textBody" rows="10" />
-        </label>
-        <div class="compose-attachments">
-          <div class="compose-attachments__head">
-            <p>
-              {{
-                composeVisibleAttachments.length > 0
-                  ? `${composeVisibleAttachments.length} ${
-                      composeVisibleAttachments.length === 1
-                        ? "attachment"
-                        : "attachments"
-                    }`
-                  : "Attachments"
-              }}
-            </p>
-            <label
-              class="compose-attachment-upload"
-              :class="{ 'is-disabled': composeUploadingAttachments }"
-            >
-              <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
-              <span>{{
-                composeUploadingAttachments ? "Uploading..." : "Attach"
-              }}</span>
-              <input
-                type="file"
-                multiple
-                :disabled="composeUploadingAttachments"
-                @change="uploadComposeAttachments"
-              />
-            </label>
-          </div>
-          <div class="compose-attachment-list">
-            <span
-              v-for="(attachment, index) in composePreservedAttachments"
-              :key="`${attachment.storageKey || index}`"
-              class="compose-attachment-chip"
-            >
-              <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
-              <span>{{ formatAttachmentName(attachment, index) }}</span>
-              <small v-if="formatAttachmentSize(attachment.size)">
-                {{ formatAttachmentSize(attachment.size) }}
-              </small>
+        <div class="compose-rows">
+          <div class="compose-row compose-row--recipient">
+            <label for="compose-to">To</label>
+            <span v-if="composeRecipientChip && !composeToFocused" class="compose-chip">
+              {{ composeRecipientChip }}
+              <button type="button" class="compose-chip__remove" aria-label="Remove recipient" @click="clearComposeRecipient">
+                <UiIcon name="X" :size="12" aria-hidden="true" />
+              </button>
             </span>
-            <span
-              v-for="(attachment, index) in composeUploadedAttachments"
-              :key="`${attachment.storageKey || index}`"
-              class="compose-attachment-chip"
-            >
-              <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
-              <span>
-                {{
-                  formatAttachmentName(
-                    attachment,
-                    index + composePreservedAttachments.length,
-                  )
-                }}
-              </span>
-              <small v-if="formatAttachmentSize(attachment.size)">
-                {{ formatAttachmentSize(attachment.size) }}
-              </small>
-              <Button color="ghost" shape="pill" size="small" icon-only class="compose-attachment-remove" type="button"
-                :aria-label="`Remove ${formatAttachmentName(attachment, index)}`"
-                @click="removeUploadedAttachment(index)"
+            <input
+              id="compose-to"
+              v-model="composeForm.to"
+              type="email"
+              autocomplete="email"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-controls="compose-recipient-list"
+              :aria-expanded="showComposeRecipientSuggestions"
+              :aria-activedescendant="showComposeRecipientSuggestions ? `compose-recipient-${composeToActiveIndex}` : undefined"
+              :class="{ 'compose-row__input--hidden': composeRecipientChip && !composeToFocused }"
+              @focus="composeToFocused = true"
+              @input="handleComposeToInput"
+              @blur="handleComposeToBlur"
+              @keydown="handleComposeToKeydown"
+            />
+            <div v-if="showComposeRecipientSuggestions" id="compose-recipient-list" class="compose-recipient-list" role="listbox">
+              <button
+                v-for="(contact, index) in composeRecipientSuggestions"
+                :key="contact.id"
+                :id="`compose-recipient-${index}`"
+                type="button"
+                class="compose-recipient-option"
+                :class="{ 'is-active': index === composeToActiveIndex }"
+                role="option"
+                :aria-selected="index === composeToActiveIndex"
+                @mousedown.prevent="selectComposeRecipient(contact)"
               >
-                <UiIcon name="X" :size="13" aria-hidden="true" />
-              </Button>
-            </span>
+                <span class="compose-recipient-option__name">{{ contact.name }}</span>
+                <span class="compose-recipient-option__email">{{ contact.email }}</span>
+              </button>
+            </div>
           </div>
+          <label v-if="outboundSenderOptions.length > 1" class="compose-row">
+            <span>From</span>
+            <select v-model="composeForm.fromAddress">
+              <option v-for="option in outboundSenderOptions" :key="option.address" :value="option.address">{{ option.label }}</option>
+            </select>
+          </label>
+          <label class="compose-row">
+            <span>Subject</span>
+            <input id="compose-subject" v-model="composeForm.subject" type="text" />
+          </label>
+        </div>
+        <textarea v-model="composeForm.textBody" class="compose-body" rows="10" placeholder="Write your message…" aria-label="Message" />
+        <div v-if="composeVisibleAttachments.length" class="compose-attachment-list">
+          <span v-for="(attachment, index) in composePreservedAttachments" :key="`${attachment.storageKey || index}`" class="compose-attachment-chip">
+            <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
+            <span>{{ formatAttachmentName(attachment, index) }}</span>
+            <small v-if="formatAttachmentSize(attachment.size)">{{ formatAttachmentSize(attachment.size) }}</small>
+          </span>
+          <span v-for="(attachment, index) in composeUploadedAttachments" :key="`${attachment.storageKey || index}`" class="compose-attachment-chip">
+            <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
+            <span>{{ formatAttachmentName(attachment, index + composePreservedAttachments.length) }}</span>
+            <small v-if="formatAttachmentSize(attachment.size)">{{ formatAttachmentSize(attachment.size) }}</small>
+            <Button color="ghost" shape="pill" size="small" icon-only class="compose-attachment-remove" type="button" :aria-label="`Remove ${formatAttachmentName(attachment, index)}`" @click="removeUploadedAttachment(index)">
+              <UiIcon name="X" :size="13" aria-hidden="true" />
+            </Button>
+          </span>
         </div>
         <p v-if="composeError" class="compose-error" role="alert">
           {{ composeError }}
-          <router-link
-            v-if="composeNeedsStorage"
-            to="/account?section=storage"
-          >
-            Activate storage
-          </router-link>
+          <router-link v-if="composeNeedsStorage" to="/account?section=storage">Activate storage</router-link>
         </p>
         <footer class="compose-modal__actions">
-          <Button color="outline" shape="soft" size="compact" type="button"
-            :disabled="composeSending"
-            @click="requestCloseComposeModal"
-          >
-            Cancel
+          <label class="compose-attach" :class="{ 'is-disabled': composeUploadingAttachments }" title="Attach files">
+            <UiIcon name="Paperclip" :size="16" aria-hidden="true" />
+            <span class="sr-only">{{ composeUploadingAttachments ? "Uploading" : "Attach files" }}</span>
+            <input type="file" multiple :disabled="composeUploadingAttachments" @change="uploadComposeAttachments" />
+          </label>
+          <span v-if="composeUploadingAttachments" class="inline-reply__uploading">Uploading…</span>
+          <span class="inline-reply__spacer" />
+          <Button color="outline" shape="soft" size="compact" type="button" :disabled="composeSending || !composeCanSaveDraft" @click="saveDraft(false)">
+            {{ composeSending ? "Saving…" : "Save draft" }}
           </Button>
-          <Button color="outline" shape="soft" size="compact" type="button"
-            :disabled="
-              composeSending ||
-              !composeCanSaveDraft
-            "
-            @click="saveDraft(false)"
-          >
-            {{
-              composeSending
-                ? "Saving…"
-                : getComposePrimaryDraftLabel()
-            }}
-          </Button>
-          <Button color="primary" shape="soft" size="compact" type="button"
-            :disabled="
-              composeSending ||
-              !composeCanSend
-            "
-            aria-keyshortcuts="Meta+Enter Control+Enter"
-            @click="saveDraft(true)"
-          >
+          <Button color="primary" shape="soft" size="compact" type="button" :disabled="composeSending || !composeCanSend" aria-keyshortcuts="Meta+Enter Control+Enter" title="Send (⌘↵)" @click="saveDraft(true)">
             <UiIcon name="Send" :size="14" aria-hidden="true" />
             {{ composeSending ? "Sending…" : "Send" }}
           </Button>
@@ -4229,34 +4328,16 @@ onBeforeUnmount(() => {
       @close="composeDiscardConfirmOpen = false"
     >
       <section class="confirm-modal__card">
-        <h2 id="discard-compose-title" class="confirm-modal__title">
-          Discard unsaved changes?
-        </h2>
-        <p id="discard-compose-description" class="confirm-modal__body">
-          Your changes have not been saved as a draft.
-        </p>
+        <h2 id="discard-compose-title" class="confirm-modal__title">Discard unsaved changes?</h2>
+        <p id="discard-compose-description" class="confirm-modal__body">Your changes have not been saved as a draft.</p>
         <footer class="confirm-modal__actions">
-          <Button
-            color="outline"
-            shape="soft"
-            size="compact"
-            type="button"
-            @click="composeDiscardConfirmOpen = false"
-          >
-            Keep editing
-          </Button>
-          <Button
-            color="danger"
-            shape="soft"
-            size="compact"
-            type="button"
-            @click="forceCloseComposeModal"
-          >
-            Discard changes
-          </Button>
+          <Button color="outline" shape="soft" size="compact" type="button" @click="composeDiscardConfirmOpen = false">Keep editing</Button>
+          <Button color="danger" shape="soft" size="compact" type="button" @click="forceCloseComposeModal">Discard changes</Button>
         </footer>
       </section>
     </AppDialog>
+
+    <EmailRulesDialog :open="rulesOpen" @close="rulesOpen = false" />
   </div>
 </template>
 
@@ -5106,214 +5187,6 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-.conversation-item {
-  position: relative;
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 58px;
-  padding: 9px 14px 9px 12px;
-  border: 0;
-  border-bottom: 1px solid var(--color-border);
-  background: transparent;
-  cursor: pointer;
-}
-
-.conversation-quick-actions {
-  position: absolute;
-  z-index: 2;
-  top: 50%;
-  right: 10px;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: var(--ui-radius-sm, 6px);
-  background: var(--ui-surface, var(--color-bg));
-  box-shadow: var(--ui-shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08));
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.conversation-item:hover .conversation-quick-actions,
-.conversation-item:focus-within .conversation-quick-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.conversation-quick-actions :deep(.me3-btn--icon-only) {
-  min-width: 32px;
-  min-height: 32px;
-}
-
-.conversation-open {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  min-height: 40px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.conversation-open:focus-visible {
-  border-radius: var(--ui-radius-sm, 6px);
-  outline: 2px solid var(--ui-accent, var(--color-text));
-  outline-offset: 2px;
-}
-
-.conversation-item__trailing {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.conversation-item:hover,
-.conversation-item--active {
-  background: var(--color-bg-subtle);
-}
-
-.conversation-item--selected {
-  background: var(--color-bg-subtle);
-}
-
-.conversation-item--unread {
-  background: color-mix(
-    in oklab,
-    var(--ui-accent, var(--color-accent)) 8%,
-    var(--ui-surface, var(--color-bg))
-  );
-}
-
-.conversation-item--unread:hover,
-.conversation-item--unread.conversation-item--selected,
-.conversation-item--unread.conversation-item--active {
-  background: color-mix(
-    in oklab,
-    var(--ui-accent, var(--color-accent)) 14%,
-    var(--ui-surface, var(--color-bg))
-  );
-}
-
-.conversation-item--active {
-  box-shadow: inset 3px 0 0 var(--color-text);
-}
-
-.conversation-item--unread.conversation-item--active {
-  box-shadow: inset 3px 0 0 var(--ui-accent, var(--color-accent));
-}
-
-.conversation-item--unread .conversation-item__meta strong,
-.conversation-item--unread .conversation-item__summary,
-.conversation-item--unread .conversation-item__subject {
-  font-weight: 800;
-}
-
-.conversation-item__content {
-  display: block;
-  min-width: 0;
-}
-
-.conversation-item__meta {
-  margin-bottom: 3px;
-  min-width: 0;
-  font-size: 14px;
-}
-
-.conversation-item__meta strong {
-  display: block;
-  min-width: 0;
-}
-
-.conversation-item__meta strong,
-.conversation-item__summary,
-.conversation-item__recipient,
-.conversation-item__preview {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-item__summary,
-.conversation-item__separator,
-.conversation-item__recipient,
-.conversation-item__preview {
-  color: var(--color-text-muted);
-}
-
-.conversation-item__summary {
-  min-width: 0;
-  margin: 0;
-  font-size: 14px;
-}
-
-.conversation-item__subject {
-  color: var(--color-text);
-  font-weight: 650;
-}
-
-.conversation-item__recipient {
-  margin-right: 6px;
-  font-size: 13px;
-}
-
-.thread-count {
-  justify-self: end;
-  padding: 2px 7px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--color-text-muted);
-}
-
-.conversation-cue {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  min-height: 20px;
-  padding: 1px 6px;
-  border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: 999px;
-  color: var(--ui-text-muted, var(--color-text-muted));
-  font-size: 10px;
-  font-weight: 750;
-  white-space: nowrap;
-}
-
-.conversation-cue--unread {
-  border-color: var(--ui-text, var(--color-text));
-  color: var(--ui-text, var(--color-text));
-}
-
-.conversation-attachment-cue {
-  flex-shrink: 0;
-  color: var(--ui-text-muted, var(--color-text-muted));
-}
-
-.conversation-item__date {
-  justify-self: end;
-  align-self: start;
-  min-width: 76px;
-  padding-top: 2px;
-  color: var(--color-text-muted);
-  font-size: 13px;
-  font-style: normal;
-  text-align: right;
-  white-space: nowrap;
-}
-
 .pagination--split {
   border-top: 1px solid var(--color-border);
   border-bottom: 0;
@@ -5407,51 +5280,6 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-@media (min-width: 641px) {
-  .mail-workspace {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .mail-workspace--has-thread {
-    grid-template-columns: minmax(320px, 42%) minmax(0, 1fr);
-  }
-
-  .mail-rail {
-    grid-column: 1 / -1;
-    grid-row: 1;
-  }
-
-  .conversation-list {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .mail-workspace--has-thread .conversation-list {
-    border-right: 1px solid var(--color-border);
-  }
-
-  .mail-workspace--has-thread .thread-pane {
-    display: flex;
-    grid-column: 2;
-    grid-row: 2;
-    border-top: 1px solid var(--color-border);
-  }
-
-  .mail-workspace--has-thread .conversation-list.conversation-list--mobile-hidden {
-    display: flex;
-  }
-
-  .thread-toolbar {
-    justify-content: flex-end;
-  }
-
-  .thread-back-btn {
-    display: none;
-  }
-}
-
 .message-card {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr);
@@ -5464,17 +5292,6 @@ onBeforeUnmount(() => {
   box-shadow: inset 3px 0 0 var(--color-text);
 }
 
-.message-card__avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--color-bg-subtle);
-  color: var(--color-text-muted);
-  font-weight: 800;
-}
 
 .message-card__body {
   min-width: 0;
@@ -5492,9 +5309,6 @@ onBeforeUnmount(() => {
   color: var(--color-text-muted);
 }
 
-.message-card__recipient {
-  font-weight: 650;
-}
 
 .message-card__header-actions {
   display: flex;
@@ -5556,9 +5370,11 @@ onBeforeUnmount(() => {
 .message-html-frame {
   width: 100%;
   min-height: 120px;
-  margin: 22px 0 0;
+  margin: 18px 0 0;
   border: none;
+  border-radius: 10px;
   background: #fff;
+  color-scheme: light;
 }
 
 .external-content-notice {
@@ -5627,377 +5443,6 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-}
-
-/* Table */
-.inbox-table-wrap {
-  width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-}
-
-.inbox-table {
-  width: max(100%, 980px);
-  min-width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-
-.inbox-table thead tr {
-  border-bottom: 1px solid var(--color-border);
-}
-
-.inbox-table th {
-  padding: 10px 14px;
-  text-align: left;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-  white-space: nowrap;
-  user-select: none;
-}
-
-.col-select,
-.cell-select {
-  width: 52px;
-  padding-right: 0;
-}
-
-.col-sortable {
-  cursor: pointer;
-}
-
-.col-sortable:hover {
-  color: var(--color-text);
-}
-
-.sort-indicator {
-  margin-left: 4px;
-  font-size: 10px;
-}
-
-.inbox-row {
-  border-bottom: 1px solid var(--color-border);
-  cursor: pointer;
-  transition: background 0.1s;
-}
-
-.inbox-row:last-of-type {
-  border-bottom: none;
-}
-
-.inbox-row:hover {
-  background: var(--color-bg-subtle);
-}
-
-.inbox-row--expanded {
-  background: var(--color-bg-subtle);
-}
-
-.inbox-row--unread .cell-to,
-.inbox-row--unread .cell-subject {
-  font-weight: 800;
-}
-
-.inbox-row--expandable:focus-visible {
-  outline: 2px solid var(--color-text);
-  outline-offset: -2px;
-}
-
-.inbox-row--pending .cell-to::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-text);
-  margin-right: 7px;
-  vertical-align: middle;
-  flex-shrink: 0;
-}
-
-.select-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-}
-
-.select-checkbox {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--color-text);
-  cursor: pointer;
-}
-
-.select-checkbox:disabled {
-  cursor: not-allowed;
-}
-
-.inbox-row td {
-  padding: 11px 14px;
-  font-size: 14px;
-  vertical-align: middle;
-}
-
-.cell-to {
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 180px;
-}
-
-.cell-subject {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.subject-stack {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.subject-stack > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.message-chip {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.message-chip--followup {
-  border-color: var(--color-text);
-  color: var(--color-text);
-}
-
-.cell-date {
-  color: var(--color-text-muted);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-/* Origin badge */
-.origin-badge {
-  display: inline-block;
-  padding: 2px 7px;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-  white-space: nowrap;
-}
-
-.origin--agent-draft {
-  border-color: var(--color-text);
-  color: var(--color-text);
-}
-
-.origin--agent-sent {
-  background: var(--color-text);
-  color: var(--color-bg);
-  border-color: var(--color-text);
-}
-
-.origin--user-approved {
-  border-color: var(--color-text-muted);
-  color: var(--color-text-muted);
-}
-
-/* Status badge */
-.status-badge {
-  display: inline-block;
-  padding: 2px 7px;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-  white-space: nowrap;
-}
-
-.status--pending-approval {
-  border-color: var(--color-text);
-  color: var(--color-text);
-}
-
-.status--sent {
-  color: var(--color-text-muted);
-}
-
-.status--rejected,
-.status--failed {
-  color: #b33b2e;
-  border-color: #b33b2e;
-}
-
-/* Detail row */
-.detail-row td {
-  padding: 0;
-}
-
-.detail-cell {
-  background: var(--color-bg-subtle);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.detail-panel {
-  padding: 16px 20px;
-}
-
-.detail-headers {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 0;
-}
-
-.detail-field {
-  display: flex;
-  gap: 10px;
-  font-size: 13px;
-}
-
-.detail-label {
-  flex-shrink: 0;
-  width: 52px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-  padding-top: 2px;
-}
-
-.detail-divider {
-  height: 1px;
-  background: var(--color-border);
-  margin: 12px 0;
-}
-
-.detail-body {
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0;
-  color: var(--color-text);
-}
-
-.contact-context {
-  display: grid;
-  gap: 10px;
-}
-
-.contact-context__content {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.contact-context__title {
-  font-weight: 600;
-}
-
-.contact-context__meta {
-  color: var(--color-text-muted);
-}
-
-.contact-link {
-  color: var(--color-text);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.detail-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.action-btn {
-  padding: 8px 18px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: opacity 0.12s;
-}
-
-.action-btn--compact {
-  min-height: 36px;
-  padding: 7px 14px;
-}
-
-.action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.action-btn--approve {
-  background: var(--color-text);
-  color: var(--color-bg);
-  border: 1px solid var(--color-text);
-}
-
-.action-btn--approve:not(:disabled):hover {
-  opacity: 0.8;
-}
-
-.action-btn--reject {
-  background: var(--color-bg);
-  color: var(--color-text-muted);
-  border: 1px solid var(--color-border);
-}
-
-.action-btn--reject:not(:disabled):hover {
-  color: var(--color-text);
-  border-color: var(--color-text);
-}
-
-.action-btn--delete {
-  background: var(--color-bg);
-  color: #b33b2e;
-  border: 1px solid #b33b2e;
-}
-
-.action-btn--delete:not(:disabled):hover {
-  opacity: 0.8;
-}
-
-.detail-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--color-text-muted);
 }
 
 /* Pagination */
@@ -6595,4 +6040,1030 @@ onBeforeUnmount(() => {
     padding-right: 0;
   }
 }
+
+/* --- Agent-first Email (October 2026): Brief default, rail, three-line rows, inline reply. --- */
+
+.mail-quiet {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent-strong, var(--ui-accent, #229874));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.mail-quiet--muted {
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.mail-quiet:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.mail-quiet:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mail-quiet:focus-visible {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.mail-tag {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.5;
+  white-space: nowrap;
+  background: var(--ui-accent-soft, rgba(34, 152, 116, 0.14));
+  color: var(--ui-accent-strong, var(--ui-accent, #229874));
+}
+
+.mail-tag--danger {
+  background: var(--ui-danger-soft, rgba(219, 31, 31, 0.12));
+  color: var(--ui-danger, #db1f1f);
+}
+
+.mail-tag--muted {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+/* Mobile top bar: title menu, search, compose */
+.mail-mobile-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.mail-mobile-nav__spacer {
+  flex: 1 1 auto;
+}
+
+.mail-title-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.mail-title-menu__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ui-text, var(--color-text));
+  font: inherit;
+  font-size: 16px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.mail-title-menu__button:hover,
+.mail-title-menu__button[aria-expanded="true"] {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+}
+
+.mail-title-menu__list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 240px;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--ui-surface, var(--color-bg));
+  box-shadow: var(--ui-shadow-md, 0 14px 40px rgba(0, 0, 0, 0.18));
+}
+
+.mail-title-menu__list hr {
+  margin: 6px 0;
+  border: 0;
+  border-top: 1px solid var(--ui-border, var(--color-border));
+}
+
+.mail-title-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ui-text, var(--color-text));
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mail-title-menu__item:hover,
+.mail-title-menu__item--active {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+}
+
+.mail-title-menu__item span:first-of-type {
+  flex: 1 1 auto;
+}
+
+.mail-title-menu__count {
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 13px;
+}
+
+/* Rail */
+.mail-rail {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  width: 220px;
+  padding: 14px 10px;
+  border-right: 1px solid var(--ui-border, var(--color-border));
+  background: var(--ui-bg, var(--color-bg));
+  overflow-y: auto;
+}
+
+.mail-rail__compose {
+  margin: 0 6px 12px;
+}
+
+.mail-rail__folders,
+.mail-rail__secondary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mail-rail__secondary {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ui-border, var(--color-border));
+}
+
+.mail-rail__folder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ui-text, var(--color-text));
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.mail-rail__folder:hover {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+}
+
+.mail-rail__folder--active {
+  background: var(--ui-accent-soft, rgba(34, 152, 116, 0.14));
+  color: var(--ui-accent-strong, var(--ui-accent, #229874));
+  font-weight: 650;
+}
+
+.mail-rail__folder:focus-visible {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+  outline-offset: 2px;
+}
+
+.mail-rail__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-rail__count {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.mail-rail__folder--active .mail-rail__count {
+  color: inherit;
+}
+
+.mail-rail__identity {
+  display: grid;
+  gap: 2px;
+  margin: auto 6px 0;
+  padding-top: 16px;
+  font-size: 12px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.mail-rail__identity strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--ui-text, var(--color-text));
+}
+
+.mail-brief {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* List */
+.mail-search--desktop {
+  display: none;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+  margin: 10px 12px 4px;
+}
+
+.mail-search__icon {
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.mail-search--desktop .mail-search__input {
+  border-radius: 999px;
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+  border-color: transparent;
+}
+
+.mail-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  padding: 2px 12px 2px 16px;
+  border-bottom: 1px solid var(--ui-border, var(--color-border));
+}
+
+.mail-list-head__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mail-list-head__status:hover:not(:disabled) {
+  color: var(--ui-text, var(--color-text));
+}
+
+.mail-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--ui-border, var(--color-border));
+  background: transparent;
+}
+
+.mail-row:hover,
+.mail-row:focus-within {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+}
+
+.mail-row--active {
+  background: var(--ui-accent-soft, rgba(34, 152, 116, 0.14));
+}
+
+.mail-row--active:hover {
+  background: var(--ui-accent-soft, rgba(34, 152, 116, 0.14));
+}
+
+.mail-row--selected {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+}
+
+.mail-row__open {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  min-height: 64px;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mail-row__open:focus-visible {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+  outline-offset: -2px;
+}
+
+.mail-row__content {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mail-row__line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.mail-row__sender {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.mail-row__count {
+  flex-shrink: 0;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 12px;
+}
+
+.mail-row__clip {
+  flex-shrink: 0;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.mail-row__time {
+  flex-shrink: 0;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.mail-row__subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.mail-row__preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.mail-row--unread .mail-row__sender,
+.mail-row--unread .mail-row__subject {
+  font-weight: 650;
+}
+
+.mail-row--unread .mail-row__time {
+  color: var(--ui-text, var(--color-text));
+  font-weight: 650;
+}
+
+.mail-row__actions {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--ui-surface, var(--color-bg));
+  box-shadow: var(--ui-shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08));
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.mail-row:hover .mail-row__actions,
+.mail-row:focus-within .mail-row__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mail-row__actions :deep(.me3-btn--icon-only) {
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.mail-skeleton {
+  display: grid;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.mail-skeleton__row {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.mail-skeleton__avatar,
+.mail-skeleton__lines i {
+  display: block;
+  border-radius: 8px;
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+}
+
+.mail-skeleton__avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.mail-skeleton__lines {
+  display: grid;
+  gap: 7px;
+  align-content: center;
+}
+
+.mail-skeleton__lines i:nth-child(1) {
+  width: 40%;
+  height: 13px;
+}
+
+.mail-skeleton__lines i:nth-child(2) {
+  width: 70%;
+  height: 13px;
+}
+
+.mail-skeleton__lines i:nth-child(3) {
+  width: 90%;
+  height: 12px;
+}
+
+/* Thread */
+.thread-action {
+  gap: 6px;
+}
+
+.thread-action__label {
+  display: none;
+  font-size: 13px;
+}
+
+.thread-more {
+  position: relative;
+}
+
+.thread-more__menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  display: grid;
+  min-width: 220px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--ui-surface, var(--color-bg));
+  box-shadow: var(--ui-shadow-md, 0 14px 40px rgba(0, 0, 0, 0.18));
+}
+
+.thread-more__menu button {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ui-text, var(--color-text));
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-more__menu button:hover:not(:disabled) {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+}
+
+.thread-more__menu button:disabled {
+  opacity: 0.5;
+}
+
+.thread-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px !important;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.thread-summary :deep(svg) {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--ui-accent-strong, var(--ui-accent, #229874));
+}
+
+.message-collapsed {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 24px;
+  border: 0;
+  border-bottom: 1px solid var(--ui-border, var(--color-border));
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-collapsed:hover {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+}
+
+.message-collapsed__text {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.message-collapsed__text strong {
+  flex-shrink: 0;
+  font-weight: 650;
+}
+
+.message-collapsed__text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.message-collapsed time {
+  font-size: 12px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.message-card__avatar {
+  margin-top: 2px;
+}
+
+.message-card__who strong {
+  font-weight: 650;
+}
+
+.message-card__who p {
+  margin: 2px 0 0;
+}
+
+.message-card__forward {
+  font-style: italic;
+}
+
+.message-card__time {
+  flex-shrink: 0;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 13px;
+}
+
+.agent-draft-card {
+  display: grid;
+  gap: 10px;
+  margin: 16px 24px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--ui-surface, var(--color-bg));
+  box-shadow: var(--ui-shadow-md, 0 2px 12px rgba(13, 18, 20, 0.1));
+}
+
+.agent-draft-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.agent-draft-card__title :deep(svg) {
+  color: var(--ui-accent-strong, var(--ui-accent, #229874));
+}
+
+.agent-draft-card__body {
+  margin: 0;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-draft-card__actions,
+.message-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.inline-reply {
+  display: grid;
+  gap: 10px;
+  margin: 16px 24px 0;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--ui-surface, var(--color-bg));
+  box-shadow: var(--ui-shadow-md, 0 2px 12px rgba(13, 18, 20, 0.1));
+}
+
+.inline-reply__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 13px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.inline-reply__meta b {
+  font-weight: 650;
+}
+
+.inline-reply__body {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 140px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border, var(--color-border));
+  border-radius: 10px;
+  background: var(--ui-bg, var(--color-bg));
+  color: var(--ui-text, var(--color-text));
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.inline-reply__body:focus {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+  outline-offset: 1px;
+}
+
+.inline-reply__quote-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  min-height: 32px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.inline-reply__quoted {
+  margin: 0;
+  padding: 0 0 0 12px;
+  border-left: 2px solid var(--ui-border, var(--color-border));
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inline-reply__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.inline-reply__spacer {
+  flex: 1 1 auto;
+}
+
+.inline-reply__uploading {
+  font-size: 12px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.inline-reply-cta {
+  display: flex;
+  gap: 16px;
+  padding: 14px 24px 0;
+}
+
+.compose-attach {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  cursor: pointer;
+}
+
+.compose-attach:hover {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+  color: var(--ui-text, var(--color-text));
+}
+
+.compose-attach.is-disabled {
+  opacity: 0.58;
+  cursor: wait;
+}
+
+.compose-attach input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.compose-attach:focus-within {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+}
+
+/* Compose: Mail-style rows */
+.compose-rows {
+  display: grid;
+}
+
+.compose-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  border-bottom: 1px solid var(--ui-border, var(--color-border));
+}
+
+.compose-row > span,
+.compose-row > label {
+  flex-shrink: 0;
+  min-width: 58px;
+  font-size: 14px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.compose-row input,
+.compose-row select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text, var(--color-text));
+  font: inherit;
+  font-size: 15px;
+}
+
+.compose-row select {
+  appearance: auto;
+}
+
+.compose-row input:focus,
+.compose-row select:focus {
+  outline: none;
+}
+
+.compose-row:focus-within {
+  border-bottom-color: var(--ui-accent, var(--color-accent));
+}
+
+.compose-row__input--hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.compose-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 2px 2px 10px;
+  border-radius: 999px;
+  background: var(--ui-accent-soft, rgba(34, 152, 116, 0.14));
+  color: var(--ui-accent-strong, var(--ui-accent, #229874));
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.compose-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.compose-body {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 220px;
+  padding: 12px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text, var(--color-text));
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.compose-body:focus {
+  outline: none;
+}
+
+.compose-modal__actions {
+  gap: 8px;
+}
+
+/* Layout */
+@media (min-width: 641px) {
+  .mail-mobile-nav {
+    display: none;
+  }
+
+  .mail-search--desktop {
+    display: grid;
+  }
+
+  .mail-workspace {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .mail-rail {
+    display: flex;
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .mail-brief,
+  .conversation-list {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .thread-pane {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .conversation-list.conversation-list--mobile-hidden {
+    display: none;
+  }
+
+  .mail-workspace--has-thread .thread-pane--mobile-open {
+    display: flex;
+  }
+
+  .thread-action__label {
+    display: inline;
+  }
+}
+
+@media (min-width: 1024px) {
+  .mail-workspace--has-thread {
+    grid-template-columns: 220px minmax(360px, 400px) minmax(0, 1fr);
+  }
+
+  .mail-workspace--has-thread .conversation-list,
+  .mail-workspace--has-thread .conversation-list.conversation-list--mobile-hidden {
+    display: flex;
+    grid-column: 2;
+    border-right: 1px solid var(--ui-border, var(--color-border));
+  }
+
+  .mail-workspace--has-thread .thread-pane {
+    display: flex;
+    grid-column: 3;
+  }
+
+  .thread-toolbar {
+    justify-content: flex-end;
+  }
+
+  .thread-back-btn {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .mail-rail {
+    display: none;
+  }
+
+  .mail-row__open {
+    min-height: 60px;
+    padding: 8px 12px;
+  }
+
+  .mail-row__actions {
+    display: none;
+  }
+
+  .thread-heading {
+    padding: 14px 16px 10px;
+  }
+
+  .message-collapsed,
+  .inline-reply-cta {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .message-card {
+    padding: 14px 0;
+  }
+
+  .message-card__header,
+  .message-card .external-content-notice,
+  .message-card .message-attachments,
+  .message-card .message-card__actions,
+  .message-card .delivery-unconfirmed,
+  .message-card .message-body {
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+
+  .message-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .message-card__avatar {
+    display: none;
+  }
+
+  .message-html-frame {
+    border-radius: 0;
+  }
+
+  .agent-draft-card,
+  .inline-reply {
+    margin-left: 12px;
+    margin-right: 12px;
+  }
+
+  .compose-modal :deep(.app-dialog__surface),
+  .compose-modal__card {
+    width: 100%;
+    max-width: none;
+    max-height: 100dvh;
+    min-height: 100dvh;
+    border-radius: 0;
+    box-sizing: border-box;
+  }
+}
+
 </style>

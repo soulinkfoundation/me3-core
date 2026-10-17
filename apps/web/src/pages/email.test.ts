@@ -244,30 +244,37 @@ describe("EmailPage", () => {
     expect(wrapper.text()).toContain("ME3");
   });
 
-  it("renders Campaigns as a mailbox tab and routes to its nested page", async () => {
+  it("keeps Campaigns out of the folders and routes to its nested page from the title menu", async () => {
     const wrapper = mountEmailPage();
     await flushPromises();
 
-    const campaigns = wrapper.get('[data-folder="campaigns"]');
-    expect(campaigns.text()).toBe("Campaigns");
-    await campaigns.trigger("click");
+    const rail = wrapper.get('[data-folder="campaigns"]');
+    expect(rail.classes()).not.toContain("mail-rail__folder--active");
+    expect(rail.classes()).not.toContain("mail-rail__folder--active");
+
+    (document.querySelector(".mail-title-menu__button") as HTMLElement).click();
+    await flushPromises();
+    const menuItem = document.querySelector('[data-menu-folder="campaigns"]') as HTMLElement;
+    expect(menuItem.textContent).toContain("Campaigns");
+    menuItem.click();
 
     expect(routerPush).toHaveBeenCalledWith("/email/campaigns");
   });
 
-  it("keeps every mailbox folder in one tab list at mobile widths", async () => {
+  it("lists the Brief first, then every mailbox folder, in one rail", async () => {
     const wrapper = mountEmailPage();
     await flushPromises();
 
     expect(
       wrapper.findAll("[data-folder]").map((tab) => tab.attributes("data-folder")),
     ).toEqual([
-      "campaigns",
+      "brief",
       "inbox",
       "drafts",
       "sent",
       "archive",
       "trash",
+      "campaigns",
     ]);
     expect(wrapper.text()).not.toContain("More");
   });
@@ -298,7 +305,8 @@ describe("EmailPage", () => {
     const wrapper = mountEmailPage();
     await flushPromises();
 
-    await wrapper.get(".conversation-item").trigger("click");
+    await wrapper.get(".mail-row").trigger("click");
+    await wrapper.get('[data-testid="mail-select-mode"]').trigger("click");
     await wrapper.get('input[aria-label="Select ME3"]').setValue(true);
     await wrapper.get(".bulk-mail-actions .me3-btn--danger").trigger("click");
     await flushPromises();
@@ -310,7 +318,7 @@ describe("EmailPage", () => {
     expect(wrapper.get(".conversation-list").classes()).not.toContain(
       "conversation-list--mobile-hidden",
     );
-    expect(wrapper.text()).toContain("No sent messages yet.");
+    expect(wrapper.text()).toContain("Nothing sent yet.");
   });
 
   it("removes a message before its archive request completes", async () => {
@@ -319,7 +327,8 @@ describe("EmailPage", () => {
     const wrapper = mountEmailPage();
     await flushPromises();
 
-    await wrapper.get(".conversation-item").trigger("click");
+    await wrapper.get(".mail-row").trigger("click");
+    await wrapper.get('[data-testid="mail-select-mode"]').trigger("click");
     await wrapper.get('input[aria-label="Select ME3"]').setValue(true);
     await wrapper.get(".bulk-mail-actions .me3-btn--outline").trigger("click");
 
@@ -327,7 +336,7 @@ describe("EmailPage", () => {
       folder: "archive",
       fromFolder: "sent",
     });
-    expect(wrapper.text()).toContain("No sent messages yet.");
+    expect(wrapper.text()).toContain("Nothing sent yet.");
 
     archive.resolve({ ok: true });
     await flushPromises();
@@ -345,12 +354,12 @@ describe("EmailPage", () => {
     const wrapper = mountEmailPage();
     await flushPromises();
 
-    expect(wrapper.text()).not.toContain("No sent messages yet.");
+    expect(wrapper.text()).not.toContain("Nothing sent yet.");
 
     initialList.resolve({ threads: [], nextCursor: null });
     await flushPromises();
 
-    expect(wrapper.text()).toContain("No sent messages yet.");
+    expect(wrapper.text()).toContain("Nothing sent yet.");
   });
 
   it("refreshes the visible inbox after its owner-scoped cache is invalidated", async () => {
@@ -395,7 +404,7 @@ describe("EmailPage", () => {
     const second = mountEmailPage();
     await flushPromises();
 
-    expect(second.find(".conversation-item").exists()).toBe(true);
+    expect(second.find(".mail-row").exists()).toBe(true);
     expect(second.text()).not.toContain("Loading messages...");
 
     revalidation.resolve({ threads: [threadSummaryFor()], nextCursor: null });
@@ -441,16 +450,17 @@ describe("EmailPage", () => {
     const wrapper = mountEmailPage();
     await flushPromises();
 
-    await wrapper.get(".conversation-item").trigger("click");
+    await wrapper.get(".mail-row").trigger("click");
+    await wrapper.get('[data-testid="mail-select-mode"]').trigger("click");
     await wrapper.get('input[aria-label="Select ME3"]').setValue(true);
     await wrapper.get(".bulk-mail-actions .me3-btn--danger").trigger("click");
 
-    expect(wrapper.text()).toContain("No sent messages yet.");
+    expect(wrapper.text()).toContain("Nothing sent yet.");
     post.reject(new Error("Trash failed"));
     await flushPromises();
 
-    expect(wrapper.find(".conversation-item").exists()).toBe(true);
-    expect(wrapper.text()).toContain(
+    expect(wrapper.find(".mail-row").exists()).toBe(true);
+    expect(toastApi.error).toHaveBeenCalledWith(
       "Some conversations could not be moved. The folder was refreshed.",
     );
   });
@@ -509,6 +519,7 @@ describe("EmailPage", () => {
 
     const wrapper = mountEmailPage();
     await flushPromises();
+    await wrapper.get('[data-testid="mail-select-mode"]').trigger("click");
     await wrapper
       .get('input[aria-label="Select all conversations on this page"]')
       .setValue(true);
@@ -517,7 +528,7 @@ describe("EmailPage", () => {
 
     expect(wrapper.text()).not.toContain("First");
     expect(wrapper.text()).toContain("Second");
-    expect(wrapper.text()).toContain(
+    expect(toastApi.error).toHaveBeenCalledWith(
       "Some conversations could not be moved. The folder was refreshed.",
     );
     expect(toastApi.success).toHaveBeenCalledWith(
@@ -580,7 +591,7 @@ describe("EmailPage", () => {
       { read: true },
     );
 
-    await wrapper.get(".conversation-open").trigger("click");
+    await wrapper.get(".mail-row__open").trigger("click");
     await flushPromises();
 
     expect(api.post).toHaveBeenCalledWith("/mailbox/threads/thread-inbox/read", {
@@ -645,7 +656,7 @@ describe("EmailPage", () => {
 
     const wrapper = mountEmailPage();
     await flushPromises();
-    const rows = wrapper.findAll(".conversation-open");
+    const rows = wrapper.findAll(".mail-row__open");
     await rows[0].trigger("click");
     await flushPromises();
     await rows[1].trigger("click");
@@ -655,9 +666,9 @@ describe("EmailPage", () => {
     await flushPromises();
 
     const secondRow = wrapper
-      .findAll(".conversation-item")
+      .findAll(".mail-row")
       .find((row) => row.text().includes("Second unread"));
-    expect(secondRow?.text()).toContain("2 unread");
+    expect(secondRow?.classes()).toContain("mail-row--unread");
   });
 
   it("keeps and reuses a saved draft when sending fails", async () => {
@@ -695,7 +706,7 @@ describe("EmailPage", () => {
     };
     setValue("#compose-to", "kim@example.com");
     setValue("#compose-subject", "Hello");
-    setValue(".compose-field--body textarea", "Hi Kim");
+    setValue(".compose-body", "Hi Kim");
     await flushPromises();
 
     (
@@ -756,7 +767,7 @@ describe("EmailPage", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("Sending");
-    await wrapper.get(".conversation-open").trigger("click");
+    await wrapper.get(".mail-row__open").trigger("click");
     await flushPromises();
     expect(wrapper.find(".message-card__actions").exists()).toBe(false);
     expect(wrapper.get('button[aria-label="Archive"]').attributes("disabled")).toBeDefined();
@@ -800,14 +811,14 @@ describe("EmailPage", () => {
     });
     const wrapper = mountEmailPage();
     await flushPromises();
-    await wrapper.get(".conversation-open").trigger("click");
+    await wrapper.get(".mail-row__open").trigger("click");
     await flushPromises();
 
     const frame = wrapper.get(".message-html-frame")
       .element as HTMLIFrameElement;
     expect(frame.srcdoc).toContain("img-src data: blob:");
     expect(wrapper.text()).toContain(
-      "External content is blocked for your privacy.",
+      "Images hidden for privacy.",
     );
 
     await wrapper.get(".external-content-notice button").trigger("click");
@@ -852,9 +863,9 @@ describe("EmailPage", () => {
     const wrapper = mountEmailPage();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("3");
-    expect(wrapper.text()).toContain("2 unread");
-    expect(wrapper.get(".conversation-item__meta").text()).toBe(
+    expect(wrapper.get(".mail-row__count").text()).toBe("3");
+    expect(wrapper.get(".mail-row").classes()).toContain("mail-row--unread");
+    expect(wrapper.get(".mail-row__sender").text()).toBe(
       "kim@example.com",
     );
     expect(api.get).not.toHaveBeenCalledWith("/mailbox/threads/thread-1");
@@ -934,13 +945,14 @@ describe("EmailPage", () => {
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("Shortcuts");
+    await wrapper.get('[data-testid="mail-select-mode"]').trigger("click");
     await wrapper.get('input[aria-label="Select ME3"]').setValue(true);
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "j" }));
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "e" }));
     await flushPromises();
 
-    expect(wrapper.get(".conversation-open").attributes("aria-current")).toBeUndefined();
+    expect(wrapper.get(".mail-row__open").attributes("aria-current")).toBeUndefined();
     expect(api.post).not.toHaveBeenCalledWith(
       "/mailbox/threads/thread-1/move",
       { folder: "archive", fromFolder: "sent" },
@@ -1022,7 +1034,7 @@ describe("EmailPage", () => {
 
     const wrapper = mountEmailPage();
     await flushPromises();
-    await wrapper.get(".conversation-open").trigger("click");
+    await wrapper.get(".mail-row__open").trigger("click");
     await flushPromises();
     await wrapper.get(".message-card__actions .me3-btn--primary").trigger("click");
     await flushPromises();
@@ -1098,7 +1110,7 @@ describe("EmailPage", () => {
 
     const wrapper = mountEmailPage();
     await flushPromises();
-    await wrapper.get(".conversation-open").trigger("click");
+    await wrapper.get(".mail-row__open").trigger("click");
     await flushPromises();
     const retry = wrapper
       .findAll(".delivery-unconfirmed button")
@@ -1169,12 +1181,12 @@ describe("EmailPage", () => {
 
     const wrapper = mountEmailPage();
     await flushPromises();
-    await wrapper.get(".conversation-open").trigger("click");
+    await wrapper.get(".mail-row__open").trigger("click");
     await flushPromises();
 
     expect(api.get).toHaveBeenCalledWith("/mailbox/messages/draft-reconciled");
     expect(draftListLoads).toBe(2);
-    expect(wrapper.text()).toContain("No drafts awaiting action");
+    expect(wrapper.text()).toContain("No drafts.");
     expect(wrapper.text()).not.toContain("Sending");
   });
 
@@ -1218,7 +1230,7 @@ describe("EmailPage", () => {
 
     const wrapper = mountEmailPage();
     await flushPromises();
-    await wrapper.get(".conversation-open").trigger("click");
+    await wrapper.get(".mail-row__open").trigger("click");
     await flushPromises();
 
     expect(wrapper.text()).toContain("Delivery could not be confirmed");
@@ -1279,7 +1291,7 @@ describe("EmailPage", () => {
 
     const wrapper = mountEmailPage();
     await flushPromises();
-    await wrapper.get(".conversation-open").trigger("click");
+    await wrapper.get(".mail-row__open").trigger("click");
     await flushPromises();
 
     expect(statusChecks).toBe(1);

@@ -27,6 +27,14 @@ const { tasks, goals } = plan;
 const journal = ref<{ id: string; date: string; title?: string | null; body?: string; preview?: string }[]>([]);
 const articles = ref<{ id: string; title?: string | null; body: string }[]>([]);
 const mail = ref<{ id: string; subject: string; fromName?: string; fromAddress?: string; preview?: string; agentSummary?: string }[]>([]);
+type HomeBrief = { needsYou: Array<{ messageId: string; sender: { name: string }; summary: string }>; handled: { total: number }; fyi: { inboxLeft: number; unread: number } };
+const brief = ref<HomeBrief | null>(null);
+const briefHeadline = computed(() => {
+  if (!brief.value) return "";
+  const count = brief.value.needsYou.length;
+  const needs = count === 0 ? "You're all caught up" : count === 1 ? "1 thing needs you" : `${count} things need you`;
+  return brief.value.handled.total > 0 ? `${needs}. ME3 handled ${brief.value.handled.total} today.` : `${needs}.`;
+});
 const soulink = ref<{ id: string; textBody?: string; outcome?: string }[]>([]);
 const approvals = ref<{ id: string; pluginId?: string; title: string; summary?: string | null; payload?: Record<string, unknown> }[]>([]);
 const reviewApproval = ref<(typeof approvals.value)[number] | null>(null);
@@ -238,6 +246,8 @@ async function refresh() {
     loadToday(),
     resource("inbox", async () => {
       const [status, inbox] = await Promise.all([api.get<{ mailbox?: { aliasAddress?: string }; sources?: { address: string; inboundEnabled?: boolean }[] }>("/mailbox"), api.get<{ messages: typeof mail.value }>("/mailbox/messages?direction=inbound&limit=8")]);
+      // The Brief (Core 0.1.227+): Home shows the same count as the Email page's first screen.
+      brief.value = await api.get<HomeBrief>("/mailbox/brief").catch(() => null);
       if (disposed) return;
       agentAddress.value = status.mailbox?.aliasAddress || status.sources?.find(s => s.inboundEnabled)?.address || ""; mail.value = inbox.messages;
       try {
@@ -372,8 +382,12 @@ onBeforeUnmount(() => {
             </template>
             <template v-else-if="card === 'inbox'">
               <RouterLink v-for="event in soulink.slice(0, 3)" :key="event.id" to="/email" class="home-entry"><strong>{{ journalPreview(event.textBody || 'New request') }}</strong><span v-if="event.outcome" class="home-muted">{{ journalPreview(event.outcome) }}</span></RouterLink>
-              <RouterLink v-for="message in mail.slice(0, 3)" :key="message.id" to="/email" class="home-entry"><strong>{{ message.fromName || message.subject || 'New message' }}</strong><span class="home-muted">{{ journalPreview(message.agentSummary || message.preview || message.subject || '') }}</span></RouterLink>
-              <template v-if="!mail.length && !soulink.length"><p class="home-muted">{{ agentAddress ? 'ME3 will keep incoming requests and replies here.' : 'Give ME3 its own email. CC it on anything. It never sees your inbox.' }}</p><RouterLink v-if="!agentAddress" to="/settings?section=mailbox" class="home-quiet"><UiIcon name="Plus" :size="16" />Set up agent email</RouterLink></template>
+              <template v-if="brief">
+                <RouterLink to="/email" class="home-entry home-entry--brief"><span class="home-muted">{{ briefHeadline }}</span></RouterLink>
+                <RouterLink v-for="item in brief.needsYou.slice(0, 3)" :key="item.messageId" to="/email" class="home-entry"><strong>{{ item.sender.name }}</strong><span class="home-muted">{{ journalPreview(item.summary) }}</span></RouterLink>
+              </template>
+              <RouterLink v-for="message in (brief ? [] : mail.slice(0, 3))" :key="message.id" to="/email?tab=inbox" class="home-entry"><strong>{{ message.fromName || message.subject || 'New message' }}</strong><span class="home-muted">{{ journalPreview(message.agentSummary || message.preview || message.subject || '') }}</span></RouterLink>
+              <template v-if="!brief && !mail.length && !soulink.length"><p class="home-muted">{{ agentAddress ? 'ME3 will keep incoming requests and replies here.' : 'Give ME3 its own email. CC it on anything. It never sees your inbox.' }}</p><RouterLink v-if="!agentAddress" to="/settings?section=mailbox" class="home-quiet"><UiIcon name="Plus" :size="16" />Set up agent email</RouterLink></template>
             </template>
             <template v-else-if="card === 'mission'">
               <!-- A read-only reminder: the mission, then goals, then the Wheel. Mission is where they're edited. -->
