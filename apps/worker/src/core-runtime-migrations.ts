@@ -8,6 +8,7 @@ import { MORNING_CALENDAR_PUSH_SCHEMA } from "./morning-calendar-push";
 import { QUOTES_SCHEMA } from "./quotes-schema";
 import { QUOTE_BOOKMARKS_SCHEMA } from "./quote-bookmarks-schema";
 import { GRATITUDE_SETTINGS_SCHEMA, CARD_REMINDERS_SCHEMA } from "./gratitude-schema";
+import { HOME_LAYOUT_SCHEMA } from "./home-layout";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import type { Env } from "./types";
 
@@ -548,6 +549,14 @@ const runtimeMigrations: RuntimeMigration[] = [
     async apply(db) {
       await db.batch(GRATITUDE_SETTINGS_SCHEMA.map(sql => db.prepare(sql)));
       if (await tableExists(db, "gratitude_settings")) await addColumnIfMissing(db, "gratitude_settings", "in_today", "INTEGER NOT NULL DEFAULT 0 CHECK (in_today IN (0, 1))");
+    },
+  },
+  // One Home card layout per install so web and the mobile apps match.
+  {
+    id: "0071_home_layout",
+    checksum: "2026-10-17-home-layout-v1",
+    async apply(db) {
+      await db.batch(HOME_LAYOUT_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];

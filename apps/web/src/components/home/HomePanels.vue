@@ -14,7 +14,7 @@ import PersonAvatar from "../people/PersonAvatar.vue";
 import PersonSheet from "../people/PersonSheet.vue";
 import { useContactsStore } from "../../stores/contacts";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
-import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDateLabel, homeDoneToday, homeGoalTasks, homeOpenTasks, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeTask, type HomeGoal } from "../../utils/homeSummary";
+import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDateLabel, homeGoalTasks, homeOpenTasks, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeTask, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
 import TodayFocusLine from "../today/TodayFocusLine.vue";
 import TodaySection from "../today/TodaySection.vue";
@@ -60,12 +60,14 @@ const agentAddress = ref("");
 const calendarConnected = ref(false);
 const accountsEnabled = ref(false);
 const accountSummary = ref<{ income: string; expense: string } | null>(null);
-const errors = ref<Partial<Record<HomeCard, string>>>({});
+// Resources load per card; tasks and wheel feed Today and Mission rather than cards of their own.
+type HomeResource = HomeCard | "tasks" | "wheel";
+const errors = ref<Partial<Record<HomeResource, string>>>({});
 const loading = ref(true);
 const busy = ref<string[]>([]);
 const dialog = ref<"add" | "wheel" | null>(null);
 const panels = ref<HTMLElement | null>(null);
-const unavailable = ref<HomeCard[]>([]);
+const unavailable = ref<HomeResource[]>([]);
 const offline = ref(!navigator.onLine);
 const lastRefresh = ref("");
 const orderAnnouncement = ref("");
@@ -82,11 +84,7 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
   inbox: { title: "Inbox", href: "/email", emoji: "📧" },
   mission: { title: "Mission", href: "/tasks?goals=1", emoji: "🚀" },
   journal: { title: "Writing", href: "/journal", emoji: "✍️" },
-  wheel: { title: "Wheel of Life", href: "/wheel-of-life", emoji: "🛞" },
   accounts: { title: "Accounts", href: "/accounts", emoji: "💰" },
-  tasks: { title: "Tasks", href: "/tasks", emoji: "✅" },
-  goals: { title: "Goals", href: "/tasks?goals=1", emoji: "🎯" },
-  files: { title: "Files", href: "/files", emoji: "📂" },
 };
 // People appears once someone is Close (People v1).
 const peopleCard = computed(() => rankHomePeople(contactsStore.contacts, contact => contact.reminderAt));
@@ -95,8 +93,6 @@ const openPerson = computed(() => contactsStore.contacts.find(contact => contact
 const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value) && (id !== "people" || peopleCard.value.state !== "hidden")));
 const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id)));
 const addCards = computed(() => available.value.filter(id => !HOME_INSIDE_TODAY.includes(id)).sort((a, b) => Number(visible.value.includes(b)) - Number(visible.value.includes(a))));
-const openTasks = computed(() => homeOpenTasks(tasks.value).slice(0, 6));
-const doneToday = computed(() => homeDoneToday(tasks.value));
 const todayTasks = computed(() => homeTodayTasks(tasks.value));
 const focus = computed(() => plan.focus.value);
 // Server setting (gratitude_settings.in_today), so it follows the owner across web and the apps.
@@ -131,15 +127,37 @@ let disposed = false;
 let todayGeneration = 0;
 let pressTimer: ReturnType<typeof setTimeout> | undefined;
 let pressOrigin: { x: number; y: number } | null = null;
-function save() { try { localStorage.setItem(storageKey.value, JSON.stringify(layout.value)); } catch { /* Layout remains usable when browser storage is unavailable. */ } }
-watch(storageKey, () => {
-  layout.value = emptyHomeLayout();
+// The layout lives on the install so web and the mobile apps show the same cards.
+// This browser keeps a copy only to paint Home before the install answers.
+let layoutGeneration = 0;
+function readLayout(value: unknown): HomeLayout {
+  const next = emptyHomeLayout();
+  const saved = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  for (const key of ["order", "hidden", "pinned", "earned"] as const) {
+    // Keep ids this client doesn't know, so it never drops cards another app added.
+    const list = saved[key];
+    if (Array.isArray(list)) next[key] = list.filter((v): v is string => typeof v === "string");
+  }
+  return next;
+}
+function cache() { try { localStorage.setItem(storageKey.value, JSON.stringify(layout.value)); } catch { /* Layout remains usable when browser storage is unavailable. */ } }
+function save() {
+  layoutGeneration++; cache();
+  api.put("/home/layout", layout.value).catch(error => toastFromUnknown(error, "Couldn't save your Home layout"));
+}
+async function loadLayout() {
+  const generation = ++layoutGeneration;
   try {
-    const saved = JSON.parse(localStorage.getItem(storageKey.value) || "null");
-    for (const key of ["order", "hidden", "pinned", "earned"] as const) {
-      if (Array.isArray(saved?.[key])) layout.value[key] = saved[key].filter((v: unknown) => typeof v === "string" && HOME_CARDS.includes(v as HomeCard));
-    }
-  } catch { /* Ignore malformed layout preferences. */ }
+    const result = await api.get<{ layout: HomeLayout | null }>("/home/layout");
+    if (disposed || generation !== layoutGeneration) return;
+    // First visit after the update: carry this browser's saved layout over once.
+    if (!result.layout) { if (Object.values(layout.value).some(list => list.length)) save(); return; }
+    layout.value = readLayout(result.layout); cache();
+  } catch { /* Keep the cached layout; the next refresh tries again. */ }
+}
+watch(storageKey, () => {
+  try { layout.value = readLayout(JSON.parse(localStorage.getItem(storageKey.value) || "null")); }
+  catch { layout.value = emptyHomeLayout(); }
 }, { immediate: true });
 function earn(card: HomeCard, hasData: boolean) { if (hasData && !layout.value.earned.includes(card)) { layout.value.earned.push(card); save(); } }
 function add(card: HomeCard) { layout.value.hidden = layout.value.hidden.filter(id => id !== card); if (!layout.value.pinned.includes(card)) layout.value.pinned.push(card); save(); toastSuccess(`${cards[card].title} added to Home`); }
@@ -192,11 +210,11 @@ function beginPress(event: PointerEvent, card: HomeCard) {
   pressTimer = setTimeout(() => { openMenu(card); }, 600);
 }
 function trackPress(event: PointerEvent) { if (pressOrigin && Math.hypot(event.clientX - pressOrigin.x, event.clientY - pressOrigin.y) > 10) cancelPress(); }
-async function resource(card: HomeCard, load: () => Promise<void>) {
-  try { await load(); if (!disposed) { delete errors.value[card]; unavailable.value = unavailable.value.filter(id => id !== card && !(card === 'mission' && id === 'goals')); } }
+async function resource(card: HomeResource, load: () => Promise<void>) {
+  try { await load(); if (!disposed) { delete errors.value[card]; unavailable.value = unavailable.value.filter(id => id !== card); } }
   catch (error) {
     if (disposed) return;
-    if (error instanceof ApiError && [403, 404].includes(error.status) && !["today", "inbox"].includes(card)) { unavailable.value.push(card, ...(card === 'mission' ? ['goals' as const] : [])); delete errors.value[card]; }
+    if (error instanceof ApiError && [403, 404].includes(error.status) && !["today", "inbox"].includes(card)) { unavailable.value.push(card); delete errors.value[card]; }
     else errors.value[card] = error instanceof Error ? error.message : "Couldn't refresh";
   }
 }
@@ -236,6 +254,7 @@ function money(stats: { thisMonthTotals?: { currency: string; amountCents: numbe
 async function refresh() {
   loading.value = true;
   await Promise.all([
+    loadLayout(),
     loadToday(),
     resource("inbox", async () => {
       const [status, inbox] = await Promise.all([api.get<{ mailbox?: { aliasAddress?: string }; sources?: { address: string; inboundEnabled?: boolean }[] }>("/mailbox"), api.get<{ messages: typeof mail.value }>("/mailbox/messages?direction=inbound&limit=8")]);
@@ -303,6 +322,7 @@ watch(day, loadToday);
 watch(() => props.active, active => {
   if (!active) return;
   const today = localDateKey(new Date());
+  void loadLayout();
   if (day.value !== today) day.value = today; else void loadToday();
 });
 onMounted(() => {
@@ -328,8 +348,7 @@ onBeforeUnmount(() => {
       <template #item="{ element: card }: { element: HomeCard }">
         <article :ref="el => setCardElement(card, el)" class="home-card" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header class="home-card__header">
-            <button v-if="card === 'wheel'" type="button" class="home-card__title" @click="openWheel"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></button>
-            <RouterLink v-else :to="cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
+            <RouterLink :to="cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
             <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
             <span v-else-if="card === 'journal' && journal[0]" class="home-card__detail">{{ homeDateLabel(journal[0].date) }}</span>
             <div class="home-card__controls">
@@ -380,20 +399,16 @@ onBeforeUnmount(() => {
                 <div class="home-actions"><RouterLink v-if="goalTasks.length > 3" to="/tasks" class="home-quiet">{{ goalTasks.length - 3 }} more</RouterLink><button type="button" class="home-quiet" @click="emit('suggest', `Add a task to my goal “${selectedGoal.title}” (goal ${selectedGoal.id}).`)"><UiIcon name="Plus" :size="16" />Add a task</button></div>
               </div>
               <div v-else class="home-actions"><button v-if="!mission" type="button" class="home-quiet" @click="emit('suggest', 'Help me write my mission.')"><UiIcon name="Plus" :size="16" />Write your mission</button><button type="button" class="home-quiet" @click="addGoal()"><UiIcon name="Plus" :size="16" />Add a goal</button></div>
+              <!-- The Wheel of Life lives in Mission now; the Mission redesign (me3-l59x.4) gives it a page of its own. -->
+              <button type="button" class="home-quiet" @click="openWheel"><span aria-hidden="true">🛞</span>Wheel of life</button>
             </template>
             <template v-else-if="card === 'journal'">
               <RouterLink v-if="journal[0]" :to="`/journal?date=${journal[0].date}`" class="home-writing"><strong v-if="journal[0].title">{{ journal[0].title }}.</strong> <span class="home-muted">{{ journalPreview(journal[0].body || journal[0].preview || '') }}</span></RouterLink>
               <RouterLink v-for="article in articles.slice(0, 2)" :key="article.id" :to="`/journal?article=${encodeURIComponent(article.id)}`" class="home-entry"><UiIcon name="FileText" :size="15" /><strong>{{ article.title || 'Untitled article' }}</strong><span class="home-muted">Draft</span></RouterLink>
               <template v-if="!journal.length && !articles.length"><p class="home-muted">Write about your day, or start an article.</p><RouterLink to="/journal" class="home-quiet"><UiIcon name="Plus" :size="16" />Start writing</RouterLink></template>
             </template>
-            <template v-else-if="card === 'wheel'">
-              <div class="home-wheel"><button type="button" class="home-wheel-open" aria-label="Open Wheel of Life" @click="openWheel"><HomeWheelChart :areas="wheel" :selected="lowestArea?.id" /></button><div v-if="lowestArea" class="home-wheel-summary"><strong><span aria-hidden="true">{{ lowestArea.emoji }}</span> {{ lowestArea.label }}</strong><span class="home-wheel-score">{{ lowestArea.value }}<small>/ 10</small></span><RouterLink v-for="goal in areaGoals(lowestArea.id).slice(0, 2)" :key="goal.id" to="/tasks?goals=1" class="home-area-goal">{{ goal.title }}</RouterLink><template v-if="!areaGoals(lowestArea.id).length"><span class="home-muted">Your lowest area. No goal for it yet.</span><button type="button" class="home-quiet" @click="addGoal(lowestArea.id)"><UiIcon name="Plus" :size="16" />Add a goal</button></template></div><div v-else><p class="home-muted">Score the areas of your life.</p><button type="button" class="home-quiet" @click="openWheel(); startCheckIn()"><UiIcon name="Plus" :size="16" />Check in</button></div></div>
-            </template>
             <template v-else-if="card === 'accounts'"><div v-if="accountSummary" class="home-stats"><div><span class="home-muted">Income this month</span><strong>{{ accountSummary.income }}</strong></div><div><span class="home-muted">Expenses this month</span><strong>{{ accountSummary.expense }}</strong></div></div><RouterLink v-else to="/accounts" class="home-quiet">Open Accounts<UiIcon name="ArrowRight" :size="16" /></RouterLink></template>
             <template v-else-if="card === 'people'"><template v-if="peopleCard.state === 'people'"><button v-for="person in peopleCard.people" :key="person.id" type="button" class="home-person" @click="openPersonId = person.id"><PersonAvatar :contact="person" :size="40" /><strong>{{ firstName(person.name) }}</strong><span class="home-muted home-person__since">{{ formatSinceShort(person.lastInTouchAt) || 'Not yet' }}</span></button></template><p v-else class="home-muted">All caught up.</p></template>
-            <template v-else-if="card === 'tasks'"><div v-for="task in openTasks" :key="task.id" class="home-line"><button type="button" class="home-task-check" :aria-label="`Complete ${task.title}`" :disabled="busy.includes(task.id)" @click="complete(task)"><UiIcon name="Circle" :size="20" /></button><RouterLink :to="`/tasks?task=${encodeURIComponent(task.id)}`">{{ task.title }}</RouterLink></div><p v-if="!openTasks.length" class="home-muted">No open tasks.</p><p v-if="doneToday" class="home-muted">{{ doneToday }} done today</p></template>
-            <template v-else-if="card === 'goals'"><RouterLink v-for="goal in activeGoals.slice(0, 3)" :key="goal.id" to="/tasks?goals=1" class="home-line"><span aria-hidden="true">{{ areaFor(goal.areaId)?.emoji || '🎯' }}</span><span>{{ goal.title }}</span></RouterLink><button v-if="!activeGoals.length" type="button" class="home-quiet" @click="addGoal()"><UiIcon name="Plus" :size="16" />Add a goal</button></template>
-            <RouterLink v-else to="/files" class="home-quiet">Open your files<UiIcon name="ArrowRight" :size="16" /></RouterLink>
           </div>
         </article>
       </template>

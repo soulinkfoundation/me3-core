@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS home_layout (
+    user_id TEXT PRIMARY KEY REFERENCES owner_profile(id) ON DELETE CASCADE,
+    layout_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
