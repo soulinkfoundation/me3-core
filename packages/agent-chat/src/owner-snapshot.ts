@@ -4,6 +4,7 @@ import {
   summarizeMe3AgentContextManifest,
   type Me3AgentContextBudget,
   type Me3AgentContextManifest,
+  type Me3AgentContextPrivateMemory,
   type Me3AgentContextProject,
   type Me3AgentContextSource,
 } from "@me3/knowledge";
@@ -58,6 +59,15 @@ type ProjectSnapshotRow = {
   open_task_count: number | string | null;
 };
 
+type MemorySnapshotRow = {
+  id: string;
+  memory_kind: string | null;
+  scope_kind: string | null;
+  title: string | null;
+  body: string | null;
+  updated_at: string | null;
+};
+
 type MeJsonSnapshotRow = {
   content: unknown;
   path: string;
@@ -68,6 +78,10 @@ const OWNER_SNAPSHOT_PROMPT_BUDGET_CHARS = 8_000;
 const MAX_ME_JSON_SNAPSHOT_CHARS = 2_600;
 const MAX_PROJECT_DESCRIPTION_CHARS = 240;
 const DEFAULT_MISSION_STATEMENT_TEMPLATE_MARKER = "[who/what]";
+// Owner preferences sit near the top so snapshot trimming never drops them.
+const MAX_MEMORY_SNAPSHOT_ITEMS = 30;
+const MAX_MEMORY_SNAPSHOT_CHARS = 2_000;
+const MAX_MEMORY_ITEM_CHARS = 240;
 
 export async function loadOwnerSnapshotContext(input: {
   db: OwnerSnapshotDb;
@@ -75,12 +89,13 @@ export async function loadOwnerSnapshotContext(input: {
   owner: OwnerSnapshotProfile | null;
   meJsonUrl: string | null;
 }): Promise<OwnerSnapshotContext> {
-  const [missionRow, wheelRow, projectRows, privateMeJsonRow, publicMeJsonRow] = await Promise.all([
+  const [missionRow, wheelRow, projectRows, privateMeJsonRow, publicMeJsonRow, memoryRows] = await Promise.all([
     loadMissionSnapshot(input.db, input.ownerId),
     loadWheelSnapshot(input.db, input.ownerId),
     loadProjectSnapshots(input.db, input.ownerId),
     loadPrivateMeJsonSnapshot(input.db, input.ownerId),
     loadPublicMeJsonSnapshot(input.db, input.ownerId),
+    loadMemorySnapshots(input.db, input.ownerId),
   ]);
 
   const privateMeJson = parseMeJson(privateMeJsonRow?.content);
@@ -92,8 +107,10 @@ export async function loadOwnerSnapshotContext(input: {
   const compactMeJson = compactMeJsonForPrompt(meJson);
   const lifeSnapshot = resolveLifeSnapshot(wheelRow);
   const projects = projectRows.map(toContextProject);
+  const memories = selectMemoriesForPrompt(memoryRows);
   const prompt = buildOwnerSnapshotPrompt({
     owner: input.owner,
+    memories,
     missionStatement,
     goals,
     meJson: compactMeJson,
@@ -152,6 +169,7 @@ export async function loadOwnerSnapshotContext(input: {
           }),
         }
       : null,
+    privateMemory: memories.map(toContextMemory),
     projects,
     budget,
   });
@@ -254,8 +272,60 @@ async function loadPublicMeJsonSnapshot(
     .first<MeJsonSnapshotRow>();
 }
 
+// Only active memories reach the agent: agent-proposed ones wait in needs_review until the owner
+// approves them, and forgetting archives them.
+async function loadMemorySnapshots(
+  db: OwnerSnapshotDb,
+  ownerId: string,
+): Promise<MemorySnapshotRow[]> {
+  const rows = await db.prepare(
+    `SELECT id, memory_kind, scope_kind, title, body, updated_at
+     FROM mission_private_memory
+     WHERE user_id = ? AND review_status = 'active'
+     ORDER BY updated_at DESC, id ASC
+     LIMIT ?`,
+  )
+    .bind(ownerId, MAX_MEMORY_SNAPSHOT_ITEMS)
+    .all<MemorySnapshotRow>();
+  return rows.results || [];
+}
+
+type SnapshotMemory = { row: MemorySnapshotRow; text: string };
+
+function selectMemoriesForPrompt(rows: MemorySnapshotRow[]): SnapshotMemory[] {
+  const selected: SnapshotMemory[] = [];
+  let used = 0;
+  for (const row of rows) {
+    const text = normalizeText(row.body, MAX_MEMORY_ITEM_CHARS);
+    if (!text) continue;
+    if (used + text.length > MAX_MEMORY_SNAPSHOT_CHARS) break;
+    used += text.length;
+    selected.push({ row, text });
+  }
+  return selected;
+}
+
+function toContextMemory(memory: SnapshotMemory): Me3AgentContextPrivateMemory {
+  return {
+    id: memory.row.id,
+    kind: memory.row.memory_kind || "owner_note",
+    title: memory.row.title,
+    body: memory.text,
+    scope: memory.row.scope_kind,
+    source: source({
+      id: `memory:${memory.row.id}`,
+      kind: "private_memory",
+      label: "Saved memory",
+      visibility: "private",
+      reason: "Owner-approved preference for how ME3 works with the owner.",
+      updatedAt: memory.row.updated_at,
+    }),
+  };
+}
+
 function buildOwnerSnapshotPrompt(input: {
   owner: OwnerSnapshotProfile | null;
+  memories: SnapshotMemory[];
   missionStatement: string | null;
   goals: string[];
   meJson: Record<string, unknown> | null;
@@ -269,6 +339,9 @@ function buildOwnerSnapshotPrompt(input: {
     `- Name: ${input.owner?.name || input.owner?.username || "Not set"}`,
     `- Timezone: ${input.owner?.timezone || "Not set"}`,
     `- Assistant name: ${input.owner?.assistantName || "ME3"}`,
+    "",
+    "How the owner wants you to work (saved or approved by the owner, newest first):",
+    ...(input.memories.length ? input.memories.map((memory) => `- ${memory.text}`) : ["- Nothing saved yet"]),
     "",
     "Mission statement:",
     `- ${input.missionStatement || "Not set"}`,
