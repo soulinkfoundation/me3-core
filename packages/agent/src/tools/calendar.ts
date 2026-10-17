@@ -1,5 +1,5 @@
 import { cancelCalendarEventForAgent, createCalendarEventForAgent, getCancellableCalendarEventForAgent, readCalendarEventsForAgent, rescheduleCalendarEventForAgent, type CalendarAgentCreateInput, type CalendarAgentEvent, type CalendarAgentReadInput, type CalendarAgentRescheduleInput } from "@me3-core/plugin-calendar";
-import { readUpcomingBookingsForAgent } from "../../../agent-chat/src/bookings";
+import { readBookingsInRangeForAgent, readUpcomingBookingsForAgent } from "../../../agent-chat/src/bookings";
 import { domainTool, ok, requiredString, services } from "./common";
 import { approval, rememberTargets, requireTarget } from "./targets";
 
@@ -7,7 +7,10 @@ export function calendarTools() {
   return [
     domainTool("core.calendar.events.list", async (args, context) => {
       const result = await readCalendarEventsForAgent(context.db, context.ownerId, context.ownerTimezone, args as CalendarAgentReadInput);
-      return ok({ ...result, ...await rememberTargets(context, "calendar event", result.events, event => event.title) });
+      // Website bookings are part of the owner's calendar, so every calendar read includes them.
+      // Best effort: a bookings failure must never break the calendar answer.
+      const bookings = await readBookingsInRangeForAgent(context.db, context.ownerId, { dateFrom: result.dateFrom, dateTo: result.dateTo, timezone: result.timezone }).catch(() => null);
+      return ok({ ...result, ...(bookings ? { bookings } : { bookingsUnavailable: true }), ...await rememberTargets(context, "calendar event", result.events, event => event.title) });
     }, { fastPath: { mode: "arguments", candidates: "calendar" } }),
     domainTool("core.calendar.availability", async (args, context) => {
       const service = services(context).scheduling?.availability;

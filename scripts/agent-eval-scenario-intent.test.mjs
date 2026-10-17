@@ -5,7 +5,10 @@ import { createSeededAgentEvalInstallation } from "./agent-eval-seed.mjs";
 import { createRuntimeAdapter } from "./agent-eval-adapters.mjs";
 import { createSeededEvalServices } from "./agent-eval-services.mjs";
 
-const cases = () => createAgentEvalScenarios("2026-10-11");
+// Seeds are relative to the base date and reminder reads only return upcoming
+// items, so a fixed past date makes these scenarios expire. Use today in Dublin.
+const BASE_DATE = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Dublin", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const cases = () => createAgentEvalScenarios(BASE_DATE);
 const resolveVerdicts = (turn, seed) => typeof turn.intentVerdicts === "function" ? turn.intentVerdicts(seed) : turn.intentVerdicts;
 const move = id => ({ decision: "allow", selectedCandidateId: id, authorizedCall: { name: "core_reminders_update", arguments: { reminderId: id, date: "2027-01-16", time: "09:30", timezone: "Europe/Dublin" } } });
 
@@ -44,7 +47,7 @@ test("numeric positive fixtures explicitly publish the chosen action rather than
 });
 
 test("created reminder intent resolves only the unique authoritative owner/source-date record after reopen", () => {
-  const seed = createSeededAgentEvalInstallation("2026-10-11");
+  const seed = createSeededAgentEvalInstallation(BASE_DATE);
   try {
     const turn = cases().find(item => item.id === "historical-reminder-winter-move-reopen").turns[1];
     assert.equal(typeof turn.intentVerdicts, "function");
@@ -66,7 +69,7 @@ test("created reminder intent resolves only the unique authoritative owner/sourc
 // semantic judge is simulated using independently authored scenario truths.
 async function runScenario(id, modifyCalls) {
   const scenario = cases().find(item => item.id === id);
-  const seed = createSeededAgentEvalInstallation("2026-10-11");
+  const seed = createSeededAgentEvalInstallation(BASE_DATE);
   try {
     scenario.setup?.(seed);
     const before = snapshotEvalState(seed);

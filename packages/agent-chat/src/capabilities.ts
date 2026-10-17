@@ -274,7 +274,7 @@ export const CORE_CHAT_CAPABILITIES = [
     pluginId: "me3.calendar",
     ownerFacingLabel: "List calendar events",
     summary:
-      "Read the owner's personal and imported calendar events for an inclusive date range of up to 31 days.",
+      "Read the owner's calendar for an inclusive date range of up to 31 days: personal and imported events plus confirmed website bookings (bookings are read-only here).",
     category: "calendar",
     handler: {
       surface: "chat",
@@ -1370,7 +1370,7 @@ export const CORE_CHAT_CAPABILITIES = [
     owner: "core",
     pluginId: null,
     ownerFacingLabel: "Search owner content",
-    summary: "Search the owner's tasks and Journal entries by title or body, returning lightweight candidates with stable IDs.",
+    summary: "Search the owner's tasks and Journal entries for specific words in the title or body, returning lightweight candidates with stable IDs. Requires non-empty search words; to list, rank or prioritise tasks use core_mission_task_list instead.",
     category: "assistant",
     handler: {
       surface: "chat",

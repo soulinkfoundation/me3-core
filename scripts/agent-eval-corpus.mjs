@@ -1,10 +1,16 @@
 import { createAgentEvalScenarios } from "./agent-eval-scenarios.mjs";
 import { createConversationEvalScenarios } from "./agent-eval-conversation.mjs";
+import { createFindingsEvalScenarios } from "./agent-eval-findings.mjs";
 import { createQuoteEvalScenarios, snapshotQuoteEvalState, checkQuoteEvalState } from "./agent-eval-quote-scenarios.mjs";
 
 export function createAgentEvalCorpus(baseDate, supplement = "") {
-  if (!["", "quotes", "conversation"].includes(supplement)) throw Error("Unknown eval supplement; use --supplement=quotes, --supplement=conversation or omit it.");
+  if (!["", "quotes", "conversation", "findings"].includes(supplement)) throw Error("Unknown eval supplement; use --supplement=quotes, --supplement=conversation, --supplement=findings or omit it.");
   const originals = createAgentEvalScenarios(baseDate), quotes = supplement === "quotes" ? createQuoteEvalScenarios() : [];
+  if (supplement === "findings") {
+    const findings = createFindingsEvalScenarios();
+    return { scenarios: [...originals, ...findings], originalIds: originals.map(s => s.id), probeIds: [], supplement,
+      version: "original85-plus-findings-v1", originalCount: originals.length, supplementCount: findings.length };
+  }
   if (supplement === "conversation") {
     const conversation = createConversationEvalScenarios();
     return { scenarios: [...originals, ...conversation], originalIds: originals.map(s => s.id), probeIds: [], supplement,

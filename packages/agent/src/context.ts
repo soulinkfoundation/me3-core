@@ -1,6 +1,9 @@
 import type { AgentMessage } from "./types";
 
-export const AGENT_CONTEXT_LIMITS = Object.freeze({ maxCharacters: 64_000, maxMessages: 60, maxToolResultCharacters: 5_000, olderExcerptCharacters: 4_000 });
+// Current-turn tool results get up to 16k characters each so lists and mailbox
+// searches are not clipped (which made replies hedge about truncation); older
+// history is still dropped first to stay within maxCharacters.
+export const AGENT_CONTEXT_LIMITS = Object.freeze({ maxCharacters: 64_000, maxMessages: 60, maxToolResultCharacters: 16_000, olderExcerptCharacters: 4_000 });
 export type AgentContextLimits = { maxCharacters?: number; maxMessages?: number; maxToolResultCharacters?: number; olderExcerptCharacters?: number };
 const size = (value: unknown) => JSON.stringify(value).length;
 
