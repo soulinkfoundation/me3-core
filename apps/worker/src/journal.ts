@@ -81,14 +81,25 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
+const PREVIEW_TAG = /<\/?[a-z][a-z0-9]*\b[^>]*>/gi;
+const PREVIEW_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+function decodePreviewEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, name: string) => {
+    const key = name.toLowerCase();
+    if (key.startsWith("#")) { const code = key[1] === "x" ? parseInt(key.slice(2), 16) : Number(key.slice(1)); return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match; }
+    return PREVIEW_ENTITIES[key] ?? match;
+  });
+}
+// Bodies can hold escaped (even double-escaped) markup, so strip and decode until nothing changes;
+// otherwise the Library shows literal tags.
 function journalBodyPreview(body: string): string {
-  return body
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 180);
+  let text = body;
+  for (let pass = 0; pass < 5; pass++) {
+    const next = decodePreviewEntities(text.replace(PREVIEW_TAG, " "));
+    if (next === text) break;
+    text = next;
+  }
+  return text.replace(PREVIEW_TAG, " ").replace(/\s+/g, " ").trim().slice(0, 180);
 }
 
 function rowHasJournalContent(row: JournalEntryRow): boolean {

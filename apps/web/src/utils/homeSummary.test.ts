@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, focusGoal, goalsWithFocus } from "./homeSummary";
+import { homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, plainPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, focusGoal, goalsWithFocus } from "./homeSummary";
 
 describe("Home summaries", () => {
   // Failure modes: board order hides due work, archived/done work leaks into open tasks,
@@ -27,6 +27,13 @@ describe("Home summaries", () => {
     expect(journalPreview("- [ ] **Draft reel** https://instagram.com/very/long?url=1. Next idea.")).toBe("Draft reel.");
     expect(journalPreview("- [x] [Write a reel](https://instagram.com/p/long) today. More notes.")).toBe("Write a reel today.");
     expect(journalPreview("<p>Hello &amp; welcome.</p><p>Next sentence.</p>")).toBe("Hello & welcome.");
+  });
+  // Failure mode: escaped markup (&lt;p&gt;) decoded after stripping tags shows up as literal HTML.
+  it("never shows markup, even when the body holds escaped HTML", () => {
+    expect(journalPreview("&lt;p&gt;Escaped &lt;strong&gt;markup&lt;/strong&gt;.&lt;/p&gt;")).toBe("Escaped markup.");
+    expect(plainPreview("&amp;lt;p&amp;gt;Double escaped&amp;lt;/p&amp;gt;<p>- [ ] Call Ada</p>")).toBe("Double escaped Call Ada");
+    expect(plainPreview("<p>5 &lt; 6 is true</p>")).toBe("5 < 6 is true");
+    expect(plainPreview(`<p>${"word ".repeat(100)}</p>`).length).toBeLessThanOrEqual(180);
   });
   it("formats journal date keys as local calendar dates", () => {
     expect(homeDateLabel("2026-10-08", now, "en-GB")).toBe("Today");

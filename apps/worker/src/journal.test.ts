@@ -293,6 +293,14 @@ describe("Journal plugin entries", () => {
     });
   });
 
+  // Failure mode: escaped markup in a body reaches the Library list as literal HTML.
+  it("keeps escaped HTML out of archive previews", async () => {
+    const env = createJournalEnv([
+      { id: "escaped", user_id: "owner", entry_date: "2026-05-22", title: null, body: "&lt;p&gt;Escaped &lt;em&gt;markup&lt;/em&gt;&lt;/p&gt;&amp;lt;br&amp;gt;5 &amp;lt; 6", body_format: "html", metadata_json: "{}", created_at: "2026-05-22T09:00:00Z", updated_at: "2026-05-22T09:00:00Z", archived_at: null },
+    ]);
+    await expect(listJournalArchive(env, "owner")).resolves.toMatchObject({ entries: [{ id: "escaped", preview: "Escaped markup 5 < 6" }] });
+  });
+
   it("soft-deletes an entry from day reads and archive lists", async () => {
     const env = createJournalEnv([
       {

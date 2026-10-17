@@ -26,7 +26,7 @@ import TodayFocusLine from "../components/today/TodayFocusLine.vue";
 import TodayTasks from "../components/today/TodayTasks.vue";
 import { useAppToast } from "../composables/useAppToast";
 import { useTodayPlan } from "../composables/useTodayPlan";
-import { homeTodayTasks, type HomeTask } from "../utils/homeSummary";
+import { homeTodayTasks, plainPreview, type HomeTask } from "../utils/homeSummary";
 
 definePage({
   meta: {
@@ -1388,7 +1388,7 @@ onBeforeUnmount(() => {
             @click="selectArchiveEntry(entry)"
           >
             <span class="journal__library-row-head"><strong>{{ entry.date === todayKey() ? 'Today' : formatDaySwitcherDate(entry.date) }}</strong><small>{{ entry.date === todayKey() ? formatArchiveDate(entry.date) : `${archiveWordCount(entry)} words` }}</small></span>
-            <span v-if="entry.preview">{{ entry.preview }}</span>
+            <span v-if="entry.preview">{{ plainPreview(entry.preview) }}</span>
           </button>
           <div class="journal__archive-row-actions" @click.stop>
             <Button

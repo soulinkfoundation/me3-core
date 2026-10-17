@@ -64,12 +64,36 @@ export function homeDateLabel(value: string, now = new Date(), locale?: string):
   if (localDateKey(date) === localDateKey(now)) return "Today";
   return new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short" }).format(date).replace(/,/g, "");
 }
-export function journalPreview(raw: string): string {
-  const plain = raw.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+const TAG = /<\/?([a-z][a-z0-9]*)\b[^>]*>/gi;
+const BLOCK_TAG = /^(p|div|li|ul|ol|br|h[1-6]|blockquote|pre|tr)$/i;
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+function decodeEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, name: string) => {
+    const key = name.toLowerCase();
+    if (key.startsWith("#")) { const code = key[1] === "x" ? parseInt(key.slice(2), 16) : Number(key.slice(1)); return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match; }
+    return ENTITIES[key] ?? match;
+  });
+}
+// Bodies can hold escaped (even double-escaped) markup, so strip and decode until nothing changes.
+function plainText(raw: string): string {
+  const strip = (text: string) => text.replace(TAG, (_, name: string) => BLOCK_TAG.test(name) ? "\n" : "");
+  let text = raw;
+  for (let pass = 0; pass < 5; pass++) {
+    const next = decodeEntities(strip(text));
+    if (next === text) break;
+    text = next;
+  }
+  return strip(text)
     .replace(/\[([^\]]+)\]\(https?:\/\/[^)]+\)/g, "$1")
     .replace(/https?:\/\/\S+/g, url => /[.!?]$/.test(url) ? url.slice(-1) : "")
     .replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s*)?(?:\[[ xX]\]\s*)?/gm, "")
     .replace(/[*_`~]/g, "").replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
+}
+/** Plain text for list rows such as the Library: never markup, at most 180 characters. */
+export function plainPreview(raw: string): string {
+  return plainText(raw).slice(0, 180);
+}
+export function journalPreview(raw: string): string {
+  const plain = plainText(raw);
   return plain.match(/^.*?[.!?](?=\s|$)/)?.[0] || plain || "No text yet";
 }
