@@ -92,6 +92,13 @@ export function assertUnchanged(expected: unknown, current: unknown, label: stri
   if (stableSnapshot(expected) !== stableSnapshot(current)) throw new Error(`${label} changed since it was read. Read it again before changing it.`);
 }
 
+/** Owner-facing date and time for approval cards, e.g. "Thu 22 Oct, 10:00". */
+export function ownerDateTime(context: Pick<AgentToolContext, "ownerTimezone">, iso: string): string {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-GB", { timeZone: context.ownerTimezone, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
 export function approval(context: AgentToolContext, title: string, summary: string, details: Record<string, unknown> = {}): AgentToolResult | null {
   return context.approved ? null : { status: "needs_approval", approval: { title, summary, ...details } };
 }

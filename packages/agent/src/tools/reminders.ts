@@ -1,7 +1,7 @@
 import { resolveAgentCalendarStart } from "@me3-core/plugin-calendar";
 import { cancelAgentReminder, createAgentReminder, getPendingAgentReminder, listPendingAgentReminders, parseAgentReminderInput, updateAgentReminder, type AgentReminder, type AgentReminderInput } from "../../../agent-chat/src/reminders";
 import { domainTool, idProperty, objectSchema, ok, optionalString, requiredString, resultOrThrow } from "./common";
-import { approval, assertUnchanged, rememberTargets, requireTarget } from "./targets";
+import { approval, ownerDateTime, assertUnchanged, rememberTargets, requireTarget } from "./targets";
 import type { AgentToolContext } from "../types";
 
 const reminderTimeProperties = {
@@ -56,7 +56,7 @@ export function reminderTools() {
       const current = await getPendingAgentReminder({ DB: context.db }, context.ownerId, id);
       if (!current) throw new Error("Reminder not found.");
       assertUnchanged(expected, current, "Reminder");
-      const pending = approval(context, "Cancel reminder", `${current.title} at ${current.remindAt}`, { target: current, targetDomain: "reminder" });
+      const pending = approval(context, "Cancel reminder", `${current.title}, ${ownerDateTime(context, current.remindAt)}`, { target: current, targetDomain: "reminder" });
       if (pending) return pending;
       context.signal.throwIfAborted();
       resultOrThrow(await cancelAgentReminder({ DB: context.db }, context.ownerId, id, expected));

@@ -1,7 +1,7 @@
 import { cancelCalendarEventForAgent, createCalendarEventForAgent, getCancellableCalendarEventForAgent, readCalendarEventsForAgent, rescheduleCalendarEventForAgent, type CalendarAgentCreateInput, type CalendarAgentEvent, type CalendarAgentReadInput, type CalendarAgentRescheduleInput } from "@me3-core/plugin-calendar";
 import { readBookingsInRangeForAgent, readUpcomingBookingsForAgent } from "../../../agent-chat/src/bookings";
 import { domainTool, ok, requiredString, services } from "./common";
-import { approval, rememberTargets, requireTarget } from "./targets";
+import { approval, ownerDateTime, rememberTargets, requireTarget } from "./targets";
 
 export function calendarTools() {
   return [
@@ -38,7 +38,7 @@ export function calendarTools() {
       const expected = await requireTarget<CalendarAgentEvent>(context, "calendar event", id);
       const current = await getCancellableCalendarEventForAgent(context.db, context.ownerId, id);
       if (current.title !== expected.title || current.notes !== expected.notes || current.location !== expected.location || current.starts_at !== expected.startsAt || current.ends_at !== expected.endsAt || current.timezone !== expected.timezone) throw new Error("Calendar event changed since it was read. List it again before cancelling it.");
-      const pending = approval(context, "Cancel calendar event", `${expected.title}, ${expected.startsAt}`, { target: expected, targetDomain: "calendar event" });
+      const pending = approval(context, "Cancel calendar event", `${expected.title}, ${ownerDateTime(context, expected.startsAt)}`, { target: expected, targetDomain: "calendar event" });
       if (pending) return pending;
       context.signal.throwIfAborted();
       return ok({ cancelled: true, event: await cancelCalendarEventForAgent(context.db, context.ownerId, { eventId: id, startsAt: expected.startsAt, endsAt: expected.endsAt }, expected) });
