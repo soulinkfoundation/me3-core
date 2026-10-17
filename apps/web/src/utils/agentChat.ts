@@ -134,6 +134,10 @@ export type AgentChatEmailDraftAction = AgentChatEmailDraft & {
   status: "draft" | "saved" | "sent" | "failed";
   statusLabel: string;
   savedDraftId: string | null;
+  /** Contact to remember a typed address on; set when ME3 knew the person but not their email. */
+  contactId: string | null;
+  missingAddress: boolean;
+  saveToContact: boolean;
   busy: "save" | "send" | null;
   error: string | null;
 };

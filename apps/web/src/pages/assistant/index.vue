@@ -2309,6 +2309,9 @@ function createAgentChatEmailDraftAction(
     status: "draft",
     statusLabel: isValidEmailAddress(to) ? "Ready" : "Needs recipient's email",
     savedDraftId: null,
+    contactId: null,
+    missingAddress: false,
+    saveToContact: false,
     busy: null,
     error: null,
   };
@@ -2330,6 +2333,9 @@ function createServerAgentChatEmailDraftAction(
     status: draft.draftId ? "saved" : "draft",
     statusLabel: draft.draftId ? "Saved draft" : isValidEmailAddress(draft.to) ? "Ready" : "Needs recipient's email",
     savedDraftId: draft.draftId,
+    contactId: draft.contactId,
+    missingAddress: !draft.to && Boolean(draft.recipientName),
+    saveToContact: true,
     busy: null,
     error: null,
   };
@@ -2351,6 +2357,9 @@ function createSavedAgentChatEmailDraftAction(
     status: "saved",
     statusLabel: "Saved draft",
     savedDraftId: draft.id,
+    contactId: null,
+    missingAddress: false,
+    saveToContact: false,
     busy: null,
     error: null,
   };
@@ -2434,6 +2443,7 @@ async function hydrateAssistantEmailDraftRecipient(
   if (existingMatch?.email) {
     action.to = existingMatch.email;
     action.statusLabel = "Ready";
+    action.missingAddress = false;
     return;
   }
 
@@ -2446,6 +2456,7 @@ async function hydrateAssistantEmailDraftRecipient(
   if (loadedMatch?.email) {
     action.to = loadedMatch.email;
     action.statusLabel = "Ready";
+    action.missingAddress = false;
   }
 }
 
@@ -2559,6 +2570,7 @@ async function saveAgentChatEmailDraftAction(
     if (!draftId) throw new Error("Draft was not saved.");
 
     action.savedDraftId = draftId;
+    await rememberAgentChatEmailDraftAddress(action);
     action.to = response.draft?.toAddress || action.to;
     action.subject = response.draft?.subject || action.subject;
     action.body = response.draft?.body || action.body;
@@ -2584,6 +2596,21 @@ async function saveAgentChatEmailDraftAction(
   } finally {
     action.busy = null;
   }
+}
+
+/** Adds a typed address to the recipient's contact; never blocks the email itself. */
+async function rememberAgentChatEmailDraftAddress(action: AgentChatEmailDraftAction) {
+  if (!action.missingAddress || !action.saveToContact || !action.toName) return;
+  const email = action.to.trim();
+  const saved = action.contactId
+    ? await contactsStore.updateContact(action.contactId, { email })
+    : await contactsStore.createContact({ name: action.toName, email });
+  if (saved) action.missingAddress = false;
+}
+
+function assistantEmailDraftContactLabel(action: AgentChatEmailDraftAction) {
+  const firstName = action.toName?.trim().split(/\s+/)[0] || "them";
+  return action.contactId ? `Save to ${firstName}'s contact` : `Add ${firstName} to contacts`;
 }
 
 function mailboxDraftIdForActionCard(card: AgentChatActionCard): string | null {
@@ -3300,6 +3327,17 @@ function messageFromUnknown(err: unknown, fallback: string) {
                     ></textarea>
                   </label>
                 </div>
+                <label
+                  v-if="message.emailDraftAction.missingAddress"
+                  class="assistant-email-draft-card__contact"
+                >
+                  <input
+                    v-model="message.emailDraftAction.saveToContact"
+                    type="checkbox"
+                    :disabled="message.emailDraftAction.busy !== null"
+                  />
+                  <span>{{ assistantEmailDraftContactLabel(message.emailDraftAction) }}</span>
+                </label>
                 <p
                   v-if="assistantEmailDraftHint(message.emailDraftAction)"
                   class="assistant-email-draft-card__hint"
@@ -5162,6 +5200,19 @@ function messageFromUnknown(err: unknown, fallback: string) {
 .assistant-email-draft-card--failed .assistant-email-draft-card__title p,
 .assistant-email-draft-card__hint {
   color: color-mix(in oklab, #a32323 82%, var(--ui-text));
+}
+
+.assistant-email-draft-card__contact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ui-text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.assistant-email-draft-card__contact input {
+  accent-color: var(--ui-accent);
 }
 
 .assistant-email-draft-card__fields {
