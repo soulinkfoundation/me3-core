@@ -139,7 +139,7 @@ onBeforeUnmount(() => {
         <RouterLink v-for="destination in destinations" :key="destination.path" :to="destination.path" class="profile-menu__row" role="menuitem" tabindex="-1" :aria-label="destination.label" :aria-current="route.fullPath === destination.path ? 'page' : undefined" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">{{ destination.emoji }}</span><span>{{ destination.label }}</span></RouterLink>
       </nav>
       <div class="profile-menu__settings">
-        <RouterLink to="/assistant?view=chat&settings=context" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Brain" :size="18" />Your agent</RouterLink>
+        <RouterLink to="/agent" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Brain" :size="18" />Your agent</RouterLink>
         <RouterLink to="/settings" class="profile-menu__row" aria-label="Settings" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Settings" :size="18" />Settings</RouterLink>
       </div>
       <div class="profile-menu__footer">

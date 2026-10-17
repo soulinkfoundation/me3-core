@@ -163,6 +163,12 @@ router.beforeEach(async (to, _from, next) => {
     return;
   }
 
+  // Agent context and activity moved from a Chat dialog to the Your agent page.
+  if ((to.path === "/assistant" || to.path === "/assistant/") && to.query.settings) {
+    next({ path: "/agent", replace: true });
+    return;
+  }
+
   if (to.path === "/messages") {
     next({
       path: "/email",
@@ -202,16 +208,6 @@ router.beforeEach(async (to, _from, next) => {
   ) {
     next({
       path: "/email",
-      query: to.query,
-      hash: to.hash,
-      replace: true,
-    });
-    return;
-  }
-
-  if (to.path === "/agent" || to.path === "/agent/") {
-    next({
-      path: "/assistant",
       query: to.query,
       hash: to.hash,
       replace: true,
