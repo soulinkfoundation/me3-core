@@ -11,6 +11,7 @@ import { socialTools } from "./social";
 import { taskTools } from "./tasks";
 import { webTools } from "./web";
 import { targetPresentationTool } from "./presentations";
+import { toolGroupFor } from "../tool-groups";
 
 // Only single-ID domain adapters can offer this exact-action selection contract.
 const targetContracts: Record<string, AgentTargetMetadata> = {
@@ -33,6 +34,7 @@ export function createDomainTools(): AgentTool[] {
   const tools = [...calendarTools(), ...journalTools(), ...quoteTools(), ...mailboxTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...taskTools(), ...webTools(), ...imageTools()];
   for (const tool of tools) {
     tool.target = targetContracts[tool.name];
+    tool.group = toolGroupFor(tool.name);
     if (tool.approval === "required") {
       // Share the read-only validation prefix; each consequential executor returns before its effect.
       tool.prepareApproval = (args, context) => tool.execute(args, { ...context, approved: false, approvalData: undefined });

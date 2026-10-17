@@ -70,6 +70,28 @@ describe("from scratch agent loop", () => {
       expect(replay).toEqual([]);
     }
   });
+  it("offers deferred tool groups only after the model loads them", async () => {
+    const f = fixture(), seen: string[][] = [];
+    let effects = 0;
+    const deferred: AgentTool = { ...f.tool, name: "core_sites_landing_page_list", group: "sites", effect: "read", parameters: { type: "object", properties: {}, additionalProperties: false }, execute: async () => { effects++; return { status: "ok" }; } };
+    const steps = [
+      { text: "", toolCalls: [{ id: "load", name: "core_tools_load", arguments: { groups: ["sites"] } }] },
+      { text: "", toolCalls: [{ id: "list", name: "core_sites_landing_page_list", arguments: {} }] },
+      { text: "Done", toolCalls: [] },
+    ];
+    const model: AgentModel = { id: "test", step: async ({ tools }) => { seen.push(tools.map(tool => tool.name)); return steps.shift()!; } };
+    const result = await runAgentTurn({ ...f, tools: [f.tool, deferred], messages: [], model });
+    expect(result.status).toBe("complete");
+    expect(seen[0]).toEqual(["save", "core_tools_load"]);
+    expect(seen[1]).toEqual(["save", "core_sites_landing_page_list", "core_tools_load"]);
+    expect(effects).toBe(1);
+  });
+  it("omits the tool loader when no deferred group is available", async () => {
+    const f = fixture(), seen: string[][] = [];
+    const model: AgentModel = { id: "test", step: async ({ tools }) => { seen.push(tools.map(tool => tool.name)); return { text: "Hi", toolCalls: [] }; } };
+    await runAgentTurn({ ...f, tools: [f.tool], messages: [], model });
+    expect(seen).toEqual([["save"]]);
+  });
   it("tags provider text and does not duplicate it at completion", async () => {
     const f = fixture(), events: AgentEvent[] = [];
     const result = await runAgentTurn({ ...f, tools: [], messages: [], model: f.model([{ text: "Hello", toolCalls: [] }]), onEvent: event => { events.push(event); } });

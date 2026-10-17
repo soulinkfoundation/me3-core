@@ -78,6 +78,8 @@ export interface AgentTool {
   target?: AgentTargetMetadata;
   fastPath?: import("./fast-path").AgentFastPathTool;
   endsTurn?: boolean;
+  /** Deferred group; the model sees the tool only after loading the group (see tool-groups.ts). */
+  group?: string;
   prepareApproval?(args: Record<string, unknown>, context: AgentToolContext): Promise<AgentToolResult>;
   idempotencyArguments?(args: Record<string, unknown>): Record<string, unknown>;
   execute(args: Record<string, unknown>, context: AgentToolContext): Promise<AgentToolResult>;
