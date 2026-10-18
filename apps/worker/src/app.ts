@@ -101,7 +101,6 @@ import { registerLocationsRoutes } from "./routes/locations";
 import { registerCoreGithubUpdaterRoutes } from "./routes/core-github-updater";
 import { registerFilesRoutes } from "./routes/files";
 import { registerJournalRoutes } from "./routes/journal";
-import { registerLocalExecutorRoutes } from "./routes/local-executor";
 import { registerManagedRuntimeRoutes } from "./routes/managed-runtime";
 import { registerManagedSetupSessionRoutes } from "./routes/managed-setup-session";
 import {
@@ -1103,7 +1102,6 @@ registerComputerRoutes(app, { requireOwner, unauthorized });
 registerMissionControlRoutes(app, { requireOwner, unauthorized, ownerSessionIssuedAt });
 registerWheelOfLifeRoutes(app, { requireOwner, unauthorized });
 registerGoalRoutes(app, { requireOwner, unauthorized });
-registerLocalExecutorRoutes(app, { requireOwner, unauthorized, getCoreApiOrigin });
 registerMobileRoutes(app, { requireOwner, unauthorized, getCoreApiOrigin, getCoreWebOrigin });
 registerPushNotificationRoutes(app, { requireOwner, unauthorized });
 registerSocialContentRoutes(app, { requireOwner, unauthorized });

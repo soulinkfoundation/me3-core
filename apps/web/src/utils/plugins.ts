@@ -62,7 +62,6 @@ const pluginDisplayOrder = [
   "me3.calendar",
   "me3.journal",
   "me3.accounts",
-  "me3.local-executor",
   "me3.landing-pages",
   "me3.email-campaigns",
   "me3.social-publishing",
@@ -125,10 +124,6 @@ export function canActivatePlugin(plugin: PluginRecord) {
 
 export function isPluginEnabled(plugin: PluginRecord) {
   return plugin.enabled || (!canActivatePlugin(plugin) && !isPluginComingSoon(plugin));
-}
-
-export function isLocalExecutorPlugin(plugin: PluginRecord) {
-  return plugin.id === "me3.local-executor";
 }
 
 export function pluginNavEmojiById(pluginId: string) {

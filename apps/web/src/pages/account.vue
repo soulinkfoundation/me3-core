@@ -27,7 +27,6 @@ import {
 } from "../utils/aiModelCatalog";
 import {
   isPluginHiddenFromList,
-  isPluginEnabled,
   type PluginRecord,
   type PluginsResponse,
 } from "../utils/plugins";
@@ -141,14 +140,6 @@ type MailboxResponse = {
   mailbox: MailboxRecord | null;
   sources: MailboxSource[];
   recentActivity: MailboxActivity[];
-};
-
-type LocalExecutorPairingInstructions = {
-  code: string;
-  sourceCommand: string;
-  runCommand: string;
-  keepAwakeCommand: string;
-  expiresAt: string | null;
 };
 
 type AiRouteId =
@@ -395,11 +386,6 @@ const navigationFeatures = ref<NavigationFeature[]>([]);
 const navigationFeaturesLoading = ref(false);
 const navigationFeatureActionLoading = ref<string | null>(null);
 const navigationFeaturesError = ref<string | null>(null);
-const localExecutorSetupOpen = ref(false);
-const localExecutorPairing = ref<LocalExecutorPairingInstructions | null>(null);
-const localExecutorPairingBusy = ref(false);
-const localExecutorPairingError = ref<string | null>(null);
-const localExecutorCopiedCommand = ref<string | null>(null);
 const aiSettingsLoading = ref(false);
 const aiSettingsSaving = ref(false);
 const aiProviders = ref<AiProviderRecord[]>([]);
@@ -676,25 +662,6 @@ function navigationFeatureEmoji(feature: NavigationFeature) {
 
 const pluginBusyIds = computed(() =>
   pluginActionLoading.value ? [pluginActionLoading.value.split(":")[0]] : [],
-);
-
-const localExecutorPlugin = computed(
-  () =>
-    plugins.value.find((plugin) => plugin.id === "me3.local-executor") || null,
-);
-
-const localExecutorPluginEnabled = computed(() =>
-  Boolean(
-    localExecutorPlugin.value && isPluginEnabled(localExecutorPlugin.value),
-  ),
-);
-
-const localExecutorPairingExpiryLabel = computed(() =>
-  formatLocalExecutorExpiry(localExecutorPairing.value?.expiresAt),
-);
-
-const localExecutorPairingCommand = computed(
-  () => localExecutorPairing.value?.sourceCommand || "",
 );
 
 const aiDefaultRouteInput = computed(
@@ -1495,85 +1462,6 @@ function pluginActionKey(
   action: "activate" | "deactivate",
 ) {
   return `${plugin.id}:${action}`;
-}
-
-const LOCAL_EXECUTOR_SOURCE_BIN =
-  "node packages/local-executor/bin/me3-local-executor.mjs";
-const LOCAL_EXECUTOR_CD_COMMAND =
-  "cd /Users/[USERNAME]/[PROJECTS_FOLDER]/[YOUR_ME3_REPO]";
-const LOCAL_EXECUTOR_CONFIG_COMMAND = `${LOCAL_EXECUTOR_SOURCE_BIN} config init --provider opencode`;
-const LOCAL_EXECUTOR_RUN_COMMAND = `${LOCAL_EXECUTOR_SOURCE_BIN} run --interval 20`;
-const LOCAL_EXECUTOR_KEEP_AWAKE_COMMAND = `caffeinate -dimsu ${LOCAL_EXECUTOR_RUN_COMMAND}`;
-
-function openLocalExecutorSetup() {
-  localExecutorSetupOpen.value = true;
-  localExecutorPairingError.value = null;
-}
-
-function closeLocalExecutorSetup() {
-  if (localExecutorPairingBusy.value) return;
-  localExecutorSetupOpen.value = false;
-  localExecutorCopiedCommand.value = null;
-}
-
-async function startLocalExecutorPairing() {
-  if (!localExecutorPluginEnabled.value) {
-    localExecutorPairingError.value =
-      "Turn on Local Executor in the plugin row first.";
-    return;
-  }
-
-  localExecutorPairingBusy.value = true;
-  localExecutorPairingError.value = null;
-  localExecutorCopiedCommand.value = null;
-
-  try {
-    const response = await api.post<{
-      code: string;
-      installCommand: string;
-      expiresAt?: string | null;
-    }>("/local-executor/pairing/start", {
-      displayName: "Local runner",
-    });
-    localExecutorPairing.value = {
-      code: response.code,
-      sourceCommand: sourceLocalExecutorCommand(response.installCommand),
-      runCommand: LOCAL_EXECUTOR_RUN_COMMAND,
-      keepAwakeCommand: LOCAL_EXECUTOR_KEEP_AWAKE_COMMAND,
-      expiresAt: response.expiresAt || null,
-    };
-  } catch (e: any) {
-    localExecutorPairingError.value =
-      e.message || "Could not create a pairing command.";
-  } finally {
-    localExecutorPairingBusy.value = false;
-  }
-}
-
-function sourceLocalExecutorCommand(command: string) {
-  return command.replace(/^me3-local-executor\b/, LOCAL_EXECUTOR_SOURCE_BIN);
-}
-
-function formatLocalExecutorExpiry(value?: string | null) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-}
-
-async function copyLocalExecutorCommand(command: string, key: string) {
-  localExecutorPairingError.value = null;
-  try {
-    await navigator.clipboard.writeText(command);
-    localExecutorCopiedCommand.value = key;
-  } catch {
-    localExecutorPairingError.value =
-      "Copy did not work. Select the command and copy it manually.";
-  }
 }
 
 async function togglePlugin(plugin: PluginRecord, enabled: boolean) {
@@ -2682,10 +2570,8 @@ onBeforeUnmount(() => {
                 v-if="visibleAccountPlugins.length"
                 :plugins="visibleAccountPlugins"
                 :busy-plugin-ids="pluginBusyIds"
-                :show-local-executor-config="true"
                 :show-coming-soon="true"
                 @toggle="togglePlugin"
-                @configure-local-executor="openLocalExecutorSetup"
               />
               <p v-else-if="plugins.length === 0" class="field-hint">
                 No curated plugins are registered in this Core build.
@@ -4197,241 +4083,6 @@ onBeforeUnmount(() => {
 
       </template>
     </main>
-
-    <Teleport to="body">
-      <div
-        v-if="localExecutorSetupOpen"
-        class="modal-overlay local-executor-modal-overlay"
-        @click.self="closeLocalExecutorSetup"
-      >
-        <section
-          class="modal local-executor-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="local-executor-modal-title"
-        >
-          <div class="modal-header local-executor-modal__header">
-            <div>
-              <h2 id="local-executor-modal-title">
-                Connect to your local computer
-              </h2>
-            </div>
-            <Button
-              color="ghost"
-              shape="soft"
-              size="compact"
-              icon-only
-              class="modal-close"
-              type="button"
-              aria-label="Close Local Executor setup"
-              title="Close"
-              :disabled="localExecutorPairingBusy"
-              @click="closeLocalExecutorSetup"
-            >
-              <UiIcon name="X" :size="18" aria-hidden="true" />
-            </Button>
-          </div>
-
-          <p v-if="!localExecutorPluginEnabled" class="local-executor-note">
-            First, turn on Local Executor in this plugin row. Then come back
-            here and create the pairing command.
-          </p>
-
-          <ol class="local-executor-steps">
-            <li>
-              <strong>Clone your ME3 repo.</strong>
-              <span>
-                Put the ME3 repo on the computer that will run local tasks.
-                This is the repo with
-                <code>packages/local-executor</code> inside it.
-              </span>
-            </li>
-            <li>
-              <strong>Open Terminal and go to that repo.</strong>
-              <span>
-                Replace the placeholders with your real folders, or type
-                <code>cd </code>, drag the ME3 folder into Terminal, and press
-                Return.
-              </span>
-              <div class="local-executor-command">
-                <pre><code>{{ LOCAL_EXECUTOR_CD_COMMAND }}</code></pre>
-                <Button
-                  color="outline"
-                  size="small"
-                  shape="soft"
-                  type="button"
-                  @click="
-                    copyLocalExecutorCommand(LOCAL_EXECUTOR_CD_COMMAND, 'cd')
-                  "
-                >
-                  {{ localExecutorCopiedCommand === "cd" ? "Copied" : "Copy" }}
-                </Button>
-              </div>
-            </li>
-            <li>
-              <strong>Pair this computer with ME3.</strong>
-              <span>
-                Create a temporary pairing command, then paste it into Terminal.
-                The code is already inside the command.
-              </span>
-              <Button
-                color="primary"
-                size="compact"
-                shape="soft"
-                type="button"
-                :disabled="
-                  localExecutorPairingBusy || !localExecutorPluginEnabled
-                "
-                @click="startLocalExecutorPairing"
-              >
-                {{
-                  localExecutorPairingBusy
-                    ? "Creating..."
-                    : localExecutorPairing
-                      ? "Create fresh command"
-                      : "Create pairing command"
-                }}
-              </Button>
-              <span v-if="localExecutorPairing">
-                <template v-if="localExecutorPairingExpiryLabel">
-                  It expires {{ localExecutorPairingExpiryLabel }}.
-                </template>
-                It saves a small runner token at
-                <code>~/.me3/local-executor/token.json</code>.
-              </span>
-              <div
-                v-if="localExecutorPairingCommand"
-                class="local-executor-command"
-              >
-                <pre><code>{{ localExecutorPairingCommand }}</code></pre>
-                <Button
-                  color="outline"
-                  size="small"
-                  shape="soft"
-                  type="button"
-                  @click="
-                    copyLocalExecutorCommand(
-                      localExecutorPairingCommand,
-                      'pair',
-                    )
-                  "
-                >
-                  {{
-                    localExecutorCopiedCommand === "pair" ? "Copied" : "Copy"
-                  }}
-                </Button>
-              </div>
-            </li>
-            <li>
-              <strong>Configure your local AI agent.</strong>
-              <span>
-                OpenCode, Codex, and Claude are supported. Install and sign in
-                to the tool locally first. Use <code>opencode</code>,
-                <code>codex</code>, or <code>claude</code> in this command.
-              </span>
-              <div class="local-executor-command">
-                <pre><code>{{ LOCAL_EXECUTOR_CONFIG_COMMAND }}</code></pre>
-                <Button
-                  color="outline"
-                  size="small"
-                  shape="soft"
-                  type="button"
-                  @click="
-                    copyLocalExecutorCommand(
-                      LOCAL_EXECUTOR_CONFIG_COMMAND,
-                      'config',
-                    )
-                  "
-                >
-                  {{
-                    localExecutorCopiedCommand === "config" ? "Copied" : "Copy"
-                  }}
-                </Button>
-              </div>
-            </li>
-            <li>
-              <strong>Start the local runner.</strong>
-              <span>
-                Leave this Terminal window open. This is the process that checks
-                ME3 and picks up local tasks while your computer is awake.
-              </span>
-              <div class="local-executor-command">
-                <pre><code>{{ LOCAL_EXECUTOR_RUN_COMMAND }}</code></pre>
-                <Button
-                  color="outline"
-                  size="small"
-                  shape="soft"
-                  type="button"
-                  @click="
-                    copyLocalExecutorCommand(LOCAL_EXECUTOR_RUN_COMMAND, 'run')
-                  "
-                >
-                  {{ localExecutorCopiedCommand === "run" ? "Copied" : "Copy" }}
-                </Button>
-              </div>
-              <span>
-                On macOS, use this version if you want Terminal to keep the
-                computer awake while the runner is open.
-              </span>
-              <div class="local-executor-command">
-                <pre><code>{{ LOCAL_EXECUTOR_KEEP_AWAKE_COMMAND }}</code></pre>
-                <Button
-                  color="outline"
-                  size="small"
-                  shape="soft"
-                  type="button"
-                  @click="
-                    copyLocalExecutorCommand(
-                      LOCAL_EXECUTOR_KEEP_AWAKE_COMMAND,
-                      'awake',
-                    )
-                  "
-                >
-                  {{
-                    localExecutorCopiedCommand === "awake" ? "Copied" : "Copy"
-                  }}
-                </Button>
-              </div>
-            </li>
-            <li>
-              <strong>Add a local project.</strong>
-              <span>
-                Visit your ME3 site, open Tasks, and add a project with type
-                <code>Local</code>. Use the local folder
-                path for the project repo you want the runner to work in.
-              </span>
-              <router-link
-                class="local-executor-project-link"
-                to="/tasks"
-                @click="closeLocalExecutorSetup"
-              >
-                Open Projects
-              </router-link>
-            </li>
-            <li>
-              <strong>Add a task and move it to Doing.</strong>
-              <span>
-                Backlog is just a holding area. When a task in a local project
-                moves to Doing, the local runner can claim it and run it inside
-                that project repo.
-              </span>
-            </li>
-            <li>
-              <strong>Check the result.</strong>
-              <span>
-                The local runner follows the rules in that project repo,
-                including its <code>AGENTS.md</code>. When the run succeeds, ME3
-                moves the task to Done.
-              </span>
-            </li>
-          </ol>
-
-          <p v-if="localExecutorPairingError" class="error">
-            {{ localExecutorPairingError }}
-          </p>
-        </section>
-      </div>
-    </Teleport>
 
     <Teleport to="body">
       <div
@@ -6412,112 +6063,6 @@ h1 {
   cursor: pointer;
 }
 
-.local-executor-modal {
-  display: grid;
-  gap: 16px;
-  width: min(680px, 100%);
-  max-height: min(760px, calc(100vh - 48px));
-  overflow-y: auto;
-}
-
-.local-executor-modal__header {
-  margin-bottom: 0;
-}
-
-.local-executor-modal__intro,
-.local-executor-note,
-.local-executor-steps span {
-  color: var(--ui-text-muted, var(--color-text-muted));
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.local-executor-modal__intro,
-.local-executor-note {
-  margin: 0;
-}
-
-.local-executor-project-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  justify-self: start;
-  min-height: 36px;
-  padding: 0 12px;
-  border-radius: var(--ui-radius-sm, 8px);
-  background: var(--ui-accent-soft, var(--color-bg-subtle));
-  color: var(--ui-accent, var(--color-primary));
-  font-size: 14px;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.local-executor-project-link:hover {
-  background: color-mix(
-    in oklab,
-    var(--ui-accent, var(--color-primary)),
-    transparent 88%
-  );
-}
-
-.local-executor-note {
-  padding: 10px 12px;
-  border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: var(--ui-radius-sm, 8px);
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-}
-
-.local-executor-steps {
-  display: grid;
-  gap: 14px;
-  margin: 0;
-  padding-left: 22px;
-}
-
-.local-executor-steps li {
-  display: grid;
-  gap: 7px;
-  padding-left: 4px;
-}
-
-.local-executor-steps strong {
-  color: var(--ui-text, var(--color-text));
-  font-size: 15px;
-}
-
-.local-executor-steps code,
-.local-executor-command code {
-  color: var(--ui-text, var(--color-text));
-  font-family:
-    ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-}
-
-.local-executor-command {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: start;
-  padding: 10px;
-  border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: var(--ui-radius-sm, 8px);
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-}
-
-.local-executor-command pre {
-  margin: 0;
-  max-width: 100%;
-  overflow-x: auto;
-  padding: 10px;
-  border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: var(--ui-radius-sm, 8px);
-  background: var(--ui-surface, var(--color-bg));
-  color: var(--ui-text, var(--color-text));
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 @media (max-width: 720px) {
   .main {
     padding: 16px;
@@ -6618,18 +6163,6 @@ h1 {
   .mailbox-config-grid,
   .email-provider-fields {
     grid-template-columns: 1fr;
-  }
-
-  .local-executor-modal {
-    max-height: calc(100vh - 32px);
-  }
-
-  .local-executor-command {
-    grid-template-columns: 1fr;
-  }
-
-  .local-executor-command :deep(.me3-btn) {
-    width: 100%;
   }
 
   .email-row .button {

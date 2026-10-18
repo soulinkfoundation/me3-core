@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import Button from "./Button.vue";
 import {
-  isLocalExecutorPlugin,
   isFixedCorePlugin,
   isPluginComingSoon,
   isPluginEnabled,
@@ -18,20 +16,17 @@ const props = withDefaults(
     plugins: PluginRecord[];
     busyPluginIds?: readonly string[];
     selectedPluginIds?: readonly string[];
-    showLocalExecutorConfig?: boolean;
     showComingSoon?: boolean;
   }>(),
   {
     busyPluginIds: () => [],
     selectedPluginIds: undefined,
-    showLocalExecutorConfig: false,
     showComingSoon: false,
   },
 );
 
 const emit = defineEmits<{
   toggle: [plugin: PluginRecord, enabled: boolean];
-  configureLocalExecutor: [];
 }>();
 
 const visiblePlugins = computed(() =>
@@ -99,16 +94,6 @@ function isPluginToggleDisabled(plugin: PluginRecord) {
           <p>{{ pluginInfoText(plugin) }}</p>
         </div>
         <div class="plugin-row__actions">
-          <Button
-            v-if="showLocalExecutorConfig && isLocalExecutorPlugin(plugin)"
-            color="outline"
-            size="small"
-            shape="soft"
-            type="button"
-            @click="emit('configureLocalExecutor')"
-          >
-            Configure
-          </Button>
           <label
             class="plugin-toggle"
             :class="{

@@ -9853,7 +9853,6 @@ describe("ME3 Worker auth", () => {
       "me3.mission-control",
       "me3.journal",
       "me3.calendar",
-      "me3.local-executor",
       "me3.landing-pages",
     ]);
     const socialPlugin = body.plugins.find(

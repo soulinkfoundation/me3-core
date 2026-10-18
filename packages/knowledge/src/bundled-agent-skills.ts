@@ -15,7 +15,7 @@ export const ME3_BUNDLED_AGENT_SKILLS: readonly Me3BundledAgentSkill[] = [
     id: "core.me3-configuration",
     name: "ME3 Configuration",
     description:
-      "ME3-specific setup, update, configuration, plugins, local executor, and recovery guidance.",
+      "ME3-specific setup, update, configuration, plugins, and recovery guidance.",
     sourceRef: "docs/how-to-me3.md",
     triggerHints: [
       "me3",
@@ -35,7 +35,7 @@ export const ME3_BUNDLED_AGENT_SKILLS: readonly Me3BundledAgentSkill[] = [
 
 Use this skill for ME3-specific setup and configuration questions.
 
-ME3 setup guidance should stay focused on ME3 concepts: installable-runtime vs plugin-owned vs hosted-only boundaries, owner setup state, assistant configuration, custom domain state, mailbox state, local executor capabilities, and recovery.
+ME3 setup guidance should stay focused on ME3 concepts: installable-runtime vs plugin-owned vs hosted-only boundaries, owner setup state, assistant configuration, custom domain state, mailbox state, and recovery.
 
 When the owner asks for provider-specific mechanics, explain the ME3 state ME3 needs, then use the bundled provider skill for the provider details. For Cloudflare tasks, use the bundled Cloudflare Platform skill.
 

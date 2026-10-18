@@ -30,7 +30,6 @@ import { getUtcMsForLocalTime, normalizeTimeZone } from "./calendar";
 import { hasConfiguredAiProvider } from "./ai-providers";
 import { isCorePluginEnabled, listCorePluginRecords } from "./plugins";
 import { getSiteFileText } from "./sites";
-import { getLocalExecutorSetupState } from "./local-executor";
 import type { Env } from "./types";
 
 type MissionProjectRow = {
@@ -1887,12 +1886,11 @@ export async function deleteMissionContextSource(env: Env, userId: string, sourc
 }
 
 export async function getMissionSetup(env: Env, userId: string) {
-  const [aiConfigured, memory, sources, daemon, localExecutor] = await Promise.all([
+  const [aiConfigured, memory, sources, daemon] = await Promise.all([
     hasConfiguredAiProvider(env, userId),
     listMissionMemory(env, userId, 1),
     listMissionContextSources(env, userId, 20),
     getMissionDaemonStatus(env, userId),
-    getLocalExecutorSetupState(env, userId),
   ]);
 
   const items: MissionSetupItem[] = [
@@ -1930,23 +1928,6 @@ export async function getMissionSetup(env: Env, userId: string) {
         : "Optional. Pair a local daemon only when you want approved local file or repo access.",
       actionPath: null,
     },
-    {
-      id: "local-executor",
-      label: "Local Executor",
-      status: localExecutor.ready
-        ? "ready"
-        : localExecutor.pluginEnabled
-          ? "setup_required"
-          : "optional",
-      detail: localExecutor.ready
-        ? "A local runner and project policy are ready for bounded coding runs."
-        : localExecutor.pluginEnabled
-          ? "Pair a local runner and add a project policy before coding runs can start."
-          : "Optional. Enable Local Executor when you want approved coding runs on a local computer.",
-      actionPath: localExecutor.pluginEnabled
-        ? "/account?section=plugins"
-        : "/account?section=plugins&blocked=me3.local-executor",
-    },
   ];
 
   return {
@@ -1954,7 +1935,6 @@ export async function getMissionSetup(env: Env, userId: string) {
     memoryCount: memory.length,
     contextSourceCount: sources.length,
     daemonConnected: daemon.connected,
-    localExecutorReady: localExecutor.ready,
     items,
   };
 }

@@ -17,7 +17,6 @@
     "@me3-core/plugin-email-campaigns": "workspace:*",
     "@me3-core/plugin-journal": "workspace:*",
     "@me3-core/plugin-landing-pages": "workspace:*",
-    "@me3-core/plugin-local-executor": "workspace:*",
     "@me3-core/plugin-mission-control": "workspace:*",
     "@me3-core/plugin-social-publishing": "workspace:*",
     "@me3-core/plugin-telegram": "workspace:*",

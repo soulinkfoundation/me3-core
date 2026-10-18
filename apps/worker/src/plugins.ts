@@ -13,7 +13,6 @@ import {
   LANDING_PAGES_PLUGIN_VERSION,
   LANDING_PAGES_RUNTIME,
 } from "@me3-core/plugin-landing-pages";
-import { LOCAL_EXECUTOR_PLUGIN_ID, LOCAL_EXECUTOR_RUNTIME } from "@me3-core/plugin-local-executor";
 import { MISSION_CONTROL_RUNTIME } from "@me3-core/plugin-mission-control";
 import { SOCIAL_PUBLISHING_RUNTIME } from "./social-publishing";
 import {
@@ -1314,115 +1313,6 @@ const LANDING_PAGES_PLUGIN: CorePluginManifestSummary = {
   ],
 };
 
-const LOCAL_EXECUTOR_PLUGIN: CorePluginManifestSummary = {
-  schemaVersion: CORE_PLUGIN_CATALOG_VERSION,
-  id: LOCAL_EXECUTOR_PLUGIN_ID,
-  name: "Local Executor",
-  version: "0.1.0",
-  description:
-    "Connect ME3 to your local computer to run tasks there. Setup required.",
-  trustTier: "first_party",
-  distribution: "workspace_package",
-  installMode: "enabled_by_owner_config",
-  showInPluginList: false,
-  defaultEnabled: false,
-  implementationStatus: LOCAL_EXECUTOR_RUNTIME.bundled ? "bundled" : "catalog_only",
-  capabilityIds: ["local_executor.run"],
-  permissions: [
-    {
-      id: "local_executor.pair",
-      label: "Pair local runners",
-    },
-    {
-      id: "local_executor.policies.manage",
-      label: "Manage local project policies",
-    },
-    {
-      id: "local_executor.runs.manage",
-      label: "Queue and review local runner jobs",
-    },
-  ],
-  routes: [
-    {
-      id: "local-executor.status.api",
-      path: "/api/local-executor/status",
-      methods: ["GET"],
-      auth: "owner",
-    },
-    {
-      id: "local-executor.pairing.api",
-      path: "/api/local-executor/pairing/start",
-      methods: ["POST"],
-      auth: "owner",
-    },
-    {
-      id: "local-executor.policies.api",
-      path: "/api/local-executor/policies",
-      methods: ["GET", "POST"],
-      auth: "owner",
-    },
-    {
-      id: "local-executor.policy.api",
-      path: "/api/local-executor/policies/:id",
-      methods: ["PATCH", "DELETE"],
-      auth: "owner",
-    },
-    {
-      id: "local-executor.runs.api",
-      path: "/api/local-executor/runs",
-      methods: ["POST"],
-      auth: "owner",
-    },
-    {
-      id: "local-executor.run.api",
-      path: "/api/local-executor/runs/:id",
-      methods: ["GET"],
-      auth: "owner",
-    },
-    {
-      id: "local-executor.audit.api",
-      path: "/api/local-executor/audit",
-      methods: ["GET"],
-      auth: "owner",
-    },
-    {
-      id: "local-executor.daemon.api",
-      path: "/api/local-executor/daemon/*",
-      methods: ["POST"],
-      auth: "daemon_token",
-    },
-  ],
-  uiSlots: [
-    {
-      id: "local-executor.account.setup",
-      slot: "account.plugins.setup",
-      label: "Local Executor setup",
-    },
-  ],
-  agentTools: [
-    agentTool({
-      id: "local_executor.run",
-      label: "Queue a bounded local runner job",
-      sideEffect: "local_shell",
-      approvalMode: "approval_required",
-    }),
-  ],
-  secrets: [],
-  migrations: [
-    publicBaselineMigration(
-      "local-executor.public-baseline",
-      "Local runner pairings, project policies, runs, run events, and audit events are included in the initial public schema.",
-    ),
-  ],
-  queuesAndCrons: [],
-  notes: [
-    "Bundled through @me3-core/plugin-local-executor as an optional first-party Core package.",
-    "The plugin owns runner pairing, project policies, queued local runs, daemon token auth, and audit.",
-    "Assistant activity remains the canonical owner-facing approval, result, and run-history surface.",
-    "OpenCode is the default provider preset, with Codex and Claude presets available for local CLI users.",
-  ],
-};
-
 const JOURNAL_PLUGIN: CorePluginManifestSummary = {
   schemaVersion: CORE_PLUGIN_CATALOG_VERSION,
   id: JOURNAL_PLUGIN_ID,
@@ -1567,7 +1457,6 @@ export const CORE_PLUGIN_CATALOG: readonly CorePluginManifestSummary[] = [
   JOURNAL_PLUGIN,
   ACCOUNTS_PLUGIN,
   CALENDAR_PLUGIN,
-  LOCAL_EXECUTOR_PLUGIN,
   LANDING_PAGES_PLUGIN,
   EMAIL_CAMPAIGNS_PLUGIN,
   SOCIAL_PUBLISHING_PLUGIN,
@@ -1623,7 +1512,6 @@ function categoryForPlugin(pluginId: string): Me3AgentCapabilityCategory {
   if (pluginId === EMAIL_CAMPAIGNS_PLUGIN_ID) return "content";
   if (pluginId === "me3.accounts") return "accounts";
   if (pluginId === "me3.landing-pages") return "sites";
-  if (pluginId === "me3.local-executor") return "local";
   return "provider";
 }
 
