@@ -2502,14 +2502,20 @@ onMounted(() => {
   }
 }
 
-.booking-section-details { padding: 12px 16px; border: 0; border-radius: 18px; background: var(--ui-surface-muted); }
-.booking-section-details summary { display: flex; align-items: center; gap: 10px; min-height: 44px; color: var(--ui-text-muted); font-size: 14px; cursor: pointer; }
-.booking-section-details[open] summary { margin-bottom: 16px; }
-.confirmation-email-section { border: 0; border-radius: 20px; padding: 16px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
-.confirmation-email-section summary { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 15px; font-weight: 600; cursor: pointer; }
-.confirmation-email-section[open] summary { margin-bottom: 16px; }
+/* Closed disclosure cards hug their summary; the whole summary row is the click target. */
+.booking-section-details { display: block; padding: 0 16px; border: 0; border-radius: 18px; background: var(--ui-surface-muted); }
+.booking-section-details[open] { display: grid; gap: 16px; padding-bottom: 16px; }
+.booking-section-details summary { display: flex; align-items: center; gap: 10px; min-height: 52px; margin: 0 -16px; padding: 0 16px; border-radius: 18px; color: var(--ui-text-muted); font-size: 14px; list-style: none; cursor: pointer; }
+.booking-section-details summary::-webkit-details-marker { display: none; }
+.confirmation-email-section { display: block; padding: 0 16px; border: 0; border-radius: 20px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
+.confirmation-email-section[open] { display: grid; gap: 16px; padding-bottom: 16px; }
+.confirmation-email-section summary { display: flex; align-items: center; gap: 10px; min-height: 52px; margin: 0 -16px; padding: 0 16px; border-radius: 20px; font-size: 15px; font-weight: 600; list-style: none; cursor: pointer; }
+.confirmation-email-section summary::-webkit-details-marker { display: none; }
 .offer-setting-row { border: 0; border-radius: 18px; background: var(--ui-surface-muted); }
-.booking-type-tabs, .offer-tabs { border: 0; }.offer-tab.active, .offer-tab-item.active .offer-tab { background: var(--ui-surface-muted); color: var(--ui-text); }
+.booking-type-tabs, .offer-tabs { border: 0; }
+/* Selected offer: dark pill with light text so the name stays readable. */
+.offer-tabs-bar .offer-tab-item.active { background: var(--ui-text); border-color: var(--ui-text); }
+.offer-tabs-bar .offer-tab-item.active .offer-tab, .offer-tabs-bar .offer-tab-item.active .offer-tab-remove { background: transparent; color: var(--ui-bg); }
 .availability-dialog { border: 0; border-radius: 24px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
 .availability-dialog-close { display: grid; place-items: center; min-width: 44px; min-height: 44px; }
 </style>

@@ -211,6 +211,35 @@ function handleNext() {
   wizard.nextStep();
 }
 
+// Round step dots: visited steps jump straight back; later steps stay locked.
+const progressSteps = computed(() =>
+  wizard.steps.map((step, index) => {
+    const number = index + 1;
+    const isCurrent = number === wizard.currentStep;
+    const isVisited = number <= wizard.furthestStep;
+    return {
+      id: step.id,
+      name: step.name,
+      number,
+      isCurrent,
+      isVisited,
+      ariaLabel: isCurrent
+        ? `Current step: ${step.name}`
+        : isVisited
+          ? `Go to ${step.name}`
+          : `${step.name} unlocks after the earlier steps`,
+    };
+  }),
+);
+const progressFill = computed(() =>
+  wizard.totalSteps > 1 ? ((wizard.currentStep - 1) / (wizard.totalSteps - 1)) * 100 : 0,
+);
+
+function handleProgressStepClick(step: { number: number; isVisited: boolean; isCurrent: boolean }) {
+  if (!step.isVisited || step.isCurrent) return;
+  handleStepJump(step.number);
+}
+
 function handleStepJump(step: number) {
   wizard.goToStep(step);
   stepsOpen.value = false;
@@ -276,7 +305,7 @@ async function handlePublish() {
     wizard.goToStepId("basics");
     return;
   }
-  const success = await publish({ openSite: false, celebrate: false });
+  const success = await publish({ openSite: false });
   if (!success) return;
   publishedSiteUrl.value = await resolvePublicSiteUrl(wizard.username, sites.sites.find(site => site.username === wizard.username) || { site_role: wizard.siteRole });
   published.value = true;
@@ -402,12 +431,24 @@ watch(
       </div>
     </section>
     <template v-else-if="!showIntroScreen">
+      <!-- Step selector and preview sit in the app top bar, beside Home, instead of a second header row. -->
+      <Teleport to="#app-page-controls" defer>
+        <div class="wizard-topbar">
+          <button type="button" class="wizard-step-button" :aria-label="`Step ${wizard.currentStep} of ${wizard.totalSteps}: ${wizard.currentStepName}. Show all steps`" aria-haspopup="dialog" :aria-expanded="stepsOpen" @click="stepsOpen = true"><span class="step-count">{{ wizard.currentStep }}<span>/</span>{{ wizard.totalSteps }}</span><span class="step-name">{{ wizard.currentStepName }}<UiIcon name="ChevronDown" :size="15" /></span></button>
+          <Button color="ghost" size="large" icon-only class="wizard-icon-button" aria-label="Preview your site" @click="previewOpen = true"><UiIcon name="Eye" :size="20" /></Button>
+        </div>
+      </Teleport>
       <header class="wizard-header">
-        <Button color="ghost" size="large" icon-only class="exit-btn wizard-icon-button" aria-label="Close editor" @click="handleExit"><UiIcon name="X" :size="20" /></Button>
-        <button type="button" class="wizard-step-button" :aria-label="`Step ${wizard.currentStep} of ${wizard.totalSteps}: ${wizard.currentStepName}. Show all steps`" aria-haspopup="dialog" :aria-expanded="stepsOpen" @click="stepsOpen = true"><span class="step-name">{{ wizard.currentStepName }}<UiIcon name="ChevronDown" :size="15" /></span></button>
-        <Button color="ghost" size="large" icon-only class="wizard-icon-button" aria-label="Preview your site" @click="previewOpen = true"><UiIcon name="Eye" :size="20" /></Button>
+        <nav class="progress-bar" aria-label="Editor steps">
+          <div class="progress-track" aria-hidden="true"><div class="progress-fill" :style="{ width: `${progressFill}%` }" /></div>
+          <div class="progress-steps" :style="{ gridTemplateColumns: `repeat(${wizard.totalSteps}, minmax(0, 1fr))` }">
+            <button v-for="step in progressSteps" :key="step.id" type="button" class="progress-step" :class="{ 'is-current': step.isCurrent, 'is-visited': step.isVisited }" :data-step-name="step.name" :aria-label="step.ariaLabel" :aria-current="step.isCurrent ? 'step' : undefined" :disabled="!step.isVisited" @click="handleProgressStepClick(step)">
+              <span class="progress-step-dot" aria-hidden="true"><span v-if="step.isCurrent" class="progress-step-core" /><UiIcon v-else-if="step.isVisited" name="Check" :size="11" /></span>
+              <span class="progress-step-tooltip" aria-hidden="true">{{ step.name }}</span>
+            </button>
+          </div>
+        </nav>
       </header>
-      <div class="wizard-progress" role="progressbar" aria-label="Site editor progress" :aria-valuenow="wizard.currentStep" :aria-valuemin="1" :aria-valuemax="wizard.totalSteps" :aria-valuetext="`${wizard.currentStepName}, step ${wizard.currentStep} of ${wizard.totalSteps}`"><span v-for="(step, index) in wizard.steps" :key="step.id" :class="{ filled: index < wizard.currentStep }" /></div>
       <div v-if="showImportedDraftRecovery" class="draft-recovery-banner"><div><strong>Imported draft saved locally.</strong><p>Imported from {{ importedDraftHost }}. Publish, keep editing or start over.</p></div><button type="button" @click="clearImportedDraft">Start over</button></div>
       <p v-if="publishProgress" class="wizard-publish-status" role="status">{{ publishProgress }}</p>
       <p v-if="publishNeedsStorage" class="wizard-publish-error" role="alert">{{ publishError }}<RouterLink to="/settings?section=storage">Activate storage</RouterLink></p>
@@ -448,16 +489,18 @@ watch(
     <main v-if="!showIntroScreen && !published" class="wizard-main" :class="{ 'wizard-main--inline-preview': inlinePreview }">
       <div class="step-content">
         <component :is="currentComponent" :key="`${wizard.draftContextId}:${wizard.currentStepId}`" ref="currentComponentRef" />
+        <nav v-if="!isEditingPage" class="step-nav" aria-label="Step navigation">
+          <Button class="nav-btn back" color="secondary" size="large" :disabled="isPublishing" @click="handleBack">{{ wizard.currentStep === 1 ? 'Cancel' : 'Back' }}</Button>
+          <div class="step-nav__right">
+            <Button v-if="wizard.needsPublish" class="nav-btn publish" color="primary" size="large" :disabled="isPublishing || wizard.isCheckingUsername" @click="handlePublish">{{ isPublishing ? 'Publishing…' : 'Publish' }}</Button>
+            <Button v-if="wizard.currentStep < wizard.totalSteps" class="nav-btn next" color="neutral" size="large" :disabled="!wizard.canProceed || isPublishing" @click="handleNext">Next</Button>
+          </div>
+        </nav>
       </div>
       <aside v-if="showPreview" class="preview-panel" aria-label="Live site preview">
         <div class="wizard-preview-label"><UiIcon name="Eye" :size="15" />Live preview<button type="button" @click="previewOpen = true">Expand</button></div>
         <GeneratedSitePreview :active-view="previewActiveView || undefined" viewport="mobile" compact />
       </aside>
-      <nav v-if="!isEditingPage" class="step-nav" aria-label="Editor steps">
-        <Button class="nav-btn back" color="ghost" size="large" :disabled="isPublishing" @click="handleBack"><UiIcon name="ArrowLeft" :size="18" />{{ wizard.currentStep === 1 ? 'Cancel' : 'Back' }}</Button>
-        <Button v-if="wizard.currentStep < wizard.totalSteps" class="nav-btn next" color="secondary" size="large" :disabled="!wizard.canProceed || isPublishing" @click="handleNext">Next<UiIcon name="ArrowRight" :size="18" /></Button>
-        <Button v-if="wizard.needsPublish" class="nav-btn publish" color="primary" size="large" :disabled="isPublishing || wizard.isCheckingUsername" @click="handlePublish">{{ isPublishing ? 'Publishing…' : 'Publish' }}</Button>
-      </nav>
     </main>
     <AppDialog :open="stepsOpen" aria-label="All editor steps" close-on-backdrop @close="stepsOpen = false">
       <section class="wizard-dialog-panel wizard-jump-list"><header><h2>All steps</h2><button type="button" class="wizard-icon-button" aria-label="Close step list" @click="stepsOpen = false"><UiIcon name="X" :size="20" /></button></header>
@@ -474,14 +517,29 @@ watch(
 </template>
 
 <style scoped>
-.wizard-page { min-height: calc(100dvh - var(--app-topbar-height)); padding-bottom: 110px; box-sizing: border-box; }
-.wizard-header { position: sticky; top: var(--app-topbar-height); z-index: 45; display: flex; align-items: center; gap: 8px; max-width: 1120px; margin: auto; padding: 16px 16px; box-sizing: border-box; background: var(--ui-bg); }
+.wizard-page { min-height: calc(100dvh - var(--app-topbar-height)); padding-bottom: 48px; box-sizing: border-box; }
+/* Step name and dots stay pinned under the app top bar while the form scrolls. */
+.wizard-header { position: sticky; top: var(--app-topbar-height); z-index: 45; background: var(--ui-bg); }
+.wizard-topbar { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.wizard-topbar .wizard-step-button { grid-column: 2; }
 .wizard-icon-button { display: grid; place-items: center; flex: 0 0 auto; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; color: var(--ui-text); background: transparent; cursor: pointer; }
-.wizard-step-button { display: grid; justify-items: center; flex: 1; min-width: 0; min-height: 44px; gap: 3px; border: 0; background: transparent; color: var(--ui-text); font: inherit; cursor: pointer; }
-.step-name { display: flex; align-items: center; gap: 4px; font-size: 16px; font-weight: 600; }
-.wizard-progress { display: flex; gap: 4px; max-width: 1120px; margin: 0 auto 10px; padding: 0 16px; box-sizing: border-box; }
-.wizard-progress span { flex: 1; height: 3px; border-radius: 2px; background: var(--ui-surface-muted); }
-.wizard-progress .filled { background: var(--ui-accent-strong); }
+.wizard-step-button { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 0; min-height: 44px; border: 0; background: transparent; color: var(--ui-text); font: inherit; cursor: pointer; }
+.step-count { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }.step-count span { margin: 0 3px; color: var(--ui-text-muted); font-weight: 400; }
+.step-name { display: flex; align-items: center; gap: 4px; overflow: hidden; color: var(--ui-text-muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
+.progress-bar { position: relative; max-width: 1120px; margin: 0 auto; padding: 4px 24px 8px; box-sizing: border-box; }
+.progress-track { position: absolute; top: 25px; right: 40px; left: 40px; height: 3px; border-radius: 999px; background: var(--ui-border); }
+.progress-fill { height: 100%; border-radius: inherit; background: var(--ui-accent); transition: width .3s ease; }
+.progress-steps { position: relative; display: grid; align-items: center; }
+.progress-step { position: relative; display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 0; border: 0; background: none; color: var(--ui-text-muted); cursor: pointer; }
+.progress-step:disabled, .progress-step.is-current { cursor: default; opacity: 1; }
+.progress-step-dot { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; box-sizing: border-box; border: 2px solid var(--ui-border-strong, var(--ui-border)); border-radius: 999px; background: var(--ui-bg); transition: transform .2s ease, box-shadow .2s ease; }
+.progress-step.is-visited .progress-step-dot { border-color: var(--ui-accent); background: var(--ui-accent); color: var(--ui-accent-contrast, #fff); }
+.progress-step.is-current .progress-step-dot { width: 22px; height: 22px; background: var(--ui-bg); color: var(--ui-accent); box-shadow: 0 0 0 4px var(--ui-accent-soft); }
+.progress-step.is-visited:not(.is-current):hover .progress-step-dot { transform: translateY(-1px); }
+.progress-step:focus-visible { outline: none; }.progress-step:focus-visible .progress-step-dot { box-shadow: 0 0 0 4px var(--ui-accent-soft); }
+.progress-step-core { width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
+.progress-step-tooltip { position: absolute; top: calc(100% + 4px); left: 50%; z-index: 2; padding: 6px 10px; border-radius: 999px; background: var(--ui-text); color: var(--ui-bg); font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap; opacity: 0; pointer-events: none; transform: translate(-50%, -4px); transition: opacity .18s ease, transform .18s ease; }
+.progress-step:hover .progress-step-tooltip, .progress-step:focus-visible .progress-step-tooltip { opacity: 1; transform: translate(-50%, 0); }
 .wizard-main { display: grid; grid-template-columns: minmax(0, 520px) minmax(0, 430px); justify-content: center; align-items: start; gap: 40px; max-width: 1120px; margin: 24px auto; padding: 0 24px; }
 .step-content { min-width: 0; }
 .step-content :deep(h2) { margin: 2px 0 8px; color: var(--ui-text); font-size: 24px; line-height: 1.2; font-weight: 600; letter-spacing: -.02em; }
@@ -495,13 +553,13 @@ watch(
 .step-content :deep(.btn.secondary) { border: 0; background: var(--ui-surface-muted); color: var(--ui-text); }
 .step-content :deep(input:focus-visible), .step-content :deep(select:focus-visible), .step-content :deep(textarea:focus-visible), .step-content :deep(.booking-offer-description-editor:focus-within) { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .step-content :deep(.visibility-group) { padding: 12px 16px; border: 0; border-radius: 18px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
-.preview-panel { position: sticky; top: calc(var(--app-topbar-height) + 90px); min-width: 0; overflow: hidden; }
+.preview-panel { position: sticky; top: calc(var(--app-topbar-height) + 76px); min-width: 0; overflow: hidden; }
 .preview-panel :deep(.generated-site-preview) { width: 100%; height: min(680px, calc(100dvh - 230px)); min-height: 240px; border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-md); }
 .wizard-preview-label { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 13px; color: var(--ui-text-muted); }
 .wizard-preview-label button { margin-left: auto; min-height: 32px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.step-nav { position: fixed; bottom: 0; left: 50%; z-index: 44; display: flex; align-items: center; gap: 8px; width: min(620px, 100%); padding: 18px 16px max(16px, env(safe-area-inset-bottom)); box-sizing: border-box; transform: translateX(-50%); background: linear-gradient(transparent, var(--ui-bg) 30%); }
-.nav-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 24px; font: 600 15px var(--font-sans); cursor: pointer; }
-.nav-btn.back { margin-right: auto; background: transparent; color: var(--ui-text-muted); }
+.step-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 40px; }
+.step-nav__right { display: flex; align-items: center; gap: 12px; }
+.nav-btn { min-height: 48px; padding: 0 28px; font: 600 15px var(--font-sans); }
 button:disabled { opacity: .45; cursor: not-allowed; } button:focus-visible, a:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 .wizard-publish-error, .wizard-publish-status { max-width: 960px; margin: 16px auto; padding: 0 16px; font-size: 14px; }.wizard-publish-error { color: var(--ui-danger); }.wizard-publish-error a { display: block; color: inherit; }
 .draft-recovery-banner { display: flex; align-items: center; gap: 12px; max-width: 960px; margin: 16px auto; padding: 16px; border-radius: 18px; background: var(--ui-surface-muted); font-size: 14px; }.draft-recovery-banner p { margin: 4px 0 0; }.draft-recovery-banner button { min-height: 44px; border: 0; background: transparent; color: var(--ui-text); font: inherit; cursor: pointer; }
@@ -517,7 +575,9 @@ button:disabled { opacity: .45; cursor: not-allowed; } button:focus-visible, a:f
   .wizard-main { grid-template-columns: minmax(0, 620px); margin: 18px auto; gap: 20px; padding: 0 16px; }
   .preview-panel { display: none; position: static; }.wizard-main--inline-preview .preview-panel { display: block; grid-row: 1; }
   .wizard-main--inline-preview .preview-panel :deep(.generated-site-preview) { height: 170px; min-height: 170px; border-radius: 20px; }
-  .wizard-header { padding: 8px 12px; gap: 4px; }.wizard-progress { padding-inline: 16px; }.wizard-step-button { gap: 2px; }.wizard-step-button .step-name { font-size: 15px; }
+  .wizard-topbar { grid-template-columns: minmax(0, 1fr) 44px; }.wizard-topbar .wizard-step-button { grid-column: 1; justify-content: flex-start; }.progress-bar { padding-inline: 12px; }.progress-track { right: 24px; left: 24px; }
+  .progress-step-dot { width: 14px; height: 14px; }.progress-step.is-current .progress-step-dot { width: 18px; height: 18px; }.progress-step-tooltip { display: none; }
+  .step-nav { padding-top: 28px; }.nav-btn { padding: 0 20px; }
   .intro-panel { flex-direction: column; gap: 20px; }.intro-image { width: min(100%, 320px); }.intro-copy h1 { font-size: 28px; }.wizard-intro { margin: 12px auto; padding: 16px; }
   .wizard-finish { margin-top: 36px; }
 }

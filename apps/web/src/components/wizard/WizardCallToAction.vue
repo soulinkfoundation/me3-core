@@ -1015,7 +1015,13 @@ function buttonItemKey(button: Me3Button) {
 .platform-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .platform-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 78px; padding: 12px 6px; border: 0; border-radius: 18px; background: var(--ui-surface-muted); color: var(--ui-text); font-size: 13px; font-weight: 500; }
 .platform-btn-icon { display: grid; place-items: center; width: 24px; height: 24px; }
-.button-item { border: 0; border-radius: 18px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }.button-label { font-weight: 600; }
+.button-item { padding: 14px 16px 16px; border: 0; border-radius: 18px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
+.button-header { gap: 8px; margin-bottom: 12px; }
+.button-label { flex: 1; min-width: 0; justify-content: flex-start; padding-inline: 4px; overflow: hidden; color: var(--ui-text); font-size: 15px; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.button-input-wrapper { gap: 8px; }
+.input-preview { flex: 0 1 auto; max-width: 45%; min-height: 46px; box-sizing: border-box; padding: 0 14px; overflow: hidden; border-radius: 14px; text-overflow: ellipsis; }
+.input-preview.outline { border-right: 2px solid var(--color-text); }
+.button-url-input { min-width: 0; text-overflow: ellipsis; }
 
 .modal { border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-md); }
 .modal input:not([type="radio"]):not([type="checkbox"]) { box-sizing: border-box; border: 0; border-radius: 14px; background: var(--ui-surface-muted); color: var(--ui-text); padding: 13px 14px; font-size: 16px; }

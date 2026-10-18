@@ -15,6 +15,7 @@ import { useContactsStore } from "../../stores/contacts";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
 import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDateLabel, homeDoneToday, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
+import { useAppLoadingWhile } from "../../composables/useAppLoading";
 const emit = defineEmits<{ suggest: [text: string]; approvalResolved: [] }>();
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
 const auth = useAuthStore();
@@ -59,6 +60,7 @@ const accountSummary = ref<{ income: string; expense: string } | null>(null);
 type HomeResource = HomeCard | "tasks" | "wheel";
 const errors = ref<Partial<Record<HomeResource, string>>>({});
 const loading = ref(true);
+useAppLoadingWhile(loading);
 const busy = ref<string[]>([]);
 const dialog = ref<"add" | null>(null);
 const panels = ref<HTMLElement | null>(null);
@@ -343,7 +345,6 @@ onBeforeUnmount(() => {
   <div ref="panels" class="home-panels" aria-label="Home panels" :aria-busy="loading">
     <p class="sr-only" role="status">{{ orderAnnouncement }}</p>
     <p v-if="offline || Object.keys(errors).length" class="home-offline" role="status"><UiIcon name="WifiOff" :size="16" /><span>{{ offline ? 'You’re offline.' : 'Home couldn’t fully refresh.' }} {{ lastRefresh ? `Showing the last available data · ${lastRefresh}.` : 'Connect to refresh Home.' }}</span><button type="button" :disabled="loading" @click="refresh">Try again</button></p>
-    <p v-else-if="loading" class="home-status" role="status">Refreshing Home…</p>
     <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__drag" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
       <template #item="{ element: card }: { element: HomeCard }">
         <article :ref="el => setCardElement(card, el)" class="home-card" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
@@ -437,7 +438,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .home-panels { padding: 18px 10px 120px; }
 .home-grid { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 16px; width: min(620px, 100%); margin: 0 auto; align-items: start; }
-.home-status, .home-offline { width: min(1120px, 100%); margin: 0 auto 12px; font-size: 14px; color: var(--ui-text-muted); }
+.home-offline { width: min(1120px, 100%); margin: 0 auto 12px; font-size: 14px; color: var(--ui-text-muted); }
 .home-offline { display: flex; align-items: center; gap: 8px; }
 .home-offline span { flex: 1; }
 .home-offline button { color: var(--ui-accent-strong); white-space: nowrap; }

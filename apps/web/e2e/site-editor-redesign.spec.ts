@@ -39,6 +39,10 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await page.goto('/create?step=basics', { waitUntil: 'domcontentloaded' });
     await expect(page.locator('.wizard-header').getByRole('button', { name: 'Publish', exact: true })).toHaveCount(0);
     await expect(page.locator('.wizard-step-button small')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Close editor' })).toHaveCount(0);
+    await expect(page.locator('.progress-step')).not.toHaveCount(0);
+    await expect(page.locator('.step-nav svg')).toHaveCount(0);
+    await expect(page.locator('.step-nav').getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
     await page.locator('#name').fill('Demo Owner'); await page.locator('#handle').fill('demo-site');
     await page.getByRole('checkbox', { name: 'Make my profile public' }).check();
     await expect(page.locator('.nav-btn.next')).toBeEnabled();
@@ -57,6 +61,10 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       await expect(page.locator('.step-name')).toContainText(name);
     }
     await jump('Features');
+    // The step name and dots stay pinned under the app top bar while the form scrolls.
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await expect.poll(async () => Math.round((await page.locator('.wizard-header').boundingBox())?.y ?? -1)).toBe(60);
+    await page.evaluate(() => window.scrollTo(0, 0));
     for (const label of ['Enable links', 'Enable call-to-action', 'Enable bookings', 'Enable newsletter', 'Enable testimonials', 'Enable blog']) await page.getByRole('switch', { name: label, exact: true }).check();
     await screenshot('editor-features');
     await jump('Links'); await page.getByRole('button', { name: 'Instagram', exact: true }).click();
@@ -67,6 +75,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await action.getByRole('textbox', { name: 'Link URL', exact: true }).fill('#booking');
     await action.getByRole('button', { name: 'Add button', exact: true }).click();
     await expect(page.locator('.button-item')).toContainText('Book a session');
+    await screenshot('editor-buttons');
     await expect(page.locator('.button-item .remove-btn, .button-item .drag-handle')).toHaveCount(0);
     await page.getByRole('button', { name: 'Edit Book a session', exact: true }).click();
     await expect(action.getByRole('button', { name: 'Remove button', exact: true })).toBeVisible();
@@ -105,8 +114,11 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     const testimonialEditor = page.getByRole('dialog', { name: 'Edit testimonial', exact: true });
     await testimonialEditor.getByRole('textbox', { name: 'Name', exact: true }).fill('Sam');
     await testimonialEditor.getByRole('textbox', { name: 'Quote', exact: true }).fill('A thoughtful session.');
+    await testimonialEditor.locator('input[type="file"]').setInputFiles('public/icons/icon-192.png');
     await testimonialEditor.getByRole('button', { name: 'Add testimonial', exact: true }).click();
     await expect(page.locator('.testimonial-item')).not.toHaveAttribute('open');
+    await expect.poll(() => page.locator('.testimonial-summary img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+    await expect(page.frameLocator('.preview-panel iframe').locator('img.testimonial-avatar').first()).toHaveAttribute('src', /^data:image\//);
     await expect(page.getByRole('button', { name: 'Remove Sam', exact: true })).toHaveCount(0);
     const row = page.locator('.swipe-row');
     const rect = await row.boundingBox(); expect(rect).toBeTruthy();
@@ -125,11 +137,15 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await screenshot('editor-look');
     // Publishing from a prior step uses the same pipeline and leaves the draft
     // editable on failure; it must not show the success finish prematurely.
-    await jump('Basics'); await page.getByRole('button', { name: 'Publish', exact: true }).click();
+    // Visited steps are round dots in the header that jump straight back.
+    await page.getByRole('button', { name: 'Go to Basics', exact: true }).click();
+    await expect(page.locator('.step-name')).toContainText('Basics');
+    await page.getByRole('button', { name: 'Publish', exact: true }).click();
     await expect(page.locator('[data-sonner-toast]')).toContainText('Temporary storage error');
     await expect(page.getByRole('heading', { name: 'You’re live', exact: true })).toHaveCount(0);
     rejectUpload = false; await page.getByRole('button', { name: 'Publish', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'You’re live', exact: true })).toBeVisible();
+    await expect(page.locator('.celebration-container')).toBeAttached();
     expect(uploaded).toContain('"layout": "split"'); expect(uploaded).toContain('"theme": "meadow"');
     const finish = page.locator('.wizard-finish');
     await expect(finish).not.toContainText(/Soulink/i);

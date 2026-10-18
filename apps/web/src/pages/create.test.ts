@@ -224,7 +224,7 @@ describe("Site Wizard route initialization", () => {
     });
     await flushPromises();
     await wrapper.get(".intro-button").trigger("click");
-    await wrapper.get(".exit-btn").trigger("click");
+    await wrapper.get(".nav-btn.back").trigger("click");
     await flushPromises();
 
     expect(router.currentRoute.value.path).toBe("/sites");

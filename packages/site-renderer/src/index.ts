@@ -220,7 +220,7 @@ export const DEFAULT_HOME_SECTIONS: NonNullable<SitePresentationSettings["sectio
   { id: "offers", visible: true },
   { id: "booking", visible: false },
   { id: "writing", visible: true },
-  { id: "testimonials", visible: false },
+  { id: "testimonials", visible: true },
   { id: "newsletter", visible: true },
 ];
 

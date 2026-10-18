@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { beginAppLoading } from "./composables/useAppLoading";
 import { routes } from "vue-router/auto-routes";
 import { useAuthStore } from "./stores/auth";
 import { api } from "./api";
@@ -95,8 +96,17 @@ async function resolveDefaultAppPathForSession(): Promise<string> {
   }
 }
 
+// The app loading bar covers each navigation, including lazy route chunks.
+let releaseNavigationLoading: (() => void) | null = null;
+function endNavigationLoading() {
+  releaseNavigationLoading?.();
+  releaseNavigationLoading = null;
+}
+router.onError(endNavigationLoading);
+
 // Navigation guard
 router.beforeEach(async (to, _from, next) => {
+  releaseNavigationLoading ??= beginAppLoading();
   // The public homepage is rendered by the Worker, outside the owner SPA.
   if (to.path === "/") {
     if (import.meta.env.DEV) next({ path: "/login", query: to.query, hash: to.hash });
@@ -275,6 +285,7 @@ router.beforeEach(async (to, _from, next) => {
 });
 
 router.afterEach((to) => {
+  endNavigationLoading();
   const title = (to.meta?.title as string) || "ME3";
   const description =
     (to.meta?.description as string) ||

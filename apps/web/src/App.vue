@@ -4,6 +4,7 @@ import { RouterView, useRoute } from "vue-router";
 import { Toaster } from "vue-sonner";
 import { api } from "./api";
 import AgentChatLauncher from "./components/AgentChatLauncher.vue";
+import AppLoadingBar from "./components/AppLoadingBar.vue";
 import AppTopBar from "./components/AppTopBar.vue";
 import SoulinkJoinPrompt from "./components/SoulinkJoinPrompt.vue";
 import { useMailboxRealtime } from "./composables/useMailboxRealtime";
@@ -193,6 +194,7 @@ watch(
 </script>
 
 <template>
+  <AppLoadingBar />
   <div class="app-root" :class="{ 'app-root--shelled': showAppShell }">
     <AppTopBar v-if="showAppShell" />
     <div class="app-root__view">
