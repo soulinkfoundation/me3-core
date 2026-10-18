@@ -1,5 +1,6 @@
 import { readManagedAllowanceNotice, type ManagedAllowanceNotice } from "../managed-ai-billing";
 import { readAgentEmailDraft, type AgentEmailDraft } from "../agent-email-draft";
+import { readSuggestedReplies } from "../agent-suggested-replies";
 import { parseAgentTargetSelection, preflightAgentTargetSelection, persistAgentTargetSelectionInput } from "../agent-target-selection";
 import { revalidateAgentTargetPayload } from "../agent-target-projection";
 import type { AgentTargetPresentationCard } from "../../../../packages/agent/src/types";
@@ -666,6 +667,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       targetPresentation: metadata.targetPresentation || undefined,
       allowanceNotice: metadata.allowanceNotice || undefined,
       emailDraft: metadata.emailDraft || undefined,
+      suggestedReplies: metadata.suggestedReplies.length ? metadata.suggestedReplies : undefined,
       attachments: metadata.attachments.length ? metadata.attachments : undefined,
     };
   }
@@ -689,14 +691,15 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     siteAction: Record<string, unknown> | null;
     allowanceNotice: ManagedAllowanceNotice | null;
     emailDraft: AgentEmailDraft | null;
+    suggestedReplies: string[];
     attachments: AssistantAttachmentAuditManifestItem[];
   } {
     if (!metadataJson)
-      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, attachments: [] };
+      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, suggestedReplies: [], attachments: [] };
     try {
       const parsed = JSON.parse(metadataJson) as unknown;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, attachments: [] };
+        return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, suggestedReplies: [], attachments: [] };
       }
       const metadata = parsed as Record<string, unknown>;
       const cards = metadata.actionCards;
@@ -717,10 +720,11 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
         // Only the agent runtime authors allowance notices.
         allowanceNotice: metadata.runtime === "agent" ? readManagedAllowanceNotice(metadata.allowanceNotice) : null,
         emailDraft: metadata.runtime === "agent" ? readAgentEmailDraft(metadata.emailDraft) : null,
+        suggestedReplies: metadata.runtime === "agent" ? readSuggestedReplies(metadata.suggestedReplies) : [],
         attachments: createAssistantAttachmentAuditManifest(attachments),
       };
     } catch {
-      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, attachments: [] };
+      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, suggestedReplies: [], attachments: [] };
     }
   }
 

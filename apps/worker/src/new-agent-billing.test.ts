@@ -50,7 +50,8 @@ function fixture(policy = settings(), response?: (model: string, index: number) 
     return Response.json(policy);
   });
   vi.stubGlobal("fetch", bridge);
-  const env = { DB: db, ME3_DEPLOYMENT_MODE: "managed", ME3_COMMERCE_BRIDGE_ORIGIN: "https://billing.example.invalid", ME3_COMMERCE_BRIDGE_TOKEN: "synthetic-fixture", AI: { async run(model: string) { models.push(model); return response?.(model, models.length - 1) ?? completion(model); } } } as unknown as Env;
+  // Suggested replies make their own model call; these tests count planner calls only.
+  const env = { DB: db, ME3_AGENT_SUGGESTED_REPLIES: "off", ME3_DEPLOYMENT_MODE: "managed", ME3_COMMERCE_BRIDGE_ORIGIN: "https://billing.example.invalid", ME3_COMMERCE_BRIDGE_TOKEN: "synthetic-fixture", AI: { async run(model: string) { models.push(model); return response?.(model, models.length - 1) ?? completion(model); } } } as unknown as Env;
   return { raw, db, env, models, events, bridge };
 }
 function completion(model: string, tool = false) {

@@ -51,7 +51,7 @@ function fixture(messageText: string, proposed: Array<Record<string, unknown>>, 
     return args ? call("core_quotes_save", args) : { choices: [{ message: { content: "Synthetic request finished." }, finish_reason: "stop" }], usage: cleanUsage };
   });
   const input: NewAgentDispatchInput = { userId: "owner", threadId: "thread", turnId: "quote-turn", requestId: "quote-request", messageText, ...(options.attachmentText ? { attachmentTextContext: options.attachmentText } : {}) };
-  const env = { DB: db, AI: { run: ai }, ME3_DEPLOYMENT_MODE: "self_hosted" } as unknown as Env;
+  const env = { DB: db, AI: { run: ai }, ME3_AGENT_SUGGESTED_REPLIES: "off", ME3_DEPLOYMENT_MODE: "self_hosted" } as unknown as Env;
   return { input, requests, db, env, raw: () => raw, reopen() { raw.close(); raw = new DatabaseSync(file); }, async run(signal = new AbortController().signal) { await persistAgentInput(db, { ownerId: "owner", threadId: "thread", turnId: input.turnId, requestId: input.requestId }, input); return executeNewAgentTurn(env, input, signal); }, quotes() { return raw.prepare("SELECT text,author,source,source_url,areas FROM quotes WHERE origin='agent' ORDER BY id").all(); }, usage() { return raw.prepare("SELECT metadata_json FROM ai_usage_events").all().map(row => JSON.parse(String(row.metadata_json))); } };
 }
 

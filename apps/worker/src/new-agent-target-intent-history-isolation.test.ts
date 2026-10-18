@@ -76,7 +76,7 @@ function fixture() {
     const next = journey.calls[step - 1];
     return next ? tool(next.name, next.arguments) : { choices: [{ message: { content: "Synthetic planner finished." }, finish_reason: "stop" }], usage: { prompt_tokens: 100, completion_tokens: 10 } };
   });
-  const env = { DB: db, AI: { run }, ME3_DEPLOYMENT_MODE: "self_hosted" } as unknown as Env;
+  const env = { DB: db, AI: { run }, ME3_AGENT_SUGGESTED_REPLIES: "off", ME3_DEPLOYMENT_MODE: "self_hosted" } as unknown as Env;
   const inputFor = (turnId: string, messageText: string): NewAgentDispatchInput => ({ userId: "owner", threadId: "thread", turnId, requestId: `${turnId}:request`, messageText });
   async function execute(turnId: string, journey: Journey, signal = new AbortController().signal) {
     journeys.set(turnId, journey); const input = inputFor(turnId, journey.messageText);
