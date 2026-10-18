@@ -136,28 +136,40 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await page.getByRole('button', { name: 'Use accent #315d86', exact: true }).click();
     await screenshot('editor-look');
     // Publishing from a prior step uses the same pipeline and leaves the draft
-    // editable on failure; it must not show the success finish prematurely.
+    // editable on failure; it must not show the live bar prematurely.
     // Visited steps are round dots in the header that jump straight back.
     await page.getByRole('button', { name: 'Go to Basics', exact: true }).click();
     await expect(page.locator('.step-name')).toContainText('Basics');
     await page.getByRole('button', { name: 'Publish', exact: true }).click();
     await expect(page.locator('[data-sonner-toast]')).toContainText('Temporary storage error');
-    await expect(page.getByRole('heading', { name: 'You’re live', exact: true })).toHaveCount(0);
+    const live = page.locator('.wizard-live');
+    await expect(live).toHaveCount(0);
     rejectUpload = false; await page.getByRole('button', { name: 'Publish', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'You’re live', exact: true })).toBeVisible();
+    // Publishing keeps the owner on the step they were editing, with the live bar above it.
+    await expect(live).toContainText('You’re live');
+    await expect(page.locator('.step-name')).toContainText('Basics');
+    await expect(page.locator('#name')).toBeVisible();
     await expect(page.locator('.celebration-container')).toBeAttached();
     expect(uploaded).toContain('"layout": "split"'); expect(uploaded).toContain('"theme": "meadow"');
-    const finish = page.locator('.wizard-finish');
-    await expect(finish).not.toContainText(/Soulink/i);
-    const copyLink = finish.getByRole('button', { name: 'Copy site link', exact: true });
+    await expect(live).not.toContainText(/Soulink/i);
+    const copyLink = live.getByRole('button', { name: 'Copy site link', exact: true });
     await expect(copyLink).toBeVisible();
     await page.mouse.move(0, 0);
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Temporary storage error' })).toHaveCount(0, { timeout: 10_000 });
     await screenshot('editor-live');
-    const siteLink = await finish.getByRole('link', { name: 'View site', exact: true }).getAttribute('href');
+    const siteLink = await live.getByRole('link', { name: 'View site', exact: true }).getAttribute('href');
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
     await copyLink.click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(siteLink);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+    // Every step stays reachable after publishing, and the bar clears once there is something new to publish.
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.locator('.step-name')).not.toContainText('Basics');
+    await expect(live).toBeVisible();
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(page.locator('.step-name')).toContainText('Basics');
+    await page.locator('#name').fill('Demo Owner Again');
+    await expect(live).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Publish', exact: true })).toBeVisible();
   });
 }

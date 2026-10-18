@@ -33,8 +33,9 @@ test("create, restore, publish, and read a public website", async ({ page }, tes
   await page.getByRole("radio", { name: "Split", exact: true }).check();
   await page.getByRole("button", { name: "Meadow theme", exact: true }).click();
   await page.getByRole("button", { name: "Publish", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "You’re live", exact: true })).toBeVisible();
-  const finish = page.locator(".wizard-finish");
+  const finish = page.locator(".wizard-live");
+  await expect(finish).toContainText("You’re live");
+  await expect(page.locator(".step-name")).toContainText("Publish");
   await expect(finish).not.toContainText(/Soulink/i);
   const siteLink = await finish.getByRole("link", { name: "View site", exact: true }).getAttribute("href");
   expect(siteLink).toBeTruthy();
@@ -42,8 +43,8 @@ test("create, restore, publish, and read a public website", async ({ page }, tes
   await finish.getByRole("button", { name: "Copy site link", exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(siteLink);
   await page.screenshot({ path: testInfo.outputPath("editor-live-real.png"), fullPage: true });
-  await page.getByRole("button", { name: "Done", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/sites/${handle}(?:$|[/?])`));
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.locator(".step-name")).not.toContainText("Publish");
 
   const content = await page.request.get(`/api/sites/${handle}/content`);
   expect(content.ok()).toBeTruthy();

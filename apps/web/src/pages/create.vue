@@ -60,6 +60,8 @@ watch([publishError, publishValidationError], ([error, validation]) => {
   if ((error || validation) && !publishNeedsStorage.value) toastError(error || validation);
 });
 const siteIsPublic = computed(() => wizard.siteRole === "organization" || wizard.profile.visibility === "public");
+// The live bar stays while the owner moves between steps and clears once they change something again.
+watch(() => wizard.needsPublish, (needsPublish) => { if (needsPublish) published.value = false; });
 const showIntroScreen = ref(false);
 const isOpeningWizard = ref(true);
 
@@ -402,12 +404,14 @@ onMounted(async () => {
 
 watch(() => route.query.step, applyRouteStep);
 watch(() => wizard.currentStepId, syncRouteStep);
+// One getter per param: a single getter returning a fresh array would fire on every route change,
+// including the step sync on Next/Back, and reopen the wizard.
 watch(
-  () => [
-    route.query.siteId,
-    route.query.site,
-    route.query.new,
-    route.query.siteRole,
+  [
+    () => route.query.siteId,
+    () => route.query.site,
+    () => route.query.new,
+    () => route.query.siteRole,
   ],
   () => {
     if (wizardMounted) void openWizardTarget();
@@ -418,19 +422,7 @@ watch(
 <template>
   <PageLoading v-if="isOpeningWizard" :label="openingLabel" />
   <div v-else class="wizard-page">
-    <section v-if="published" class="wizard-finish" aria-labelledby="wizard-finish-title">
-      <UiIcon name="CircleCheck" :size="72" class="wizard-finish__check" aria-hidden="true" />
-      <h1 id="wizard-finish-title">{{ siteIsPublic ? "You’re live" : "Your site is saved" }}</h1>
-      <p v-if="!siteIsPublic">Your profile is private. Make it public in Basics when you’re ready to share it.</p>
-      <button v-if="siteIsPublic" type="button" class="wizard-copy-link" aria-label="Copy site link" @click="copySiteLink">{{ publishedSiteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}<UiIcon name="Copy" :size="16" /></button>
-      <div class="wizard-finish__preview"><GeneratedSitePreview viewport="mobile" compact /></div>
-      <div class="wizard-finish__actions">
-        <a v-if="siteIsPublic" :href="publishedSiteUrl" target="_blank" rel="noopener noreferrer"><UiIcon name="ExternalLink" :size="18" />View site</a>
-        <RouterLink v-else :to="`/sites/${encodeURIComponent(wizard.username)}`">View site</RouterLink>
-        <button type="button" class="nav-btn next" @click="handleExit">Done</button>
-      </div>
-    </section>
-    <template v-else-if="!showIntroScreen">
+    <template v-if="!showIntroScreen">
       <!-- Step selector and preview sit in the app top bar, beside Home, instead of a second header row. -->
       <Teleport to="#app-page-controls" defer>
         <div class="wizard-topbar">
@@ -449,11 +441,21 @@ watch(
           </div>
         </nav>
       </header>
+      <section v-if="published" class="wizard-live" role="status" aria-label="Published">
+        <UiIcon name="CircleCheck" :size="22" class="wizard-live__check" aria-hidden="true" />
+        <div class="wizard-live__text">
+          <strong>{{ siteIsPublic ? "You’re live" : "Your site is saved" }}</strong>
+          <button v-if="siteIsPublic" type="button" class="wizard-copy-link" aria-label="Copy site link" @click="copySiteLink">{{ publishedSiteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}<UiIcon name="Copy" :size="15" /></button>
+          <span v-else>Your profile is private. Make it public in Basics when you’re ready to share it.</span>
+        </div>
+        <a v-if="siteIsPublic" class="wizard-live__view" :href="publishedSiteUrl" target="_blank" rel="noopener noreferrer"><UiIcon name="ExternalLink" :size="16" />View site</a>
+        <RouterLink v-else class="wizard-live__view" :to="`/sites/${encodeURIComponent(wizard.username)}`">View site</RouterLink>
+      </section>
       <div v-if="showImportedDraftRecovery" class="draft-recovery-banner"><div><strong>Imported draft saved locally.</strong><p>Imported from {{ importedDraftHost }}. Publish, keep editing or start over.</p></div><button type="button" @click="clearImportedDraft">Start over</button></div>
       <p v-if="publishProgress" class="wizard-publish-status" role="status">{{ publishProgress }}</p>
       <p v-if="publishNeedsStorage" class="wizard-publish-error" role="alert">{{ publishError }}<RouterLink to="/settings?section=storage">Activate storage</RouterLink></p>
     </template>
-    <main v-if="showIntroScreen && !published" class="wizard-intro">
+    <main v-if="showIntroScreen" class="wizard-intro">
       <section class="intro-panel" aria-labelledby="intro-title">
         <img
           class="intro-image"
@@ -486,7 +488,7 @@ watch(
     </main>
 
 
-    <main v-if="!showIntroScreen && !published" class="wizard-main" :class="{ 'wizard-main--inline-preview': inlinePreview }">
+    <main v-if="!showIntroScreen" class="wizard-main" :class="{ 'wizard-main--inline-preview': inlinePreview }">
       <div class="step-content">
         <component :is="currentComponent" :key="`${wizard.draftContextId}:${wizard.currentStepId}`" ref="currentComponentRef" />
         <nav v-if="!isEditingPage" class="step-nav" aria-label="Step navigation">
@@ -569,8 +571,10 @@ button:disabled { opacity: .45; cursor: not-allowed; } button:focus-visible, a:f
 .wizard-jump-list nav { display: grid; max-height: min(65dvh, 600px); overflow: auto; }.wizard-jump-list nav button { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 12px; border: 0; border-radius: 12px; background: transparent; color: var(--ui-text); font: 500 15px var(--font-sans); text-align: left; cursor: pointer; }
 .wizard-jump-list [aria-current='step'] { background: var(--ui-surface-muted); font-weight: 600; }.wizard-jump-list small { margin-left: auto; color: var(--ui-text-muted); font-weight: 400; }.wizard-jump-list p { margin: 16px 0 0; color: var(--ui-text-muted); font-size: 13px; }.wizard-jump-number { display: grid; place-items: center; width: 18px; font-variant-numeric: tabular-nums; color: var(--ui-text-muted); }
 .wizard-preview-dialog { width: min(960px, 100%); }.wizard-preview-dialog :deep(.generated-site-preview) { width: 100%; height: min(65dvh, 640px); border: 0; border-radius: 18px; }.wizard-preview-viewport { display: flex; gap: 2px; padding: 3px; background: var(--ui-surface-muted); border-radius: 24px; }.wizard-preview-viewport button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ui-text-muted); cursor: pointer; }.wizard-preview-viewport [aria-pressed='true'] { background: var(--ui-surface); color: var(--ui-text); box-shadow: var(--ui-shadow-sm); }
-.wizard-finish { display: grid; justify-items: center; gap: 16px; max-width: 620px; margin: 60px auto; padding: 0 16px; text-align: center; }.wizard-finish h1 { margin: 0; font-size: 28px; font-weight: 600; }.wizard-finish > p { margin: 0; color: var(--ui-text-muted); }.wizard-finish__check { color: var(--ui-accent-strong); }.wizard-copy-link { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 16px; border: 0; border-radius: 24px; background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; overflow-wrap: anywhere; cursor: pointer; }
-.wizard-finish__preview { width: 100%; }.wizard-finish__preview :deep(.generated-site-preview) { height: 330px; border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-sm); }.wizard-finish__actions { display: flex; align-items: center; gap: 12px; width: 100%; }.wizard-finish__actions a { display: flex; align-items: center; justify-content: center; gap: 8px; flex: 1; min-height: 50px; border-radius: 26px; background: var(--ui-surface-muted); color: var(--ui-text); text-decoration: none; font-weight: 600; }
+.wizard-live { display: flex; align-items: center; gap: 12px; max-width: 960px; margin: 16px auto 0; padding: 10px 12px 10px 16px; box-sizing: border-box; border-radius: 18px; background: var(--ui-surface-muted); }.wizard-live__check { flex: 0 0 auto; color: var(--ui-accent-strong); }
+.wizard-live__text { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; flex: 1; min-width: 0; font-size: 14px; }.wizard-live__text strong { font-size: 15px; font-weight: 600; }.wizard-live__text span { color: var(--ui-text-muted); }
+.wizard-copy-link { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 12px; border: 0; border-radius: 18px; background: var(--ui-surface); color: var(--ui-text); font: inherit; overflow-wrap: anywhere; text-align: left; cursor: pointer; }
+.wizard-live__view { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; min-height: 44px; padding: 0 16px; border-radius: 22px; background: var(--ui-surface); color: var(--ui-text); text-decoration: none; font-weight: 600; font-size: 14px; }
 @media(max-width:900px) {
   .wizard-main { grid-template-columns: minmax(0, 620px); margin: 18px auto; gap: 20px; padding: 0 16px; }
   .preview-panel { display: none; position: static; }.wizard-main--inline-preview .preview-panel { display: block; grid-row: 1; }
@@ -579,7 +583,7 @@ button:disabled { opacity: .45; cursor: not-allowed; } button:focus-visible, a:f
   .progress-step-dot { width: 14px; height: 14px; }.progress-step.is-current .progress-step-dot { width: 18px; height: 18px; }.progress-step-tooltip { display: none; }
   .step-nav { padding-top: 28px; }.nav-btn { padding: 0 20px; }
   .intro-panel { flex-direction: column; gap: 20px; }.intro-image { width: min(100%, 320px); }.intro-copy h1 { font-size: 28px; }.wizard-intro { margin: 12px auto; padding: 16px; }
-  .wizard-finish { margin-top: 36px; }
+  .wizard-live { margin: 12px 16px 0; align-items: flex-start; }.wizard-live__check { margin-top: 8px; }.wizard-live__view { padding: 0 12px; }
 }
 @media(prefers-reduced-motion:reduce) { *, *::before, *::after { transition: none; animation: none; scroll-behavior: auto; } }
 
