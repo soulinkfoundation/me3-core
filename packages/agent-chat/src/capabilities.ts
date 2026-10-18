@@ -2136,6 +2136,85 @@ export const CORE_CHAT_CAPABILITIES = [
       sideEffectLevel: "write",
     },
   }),
+  defineCoreChatCapability({
+    id: "core.coding.send",
+    owner: "core",
+    pluginId: null,
+    ownerFacingLabel: "Send work to Claude",
+    summary:
+      "Hand a coding task to Claude Code in one of the owner's GitHub repositories by opening an issue that mentions @claude. Claude works on a branch and a pull request is opened for the owner to review and merge. Write a short, self-contained brief from the conversation and project context; never include email, journal, contacts, money or other private data. Requires owner approval.",
+    category: "provider",
+    handler: {
+      surface: "chat",
+      route: "core.coding.send",
+    },
+    sideEffect: "external_write",
+    approvalMode: "approval_required",
+    requiresSetup: [],
+    inputSchema: {
+      type: "object",
+      required: ["repository", "title", "brief"],
+      properties: {
+        repository: {
+          type: "string",
+          description: "Repository from core_coding_status, as owner/name or just the name when it is unique.",
+        },
+        title: {
+          type: "string",
+          description: "Short issue title, under 72 characters, naming the change.",
+        },
+        brief: {
+          type: "string",
+          description: "What Claude should change and why, in plain words. Keep only what the task needs.",
+        },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "core_coding_sent",
+    examples: {
+      positive: ["Send this to Claude for me3-ios: the journal save button flickers.", "Ask Claude to fix the typo on the pricing page in me3-core."],
+      negative: ["What is Claude?", "Draft an email to Claude Smith."],
+    },
+    chat: {
+      intentKind: "write_action",
+      sideEffectLevel: "write",
+    },
+  }),
+  defineCoreChatCapability({
+    id: "core.coding.status",
+    owner: "core",
+    pluginId: null,
+    ownerFacingLabel: "Check work sent to Claude",
+    summary:
+      "List the repositories Claude can work in and the recent tasks sent to Claude, each with its status (waiting, working, pull request ready, replied, error or closed) and link. Use before core_coding_send to pick the repository.",
+    category: "provider",
+    handler: {
+      surface: "chat",
+      route: "core.coding.status",
+    },
+    sideEffect: "read_external",
+    approvalMode: "none",
+    requiresSetup: [],
+    inputSchema: {
+      type: "object",
+      properties: {
+        repository: {
+          type: "string",
+          description: "Optional repository to limit recent tasks to, as owner/name or name.",
+        },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "core_coding_status_read",
+    examples: {
+      positive: ["Has Claude finished the journal fix?", "Which repos can Claude work in?"],
+      negative: ["Send this to Claude."],
+    },
+    chat: {
+      intentKind: "read_action",
+      sideEffectLevel: "read",
+    },
+  }),
 ] as const;
 
 export type CoreChatCapabilityId = (typeof CORE_CHAT_CAPABILITIES)[number]["id"];

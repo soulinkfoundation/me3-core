@@ -5,6 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api } from "../api";
 import { getEmailTestOperation, finishEmailTestOperation } from "../utils/emailTestOperation";
 import Button from "../components/Button.vue";
+import CodingAgentSettings from "../components/CodingAgentSettings.vue";
 import PageLoading from "../components/PageLoading.vue";
 import PluginList from "../components/PluginList.vue";
 import SoulinkConnectPanel from "../components/SoulinkConnectPanel.vue";
@@ -462,6 +463,7 @@ const openSection = ref({
   ai: false,
   appConnections: false,
   account: false,
+  codingAgents: false,
   mailbox: false,
   payments: false,
   plugins: true,
@@ -2268,6 +2270,9 @@ function openRouteSection() {
   if (route.query.section === "mailbox") {
     openSection.value.mailbox = true;
   }
+  if (route.query.section === "coding") {
+    openSection.value.codingAgents = true;
+  }
   if (route.query.section === "storage") {
     openSection.value.storage = true;
     storageModalOpen.value = true;
@@ -3737,6 +3742,31 @@ onBeforeUnmount(() => {
 
               </template>
             </div>
+          </div>
+        </section>
+
+        <section id="account-coding" class="card accordion-card">
+          <button
+            id="account-trigger-coding"
+            class="accordion-trigger"
+            type="button"
+            :aria-expanded="openSection.codingAgents"
+            aria-controls="account-panel-coding"
+            @click="openSection.codingAgents = !openSection.codingAgents"
+          >
+            <span class="accordion-title-wrap accordion-title-flex">
+              <h2>Coding agents</h2>
+            </span>
+            <span class="accordion-chevron" aria-hidden="true">▼</span>
+          </button>
+          <div
+            id="account-panel-coding"
+            class="accordion-panel"
+            role="region"
+            aria-labelledby="account-trigger-coding"
+            :hidden="!openSection.codingAgents"
+          >
+            <CodingAgentSettings v-if="openSection.codingAgents" />
           </div>
         </section>
 

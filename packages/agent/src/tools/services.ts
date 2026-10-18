@@ -67,8 +67,16 @@ export interface AgentHomeCardServices {
   update(cardId: string, input: unknown, summary: unknown): Promise<unknown>;
   act(cardId: string, input: unknown): Promise<unknown>;
 }
+/** Claude Code through GitHub issues, provided by the worker once the owner connects GitHub. */
+export interface AgentCodingServices {
+  status(input: { repository?: string }): Promise<unknown>;
+  /** Returns owner/name for a repository the token can reach; throws an owner-facing Error otherwise. */
+  resolveRepository(repository: string): Promise<string>;
+  send(input: { repository: string; title: string; brief: string }): Promise<unknown>;
+}
 export interface AgentDomainServices {
   cards?: AgentHomeCardServices;
+  coding?: AgentCodingServices;
   quotes?: { save(input: Record<string, unknown>, options?: { signal?: AbortSignal; authorization?: import("../owner-create-intent").OwnerCreateAuthorization }): Promise<unknown> };
   mailbox?: AgentMailboxServices;
   scheduling?: AgentSchedulingServices;

@@ -11,6 +11,7 @@ export const DEFERRED_TOOL_GROUPS: Record<string, { prefix: string; summary: str
   sites: { prefix: "core_sites_", summary: "create, update or list landing pages on the owner's websites, and read site blog posts" },
   payments: { prefix: "core_payments_", summary: "propose a purchase for the owner to approve and pay on their own device (including from other ME3 sites found with core_people_search, checked live with the seller), record receipts, and list payments" },
   computer: { prefix: "core_computer_", summary: "start, check or cancel a background browser job in which ME3 reads public websites to find or check information such as prices, availability or opening hours" },
+  coding: { prefix: "core_coding_", summary: "send a coding task to Claude Code in one of the owner's GitHub repositories (it opens a pull request to review) and check on tasks already sent. Use it whenever the owner asks Claude to build, change or fix something in a repo or app" },
   social: { prefix: "core_social_", summary: "save social post drafts and post suggestions from a journal entry or task, search the social library, and plan or schedule posts. Use it whenever the owner asks for a social post or draft" },
 };
 
