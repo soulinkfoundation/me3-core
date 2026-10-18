@@ -23,7 +23,7 @@ const basePayment = {
   createdAt: now, decidedAt: null, handedOverAt: null, completedAt: null, receipt: null,
 };
 
-type State = { approvals: unknown[]; payment: Record<string, unknown>; audit: unknown[]; decisions: unknown[]; staleSession: boolean; receipts: unknown[]; notPaid: number; limits: Record<string, unknown>; limitPuts: unknown[] };
+type State = { approvals: unknown[]; payment: Record<string, unknown>; audit: unknown[]; decisions: unknown[]; staleSession: boolean; resumeFails?: boolean; receipts: unknown[]; notPaid: number; limits: Record<string, unknown>; limitPuts: unknown[] };
 
 async function fixture(page: Page, overrides: Partial<State> = {}) {
   const state: State = {
@@ -37,6 +37,11 @@ async function fixture(page: Page, overrides: Partial<State> = {}) {
       const body = route.request().postDataJSON(); state.decisions.push(body);
       if (body.decision === "approved" && state.staleSession) return json(route, { ok: false, error: "Sign in again to approve this payment.", code: "fresh_authentication_required" }, 403);
       state.approvals = [];
+      if (body.decision === "approved" && state.resumeFails) {
+        // The server saved the decision and the sign-in, but the agent could not resume to hand it over.
+        state.payment = { ...state.payment, approvalId: "appr-1", approvedWith: { channel: "web", signedInAt: now }, decidedAt: now };
+        return json(route, { ok: false, error: "Agent resume response unavailable" }, 502);
+      }
       state.payment = { ...state.payment, status: body.decision === "approved" ? "handed_over" : "declined", decidedAt: now, handedOverAt: body.decision === "approved" ? now : null };
       state.audit.push({ event: body.decision, data: { auth: { channel: "web" } }, at: now });
       if (body.decision === "approved") state.audit.push({ event: "handed_over", data: {}, at: now });
@@ -186,4 +191,43 @@ test("Settings shows limits, rejects a per-payment limit above the monthly one, 
   expect(state.limitPuts).toEqual([{ currency: "EUR", perPaymentMax: "2000", monthlyMax: "1000" }, { currency: "EUR", perPaymentMax: "100", monthlyMax: "1000" }]);
   await expect(page.getByRole("region", { name: "History" })).toContainText("Paid");
   await page.screenshot({ path: testInfo.outputPath("settings-payments.png"), fullPage: true });
+});
+
+test("An approval whose hand-over failed stays visible after reload and the owner can finish it", async ({ page }, testInfo) => {
+  const state = await fixture(page, { resumeFails: true });
+  await page.goto("/assistant?view=chat&thread=main");
+  await page.getByTestId("payment-approval").getByRole("button", { name: /^Approve/ }).click();
+  await expect(page.getByTestId("payment-approval").getByRole("alert").last()).toContainText("Agent resume response unavailable");
+
+  await page.reload();
+  const stalled = page.getByRole("region", { name: /hand-over not finished/ });
+  await expect(stalled).toContainText("You approved this");
+  await expect(stalled).toContainText("ME3 hasn't handed it over yet");
+  await expect(page.getByTestId("payment-approval")).toHaveCount(0);
+  expect(state.decisions).toHaveLength(1);
+
+  state.resumeFails = false; state.staleSession = true;
+  await stalled.getByRole("button", { name: "Finish hand-over" }).click();
+  await expect(stalled).toContainText("sign in again");
+  await page.waitForTimeout(300); expect(state.decisions).toHaveLength(2);
+  await stalled.getByRole("button", { name: "Sign in again" }).click();
+  await expect(page).toHaveURL(/\/login\?/);
+  const redirect = new URL(page.url()).searchParams.get("redirect")!;
+  expect(redirect).toBe("/assistant?view=chat&thread=main&payment=appr-1");
+
+  state.staleSession = false;
+  await page.goto(redirect);
+  await expect(page.getByRole("region", { name: /hand-over not finished/ })).toContainText("You're signed in again");
+  expect(state.decisions).toHaveLength(2);
+  await page.getByRole("region", { name: /hand-over not finished/ }).getByRole("button", { name: "Finish hand-over" }).click();
+  await expect.poll(() => state.decisions).toEqual([{ decision: "approved" }, { decision: "approved" }, { decision: "approved" }]);
+  await expect(page.getByRole("region", { name: /^Pay / }).getByRole("link", { name: "Open checkout" })).toHaveAttribute("href", "https://pay.other.example/c/1");
+  await expect(page).not.toHaveURL(/payment=/);
+  await page.screenshot({ path: testInfo.outputPath("stalled-finished.png"), fullPage: true });
+});
+
+test("Payments history labels an unfinished hand-over", async ({ page }) => {
+  await fixture(page, { approvals: [], payment: { ...basePayment, approvalId: "appr-1", approvedWith: { channel: "web", signedInAt: now }, decidedAt: now } });
+  await page.goto("/settings/payments");
+  await expect(page.getByRole("region", { name: "History" })).toContainText("Approved · hand-over not finished");
 });

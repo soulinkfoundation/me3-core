@@ -7,7 +7,7 @@ import UiIcon from "../UiIcon.vue";
 import PaymentApprovalCard from "./PaymentApprovalCard.vue";
 import PaymentReceiptDialog from "./PaymentReceiptDialog.vue";
 import {
-  formatPaymentMoney, paymentApprovalView, paymentHandOver, paymentReceiptWarning, paymentTimestamp,
+  formatPaymentMoney, isFreshAuthenticationRequired, paymentApprovalView, paymentHandOver, paymentReauthLocation, paymentReceiptWarning, paymentStalledHandOver, paymentTimestamp,
   type PaymentApprovalLike, type PaymentRecord,
 } from "../../utils/agentPayments";
 
@@ -32,6 +32,9 @@ const recent = computed(() => payments.value.filter(payment => {
   const at = paymentTimestamp(payment.completedAt || payment.decidedAt || payment.createdAt);
   return at !== null && Date.now() - at < RECENT_MS;
 }).reverse());
+// Approved, but the agent never resumed to hand it over (for example the resume failed).
+const stalled = computed(() => payments.value.filter(payment => paymentStalledHandOver(payment) && !pendingIds.value.has(payment.id)).reverse());
+const retry = ref<Record<string, { busy: boolean; reauth: boolean; error: string }>>({});
 
 async function load() {
   const threadId = props.threadId, seq = ++loadSeq;
@@ -57,6 +60,27 @@ async function resolved(approvalId: string) {
   emit("decided");
 }
 
+async function finishHandOver(payment: PaymentRecord) {
+  const target = paymentStalledHandOver(payment);
+  if (!target || retry.value[payment.id]?.busy) return;
+  retry.value[payment.id] = { busy: true, reauth: false, error: "" };
+  try {
+    // The owner's own click re-sends their saved decision; the server re-checks the fresh sign-in.
+    await api.post(`/assistant/approvals/${encodeURIComponent(target.approvalId)}`, { decision: "approved" });
+    delete retry.value[payment.id];
+    await resolved(target.approvalId);
+  } catch (error) {
+    retry.value[payment.id] = isFreshAuthenticationRequired(error)
+      ? { busy: false, reauth: true, error: "" }
+      : { busy: false, reauth: false, error: error instanceof Error ? error.message : "Couldn't finish the hand-over. Try again." };
+  }
+}
+
+function signInAgain(payment: PaymentRecord) {
+  const target = paymentStalledHandOver(payment);
+  if (target) void router.push(paymentReauthLocation({ approvalId: target.approvalId, threadId: props.threadId }));
+}
+
 function pill(payment: PaymentRecord) {
   const total = formatPaymentMoney(payment.amount, payment.currency);
   if (payment.status === "paid") return `Paid ${payment.receipt ? formatPaymentMoney(payment.receipt.amount, payment.receipt.currency) : total} to ${payment.merchant.name}`;
@@ -69,9 +93,22 @@ watch(() => [props.threadId, props.refreshKey], load, { immediate: true });
 
 <template>
   <!-- Stays mounted while a receipt is open, even if the payment drops out of the recent list. -->
-  <div v-if="approvals.length || recent.length || receiptFor" ref="root" class="chat-payments" aria-label="Payments">
+  <div v-if="approvals.length || stalled.length || recent.length || receiptFor" ref="root" class="chat-payments" aria-label="Payments">
     <PaymentApprovalCard v-for="approval in approvals" :key="approval.id" :data-approval-id="approval.id" :approval="approval"
       :returned-from-sign-in="returnedApprovalId === approval.id" @resolved="resolved(approval.id)" @receipt="receiptFor = $event" />
+    <section v-for="payment in stalled" :key="payment.id" class="chat-payments__handover" :data-approval-id="payment.approvalId"
+      :aria-label="`${payment.merchant.name}: hand-over not finished`">
+      <div class="chat-payments__head"><span aria-hidden="true">💳</span><span><strong>{{ formatPaymentMoney(payment.amount, payment.currency) }} to {{ payment.merchant.name }}</strong><small>Approved · hand-over not finished</small></span></div>
+      <p>You approved this, but ME3 hasn't handed it over yet. Nothing has been bought.</p>
+      <p v-if="retry[payment.id]?.reauth" class="chat-payments__note" role="status"><UiIcon name="Lock" :size="18" /><span>For your safety, sign in again first. You'll come back here to finish it yourself.</span></p>
+      <p v-else-if="returnedApprovalId === payment.approvalId" class="chat-payments__note" role="status"><UiIcon name="Check" :size="18" /><span>You're signed in again. Finish the hand-over when you're ready.</span></p>
+      <p v-if="retry[payment.id]?.error" class="chat-payments__error" role="alert">{{ retry[payment.id]?.error }}</p>
+      <div class="chat-payments__btns">
+        <Button color="ghost" shape="soft" @click="receiptFor = payment.id">Details</Button>
+        <Button v-if="retry[payment.id]?.reauth" class="chat-payments__primary" color="primary" shape="soft" @click="signInAgain(payment)">Sign in again</Button>
+        <Button v-else class="chat-payments__primary" color="primary" shape="soft" :disabled="retry[payment.id]?.busy" @click="finishHandOver(payment)">{{ retry[payment.id]?.busy ? 'Finishing…' : 'Finish hand-over' }}</Button>
+      </div>
+    </section>
     <template v-for="payment in recent" :key="payment.id">
       <section v-if="payment.status === 'handed_over'" class="chat-payments__handover" :aria-label="`Pay ${payment.merchant.name}`">
         <div class="chat-payments__head"><span aria-hidden="true">💳</span><span><strong>Pay {{ formatPaymentMoney(payment.amount, payment.currency) }} to {{ payment.merchant.name }}</strong><small>Approved · waiting for your receipt</small></span></div>
@@ -103,6 +140,9 @@ watch(() => [props.threadId, props.refreshKey], load, { immediate: true });
 .chat-payments__btns :deep(.me3-btn) { min-height: 44px; }
 .chat-payments__btns :deep(svg) { margin-right: 6px; }
 .chat-payments__primary { flex: 1; }
+.chat-payments__note { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: var(--ui-radius-md); background: var(--ui-accent-soft); }
+.chat-payments__note :deep(svg) { flex: 0 0 auto; margin-top: 1px; color: var(--ui-accent); }
+.chat-payments__error { color: var(--ui-danger, #e5484d); font-weight: 600; }
 .chat-payments__pill { display: flex; align-items: center; gap: 10px; align-self: flex-start; max-width: 100%; min-height: 44px; padding: 6px 8px 6px 14px; border-radius: 999px; background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); font-size: 14px; }
 .chat-payments__pill > span { overflow-wrap: anywhere; }
 .chat-payments__pill small { color: var(--ui-danger, #e5484d); font-size: 13px; }

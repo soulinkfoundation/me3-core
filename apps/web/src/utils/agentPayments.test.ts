@@ -8,7 +8,9 @@ import {
   paymentAuditLabel,
   paymentHandOver,
   paymentReauthLocation,
+  paymentDisplayStatus,
   paymentReceiptWarning,
+  paymentStalledHandOver,
   paymentStatusLabel,
   paymentTimestamp,
   type PaymentRecord,
@@ -144,5 +146,26 @@ describe("payment timestamps", () => {
     expect(paymentTimestamp("2026-10-17T10:00:00.000Z")).toBe(Date.UTC(2026, 9, 17, 10));
     expect(paymentTimestamp("2026-10-17T12:00:00+02:00")).toBe(Date.UTC(2026, 9, 17, 10));
     expect(paymentTimestamp("not a date")).toBeNull();
+  });
+});
+
+describe("approved but not handed over", () => {
+  const approvedWith = { channel: "web", signedInAt: "2026-10-17T19:50:37.000Z" };
+
+  it("finds an approval whose hand-over never ran, so the owner can try it again", () => {
+    expect(paymentStalledHandOver(payment({ status: "proposed", approvalId: "a1", approvedWith }))).toEqual({ approvalId: "a1" });
+  });
+
+  it("ignores proposals still waiting for the owner, finished hand-overs and approvals it cannot retry", () => {
+    expect(paymentStalledHandOver(payment({ status: "proposed", approvalId: null, approvedWith: null }))).toBeNull();
+    expect(paymentStalledHandOver(payment({ status: "proposed", approvalId: "a1", approvedWith: null }))).toBeNull();
+    expect(paymentStalledHandOver(payment({ status: "handed_over", approvalId: "a1", approvedWith }))).toBeNull();
+    expect(paymentStalledHandOver(payment({ status: "proposed", approvalId: null, approvedWith }))).toBeNull();
+  });
+
+  it("labels the stalled state instead of 'Waiting for your OK'", () => {
+    expect(paymentDisplayStatus(payment({ status: "proposed", approvalId: "a1", approvedWith }))).toBe("Approved · hand-over not finished");
+    expect(paymentDisplayStatus(payment({ status: "proposed" }))).toBe("Waiting for your OK");
+    expect(paymentDisplayStatus(payment({ status: "paid" }))).toBe("Paid");
   });
 });

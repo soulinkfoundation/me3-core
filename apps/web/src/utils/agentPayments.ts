@@ -16,7 +16,7 @@ export type PaymentReceipt = {
 export type PaymentRecord = {
   id: string; status: string; merchant: { name: string; url: string }; purpose: string; items: PaymentItem[];
   amount: string; currency: string; checkoutUrl: string | null; checkoutDomainDiffers: boolean; refundPolicy: string | null;
-  threadId?: string; approvalId?: string | null; createdAt: string; decidedAt: string | null; handedOverAt: string | null;
+  threadId?: string; approvalId?: string | null; approvedWith?: Record<string, unknown> | null; createdAt: string; decidedAt: string | null; handedOverAt: string | null;
   completedAt: string | null; receipt: PaymentReceipt | null;
 };
 export type PaymentAuditEvent = { event: string; data: Record<string, unknown>; at?: string };
@@ -111,6 +111,18 @@ const STATUS_LABELS: Record<PaymentStatus, string> = {
 };
 export function paymentStatusLabel(status: string): string {
   return STATUS_LABELS[status as PaymentStatus] ?? status.replace(/_/g, " ");
+}
+
+/**
+ * The owner approved (the server bound their fresh sign-in) but the agent never resumed to hand the
+ * purchase over. Re-sending the owner's same decision re-runs the hand-over, so it stays the owner's click.
+ */
+export function paymentStalledHandOver(payment: PaymentRecord): { approvalId: string } | null {
+  return payment.status === "proposed" && payment.approvedWith && payment.approvalId ? { approvalId: payment.approvalId } : null;
+}
+
+export function paymentDisplayStatus(payment: PaymentRecord): string {
+  return payment.status === "proposed" && payment.approvedWith ? "Approved · hand-over not finished" : paymentStatusLabel(payment.status);
 }
 
 export function paymentReceiptWarning(payment: PaymentRecord): string | null {

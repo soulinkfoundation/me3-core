@@ -4,7 +4,7 @@ import { api } from "../../api";
 import Button from "../Button.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import {
-  formatPaymentMoney, paymentActions, paymentAuditLabel, paymentDate, paymentHandOver, paymentReceiptWarning, paymentStatusLabel, safeHttpsUrl,
+  formatPaymentMoney, paymentActions, paymentAuditLabel, paymentDate, paymentHandOver, paymentDisplayStatus, paymentReceiptWarning, safeHttpsUrl,
   type PaymentAuditEvent, type PaymentRecord,
 } from "../../utils/agentPayments";
 
@@ -76,7 +76,7 @@ watch(() => props.paymentId, load, { immediate: true });
     <template v-else-if="payment">
       <header class="payment-receipt__head">
         <h2 :id="headingId || fallbackHeadingId">{{ payment.merchant.name }}</h2>
-        <span class="payment-receipt__status" :class="`is-${payment.status}`">{{ paymentStatusLabel(payment.status) }}</span>
+        <span class="payment-receipt__status" :class="`is-${payment.status}`">{{ paymentDisplayStatus(payment) }}</span>
       </header>
       <p class="payment-receipt__amount">{{ formatPaymentMoney(payment.amount, payment.currency) }} <small>approved</small></p>
       <p v-if="payment.purpose" class="payment-receipt__muted">{{ payment.purpose }}</p>

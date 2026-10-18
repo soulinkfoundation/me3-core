@@ -6,7 +6,7 @@ import Button from "../../components/Button.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import PaymentReceiptDialog from "../../components/payments/PaymentReceiptDialog.vue";
 import { useAppToast } from "../../composables/useAppToast";
-import { formatPaymentMoney, paymentDate, paymentReceiptWarning, paymentStatusLabel, type PaymentLimits, type PaymentRecord } from "../../utils/agentPayments";
+import { formatPaymentMoney, paymentDate, paymentDisplayStatus, paymentReceiptWarning, type PaymentLimits, type PaymentRecord } from "../../utils/agentPayments";
 
 definePage({
   meta: {
@@ -150,7 +150,7 @@ onMounted(load);
           <button v-for="payment in payments" :key="payment.id" type="button" class="payments-row" @click="receiptFor = payment.id">
             <span class="payments-row__text">
               <span>{{ payment.merchant.name }}</span>
-              <small>{{ paymentStatusLabel(payment.status) }} · {{ paymentDate(payment.createdAt) }}<template v-if="paymentReceiptWarning(payment)"> · <span class="payments-danger">amount differs</span></template></small>
+              <small>{{ paymentDisplayStatus(payment) }} · {{ paymentDate(payment.createdAt) }}<template v-if="paymentReceiptWarning(payment)"> · <span class="payments-danger">amount differs</span></template></small>
             </span>
             <span class="payments-row__amount">{{ formatPaymentMoney(payment.receipt?.amount ?? payment.amount, payment.receipt?.currency ?? payment.currency) }}</span>
             <UiIcon name="ChevronRight" :size="18" class="payments-muted" />
