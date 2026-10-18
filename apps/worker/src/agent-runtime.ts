@@ -2,6 +2,7 @@ import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, c
 import type { AgentFastPathRequestMeasurement } from "../../../packages/agent/src/fast-path";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { saveOwnerQuote } from "./quotes";
+import { createAgentHomeCardServices } from "./home-cards";
 import { createAgentPaymentServices } from "./agent-payments";
 import { createAgentNetworkPaymentServices } from "./agent-network-commerce";
 import { computerAvailability, createComputerChatServices, type ComputerJobHost } from "./agent-computer";
@@ -273,6 +274,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     payments:{...createAgentPaymentServices(env,ownerId),...createAgentNetworkPaymentServices(env,ownerId)},
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
     web:createWebResearchToolServices(env,ownerId),landingPageEnv:env as never,
+    cards:createAgentHomeCardServices(env,ownerId),
   };
 }
 function isToolAvailable(name:string,services:AgentDomainServices):boolean {
@@ -284,6 +286,7 @@ function isToolAvailable(name:string,services:AgentDomainServices):boolean {
   if(name==="core_scheduling_request_read")return Boolean(services.scheduling?.getRequest);
   if(name==="core_scheduling_request")return Boolean(services.scheduling?.request);
   if(name==="core_scheduling_request_profile")return Boolean(services.scheduling?.requestNetwork);
+  if(name.startsWith("core_cards_"))return Boolean(services.cards);
   if(name==="core_scheduling_approve")return Boolean(services.scheduling?.approve);
   if(name==="core_scheduling_decline")return Boolean(services.scheduling?.decline);
   return true;

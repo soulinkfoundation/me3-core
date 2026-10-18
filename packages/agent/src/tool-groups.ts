@@ -7,6 +7,7 @@ import type { AgentMessage, AgentTool } from "./types";
  */
 export const TOOL_LOADER_NAME = "core_tools_load";
 export const DEFERRED_TOOL_GROUPS: Record<string, { prefix: string; summary: string }> = {
+  cards: { prefix: "core_cards_", summary: "build, change, read and use the owner's own custom Home cards (habit trackers, counters, daily notes). Use it whenever the owner wants to track, count or log something, asks for a card or widget, or says they did a habit" },
   sites: { prefix: "core_sites_", summary: "create, update or list landing pages on the owner's websites, and read site blog posts" },
   payments: { prefix: "core_payments_", summary: "propose a purchase for the owner to approve and pay on their own device (including from other ME3 sites found with core_people_search, checked live with the seller), record receipts, and list payments" },
   computer: { prefix: "core_computer_", summary: "start, check or cancel a background browser job in which ME3 reads public websites to find or check information such as prices, availability or opening hours" },

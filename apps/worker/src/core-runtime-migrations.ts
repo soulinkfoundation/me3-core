@@ -9,6 +9,7 @@ import { QUOTES_SCHEMA } from "./quotes-schema";
 import { QUOTE_BOOKMARKS_SCHEMA } from "./quote-bookmarks-schema";
 import { GRATITUDE_SETTINGS_SCHEMA, CARD_REMINDERS_SCHEMA } from "./gratitude-schema";
 import { HOME_LAYOUT_SCHEMA } from "./home-layout";
+import { HOME_CARDS_SCHEMA } from "./home-cards";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { AGENT_PAYMENTS_SCHEMA } from "./agent-payments";
@@ -611,6 +612,14 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-18-agent-network-purchases-v1",
     async apply(db) {
       await db.batch(AGENT_NETWORK_COMMERCE_SCHEMA.map(sql => db.prepare(sql)));
+    },
+  },
+  // Custom Home cards built by ME3: spec, linear versions and day-keyed entries.
+  {
+    id: "0078_home_cards",
+    checksum: "2026-10-17-home-cards-v1",
+    async apply(db) {
+      await db.batch(HOME_CARDS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];

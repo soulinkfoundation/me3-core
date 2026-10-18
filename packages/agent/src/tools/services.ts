@@ -58,7 +58,17 @@ export interface AgentPaymentServices {
 }
 /** A seller from the network index. Its spec URL is the only address ME3 calls to buy. */
 export type NetworkSellerRef = { profileId: string | null; name: string; handle: string | null; profileUrl: string | null; specUrl: string; offeringUrl?: string | null };
+
+/** Custom Home cards, provided by the worker. Each call throws an owner-facing Error on bad input. */
+export interface AgentHomeCardServices {
+  list(): Promise<unknown>;
+  read(cardId: string): Promise<unknown>;
+  create(input: unknown): Promise<unknown>;
+  update(cardId: string, input: unknown, summary: unknown): Promise<unknown>;
+  act(cardId: string, input: unknown): Promise<unknown>;
+}
 export interface AgentDomainServices {
+  cards?: AgentHomeCardServices;
   quotes?: { save(input: Record<string, unknown>, options?: { signal?: AbortSignal; authorization?: import("../owner-create-intent").OwnerCreateAuthorization }): Promise<unknown> };
   mailbox?: AgentMailboxServices;
   scheduling?: AgentSchedulingServices;

@@ -100,6 +100,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0075_agent_computer", "2026-10-17-agent-computer-v1"],
   ["0076_agent_commerce", "2026-10-17-agent-commerce-v1"],
   ["0077_agent_network_purchases", "2026-10-18-agent-network-purchases-v1"],
+  ["0078_home_cards", "2026-10-17-home-cards-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
