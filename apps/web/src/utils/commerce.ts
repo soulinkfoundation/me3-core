@@ -10,6 +10,8 @@ export type CommerceSettingsResponse = {
     preferredProvider: "auto" | "direct" | "managed";
     directConfigured: boolean;
     directKeySetupAllowed: boolean;
+    /** Managed hosting accepts only test-mode keys; live payments use Stripe Connect. */
+    directKeyTestOnly?: boolean;
     directSource: "environment" | "stored" | "not_configured";
     managedAvailable: boolean;
     connectionStatus: "not_connected" | "pending" | "restricted" | "active" | "unavailable" | null;

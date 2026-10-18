@@ -3879,7 +3879,7 @@ onBeforeUnmount(() => {
                     class="field commerce-settings-row__field commerce-settings-row__field--secret payment-key-field"
                   >
                     <label for="stripe-secret-key-input">
-                      Stripe secret key
+                      {{ commerceSettings.stripe.directKeyTestOnly ? "Stripe test key (test mode only)" : "Stripe secret key" }}
                     </label>
                     <div class="password-field payment-key-row">
                       <input
@@ -3889,7 +3889,7 @@ onBeforeUnmount(() => {
                         :type="showStripeSecret ? 'text' : 'password'"
                         autocomplete="off"
                         spellcheck="false"
-                        placeholder="sk_live_... or sk_test_..."
+                        :placeholder="commerceSettings.stripe.directKeyTestOnly ? 'sk_test_...' : 'sk_live_... or sk_test_...'"
                         @keydown.enter.prevent="saveCommerceSettings"
                       />
                       <button
@@ -3909,6 +3909,10 @@ onBeforeUnmount(() => {
                         />
                       </button>
                     </div>
+                    <p v-if="commerceSettings.stripe.directKeyTestOnly" class="field-hint">
+                      For trying paid bookings and products without real money.
+                      Live payments on hosted ME3 use Stripe Connect.
+                    </p>
                   </div>
 
                   <Button
@@ -3966,7 +3970,7 @@ onBeforeUnmount(() => {
                     :disabled="commerceSaving"
                     @click="selectCommerceStripeProvider('direct')"
                   >
-                    Use configured API key
+                    {{ commerceSettings.stripe.directKeyTestOnly ? "Use test key" : "Use configured API key" }}
                   </Button>
 
                   <Button

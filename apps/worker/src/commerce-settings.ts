@@ -33,6 +33,8 @@ export type CommerceSettingsResponse = {
     preferredProvider: StripeProviderPreference;
     directConfigured: boolean;
     directKeySetupAllowed: boolean;
+    /** Managed hosting accepts only Stripe test-mode keys, for testing; live payments use Connect. */
+    directKeyTestOnly: boolean;
     directSource: "environment" | "stored" | "not_configured";
     managedAvailable: boolean;
     connectionStatus: ManagedCommerceConnectionStatus["status"] | "unavailable" | null;
@@ -110,7 +112,8 @@ export async function getCommerceSettings(
       mode,
       preferredProvider,
       directConfigured,
-      directKeySetupAllowed: env.ME3_DEPLOYMENT_MODE?.trim().toLowerCase() !== "managed",
+      directKeySetupAllowed: true,
+      directKeyTestOnly: isManagedHosting(env),
       directSource: hasEnvKey
         ? "environment"
         : hasStoredKey
@@ -168,9 +171,20 @@ export async function updateCommerceSettings(
   const preferredProviderInput = hasPreferredProviderInput
     ? parseStripeProviderPreference(body.preferredStripeProvider)
     : null;
-  if (env.ME3_DEPLOYMENT_MODE?.trim().toLowerCase() === "managed" &&
-      (stripeSecretKey || preferredProviderInput === "direct")) {
-    throw new CommerceSettingsInputError("Use Stripe Connect for payments on managed hosting.", 400);
+  if (isManagedHosting(env)) {
+    // Managed hosting takes live payments through Stripe Connect only. A test-mode key is
+    // allowed so owners can try paid flows without real money.
+    if (stripeSecretKey && !isStripeTestKey(stripeSecretKey)) {
+      throw new CommerceSettingsInputError("On managed hosting, add only a Stripe test key (sk_test_). Use Stripe Connect for live payments.", 400);
+    }
+    if (preferredProviderInput === "direct" && !stripeSecretKey) {
+      const stored = existingRow?.encrypted_stripe_secret_key
+        ? await decryptSecret(existingRow.encrypted_stripe_secret_key, await getOrCreateInstallEncryptionKey(env)).catch(() => null)
+        : null;
+      if (!stored || !isStripeTestKey(stored)) {
+        throw new CommerceSettingsInputError("On managed hosting, direct payments need a Stripe test key (sk_test_). Use Stripe Connect for live payments.", 400);
+      }
+    }
   }
   const hasDefaultCurrencyInput = Object.prototype.hasOwnProperty.call(body, "defaultCurrency");
   const defaultCurrencyInput = hasDefaultCurrencyInput
@@ -316,11 +330,12 @@ export async function getStripeSecretKey(
     hasManagedBridge,
   );
   if (mode === "managed") return null;
-  if (envKey) return envKey;
-  if (!row?.encrypted_stripe_secret_key) return null;
-
-  const installKey = await getOrCreateInstallEncryptionKey(env);
-  return decryptSecret(row.encrypted_stripe_secret_key, installKey);
+  const key = envKey || (row?.encrypted_stripe_secret_key
+    ? await decryptSecret(row.encrypted_stripe_secret_key, await getOrCreateInstallEncryptionKey(env))
+    : null);
+  // Defense in depth: managed hosting never charges real cards with a direct key.
+  if (key && isManagedHosting(env) && !isStripeTestKey(key)) return null;
+  return key;
 }
 
 async function getCommerceSettingsRow(
@@ -429,6 +444,14 @@ function inferDefaultCurrencyFromTimezone(timezone: string | null): string | nul
 
 function normalizeSecret(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isManagedHosting(env: Env): boolean {
+  return env.ME3_DEPLOYMENT_MODE?.trim().toLowerCase() === "managed";
+}
+
+function isStripeTestKey(value: string): boolean {
+  return value.startsWith("sk_test_");
 }
 
 function validateStripeSecretKey(value: string): void {

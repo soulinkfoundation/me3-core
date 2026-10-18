@@ -7933,25 +7933,26 @@ describe("ME3 Worker auth", () => {
     expect(body.user.localeSource).toBe("inferred");
   });
 
-  it("disables direct Stripe key setup on managed hosting while allowing removal and currency changes", async () => {
+  it("allows only Stripe test keys on managed hosting while allowing removal and currency changes", async () => {
     const env = createEnv();
     const session = cookieHeader(await bootstrap(env));
     env.ME3_DEPLOYMENT_MODE = "managed";
     const headers = { "Content-Type": "application/json", Cookie: session };
+    const put = (body: unknown) => app.fetch(new Request("http://localhost/api/commerce/settings", { method: "PUT", headers, body: JSON.stringify(body) }), env);
     const status = await app.fetch(new Request("http://localhost/api/commerce/status", { headers }), env);
-    expect(await status.json()).toMatchObject({ stripe: { directKeySetupAllowed: false } });
-    for (const body of [{ stripeSecretKey: "sk_test_managed_setup" }, { preferredStripeProvider: "direct" }]) {
-      const response = await app.fetch(new Request("http://localhost/api/commerce/settings", {
-        method: "PUT", headers, body: JSON.stringify(body),
-      }), env);
+    expect(await status.json()).toMatchObject({ stripe: { directKeySetupAllowed: true, directKeyTestOnly: true } });
+    for (const body of [{ stripeSecretKey: "sk_live_managed_setup" }, { preferredStripeProvider: "direct" }]) {
+      const response = await put(body);
       expect(response.status).toBe(400);
-      expect(await response.json()).toMatchObject({ error: "Use Stripe Connect for payments on managed hosting." });
+      expect(await response.json()).toMatchObject({ error: expect.stringMatching(/Stripe test key \(sk_test_\)/) });
     }
-    const response = await app.fetch(new Request("http://localhost/api/commerce/settings", {
-      method: "PUT", headers, body: JSON.stringify({ clearStripeSecretKey: true, defaultCurrency: "EUR" }),
-    }), env);
+    const added = await put({ stripeSecretKey: "sk_test_managed_setup" });
+    expect(added.status).toBe(200);
+    expect(await added.json()).toMatchObject({ stripe: { directConfigured: true, keyHint: "***etup" } });
+    expect((await put({ preferredStripeProvider: "direct" })).status).toBe(200);
+    const response = await put({ clearStripeSecretKey: true, defaultCurrency: "EUR" });
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ defaultCurrency: "EUR", stripe: { directKeySetupAllowed: false } });
+    expect(await response.json()).toMatchObject({ defaultCurrency: "EUR", stripe: { directConfigured: false, directKeyTestOnly: true } });
   });
 
   it("stores Stripe payment settings for the signed-in owner", async () => {
