@@ -1,3 +1,4 @@
+import { renderAssistantMarkdown } from "../../utils/assistantMarkdown";
 import { resolveUiIconName, type UiIconName } from "../../utils/icons";
 
 export type TaskModeId = "now" | "backlog" | "done";
@@ -74,16 +75,22 @@ export function sortTasks(tasks: WorkspaceTask[]): WorkspaceTask[] {
   });
 }
 
+// The web editor saves HTML; the agent and API clients may write Markdown.
+function taskDescriptionIsHtml(description: string): boolean {
+  return /^<(p|h[1-6]|ul|ol|blockquote|pre|div|hr)[\s>/]/i.test(description);
+}
+
 export function taskDescriptionForEditor(
   task: WorkspaceTask | null | undefined,
 ): string {
-  return task?.description || "";
+  const description = task?.description?.trim() || "";
+  if (!description || taskDescriptionIsHtml(description)) return description;
+  return renderAssistantMarkdown(description);
 }
 
 export function taskDescriptionText(task: WorkspaceTask | null | undefined): string {
-  const description = task?.description?.trim();
+  const description = taskDescriptionForEditor(task);
   if (!description) return "";
-  if (!/[<&]/.test(description)) return description.replace(/\s+/g, " ").trim();
 
   const document = new DOMParser().parseFromString(
     description.replace(/<\/(p|div|li|h[1-6])>/gi, " "),

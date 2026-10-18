@@ -1300,6 +1300,8 @@ onBeforeUnmount(() => {
 
 .tasks-dialog {
   display: grid;
+  /* Cap the content row so long descriptions scroll inside the dialog. */
+  grid-template-rows: auto minmax(0, 1fr);
   width: min(620px, calc(100vw - 32px));
   max-height: min(820px, calc(100vh - 48px));
   overflow: hidden;

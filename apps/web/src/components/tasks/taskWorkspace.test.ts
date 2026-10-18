@@ -82,6 +82,19 @@ describe("task workspace utilities", () => {
     expect(taskDescriptionText(task)).toBe("Plan the launch with Kieran");
   });
 
+  it("renders Markdown task notes as editor HTML and plain previews", () => {
+    const task = workspaceTask("markdown", {
+      description: "## 1. Identity\nME3 is **loyal**.\n\n- Therapist\n- Psychologist",
+    });
+
+    expect(taskDescriptionForEditor(task)).toBe(
+      "<h2>1. Identity</h2><p>ME3 is <strong>loyal</strong>.</p><ul><li>Therapist</li><li>Psychologist</li></ul>",
+    );
+    expect(taskDescriptionText(task)).toBe(
+      "1. Identity ME3 is loyal. Therapist Psychologist",
+    );
+  });
+
   it("distinguishes logos, shared icons, and emoji", () => {
     expect(projectIconIsImage("data:image/png;base64,abc")).toBe(true);
     expect(projectUiIcon("Briefcase")).toBe("Briefcase");
