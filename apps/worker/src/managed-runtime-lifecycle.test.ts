@@ -1,3 +1,5 @@
+import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./sdk-user-agent", () => ({ Me3SdkUserAgent: class {} }));
 vi.mock("./me3-agent", () => ({ Me3Agent: class {} }));
@@ -246,6 +248,29 @@ describe("managed runtime lifecycle", () => {
       "public, max-age=31536000, immutable",
     );
     expect(db.statements).toHaveLength(0);
+  });
+
+  it("serves every owner app public file on the installation host instead of the public site", async () => {
+    // The public site owns these at the installation root; everything else in apps/web/public belongs to the app.
+    const publicSiteFiles = new Set(["_headers", "robots.txt", "sitemap.xml", "llms.txt"]);
+    const publicDir = fileURLToPath(new URL("../../web/public", import.meta.url));
+    const entries = readdirSync(publicDir, { withFileTypes: true })
+      .filter((entry) => !entry.name.startsWith(".") && !publicSiteFiles.has(entry.name));
+    expect(entries.map((entry) => entry.name)).toContain("me3-dog-head-emoji-smooth.png");
+
+    const db = new LifecycleDb();
+    const env = createEnv(db);
+    env.CORE_WEB_ORIGIN = "https://tester.me3.app";
+    const assetsFetch = vi.fn(async () => new Response("asset"));
+    env.ASSETS = { fetch: assetsFetch } as unknown as Fetcher;
+
+    for (const entry of entries) {
+      const path = entry.isDirectory() ? `/${entry.name}/x` : `/${entry.name}`;
+      assetsFetch.mockClear();
+      const response = await app.fetch(new Request(`https://tester.me3.app${path}`), env);
+      expect({ path, status: response.status, assets: assetsFetch.mock.calls.length })
+        .toEqual({ path, status: 200, assets: 1 });
+    }
   });
 
   it("avoids write leases for active GETs and still blocks them while quiesced", async () => {

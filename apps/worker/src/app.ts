@@ -377,9 +377,13 @@ const OWNER_APP_ROUTE_PREFIXES = [
   "/socials",
   "/wheel-of-life",
 ];
+// Every top-level entry in apps/web/public except the public site's own robots.txt, sitemap.xml and llms.txt;
+// anything missing here 404s on the installation host because the public site answers it.
 const OWNER_APP_ASSET_PATHS = [
-  "/assets", "/icons", "/manifest.webmanifest", "/sw.js", "/favicon.ico",
+  "/assets", "/icons", "/images", "/landing-page-lab", "/manifest.webmanifest", "/sw.js",
+  "/favicon.ico", "/favicon.png", "/flower.png", "/me3protocol.jpg",
   "/me3-logo-light.png", "/me3-logo-dark.png",
+  "/me3-dog-head-emoji-smooth.png", "/me3-dog-head-panting.gif", "/me3-dog-head-panting.webp",
 ];
 const STRICT_TRANSPORT_SECURITY_HEADER = "max-age=31536000";
 const fetchWithWorkerGlobalContext: typeof fetch = (input, init) =>
