@@ -115,6 +115,21 @@ export type CorePeopleSearchOffering = {
   url: string | null;
   durationMinutes: number | null;
   price: { amount: string; currency: string } | null;
+  /** Commerce shape from the network index; absent from older index responses. */
+  kind?: "booking" | "event" | "product";
+  delivery?: "online" | "in_person" | "hybrid" | null;
+  /** Present only when the seller takes ME3 agent checkouts for this offering. */
+  agentCheckout?: { version: string; specUrl: string | null } | null;
+};
+
+/** Seller trust signals from the network index. Nothing here is paid placement. */
+export type CorePeopleSearchSeller = {
+  soulinkLinked: boolean;
+  listedSince: string | null;
+  completedNetworkSales: number;
+  reportStatus: "none" | "reported";
+  newSeller: boolean;
+  agentCheckout: boolean;
 };
 
 export type CorePeopleSearchResult = {
@@ -139,12 +154,16 @@ export type CorePeopleSearchResult = {
   offerings: CorePeopleSearchOffering[];
   reasons: string[];
   indexedAt: string;
+  seller?: CorePeopleSearchSeller | null;
+  /** Short owner-facing trust labels, such as "ME3 agent checkout" or "New seller". */
+  badges?: string[];
 };
 
 export type CorePeopleSearchToolServices = {
   search(input: {
     query: string;
     offeringType?: "service" | "product";
+    offeringKind?: "booking" | "event" | "product";
     countryCode?: string;
     limit?: number;
   }): Promise<{

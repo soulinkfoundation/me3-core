@@ -22,7 +22,7 @@ export interface AgentSchedulingServices {
 }
 export type PeopleRecord = { profileId: string | null; name: string; [key: string]: unknown };
 export interface AgentPeopleServices {
-  search(input: { query: string; offeringType?: "service" | "product"; countryCode?: string; limit?: number }): Promise<{ results: PeopleRecord[]; [key: string]: unknown }>;
+  search(input: { query: string; offeringType?: "service" | "product"; offeringKind?: "booking" | "event" | "product"; countryCode?: string; limit?: number }): Promise<{ results: PeopleRecord[]; [key: string]: unknown }>;
 }
 export type AgentGeneratedImageAsset = {
   id: string; attachmentId: string; name: string; mimeType: string; size: number;
@@ -50,7 +50,14 @@ export interface AgentPaymentServices {
   list(options: { status?: string; limit?: number }): Promise<{ payments: PaymentProposalRecord[] }>;
   limits(currency: string): Promise<Record<string, unknown>>;
   shopifyCart?(input: { productUrl: unknown; options?: unknown; quantity?: unknown }): Promise<Record<string, unknown>>;
+  /** Buying from another ME3 site through its agent commerce API (network commerce). */
+  networkCheck?(seller: NetworkSellerRef, input: { offeringId: unknown; from?: unknown; to?: unknown }): Promise<Record<string, unknown>>;
+  proposeNetwork?(input: { seller: NetworkSellerRef | null; offeringId: unknown; slotStart?: unknown; quantity?: unknown; purpose: unknown }, scope: { threadId: string; turnId: string; idempotencyKey: string }): Promise<PaymentProposalRecord>;
+  handOverNetwork?(proposalId: string, proposalHash: string): Promise<{ outcome: string; proposal: PaymentProposalRecord; handOver: { openUrl: string; instructions: string; expiresAt: string | null } | null; next: string; [key: string]: unknown }>;
+  refreshNetwork?(proposalId: string): Promise<PaymentProposalRecord>;
 }
+/** A seller from the network index. Its spec URL is the only address ME3 calls to buy. */
+export type NetworkSellerRef = { profileId: string | null; name: string; handle: string | null; profileUrl: string | null; specUrl: string; offeringUrl?: string | null };
 export interface AgentDomainServices {
   quotes?: { save(input: Record<string, unknown>, options?: { signal?: AbortSignal; authorization?: import("../owner-create-intent").OwnerCreateAuthorization }): Promise<unknown> };
   mailbox?: AgentMailboxServices;

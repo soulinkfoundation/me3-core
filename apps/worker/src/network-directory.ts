@@ -1,6 +1,7 @@
 import type {
   CorePeopleSearchOffering,
   CorePeopleSearchResult,
+  CorePeopleSearchSeller,
   CorePeopleSearchToolServices,
 } from "@me3-core/plugin-agent-chat";
 import { ensureSoulinkContactsFresh } from "./routes/channels";
@@ -118,11 +119,11 @@ export async function searchPeople(
     .filter((link) => linkMatchesQuery(link, input.query))
     .filter((link) => !annotatedPublicResults.some((result) => publicResultMatchesLink(result, link)))
     .map(linkCandidateToPeopleResult);
-  const merged = deduplicatePeopleResults([
+  const merged = preferAgentCheckoutOnTies(deduplicatePeopleResults([
     ...localMatches,
     ...annotatedPublicResults.filter((result) => result.relationshipTier === "link"),
     ...annotatedPublicResults.filter((result) => result.relationshipTier === "public"),
-  ]).slice(0, limit);
+  ])).slice(0, limit);
   const warnings = uniqueStrings([
     linkState.warning,
     publicState.warning,
@@ -155,6 +156,7 @@ export async function searchPublicSoulinkDirectory(
     body: JSON.stringify({
       query: input.query.trim().slice(0, 200),
       offeringType: input.offeringType,
+      ...(input.offeringKind ? { offeringKind: input.offeringKind } : {}),
       countryCode: input.countryCode?.trim().slice(0, 2).toUpperCase(),
       limit: Math.min(10, Math.max(1, Math.floor(input.limit || 5))),
     }),
@@ -288,6 +290,7 @@ function normalizeSearchResponse(
             ? result.reasons.map((reason) => string(reason, 200)).filter(isString).slice(0, 3)
             : [],
           indexedAt: string(result.indexedAt, 80) || "",
+          ...sellerFields(result.seller),
         }];
       })
     : [];
@@ -326,8 +329,75 @@ function normalizeOfferings(value: unknown): CorePeopleSearchOffering[] {
         ? Math.max(1, Math.floor(offering.durationMinutes))
         : null,
       price: amount && currency ? { amount, currency } : null,
+      ...(offering.kind === "booking" || offering.kind === "event" || offering.kind === "product" ? { kind: offering.kind } : {}),
+      ...(offering.delivery === "online" || offering.delivery === "in_person" || offering.delivery === "hybrid" ? { delivery: offering.delivery } : {}),
+      agentCheckout: normalizeAgentCheckout(offering.agentCheckout),
     }];
   });
+}
+
+/** Only an https spec on the seller's agent commerce path counts as agent checkout. */
+function normalizeAgentCheckout(value: unknown): CorePeopleSearchOffering["agentCheckout"] {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const version = string(raw.version, 20);
+  const specUrl = httpsUrl(raw.specUrl);
+  if (!version || !specUrl || !/\/api\/agent-commerce\/v1\/sites\/[^/]+\/openapi\.json$/.test(new URL(specUrl).pathname)) return null;
+  return { version, specUrl };
+}
+
+function sellerFields(value: unknown): { seller: CorePeopleSearchSeller; badges: string[] } | Record<string, never> {
+  if (!value || typeof value !== "object") return {};
+  const raw = value as Record<string, unknown>;
+  const seller: CorePeopleSearchSeller = {
+    soulinkLinked: raw.soulinkLinked === true,
+    listedSince: string(raw.listedSince, 80),
+    completedNetworkSales: typeof raw.completedNetworkSales === "number" && Number.isFinite(raw.completedNetworkSales)
+      ? Math.max(0, Math.floor(raw.completedNetworkSales))
+      : 0,
+    reportStatus: raw.reportStatus === "reported" ? "reported" : "none",
+    newSeller: raw.newSeller === true,
+    agentCheckout: raw.agentCheckout === true,
+  };
+  const badges = [
+    seller.agentCheckout ? "ME3 agent checkout" : null,
+    seller.soulinkLinked ? "Soulink member" : null,
+    seller.completedNetworkSales > 0 ? `${seller.completedNetworkSales} network ${seller.completedNetworkSales === 1 ? "sale" : "sales"}` : null,
+    seller.newSeller ? "New seller" : null,
+    seller.reportStatus === "reported" ? "Reported, under review" : null,
+  ].filter(isString);
+  return { seller, badges };
+}
+
+function hasAgentCheckout(result: CorePeopleSearchResult): boolean {
+  return result.offerings.some((offering) => Boolean(offering.agentCheckout));
+}
+
+/**
+ * ME3 Cloud already ranks by relevance band, then location, then trust. Core only
+ * breaks near-ties toward sellers with agent checkout: such a seller moves ahead of the
+ * public result directly above it when both match on an offering, that result has no
+ * agent checkout, and it is not a reported seller. A seller never moves more than one
+ * place, so a clearly better match stays ahead.
+ */
+export function preferAgentCheckoutOnTies(results: readonly CorePeopleSearchResult[]): CorePeopleSearchResult[] {
+  const ordered = [...results];
+  const offersMatch = (result: CorePeopleSearchResult) => result.reasons.some((reason) => reason.startsWith("Offers "));
+  for (let index = 1; index < ordered.length; index++) {
+    const above = ordered[index - 1], current = ordered[index];
+    if (
+      above.relationshipTier === "public" && current.relationshipTier === "public" &&
+      offersMatch(above) && offersMatch(current) &&
+      !hasAgentCheckout(above) && hasAgentCheckout(current) &&
+      current.seller?.reportStatus !== "reported"
+    ) {
+      ordered[index - 1] = current;
+      ordered[index] = above;
+      // Skip the moved result so it cannot climb a second place.
+      index++;
+    }
+  }
+  return ordered;
 }
 
 async function loadSoulinkLinkCandidates(

@@ -58,7 +58,7 @@ function signInAgain() {
         <span class="pay-card__emoji" aria-hidden="true">💳</span>
         <span class="pay-card__stack"><h3 :id="titleId" class="pay-card__title">Now pay on your device</h3><span class="pay-card__sub">{{ view.total }} to {{ view.merchantName }} · approved</span></span>
       </div>
-      <p class="pay-card__text">{{ handOver?.instructions ?? `Open ${view.merchantName} on your own device and pay ${view.total}. ME3 does not charge you.` }}</p>
+      <p class="pay-card__text">{{ handOver?.instructions ?? (view.network ? `${view.network.sellerName} couldn't start the checkout, so nothing was bought. ME3 will tell you what happened in Chat.` : `Open ${view.merchantName} on your own device and pay ${view.total}. ME3 does not charge you.`) }}</p>
       <p v-if="view.checkoutWarning" class="pay-card__warning" role="alert"><UiIcon name="CircleAlert" :size="16" />{{ view.checkoutWarning }}</p>
       <div class="pay-card__btns">
         <Button color="ghost" shape="soft" @click="emit('receipt', view.proposalId)">Receipt</Button>
@@ -87,15 +87,18 @@ function signInAgain() {
         <span v-if="view.refundPolicy" class="pay-card__sub">{{ view.refundPolicy }}</span>
       </div>
 
+      <p v-if="view.network" class="pay-card__network"><UiIcon name="Shield" :size="16" />On the ME3 network · price and time checked live with {{ view.network.sellerName }}</p>
       <dl class="pay-card__facts">
         <div v-if="view.purpose"><dt>For</dt><dd>{{ view.purpose }}</dd></div>
         <div><dt>Items</dt><dd><span v-for="(item, index) in view.items" :key="index" class="pay-card__item">{{ item.quantity }} × {{ item.name }}<template v-if="item.options"> · {{ item.options }}</template></span></dd></div>
         <div><dt>Total</dt><dd>{{ view.amount }} {{ view.currency }}</dd></div>
         <div><dt>Refunds</dt><dd>{{ view.refundPolicy ?? "The merchant didn't show a refund policy." }}</dd></div>
         <div><dt>Checkout</dt><dd>
-          <a v-if="view.checkoutHref" :href="view.checkoutHref" target="_blank" rel="noopener noreferrer">{{ view.checkoutHref }}</a>
+          <template v-if="view.network">{{ view.network.sellerName }}'s secure checkout, held for 15 minutes after you approve.</template>
+          <a v-else-if="view.checkoutHref" :href="view.checkoutHref" target="_blank" rel="noopener noreferrer">{{ view.checkoutHref }}</a>
           <template v-else>You'll pay on {{ view.merchantName }}'s own site.</template>
         </dd></div>
+        <div v-if="view.network"><dt>Shared</dt><dd>{{ view.network.sharesNotice }}<template v-if="view.network.sharesWith"><br><span class="pay-card__sub">{{ view.network.sharesWith }}</span></template></dd></div>
         <div v-if="view.remainingLimit"><dt>Your limit</dt><dd>{{ view.remainingLimit }}</dd></div>
       </dl>
       <p v-if="view.checkoutWarning" class="pay-card__warning" role="alert"><UiIcon name="CircleAlert" :size="16" />{{ view.checkoutWarning }}</p>
@@ -131,6 +134,8 @@ function signInAgain() {
 .pay-card__facts dt { color: var(--ui-text-muted); font-size: 13px; }
 .pay-card__facts dd { margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
 .pay-card__item { display: block; }
+.pay-card__network { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--ui-text-muted); font-size: 13px; }
+.pay-card__network :deep(svg) { flex: 0 0 auto; color: var(--ui-accent); }
 .pay-card__text { margin: 0; font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
 .pay-card__fine { margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.45; }
 .pay-card__warning { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px; border-radius: var(--ui-radius-md); background: var(--ui-danger-soft, color-mix(in srgb, var(--ui-danger, #e5484d) 16%, transparent)); color: var(--ui-text); font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }

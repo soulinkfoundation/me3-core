@@ -7,6 +7,7 @@ import {
   paymentApprovalView,
   paymentAuditLabel,
   paymentHandOver,
+  paymentNetworkNote,
   paymentReauthLocation,
   paymentDisplayStatus,
   paymentReceiptWarning,
@@ -122,9 +123,9 @@ describe("receipts", () => {
   });
 
   it("only offers receipt actions the server accepts", () => {
-    expect(paymentActions(payment())).toEqual({ confirm: true, notPaid: true });
-    expect(paymentActions(payment({ status: "paid", receipt: { amount: "20.00", currency: "EUR", orderReference: null, paidAt: null, source: "email", mismatch: false, ownerConfirmed: false } }))).toEqual({ confirm: true, notPaid: false });
-    for (const status of ["proposed", "declined", "not_paid"]) expect(paymentActions(payment({ status }))).toEqual({ confirm: false, notPaid: false });
+    expect(paymentActions(payment())).toEqual({ confirm: true, notPaid: true, checkSeller: false });
+    expect(paymentActions(payment({ status: "paid", receipt: { amount: "20.00", currency: "EUR", orderReference: null, paidAt: null, source: "email", mismatch: false, ownerConfirmed: false } }))).toEqual({ confirm: true, notPaid: false, checkSeller: false });
+    for (const status of ["proposed", "declined", "not_paid"]) expect(paymentActions(payment({ status }))).toEqual({ confirm: false, notPaid: false, checkSeller: false });
   });
 
   it("describes audit events in plain words", () => {
@@ -167,5 +168,44 @@ describe("approved but not handed over", () => {
     expect(paymentDisplayStatus(payment({ status: "proposed", approvalId: "a1", approvedWith }))).toBe("Approved · hand-over not finished");
     expect(paymentDisplayStatus(payment({ status: "proposed" }))).toBe("Waiting for your OK");
     expect(paymentDisplayStatus(payment({ status: "paid" }))).toBe("Paid");
+  });
+});
+
+describe("network purchases (another ME3 site)", () => {
+  const network = (overrides: Partial<NonNullable<PaymentRecord["network"]>> = {}): NonNullable<PaymentRecord["network"]> => ({
+    seller: { name: "Aoife", handle: "aoife", profileId: "cloud-aoife" }, offering: { id: "service:coaching", kind: "booking", title: "Coaching session" },
+    slot: { start: "2026-10-22T09:00:00.000Z", end: "2026-10-22T10:00:00.000Z", timezone: "Europe/Dublin" }, quantity: 1,
+    sharesWith: { name: "Sam Buyer", email: "sam@example.com" }, checkoutStatus: "pending",
+    payUrl: "https://aoife.example/api/agent-commerce/v1/sites/aoife/checkouts/c1/pay", expiresAt: "2026-10-18T10:15:00.000Z",
+    livePrice: null, reference: null, calendarEventId: null, ...overrides,
+  });
+
+  it("shows the seller, the time and who receives the owner's details on the approval card", () => {
+    const view = paymentApprovalView({ id: "a3", threadId: "t1", status: "pending", payload: { ...card, method: "in_network", checkoutUrl: null, checkoutDomainDiffers: false,
+      network: { seller: { name: "Aoife" }, slot: { start: "2026-10-22T09:00:00.000Z", timezone: "Europe/Dublin" }, sharesWith: { name: "Sam Buyer", email: "sam@example.com" } },
+      sharesNotice: "ignored: the notice is fixed copy" } })!;
+    expect(view.network).toMatchObject({ sellerName: "Aoife", sharesNotice: "Shares your name and email with Aoife.", sharesWith: "Sam Buyer · sam@example.com" });
+    expect(view.network!.slotLabel).toBeTruthy();
+    expect(view.howItWorks).toMatch(/hold it for 15 minutes/);
+    expect(paymentApprovalView(approval)!.network).toBeNull();
+  });
+
+  it("hands over the seller's payment link only while the hold is open", () => {
+    expect(paymentHandOver(payment({ network: network() }))).toMatchObject({ openUrl: "https://aoife.example/api/agent-commerce/v1/sites/aoife/checkouts/c1/pay", instructions: expect.stringMatching(/Aoife's secure checkout.*ME3 does not charge you/) });
+    expect(paymentHandOver(payment({ network: network({ checkoutStatus: "expired", payUrl: null }) }))).toBeNull();
+    expect(paymentHandOver(payment({ network: network({ payUrl: "http://aoife.example/pay" }) }))).toBeNull();
+  });
+
+  it("says what happened at the seller", () => {
+    expect(paymentNetworkNote(payment({ network: network({ checkoutStatus: "price_changed", livePrice: { amount: "70.00", currency: "EUR" } }) }))).toMatch(/Price changed to .*70\.00 · nothing bought/);
+    expect(paymentNetworkNote(payment({ network: network({ checkoutStatus: "expired" }) }))).toBe("Hold expired · nothing bought");
+    expect(paymentNetworkNote(payment({ network: network({ checkoutStatus: "agent_checkout_off" }) }))).toBe("Book on Aoife's page · nothing bought");
+    expect(paymentNetworkNote(payment({ status: "paid", network: network({ checkoutStatus: "paid", calendarEventId: "e1" }) }))).toBe("Paid · in your calendar");
+    expect(paymentDisplayStatus(payment({ status: "not_paid", network: network({ checkoutStatus: "unavailable" }) }))).toBe("No longer available · nothing bought");
+    expect(paymentDisplayStatus(payment({ network: network() }))).toBe("Waiting for you to pay");
+    expect(paymentNetworkNote(payment())).toBeNull();
+    expect(paymentActions(payment({ network: network() })).checkSeller).toBe(true);
+    expect(paymentAuditLabel({ event: "receipt_recorded", data: { source: "seller", mismatch: true } })).toBe("Receipt from the seller · amount differs");
+    expect(paymentAuditLabel({ event: "checkout_expired", data: {} })).toBe("The 15-minute hold expired before payment");
   });
 });

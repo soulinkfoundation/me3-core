@@ -1,5 +1,6 @@
 import { reconcileProductOrders } from "./commerce-reconciliation";
 import { expireStaleAgentCheckouts } from "./agent-commerce";
+import { pollNetworkPurchases } from "./agent-network-commerce";
 import { reconcileMailboxAttachmentStaging } from "./mailbox-attachment-staging";
 import app from "./app";
 import { dispatchDueCalendarSourceRefreshes } from "./calendar-sources";
@@ -83,6 +84,7 @@ const worker = {
       }
       await reconcileProductOrders(env);
       await expireStaleAgentCheckouts(env).catch((error) => console.error("Agent checkout sweep failed", error));
+      await pollNetworkPurchases(env).catch(() => console.error("Network purchase sweep failed"));
       await reconcileMailboxAttachmentStaging(env);
       await retryPendingMailTriage(env).catch((error) => console.error("Mail triage retry failed", error));
       await dispatchDueMorningCalendarPushes(env);

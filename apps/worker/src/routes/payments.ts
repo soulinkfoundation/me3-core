@@ -1,3 +1,4 @@
+import { refreshNetworkPurchase } from "../agent-network-commerce";
 import { PaymentError, getPayment, getPaymentLimits, listPayments, markPaymentNotPaid, recordPaymentReceipt, savePaymentLimits } from "../agent-payments";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 
@@ -27,5 +28,7 @@ export function registerPaymentRoutes(app: AppHono, deps: OwnerRouteDeps) {
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
     return { payment: await recordPaymentReceipt(c.env, await owner(c), { proposalId: c.req.param("id"), amount: body.amount, currency: body.currency, orderReference: body.orderReference, paidAt: body.paidAt }, "owner") };
   }));
+  // Network purchases: ask the seller now instead of waiting for the background check.
+  app.post("/api/payments/:id/refresh", c => handle(c, async () => ({ payment: await refreshNetworkPurchase(c.env, await owner(c), c.req.param("id")) })));
   app.post("/api/payments/:id/not-paid", c => handle(c, async () => ({ payment: await markPaymentNotPaid(c.env, await owner(c), c.req.param("id")) })));
 }

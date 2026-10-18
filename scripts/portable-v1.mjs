@@ -99,6 +99,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0074_accounts_removals", "2026-10-17-accounts-removals-v1"],
   ["0075_agent_computer", "2026-10-17-agent-computer-v1"],
   ["0076_agent_commerce", "2026-10-17-agent-commerce-v1"],
+  ["0077_agent_network_purchases", "2026-10-18-agent-network-purchases-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -193,6 +194,8 @@ const COPIED_TABLES = [
   // Seller agent commerce: checkouts buying agents created here and the owner switch.
   "agent_commerce_checkouts",
   "agent_commerce_settings",
+  // Buyer side: seller checkouts of the owner's network purchases.
+  "agent_network_purchases",
   "ai_model_defaults",
   "ai_provider_credentials",
   "ai_usage_events",
@@ -375,6 +378,7 @@ const SENSITIVE_FIELD_POLICIES = new Map([
   ["ai_gateway_settings.api_token_hint", "exclude platform credential metadata"],
   ["ai_gateway_settings.api_token_updated_at", "exclude platform credential metadata"],
   ["agent_commerce_checkouts.hold_token", "preserve inert reference to an unexported booking hold"],
+  ["agent_network_purchases.encrypted_status_secret", "preserve encrypted owner credential"],
   ["ai_provider_credentials.encrypted_api_key", "preserve encrypted owner credential"],
   ["booking_holds.hold_token", "exclude one-time state"],
   ["bookings.meeting_guest_token_hash", "preserve hashed guest meeting authorization"],

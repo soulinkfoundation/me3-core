@@ -4,7 +4,8 @@ Status: **approved by the owner on 2026-10-17** (bead `me3-2gdu.11`), including
 15-minute booking holds and a seller switch for agent checkout (on by default
 when commerce is enabled). Spans ME3 Core, ME3 Cloud and ME3 Protocol. Durable
 parts move into the shared docs; build work is in beads. Step 1, the Core seller
-API, is built (`me3-2gdu.13`); see "Seller agent commerce API (Core)".
+API, is built (`me3-2gdu.13`); see "Seller agent commerce API (Core)". Step 3,
+the Core buyer, is built (`me3-2gdu.15`); see "Buyer flow (Core agent)".
 
 ## Goal
 
@@ -152,6 +153,46 @@ hold), and index the extension.
 6. **Receipt.** Core polls `GET /checkouts/:id` (and on notification) and records
    the receipt automatically, flagging any difference from the approved amount.
    The booking also lands in the owner's calendar.
+
+As built (`me3-2gdu.15`, `apps/worker/src/agent-network-commerce.ts`):
+
+- **Search.** `core_people_search` passes `offeringKind` to the index and returns
+  each offering's `kind`, `delivery` and `agentCheckout` (only an https spec on
+  the agent commerce path counts), plus seller trust signals and badges ("ME3
+  agent checkout", "Soulink member", "N network sales", "New seller",
+  "Reported, under review"). Core keeps ME3 Cloud's ranking and only breaks
+  near-ties: an agent-ready seller moves ahead of the public result directly
+  above it when both match on an offering and that one has no agent checkout,
+  never more than one place and never when reported.
+- **Check.** `core_payments_network_check` (read) takes a `profileId` and
+  offering id from a search in the same conversation; the only address it calls
+  is the indexed spec URL's API base. Seller requests are public https only, do
+  not follow redirects, time out after 8 seconds and read at most 256 KB.
+- **Propose.** `core_payments_propose_network` re-reads the seller live and saves
+  an immutable `in_network` proposal (seller API, offering, slot, quantity,
+  price and the owner's name and email are all in the proposal hash). The
+  approval card says "Shares your name and email with {seller}." Free offerings
+  and sellers without agent checkout get the seller's page link instead.
+- **Hand over.** After the fresh-sign-in approval, Core rechecks limits and
+  calls `POST /checkouts` with the approved total and the stable key
+  `me3-network-{paymentId}`. A lost answer is retried with the same key, and a
+  stored checkout is never created again. `price_changed`, an unavailable slot
+  and agent checkout turned off close the proposal as not bought (the limit is
+  released) and tell the agent to re-propose or give the seller's page.
+- **Receipt.** The status secret is stored AES-GCM encrypted with the install
+  key (`agent_network_purchases`, migration 0077) and never appears in views,
+  tool results, stream events or logs. The scheduled sweep (every minute while a
+  hold or payment window can be open, then backing off) and
+  `core_payments_network_status` or `POST /api/payments/:id/refresh` read
+  `GET /checkouts/:id`. Paid records a `seller` receipt (flagging a different
+  amount), adds bookings to the owner's calendar and posts "Booked: …" in the
+  proposing thread; an expired hold posts that nothing was bought and is never
+  retried silently; a seller cancellation removes the calendar entry.
+- **Web.** The payment card, Chat strip ("I've paid" checks the seller), receipt
+  panel and Payments history show network purchases and their seller status.
+- **Not yet.** Buyer-installation tokens (`ME3-Buyer-Install`) await ME3 Cloud,
+  so buyers call sellers anonymously with per-IP limits. Native cards are
+  `me3-2gdu` follow-ups.
 
 What the owner sees: one card with seller, item, time and total; **Approve**
 (Face ID); a sheet that opens the seller's payment page with Apple Pay; then

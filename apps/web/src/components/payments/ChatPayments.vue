@@ -7,7 +7,7 @@ import UiIcon from "../UiIcon.vue";
 import PaymentApprovalCard from "./PaymentApprovalCard.vue";
 import PaymentReceiptDialog from "./PaymentReceiptDialog.vue";
 import {
-  formatPaymentMoney, isFreshAuthenticationRequired, paymentApprovalView, paymentHandOver, paymentReauthLocation, paymentReceiptWarning, paymentStalledHandOver, paymentTimestamp,
+  formatPaymentMoney, isFreshAuthenticationRequired, paymentApprovalView, paymentHandOver, paymentNetworkNote, paymentReauthLocation, paymentReceiptWarning, paymentStalledHandOver, paymentTimestamp,
   type PaymentApprovalLike, type PaymentRecord,
 } from "../../utils/agentPayments";
 
@@ -81,8 +81,22 @@ function signInAgain(payment: PaymentRecord) {
   if (target) void router.push(paymentReauthLocation({ approvalId: target.approvalId, threadId: props.threadId }));
 }
 
+const checking = ref<Record<string, boolean>>({});
+/** Asks the seller now; ME3 also checks network purchases in the background. */
+async function checkSeller(payment: PaymentRecord) {
+  if (checking.value[payment.id]) return;
+  checking.value[payment.id] = true;
+  try {
+    const { payment: next } = await api.post<{ payment: PaymentRecord }>(`/payments/${encodeURIComponent(payment.id)}/refresh`, {});
+    payments.value = payments.value.map(item => item.id === next.id ? { ...item, ...next } : item);
+  } catch { /* the next background check updates it */ }
+  finally { checking.value[payment.id] = false; }
+}
+
 function pill(payment: PaymentRecord) {
   const total = formatPaymentMoney(payment.amount, payment.currency);
+  const note = paymentNetworkNote(payment);
+  if (payment.network && payment.status === "not_paid" && note) return `${payment.merchant.name}: ${note}`;
   if (payment.status === "paid") return `Paid ${payment.receipt ? formatPaymentMoney(payment.receipt.amount, payment.receipt.currency) : total} to ${payment.merchant.name}`;
   if (payment.status === "declined") return `Declined ${total} to ${payment.merchant.name}`;
   return `Didn't buy from ${payment.merchant.name}`;
@@ -111,10 +125,11 @@ watch(() => [props.threadId, props.refreshKey], load, { immediate: true });
     </section>
     <template v-for="payment in recent" :key="payment.id">
       <section v-if="payment.status === 'handed_over'" class="chat-payments__handover" :aria-label="`Pay ${payment.merchant.name}`">
-        <div class="chat-payments__head"><span aria-hidden="true">💳</span><span><strong>Pay {{ formatPaymentMoney(payment.amount, payment.currency) }} to {{ payment.merchant.name }}</strong><small>Approved · waiting for your receipt</small></span></div>
-        <p>{{ paymentHandOver(payment)?.instructions }}</p>
+        <div class="chat-payments__head"><span aria-hidden="true">💳</span><span><strong>Pay {{ formatPaymentMoney(payment.amount, payment.currency) }} to {{ payment.merchant.name }}</strong><small>{{ payment.network ? `Approved · ${paymentNetworkNote(payment) ?? 'on the ME3 network'}` : 'Approved · waiting for your receipt' }}</small></span></div>
+        <p>{{ paymentHandOver(payment)?.instructions ?? (payment.network ? 'ME3 is checking with the seller.' : '') }}</p>
         <div class="chat-payments__btns">
-          <Button color="ghost" shape="soft" @click="receiptFor = payment.id">Receipt</Button>
+          <Button v-if="payment.network" color="ghost" shape="soft" :disabled="checking[payment.id]" @click="checkSeller(payment)">{{ checking[payment.id] ? 'Checking…' : "I've paid" }}</Button>
+          <Button v-else color="ghost" shape="soft" @click="receiptFor = payment.id">Receipt</Button>
           <Button v-if="paymentHandOver(payment)" class="chat-payments__primary" color="primary" shape="soft" :href="paymentHandOver(payment)!.openUrl" target="_blank" rel="noopener noreferrer"><UiIcon name="ExternalLink" :size="18" />Open checkout</Button>
         </div>
       </section>

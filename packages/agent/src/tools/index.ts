@@ -44,4 +44,4 @@ export function createDomainTools(): AgentTool[] {
   tools.push(targetPresentationTool(tools));
   return tools;
 }
-export type { AgentDomainServices, AgentMailboxServices, AgentPaymentServices, PaymentProposalRecord, AgentSchedulingServices, AgentPeopleServices, AgentImageGenerationServices, AgentImageGenerationResult, AgentGeneratedImageAction, AgentGeneratedImageAsset, MailboxRecord, SchedulingContact, SchedulingRequest } from "./services";
+export type { AgentDomainServices, AgentMailboxServices, AgentPaymentServices, NetworkSellerRef, PaymentProposalRecord, AgentSchedulingServices, AgentPeopleServices, AgentImageGenerationServices, AgentImageGenerationResult, AgentGeneratedImageAction, AgentGeneratedImageAsset, MailboxRecord, SchedulingContact, SchedulingRequest } from "./services";

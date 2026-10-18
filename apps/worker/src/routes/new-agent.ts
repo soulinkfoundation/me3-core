@@ -2,7 +2,7 @@ import { decideAgentApproval } from "../../../../packages/agent/src/store";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import type { Env } from "../types";
 import { updateAgentChatPresence } from "../agent-notifications";
-import { PAYMENT_PROPOSE_TOOL, PaymentError, paymentApprovalAuth, recordPaymentDecision } from "../agent-payments";
+import { PaymentError, isPaymentApprovalTool, paymentApprovalAuth, recordPaymentDecision } from "../agent-payments";
 
 /** How the owner proved they are present: a web session's sign-in time, or a native device unlock. */
 export type ApprovalAuthEvidence={sessionIssuedAt:number|null;deviceAuthentication?:unknown};
@@ -24,7 +24,7 @@ export async function listNewAgentApprovals(env:Env,ownerId:string,status?:strin
 export async function decideNewAgentApproval(c:AppContext,ownerId:string,id:string,decision:"approved"|"declined",evidence?:ApprovalAuthEvidence):Promise<Response> {
   const row=await c.env.DB.prepare(`${approvalSelect} WHERE id=? AND owner_id=?`).bind(id,ownerId).first<ApprovalRow>();
   if(!row)return c.json({ok:false,error:"Approval not found"},404);
-  if(row.tool_name===PAYMENT_PROPOSE_TOOL) {
+  if(isPaymentApprovalTool(row.tool_name)) {
     // Payments need a fresh sign-in, bound to the proposal before the agent can resume.
     try {
       const auth=decision==="approved"?paymentApprovalAuth({channel:evidence?.sessionIssuedAt!=null?"web":"mobile",sessionIssuedAt:evidence?.sessionIssuedAt,deviceAuthentication:evidence?.deviceAuthentication}):undefined;

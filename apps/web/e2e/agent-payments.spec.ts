@@ -16,6 +16,7 @@ const card = {
 };
 const approval = { ...card, id: "appr-1", pluginId: "me3.core", actionId: "core_payments_propose", title: "Approve payment", summary: "20.00 EUR", riskLevel: "high", status: "pending", requestedAt: "2026-10-17T10:00:00Z", threadId: "main", turnId: "turn-1", payload: card };
 const now = new Date().toISOString();
+const SELLER_PAY_URL = "https://aoife.example/api/agent-commerce/v1/sites/aoife/checkouts/c1/pay";
 const basePayment = {
   id: "pay-1", status: "proposed", method: "finish_on_device", merchant: card.merchant, purpose: card.purpose, items: card.items,
   amount: "20.00", amountMinor: 2000, currency: "EUR", checkoutUrl: card.checkoutUrl, checkoutDomainDiffers: true, refundPolicy: card.refundPolicy,
@@ -23,12 +24,12 @@ const basePayment = {
   createdAt: now, decidedAt: null, handedOverAt: null, completedAt: null, receipt: null,
 };
 
-type State = { approvals: unknown[]; payment: Record<string, unknown>; audit: unknown[]; decisions: unknown[]; staleSession: boolean; resumeFails?: boolean; receipts: unknown[]; notPaid: number; limits: Record<string, unknown>; limitPuts: unknown[] };
+type State = { approvals: unknown[]; payment: Record<string, unknown>; audit: unknown[]; decisions: unknown[]; staleSession: boolean; resumeFails?: boolean; receipts: unknown[]; notPaid: number; limits: Record<string, unknown>; limitPuts: unknown[]; refreshes: number };
 
 async function fixture(page: Page, overrides: Partial<State> = {}) {
   const state: State = {
     approvals: [approval], payment: { ...basePayment }, audit: [{ event: "proposed", data: {}, at: now }], decisions: [], staleSession: false,
-    receipts: [], notPaid: 0, limits: { ...card.limits, updatedAt: null, perPaymentMaxMinor: 25000, monthlyMaxMinor: 100000 }, limitPuts: [], ...overrides,
+    receipts: [], notPaid: 0, refreshes: 0, limits: { ...card.limits, updatedAt: null, perPaymentMaxMinor: 25000, monthlyMaxMinor: 100000 }, limitPuts: [], ...overrides,
   };
   const json = (route: Route, body: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
   await page.route("**/api/**", async route => {
@@ -43,6 +44,8 @@ async function fixture(page: Page, overrides: Partial<State> = {}) {
         return json(route, { ok: false, error: "Agent resume response unavailable" }, 502);
       }
       state.payment = { ...state.payment, status: body.decision === "approved" ? "handed_over" : "declined", decidedAt: now, handedOverAt: body.decision === "approved" ? now : null };
+      // A network purchase: the seller now holds it and returned its payment link.
+      if (body.decision === "approved" && state.payment.network) state.payment.network = { ...(state.payment.network as object), checkoutStatus: "pending", payUrl: SELLER_PAY_URL, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
       state.audit.push({ event: body.decision, data: { auth: { channel: "web" } }, at: now });
       if (body.decision === "approved") state.audit.push({ event: "handed_over", data: {}, at: now });
       return json(route, { ok: true, status: "complete", replyText: "Open the checkout link to pay." });
@@ -51,6 +54,12 @@ async function fixture(page: Page, overrides: Partial<State> = {}) {
       const body = route.request().postDataJSON(); state.receipts.push(body);
       state.payment = { ...state.payment, status: "paid", completedAt: now, receipt: { amount: body.amount, currency: "EUR", orderReference: body.orderReference ?? null, paidAt: null, source: "owner", mismatch: body.amount !== "20.00", ownerConfirmed: true } };
       state.audit.push({ event: "receipt_recorded", data: { source: "owner" }, at: now });
+      return json(route, { payment: state.payment });
+    }
+    if (path === "/payments/pay-1/refresh") {
+      state.refreshes++;
+      state.payment = { ...state.payment, status: "paid", completedAt: now, receipt: { amount: "60.00", currency: "EUR", orderReference: "booking-1", paidAt: now, source: "seller", mismatch: false, ownerConfirmed: false },
+        network: { ...(state.payment.network as object), checkoutStatus: "paid", payUrl: null, calendarEventId: "network-purchase-pay-1", reference: { type: "booking", id: "booking-1" } } };
       return json(route, { payment: state.payment });
     }
     if (path === "/payments/pay-1/not-paid") {
@@ -230,4 +239,44 @@ test("Payments history labels an unfinished hand-over", async ({ page }) => {
   await fixture(page, { approvals: [], payment: { ...basePayment, approvalId: "appr-1", approvedWith: { channel: "web", signedInAt: now }, decidedAt: now } });
   await page.goto("/settings/payments");
   await expect(page.getByRole("region", { name: "History" })).toContainText("Approved · hand-over not finished");
+});
+
+test("A purchase from another ME3 site says what is shared, hands over the seller's checkout and records the seller receipt", async ({ page }, testInfo) => {
+  const slotStart = "2026-10-22T09:00:00.000Z";
+  const networkCard = {
+    ...card, merchant: { name: "Aoife", url: "https://aoife.example/book/coaching" }, purpose: "A coaching session", items: [{ name: "Coaching session", quantity: 1, options: "Thu 22 Oct, 10:00 (Europe/Dublin)" }],
+    amount: "60.00", amountMinor: 6000, method: "in_network", checkoutUrl: null, checkoutDomainDiffers: false, refundPolicy: null,
+    network: { seller: { name: "Aoife" }, offering: { id: "service:coaching", kind: "booking", title: "Coaching session" }, slot: { start: slotStart, end: "2026-10-22T10:00:00.000Z", timezone: "Europe/Dublin" }, sharesWith: { name: "Demo Owner", email: "owner@example.test" }, holdMinutes: 15 },
+    sharesNotice: "Shares your name and email with Aoife.",
+  };
+  const networkApproval = { ...approval, actionId: "core_payments_propose_network", summary: "60.00 EUR to Aoife", payload: networkCard };
+  const state = await fixture(page, {
+    approvals: [networkApproval],
+    payment: { ...basePayment, method: "in_network", merchant: networkCard.merchant, purpose: networkCard.purpose, items: networkCard.items, amount: "60.00", amountMinor: 6000, checkoutUrl: null, checkoutDomainDiffers: false, refundPolicy: null,
+      network: { seller: { name: "Aoife", handle: "aoife", profileId: "cloud-aoife" }, offering: networkCard.network.offering, slot: networkCard.network.slot, quantity: 1, sharesWith: networkCard.network.sharesWith,
+        checkoutStatus: "not_started", payUrl: null, expiresAt: null, livePrice: null, reference: null, calendarEventId: null } },
+  });
+  await page.goto("/assistant?view=chat&thread=main");
+  const cardEl = page.getByTestId("payment-approval");
+  await expect(cardEl).toContainText("On the ME3 network");
+  await expect(cardEl).toContainText("Shares your name and email with Aoife.");
+  await expect(cardEl).toContainText("Demo Owner · owner@example.test");
+  await expect(cardEl).toContainText("Aoife's secure checkout, held for 15 minutes after you approve.");
+  await expect(cardEl).toContainText("hold it for 15 minutes");
+  await page.screenshot({ path: testInfo.outputPath("network-payment-card.png"), fullPage: true });
+
+  await cardEl.getByRole("button", { name: /^Approve/ }).click();
+  await expect.poll(() => state.decisions).toEqual([{ decision: "approved" }]);
+  const handOver = page.getByRole("region", { name: /^Pay / });
+  await expect(handOver).toContainText("Open Aoife's secure checkout on your own device and pay €60.00.");
+  await expect(handOver.getByRole("link", { name: "Open checkout" })).toHaveAttribute("href", SELLER_PAY_URL);
+  await expect(handOver).not.toContainText(/payment (is )?complete|you paid/i);
+
+  // Back in Chat later: the strip offers the seller check instead of a manual receipt.
+  await page.reload();
+  await expect(handOver).toContainText("Held until");
+  await handOver.getByRole("button", { name: "I've paid" }).click();
+  await expect.poll(() => state.refreshes).toBe(1);
+  await expect(page.locator(".chat-payments")).toContainText("Paid €60.00 to Aoife");
+  await page.screenshot({ path: testInfo.outputPath("network-payment-paid.png"), fullPage: true });
 });

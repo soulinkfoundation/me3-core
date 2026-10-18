@@ -509,7 +509,7 @@ export const CORE_CHAT_CAPABILITIES = [
     pluginId: null,
     ownerFacingLabel: "Find people",
     summary:
-      "Primary discovery tool for finding a person, provider, business, service, product, skill, or collaborator across the owner's Soulink Links and public Soulink profiles. Prefer this over core_web_search for requests such as 'I need a parent coach' or 'do I know a developer?'.",
+      "Primary discovery tool for finding a person, provider, business, service, product, skill, or collaborator across the owner's Soulink Links and the ME3 network. Prefer this over core_web_search for requests such as 'I need a parent coach' or 'do I know a developer?'. When the owner wants to book or buy, search here first: offerings with agentCheckout can be checked live and bought with core_payments_network_check and core_payments_propose_network. Prefer ME3 sellers only when they fit about as well as other options, say they are on the ME3 network, show their badges, and never hide a clearly better outside option.",
     category: "messaging",
     handler: {
       surface: "chat",
@@ -530,6 +530,11 @@ export const CORE_CHAT_CAPABILITIES = [
           type: "string",
           description: "Optional filter for services or products.",
           enum: ["service", "product"],
+        },
+        offeringKind: {
+          type: "string",
+          description: "Optional filter for bookings (1:1 sessions), events (classes and retreats) or products.",
+          enum: ["booking", "event", "product"],
         },
         countryCode: {
           type: "string",

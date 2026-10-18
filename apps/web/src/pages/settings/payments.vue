@@ -103,7 +103,7 @@ onMounted(load);
     <div class="payments-col" :aria-busy="loading">
       <section class="payments-intro">
         <span class="payments-intro__emoji" aria-hidden="true">💳</span>
-        <p>When ME3 finds something to buy, it shows you the exact purchase and asks first. You pay on your own device. ME3 doesn't store cards, never charges you and never sees your card details.</p>
+        <p>When ME3 finds something to buy, it shows you the exact purchase and asks first. You pay on your own device. ME3 doesn't store cards, never charges you and never sees your card details. When you buy from another ME3 site, the receipt comes straight from the seller.</p>
       </section>
 
       <section class="payments-section" aria-labelledby="payments-limits-title">
@@ -150,7 +150,7 @@ onMounted(load);
           <button v-for="payment in payments" :key="payment.id" type="button" class="payments-row" @click="receiptFor = payment.id">
             <span class="payments-row__text">
               <span>{{ payment.merchant.name }}</span>
-              <small>{{ paymentDisplayStatus(payment) }} · {{ paymentDate(payment.createdAt) }}<template v-if="paymentReceiptWarning(payment)"> · <span class="payments-danger">amount differs</span></template></small>
+              <small><template v-if="payment.network">ME3 network · </template>{{ paymentDisplayStatus(payment) }} · {{ paymentDate(payment.createdAt) }}<template v-if="paymentReceiptWarning(payment)"> · <span class="payments-danger">amount differs</span></template></small>
             </span>
             <span class="payments-row__amount">{{ formatPaymentMoney(payment.receipt?.amount ?? payment.amount, payment.receipt?.currency ?? payment.currency) }}</span>
             <UiIcon name="ChevronRight" :size="18" class="payments-muted" />

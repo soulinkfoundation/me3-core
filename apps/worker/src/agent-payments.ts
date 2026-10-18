@@ -70,6 +70,12 @@ export const AGENT_PAYMENTS_SCHEMA = [
 
 export const PAYMENT_TOOL_PREFIX = "core_payments_";
 export const PAYMENT_PROPOSE_TOOL = "core_payments_propose";
+/** Purchases from another ME3 site's agent commerce API (agent-network-commerce.ts). */
+export const PAYMENT_PROPOSE_NETWORK_TOOL = "core_payments_propose_network";
+/** Approvals of these tools need a fresh sign-in and are bound to a payment proposal. */
+export function isPaymentApprovalTool(toolName: string): boolean {
+  return toolName === PAYMENT_PROPOSE_TOOL || toolName === PAYMENT_PROPOSE_NETWORK_TOOL;
+}
 /** A web approval must come from a session signed in within this window. */
 export const PAYMENT_FRESH_SIGN_IN_SECONDS = 10 * 60;
 /** Defaults in whole currency units when the owner has not set limits. */
@@ -89,13 +95,26 @@ export type PaymentProposalInput = {
   amount: unknown; currency: unknown; checkoutUrl?: unknown; refundPolicy?: unknown;
 };
 export type PaymentScope = { threadId: string; turnId: string; idempotencyKey: string };
+/** What an in-network proposal binds besides the price: who sells what, when, and what is shared. */
+export type NetworkProposalDetails = {
+  sellerProfileId: string | null; sellerHandle: string | null; apiBase: string; offeringId: string; offeringKind: string; offeringTitle: string;
+  slotStart: string | null; slotEnd: string | null; slotRequired: boolean; timezone: string | null; quantity: number; unitAmountMinor: number; buyerName: string; buyerEmail: string;
+};
 export type PaymentAuth = { channel: "web"; signedInAt: string } | { channel: "mobile"; deviceAuthentication: "biometric" | "passcode" };
 
-type ProposalRow = {
+export type ProposalRow = {
   id: string; owner_id: string; thread_id: string; turn_id: string; method: string; merchant_name: string; merchant_url: string;
   purpose: string; items_json: string; amount_minor: number; currency: string; checkout_url: string | null; refund_policy: string | null;
   proposal_hash: string; status: string; approval_id: string | null; approval_auth: string | null; created_at: string;
   decided_at: string | null; handed_over_at: string | null; completed_at: string | null;
+};
+export type NetworkPurchaseRow = {
+  proposal_id: string; owner_id: string; seller_name: string; seller_profile_id: string | null; seller_handle: string | null; api_base: string;
+  offering_id: string; offering_kind: string; offering_title: string; slot_start: string | null; slot_end: string | null; timezone: string | null; slot_required: number;
+  quantity: number; buyer_name: string; buyer_email: string; checkout_idempotency_key: string; checkout_id: string | null; pay_url: string | null;
+  encrypted_status_secret: string | null; checkout_status: string; live_amount_minor: number | null; live_currency: string | null; expires_at: string | null;
+  reference_type: string | null; reference_id: string | null; calendar_event_id: string | null; last_checked_at: string | null; next_check_at: string | null;
+  check_error: string | null; created_at: string; updated_at: string;
 };
 type ReceiptRow = {
   proposal_id: string; amount_minor: number; currency: string; order_reference: string | null; paid_at: string | null;
@@ -172,7 +191,21 @@ async function sha256(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function proposalView(row: ProposalRow, receipt?: ReceiptRow | null) {
+function networkView(row: NetworkPurchaseRow) {
+  // The checkout status secret never leaves the server: not in views, tool results or the web.
+  return {
+    seller: { name: row.seller_name, handle: row.seller_handle, profileId: row.seller_profile_id },
+    offering: { id: row.offering_id, kind: row.offering_kind, title: row.offering_title },
+    slot: row.slot_start ? { start: row.slot_start, end: row.slot_end, timezone: row.timezone } : null,
+    quantity: row.quantity, sharesWith: { name: row.buyer_name, email: row.buyer_email },
+    checkoutStatus: row.checkout_status, checkoutId: row.checkout_id, payUrl: row.checkout_status === "pending" ? row.pay_url : null, expiresAt: row.expires_at,
+    livePrice: row.live_amount_minor !== null && row.live_currency ? { amount: formatMinorUnits(row.live_amount_minor, row.live_currency), amountMinor: row.live_amount_minor, currency: row.live_currency } : null,
+    reference: row.reference_id ? { type: row.reference_type, id: row.reference_id } : null,
+    calendarEventId: row.calendar_event_id, lastCheckedAt: row.last_checked_at,
+  };
+}
+
+function proposalView(row: ProposalRow, receipt?: ReceiptRow | null, network?: NetworkPurchaseRow | null) {
   const checkoutHost = row.checkout_url ? new URL(row.checkout_url).hostname : null;
   return {
     id: row.id, status: row.status, method: row.method,
@@ -188,16 +221,26 @@ function proposalView(row: ProposalRow, receipt?: ReceiptRow | null) {
       orderReference: receipt.order_reference, paidAt: receipt.paid_at, source: receipt.source, sourceMessageId: receipt.source_message_id,
       mismatch: receipt.mismatch === 1, ownerConfirmed: receipt.owner_confirmed === 1, recordedAt: receipt.created_at, updatedAt: receipt.updated_at,
     } : null,
+    network: network ? networkView(network) : null,
   };
 }
 export type PaymentProposalView = ReturnType<typeof proposalView>;
 
-async function appendEvent(env: Env, ownerId: string, proposalId: string, event: string, data: Record<string, unknown> = {}) {
+export async function appendEvent(env: Env, ownerId: string, proposalId: string, event: string, data: Record<string, unknown> = {}) {
   await env.DB.prepare("INSERT INTO agent_payment_events(owner_id,proposal_id,event,data_json) VALUES(?,?,?,?)").bind(ownerId, proposalId, event, JSON.stringify(data)).run();
 }
 
-async function loadProposal(env: Env, ownerId: string, id: string): Promise<ProposalRow | null> {
+export async function loadProposal(env: Env, ownerId: string, id: string): Promise<ProposalRow | null> {
   return env.DB.prepare("SELECT * FROM agent_payment_proposals WHERE owner_id=? AND id=?").bind(ownerId, id).first<ProposalRow>();
+}
+
+export async function loadNetworkPurchase(env: Env, ownerId: string, proposalId: string): Promise<NetworkPurchaseRow | null> {
+  return env.DB.prepare("SELECT * FROM agent_network_purchases WHERE owner_id=? AND proposal_id=?").bind(ownerId, proposalId).first<NetworkPurchaseRow>();
+}
+
+/** The owner-facing view of one payment, with its receipt and, for network purchases, the seller checkout. */
+export async function paymentView(env: Env, ownerId: string, row: ProposalRow) {
+  return proposalView(row, await loadReceipt(env, ownerId, row.id), row.method === "in_network" ? await loadNetworkPurchase(env, ownerId, row.id) : null);
 }
 
 export async function getPaymentLimits(env: Env, ownerId: string, currency: string) {
@@ -233,7 +276,7 @@ export async function savePaymentLimits(env: Env, ownerId: string, input: { curr
   return getPaymentLimits(env, ownerId, currency);
 }
 
-async function assertWithinLimits(env: Env, ownerId: string, amountMinor: number, currency: string) {
+export async function assertWithinLimits(env: Env, ownerId: string, amountMinor: number, currency: string) {
   const limits = await getPaymentLimits(env, ownerId, currency);
   if (amountMinor > limits.perPaymentMaxMinor) throw new PaymentError(`This is above the owner's per-payment limit of ${limits.perPaymentMax} ${currency}. The owner can change limits in Payments settings.`, 403);
   if (amountMinor > limits.remainingMinor) throw new PaymentError(`This would exceed the owner's 30-day limit of ${limits.monthlyMax} ${currency} (${limits.remaining} left). The owner can change limits in Payments settings.`, 403);
@@ -241,21 +284,23 @@ async function assertWithinLimits(env: Env, ownerId: string, amountMinor: number
 }
 
 /** Saves an immutable proposal. Retrying the same tool call returns the same proposal; a changed retry is refused. */
-export async function proposePayment(env: Env, ownerId: string, scope: PaymentScope, input: PaymentProposalInput) {
+export async function proposePayment(env: Env, ownerId: string, scope: PaymentScope, input: PaymentProposalInput, network?: NetworkProposalDetails) {
   const currency = normalizeCurrency(input.currency);
   const amountMinor = toMinorUnits(input.amount, currency);
   const merchantUrl = publicHttpsUrl(input.merchantUrl, "Merchant URL");
   const checkoutUrl = input.checkoutUrl === undefined || input.checkoutUrl === null || input.checkoutUrl === "" ? null : publicHttpsUrl(input.checkoutUrl, "Checkout URL");
   const immutable = {
-    method: "finish_on_device", merchantName: requiredText(input.merchantName, "Merchant name", 200), merchantUrl: merchantUrl.toString(),
+    method: network ? "in_network" : "finish_on_device", merchantName: requiredText(input.merchantName, "Merchant name", 200), merchantUrl: merchantUrl.toString(),
     purpose: requiredText(input.purpose, "Purpose", 500), items: normalizeItems(input.items), amountMinor, currency,
     checkoutUrl: checkoutUrl?.toString() ?? null, refundPolicy: optionalText(input.refundPolicy, "Refund policy"),
+    // Network purchases bind the seller, offering, slot and the details shared with the seller.
+    ...(network ? { network } : {}),
   };
   const hash = await sha256(JSON.stringify(immutable));
   const existing = await env.DB.prepare("SELECT * FROM agent_payment_proposals WHERE owner_id=? AND idempotency_key=?").bind(ownerId, scope.idempotencyKey).first<ProposalRow>();
   if (existing) {
     if (existing.proposal_hash !== hash) throw new PaymentError("This payment proposal changed after it was saved. Propose it again for a fresh review.", 409);
-    return proposalView(existing);
+    return paymentView(env, ownerId, existing);
   }
   await assertWithinLimits(env, ownerId, amountMinor, currency);
   const id = crypto.randomUUID();
@@ -264,7 +309,7 @@ export async function proposePayment(env: Env, ownerId: string, scope: PaymentSc
     immutable.purpose, JSON.stringify(immutable.items), amountMinor, currency, immutable.checkoutUrl, immutable.refundPolicy, hash).run();
   const saved = await env.DB.prepare("SELECT * FROM agent_payment_proposals WHERE owner_id=? AND idempotency_key=?").bind(ownerId, scope.idempotencyKey).first<ProposalRow>();
   if (!saved || saved.proposal_hash !== hash) throw new PaymentError("This payment proposal conflicts with a concurrent one.", 409);
-  if (saved.id === id) await appendEvent(env, ownerId, id, "proposed", { amountMinor, currency, merchant: immutable.merchantName });
+  if (saved.id === id) await appendEvent(env, ownerId, id, "proposed", { amountMinor, currency, merchant: immutable.merchantName, ...(network ? { network: true } : {}) });
   return proposalView(saved);
 }
 
@@ -281,7 +326,7 @@ export function paymentApprovalAuth(input: { channel: "web" | "mobile"; sessionI
 
 /** Binds an owner decision to its proposal before the agent resumes. Declines are final. */
 export async function recordPaymentDecision(env: Env, ownerId: string, approval: { id: string; tool_name: string; card_json: string }, decision: "approved" | "declined", auth?: PaymentAuth) {
-  if (approval.tool_name !== PAYMENT_PROPOSE_TOOL) return;
+  if (!isPaymentApprovalTool(approval.tool_name)) return;
   const card = JSON.parse(approval.card_json) as { proposalId?: unknown; proposalHash?: unknown };
   const proposal = typeof card.proposalId === "string" ? await loadProposal(env, ownerId, card.proposalId) : null;
   if (!proposal || proposal.proposal_hash !== card.proposalHash) {
@@ -307,6 +352,7 @@ export async function handOverApprovedPayment(env: Env, ownerId: string, proposa
   if (!proposal || proposal.proposal_hash !== expectedHash) throw new PaymentError("The payment proposal no longer matches what was reviewed.", 409);
   if (proposal.status === "declined") throw new PaymentError("The owner declined this payment.", 409);
   if (!proposal.approval_auth) throw new PaymentError("This payment has not been approved with a fresh sign-in.", 403);
+  if (proposal.method === "in_network") throw new PaymentError("Network purchases are handed over through the seller's checkout.", 409);
   if (proposal.status === "proposed") {
     // Limits are checked again at execution so concurrent approvals cannot overspend.
     await assertWithinLimits(env, ownerId, proposal.amount_minor, proposal.currency);
@@ -336,7 +382,7 @@ async function loadReceipt(env: Env, ownerId: string, proposalId: string) {
  * Records what was actually paid. The agent records from an order email; the owner
  * can confirm or correct it. An agent never overwrites an owner-confirmed receipt.
  */
-export async function recordPaymentReceipt(env: Env, ownerId: string, input: { proposalId: unknown; amount: unknown; currency?: unknown; orderReference?: unknown; paidAt?: unknown; sourceMessageId?: unknown }, source: "owner" | "email") {
+export async function recordPaymentReceipt(env: Env, ownerId: string, input: { proposalId: unknown; amount: unknown; currency?: unknown; orderReference?: unknown; paidAt?: unknown; sourceMessageId?: unknown }, source: "owner" | "email" | "seller") {
   const proposalId = requiredText(input.proposalId, "Payment ID", 100);
   const proposal = await loadProposal(env, ownerId, proposalId);
   if (!proposal) throw new PaymentError("Payment not found.", 404);
@@ -347,7 +393,9 @@ export async function recordPaymentReceipt(env: Env, ownerId: string, input: { p
   if (paidAt && Number.isNaN(Date.parse(paidAt))) throw new PaymentError("Paid at must be an ISO date and time.");
   const sourceMessageId = source === "email" ? requiredText(input.sourceMessageId, "Order email ID", 200) : null;
   const existing = await loadReceipt(env, ownerId, proposalId);
-  if (existing?.owner_confirmed && source === "email") throw new PaymentError("The owner already confirmed this receipt.", 409);
+  if (existing?.owner_confirmed && source !== "owner") throw new PaymentError("The owner already confirmed this receipt.", 409);
+  // The seller's own checkout record outranks an order email.
+  if (existing?.source === "seller" && source === "email") throw new PaymentError("The seller already reported this receipt.", 409);
   const mismatch = amountMinor !== proposal.amount_minor || currency !== proposal.currency ? 1 : 0;
   await env.DB.prepare(`INSERT INTO agent_payment_receipts(proposal_id,owner_id,amount_minor,currency,order_reference,paid_at,source,source_message_id,mismatch,owner_confirmed)
     VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(proposal_id) DO UPDATE SET amount_minor=excluded.amount_minor,currency=excluded.currency,
@@ -357,7 +405,7 @@ export async function recordPaymentReceipt(env: Env, ownerId: string, input: { p
     .bind(proposalId, ownerId, amountMinor, currency, optionalText(input.orderReference, "Order reference", 200), paidAt, source, sourceMessageId, mismatch, source === "owner" ? 1 : 0).run();
   await env.DB.prepare("UPDATE agent_payment_proposals SET status='paid',completed_at=COALESCE(completed_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=? AND status IN ('handed_over','paid')").bind(ownerId, proposalId).run();
   await appendEvent(env, ownerId, proposalId, "receipt_recorded", { source, amountMinor, currency, mismatch: mismatch === 1 });
-  return proposalView((await loadProposal(env, ownerId, proposalId))!, await loadReceipt(env, ownerId, proposalId));
+  return paymentView(env, ownerId, (await loadProposal(env, ownerId, proposalId))!);
 }
 
 /** The owner says they did not go through with an approved purchase. */
@@ -365,7 +413,7 @@ export async function markPaymentNotPaid(env: Env, ownerId: string, proposalId: 
   const result = await env.DB.prepare("UPDATE agent_payment_proposals SET status='not_paid',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=? AND status='handed_over'").bind(ownerId, proposalId).run();
   if (!result.meta?.changes) throw new PaymentError("Only a handed-over payment without a receipt can be marked as not paid.", 409);
   await appendEvent(env, ownerId, proposalId, "not_paid", {});
-  return proposalView((await loadProposal(env, ownerId, proposalId))!);
+  return paymentView(env, ownerId, (await loadProposal(env, ownerId, proposalId))!);
 }
 
 export async function listPayments(env: Env, ownerId: string, options: { status?: unknown; limit?: unknown } = {}) {
@@ -374,7 +422,7 @@ export async function listPayments(env: Env, ownerId: string, options: { status?
   const rows = await env.DB.prepare(`SELECT * FROM agent_payment_proposals WHERE owner_id=?${status ? " AND status=?" : ""} ORDER BY created_at DESC,id DESC LIMIT ?`)
     .bind(...(status ? [ownerId, status, limit] : [ownerId, limit])).all<ProposalRow>();
   const views = [];
-  for (const row of rows.results ?? []) views.push(proposalView(row, await loadReceipt(env, ownerId, row.id)));
+  for (const row of rows.results ?? []) views.push(await paymentView(env, ownerId, row));
   return { payments: views };
 }
 
@@ -382,7 +430,7 @@ export async function getPayment(env: Env, ownerId: string, proposalId: string) 
   const row = await loadProposal(env, ownerId, proposalId);
   if (!row) throw new PaymentError("Payment not found.", 404);
   const events = await env.DB.prepare("SELECT event,data_json,created_at FROM agent_payment_events WHERE owner_id=? AND proposal_id=? ORDER BY seq").bind(ownerId, proposalId).all<{ event: string; data_json: string; created_at: string }>();
-  return { payment: proposalView(row, await loadReceipt(env, ownerId, proposalId)), audit: (events.results ?? []).map(event => ({ event: event.event, data: JSON.parse(event.data_json), at: event.created_at })) };
+  return { payment: await paymentView(env, ownerId, row), audit: (events.results ?? []).map(event => ({ event: event.event, data: JSON.parse(event.data_json), at: event.created_at })) };
 }
 
 /** Agent-facing adapter; proposals are owner-scoped and the agent cannot set an owner receipt. */

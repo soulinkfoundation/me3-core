@@ -3,6 +3,7 @@ import type { AgentFastPathRequestMeasurement } from "../../../packages/agent/sr
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { saveOwnerQuote } from "./quotes";
 import { createAgentPaymentServices } from "./agent-payments";
+import { createAgentNetworkPaymentServices } from "./agent-network-commerce";
 import { computerAvailability, createComputerChatServices, type ComputerJobHost } from "./agent-computer";
 import { computerChatTools } from "../../../packages/agent/src/computer/tools";
 import { createOwnerCreateIntentVerifier } from "./agent-owner-create-intent";
@@ -269,7 +270,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     scheduling:createStableAgentSchedulingServices(env,ownerId),
     mailbox:createAgentMailboxServices(env,ownerId),
     images:createAgentImageGenerationServices(env,ownerId),
-    payments:createAgentPaymentServices(env,ownerId),
+    payments:{...createAgentPaymentServices(env,ownerId),...createAgentNetworkPaymentServices(env,ownerId)},
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
     web:createWebResearchToolServices(env,ownerId),landingPageEnv:env as never,
   };

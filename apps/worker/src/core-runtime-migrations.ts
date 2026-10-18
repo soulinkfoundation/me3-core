@@ -14,6 +14,7 @@ import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { AGENT_PAYMENTS_SCHEMA } from "./agent-payments";
 import { AGENT_COMPUTER_SCHEMA } from "./agent-computer";
 import { AGENT_COMMERCE_SCHEMA } from "./agent-commerce-store";
+import { AGENT_NETWORK_COMMERCE_SCHEMA } from "./agent-network-commerce";
 import { MAIL_TRIAGE_SCHEMA } from "./mailbox-triage";
 import type { Env } from "./types";
 
@@ -602,6 +603,14 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-17-agent-commerce-v1",
     async apply(db) {
       await db.batch(AGENT_COMMERCE_SCHEMA.map(sql => db.prepare(sql)));
+    },
+  },
+  // Network commerce, buyer side: seller receipts and the seller checkout of each network purchase.
+  {
+    id: "0077_agent_network_purchases",
+    checksum: "2026-10-18-agent-network-purchases-v1",
+    async apply(db) {
+      await db.batch(AGENT_NETWORK_COMMERCE_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];

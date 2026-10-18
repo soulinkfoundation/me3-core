@@ -4,7 +4,7 @@ import { api } from "../../api";
 import Button from "../Button.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import {
-  formatPaymentMoney, paymentActions, paymentAuditLabel, paymentDate, paymentHandOver, paymentDisplayStatus, paymentReceiptWarning, safeHttpsUrl,
+  formatPaymentMoney, paymentActions, paymentAuditLabel, paymentDate, paymentHandOver, paymentDisplayStatus, paymentNetworkNote, paymentReceiptWarning, paymentSlotLabel, safeHttpsUrl,
   type PaymentAuditEvent, type PaymentRecord,
 } from "../../utils/agentPayments";
 
@@ -19,12 +19,13 @@ const payment = ref<PaymentRecord | null>(null);
 const audit = ref<PaymentAuditEvent[]>([]);
 const loading = ref(true);
 const loadError = ref("");
-const busy = ref<"" | "receipt" | "not-paid">("");
+const busy = ref<"" | "receipt" | "not-paid" | "check">("");
 const formError = ref("");
 const amountDraft = ref("");
 const referenceDraft = ref("");
 
-const actions = computed(() => payment.value ? paymentActions(payment.value) : { confirm: false, notPaid: false });
+const actions = computed(() => payment.value ? paymentActions(payment.value) : { confirm: false, notPaid: false, checkSeller: false });
+const networkNote = computed(() => payment.value ? paymentNetworkNote(payment.value) : null);
 const warning = computed(() => payment.value ? paymentReceiptWarning(payment.value) : null);
 const handOver = computed(() => payment.value ? paymentHandOver(payment.value) : null);
 const merchantHref = computed(() => safeHttpsUrl(payment.value?.merchant.url)?.toString() ?? null);
@@ -66,6 +67,16 @@ async function markNotPaid() {
   finally { busy.value = ""; }
 }
 
+async function checkSeller() {
+  if (!payment.value || busy.value) return;
+  busy.value = "check";
+  try {
+    const { payment: saved } = await api.post<{ payment: PaymentRecord }>(`/payments/${encodeURIComponent(payment.value.id)}/refresh`, {});
+    emit("changed", saved); await load();
+  } catch (error) { toastFromUnknown(error, "Couldn't reach the seller"); }
+  finally { busy.value = ""; }
+}
+
 watch(() => props.paymentId, load, { immediate: true });
 </script>
 
@@ -83,17 +94,26 @@ watch(() => props.paymentId, load, { immediate: true });
 
       <dl class="payment-receipt__facts">
         <div><dt>Items</dt><dd><span v-for="(item, index) in payment.items" :key="index" class="payment-receipt__item">{{ item.quantity }} × {{ item.name }}<template v-if="item.options"> · {{ item.options }}</template></span></dd></div>
+        <template v-if="payment.network">
+          <div><dt>Seller</dt><dd>{{ payment.network.seller.name }} · ME3 network<template v-if="networkNote"><br><span class="payment-receipt__muted">{{ networkNote }}</span></template></dd></div>
+          <div v-if="payment.network.slot"><dt>When</dt><dd>{{ paymentSlotLabel(payment.network.slot.start, payment.network.slot.timezone) }}</dd></div>
+          <div><dt>Shared with seller</dt><dd>{{ payment.network.sharesWith.name }} · {{ payment.network.sharesWith.email }}</dd></div>
+          <div v-if="payment.network.reference"><dt>{{ payment.network.reference.type === 'booking' ? 'Booking' : 'Order' }}</dt><dd>{{ payment.network.reference.id }}</dd></div>
+        </template>
         <div v-if="merchantHref"><dt>Merchant</dt><dd><a :href="merchantHref" target="_blank" rel="noopener noreferrer">{{ payment.merchant.url }}</a></dd></div>
         <div v-if="payment.refundPolicy"><dt>Refunds</dt><dd>{{ payment.refundPolicy }}</dd></div>
         <template v-if="payment.receipt">
           <div><dt>Receipt</dt><dd>{{ formatPaymentMoney(payment.receipt.amount, payment.receipt.currency) }}</dd></div>
           <div v-if="payment.receipt.orderReference"><dt>Order reference</dt><dd>{{ payment.receipt.orderReference }}</dd></div>
-          <div><dt>Source</dt><dd>{{ payment.receipt.source === 'owner' ? 'Confirmed by you' : payment.receipt.ownerConfirmed ? 'Order email, confirmed by you' : 'Read from the order email' }}</dd></div>
+          <div><dt>Source</dt><dd>{{ payment.receipt.source === 'owner' ? 'Confirmed by you' : payment.receipt.source === 'seller' ? (payment.receipt.ownerConfirmed ? 'From the seller, confirmed by you' : "From the seller's checkout") : payment.receipt.ownerConfirmed ? 'Order email, confirmed by you' : 'Read from the order email' }}</dd></div>
           <div v-if="payment.receipt.paidAt"><dt>Paid</dt><dd>{{ paymentDate(payment.receipt.paidAt) }}</dd></div>
         </template>
       </dl>
       <p v-if="warning" class="payment-receipt__warning" role="alert">{{ warning }}</p>
       <p v-if="handOver" class="payment-receipt__muted">{{ handOver.instructions }} <a :href="handOver.openUrl" target="_blank" rel="noopener noreferrer">Open checkout</a></p>
+      <div v-if="actions.checkSeller" class="payment-receipt__actions">
+        <Button color="ghost" shape="soft" :disabled="Boolean(busy)" @click="checkSeller">{{ busy === 'check' ? 'Checking…' : 'Check with the seller' }}</Button>
+      </div>
 
       <form v-if="actions.confirm" :id="formId" class="payment-receipt__form" @submit.prevent="confirmAmount">
         <label><span>Amount you paid ({{ payment.receipt?.currency ?? payment.currency }})</span><input v-model="amountDraft" class="input" inputmode="decimal" autocomplete="off" required :aria-invalid="Boolean(formError)"></label>

@@ -1,7 +1,7 @@
 import { persistAgentTargetSelectionInput } from "./agent-target-selection";
 import { revalidateAgentTargetPayload } from "./agent-target-projection";
 import { Agent, type FiberRecoveryContext } from "agents";
-import { PAYMENT_PROPOSE_TOOL, recordPaymentDecision } from "./agent-payments";
+import { isPaymentApprovalTool, recordPaymentDecision } from "./agent-payments";
 import { AgentInputConflictError, appendAgentStreamEvent, createD1TurnStore, persistAgentApprovalReply, persistAgentRequestAlias, isAgentCancellationRequested, requestAgentCancellation } from "../../../packages/agent/src/store";
 import { executeNewAgentTurn, isNewAgentDispatchInput, type NewAgentDispatchInput } from "./agent-runtime";
 import { resolvePrimaryAssistantThread } from "./assistant-primary-thread";
@@ -296,7 +296,7 @@ export class Me3Agent extends Agent<Env> {
       WHERE a.owner_id=? AND a.thread_id=? AND a.status='pending' AND t.status='needs_approval' ORDER BY a.created_at DESC LIMIT 2`).bind(input.userId,input.threadId).all<SavedTurn&{id:string;approval_tool_name:string;approval_card_json:string}>();
     if(rows.results?.length!==1)return input;
     const row=rows.results[0];
-    if(row.approval_tool_name===PAYMENT_PROPOSE_TOOL) {
+    if(isPaymentApprovalTool(row.approval_tool_name)) {
       // A typed "yes" cannot approve a payment: that needs the approval card and a fresh sign-in.
       if(decision==="approved")return input;
       await recordPaymentDecision(this.env,input.userId,{id:row.id,tool_name:row.approval_tool_name,card_json:row.approval_card_json},"declined");
