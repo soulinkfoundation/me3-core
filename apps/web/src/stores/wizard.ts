@@ -4553,6 +4553,28 @@ export const useWizardStore = defineStore("wizard", () => {
     saveToStorage();
   }
 
+  /**
+   * After a publish uploads testimonial photos, point each testimonial at its
+   * published file. Blob URLs never reach the saved draft, so without this a
+   * restored draft would publish the testimonials with no avatar.
+   */
+  function adoptPublishedTestimonialAvatars() {
+    if (!testimonialsEnabled.value) return;
+    let slot = 0;
+    testimonials.value = testimonials.value.map((testimonial) => {
+      if (testimonial.name.trim().length === 0 || testimonial.quote.trim().length === 0) return testimonial;
+      slot += 1;
+      if (!testimonial.avatarBlob) return testimonial;
+      revokeTestimonialObjectUrl(testimonial.avatar);
+      return {
+        ...testimonial,
+        avatar: resolveWizardSiteAssetUrl(`./files/testimonial-${slot}.${blobImageExt(testimonial.avatarBlob)}`, username.value) || undefined,
+        avatarBlob: null,
+      };
+    });
+    saveToStorage();
+  }
+
   // Mark site as published
   function markAsPublished() {
     const now = new Date().toISOString();
@@ -5297,6 +5319,7 @@ export const useWizardStore = defineStore("wizard", () => {
     generateMe3Json,
     saveToStorage,
     loadFromStorage,
+    adoptPublishedTestimonialAvatars,
     reconcileSession,
     reset,
     activateDraftContext,

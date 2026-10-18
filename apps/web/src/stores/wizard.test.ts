@@ -37,6 +37,29 @@ describe("wizard store", () => {
     expect(reloaded.profile.booking.retreatOffers[0].pricing?.regionalPrices).toEqual(regionalPrices);
   });
 
+  it("keeps uploaded testimonial avatars after publishing and reloading the draft", () => {
+    const store = useWizardStore();
+    store.activateDraftContext({ siteId: "site-profile", username: "owner", role: "profile" });
+    store.updateProfile({ name: "Owner" });
+    store.testimonialsEnabled = true;
+    const photo = new Blob(["png"], { type: "image/png" });
+    store.addTestimonial({ name: "No quote yet", quote: "" });
+    store.addTestimonial({ name: "Sam", quote: "Great session.", avatar: "blob:http://localhost/sam", avatarBlob: photo });
+    store.addTestimonial({ name: "Jo", quote: "Lovely.", avatar: "https://example.com/jo.jpg" });
+
+    // Publish uploads Sam's photo as the first publishable slot, testimonial-1.
+    expect(store.generateMe3Json().testimonials?.[0].avatar).toBe("./files/testimonial-1.png");
+    store.adoptPublishedTestimonialAvatars();
+    store.markAsPublished();
+
+    // A later session restores the local draft, then publishes again.
+    setActivePinia(createPinia());
+    const reloaded = useWizardStore();
+    reloaded.activateDraftContext({ siteId: "site-profile", username: "owner", role: "profile" });
+    expect(reloaded.testimonials[1].avatar).toBe("/preview/owner/files/testimonial-1.png");
+    expect(reloaded.generateMe3Json().testimonials?.map((t) => t.avatar)).toEqual(["./files/testimonial-1.png", "https://example.com/jo.jpg"]);
+  });
+
   describe("initialization", () => {
     it("should initialize with default values", () => {
       const store = useWizardStore();

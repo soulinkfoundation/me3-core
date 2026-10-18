@@ -489,6 +489,7 @@ export function usePublish() {
       });
 
       // Mark as published in wizard store
+      wizard.adoptPublishedTestimonialAvatars();
       wizard.markAsPublished();
 
       if (auth.sessionOnboardingStartStep) {
