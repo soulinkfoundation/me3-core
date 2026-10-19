@@ -27,6 +27,7 @@ import { decodeMimeHeaderValue } from "../../../../shared/email-headers";
 definePage({
   meta: {
     requiresAuth: true,
+    hideTopBarOnWide: true,
     title: "Email | ME3",
     description: "Review email and assistant chat with your ME3 assistant.",
     robots: "noindex,follow",
@@ -3598,6 +3599,10 @@ onBeforeUnmount(() => {
               }"
             >
               <aside class="mail-rail" aria-label="Mailbox">
+                <router-link to="/assistant" class="mail-rail__home" aria-label="Home">
+                  <UiIcon name="ArrowLeft" :size="16" aria-hidden="true" />
+                  <span>Home</span>
+                </router-link>
                 <Button color="primary" shape="pill" size="compact" type="button" class="mail-rail__compose" @click="openComposeModal()">
                   <UiIcon name="SquarePen" :size="16" aria-hidden="true" />
                   Compose
@@ -6166,6 +6171,30 @@ onBeforeUnmount(() => {
   border-right: 1px solid var(--ui-border, var(--color-border));
   background: var(--ui-bg, var(--color-bg));
   overflow-y: auto;
+}
+
+.mail-rail__home {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  margin: 0 0 8px;
+  padding: 0 10px;
+  border-radius: 10px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.mail-rail__home:hover {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+  color: var(--ui-text, var(--color-text));
+}
+
+.mail-rail__home:focus-visible {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+  outline-offset: 2px;
 }
 
 .mail-rail__compose {

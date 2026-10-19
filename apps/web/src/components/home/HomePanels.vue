@@ -434,7 +434,6 @@ onBeforeUnmount(() => {
     <AppDialog :open="dialog !== null" aria-label="Add to Home" @close="dialog = null">
       <section class="home-dialog"><header><h2>Add to Home</h2><button type="button" aria-label="Close Home editor" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>
         <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in addCards" :key="card" type="button" :aria-label="cards[card].title" :aria-pressed="visible.includes(card)" class="home-add-tile" @click="visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
-        <p v-if="dialog === 'add'" class="home-muted">Drag a card, or use its options menu to move or remove it.</p>
       </section>
     </AppDialog>
     <PersonSheet :contact="openPerson" @close="openPersonId = null" />

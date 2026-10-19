@@ -149,20 +149,6 @@ describe("AppProfileMenu optional plugin links", () => {
     wrapper.unmount();
   });
 
-  it("hides Calendar when its navigation feature is disabled", async () => {
-    const wrapper = await mountProfileMenu(
-      [{ id: "me3.calendar", status: "installed", enabled: true }],
-      {},
-      [
-        { id: "assistant", visible: true },
-        { id: "calendar", visible: false },
-      ],
-    );
-
-    expect(wrapper.find('[aria-label="Calendar"]').exists()).toBe(false);
-    wrapper.unmount();
-  });
-
   it("never lists Wheel of Life, which lives in Mission", async () => {
     const wrapper = await mountProfileMenu(
       [],
@@ -203,27 +189,24 @@ describe("AppProfileMenu optional plugin links", () => {
     wrapper.unmount();
   });
 
-  it("hides configurable workspaces while keeping enabled Accounts available", async () => {
+  it("lists core workspaces even where an older setting hid them", async () => {
     const wrapper = await mountProfileMenu([
+      { id: "me3.calendar", status: "installed", enabled: true },
       { id: "me3.journal", status: "installed", enabled: true },
       { id: "me3.mission-control", status: "installed", enabled: true },
-      { id: "me3.social-publishing", status: "installed", enabled: true },
       { id: "me3.accounts", status: "installed", enabled: true },
     ], {}, [
-      { id: "assistant", visible: false },
+      { id: "calendar", visible: false },
       { id: "journal", visible: false },
       { id: "tasks", visible: false },
       { id: "email", visible: false },
       { id: "files", visible: false },
-      { id: "social", visible: false },
-      { id: "accounts", visible: false },
     ]);
 
-    for (const label of ["Chat", "Writing", "Tasks", "Email", "Files"]) {
-      expect(wrapper.find(`[aria-label="${label}"]`).exists()).toBe(false);
+    // Home and Add to Home decide what shows now; the old workspace switches no longer hide pages.
+    for (const label of ["Calendar", "Writing", "Tasks", "Email", "Files", "Accounts"]) {
+      expect(wrapper.find(`[aria-label="${label}"]`).exists()).toBe(true);
     }
-    expect(wrapper.find('[aria-label="Accounts"]').exists()).toBe(true);
-    expect(wrapper.find('[aria-label="Socials"]').exists()).toBe(true);
     wrapper.unmount();
   });
 });

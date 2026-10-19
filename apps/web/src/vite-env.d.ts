@@ -5,12 +5,12 @@ import "vue-router";
 
 declare module "vue-router" {
   interface RouteMeta {
-    /** Requires an authenticated local Core workspace. */
     /** Requires a Core plugin to be installed and enabled. */
     requiresPlugin?: string;
-    requiresNavigationFeature?: string;
     /** Hides the floating agent chat launcher on this route. */
     hideAgentLauncher?: boolean;
+    /** Hides the app top bar on wide screens; the page provides its own way Home. */
+    hideTopBarOnWide?: boolean;
   }
 }
 

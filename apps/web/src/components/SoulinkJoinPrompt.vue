@@ -50,9 +50,9 @@ function continueToSoulink() {
     aria-label="Soulink network"
   >
     <p>
-      Join Soulink, an impact network for conscious communities.
-      <button type="button" class="soulink-banner__link" @click="openDialog">
-        Join Soulink
+      Meditate, call and chat with conscious communities on Soulink.
+      <button type="button" class="soulink-banner__link" aria-label="Join Soulink" @click="openDialog">
+        Join
       </button>
     </p>
     <button
@@ -83,7 +83,7 @@ function continueToSoulink() {
         <div>
           <h2 id="soulink-join-title">Join Soulink</h2>
           <p id="soulink-join-description">
-            An impact network for conscious communities.
+            A conscious social network for meditation, video calls and chat.
           </p>
         </div>
         <Button

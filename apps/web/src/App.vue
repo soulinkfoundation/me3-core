@@ -195,7 +195,13 @@ watch(
 
 <template>
   <AppLoadingBar />
-  <div class="app-root" :class="{ 'app-root--shelled': showAppShell }">
+  <div
+    class="app-root"
+    :class="{
+      'app-root--shelled': showAppShell,
+      'app-root--no-wide-bar': showAppShell && route.meta.hideTopBarOnWide === true,
+    }"
+  >
     <AppTopBar v-if="showAppShell" />
     <div class="app-root__view">
       <RouterView />
@@ -235,6 +241,17 @@ watch(
   min-height: 100dvh;
   box-sizing: border-box;
   padding-top: var(--app-topbar-height);
+}
+
+/* Pages with their own navigation column (Email) drop the Back row on wide screens. */
+@media (min-width: 641px) {
+  .app-root--no-wide-bar {
+    --app-topbar-height: 0px;
+  }
+
+  .app-root--no-wide-bar .app-top-bar {
+    display: none;
+  }
 }
 
 .remote-dev-banner {

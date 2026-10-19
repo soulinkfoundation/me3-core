@@ -29,7 +29,6 @@ const menu = ref<HTMLElement | null>(null);
 const failedPhoto = ref(false);
 const loggingOut = ref(false);
 const plugins = ref<Awaited<ReturnType<typeof ensurePluginAccess>>>([]);
-const features = ref<Record<string, boolean>>({ calendar: true });
 const profile = computed(() => sites.sites.find(site => site.site_role === "profile"));
 const username = computed(() => profile.value?.username || auth.user?.username || "");
 const name = computed(() => auth.user?.name || username.value || "Your profile");
@@ -53,23 +52,19 @@ function installed(id: string) { return plugins.value.some(plugin => plugin.id =
 // plugin-owned; Email and Files are Core features. Wheel of Life lives in Mission, Edit site is in the
 // header and Chat is the top switch, so none of them repeat here. No hosted entitlement is inferred.
 const destinations = computed(() => [
-  { label: "Calendar", path: "/calendar", emoji: APP_FEATURE_ICONS.calendar, visible: installed("me3.calendar") && features.value.calendar },
-  { label: "Writing", path: "/journal", emoji: APP_FEATURE_ICONS.journal, visible: installed("me3.journal") && features.value.journal },
+  { label: "Calendar", path: "/calendar", emoji: APP_FEATURE_ICONS.calendar, visible: installed("me3.calendar") },
+  { label: "Writing", path: "/journal", emoji: APP_FEATURE_ICONS.journal, visible: installed("me3.journal") },
   { label: "People", path: "/people", emoji: APP_FEATURE_ICONS.people, visible: true },
-  { label: "Email", path: "/email", emoji: APP_FEATURE_ICONS.email, visible: features.value.email },
+  { label: "Email", path: "/email", emoji: APP_FEATURE_ICONS.email, visible: true },
   { label: "Mission", path: "/mission", emoji: "🚀", visible: installed("me3.mission-control") },
-  { label: "Tasks", path: "/tasks", emoji: "✅", visible: installed("me3.mission-control") && features.value.tasks },
+  { label: "Tasks", path: "/tasks", emoji: "✅", visible: installed("me3.mission-control") },
   { label: "Accounts", path: "/accounts", emoji: APP_FEATURE_ICONS.accounts, visible: installed("me3.accounts") },
-  { label: "Files", path: "/files", emoji: APP_FEATURE_ICONS.files, visible: features.value.files },
+  { label: "Files", path: "/files", emoji: APP_FEATURE_ICONS.files, visible: true },
   { label: "Socials", path: "/social", emoji: APP_FEATURE_ICONS.social, visible: installed("me3.social-publishing") },
 ].filter(destination => destination.visible));
 
 async function loadNavigation() {
-  const [pluginResult, featureResult] = await Promise.allSettled([
-    ensurePluginAccess(), api.get<{ features: { id: string; visible: boolean }[] }>("/navigation-features"),
-  ]);
-  if (pluginResult.status === "fulfilled") plugins.value = pluginResult.value;
-  if (featureResult.status === "fulfilled") features.value = { ...features.value, ...Object.fromEntries(featureResult.value.features.map(feature => [feature.id, feature.visible])) };
+  plugins.value = await ensurePluginAccess().catch(() => plugins.value);
 }
 function refreshPlugins() { invalidatePluginAccess(); void loadNavigation(); }
 function close(restoreFocus = false) { open.value = false; if (restoreFocus) void nextTick(() => trigger.value?.focus()); }
