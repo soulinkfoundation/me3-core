@@ -31,6 +31,11 @@ vi.mock("../composables/useAppToast", () => ({
   }),
 }));
 
+let campaignsPluginEnabled = true;
+vi.mock("../utils/pluginAccess", () => ({
+  isPluginAccessEnabled: vi.fn(async () => campaignsPluginEnabled),
+}));
+
 const routerReplace = vi.fn();
 const routerPush = vi.fn();
 let routeTab = "sent";
@@ -259,6 +264,18 @@ describe("EmailPage", () => {
     menuItem.click();
 
     expect(routerPush).toHaveBeenCalledWith("/email/campaigns");
+  });
+
+  it("hides Campaigns when the Email Campaigns plugin is off", async () => {
+    campaignsPluginEnabled = false;
+    try {
+      const wrapper = mountEmailPage();
+      await flushPromises();
+
+      expect(wrapper.find('[data-folder="campaigns"]').exists()).toBe(false);
+    } finally {
+      campaignsPluginEnabled = true;
+    }
   });
 
   it("lists the Brief first, then every mailbox folder, in one rail", async () => {

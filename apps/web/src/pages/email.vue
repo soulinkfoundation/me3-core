@@ -21,12 +21,12 @@ import {
   type MailboxListRequest,
 } from "../stores/mailbox";
 import type { UiIconName } from "../utils/icons";
+import { isPluginAccessEnabled } from "../utils/pluginAccess";
 import { decodeMimeHeaderValue } from "../../../../shared/email-headers";
 
 definePage({
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     title: "Email | ME3",
     description: "Review email and assistant chat with your ME3 assistant.",
     robots: "noindex,follow",
@@ -3356,6 +3356,10 @@ async function resolveUnconfirmedDelivery(
   }
 }
 
+// Campaigns is an optional plugin; only link to it when the owner has it switched on.
+const campaignsEnabled = ref(false);
+void isPluginAccessEnabled("me3.email-campaigns").then((enabled) => { campaignsEnabled.value = enabled; }).catch(() => {});
+
 onMounted(() => {
   const routeTab = typeof route.query.tab === "string" ? route.query.tab : "";
   const routeMessage = typeof route.query.message === "string" ? route.query.message.trim() : "";
@@ -3441,7 +3445,7 @@ onBeforeUnmount(() => {
               <span v-if="tab.count" class="mail-title-menu__count">{{ tab.count }}</span>
             </button>
             <hr />
-            <button type="button" role="menuitem" class="mail-title-menu__item" data-menu-folder="campaigns" @click="switchMailFolderTab('campaigns')">
+            <button v-if="campaignsEnabled" type="button" role="menuitem" class="mail-title-menu__item" data-menu-folder="campaigns" @click="switchMailFolderTab('campaigns')">
               <UiIcon name="Send" :size="16" aria-hidden="true" /><span>Campaigns</span>
             </button>
             <button type="button" role="menuitem" class="mail-title-menu__item" @click="switchMailFolderTab('rules')">
@@ -3615,7 +3619,7 @@ onBeforeUnmount(() => {
                   </button>
                 </nav>
                 <div class="mail-rail__secondary">
-                  <router-link to="/email/campaigns" class="mail-rail__folder" data-folder="campaigns">
+                  <router-link v-if="campaignsEnabled" to="/email/campaigns" class="mail-rail__folder" data-folder="campaigns">
                     <UiIcon name="Send" :size="16" aria-hidden="true" />
                     <span class="mail-rail__label">Campaigns</span>
                   </router-link>
@@ -4911,37 +4915,6 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-.mail-rail {
-  order: 1;
-  position: static;
-  z-index: 3;
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-start;
-  width: 100%;
-  height: auto;
-  max-height: none;
-  box-sizing: border-box;
-  padding: 4px 8px 0;
-  background: var(--color-bg);
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-  scroll-padding-inline: 8px;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-}
-
-@media (min-width: 768px) {
-  .mail-rail {
-    justify-content: center;
-  }
-}
-
-.mail-rail::-webkit-scrollbar {
-  display: none;
-}
-
 .conversation-list.conversation-list--mobile-hidden {
   display: none;
 }
@@ -5851,13 +5824,6 @@ onBeforeUnmount(() => {
     height: auto;
   }
 
-  .mail-rail {
-    align-items: stretch;
-    padding: 4px 8px 0;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
   .conversation-list__head {
     display: none;
   }
@@ -6299,7 +6265,9 @@ onBeforeUnmount(() => {
   display: none;
   grid-template-columns: 20px minmax(0, 1fr);
   gap: 8px;
-  margin: 10px 12px 4px;
+  /* Auto width so the side margins sit inside the column instead of overflowing it. */
+  width: auto;
+  margin: 12px 16px 6px;
 }
 
 .mail-search__icon {

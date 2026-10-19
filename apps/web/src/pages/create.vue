@@ -9,6 +9,7 @@ import {
 } from "../stores/wizard";
 import { useSitesStore } from "../stores/sites";
 import { usePublish } from "../composables/usePublish";
+import AppPageBar from "../components/AppPageBar.vue";
 import GeneratedSitePreview from "../components/GeneratedSitePreview.vue";
 import PageLoading from "../components/PageLoading.vue";
 import AppDialog from "../components/AppDialog.vue";
@@ -455,6 +456,7 @@ watch(
       <p v-if="publishProgress" class="wizard-publish-status" role="status">{{ publishProgress }}</p>
       <p v-if="publishNeedsStorage" class="wizard-publish-error" role="alert">{{ publishError }}<RouterLink to="/settings?section=storage">Activate storage</RouterLink></p>
     </template>
+    <AppPageBar v-if="showIntroScreen" title="Website" />
     <main v-if="showIntroScreen" class="wizard-intro">
       <section class="intro-panel" aria-labelledby="intro-title">
         <img
