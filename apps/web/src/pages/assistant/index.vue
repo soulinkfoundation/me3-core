@@ -343,7 +343,7 @@ let assistantAbortController: AbortController | null = null;
 let assistantActiveRequestId: string | null = null;
 
 const configureStarterPrompt =
-  "Help me configure my ME3 installation. First check what is already set up across my public site/profile, email mailbox, Soulink or Telegram, assistant/AI, plugins, and updates. Then suggest the missing or most useful next step. If I'm not sure, walk me through the basics.";
+  "Help me configure my ME3 installation. First check what is already set up across my public site/profile, email mailbox, Soulink, assistant/AI, plugins, and updates. Then suggest the missing or most useful next step. If I'm not sure, walk me through the basics.";
 const assistantPlaceholders = [
   "Ask {{assistantName}} anything...",
   "Set a reminder tomorrow at 9am to...",

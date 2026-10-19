@@ -439,6 +439,8 @@ const soulinkPanelRef = ref<InstanceType<typeof SoulinkConnectPanel> | null>(
 const telegramPanelRef = ref<InstanceType<typeof TelegramConnectPanel> | null>(
   null,
 );
+// Telegram is hidden in every ME3 app for now; the Core channel and API stay in place.
+const TELEGRAM_UI_ENABLED = false;
 const telegramSetupOpen = ref(route.query.section === "telegram");
 
 const openSection = ref({
@@ -3088,6 +3090,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div
+                  v-if="TELEGRAM_UI_ENABLED"
                   class="connection-line connection-line--telegram"
                   :class="{
                     'connection-line--connected':

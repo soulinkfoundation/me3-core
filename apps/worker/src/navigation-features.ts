@@ -114,32 +114,3 @@ export class NavigationFeatureInputError extends Error {
     super(message);
   }
 }
-
-export async function shouldShowFeatureDiscovery(
-  env: Env,
-  ownerId: string,
-): Promise<boolean> {
-  const row = await env.DB.prepare(
-    `SELECT dismissed_at
-     FROM owner_feature_discovery
-     WHERE user_id = ?`,
-  )
-    .bind(ownerId)
-    .first<{ dismissed_at: string | null }>();
-  return !row?.dismissed_at;
-}
-
-export async function dismissFeatureDiscovery(
-  env: Env,
-  ownerId: string,
-): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO owner_feature_discovery (user_id, dismissed_at, updated_at)
-     VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-     ON CONFLICT(user_id) DO UPDATE SET
-       dismissed_at = excluded.dismissed_at,
-       updated_at = excluded.updated_at`,
-  )
-    .bind(ownerId)
-    .run();
-}

@@ -30,8 +30,6 @@ const quota = ref<SiteQuota | null>(null);
 const sitesReady = ref(sites.loaded);
 const quotaLoading = ref(true);
 const addSiteDialogOpen = ref(false);
-const showFeatureDiscovery = ref(false);
-const dismissingFeatureDiscovery = ref(false);
 
 const profileSite = computed(() =>
   sites.sites.find((site) => site.site_role === "profile"),
@@ -142,25 +140,6 @@ async function loadDashboardDetails(): Promise<void> {
   }
 }
 
-async function loadFeatureDiscovery(): Promise<void> {
-  try {
-    const response = await api.get<{ show: boolean }>("/feature-discovery");
-    showFeatureDiscovery.value = response.show;
-  } catch {
-    showFeatureDiscovery.value = false;
-  }
-}
-
-async function dismissFeatureDiscovery(): Promise<void> {
-  dismissingFeatureDiscovery.value = true;
-  try {
-    await api.post("/feature-discovery/dismiss", {});
-    showFeatureDiscovery.value = false;
-  } finally {
-    dismissingFeatureDiscovery.value = false;
-  }
-}
-
 // The "Made with ME3" badge on published pages. "auto" follows the install default:
 // on for self-hosted sites and managed free trials, off once a managed install is paying.
 type SiteBadgeState = { preference: "auto" | "shown" | "hidden"; automaticallyShown: boolean };
@@ -195,7 +174,6 @@ onMounted(async () => {
   await sites.ensureSites();
   sitesReady.value = true;
   void loadDashboardDetails();
-  void loadFeatureDiscovery();
   void loadSiteBadge();
 });
 </script>
@@ -227,40 +205,6 @@ onMounted(async () => {
       >
         {{ visibleSitesError }}
       </p>
-
-      <section
-        v-if="showFeatureDiscovery"
-        class="feature-discovery"
-        aria-labelledby="feature-discovery-title"
-      >
-        <div>
-          <h2 id="feature-discovery-title">Make ME3 your own</h2>
-          <p>
-            Start with your profile and website. Add writing, tasks, email, and
-            more whenever you need them.
-          </p>
-        </div>
-        <div class="feature-discovery__actions">
-          <Button
-            color="outline"
-            shape="soft"
-            size="compact"
-            to="/settings?section=plugins"
-          >
-            Explore features
-          </Button>
-          <Button
-            color="ghost"
-            shape="soft"
-            size="compact"
-            type="button"
-            :disabled="dismissingFeatureDiscovery"
-            @click="dismissFeatureDiscovery"
-          >
-            Dismiss
-          </Button>
-        </div>
-      </section>
 
       <section
         v-if="sitesReady && !visibleSitesError && !profileSite"
@@ -648,36 +592,9 @@ onMounted(async () => {
   color: var(--ui-text-muted, var(--color-text-muted));
 }
 
-.feature-discovery {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 20px;
-  padding: 16px;
-  border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: var(--ui-radius-md, 12px);
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-}
 
-.feature-discovery h2 {
-  margin: 0;
-  font-size: 1rem;
-}
 
-.feature-discovery p {
-  max-width: 54ch;
-  margin: 4px 0 0;
-  color: var(--ui-text-muted, var(--color-text-muted));
-  line-height: 1.45;
-}
 
-.feature-discovery__actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-}
 
 .sites-message {
   margin: 0 0 18px;
@@ -831,10 +748,7 @@ onMounted(async () => {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .feature-discovery {
-    align-items: flex-start;
-    flex-direction: column;
-  }
+  
 
   .profile-callout > :deep(.me3-btn) {
     grid-column: 1 / -1;
