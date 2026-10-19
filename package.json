@@ -19,6 +19,8 @@
     "capture:fast-path:shadow": "node scripts/capture-fast-path-shadow.mjs",
     "eval:web-research": "node --import tsx scripts/evaluate-web-research.mjs",
     "update:check": "node scripts/check-updates.mjs",
+    "release:check": "node scripts/check-release-metadata.mjs",
+    "release:check:test": "node --test scripts/check-release-metadata.test.mjs",
     "update:core": "node scripts/update-core.mjs",
     "update:doctor": "node scripts/update-doctor.mjs",
     "deploy:prepare": "node scripts/prepare-cloudflare-deploy.mjs",

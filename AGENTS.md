@@ -27,6 +27,7 @@
   - `me3-core.json` must have the new installed Core `version`.
   - `updates/stable.json` must set `latest.version`, `latest.tag`, `releasedAt`, `releaseNotesUrl`, and add the release to the top of `releases`.
   - Set `migrationRequired: true` when the release includes Worker/D1 migrations since the previous stable release.
+- Before tagging, run `pnpm release:check`; it fails if the release changes migrations since the previous tag without `migrationRequired: true`.
 - Commit and push the metadata update on `main`, then create and push the tag from that commit.
 - After tagging, verify with `pnpm update:check -- --manifest-url updates/stable.json --json`.
 
