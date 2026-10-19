@@ -4,8 +4,8 @@ export type HomeTask = {
   goalId?: string | null; projectId?: string | null;
 };
 export type HomeGoal = { id: string; title: string; status: "active" | "completed"; areaId?: string | null; progress?: number; taskIds?: string[]; projectIds?: string[] };
-// Files lives in the avatar menu, Wheel and Goals live in Mission, and tasks live on the Journal day page.
-export const HOME_CARDS = ["today", "people", "gratitude", "inbox", "mission", "journal", "accounts"] as const;
+// Files lives in the avatar menu, Wheel and Goals live in Mission, and tasks and writing live on the Journal day page.
+export const HOME_CARDS = ["today", "people", "gratitude", "inbox", "mission", "accounts"] as const;
 export type HomeCard = typeof HOME_CARDS[number];
 export type HomeLayout = { order: string[]; hidden: string[]; pinned: string[]; earned: string[] };
 export const emptyHomeLayout = (): HomeLayout => ({ order: [], hidden: [], pinned: [], earned: [] });

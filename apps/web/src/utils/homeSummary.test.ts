@@ -40,7 +40,10 @@ describe("Home summaries", () => {
     expect(homeDateLabel("2026-10-06", now, "en-GB")).toBe("Tue 6 Oct");
   });
   it("restores hidden cards and keeps a deduplicated saved order", () => {
-    expect(visibleHomeCards({ order: ["journal", "journal", "today"], hidden: ["inbox"], pinned: ["mission", "files"], earned: ["journal"] })).toEqual(["journal", "today", "people", "mission", "accounts"]);
+    expect(visibleHomeCards({ order: ["mission", "mission", "today"], hidden: ["inbox"], pinned: ["mission", "files"], earned: [] })).toEqual(["mission", "today", "people", "accounts"]);
+  });
+  it("drops the retired Writing card from saved layouts", () => {
+    expect(visibleHomeCards({ order: ["journal", "today"], hidden: [], pinned: ["journal"], earned: ["journal"] })).toEqual(["today", "people", "accounts"]);
   });
   it("defaults Home to Today and People, keeping gratitude inside Today", () => {
     expect(visibleHomeCards(emptyHomeLayout())).toEqual(["today", "people", "accounts"]);

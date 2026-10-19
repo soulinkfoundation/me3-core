@@ -14,7 +14,7 @@ import PersonSheet from "../people/PersonSheet.vue";
 import { useContactsStore } from "../../stores/contacts";
 import { ownMissionStatement } from "../../utils/missionStatement";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
-import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDateLabel, homeDoneToday, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
+import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDoneToday, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
 import { useAppLoadingWhile } from "../../composables/useAppLoading";
 const emit = defineEmits<{ suggest: [text: string]; approvalResolved: [] }>();
@@ -26,8 +26,6 @@ const layout = ref<HomeLayout>(emptyHomeLayout());
 // Today's tasks and goals come from the shared plan so the daily page and Mission stay in step.
 const plan = useTodayPlan();
 const { tasks, goals } = plan;
-const journal = ref<{ id: string; date: string; title?: string | null; body?: string; preview?: string }[]>([]);
-const articles = ref<{ id: string; title?: string | null; body: string }[]>([]);
 const mail = ref<{ id: string; subject: string; fromName?: string; fromAddress?: string; preview?: string; agentSummary?: string }[]>([]);
 type HomeBrief = { needsYou: Array<{ messageId: string; sender: { name: string }; summary: string }>; handled: { total: number }; fyi: { inboxLeft: number; unread: number } };
 const brief = ref<HomeBrief | null>(null);
@@ -81,7 +79,6 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
   gratitude: { title: "Gratitude", href: "/journal", emoji: "🌅" },
   inbox: { title: "Inbox", href: "/email", emoji: "📧" },
   mission: { title: "Mission", href: "/mission", emoji: "🚀" },
-  journal: { title: "Writing", href: "/journal", emoji: "✍️" },
   accounts: { title: "Accounts", href: "/accounts", emoji: "💰" },
 };
 // People appears once someone is Close (People v1).
@@ -112,12 +109,12 @@ function eventState(event: { start: string; end?: string | null; allDay?: boolea
 const todayEvents = computed(() => events.value.slice(0, 6));
 const dayOver = computed(() => events.value.length > 0 && events.value.every(event => eventState(event) === "is-past"));
 const tomorrowKey = computed(() => { const date = new Date(`${day.value}T12:00:00`); date.setDate(date.getDate() + 1); return localDateKey(date); });
-// One line into today's journal page, where tasks are added and ticked off.
+// One line into today's journal page (each day has its own), where tasks are added and ticked off.
 const doneToday = computed(() => homeDoneToday(tasks.value));
 const tasksLine = computed(() => {
   const open = todayTasks.value.length; const done = doneToday.value; const total = open + done;
-  const text = !total ? "No tasks today" : !open ? "All done today" : !done ? `${open} ${open === 1 ? "task" : "tasks"} today` : `${open} of ${total} left`;
-  return { open, done, total, text, label: total ? `${open} of ${total} tasks left. Open today's page` : "No tasks today. Open today's page" };
+  const count = !total ? "" : !open ? "All done" : !done ? `${open} ${open === 1 ? "task" : "tasks"}` : `${open} of ${total} left`;
+  return { count, label: total ? `Open today's page. ${open} of ${total} tasks left` : "Open today's page" };
 });
 const missionPage = ref(0);
 function onMissionScroll(event: Event) { const pager = event.currentTarget as HTMLElement; missionPage.value = Math.round(pager.scrollLeft / Math.max(pager.clientWidth, 1)); }
@@ -302,10 +299,6 @@ async function refresh() {
     resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed) gratitudeOn.value = Boolean(state.settings?.inToday); }),
     resource("people", async () => { await contactsStore.fetchContacts(); if (contactsStore.error) throw new Error(contactsStore.error); }),
     resource("tasks", plan.loadTasks),
-    resource("journal", async () => {
-      const [data, drafts] = await Promise.all([api.get<{ entries: typeof journal.value }>("/journal/archive?limit=1"), api.get<{ articles: typeof articles.value }>("/journal/articles")]);
-      if (!disposed) { journal.value = data.entries || []; articles.value = drafts.articles || []; }
-    }),
     resource("mission", async () => {
       const [data] = await Promise.all([api.get<{ missionStatement?: string }>("/mission-control/dashboard"), plan.loadGoals()]);
       if (!disposed) mission.value = ownMissionStatement(data.missionStatement);
@@ -392,7 +385,6 @@ onBeforeUnmount(() => {
           <header class="home-card__header">
             <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
             <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
-            <span v-else-if="card === 'journal' && journal[0]" class="home-card__detail">{{ homeDateLabel(journal[0].date) }}</span>
             <div class="home-card__controls">
               <button type="button" class="home-card__drag" :aria-label="`Drag ${cards[card].title} to reorder`" title="Drag to reorder, or use the options menu"><UiIcon name="GripVertical" :size="16" /></button>
               <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-haspopup="menu" :aria-expanded="menu === card" @click="menu === card ? closeMenu(card) : openMenu(card)"><UiIcon name="Ellipsis" :size="20" /></button>
@@ -423,8 +415,9 @@ onBeforeUnmount(() => {
               </template>
               <GratitudeCard v-if="showGratitude" section :active="active" @unavailable="unavailable.push('gratitude')" />
               <RouterLink to="/journal" class="home-tasksline" :aria-label="tasksLine.label">
-                <span v-if="tasksLine.total" class="home-dots" aria-hidden="true"><i v-for="index in Math.min(tasksLine.total, 5)" :key="index" :class="{ 'is-done': index <= tasksLine.done }" /></span>
-                <strong>{{ tasksLine.text }}</strong>
+                <span class="home-emoji" aria-hidden="true">📝</span>
+                <strong>Today's page</strong>
+                <span v-if="tasksLine.count" class="home-muted">· {{ tasksLine.count }}</span>
                 <UiIcon name="ChevronRight" :size="16" class="home-tasksline__go" />
               </RouterLink>
             </template>
@@ -467,11 +460,6 @@ onBeforeUnmount(() => {
                 </template>
               </Teleport>
               <div class="home-pager-dots" aria-hidden="true"><i v-for="index in 3" :key="index" :class="{ 'is-on': missionPage === index - 1 }" /></div>
-            </template>
-            <template v-else-if="card === 'journal'">
-              <RouterLink v-if="journal[0]" :to="`/journal?date=${journal[0].date}`" class="home-writing"><strong v-if="journal[0].title">{{ journal[0].title }}.</strong> <span class="home-muted">{{ journalPreview(journal[0].body || journal[0].preview || '') }}</span></RouterLink>
-              <RouterLink v-for="article in articles.slice(0, 2)" :key="article.id" :to="`/journal?article=${encodeURIComponent(article.id)}`" class="home-entry"><UiIcon name="FileText" :size="15" /><strong>{{ article.title || 'Untitled article' }}</strong><span class="home-muted">Draft</span></RouterLink>
-              <template v-if="!journal.length && !articles.length"><p class="home-muted">Write about your day, or start an article.</p><RouterLink to="/journal" class="home-quiet"><UiIcon name="Plus" :size="16" />Start writing</RouterLink></template>
             </template>
             <template v-else-if="card === 'accounts'"><div v-if="accountSummary" class="home-stats"><div><span class="home-muted">Income this month</span><strong>{{ accountSummary.income }}</strong></div><div><span class="home-muted">Expenses this month</span><strong>{{ accountSummary.expense }}</strong></div></div><RouterLink v-else to="/accounts" class="home-quiet">Open Accounts<UiIcon name="ArrowRight" :size="16" /></RouterLink></template>
             <template v-else-if="card === 'people'"><template v-if="peopleCard.state === 'people'"><button v-for="person in peopleCard.people" :key="person.id" type="button" class="home-person" @click="openPersonId = person.id"><PersonAvatar :contact="person" :size="40" /><strong>{{ firstName(person.name) }}</strong><span class="home-muted home-person__since">{{ formatSinceShort(person.lastInTouchAt) || 'Not yet' }}</span></button></template><p v-else class="home-muted">All caught up.</p></template>
@@ -546,9 +534,7 @@ p { margin: 4px 0; }
 .home-tasksline { display: flex; align-items: center; gap: 8px; min-height: 40px; margin-top: 6px; padding: 0 12px; border-radius: 12px; background: var(--ui-surface-muted); color: var(--ui-text); font-size: 14px; text-decoration: none; }
 .home-tasksline strong { font-weight: 600; }
 .home-tasksline__go { margin-left: auto; color: var(--ui-text-muted); }
-.home-dots { display: flex; gap: 3px; }
-.home-dots i { width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ui-text-muted); }
-.home-dots i.is-done { background: var(--ui-accent); box-shadow: none; }
+.home-tasksline .home-emoji { font-size: 16px; }
 .home-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
 .home-pager::-webkit-scrollbar { display: none; }
 .home-page { flex: 0 0 100%; min-height: 150px; display: flex; flex-direction: column; justify-content: center; scroll-snap-align: start; color: var(--ui-text); text-decoration: none; }
@@ -589,8 +575,6 @@ p { margin: 4px 0; }
 .home-mission { margin: 8px 6px; font-family: var(--font-serif, Georgia, serif); font-size: 22px; font-weight: 500; line-height: 1.4; text-align: center; }
 .home-progress { display: block; height: 4px; border-radius: 4px; background: var(--ui-surface-muted); }
 .home-progress i { display: block; height: 100%; border-radius: inherit; background: var(--ui-accent); }
-.home-writing { display: block; margin: 2px 0 6px; color: var(--ui-text); text-decoration: none; }
-.home-writing strong { font-weight: 600; }
 .home-wheel { display: flex; align-items: center; gap: 18px; padding: 6px 0; }
 .home-wheel-summary { display: grid; gap: 4px; min-width: 0; }
 .home-wheel-summary strong { font-weight: 600; }

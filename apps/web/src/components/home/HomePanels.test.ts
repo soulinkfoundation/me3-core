@@ -163,7 +163,8 @@ describe("Home Today card", () => {
     expect(text).not.toContain("Finish the person sheet");
     expect(text).not.toContain("Notes");
     expect(today().querySelector('input[aria-label="Add a task"]')).toBeNull();
-    const line = today().querySelector('a[aria-label^="1 of 2 tasks left"]')!;
+    const line = today().querySelector('a[aria-label="Open today\'s page. 1 of 2 tasks left"]')!;
+    expect(line.textContent!.replace(/\s+/g, "")).toBe("📝Today'spage·1of2left");
     expect(line.getAttribute("href") ?? line.getAttribute("to")).toBe("/journal");
     expect(today().querySelector(".home-card__title")!.getAttribute("to")).toMatch(/^\/calendar\?date=\d{4}-\d{2}-\d{2}$/);
   });
