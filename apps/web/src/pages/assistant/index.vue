@@ -3083,7 +3083,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
           <div class="assistant-composer__bottom">
             <input ref="assistantAttachmentInputRef" class="sr-only" type="file" multiple accept=".txt,.md,.markdown,.csv,.tsv,.json,.xml,.avif,text/*,application/json,application/xml,image/*,image/avif" @change="onAssistantAttachmentChange" />
             <details ref="composerMenu" class="composer-options" @keydown.esc="composerMenu?.removeAttribute('open')">
-              <summary aria-label="Message options"><UiIcon name="Plus" :size="22" aria-hidden="true" /></summary>
+              <summary aria-label="Message options" @pointerdown.prevent><UiIcon name="Plus" :size="22" aria-hidden="true" /></summary>
               <div class="composer-options__menu">
                 <button type="button" :disabled="assistantSending" @click="openAssistantAttachmentPicker(); composerMenu?.removeAttribute('open')"><UiIcon name="Paperclip" :size="18" /> Attach files</button>
                 <button v-if="!siteBuilderMode && assistantThreadId" type="button" :disabled="assistantSending" @click="composerMenu?.removeAttribute('open'); startFresh()"><UiIcon name="SquarePen" :size="18" /> Start fresh</button>
