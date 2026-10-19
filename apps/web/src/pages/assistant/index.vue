@@ -302,11 +302,6 @@ function homeSuggestion(text: string) {
 }
 const assistantComposerRef = ref<HTMLTextAreaElement | null>(null);
 function dismissComposer() { assistantComposerRef.value?.blur(); }
-async function openAddToHome() {
-  dismissComposer();
-  await nextTick();
-  homePanels.value?.openAddDialog();
-}
 const assistantScrollerRef = ref<HTMLDivElement | null>(null);
 const assistantAttachmentInputRef = ref<HTMLInputElement | null>(null);
 const assistantAttachments = ref<AssistantAttachmentDraft[]>([]);
@@ -2350,9 +2345,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
   >
     <Teleport v-if="!siteBuilderMode" to="#app-page-controls" defer>
       <div class="home-chat-header">
-        <div class="home-chat-actions">
-          <Button v-if="homeMode" color="ghost" size="large" icon-only class="home-nav-button" aria-label="Add a card to Home" @click="openAddToHome"><UiIcon name="Plus" :size="24" /></Button>
-        </div>
         <div class="home-chat-switcher" role="group" aria-label="Workspace view">
           <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
           <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>
@@ -5217,16 +5209,13 @@ button:disabled {
 
 <style scoped>
 .home-chat-header { display: flex; align-items: center; height: 44px; }
-.home-chat-actions { display: flex; align-items: center; }
 .home-chat-switcher { position: absolute; left: 50%; transform: translateX(-50%); display: flex; padding: 3px; border-radius: 28px; background: var(--ui-surface-muted); }
 .home-chat-switcher button { min-width: 68px; min-height: 44px; padding: 0 14px; border: 0; border-radius: 24px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
 .home-chat-switcher button[aria-pressed="true"] { color: var(--ui-primary-contrast); background: var(--ui-primary); font-weight: 600; }
 /* Home scrolls with the window, so there is one scrollbar rather than a second one on the card list. */
 .assistant-home { margin-inline: -14px; align-content: start; box-sizing: border-box; }
-.home-nav-button { display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--ui-text-muted); border-radius: 50%; cursor: pointer; }
-.home-nav-button:hover { background: var(--ui-surface-muted); }
 @media (max-width: 360px) { .home-chat-switcher { left: calc(50% + 8px); } .home-chat-switcher button { min-width: 52px; padding-inline: 10px; } }
-.home-nav-button:focus-visible, .home-chat-switcher button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.home-chat-switcher button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .assistant-page:not(.assistant-page--site-builder) .assistant-timeline { padding-top: 18px; }
 .assistant-composer { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: 5px 6px 5px 16px; gap: 0 4px; min-height: 56px; box-sizing: border-box; }
 .assistant-composer .assistant-attachments, .assistant-composer > p, .assistant-composer > .sr-only { grid-column: 1 / -1; }

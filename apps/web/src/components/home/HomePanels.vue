@@ -72,7 +72,7 @@ const orderAnnouncement = ref("");
 const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 const reducedMotion = ref(motionPreference?.matches ?? false);
 function updateMotionPreference() { reducedMotion.value = motionPreference?.matches ?? false; }
-defineExpose({ openAddDialog: () => { dialog.value = "add"; }, refreshToday: loadToday });
+defineExpose({ refreshToday: loadToday });
 const menu = ref<HomeCard | null>(null);
 const day = ref(localDateKey(new Date()));
 const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = {

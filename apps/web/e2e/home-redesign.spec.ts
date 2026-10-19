@@ -46,7 +46,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await page.goto('/assistant');
     await page.locator('#assistant-console-input').fill('A longer draft that stays intact while adding a Home card.');
     await expect(page.getByRole('button', { name: 'Dismiss keyboard', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Add a card to Home', exact: true }).click();
+    await page.getByRole('button', { name: 'Add to Home', exact: true }).click();
     const addDialog = page.getByRole('dialog', { name: 'Add to Home', exact: true });
     await expect(addDialog.getByRole('button', { name: 'Calendar', exact: true })).toBeVisible();
     await expect(page.locator('#assistant-console-input')).not.toBeFocused();
