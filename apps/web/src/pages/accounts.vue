@@ -15,7 +15,6 @@ definePage({
   path: "/accounts",
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     requiresPlugin: "me3.accounts",
     title: "Accounts | ME3",
     description: "Manage income, expenses, and customers in one place.",

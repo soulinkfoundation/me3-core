@@ -21,7 +21,6 @@ import type { PluginRecord, PluginsResponse } from "../../../utils/plugins";
 definePage({
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     title: "Campaigns | ME3",
     description: "Create and review email campaigns.",
     robots: "noindex,follow",

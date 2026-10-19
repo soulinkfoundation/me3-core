@@ -30,7 +30,6 @@ import { plainPreview, type HomeTask } from "../utils/homeSummary";
 definePage({
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     requiresPlugin: "me3.journal",
     title: "Writing | ME3",
     description: "Private ME3 Journal workspace.",

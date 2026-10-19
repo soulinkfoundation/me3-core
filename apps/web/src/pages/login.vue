@@ -7,12 +7,10 @@ import LandingGrids from "../components/LandingGrids.vue";
 import UiIcon from "../components/UiIcon.vue";
 import { api } from "../api";
 import { useAuthStore } from "../stores/auth";
-import { useSitesStore } from "../stores/sites";
 import { DEFAULT_APP_PATH } from "../utils/navigation";
 import {
   resolveAuthenticatedLoginRedirect,
   resolveMe3OAuthRedirect,
-  resolveProfileSetupPath,
 } from "../utils/loginRedirect";
 import { detectBrowserTimeZone } from "../utils/timezone";
 
@@ -29,7 +27,6 @@ definePage({
 const router = useRouter();
 const route = useRoute();
 const auth = useAuthStore();
-const sites = useSitesStore();
 const remoteApiHost = import.meta.env.DEV
   ? import.meta.env.VITE_REMOTE_API_HOST || ""
   : "";
@@ -155,27 +152,14 @@ function deriveUsername() {
   return username || "owner";
 }
 
-async function resolveDefaultPostLoginRedirect(): Promise<string> {
-  try {
-    await sites.fetchSites();
-    return resolveProfileSetupPath({
-      sitesLoaded: sites.loaded,
-      hasProfileSite: sites.hasProfileSite,
-      defaultPath: DEFAULT_APP_PATH,
-    });
-  } catch {
-    return DEFAULT_APP_PATH;
-  }
-}
-
 async function resolvePostLoginRedirect(raw: unknown): Promise<string> {
   const redirect = resolveAuthenticatedLoginRedirect(raw, {
     origin: window.location.origin,
     hostname: window.location.hostname,
     dev: import.meta.env.DEV,
   });
-  if (!redirect) return resolveDefaultPostLoginRedirect();
-  return redirect;
+  // New owners land on Home; there is no separate first-run setup flow.
+  return redirect || DEFAULT_APP_PATH;
 }
 
 function navigateAfterLogin(target: string) {
@@ -282,7 +266,6 @@ async function startMe3SignIn() {
           origin: window.location.origin,
           hostname: window.location.hostname,
           dev: import.meta.env.DEV,
-          setupIncomplete: !ownerAuthConfigured.value,
         }),
       },
     );

@@ -13,7 +13,6 @@ import { useTodayPlan } from "../composables/useTodayPlan";
 definePage({
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     title: "Mission | ME3",
     description: "Your mission, your goals and the one you're focused on, and your Wheel of Life.",
     robots: "noindex,follow",

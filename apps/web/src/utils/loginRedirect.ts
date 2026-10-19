@@ -1,27 +1,9 @@
+import { DEFAULT_APP_PATH } from "./navigation";
+
 export interface LoginRedirectOptions {
   origin: string;
   hostname: string;
   dev: boolean;
-  setupIncomplete?: boolean;
-}
-
-export interface ProfileSetupPathOptions {
-  sitesLoaded: boolean;
-  hasProfileSite: boolean;
-  onboardingStartStep?: 2 | 3 | null;
-  defaultPath: string;
-}
-
-export function resolveProfileSetupPath(
-  options: ProfileSetupPathOptions,
-): string {
-  if (options.onboardingStartStep === 2 || options.onboardingStartStep === 3) {
-    return "/create";
-  }
-  if (!options.sitesLoaded || options.hasProfileSite) {
-    return options.defaultPath;
-  }
-  return "/create";
 }
 
 export function normalizeSafeLoginRedirect(
@@ -74,7 +56,5 @@ export function resolveMe3OAuthRedirect(
   raw: unknown,
   options: LoginRedirectOptions,
 ): string {
-  if (options.setupIncomplete) return "/create";
-
-  return normalizeSafeLoginRedirect(raw, options) || "/login";
+  return normalizeSafeLoginRedirect(raw, options) || DEFAULT_APP_PATH;
 }

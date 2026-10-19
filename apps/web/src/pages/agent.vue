@@ -12,7 +12,6 @@ import { useAppToast } from "../composables/useAppToast";
 definePage({
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     title: "Your agent | ME3",
     description: "Your agent's name, its email, what it remembers about how you like to work, and its recent work.",
     robots: "noindex,follow",

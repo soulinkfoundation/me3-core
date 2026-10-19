@@ -6,7 +6,6 @@ import "vue-router";
 declare module "vue-router" {
   interface RouteMeta {
     /** Requires an authenticated local Core workspace. */
-    requiresWorkspace?: boolean;
     /** Requires a Core plugin to be installed and enabled. */
     requiresPlugin?: string;
     requiresNavigationFeature?: string;

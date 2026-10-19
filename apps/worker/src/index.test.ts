@@ -6012,25 +6012,14 @@ describe("ME3 Worker auth", () => {
     const body = (await response.json()) as {
       ok: boolean;
       user: OwnerProfile;
-      workspace: { hasProfileSite: boolean };
+      workspace?: unknown;
     };
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.user.id).toBe("owner");
-    expect(body.workspace.hasProfileSite).toBe(false);
-
-    addAssistantEditableSite(env);
-    const responseWithSite = await app.fetch(
-      new Request("http://localhost/api/auth/me", {
-        headers: { Cookie: session },
-      }),
-      env,
-    );
-    const bodyWithSite = (await responseWithSite.json()) as {
-      workspace: { hasProfileSite: boolean };
-    };
-    expect(bodyWithSite.workspace.hasProfileSite).toBe(true);
+    // Routing no longer depends on setup state, so the session carries none.
+    expect(body.workspace).toBeUndefined();
   });
 
   it("clears the owner session cookie on logout", async () => {

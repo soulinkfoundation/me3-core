@@ -105,10 +105,6 @@ import { registerJournalRoutes } from "./routes/journal";
 import { registerManagedRuntimeRoutes } from "./routes/managed-runtime";
 import { registerManagedSetupSessionRoutes } from "./routes/managed-setup-session";
 import {
-  getPendingOnboardingStartStep,
-  registerOnboardingRoutes,
-} from "./routes/onboarding";
-import {
   acknowledgeStarterProfileHandoff,
   importManagedStarterProfile,
 } from "./managed-starter-profile";
@@ -746,7 +742,7 @@ app.get("/api/auth/me3/callback", async (c) => {
   await setOwnerSession(c, "owner");
 
   return c.redirect(
-    normalizeClaimRedirect(c.req.query("redirect")) || pending.redirect_path || "/account",
+    normalizeClaimRedirect(c.req.query("redirect")) || pending.redirect_path || "/assistant",
   );
 });
 
@@ -916,11 +912,7 @@ app.get("/api/auth/me", async (c) => {
     return c.json({ ok: false, user: null }, 401);
   }
 
-  const [owner, hasProfileSite, onboardingStartStep] = await Promise.all([
-    getOwnerProfile(c.env, ownerId),
-    hasOwnerProfileSite(c.env, ownerId),
-    getPendingOnboardingStartStep(c.env, ownerId),
-  ]);
+  const owner = await getOwnerProfile(c.env, ownerId);
   if (!owner) {
     clearOwnerSession(c);
     return c.json({ ok: false, user: null }, 401);
@@ -929,7 +921,6 @@ app.get("/api/auth/me", async (c) => {
   return c.json({
     ok: true,
     user: toPublicOwner(owner),
-    workspace: { hasProfileSite, onboardingStartStep },
   });
 });
 
@@ -939,7 +930,6 @@ app.post("/api/auth/logout", (c) => {
 });
 
 registerAssistantRoutes(app, { requireOwner, unauthorized, getSessionOwnerId, getSetupRequired, ownerSessionIssuedAt });
-registerOnboardingRoutes(app, { requireOwner, unauthorized });
 registerNavigationFeatureRoutes(app, { requireOwner, unauthorized });
 
 app.get("/api/account", async (c) => {
@@ -1915,20 +1905,6 @@ async function getOwnerProfile(env: Env, ownerId: string): Promise<OwnerRecord |
     .first<OwnerRecord>();
 
   return result ?? null;
-}
-
-async function hasOwnerProfileSite(env: Env, ownerId: string): Promise<boolean> {
-  const result = await env.DB.prepare(
-    `SELECT id
-     FROM sites
-     WHERE user_id = ?
-       AND COALESCE(site_type, 'profile') = 'profile' AND site_role = 'profile'
-     LIMIT 1`,
-  )
-    .bind(ownerId)
-    .all<{ id: string }>();
-
-  return (result.results || []).length > 0;
 }
 
 async function getOwnerByEmail(env: Env, email: string): Promise<OwnerRecord | null> {

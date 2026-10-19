@@ -7,10 +7,7 @@ import { useSitesStore } from "./stores/sites";
 import { useWizardStore } from "./stores/wizard";
 import { updateFeatureFavicon } from "./utils/favicon";
 import { DEFAULT_APP_PATH } from "./utils/navigation";
-import {
-  resolveAuthenticatedLoginRedirect,
-  resolveProfileSetupPath,
-} from "./utils/loginRedirect";
+import { resolveAuthenticatedLoginRedirect } from "./utils/loginRedirect";
 import {
   invalidatePluginAccess,
   isPluginAccessEnabled,
@@ -54,46 +51,6 @@ function updateLinkTag(rel: string, href: string | undefined) {
     document.head.appendChild(element);
   }
   element.setAttribute("href", href);
-}
-
-async function resolveDefaultAppPathForSession(): Promise<string> {
-  const auth = useAuthStore();
-  if (auth.sessionOnboardingStartStep !== null) {
-    return resolveProfileSetupPath({
-      sitesLoaded: true,
-      hasProfileSite: auth.sessionHasProfileSite === true,
-      onboardingStartStep: auth.sessionOnboardingStartStep,
-      defaultPath: DEFAULT_APP_PATH,
-    });
-  }
-
-  const sites = useSitesStore();
-  if (sites.loaded) {
-    return resolveProfileSetupPath({
-      sitesLoaded: true,
-      hasProfileSite: sites.hasProfileSite,
-      defaultPath: DEFAULT_APP_PATH,
-    });
-  }
-
-  if (auth.sessionHasProfileSite !== null) {
-    return resolveProfileSetupPath({
-      sitesLoaded: true,
-      hasProfileSite: auth.sessionHasProfileSite,
-      defaultPath: DEFAULT_APP_PATH,
-    });
-  }
-
-  try {
-    await sites.ensureSites();
-    return resolveProfileSetupPath({
-      sitesLoaded: sites.loaded,
-      hasProfileSite: sites.hasProfileSite,
-      defaultPath: DEFAULT_APP_PATH,
-    });
-  } catch {
-    return DEFAULT_APP_PATH;
-  }
 }
 
 // The app loading bar covers each navigation, including lazy route chunks.
@@ -140,7 +97,7 @@ router.beforeEach(async (to, _from, next) => {
       next(redirect);
       return;
     }
-    next({ path: await resolveDefaultAppPathForSession() });
+    next({ path: DEFAULT_APP_PATH });
     return;
   }
 
@@ -231,10 +188,7 @@ router.beforeEach(async (to, _from, next) => {
     return;
   }
 
-  const [defaultAppPath, requiredPluginEnabled, requiredNavigationFeatureEnabled] = await Promise.all([
-    to.meta.requiresWorkspace
-      ? resolveDefaultAppPathForSession()
-      : Promise.resolve(DEFAULT_APP_PATH),
+  const [requiredPluginEnabled, requiredNavigationFeatureEnabled] = await Promise.all([
     typeof to.meta.requiresPlugin === "string"
       ? isPluginAccessEnabled(to.meta.requiresPlugin).catch(() => false)
       : Promise.resolve(true),
@@ -254,17 +208,6 @@ router.beforeEach(async (to, _from, next) => {
       : Promise.resolve(true),
   ]);
 
-  if (to.meta.requiresWorkspace) {
-    if (!auth.isAuthenticated) {
-      next({ path: "/login", query: { redirect: to.fullPath } });
-      return;
-    }
-    if (defaultAppPath === "/create") {
-      next({ path: "/create", replace: true });
-      return;
-    }
-  }
-
   if (to.meta.requiresPlugin) {
     if (!requiredPluginEnabled) {
       next({
@@ -277,7 +220,7 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   if (to.meta.requiresNavigationFeature && !requiredNavigationFeatureEnabled) {
-    next({ path: defaultAppPath, replace: true });
+    next({ path: DEFAULT_APP_PATH, replace: true });
     return;
   }
 

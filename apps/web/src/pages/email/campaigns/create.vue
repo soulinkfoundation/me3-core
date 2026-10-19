@@ -20,7 +20,6 @@ import {
 definePage({
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     title: "Create campaign | ME3",
     description: "Compose and schedule an email campaign.",
     robots: "noindex,follow",

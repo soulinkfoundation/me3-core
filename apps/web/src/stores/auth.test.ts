@@ -51,10 +51,6 @@ describe("auth store", () => {
           username: "owner",
           timezone: null,
         },
-        workspace: {
-          hasProfileSite: true,
-          onboardingStartStep: 2,
-        },
       });
 
       const store = useAuthStore();
@@ -63,8 +59,6 @@ describe("auth store", () => {
       expect(store.initialized).toBe(true);
       expect(store.user).toEqual(storedUser);
       expect(store.isAuthenticated).toBe(true);
-      expect(store.sessionHasProfileSite).toBe(true);
-      expect(store.sessionOnboardingStartStep).toBe(2);
       expect(api.get).toHaveBeenCalledWith("/auth/me");
       expect(window.localStorage.getItem("me3_core_owner_session")).toBeNull();
     });
@@ -76,7 +70,6 @@ describe("auth store", () => {
       expect(store.initialized).toBe(true);
       expect(store.user).toBeNull();
       expect(store.isAuthenticated).toBe(false);
-      expect(store.sessionOnboardingStartStep).toBeNull();
       expect(api.get).toHaveBeenCalledWith("/auth/me");
     });
 

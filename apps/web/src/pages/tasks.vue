@@ -39,7 +39,6 @@ definePage({
   path: "/tasks",
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     requiresPlugin: "me3.mission-control",
     title: "Tasks | ME3",
     description: "ME3 tasks and projects workspace.",

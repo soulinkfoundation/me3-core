@@ -3,7 +3,6 @@ import { computed, ref } from "vue";
 import { useWizardStore } from "../stores/wizard";
 import { productSendsPurchaseConfirmation } from "../../../../shared/product-purchase-confirmation";
 import { useSitesStore, type PublishManifest } from "../stores/sites";
-import { useAuthStore } from "../stores/auth";
 import { api } from "../api";
 import { resolvePublicSiteUrl } from "../utils/publicSiteUrl";
 import {
@@ -101,7 +100,6 @@ function validateManualPaymentInstructions(
 export function usePublish() {
   const wizard = useWizardStore();
   const sites = useSitesStore();
-  const auth = useAuthStore();
 
   const isPublishing = ref(false);
   const publishProgress = ref<string | null>(null);
@@ -491,15 +489,6 @@ export function usePublish() {
       // Mark as published in wizard store
       wizard.adoptPublishedTestimonialAvatars();
       wizard.markAsPublished();
-
-      if (auth.sessionOnboardingStartStep) {
-        try {
-          await api.post<{ ok: boolean }>("/onboarding/complete", {});
-          auth.setSessionOnboardingStartStep(null);
-        } catch (error) {
-          console.warn("Profile published, but onboarding completion did not sync", error);
-        }
-      }
 
       const isPublicProfile =
         wizard.siteRole !== "profile" || wizard.profile.visibility === "public";

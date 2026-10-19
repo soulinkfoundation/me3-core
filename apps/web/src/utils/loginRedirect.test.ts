@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   resolveAuthenticatedLoginRedirect,
   resolveMe3OAuthRedirect,
-  resolveProfileSetupPath,
 } from "./loginRedirect";
 
 const options = {
@@ -12,58 +11,12 @@ const options = {
 };
 
 describe("login redirects", () => {
-  it("only routes to setup after a successful empty site lookup", () => {
-    expect(
-      resolveProfileSetupPath({
-        sitesLoaded: false,
-        hasProfileSite: false,
-        defaultPath: "/mission-control",
-      }),
-    ).toBe("/mission-control");
-    expect(
-      resolveProfileSetupPath({
-        sitesLoaded: true,
-        hasProfileSite: true,
-        defaultPath: "/mission-control",
-      }),
-    ).toBe("/mission-control");
-    expect(
-      resolveProfileSetupPath({
-        sitesLoaded: true,
-        hasProfileSite: false,
-        defaultPath: "/mission-control",
-      }),
-    ).toBe("/create");
+  it("lands a first ME3.app claim on Home rather than a setup flow", () => {
+    expect(resolveMe3OAuthRedirect(undefined, options)).toBe("/assistant");
   });
 
-  it("resumes imported managed onboarding even when the profile site exists", () => {
-    expect(
-      resolveProfileSetupPath({
-        sitesLoaded: true,
-        hasProfileSite: true,
-        onboardingStartStep: 2,
-        defaultPath: "/mission-control",
-      }),
-    ).toBe("/create");
-  });
-
-  it("sends first ME3.app claims to profile setup", () => {
-    expect(
-      resolveMe3OAuthRedirect(undefined, {
-        ...options,
-        setupIncomplete: true,
-      }),
-    ).toBe("/create");
-    expect(
-      resolveMe3OAuthRedirect("/mission-control", {
-        ...options,
-        setupIncomplete: true,
-      }),
-    ).toBe("/create");
-  });
-
-  it("returns to login for ME3.app OAuth so setup state can decide", () => {
-    expect(resolveMe3OAuthRedirect(undefined, options)).toBe("/login");
+  it("keeps a safe redirect for a first ME3.app claim", () => {
+    expect(resolveMe3OAuthRedirect("/mission", options)).toBe("/mission");
   });
 
   it("keeps safe same-origin redirects", () => {

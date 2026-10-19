@@ -16,7 +16,6 @@ import type { UiIconName } from "../utils/icons";
 definePage({
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     title: "Files | ME3",
     description: "Browse private ME3 files stored in R2.",
     robots: "noindex,follow",

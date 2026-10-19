@@ -45,7 +45,6 @@ import {
 definePage({
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     requiresPlugin: "me3.calendar",
     title: "Calendar | ME3",
     description:

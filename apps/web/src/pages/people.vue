@@ -23,7 +23,6 @@ import {
 definePage({
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     title: "People | ME3",
     description: "The people in your life, and who you've not been in touch with lately.",
     robots: "noindex,follow",

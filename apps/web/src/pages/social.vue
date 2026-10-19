@@ -40,7 +40,6 @@ import {
 definePage({
   meta: {
     requiresAuth: true,
-    requiresWorkspace: true,
     title: "Social | ME3",
     description: "Write, review, approve, and publish social posts.",
     robots: "noindex,follow",
@@ -2647,8 +2646,8 @@ function currentQueryParam(name: string): string | null {
       </div>
 
       <div v-else-if="sites.sites.length === 0" class="empty-state">
-        <strong>Finish account setup to start publishing.</strong>
-        <RouterLink to="/onboarding">Continue setup</RouterLink>
+        <strong>Create your website to start publishing.</strong>
+        <RouterLink to="/create">Create your website</RouterLink>
       </div>
 
       <div v-else class="social-workspace-shell">
