@@ -257,7 +257,7 @@ function applyRouteStep() {
     return;
   }
   if (step === "goals" && wizard.siteRole === "profile" && !isOpeningWizard.value) {
-    void router.replace("/tasks?goals=1");
+    void router.replace("/mission?focus=goals");
     return;
   }
   const navigated = wizard.goToStepId(step, { enableOptional: true });
@@ -390,7 +390,7 @@ async function openWizardTarget() {
     if (requestId !== wizardOpenRequest) return;
     showIntroScreen.value = !openedExistingSite;
     if (route.query.step === "goals" && wizard.siteRole === "profile") {
-      void router.replace("/tasks?goals=1");
+      void router.replace("/mission?focus=goals");
       return;
     }
     applyRouteStep();

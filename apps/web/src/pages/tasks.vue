@@ -10,7 +10,6 @@ import {
 import { definePage } from "unplugin-vue-router/runtime";
 import { useRoute, useRouter } from "vue-router";
 import { ApiError, api } from "../api";
-import GoalsDialog from "../components/tasks/GoalsDialog.vue";
 import AppDialog from "../components/AppDialog.vue";
 import Button from "../components/Button.vue";
 import IconPicker from "../components/IconPicker.vue";
@@ -62,15 +61,8 @@ type TaskDraft = {
 
 const route = useRoute();
 const router = useRouter();
-const goalsOpen = ref(route.query.goals === "1");
-watch(() => route.query.goals, (value) => { goalsOpen.value = value === "1"; });
-function closeGoals() {
-  goalsOpen.value = false;
-  if (route.query.goals) {
-    const { goals: _goals, ...query } = route.query;
-    void router.replace({ query });
-  }
-}
+// Goals live in Mission now; old ?goals=1 links land there.
+if (route.query.goals === "1") void router.replace({ path: "/mission", query: { focus: "goals" } });
 
 const { toastSuccess } = useAppToast();
 
@@ -606,7 +598,7 @@ onBeforeUnmount(() => {
       </details>
 
       <div class="tasks-topbar-actions">
-        <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Goals" title="Goals" aria-haspopup="dialog" @click="goalsOpen = true">
+        <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Goals" title="Goals" @click="router.push({ path: '/mission', query: { focus: 'goals' } })">
           <UiIcon name="Goal" :size="19" />
         </Button>
         <Button
@@ -624,8 +616,6 @@ onBeforeUnmount(() => {
       </div>
     </header>
     </Teleport>
-
-    <GoalsDialog v-if="goalsOpen" @close="closeGoals" />
 
     <section class="tasks-workspace" aria-labelledby="tasks-view-title">
       <h1 id="tasks-view-title" class="visually-hidden">Tasks</h1>

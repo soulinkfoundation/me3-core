@@ -41,7 +41,7 @@ const soulink = ref<{ id: string; textBody?: string; outcome?: string }[]>([]);
 const approvals = ref<{ id: string; pluginId?: string; title: string; summary?: string | null; payload?: Record<string, unknown> }[]>([]);
 const reviewApproval = ref<(typeof approvals.value)[number] | null>(null);
 const approvalError = ref("");
-const { toastFromUnknown, toastSuccess } = useAppToast();
+const { toastFromUnknown, toastSuccess, toast } = useAppToast();
 const events = ref<{ id: string; title: string; start: string; end?: string | null; allDay?: boolean }[]>([]);
 const defaultAreas: HomeWheelArea[] = [
   { id: "health", label: "Health", color: "#ff3b30", emoji: "❤️", value: null },
@@ -193,14 +193,48 @@ function openMenu(card: HomeCard) {
 function menuKeys(event: KeyboardEvent) {
   if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
   event.preventDefault();
-  const buttons = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
-  const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  const buttons = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("button:not(:disabled),a[role=menuitem]")];
+  const index = buttons.indexOf(document.activeElement as HTMLElement);
   const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
   buttons[next]?.focus();
 }
-function dismissMenu(event: PointerEvent) { if (!(event.target as HTMLElement).closest(".home-card__menu,.home-card__more")) menu.value = null; }
+function dismissMenu(event: PointerEvent) {
+  if (!(event.target as HTMLElement).closest(".home-card__menu,.home-card__more")) menu.value = null;
+  if (!(event.target as HTMLElement).closest(".home-goal__menu,.home-goal__more,.home-goal-row")) goalMenu.value = "";
+}
 function reconnect() { offline.value = !navigator.onLine; if (!offline.value) void refresh(); }
 function cancelPress() { clearTimeout(pressTimer); pressOrigin = null; }
+// Long-press, right-click or ⋯ on a Home goal: the updates people make most, without opening Mission.
+const goalMenu = ref("");
+const goalPressed = ref(false);
+let goalPressTimer: ReturnType<typeof setTimeout> | undefined;
+let goalPressOrigin: { x: number; y: number } | null = null;
+const goalMenuStyle = ref<Record<string, string>>({});
+function openGoalMenu(id: string, event?: Event) {
+  const row = (event?.target as HTMLElement | undefined)?.closest(".home-goal-row")?.getBoundingClientRect();
+  if (row) goalMenuStyle.value = { top: `${Math.min(row.bottom + 4, window.innerHeight - 200)}px`, left: `${Math.max(8, Math.min(row.right - 220, window.innerWidth - 228))}px` };
+  window.addEventListener("scroll", () => { goalMenu.value = ""; }, { once: true, passive: true, capture: true });
+  menu.value = null; goalMenu.value = id;
+  void nextTick(() => document.querySelector<HTMLElement>(".home-goal__menu [role=menuitem]")?.focus({ preventScroll: true }));
+}
+function beginGoalPress(event: PointerEvent, id: string) {
+  goalPressed.value = false;
+  if (event.pointerType === "mouse") return;
+  goalPressOrigin = { x: event.clientX, y: event.clientY };
+  goalPressTimer = setTimeout(() => { goalPressed.value = true; openGoalMenu(id, event); }, 500);
+}
+function trackGoalPress(event: PointerEvent) { if (goalPressOrigin && Math.hypot(event.clientX - goalPressOrigin.x, event.clientY - goalPressOrigin.y) > 10) cancelGoalPress(); }
+function cancelGoalPress() { clearTimeout(goalPressTimer); goalPressOrigin = null; }
+async function updateGoal(id: string, edit: (goal: HomeGoal) => void, undoMessage?: string) {
+  goalMenu.value = "";
+  try {
+    const undo = await plan.changeGoal(id, edit);
+    if (undo && undoMessage) toast(undoMessage, { duration: 5000, action: { label: "Undo", onClick: () => { plan.restoreGoal(undo).catch(() => toastFromUnknown(null, "Couldn't undo. Try again.")); } } });
+  } catch (error) { toastFromUnknown(error, "Couldn't update that goal. Try again."); void plan.loadGoals(); }
+}
+const completeGoal = (id: string) => updateGoal(id, goal => { goal.status = "completed"; }, "Goal completed");
+const setGoalProgress = (id: string, value: number) => updateGoal(id, goal => { goal.progress = value; });
+function focusGoalFromHome(id: string) { goalMenu.value = ""; plan.makeFocus(id).catch(error => toastFromUnknown(error, "Couldn't change your focus. Try again.")); }
 function beginPress(event: PointerEvent, card: HomeCard) {
   if (event.pointerType === "mouse" || (event.target as HTMLElement).closest("a,button,input")) return;
   pressOrigin = { x: event.clientX, y: event.clientY };
@@ -273,8 +307,8 @@ async function refresh() {
       if (!disposed) { journal.value = data.entries || []; articles.value = drafts.articles || []; }
     }),
     resource("mission", async () => {
-      const [data, result] = await Promise.all([api.get<{ missionStatement?: string }>("/mission-control/dashboard"), api.get<{ goals: HomeGoal[] }>("/tasks/goals")]);
-      if (!disposed) { mission.value = ownMissionStatement(data.missionStatement); goals.value = result.goals || []; }
+      const [data] = await Promise.all([api.get<{ missionStatement?: string }>("/mission-control/dashboard"), plan.loadGoals()]);
+      if (!disposed) mission.value = ownMissionStatement(data.missionStatement);
     }),
     resource("wheel", async () => {
       const data = await api.get<{ snapshots: { createdAt: string; segments: HomeWheelArea[] }[]; settings: { segments: HomeWheelArea[] } }>("/journal/wheel");
@@ -404,19 +438,34 @@ onBeforeUnmount(() => {
               <template v-if="!brief && !mail.length && !soulink.length"><p class="home-muted">{{ agentAddress ? 'ME3 will keep incoming requests and replies here.' : 'Give ME3 its own email. CC it on anything. It never sees your inbox.' }}</p><RouterLink v-if="!agentAddress" to="/settings?section=mailbox" class="home-quiet"><UiIcon name="Plus" :size="16" />Set up agent email</RouterLink></template>
             </template>
             <template v-else-if="card === 'mission'">
-              <!-- A read-only reminder: the mission, then goals, then the Wheel. Mission is where they're edited. -->
-              <div class="home-pager" aria-label="Mission, goals and Wheel of Life" @scroll.passive="onMissionScroll">
-                <RouterLink to="/mission" class="home-page home-page--mission"><p class="home-mission" :class="{ 'home-muted': !mission }">{{ mission || 'What do you want your life built around?' }}</p></RouterLink>
-                <RouterLink to="/mission" class="home-page" aria-label="Goals. Open Mission">
-                  <div v-for="goal in activeGoals.slice(0, 3)" :key="goal.id" class="home-goal"><span aria-hidden="true">{{ areaFor(goal.areaId)?.emoji || '🎯' }}</span><span class="home-goal__text">{{ goal.title }}<span class="home-progress" aria-hidden="true"><i :style="{ width: `${goal.progress || 0}%` }" /></span></span><span class="home-muted home-goal__pc">{{ goal.progress || 0 }}%</span></div>
-                  <p v-if="activeGoals.length > 3" class="home-muted">{{ activeGoals.length - 3 }} more in Mission</p>
-                  <p v-if="!activeGoals.length" class="home-muted">No goals yet. Add one in Mission.</p>
-                </RouterLink>
-                <RouterLink to="/mission" class="home-page" aria-label="Wheel of Life. Open Mission">
+              <!-- A reminder: goals, then the Wheel, then the mission. Each page opens Mission at the part it shows,
+                   ready to edit. Long-press, right-click or the ⋯ on a goal updates it here without leaving Home. -->
+              <div class="home-pager" aria-label="Goals, Wheel of Life and mission" @scroll.passive="onMissionScroll">
+                <div class="home-page" role="group" aria-label="Goals">
+                  <div v-for="goal in activeGoals.slice(0, 3)" :key="goal.id" class="home-goal-row" @contextmenu.prevent.stop="openGoalMenu(goal.id, $event)" @pointerdown.stop="beginGoalPress($event, goal.id)" @pointermove="trackGoalPress" @pointerup="cancelGoalPress" @pointercancel="cancelGoalPress">
+                    <RouterLink :to="{ path: '/mission', query: { goal: goal.id } }" class="home-goal" :aria-label="`${goal.title}, ${goal.progress || 0} percent. Open in Mission`" @click="goalPressed && $event.preventDefault()"><span aria-hidden="true">{{ areaFor(goal.areaId)?.emoji || '🎯' }}</span><span class="home-goal__text">{{ goal.title }}<span class="home-progress" aria-hidden="true"><i :style="{ width: `${goal.progress || 0}%` }" /></span></span><span class="home-muted home-goal__pc">{{ goal.progress || 0 }}%</span></RouterLink>
+                    <button type="button" class="home-goal__more" :aria-label="`Update ${goal.title}`" aria-haspopup="menu" :aria-expanded="goalMenu === goal.id" @click="goalMenu === goal.id ? goalMenu = '' : openGoalMenu(goal.id, $event)"><UiIcon name="Ellipsis" :size="18" /></button>
+                  </div>
+                  <RouterLink v-if="activeGoals.length > 3" :to="{ path: '/mission', query: { focus: 'goals' } }" class="home-muted home-goal__more-link">{{ activeGoals.length - 3 }} more in Mission</RouterLink>
+                  <RouterLink v-if="!activeGoals.length" :to="{ path: '/mission', query: { focus: 'goals' } }" class="home-muted home-goal__more-link">No goals yet. Add one in Mission.</RouterLink>
+                </div>
+                <RouterLink :to="{ path: '/mission', query: { focus: 'check-in' } }" class="home-page" aria-label="Wheel of Life. Check in">
                   <div v-if="lowestArea" class="home-wheel"><HomeWheelChart :areas="wheel" :selected="lowestArea.id" /><div class="home-wheel-summary"><strong><span aria-hidden="true">{{ lowestArea.emoji }}</span> {{ lowestArea.label }}</strong><span class="home-wheel-score">{{ lowestArea.value }}<small>/ 10</small></span><span class="home-muted">Your lowest area</span></div></div>
-                  <p v-else class="home-muted">How are you doing across the areas of your life? Check in from Mission.</p>
+                  <p v-else class="home-muted">How are you doing across the areas of your life? Tap to check in.</p>
                 </RouterLink>
+                <RouterLink :to="{ path: '/mission', query: { focus: 'statement' } }" class="home-page home-page--mission"><p class="home-mission" :class="{ 'home-muted': !mission }">{{ mission || 'What do you want your life built around?' }}</p></RouterLink>
               </div>
+              <!-- The pager clips its pages, so the goal menu sits outside it, under the goal it belongs to. -->
+              <Teleport to="body">
+                <template v-for="goal in activeGoals.filter(item => item.id === goalMenu)" :key="goal.id">
+                  <div class="home-card__menu home-goal__menu" role="menu" :aria-label="`Update ${goal.title}`" :style="goalMenuStyle" @keydown.esc.stop.prevent="goalMenu = ''" @keydown="menuKeys">
+                    <button type="button" role="menuitem" @click="completeGoal(goal.id)"><UiIcon name="CircleCheck" :size="16" />Complete</button>
+                    <div class="home-goal__progress" role="group" aria-label="Set progress"><span>Progress</span><button v-for="value in [25, 50, 75]" :key="value" type="button" role="menuitem" :aria-pressed="(goal.progress || 0) === value" @click="setGoalProgress(goal.id, value)">{{ value }}%</button></div>
+                    <button v-if="goal.id !== activeGoals[0]?.id" type="button" role="menuitem" @click="focusGoalFromHome(goal.id)"><UiIcon name="Star" :size="16" />Make focus</button>
+                    <RouterLink role="menuitem" :to="{ path: '/mission', query: { goal: goal.id } }" class="home-goal__edit"><UiIcon name="Pencil" :size="16" />Edit…</RouterLink>
+                  </div>
+                </template>
+              </Teleport>
               <div class="home-pager-dots" aria-hidden="true"><i v-for="index in 3" :key="index" :class="{ 'is-on': missionPage === index - 1 }" /></div>
             </template>
             <template v-else-if="card === 'journal'">
@@ -506,7 +555,18 @@ p { margin: 4px 0; }
 .home-page--mission { align-items: center; }
 /* The pager clips overflow, so an outset focus ring would show only as a stray line at one edge. */
 .home-page:focus-visible { outline-offset: -2px; border-radius: 16px; }
-.home-goal { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; font-size: 15px; line-height: 1.35; }
+.home-goal-row { position: relative; display: flex; align-items: center; gap: 4px; -webkit-touch-callout: none; user-select: none; }
+.home-goal { display: flex; flex: 1; align-items: flex-start; gap: 10px; min-width: 0; padding: 5px 0; color: var(--ui-text); font-size: 15px; line-height: 1.35; text-decoration: none; }
+.home-goal__more { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ui-text-muted); cursor: pointer; opacity: 0; }
+.home-goal-row:hover .home-goal__more, .home-goal-row:focus-within .home-goal__more, .home-goal__more[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .home-goal__more { display: none; } }
+.home-goal__menu { position: fixed; right: auto; width: 220px; }
+.home-goal__menu .home-goal__edit { display: flex; gap: 10px; align-items: center; min-height: 44px; padding: 0 12px; color: var(--ui-text); font-size: 14px; text-decoration: none; }
+.home-goal__progress { display: flex; align-items: center; gap: 4px; padding: 0 6px 0 12px; font-size: 14px; }
+.home-goal__progress span { flex: 1; }
+.home-goal__progress button { min-width: 44px; min-height: 36px; padding: 0 6px !important; justify-content: center; border-radius: 10px; }
+.home-goal__progress button[aria-pressed="true"] { background: var(--ui-accent-soft); }
+.home-goal__more-link { display: block; padding: 6px 0; font-size: 13px; text-decoration: none; }
 .home-goal__text { flex: 1; min-width: 0; display: grid; gap: 6px; }
 .home-goal__pc { font-size: 13px; font-variant-numeric: tabular-nums; }
 .home-pager-dots { display: flex; justify-content: center; gap: 6px; padding-top: 6px; }

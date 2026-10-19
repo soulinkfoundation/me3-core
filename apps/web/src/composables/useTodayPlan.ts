@@ -1,12 +1,16 @@
 import { computed, ref } from "vue";
 import { api } from "../api";
 import { focusGoal, goalsWithFocus, homeOpenTasks, type HomeGoal, type HomeTask } from "../utils/homeSummary";
+import { createGoalSaveQueue } from "../utils/goalSaves";
 
 // Today's tasks and the focus goal, shared by the Home Today card, the daily page and Mission.
 export function useTodayPlan() {
   const tasks = ref<HomeTask[]>([]);
   const goals = ref<HomeGoal[]>([]);
   const busy = ref<string[]>([]);
+  // ME3 replaces the whole goal list on save, so nothing saves until the goals have loaded.
+  const goalsLoaded = ref(false);
+  const saveGoalList = createGoalSaveQueue(list => api.patch<{ goals: HomeGoal[] }>("/tasks/goals", { goals: list }).then(response => response.goals));
   const focus = computed(() => focusGoal(goals.value));
   const openTasks = computed(() => homeOpenTasks(tasks.value));
 
@@ -23,6 +27,30 @@ export function useTodayPlan() {
 
   async function loadGoals() {
     goals.value = (await api.get<{ goals: HomeGoal[] }>("/tasks/goals")).goals || [];
+    goalsLoaded.value = true;
+  }
+
+  // Goals save as they change. Saves queue up, so a quick run of edits lands in order.
+  async function saveGoals() {
+    if (!goalsLoaded.value) throw new Error("Goals haven't loaded yet. Try again.");
+    await saveGoalList(goals.value.map(goal => ({ ...goal })));
+  }
+
+  // Changes one goal and saves. Returns the goal as it was and where, so the change can be undone.
+  async function changeGoal(id: string, edit: (goal: HomeGoal) => void) {
+    const index = goals.value.findIndex(goal => goal.id === id);
+    if (index < 0) return null;
+    const before = { ...goals.value[index] };
+    edit(goals.value[index]);
+    await saveGoals();
+    return { goal: before, index };
+  }
+
+  async function restoreGoal(undo: { goal: HomeGoal; index: number }) {
+    const current = goals.value.findIndex(goal => goal.id === undo.goal.id);
+    if (current >= 0) goals.value[current] = undo.goal;
+    else goals.value.splice(Math.min(undo.index, goals.value.length), 0, undo.goal);
+    await saveGoals();
   }
 
   async function complete(task: HomeTask) {
@@ -40,14 +68,12 @@ export function useTodayPlan() {
     tasks.value = [...tasks.value, result.task];
   }
 
-  // Goal order is the focus: only id and metadata are sent, so task and project links stay as they are.
+  // Goal order is the focus: the first active goal shows on Today.
   async function makeFocus(id: string) {
     const previous = goals.value;
     goals.value = goalsWithFocus(previous, id);
-    try {
-      await api.patch("/tasks/goals", { goals: goals.value.map(({ id, title, status, areaId, progress }) => ({ id, title, status, areaId: areaId ?? null, progress: progress ?? 0 })) });
-    } catch (error) { goals.value = previous; throw error; }
+    try { await saveGoals(); } catch (error) { goals.value = previous; throw error; }
   }
 
-  return { tasks, goals, busy, focus, openTasks, loadTasks, loadGoals, complete, addTask, makeFocus };
+  return { tasks, goals, goalsLoaded, busy, focus, openTasks, loadTasks, loadGoals, saveGoals, changeGoal, restoreGoal, complete, addTask, makeFocus };
 }
