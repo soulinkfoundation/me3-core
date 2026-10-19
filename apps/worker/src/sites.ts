@@ -594,11 +594,6 @@ async function siteMeJsonResponse(env: Env, requestedSite: DbSite, origin: strin
       ) {
         profile = withoutAgentCheckout(profile);
       }
-      // The Mission is private now; sites published before the move still carry it in the stored file.
-      if ("business" in profile) {
-        const { business: _business, ...withoutMission } = profile;
-        profile = withoutMission as typeof profile;
-      }
       return publicMeJsonResponse({
         ...profile,
         ...(canonicalBase ? { id: `${canonicalBase}/me.json`, url: `${canonicalBase}/` } : {}),
