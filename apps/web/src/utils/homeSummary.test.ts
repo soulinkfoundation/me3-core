@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, plainPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, focusGoal, goalsWithFocus } from "./homeSummary";
+import { homeTasksCard, homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, plainPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, focusGoal, goalsWithFocus } from "./homeSummary";
 
 describe("Home summaries", () => {
   // Failure modes: board order hides due work, archived/done work leaks into open tasks,
@@ -41,6 +41,20 @@ describe("Home summaries", () => {
   });
   it("restores hidden cards and keeps a deduplicated saved order", () => {
     expect(visibleHomeCards({ order: ["mission", "mission", "today"], hidden: ["inbox"], pinned: ["mission", "files"], earned: [] })).toEqual(["mission", "today", "people", "accounts"]);
+  });
+  it("shows Tasks only when added by hand, never from an old earned layout", () => {
+    expect(visibleHomeCards({ ...emptyHomeLayout(), earned: ["tasks"] })).not.toContain("tasks");
+    expect(visibleHomeCards({ ...emptyHomeLayout(), pinned: ["tasks"] })).toContain("tasks");
+  });
+  // Failure modes: Now hidden behind the backlog; the backlog flooding the card; finished work reappearing.
+  it("fills the Tasks card from Now, or three open backlog tasks when Now is empty", () => {
+    const now = new Date("2026-10-19T12:00:00");
+    const backlog = ["a", "b", "c", "d"].map(id => ({ id, title: id, status: "backlog" }));
+    const done = { id: "done", title: "Done", status: "done" };
+    expect(homeTasksCard([...backlog, done, { id: "n1", title: "Now 1", status: "in_progress" }, { id: "n2", title: "Now 2", status: "in_progress" }], now))
+      .toEqual({ view: "now", tasks: [expect.objectContaining({ id: "n1" }), expect.objectContaining({ id: "n2" })] });
+    expect(homeTasksCard([done, ...backlog, { ...backlog[3], id: "due", dueAt: "2026-10-20" }], now).tasks.map(t => t.id)).toEqual(["due", "a", "b"]);
+    expect(homeTasksCard([done], now)).toEqual({ view: "backlog", tasks: [] });
   });
   it("drops the retired Writing card from saved layouts", () => {
     expect(visibleHomeCards({ order: ["journal", "today"], hidden: [], pinned: ["journal"], earned: ["journal"] })).toEqual(["today", "people", "accounts"]);

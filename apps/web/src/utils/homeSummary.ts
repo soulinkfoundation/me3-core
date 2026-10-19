@@ -4,8 +4,8 @@ export type HomeTask = {
   goalId?: string | null; projectId?: string | null;
 };
 export type HomeGoal = { id: string; title: string; status: "active" | "completed"; areaId?: string | null; progress?: number; taskIds?: string[]; projectIds?: string[] };
-// Files lives in the avatar menu, Wheel and Goals live in Mission, and tasks and writing live on the Journal day page.
-export const HOME_CARDS = ["today", "people", "gratitude", "inbox", "mission", "accounts"] as const;
+// Files lives in the avatar menu, Wheel and Goals live in Mission, and writing lives on the Journal day page.
+export const HOME_CARDS = ["today", "people", "gratitude", "inbox", "tasks", "mission", "accounts"] as const;
 export type HomeCard = typeof HOME_CARDS[number];
 export type HomeLayout = { order: string[]; hidden: string[]; pinned: string[]; earned: string[] };
 export const emptyHomeLayout = (): HomeLayout => ({ order: [], hidden: [], pinned: [], earned: [] });
@@ -13,7 +13,8 @@ export function visibleHomeCards(layout: HomeLayout): HomeCard[] {
   return [...new Set([...layout.order, ...HOME_CARDS])].filter((id): id is HomeCard =>
     HOME_CARDS.includes(id as HomeCard) && !layout.hidden.includes(id) &&
     // Today holds the day (calendar, tasks, notes, optional gratitude); other cards are opt-in.
-    (HOME_DEFAULT_CARDS.includes(id as HomeCard) || layout.pinned.includes(id) || layout.earned.includes(id)),
+    // Tasks is only ever added by hand: older Homes "earned" a Tasks card that was later retired.
+    (HOME_DEFAULT_CARDS.includes(id as HomeCard) || layout.pinned.includes(id) || (id !== "tasks" && layout.earned.includes(id))),
   ).filter(id => !HOME_INSIDE_TODAY.includes(id));
 }
 export const HOME_DEFAULT_CARDS: HomeCard[] = ["today", "people", "accounts"];
@@ -45,6 +46,12 @@ export function homeOpenTasks(tasks: HomeTask[], now = new Date()): HomeTask[] {
   return tasks.filter(t => !t.archivedAt && !["done", "cancelled", "canceled", "archived"].includes((t.status || "").toLowerCase()))
     .sort((a, b) => Number(date(a) >= end.getTime()) - Number(date(b) >= end.getTime()) ||
       (date(a) === date(b) ? 0 : date(a) - date(b)) || (a.priority ?? 2) - (b.priority ?? 2) || a.id.localeCompare(b.id));
+}
+// The Tasks card: everything in Now, or the first three open tasks from the backlog when Now is empty.
+export function homeTasksCard(tasks: HomeTask[], now = new Date()): { view: "now" | "backlog"; tasks: HomeTask[] } {
+  const open = homeOpenTasks(tasks, now);
+  const inNow = open.filter(t => t.status === "in_progress");
+  return inNow.length ? { view: "now", tasks: inNow } : { view: "backlog", tasks: open.slice(0, 3) };
 }
 // Today's list: tasks in Now, plus anything due or scheduled today or earlier. Backlog without a date stays in Tasks.
 export function homeTodayTasks(tasks: HomeTask[], now = new Date()): HomeTask[] {

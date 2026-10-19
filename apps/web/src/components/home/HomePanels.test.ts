@@ -204,3 +204,30 @@ describe("Home Today card", () => {
     expect(api.patch).toHaveBeenCalledWith("/gratitude/settings", { inToday: true });
   });
 });
+
+describe("Home Tasks card", () => {
+  const card = () => document.body.querySelector('article[aria-label="Tasks"]');
+  async function addTasks() {
+    render(); await flushPromises();
+    expect(card()).toBeNull();
+    button("Add to Home")!.click(); await flushPromises();
+    (document.body.querySelector('dialog[open] button[aria-label="Tasks"]') as HTMLButtonElement).click(); await flushPromises();
+  }
+  // Failure modes: the card shows on its own; Now hidden behind the backlog; rows not opening their task.
+  it("is added by hand and lists what's in Now, each opening its task", async () => {
+    tasks = [{ id: "n1", title: "Finish the person sheet", status: "in_progress" }, { id: "b1", title: "Someday idea", status: "backlog" }];
+    await addTasks();
+    expect(card()!.querySelector(".home-card__detail")!.textContent).toBe("Now");
+    const rows = [...card()!.querySelectorAll(".home-task")];
+    expect(rows.map(row => row.textContent!.trim())).toEqual(["Finish the person sheet"]);
+    expect(rows[0].getAttribute("to")).toBe("/tasks?view=now&task=n1");
+    expect(card()!.querySelector(".home-card__title")!.getAttribute("to")).toBe("/tasks?view=now");
+  });
+  it("falls back to three from the backlog when Now is empty", async () => {
+    tasks = ["One", "Two", "Three", "Four"].map((title, i) => ({ id: `b${i}`, title, status: "backlog" }));
+    await addTasks();
+    expect(card()!.querySelector(".home-card__detail")!.textContent).toBe("Backlog");
+    expect([...card()!.querySelectorAll(".home-task")].map(row => row.textContent!.trim())).toEqual(["One", "Two", "Three"]);
+    expect(card()!.querySelector(".home-card__title")!.getAttribute("to")).toBe("/tasks?view=backlog");
+  });
+});

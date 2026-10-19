@@ -14,7 +14,7 @@ import PersonSheet from "../people/PersonSheet.vue";
 import { useContactsStore } from "../../stores/contacts";
 import { ownMissionStatement } from "../../utils/missionStatement";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
-import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDoneToday, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
+import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDoneToday, homeTasksCard, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
 import { useAppLoadingWhile } from "../../composables/useAppLoading";
 const emit = defineEmits<{ suggest: [text: string]; approvalResolved: [] }>();
@@ -78,6 +78,7 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
   people: { title: "People", href: "/people", emoji: "🫶" },
   gratitude: { title: "Gratitude", href: "/journal", emoji: "🌅" },
   inbox: { title: "Inbox", href: "/email", emoji: "📧" },
+  tasks: { title: "Tasks", href: "/tasks", emoji: "✅" },
   mission: { title: "Mission", href: "/mission", emoji: "🚀" },
   accounts: { title: "Accounts", href: "/accounts", emoji: "💰" },
 };
@@ -116,6 +117,8 @@ const tasksLine = computed(() => {
   const count = !total ? "" : !open ? "All done" : !done ? `${open} ${open === 1 ? "task" : "tasks"}` : `${open} of ${total} left`;
   return { count, label: total ? `Open today's page. ${open} of ${total} tasks left` : "Open today's page" };
 });
+// Tasks shows Now, falling back to the top of the backlog; the Tasks page has the tabs and projects.
+const tasksCard = computed(() => homeTasksCard(tasks.value));
 const missionPage = ref(0);
 function onMissionScroll(event: Event) { const pager = event.currentTarget as HTMLElement; missionPage.value = Math.round(pager.scrollLeft / Math.max(pager.clientWidth, 1)); }
 const todayLabel = computed(() => new Date(`${day.value}T12:00:00`).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }));
@@ -383,8 +386,9 @@ onBeforeUnmount(() => {
       <template #item="{ element: card }: { element: HomeCard }">
         <article :ref="el => setCardElement(card, el)" class="home-card" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header class="home-card__header">
-            <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
+            <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
             <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
+            <span v-else-if="card === 'tasks' && tasksCard.tasks.length" class="home-card__detail">{{ tasksCard.view === 'now' ? 'Now' : 'Backlog' }}</span>
             <div class="home-card__controls">
               <button type="button" class="home-card__drag" :aria-label="`Drag ${cards[card].title} to reorder`" title="Drag to reorder, or use the options menu"><UiIcon name="GripVertical" :size="16" /></button>
               <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-haspopup="menu" :aria-expanded="menu === card" @click="menu === card ? closeMenu(card) : openMenu(card)"><UiIcon name="Ellipsis" :size="20" /></button>
@@ -429,6 +433,10 @@ onBeforeUnmount(() => {
               </template>
               <RouterLink v-for="message in (brief ? [] : mail.slice(0, 3))" :key="message.id" to="/email?tab=inbox" class="home-entry"><strong>{{ message.fromName || message.subject || 'New message' }}</strong><span class="home-muted">{{ journalPreview(message.agentSummary || message.preview || message.subject || '') }}</span></RouterLink>
               <template v-if="!brief && !mail.length && !soulink.length"><p class="home-muted">{{ agentAddress ? 'ME3 will keep incoming requests and replies here.' : 'Give ME3 its own email. CC it on anything. It never sees your inbox.' }}</p><RouterLink v-if="!agentAddress" to="/settings?section=mailbox" class="home-quiet"><UiIcon name="Plus" :size="16" />Set up agent email</RouterLink></template>
+            </template>
+            <template v-else-if="card === 'tasks'">
+              <RouterLink v-for="task in tasksCard.tasks" :key="task.id" :to="`/tasks?view=${tasksCard.view}&task=${encodeURIComponent(task.id)}`" class="home-line home-task"><i class="home-task__dot" aria-hidden="true" /><span class="home-task__title">{{ task.title }}</span></RouterLink>
+              <p v-if="!tasksCard.tasks.length" class="home-muted">No open tasks.</p>
             </template>
             <template v-else-if="card === 'mission'">
               <!-- A reminder: goals, then the Wheel, then the mission. Each page opens Mission at the part it shows,
@@ -535,6 +543,9 @@ p { margin: 4px 0; }
 .home-tasksline strong { font-weight: 600; }
 .home-tasksline__go { margin-left: auto; color: var(--ui-text-muted); }
 .home-tasksline .home-emoji { font-size: 16px; }
+.home-task { min-height: 36px; }
+.home-task__dot { flex: none; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ui-text-muted); }
+.home-task__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-pager { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
 .home-pager::-webkit-scrollbar { display: none; }
 .home-page { flex: 0 0 100%; min-height: 150px; display: flex; flex-direction: column; justify-content: center; scroll-snap-align: start; color: var(--ui-text); text-decoration: none; }
