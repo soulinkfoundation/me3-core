@@ -1,7 +1,8 @@
 import { test, expect } from './fixtures/test';
 
-// UI failure modes: goals mix unrelated work; chart loses saved area values; masonry loses
-// reading order; menus trap focus; dragging/removal fails to survive a fresh page; retries multiply.
+// UI failure modes: Today stops leading into the day page; Mission loses goal progress or the
+// Wheel's saved area values; the column loses reading order; menus trap focus; dragging/removal fails
+// to survive a fresh page; retries multiply.
 for (const mobile of [false, true]) for (const dark of [false, true]) {
   test(`Redesigned Home on ${mobile ? 'phone' : 'desktop'} ${dark ? 'dark' : 'light'}`, async ({ page }, testInfo) => {
     await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
@@ -13,7 +14,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       { id: 'run', title: 'Run a 10k', status: 'active', areaId: 'health', progress: 35, projectIds: [], taskIds: ['5k'] },
     ];
     let tasks = [
-      { id: 'deck', title: 'Send the intro deck', goalId: 'launch', status: 'backlog' },
+      { id: 'deck', title: 'Send the intro deck', goalId: 'launch', status: 'backlog', dueAt: today },
       { id: 'design', title: 'Prep design review notes', projectId: 'app', status: 'backlog' },
       { id: '5k', title: 'Easy 5k after lunch', goalId: 'run', status: 'backlog' },
     ];
@@ -48,60 +49,52 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await expect(page.getByRole('button', { name: 'Dismiss keyboard', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Add to Home', exact: true }).click();
     const addDialog = page.getByRole('dialog', { name: 'Add to Home', exact: true });
-    await expect(addDialog.getByRole('button', { name: 'Calendar', exact: true })).toBeVisible();
+    await expect(addDialog.getByRole('button', { name: 'Today', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(addDialog.getByRole('button', { name: 'Writing', exact: true })).toHaveCount(0);
     await expect(page.locator('#assistant-console-input')).not.toBeFocused();
+    await addDialog.getByRole('button', { name: 'Mission', exact: true }).click();
     await addDialog.getByRole('button', { name: 'Close Home editor', exact: true }).click();
     await expect(page.locator('#assistant-console-input')).toHaveValue('A longer draft that stays intact while adding a Home card.');
     await page.locator('#assistant-console-input').fill('');
+    const todayCard = page.getByRole('article', { name: 'Today', exact: true });
+    await expect(todayCard).toContainText('Design review');
+    const dayPage = todayCard.getByRole('link', { name: "Open today's page. 1 of 1 tasks left", exact: true });
+    await expect(dayPage).toHaveText(/Today's page\s*· 1 task/);
+    await expect(dayPage).toHaveAttribute('href', '/journal');
     const mission = page.getByRole('article', { name: 'Mission', exact: true });
-    await expect(mission).toContainText('60%'); await expect(mission).toContainText('Work');
-    await expect(mission).toContainText('Send the intro deck'); await expect(mission).toContainText('Prep design review notes');
-    await expect(mission).not.toContainText('Easy 5k after lunch');
-    await mission.getByRole('button', { name: 'Run a 10k', exact: true }).click();
-    await expect(mission).toContainText('Easy 5k after lunch'); await expect(mission).not.toContainText('Send the intro deck');
-    await mission.getByRole('button', { name: 'Launch ME3 mobile', exact: true }).click();
-    const wheel = page.getByRole('article', { name: 'Wheel of Life', exact: true });
+    await expect(mission.getByRole('link', { name: 'Launch ME3 mobile, 60 percent. Open in Mission', exact: true })).toBeVisible();
+    await expect(mission.getByRole('link', { name: 'Run a 10k, 35 percent. Open in Mission', exact: true })).toBeVisible();
+    await expect(mission).not.toContainText('Send the intro deck');
+    const wheel = mission.getByRole('link', { name: 'Wheel of Life. Check in', exact: true });
     await expect(wheel).toContainText('Joy'); await expect(wheel).toContainText('4');
-    await expect(wheel.locator('svg text')).toHaveCount(6);
+    await expect(mission).toContainText('A calm life built around meaningful work and the people I love.');
     const bounds = await page.locator('.home-card').evaluateAll(nodes => nodes.map(node => { const r = node.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y) }; }));
-    expect(new Set(bounds.map(b => b.x)).size).toBe(mobile ? 1 : 2);
+    expect(new Set(bounds.map(b => b.x)).size).toBe(1);
+    expect(bounds.map(b => b.y)).toEqual([...bounds.map(b => b.y)].sort((a, b) => a - b));
     await page.screenshot({ path: testInfo.outputPath('home.png'), fullPage: true });
     await page.getByRole('button', { name: 'Open profile menu', exact: true }).click();
     await page.getByRole('menuitemradio', { name: 'Dark appearance', exact: true }).click();
     await expect(page.getByRole('menuitemradio', { name: 'Dark appearance', exact: true })).toHaveAttribute('aria-checked', 'true');
-    await page.getByRole('menuitemradio', { name: 'System appearance', exact: true }).click();
+    await page.getByRole('menuitemradio', { name: 'Match system appearance', exact: true }).click();
     await page.screenshot({ path: testInfo.outputPath('profile-appearance.png'), fullPage: true });
     await page.keyboard.press('Escape');
-    await wheel.getByRole('button', { name: 'Open Wheel of Life', exact: true }).click();
-    const fullWheel = page.getByRole('dialog', { name: 'Wheel of Life', exact: true });
-    await expect(fullWheel).toBeVisible();
-    await fullWheel.getByRole('button', { name: 'Work, 8 out of 10', exact: true }).click();
-    await expect(fullWheel).toContainText('Launch ME3 mobile');
-    await page.screenshot({ path: testInfo.outputPath('wheel.png'), fullPage: true });
-    await fullWheel.getByRole('button', { name: 'Check in', exact: true }).click();
-    await fullWheel.getByLabel('Joy score', { exact: true }).fill('5');
-    await fullWheel.getByRole('button', { name: 'Save check-in', exact: true }).click();
-    await expect(fullWheel).not.toBeVisible();
-    const writing = page.getByRole('article', { name: 'Writing', exact: true });
-    await writing.getByRole('button', { name: 'Writing options' }).focus();
-    await writing.getByRole('button', { name: 'Writing options' }).press('Enter');
+    await expect(page.locator('.home-card')).toHaveCount(3);
+    await expect(page.locator('.home-card').nth(1)).toHaveAttribute('aria-label', 'Mission');
+    await mission.getByRole('button', { name: 'Mission options' }).focus();
+    await mission.getByRole('button', { name: 'Mission options' }).press('Enter');
     await page.getByRole('menuitem', { name: 'Move up', exact: true }).click();
-    await writing.getByRole('button', { name: 'Writing options' }).click();
-    await page.getByRole('menuitem', { name: 'Move up', exact: true }).click();
-    await writing.getByRole('button', { name: 'Writing options' }).click();
-    await page.getByRole('menuitem', { name: 'Move up', exact: true }).click();
-    await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Writing');
-    await page.reload(); await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Writing');
-    await page.getByRole('button', { name: 'Drag Writing to reorder' }).dragTo(page.getByRole('article', { name: 'Today', exact: true }).locator('header'));
+    await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Mission');
+    await page.reload(); await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Mission');
+    await page.getByRole('button', { name: 'Drag Mission to reorder' }).dragTo(page.getByRole('article', { name: 'Today', exact: true }).locator('header'));
     await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Today');
     await page.reload(); await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Today');
-    await writing.click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Remove from Home', exact: true }).click(); await expect(writing).toHaveCount(0);
+    await mission.locator('header').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Remove from Home', exact: true }).click(); await expect(mission).toHaveCount(0);
+    await page.reload(); await expect(todayCard).toContainText('Design review'); await expect(mission).toHaveCount(0);
     await page.getByRole('button', { name: 'Add to Home', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Add to Home' }).getByRole('button', { name: 'Writing', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Add to Home' }).getByRole('button', { name: 'Mission', exact: true }).click();
     await page.screenshot({ path: testInfo.outputPath('add-to-home.png'), fullPage: true });
-    await page.getByRole('button', { name: 'Close Home editor' }).click(); await expect(writing).toBeVisible();
-    await page.getByRole('button', { name: 'Complete Send the intro deck' }).click(); await expect(mission).not.toContainText('Send the intro deck');
+    await page.getByRole('button', { name: 'Close Home editor' }).click(); await expect(mission).toBeVisible();
     unavailable = true;
     await page.evaluate(() => window.dispatchEvent(new Event('online')));
     await expect(page.locator('.home-offline')).toHaveCount(1);

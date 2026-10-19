@@ -6,7 +6,6 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
     await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 });
     const today = new Date().toLocaleDateString('en-CA');
-    let completed = false;
     const thread = { id: 'main', title: 'Main conversation', status: 'active', isPrimary: true };
     await page.route('**/api/**', async route => {
       const url = new URL(route.request().url());
@@ -27,46 +26,22 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       else if (path === '/mailbox') data = { available: true, mailbox: { aliasAddress: 'me3@example.com' } };
       else if (path === '/mailbox/messages') data = { messages: [] };
       else if (path === '/soulink/status') data = { recentEvents: [] };
-      else if (path === '/mission-control/tasks/due' && route.request().method() === 'PATCH') { completed = true; data = { task: { id: 'due', title: 'Send the proposal', status: 'done', updatedAt: new Date().toISOString() } }; }
-      else if (path === '/mission-control/tasks') data = url.searchParams.has('cursor') ? { tasks: [{ id: 'due', title: 'Send the proposal', dueAt: today, status: completed ? 'done' : 'backlog', updatedAt: new Date().toISOString() }], nextCursor: null } : { tasks: [{ id: 'later', title: 'A later idea', dueAt: '2099-01-01', status: 'backlog' }, { id: 'done', title: 'Finished reel', status: 'done', updatedAt: new Date().toISOString() }], nextCursor: 'next' };
-      else if (path === '/journal/archive') data = { entries: [{ id: 'journal-1', date: today, body: '- [ ] **A good day**. https://instagram.com/p/longurl More notes.' }] };
+      else if (path === '/mission-control/tasks') data = url.searchParams.has('cursor') ? { tasks: [{ id: 'due', title: 'Send the proposal', dueAt: today, status: 'backlog', updatedAt: new Date().toISOString() }], nextCursor: null } : { tasks: [{ id: 'later', title: 'A later idea', dueAt: '2099-01-01', status: 'backlog' }, { id: 'done', title: 'Finished reel', status: 'done', updatedAt: new Date().toISOString() }], nextCursor: 'next' };
       else if (path === '/mission-control/dashboard') data = { settings: { goals: [] } };
       else if (path === '/mission-control/wheel') data = { snapshots: [], settings: { segments: [] } };
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
     });
     await page.goto('/assistant');
-    await page.getByRole('button', { name: 'Add to Home', exact: true }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Tasks', exact: true }).click();
-    await page.getByRole('button', { name: 'Close Home editor' }).click();
-    const tasks = page.getByRole('article', { name: 'Tasks', exact: true });
-    const journal = page.getByRole('article', { name: 'Writing', exact: true });
-    await expect(tasks).toContainText('1 done today');
-    await expect(tasks.locator('.home-line').first()).toContainText('Send the proposal');
-    await expect(tasks).not.toContainText('Finished reel');
-    await expect(journal).toContainText('Today');
-    await expect(journal).toContainText('A good day.');
-    await expect(journal).not.toContainText('https://');
+    // Tasks load across pages: one due today on the second page, one finished today, one for later.
+    const dayPage = page.getByRole('article', { name: 'Today', exact: true }).getByRole('link', { name: "Open today's page. 1 of 2 tasks left", exact: true });
+    await expect(dayPage).toHaveText(/Today's page\s*· 1 of 2 left/);
+    await expect(dayPage).toHaveAttribute('href', '/journal');
+    await expect(page.getByRole('article', { name: 'Writing', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Start voice dictation', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Send message', exact: true })).toHaveCount(0);
     const composer = page.getByLabel('Message composer');
     expect((await composer.boundingBox())!.height).toBeLessThan(80);
     await page.screenshot({ path: testInfo.outputPath('home.png'), fullPage: true });
-    for (let i = 0; i < 3; i++) {
-      await page.getByRole('button', { name: 'Writing options' }).click();
-      await page.getByRole('menuitem', { name: 'Move up', exact: true }).click();
-    }
-    await page.reload();
-    await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Writing');
-    await page.screenshot({ path: testInfo.outputPath('reloaded.png'), fullPage: true });
-    await page.getByRole('button', { name: 'Writing options' }).click();
-    await page.getByRole('menuitem', { name: 'Remove from Home', exact: true }).click();
-    await expect(journal).toHaveCount(0);
-    await page.getByRole('button', { name: 'Add to Home', exact: true }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Writing', exact: true }).click();
-    await page.getByRole('button', { name: 'Close Home editor' }).click();
-    await expect(journal).toBeVisible();
-    await page.getByRole('button', { name: 'Complete Send the proposal' }).click();
-    await expect(tasks).toContainText('2 done today');
     await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await expect(page.locator('.assistant-timeline ul ul')).toContainText('Nested item');
     await expect(page.locator('.assistant-timeline li').first()).toContainText('continuation');
