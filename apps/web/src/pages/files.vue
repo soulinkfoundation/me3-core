@@ -2,7 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { API_BASE, ApiError, api } from "../api";
+import AppPageBar from "../components/AppPageBar.vue";
 import Button from "../components/Button.vue";
+import PageLoading from "../components/PageLoading.vue";
 import UiIcon from "../components/UiIcon.vue";
 import { useAppToast } from "../composables/useAppToast";
 import {
@@ -684,12 +686,10 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
       @change="handleUploadInput"
     />
 
-    <section v-if="loading" class="files-centered">
-      <div class="files-spinner" aria-hidden="true" />
-      <p>Loading files...</p>
-    </section>
+    <PageLoading v-if="loading" label="Loading files..." />
 
     <section v-else-if="!r2Available" class="files-empty-setup">
+      <AppPageBar title="Files" />
       <div class="files-empty-setup__icon" aria-hidden="true">📂</div>
       <h1>Files need storage</h1>
       <Button color="primary" shape="soft" size="medium" to="/account?section=storage">
@@ -748,7 +748,7 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
             <div class="files-list-controls__meta">
               <span>{{ sortedItems.length }} items</span>
               <span v-if="isSearching">Search: {{ searchQuery.trim() }}</span>
-              <span v-if="itemsLoading">Refreshing</span>
+              <PageLoading v-if="itemsLoading" label="Refreshing files" />
             </div>
             <div class="files-list-controls__sort">
               <label for="files-sort-select">Sort</label>
@@ -936,8 +936,7 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
 
             <div v-else-if="selectedFile" class="files-preview__body">
               <div v-if="previewLoading" class="files-preview__empty">
-                <div class="files-spinner" aria-hidden="true" />
-                <p>Loading preview...</p>
+                <PageLoading label="Loading preview..." />
               </div>
 
               <template v-else-if="preview">
@@ -1099,7 +1098,6 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
   display: none;
 }
 
-.files-centered,
 .files-empty-setup {
   display: grid;
   min-height: 100dvh;
@@ -1137,21 +1135,6 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
   margin: 0;
   color: var(--ui-text-muted, var(--color-text-muted));
   line-height: 1.5;
-}
-
-.files-spinner {
-  width: 22px;
-  height: 22px;
-  border: 2px solid var(--ui-border, var(--color-border));
-  border-top-color: var(--ui-accent, var(--color-accent));
-  border-radius: 50%;
-  animation: files-spin 0.9s linear infinite;
-}
-
-@keyframes files-spin {
-  to {
-    transform: rotate(1turn);
-  }
 }
 
 .files-workspace {

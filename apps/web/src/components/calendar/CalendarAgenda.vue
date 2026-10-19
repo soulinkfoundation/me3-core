@@ -623,6 +623,14 @@ watch(
   margin: 0;
 }
 
+/* The agenda runs edge to edge on phones; the empty card keeps the page gutter. */
+@media (max-width: 640px) {
+  .calendar-empty {
+    margin: 12px 16px;
+    border-radius: 16px;
+  }
+}
+
 .calendar-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

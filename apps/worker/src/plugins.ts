@@ -911,7 +911,7 @@ const ACCOUNTS_PLUGIN: CorePluginManifestSummary = {
   trustTier: "first_party",
   distribution: "workspace_package",
   installMode: "enabled_by_owner_config",
-  defaultEnabled: false,
+  defaultEnabled: true,
   implementationStatus: "bundled",
   capabilityIds: ["workspace.accounts", "finance.ledger"],
   permissions: [

@@ -10,6 +10,7 @@ import {
 } from "../../stores/sites";
 import BrandLogo from "../../components/BrandLogo.vue";
 import AppDialog from "../../components/AppDialog.vue";
+import AppPageBar from "../../components/AppPageBar.vue";
 import Button from "../../components/Button.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import { ASSISTANT_SITE_BUILDER_STARTER_PROMPT } from "../../utils/assistantSiteBuilder";
@@ -170,21 +171,22 @@ onMounted(async () => {
 <template>
   <div class="sites-page">
     <main class="sites-shell">
-      <h1 class="sr-only">Website</h1>
-      <header class="sites-header">
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          aria-label="Add site"
-          title="Add site"
-          type="button"
-          @click="addSiteDialogOpen = true"
-        >
-          <UiIcon name="Plus" :size="20" aria-hidden="true" />
-        </Button>
-      </header>
+      <AppPageBar title="Website">
+        <template #actions>
+          <Button
+            color="ghost"
+            shape="soft"
+            size="compact"
+            icon-only
+            aria-label="Add site"
+            title="Add site"
+            type="button"
+            @click="addSiteDialogOpen = true"
+          >
+            <UiIcon name="Plus" :size="20" aria-hidden="true" />
+          </Button>
+        </template>
+      </AppPageBar>
 
       <p
         v-if="visibleSitesError"
@@ -567,22 +569,6 @@ onMounted(async () => {
   margin: -1px;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
-}
-
-.sites-header {
-  display: flex;
-  min-height: 44px;
-  justify-content: flex-end;
-  margin-bottom: 28px;
-}
-
-.sites-header > :deep(.me3-btn) {
-  position: fixed;
-  z-index: 70;
-  top: calc(var(--app-topbar-height) + var(--workspace-topbar-padding-block));
-  right: var(--app-shell-mobile-nav-inset-inline-start);
-  min-width: 44px;
-  min-height: 44px;
 }
 
 .profile-callout h2,

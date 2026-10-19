@@ -65,7 +65,8 @@ async function mountPeople(path = "/people") {
   });
   await router.push(path);
   await router.isReady();
-  const wrapper = mount(PeoplePage, { global: { plugins: [router, createPinia()] } });
+  // The page bar teleports into the app shell, which this mount does not render.
+  const wrapper = mount(PeoplePage, { global: { plugins: [router, createPinia()], stubs: { AppPageBar: { props: ["title"], template: '<div><h1><slot name="title">{{ title }}</slot></h1><slot name="actions" /></div>' } } } });
   await flushPromises();
   return { wrapper, router };
 }

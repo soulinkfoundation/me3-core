@@ -212,6 +212,13 @@ watch(handle, async (val) => {
   }, 500);
 }, { immediate: handle.value.length >= 3 });
 
+// The saved site already holds this handle, so "is available" would read as if it were up for grabs.
+const ownsHandle = computed(
+  () =>
+    Boolean(wizard.selectedSiteId) &&
+    handle.value.trim().toLowerCase() === wizard.selectedSiteUsername.trim().toLowerCase(),
+);
+
 const bioLength = 320;
 const bioTextLength = computed(() =>
   bio.value
@@ -272,7 +279,7 @@ const bioTextLength = computed(() =>
           Checking availability...
         </span>
         <span
-          v-else-if="handle.length >= 3 && wizard.isUsernameAvailable === true"
+          v-else-if="handle.length >= 3 && wizard.isUsernameAvailable === true && !ownsHandle"
           class="available"
         >
           {{ isOrganization ? "This site address" : handle }} is available.

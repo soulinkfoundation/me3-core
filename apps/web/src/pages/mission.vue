@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { api } from "../api";
+import { ownMissionStatement } from "../utils/missionStatement";
+import AppPageBar from "../components/AppPageBar.vue";
 import UiIcon from "../components/UiIcon.vue";
 import GoalsDialog from "../components/tasks/GoalsDialog.vue";
 import HomeWheelChart, { type HomeWheelArea } from "../components/home/HomeWheelChart.vue";
@@ -41,8 +43,7 @@ async function load() {
     plan.loadGoals(),
     api.get<{ snapshots: { createdAt: string; segments: HomeWheelArea[] }[]; settings: { segments: HomeWheelArea[] } }>("/journal/wheel"),
   ]);
-  // The API falls back to a fill-in-the-blanks template; treat that as no mission yet.
-  if (dashboard.status === "fulfilled") mission.value = /\[[^\]]+\]/.test(dashboard.value.missionStatement || "") ? "" : dashboard.value.missionStatement || "";
+  if (dashboard.status === "fulfilled") mission.value = ownMissionStatement(dashboard.value.missionStatement);
   if (wheelData.status === "fulfilled") {
     wheelDate.value = wheelData.value.snapshots?.[0]?.createdAt || "";
     wheel.value = wheelData.value.snapshots?.[0]?.segments || wheelData.value.settings?.segments || [];
@@ -63,9 +64,7 @@ onMounted(load);
 
 <template>
   <main class="mission-page">
-    <Teleport to="#app-page-controls" defer>
-      <div class="mission-bar"><span>Mission</span></div>
-    </Teleport>
+    <AppPageBar title="Mission" />
     <div class="mission-col" :aria-busy="loading">
       <p v-if="error" class="mission-error" role="alert">{{ error }} <button type="button" @click="load">Try again</button></p>
 
@@ -99,11 +98,15 @@ onMounted(load);
         <div v-if="scored" class="mission-wheel">
           <RouterLink to="/wheel-of-life" class="mission-wheel__chart" aria-label="Open Wheel of Life"><HomeWheelChart :areas="wheel" :selected="lowest?.id" /></RouterLink>
           <div class="mission-wheel__rows">
-            <div v-for="area in wheel" :key="area.id" class="mission-area"><span aria-hidden="true">{{ area.emoji }}</span><span>{{ area.label }}</span><strong>{{ area.value ?? '—' }}</strong></div>
+            <div v-for="area in wheel" :key="area.id" class="mission-area" :aria-label="`${area.label}, ${area.value ?? 'not scored'} out of 10`">
+              <span class="mission-area__label"><span aria-hidden="true">{{ area.emoji }}</span>{{ area.label }}</span>
+              <span class="mission-area__score">{{ area.value ?? '—' }} / 10</span>
+              <span class="mission-area__bar" aria-hidden="true"><i :style="{ width: `${(area.value ?? 0) * 10}%`, background: area.color }" /></span>
+            </div>
           </div>
         </div>
         <p v-else-if="!loading" class="mission-muted">Score the areas of your life.</p>
-        <RouterLink to="/wheel-of-life" class="mission-quiet">{{ scored ? 'Check in' : 'Start a check-in' }}</RouterLink>
+        <RouterLink to="/wheel-of-life" class="mission-check-in">{{ scored ? 'Check in' : 'Start a check-in' }}</RouterLink>
       </section>
     </div>
     <GoalsDialog v-if="editing" :initial-area-id="editing.areaId" @close="closeEditor" />
@@ -112,7 +115,6 @@ onMounted(load);
 
 <style scoped>
 .mission-page { padding: 8px 16px 96px; }
-.mission-bar { display: flex; justify-content: center; width: 100%; font-size: 15px; font-weight: 700; }
 .mission-col { display: flex; flex-direction: column; gap: 16px; width: min(620px, 100%); margin: 0 auto; }
 .mission-card { padding: 14px 18px 12px; border-radius: 24px; background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
 .mission-card h2 { display: flex; align-items: center; gap: 8px; min-height: 40px; margin: 0; font-size: 15px; font-weight: 600; }
@@ -131,12 +133,19 @@ onMounted(load);
 .mission-focus { flex-shrink: 0; min-height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; font-size: 13px; font-weight: 600; line-height: 34px; cursor: pointer; }
 .mission-focus.is-on { background: var(--ui-primary); color: var(--ui-primary-contrast); cursor: default; }
 .mission-focus:disabled { opacity: .5; cursor: default; }
-.mission-wheel { display: flex; align-items: center; gap: 20px; padding: 6px 0; }
+.mission-wheel { display: flex; align-items: center; gap: 24px; padding: 8px 0 4px; }
 .mission-wheel__chart { flex: 0 0 auto; border-radius: 50%; }
 .mission-wheel__chart :deep(svg) { width: 170px; height: 170px; }
-.mission-wheel__rows { display: grid; flex: 1; gap: 4px; min-width: 0; }
-.mission-area { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.mission-area strong { margin-left: auto; font-variant-numeric: tabular-nums; }
+.mission-wheel__rows { display: grid; flex: 1; gap: 14px; min-width: 0; }
+.mission-area { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 8px; }
+.mission-area__label { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 15px; font-weight: 600; }
+.mission-area__label > span { font-size: 18px; line-height: 1; }
+.mission-area__score { color: var(--ui-text-muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.mission-area__bar { grid-column: 1 / -1; display: block; height: 4px; overflow: hidden; border-radius: 4px; background: var(--ui-surface-muted); }
+.mission-area__bar i { display: block; height: 100%; border-radius: inherit; }
+.mission-check-in { display: flex; align-items: center; justify-content: center; min-height: 44px; margin: 14px 0 6px; border-radius: 999px; background: var(--ui-primary); color: var(--ui-primary-contrast); font-size: 15px; font-weight: 600; text-decoration: none; }
+.mission-check-in:hover { opacity: .9; }
+.mission-check-in:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .mission-error { color: var(--ui-danger, #dc2626); font-size: 14px; }
 .mission-error button { border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
 @media (max-width: 640px) {

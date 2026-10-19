@@ -37,6 +37,19 @@ describe("GeneratedSitePreview", () => {
     expect(html).toContain("me3-preview-navigation");
   });
 
+  it("previews a private profile for its owner", async () => {
+    const wizard = useWizardStore();
+    wizard.profile.visibility = "private";
+    wizard.profile.name = "Private Person";
+    wizard.profile.handle = "private-person";
+    wizard.username = "private-person";
+
+    const wrapper = mount(GeneratedSitePreview);
+    await flushPromises();
+
+    expect(wrapper.get("iframe").attributes("srcdoc")).toContain("Private Person");
+  });
+
   it("resolves nested preview pages from their generated directory", async () => {
     const wizard = useWizardStore();
     wizard.profile.name = "Preview Person";

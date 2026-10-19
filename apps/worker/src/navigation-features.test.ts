@@ -20,15 +20,20 @@ describe("navigation features", () => {
     expect(features.find((feature) => feature.id === "calendar")?.visible).toBe(true);
   });
 
-  it("keeps Wheel of Life hidden for new installations until enabled", async () => {
+  it("shows every workspace except Socials on a fresh installation", async () => {
     const { env } = navigationFeatureEnv();
 
     const features = await listNavigationFeatures(env, "owner-1");
 
-    expect(features.find((feature) => feature.id === "wheel-of-life")).toMatchObject({
-      name: "Wheel of Life",
-      visible: false,
-    });
+    expect(features.filter((feature) => !feature.visible).map((feature) => feature.id)).toEqual(["social"]);
+  });
+
+  it("keeps an owner's saved choice over the default", async () => {
+    const { env } = navigationFeatureEnv([{ feature_id: "wheel-of-life", visible: 0 }]);
+
+    const features = await listNavigationFeatures(env, "owner-1");
+
+    expect(features.find((feature) => feature.id === "wheel-of-life")?.visible).toBe(false);
   });
 
   it("allows Calendar visibility to be disabled", async () => {

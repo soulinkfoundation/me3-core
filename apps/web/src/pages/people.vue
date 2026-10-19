@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { storeToRefs } from "pinia";
 import { definePage } from "unplugin-vue-router/runtime";
 import { useRoute, useRouter } from "vue-router";
+import AppPageBar from "../components/AppPageBar.vue";
 import UiIcon from "../components/UiIcon.vue";
 import AddSomeoneSheet from "../components/people/AddSomeoneSheet.vue";
 import NewPersonSheet from "../components/people/NewPersonSheet.vue";
@@ -186,12 +187,15 @@ watch(filter, () => { now.value = Date.now(); });
 
 <template>
   <main class="people-page">
-    <header ref="headEl" class="people-head">
-      <h1>People</h1>
-      <button type="button" class="people-add" aria-label="Add someone" title="Add someone" @click="addOpen = true">
-        <UiIcon name="Plus" :size="26" aria-hidden="true" />
-      </button>
-    </header>
+    <AppPageBar title="People">
+      <template #actions>
+        <button type="button" class="people-add" aria-label="Add someone" title="Add someone" @click="addOpen = true">
+          <UiIcon name="Plus" :size="22" aria-hidden="true" />
+        </button>
+      </template>
+    </AppPageBar>
+    <!-- Zero-height anchor under the top bar; the pull-down search measures against it. -->
+    <div ref="headEl" class="people-head" aria-hidden="true" />
 
     <div
       ref="pullEl"
@@ -276,7 +280,7 @@ watch(filter, () => { now.value = Date.now(); });
 
 <style scoped>
 .people-page {
-  --people-head-height: 56px;
+  --people-head-height: 0px;
   --people-top: var(--app-topbar-height, 60px);
   box-sizing: border-box;
   width: 100%;
@@ -299,19 +303,12 @@ watch(filter, () => { now.value = Date.now(); });
   background: var(--ui-bg, var(--color-bg));
 }
 
-.people-head h1 {
-  margin: 0;
-  font-size: 28px;
-  letter-spacing: -0.02em;
-}
-
 .people-add {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 44px;
   height: 44px;
-  margin-right: -8px;
   padding: 0;
   border: 0;
   background: transparent;

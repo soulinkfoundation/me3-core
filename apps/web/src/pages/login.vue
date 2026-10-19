@@ -106,15 +106,19 @@ const needsNewPassword = computed(
     showBootstrapSetup.value &&
     (isSetupMode.value || isResetMode.value || isCustomPasswordSetupMode.value),
 );
+// An empty field gets a neutral hint; it only turns into an error once typing starts.
 const showPasswordRequirement = computed(
-  () => needsNewPassword.value && password.value.length < passwordMinLength,
+  () =>
+    needsNewPassword.value &&
+    password.value.length > 0 &&
+    password.value.length < passwordMinLength,
 );
 const passwordRequirementText = computed(() => {
   const remaining = passwordMinLength - password.value.length;
   if (remaining <= 0) return "Password meets the length requirement.";
 
   return remaining === passwordMinLength
-    ? `Password must be at least ${passwordMinLength} characters.`
+    ? `Use at least ${passwordMinLength} characters.`
     : `Add ${remaining} more character${remaining === 1 ? "" : "s"}. Passwords must be at least ${passwordMinLength} characters.`;
 });
 

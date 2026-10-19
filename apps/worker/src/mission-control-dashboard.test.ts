@@ -312,6 +312,8 @@ describe("Mission Control dashboard settings", () => {
       "mission.projects",
       "assistant.chat",
       "journal.today",
+      // Accounts is on by default, so a fresh installation gets its link.
+      "accounts.ledger",
     ]);
     expect(dashboard.quickLinks[0]).toMatchObject({
       label: "Projects",

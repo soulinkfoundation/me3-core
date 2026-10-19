@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { api, ApiError } from "../api";
+import AppPageBar from "../components/AppPageBar.vue";
 import AgentDog from "../components/AgentDog.vue";
 import AssistantApprovalDialog from "../components/AssistantApprovalDialog.vue";
 import UiIcon from "../components/UiIcon.vue";
@@ -195,9 +196,7 @@ onMounted(load);
 
 <template>
   <main class="agent-page">
-    <Teleport to="#app-page-controls" defer>
-      <div class="agent-bar"><span>Your agent</span></div>
-    </Teleport>
+    <AppPageBar title="Your agent" />
     <div class="agent-col" :aria-busy="loading">
       <p v-if="error" class="agent-error" role="alert">{{ error }} <button type="button" @click="load">Try again</button></p>
 
@@ -297,7 +296,6 @@ onMounted(load);
 
 <style scoped>
 .agent-page { padding: 8px 16px 96px; }
-.agent-bar { display: flex; justify-content: center; width: 100%; font-size: 15px; font-weight: 700; }
 .agent-col { display: flex; flex-direction: column; gap: 16px; width: min(620px, 100%); margin: 0 auto; }
 .agent-hero { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0 4px; text-align: center; }
 .agent-hero p { max-width: 300px; margin: 0; color: var(--ui-text-muted); font-size: 14px; line-height: 1.45; }

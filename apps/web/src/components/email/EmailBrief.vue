@@ -229,6 +229,7 @@ watch(() => props.active, (active) => { if (active) void load(); });
         <div class="brief-caught-up__actions">
           <button v-if="brief.handled.total > 0" type="button" class="brief-quiet" @click="expandedGroups = new Set(brief!.handled.groups.map((group) => group.kind))">See what ME3 handled</button>
           <button v-if="brief.fyi.inboxLeft > 0" type="button" class="brief-quiet" @click="emit('openInbox')">Open Inbox</button>
+          <button v-if="!brief.handled.groups.length" type="button" class="brief-quiet" @click="emit('openRules')">How ME3 handles mail</button>
         </div>
       </div>
 
@@ -315,7 +316,8 @@ watch(() => props.active, (active) => { if (active) void load(); });
         </div>
       </template>
 
-      <footer class="brief-finish">
+      <!-- An empty Brief already says it is caught up above, so the sign-off only follows a list. -->
+      <footer v-if="brief.needsYou.length || brief.handled.groups.length" class="brief-finish">
         <strong>That's everything for now</strong>
         <p>
           <template v-if="brief.fyi.inboxLeft > 0">{{ brief.fyi.inboxLeft }} more in Inbox to read later. </template>

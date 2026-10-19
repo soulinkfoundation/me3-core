@@ -71,13 +71,11 @@ export async function listNavigationFeatures(
     (rows.results || []).map((row) => [row.feature_id, row.visible === 1]),
   );
 
-  // Calendar was previously always shown, so preserve that behavior for
-  // existing and new installations until the owner explicitly hides it.
+  // Every workspace is on until the owner hides it. Socials stays off because
+  // social publishing is not ready to be on by default.
   return NAVIGATION_FEATURES.map((feature) => ({
     ...feature,
-    visible:
-      visibility.get(feature.id) ??
-      (feature.id === "assistant" || feature.id === "calendar"),
+    visible: visibility.get(feature.id) ?? feature.id !== "social",
   }));
 }
 

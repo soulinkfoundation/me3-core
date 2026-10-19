@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { api } from "../../api";
+import AppPageBar from "../../components/AppPageBar.vue";
 import Button from "../../components/Button.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import PaymentReceiptDialog from "../../components/payments/PaymentReceiptDialog.vue";
@@ -97,9 +98,7 @@ onMounted(load);
 
 <template>
   <main class="payments-page">
-    <Teleport to="#app-page-controls" defer>
-      <div class="payments-bar"><span>Payments</span></div>
-    </Teleport>
+    <AppPageBar title="Payments" />
     <div class="payments-col" :aria-busy="loading">
       <section class="payments-intro">
         <span class="payments-intro__emoji" aria-hidden="true">💳</span>
@@ -165,7 +164,6 @@ onMounted(load);
 
 <style scoped>
 .payments-page { padding: 8px 16px 96px; }
-.payments-bar { display: flex; justify-content: center; width: 100%; font-size: 15px; font-weight: 700; }
 .payments-col { display: flex; flex-direction: column; gap: 20px; width: min(620px, 100%); margin: 0 auto; }
 .payments-intro { display: flex; align-items: flex-start; gap: 12px; padding: 8px 4px 0; }
 .payments-intro__emoji { font-size: 26px; line-height: 1.2; }

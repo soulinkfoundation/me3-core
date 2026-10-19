@@ -5221,7 +5221,7 @@ button:disabled {
 .home-chat-switcher { position: absolute; left: 50%; transform: translateX(-50%); display: flex; padding: 3px; border-radius: 28px; background: var(--ui-surface-muted); }
 .home-chat-switcher button { min-width: 68px; min-height: 44px; padding: 0 14px; border: 0; border-radius: 24px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
 .home-chat-switcher button[aria-pressed="true"] { color: var(--ui-primary-contrast); background: var(--ui-primary); font-weight: 600; }
-.assistant-home { height: calc(100dvh - var(--app-topbar-height)); overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 18px; align-content: start; box-sizing: border-box; }
+.assistant-home { height: calc(100dvh - var(--app-topbar-height)); margin-inline: -14px; overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 18px; align-content: start; box-sizing: border-box; }
 .home-nav-button { display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--ui-text-muted); border-radius: 50%; cursor: pointer; }
 .home-nav-button:hover { background: var(--ui-surface-muted); }
 @media (max-width: 360px) { .home-chat-switcher { left: calc(50% + 8px); } .home-chat-switcher button { min-width: 52px; padding-inline: 10px; } }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import AppPageBar from "../AppPageBar.vue";
 import Button from "../Button.vue";
 import IconPicker from "../IconPicker.vue";
 import LifeWheelChart from "./LifeWheelChart.vue";
@@ -483,39 +484,35 @@ watch(snapshots, persistState, { deep: true });
     :class="{ 'life-wheel--embedded': props.embedded }"
     :aria-labelledby="props.labelledBy || 'life-wheel-title'"
   >
-    <h1
-      v-if="!props.labelledBy"
-      id="life-wheel-title"
-      class="life-wheel__sr-only"
-    >
-      Wheel of Life
-    </h1>
-
-    <div class="life-wheel__actions" aria-label="Wheel of Life actions">
-      <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-        :disabled="!historyAvailable"
-        aria-label="View snapshot history"
-        title="View snapshot history"
-        @click="historyModalOpen = true"
-      >
-        <UiIcon name="History" :size="18" />
-      </Button>
-      <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-        aria-label="Edit wheel segments"
-        title="Edit wheel segments"
-        @click="editModalOpen = true"
-      >
-        <UiIcon name="Pencil" :size="18" />
-      </Button>
-      <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-        :disabled="!allSegmentsScored || saving"
-        aria-label="Save snapshot"
-        :title="saving ? 'Saving snapshot' : 'Save snapshot'"
-        @click="openSaveModal"
-      >
-        <UiIcon name="Save" :size="18" />
-      </Button>
-    </div>
+    <AppPageBar title="Wheel of Life" :title-id="props.labelledBy ? undefined : 'life-wheel-title'">
+      <template #actions>
+        <div class="life-wheel__actions" aria-label="Wheel of Life actions">
+          <Button color="ghost" shape="soft" size="compact" icon-only type="button"
+            :disabled="!historyAvailable"
+            aria-label="View snapshot history"
+            title="View snapshot history"
+            @click="historyModalOpen = true"
+          >
+            <UiIcon name="History" :size="18" />
+          </Button>
+          <Button color="ghost" shape="soft" size="compact" icon-only type="button"
+            aria-label="Edit wheel segments"
+            title="Edit wheel segments"
+            @click="editModalOpen = true"
+          >
+            <UiIcon name="Pencil" :size="18" />
+          </Button>
+          <Button color="ghost" shape="soft" size="compact" icon-only type="button"
+            :disabled="!allSegmentsScored || saving"
+            aria-label="Save snapshot"
+            :title="saving ? 'Saving snapshot' : 'Save snapshot'"
+            @click="openSaveModal"
+          >
+            <UiIcon name="Save" :size="18" />
+          </Button>
+        </div>
+      </template>
+    </AppPageBar>
 
     <div class="life-wheel__workspace">
       <div class="life-wheel__stage">
@@ -775,8 +772,7 @@ watch(snapshots, persistState, { deep: true });
 .life-wheel {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
+  grid-template-rows: minmax(0, 1fr);
   width: min(1180px, 100%);
   height: 100%;
   min-height: 0;
@@ -832,11 +828,8 @@ watch(snapshots, persistState, { deep: true });
 }
 
 .life-wheel__actions {
-  z-index: 22;
-  justify-self: end;
   display: flex;
-  gap: 8px;
-  margin-bottom: -44px;
+  gap: 2px;
 }
 
 .life-wheel__icon-button,
@@ -1343,10 +1336,6 @@ watch(snapshots, persistState, { deep: true });
 }
 
 @media (max-width: 959px) {
-  .life-wheel__actions {
-    margin-bottom: -40px;
-  }
-
   .life-wheel__workspace {
     display: block;
   }
@@ -1370,9 +1359,10 @@ watch(snapshots, persistState, { deep: true });
 }
 
 @media (max-width: 560px) {
-  .life-wheel__actions {
-    justify-self: stretch;
-    justify-content: flex-end;
+  /* Phones read top-down, so the wheel sits under the bar instead of floating mid-screen. */
+  .life-wheel__stage {
+    align-content: start;
+    padding-top: 40px;
   }
 
   .life-wheel__canvas {

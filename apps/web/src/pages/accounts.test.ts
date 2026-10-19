@@ -189,6 +189,8 @@ function mountPage() {
     attachTo: document.body,
     global: {
       stubs: {
+        // The page bar teleports into the app shell, which this mount does not render.
+        AppPageBar: { props: ["title"], template: '<div><h1><slot name="title">{{ title }}</slot></h1><slot name="actions" /></div>' },
         AppDialog: { props: ["open"], template: '<div v-if="open"><slot /></div>' },
         RouterLink: { props: ["to"], template: '<a :href="`/email?message=${to.query.message}`"><slot /></a>' },
       },

@@ -4,6 +4,7 @@ import { definePage } from "unplugin-vue-router/runtime";
 import { useRoute, useRouter } from "vue-router";
 import { API_BASE, api } from "../api";
 import AppDialog from "../components/AppDialog.vue";
+import AppPageBar from "../components/AppPageBar.vue";
 import Button from "../components/Button.vue";
 import PageLoading from "../components/PageLoading.vue";
 import UiIcon from "../components/UiIcon.vue";
@@ -603,19 +604,8 @@ onMounted(() => {
 
 <template>
   <main class="accounts-page">
-    <div class="accounts-workspace">
-      <header class="accounts-toolbar">
-        <div class="accounts-tabs" role="tablist" aria-label="Accounts views">
-          <button id="accounts-tab-income" type="button" :class="{ 'is-active': currentView === 'income' }" role="tab" :aria-selected="currentView === 'income'" aria-controls="accounts-panel" @click="setView('income')">
-            Income
-          </button>
-          <button id="accounts-tab-expenses" type="button" :class="{ 'is-active': currentView === 'expense' }" role="tab" :aria-selected="currentView === 'expense'" aria-controls="accounts-panel" @click="setView('expense')">
-            Expenses
-          </button>
-          <button id="accounts-tab-customers" type="button" :class="{ 'is-active': currentView === 'customers' }" role="tab" :aria-selected="currentView === 'customers'" aria-controls="accounts-panel" @click="setView('customers')">
-            Customers
-          </button>
-        </div>
+    <AppPageBar title="Accounts">
+      <template #actions>
         <div class="accounts-toolbar__actions">
           <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Search and filter" :active="Boolean(activeFilterCount)" @click="filtersOpen = true">
             <UiIcon name="Search" :size="17" /><span v-if="activeFilterCount" class="accounts-filter-count">{{ activeFilterCount }}</span>
@@ -647,6 +637,21 @@ onMounted(() => {
             </div>
           </details>
           <input ref="importInput" type="file" accept=".csv,text/csv" hidden @change="importCsv" />
+        </div>
+      </template>
+    </AppPageBar>
+    <div class="accounts-workspace">
+      <header class="accounts-toolbar">
+        <div class="accounts-tabs" role="tablist" aria-label="Accounts views">
+          <button id="accounts-tab-income" type="button" :class="{ 'is-active': currentView === 'income' }" role="tab" :aria-selected="currentView === 'income'" aria-controls="accounts-panel" @click="setView('income')">
+            Income
+          </button>
+          <button id="accounts-tab-expenses" type="button" :class="{ 'is-active': currentView === 'expense' }" role="tab" :aria-selected="currentView === 'expense'" aria-controls="accounts-panel" @click="setView('expense')">
+            Expenses
+          </button>
+          <button id="accounts-tab-customers" type="button" :class="{ 'is-active': currentView === 'customers' }" role="tab" :aria-selected="currentView === 'customers'" aria-controls="accounts-panel" @click="setView('customers')">
+            Customers
+          </button>
         </div>
       </header>
 
@@ -817,13 +822,13 @@ onMounted(() => {
 .order-delivery__details address { margin: 0; font-style: normal; }
 .accounts-page { width: 100%; min-width: 0; min-height: 100vh; min-height: 100dvh; overflow-x: hidden; padding: var(--workspace-topbar-padding-block) 24px 40px; background: var(--ui-bg); color: var(--ui-text); }
 .accounts-workspace { display: grid; width: min(1120px, 100%); min-width: 0; gap: 14px; margin: 0 auto; }
-.accounts-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; min-height: var(--workspace-topbar-height); }
-.accounts-tabs { display: grid; width: min(540px, 100%); grid-template-columns: repeat(3, 1fr); grid-column: 2; justify-self: center; padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
+.accounts-toolbar { display: flex; justify-content: center; padding: 4px 0 8px; }
+.accounts-tabs { display: grid; width: min(540px, 100%); grid-template-columns: repeat(3, 1fr); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
 .accounts-tabs button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
 .accounts-tabs button:hover, .accounts-tabs button:focus-visible { color: var(--ui-text); outline: none; }
 .accounts-tabs button:focus-visible { box-shadow: inset 0 0 0 2px var(--ui-focus); }
 .accounts-tabs button.is-active { background: var(--ui-surface); color: var(--ui-text); font-weight: 750; box-shadow: var(--ui-shadow-sm); }
-.accounts-toolbar__actions { position: relative; display: flex; grid-column: 3; justify-self: end; gap: 6px; }
+.accounts-toolbar__actions { position: relative; display: flex; gap: 2px; }
 .accounts-filter-count { position: absolute; top: 2px; right: 2px; display: grid; min-width: 14px; height: 14px; place-items: center; border-radius: 999px; background: var(--ui-accent); color: var(--ui-accent-contrast); font-size: 9px; font-weight: 800; }
 .accounts-actions-menu { position: relative; }
 .accounts-actions-menu summary { display: inline-grid; width: 34px; height: 34px; place-items: center; border-radius: var(--ui-radius-sm); color: var(--ui-text-muted); cursor: pointer; list-style: none; }
@@ -899,9 +904,7 @@ onMounted(() => {
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (max-width: 959px) { .accounts-page { padding: var(--workspace-topbar-padding-block) 16px 32px; } }
 @media (max-width: 640px) {
-  .accounts-toolbar { grid-template-columns: 1fr auto; padding-left: var(--app-shell-mobile-nav-leading-padding); }
-  .accounts-tabs { width: 100%; grid-row: 2; grid-column: 1 / -1; }
-  .accounts-toolbar__actions { grid-row: 1; grid-column: 2; }
+  .accounts-tabs { width: 100%; }
   .accounts-summary strong { overflow-wrap: anywhere; white-space: normal; }
   .accounts-dialog { width: 100vw; max-height: min(92vh, 92dvh); border-right: 0; border-bottom: 0; border-left: 0; border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0; }
   .accounts-dialog__grid { grid-template-columns: 1fr; }

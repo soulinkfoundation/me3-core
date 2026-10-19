@@ -12,6 +12,7 @@ import UiIcon from "../UiIcon.vue";
 import PersonAvatar from "../people/PersonAvatar.vue";
 import PersonSheet from "../people/PersonSheet.vue";
 import { useContactsStore } from "../../stores/contacts";
+import { ownMissionStatement } from "../../utils/missionStatement";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
 import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDateLabel, homeDoneToday, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
@@ -89,7 +90,13 @@ const openPersonId = ref<string | null>(null);
 const openPerson = computed(() => contactsStore.contacts.find(contact => contact.id === openPersonId.value) || null);
 const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value) && (id !== "people" || peopleCard.value.state !== "hidden")));
 const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id)));
-const addCards = computed(() => available.value.filter(id => !HOME_INSIDE_TODAY.includes(id)).sort((a, b) => Number(visible.value.includes(b)) - Number(visible.value.includes(a))));
+// Cards already on Home sort first when the sheet opens, then the order holds still,
+// so adding one never slides a different tile under the next tap.
+const addOrder = ref<HomeCard[]>([]);
+watch(dialog, value => {
+  if (value === "add") addOrder.value = available.value.filter(id => !HOME_INSIDE_TODAY.includes(id)).sort((a, b) => Number(visible.value.includes(b)) - Number(visible.value.includes(a)));
+});
+const addCards = computed(() => addOrder.value.filter(id => available.value.includes(id)));
 const todayTasks = computed(() => homeTodayTasks(tasks.value));
 // Server setting (gratitude_settings.in_today), so it follows the owner across web and the apps.
 const gratitudeOn = ref(false);
@@ -267,7 +274,7 @@ async function refresh() {
     }),
     resource("mission", async () => {
       const [data, result] = await Promise.all([api.get<{ missionStatement?: string }>("/mission-control/dashboard"), api.get<{ goals: HomeGoal[] }>("/tasks/goals")]);
-      if (!disposed) { mission.value = data.missionStatement || ""; goals.value = result.goals || []; }
+      if (!disposed) { mission.value = ownMissionStatement(data.missionStatement); goals.value = result.goals || []; }
     }),
     resource("wheel", async () => {
       const data = await api.get<{ snapshots: { createdAt: string; segments: HomeWheelArea[] }[]; settings: { segments: HomeWheelArea[] } }>("/journal/wheel");
@@ -436,7 +443,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.home-panels { padding: 18px 10px 120px; }
+/* The 16px gutter sits inside the scroller so card shadows have room instead of being clipped at its edges. */
+.home-panels { padding: 18px 16px 120px; }
 .home-grid { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 16px; width: min(620px, 100%); margin: 0 auto; align-items: start; }
 .home-offline { width: min(1120px, 100%); margin: 0 auto 12px; font-size: 14px; color: var(--ui-text-muted); }
 .home-offline { display: flex; align-items: center; gap: 8px; }
@@ -497,6 +505,8 @@ p { margin: 4px 0; }
 .home-pager::-webkit-scrollbar { display: none; }
 .home-page { flex: 0 0 100%; min-height: 150px; display: flex; flex-direction: column; justify-content: center; scroll-snap-align: start; color: var(--ui-text); text-decoration: none; }
 .home-page--mission { align-items: center; }
+/* The pager clips overflow, so an outset focus ring would show only as a stray line at one edge. */
+.home-page:focus-visible { outline-offset: -2px; border-radius: 16px; }
 .home-goal { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; font-size: 15px; line-height: 1.35; }
 .home-goal__text { flex: 1; min-width: 0; display: grid; gap: 6px; }
 .home-goal__pc { font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -547,7 +557,6 @@ p { margin: 4px 0; }
 .home-add-tile__check { position: absolute; top: 8px; right: 8px; color: var(--ui-accent-strong); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 640px) {
-  .home-panels { padding-inline: 2px; }
   .home-card__controls > button { min-width: 44px; width: 44px; }
   .home-card__header { flex-wrap: wrap; gap: 0 6px; }
   .home-wheel { gap: 10px; }

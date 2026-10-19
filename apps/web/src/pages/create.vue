@@ -555,6 +555,12 @@ watch(
 .step-content :deep(.btn.secondary) { border: 0; background: var(--ui-surface-muted); color: var(--ui-text); }
 .step-content :deep(input:focus-visible), .step-content :deep(select:focus-visible), .step-content :deep(textarea:focus-visible), .step-content :deep(.booking-offer-description-editor:focus-within) { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .step-content :deep(.visibility-group) { padding: 12px 16px; border: 0; border-radius: 18px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
+/* A legend sits on a fieldset's top border by default; float it so the title stays inside the card. */
+.step-content :deep(.visibility-group legend) { float: left; width: 100%; }
+.step-content :deep(.visibility-group .visibility-checkbox) { clear: both; }
+/* The @handle wrapper clips its input, so the focus ring goes on the wrapper rather than showing as a sliver. */
+.step-content :deep(.handle-input input:focus-visible) { outline: none; }
+.step-content :deep(.handle-input:focus-within) { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .preview-panel { position: sticky; top: calc(var(--app-topbar-height) + 76px); min-width: 0; overflow: hidden; }
 .preview-panel :deep(.generated-site-preview) { width: 100%; height: min(680px, calc(100dvh - 230px)); min-height: 240px; border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-md); }
 .wizard-preview-label { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 13px; color: var(--ui-text-muted); }

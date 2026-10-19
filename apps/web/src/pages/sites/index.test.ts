@@ -248,6 +248,8 @@ function mountOptions(router: Router) {
     global: {
       plugins: [router],
       stubs: {
+        // The page bar teleports into the app shell, which this mount does not render.
+        AppPageBar: { props: ["title"], template: '<div><h1><slot name="title">{{ title }}</slot></h1><slot name="actions" /></div>' },
         AppDialog: {
           props: ["open"],
           emits: ["close"],

@@ -91,9 +91,13 @@ describe("Accounts invoice hook on the agent mailbox with real SQLite", () => {
     const f = fixture(); await deliverInboundEmail(mail(subject, body, from), f.env); expect(f.entries()).toHaveLength(0);
   });
 
-  it.each(["missing", "disabled", "setup_required", "toggle"])("does not triage when %s", async condition => {
+  it("triages on a fresh installation, where Accounts is on by default", async () => {
+    const f = fixture(); f.raw.exec("DELETE FROM plugin_installations");
+    expect((await deliverInboundEmail(mail(), f.env)).status).toBe("accepted"); expect(f.entries()).toHaveLength(1);
+  });
+
+  it.each(["disabled", "setup_required", "toggle"])("does not triage when %s", async condition => {
     const f = fixture();
-    if (condition === "missing") f.raw.exec("DELETE FROM plugin_installations");
     if (condition === "disabled") f.raw.exec("UPDATE plugin_installations SET enabled=0,status='disabled'");
     if (condition === "setup_required") f.raw.exec("UPDATE plugin_installations SET status='setup_required'");
     if (condition === "toggle") f.raw.exec("INSERT INTO accounts_email_triage_settings(user_id,enabled) VALUES('owner',0)");

@@ -151,7 +151,8 @@ watch(
 
 watchEffect(async () => {
   const version = ++renderVersion;
-  const profile = wizard.generateMe3Json() as unknown as Me3SiteProfile;
+  // The renderer outputs nothing for a private profile, but the owner still previews their own site.
+  const profile = { ...(wizard.generateMe3Json() as unknown as Me3SiteProfile), visibility: "public" as const };
   const logoUrl = wizard.profile.logo;
   const logoBlob = wizard.profile.logoBlob;
   const avatarUrl = wizard.profile.avatar;

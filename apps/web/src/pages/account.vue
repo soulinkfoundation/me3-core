@@ -7,6 +7,7 @@ import { getEmailTestOperation, finishEmailTestOperation } from "../utils/emailT
 import Button from "../components/Button.vue";
 import CodingAgentSettings from "../components/CodingAgentSettings.vue";
 import PageLoading from "../components/PageLoading.vue";
+import AppPageBar from "../components/AppPageBar.vue";
 import PluginList from "../components/PluginList.vue";
 import SoulinkConnectPanel from "../components/SoulinkConnectPanel.vue";
 import StatusBadge from "../components/StatusBadge.vue";
@@ -466,7 +467,7 @@ const openSection = ref({
   codingAgents: false,
   mailbox: false,
   payments: false,
-  plugins: true,
+  plugins: route.query.section === "plugins",
   storage: route.query.section === "storage",
   timezone: false,
 });
@@ -2326,56 +2327,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="account-page">
-    <Teleport to="#app-page-controls" defer disabled>
-      <div class="account-mobile-nav">
-        <h1 class="account-title account-mobile-nav__title">
-          <span>Account</span>
-          <span
-            v-if="coreGithubInstalledVersion"
-            class="account-title__version"
-          >
-            v{{ coreGithubInstalledVersion }}
-          </span>
-        </h1>
-        <div
-          class="theme-segmented account-theme-switch account-mobile-nav__actions"
-          role="radiogroup"
-          aria-label="Interface theme"
-        >
-          <button
-            v-for="option in themeOptions"
-            :key="option.value"
-            type="button"
-            class="theme-segmented__option"
-            :class="{
-              'theme-segmented__option--active':
-                themePreference === option.value,
-            }"
-            role="radio"
-            :aria-checked="themePreference === option.value"
-            :aria-label="`${option.label} theme`"
-            :title="`${option.label} theme`"
-            @click="chooseThemePreference(option.value)"
-          >
-            <UiIcon :name="option.icon" :size="16" aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-    </Teleport>
-
-    <main class="main">
-      <header class="account-header">
-        <div>
-          <h1 class="account-title">
-            <span>Account</span>
-            <span
-              v-if="coreGithubInstalledVersion"
-              class="account-title__version"
-            >
-              v{{ coreGithubInstalledVersion }}
-            </span>
-          </h1>
-        </div>
+    <AppPageBar>
+      <template #title>
+        Account
+        <span v-if="coreGithubInstalledVersion" class="account-title__version">
+          v{{ coreGithubInstalledVersion }}
+        </span>
+      </template>
+      <template #actions>
         <div
           class="theme-segmented account-theme-switch"
           role="radiogroup"
@@ -2399,7 +2358,10 @@ onBeforeUnmount(() => {
             <UiIcon :name="option.icon" :size="16" aria-hidden="true" />
           </button>
         </div>
-      </header>
+      </template>
+    </AppPageBar>
+
+    <main class="main">
 
       <PageLoading v-if="loading" label="Loading account..." />
 
@@ -4349,27 +4311,6 @@ onBeforeUnmount(() => {
   padding: 20px 40px;
 }
 
-.account-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 20px;
-}
-
-h1 {
-  margin: 0;
-  font-size: 28px;
-  line-height: 1.1;
-}
-
-.account-title {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-}
-
 .account-title__version {
   color: var(--ui-text-muted, var(--color-text-muted));
   font-size: 0.72em;
@@ -4380,36 +4321,6 @@ h1 {
 
 .account-theme-switch {
   flex: 0 0 auto;
-}
-
-.account-mobile-nav {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-}
-
-.account-mobile-nav__actions {
-  position: absolute;
-  top: 50%;
-  right: 4px;
-  transform: translateY(-50%);
-}
-
-.account-header {
-  display: none;
-}
-
-.account-mobile-nav__title {
-  margin: 0;
-  color: var(--color-text);
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1.2;
-  text-align: center;
 }
 
 .primary-section {
