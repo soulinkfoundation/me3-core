@@ -77,7 +77,6 @@ type MeJsonSnapshotRow = {
 const OWNER_SNAPSHOT_PROMPT_BUDGET_CHARS = 8_000;
 const MAX_ME_JSON_SNAPSHOT_CHARS = 2_600;
 const MAX_PROJECT_DESCRIPTION_CHARS = 240;
-const DEFAULT_MISSION_STATEMENT_TEMPLATE_MARKER = "[who/what]";
 // Owner preferences sit near the top so snapshot trimming never drops them.
 const MAX_MEMORY_SNAPSHOT_ITEMS = 30;
 const MAX_MEMORY_SNAPSHOT_CHARS = 2_000;
@@ -99,9 +98,9 @@ export async function loadOwnerSnapshotContext(input: {
   ]);
 
   const privateMeJson = parseMeJson(privateMeJsonRow?.content);
-  const missionStatement = privateMeJson
-    ? missionStatementFromMeJson(privateMeJson)
-    : normalizeMissionStatement(missionRow?.mission_statement);
+  // The Mission is private to Core; a line left in the site profile only counts until one is written here.
+  const missionStatement = normalizeMissionStatement(missionRow?.mission_statement)
+    ?? (privateMeJson ? missionStatementFromMeJson(privateMeJson) : null);
   const goals = resolveGoals(missionRow?.settings_json);
   const meJson = parseMeJson(publicMeJsonRow?.content);
   const compactMeJson = compactMeJsonForPrompt(meJson);
@@ -460,7 +459,8 @@ function resolveLifeSnapshot(wheel: WheelSnapshotRow | null) {
 
 function normalizeMissionStatement(value: unknown): string | null {
   const statement = normalizeText(value, 2_000);
-  if (!statement || statement.includes(DEFAULT_MISSION_STATEMENT_TEMPLATE_MARKER)) return null;
+  // Fill-in-the-blanks templates, old or new, are prompts rather than a Mission.
+  if (!statement || /\[[^\]]+\]/.test(statement)) return null;
   return statement;
 }
 

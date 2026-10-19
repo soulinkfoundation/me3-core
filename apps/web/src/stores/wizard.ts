@@ -412,7 +412,6 @@ export type WizardStepId =
   | "basics"
   | "avatar"
   | "banner"
-  | "mission"
   | "goals"
   | "links"
   | "call-to-action"
@@ -434,7 +433,6 @@ const WIZARD_STEP_IDS: readonly WizardStepId[] = [
   "basics",
   "avatar",
   "banner",
-  "mission",
   "goals",
   "links",
   "call-to-action",
@@ -1586,10 +1584,7 @@ export const useWizardStore = defineStore("wizard", () => {
         name: siteRole.value === "organization" ? "Logo" : "Photo",
       },
       { id: "banner", name: "Banner" },
-      {
-        id: "mission",
-        name: "Who you help",
-      },
+      // Who you help became the private Mission, drafted in Mission rather than published with the site.
       ...(siteRole.value === "organization"
         ? [{ id: "goals" as const, name: "Site goals" }]
         : []),

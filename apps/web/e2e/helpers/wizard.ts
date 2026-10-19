@@ -4,7 +4,6 @@ const wizardStepNames: Record<string, string> = {
   basics: "Basics",
   avatar: "Avatar",
   banner: "Banner",
-  mission: "Who you help",
   goals: "Site goals",
   "additional-features": "Additional Features",
   links: "Links",

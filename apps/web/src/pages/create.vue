@@ -22,7 +22,6 @@ import { useAppToast } from "../composables/useAppToast";
 import WizardBasics from "../components/wizard/WizardBasics.vue";
 import WizardAvatar from "../components/wizard/WizardAvatar.vue";
 import WizardBanner from "../components/wizard/WizardBanner.vue";
-import WizardMission from "../components/wizard/WizardMission.vue";
 import WizardGoals from "../components/wizard/WizardGoals.vue";
 import WizardLinks from "../components/wizard/WizardLinks.vue";
 import WizardCallToAction from "../components/wizard/WizardCallToAction.vue";
@@ -89,7 +88,6 @@ const stepComponentById = {
   basics: WizardBasics,
   avatar: WizardAvatar,
   banner: WizardBanner,
-  mission: WizardMission,
   goals: WizardGoals,
   links: WizardLinks,
   "call-to-action": WizardCallToAction,
@@ -330,6 +328,11 @@ let wizardMounted = false;
 async function openWizardTarget() {
   if (route.query.step === "wheel-of-life" || route.query.step === "wheel") {
     await router.replace("/wheel-of-life");
+    return;
+  }
+  // Who you help is now the private Mission; old links land there.
+  if (route.query.step === "mission") {
+    await router.replace({ path: "/mission", query: { focus: "statement" } });
     return;
   }
   const requestId = ++wizardOpenRequest;

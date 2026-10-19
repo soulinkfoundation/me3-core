@@ -9,6 +9,7 @@ import {
   updateMissionDashboard,
   updateMissionWheelSettings,
 } from "./mission-control";
+import { MISSION_PLACEHOLDER, saveOwnerMission } from "@me3-core/plugin-mission-control";
 import type { Env } from "./types";
 
 type DashboardSettingsRow = {
@@ -133,7 +134,8 @@ describe("Mission Control dashboard settings", () => {
       setupChecklistDismissed: true,
     });
     expect(dashboard.mainGoal).toBe("");
-    expect(dashboard.missionStatement).toContain("I am here to help");
+    expect(dashboard.missionStatement).toBe(MISSION_PLACEHOLDER);
+    expect(dashboard.mission).toEqual({ statement: null, answers: {} });
     expect(dashboard.data["mission.daily-briefing"]).toMatchObject({
       message: "A calm operational day.",
       plainText: "A calm operational day.",
@@ -150,7 +152,9 @@ describe("Mission Control dashboard settings", () => {
     });
   });
 
-  it("derives Mission from the canonical private profile answers", async () => {
+  // The Mission is private to Core. Failure modes: the public site profile still wins; a Mission written on the
+  // site before the move is lost; a fill-in-the-blanks template shows as a Mission.
+  it("carries a Mission written on the site into the private Mission once", async () => {
     const env = createDashboardEnv({
       profile: {
         name: "Kieran",
@@ -161,43 +165,39 @@ describe("Mission Control dashboard settings", () => {
           solution: "building calm, useful systems",
         },
       },
-      dashboardSettings: {
-        mission_statement: "Legacy Mission that should not win.",
-      },
+      dashboardSettings: { mission_statement: "I am here to help [who/what] become [desired change]." },
     });
 
     const dashboard = await getMissionDashboard(env, "owner");
 
-    expect(dashboard.missionStatement).toBe(
-      "I help conscious change-makers with having impact without burning out by building calm, useful systems.",
-    );
-    expect(dashboard.data["mission.mission-statement"]).toMatchObject({
-      source: "profile",
-    });
-    expect(dashboard.data["mission.me3-profile"]).toMatchObject({
-      name: "Kieran",
-      handle: "kieran",
-    });
+    const carried = "I help conscious change-makers with having impact without burning out by building calm, useful systems.";
+    expect(dashboard.missionStatement).toBe(carried);
+    expect(dashboard.mission).toEqual({ statement: carried, answers: { who: "conscious change-makers", how: "building calm, useful systems" } });
+    expect(dashboard.data["mission.mission-statement"]).toMatchObject({ source: "private" });
+    expect(env.settingsRow()?.mission_statement).toBe(carried);
   });
 
-  it("does not resurrect legacy Mission after the canonical profile clears it", async () => {
+  it("uses the private Mission over anything left in the site profile", async () => {
     const env = createDashboardEnv({
-      profile: {
-        name: "Kieran",
-        handle: "kieran",
-        business: {},
-      },
-      dashboardSettings: {
-        mission_statement: "Legacy Mission that has been cleared.",
-      },
+      profile: { name: "Kieran", handle: "kieran", business: { positioningStatement: "An old public line." } },
+      dashboardSettings: { mission_statement: "I help my family thrive by being present." },
     });
 
     const dashboard = await getMissionDashboard(env, "owner");
 
-    expect(dashboard.missionStatement).not.toContain("Legacy Mission");
-    expect(dashboard.data["mission.mission-statement"]).toMatchObject({
-      source: "profile",
-    });
+    expect(dashboard.missionStatement).toBe("I help my family thrive by being present.");
+    expect(dashboard.mission.statement).toBe("I help my family thrive by being present.");
+  });
+
+  it("keeps the Mission answers when the dashboard is updated", async () => {
+    const env = createDashboardEnv({ dashboardSettings: { settings_json: JSON.stringify({ goals: [] }) } });
+    await saveOwnerMission(env.DB, "owner", { answers: { who: "makers", change: "ship", how: "pairing" } });
+
+    await updateMissionDashboard(env, "owner", { goals: [{ id: "run", title: "Run 10k", status: "active" }] });
+    const dashboard = await getMissionDashboard(env, "owner");
+
+    expect(dashboard.mission).toEqual({ statement: "I help makers ship by pairing.", answers: { who: "makers", change: "ship", how: "pairing" } });
+    expect(dashboard.settings.goals.map((goal) => goal.title)).toEqual(["Run 10k"]);
   });
 
   it("does not let legacy mainGoal updates replace structured Goals", async () => {
@@ -282,7 +282,7 @@ describe("Mission Control dashboard settings", () => {
       ],
     });
 
-    expect(dashboard.missionStatement).toContain("I am here to help");
+    expect(dashboard.missionStatement).toBe(MISSION_PLACEHOLDER);
     expect(dashboard.mainGoal).toBe("Finish the onboarding polish.");
     expect(dashboard.settings).toEqual({
       kanbanEnabled: true,
@@ -484,7 +484,7 @@ describe("Mission Control dashboard settings", () => {
     expect(sources[0]).toMatchObject({
       label: "Mission",
       status: "setup_required",
-      sourceRef: "/create?step=mission",
+      sourceRef: "/mission?focus=statement",
     });
     expect(sources[1]).toMatchObject({
       label: "Wheel of Life",
@@ -517,6 +517,12 @@ describe("Mission Control dashboard settings", () => {
 
     sources = await listMissionContextSources(env, "owner");
 
+    // Goals alone don't say what someone's life is built around; the Mission stays missing until it's written.
+    expect(sources.find((source) => source.sourceKind === "mission_statement"))
+      .toMatchObject({ status: "setup_required" });
+
+    await saveOwnerMission(env.DB, "owner", { statement: "I help builders steer their work with calm, useful systems." });
+    sources = await listMissionContextSources(env, "owner");
     expect(sources.find((source) => source.sourceKind === "mission_statement"))
       .toMatchObject({ status: "active" });
     expect(sources.find((source) => source.sourceKind === "wheel_of_life"))
@@ -718,7 +724,20 @@ function createDashboardEnv(options: {
                   if (task.user_id === values[0] && task.goal_id && removedIds.includes(task.goal_id)) task.goal_id = null;
                 }
               }
-              if (sql.includes("mission_dashboard_settings")) {
+              if (sql.includes("'$.missionAnswers'")) {
+                const [userId, answersJson, statement] = values.map(String);
+                const existing = settings.get(userId);
+                const merged = { ...JSON.parse(existing?.settings_json || "{}"), missionAnswers: JSON.parse(answersJson) };
+                settings.set(userId, {
+                  user_id: userId,
+                  cards_json: existing?.cards_json || "[]",
+                  quick_links_json: existing?.quick_links_json || "[]",
+                  settings_json: JSON.stringify(merged),
+                  mission_statement: statement,
+                  created_at: existing?.created_at || "2026-06-04 08:00:00",
+                  updated_at: "2026-06-04 08:00:00",
+                });
+              } else if (sql.includes("mission_dashboard_settings")) {
                 const userId = String(values[0]);
                 settings.set(userId, {
                   user_id: userId,
@@ -795,5 +814,5 @@ function createDashboardEnv(options: {
     },
   };
 
-  return { DB: db as unknown as D1Database } as Env;
+  return { DB: db as unknown as D1Database, settingsRow: () => settings.get("owner") } as Env & { settingsRow: () => DashboardSettingsRow | undefined };
 }

@@ -52,11 +52,7 @@ test.describe("Wizard Full Flow", () => {
     await wizard.expectStepName("Banner");
     await wizard.nextStep();
 
-    // Step 4: Who you help
-    await wizard.expectStepName("Who you help");
-    await wizard.nextStep();
-
-    // Step 5: Additional Features
+    // Step 4: Additional Features
     await wizard.expectStepName("Additional Features");
     await wizard.nextStep();
 
@@ -134,7 +130,7 @@ test.describe("Wizard Full Flow", () => {
     await wizard.expectStepShortcutEnabled("Basics", true);
     await wizard.expectStepShortcutEnabled("Avatar", true);
     await wizard.expectStepShortcutEnabled("Banner", true);
-    await wizard.expectStepShortcutEnabled("Who you help", false);
+    await wizard.expectStepShortcutEnabled("Features", false);
 
     await wizard.clickStepShortcut("Basics");
     await wizard.expectStepName("Basics");

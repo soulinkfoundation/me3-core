@@ -5,6 +5,7 @@ import type { DbSite, Env } from "./types";
 function createVisibilityEnv(input: {
   published: boolean;
   sourceVisibility: "public" | "private";
+  storedPublic?: Record<string, unknown>;
 }): Env {
   const site: DbSite = {
     id: "site-1",
@@ -29,7 +30,7 @@ function createVisibilityEnv(input: {
   });
   const files = new Map([
     ["src/me.json", source],
-    ["public/me.json", source],
+    ["public/me.json", input.storedPublic ? JSON.stringify(input.storedPublic) : source],
   ]);
 
   return {
@@ -69,6 +70,22 @@ function createVisibilityEnv(input: {
 }
 
 describe("public me.json visibility", () => {
+  // The Mission moved out of the public protocol. A site published before the move still has it in its stored
+  // public me.json, so it has to be left out when served, not only when the site is next published.
+  it("leaves the Mission out of a site published before it became private", async () => {
+    const response = await serveMeJsonResponse(
+      createVisibilityEnv({ published: true, sourceVisibility: "public", storedPublic: {
+        version: "0.3", kind: "person", visibility: "public", name: "Connie", handle: "connie",
+        business: { positioningStatement: "I help makers ship.", audience: "makers" },
+      } }),
+      new Request("https://connie.example/.well-known/me.json"),
+    );
+    const profile = (await response.json()) as Record<string, unknown>;
+
+    expect(profile).toMatchObject({ visibility: "public", handle: "connie" });
+    expect(profile).not.toHaveProperty("business");
+  });
+
   it("forces an unpublished profile to a minimal private projection", async () => {
     const response = await serveMeJsonResponse(
       createVisibilityEnv({ published: false, sourceVisibility: "public" }),

@@ -1,4 +1,5 @@
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
+import { saveOwnerMission } from "@me3-core/plugin-mission-control";
 import { getAiGatewayUsageSummary } from "../ai-gateway";
 import { getLiveDailyBriefing } from "../daily-briefing";
 import {
@@ -98,6 +99,24 @@ export function registerMissionControlRoutes(app: AppHono, deps: OwnerRouteDeps)
         ),
       );
     } catch (error) {
+      return missionControlErrorResponse(c, error);
+    }
+  });
+
+  // The private Mission. A written statement wins; otherwise the answers become the sentence.
+  app.put("/api/mission-control/mission", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireMissionControlPlugin(c);
+    if (blocked) return blocked;
+
+    const body = await c.req.json().catch(() => ({}));
+    const input = body && typeof body === "object" ? body as Record<string, unknown> : {};
+    try {
+      return c.json({ mission: await saveOwnerMission(c.env.DB, ownerId, { statement: input.statement, answers: input.answers }) });
+    } catch (error) {
+      // The store's only own error is an empty Mission; anything else is a server fault.
+      if (error instanceof Error && error.message.startsWith("Write your mission")) return c.json({ ok: false, error: error.message }, 400);
       return missionControlErrorResponse(c, error);
     }
   });

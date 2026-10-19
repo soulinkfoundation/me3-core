@@ -143,28 +143,6 @@ function publicLinks(profile: Me3SiteProfile): Me3Link[] | undefined {
   return links.length > 0 ? links : undefined;
 }
 
-function publicBusiness(profile: Me3SiteProfile): Me3PublicProfile["business"] {
-  const source = profile.business;
-  if (!source) return undefined;
-  const business = {
-    ...(text(source.positioningStatement, 320)
-      ? { positioningStatement: text(source.positioningStatement, 320) }
-      : {}),
-    ...(text(source.audience, 160) ? { audience: text(source.audience, 160) } : {}),
-    ...(text(source.primaryProblem, 160)
-      ? { primaryProblem: text(source.primaryProblem, 160) }
-      : {}),
-    ...(text(source.solution, 240) ? { solution: text(source.solution, 240) } : {}),
-    ...(text(source.targetMarket, 160)
-      ? { targetMarket: text(source.targetMarket, 160) }
-      : {}),
-    ...(text(source.primaryOutcome, 240)
-      ? { primaryOutcome: text(source.primaryOutcome, 240) }
-      : {}),
-  };
-  return Object.keys(business).length > 0 ? business : undefined;
-}
-
 function publicLocation(profile: Me3SiteProfile): Me3LocationData | undefined {
   const source = profile.locationData;
   if (!source || typeof source !== "object") return undefined;
@@ -415,7 +393,6 @@ export function buildPublicMe3Profile(
         }
       : {}),
     ...(products.length > 0 ? { products } : {}),
-    ...(publicBusiness(source) ? { business: publicBusiness(source) } : {}),
     ...(services.length > 0 ? { services } : {}),
     ...(Object.keys(actions).length > 0 ? { actions } : {}),
     ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),

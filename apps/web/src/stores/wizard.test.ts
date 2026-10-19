@@ -507,13 +507,13 @@ describe("wizard store", () => {
       expect(store.stepIds).toContain("goals");
       expect(store.stepIds).not.toContain("wheel-of-life");
       expect(store.stepNames).toContain("Logo");
-      expect(store.stepNames).toContain("Who you help");
+      expect(store.stepNames).not.toContain("Who you help");
 
       store.activateDraftContext({ role: "profile" });
       expect(store.stepIds).not.toContain("goals");
       expect(store.stepIds).not.toContain("wheel-of-life");
       expect(store.stepNames).toContain("Photo");
-      expect(store.stepNames).toContain("Who you help");
+      expect(store.stepNames).not.toContain("Who you help");
     });
   });
 
@@ -2306,7 +2306,6 @@ describe("wizard store", () => {
         "Basics",
         "Photo",
         "Banner",
-        "Who you help",
         "Features",
         "Pages",
         "Publish",

@@ -26,6 +26,14 @@ import {
   type MissionProjectStatus,
   type MissionTaskStatus,
 } from "@me3-core/plugin-mission-control";
+import {
+  legacyMissionFromBusiness,
+  MISSION_PLACEHOLDER,
+  normalizeMissionAnswers,
+  ownedMissionStatement,
+  saveOwnerMission,
+  type OwnerMission,
+} from "@me3-core/plugin-mission-control";
 import { getUtcMsForLocalTime, normalizeTimeZone } from "./calendar";
 import { hasConfiguredAiProvider } from "./ai-providers";
 import { isCorePluginEnabled, listCorePluginRecords } from "./plugins";
@@ -379,8 +387,8 @@ type DashboardPluginRecord = Awaited<ReturnType<typeof listCorePluginRecords>>[n
 const PERSONAL_PROJECT_ID = "mission-project-personal";
 const DEFAULT_OWNER_TIMEZONE = "UTC";
 const WORKSPACE_TASK_STATUSES: MissionTaskStatus[] = ["backlog", "in_progress", "done"];
-const DEFAULT_MISSION_STATEMENT =
-  "I am here to help [who/what] become [desired change] by being [way of being] and creating [work/service], guided by [values].";
+// Returned where no Mission is written yet, so older clients that look for [blanks] keep prompting.
+const DEFAULT_MISSION_STATEMENT = MISSION_PLACEHOLDER;
 const DEFAULT_SETUP_CHECKLIST_DISMISSED = true;
 const DASHBOARD_CARD_COMPONENT_KEYS = new Set([
   "DailyBriefingCard",
@@ -1022,26 +1030,9 @@ type MissionProfileSnapshot = {
   name: string;
   handle: string;
   bio: string;
-  missionStatement: string;
+  /** A Mission written on the site before it became private; carried into Core once. */
+  legacyMission: OwnerMission | null;
 };
-
-function missionStatementFromBusiness(
-  business: Record<string, unknown>,
-): string {
-  const explicit = normalizeContextMissionStatement(
-    business.positioningStatement,
-  );
-  if (explicit) return explicit;
-
-  const audience = normalizeNullableText(business.audience);
-  if (!audience) return "";
-  const primaryProblem = normalizeNullableText(business.primaryProblem);
-  const solution = normalizeNullableText(business.solution);
-  const parts = [`I help ${audience}`];
-  if (primaryProblem) parts.push(`with ${primaryProblem}`);
-  if (solution) parts.push(`by ${solution}`);
-  return `${parts.join(" ")}.`;
-}
 
 async function loadMissionProfileSnapshot(
   env: Env,
@@ -1072,7 +1063,7 @@ async function loadMissionProfileSnapshot(
       name: normalizeNullableText(profile.name) || site.username,
       handle: normalizeNullableText(profile.handle) || site.username,
       bio: normalizeNullableText(profile.bio) || "",
-      missionStatement: missionStatementFromBusiness(business),
+      legacyMission: legacyMissionFromBusiness(business),
     };
   } catch {
     return null;
@@ -1108,9 +1099,16 @@ export async function getMissionDashboard(env: Env, userId: string) {
     allQuickActionContributions,
     enabledPlugins,
   );
-  const missionStatement = profileSnapshot
-    ? profileSnapshot.missionStatement || DEFAULT_MISSION_STATEMENT
-    : row.mission_statement || DEFAULT_MISSION_STATEMENT;
+  // The Mission is private to Core. One written on the site before the move is carried over the first time.
+  let mission: OwnerMission = {
+    statement: ownedMissionStatement(row.mission_statement),
+    answers: normalizeMissionAnswers(parseJsonRecord(row.settings_json).missionAnswers),
+  };
+  if (!mission.statement && profileSnapshot?.legacyMission) {
+    mission = profileSnapshot.legacyMission;
+    await saveOwnerMission(env.DB, userId, mission).catch(() => undefined);
+  }
+  const missionStatement = mission.statement || DEFAULT_MISSION_STATEMENT;
   const cards = resolveDashboardCards(
     parseJsonArray(row.cards_json),
     allCardContributions,
@@ -1133,13 +1131,14 @@ export async function getMissionDashboard(env: Env, userId: string) {
     quickLinks,
     settings,
     missionStatement,
+    mission,
     mainGoal,
     data: {
       "mission.daily-briefing": latestDailyBriefing,
       "mission.mission-statement": {
         missionStatement,
         placeholder: DEFAULT_MISSION_STATEMENT,
-        source: profileSnapshot ? "profile" : "legacy",
+        source: "private",
       },
       "mission.goals": {
         goals: settings.goals,
@@ -1309,6 +1308,8 @@ export async function updateMissionDashboard(
     kanbanEnabled: settings.kanbanEnabled,
     goals: settings.goals,
     setupChecklistDismissed: settings.setupChecklistDismissed,
+    // Saved through the Mission endpoint; dashboard updates keep it as it is.
+    ...(existingPersistedSettings.missionAnswers === undefined ? {} : { missionAnswers: existingPersistedSettings.missionAnswers }),
   };
 
   const writeSettings = env.DB.prepare(
@@ -2384,14 +2385,9 @@ async function ensureBaselineContextSources(env: Env, userId: string) {
     getLatestMissionWheelSnapshot(env, userId).catch(() => null),
     loadMissionProfileSnapshot(env, userId).catch(() => null),
   ]);
-  const missionStatement = profileSnapshot
-    ? profileSnapshot.missionStatement
-    : normalizeContextMissionStatement(dashboardRow?.mission_statement || null);
-  const dashboardSettings = normalizeDashboardSettings(
-    parseJsonRecord(dashboardRow?.settings_json || "{}"),
-  );
+  // Goals alone don't say what someone's life is built around, so the Mission stays missing until it's written.
   const hasMissionContext = Boolean(
-    missionStatement || dashboardSettings.goals.length,
+    ownedMissionStatement(dashboardRow?.mission_statement) || profileSnapshot?.legacyMission?.statement,
   );
   const baselines = [
     {
@@ -2399,11 +2395,11 @@ async function ensureBaselineContextSources(env: Env, userId: string) {
       kind: "mission_statement",
       label: "Mission",
       description: hasMissionContext
-        ? "The owner's Mission and active goals for assistant help."
-        : "Missing: define a Mission or active goal so ME3 understands the owner's direction.",
+        ? "The owner's private Mission: who they help, the change they want, and how."
+        : "Missing: draft a Mission so ME3 understands who the owner helps and why.",
       visibility: "private",
       status: hasMissionContext ? "active" : "setup_required",
-      sourceRef: "/create?step=mission",
+      sourceRef: "/mission?focus=statement",
     },
     {
       id: `mission-source-wheel-of-life-${userId}`,
@@ -3177,12 +3173,6 @@ function normalizeDashboardIcon(value: unknown): string | null {
   return text;
 }
 
-function normalizeContextMissionStatement(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === DEFAULT_MISSION_STATEMENT) return null;
-  return trimmed.slice(0, 2000);
-}
 
 function normalizeDashboardSettings(value: Record<string, unknown>, previousGoals: ReturnType<typeof normalizeMissionGoals> = []) {
   const legacyMainGoal = normalizeMainGoal(value.mainGoal);

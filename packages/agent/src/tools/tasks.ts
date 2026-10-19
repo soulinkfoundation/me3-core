@@ -1,5 +1,6 @@
 import { archiveAgentMissionTask, createAgentMissionTask, getAgentMissionTask, listAgentMissionProjects, listAgentMissionTasks, slugifyMissionProjectName, updateAgentMissionTask, type AgentMissionProject, type AgentMissionTask, type CreateAgentMissionTaskInput, type UpdateAgentMissionTaskInput } from "@me3-core/plugin-mission-control";
 import { domainTool, ok, optionalString, requiredString, resultOrThrow } from "./common";
+import { readOwnerMission, saveOwnerMission } from "@me3-core/plugin-mission-control";
 import { approval, rememberTargets, requireTarget } from "./targets";
 
 // Mission tasks clamp priority to 1-5 and sort ascending, so 1 is most urgent.
@@ -15,6 +16,18 @@ export function resolveProject(projects: AgentMissionProject[], args: Record<str
 }
 export function taskTools() {
   return [
+    // Drafting a Mission in chat saves straight away; replacing one the owner already wrote waits for their yes.
+    domainTool("core.mission.statement.save", async (args, context) => {
+      const { statement, ...answers } = args as Record<string, unknown>;
+      const input = { statement, answers: Object.keys(answers).length ? answers : undefined };
+      const existing = await readOwnerMission(context.db, context.ownerId);
+      if (existing.statement) {
+        const pending = approval(context, "Replace your Mission", `Replace "${existing.statement}"`, { current: existing.statement, proposed: input });
+        if (pending) return pending;
+      }
+      context.signal.throwIfAborted();
+      return ok({ mission: await saveOwnerMission(context.db, context.ownerId, input) });
+    }),
     domainTool("core.mission.task.list", async (args, context) => {
       const projects = await listAgentMissionProjects({ DB: context.db }, context.ownerId);
       const projectId = resolveProject(projects, args);

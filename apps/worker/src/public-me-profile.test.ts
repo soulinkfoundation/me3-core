@@ -135,6 +135,9 @@ describe("public me.json profile", () => {
     expect(JSON.stringify(profile)).not.toContain("minimumAmount");
     expect(JSON.stringify(profile)).not.toContain("allowFlexiblePricing");
     expect(JSON.stringify(profile)).not.toContain("_vibe");
+    // The Mission is private to Core: neither the statement nor the answers behind it are public.
+    expect(profile).not.toHaveProperty("business");
+    expect(JSON.stringify(profile)).not.toContain("clarify their offer");
   });
 
   it("publishes a valid identity-only profile when no public HTTPS origin exists", () => {

@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { definePage } from "unplugin-vue-router/runtime";
 import { api } from "../api";
-import { ownMissionStatement, saveMissionStatement } from "../utils/missionStatement";
+import { MISSION_DRAFT_PROMPT, missionSentence, ownMissionStatement, saveMission, type MissionAnswers } from "../utils/missionStatement";
 import AppPageBar from "../components/AppPageBar.vue";
 import Button from "../components/Button.vue";
 import UiIcon from "../components/UiIcon.vue";
@@ -54,11 +54,23 @@ const savingWheel = ref(false);
 const scored = computed(() => Boolean(wheelDate.value));
 const lowest = computed(() => [...wheel.value].filter(area => area.value !== null).sort((a, b) => a.value! - b.value!)[0]);
 
+// The Mission is private to ME3. A first one is drafted from three short questions (who, the change, how, and an
+// optional why) so it starts structured; "Write it my own way" is always there for people who'd rather not.
 const mission = ref("");
+const answers = ref<MissionAnswers>({});
 const editingMission = ref(false);
+const missionMode = ref<"questions" | "words">("questions");
+const draftAnswers = ref<MissionAnswers>({});
 const missionDraft = ref("");
 const savingMission = ref(false);
 const missionField = ref<HTMLTextAreaElement | null>(null);
+const whoField = ref<HTMLInputElement | null>(null);
+const draftSentence = computed(() => missionSentence(draftAnswers.value));
+const missionExamples = [
+  "I help my family feel safe and loved by being present and patient.",
+  "I help first-time founders launch with confidence by coaching them and building simple tools.",
+  "I help my neighbours feel less alone by hosting a weekly walk, because community kept me going.",
+];
 
 // Tasks inform progress without setting it: many goals aren't task-shaped, and adding a task shouldn't move you back.
 function taskLine(goal: HomeGoal) {
@@ -71,13 +83,16 @@ function taskLine(goal: HomeGoal) {
 async function load() {
   loading.value = true; loadError.value = "";
   const [dashboard, goals, wheelData, projectList] = await Promise.allSettled([
-    api.get<{ missionStatement?: string }>("/mission-control/dashboard"),
+    api.get<{ missionStatement?: string; mission?: { statement: string | null; answers: MissionAnswers } }>("/mission-control/dashboard"),
     plan.loadGoals(),
     api.get<{ snapshots: { createdAt: string; segments: HomeWheelArea[] }[]; settings: { segments: HomeWheelArea[] } }>("/journal/wheel"),
     api.get<{ projects: Project[] }>("/mission-control/projects"),
     plan.loadTasks().catch(() => undefined),
   ]);
-  if (dashboard.status === "fulfilled") mission.value = ownMissionStatement(dashboard.value.missionStatement);
+  if (dashboard.status === "fulfilled") {
+    mission.value = ownMissionStatement(dashboard.value.mission?.statement ?? dashboard.value.missionStatement);
+    answers.value = dashboard.value.mission?.answers || {};
+  }
   if (wheelData.status === "fulfilled") {
     wheelDate.value = wheelData.value.snapshots?.[0]?.createdAt || "";
     wheel.value = wheelData.value.snapshots?.[0]?.segments || wheelData.value.settings?.segments || [];
@@ -165,28 +180,40 @@ async function saveCheckIn() {
   } finally { savingWheel.value = false; }
 }
 
-function startEditingMission() {
-  missionDraft.value = mission.value;
+// No Mission yet starts with the questions; editing one starts with the words, with the questions a tap away.
+function startEditingMission(mode: "questions" | "words" = mission.value ? "words" : "questions") {
+  draftAnswers.value = { ...answers.value };
+  missionDraft.value = mission.value || draftSentence.value;
+  missionMode.value = mode;
   editingMission.value = true;
-  void nextTick(() => missionField.value?.focus());
+  void nextTick(() => (mode === "questions" ? whoField.value : missionField.value)?.focus());
 }
 
-async function saveMission() {
-  const text = missionDraft.value.trim();
-  if (!text) return;
+function switchMissionMode(mode: "questions" | "words") {
+  if (mode === "words" && !missionDraft.value.trim()) missionDraft.value = draftSentence.value;
+  missionMode.value = mode;
+  void nextTick(() => (mode === "questions" ? whoField.value : missionField.value)?.focus());
+}
+
+const canSaveMission = computed(() => missionMode.value === "questions" ? Boolean(draftSentence.value) : Boolean(missionDraft.value.trim()));
+
+async function saveMissionDraft() {
+  if (!canSaveMission.value) return;
   savingMission.value = true;
   try {
-    await saveMissionStatement(text);
-    mission.value = text;
+    const saved = await saveMission(missionMode.value === "questions" ? { answers: draftAnswers.value } : { statement: missionDraft.value.trim() });
+    mission.value = saved.statement || "";
+    answers.value = saved.answers;
     editingMission.value = false;
   } catch (error) {
     toastError(`Couldn't save your mission. ${error instanceof Error ? error.message : ""}`.trim());
   } finally { savingMission.value = false; }
 }
 
-const askPrompt = computed(() => missionDraft.value.trim()
-  ? `Help me rewrite my mission statement. It's currently: "${missionDraft.value.trim()}"`
-  : "Help me write my mission statement.");
+const askPrompt = computed(() => {
+  const current = missionMode.value === "words" ? missionDraft.value.trim() : draftSentence.value;
+  return current ? `Help me rewrite my mission statement. It's currently: "${current}"` : MISSION_DRAFT_PROMPT;
+});
 
 async function applyFocus() {
   const goal = typeof route.query.goal === "string" ? route.query.goal : "";
@@ -197,7 +224,7 @@ async function applyFocus() {
   const section = goal || focus === "goals" ? "goals-title" : focus === "check-in" ? "wheel-title" : focus === "statement" ? "mission-title" : "";
   await nextTick();
   if (section) document.getElementById(section)?.scrollIntoView({ block: "start" });
-  if (focus === "statement" && !mission.value) missionField.value?.focus();
+  if (focus === "statement" && !mission.value) whoField.value?.focus();
 }
 
 onMounted(async () => { await load(); await applyFocus(); });
@@ -294,18 +321,36 @@ onMounted(async () => { await load(); await applyFocus(); });
       <section class="mission-card" aria-labelledby="mission-title">
         <h2 id="mission-title">
           <span aria-hidden="true">🚀</span>Mission
-          <Button v-if="!editingMission && !loading" class="mission-head-action" color="ghost" size="compact" shape="soft" icon-only :aria-label="mission ? 'Edit your mission' : 'Write your mission'" @click="startEditingMission"><UiIcon :name="mission ? 'Pencil' : 'Plus'" :size="17" /></Button>
+          <Button v-if="!editingMission && !loading" class="mission-head-action" color="ghost" size="compact" shape="soft" icon-only :aria-label="mission ? 'Edit your mission' : 'Write your mission'" @click="startEditingMission()"><UiIcon :name="mission ? 'Pencil' : 'Plus'" :size="17" /></Button>
         </h2>
-        <form v-if="editingMission" class="mission-editor" @submit.prevent="saveMission">
-          <textarea ref="missionField" v-model="missionDraft" rows="3" aria-label="Your mission" placeholder="What do you want your life built around?" />
-          <RouterLink :to="{ path: '/assistant', query: { prompt: askPrompt } }" class="mission-quiet"><UiIcon name="Sparkles" :size="16" />Ask ME3 to help rewrite it</RouterLink>
+        <form v-if="editingMission" class="mission-editor" @submit.prevent="saveMissionDraft">
+          <template v-if="missionMode === 'questions'">
+            <p class="mission-muted">Who you help, the change you want for them, and how. It doesn't need to be perfect; it's a first draft you'll come back to.</p>
+            <label class="mission-question"><span>Who do you want to help?</span><input ref="whoField" v-model="draftAnswers.who" maxlength="160" placeholder="My family, first-time founders, my community" /></label>
+            <label class="mission-question"><span>What change do you want for them?</span><input v-model="draftAnswers.change" maxlength="240" placeholder="Feel less alone, launch with confidence" /></label>
+            <label class="mission-question"><span>How do you help?</span><input v-model="draftAnswers.how" maxlength="240" placeholder="Listening, coaching, building simple tools" /></label>
+            <label class="mission-question"><span>Why does it matter to you? <em>Optional</em></span><input v-model="draftAnswers.why" maxlength="240" placeholder="Someone did it for me" /></label>
+            <p class="mission-preview" :class="{ 'is-empty': !draftSentence }" aria-live="polite">{{ draftSentence || "Your mission appears here as you answer." }}</p>
+            <details class="mission-examples"><summary>See examples</summary><ul><li v-for="example in missionExamples" :key="example">{{ example }}</li></ul></details>
+            <div class="mission-links">
+              <button type="button" class="mission-quiet" @click="switchMissionMode('words')"><UiIcon name="PenLine" :size="16" />Write it my own way</button>
+              <RouterLink :to="{ path: '/assistant', query: { prompt: askPrompt } }" class="mission-quiet"><UiIcon name="Sparkles" :size="16" />Ask ME3 to help</RouterLink>
+            </div>
+          </template>
+          <template v-else>
+            <textarea ref="missionField" v-model="missionDraft" rows="3" aria-label="Your mission" placeholder="What do you want your life built around?" />
+            <div class="mission-links">
+              <button type="button" class="mission-quiet" @click="switchMissionMode('questions')"><UiIcon name="ListTodo" :size="16" />Answer the questions instead</button>
+              <RouterLink :to="{ path: '/assistant', query: { prompt: askPrompt } }" class="mission-quiet"><UiIcon name="Sparkles" :size="16" />Ask ME3 to help rewrite it</RouterLink>
+            </div>
+          </template>
           <div class="mission-actions">
             <Button color="outline" shape="soft" :disabled="savingMission" @click="editingMission = false">Cancel</Button>
-            <Button type="submit" color="primary" shape="soft" :disabled="savingMission || !missionDraft.trim()">{{ savingMission ? 'Saving…' : 'Save mission' }}</Button>
+            <Button type="submit" color="primary" shape="soft" :disabled="savingMission || !canSaveMission">{{ savingMission ? 'Saving…' : 'Save mission' }}</Button>
           </div>
         </form>
-        <button v-else-if="mission" type="button" class="mission-statement" @click="startEditingMission">{{ mission }}</button>
-        <button v-else-if="!loading" type="button" class="mission-statement is-empty" @click="startEditingMission">What do you want your life built around?</button>
+        <button v-else-if="mission" type="button" class="mission-statement" @click="startEditingMission()">{{ mission }}</button>
+        <button v-else-if="!loading" type="button" class="mission-statement is-empty" @click="startEditingMission()">Who do you want to help, and how? Draft your mission in three short answers.</button>
       </section>
     </div>
   </main>
@@ -376,6 +421,16 @@ onMounted(async () => { await load(); await applyFocus(); });
 .mission-editor { display: grid; gap: 4px; padding-top: 4px; }
 .mission-editor textarea { box-sizing: border-box; width: 100%; padding: 12px; border: 0; border-radius: var(--ui-radius-md); background: var(--ui-surface-muted); color: var(--ui-text); font-family: var(--font-serif, Georgia, serif); font-size: 19px; line-height: 1.45; resize: vertical; }
 .mission-editor textarea:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+.mission-question { display: grid; gap: 6px; margin-top: 8px; font-size: 14px; font-weight: 600; }
+.mission-question em { color: var(--ui-text-muted); font-style: normal; font-weight: 400; }
+.mission-question input { box-sizing: border-box; width: 100%; min-height: 44px; padding: 0 12px; border: 0; border-radius: var(--ui-radius-md); background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; font-size: 15px; font-weight: 400; }
+.mission-question input:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+.mission-preview { margin: 14px 0 4px; font-family: var(--font-serif, Georgia, serif); font-size: 19px; line-height: 1.45; }
+.mission-preview.is-empty { color: var(--ui-text-muted); font-size: 16px; }
+.mission-examples { color: var(--ui-text-muted); font-size: 14px; }
+.mission-examples summary { min-height: 36px; display: flex; align-items: center; cursor: pointer; }
+.mission-examples ul { margin: 0 0 6px; padding-left: 18px; line-height: 1.5; }
+.mission-links { display: flex; flex-wrap: wrap; gap: 4px 18px; }
 .mission-error { color: var(--ui-danger, #dc2626); font-size: 14px; }
 .mission-error button { border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

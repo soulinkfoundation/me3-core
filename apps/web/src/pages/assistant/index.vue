@@ -10,6 +10,7 @@ import {
 import { useRoute, useRouter } from "vue-router";
 import { definePage } from "unplugin-vue-router/runtime";
 import { api, type ApiStreamEvent } from "../../api";
+import { MISSION_DRAFT_PROMPT, ownMissionStatement } from "../../utils/missionStatement";
 import Button from "../../components/Button.vue";
 import HomePanels from "../../components/home/HomePanels.vue";
 import AgentTargetChoices from "../../components/AgentTargetChoices.vue";
@@ -436,13 +437,20 @@ const showConfigureStarterPrompt = computed(() => {
   return aiDeploymentMode.value === "self_hosted" && !selectedModelSetup.value.configured;
 });
 
-const visibleStarterPrompts = computed(() =>
-  siteBuilderMode.value
-    ? []
-    : showConfigureStarterPrompt.value
-      ? starterPrompts
-      : starterPrompts.filter((prompt) => prompt.label !== "Configure"),
-);
+// Until there's a Mission, drafting one leads the starters: it tells ME3 who the owner helps and why.
+const missionMissing = ref(false);
+const missionStarterPrompt: StarterPrompt = { label: "Draft my mission", icon: "Sparkles", prompt: MISSION_DRAFT_PROMPT };
+async function loadMissionStarter() {
+  try {
+    const dashboard = await api.get<{ missionStatement?: string; mission?: { statement: string | null } }>("/mission-control/dashboard");
+    missionMissing.value = !ownMissionStatement(dashboard.mission?.statement ?? dashboard.missionStatement);
+  } catch { missionMissing.value = false; }
+}
+const visibleStarterPrompts = computed(() => {
+  if (siteBuilderMode.value) return [];
+  const prompts = showConfigureStarterPrompt.value ? starterPrompts : starterPrompts.filter((prompt) => prompt.label !== "Configure");
+  return missionMissing.value ? [missionStarterPrompt, ...prompts] : prompts;
+});
 const assistantMessageLabel = computed(
   () => `Message ${assistantDisplayName.value}`,
 );
@@ -606,6 +614,7 @@ const canSendAssistantMessage = computed(
     !assistantAttachmentIssue.value,
 );
 onMounted(() => {
+  void loadMissionStarter();
   void initializeAssistantPage();
 });
 

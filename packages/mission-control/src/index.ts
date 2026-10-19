@@ -144,3 +144,17 @@ export {
   type CreateAgentMissionTaskInput,
   type UpdateAgentMissionTaskInput,
 } from "./agent-tasks";
+
+export {
+  legacyMissionFromBusiness,
+  missionSentence,
+  MISSION_PLACEHOLDER,
+  MISSION_STATEMENT_MAX_LENGTH,
+  normalizeMissionAnswers,
+  ownedMissionStatement,
+  readOwnerMission,
+  saveOwnerMission,
+  type MissionAnswers,
+  type MissionDb,
+  type OwnerMission,
+} from "./mission-statement";
