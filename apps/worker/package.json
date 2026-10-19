@@ -26,7 +26,7 @@
     "agents": "^0.24.0",
     "hono": "^4.13.13",
     "ical.js": "^2.2.1",
-    "me3-protocol": "github:soulinkfoundation/me3-protocol#v4.1.0",
+    "me3-protocol": "^5.0.0",
     "stripe": "^17.0.0",
     "zod": "4.6.5"
   },
