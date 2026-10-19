@@ -622,6 +622,14 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.batch(HOME_CARDS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
+  // Owner's choice for the "Create your own ME3 site" badge; NULL follows the install default.
+  {
+    id: "0079_site_badge",
+    checksum: "2026-10-19-site-badge-v1",
+    async apply(db) {
+      await addColumnIfMissing(db, "owner_profile", "site_badge", "TEXT CHECK (site_badge IN ('shown', 'hidden'))");
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

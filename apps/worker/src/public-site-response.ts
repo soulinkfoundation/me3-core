@@ -39,14 +39,14 @@ export async function publicSiteFileResponse(options: {
 }
 
 function addCreateSitePrompt(html: string): string {
+  // A small corner pill, quiet enough not to compete with the owner's own page.
   const prompt = `<style>
-    .me3-create-site-space{height:96px}
-    a.me3-create-site{box-sizing:border-box;position:fixed;z-index:1000;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;align-items:center;gap:14px;width:max-content;max-width:calc(100vw - 32px);min-height:58px;padding:8px 16px 8px 9px;border:1px solid #171717;border-radius:999px;background:#fff;color:#171717;box-shadow:0 8px 28px rgba(0,0,0,.25);font:600 14px/1.2 system-ui,-apple-system,sans-serif;text-decoration:none;white-space:nowrap}
-    a.me3-create-site:hover{background:#f3f3f3}
-    a.me3-create-site:focus-visible{outline:3px solid #0b806e;outline-offset:3px}
-    .me3-create-site-mark{display:grid;place-items:center;flex:none;width:40px;height:40px;border-radius:50%;background:#171717;color:#fff;font-size:12px;font-weight:800;letter-spacing:-.06em}
-    .me3-create-site-arrow{margin-left:auto;font-size:24px;font-weight:400;line-height:1}
-    @media(max-width:380px){a.me3-create-site{gap:9px;padding-right:12px;font-size:12px}.me3-create-site-mark{width:36px;height:36px;font-size:11px}}
-  </style><div class="me3-create-site-space" aria-hidden="true"></div><a class="me3-create-site" href="https://me3.app/"><span class="me3-create-site-mark" aria-hidden="true">ME3</span><span>Create a free ME3 site</span><span class="me3-create-site-arrow" aria-hidden="true">→</span></a>`;
+    .me3-create-site-space{height:64px}
+    a.me3-create-site{box-sizing:border-box;position:fixed;z-index:1000;right:calc(16px + env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom));display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:4px 12px 4px 4px;border:1px solid rgba(0,0,0,.08);border-radius:999px;background:rgba(255,255,255,.88);color:#3d3d3d;box-shadow:0 2px 10px rgba(0,0,0,.08);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);font:500 12px/1 system-ui,-apple-system,sans-serif;text-decoration:none;white-space:nowrap;opacity:.92;transition:opacity .15s,box-shadow .15s}
+    a.me3-create-site:hover{opacity:1;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+    a.me3-create-site:focus-visible{outline:2px solid #0b806e;outline-offset:2px}
+    .me3-create-site-mark{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:50%;background:#171717;color:#fff;font-size:8px;font-weight:800;letter-spacing:-.04em}
+    @media(prefers-color-scheme:dark){a.me3-create-site{border-color:rgba(255,255,255,.12);background:rgba(28,28,28,.82);color:#e8e8e8}.me3-create-site-mark{background:#fff;color:#171717}}
+  </style><div class="me3-create-site-space" aria-hidden="true"></div><a class="me3-create-site" href="https://me3.app/" aria-label="Made with ME3. Create your own site"><span class="me3-create-site-mark" aria-hidden="true">ME3</span><span>Made with ME3</span></a>`;
   return /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${prompt}</body>`) : `${html}${prompt}`;
 }

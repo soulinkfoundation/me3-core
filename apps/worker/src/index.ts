@@ -30,7 +30,7 @@ import {
 } from "./core-runtime-migrations";
 import { Me3UserAgent } from "./user-agent";
 import { Me3Agent } from "./me3-agent";
-import { syncManagedAiUsage } from "./managed-ai-billing";
+import { refreshManagedBillingPolicyIfStale, syncManagedAiUsage } from "./managed-ai-billing";
 import { syncDueSoulinkContacts } from "./routes/channels";
 import {
   CAMPAIGN_DISPATCH_CRON,
@@ -97,6 +97,7 @@ const worker = {
       await dispatchDueCalendarSourceRefreshes(env);
       await syncDueSoulinkContacts(env);
       await syncManagedAiUsage(env);
+      await refreshManagedBillingPolicyIfStale(env).catch(() => console.error("Managed billing refresh failed"));
       await dispatchDueCampaignJobs(env);
       await recoverManagedCampaignEvents(env).catch(() => undefined);
     } finally {

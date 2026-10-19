@@ -1,3 +1,4 @@
+import { getSiteBadgeState, setSiteBadgePreference } from "./site-badge";
 import { registerWheelOfLifeRoutes } from "./routes/wheel-of-life";
 import { registerQuoteRoutes } from "./routes/quotes";
 import { registerGratitudeRoutes } from "./routes/gratitude";
@@ -1429,6 +1430,24 @@ app.put("/api/account", async (c) => {
   if (!owner) return c.json({ error: "Account not found" }, 404);
 
   return c.json({ user: serializeAccountOwner(owner) });
+});
+
+// The "Create your own ME3 site" badge on published pages: "auto" follows the install default.
+app.get("/api/site-badge", async (c) => {
+  const ownerId = await requireOwner(c);
+  if (!ownerId) return unauthorized(c);
+  return c.json(await getSiteBadgeState(c.env, ownerId));
+});
+
+app.put("/api/site-badge", async (c) => {
+  const ownerId = await requireOwner(c);
+  if (!ownerId) return unauthorized(c);
+  const body = await c.req.json<{ preference?: unknown }>().catch((): { preference?: unknown } => ({}));
+  if (body.preference !== "auto" && body.preference !== "shown" && body.preference !== "hidden") {
+    return c.json({ error: "preference must be auto, shown or hidden" }, 400);
+  }
+  await setSiteBadgePreference(c.env, ownerId, body.preference);
+  return c.json(await getSiteBadgeState(c.env, ownerId));
 });
 
 app.post("/api/account/delete", async (c) => {

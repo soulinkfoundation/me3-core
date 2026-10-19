@@ -259,10 +259,53 @@ async function cacheManagedAiBillingPolicy(
         defaultModel: settings.defaultModel,
         overagesEnabled: settings.overagesEnabled,
         monthlyMaximumCents: settings.monthlyMaximumCents,
+        billingSource: settings.billingSource,
         cachedAt: new Date().toISOString(),
       }),
     )
     .run();
+}
+
+async function readCachedManagedBillingPolicy(
+  env: Env,
+): Promise<{ billingSource: ManagedAiBillingSettings["billingSource"]; cachedAt: string | null } | null> {
+  try {
+    const row = await env.DB.prepare("SELECT value FROM install_secrets WHERE name = ?")
+      .bind(MANAGED_AI_BILLING_POLICY_SECRET)
+      .first<{ value: string }>();
+    if (!row?.value) return null;
+    const parsed = JSON.parse(row.value) as { billingSource?: unknown; cachedAt?: unknown };
+    const sources = ["internal", "storekit", "stripe", "google_play", "trial", "complimentary"];
+    return {
+      billingSource: typeof parsed.billingSource === "string" && sources.includes(parsed.billingSource)
+        ? parsed.billingSource as ManagedAiBillingSettings["billingSource"]
+        : null,
+      cachedAt: typeof parsed.cachedAt === "string" ? parsed.cachedAt : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The owner's last known entitlement source, from the local cache (no network call). */
+export async function readCachedManagedBillingSource(
+  env: Env,
+): Promise<ManagedAiBillingSettings["billingSource"]> {
+  return (await readCachedManagedBillingPolicy(env))?.billingSource ?? null;
+}
+
+const BILLING_POLICY_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Keeps the cached billing source fresh for decisions made on public requests
+ * (such as the site badge) without calling ME3 Cloud from those requests.
+ */
+export async function refreshManagedBillingPolicyIfStale(env: Env, now = Date.now()): Promise<void> {
+  if (!isManaged(env)) return;
+  const cached = await readCachedManagedBillingPolicy(env);
+  const cachedAt = cached?.cachedAt ? Date.parse(cached.cachedAt) : NaN;
+  if (cached?.billingSource && Number.isFinite(cachedAt) && now - cachedAt < BILLING_POLICY_MAX_AGE_MS) return;
+  await getManagedAiBillingSettings(env, { syncUsage: false });
 }
 
 function unavailableSettings(

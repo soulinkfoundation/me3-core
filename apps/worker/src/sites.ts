@@ -1,3 +1,4 @@
+import { shouldShowSiteBadge } from "./site-badge";
 import { extractEmbeddedPageImages, hasEmbeddedPageImages } from "./site-embedded-images";
 import { publicSiteFileResponse } from "./public-site-response";
 import { requestCountry } from "../../../shared/regional-pricing";
@@ -846,7 +847,7 @@ export async function serveSiteFileResponse(
   return publicSiteFileResponse({
     content, contentType: file.content_type,
     sha256, published: requirePublished, request, path: requestedPath, noindex,
-    showCreateSitePrompt: !(site.custom_domain && site.custom_domain_status === "active"),
+    showCreateSitePrompt: requirePublished && file.content_type.startsWith("text/html") && await shouldShowSiteBadge(env, site),
     profileUrl: `${publicBasePath}/me.json`,
     regionalPricing: Boolean(pricingCountries?.length),
   });

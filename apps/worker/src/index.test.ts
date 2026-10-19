@@ -3968,13 +3968,20 @@ describe("ME3 Worker auth", () => {
     const html = await response.text();
     expect(html).toContain("Studio site");
     expect(html).toContain('href="https://me3.app/"');
-    expect(html).toContain("Create a free ME3 site");
+    expect(html).toContain("Made with ME3");
 
     env.sites[0].custom_domain = "studio.example.com";
     env.sites[0].custom_domain_status = "active";
     const branded = await app.fetch(new Request("https://owner.me3.app/site/studio/"), env);
-    expect(await branded.text()).not.toContain("Create a free ME3 site");
+    expect(await branded.text()).not.toContain("Made with ME3");
     expect(branded.headers.get("ETag")).not.toBe(response.headers.get("ETag"));
+
+    // A managed install with no known trial stays unbranded by default.
+    env.sites[0].custom_domain = null;
+    env.sites[0].custom_domain_status = null;
+    env.ME3_DEPLOYMENT_MODE = "managed";
+    const managed = await app.fetch(new Request("https://owner.me3.app/site/studio/"), env);
+    expect(await managed.text()).not.toContain("Made with ME3");
   });
 
   it("routes exact custom hosts and rejects discovery on unknown hosts", async () => {
@@ -9802,8 +9809,9 @@ describe("ME3 Worker auth", () => {
           implementationStatus: "bundled",
         }),
         expect.objectContaining({
+          // Experimental plugins stay out of the list until switched on.
           id: "me3.social-publishing",
-          showInPluginList: true,
+          showInPluginList: false,
           status: "available",
           implementationStatus: "bundled",
         }),
@@ -9818,7 +9826,7 @@ describe("ME3 Worker auth", () => {
         }),
         expect.objectContaining({
           id: "me3.email-campaigns",
-          showInPluginList: true,
+          showInPluginList: false,
           status: "available",
           implementationStatus: "bundled",
           releaseStage: "available",
@@ -9844,6 +9852,8 @@ describe("ME3 Worker auth", () => {
       "me3.journal",
       "me3.calendar",
       "me3.landing-pages",
+      "me3.email-campaigns",
+      "me3.social-publishing",
     ]);
     const socialPlugin = body.plugins.find(
       (plugin) => plugin.id === "me3.social-publishing",

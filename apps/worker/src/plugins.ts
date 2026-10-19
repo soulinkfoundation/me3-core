@@ -92,6 +92,8 @@ export type CorePluginManifestSummary = {
   installMode: "enabled_by_owner_config";
   defaultEnabled?: boolean;
   showInPluginList?: boolean;
+  /** Not ready for most owners: left out of the plugin list unless already switched on. */
+  experimental?: boolean;
   releaseStage?: "available" | "coming_soon";
   activationAllowed?: boolean;
   implementationStatus: "catalog_only" | "bundled";
@@ -176,6 +178,7 @@ const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
   distribution: "workspace_package",
   installMode: "enabled_by_owner_config",
   showInPluginList: true,
+  experimental: true,
   implementationStatus: SOCIAL_PUBLISHING_RUNTIME.bundled ? "bundled" : "catalog_only",
   capabilityIds: ["content.social_publishing"],
   permissions: [
@@ -1141,6 +1144,7 @@ const EMAIL_CAMPAIGNS_PLUGIN: CorePluginManifestSummary = {
   distribution: "workspace_package",
   installMode: "enabled_by_owner_config",
   showInPluginList: true,
+  experimental: true,
   defaultEnabled: false,
   releaseStage: "available",
   activationAllowed: true,
@@ -1702,7 +1706,8 @@ function serializePluginRecord(
 
   return {
     ...plugin,
-    showInPluginList: plugin.showInPluginList !== false,
+    // An owner who already switched an experimental plugin on can still switch it off.
+    showInPluginList: plugin.showInPluginList !== false && (!plugin.experimental || enabled),
     releaseStage: plugin.releaseStage || "available",
     activationAllowed,
     status,
