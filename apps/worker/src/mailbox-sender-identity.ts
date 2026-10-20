@@ -113,10 +113,19 @@ export function parseForwardedMessage(text: string | null | undefined, subject: 
   return { isForward: true, originalSender, forwardedBody: lines.slice(bodyStart).join("\n").trim() };
 }
 
-/** One readable line for list rows: no forward headers, quotes, signatures or device footers. */
+/** Stylesheets that leak into a text body (a bad text/plain part, an unclosed <style>): "@media … { … }" and "selector { prop: value }". */
+const CSS_AT_RULE = /@[a-z-]+[^{};]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/gi;
+const CSS_RULE = /(?:^|\s)[^\s{};]+(?:\s*[,>+~]\s*[^\s{};]+|\s+[^\s{};]+)*\s*\{[^{}]*:[^{}]*\}/g;
+
+export function stripLeakedStyles(text: string): string {
+  if (!text.includes("{")) return text;
+  return text.replace(CSS_AT_RULE, " ").replace(CSS_RULE, " ");
+}
+
+/** One readable line for list rows: no forward headers, quotes, signatures, device footers or leaked styles. */
 export function cleanMailPreview(text: string | null | undefined, options: { maxLength?: number; subject?: string | null } = {}): string {
   const maxLength = options.maxLength ?? 200;
-  const { forwardedBody } = parseForwardedMessage(text, options.subject);
+  const { forwardedBody } = parseForwardedMessage(stripLeakedStyles(text || ""), options.subject);
   const kept: string[] = [];
   for (const rawLine of forwardedBody.split("\n")) {
     const line = rawLine.replace(/\s+$/g, "");

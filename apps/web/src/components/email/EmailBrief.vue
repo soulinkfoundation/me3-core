@@ -248,6 +248,7 @@ watch(() => props.active, (active) => { if (active) void load(); });
                 <strong>{{ item.sender.name }}</strong>
                 <span class="brief-item__subject">{{ item.subject }}</span>
                 <span v-if="item.urgency === 'urgent'" class="brief-tag brief-tag--urgent">Urgent</span>
+                <span v-if="item.duplicates" class="brief-tag" :title="`${item.duplicates + 1} similar emails`">×{{ item.duplicates + 1 }}</span>
                 <time class="brief-item__time">{{ formatTime(item.receivedAt) }}</time>
               </span>
               <span class="brief-item__summary" :class="{ 'brief-item__summary--pending': item.pending }">{{ item.summary }}</span>

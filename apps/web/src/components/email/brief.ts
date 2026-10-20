@@ -37,6 +37,9 @@ export type MailboxBriefItem = {
   primaryAction: MailboxBriefAction | null;
   secondaryAction: MailboxBriefAction | null;
   draft: { id: string; preview: string; body: string } | null;
+  /** Older messages from the same sender about the same thing, folded into this item (Core 0.1.232+). */
+  duplicates?: number;
+  relatedMessageIds?: string[];
 };
 
 export type MailboxHandledItem = {

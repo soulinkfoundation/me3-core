@@ -37,6 +37,9 @@ export type MailboxBriefItem = {
   primaryAction: MailTriageAction | null;
   secondaryAction: MailTriageAction | null;
   draft: { id: string; preview: string; body: string } | null;
+  /** Older messages from the same sender about the same thing, folded into this item. */
+  duplicates: number;
+  relatedMessageIds: string[];
 };
 
 export type MailboxHandledItem = {
@@ -144,7 +147,17 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
      ORDER BY CASE t.urgency WHEN 'urgent' THEN 0 ELSE 1 END, COALESCE(m.received_at, m.created_at) DESC
      LIMIT 50`,
   ).bind(ownerId, now.toISOString()).all<NeedsYouRow>();
-  const needsYou = needsYouRows.results || [];
+  const allNeedsYou = needsYouRows.results || [];
+  // The same alert firing three times is one thing to deal with, not three: keep the newest
+  // (urgent first) per sender and subject and fold the rest into it.
+  const folded = new Map<string, NeedsYouRow[]>();
+  for (const row of allNeedsYou) {
+    const key = briefDuplicateKey(row.from_address, row.subject);
+    const group = folded.get(key);
+    if (group) group.push(row); else folded.set(key, [row]);
+  }
+  const needsYou = [...folded.values()].map(group => group[0]);
+  const related = new Map<string, string[]>([...folded.values()].map(group => [group[0].message_id, group.slice(1).map(row => row.message_id)]));
 
   const draftIds = needsYou.map(row => row.draft_id).filter((id): id is string => Boolean(id));
   const drafts = new Map<string, { body: string }>();
@@ -187,6 +200,8 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
       primaryAction: draft ? { kind: "send_draft", label: primary?.kind === "send_draft" ? primary.label : "Send reply" } : primary?.kind === "send_draft" ? { kind: "draft_reply", label: "Draft a reply" } : primary || { kind: "draft_reply", label: "Draft a reply" },
       secondaryAction: draft ? { kind: "edit_draft", label: "Edit" } : secondary?.kind === "edit_draft" ? { kind: "remind_later", label: "Tomorrow" } : secondary || { kind: "remind_later", label: "Tomorrow" },
       draft: draft ? { id: row.draft_id!, preview: cleanMailPreview(draft.body, { maxLength: 160 }), body: draft.body } : null,
+      duplicates: related.get(row.message_id)?.length || 0,
+      relatedMessageIds: related.get(row.message_id) || [],
     };
   }));
 
@@ -236,7 +251,7 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
     needsYou: items,
     handled: { total: handled.length, groups: [...groups.values()] },
     fyi: {
-      inboxLeft: Math.max(0, Number(inbox?.total || 0) - items.length - handledInInbox),
+      inboxLeft: Math.max(0, Number(inbox?.total || 0) - allNeedsYou.length - handledInInbox),
       unread: Number(inbox?.unread || 0),
     },
     checkedAt: checked?.checked_at || null,
@@ -271,12 +286,42 @@ function parseUndo(json: string | null): MailHandledUndo | null {
   }
 }
 
+/** Sender address plus the subject without reply/forward prefixes, numbers and punctuation. */
+export function briefDuplicateKey(fromAddress: string | null, subject: string | null): string {
+  const address = (fromAddress || "").trim().toLowerCase();
+  const topic = (subject || "")
+    .toLowerCase()
+    .replace(/^(?:\s*(?:re|fwd?|fw|aw|wg)\s*:\s*)+/i, "")
+    .replace(/[#\[\]()]|\b\d[\d:.,/-]*\b/g, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return `${address}|${topic}`;
+}
+
 async function ownTriageRow(env: Pick<Env, "DB">, ownerId: string, messageId: string): Promise<{ message_id: string; draft_id: string | null } | null> {
   return (await env.DB.prepare("SELECT message_id, draft_id FROM mailbox_triage WHERE user_id = ? AND message_id = ?")
     .bind(ownerId, messageId).first<{ message_id: string; draft_id: string | null }>()) || null;
 }
 
-/** "Tomorrow": hides the item until the owner's next morning (or a given time). */
+/** The item plus the unresolved Brief items it was folded with (same sender, same subject). */
+async function briefItemMessageIds(env: Pick<Env, "DB">, ownerId: string, messageId: string): Promise<string[]> {
+  const message = await env.DB.prepare(
+    `SELECT m.from_address, m.subject FROM mailbox_messages m JOIN mailbox_triage t ON t.message_id = m.id
+     WHERE t.user_id = ? AND m.id = ?`,
+  ).bind(ownerId, messageId).first<{ from_address: string | null; subject: string | null }>().catch(() => null);
+  if (!message?.from_address) return [messageId];
+  const key = briefDuplicateKey(message.from_address, message.subject);
+  const siblings = await env.DB.prepare(
+    `SELECT m.id, m.subject FROM mailbox_triage t JOIN mailbox_messages m ON m.id = t.message_id
+     WHERE t.user_id = ? AND t.resolved_at IS NULL AND m.folder = 'inbox' AND LOWER(TRIM(m.from_address)) = ?
+       AND (t.category = 'needs_you' OR t.status IN ('pending', 'failed'))`,
+  ).bind(ownerId, message.from_address.trim().toLowerCase()).all<{ id: string; subject: string | null }>().catch(() => ({ results: [] as Array<{ id: string; subject: string | null }> }));
+  const ids = new Set([messageId, ...(siblings.results || []).filter(row => briefDuplicateKey(message.from_address, row.subject) === key).map(row => row.id)]);
+  return [...ids];
+}
+
+/** "Tomorrow": hides the item (and the repeats folded into it) until the owner's next morning, or a given time. */
 export async function snoozeBriefItem(env: Env, ownerId: string, messageId: string, until?: string | null, now = new Date()): Promise<{ ok: true; snoozedUntil: string } | ServiceError> {
   if (!(await ownTriageRow(env, ownerId, messageId))) return { error: "Message not found", status: 404 };
   let snoozedUntil: string;
@@ -288,16 +333,18 @@ export async function snoozeBriefItem(env: Env, ownerId: string, messageId: stri
     const dayStart = Date.parse(await getOwnerDayStart(env, ownerId, now));
     snoozedUntil = new Date(dayStart + 32 * 60 * 60_000).toISOString(); // 08:00 tomorrow, owner's clock
   }
-  await env.DB.prepare("UPDATE mailbox_triage SET snoozed_until = ?, updated_at = ? WHERE user_id = ? AND message_id = ?")
-    .bind(snoozedUntil, now.toISOString(), ownerId, messageId).run();
+  const ids = await briefItemMessageIds(env, ownerId, messageId);
+  await env.DB.prepare(`UPDATE mailbox_triage SET snoozed_until = ?, updated_at = ? WHERE user_id = ? AND message_id IN (${ids.map(() => "?").join(",")})`)
+    .bind(snoozedUntil, now.toISOString(), ownerId, ...ids).run();
   return { ok: true, snoozedUntil };
 }
 
-/** The owner dealt with it (or does not need to): it leaves the Brief for good. */
+/** The owner dealt with it (or does not need to): it and the repeats folded into it leave the Brief for good. */
 export async function resolveBriefItem(env: Env, ownerId: string, messageId: string, now = new Date()): Promise<{ ok: true } | ServiceError> {
   if (!(await ownTriageRow(env, ownerId, messageId))) return { error: "Message not found", status: 404 };
-  await env.DB.prepare("UPDATE mailbox_triage SET resolved_at = ?, updated_at = ? WHERE user_id = ? AND message_id = ?")
-    .bind(now.toISOString(), now.toISOString(), ownerId, messageId).run();
+  const ids = await briefItemMessageIds(env, ownerId, messageId);
+  await env.DB.prepare(`UPDATE mailbox_triage SET resolved_at = ?, updated_at = ? WHERE user_id = ? AND message_id IN (${ids.map(() => "?").join(",")})`)
+    .bind(now.toISOString(), now.toISOString(), ownerId, ...ids).run();
   return { ok: true };
 }
 

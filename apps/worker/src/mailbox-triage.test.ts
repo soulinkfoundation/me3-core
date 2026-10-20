@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
-import { getMailboxBrief, undoHandledAction } from "./mailbox-brief";
+import { getMailboxBrief, resolveBriefItem, snoozeBriefItem, undoHandledAction } from "./mailbox-brief";
 import {
   MAIL_TRIAGE_SCHEMA,
   enqueueMailTriage,
@@ -16,7 +16,10 @@ import type { Env } from "./types";
 // Failure modes: a replayed delivery triages the same message twice; a receipt
 // still lands in the Accounts ledger and a deterministic decision calls the
 // model anyway; a model failure drops the message from the Brief instead of
-// retrying; undoing an archived notification does not restore it to Inbox.
+// retrying; undoing an archived notification does not restore it to Inbox;
+// the same alert firing three times fills the Brief three times and "Done"
+// clears only one of them; a newsletter's stylesheet leaks into its summary;
+// a newsletter summary fails the whole pass when the model is down.
 const databases: DatabaseSync[] = [];
 afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMocks(); });
 
@@ -44,13 +47,13 @@ function fixture() {
   return { raw, env };
 }
 
-function insertMail(raw: DatabaseSync, input: { id: string; from: string; subject: string; body: string; headers?: Record<string, string> }) {
+function insertMail(raw: DatabaseSync, input: { id: string; from: string; subject: string; body: string; headers?: Record<string, string>; receivedAt?: string }) {
   raw.prepare(
     `INSERT INTO mailbox_messages(id,mailbox_id,direction,message_kind,status,from_address,to_address,subject,text_body,raw_headers_json,metadata_json,folder,created_by,received_at)
      VALUES (?,?, 'inbound','email','received',?,?,?,?,?,'{}','inbox','provider',?)`,
   ).run(input.id, "mailbox", input.from, "owner@me3.test", input.subject, input.body,
     JSON.stringify({ from: input.from, subject: input.subject, "message-id": `<${input.id}@example.test>`, ...(input.headers || {}) }),
-    new Date().toISOString());
+    input.receivedAt || new Date().toISOString());
 }
 
 const triageRows = (raw: DatabaseSync) => raw.prepare("SELECT * FROM mailbox_triage ORDER BY message_id").all() as Array<Record<string, unknown>>;
@@ -133,5 +136,46 @@ describe("mail triage pipeline", () => {
       primaryAction: { kind: "send_draft", label: "Send reply" },
       secondaryAction: { kind: "edit_draft", label: "Edit" },
     });
+  });
+  it("collapses repeated alerts into one Brief item and resolves them together", async () => {
+    const f = fixture();
+    for (const [id, hour] of [["alert1", "09"], ["alert2", "12"], ["alert3", "15"]]) {
+      insertMail(f.raw, { id, from: "hey@posthog.test", subject: "PostHog alert: Soulink call canary failure", body: `Firing at ${hour}:00`, receivedAt: `2026-10-20T${hour}:00:00.000Z` });
+    }
+    insertMail(f.raw, { id: "other", from: "hey@posthog.test", subject: "Your weekly PostHog digest", body: "What happened this week." });
+    const classifier = vi.fn<MailTriageClassifier>(async ({ subject }) => ({
+      category: "needs_you", urgency: "normal", summary: subject, action: { kind: "open_url", label: "Check alert" }, secondary: null, reply: null, url: "https://posthog.test/alerts/1",
+    }));
+    for (const id of ["alert1", "alert2", "alert3", "other"]) await runMailTriage(f.env, id, { classify: classifier });
+
+    const brief = await getMailboxBrief(f.env, "owner");
+    expect(brief.needsYou.map(item => item.messageId).sort()).toEqual(["alert3", "other"]);
+    const alert = brief.needsYou.find(item => item.messageId === "alert3")!;
+    expect(alert.duplicates).toBe(2);
+    expect(alert.relatedMessageIds.sort()).toEqual(["alert1", "alert2"]);
+    expect(brief.fyi.inboxLeft).toBe(0);
+
+    await snoozeBriefItem(f.env, "owner", "alert3", "2999-01-01T08:00:00.000Z");
+    expect((await getMailboxBrief(f.env, "owner")).needsYou.map(item => item.messageId)).toEqual(["other"]);
+    await resolveBriefItem(f.env, "owner", "other");
+    expect(f.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_triage WHERE resolved_at IS NULL AND snoozed_until IS NULL").get()).toEqual({ n: 0 });
+  });
+
+  it("summarises a newsletter with the model, never leaks its stylesheet, and survives a model outage", async () => {
+    const f = fixture();
+    const css = "@media screen and (max-width: 768px) { .o_mail_col_mv { display: block !important; width: auto !important; } } .btn { color: #fff; }";
+    insertMail(f.raw, { id: "news1", from: "michelle@vindax.test", subject: "We'll show you the next 3 features", body: `${css} Now make it unstoppable. You've built the foundation; staking and compliance are next.`, headers: { "list-unsubscribe": "<https://vindax.test/u>" } });
+    insertMail(f.raw, { id: "news2", from: "simon@squibb.test", subject: "Only 500 spots", body: `${css} Dreams inside! Only 500 spots for the November cohort.`, headers: { "list-unsubscribe": "<https://squibb.test/u>" } });
+    const classifier = vi.fn<MailTriageClassifier>(async () => { throw new Error("model must not triage newsletters"); });
+    await runMailTriage(f.env, "news1", { classify: classifier, summarize: async () => "Vindax previews staking and compliance features for exchange operators." });
+    await runMailTriage(f.env, "news2", { classify: classifier, summarize: async () => { throw new Error("model down"); } });
+
+    const brief = await getMailboxBrief(f.env, "owner");
+    const group = brief.handled.groups.find(entry => entry.kind === "newsletter")!;
+    const detail = (id: string) => group.items.find(item => item.messageId === id)?.detail || "";
+    expect(detail("news1")).toBe("Vindax previews staking and compliance features for exchange operators.");
+    expect(detail("news2")).toBe("Dreams inside!");
+    expect(detail("news2")).not.toMatch(/@media|!important/);
+    expect(f.raw.prepare("SELECT status FROM mailbox_triage WHERE message_id = 'news2'").get()).toEqual({ status: "done" });
   });
 });
