@@ -165,6 +165,8 @@ export type Me3SiteProfile = {
   posts?: Me3Post[];
   blogEnabled?: boolean;
   products?: Me3Product[];
+  /** Offers that are not booked through the calendar (asked about on a call). me.json lists them as manual services. */
+  services?: Array<{ id?: string; title?: string; description?: string; durationMinutes?: number }>;
   testimonials?: Me3Testimonial[];
   blogTitle?: string;
   shopTitle?: string;
@@ -319,7 +321,7 @@ export async function generateSiteHtml(
   profile: Me3SiteProfile,
   files: { name: string; content: string }[],
   capabilities: Partial<SiteRenderCapabilities> = DEFAULT_CAPABILITIES,
-  context: { baseUrl?: string; entityType?: "Person" | "Organization"; images?: SiteImageMetadata } = {},
+  context: { baseUrl?: string; entityType?: "Person" | "Organization"; images?: SiteImageMetadata; placeholders?: boolean } = {},
 ): Promise<Record<string, string>> {
   if (profile.visibility === "private") return {};
   const pricingCountries = regionalPricingCountries(profile);
@@ -341,7 +343,7 @@ export async function generateSiteHtml(
   const sectionPaths = resolveSiteSectionPaths(profile);
   const access = { ...DEFAULT_CAPABILITIES, ...capabilities };
 
-  output["index.html"] = generateIndexHtml(profile, access);
+  output["index.html"] = generateIndexHtml(profile, access, context.placeholders === true);
 
   for (const page of profile.pages || []) {
     if (page.visible === false || !page.slug || !page.file) continue;
@@ -401,8 +403,8 @@ export async function generateSiteHtml(
   return output;
 }
 
-function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities): string {
-  if (profile.extensions?.["me3.app/site"]) return generateModernIndexHtml(profile, capabilities);
+function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities, placeholders = false): string {
+  if (profile.extensions?.["me3.app/site"]) return generateModernIndexHtml(profile, capabilities, placeholders);
   const vibe = getVibe(profile);
   const title = profile.name || profile.handle || "ME3 site";
   const description = profile.bio
@@ -436,7 +438,7 @@ function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapa
         ${generateNav(profile, "", "./", "home")}
         ${generateButtons(profile)}
         ${generateLinks(profile)}
-        ${generateTestimonials(profile)}
+        ${generateTestimonials(profile) || (placeholders ? testimonialsPlaceholder() : "")}
         ${booking}
         ${newsletter}
       </main>`,
@@ -474,7 +476,7 @@ function siteActionLink(profile: Me3SiteProfile, className: string, basePath = "
   return `<a class="${className}" href="${escapeHtml(href)}"${external}>${escapeHtml(action.label)}</a>`;
 }
 
-function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities): string {
+function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities, placeholders = false): string {
   const title = profile.name || profile.handle || "ME3 site";
   const description = profile.bio ? contentToPlainText(profile.bio) : `${title} on ME3`;
   const layout = modernSiteLayout(profile);
@@ -493,7 +495,7 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
       case "offers": return capabilities.bookingsEnabled ? generateOffers(profile, !showBooking) : "";
       case "booking": return capabilities.bookingsEnabled ? generateBooking(profile) : "";
       case "writing": return generateLatestWriting(profile);
-      case "testimonials": return generateTestimonials(profile);
+      case "testimonials": return generateTestimonials(profile) || (placeholders ? testimonialsPlaceholder() : "");
       case "newsletter": return capabilities.newsletterSignup ? generateNewsletter(profile) : "";
     }
   }).join("");
@@ -1085,6 +1087,14 @@ function generateTestimonials(profile: Me3SiteProfile, basePath = "./"): string 
     .join("");
 
   return `<section class="testimonials-section"><h3 class="section-title">${escapeHtml(profile.testimonialsTitle || "Testimonials")}</h3><div class="testimonials-carousel" data-testimonials-carousel><div class="testimonials-track">${slides}</div></div><div class="carousel-dots">${dots}</div></section><script src="https://unpkg.com/embla-carousel/embla-carousel.umd.js"></script><script>${testimonialCarouselScript()}</script>`;
+}
+
+/**
+ * Owner-only previews of a draft show where testimonials will go. The published
+ * site never renders it: the block appears once a real quote exists.
+ */
+function testimonialsPlaceholder(): string {
+  return `<section class="testimonials-placeholder" aria-label="Testimonials placeholder" style="margin:32px 0;padding:20px;border:1.5px dashed var(--border);border-radius:var(--radius,16px);color:var(--muted)"><h2 style="margin:0 0 6px;font-size:18px;line-height:1.2;color:var(--text)">What clients say</h2><p style="margin:0;font-size:15px;line-height:1.45">Only you see this. It goes live once you add a real quote from a client.</p></section>`;
 }
 
 function testimonialCarouselScript(): string {

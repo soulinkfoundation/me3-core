@@ -962,6 +962,88 @@ export const CORE_CHAT_CAPABILITIES = [
     },
   }),
   defineCoreChatCapability({
+    id: "core.sites.starter.draft",
+    owner: "core",
+    pluginId: null,
+    ownerFacingLabel: "Draft your website",
+    summary:
+      "Draft the owner's whole first website in ONE call from their description of their work: bio, headline, location, links, an About page and their services. ME3 adds a free 30-minute clarity call with bookings on, a newsletter signup and a theme, keeps their existing photo, and shows a draft card the owner can restyle, edit and publish; nothing goes live until they publish. Before calling: open each public link the owner gave with core_web_open and use what you read; skip a link that needs a login and say so in one line. Ask at most one short follow-up, and only when you cannot tell what they offer. Invent no prices and no facts. Never mention the Mission.",
+    category: "sites",
+    handler: {
+      surface: "chat",
+      route: "core.sites.starter.draft",
+    },
+    sideEffect: "write_internal_draft",
+    approvalMode: "approval_required",
+    requiresSetup: [],
+    inputSchema: {
+      type: "object",
+      required: ["bio", "about", "services"],
+      properties: {
+        headline: {
+          type: "string",
+          description: "One line under the name, up to 120 characters: what they do and where, e.g. \"Career coach · Leeds and online\".",
+        },
+        bio: {
+          type: "string",
+          description: "Two or three plain sentences in the owner's voice, up to 600 characters: who they help, with what, and how it happens. No prices.",
+        },
+        location: {
+          type: "string",
+          description: "Town or city and country from the answer, e.g. \"Leeds, UK\". Omit when unknown.",
+        },
+        links: {
+          type: "array",
+          description: "Absolute https URLs the owner gave or that core_web_open confirmed, at most 8. Leave out links that need a login.",
+          items: { type: "string" },
+        },
+        about: {
+          type: "string",
+          description: "The About page in Markdown, up to 6,000 characters: the story of the work, who it is for, and where and how it happens, from the answer and any pages read. No invented facts or prices.",
+        },
+        services: {
+          type: "array",
+          description: "What the owner offers, inferred from the answer, at most 6, without prices (the site says \"Ask about it\"). One entry per offer as \"Title: one-sentence description\", e.g. \"6-week programme: six weekly video calls to plan and make your move\". ME3 adds the free 30-minute clarity call itself; do not list it.",
+          items: { type: "string" },
+        },
+        missionWho: {
+          type: "string",
+          description: "Private Mission, drafted from the same answer and saved only when the owner has none; never published, never mentioned. Who they help, e.g. people who've outgrown their job.",
+        },
+        missionChange: {
+          type: "string",
+          description: "Private Mission: the change they want for those people, as a verb phrase, e.g. work out what's next and make the move.",
+        },
+        missionHow: {
+          type: "string",
+          description: "Private Mission: how they help, as a verb phrase, e.g. 1:1 coaching over video.",
+        },
+        missionWhy: {
+          type: "string",
+          description: "Private Mission, optional: why it matters to them, only if the answer says.",
+        },
+        theme: {
+          type: "string",
+          enum: ["warm", "meadow", "paper"],
+          description: "Only when the owner asked for a look. The card lets them switch later.",
+        },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "site_starter_drafted",
+    examples: {
+      positive: [
+        "Build my website. About my work: I'm a career coach in Leeds, I help people in their 30s and 40s work out what's next over 1:1 video calls.",
+        "Draft my site from this: I run a small bakery in Cork and do wedding cakes to order.",
+      ],
+      negative: ["Add a landing page for my workshop.", "Change my site's banner."],
+    },
+    chat: {
+      intentKind: "write_action",
+      sideEffectLevel: "write",
+    },
+  }),
+  defineCoreChatCapability({
     id: "core.sites.landing_page.designs",
     owner: "plugin",
     pluginId: "me3.landing-pages",

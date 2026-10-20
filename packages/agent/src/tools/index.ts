@@ -42,6 +42,8 @@ const oneStepConfirmations: Record<string, (data: unknown, timezone: string) => 
   core_mission_task_create: confirmTask,
 };
 
+const ALWAYS_VISIBLE_TOOLS = new Set(["core_sites_starter_draft"]);
+
 export function createDomainTools(): AgentTool[] {
   const tools = [...calendarTools(), ...cardTools(), ...codingTools(), ...conversationTools(), ...journalTools(), ...quoteTools(), ...mailboxTools(), ...memoryTools(), ...paymentTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...taskTools(), ...webTools(), ...imageTools()];
   for (const [index, tool] of tools.entries()) {
@@ -50,7 +52,9 @@ export function createDomainTools(): AgentTool[] {
   }
   for (const tool of tools) {
     tool.target = targetContracts[tool.name];
-    tool.group = toolGroupFor(tool.name);
+    // The first-site draft stays visible on every turn: the Build your website entry must reach it in
+    // one step. Once deferred-group preloading lands (agent-latency, me3-ahsk.34) it can rejoin "sites".
+    tool.group = ALWAYS_VISIBLE_TOOLS.has(tool.name) ? undefined : toolGroupFor(tool.name);
     if (tool.approval === "required") {
       // Share the read-only validation prefix; each consequential executor returns before its effect.
       tool.prepareApproval = (args, context) => tool.execute(args, { ...context, approved: false, approvalData: undefined });

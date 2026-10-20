@@ -87,4 +87,15 @@ export interface AgentDomainServices {
   computer?: import("../computer/tools").ComputerChatServices;
   web?: { search: WebResearchService["search"]; open: WebContentFetcher["open"] };
   landingPageEnv?: AgentLandingPageEnv;
+  /** The owner's first site, drafted in one call and published after their approval. See apps/worker/src/site-starter.ts. */
+  sites?: AgentSiteStarterServices;
+}
+/** What the draft card shows: where the site will live, how to preview it and which looks it can switch between. */
+export type AgentSiteStarterDraft = {
+  username: string; name: string; publicUrl: string; previewPath: string; theme: string; themes: Array<{ id: string; name: string }>;
+  services: Array<{ title: string; bookable: boolean }>; newsletter: boolean;
+};
+export interface AgentSiteStarterServices {
+  draft(input: Record<string, unknown>): Promise<AgentSiteStarterDraft>;
+  publish(): Promise<{ username: string; name: string; publicUrl: string; publishedAt: string }>;
 }

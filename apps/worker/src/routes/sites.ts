@@ -152,6 +152,8 @@ import {
   createSiteFormPermissionEvidence,
 } from "../campaign-audience";
 import { listLatestSiteBuilderThreads } from "../site-builder-threads";
+import { publishSiteFromSource } from "../site-publish";
+import { renderDraftPreviewHtml, setDraftTheme } from "../site-starter";
 import {
   confirmDoubleOptInSubscriber,
   getDoubleOptInConfirmationStatus,
@@ -1371,60 +1373,13 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
         manifest.sourceFiles[sourceName] = await sha256Text(content);
       }
 
-      let sourceFiles = await loadSiteSourceFiles(c.env, site.id);
-      const meJson = sourceFiles.get("me.json");
-      let isPrivateProfile = false;
-      if (meJson) {
-        const profile = parseSiteProfile(meJson, site.username);
-        isPrivateProfile =
-          site.site_role === "profile" && profile.visibility === "private";
-        await pruneUnreferencedSiteSourceFiles(c.env, site.id, profile, manifest);
-        sourceFiles = await loadSiteSourceFiles(c.env, site.id);
-        await pruneUnreferencedContentAssets(c.env, site, sourceFiles, manifest);
-        const generatedFiles = isPrivateProfile
-          ? {}
-          : await generateSiteHtml(
-              profile,
-              Array.from(sourceFiles.entries()).map(([name, content]) => ({ name, content })),
-              undefined, { baseUrl: await getPublishedSiteBaseUrl(c.env, site), images: await getSiteImageMetadata(c.env, site, [...sourceFiles.values()]) },
-            );
-        const publishedBaseUrl = await getPublishedSiteBaseUrl(c.env, site);
-        networkProfile = buildPublicMe3Profile(profile, publishedBaseUrl, {
-          agentCheckout: isPrivateProfile
-            ? null
-            : await resolveAgentCheckoutPublication(c.env, site, profile, publishedBaseUrl),
-        });
-        generatedFiles["me.json"] = JSON.stringify(networkProfile, null, 2);
-        for (const [name, content] of Object.entries(generatedFiles)) {
-          await putSiteFile(
-            c.env,
-            site.id,
-            `public/${normalizeSiteFileName(name)}`,
-            content,
-            getGeneratedSiteContentType(name),
-          );
-        }
-        await pruneGeneratedPublicFiles(c.env, site.id, generatedFiles);
-      }
-
-      manifest.updatedAt = new Date().toISOString();
-      await savePublishManifest(c.env, site.id, manifest);
-      await c.env.DB.prepare(
-        isPrivateProfile
-          ? "UPDATE sites SET published_at = NULL, updated_at = datetime('now') WHERE id = ?"
-          : "UPDATE sites SET published_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
-      )
-        .bind(site.id)
-        .run();
-
+      const published = await publishSiteFromSource(c.env, site, manifest);
+      networkProfile = published.networkProfile;
       if (networkProfile) {
         queueNetworkDirectoryProfileSync(c, site, networkProfile);
       }
 
-      return c.json({
-        ok: true,
-        publishedAt: isPrivateProfile ? null : new Date().toISOString(),
-      });
+      return c.json({ ok: true, publishedAt: published.publishedAt });
     } catch (error) {
       if (isMissingSiteFilesTableError(error)) return siteStorageSetupRequired(c);
       if (isD1SiteFileLimitError(error)) return siteStorageActivationRequired(c);
@@ -1688,6 +1643,33 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
 
     c.header("X-Robots-Tag", "noindex, nofollow");
     return c.html(injectBaseHref(html, `/preview/${site.username}/`));
+  });
+
+  // The chat-drafted first site: the unpublished source, rendered by the real renderer for the
+  // draft card. ?theme= tries a look without saving it; PUT draft-theme saves one.
+  app.get("/api/sites/:username/draft-preview-html", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    const html = await renderDraftPreviewHtml(c.env, site, c.req.query("theme"));
+    if (!html) return c.body(null, 204);
+    c.header("X-Robots-Tag", "noindex, nofollow");
+    c.header("Cache-Control", "no-store");
+    return c.html(injectBaseHref(html, `/preview/${site.username}/`));
+  });
+
+  app.put("/api/sites/:username/draft-theme", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    const body = await c.req.json<{ theme?: unknown }>().catch(() => null);
+    try {
+      return c.json({ ok: true, theme: await setDraftTheme(c.env, site, body?.theme) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "Could not save the theme" }, 400);
+    }
   });
 
   app.get("/api/sites/:username/pages", async (c) => {

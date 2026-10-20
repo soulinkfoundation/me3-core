@@ -234,6 +234,26 @@ function bookingServices(profile: Me3SiteProfile): Me3Service[] {
   return Array.from(services.values());
 }
 
+/** Site-level offers without calendar booking: listed so agents can ask about them, never priced. */
+function manualServices(profile: Me3SiteProfile): Me3Service[] {
+  const booked = new Set(bookingServices(profile).map((service) => service.id));
+  const services: Me3Service[] = [];
+  for (const entry of profile.services || []) {
+    const title = text(entry?.title, 160);
+    const serviceId = id(entry?.id || title, "service:");
+    if (!title || !serviceId || booked.has(serviceId) || services.some((service) => service.id === serviceId)) continue;
+    services.push({
+      id: serviceId,
+      title,
+      ...(text(entry.description, 1000) ? { description: text(entry.description, 1000) } : {}),
+      ...(typeof entry.durationMinutes === "number" && entry.durationMinutes > 0 ? { durationMinutes: entry.durationMinutes } : {}),
+      availability: "manual",
+      status: "active",
+    });
+  }
+  return services;
+}
+
 export const AGENT_CHECKOUT_EXTENSION = "me3.app/agent-checkout";
 export const AGENT_CHECKOUT_OPERATION_ID = "createCheckout";
 
@@ -271,7 +291,7 @@ export function buildPublicMe3Profile(
   }
 
   const sectionPaths = resolveSiteSectionPaths(source);
-  const services = bookingServices(source);
+  const services = [...bookingServices(source), ...manualServices(source)];
   const products = (source.products || [])
     .filter((product) => product.slug && product.title)
     .map((product) => ({

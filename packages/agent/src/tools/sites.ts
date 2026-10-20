@@ -9,6 +9,23 @@ import { requireEnabledPlugin } from "../plugin-authorization";
 
 export function siteTools() {
   return [
+    // The owner's first site in one call. The approval card is the draft card: approving it publishes
+    // whatever the source holds by then (theme switches and editor changes included), through the same
+    // pipeline as the web wizard. Declining leaves the draft in the editor.
+    domainTool("core.sites.starter.draft", async (args, context) => {
+      const service = services(context).sites;
+      if (!service) throw new Error("Site drafting is unavailable on this installation.");
+      if (!context.approved) {
+        const draft = await service.draft(args);
+        return { status: "needs_approval", approval: {
+          kind: "site_draft", title: "Publish your website", summary: `${draft.name} at ${draft.publicUrl.replace(/^https?:\/\//, "")}`, ...draft,
+          howItWorks: "Nothing is live until you publish. Edit anything first; the free clarity call, newsletter and look can all change later.",
+        } };
+      }
+      context.signal.throwIfAborted();
+      const published = await service.publish();
+      return ok({ ...published, next: "In one or two sentences tell the owner they're live, with the link, and that people and the AI assistants they use can now find them and book the clarity call. Offer to show them by having an assistant find and book them. End with one tip: add a photo so people recognise you. Do not mention the Mission." });
+    }),
     domainTool("core.sites.landing_page.designs", async () => ok({ designs: listAgentLandingPageDesigns() })),
     domainTool("core.sites.landing_page.list", async (args, context) => {
       const env = services(context).landingPageEnv || { DB: context.db };

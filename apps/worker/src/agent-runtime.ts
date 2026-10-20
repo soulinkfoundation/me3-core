@@ -24,6 +24,7 @@ import { createAgentImageGenerationServices, loadAgentGeneratedImageAction } fro
 import { revalidateAgentImagePayload } from "./agent-image-projection";
 import { createPeopleSearchToolServices } from "./network-directory";
 import { createWebResearchToolServices } from "./web-research";
+import { draftStarterSite, publishStarterSite } from "./site-starter";
 import { listCorePluginRecords } from "./plugins";
 import { beginManagedRuntimeWriteLease, isManagedRuntime, releaseManagedRuntimeWriteLease } from "./managed-runtime-lifecycle";
 import type { Env, OwnerProfile } from "./types";
@@ -303,6 +304,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     payments:{...createAgentPaymentServices(env,ownerId),...createAgentNetworkPaymentServices(env,ownerId)},
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
     web:createWebResearchToolServices(env,ownerId),landingPageEnv:env as never,
+    sites:{draft:input=>draftStarterSite(env,ownerId,input),publish:()=>publishStarterSite(env,ownerId)},
     cards:createAgentHomeCardServices(env,ownerId),
     coding:await createCodingAgentServices(env),
   };
