@@ -7,6 +7,7 @@ import { startFastPathShadow } from "./fast-path";
 import { decideRoute } from "./router";
 import { requireEnabledPlugin } from "./plugin-authorization";
 import { visibleTools, withToolLoader } from "./tool-groups";
+import { withOwnerLocalToolTimes } from "./owner-times";
 import type { AgentCheckpoint, AgentModel, AgentModelResponse, AgentTargetPresentationCard, AgentTool, AgentToolCall, AgentToolResult, AgentTurnInput, AgentTurnResult } from "./types";
 
 export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
@@ -129,7 +130,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       }
       if (checkpoint.steps >= (input.maxSteps ?? 30)) return finish("failed", "I reached the turn's step limit. Completed tool results are saved; the remaining work is unfinished.");
       let emittedText = false;
-      const stepInput = { messages: compactAgentContext(checkpoint.messages, input.contextWindow), tools: visibleTools(tools, checkpoint.messages), signal: controller.signal, onDelta: async (text: string) => {
+      const stepInput = { messages: compactAgentContext(withOwnerLocalToolTimes(checkpoint.messages, input.context.ownerTimezone), input.contextWindow), tools: visibleTools(tools, checkpoint.messages), signal: controller.signal, onDelta: async (text: string) => {
         if (!text) return;
         emittedText = true;
         checkpoint.trace.timeToFirstTokenMs ??= performance.now() - started;

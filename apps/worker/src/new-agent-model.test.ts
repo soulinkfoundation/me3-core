@@ -99,8 +99,9 @@ describe("new agent Cloudflare model transport", () => {
       {type:"message_stop"},
     ]);}}});
     const result=await model.step({messages:[{role:"system",content:"Be useful"},{role:"user",content:"Save"},{role:"assistant",content:"",toolCalls:[{id:"old",name:"save",arguments:{title:"first"}}]},{role:"tool",content:'{"status":"ok"}',toolCallId:"old"}],tools:[tool],signal:new AbortController().signal,onDelta:async()=>{}});
-    expect(request.system).toBe("Be useful");
+    expect(request.system).toEqual([{type:"text",text:"Be useful",cache_control:{type:"ephemeral"}}]);
     expect(request.tools).toMatchObject([{cache_control:{type:"ephemeral"}}]);
+    expect((request.messages as Array<{content:unknown[]}>).at(-1)?.content.at(-1)).toMatchObject({type:"tool_result",cache_control:{type:"ephemeral"}});
     expect(JSON.stringify(request)).toContain("tool_result");
     expect(result.usage).toMatchObject({inputTokens:140,outputTokens:10,cachedInputTokens:40});
     expect(result.toolCalls[0].arguments).toEqual({title:"hello"});
@@ -138,6 +139,20 @@ describe("new agent Cloudflare model transport", () => {
     expect(model.id).toBe("@cf/openai/gpt-oss-120b");
     expect(selected).toBe(model.id);
     expect(result.text).toBe("Ready");
+  });
+  it("sets DeepSeek V4 reasoning low on Workers AI chat requests", async () => {
+    let request: Record<string, unknown> = {};
+    const model = createCloudflareModel({model:"@cf/deepseek-ai/deepseek-v4-flash-0731",ai:{run:async(_,input)=>{request=input;return stream([
+      {choices:[{delta:{reasoning_content:"thinking"}}]},
+      {choices:[{delta:{tool_calls:[{index:0,id:"a",function:{name:"save",arguments:'{"title":"hi"}'}}]},finish_reason:"tool_calls"}]},
+      {choices:[],usage:{prompt_tokens:100,completion_tokens:10,prompt_tokens_details:{cached_tokens:50}}},
+    ]);}}});
+    const result = await model.step({messages:[{role:"user",content:"Save"}],tools:[tool],signal:new AbortController().signal,onDelta:async()=>{}});
+    expect(request).toMatchObject({reasoning_effort:"low",max_tokens:4096});
+    expect(request).not.toHaveProperty("max_completion_tokens");
+    expect(result.text).toBe("");
+    expect(result.toolCalls).toEqual([{id:"a",name:"save",arguments:{title:"hi"}}]);
+    expect(result.usage?.estimatedCostUsd).toBeCloseTo((50*0.44+50*0.014+10*1.32)/1_000_000, 12);
   });
   it("charges the published Cloudflare cached-input and cache-write candidate rates", async () => {
     const cases: Array<[string, number]> = [["anthropic/claude-sonnet-5.5",0.00107],["anthropic/claude-sonnet-5",0.00107],["anthropic/claude-sonnet-4.6",0.001605],["moonshotai/kimi-k3",0.00153],["openai/gpt-6-astra",0.0053],["@cf/zai-org/glm-5.3-flash",0.000083]];

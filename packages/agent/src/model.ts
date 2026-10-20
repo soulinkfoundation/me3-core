@@ -33,7 +33,20 @@ const PRICING: Record<string, {input:number;output:number;cachedInput?:number;ca
   // Cache rates follow Anthropic's standard 0.1x read / 1.25x write multipliers.
   "anthropic/claude-haiku-5.5": {input:0.1,output:0.5,cachedInput:0.01,cacheWriteInput:0.125},
   "@cf/zai-org/glm-5.3-flash": {input:0.15,output:0.5,cachedInput:0.03},
+  // https://developers.cloudflare.com/workers-ai/models/deepseek-v4-flash-0731/
+  "@cf/deepseek-ai/deepseek-v4-flash-0731": {input:0.44,output:1.32,cachedInput:0.014},
 };
+
+// Reasoning effort each provider receives. Providers default very differently
+// (DeepSeek V4 thinks at "high" unless told otherwise), so agent latency stays
+// comparable only when every reasoning model is set explicitly.
+const REASONING_EFFORT: Array<[RegExp, string]> = [
+  [/^openai\/(?:gpt-[5-9]|o\d)/, "low"],
+  [/^@cf\/deepseek-ai\/deepseek-v4/, "low"],
+];
+function reasoningEffort(model: string): string | undefined {
+  return REASONING_EFFORT.find(([pattern]) => pattern.test(model))?.[1];
+}
 
 export function createCloudflareModel(options: CloudflareModelOptions): AgentModel {
   const model = options.model;
@@ -47,7 +60,7 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
     async step({messages,tools,signal,onDelta}): Promise<AgentModelResponse> {
       signal.throwIfAborted();
       const responses = model.startsWith("openai/gpt-6") || (reasoningOpenAi && tools.length > 0);
-      const request = anthropic ? anthropicRequest(messages, tools, options.maxOutputTokens ?? 4096) : responses ? responsesRequest(messages,tools,options.maxOutputTokens??4096) : openAiRequest(messages, tools, options.maxOutputTokens ?? 4096, model);
+      const request = anthropic ? anthropicRequest(messages, tools, options.maxOutputTokens ?? 4096) : responses ? responsesRequest(messages,tools,options.maxOutputTokens??4096,model) : openAiRequest(messages, tools, options.maxOutputTokens ?? 4096, model);
       const result = await options.ai.run(model, {...request,stream:true}, options.gatewayId ? {gateway:{id:options.gatewayId,metadata:options.metadata ?? {},requestTimeoutMs:60_000,retries:{maxAttempts:1}}} : undefined);
       signal.throwIfAborted();
       const response = isStream(result) ? await consumeStream(result, anthropic, onDelta, signal) : parseResponse(result, anthropic);
@@ -62,25 +75,27 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
   };
 }
 
-function responsesRequest(messages:readonly AgentMessage[],tools:readonly AgentTool[],maxTokens:number):Record<string,unknown> {
+function responsesRequest(messages:readonly AgentMessage[],tools:readonly AgentTool[],maxTokens:number,model:string):Record<string,unknown> {
   const input:unknown[]=[];
   for(const message of messages.filter(message=>message.role!=="system")) {
     if(message.role==="tool") {input.push({type:"function_call_output",call_id:message.toolCallId,output:message.content});continue;}
     if(message.content||message.images?.length) input.push({role:message.role,content:[...(message.content?[{type:message.role==="assistant"?"output_text":"input_text",text:message.content}]:[]),...(message.images?.map(image=>({type:"input_image",image_url:image.url}))??[])]});
     for(const call of message.toolCalls??[])input.push({type:"function_call",call_id:call.id,name:call.name,arguments:JSON.stringify(call.arguments)});
   }
-  return {input,instructions:messages.filter(message=>message.role==="system").map(message=>message.content).join("\n\n"),tools:tools.map(tool=>({type:"function",name:tool.name,description:tool.description,parameters:tool.parameters,strict:false})),max_output_tokens:maxTokens,reasoning:{effort:"low"},store:false};
+  return {input,instructions:messages.filter(message=>message.role==="system").map(message=>message.content).join("\n\n"),tools:tools.map(tool=>({type:"function",name:tool.name,description:tool.description,parameters:tool.parameters,strict:false})),max_output_tokens:maxTokens,reasoning:{effort:reasoningEffort(model) ?? "low"},store:false};
 }
 
 function openAiRequest(messages: readonly AgentMessage[], tools: readonly AgentTool[], maxTokens: number, model: string): Record<string, unknown> {
-  const reasoning = /^openai\/(?:gpt-[5-9]|o\d)/.test(model);
+  const openAiReasoning = /^openai\/(?:gpt-[5-9]|o\d)/.test(model);
+  const effort = reasoningEffort(model);
   return {
     messages: messages.map(message => ({role:message.role,content:message.images?.length ? [{type:"text",text:message.content},...message.images.map(image=>({type:"image_url",image_url:{url:image.url}}))] : message.content,
       ...(message.toolCallId?{tool_call_id:message.toolCallId}:{}),
       ...(message.toolCalls?.length?{tool_calls:message.toolCalls.map(call=>({id:call.id,type:"function",function:{name:call.name,arguments:JSON.stringify(call.arguments)}}))}:{}),
     })),
     ...(tools.length?{tools:tools.map(tool=>({type:"function",function:{name:tool.name,description:tool.description,parameters:tool.parameters,strict:false}}))}:{}),
-    ...(reasoning?{max_completion_tokens:maxTokens,reasoning_effort:"low"}:{max_tokens:maxTokens}),
+    ...(openAiReasoning?{max_completion_tokens:maxTokens}:{max_tokens:maxTokens}),
+    ...(effort?{reasoning_effort:effort}:{}),
     stream_options: {include_usage:true},
   };
 }
@@ -119,8 +134,13 @@ function anthropicRequest(messages: readonly AgentMessage[], tools: readonly Age
     if (history.at(-1)?.role === role) history.at(-1)!.content.push(...content);
     else history.push({role,content});
   }
+  // Tools, system and the newest message each end a cache breakpoint, so every
+  // tool step in a turn rereads the earlier prefix from Anthropic's cache.
+  const lastBlock = history.at(-1)?.content.at(-1);
+  if (lastBlock && typeof lastBlock === "object") (lastBlock as Record<string, unknown>).cache_control = {type:"ephemeral"};
+  const system = messages.filter(message=>message.role==="system").map(message=>message.content).join("\n\n");
   return {
-    system: messages.filter(message=>message.role==="system").map(message=>message.content).join("\n\n"),
+    ...(system?{system:[{type:"text",text:system,cache_control:{type:"ephemeral"}}]}:{}),
     messages:history,
     ...(tools.length?{tools:tools.map((tool,index)=>({name:tool.name,description:tool.description,input_schema:anthropicInputSchema(tool),...(index===tools.length-1?{cache_control:{type:"ephemeral"}}:{})}))}:{}),
     max_tokens:maxTokens,
