@@ -53,6 +53,8 @@ export interface Env {
   /** "off" hides the one-tap follow-ups under agent replies. */
   ME3_AGENT_SUGGESTED_REPLIES?: string;
   ME3_AGENT_FAST_MODEL?: string;
+  /** Model for independent intent checks; defaults to the planner model. */
+  ME3_AGENT_VERIFIER_MODEL?: string;
   ME3_AI_REASONING_PROVIDER?: string;
   ME3_AI_REASONING_MODEL?: string;
   ME3_AI_EXTRACTION_PROVIDER?: string;

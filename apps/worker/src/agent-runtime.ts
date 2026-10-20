@@ -111,14 +111,16 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const intentScope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId};
     const loadIntentOwnerInputs=(references:Parameters<typeof loadTargetIntentOwnerInputs>[2],intentSignal:AbortSignal)=>
       loadTargetIntentOwnerInputs(env.DB,intentScope,references,intentSignal);
+    // Independent intent checks default to the planner model; a faster verifier can be set per installation.
+    const verifierName=env.ME3_AGENT_VERIFIER_MODEL?.trim()||modelName;
     const verifyTargetIntent=createTargetIntentVerifier({db:env.DB,scope:intentScope,ownerTimezone:timezone,tools:intentTools,requireReferenceEvidence:true,admit:()=>{
       let usageId:string|undefined;
-      const verifier=modelFor(modelName,{purpose:"target_intent",onAdmission:id=>{usageId=id;}});
+      const verifier=modelFor(verifierName,{purpose:"target_intent",onAdmission:id=>{usageId=id;}});
       return {model:verifier,usageId:()=>usageId};
     }});
     const verifyOwnerCreateIntent=createOwnerCreateIntentVerifier({db:env.DB,scope:{...intentScope,ownerTimezone:timezone},tools:intentTools,admit:()=>{
       let usageId:string|undefined;
-      const verifier=modelFor(modelName,{purpose:"owner_create_intent",onAdmission:id=>{usageId=id;}});
+      const verifier=modelFor(verifierName,{purpose:"owner_create_intent",onAdmission:id=>{usageId=id;}});
       return {model:verifier,usageId:()=>usageId};
     }});
     // Routing uses the same unreconciled-receipt exclusions as fast-path

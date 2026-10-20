@@ -81,7 +81,7 @@ async function runNewEvalTurn(input) {
       await onDelta(text);
       return { text, toolCalls: [], ...(input.guardProbe ? { usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, estimatedCostUsd: 0 } } : {}) };
     } };
-  } else model = createCloudflareModel({ ai: input.modelRoute.ai, model: input.modelRoute.model, gatewayId: input.modelRoute.aiGateway.gatewayId, recordUsage: (usage) => input.modelRoute.recordUsage({ usage }) });
+  } else model = createCloudflareModel({ ai: input.modelRoute.ai, model: input.modelRoute.model, gatewayId: input.modelRoute.aiGateway.gatewayId, ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}), recordUsage: (usage) => input.modelRoute.recordUsage({ usage }) });
   const tools = createDomainTools();
   const intentTools = tools.filter(tool => !tool.pluginId || input.enabledPluginIds.has(tool.pluginId));
   const intentScope = { ownerId: input.ownerId, ...contextIds };
@@ -92,20 +92,21 @@ async function runNewEvalTurn(input) {
   const verifyTargetIntent = createTargetIntentVerifier({ db: input.seed.db, scope: intentScope, ownerTimezone: input.ownerTimezone, tools: intentTools, requireReferenceEvidence: true,
     admit: () => {
       let usageId;
-      const ai={run:(model,request,options)=>input.modelRoute.ai.run(model,request,{...options,onAdmission:id=>{usageId=id;}})};
-      return { usageId: () => usageId, model: input.modelRoute.model === "scripted-fixture" ? {
+      const route = input.verifierRoute ?? input.modelRoute;
+      const ai={run:(model,request,options)=>route.ai.run(model,request,{...options,onAdmission:id=>{usageId=id;}})};
+      return { usageId: () => usageId, model: route.model === "scripted-fixture" ? {
       id: "scripted-fixture", async step() {
         // These verdicts must be explicit independent fixture expectations; never echo the proposed tool call.
         const verdict = fixtureVerdicts.shift() || { decision: "clarify", reason: "Independent fixture intent verdict was not specified" };
         return { text: "", toolCalls: [{ id: crypto.randomUUID(), name: "core_target_intent_verdict", arguments: verdict }], usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, estimatedCostUsd: 0 } };
       },
-    } : createCloudflareModel({ ai, model: input.modelRoute.model, gatewayId: input.modelRoute.aiGateway.gatewayId,
-      metadata: { purpose: "target_intent" }, recordUsage: usage => input.modelRoute.recordUsage({ usage: { ...usage, purpose: "target_intent" } }) }) };
+    } : createCloudflareModel({ ai, model: route.model, gatewayId: route.aiGateway.gatewayId,
+      metadata: { purpose: "target_intent" }, recordUsage: usage => route.recordUsage({ usage: { ...usage, purpose: "target_intent" } }) }) };
     },
   });
   const intentToolContracts = intentTools.filter(tool => tool.target).map(({ name, description, parameters, effect, approval, target }) => ({ name, description, parameters, effect, approval, target: { domain: target.domain, idParameter: target.idParameter } }));
   const { createEvalOwnerCreateVerifier } = await import("./agent-eval-owner-create.mjs");
-  const verifyOwnerCreateIntent = createEvalOwnerCreateVerifier({ db: input.seed.db, scope: { ...intentScope, ownerTimezone: input.ownerTimezone }, tools: intentTools, route: input.modelRoute, fixtureVerdicts: input.ownerCreateFixtureVerdicts });
+  const verifyOwnerCreateIntent = createEvalOwnerCreateVerifier({ db: input.seed.db, scope: { ...intentScope, ownerTimezone: input.ownerTimezone }, tools: intentTools, route: input.verifierRoute ?? input.modelRoute, fixtureVerdicts: input.ownerCreateFixtureVerdicts });
   const intentReadToolContracts = intentTools.filter(tool => tool.effect === "read" && !tool.endsTurn).map(({ name, parameters }) => ({ name, parameters }));
   let messages=input.messages;
   if(!await store.load()) {

@@ -7,6 +7,8 @@ export interface CloudflareModelOptions {
   metadata?: Record<string, string | number | boolean>;
   maxOutputTokens?: number;
   pricing?: { input: number; output: number; cachedInput?: number; cacheWriteInput?: number };
+  /** Overrides the per-model reasoning effort table, for evaluations. */
+  reasoningEffort?: string;
   recordUsage?(usage: AgentUsage): Promise<void> | void;
 }
 
@@ -46,8 +48,8 @@ const REASONING_EFFORT: Array<[RegExp, string]> = [
   [/^openai\/(?:gpt-[5-9]|o\d)/, "low"],
   [/^@cf\/deepseek-ai\/deepseek-v4/, "low"],
 ];
-function reasoningEffort(model: string): string | undefined {
-  return REASONING_EFFORT.find(([pattern]) => pattern.test(model))?.[1];
+function reasoningEffort(model: string, override?: string): string | undefined {
+  return override ?? REASONING_EFFORT.find(([pattern]) => pattern.test(model))?.[1];
 }
 
 export function createCloudflareModel(options: CloudflareModelOptions): AgentModel {
@@ -62,7 +64,7 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
     async step({messages,tools,signal,onDelta,toolChoice}): Promise<AgentModelResponse> {
       signal.throwIfAborted();
       const responses = model.startsWith("openai/gpt-6") || (reasoningOpenAi && tools.length > 0);
-      const request = anthropic ? anthropicRequest(messages, tools, options.maxOutputTokens ?? 4096) : responses ? responsesRequest(messages,tools,options.maxOutputTokens??4096,model) : openAiRequest(messages, tools, options.maxOutputTokens ?? 4096, model);
+      const request = anthropic ? anthropicRequest(messages, tools, options.maxOutputTokens ?? 4096) : responses ? responsesRequest(messages,tools,options.maxOutputTokens??4096,model,options.reasoningEffort) : openAiRequest(messages, tools, options.maxOutputTokens ?? 4096, model, options.reasoningEffort);
       // Each protocol names a forced tool differently; all of them suppress prose.
       if (toolChoice) request.tool_choice = anthropic ? {type:"tool",name:toolChoice} : responses ? {type:"function",name:toolChoice} : {type:"function",function:{name:toolChoice}};
       const result = await options.ai.run(model, {...request,stream:true}, options.gatewayId ? {gateway:{id:options.gatewayId,metadata:options.metadata ?? {},requestTimeoutMs:60_000,retries:{maxAttempts:1}}} : undefined);
@@ -79,19 +81,19 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
   };
 }
 
-function responsesRequest(messages:readonly AgentMessage[],tools:readonly AgentTool[],maxTokens:number,model:string):Record<string,unknown> {
+function responsesRequest(messages:readonly AgentMessage[],tools:readonly AgentTool[],maxTokens:number,model:string,effortOverride?:string):Record<string,unknown> {
   const input:unknown[]=[];
   for(const message of messages.filter(message=>message.role!=="system")) {
     if(message.role==="tool") {input.push({type:"function_call_output",call_id:message.toolCallId,output:message.content});continue;}
     if(message.content||message.images?.length) input.push({role:message.role,content:[...(message.content?[{type:message.role==="assistant"?"output_text":"input_text",text:message.content}]:[]),...(message.images?.map(image=>({type:"input_image",image_url:image.url}))??[])]});
     for(const call of message.toolCalls??[])input.push({type:"function_call",call_id:call.id,name:call.name,arguments:JSON.stringify(call.arguments)});
   }
-  return {input,instructions:messages.filter(message=>message.role==="system").map(message=>message.content).join("\n\n"),tools:tools.map(tool=>({type:"function",name:tool.name,description:tool.description,parameters:tool.parameters,strict:false})),max_output_tokens:maxTokens,reasoning:{effort:reasoningEffort(model) ?? "low"},store:false};
+  return {input,instructions:messages.filter(message=>message.role==="system").map(message=>message.content).join("\n\n"),tools:tools.map(tool=>({type:"function",name:tool.name,description:tool.description,parameters:tool.parameters,strict:false})),max_output_tokens:maxTokens,reasoning:{effort:reasoningEffort(model,effortOverride) ?? "low"},store:false};
 }
 
-function openAiRequest(messages: readonly AgentMessage[], tools: readonly AgentTool[], maxTokens: number, model: string): Record<string, unknown> {
+function openAiRequest(messages: readonly AgentMessage[], tools: readonly AgentTool[], maxTokens: number, model: string, effortOverride?: string): Record<string, unknown> {
   const openAiReasoning = /^openai\/(?:gpt-[5-9]|o\d)/.test(model);
-  const effort = reasoningEffort(model);
+  const effort = reasoningEffort(model, effortOverride);
   return {
     messages: messages.map(message => ({role:message.role,content:message.images?.length ? [{type:"text",text:message.content},...message.images.map(image=>({type:"image_url",image_url:{url:image.url}}))] : message.content,
       ...(message.toolCallId?{tool_call_id:message.toolCallId}:{}),
