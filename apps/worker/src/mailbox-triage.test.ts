@@ -19,7 +19,8 @@ import type { Env } from "./types";
 // retrying; undoing an archived notification does not restore it to Inbox;
 // the same alert firing three times fills the Brief three times and "Done"
 // clears only one of them; a newsletter's stylesheet leaks into its summary;
-// a newsletter summary fails the whole pass when the model is down.
+// a newsletter summary fails the whole pass when the model is down; an owner
+// on Gmail gets every stranger at gmail.com filed as FYI without the model.
 const databases: DatabaseSync[] = [];
 afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMocks(); });
 
@@ -137,6 +138,16 @@ describe("mail triage pipeline", () => {
       secondaryAction: { kind: "edit_draft", label: "Edit" },
     });
   });
+  it("sends a stranger on the owner's own mail provider to the model instead of filing it as FYI", async () => {
+    const f = fixture();
+    f.raw.exec("UPDATE owner_profile SET email = 'owner@gmail.com' WHERE id = 'owner'");
+    insertMail(f.raw, { id: "stranger", from: "sam@gmail.com", subject: "Podcast guest?", body: "Would you join our podcast in November?" });
+    const classifier = vi.fn<MailTriageClassifier>(async () => ({ category: "needs_you", urgency: "normal", summary: "Podcast invite for November.", action: { kind: "draft_reply", label: "Draft a reply" }, secondary: null, reply: null, url: null }));
+    await runMailTriage(f.env, "stranger", { classify: classifier });
+    expect(classifier).toHaveBeenCalledTimes(1);
+    expect(triageRows(f.raw)[0]).toMatchObject({ category: "needs_you", decided_by: "model" });
+  });
+
   it("collapses repeated alerts into one Brief item and resolves them together", async () => {
     const f = fixture();
     for (const [id, hour] of [["alert1", "09"], ["alert2", "12"], ["alert3", "15"]]) {

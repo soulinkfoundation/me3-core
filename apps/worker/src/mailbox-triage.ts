@@ -7,6 +7,7 @@ import {
   describeSenderName,
   firstSentence,
   isAutomatedLocalPart,
+  isGenericMailProvider,
   parseForwardedMessage,
   resolveSenderAvatar,
   senderDomain,
@@ -371,8 +372,9 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
     return outcome("handled", "low", summary, "signal", "newsletter", { kind: "unsubscribe", label: "Unsubscribe" }, null, null, context);
   }
 
+  // A shared provider like gmail.com says nothing about who the sender is.
   const ownerDomain = senderDomain(row.owner_email) || null;
-  const ownDomain = Boolean(domain && !contact && ownerDomain && domain === ownerDomain && !forward.isForward);
+  const ownDomain = Boolean(domain && !contact && ownerDomain && !isGenericMailProvider(ownerDomain) && domain === ownerDomain && !forward.isForward);
   if (ownDomain) {
     return outcome("fyi", "low", firstSentence(body) || subject, "signal", null, null, null, null, context);
   }
