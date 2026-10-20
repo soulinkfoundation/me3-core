@@ -8,7 +8,7 @@ import { decideRoute } from "./router";
 import { requireEnabledPlugin } from "./plugin-authorization";
 import { visibleTools, withToolLoader } from "./tool-groups";
 import { withOwnerLocalToolTimes } from "./owner-times";
-import { buildCreateIntentEvidence, CreateIntentRefused, requireCreateIntent } from "./create-intent";
+import { buildCreateIntentEvidence, CreateIntentRefused, requireCreateIntent, skipsCreateCheck } from "./create-intent";
 import type { AgentCheckpoint, AgentModel, AgentModelResponse, AgentTargetPresentationCard, AgentTool, AgentToolCall, AgentToolResult, AgentTurnInput, AgentTurnResult } from "./types";
 
 export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
@@ -297,7 +297,8 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         }
       }
       await requireEnabledPlugin(context, pluginId);
-      if (tool.createCheck && input.context.verifyCreateIntent && !approved && !await cancelled()) {
+      // The model that proposed this call, so a fallback or backup planner is still checked.
+      if (tool.createCheck && input.context.verifyCreateIntent && !approved && !skipsCreateCheck(checkpoint.trace.modelSteps?.at(-1)?.model) && !await cancelled()) {
         const evidence = buildCreateIntentEvidence(checkpoint.messages, tool, call, input.context.ownerTimezone);
         try {
           const checked = await requireCreateIntent(input.context.verifyCreateIntent, evidence, controller.signal);

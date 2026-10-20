@@ -211,6 +211,15 @@ describe("independent check of new records", () => {
     expect(result.trace?.targetIntentRequests).toEqual([expect.objectContaining({ modelId: "verifier", uncertain: false })]);
   });
 
+  it.each([["openai/gpt-6.1-sol", 0], ["anthropic/claude-sonnet-5.5", 0], ["anthropic/claude-opus-5.5", 0], ["anthropic/claude-haiku-5.5", 1], ["@cf/deepseek-ai/deepseek-v4.1-flash-1017", 1]] as const)("checks creates proposed by %s only when it is not a trusted planner", async (modelId, expected) => {
+    const f = fixture(); let checks = 0;
+    f.tool.createCheck = true;
+    const context = { ...f.context, verifyCreateIntent: async () => { checks++; return { decision: "allow" as const, reason: "Asked." }; } };
+    const model = { ...f.model([{ text: "", toolCalls: [f.call()] }, { text: "Done.", toolCalls: [] }]), id: modelId };
+    await runAgentTurn({ ...f, context, tools: [f.tool], messages: [{ role: "user", content: "Remind me at 9" }], model });
+    expect(checks).toBe(expected);
+  });
+
   it("creates the record once the check allows it, and skips tools without the flag", async () => {
     const f = fixture(); let effects = 0; let checks = 0;
     f.tool.execute = async () => { effects++; return { status: "ok" }; };

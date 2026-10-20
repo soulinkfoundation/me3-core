@@ -49,6 +49,14 @@ export function parseCreateIntentVerdict(value: unknown): CreateIntentVerdict | 
   return (decision === "allow" || decision === "deny" || decision === "clarify") && reason ? { decision, reason: reason.slice(0, 300) } : null;
 }
 
+// Planners with no unrequested creates across the 20 Oct 2026 evals (Sol 0/~650,
+// Sonnet 0/~600, Opus 0/~200 trials). Their creates skip the check so everyday
+// reminders and events stay fast; every other planner, including fallbacks, is checked.
+const TRUSTED_CREATE_PLANNERS = [/^openai\/gpt-6\.1-sol$/, /^anthropic\/claude-(?:sonnet|opus)-5\.5$/];
+export function skipsCreateCheck(plannerModelId: string | undefined): boolean {
+  return !!plannerModelId && TRUSTED_CREATE_PLANNERS.some(pattern => pattern.test(plannerModelId.replace(/^@cf\//, "")));
+}
+
 /** Thrown before any effect starts, so a corrected or clarified retry can run. */
 export class CreateIntentRefused extends Error {}
 
