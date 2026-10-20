@@ -9,6 +9,7 @@ import { requireEnabledPlugin } from "./plugin-authorization";
 import { visibleTools, withToolLoader } from "./tool-groups";
 import { withOwnerLocalToolTimes } from "./owner-times";
 import { buildCreateIntentEvidence, CreateIntentRefused, requireCreateIntent, skipsCreateCheck } from "./create-intent";
+import { FINAL_STEP_ARGUMENT } from "./confirmations";
 import type { AgentCheckpoint, AgentModel, AgentModelResponse, AgentTargetPresentationCard, AgentTool, AgentToolCall, AgentToolResult, AgentTurnInput, AgentTurnResult } from "./types";
 
 export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
@@ -110,6 +111,18 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
               checkpoint.pendingCalls = undefined;
               checkpoint.nextCallIndex = undefined;
               return finish("complete", output.replyText);
+            }
+            // One-step confirmation: a lone create the model marked final needs no second model call.
+            const confirm = tools.find(tool => tool.name === calls[i].name)?.confirm;
+            if (output.status === "ok" && confirm && checkpoint.pendingCalls.length === 1 && calls[i].arguments[FINAL_STEP_ARGUMENT] === true) {
+              const confirmation = confirm(output.data, input.context.ownerTimezone);
+              if (confirmation) {
+                checkpoint.pendingCalls = undefined;
+                checkpoint.nextCallIndex = undefined;
+                const unfinished = await unfinishedPlan();
+                if (unfinished) return unfinished;
+                return finish("complete", confirmation);
+              }
             }
             if (output.status === "needs_selection" && tools.find(tool => tool.name === calls[i].name)?.endsTurn) {
               checkpoint.targetPresentation = (output.data as { targetPresentation: AgentTargetPresentationCard }).targetPresentation;

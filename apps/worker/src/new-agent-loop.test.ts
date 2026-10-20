@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { runAgentTurn } from "../../../packages/agent/src/loop";
+import { withOneStepConfirmation } from "../../../packages/agent/src/confirmations";
 import type { AgentCheckpoint, AgentEvent, AgentModel, AgentTool, AgentToolResult, AgentTurnStore } from "../../../packages/agent/src/types";
 
 function fixture() {
@@ -229,5 +230,31 @@ describe("independent check of new records", () => {
       model: f.model([{ text: "", toolCalls: [{ id: "a", name: "save", arguments: { value: "x" } }, { id: "b", name: "create", arguments: { value: "y" } }] }, { text: "Done.", toolCalls: [] }]) });
     expect(checks).toBe(1);
     expect(effects).toBe(2);
+  });
+});
+
+describe("one-step confirmations for everyday creates", () => {
+  const setup = (steps: Array<{ text: string; toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> }>, status: "ok" | "error" = "ok") => {
+    const f = fixture(); let modelCalls = 0;
+    const create = withOneStepConfirmation({ ...f.tool, name: "create", execute: async () => ({ status, data: { reminder: { title: "Call Alex" } } }) }, () => "Reminder set: Call Alex, Wed 21 Oct, 09:00.");
+    const base = f.model(steps as Parameters<typeof f.model>[0]);
+    const model = { id: "test", step: async (input: Parameters<typeof base.step>[0]) => { modelCalls++; return base.step(input); } };
+    return { run: () => runAgentTurn({ ...f, tools: [f.tool, create], messages: [{ role: "user", content: "Remind me" }], model }), calls: () => modelCalls };
+  };
+  it("replies from the saved record without a second model call", async () => {
+    const t = setup([{ text: "", toolCalls: [{ id: "a", name: "create", arguments: { value: "x", finalStep: true } }] }]);
+    const result = await t.run();
+    expect(result).toMatchObject({ status: "complete", replyText: "Reminder set: Call Alex, Wed 21 Oct, 09:00." });
+    expect(t.calls()).toBe(1);
+  });
+  it.each([
+    ["without the flag", [{ id: "a", name: "create", arguments: { value: "x" } }], "ok"],
+    ["beside another call", [{ id: "a", name: "create", arguments: { value: "x", finalStep: true } }, { id: "b", name: "save", arguments: { value: "y" } }], "ok"],
+    ["when the create fails", [{ id: "a", name: "create", arguments: { value: "x", finalStep: true } }], "error"],
+  ] as const)("keeps the normal reply step %s", async (_label, toolCalls, status) => {
+    const t = setup([{ text: "", toolCalls: [...toolCalls] }, { text: "Model reply.", toolCalls: [] }], status);
+    const result = await t.run();
+    expect(result.replyText).toBe("Model reply.");
+    expect(t.calls()).toBe(2);
   });
 });

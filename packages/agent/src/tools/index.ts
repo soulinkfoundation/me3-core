@@ -17,6 +17,7 @@ import { taskTools } from "./tasks";
 import { webTools } from "./web";
 import { targetPresentationTool } from "./presentations";
 import { toolGroupFor } from "../tool-groups";
+import { confirmEvent, confirmReminder, confirmTask, withOneStepConfirmation } from "../confirmations";
 
 // Only single-ID domain adapters can offer this exact-action selection contract.
 const targetContracts: Record<string, AgentTargetMetadata> = {
@@ -35,8 +36,18 @@ const targetContracts: Record<string, AgentTargetMetadata> = {
   core_social_posting_plan_confirm: { domain: "posting plan", idParameter: "planId", actionLabel: "Schedule social posts" },
 };
 
+const oneStepConfirmations: Record<string, (data: unknown, timezone: string) => string | null> = {
+  core_reminders_create: confirmReminder,
+  core_calendar_event_create: confirmEvent,
+  core_mission_task_create: confirmTask,
+};
+
 export function createDomainTools(): AgentTool[] {
   const tools = [...calendarTools(), ...cardTools(), ...codingTools(), ...conversationTools(), ...journalTools(), ...quoteTools(), ...mailboxTools(), ...memoryTools(), ...paymentTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...taskTools(), ...webTools(), ...imageTools()];
+  for (const [index, tool] of tools.entries()) {
+    const confirm = oneStepConfirmations[tool.name];
+    if (confirm) tools[index] = withOneStepConfirmation(tool, confirm);
+  }
   for (const tool of tools) {
     tool.target = targetContracts[tool.name];
     tool.group = toolGroupFor(tool.name);

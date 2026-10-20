@@ -82,6 +82,8 @@ export interface AgentTool {
   endsTurn?: boolean;
   /** New-record tools: an independent model confirms the owner asked for the record before it runs. */
   createCheck?: boolean;
+  /** One-step confirmation built from an ok result, used when the model marks this create as the final step. */
+  confirm?(data: unknown, timezone: string): string | null;
   /** Deferred group; the model sees the tool only after loading the group (see tool-groups.ts). */
   group?: string;
   prepareApproval?(args: Record<string, unknown>, context: AgentToolContext): Promise<AgentToolResult>;
