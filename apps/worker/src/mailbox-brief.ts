@@ -114,9 +114,10 @@ type HandledRow = {
 };
 
 const HANDLED_TITLES: Record<MailHandledKind, [string, string]> = {
-  receipt: ["receipt filed", "receipts filed"],
-  newsletter: ["newsletter summarised", "newsletters summarised"],
+  receipt: ["invoice filed to Accounts", "invoices filed to Accounts"],
+  newsletter: ["newsletter set aside", "newsletters set aside"],
   notification: ["notification archived", "notifications archived"],
+  login_code: ["login code archived", "login codes archived"],
   rule_archive: ["email archived", "emails archived"],
   rule_reply: ["reply sent", "replies sent"],
 };
@@ -243,7 +244,7 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
      FROM mailbox_messages m JOIN mailbox_aliases a ON a.id = m.mailbox_id
      WHERE a.user_id = ? AND m.folder = 'inbox' AND m.direction = 'inbound' AND m.message_kind = 'email'`,
   ).bind(ownerId).first<{ total: number | string; unread: number | string | null }>();
-  const handledInInbox = handled.filter(row => row.kind === "receipt" || row.kind === "newsletter").length;
+  const handledInInbox = handled.filter(row => row.kind === "newsletter").length;
   const checked = await env.DB.prepare("SELECT MAX(triaged_at) AS checked_at FROM mailbox_triage WHERE user_id = ?")
     .bind(ownerId).first<{ checked_at: string | null }>().catch(() => null);
 
@@ -367,16 +368,16 @@ export async function undoHandledAction(env: Env, ownerId: string, actionId: str
   if (!undo) return { error: "This action cannot be undone", status: 409 };
 
   let restored: "inbox" | "ledger" = "inbox";
-  if (undo.kind === "move_to_inbox") {
-    await env.DB.prepare(
-      `UPDATE mailbox_messages SET folder = 'inbox', updated_at = CURRENT_TIMESTAMP
-       WHERE id = ? AND mailbox_id IN (SELECT id FROM mailbox_aliases WHERE user_id = ?)`,
-    ).bind(row.message_id, ownerId).run();
-  } else {
+  if (undo.kind === "remove_ledger_entry") {
     await env.DB.prepare("DELETE FROM financial_entries WHERE id = ? AND user_id = ? AND source = 'email_triage'")
       .bind(undo.entryId, ownerId).run();
     restored = "ledger";
   }
+  // A filed invoice was also archived, so its undo brings it back to Inbox too (unless the owner moved it since).
+  await env.DB.prepare(
+    `UPDATE mailbox_messages SET folder = 'inbox', updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND (? = 'move_to_inbox' OR folder = 'archive') AND mailbox_id IN (SELECT id FROM mailbox_aliases WHERE user_id = ?)`,
+  ).bind(row.message_id, undo.kind, ownerId).run();
   await env.DB.prepare("UPDATE mailbox_handled_actions SET undone_at = ? WHERE id = ?").bind(now.toISOString(), row.id).run();
   // The message stays visible in Inbox as plain mail; it is not re-handled and not pushed to needs-you.
   await env.DB.prepare(

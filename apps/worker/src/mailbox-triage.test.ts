@@ -6,6 +6,7 @@ import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import { getMailboxBrief, resolveBriefItem, snoozeBriefItem, undoHandledAction } from "./mailbox-brief";
 import {
   MAIL_TRIAGE_SCHEMA,
+  archiveStaleLoginCodes,
   enqueueMailTriage,
   retryPendingMailTriage,
   runMailTriage,
@@ -21,7 +22,10 @@ import type { Env } from "./types";
 // clears only one of them; a newsletter's stylesheet leaks into its summary;
 // a newsletter summary fails the whole pass when the model is down; an owner
 // on Gmail gets every stranger at gmail.com filed as FYI without the model; a
-// reply drafted on a forward is addressed to whoever forwarded it.
+// reply drafted on a forward is addressed to whoever forwarded it; a filed
+// invoice stays in Inbox, or its undo leaves it archived; a sign-in code is
+// archived before the owner can use it, never archived at all, or a booking
+// confirmation code is mistaken for one.
 const databases: DatabaseSync[] = [];
 afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMocks(); });
 
@@ -72,7 +76,7 @@ describe("mail triage pipeline", () => {
     expect(triageRows(f.raw)[0]).toMatchObject({ status: "done", category: "needs_you", decided_by: "model", attempts: 1 });
   });
 
-  it("files a receipt to Accounts, logs a reversible handled action and skips the model", async () => {
+  it("files a receipt to Accounts, archives it, and undo restores both", async () => {
     const f = fixture();
     insertMail(f.raw, { id: "receipt", from: "billing@registrar.test", subject: "Receipt for your renewal", body: "Thank you for your payment. Total: £12.00" });
     const classifier = vi.fn<MailTriageClassifier>(async () => { throw new Error("model must not run"); });
@@ -82,14 +86,44 @@ describe("mail triage pipeline", () => {
       expect.objectContaining({ source_email_id: "receipt", amount_cents: 1200 }),
     ]);
     expect(triageRows(f.raw)[0]).toMatchObject({ status: "done", category: "handled", handled_kind: "receipt", decided_by: "signal" });
+    expect(f.raw.prepare("SELECT folder FROM mailbox_messages WHERE id = 'receipt'").get()).toEqual({ folder: "archive" });
     const brief = await getMailboxBrief(f.env, "owner");
     expect(brief.handled.groups).toEqual([
-      expect.objectContaining({ kind: "receipt", count: 1, amountCents: 1200, currency: "GBP" }),
+      expect.objectContaining({ kind: "receipt", title: "1 invoice filed to Accounts", count: 1, amountCents: 1200, currency: "GBP" }),
     ]);
     const action = brief.handled.groups[0].items[0];
     expect(action.undo).toEqual({ kind: "remove_ledger_entry" });
     expect(await undoHandledAction(f.env, "owner", action.id)).toMatchObject({ ok: true });
     expect(f.raw.prepare("SELECT COUNT(*) AS n FROM financial_entries").get()).toEqual({ n: 0 });
+    expect(f.raw.prepare("SELECT folder FROM mailbox_messages WHERE id = 'receipt'").get()).toEqual({ folder: "inbox" });
+  });
+
+  it("keeps a sign-in code in Inbox for an hour, then archives it once with undo", async () => {
+    const f = fixture();
+    const sent = new Date("2026-10-20T09:00:00.000Z");
+    insertMail(f.raw, { id: "code", from: "no-reply@accounts.test", subject: "Your verification code", body: "Your code is 482913. It expires in 10 minutes.", headers: { "auto-submitted": "auto-generated" } });
+    insertMail(f.raw, { id: "slack", from: "feedback@slack.test", subject: "Slack confirmation code: 123-456", body: "Confirm your email." });
+    insertMail(f.raw, { id: "booking", from: "hello@hotel.test", subject: "Your booking confirmation code ABC123", body: "See you on Friday." });
+    const classifier = vi.fn<MailTriageClassifier>(async () => ({ category: "fyi", urgency: "low", summary: "Booking confirmed.", action: null, secondary: null, reply: null, url: null }));
+    for (const id of ["code", "slack", "booking"]) await runMailTriage(f.env, id, { classify: classifier, now: sent });
+    expect(classifier).toHaveBeenCalledTimes(1);
+    for (const id of ["code", "slack"]) expect(triageRows(f.raw).find(row => row.message_id === id)).toMatchObject({ category: "handled", handled_kind: "login_code" });
+    expect(triageRows(f.raw).find(row => row.message_id === "booking")).toMatchObject({ handled_kind: null, decided_by: "model" });
+    const folder = (id: string) => (f.raw.prepare("SELECT folder FROM mailbox_messages WHERE id = ?").get(id) as { folder: string }).folder;
+
+    expect(await archiveStaleLoginCodes(f.env, { now: new Date(sent.getTime() + 30 * 60_000) })).toEqual({ archived: 0 });
+    expect(folder("code")).toBe("inbox");
+    expect(await archiveStaleLoginCodes(f.env, { now: new Date(sent.getTime() + 61 * 60_000) })).toEqual({ archived: 2 });
+    expect(folder("code")).toBe("archive");
+    expect(folder("booking")).toBe("inbox");
+
+    const brief = await getMailboxBrief(f.env, "owner", { now: new Date(sent.getTime() + 62 * 60_000) });
+    const group = brief.handled.groups.find(entry => entry.kind === "login_code")!;
+    expect(group).toMatchObject({ title: "2 login codes archived", count: 2 });
+    await undoHandledAction(f.env, "owner", group.items.find(item => item.messageId === "code")!.id);
+    expect(folder("code")).toBe("inbox");
+    expect(await archiveStaleLoginCodes(f.env, { now: new Date(sent.getTime() + 3 * 60 * 60_000) })).toEqual({ archived: 0 });
+    expect(folder("code")).toBe("inbox");
   });
 
   it("keeps a message in the Brief when the model fails and retries it from the cron", async () => {
@@ -188,7 +222,7 @@ describe("mail triage pipeline", () => {
     expect(f.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_triage WHERE resolved_at IS NULL AND snoozed_until IS NULL").get()).toEqual({ n: 0 });
   });
 
-  it("summarises a newsletter with the model, never leaks its stylesheet, and survives a model outage", async () => {
+  it("summarises a newsletter with the model, never leaks its stylesheet, and claims no summary during a model outage", async () => {
     const f = fixture();
     const css = "@media screen and (max-width: 768px) { .o_mail_col_mv { display: block !important; width: auto !important; } } .btn { color: #fff; }";
     insertMail(f.raw, { id: "news1", from: "michelle@vindax.test", subject: "We'll show you the next 3 features", body: `${css} Now make it unstoppable. You've built the foundation; staking and compliance are next.`, headers: { "list-unsubscribe": "<https://vindax.test/u>" } });
@@ -201,8 +235,8 @@ describe("mail triage pipeline", () => {
     const group = brief.handled.groups.find(entry => entry.kind === "newsletter")!;
     const detail = (id: string) => group.items.find(item => item.messageId === id)?.detail || "";
     expect(detail("news1")).toBe("Vindax previews staking and compliance features for exchange operators.");
-    expect(detail("news2")).toBe("Dreams inside!");
-    expect(detail("news2")).not.toMatch(/@media|!important/);
+    expect(detail("news2")).toBe("");
+    expect(group.title).toBe("2 newsletters set aside");
     expect(f.raw.prepare("SELECT status FROM mailbox_triage WHERE message_id = 'news2'").get()).toEqual({ status: "done" });
   });
 });

@@ -18,9 +18,9 @@ import type { Env } from "./types";
  * One mail-triage pass per inbound message, run when the message arrives
  * (in the background of the Email Routing handler) and retried by the
  * 15-minute cron. Cheapest checks first: owner rules, deterministic signals
- * (receipts, newsletters, automated notifications, known contacts, the
- * owner's own domain), then one small model call for whatever is left. The
- * Brief is a live read of these records.
+ * (login codes, receipts, newsletters, automated notifications, known
+ * contacts, the owner's own domain), then one small model call for whatever
+ * is left. The Brief is a live read of these records.
  */
 
 export const MAIL_TRIAGE_SCHEMA = [
@@ -51,7 +51,7 @@ export const MAIL_TRIAGE_SCHEMA = [
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
     message_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('receipt', 'newsletter', 'notification', 'rule_archive', 'rule_reply')),
+    kind TEXT NOT NULL CHECK (kind IN ('receipt', 'newsletter', 'notification', 'login_code', 'rule_archive', 'rule_reply')),
     label TEXT NOT NULL,
     detail TEXT,
     amount_cents INTEGER,
@@ -84,6 +84,28 @@ export const MAIL_TRIAGE_SCHEMA = [
   )`,
 ] as const;
 
+/** Rebuilds the handled log so its kind check allows "login_code" (0080). */
+export const MAILBOX_LOGIN_CODES_STATEMENTS = [
+  `CREATE TABLE mailbox_handled_actions_next (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('receipt', 'newsletter', 'notification', 'login_code', 'rule_archive', 'rule_reply')),
+    label TEXT NOT NULL,
+    detail TEXT,
+    amount_cents INTEGER,
+    currency TEXT,
+    undo_json TEXT,
+    undone_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `INSERT INTO mailbox_handled_actions_next (id, user_id, message_id, kind, label, detail, amount_cents, currency, undo_json, undone_at, created_at)
+   SELECT id, user_id, message_id, kind, label, detail, amount_cents, currency, undo_json, undone_at, created_at FROM mailbox_handled_actions`,
+  `DROP TABLE mailbox_handled_actions`,
+  `ALTER TABLE mailbox_handled_actions_next RENAME TO mailbox_handled_actions`,
+  `CREATE INDEX IF NOT EXISTS idx_mailbox_handled_actions_user_created ON mailbox_handled_actions(user_id, created_at DESC)`,
+] as const;
+
 export type MailTriageCategory = "needs_you" | "handled" | "fyi" | "noise";
 export type MailTriageUrgency = "low" | "normal" | "urgent";
 export type MailTriageActionKind =
@@ -97,7 +119,7 @@ export type MailTriageActionKind =
   | "unsubscribe"
   | "mark_done";
 export type MailTriageAction = { kind: MailTriageActionKind; label: string; url?: string | null };
-export type MailHandledKind = "receipt" | "newsletter" | "notification" | "rule_archive" | "rule_reply";
+export type MailHandledKind = "receipt" | "newsletter" | "notification" | "login_code" | "rule_archive" | "rule_reply";
 
 /** What the model returns for mail that rules and signals did not decide. */
 export type MailTriageDecision = {
@@ -187,6 +209,8 @@ type TriageOutcome = {
 
 const MODEL_BODY_LIMIT = 4000;
 const MAX_TRIAGE_ATTEMPTS = 5;
+/** A sign-in code stays in Inbox this long, so it is there while the owner is signing in. */
+export const LOGIN_CODE_KEEP_MS = 60 * 60_000;
 
 /** Records the message for triage (replay-safe) and runs it, in the background when possible. */
 export async function enqueueMailTriage(
@@ -338,11 +362,18 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
   }
 
   // 2. Deterministic signals.
+  // A sign-in code is needed now and clutter in an hour: it stays in Inbox until the cron archives it.
+  if (!contact && !alwaysShow && isLoginCodeEmail(subject, body, address)) {
+    return outcome("handled", "low", subject, "signal", "login_code", null, null, null, context);
+  }
+
   const receipt = await fileReceipt(env, row);
   if (receipt) {
+    // Filed means done with: the email leaves Inbox, and undo brings both back.
+    await archiveMessage(env, row);
     await logHandledAction(env, row, {
       kind: "receipt",
-      label: "Receipt filed to Accounts",
+      label: "Filed to Accounts",
       detail: subject,
       amountCents: receipt.amountCents,
       currency: receipt.currency,
@@ -360,16 +391,16 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
     return outcome("handled", "low", firstSentence(body) || subject, "signal", "notification", null, null, null, context);
   }
   if (!contact && !alwaysShow && newsletter) {
-    // "Summarised" has to mean it: one small model call says what the issue is about. A model
-    // outage must not stall the pass, so the first sentence stands in.
+    // One small model call says what the issue is about. A model outage must not stall the pass;
+    // the Brief then shows the subject rather than whatever text the email happens to start with.
     const summarize = options.summarize === undefined ? createModelNewsletterSummarizer(env) : options.summarize;
     const written = summarize
       ? await summarize({ ownerId: row.user_id, subject, from: { name: senderName, address }, body: cleanMailPreview(body, { maxLength: MODEL_BODY_LIMIT, subject }) })
         .catch((error: unknown) => { console.warn("Newsletter summary failed", { messageId: row.message_id, error: error instanceof Error ? error.message : String(error) }); return null; })
       : null;
-    const summary = written?.trim() || firstSentence(body) || subject;
-    await logHandledAction(env, row, { kind: "newsletter", label: "Newsletter summarised", detail: summary, undo: null });
-    return outcome("handled", "low", summary, "signal", "newsletter", { kind: "unsubscribe", label: "Unsubscribe" }, null, null, context);
+    const summary = written?.trim() || null;
+    await logHandledAction(env, row, { kind: "newsletter", label: "Newsletter set aside", detail: summary, undo: null });
+    return outcome("handled", "low", summary || firstSentence(body) || subject, "signal", "newsletter", { kind: "unsubscribe", label: "Unsubscribe" }, null, null, context);
   }
 
   // A shared provider like gmail.com says nothing about who the sender is.
@@ -436,6 +467,40 @@ function outcome(
   return { category, urgency, summary: summary.slice(0, 200), decidedBy, handledKind, primary, secondary, draftId, context };
 }
 
+// Booking references ("confirmation code ABC123") and event access codes are not sign-in codes and are kept.
+const LOGIN_CODE_SUBJECT = /\b(?:verification|verify|security|sign[- ]?in|log[- ]?in|login|one[- ]time|authenticat\w*|2fa|otp)\s+(?:code|pin)\b|\bpass ?code\b|\bone[- ]time pass(?:word|code)\b|\b(?:magic|sign[- ]?in|log[- ]?in|login) link\b|\b(?:verify|confirm) your (?:e-?mail|email address|account)\b|\b\d{4,8} is your\b.{0,30}\bcode\b|\byour code is:? *\d{4,8}\b|\bconfirmation code:? *\d{3}[- ]?\d{3}\b/i;
+const LOGIN_CODE_BODY = /\b(?:verification|security|sign[- ]?in|log[- ]?in|login|one[- ]time|authenticat\w*)\s+code\b/i;
+
+/** A one-time sign-in or verification code (or magic link). The body counts only from an automated sender, with a code in it. */
+export function isLoginCodeEmail(subject: string, body: string, address: string): boolean {
+  if (LOGIN_CODE_SUBJECT.test(subject)) return true;
+  const head = body.slice(0, 1500);
+  return isAutomatedLocalPart(address) && LOGIN_CODE_BODY.test(head) && /\b\d{4,8}\b/.test(head);
+}
+
+/** Cron: archives sign-in codes that have sat in Inbox past their use, each logged with undo. */
+export async function archiveStaleLoginCodes(env: Env, options: { now?: Date; limit?: number } = {}): Promise<{ archived: number }> {
+  const now = options.now || new Date();
+  const cutoff = new Date(now.getTime() - LOGIN_CODE_KEEP_MS).toISOString();
+  // A code the owner already moved back once is theirs to keep.
+  const rows = await env.DB.prepare(
+    `SELECT t.message_id, t.user_id, m.subject FROM mailbox_triage t JOIN mailbox_messages m ON m.id = t.message_id
+     WHERE t.handled_kind = 'login_code' AND t.status = 'done' AND m.folder = 'inbox' AND t.triaged_at <= ?
+       AND NOT EXISTS (SELECT 1 FROM mailbox_handled_actions h WHERE h.message_id = t.message_id AND h.kind = 'login_code')
+     ORDER BY t.triaged_at ASC LIMIT ?`,
+  ).bind(cutoff, options.limit ?? 50).all<{ message_id: string; user_id: string; subject: string | null }>()
+    .catch(() => ({ results: [] as Array<{ message_id: string; user_id: string; subject: string | null }> }));
+  let archived = 0;
+  for (const row of rows.results || []) {
+    const moved = await env.DB.prepare("UPDATE mailbox_messages SET folder = 'archive', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND folder = 'inbox'")
+      .bind(row.message_id).run();
+    if (!moved.meta?.changes) continue;
+    await logHandledAction(env, row, { kind: "login_code", label: "Login code archived", detail: row.subject, undo: { kind: "move_to_inbox" } }, now);
+    archived += 1;
+  }
+  return { archived };
+}
+
 export function isAutomatedNotification(headers: Record<string, string>, address: string, subject: string): boolean {
   const autoSubmitted = (headers["auto-submitted"] || "").trim().toLowerCase();
   if (autoSubmitted && autoSubmitted !== "no") return true;
@@ -468,8 +533,9 @@ export type MailHandledUndo = { kind: "move_to_inbox" } | { kind: "remove_ledger
 
 async function logHandledAction(
   env: Env,
-  row: TriageMessageRow,
+  row: Pick<TriageMessageRow, "user_id" | "message_id">,
   action: { kind: MailHandledKind; label: string; detail: string | null; amountCents?: number | null; currency?: string | null; undo: MailHandledUndo | null },
+  now = new Date(),
 ): Promise<void> {
   await env.DB.prepare("DELETE FROM mailbox_handled_actions WHERE user_id = ? AND message_id = ? AND kind = ? AND undone_at IS NULL")
     .bind(row.user_id, row.message_id, action.kind).run();
@@ -478,7 +544,7 @@ async function logHandledAction(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     crypto.randomUUID(), row.user_id, row.message_id, action.kind, action.label, action.detail?.slice(0, 300) || null,
-    action.amountCents ?? null, action.currency ?? null, action.undo ? JSON.stringify(action.undo) : null, new Date().toISOString(),
+    action.amountCents ?? null, action.currency ?? null, action.undo ? JSON.stringify(action.undo) : null, now.toISOString(),
   ).run();
 }
 

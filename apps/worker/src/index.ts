@@ -7,7 +7,7 @@ import { dispatchDueCalendarSourceRefreshes } from "./calendar-sources";
 import { dispatchDueCalendarPushNotifications } from "./calendar-push-notifications";
 import { dispatchDueMorningCalendarPushes } from "./morning-calendar-push";
 import { dispatchDueGratitudeReminders } from "./gratitude";
-import { retryPendingMailTriage } from "./mailbox-triage";
+import { archiveStaleLoginCodes, retryPendingMailTriage } from "./mailbox-triage";
 import { retryAgentTurnNotifications } from "./agent-notifications";
 import {
   BOOKING_REMINDER_QUEUE_NAME,
@@ -132,6 +132,7 @@ const QUARTER_HOUR_SCHEDULED_STEPS: readonly ScheduledStep[] = [
   ["network purchase sweep", pollNetworkPurchases],
   ["mailbox attachment staging", reconcileMailboxAttachmentStaging],
   ["mail triage retry", retryPendingMailTriage],
+  ["login code cleanup", archiveStaleLoginCodes],
   ["morning calendar push", dispatchDueMorningCalendarPushes],
   ["gratitude reminders", dispatchDueGratitudeReminders],
   ["calendar push dispatch", dispatchDueCalendarPushNotifications],

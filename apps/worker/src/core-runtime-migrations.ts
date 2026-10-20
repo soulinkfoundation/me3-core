@@ -16,7 +16,7 @@ import { AGENT_PAYMENTS_SCHEMA } from "./agent-payments";
 import { AGENT_COMPUTER_SCHEMA } from "./agent-computer";
 import { AGENT_COMMERCE_SCHEMA } from "./agent-commerce-store";
 import { AGENT_NETWORK_COMMERCE_SCHEMA } from "./agent-network-commerce";
-import { MAIL_TRIAGE_SCHEMA } from "./mailbox-triage";
+import { MAIL_TRIAGE_SCHEMA, MAILBOX_LOGIN_CODES_STATEMENTS } from "./mailbox-triage";
 import type { Env } from "./types";
 
 type RuntimeMigration = {
@@ -628,6 +628,20 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-19-site-badge-v1",
     async apply(db) {
       await addColumnIfMissing(db, "owner_profile", "site_badge", "TEXT CHECK (site_badge IN ('shown', 'hidden'))");
+    },
+  },
+  // The handled log learns "login_code": sign-in codes ME3 archives once they are past use.
+  {
+    id: "0080_mailbox_login_codes",
+    checksum: "2026-10-20-mailbox-login-codes-v1",
+    async apply(db) {
+      const table = await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'mailbox_handled_actions'").first<SqliteDefinitionRow>();
+      if (!table?.sql) {
+        await db.batch(MAIL_TRIAGE_SCHEMA.map(sql => db.prepare(sql)));
+        return;
+      }
+      if (table.sql.includes("'login_code'")) return;
+      await db.batch(MAILBOX_LOGIN_CODES_STATEMENTS.map(sql => db.prepare(sql)));
     },
   },
 ];

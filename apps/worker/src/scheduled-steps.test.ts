@@ -25,7 +25,7 @@ vi.mock("./commerce-reconciliation", () => ({ reconcileProductOrders: vi.fn() })
 vi.mock("./agent-commerce", () => ({ expireStaleAgentCheckouts: vi.fn(async () => undefined) }));
 vi.mock("./agent-network-commerce", () => ({ pollNetworkPurchases: vi.fn(async () => undefined) }));
 vi.mock("./mailbox-attachment-staging", () => ({ reconcileMailboxAttachmentStaging: vi.fn() }));
-vi.mock("./mailbox-triage", () => ({ retryPendingMailTriage: vi.fn(async () => undefined) }));
+vi.mock("./mailbox-triage", () => ({ retryPendingMailTriage: vi.fn(async () => undefined), archiveStaleLoginCodes: vi.fn(async () => undefined) }));
 vi.mock("./morning-calendar-push", () => ({ dispatchDueMorningCalendarPushes: vi.fn() }));
 vi.mock("./gratitude", () => ({ dispatchDueGratitudeReminders: vi.fn() }));
 vi.mock("./calendar-push-notifications", () => ({ dispatchDueCalendarPushNotifications: vi.fn() }));

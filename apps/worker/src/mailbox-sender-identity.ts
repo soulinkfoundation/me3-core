@@ -333,7 +333,8 @@ export function triageTagLabel(handledKind: string | null, draftId: string | nul
   switch (handledKind) {
     case "receipt": return "Filed to Accounts";
     case "rule_reply": return "ME3 replied";
-    case "newsletter": return "Summarised";
+    case "newsletter": return "Newsletter";
+    case "login_code": return "Login code";
     case "notification": return "Archived";
     case "rule_archive": return "Archived · your rule";
     default: return null;
