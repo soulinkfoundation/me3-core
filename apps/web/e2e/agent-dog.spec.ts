@@ -38,7 +38,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     const idle = page.locator('.agent-dog[data-state="idle"]:visible');
     await expect(page.getByRole('heading', { name: 'What should I fetch?' })).toBeVisible();
     await expect(idle).toBeVisible();
-    await expect(page.getByRole('button', { name: "What's on tomorrow?", exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: "Help me reply to an email", exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('chat-empty.png'), fullPage: true });
     await page.emulateMedia({ reducedMotion: 'reduce' }); await expect(idle.locator('img')).toHaveCSS('animation-name', 'none');
     await page.emulateMedia({ reducedMotion: 'no-preference' });

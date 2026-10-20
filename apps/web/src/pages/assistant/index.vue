@@ -10,7 +10,8 @@ import {
 import { useRoute, useRouter } from "vue-router";
 import { definePage } from "unplugin-vue-router/runtime";
 import { api, type ApiStreamEvent } from "../../api";
-import { MISSION_DRAFT_PROMPT, ownMissionStatement } from "../../utils/missionStatement";
+import { ownMissionStatement } from "../../utils/missionStatement";
+import { assistantSuggestions, type AssistantSuggestion, type UpcomingEvent } from "../../utils/assistantSuggestions";
 import Button from "../../components/Button.vue";
 import HomePanels from "../../components/home/HomePanels.vue";
 import AgentTargetChoices from "../../components/AgentTargetChoices.vue";
@@ -60,7 +61,6 @@ import {
   type AiAgentModelOption,
   type AiAgentModelProviderId,
 } from "../../utils/aiModelCatalog";
-import type { UiIconName } from "../../utils/icons";
 import AgentDog from "../../components/AgentDog.vue";
 import ChatPayments from "../../components/payments/ChatPayments.vue";
 
@@ -347,30 +347,13 @@ watch(voiceDictationStatusText, message => { if (message) toastError(message); }
 let assistantAbortController: AbortController | null = null;
 let assistantActiveRequestId: string | null = null;
 
-const configureStarterPrompt =
-  "Help me configure my ME3 installation. First check what is already set up across my public site/profile, email mailbox, Soulink, assistant/AI, plugins, and updates. Then suggest the missing or most useful next step. If I'm not sure, walk me through the basics.";
 const assistantPlaceholders = [
   "Ask {{assistantName}} anything...",
   "Set a reminder tomorrow at 9am to...",
   "Draft an email to tell Sarah about...",
 ];
-type StarterPrompt = {
-  label: string;
-  icon: UiIconName;
-  prompt: string;
-  mode?: "site-builder";
-};
-const starterPrompts: StarterPrompt[] = [
-  { label: "What's on tomorrow?", icon: "CalendarDays", prompt: "What's on my calendar tomorrow?" },
-  { label: "Help me reply to an email", icon: "Mail", prompt: "Help me choose an email to reply to and draft a response. Ask me before sending." },
-  { label: "Help me plan my day", icon: "ListTodo", prompt: "Help me plan my day using my calendar, goals and tasks." },
-  // "Build a site" returns here once site building is polished enough to release.
-  {
-    label: "Configure",
-    icon: "Settings",
-    prompt: configureStarterPrompt,
-  },
-];
+// "Build a site" (mode "site-builder") returns to the starters once site building is polished enough to release.
+type StarterPrompt = AssistantSuggestion & { mode?: "site-builder" };
 const assistantAttachmentLimit = 4;
 const assistantAttachmentMaxBytes = 10_000_000;
 const assistantTextAttachmentMaxBytes = 1_000_000;
@@ -440,19 +423,42 @@ const showConfigureStarterPrompt = computed(() => {
   return aiDeploymentMode.value === "self_hosted" && !selectedModelSetup.value.configured;
 });
 
-// Until there's a Mission, drafting one leads the starters: it tells ME3 who the owner helps and why.
+// The starters follow the moment (see assistantSuggestions): next meeting, a first Mission, time of day.
 const missionMissing = ref(false);
-const missionStarterPrompt: StarterPrompt = { label: "Draft my mission", icon: "Sparkles", prompt: MISSION_DRAFT_PROMPT };
+const upcomingEvent = ref<UpcomingEvent | null>(null);
+const suggestionsNow = ref(new Date());
 async function loadMissionStarter() {
   try {
     const dashboard = await api.get<{ missionStatement?: string; mission?: { statement: string | null } }>("/mission-control/dashboard");
     missionMissing.value = !ownMissionStatement(dashboard.mission?.statement ?? dashboard.missionStatement);
   } catch { missionMissing.value = false; }
 }
-const visibleStarterPrompts = computed(() => {
+async function loadUpcomingEvent() {
+  type FeedEvent = { title?: string; startsAt?: string; allDay?: boolean; status?: string };
+  const now = new Date();
+  suggestionsNow.value = now;
+  try {
+    const end = new Date(now.getTime() + 90 * 60 * 1000);
+    const feed = await api.get<{ events?: FeedEvent[]; importedEvents?: FeedEvent[] }>(
+      `/calendar/feed?${new URLSearchParams({ start: now.toISOString(), end: end.toISOString() })}`,
+    );
+    upcomingEvent.value = [...(feed.events ?? []), ...(feed.importedEvents ?? [])]
+      .flatMap((event) => {
+        const startsAt = event.startsAt ? new Date(event.startsAt) : null;
+        if (!startsAt || event.allDay || event.status === "cancelled" || startsAt <= now) return [];
+        return [{ title: event.title || "your next event", startsAt }];
+      })
+      .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime())[0] ?? null;
+  } catch { upcomingEvent.value = null; }
+}
+const visibleStarterPrompts = computed<StarterPrompt[]>(() => {
   if (siteBuilderMode.value) return [];
-  const prompts = showConfigureStarterPrompt.value ? starterPrompts : starterPrompts.filter((prompt) => prompt.label !== "Configure");
-  return missionMissing.value ? [missionStarterPrompt, ...prompts] : prompts;
+  return assistantSuggestions({
+    now: suggestionsNow.value,
+    upcomingEvent: upcomingEvent.value,
+    missionMissing: missionMissing.value,
+    needsConfigure: showConfigureStarterPrompt.value,
+  });
 });
 const assistantMessageLabel = computed(
   () => `Message ${assistantDisplayName.value}`,
@@ -618,9 +624,12 @@ const canSendAssistantMessage = computed(
 );
 onMounted(() => {
   void loadMissionStarter();
+  void loadUpcomingEvent();
   void initializeAssistantPage();
   window.addEventListener("scroll", onAssistantScroll, { capture: true, passive: true });
 });
+// A fresh chat can open hours after the page did; refresh the moment its starters follow.
+watch(() => assistantConsoleMessages.value.length === 0, (empty) => { if (empty) void loadUpcomingEvent(); });
 
 async function initializeAssistantPage() {
   const routePrompt = routeAssistantPrompt();
