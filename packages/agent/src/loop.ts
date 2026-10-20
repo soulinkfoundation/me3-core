@@ -16,7 +16,6 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted) abort();
   const timeout = setTimeout(() => controller.abort("Agent time budget exceeded"), input.timeBudgetMs ?? 300_000);
-  const tools = withToolLoader(input.tools.filter(tool => !tool.pluginId || input.context.enabledPluginIds.has(tool.pluginId)));
   let model: AgentModel = input.model;
   let state = await input.store.load();
   const freshTurn = !state;
@@ -25,6 +24,9 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     trace: { model: model.id, steps: 0, toolCalls: [], startedAt: new Date().toISOString(), totalDurationMs: 0, timeToFirstTokenMs: null, usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, estimatedCostUsd: 0 } },
   };
   const checkpoint = state;
+  if (freshTurn && input.preloadedToolGroups?.length) checkpoint.trace.toolGroups = [...input.preloadedToolGroups];
+  // Groups already visible this turn are left out of the loader, so the model is not told to load them first.
+  const tools = withToolLoader(input.tools.filter(tool => !tool.pluginId || input.context.enabledPluginIds.has(tool.pluginId)), checkpoint.trace.toolGroups ?? []);
   const measureModel = async (selected: AgentModel, step: Parameters<AgentModel["step"]>[0]) => {
     const began = performance.now();
     try {
@@ -127,7 +129,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       }
       if (checkpoint.steps >= (input.maxSteps ?? 30)) return finish("failed", "I reached the turn's step limit. Completed tool results are saved; the remaining work is unfinished.");
       let emittedText = false;
-      const stepInput = { messages: compactAgentContext(withOwnerLocalToolTimes(checkpoint.messages, input.context.ownerTimezone), input.contextWindow), tools: visibleTools(tools, checkpoint.messages), signal: controller.signal, onDelta: async (text: string) => {
+      const stepInput = { messages: compactAgentContext(withOwnerLocalToolTimes(checkpoint.messages, input.context.ownerTimezone), input.contextWindow), tools: visibleTools(tools, checkpoint.messages, checkpoint.trace.toolGroups ?? []), signal: controller.signal, onDelta: async (text: string) => {
         if (!text) return;
         emittedText = true;
         checkpoint.trace.timeToFirstTokenMs ??= performance.now() - started;

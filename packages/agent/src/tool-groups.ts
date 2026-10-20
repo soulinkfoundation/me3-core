@@ -21,9 +21,10 @@ export function toolGroupFor(name: string): string | undefined {
   return Object.entries(DEFERRED_TOOL_GROUPS).find(([, group]) => name.startsWith(group.prefix))?.[0];
 }
 
-/** Adds the loader when any deferred group is available to this turn. */
-export function withToolLoader(tools: AgentTool[]): AgentTool[] {
-  const groups = [...new Set(tools.map(tool => tool.group).filter((group): group is string => !!group))];
+/** Adds the loader when any deferred group still needs loading this turn; preloaded groups are already visible. */
+export function withToolLoader(tools: AgentTool[], preloaded: Iterable<string> = []): AgentTool[] {
+  const visible = new Set(preloaded);
+  const groups = [...new Set(tools.map(tool => tool.group).filter((group): group is string => !!group && !visible.has(group)))];
   if (!groups.length) return tools;
   const loader: AgentTool = {
     name: TOOL_LOADER_NAME, effect: "read", approval: "none",
@@ -37,9 +38,9 @@ export function withToolLoader(tools: AgentTool[]): AgentTool[] {
   return [...tools, loader];
 }
 
-/** Tools the model sees: always-on tools plus every group loaded earlier in the turn. */
-export function visibleTools(tools: readonly AgentTool[], messages: readonly AgentMessage[]): AgentTool[] {
-  const loaded = new Set<string>();
+/** Tools the model sees: always-on tools plus every group loaded earlier in the turn or preloaded by the caller. */
+export function visibleTools(tools: readonly AgentTool[], messages: readonly AgentMessage[], preloaded: Iterable<string> = []): AgentTool[] {
+  const loaded = new Set<string>(preloaded);
   for (const message of messages) for (const call of message.toolCalls ?? []) {
     if (call.name === TOOL_LOADER_NAME && Array.isArray(call.arguments.groups)) for (const group of call.arguments.groups) loaded.add(String(group));
   }

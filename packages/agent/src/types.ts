@@ -90,6 +90,8 @@ export interface AgentTool {
 export type AgentEvent = { event: "status" | "tool" | "delta" | "step" | "approval_required"; data: Record<string, unknown> };
 export type AgentTrace = {
   model: string;
+  /** Deferred tool groups visible from the first step, without a loader call. */
+  toolGroups?: string[];
   modelSteps?: Array<{ step: number; model: string; status: "complete" | "error"; durationMs: number; usage?: AgentUsage; billingUsageId?: string; toolCalls: Array<Pick<AgentToolCall, "name" | "arguments">> }>;
   targetIntentRequests?:Array<{receiptId:string;modelId:string;usageId?:string;uncertain:boolean}>;
   steps: number;
@@ -115,6 +117,8 @@ export type AgentTurnInput = {
   model: AgentModel;
   backupModel?: AgentModel;
   tools: readonly AgentTool[];
+  /** Deferred tool groups shown from the first step, e.g. groups this conversation loaded on earlier turns. */
+  preloadedToolGroups?: readonly string[];
   messages: AgentMessage[];
   context: Omit<AgentToolContext, "toolCallId" | "idempotencyKey" | "effectReceiptClaimed" | "signal" | "messages">;
   store: AgentTurnStore;
