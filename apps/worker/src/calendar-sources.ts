@@ -729,7 +729,8 @@ function normalizeCalendarUrl(value: unknown): URL {
 
   let url: URL;
   try {
-    url = new URL(value.trim());
+    // Apple shares public iCloud calendars as webcal:// links; the same feed is served over HTTPS.
+    url = new URL(value.trim().replace(/^webcal:\/\//i, "https://"));
   } catch {
     throw new CalendarSourceInputError("Use a valid calendar subscription URL.");
   }

@@ -201,6 +201,29 @@ describe("calendar source subscriptions", () => {
     });
   });
 
+  it("subscribes to an iCloud webcal:// link over HTTPS", async () => {
+    const { env, state } = createCalendarSourceEnv();
+    const fetcher = vi.fn(async () => new Response(FEED_ONE)) as typeof fetch;
+
+    const result = await subscribeIcsUrl(env, "owner", {
+      url: "  WEBCAL://p42-caldav.icloud.com/published/2/abc123  ",
+    }, fetcher);
+
+    expect(result.importedCount).toBe(1);
+    expect(vi.mocked(fetcher).mock.calls[0]![0]).toBe("https://p42-caldav.icloud.com/published/2/abc123");
+    expect(state.sources).toHaveLength(1);
+  });
+
+  it("still rejects plain HTTP calendar links", async () => {
+    const { env } = createCalendarSourceEnv();
+    const fetcher = vi.fn(async () => new Response(FEED_ONE)) as typeof fetch;
+
+    await expect(subscribeIcsUrl(env, "owner", {
+      url: "http://calendar.example.com/feed.ics",
+    }, fetcher)).rejects.toThrow("Use an HTTPS calendar subscription URL.");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("refreshes due subscribed sources and replaces stale events", async () => {
     const { env, state } = createCalendarSourceEnv();
     const firstFetcher = vi.fn(async () => new Response(FEED_ONE)) as typeof fetch;
