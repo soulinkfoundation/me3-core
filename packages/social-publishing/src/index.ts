@@ -3414,6 +3414,22 @@ export async function recoverStrandedQueuedSocialPublications(
   return { requeued, skipped };
 }
 
+/** A post went live on its platform; fired once per Publication. */
+export type SocialPublishedEvent = {
+  userId: string;
+  publicationId: string;
+  variantId: string;
+  platform: SocialPlatform;
+  platformLabel: string;
+  title: string | null;
+  platformPostUrl: string | null;
+};
+
+/** Lets the host record what the plugin did without the plugin knowing about host tables. */
+export type SocialPublishHooks = {
+  onPublished?(event: SocialPublishedEvent): Promise<void>;
+};
+
 export async function processSocialPublishBatch(
   batch: {
     queue?: string;
@@ -3424,6 +3440,7 @@ export async function processSocialPublishBatch(
     }>;
   },
   env: SocialPublishingEnv,
+  hooks: SocialPublishHooks = {},
 ): Promise<void> {
   const isDeadLetterBatch =
     batch.queue === SOCIAL_PUBLISH_DLQ_NAME || Boolean(batch.queue?.includes("dlq"));
@@ -3438,6 +3455,7 @@ export async function processSocialPublishBatch(
         env,
         message.body.publicationId,
         fetchWithGlobalContext,
+        hooks,
       );
       message.ack();
     } catch (error) {
@@ -3609,6 +3627,7 @@ export async function publishQueuedPublication(
   env: SocialPublishingEnv,
   publicationIdInput: unknown,
   fetcher: typeof fetch = fetchWithGlobalContext,
+  hooks: SocialPublishHooks = {},
 ): Promise<void> {
   const gate = await getSocialPublishingRuntimeStatus(env);
   const publicationId = normalizeId(publicationIdInput);
@@ -4040,6 +4059,20 @@ export async function publishQueuedPublication(
     await revokeProviderMediaGrants(env, row.publication_id);
   }
   await syncContentItemStatusFromPublications(env, row.variant_id);
+  try {
+    await hooks.onPublished?.({
+      userId: row.user_id,
+      publicationId: row.publication_id,
+      variantId: row.variant_id,
+      platform: row.platform,
+      platformLabel: platformLabel(row.platform),
+      title: row.title?.trim() || null,
+      platformPostUrl: result.platformPostUrl || null,
+    });
+  } catch (error) {
+    // The post is live; a host hook failure must not retry the publish.
+    console.warn("social publish hook failed", row.publication_id, error);
+  }
 }
 
 async function publicationAttemptNumber(

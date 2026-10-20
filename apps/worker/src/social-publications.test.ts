@@ -890,6 +890,34 @@ describe("reusable social Publications", () => {
     )).toEqual({ publishing_settings_json: "{}" });
   });
 
+  it("tells the host once when a post goes live, and a failing host hook never retries the publish", async () => {
+    const publication = await createPublication(fixture, "version-1");
+    await enableProviderDelivery(fixture, publication.id);
+    fixture.db.run("UPDATE social_variants SET title = 'Launch week recap' WHERE id = 'version-1'");
+    vi.stubGlobal("fetch", linkedInFetcher(201));
+    const onPublished = vi.fn(async () => { throw new Error("Host activity store unavailable"); });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const message = socialQueueMessage(publication.id);
+    await processSocialPublishBatch({ queue: SOCIAL_PUBLISH_QUEUE_NAME, messages: [message] }, fixture.env as never, { onPublished });
+    const redelivered = socialQueueMessage(publication.id);
+    await processSocialPublishBatch({ queue: SOCIAL_PUBLISH_QUEUE_NAME, messages: [redelivered] }, fixture.env as never, { onPublished });
+
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+    expect(redelivered.ack).toHaveBeenCalledOnce();
+    expect(onPublished).toHaveBeenCalledOnce();
+    expect(onPublished).toHaveBeenCalledWith({
+      userId: "owner",
+      publicationId: publication.id,
+      variantId: "version-1",
+      platform: "linkedin",
+      platformLabel: "LinkedIn",
+      title: "Launch week recap",
+      platformPostUrl: expect.any(String),
+    });
+  });
+
   it("preserves the Worker global fetch context for provider requests", async () => {
     const publication = await createPublication(fixture, "version-1");
     await enableProviderDelivery(fixture, publication.id);

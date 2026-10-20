@@ -18,6 +18,7 @@ import {
   dispatchDueSocialPublications,
   processSocialPublishBatch,
   recoverStrandedQueuedSocialPublications,
+  socialPublishActivityHooks,
   SOCIAL_PUBLISH_QUEUE_NAME,
 } from "./social-publishing";
 import {
@@ -124,7 +125,7 @@ const worker = {
         );
       }
       if (batch.queue === SOCIAL_PUBLISH_QUEUE_NAME || batch.queue.includes("social-publish")) {
-        return await processSocialPublishBatch(batch as MessageBatch<SocialPublishQueueMessage>, env);
+        return await processSocialPublishBatch(batch as MessageBatch<SocialPublishQueueMessage>, env, socialPublishActivityHooks(env));
       }
       for (const message of batch.messages) message.ack();
     } finally {

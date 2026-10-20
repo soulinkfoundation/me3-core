@@ -1,3 +1,7 @@
+import { SOCIAL_PUBLISHING_PLUGIN_ID, type SocialPublishHooks } from "@me3-core/plugin-social-publishing";
+import { recordOwnerActivity } from "./mission-activity";
+import type { Env } from "./types";
+
 export {
   CAROUSEL_RASTER_MIME_TYPES,
   SOCIAL_PLATFORMS,
@@ -120,6 +124,8 @@ export {
   type SocialProviderSetting,
   type SocialProviderSettingsUpdate,
   type SocialPublishQueueMessage,
+  type SocialPublishedEvent,
+  type SocialPublishHooks,
   type SocialPublishingAccount,
   type SocialPublishingGate,
   type SocialPublishingRuntimeStatus,
@@ -142,3 +148,19 @@ export {
   type UpdateSocialSuggestionInput,
   type UploadSocialCarouselMediaInput,
 } from "@me3-core/plugin-social-publishing";
+
+/** Each post that goes live shows once in the agent's Recent work. */
+export function socialPublishActivityHooks(env: Env): SocialPublishHooks {
+  return {
+    async onPublished(event) {
+      await recordOwnerActivity(env, event.userId, {
+        pluginId: SOCIAL_PUBLISHING_PLUGIN_ID,
+        activityType: "social.post_published",
+        title: event.title ? `Posted “${event.title}” to ${event.platformLabel}` : `Posted to ${event.platformLabel}`,
+        summary: `Live on ${event.platformLabel}.`,
+        status: "succeeded",
+        relatedId: event.publicationId,
+      });
+    },
+  };
+}

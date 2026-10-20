@@ -13,7 +13,8 @@ import type { Env } from "./types";
 // job pushing anyway; screenshots stored outside the owner's private conversation
 // storage; owners raising limits above the installation ceiling; a stuck job holding
 // the only running slot; Stop with no live run leaving the job running; DO recovery
-// not resuming a job; another owner's job being visible.
+// not resuming a job; another owner's job being visible; Recent work missing a
+// finished job, repeating it on recovery, or claiming a failed or cancelled one.
 const runtime = vi.hoisted(() => ({ model: undefined as AgentModel | undefined }));
 vi.mock("./agent-runtime", () => ({
   createAgentModels: async () => ({ model: runtime.model, backup: undefined }),
@@ -33,7 +34,7 @@ function fixture(envOverrides: Partial<Env> = {}) {
   raw.exec("CREATE TABLE owner_profile(id TEXT PRIMARY KEY,name TEXT,timezone TEXT); INSERT INTO owner_profile VALUES('owner','Test Owner','Europe/Dublin'),('other','Other','UTC');");
   raw.exec("CREATE TABLE assistant_threads(id TEXT PRIMARY KEY,owner_id TEXT,status TEXT,updated_at TEXT,last_message_at TEXT); INSERT INTO assistant_threads(id,owner_id,status) VALUES('thread','owner','active'),('other-thread','other','active');");
   raw.exec("CREATE TABLE assistant_messages(id TEXT PRIMARY KEY,owner_id TEXT,thread_id TEXT,role TEXT,content TEXT,metadata_json TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);");
-  for (const name of ["assistant_attachments", "assistant_message_assets"]) raw.exec(initial.match(new RegExp(`CREATE TABLE ${name} \\([\\s\\S]*?\\n\\);`))![0].replace(/,\s*FOREIGN KEY[^\n]*\n/g, "\n").replace(/REFERENCES [a-z_]+\([a-z_]+\)( ON DELETE (SET NULL|CASCADE))?/g, ""));
+  for (const name of ["assistant_attachments", "assistant_message_assets", "mission_plugin_activity"]) raw.exec(initial.match(new RegExp(`CREATE TABLE ${name} \\([\\s\\S]*?\\n\\);`))![0].replace(/,\s*FOREIGN KEY[^\n]*\n/g, "\n").replace(/REFERENCES [a-z_]+\([a-z_]+\)( ON DELETE (SET NULL|CASCADE))?/g, ""));
   raw.exec("CREATE TABLE install_secrets(name TEXT,value TEXT); INSERT INTO install_secrets VALUES('ME3_CLOUD_OWNER_ID','cloud-owner'),('ME3_CORE_INSTALL_ID','install'),('ME3_CLOUD_CORE_TOKEN','test-token');");
   for (const sql of [...AGENT_SCHEMA_STATEMENTS, ...AGENT_COMPUTER_SCHEMA, ...AGENT_NOTIFICATION_SCHEMA]) raw.exec(sql);
   const executions = new WeakMap<object, () => unknown>();
@@ -105,6 +106,25 @@ describe("computer job results in the conversation", () => {
     await executeComputerJob(env, "owner", "job-1", new AbortController().signal, { driver });
     expect(raw.prepare("SELECT COUNT(*) AS count FROM assistant_messages").get()).toMatchObject({ count: 1 });
     expect(relay).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a finished job once in Recent work, never a failed or cancelled one", async () => {
+    const { env, raw } = fixture();
+    const activity = () => raw.prepare("SELECT user_id,plugin_id,activity_type,title,summary,related_id FROM mission_plugin_activity").all();
+    await newJob(env);
+    runtime.model = scripted([[call("computer_finish", { summary: "The kettle is €24.99." })]]);
+    await executeComputerJob(env, "owner", "job-1", new AbortController().signal, { driver: createFakeBrowserDriver(shop) });
+    await publishComputerJobResult(env, (await loadComputerJob(env.DB as never, "owner", "job-1"))!);
+    expect(activity()).toEqual([{ user_id: "owner", plugin_id: "me3.agent-chat", activity_type: "agent.computer_job.completed", title: "Researched: Find the kettle price", summary: "The kettle is €24.99.", related_id: "job-1" }]);
+    raw.exec("DELETE FROM mission_plugin_activity");
+    await publishComputerJobResult(env, (await loadComputerJob(env.DB as never, "owner", "job-1"))!);
+    await newJob(env, "job-2");
+    runtime.model = undefined;
+    expect((await executeComputerJob(env, "owner", "job-2", new AbortController().signal, { driver: createFakeBrowserDriver(shop) })).status).toBe("failed");
+    await newJob(env, "job-3");
+    await createComputerChatServices(env, "owner", { start: vi.fn(), cancel: async () => undefined }).cancel("job-3");
+    expect((await executeComputerJob(env, "owner", "job-3", new AbortController().signal, { driver: createFakeBrowserDriver(shop) })).status).toBe("cancelled");
+    expect(activity()).toEqual([]);
   });
 
   it("suppresses the push while the owner watches, and never pushes a cancellation", async () => {

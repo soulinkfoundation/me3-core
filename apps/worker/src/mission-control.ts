@@ -1,5 +1,6 @@
 import { normalizeMainGoal, normalizeMissionGoals, resolveMissionGoalId } from "./goals";
 import { getLatestMissionWheelSnapshot } from "./wheel-of-life";
+import { recordOwnerActivity } from "./mission-activity";
 // Compatibility exports for existing native clients and integrations.
 export {
   getMissionWheel,
@@ -1628,7 +1629,7 @@ async function submitWeeklyReviewPayload(
       .run();
   }
 
-  await appendMissionPluginActivity(env, userId, {
+  await recordOwnerActivity(env, userId, {
     pluginId: "me3.mission-control",
     activityType: "weekly_review.submitted",
     title: "Weekly Review submitted",
@@ -2466,38 +2467,6 @@ async function getOwnerTimezone(env: Env, userId: string): Promise<string> {
     .bind(userId)
     .first<OwnerTimezoneRow>();
   return normalizeTimeZone(row?.timezone) || DEFAULT_OWNER_TIMEZONE;
-}
-
-async function appendMissionPluginActivity(
-  env: Env,
-  userId: string,
-  input: {
-    pluginId: string;
-    activityType: string;
-    title: string;
-    summary?: string | null;
-    status?: string | null;
-    relatedId?: string | null;
-  },
-) {
-  const now = new Date().toISOString();
-  await env.DB.prepare(
-    `INSERT INTO mission_plugin_activity
-       (id, user_id, plugin_id, activity_type, title, summary, status, related_id, metadata_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)`,
-  )
-    .bind(
-      crypto.randomUUID(),
-      userId,
-      input.pluginId,
-      input.activityType,
-      input.title,
-      input.summary || null,
-      input.status || null,
-      input.relatedId || null,
-      now,
-    )
-    .run();
 }
 
 async function appendMissionDaemonAudit(

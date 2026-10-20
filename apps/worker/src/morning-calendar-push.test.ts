@@ -5,7 +5,8 @@ import type { Env } from "./types";
 
 // Failure modes: UTC/local date drift, DST short/long days, early delivery,
 // repeated/concurrent cron, abandoned claims, relay failures, private titles,
-// truncated counts, missing recurring birthdays or subscribed events, tasks leaking.
+// truncated counts, missing recurring birthdays or subscribed events, tasks leaking,
+// Recent work claiming a briefing that reached no device or showing one day twice.
 const databases: DatabaseSync[] = [];
 afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.unstubAllGlobals(); });
 
@@ -27,6 +28,9 @@ function fixture(timezone = "Europe/Dublin", time = "07:30") {
     CREATE TABLE calendar_source_events(id TEXT, source_id TEXT, external_key TEXT, external_uid TEXT,
       title TEXT, notes TEXT, location TEXT, starts_at TEXT, ends_at TEXT, timezone TEXT, all_day INTEGER, is_busy INTEGER, created_at TEXT);
     CREATE TABLE calendar_source_event_dismissals(source_id TEXT, external_key TEXT);
+    CREATE TABLE mission_plugin_activity(id TEXT PRIMARY KEY, user_id TEXT NOT NULL, plugin_id TEXT NOT NULL,
+      activity_type TEXT NOT NULL, title TEXT NOT NULL, summary TEXT, status TEXT, related_id TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
   `);
   raw.prepare("INSERT INTO owner_profile VALUES('owner',?,?, '2026-01-01')").run(timezone, time);
   for (const sql of MORNING_CALENDAR_PUSH_SCHEMA) raw.exec(sql);
@@ -87,6 +91,25 @@ describe("morning calendar push with real SQLite", () => {
     f.fetch.mockResolvedValueOnce(Response.json({ ok: true, matched: 2, sent: 1, retryable: 1 }));
     f.fetch.mockResolvedValueOnce(Response.json({ ok: true, matched: 2, sent: 1, alreadySent: 1, retryable: 0 }));
     await f.dispatch(); await f.dispatch(); await f.dispatch(); expect(f.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows each day's delivered briefing once in Recent work, and none when no device received it", async () => {
+    const f = fixture();
+    const activity = () => f.raw.prepare("SELECT user_id, plugin_id, activity_type, title, summary, related_id FROM mission_plugin_activity ORDER BY related_id").all();
+    f.raw.exec(`INSERT INTO user_reminders VALUES('reminder','owner','Private reminder',NULL,'2026-10-13T20:00:00.000Z',NULL,NULL,NULL,NULL,NULL,'pending',NULL,NULL,'2026-01-01');
+      INSERT INTO bookings VALUES('booking','site','Private Guest','2026-10-13T10:00:00.000Z','2026-10-13T11:00:00.000Z','confirmed');`);
+    f.fetch.mockResolvedValueOnce(Response.json({ ok: true, matched: 2, sent: 1, retryable: 1 }));
+    f.fetch.mockResolvedValueOnce(Response.json({ ok: true, matched: 2, sent: 1, alreadySent: 1, retryable: 0 }));
+    await f.dispatch(); expect(activity()).toEqual([]);
+    await f.dispatch(); await f.dispatch("2026-10-13T23:00:00Z");
+    f.fetch.mockResolvedValueOnce(Response.json({ ok: true, matched: 0, sent: 0, alreadySent: 0, retryable: 0 }));
+    await f.dispatch("2026-10-14T06:30:00Z");
+    expect(activity()).toEqual([{
+      user_id: "owner", plugin_id: "me3.mission-control", activity_type: "daily_briefing.sent",
+      title: "Sent your morning briefing", summary: "1 booking and 1 reminder today.", related_id: "daily-briefing:2026-10-13",
+    }]);
+    f.raw.exec("DELETE FROM mission_plugin_activity"); await f.dispatch("2026-10-14T07:00:00Z");
+    expect(activity()).toEqual([]);
   });
 
   it("keeps a recurring birthday on one local date across a short DST day", async () => {

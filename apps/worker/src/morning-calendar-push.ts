@@ -1,5 +1,6 @@
 import { addDaysToDateString, getUtcMsForLocalTime, normalizeTimeZone } from "./calendar";
 import { loadCalendarPushItems } from "./calendar-push-notifications";
+import { recordOwnerActivity } from "./mission-activity";
 import { notifyDailyBriefingReady, type DailyBriefingPushSummary } from "./push-notifications";
 import type { Env } from "./types";
 import { getBriefingQuote } from "./quotes";
@@ -44,6 +45,8 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
     if (!claim.meta?.changes) continue;
 
     let delivered = false;
+    let reachedDevice = false;
+    let summary: DailyBriefingPushSummary | null = null;
     try {
       const midnight = (date: string) => {
         const [year, month, day] = date.split("-").map(Number);
@@ -52,7 +55,7 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
       const items = await loadCalendarPushItems(env, owner.id, midnight(dateKey), midnight(addDaysToDateString(dateKey, 1)));
       const birthdays = items.events.filter(event => event.kind === "birthday");
       const quote = await getBriefingQuote(env, owner.id, now);
-      const summary: DailyBriefingPushSummary = {
+      summary = {
         ...(quote ? { quote: { text: quote.text, author: quote.author } } : {}),
         birthdayNames: birthdays.map(event => event.title.replace(/['’]s birthday$/i, "").trim()),
         counts: {
@@ -66,6 +69,7 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
       delivered = result.ok === true && (typeof result.retryable === "number"
         ? result.retryable === 0
         : Number(result.sent || 0) + Number(result.alreadySent || 0) >= Number(result.matched || 0));
+      reachedDevice = Number(result.sent || 0) + Number(result.alreadySent || 0) > 0;
     } catch {
       console.warn("Morning calendar push was deferred", { dateKey });
     }
@@ -73,6 +77,25 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
       "UPDATE morning_calendar_push_dispatches SET status = ? WHERE user_id = ? AND date_key = ? AND claimed_at = ?",
     ).bind(delivered ? "sent" : "failed", owner.id, dateKey, now.getTime()).run();
     if (delivered) sent++; else failed++;
+    // With no registered device the briefing reached no one, so it is not work done.
+    if (delivered && reachedDevice && summary) await recordOwnerActivity(env, owner.id, {
+      pluginId: "me3.mission-control",
+      activityType: "daily_briefing.sent",
+      title: "Sent your morning briefing",
+      summary: describeBriefingDay(summary),
+      status: "succeeded",
+      relatedId: `daily-briefing:${dateKey}`,
+    });
   }
   return { checkedAt: now.toISOString(), sent, failed };
+}
+
+function describeBriefingDay(summary: DailyBriefingPushSummary) {
+  const counts = summary.counts;
+  const parts = ([
+    [counts.events, "event"], [counts.bookings, "booking"], [counts.reminders, "reminder"], [counts.birthdays, "birthday"],
+  ] as const).filter(([count]) => count > 0).map(([count, noun]) => `${count} ${noun}${count === 1 ? "" : "s"}`);
+  if (parts.length === 0) return "Nothing on your calendar today.";
+  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  return `${list} today.`;
 }

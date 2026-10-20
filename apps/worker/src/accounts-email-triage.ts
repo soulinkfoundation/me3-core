@@ -1,6 +1,8 @@
 import { decodeMimeHeaderValue } from "../../../shared/email-headers";
 import { ACCOUNTS_PLUGIN_ID, AccountsInputError, getOrCreateCategoryByName, isFinancialEntryRemoved } from "./accounts";
 import { getDefaultCommerceCurrency } from "./commerce-settings";
+import { brandNameFromDomain, describeSenderName, isGenericMailProvider, senderDomain } from "./mailbox-sender-identity";
+import { recordOwnerActivity } from "./mission-activity";
 import { isCorePluginEnabled } from "./plugins";
 import { sha256Text } from "./sites";
 import type { Env } from "./types";
@@ -71,7 +73,32 @@ export async function triageInboundInvoiceEmail(env: Env, mailboxId: string, mes
 
   // Direct delivery retries can persist a new mailbox row for the same provider message.
   const entryId = `email-triage:${await sha256Text(JSON.stringify([mailboxId, message.provider_id, message.provider_message_id || message.id]))}`;
-  return insertInvoiceFinancialEntry(env, message.user_id, entryId, extraction);
+  const filed = await insertInvoiceFinancialEntry(env, message.user_id, entryId, extraction);
+  // Only the first filing shows in Recent work; retries and duplicates file nothing.
+  if (filed) await recordOwnerActivity(env, message.user_id, {
+    pluginId: ACCOUNTS_PLUGIN_ID,
+    activityType: "accounts.email_entry_filed",
+    title: invoiceActivityTitle(message, extraction),
+    summary: `${formatInvoiceAmount(extraction)} added to Accounts${extraction.status === "needs_review" ? " for you to check" : ""}.`,
+    status: "succeeded",
+    relatedId: entryId,
+  });
+  return filed;
+}
+
+function invoiceActivityTitle(message: InvoiceMessage, extraction: InvoiceExtraction) {
+  const domain = senderDomain(message.from_address);
+  const sender = domain && !isGenericMailProvider(domain)
+    ? brandNameFromDomain(domain) || domain
+    : describeSenderName({ address: message.from_address });
+  if (extraction.entryType === "income") return `Logged a payment from ${sender}`;
+  return `Filed a ${extraction.status === "pending" ? "bill" : "receipt"} from ${sender}`;
+}
+
+function formatInvoiceAmount(extraction: InvoiceExtraction) {
+  const value = extraction.amountCents / 100;
+  try { return new Intl.NumberFormat("en-IE", { style: "currency", currency: extraction.currency }).format(value); }
+  catch { return `${value.toFixed(2)} ${extraction.currency}`; }
 }
 
 async function insertInvoiceFinancialEntry(env: Env, userId: string, entryId: string, extraction: InvoiceExtraction) {

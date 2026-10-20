@@ -83,6 +83,29 @@ describe("Accounts invoice hook on the agent mailbox with real SQLite", () => {
     expect(f.entries()).toHaveLength(1);
   });
 
+  it("shows each filed entry once in the agent's Recent work, named after the sender", async () => {
+    const f = fixture();
+    const activity = () => f.raw.prepare("SELECT plugin_id, activity_type, title, summary, related_id FROM mission_plugin_activity ORDER BY title").all();
+    await deliverInboundEmail(mail(), f.env); await deliverInboundEmail(mail(), f.env);
+    await deliverInboundEmail(mail("Your upcoming invoice", "Invoice total EUR 49.00 will be charged on 3 November.", "billing@northwind-hosting.test", "bill-1"), f.env);
+    await deliverInboundEmail(mail("Payment received", "Payment received EUR 49.00. Thank you for your payment.", "billing@stripe.test", "payout-1"), f.env);
+    await deliverInboundEmail(mail("Lunch tomorrow", "See you at noon", "friend@example.test", "lunch-1"), f.env);
+    const entryId = (description: string) => (f.raw.prepare("SELECT id FROM financial_entries WHERE description = ?").get(description) as { id: string }).id;
+    expect(activity()).toEqual([
+      { plugin_id: "me3.accounts", activity_type: "accounts.email_entry_filed", title: "Filed a bill from Northwind Hosting", summary: "€49.00 added to Accounts.", related_id: entryId("Your upcoming invoice") },
+      { plugin_id: "me3.accounts", activity_type: "accounts.email_entry_filed", title: "Filed a receipt from Example", summary: "€24.50 added to Accounts for you to check.", related_id: entryId("Receipt") },
+      { plugin_id: "me3.accounts", activity_type: "accounts.email_entry_filed", title: "Logged a payment from Stripe", summary: "€49.00 added to Accounts.", related_id: entryId("Payment received") },
+    ]);
+  });
+
+  it("does not log a receipt again after the owner clears Recent work", async () => {
+    const f = fixture(); const delivery = await deliverInboundEmail(mail(), f.env);
+    if (delivery.status !== "accepted") throw new Error("Expected accepted synthetic email");
+    f.raw.exec("DELETE FROM mission_plugin_activity");
+    expect(await triageInboundInvoiceEmail(f.env, "mailbox", delivery.messageId)).toBe(false);
+    expect(f.raw.prepare("SELECT id FROM mission_plugin_activity").all()).toHaveLength(0);
+  });
+
   it.each([
     ["Lunch tomorrow", "See you at noon", "friend@example.test"],
     ["Payment platform update", "Introducing a new feature. For example, total EUR 99.00. Learn more.", "billing@stripe.test"],

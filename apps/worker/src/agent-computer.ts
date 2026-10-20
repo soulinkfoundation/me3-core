@@ -5,6 +5,7 @@ import {
 } from "../../../packages/agent/src/computer";
 import type { AgentImage } from "../../../packages/agent/src/types";
 import { notifyAgentBackgroundResult } from "./agent-notifications";
+import { recordOwnerActivity } from "./mission-activity";
 import type { Env } from "./types";
 
 /**
@@ -163,7 +164,7 @@ export async function publishComputerJobResult(env: Env, job: ComputerJob) {
     ok: job.status === "complete", runtime: "agent", turnId, threadId: job.threadId, status: job.status, replyText,
     computerJob: { id: job.id, status: job.status, endReason: job.endReason, goal: job.goal, pages: job.result?.pages ?? [], steps: job.result?.steps ?? job.steps, browsingSeconds: job.result?.browsingSeconds ?? 0, artifacts: job.result?.artifacts ?? [], untrustedSources: true },
   };
-  await env.DB.batch([
+  const [posted] = await env.DB.batch([
     env.DB.prepare(`INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json)
       SELECT ?,?,?,'assistant',?,? WHERE EXISTS(SELECT 1 FROM assistant_threads WHERE id=? AND owner_id=?)`).bind(messageId, job.ownerId, job.threadId, replyText, JSON.stringify(payload), job.threadId, job.ownerId),
     ...(job.result?.artifacts ?? []).map((artifact, index) => env.DB.prepare(`INSERT OR IGNORE INTO assistant_message_assets(id,owner_id,thread_id,message_id,attachment_id,role,display_order,metadata_json)
@@ -173,6 +174,15 @@ export async function publishComputerJobResult(env: Env, job: ComputerJob) {
     env.DB.prepare("UPDATE assistant_threads SET updated_at=CURRENT_TIMESTAMP,last_message_at=CURRENT_TIMESTAMP WHERE id=? AND owner_id=?").bind(job.threadId, job.ownerId),
   ]);
   await markComputerJobPublished(env.DB, job.ownerId, job.id);
+  // A repeated publish posts nothing new, so it adds nothing to Recent work either.
+  if (job.status === "complete" && (posted?.meta?.changes || 0) > 0) await recordOwnerActivity(env, job.ownerId, {
+    pluginId: "me3.agent-chat",
+    activityType: "agent.computer_job.completed",
+    title: `Researched: ${job.goal}`,
+    summary: job.result?.summary || null,
+    status: "succeeded",
+    relatedId: job.id,
+  });
   // Cancellation does not notify, matching chat turns.
   if (job.status !== "cancelled") await notifyAgentBackgroundResult(env, job.ownerId, { resultId: turnId, threadId: job.threadId, kind: "complete" });
 }
