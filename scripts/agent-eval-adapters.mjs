@@ -108,6 +108,14 @@ async function runNewEvalTurn(input) {
   const { createEvalOwnerCreateVerifier } = await import("./agent-eval-owner-create.mjs");
   const verifyOwnerCreateIntent = createEvalOwnerCreateVerifier({ db: input.seed.db, scope: { ...intentScope, ownerTimezone: input.ownerTimezone }, tools: intentTools, route: input.verifierRoute ?? input.modelRoute, fixtureVerdicts: input.ownerCreateFixtureVerdicts });
   const intentReadToolContracts = intentTools.filter(tool => tool.effect === "read" && !tool.endsTurn).map(({ name, parameters }) => ({ name, parameters }));
+  // New-record intent check: scripted runs allow unless a turn supplies explicit verdicts; live runs ask the verifier model.
+  const { createIntentVerifierFromModel } = await import("../packages/agent/src/create-intent.ts");
+  const createFixtures = [...(input.createFixtureVerdicts || [])];
+  const createRoute = input.createVerifierRoute ?? input.verifierRoute ?? input.modelRoute;
+  const verifyCreateIntent = createRoute.model === "scripted-fixture"
+    ? async () => ({ ...(createFixtures.shift() || { decision: "allow", reason: "Scripted fixture allows requested creates." }), inference: { modelId: "scripted-fixture", usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, estimatedCostUsd: 0 } } })
+    : createIntentVerifierFromModel(createCloudflareModel({ ai: createRoute.ai, model: createRoute.model, gatewayId: createRoute.aiGateway.gatewayId,
+      metadata: { purpose: "create_intent" }, recordUsage: usage => createRoute.recordUsage({ usage: { ...usage, purpose: "create_intent" } }) }));
   let messages=input.messages;
   if(!await store.load()) {
     const {loadAgentPlannerHistory}=await import("../apps/worker/src/agent-planner-history.ts");
@@ -125,7 +133,7 @@ async function runNewEvalTurn(input) {
       fastModel: createCloudflareModel({ ai: fast.ai, model: fast.model, gatewayId: fast.aiGateway.gatewayId, recordUsage: usage => fast.recordUsage({ usage }) }) });
   }
   const response = await runAgentTurn({ model, router, tools, messages, store,
-    signal:input.signal, context: { db: input.seed.db, ownerId: input.ownerId, ...contextIds, ownerTimezone: input.ownerTimezone, messageText: currentOwnerInput.messageText, loadIntentOwnerInputs, intentToolContracts, intentReadToolContracts, verifyTargetIntent, verifyOwnerCreateIntent, enabledPluginIds: input.enabledPluginIds, services: input.services }, onEvent: async event => {
+    signal:input.signal, context: { db: input.seed.db, ownerId: input.ownerId, ...contextIds, ownerTimezone: input.ownerTimezone, messageText: currentOwnerInput.messageText, loadIntentOwnerInputs, intentToolContracts, intentReadToolContracts, verifyTargetIntent, verifyOwnerCreateIntent, verifyCreateIntent, enabledPluginIds: input.enabledPluginIds, services: input.services }, onEvent: async event => {
       await appendAgentStreamEvent(input.seed.db, input.ownerId, contextIds.turnId, event.event, event.data);
       await input.onEvent?.(event);
     } });

@@ -193,3 +193,32 @@ describe("from scratch agent loop", () => {
     expect(bounded.status).toBe("failed"); expect(bounded.replyText).not.toContain("done");
   });
 });
+
+describe("independent check of new records", () => {
+  it.each(["deny", "clarify"] as const)("does not create a record the check answers %s, and leaves it retryable", async (decision) => {
+    const f = fixture(); let effects = 0; let evidence: unknown;
+    const receipts: string[] = [];
+    f.store.finishReceipt = async (_key, _value, options) => { receipts.push(options?.notAdmitted ? "not_admitted" : "finished"); };
+    f.tool.createCheck = true;
+    f.tool.execute = async () => { effects++; return { status: "ok" }; };
+    const context = { ...f.context, verifyCreateIntent: async (value: unknown) => { evidence = value; return { decision, reason: "Only asked to look it up.", inference: { modelId: "verifier", usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, estimatedCostUsd: 0.0001 } } }; } };
+    const messages = [{ role: "user" as const, content: "Is Call Alex on my calendar?" }, { role: "assistant" as const, content: "I couldn't find it." }, { role: "user" as const, content: "The second one." }];
+    const result = await runAgentTurn({ ...f, context, tools: [f.tool], messages, model: f.model([{ text: "", toolCalls: [f.call()] }, { text: "I didn't create anything.", toolCalls: [] }]) });
+    expect(effects).toBe(0);
+    expect(receipts).toEqual(["not_admitted"]);
+    expect(result.toolCalls[0].status).toBe("error");
+    expect(evidence).toMatchObject({ ownerRequest: "The second one.", recentConversation: [{ role: "owner", text: "Is Call Alex on my calendar?" }, { role: "assistant", text: "I couldn't find it." }], proposedAction: { name: "save", arguments: { value: "hello" } } });
+    expect(result.trace?.targetIntentRequests).toEqual([expect.objectContaining({ modelId: "verifier", uncertain: false })]);
+  });
+
+  it("creates the record once the check allows it, and skips tools without the flag", async () => {
+    const f = fixture(); let effects = 0; let checks = 0;
+    f.tool.execute = async () => { effects++; return { status: "ok" }; };
+    const context = { ...f.context, verifyCreateIntent: async () => { checks++; return { decision: "allow" as const, reason: "Asked for it." }; } };
+    const created = { ...f.tool, name: "create", createCheck: true };
+    await runAgentTurn({ ...f, context, tools: [f.tool, created], messages: [{ role: "user", content: "Remind me" }],
+      model: f.model([{ text: "", toolCalls: [{ id: "a", name: "save", arguments: { value: "x" } }, { id: "b", name: "create", arguments: { value: "y" } }] }, { text: "Done.", toolCalls: [] }]) });
+    expect(checks).toBe(1);
+    expect(effects).toBe(2);
+  });
+});

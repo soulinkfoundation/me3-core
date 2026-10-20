@@ -8,6 +8,7 @@ import { decideRoute } from "./router";
 import { requireEnabledPlugin } from "./plugin-authorization";
 import { visibleTools, withToolLoader } from "./tool-groups";
 import { withOwnerLocalToolTimes } from "./owner-times";
+import { buildCreateIntentEvidence, CreateIntentRefused, requireCreateIntent } from "./create-intent";
 import type { AgentCheckpoint, AgentModel, AgentModelResponse, AgentTargetPresentationCard, AgentTool, AgentToolCall, AgentToolResult, AgentTurnInput, AgentTurnResult } from "./types";
 
 export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
@@ -296,6 +297,19 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         }
       }
       await requireEnabledPlugin(context, pluginId);
+      if (tool.createCheck && input.context.verifyCreateIntent && !approved && !await cancelled()) {
+        const evidence = buildCreateIntentEvidence(checkpoint.messages, tool, call, input.context.ownerTimezone);
+        try {
+          const checked = await requireCreateIntent(input.context.verifyCreateIntent, evidence, controller.signal);
+          if (checked.inference) await context.onTargetIntentReceipt({receiptId:`${key}:create`,inference:checked.inference,cacheHit:false});
+        } catch (error) {
+          // Nothing was created, so a clarified or corrected request can retry.
+          notAdmitted = true;
+          const inference = error && typeof error === "object" && "inference" in error ? error.inference as AgentTargetIntentReceipt["inference"] : undefined;
+          if (inference) await context.onTargetIntentReceipt({receiptId:`${key}:create`,inference,uncertain:!(error instanceof CreateIntentRefused),cacheHit:false});
+          throw error;
+        }
+      }
       if (await cancelled()) output={status:"error",error:"Turn cancelled before the tool started"};
       else if (needsApproval && !approved) {
         const prepared=await tool.prepareApproval?.(call.arguments,context);

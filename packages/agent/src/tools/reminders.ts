@@ -36,7 +36,7 @@ export function reminderTools() {
       const reminder = resultOrThrow(await createAgentReminder({ DB: context.db }, context.ownerId, reminderInput(args, context), { idempotencyKey: context.idempotencyKey }));
       await rememberTargets(context, "reminder", [reminder], value => value.title);
       return ok({ reminder });
-    }, { fastPath: { mode: "tool_only" }, parameters: objectSchema(reminderTimeProperties, ["title", "date", "time"]) }),
+    }, { createCheck: true, fastPath: { mode: "tool_only" }, parameters: objectSchema(reminderTimeProperties, ["title", "date", "time"]) }),
     domainTool("core.reminders.update", async (args, context) => {
       const id = requiredString(args.reminderId, "Reminder ID");
       const expected = await requireTarget<AgentReminder>(context, "reminder", id);

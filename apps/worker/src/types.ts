@@ -57,6 +57,8 @@ export interface Env {
   ME3_AGENT_FAST_MODEL?: string;
   /** Model for independent intent checks; defaults to the planner model. */
   ME3_AGENT_VERIFIER_MODEL?: string;
+  /** Model for the new-record intent check; defaults to ME3_AGENT_VERIFIER_MODEL, then the planner. */
+  ME3_AGENT_CREATE_VERIFIER_MODEL?: string;
   ME3_AI_REASONING_PROVIDER?: string;
   ME3_AI_REASONING_MODEL?: string;
   ME3_AI_EXTRACTION_PROVIDER?: string;

@@ -44,7 +44,7 @@ export function taskTools() {
       context.signal.throwIfAborted();
       const task = resultOrThrow(await createAgentMissionTask({ DB: context.db }, context.ownerId, { ...args as CreateAgentMissionTaskInput, projectId, idempotencyKey: context.idempotencyKey }));
       await rememberTargets(context, "task", [task], value => value.title); return ok({ task });
-    }, { fastPath: { mode: "tool_only" } }),
+    }, { createCheck: true, fastPath: { mode: "tool_only" } }),
     domainTool("core.mission.task.update", async (args, context) => {
       const taskId = requiredString(args.taskId, "Task ID");
       const expected = await requireTarget<AgentMissionTask>(context, "task", taskId);

@@ -15,7 +15,7 @@ import { sourceFingerprint } from "./agent-eval-source.mjs";
 import { createFastPathAi } from "./evaluate-fast-path.mjs";
 
 const args = process.argv.slice(2).filter((arg) => arg !== "--");
-const allowedFlags = new Set(["runtime", "model", "repeat", "date", "limit", "scenarios", "pricing", "report", "report-only", "max-cost-usd", "grader-model", "supplement", "fast-model", "verifier-model", "reasoning-effort"]);
+const allowedFlags = new Set(["runtime", "model", "repeat", "date", "limit", "scenarios", "pricing", "report", "report-only", "max-cost-usd", "grader-model", "supplement", "fast-model", "verifier-model", "reasoning-effort", "create-verifier-model"]);
 for (const arg of args) if (!arg.startsWith("--") || !allowedFlags.has(arg.slice(2).split("=")[0])) throw new Error(`Unknown eval option: ${arg}`);
 const value = (name, fallback) => args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3) ?? fallback;
 const graderModel = resolveGraderModel(value("grader-model", GRADER_MODEL));
@@ -29,6 +29,8 @@ const reasoningEffortChoice = value("reasoning-effort", "");
 if (reasoningEffortChoice && !/^(none|minimal|low|medium|high)$/.test(reasoningEffortChoice)) throw new Error("--reasoning-effort must be none, minimal, low, medium or high.");
 // Independent intent checks run on the main model unless a separate verifier is named.
 const verifierModelChoice = value("verifier-model", "");
+const createVerifierModelChoice = value("create-verifier-model", "");
+if (createVerifierModelChoice && !/^(openai|anthropic|workers-ai):[^\s]+$/.test(createVerifierModelChoice)) throw new Error("--create-verifier-model must be provider:MODEL.");
 if (verifierModelChoice && !/^(openai|anthropic|workers-ai):[^\s]+$/.test(verifierModelChoice)) throw new Error("--verifier-model must be provider:MODEL.");
 if (fastModelChoice && !/^(openai|anthropic|workers-ai):[^\s]+$/.test(fastModelChoice)) throw new Error("--fast-model must be provider:MODEL.");
 const routerUsage = [];
@@ -108,6 +110,7 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
     const messages = [{ role: "system", content: buildAgentSystemPrompt({ ownerName: "Eval Owner", timezone: "Europe/Dublin", now: new Date(`${baseDate}T12:00:00Z`), ownerSnapshot: "Synthetic owner. Main project: ME3 Launch. Goals: a calmer launch week. Contact and mailbox data require tools." }) }];
     const routing = live && fastModelChoice ? { fastRoute: createGatewayRoute(fastModelChoice, { budget }), clefAi: routingClefAi, recordRouterUsage: usage => routerUsage.push(usage) } : undefined;
     const verifierRoute = live && verifierModelChoice ? createGatewayRoute(verifierModelChoice, { budget }) : undefined;
+    const createVerifierRoute = live && createVerifierModelChoice ? createGatewayRoute(createVerifierModelChoice, { budget }) : undefined;
     const route = live ? createGatewayRoute(modelChoice, { budget }) : { model: "scripted-fixture", providerId: "workers-ai", configured: true, usageSamples: [], recordUsage() {}, ai: { async run() { throw new Error("Fixture provider not initialized"); } }, aiGateway: null };
     try {
       scenario.setup?.(seed);
@@ -137,7 +140,7 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
           return next;
         };
         const response = await adapter.runTurn({ seed, ownerId: seed.ownerId, messages: [...messages], requestId: `eval-${scenario.id}-${iteration}-${turnIndex}`, turnId: `eval-${scenario.id}-${iteration}-${turnIndex}`,
-          ownerTimezone: "Europe/Dublin", canonicalOwnerInputs: [...canonicalOwnerInputs], intentFixtureVerdicts: typeof turn.intentVerdicts === "function" ? turn.intentVerdicts(seed) : turn.intentVerdicts || [], modelRoute: route, verifierRoute, reasoningEffort: reasoningEffortChoice || undefined, routing, services, enabledPluginIds, fixtureCalls: turn.calls, fixtureReply, approve: turn.approve,
+          ownerTimezone: "Europe/Dublin", canonicalOwnerInputs: [...canonicalOwnerInputs], intentFixtureVerdicts: typeof turn.intentVerdicts === "function" ? turn.intentVerdicts(seed) : turn.intentVerdicts || [], modelRoute: route, verifierRoute, createVerifierRoute, createFixtureVerdicts: turn.createVerdicts, reasoningEffort: reasoningEffortChoice || undefined, routing, services, enabledPluginIds, fixtureCalls: turn.calls, fixtureReply, approve: turn.approve,
           ownerCreateFixtureVerdicts: turn.ownerCreateVerdicts, guardProbe, guardProbeOracle: scenario.quoteExpectation?.expectedArguments,
           onEvent: streamTiming.onEvent });
         lastResponse = response;

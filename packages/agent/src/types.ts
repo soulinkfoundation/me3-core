@@ -65,6 +65,7 @@ export interface AgentToolContext {
   intentReadToolContracts?:AgentTargetIntentReadContract[];
   verifyTargetIntent?(evidence:AgentTargetIntentEvidence,signal:AbortSignal):Promise<AgentTargetIntentVerdictResult>;
   verifyOwnerCreateIntent?: import("./owner-create-intent").OwnerCreateVerifier;
+  verifyCreateIntent?: import("./create-intent").CreateIntentVerifier;
   onTargetIntentReceipt?(receipt:AgentTargetIntentReceipt):void|Promise<void>;
 
   signal: AbortSignal;
@@ -79,6 +80,8 @@ export interface AgentTool {
   target?: AgentTargetMetadata;
   fastPath?: import("./fast-path").AgentFastPathTool;
   endsTurn?: boolean;
+  /** New-record tools: an independent model confirms the owner asked for the record before it runs. */
+  createCheck?: boolean;
   /** Deferred group; the model sees the tool only after loading the group (see tool-groups.ts). */
   group?: string;
   prepareApproval?(args: Record<string, unknown>, context: AgentToolContext): Promise<AgentToolResult>;

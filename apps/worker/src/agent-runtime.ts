@@ -1,4 +1,4 @@
-import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createClefDecider, createClefRouter, createD1TurnStore, runAgentTurn, sampleFastPathTurn, type AgentDecider, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
+import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createIntentVerifierFromModel, createClefDecider, createClefRouter, createD1TurnStore, runAgentTurn, sampleFastPathTurn, type AgentDecider, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import { createCodingAgentServices } from "./coding-agent";
 import type { AgentFastPathRequestMeasurement } from "../../../packages/agent/src/fast-path";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
@@ -121,6 +121,12 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const verifier=modelFor(verifierName,{purpose:"target_intent",onAdmission:id=>{usageId=id;}});
       return {model:verifier,usageId:()=>usageId};
     }});
+    // New calendar events, reminders and tasks are checked against what the owner asked (me3-ahsk.48).
+    const verifyCreateIntent=(evidence:Parameters<NonNullable<AgentToolContext["verifyCreateIntent"]>>[0],intentSignal:AbortSignal)=>{
+      let usageId:string|undefined;
+      const verifier=modelFor(env.ME3_AGENT_CREATE_VERIFIER_MODEL?.trim()||verifierName,{purpose:"create_intent",onAdmission:id=>{usageId=id;}});
+      return createIntentVerifierFromModel(verifier,()=>usageId)(evidence,intentSignal);
+    };
     const verifyOwnerCreateIntent=createOwnerCreateIntentVerifier({db:env.DB,scope:{...intentScope,ownerTimezone:timezone},tools:intentTools,admit:()=>{
       let usageId:string|undefined;
       const verifier=modelFor(verifierName,{purpose:"owner_create_intent",onAdmission:id=>{usageId=id;}});
@@ -143,7 +149,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
         routingReceipt=await admitModel(selected,count,{purpose:"fast_path",shadow:{stage:"routing",argumentMode:"route",sampleRate:1}},true);
         return env.AI!.run(selected as never,payload as never,options as never);
       }}}):undefined;
-    const result=await runAgentTurn({model,backupModel:backup,fastPath,router,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
+    const result=await runAgentTurn({model,backupModel:backup,fastPath,router,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,verifyCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
       const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event.event,event.data);
       onEvent?.(event.event,event.data,seq);
     }});
@@ -162,7 +168,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
   } finally {await releaseManagedRuntimeWriteLease(env,lease);}
 }
 
-type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"fast_path"|"suggested_replies"|"memory_extraction";onAdmission?(id:string):void;shadow?:{stage:string;argumentMode:string;sampleRate:number}};
+type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"create_intent"|"fast_path"|"suggested_replies"|"memory_extraction";onAdmission?(id:string):void;shadow?:{stage:string;argumentMode:string;sampleRate:number}};
 export type AgentModelScope = Pick<NewAgentDispatchInput,"userId"|"threadId"|"turnId"|"requestId"|"selectedModel">;
 
 /**
