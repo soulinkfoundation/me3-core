@@ -47,6 +47,9 @@ const PRICING: Record<string, {input:number;output:number;cachedInput?:number;ca
 const REASONING_EFFORT: Array<[RegExp, string]> = [
   [/^openai\/(?:gpt-[5-9]|o\d)/, "low"],
   [/^@cf\/deepseek-ai\/deepseek-v4/, "low"],
+  // Claude 5.5 thinks adaptively at "high" (Sonnet) or "medium" (Opus) by default.
+  // At "low" the 20 Oct 2026 effort A/B kept pass rates and cut tool-turn p50 15-25%.
+  [/^anthropic\/claude-(?:sonnet|opus)-5\.5/, "low"],
 ];
 // These reject forced tool_choice ("tool"/"any") with a 400; callers must
 // accept prose beside the one call they asked for.

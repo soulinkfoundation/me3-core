@@ -172,13 +172,16 @@ describe("new agent Cloudflare model transport", () => {
     const free = createCloudflareModel({model:"anthropic/claude-sonnet-5.5",gatewayId:"test",ai:{run:async(_,input)=>{expect(input).not.toHaveProperty("tool_choice");return stream([{type:"message_stop"}]);}}});
     await free.step({messages:[{role:"user",content:"Hi"}],tools:[tool],signal:new AbortController().signal,onDelta:async()=>{}});
   });
-  it("sends Claude effort only when set, as output_config", async () => {
+  it("sends Claude effort from the table or override, as output_config", async () => {
     let request: Record<string, unknown> = {};
     const run = async (_: string, input: Record<string, unknown>) => { request = input; return stream([{type:"message_stop"}]); };
-    await createCloudflareModel({model:"anthropic/claude-sonnet-5.5",gatewayId:"test",ai:{run}}).step({messages:[{role:"user",content:"Hi"}],tools:[],signal:new AbortController().signal,onDelta:async()=>{}});
+    const step = (model: string, reasoningEffort?: string) => createCloudflareModel({model,gatewayId:"test",reasoningEffort,ai:{run}}).step({messages:[{role:"user",content:"Hi"}],tools:[],signal:new AbortController().signal,onDelta:async()=>{}});
+    await step("anthropic/claude-haiku-5.5");
     expect(request).not.toHaveProperty("output_config");
-    await createCloudflareModel({model:"anthropic/claude-sonnet-5.5",gatewayId:"test",reasoningEffort:"low",ai:{run}}).step({messages:[{role:"user",content:"Hi"}],tools:[],signal:new AbortController().signal,onDelta:async()=>{}});
+    await step("anthropic/claude-sonnet-5.5");
     expect(request.output_config).toEqual({effort:"low"});
+    await step("anthropic/claude-opus-5.5", "medium");
+    expect(request.output_config).toEqual({effort:"medium"});
   });
   it("charges the published Cloudflare cached-input and cache-write candidate rates", async () => {
     const cases: Array<[string, number]> = [["anthropic/claude-sonnet-5.5",0.00107],["anthropic/claude-sonnet-5",0.00107],["anthropic/claude-sonnet-4.6",0.001605],["moonshotai/kimi-k3",0.00153],["openai/gpt-6-astra",0.0053],["@cf/zai-org/glm-5.3-flash",0.000083]];
