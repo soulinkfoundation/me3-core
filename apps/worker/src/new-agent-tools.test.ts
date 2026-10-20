@@ -252,6 +252,18 @@ describe("new agent domain tools", () => {
     expect(created).toBe(0);
   });
 
+  it("drafts to a contact's saved email from its stable ID, never another owner's contact", async () => {
+    const ctx = context(); const drafts: Array<{ to: string }> = [];
+    ctx.raw.exec("CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, email TEXT, status TEXT DEFAULT 'active')");
+    ctx.raw.prepare("INSERT INTO contacts (id,user_id,name,email) VALUES (?,?,?,?)").run("c-ada", ctx.ownerId, "Ada Example", "ada@example.test");
+    ctx.raw.prepare("INSERT INTO contacts (id,user_id,name,email) VALUES (?,?,?,?)").run("c-other", "other-owner", "Other", "other@example.test");
+    ctx.services = { mailbox: { createDraft: async (input: { to: string }) => { drafts.push(input); return { draft: { id: "d1", to: input.to, subject: "Hi", status: "draft" } }; } } };
+    expect(await tool("core_mailbox_draft").execute({ recipientName: "Ada Example", contactId: "c-ada", subject: "Hi", body: "Thursday?" }, ctx)).toMatchObject({ status: "ok", data: { draft: { id: "d1" } } });
+    expect(drafts).toEqual([expect.objectContaining({ to: "ada@example.test" })]);
+    expect(await tool("core_mailbox_draft").execute({ contactId: "c-other", subject: "Hi", body: "Thursday?" }, ctx)).toMatchObject({ status: "ok", data: { saved: false } });
+    expect(drafts).toHaveLength(1);
+  });
+
   it("keeps the original approved draft snapshot when a later turn reads a changed draft", async () => {
     const ctx = context(); authorize(ctx,{draftId:"draft-1"},"core_mailbox_send","draft-1"); let sends = 0;
     let message = { id: "draft-1", status: "draft", to: "ada@example.test", subject: "Launch", bodyText: "Ready" };

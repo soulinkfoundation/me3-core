@@ -26,7 +26,13 @@ export function mailboxTools(): AgentTool[] {
         assertUnchanged(source, resultOrThrow(await service.read(replyToMessageId)).message, "Reply source");
       }
       context.signal.throwIfAborted();
-      const to = optionalString(args.to)?.trim();
+      // Contact reads omit addresses, so a contact recipient resolves to its saved email here.
+      const contactId = optionalString(args.contactId)?.trim();
+      const contactEmail = !optionalString(args.to)?.trim() && contactId
+        // A failed lookup leaves the address unknown, which shows the ask-for-address card.
+        ? (await context.db.prepare("SELECT email FROM contacts WHERE id = ? AND user_id = ? AND status = 'active'").bind(contactId, context.ownerId).first<{ email: string | null }>().catch(() => null))?.email?.trim()
+        : undefined;
+      const to = optionalString(args.to)?.trim() || contactEmail || undefined;
       if (!to) {
         // No address known: nothing is saved. Chat shows the draft as a card that asks the owner for it.
         return ok({ saved: false, draft: { id: null, toAddress: "", recipientName: optionalString(args.recipientName) ?? null, contactId: optionalString(args.contactId) ?? null,
