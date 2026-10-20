@@ -2418,6 +2418,19 @@ function messageFromUnknown(err: unknown, fallback: string) {
           <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
           <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>
         </div>
+        <Button
+          v-if="!homeMode && assistantThreadId"
+          class="home-chat-new"
+          color="ghost"
+          size="large"
+          icon-only
+          aria-label="Start fresh"
+          title="Start fresh"
+          :disabled="assistantSending"
+          @click="startFresh"
+        >
+          <UiIcon name="SquarePen" :size="20" />
+        </Button>
       </div>
     </Teleport>
 
@@ -3155,7 +3168,6 @@ function messageFromUnknown(err: unknown, fallback: string) {
               <summary aria-label="Message options" @pointerdown.prevent><UiIcon name="Plus" :size="22" aria-hidden="true" /></summary>
               <div class="composer-options__menu">
                 <button type="button" :disabled="assistantSending" @click="openAssistantAttachmentPicker(); composerMenu?.removeAttribute('open')"><UiIcon name="Paperclip" :size="18" /> Attach files</button>
-                <button v-if="!siteBuilderMode && assistantThreadId" type="button" :disabled="assistantSending" @click="composerMenu?.removeAttribute('open'); startFresh()"><UiIcon name="SquarePen" :size="18" /> Start fresh</button>
               <div
                 v-if="
                   voiceDictationState !== 'listening' &&
@@ -5299,7 +5311,8 @@ button:disabled {
 </style>
 
 <style scoped>
-.home-chat-header { display: flex; align-items: center; height: 44px; }
+.home-chat-header { display: flex; align-items: center; flex: 1; height: 44px; }
+.home-chat-new { margin-left: auto; }
 .home-chat-switcher { position: absolute; left: 50%; transform: translateX(-50%); display: flex; padding: 3px; border-radius: 28px; background: var(--ui-surface-muted); }
 .home-chat-switcher button { min-width: 68px; min-height: 44px; padding: 0 14px; border: 0; border-radius: 24px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
 .home-chat-switcher button[aria-pressed="true"] { color: var(--ui-primary-contrast); background: var(--ui-primary); font-weight: 600; }
