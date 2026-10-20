@@ -30,13 +30,13 @@ export function reminderTools() {
       const reminders = await listPendingAgentReminders({ DB: context.db }, context.ownerId, { query, limit: 50, includeOverdue: Boolean(query) });
       const selection = await rememberTargets(context, "reminder", reminders, reminder => reminder.title);
       return ok({ reminders, ...selection, ambiguous: reminders.length > 1 });
-    }, { fastPath: { mode: "arguments", candidates: "reminders" }, description: "List upcoming owner reminders with stable IDs. A nonempty query searches matching pending or failed reminders, including overdue records. Multiple matches return numbered candidates. Read before changing a reminder.", parameters: objectSchema({ query: { type: "string" } }) }),
+    }, { description: "List upcoming owner reminders with stable IDs. A nonempty query searches matching pending or failed reminders, including overdue records. Multiple matches return numbered candidates. Read before changing a reminder.", parameters: objectSchema({ query: { type: "string" } }) }),
     domainTool("core.reminders.create", async (args, context) => {
       context.signal.throwIfAborted();
       const reminder = resultOrThrow(await createAgentReminder({ DB: context.db }, context.ownerId, reminderInput(args, context), { idempotencyKey: context.idempotencyKey }));
       await rememberTargets(context, "reminder", [reminder], value => value.title);
       return ok({ reminder });
-    }, { createCheck: true, fastPath: { mode: "tool_only" }, parameters: objectSchema(reminderTimeProperties, ["title", "date", "time"]) }),
+    }, { createCheck: true, parameters: objectSchema(reminderTimeProperties, ["title", "date", "time"]) }),
     domainTool("core.reminders.update", async (args, context) => {
       const id = requiredString(args.reminderId, "Reminder ID");
       const expected = await requireTarget<AgentReminder>(context, "reminder", id);

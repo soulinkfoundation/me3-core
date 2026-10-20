@@ -33,8 +33,6 @@ binding = "IMAGES"
 
 [vars]
 ME3_DEPLOYMENT_MODE = "self_hosted"
-# Measurement only: "off" (default) or "shadow"; no fast-path tool execution.
-ME3_AGENT_FAST_PATH = "off"
 # The official ME3 OAuth bridge is managed-hosting only. Self-hosted installs
 # configure provider credentials in the Social accounts screen.
 
