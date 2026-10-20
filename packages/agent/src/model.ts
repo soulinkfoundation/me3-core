@@ -59,10 +59,12 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
   if (/^(openai|anthropic)\//.test(model) && !options.gatewayId) throw new Error("External models require the installation's AI Gateway");
   return {
     id: model,
-    async step({messages,tools,signal,onDelta}): Promise<AgentModelResponse> {
+    async step({messages,tools,signal,onDelta,toolChoice}): Promise<AgentModelResponse> {
       signal.throwIfAborted();
       const responses = model.startsWith("openai/gpt-6") || (reasoningOpenAi && tools.length > 0);
       const request = anthropic ? anthropicRequest(messages, tools, options.maxOutputTokens ?? 4096) : responses ? responsesRequest(messages,tools,options.maxOutputTokens??4096,model) : openAiRequest(messages, tools, options.maxOutputTokens ?? 4096, model);
+      // Each protocol names a forced tool differently; all of them suppress prose.
+      if (toolChoice) request.tool_choice = anthropic ? {type:"tool",name:toolChoice} : responses ? {type:"function",name:toolChoice} : {type:"function",function:{name:toolChoice}};
       const result = await options.ai.run(model, {...request,stream:true}, options.gatewayId ? {gateway:{id:options.gatewayId,metadata:options.metadata ?? {},requestTimeoutMs:60_000,retries:{maxAttempts:1}}} : undefined);
       signal.throwIfAborted();
       const response = isStream(result) ? await consumeStream(result, anthropic, onDelta, signal) : parseResponse(result, anthropic);

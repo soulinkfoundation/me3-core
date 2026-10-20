@@ -154,6 +154,21 @@ describe("new agent Cloudflare model transport", () => {
     expect(result.toolCalls).toEqual([{id:"a",name:"save",arguments:{title:"hi"}}]);
     expect(result.usage?.estimatedCostUsd).toBeCloseTo((50*0.3+50*0.006+10*1.2)/1_000_000, 12);
   });
+  it("forces a named tool in every provider protocol", async () => {
+    const cases: Array<[string, unknown, unknown[]]> = [
+      ["anthropic/claude-sonnet-5.5", {type:"tool",name:"save"}, [{type:"content_block_start",index:0,content_block:{type:"tool_use",id:"a",name:"save",input:{title:"x"}}},{type:"message_stop"}]],
+      ["openai/gpt-6.1-sol", {type:"function",name:"save"}, [{type:"response.output_item.done",output_index:0,item:{type:"function_call",call_id:"a",name:"save",arguments:'{"title":"x"}'}},{type:"response.completed",response:{status:"completed"}}]],
+      ["@cf/deepseek-ai/deepseek-v4.1-flash-1017", {type:"function",function:{name:"save"}}, [{choices:[{delta:{tool_calls:[{index:0,id:"a",function:{name:"save",arguments:'{"title":"x"}'}}]},finish_reason:"tool_calls"}]}]],
+    ];
+    for (const [name, expected, events] of cases) {
+      let request: Record<string, unknown> = {};
+      const model = createCloudflareModel({model:name,gatewayId:"test",ai:{run:async(_,input)=>{request=input;return stream(events);}}});
+      await model.step({messages:[{role:"user",content:"Save"}],tools:[tool],toolChoice:"save",signal:new AbortController().signal,onDelta:async()=>{}});
+      expect(request.tool_choice).toEqual(expected);
+    }
+    const free = createCloudflareModel({model:"anthropic/claude-sonnet-5.5",gatewayId:"test",ai:{run:async(_,input)=>{expect(input).not.toHaveProperty("tool_choice");return stream([{type:"message_stop"}]);}}});
+    await free.step({messages:[{role:"user",content:"Hi"}],tools:[tool],signal:new AbortController().signal,onDelta:async()=>{}});
+  });
   it("charges the published Cloudflare cached-input and cache-write candidate rates", async () => {
     const cases: Array<[string, number]> = [["anthropic/claude-sonnet-5.5",0.00107],["anthropic/claude-sonnet-5",0.00107],["anthropic/claude-sonnet-4.6",0.001605],["moonshotai/kimi-k3",0.00153],["openai/gpt-6-astra",0.0053],["@cf/zai-org/glm-5.3-flash",0.000083]];
     for (const [name, expected] of cases) {

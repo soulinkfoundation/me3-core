@@ -20,7 +20,8 @@ export type AgentUsage = { inputTokens: number; outputTokens: number; cachedInpu
 export type AgentModelResponse = { text: string; toolCalls: AgentToolCall[]; usage?: AgentUsage; billingUsageId?: string };
 export interface AgentModel {
   id: string;
-  step(input: { messages: readonly AgentMessage[]; tools: readonly AgentTool[]; signal: AbortSignal; onDelta(text: string): Promise<void> }): Promise<AgentModelResponse>;
+  /** `toolChoice` forces exactly that tool, so the reply is one call and no prose. */
+  step(input: { messages: readonly AgentMessage[]; tools: readonly AgentTool[]; signal: AbortSignal; onDelta(text: string): Promise<void>; toolChoice?: string }): Promise<AgentModelResponse>;
 }
 export interface AgentStatement {
   bind(...values: unknown[]): AgentStatement;
