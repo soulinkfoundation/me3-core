@@ -128,7 +128,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const fastName=env.ME3_AGENT_FAST_MODEL?.trim()||"anthropic/claude-haiku-5.5";
     const fastAllowed=!managed||managed.models.some(item=>managedModelId(item.id)===managedModelId(fastName));
     let routingReceipt:((usage:AgentUsage)=>Promise<void>)|undefined;
-    const router=env.ME3_AGENT_ROUTING?.trim()==="on"&&fastAllowed&&managedModelId(fastName)!==managedModelId(model.id)?createClefRouter({model:"clef-flash",fastModel:modelFor(fastName),
+    const router=env.ME3_AGENT_ROUTING?.trim()==="on"&&fastAllowed&&managedModelId(fastName)!==managedModelId(model.id)&&!UNROUTED_MAIN_MODELS.has(managedModelId(model.id))?createClefRouter({model:"clef-flash",fastModel:modelFor(fastName),
       gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,purpose:"routing"},recordUsage:usage=>routingReceipt?.(usage),
       ai:{async run(selected,payload,options){
         routingReceipt=undefined;
@@ -303,6 +303,9 @@ function isToolAvailable(name:string,services:AgentDomainServices):boolean {
   return true;
 }
 function providerModel(provider:string,model:string):string {return provider==="workers-ai"?canonicalNativeModel(model):model.startsWith(`${provider}/`)?model:`${provider}/${model}`;}
+// These answer chat about as fast as the routed fast model, so routing only
+// added ~0.5 s to their tool turns (routing A/B, 20 Oct 2026, me3-ahsk.45).
+const UNROUTED_MAIN_MODELS=new Set(["openai/gpt-6.1-sol","anthropic/claude-sonnet-5.5","anthropic/claude-haiku-5.5"]);
 function managedModelId(model:string):string {return model.replace(/^@cf\//,"");}
 function canonicalNativeModel(model:string):string {
   const nativeModel=`@cf/${managedModelId(model)}`;
