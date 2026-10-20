@@ -401,10 +401,13 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
   let draftId: string | null = null;
   let primary = decision.action;
   let secondary = decision.secondary;
-  if (decision.category === "needs_you" && decision.reply && address) {
+  // A forward is answered to the person it came from, never to whoever forwarded it.
+  const replyTo = forward.isForward ? forward.originalSender?.address || null : address;
+  const replySubject = forward.isForward ? subject.replace(/^\s*(?:fwd?|tr|wg)\s*:\s*/i, "") : subject;
+  if (decision.category === "needs_you" && decision.reply && replyTo) {
     const draft = await createAgentMailboxDraft(env, row.user_id, {
-      to: address,
-      subject: /^\s*re\s*:/i.test(subject) ? subject : `Re: ${subject}`,
+      to: replyTo,
+      subject: /^\s*re\s*:/i.test(replySubject) ? replySubject : `Re: ${replySubject}`,
       textBody: decision.reply,
       source: "agent",
       replyToMessageId: row.message_id,

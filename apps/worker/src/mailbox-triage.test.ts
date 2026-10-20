@@ -20,7 +20,8 @@ import type { Env } from "./types";
 // the same alert firing three times fills the Brief three times and "Done"
 // clears only one of them; a newsletter's stylesheet leaks into its summary;
 // a newsletter summary fails the whole pass when the model is down; an owner
-// on Gmail gets every stranger at gmail.com filed as FYI without the model.
+// on Gmail gets every stranger at gmail.com filed as FYI without the model; a
+// reply drafted on a forward is addressed to whoever forwarded it.
 const databases: DatabaseSync[] = [];
 afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMocks(); });
 
@@ -146,6 +147,21 @@ describe("mail triage pipeline", () => {
     await runMailTriage(f.env, "stranger", { classify: classifier });
     expect(classifier).toHaveBeenCalledTimes(1);
     expect(triageRows(f.raw)[0]).toMatchObject({ category: "needs_you", decided_by: "model" });
+  });
+
+  it("addresses a reply drafted on a forward to the original sender, and drafts none when the sender is unknown", async () => {
+    const f = fixture();
+    const reply = vi.fn<MailTriageClassifier>(async () => ({ category: "needs_you", urgency: "normal", summary: "Move Thursday to Friday?", action: { kind: "send_draft", label: "Send reply" }, secondary: null, reply: "Hi Sam, Friday works for me.", url: null }));
+    insertMail(f.raw, { id: "fwd1", from: "me@owner.test", subject: "Fwd: Moving Thursday", body: "Can you reply?\n\n---------- Forwarded message ---------\nFrom: Sam Reyes <sam@example.test>\nSubject: Moving Thursday\n\nCould we do Friday instead?" });
+    await runMailTriage(f.env, "fwd1", { classify: reply });
+    expect(f.raw.prepare("SELECT to_address, subject FROM mailbox_messages WHERE message_kind = 'draft'").all()).toEqual([
+      { to_address: "sam@example.test", subject: "Re: Moving Thursday" },
+    ]);
+
+    insertMail(f.raw, { id: "fwd2", from: "me@owner.test", subject: "Fwd: Moving Thursday", body: "Could we do Friday instead?" });
+    await runMailTriage(f.env, "fwd2", { classify: reply });
+    expect(f.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_messages WHERE message_kind = 'draft'").get()).toEqual({ n: 1 });
+    expect(triageRows(f.raw).find(row => row.message_id === "fwd2")).toMatchObject({ category: "needs_you", draft_id: null });
   });
 
   it("collapses repeated alerts into one Brief item and resolves them together", async () => {
