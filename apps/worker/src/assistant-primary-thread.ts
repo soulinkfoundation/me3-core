@@ -29,6 +29,8 @@ export async function resolvePrimaryAssistantThread(env: Env, ownerId: string): 
   // D1 batches are atomic. Choose the mapping before inserting its thread so
   // competing first requests cannot leave duplicate, empty main conversations.
   // The deferred FK is satisfied by the second statement before commit.
+  // Older chats are adopted only the first time; once a main conversation has
+  // existed, replacing it (Start fresh) always begins an empty one.
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO assistant_primary_threads(owner_id, thread_id)
       VALUES (?, COALESCE((
@@ -36,6 +38,7 @@ export async function resolvePrimaryAssistantThread(env: Env, ownerId: string): 
         LEFT JOIN agent_channel_connections c
           ON c.user_id = t.owner_id AND c.channel = 'soulink' AND c.status = 'active'
         WHERE t.owner_id = ? AND t.status = 'active' AND t.project_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM assistant_primary_threads p WHERE p.owner_id = t.owner_id)
           AND (t.id = 'soulink:' || c.provider_thread_id OR t.id = c.provider_thread_id
             OR t.origin_surface IN ('assistant', 'launcher'))
         ORDER BY CASE WHEN t.id = 'soulink:' || c.provider_thread_id THEN 0

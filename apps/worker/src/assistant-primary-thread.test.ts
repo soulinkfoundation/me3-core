@@ -103,6 +103,19 @@ describe("primary assistant conversation persisted in D1", () => {
     expect(primary.owner_id).toBe("alice");
   });
 
+  it("starts fresh with a new empty thread instead of adopting older chats", async () => {
+    const { env, raw, thread } = fixture();
+    thread("old-1"); thread("old-2");
+    raw.exec("UPDATE assistant_threads SET last_message_at = '2026-01-02T00:00:00Z' WHERE id = 'old-1'");
+    raw.exec("UPDATE assistant_threads SET last_message_at = '2026-01-01T00:00:00Z' WHERE id = 'old-2'");
+    const first = await resolvePrimaryAssistantThread(env, "alice");
+    expect(first.id).toBe("old-1");
+    raw.prepare("UPDATE assistant_threads SET status = 'archived' WHERE id = ?").run(first.id);
+    const fresh = await resolvePrimaryAssistantThread(env, "alice");
+    expect(["old-1", "old-2"]).not.toContain(fresh.id);
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM assistant_messages WHERE thread_id = ?").get(fresh.id)?.n).toBe(0);
+  });
+
   it.each(["archived", "deleted"])("replaces a %s main thread without reviving or changing history", async (status) => {
     const { env, raw } = fixture();
     const first = await resolvePrimaryAssistantThread(env, "alice");
