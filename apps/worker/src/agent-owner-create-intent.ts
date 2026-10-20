@@ -28,7 +28,8 @@ export function createOwnerCreateIntentVerifier(input: { db: AgentDb; scope: Sco
       if (canonicalJson(current.evidence) !== canonicalJson(evidence) || current.inputJson !== loaded.inputJson || current.metadataJson !== loaded.metadataJson) throw Error("Canonical input changed");
     } catch { return { decision: "deny", reason: "Canonical owner input changed or the owner stopped after verification.", inference }; }
     const call = response.toolCalls[0];
-    if (response.text.trim() || response.toolCalls.length !== 1 || call?.name !== verdictTool.name || validateArguments(parameters, call.arguments)) return { decision: "deny", reason: "Independent creation verification returned a malformed or unsupported verdict.", inference };
+    // Some models cannot be forced to call the tool and may add prose; only the one verdict call counts.
+    if (response.toolCalls.length !== 1 || call?.name !== verdictTool.name || validateArguments(parameters, call.arguments)) return { decision: "deny", reason: "Independent creation verification returned a malformed or unsupported verdict.", inference };
     return { ...call.arguments as OwnerCreateVerdict, inference };
   };
 }

@@ -48,6 +48,9 @@ const REASONING_EFFORT: Array<[RegExp, string]> = [
   [/^openai\/(?:gpt-[5-9]|o\d)/, "low"],
   [/^@cf\/deepseek-ai\/deepseek-v4/, "low"],
 ];
+// These reject forced tool_choice ("tool"/"any") with a 400; callers must
+// accept prose beside the one call they asked for.
+const FORCED_TOOL_UNSUPPORTED = [/^anthropic\/claude-(?:opus|sonnet)-5\.5/, /^anthropic\/claude-fable/];
 function reasoningEffort(model: string, override?: string): string | undefined {
   return override ?? REASONING_EFFORT.find(([pattern]) => pattern.test(model))?.[1];
 }
@@ -64,9 +67,9 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
     async step({messages,tools,signal,onDelta,toolChoice}): Promise<AgentModelResponse> {
       signal.throwIfAborted();
       const responses = model.startsWith("openai/gpt-6") || (reasoningOpenAi && tools.length > 0);
-      const request = anthropic ? anthropicRequest(messages, tools, options.maxOutputTokens ?? 4096) : responses ? responsesRequest(messages,tools,options.maxOutputTokens??4096,model,options.reasoningEffort) : openAiRequest(messages, tools, options.maxOutputTokens ?? 4096, model, options.reasoningEffort);
+      const request = anthropic ? anthropicRequest(messages, tools, options.maxOutputTokens ?? 4096, reasoningEffort(model, options.reasoningEffort)) : responses ? responsesRequest(messages,tools,options.maxOutputTokens??4096,model,options.reasoningEffort) : openAiRequest(messages, tools, options.maxOutputTokens ?? 4096, model, options.reasoningEffort);
       // Each protocol names a forced tool differently; all of them suppress prose.
-      if (toolChoice) request.tool_choice = anthropic ? {type:"tool",name:toolChoice} : responses ? {type:"function",name:toolChoice} : {type:"function",function:{name:toolChoice}};
+      if (toolChoice && !FORCED_TOOL_UNSUPPORTED.some(pattern => pattern.test(model))) request.tool_choice = anthropic ? {type:"tool",name:toolChoice} : responses ? {type:"function",name:toolChoice} : {type:"function",function:{name:toolChoice}};
       const result = await options.ai.run(model, {...request,stream:true}, options.gatewayId ? {gateway:{id:options.gatewayId,metadata:options.metadata ?? {},requestTimeoutMs:60_000,retries:{maxAttempts:1}}} : undefined);
       signal.throwIfAborted();
       const response = isStream(result) ? await consumeStream(result, anthropic, onDelta, signal) : parseResponse(result, anthropic);
@@ -123,7 +126,7 @@ function unwrapAnthropicToolCalls(calls: AgentToolCall[], tools: readonly AgentT
   return calls.map(call => wrapped.has(call.name) ? {...call, arguments: record(record(call.arguments)[ANTHROPIC_WRAPPED_INPUT])} : call);
 }
 
-function anthropicRequest(messages: readonly AgentMessage[], tools: readonly AgentTool[], maxTokens: number): Record<string, unknown> {
+function anthropicRequest(messages: readonly AgentMessage[], tools: readonly AgentTool[], maxTokens: number, effort?: string): Record<string, unknown> {
   const wrapped = new Set(tools.filter(tool=>needsAnthropicWrap(tool.parameters)).map(tool=>tool.name));
   const history: Array<{role:"user"|"assistant";content:unknown[]}> = [];
   for (const message of messages.filter(message=>message.role!=="system")) {
@@ -150,6 +153,8 @@ function anthropicRequest(messages: readonly AgentMessage[], tools: readonly Age
     messages:history,
     ...(tools.length?{tools:tools.map((tool,index)=>({name:tool.name,description:tool.description,input_schema:anthropicInputSchema(tool),...(index===tools.length-1?{cache_control:{type:"ephemeral"}}:{})}))}:{}),
     max_tokens:maxTokens,
+    // Claude 5.5 models think adaptively by default; effort is the depth control.
+    ...(effort?{output_config:{effort}}:{}),
   };
 }
 

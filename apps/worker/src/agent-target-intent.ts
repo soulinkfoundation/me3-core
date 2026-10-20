@@ -196,7 +196,8 @@ export function createTargetIntentVerifier(input:{db:AgentDb;scope:Scope;ownerTi
     try {if(await validateEvidence(input.db,input.scope,input.ownerTimezone,contracts,evidence,signal,readContracts,input.requireReferenceEvidence!==false)!==verified)throw new Error("Immutable source origins changed");}
     catch {return {decision:"deny",reason:signal.aborted?"Owner cancelled independent verification":"Canonical owner or target evidence changed during independent verification",inference};}
     const call=response.toolCalls[0];
-    if(response.text.trim()||response.toolCalls.length!==1||call?.name!==verdictTool.name||validateArguments(parameters,call.arguments))
+    // Some models cannot be forced to call the tool and may add prose; only the one verdict call counts.
+    if(response.toolCalls.length!==1||call?.name!==verdictTool.name||validateArguments(parameters,call.arguments))
       return {decision:"clarify",reason:"Independent target verification did not produce one valid complete verdict",inference};
     const verdict=call.arguments as IntentVerdict;
     if(verdict.decision==="allow") {

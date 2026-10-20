@@ -156,7 +156,10 @@ describe("new agent Cloudflare model transport", () => {
   });
   it("forces a named tool in every provider protocol", async () => {
     const cases: Array<[string, unknown, unknown[]]> = [
-      ["anthropic/claude-sonnet-5.5", {type:"tool",name:"save"}, [{type:"content_block_start",index:0,content_block:{type:"tool_use",id:"a",name:"save",input:{title:"x"}}},{type:"message_stop"}]],
+      ["anthropic/claude-haiku-5.5", {type:"tool",name:"save"}, [{type:"content_block_start",index:0,content_block:{type:"tool_use",id:"a",name:"save",input:{title:"x"}}},{type:"message_stop"}]],
+      // Sonnet and Opus 5.5 reject forced tool_choice, so the request leaves it to the model.
+      ["anthropic/claude-sonnet-5.5", undefined, [{type:"content_block_start",index:0,content_block:{type:"tool_use",id:"a",name:"save",input:{title:"x"}}},{type:"message_stop"}]],
+      ["anthropic/claude-opus-5.5", undefined, [{type:"content_block_start",index:0,content_block:{type:"tool_use",id:"a",name:"save",input:{title:"x"}}},{type:"message_stop"}]],
       ["openai/gpt-6.1-sol", {type:"function",name:"save"}, [{type:"response.output_item.done",output_index:0,item:{type:"function_call",call_id:"a",name:"save",arguments:'{"title":"x"}'}},{type:"response.completed",response:{status:"completed"}}]],
       ["@cf/deepseek-ai/deepseek-v4.1-flash-1017", {type:"function",function:{name:"save"}}, [{choices:[{delta:{tool_calls:[{index:0,id:"a",function:{name:"save",arguments:'{"title":"x"}'}}]},finish_reason:"tool_calls"}]}]],
     ];
@@ -168,6 +171,14 @@ describe("new agent Cloudflare model transport", () => {
     }
     const free = createCloudflareModel({model:"anthropic/claude-sonnet-5.5",gatewayId:"test",ai:{run:async(_,input)=>{expect(input).not.toHaveProperty("tool_choice");return stream([{type:"message_stop"}]);}}});
     await free.step({messages:[{role:"user",content:"Hi"}],tools:[tool],signal:new AbortController().signal,onDelta:async()=>{}});
+  });
+  it("sends Claude effort only when set, as output_config", async () => {
+    let request: Record<string, unknown> = {};
+    const run = async (_: string, input: Record<string, unknown>) => { request = input; return stream([{type:"message_stop"}]); };
+    await createCloudflareModel({model:"anthropic/claude-sonnet-5.5",gatewayId:"test",ai:{run}}).step({messages:[{role:"user",content:"Hi"}],tools:[],signal:new AbortController().signal,onDelta:async()=>{}});
+    expect(request).not.toHaveProperty("output_config");
+    await createCloudflareModel({model:"anthropic/claude-sonnet-5.5",gatewayId:"test",reasoningEffort:"low",ai:{run}}).step({messages:[{role:"user",content:"Hi"}],tools:[],signal:new AbortController().signal,onDelta:async()=>{}});
+    expect(request.output_config).toEqual({effort:"low"});
   });
   it("charges the published Cloudflare cached-input and cache-write candidate rates", async () => {
     const cases: Array<[string, number]> = [["anthropic/claude-sonnet-5.5",0.00107],["anthropic/claude-sonnet-5",0.00107],["anthropic/claude-sonnet-4.6",0.001605],["moonshotai/kimi-k3",0.00153],["openai/gpt-6-astra",0.0053],["@cf/zai-org/glm-5.3-flash",0.000083]];
