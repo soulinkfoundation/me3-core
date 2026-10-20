@@ -35,10 +35,12 @@ const PRICING: Record<string, {input:number;output:number;cachedInput?:number;ca
   "@cf/zai-org/glm-5.3-flash": {input:0.15,output:0.5,cachedInput:0.03},
   // https://developers.cloudflare.com/workers-ai/models/deepseek-v4-flash-0731/
   "@cf/deepseek-ai/deepseek-v4-flash-0731": {input:0.44,output:1.32,cachedInput:0.014},
+  // https://developers.cloudflare.com/workers-ai/models/deepseek-v4.1-flash-1017/
+  "@cf/deepseek-ai/deepseek-v4.1-flash-1017": {input:0.3,output:1.2,cachedInput:0.006},
 };
 
 // Reasoning effort each provider receives. Providers default very differently
-// (DeepSeek V4 thinks at "high" unless told otherwise), so agent latency stays
+// (DeepSeek V4 and V4.1 think at "high" unless told otherwise), so agent latency stays
 // comparable only when every reasoning model is set explicitly.
 const REASONING_EFFORT: Array<[RegExp, string]> = [
   [/^openai\/(?:gpt-[5-9]|o\d)/, "low"],

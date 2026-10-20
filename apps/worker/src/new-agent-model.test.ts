@@ -140,9 +140,9 @@ describe("new agent Cloudflare model transport", () => {
     expect(selected).toBe(model.id);
     expect(result.text).toBe("Ready");
   });
-  it("sets DeepSeek V4 reasoning low on Workers AI chat requests", async () => {
+  it("sets DeepSeek V4.1 reasoning low on Workers AI chat requests", async () => {
     let request: Record<string, unknown> = {};
-    const model = createCloudflareModel({model:"@cf/deepseek-ai/deepseek-v4-flash-0731",ai:{run:async(_,input)=>{request=input;return stream([
+    const model = createCloudflareModel({model:"@cf/deepseek-ai/deepseek-v4.1-flash-1017",ai:{run:async(_,input)=>{request=input;return stream([
       {choices:[{delta:{reasoning_content:"thinking"}}]},
       {choices:[{delta:{tool_calls:[{index:0,id:"a",function:{name:"save",arguments:'{"title":"hi"}'}}]},finish_reason:"tool_calls"}]},
       {choices:[],usage:{prompt_tokens:100,completion_tokens:10,prompt_tokens_details:{cached_tokens:50}}},
@@ -152,7 +152,7 @@ describe("new agent Cloudflare model transport", () => {
     expect(request).not.toHaveProperty("max_completion_tokens");
     expect(result.text).toBe("");
     expect(result.toolCalls).toEqual([{id:"a",name:"save",arguments:{title:"hi"}}]);
-    expect(result.usage?.estimatedCostUsd).toBeCloseTo((50*0.44+50*0.014+10*1.32)/1_000_000, 12);
+    expect(result.usage?.estimatedCostUsd).toBeCloseTo((50*0.3+50*0.006+10*1.2)/1_000_000, 12);
   });
   it("charges the published Cloudflare cached-input and cache-write candidate rates", async () => {
     const cases: Array<[string, number]> = [["anthropic/claude-sonnet-5.5",0.00107],["anthropic/claude-sonnet-5",0.00107],["anthropic/claude-sonnet-4.6",0.001605],["moonshotai/kimi-k3",0.00153],["openai/gpt-6-astra",0.0053],["@cf/zai-org/glm-5.3-flash",0.000083]];
