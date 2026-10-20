@@ -1061,18 +1061,59 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     const thread = await getAssistantThread(c.env, ownerId, threadId);
     if (!thread) return c.json({ ok: false, error: "Assistant thread not found" }, 404);
 
+    // Without `limit` the whole thread is returned, which older native clients still expect.
+    // With it, the newest page comes back and `before` walks back from a message id.
+    const limitParam = c.req.query("limit");
+    const before = normalizeNullableText(c.req.query("before"));
+    if (!limitParam) {
+      const rows = await c.env.DB.prepare(
+        `SELECT id, role, content, created_at, metadata_json
+         FROM assistant_messages
+         WHERE owner_id = ? AND thread_id = ? AND role IN ('user', 'assistant')
+         ORDER BY created_at ASC, rowid ASC`,
+      )
+        .bind(ownerId, threadId)
+        .all<AssistantMessageRow>();
+
+      return c.json({
+        thread: serializeAssistantThread(thread),
+        messages: await Promise.all((rows.results || []).map(row => serializePrivateAssistantMessage(c.env, ownerId, threadId, row))),
+        hasMore: false,
+      });
+    }
+
+    const limit = Math.min(Math.max(Number.parseInt(limitParam, 10) || 50, 1), 200);
+    let cursorWhere = "";
+    const bindings: unknown[] = [ownerId, threadId];
+    if (before) {
+      const cursor = await c.env.DB.prepare(
+        "SELECT created_at, rowid FROM assistant_messages WHERE owner_id = ? AND thread_id = ? AND id = ?",
+      )
+        .bind(ownerId, threadId, before)
+        .first<{ created_at: string; rowid: number }>();
+      if (!cursor) return c.json({ ok: false, error: "Message cursor not found" }, 400);
+      cursorWhere = "AND (created_at < ? OR (created_at = ? AND rowid < ?))";
+      bindings.push(cursor.created_at, cursor.created_at, cursor.rowid);
+    }
+    bindings.push(limit + 1);
+
     const rows = await c.env.DB.prepare(
       `SELECT id, role, content, created_at, metadata_json
        FROM assistant_messages
-       WHERE owner_id = ? AND thread_id = ? AND role IN ('user', 'assistant')
-       ORDER BY created_at ASC`,
+       WHERE owner_id = ? AND thread_id = ? AND role IN ('user', 'assistant') ${cursorWhere}
+       ORDER BY created_at DESC, rowid DESC
+       LIMIT ?`,
     )
-      .bind(ownerId, threadId)
+      .bind(...bindings)
       .all<AssistantMessageRow>();
+    const page = rows.results || [];
+    const hasMore = page.length > limit;
+    const newestFirst = hasMore ? page.slice(0, limit) : page;
 
     return c.json({
       thread: serializeAssistantThread(thread),
-      messages: await Promise.all((rows.results || []).map(row => serializePrivateAssistantMessage(c.env, ownerId, threadId, row))),
+      messages: await Promise.all(newestFirst.reverse().map(row => serializePrivateAssistantMessage(c.env, ownerId, threadId, row))),
+      hasMore,
     });
   });
 

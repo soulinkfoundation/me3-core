@@ -243,7 +243,10 @@ type AssistantAttachmentUploadResponse = {
 type AssistantThreadMessagesResponse = {
   thread: AssistantThread;
   messages: AssistantThreadMessage[];
+  hasMore?: boolean;
 };
+
+const ASSISTANT_HISTORY_PAGE_SIZE = 50;
 
 const { toastSuccess, toastFromUnknown, toastError } = useAppToast();
 const agentChat = useAgentChat();
@@ -280,6 +283,8 @@ const assistantTurnStatusText = ref("");
 const assistantError = ref<string | null>(null);
 const assistantThreadId = ref<string | null>(null);
 const assistantThreadLoading = ref(Boolean(route.query.thread));
+const assistantHistoryHasMore = ref(false);
+const assistantHistoryLoadingOlder = ref(false);
 const assistantSettingsError = ref("");
 const assistantSettings = ref<AssistantSettingsResponse>({
   assistantName: null,
@@ -616,6 +621,7 @@ const canSendAssistantMessage = computed(
 onMounted(() => {
   void loadMissionStarter();
   void initializeAssistantPage();
+  window.addEventListener("scroll", onAssistantScroll, { capture: true, passive: true });
 });
 
 async function initializeAssistantPage() {
@@ -649,12 +655,13 @@ async function initializeAssistantPage() {
 
 onBeforeUnmount(() => {
   clearAssistantAttachments();
+  window.removeEventListener("scroll", onAssistantScroll, { capture: true });
 });
 
 watch(
   () => chatMessages.value.length,
   () => {
-    if (!assistantSending.value) void scrollAssistantToBottom();
+    if (!assistantSending.value && !assistantHistoryLoadingOlder.value) void scrollAssistantToBottom();
   },
 );
 let assistantApprovalHistoryRefreshPending = false;
@@ -758,6 +765,98 @@ function visibleAssistantActionCards(message: {
     : cards;
 }
 
+function mapAssistantThreadMessages(messages: AssistantThreadMessage[]) {
+  let previousUserText = "";
+  return messages.map((message) => {
+    const actionLink = resolveAgentMessageActionLink({
+      siteAction: message.siteAction || null,
+      replyText: message.text,
+    });
+    const mappedMessage: {
+      id: string;
+      role: "user" | "assistant";
+      text: string;
+      createdAt: string;
+      actionCards: AgentChatActionCard[];
+      imageAction: AgentChatImageAction | null;
+      targetPresentation: AgentTargetPresentation | null;
+      allowanceNotice: AgentChatAllowanceNotice | null;
+      emailDraftAction: AgentChatEmailDraftAction | null;
+      attachments: AgentChatMessageAttachment[];
+      actionHref: string | null;
+      actionLabel: string | null;
+    } = {
+      id: message.id,
+      role: message.role,
+      text: message.text,
+      createdAt: message.createdAt,
+      attachments: normalizeAssistantMessageAttachments(message.attachments),
+      actionCards: normalizeAgentActionCards(message.actionCards),
+      imageAction: message.imageAction || null,
+      targetPresentation: normalizeAgentTargetPresentation(message.targetPresentation),
+      allowanceNotice: message.allowanceNotice || null,
+      emailDraftAction: null,
+      actionHref: actionLink?.href || null,
+      actionLabel: actionLink?.label || null,
+    };
+    if (message.role === "assistant") {
+      mappedMessage.emailDraftAction = message.emailDraft
+        ? createServerAgentChatEmailDraftAction(message, message.emailDraft)
+        : createAgentChatEmailDraftAction(message, previousUserText);
+    } else {
+      previousUserText = message.text;
+    }
+    return mappedMessage;
+  });
+}
+
+// Keeps the reader's place: the timeline grows above them by the height of the older page.
+async function loadOlderAssistantMessages() {
+  const threadId = assistantThreadId.value;
+  const oldest = assistantConsoleMessages.value.find((message) => message.id);
+  if (!threadId || !oldest?.id || !assistantHistoryHasMore.value || assistantHistoryLoadingOlder.value) return;
+  assistantHistoryLoadingOlder.value = true;
+  try {
+    const response = await api.get<AssistantThreadMessagesResponse>(
+      `/assistant/threads/${encodeURIComponent(threadId)}/messages?limit=${ASSISTANT_HISTORY_PAGE_SIZE}&before=${encodeURIComponent(oldest.id)}`,
+    );
+    if (assistantThreadId.value !== threadId) return;
+    const node = assistantScrollContainer();
+    const previousHeight = node?.scrollHeight ?? 0;
+    const olderMessages = mapAssistantThreadMessages(response.messages);
+    assistantHistoryHasMore.value = Boolean(response.hasMore);
+    agentChat.prependMessages(olderMessages);
+    const olderIds = new Set(olderMessages.map((message) => message.id));
+    chatMessages.value
+      .filter((message) => message.id && olderIds.has(message.id))
+      .forEach((message) => hydrateAssistantEmailDraftMessage(message));
+    await nextTick();
+    if (node) node.scrollTop += node.scrollHeight - previousHeight;
+  } catch (err) {
+    if (assistantThreadId.value !== threadId) return;
+    assistantError.value = messageFromUnknown(err, "Earlier messages could not load.");
+  } finally {
+    if (assistantThreadId.value === threadId) assistantHistoryLoadingOlder.value = false;
+  }
+}
+
+// The timeline scrolls itself in site-builder mode; otherwise the page scrolls.
+function assistantScrollContainer(): HTMLElement | null {
+  const timeline = assistantScrollerRef.value;
+  if (!timeline) return null;
+  for (let node: HTMLElement | null = timeline; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight) return node;
+  }
+  return document.scrollingElement as HTMLElement | null;
+}
+
+function onAssistantScroll() {
+  if (homeMode.value && !siteBuilderMode.value) return;
+  const node = assistantScrollContainer();
+  if (node && node.scrollTop < 200) void loadOlderAssistantMessages();
+}
+
 async function loadAssistantThreadFromRoute() {
   let threadId = routeThreadId();
   if (!threadId && !siteBuilderMode.value) {
@@ -782,53 +881,14 @@ async function loadAssistantThreadFromRoute() {
   }
 
   assistantThreadLoading.value = true;
+  assistantHistoryHasMore.value = false;
   try {
     const response = await api.get<AssistantThreadMessagesResponse>(
-      `/assistant/threads/${encodeURIComponent(threadId)}/messages`,
+      `/assistant/threads/${encodeURIComponent(threadId)}/messages?limit=${ASSISTANT_HISTORY_PAGE_SIZE}`,
     );
     if (assistantThreadId.value !== threadId) return;
-    let previousUserText = "";
-    const mappedMessages = response.messages.map((message) => {
-      const actionLink = resolveAgentMessageActionLink({
-        siteAction: message.siteAction || null,
-        replyText: message.text,
-      });
-      const mappedMessage: {
-        id: string;
-        role: "user" | "assistant";
-        text: string;
-        createdAt: string;
-        actionCards: AgentChatActionCard[];
-        imageAction: AgentChatImageAction | null;
-        targetPresentation: AgentTargetPresentation | null;
-        allowanceNotice: AgentChatAllowanceNotice | null;
-        emailDraftAction: AgentChatEmailDraftAction | null;
-        attachments: AgentChatMessageAttachment[];
-        actionHref: string | null;
-        actionLabel: string | null;
-      } = {
-        id: message.id,
-        role: message.role,
-        text: message.text,
-        createdAt: message.createdAt,
-        attachments: normalizeAssistantMessageAttachments(message.attachments),
-        actionCards: normalizeAgentActionCards(message.actionCards),
-        imageAction: message.imageAction || null,
-        targetPresentation: normalizeAgentTargetPresentation(message.targetPresentation),
-        allowanceNotice: message.allowanceNotice || null,
-        emailDraftAction: null,
-        actionHref: actionLink?.href || null,
-        actionLabel: actionLink?.label || null,
-      };
-      if (message.role === "assistant") {
-        mappedMessage.emailDraftAction = message.emailDraft
-          ? createServerAgentChatEmailDraftAction(message, message.emailDraft)
-          : createAgentChatEmailDraftAction(message, previousUserText);
-      } else {
-        previousUserText = message.text;
-      }
-      return mappedMessage;
-    });
+    const mappedMessages = mapAssistantThreadMessages(response.messages);
+    assistantHistoryHasMore.value = Boolean(response.hasMore);
     agentChat.replaceMessages(mappedMessages);
     await syncAssistantModeForThread(mappedMessages);
     chatMessages.value.forEach((message) => {
@@ -2374,6 +2434,15 @@ function messageFromUnknown(err: unknown, fallback: string) {
           class="assistant-timeline"
           aria-live="polite"
         >
+          <button
+            v-if="assistantHistoryHasMore && assistantConsoleMessages.length > 0"
+            type="button"
+            class="assistant-history-more"
+            :disabled="assistantHistoryLoadingOlder"
+            @click="loadOlderAssistantMessages"
+          >
+            {{ assistantHistoryLoadingOlder ? "Loading earlier messages…" : "Show earlier messages" }}
+          </button>
           <PageLoading
             v-if="
               assistantThreadLoading && assistantConsoleMessages.length === 0
@@ -3609,6 +3678,19 @@ function messageFromUnknown(err: unknown, fallback: string) {
   padding: var(--assistant-header-clearance) 0
     var(--assistant-composer-clearance);
 }
+
+.assistant-history-more {
+  align-self: center;
+  border: 0;
+  padding: 6px 10px;
+  background: none;
+  color: var(--ui-text-muted);
+  font: 500 14px var(--font-sans);
+  cursor: pointer;
+}
+.assistant-history-more:hover:not(:disabled) { color: var(--ui-text); }
+.assistant-history-more:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; border-radius: var(--ui-radius-sm); }
+.assistant-history-more:disabled { cursor: default; }
 
 .assistant-empty-state {
   display: grid; gap: 12px; justify-items: center; margin: 0 0 18px;

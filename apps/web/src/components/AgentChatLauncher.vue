@@ -93,21 +93,56 @@ const error = ref<string | null>(null);
 const composerRef = ref<HTMLTextAreaElement | null>(null);
 const scrollerRef = ref<HTMLDivElement | null>(null);
 const primaryThreadId = ref<string | null>(null);
+const HISTORY_PAGE_SIZE = 50;
+type HistoryPage = { messages: AgentChatMessage[]; hasMore?: boolean };
+const historyHasMore = ref(false);
+const loadingOlder = ref(false);
+const normalizeHistory = (messages: AgentChatMessage[]) => messages.map(message => ({
+  ...message,
+  targetPresentation: normalizeAgentTargetPresentation(message.targetPresentation),
+}));
 useAgentChatPresence(primaryThreadId, computed(() => chatOpen.value && !launcherHidden.value && auth.isAuthenticated));
 
 async function loadPrimaryConversation() {
   const ownerId = currentUserId.value;
   primaryThreadId.value = null;
   const response = await api.post<{ thread: { id: string } }>("/assistant/threads/primary", {});
-  const history = await api.get<{ messages: AgentChatMessage[] }>(
-    `/assistant/threads/${encodeURIComponent(response.thread.id)}/messages`,
+  historyHasMore.value = false;
+  const history = await api.get<HistoryPage>(
+    `/assistant/threads/${encodeURIComponent(response.thread.id)}/messages?limit=${HISTORY_PAGE_SIZE}`,
   );
   if (currentUserId.value !== ownerId) return;
   primaryThreadId.value = response.thread.id;
-  agentChat.replaceMessages(history.messages.map(message => ({
-    ...message,
-    targetPresentation: normalizeAgentTargetPresentation(message.targetPresentation),
-  })));
+  historyHasMore.value = Boolean(history.hasMore);
+  agentChat.replaceMessages(normalizeHistory(history.messages));
+}
+
+// Keeps the reader's place: the list grows above them by the height of the older page.
+async function loadOlderMessages() {
+  const threadId = primaryThreadId.value;
+  const oldest = chatMessages.value.find(message => message.id && message.id !== "assistant-ready");
+  if (!threadId || !oldest?.id || !historyHasMore.value || loadingOlder.value) return;
+  loadingOlder.value = true;
+  try {
+    const history = await api.get<HistoryPage>(
+      `/assistant/threads/${encodeURIComponent(threadId)}/messages?limit=${HISTORY_PAGE_SIZE}&before=${encodeURIComponent(oldest.id)}`,
+    );
+    if (primaryThreadId.value !== threadId) return;
+    const node = scrollerRef.value;
+    const previousHeight = node?.scrollHeight ?? 0;
+    historyHasMore.value = Boolean(history.hasMore);
+    agentChat.prependMessages(normalizeHistory(history.messages));
+    await nextTick();
+    if (node) node.scrollTop += node.scrollHeight - previousHeight;
+  } catch (cause: any) {
+    error.value = cause?.message || "Earlier messages could not load.";
+  } finally {
+    loadingOlder.value = false;
+  }
+}
+
+function onMessagesScroll() {
+  if ((scrollerRef.value?.scrollTop ?? Infinity) < 120) void loadOlderMessages();
 }
 
 const showRuntimeMetadata = import.meta.env.DEV;
@@ -329,7 +364,16 @@ onMounted(async () => {
           </button>
         </header>
 
-        <div ref="scrollerRef" class="agent-messages" aria-live="polite">
+        <div ref="scrollerRef" class="agent-messages" aria-live="polite" @scroll.passive="onMessagesScroll">
+          <button
+            v-if="historyHasMore"
+            type="button"
+            class="agent-history-more"
+            :disabled="loadingOlder"
+            @click="loadOlderMessages"
+          >
+            {{ loadingOlder ? "Loading earlier messages…" : "Show earlier messages" }}
+          </button>
           <article
             v-for="(message, index) in chatMessages"
             :key="
@@ -537,6 +581,31 @@ onMounted(async () => {
   gap: 12px;
   padding: 16px 18px;
   overflow-y: auto;
+}
+
+.agent-history-more {
+  align-self: center;
+  border: 0;
+  padding: 4px 8px;
+  background: none;
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.agent-history-more:hover:not(:disabled) {
+  color: var(--ui-text);
+}
+
+.agent-history-more:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+  border-radius: var(--ui-radius-sm);
+}
+
+.agent-history-more:disabled {
+  cursor: default;
 }
 
 .agent-message {

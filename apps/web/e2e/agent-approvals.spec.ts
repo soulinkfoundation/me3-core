@@ -48,7 +48,7 @@ for (const journey of [{ surface: "Home", decision: "Approve" }, { surface: "Hom
   test(`${journey.surface} ${journey.decision} refreshes the current chat from saved history`, async ({ page }, testInfo) => {
     await fixture(page); let decided = false;
     const finalReply = journey.decision === "Approve" ? "The launch email was sent to Ada." : "The launch email was declined and remains unsent.";
-    await page.route("**/api/assistant/threads/main/messages", async route => {
+    await page.route("**/api/assistant/threads/main/messages*", async route => {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ thread: { id: "main", title: "Main conversation", status: "active", isPrimary: true }, messages: [{ id: "reply", role: "assistant", text: decided ? finalReply : "Please approve the launch email before I send it.", createdAt: "2026-10-10T12:00:00Z" }] }) });
     });
     await page.route("**/api/assistant/approvals/core-1", async route => {
@@ -74,7 +74,7 @@ for (const journey of [{ surface: "Home", decision: "Approve" }, { surface: "Hom
 
 test("An approval refresh waits for the active response to finish", async ({ page }) => {
   await fixture(page); let decided = false; let reads = 0; let streamStarted = false; let release: (() => void) | undefined;
-  await page.route("**/api/assistant/threads/main/messages", async route => {
+  await page.route("**/api/assistant/threads/main/messages*", async route => {
     reads++;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ thread: { id: "main", title: "Main conversation", status: "active", isPrimary: true }, messages: [{ id: "reply", role: "assistant", text: decided ? "The launch email was sent to Ada." : "Please approve the launch email before I send it." }] }) });
   });

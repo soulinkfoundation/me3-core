@@ -103,6 +103,11 @@ export function useAgentChat() {
     messages.value.push(message);
   }
 
+  function prependMessages(older: AgentChatMessage[]) {
+    const seen = new Set(messages.value.map((message) => message.id).filter(Boolean));
+    messages.value.unshift(...older.filter((message) => !message.id || !seen.has(message.id)));
+  }
+
   function resetMessages() {
     messages.value = defaultMessages();
   }
@@ -127,6 +132,7 @@ export function useAgentChat() {
     showLauncher,
     replaceMessages,
     appendMessage,
+    prependMessages,
     resetMessages,
     resetState,
   };
