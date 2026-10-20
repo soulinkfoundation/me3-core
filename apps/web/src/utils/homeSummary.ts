@@ -71,6 +71,24 @@ export function homeDateLabel(value: string, now = new Date(), locale?: string):
   if (localDateKey(date) === localDateKey(now)) return "Today";
   return new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short" }).format(date).replace(/,/g, "");
 }
+export type HomeSoulinkEvent = { id: string; direction: string; status?: string; createdAt?: string; textBody?: string };
+const INBOX_WINDOW_MS = 7 * 24 * 3_600_000;
+// The status feed is the last ten events ever, so Home shows what still waits on the owner and what came in this week.
+export function homeInboxSoulink<T extends HomeSoulinkEvent>(events: T[], now = new Date()): T[] {
+  return events.filter(event => {
+    if (event.direction !== "inbound") return false;
+    if (event.status === "pending_approval") return true;
+    const at = event.createdAt ? new Date(taskTimestamp(event.createdAt)).getTime() : NaN;
+    return !Number.isNaN(at) && now.getTime() - at < INBOX_WINDOW_MS;
+  });
+}
+/** The time for a message from today, otherwise its day; the same shorthand as the native Inbox rows. */
+export function homeMailTime(value?: string | null, now = new Date(), locale?: string): string {
+  const date = value ? new Date(taskTimestamp(value)) : null;
+  if (!date || Number.isNaN(date.getTime())) return "";
+  if (localDateKey(date) === localDateKey(now)) return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short" }).format(date).replace(/,/g, "");
+}
 const TAG = /<\/?([a-z][a-z0-9]*)\b[^>]*>/gi;
 const BLOCK_TAG = /^(p|div|li|ul|ol|br|h[1-6]|blockquote|pre|tr)$/i;
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };

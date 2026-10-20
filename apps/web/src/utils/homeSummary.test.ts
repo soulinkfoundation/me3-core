@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homeTasksCard, homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, plainPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, focusGoal, goalsWithFocus } from "./homeSummary";
+import { homeTasksCard, homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, plainPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, focusGoal, goalsWithFocus, homeInboxSoulink, homeMailTime } from "./homeSummary";
 
 describe("Home summaries", () => {
   // Failure modes: board order hides due work, archived/done work leaks into open tasks,
@@ -95,5 +95,24 @@ describe("Home summaries", () => {
       { id: "done", title: "Done", goalId: "launch", status: "done" },
     ];
     expect(homeGoalTasks(tasks, { id: "launch", projectIds: ["app"] }).map(t => t.id)).toEqual(["both", "direct", "project"]);
+  });
+  // Failure modes: the last ten Soulink events ever sit in Inbox for months; a request still waiting on the
+  // owner ages out of view; outbound replies show as requests; database timestamps shift by the UTC offset.
+  it("keeps Soulink requests that wait on the owner or arrived this week", () => {
+    const now = new Date("2026-10-20T12:00:00Z");
+    const events = [
+      { id: "new", direction: "inbound", status: "received", createdAt: "2026-10-18 09:00:00" },
+      { id: "old", direction: "inbound", status: "received", createdAt: "2026-10-01 09:00:00" },
+      { id: "waiting", direction: "inbound", status: "pending_approval", createdAt: "2026-09-01 09:00:00" },
+      { id: "reply", direction: "outbound", status: "sent", createdAt: "2026-10-19 09:00:00" },
+      { id: "undated", direction: "inbound", status: "received" },
+    ];
+    expect(homeInboxSoulink(events, now).map(event => event.id)).toEqual(["new", "waiting"]);
+  });
+  it("labels an inbox row with the time today and the day otherwise", () => {
+    const now = new Date("2026-10-20T15:00:00");
+    expect(homeMailTime("2026-10-20T09:05:00", now, "en-GB")).toBe("09:05");
+    expect(homeMailTime("2026-10-17T09:05:00", now, "en-GB")).toBe("Sat 17 Oct");
+    expect(homeMailTime("", now, "en-GB")).toBe("");
   });
 });

@@ -81,11 +81,10 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await expect(page.locator('.home-card')).toHaveCount(3);
     await expect(page.locator('.home-card').nth(1)).toHaveAttribute('aria-label', 'Mission');
     await mission.getByRole('button', { name: 'Mission options' }).focus();
-    await mission.getByRole('button', { name: 'Mission options' }).press('Enter');
-    await page.getByRole('menuitem', { name: 'Move up', exact: true }).click();
+    await mission.getByRole('button', { name: 'Mission options' }).press('Alt+ArrowUp');
     await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Mission');
     await page.reload(); await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Mission');
-    await page.getByRole('button', { name: 'Drag Mission to reorder' }).dragTo(page.getByRole('article', { name: 'Today', exact: true }).locator('header'));
+    await mission.getByRole('button', { name: 'Mission options' }).dragTo(page.getByRole('article', { name: 'Today', exact: true }).locator('header'));
     await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Today');
     await page.reload(); await expect(page.locator('.home-card').first()).toHaveAttribute('aria-label', 'Today');
     await mission.locator('header').click({ button: 'right' });

@@ -10,11 +10,12 @@ import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import UiIcon from "../UiIcon.vue";
 import PersonAvatar from "../people/PersonAvatar.vue";
+import EmailSenderAvatar from "../email/EmailSenderAvatar.vue";
 import PersonSheet from "../people/PersonSheet.vue";
 import { useContactsStore } from "../../stores/contacts";
 import { ownMissionStatement } from "../../utils/missionStatement";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
-import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDoneToday, homeTasksCard, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
+import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDoneToday, homeInboxSoulink, homeMailTime, homeTasksCard, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
 import { useAppLoadingWhile } from "../../composables/useAppLoading";
 const emit = defineEmits<{ suggest: [text: string]; approvalResolved: [] }>();
@@ -26,16 +27,31 @@ const layout = ref<HomeLayout>(emptyHomeLayout());
 // Today's tasks and goals come from the shared plan so the daily page and Mission stay in step.
 const plan = useTodayPlan();
 const { tasks, goals } = plan;
-const mail = ref<{ id: string; subject: string; fromName?: string; fromAddress?: string; preview?: string; agentSummary?: string }[]>([]);
-type HomeBrief = { needsYou: Array<{ messageId: string; sender: { name: string }; summary: string }>; handled: { total: number }; fyi: { inboxLeft: number; unread: number } };
+type HomeMail = { id: string; subject: string; fromName?: string; fromAddress?: string; preview?: string; agentSummary?: string; status?: string; unread?: boolean; receivedAt?: string; createdAt?: string; sender?: { name?: string; avatarUrl?: string | null } };
+const mail = ref<HomeMail[]>([]);
+type HomeBrief = { needsYou: Array<{ messageId: string; sender: { name: string; avatarUrl?: string | null }; subject: string; summary: string; receivedAt: string; unread: boolean }>; handled: { total: number }; fyi: { inboxLeft: number; unread: number } };
 const brief = ref<HomeBrief | null>(null);
-const briefHeadline = computed(() => {
-  if (!brief.value) return "";
-  const count = brief.value.needsYou.length;
-  const needs = count === 0 ? "You're all caught up" : count === 1 ? "1 thing needs you" : `${count} things need you`;
-  return brief.value.handled.total > 0 ? `${needs}. ME3 handled ${brief.value.handled.total} today.` : `${needs}.`;
+const soulink = ref<{ id: string; direction: string; status?: string; createdAt?: string; textBody?: string; outcome?: string }[]>([]);
+// Inbox shows what waits on the owner, nothing else: a sender, when, and the one line that says what.
+type InboxRow = { key: string; name: string; avatarUrl?: string | null; soulink?: boolean; time: string; line: string; unread?: boolean; waiting?: boolean; to: string };
+const inboxRows = computed<InboxRow[]>(() => {
+  const requests = soulink.value.slice(0, 3).map(event => ({ key: event.id, name: "Soulink request", soulink: true, time: homeMailTime(event.createdAt), line: journalPreview(event.textBody || "Request received"), waiting: event.status === "pending_approval", to: "/email" }));
+  const room = 3 - requests.length;
+  const messages: InboxRow[] = brief.value
+    ? brief.value.needsYou.slice(0, room).map(item => ({ key: item.messageId, name: item.sender.name, avatarUrl: item.sender.avatarUrl, time: homeMailTime(item.receivedAt), line: journalPreview(item.summary || item.subject || "(no subject)"), unread: item.unread, to: "/email" }))
+    : mail.value.slice(0, room).map(message => ({ key: message.id, name: message.sender?.name || message.fromName || message.fromAddress || message.subject || "New message", avatarUrl: message.sender?.avatarUrl, time: homeMailTime(message.receivedAt || message.createdAt), line: journalPreview(message.agentSummary || message.preview || message.subject || "(no subject)"), unread: message.unread === true, waiting: message.status === "pending_approval", to: "/email?tab=inbox" }));
+  return [...requests, ...messages];
 });
-const soulink = ref<{ id: string; textBody?: string; outcome?: string }[]>([]);
+// Beside the title: a pill when something needs the owner, a quiet note when nothing does.
+const inboxStatus = computed(() => {
+  if (!brief.value) return { badge: "", note: "" };
+  const count = brief.value.needsYou.length + soulink.value.length;
+  return count === 0 ? { badge: "", note: "All caught up" } : { badge: `${count} ${count === 1 ? "needs" : "need"} you`, note: "" };
+});
+async function copyAgentAddress() {
+  try { await navigator.clipboard.writeText(agentAddress.value); toastSuccess("Agent email copied"); }
+  catch { toastFromUnknown(null, "Couldn't copy the address"); }
+}
 const approvals = ref<{ id: string; pluginId?: string; title: string; summary?: string | null; payload?: Record<string, unknown> }[]>([]);
 const reviewApproval = ref<(typeof approvals.value)[number] | null>(null);
 const approvalError = ref("");
@@ -120,6 +136,13 @@ const tasksLine = computed(() => {
 // Tasks shows Now, falling back to the top of the backlog; the Tasks page has the tabs and projects.
 const tasksCard = computed(() => homeTasksCard(tasks.value));
 const missionPage = ref(0);
+const missionPages = ["Goals", "Wheel of Life", "Mission"];
+// Dragging a pager with a mouse does nothing, so the chevrons take the owner to a page by name.
+function goToMissionPage(page: number) {
+  const pager = cardElements.get("mission")?.querySelector<HTMLElement>(".home-pager");
+  if (!pager || page < 0 || page >= missionPages.length) return;
+  pager.scrollTo({ left: page * pager.clientWidth, behavior: reducedMotion.value ? "auto" : "smooth" });
+}
 function onMissionScroll(event: Event) { const pager = event.currentTarget as HTMLElement; missionPage.value = Math.round(pager.scrollLeft / Math.max(pager.clientWidth, 1)); }
 const todayLabel = computed(() => new Date(`${day.value}T12:00:00`).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }));
 async function toggleGratitude() {
@@ -177,6 +200,7 @@ function setOrder(order: HomeCard[]) {
   save();
   orderAnnouncement.value = `Home order: ${order.map(id => cards[id].title).join(", ")}`;
 }
+// Dragging the ⋯ reorders with a pointer; Alt+↑ / Alt+↓ on it reorders from the keyboard.
 function move(card: HomeCard, offset: number) {
   const order = [...visible.value]; const i = order.indexOf(card); const target = i + offset;
   if (target < 0 || target >= order.length) return;
@@ -294,9 +318,9 @@ async function refresh() {
       if (disposed) return;
       agentAddress.value = status.mailbox?.aliasAddress || status.sources?.find(s => s.inboundEnabled)?.address || ""; mail.value = inbox.messages;
       try {
-        const result = await api.get<{ recentEvents?: { id: string; direction: string; textBody?: string; providerEventId?: string }[] }>("/soulink/status");
+        const result = await api.get<{ recentEvents?: { id: string; direction: string; status?: string; createdAt?: string; textBody?: string; providerEventId?: string }[] }>("/soulink/status");
         if (disposed) return;
-        soulink.value = (result.recentEvents || []).filter(e => e.direction === "inbound").map(e => ({ ...e, outcome: result.recentEvents?.find(reply => e.providerEventId && reply.direction === "outbound" && reply.providerEventId === `${e.providerEventId}:reply`)?.textBody }));
+        soulink.value = homeInboxSoulink(result.recentEvents || []).map(e => ({ ...e, outcome: result.recentEvents?.find(reply => e.providerEventId && reply.direction === "outbound" && reply.providerEventId === `${e.providerEventId}:reply`)?.textBody }));
       } catch (error) { if (!(error instanceof ApiError && error.status === 404)) throw error; }
     }),
     resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed) gratitudeOn.value = Boolean(state.settings?.inToday); }),
@@ -382,25 +406,24 @@ onBeforeUnmount(() => {
   <div ref="panels" class="home-panels" aria-label="Home panels" :aria-busy="loading">
     <p class="sr-only" role="status">{{ orderAnnouncement }}</p>
     <p v-if="offline || Object.keys(errors).length" class="home-offline" role="status"><UiIcon name="WifiOff" :size="16" /><span>{{ offline ? 'You’re offline.' : 'Home couldn’t fully refresh.' }} {{ lastRefresh ? `Showing the last available data · ${lastRefresh}.` : 'Connect to refresh Home.' }}</span><button type="button" :disabled="loading" @click="refresh">Try again</button></p>
-    <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__drag" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
+    <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__more" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
       <template #item="{ element: card }: { element: HomeCard }">
         <article :ref="el => setCardElement(card, el)" class="home-card" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header class="home-card__header">
             <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
             <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
             <span v-else-if="card === 'tasks' && tasksCard.tasks.length" class="home-card__detail">{{ tasksCard.view === 'now' ? 'Now' : 'Backlog' }}</span>
+            <span v-else-if="card === 'inbox' && inboxStatus.badge" class="home-card__badge">{{ inboxStatus.badge }}</span>
+            <span v-else-if="card === 'inbox' && inboxStatus.note" class="home-card__detail">{{ inboxStatus.note }}</span>
             <div class="home-card__controls">
-              <button type="button" class="home-card__drag" :aria-label="`Drag ${cards[card].title} to reorder`" title="Drag to reorder, or use the options menu"><UiIcon name="GripVertical" :size="16" /></button>
-              <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-haspopup="menu" :aria-expanded="menu === card" @click="menu === card ? closeMenu(card) : openMenu(card)"><UiIcon name="Ellipsis" :size="20" /></button>
+              <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-haspopup="menu" :aria-expanded="menu === card" title="Options. Drag to reorder." @click="menu === card ? closeMenu(card) : openMenu(card)" @keydown.alt.up.prevent="move(card, -1)" @keydown.alt.down.prevent="move(card, 1)"><UiIcon name="Ellipsis" :size="20" /></button>
             </div>
           </header>
-          <!-- Today's menu holds only the Gratitude switch; reorder by dragging. -->
+          <!-- Today's menu holds only the Gratitude switch; every card reorders by dragging its ⋯. -->
           <div v-if="menu === card && card === 'today'" class="home-card__menu" role="menu" aria-label="Today options" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
             <button type="button" role="menuitemcheckbox" :aria-checked="showGratitude" @click="toggleGratitude"><span class="home-emoji home-emoji--menu" aria-hidden="true">🌅</span>Gratitude<span class="home-switch" :class="{ 'is-on': showGratitude }" aria-hidden="true" /></button>
           </div>
           <div v-else-if="menu === card" class="home-card__menu" role="menu" :aria-label="`${cards[card].title} options`" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
-            <button type="button" role="menuitem" :disabled="visible.indexOf(card) === 0" @click="move(card, -1)"><UiIcon name="ArrowUp" :size="16" />Move up</button>
-            <button type="button" role="menuitem" :disabled="visible.indexOf(card) === visible.length - 1" @click="move(card, 1)"><UiIcon name="ArrowDown" :size="16" />Move down</button>
             <button type="button" role="menuitem" class="home-danger" @click="remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
           </div>
           <div class="home-card__body">
@@ -426,13 +449,20 @@ onBeforeUnmount(() => {
               </RouterLink>
             </template>
             <template v-else-if="card === 'inbox'">
-              <RouterLink v-for="event in soulink.slice(0, 3)" :key="event.id" to="/email" class="home-entry"><strong>{{ journalPreview(event.textBody || 'New request') }}</strong><span v-if="event.outcome" class="home-muted">{{ journalPreview(event.outcome) }}</span></RouterLink>
-              <template v-if="brief">
-                <RouterLink to="/email" class="home-entry home-entry--brief"><span class="home-muted">{{ briefHeadline }}</span></RouterLink>
-                <RouterLink v-for="item in brief.needsYou.slice(0, 3)" :key="item.messageId" to="/email" class="home-entry"><strong>{{ item.sender.name }}</strong><span class="home-muted">{{ journalPreview(item.summary) }}</span></RouterLink>
+              <RouterLink v-for="row in inboxRows" :key="row.key" :to="row.to" class="home-inbox-row">
+                <span v-if="row.soulink" class="home-inbox-row__icon" aria-hidden="true"><UiIcon name="Sparkles" :size="18" /></span>
+                <EmailSenderAvatar v-else :name="row.name" :avatar-url="row.avatarUrl" :size="36" />
+                <span class="home-inbox-row__text">
+                  <span class="home-inbox-row__top"><strong :class="{ 'is-unread': row.unread }">{{ row.name }}</strong><span class="home-muted home-inbox-row__time">{{ row.time }}</span><i v-if="row.unread" class="home-inbox-row__dot" aria-label="Unread" /></span>
+                  <span v-if="row.waiting" class="home-inbox-row__waiting">Waiting on you</span>
+                  <span v-else class="home-muted home-inbox-row__line">{{ row.line }}</span>
+                </span>
+              </RouterLink>
+              <template v-if="!inboxRows.length && (!brief || brief.handled.total === 0)">
+                <button v-if="agentAddress" type="button" class="home-copy" @click="copyAgentAddress"><span>{{ agentAddress }}</span><UiIcon name="Copy" :size="16" /><span class="sr-only">Copy agent email</span></button>
+                <RouterLink v-else to="/settings?section=mailbox" class="home-quiet"><UiIcon name="Plus" :size="16" />Set up agent email</RouterLink>
+                <p v-if="!brief" class="home-muted">CC me on any email. I never see your own inbox.</p>
               </template>
-              <RouterLink v-for="message in (brief ? [] : mail.slice(0, 3))" :key="message.id" to="/email?tab=inbox" class="home-entry"><strong>{{ message.fromName || message.subject || 'New message' }}</strong><span class="home-muted">{{ journalPreview(message.agentSummary || message.preview || message.subject || '') }}</span></RouterLink>
-              <template v-if="!brief && !mail.length && !soulink.length"><p class="home-muted">{{ agentAddress ? 'ME3 will keep incoming requests and replies here.' : 'Give ME3 its own email. CC it on anything. It never sees your inbox.' }}</p><RouterLink v-if="!agentAddress" to="/settings?section=mailbox" class="home-quiet"><UiIcon name="Plus" :size="16" />Set up agent email</RouterLink></template>
             </template>
             <template v-else-if="card === 'tasks'">
               <RouterLink v-for="task in tasksCard.tasks" :key="task.id" :to="`/tasks?view=${tasksCard.view}&task=${encodeURIComponent(task.id)}`" class="home-line home-task"><i class="home-task__dot" aria-hidden="true" /><span class="home-task__title">{{ task.title }}</span></RouterLink>
@@ -467,7 +497,11 @@ onBeforeUnmount(() => {
                   </div>
                 </template>
               </Teleport>
-              <div class="home-pager-dots" aria-hidden="true"><i v-for="index in 3" :key="index" :class="{ 'is-on': missionPage === index - 1 }" /></div>
+              <div class="home-pager-nav">
+                <button type="button" class="home-pager-nav__go" :aria-label="missionPage > 0 ? `Show ${missionPages[missionPage - 1]}` : 'Previous'" :disabled="missionPage === 0" @click="goToMissionPage(missionPage - 1)"><UiIcon name="ChevronLeft" :size="18" /></button>
+                <div class="home-pager-dots" aria-hidden="true"><i v-for="index in 3" :key="index" :class="{ 'is-on': missionPage === index - 1 }" /></div>
+                <button type="button" class="home-pager-nav__go" :aria-label="missionPage < missionPages.length - 1 ? `Show ${missionPages[missionPage + 1]}` : 'Next'" :disabled="missionPage === missionPages.length - 1" @click="goToMissionPage(missionPage + 1)"><UiIcon name="ChevronRight" :size="18" /></button>
+              </div>
             </template>
             <template v-else-if="card === 'accounts'"><div v-if="accountSummary" class="home-stats"><div><span class="home-muted">Income this month</span><strong>{{ accountSummary.income }}</strong></div><div><span class="home-muted">Expenses this month</span><strong>{{ accountSummary.expense }}</strong></div></div><RouterLink v-else to="/accounts" class="home-quiet">Open Accounts<UiIcon name="ArrowRight" :size="16" /></RouterLink></template>
             <template v-else-if="card === 'people'"><template v-if="peopleCard.state === 'people'"><button v-for="person in peopleCard.people" :key="person.id" type="button" class="home-person" @click="openPersonId = person.id"><PersonAvatar :contact="person" :size="40" /><strong>{{ firstName(person.name) }}</strong><span class="home-muted home-person__since">{{ formatSinceShort(person.lastInTouchAt) || 'Not yet' }}</span></button></template><p v-else class="home-muted">All caught up.</p></template>
@@ -501,14 +535,15 @@ onBeforeUnmount(() => {
 .home-card__title:hover { background: transparent; text-decoration: underline; text-underline-offset: 3px; }
 .home-emoji { font-size: 20px; line-height: 1; font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
 .home-card__detail { color: var(--ui-text-muted); font-size: 12px; white-space: nowrap; }
+.home-card__badge { padding: 3px 8px; border-radius: 999px; background: var(--ui-accent-soft); color: var(--ui-accent-strong); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .home-card__controls { display: flex; margin-left: auto; }
 button { cursor: pointer; font: inherit; color: var(--ui-text); background: transparent; border: 0; min-width: 44px; min-height: 44px; border-radius: 12px; }
 button:hover { background: var(--ui-surface-muted); }
 button:disabled { opacity: .35; cursor: default; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 .home-card__controls > button { display: grid; place-items: center; width: 36px; min-width: 36px; }
-.home-card__drag { cursor: grab; touch-action: none; }
-.home-card__drag:active { cursor: grabbing; }
+.home-card__more { cursor: grab; touch-action: none; }
+.home-card__more:active { cursor: grabbing; }
 @media (hover: hover) and (pointer: fine) {
   .home-card__controls { opacity: 0; }
   .home-card:hover .home-card__controls, .home-card:focus-within .home-card__controls { opacity: 1; }
@@ -516,10 +551,18 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
 .home-card__body { padding: 0 18px 16px; font-size: 15px; line-height: 1.45; }
 p { margin: 4px 0; }
 .home-muted { color: var(--ui-text-muted); font-size: 14px; }
-.home-entry { display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 6px 0; text-decoration: none; color: var(--ui-text); }
-.home-entry strong { flex: 0 1 auto; font-size: 14px; font-weight: 600; }
-.home-entry span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.home-entry svg { flex-shrink: 0; align-self: center; }
+.home-inbox-row { display: flex; align-items: flex-start; gap: 12px; min-width: 0; min-height: 44px; padding: 8px 0; color: var(--ui-text); text-decoration: none; }
+.home-inbox-row__icon { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 50%; background: var(--ui-accent-soft); color: var(--ui-accent-strong); }
+.home-inbox-row__text { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.home-inbox-row__top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.home-inbox-row__top strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.home-inbox-row__top strong.is-unread { font-weight: 700; }
+.home-inbox-row__time { flex: none; font-size: 12px; }
+.home-inbox-row__dot { flex: none; align-self: center; width: 8px; height: 8px; border-radius: 50%; background: var(--ui-accent); }
+.home-inbox-row__line, .home-inbox-row__waiting { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.home-inbox-row__waiting { color: var(--ui-accent-strong); font-weight: 600; }
+.home-copy { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 0 12px; border-radius: 12px; background: var(--ui-surface-muted); color: var(--ui-text-muted); font-size: 14px; }
+.home-copy > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-person { display: flex; gap: 12px; align-items: center; width: 100%; min-height: 52px; padding: 0; border: 0; background: transparent; color: var(--ui-text); font: inherit; font-size: 16px; text-align: left; cursor: pointer; }
 .home-person__since { margin-left: auto; font-size: 13.5px; font-variant-numeric: tabular-nums; }
 .home-line { display: flex; gap: 8px; align-items: center; min-height: 40px; color: var(--ui-text); text-decoration: none; }
@@ -566,7 +609,12 @@ p { margin: 4px 0; }
 .home-goal__more-link { display: block; padding: 6px 0; font-size: 13px; text-decoration: none; }
 .home-goal__text { flex: 1; min-width: 0; display: grid; gap: 6px; }
 .home-goal__pc { font-size: 13px; font-variant-numeric: tabular-nums; }
-.home-pager-dots { display: flex; justify-content: center; gap: 6px; padding-top: 6px; }
+.home-pager-nav { display: flex; align-items: center; justify-content: center; gap: 6px; padding-top: 6px; }
+.home-pager-nav__go { display: grid; place-items: center; min-width: 32px; min-height: 32px; width: 32px; height: 32px; padding: 0; border-radius: 50%; color: var(--ui-text-muted); }
+.home-pager-nav__go:disabled { opacity: 0; cursor: default; }
+/* Touch swipes the pager; the chevrons are for a mouse. */
+@media (hover: none) { .home-pager-nav__go { display: none; } }
+.home-pager-dots { display: flex; justify-content: center; gap: 6px; }
 .home-pager-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--ui-surface-muted); }
 .home-pager-dots i.is-on { background: var(--ui-text); }
 .home-approval strong { font-size: 14px; font-weight: 600; }

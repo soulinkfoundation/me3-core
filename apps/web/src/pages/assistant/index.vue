@@ -360,17 +360,11 @@ type StarterPrompt = {
   prompt: string;
   mode?: "site-builder";
 };
-const siteBuilderStarterPrompt = ASSISTANT_SITE_BUILDER_STARTER_PROMPT;
 const starterPrompts: StarterPrompt[] = [
   { label: "What's on tomorrow?", icon: "CalendarDays", prompt: "What's on my calendar tomorrow?" },
   { label: "Help me reply to an email", icon: "Mail", prompt: "Help me choose an email to reply to and draft a response. Ask me before sending." },
   { label: "Help me plan my day", icon: "ListTodo", prompt: "Help me plan my day using my calendar, goals and tasks." },
-  {
-    label: "Build a site",
-    icon: "Sparkles",
-    prompt: siteBuilderStarterPrompt,
-    mode: "site-builder",
-  },
+  // "Build a site" returns here once site building is polished enough to release.
   {
     label: "Configure",
     icon: "Settings",
@@ -2417,14 +2411,11 @@ function messageFromUnknown(err: unknown, fallback: string) {
     class="assistant-page"
     :class="{
       'assistant-page--site-builder': siteBuilderMode,
+      'assistant-page--home': homeMode && !siteBuilderMode,
     }"
   >
     <Teleport v-if="!siteBuilderMode" to="#app-page-controls" defer>
       <div class="home-chat-header">
-        <div class="home-chat-switcher" role="group" aria-label="Workspace view">
-          <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
-          <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>
-        </div>
         <Button
           v-if="!homeMode && assistantThreadId"
           class="home-chat-new"
@@ -2438,6 +2429,10 @@ function messageFromUnknown(err: unknown, fallback: string) {
         >
           <UiIcon name="SquarePen" :size="20" />
         </Button>
+        <div class="home-chat-switcher" role="group" aria-label="Workspace view">
+          <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
+          <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>
+        </div>
       </div>
     </Teleport>
 
@@ -4545,6 +4540,9 @@ function messageFromUnknown(err: unknown, fallback: string) {
 }
 .assistant-composer::before { content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 22px; background: linear-gradient(transparent, var(--ui-bg)); pointer-events: none; border-radius: 28px 28px 0 0; }
 
+/* On Home the composer lines up with the column of cards above it. */
+.assistant-page--home .assistant-composer { width: min(620px, calc(100vw - 28px)); max-width: 620px; }
+
 .assistant-composer--drag-active {
   border-color: color-mix(in oklab, var(--ui-accent) 65%, var(--ui-border));
   background:
@@ -5320,7 +5318,6 @@ button:disabled {
 
 <style scoped>
 .home-chat-header { display: flex; align-items: center; flex: 1; height: 44px; }
-.home-chat-new { margin-left: auto; }
 .home-chat-switcher { position: absolute; left: 50%; transform: translateX(-50%); display: flex; padding: 3px; border-radius: 28px; background: var(--ui-surface-muted); }
 .home-chat-switcher button { min-width: 68px; min-height: 44px; padding: 0 14px; border: 0; border-radius: 24px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
 .home-chat-switcher button[aria-pressed="true"] { color: var(--ui-primary-contrast); background: var(--ui-primary); font-weight: 600; }
