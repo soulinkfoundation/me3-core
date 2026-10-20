@@ -1,4 +1,5 @@
 import { notifyAgentTurnReady } from "./push-notifications";
+import { replyToOwnerInstruction } from "./mailbox-instructions";
 import type { Env } from "./types";
 
 export const AGENT_NOTIFICATION_SCHEMA = [
@@ -31,6 +32,10 @@ export async function updateAgentChatPresence(env: Env, ownerId: string, threadI
 }
 
 export async function notifyAgentTurnFinished(env: Env, ownerId: string, turnId: string) {
+  // A turn the owner started by email is answered by email too.
+  await replyToOwnerInstruction(env, ownerId, turnId).catch((error: unknown) => {
+    console.warn("Email reply to the owner was deferred", { turnId, error: error instanceof Error ? error.message : "Unknown reply error" });
+  });
   try {
     const turn = await env.DB.prepare(`SELECT t.thread_id,t.status FROM me3_agent_turns t
       JOIN assistant_threads a ON a.id=t.thread_id AND a.owner_id=t.owner_id AND a.status='active'

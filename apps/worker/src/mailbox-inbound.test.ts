@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deliverInboundEmail, handleInboundEmail, type ForwardableEmailMessageLike } from "./mailbox-inbound";
 import { reconcileMailboxAttachmentStaging } from "./mailbox-attachment-staging";
+import { testDkimSigner } from "./mailbox-sender-auth.test-helpers";
 import type { Env } from "./types";
 
 const databases: DatabaseSync[] = [];
@@ -120,6 +121,24 @@ describe("inbound MIME and attachment persistence", () => {
     expect(objects.size).toBe(0);
     expect(db.prepare("SELECT * FROM mailbox_messages").all()).toHaveLength(0);
     expect(db.prepare("SELECT * FROM mailbox_attachment_staging").all()).toHaveLength(0);
+  });
+
+  it("verifies the signature only on mail that claims to be from the owner, and records the result", async () => {
+    const { db, env } = setup();
+    db.exec("UPDATE owner_profile SET email = 'kieran@gmail.test' WHERE id = 'owner'");
+    const { sign, resolveTxt } = await testDkimSigner("gmail.test");
+    const ownerMail = ["From: Kieran <kieran@gmail.test>", "To: owner@me3.app", "Subject: Book a table", "Date: Tue, 20 Oct 2026 09:00:00 +0000", "", "Friday at 7 please.", ""].join("\r\n");
+    const senderAuth = (id: string) => JSON.parse((db.prepare("SELECT metadata_json FROM mailbox_messages WHERE id = ?").get(id) as { metadata_json: string }).metadata_json).senderAuth;
+
+    const signed = await deliverInboundEmail(message(await sign(ownerMail), { from: "kieran@gmail.test" }), env, { resolveTxt });
+    const forged = await deliverInboundEmail(message(ownerMail.replace("Book a table", "Pay this"), { from: "kieran@gmail.test" }), env, { resolveTxt });
+    const lookups = vi.fn(resolveTxt);
+    const stranger = await deliverInboundEmail(message(raw), env, { resolveTxt: lookups });
+    if (signed.status !== "accepted" || forged.status !== "accepted" || stranger.status !== "accepted") throw new Error("not accepted");
+    expect(senderAuth(signed.messageId)).toEqual({ dkim: "pass", domain: "gmail.test" });
+    expect(senderAuth(forged.messageId)).toMatchObject({ dkim: "none" });
+    expect(senderAuth(stranger.messageId)).toBeUndefined();
+    expect(lookups).not.toHaveBeenCalled();
   });
 
   it("marks the sending contact as in touch without copying the email", async () => {

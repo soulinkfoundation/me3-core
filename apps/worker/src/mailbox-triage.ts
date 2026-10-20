@@ -1,4 +1,5 @@
 import { createAgentMailboxDraft } from "@me3-core/plugin-agent-chat";
+import { MAILBOX_INSTRUCTIONS_SCHEMA, startOwnerInstruction, type OwnerInstructionDispatcher } from "./mailbox-instructions";
 import { parseEmailAddressHeader } from "../../../shared/email-headers";
 import { triageInboundInvoiceEmail } from "./accounts-email-triage";
 import { generateAiText, hasConfiguredAiProvider } from "./ai-providers";
@@ -51,7 +52,7 @@ export const MAIL_TRIAGE_SCHEMA = [
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
     message_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('receipt', 'newsletter', 'notification', 'login_code', 'rule_archive', 'rule_reply')),
+    kind TEXT NOT NULL CHECK (kind IN ('receipt', 'newsletter', 'notification', 'login_code', 'instruction', 'rule_archive', 'rule_reply')),
     label TEXT NOT NULL,
     detail TEXT,
     amount_cents INTEGER,
@@ -61,6 +62,7 @@ export const MAIL_TRIAGE_SCHEMA = [
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   `CREATE INDEX IF NOT EXISTS idx_mailbox_handled_actions_user_created ON mailbox_handled_actions(user_id, created_at DESC)`,
+  ...MAILBOX_INSTRUCTIONS_SCHEMA,
   `CREATE TABLE IF NOT EXISTS mailbox_rules (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
@@ -84,13 +86,14 @@ export const MAIL_TRIAGE_SCHEMA = [
   )`,
 ] as const;
 
-/** Rebuilds the handled log so its kind check allows "login_code" (0080). */
+/** Rebuilds the handled log so its kind check allows "login_code" and "instruction" (0080). */
 export const MAILBOX_LOGIN_CODES_STATEMENTS = [
+  `DROP TABLE IF EXISTS mailbox_handled_actions_next`,
   `CREATE TABLE mailbox_handled_actions_next (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
     message_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('receipt', 'newsletter', 'notification', 'login_code', 'rule_archive', 'rule_reply')),
+    kind TEXT NOT NULL CHECK (kind IN ('receipt', 'newsletter', 'notification', 'login_code', 'instruction', 'rule_archive', 'rule_reply')),
     label TEXT NOT NULL,
     detail TEXT,
     amount_cents INTEGER,
@@ -119,7 +122,7 @@ export type MailTriageActionKind =
   | "unsubscribe"
   | "mark_done";
 export type MailTriageAction = { kind: MailTriageActionKind; label: string; url?: string | null };
-export type MailHandledKind = "receipt" | "newsletter" | "notification" | "login_code" | "rule_archive" | "rule_reply";
+export type MailHandledKind = "receipt" | "newsletter" | "notification" | "login_code" | "instruction" | "rule_archive" | "rule_reply";
 
 /** What the model returns for mail that rules and signals did not decide. */
 export type MailTriageDecision = {
@@ -155,6 +158,8 @@ export type MailTriageOptions = {
   summarize?: MailNewsletterSummarizer | null;
   /** Runs triage after the request returns (Email Routing / managed inbound). */
   waitUntil?: (work: Promise<unknown>) => void;
+  /** Replaces starting the agent turn for an owner's email. */
+  dispatchInstruction?: OwnerInstructionDispatcher;
   now?: Date;
 };
 
@@ -345,6 +350,15 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
   const senderName = describeSenderName({ headerName: fromHeader?.name, address, contactName: contact?.name });
   const forward = parseForwardedMessage(body, subject);
   const context: Record<string, unknown> = { sender: senderName, knownContact: Boolean(contact), isForward: forward.isForward };
+
+  // 0. The owner's own (verified) email is a request ME3 acts on, before any rule or signal.
+  const instruction = await startOwnerInstruction(env, row, { dispatch: options.dispatchInstruction, now: options.now });
+  if (instruction) {
+    await archiveMessage(env, row);
+    await logHandledAction(env, row, { kind: "instruction", label: "Request from you", detail: instruction.note.replace(/\s+/g, " ").slice(0, 300), undo: { kind: "move_to_inbox" } });
+    return outcome("handled", "low", instruction.note.replace(/\s+/g, " "), "signal", "instruction", null, null, null,
+      { ...context, assistantThreadId: instruction.threadId, turnId: instruction.turnId });
+  }
 
   // 1. Owner rules.
   const rules = await env.DB.prepare(

@@ -51,7 +51,7 @@ export class Me3Agent extends Agent<Env> {
       await this.startTurn(input,true);
       return Response.json(await this.readResponse(input));
     }
-    if(!["/turn","/turn/stream"].includes(url.pathname))return Response.json({error:"Not found"},{status:404});
+    if(!["/turn","/turn/stream","/turn/start"].includes(url.pathname))return Response.json({error:"Not found"},{status:404});
     if(!isNewAgentDispatchInput(body))return Response.json({error:"Invalid agent dispatch payload"},{status:400});
     let input=body;
     if(!input.threadId)input={...input,threadId:(await resolvePrimaryAssistantThread(this.env,input.userId)).id};
@@ -65,6 +65,8 @@ export class Me3Agent extends Agent<Env> {
     // Retries cannot replace the first saved input, even before a checkpoint exists.
     input=JSON.parse((await this.loadTurn(input.userId,input.turnId))!.input_json) as NewAgentDispatchInput;
     await this.prepareResume(input);
+    // Background requests (the owner's email) start the turn and return; its end is announced as usual.
+    if(url.pathname.endsWith("/start")){await this.startTurn(input,false);return Response.json({ok:true,turnId:input.turnId,threadId:input.threadId});}
     if(url.pathname.endsWith("/stream")) {
       const response=this.subscribe(input,Number(request.headers.get("Last-Event-ID")||0));
       await this.startTurn(input,false);

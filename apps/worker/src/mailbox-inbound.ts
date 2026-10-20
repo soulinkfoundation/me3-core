@@ -1,4 +1,6 @@
 import { stageMailboxAttachmentKeys, finishMailboxAttachmentStaging, cleanMailboxAttachmentStaging } from "./mailbox-attachment-staging";
+import { ownerSenderAuth } from "./mailbox-instructions";
+import type { DnsTxtResolver } from "./mailbox-sender-auth";
 import { touchContactInteraction, type AgentMailboxMessage } from "@me3-core/plugin-agent-chat";
 import type { EmailProviderAttachment } from "./email-providers";
 import { publishMailboxMessageReceived } from "./mailbox-events";
@@ -46,6 +48,8 @@ export type InboundEmailDeliveryOptions = {
   allowNativeForwarding?: boolean;
   /** Lets triage (receipts, the Brief) finish after the inbound handler returns. */
   waitUntil?: (work: Promise<unknown>) => void;
+  /** Replaces DNS over HTTPS when checking the DKIM signature of mail from the owner. */
+  resolveTxt?: DnsTxtResolver;
   managedDelivery?: {
     deliveryId: string;
     managedInstallationId: string;
@@ -183,6 +187,9 @@ export async function deliverInboundEmail(
       normalizeEmail(message.from) ||
       normalizeEmailHeaderValue(parsed.headers.from);
 
+    // Mail that says it is from the owner may be an instruction; only a verified signature makes it one.
+    const senderAuth = await ownerSenderAuth(env, mailbox.user_id, fromAddress, rawMessage, options.resolveTxt);
+
     const messageStatement = buildInboundMessageStatement(env, {
       id: rowId,
       mailboxId: mailbox.id,
@@ -209,6 +216,7 @@ export async function deliverInboundEmail(
         ...(htmlBodyFits ? {} : { htmlBodyOmitted: true }),
         attachmentCount: storedAttachments.length,
         attachments: storedAttachments,
+        ...(senderAuth ? { senderAuth } : {}),
       },
       now,
     });

@@ -1,3 +1,4 @@
+import { ownerInstructionAddresses } from "../mailbox-instructions";
 import {
   activateAgentMailbox,
   createAgentMailboxDraft,
@@ -227,12 +228,12 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     const configuredIdentity = isManagedEmailDeployment(c.env)
       ? null
       : await getConfiguredEmailIdentity(c.env, ownerId).catch(() => null);
-    return c.json(
-      await getAgentMailboxOverview(c.env, ownerId, owner || undefined, {
-        includeRecentActivity: c.req.query("include_activity") !== "0",
-        configuredIdentity,
-      }),
-    );
+    const overview = await getAgentMailboxOverview(c.env, ownerId, owner || undefined, {
+      includeRecentActivity: c.req.query("include_activity") !== "0",
+      configuredIdentity,
+    });
+    // Mail from these addresses is a request ME3 acts on; clients name them when explaining that.
+    return c.json({ ...overview, ownerAddresses: await ownerInstructionAddresses(c.env, ownerId) });
   });
 
   app.get("/api/mailbox/events", async (c) => {

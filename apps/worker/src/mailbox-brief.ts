@@ -118,6 +118,7 @@ const HANDLED_TITLES: Record<MailHandledKind, [string, string]> = {
   newsletter: ["newsletter set aside", "newsletters set aside"],
   notification: ["notification archived", "notifications archived"],
   login_code: ["login code archived", "login codes archived"],
+  instruction: ["request from you", "requests from you"],
   rule_archive: ["email archived", "emails archived"],
   rule_reply: ["reply sent", "replies sent"],
 };

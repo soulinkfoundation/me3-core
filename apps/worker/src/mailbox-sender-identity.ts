@@ -113,6 +113,35 @@ export function parseForwardedMessage(text: string | null | undefined, subject: 
   return { isForward: true, originalSender, forwardedBody: lines.slice(bodyStart).join("\n").trim() };
 }
 
+/**
+ * The owner's own words in an email they sent ME3: everything above a forwarded block or the
+ * quoted thread ("On … wrote:", "> …", an Outlook "From:/Sent:" header), without signatures.
+ * `rest` is what follows the cut, for a forward the forwarded email.
+ */
+export function splitOwnerNote(text: string | null | undefined, subject: string | null | undefined): {
+  note: string;
+  isForward: boolean;
+  originalSender: { name: string; address: string } | null;
+  rest: string;
+} {
+  const clean = stripLeakedStyles(text || "").replace(/\r\n/g, "\n");
+  const lines = clean.split("\n");
+  let cut = lines.length;
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    const next = (lines[index + 1] || "").trim();
+    if (FORWARD_MARKER.test(trimmed) || SIGNATURE_DIVIDER.test(trimmed) || DEVICE_SIGNATURE.test(trimmed)
+      || QUOTE_TAIL.test(trimmed) || (/^on .{3,200}$/i.test(trimmed) && QUOTE_TAIL.test(`${trimmed} ${next}`))
+      || (/^from\s*:\s*\S/i.test(trimmed) && /^(?:sent|date)\s*:/i.test(next)) || trimmed.startsWith(">")) {
+      cut = index;
+      break;
+    }
+  }
+  const note = lines.slice(0, cut).map(line => line.replace(/\s+$/g, "")).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const parsed = parseForwardedMessage(clean, subject);
+  return { note, isForward: parsed.isForward, originalSender: parsed.originalSender, rest: lines.slice(cut).join("\n").trim() };
+}
+
 /** Stylesheets that leak into a text body (a bad text/plain part, an unclosed <style>): "@media … { … }" and "selector { prop: value }". */
 const CSS_AT_RULE = /@[a-z-]+[^{};]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/gi;
 const CSS_RULE = /(?:^|\s)[^\s{};]+(?:\s*[,>+~]\s*[^\s{};]+|\s+[^\s{};]+)*\s*\{[^{}]*:[^{}]*\}/g;
@@ -335,6 +364,7 @@ export function triageTagLabel(handledKind: string | null, draftId: string | nul
     case "rule_reply": return "ME3 replied";
     case "newsletter": return "Newsletter";
     case "login_code": return "Login code";
+    case "instruction": return "Request from you";
     case "notification": return "Archived";
     case "rule_archive": return "Archived · your rule";
     default: return null;
