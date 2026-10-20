@@ -646,6 +646,15 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.batch(MAILBOX_INSTRUCTIONS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
+  // Automatic agent memory: importance decides what reaches the agent, and time-bound facts lapse.
+  {
+    id: "0081_private_memory_importance",
+    checksum: "2026-10-20-private-memory-importance-v1",
+    async apply(db) {
+      await addColumnIfMissing(db, "mission_private_memory", "importance", "INTEGER NOT NULL DEFAULT 3");
+      await addColumnIfMissing(db, "mission_private_memory", "expires_at", "TEXT");
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

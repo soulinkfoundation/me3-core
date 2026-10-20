@@ -39,6 +39,9 @@ describe("Core runtime migrations", () => {
     expect(db.columns.get("mission_tasks")?.has("pinned_at")).toBe(true);
     expect(db.columns.get("mission_tasks")?.has("goal_id")).toBe(true);
     expect(db.migrations.get("0060_mission_goal_links")).toBe("2026-10-10-mission-goal-links-v1");
+    expect(db.columns.get("mission_private_memory")?.has("importance")).toBe(true);
+    expect(db.columns.get("mission_private_memory")?.has("expires_at")).toBe(true);
+    expect(db.migrations.get("0081_private_memory_importance")).toBe("2026-10-20-private-memory-importance-v1");
     expect(db.columns.get("commerce_settings")?.has("default_currency")).toBe(true);
     expect(db.columns.get("commerce_settings")?.has("preferred_stripe_provider")).toBe(true);
     expect(db.tables.has("ai_usage_events")).toBe(true);
@@ -489,6 +492,7 @@ class RuntimeMigrationDb {
     "subscribers",
     "bookings",
     "calendar_sources",
+    "mission_private_memory",
   ]);
   readonly columns = new Map<string, Set<string>>([
     ["commerce_settings", new Set(["user_id", "encrypted_stripe_secret_key"])],
@@ -505,6 +509,7 @@ class RuntimeMigrationDb {
       ]),
     ],
     ["mission_tasks", new Set(["id", "user_id", "title", "status", "priority"])],
+    ["mission_private_memory", new Set(["id", "user_id", "memory_kind", "body", "source_kind", "review_status", "updated_at"])],
     ["mailbox_messages", new Set(["id", "mailbox_id", "message_kind"])],
     ["subscribers", new Set(["id", "site_id", "email"])],
     ["bookings", new Set(["id", "site_id", "guest_email"])],
@@ -759,7 +764,8 @@ class RuntimeMigrationStatement {
     }
     if (
       this.sql.includes("ALTER TABLE email_campaigns") ||
-      this.sql.includes("ALTER TABLE mobile_push_preferences")
+      this.sql.includes("ALTER TABLE mobile_push_preferences") ||
+      this.sql.includes("ALTER TABLE mission_private_memory")
     ) {
       const match = this.sql.match(/ALTER TABLE (\w+) ADD COLUMN (\w+)/);
       if (!match) throw new Error("invalid accounts alter statement");
