@@ -9,6 +9,11 @@
 - Follow the shared testing policy in `/Users/kieranbutler/Coding/docs/testing.md`.
 - Verify git scope before staging so install-local or unrelated user work is not hidden or reverted.
 
+## Responses
+
+- The owner runs many sessions in parallel. Keep replies short: what changed, the current state, and the next action.
+- Only mention something the owner must act on or would be harmed by not knowing. Leave out background, side observations and nice-to-knows; file real follow-ups as beads instead of describing them.
+
 ## Ecosystem Source Of Truth
 
 - Canonical high-level ecosystem docs live at `/Users/kieranbutler/Coding/docs`.
