@@ -196,3 +196,51 @@ function readExpiry(value: unknown, now: Date): string | null {
 function normalizeBody(body: string): string {
   return body.toLowerCase().replace(/\s+/g, " ").replace(/[.!\s]+$/, "").trim();
 }
+
+// Memories are written for the agent as "Owner's daughter is Mia." The owner reads them as
+// "Your daughter is Mia." Anything this can't rewrite with confidence keeps its original words.
+const OWNER_VERBS: Record<string, string> = { is: "are", was: "were", has: "have", does: "do", goes: "go", "isn't": "aren't", "wasn't": "weren't", "hasn't": "haven't", "doesn't": "don't" };
+const OWNER_ADVERBS = "(?:(?:always|usually|often|never|rarely|seldom|sometimes|generally|typically|normally|regularly|frequently|also|still|currently|now|only|mostly|really|no longer)\\s+)*";
+const OWNER_SUBJECT = new RegExp(`^(\\s+${OWNER_ADVERBS})([a-z]+(?:['’][a-z]+)?)\\b`);
+
+export function ownerFacingMemory(body: string): string {
+  if (!/\b(?:Owner|The owner)\b/.test(body)) return body;
+  const parts = body.split(/([.;:!?]\s+)/);
+  for (let index = 0; index < parts.length; index += 2) {
+    const clause = rewriteOwnerClause(parts[index], index === 0 || /[.!?]/.test(parts[index - 1]));
+    if (clause === null) return body;
+    parts[index] = clause;
+  }
+  return parts.join("");
+}
+
+function rewriteOwnerClause(clause: string, capital: boolean): string | null {
+  const lead = /^(?:Owner|The owner)(['’]s\b)?/.exec(clause);
+  let rest = clause;
+  let subject = false;
+  if (lead) {
+    rest = clause.slice(lead[0].length);
+    if (lead[1]) rest = (capital ? "Your" : "your") + rest;
+    else {
+      const verb = OWNER_SUBJECT.exec(rest);
+      const conjugated = verb && ownerVerb(verb[2]);
+      if (!verb || !conjugated) return null;
+      rest = (capital ? "You" : "you") + verb[1] + conjugated + rest.slice(verb[0].length);
+      subject = true;
+    }
+  }
+  rest = rest.replace(/\bOwner['’]s\b/g, "your");
+  if (/\b(?:Owner|The owner)\b/.test(rest)) return null;
+  return subject ? rest.replace(/\bthemsel(?:ves|f)\b/g, "yourself") : rest;
+}
+
+function ownerVerb(word: string): string | null {
+  const apostrophe = word.includes("’") ? "’" : "'";
+  const irregular = OWNER_VERBS[word.replace("’", "'")];
+  if (irregular) return irregular.replace("'", apostrophe);
+  if (!word.endsWith("s")) return word;
+  if (/(?:ss|us|is)$/.test(word)) return null;
+  if (/(?:ss|sh|ch|x|z|o)es$/.test(word)) return word.slice(0, -2);
+  if (/[^aeiou]ies$/.test(word)) return `${word.slice(0, -3)}y`;
+  return word.slice(0, -1);
+}

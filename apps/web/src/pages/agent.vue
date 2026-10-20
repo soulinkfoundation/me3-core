@@ -18,7 +18,7 @@ definePage({
   },
 });
 
-type Memory = { id: string; body: string; memoryKind: string; sourceKind: string; reviewStatus: "active" | "needs_review" | "archived"; updatedAt: string };
+type Memory = { id: string; body: string; displayBody?: string; memoryKind: string; sourceKind: string; reviewStatus: "active" | "needs_review" | "archived"; updatedAt: string };
 type Approval = { id: string; pluginId: string; actionId: string; title: string; summary: string | null; requestedAt: string; payload?: Record<string, unknown> };
 type Run = { id: string; title: string; promptSummary: string | null; status: string; startedAt: string | null; finishedAt: string | null; createdAt: string };
 type Activity = { id: string; title: string; summary: string | null; status: string | null; relatedId: string | null; createdAt: string };
@@ -250,8 +250,8 @@ onMounted(load);
         <h2 id="agent-memory-title">How {{ displayName }} works with you</h2>
         <div class="agent-card">
           <div v-for="item in activeMemories" :key="item.id" class="agent-memory">
-            <span>{{ item.body }}</span>
-            <button type="button" class="agent-icon-button" :aria-label="`Forget: ${item.body}`" :disabled="Boolean(memoryBusy)" @click="forgetMemory(item)"><UiIcon name="X" :size="16" /></button>
+            <span>{{ item.displayBody || item.body }}</span>
+            <button type="button" class="agent-icon-button" :aria-label="`Forget: ${item.displayBody || item.body}`" :disabled="Boolean(memoryBusy)" @click="forgetMemory(item)"><UiIcon name="X" :size="16" /></button>
           </div>
           <form class="agent-add" @submit.prevent="addMemory">
             <UiIcon name="Plus" :size="18" class="agent-row__icon" />
@@ -266,7 +266,7 @@ onMounted(load);
         <h2 id="agent-memory-waiting-title">Waiting for your OK</h2>
         <div class="agent-card">
           <div v-for="item in waitingMemories" :key="item.id" class="agent-memory agent-memory--review">
-            <span>{{ item.body }}</span>
+            <span>{{ item.displayBody || item.body }}</span>
             <div class="agent-memory__actions">
               <button type="button" class="agent-text-button agent-text-button--accent" :disabled="Boolean(memoryBusy)" @click="keepMemory(item)">Remember</button>
               <button type="button" class="agent-text-button" :disabled="Boolean(memoryBusy)" @click="forgetMemory(item)">Don't</button>
@@ -280,8 +280,8 @@ onMounted(load);
         <h2 id="agent-memory-facts-title">What {{ displayName }} remembers</h2>
         <div class="agent-card">
           <div v-for="item in rememberedFacts" :key="item.id" class="agent-memory">
-            <span>{{ item.body }}</span>
-            <button type="button" class="agent-icon-button" :aria-label="`Forget: ${item.body}`" :disabled="Boolean(memoryBusy)" @click="forgetMemory(item)"><UiIcon name="X" :size="16" /></button>
+            <span>{{ item.displayBody || item.body }}</span>
+            <button type="button" class="agent-icon-button" :aria-label="`Forget: ${item.displayBody || item.body}`" :disabled="Boolean(memoryBusy)" @click="forgetMemory(item)"><UiIcon name="X" :size="16" /></button>
           </div>
         </div>
         <p class="agent-note">Picked up from your chats. Forget anything here and {{ displayName }} won't learn it again.</p>

@@ -31,6 +31,7 @@ export function shouldSendAssistantModelOverride(
 export type AgentChatMemoryReview = {
   id: string;
   body: string;
+  displayBody?: string;
   status: "pending" | "remembered" | "declined";
 };
 

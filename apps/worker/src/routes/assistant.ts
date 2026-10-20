@@ -9,6 +9,7 @@ import { revalidateAgentImagePayload } from "../agent-image-projection";
 import { getSiteImageMetadata } from "../site-images";
 import { type Context } from "hono";
 import { registerNewAgentRoutes } from "./new-agent";
+import { ownerFacingMemory } from "../agent-memory";
 import { registerAssistantSkillsRoutes } from "./assistant-skills";
 import {
   AGENT_CHAT_MODES,
@@ -699,7 +700,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     ).bind(memoryId, ownerId).first<{ id: string; body: string; review_status: string }>();
     if (!memory) return message;
     const status = memory.review_status === "needs_review" ? "pending" : memory.review_status === "active" ? "remembered" : "declined";
-    return { ...message, memoryReview: { id: memory.id, body: memory.body, status } };
+    return { ...message, memoryReview: { id: memory.id, body: memory.body, displayBody: ownerFacingMemory(memory.body), status } };
   }
 
   function parseAssistantMessageMetadata(metadataJson: string | null | undefined): {

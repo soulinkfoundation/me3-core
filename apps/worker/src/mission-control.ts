@@ -38,6 +38,7 @@ import {
 import { getUtcMsForLocalTime, normalizeTimeZone } from "./calendar";
 import { hasConfiguredAiProvider } from "./ai-providers";
 import { isCorePluginEnabled, listCorePluginRecords } from "./plugins";
+import { ownerFacingMemory } from "./agent-memory";
 import { getSiteFileText } from "./sites";
 import type { Env } from "./types";
 
@@ -2939,6 +2940,7 @@ function serializeMemory(row: MissionMemoryRow) {
     scopeId: row.scope_id,
     title: row.title,
     body: row.body,
+    displayBody: ownerFacingMemory(row.body),
     confidence: row.confidence,
     sourceKind: row.source_kind,
     sourceRef: row.source_ref,

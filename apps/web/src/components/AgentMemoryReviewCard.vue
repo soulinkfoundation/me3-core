@@ -30,7 +30,7 @@ async function decide(remember: boolean) {
 <template>
   <aside class="memory-review" role="group" aria-label="Remember this?">
     <strong>Remember this?</strong>
-    <span class="memory-review__body">{{ review.body }}</span>
+    <span class="memory-review__body">{{ review.displayBody || review.body }}</span>
     <div v-if="status === 'pending'" class="memory-review__actions">
       <button type="button" class="memory-review__remember" :disabled="busy" @click="decide(true)">Remember</button>
       <button type="button" class="memory-review__decline" :disabled="busy" @click="decide(false)">Don't</button>

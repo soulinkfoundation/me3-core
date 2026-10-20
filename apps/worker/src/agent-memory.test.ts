@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentDb, AgentMessage, AgentModel } from "../../../packages/agent/src/types";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
-import { rememberFromTurn } from "./agent-memory";
+import { ownerFacingMemory, rememberFromTurn } from "./agent-memory";
 import { createDomainTools } from "../../../packages/agent/src/tools";
 import type { AgentToolContext } from "../../../packages/agent/src/types";
 import { Hono } from "hono";
@@ -185,9 +185,9 @@ describe("memory review and forgetting", () => {
     const response = await app.request("/api/assistant/threads/thread/messages?limit=10", {}, { DB: f.db } as unknown as Env);
     const body = await response.json() as { messages: Array<{ memoryReview?: unknown }> };
     expect(body.messages.map(message => message.memoryReview ?? null)).toEqual([
-      { id: "m-pending", body: "Owner has a back injury.", status: "pending" },
-      { id: "m-kept", body: "Owner is training for a marathon.", status: "remembered" },
-      { id: "m-no", body: "Owner is in debt.", status: "declined" },
+      { id: "m-pending", body: "Owner has a back injury.", displayBody: "You have a back injury.", status: "pending" },
+      { id: "m-kept", body: "Owner is training for a marathon.", displayBody: "You are training for a marathon.", status: "remembered" },
+      { id: "m-no", body: "Owner is in debt.", displayBody: "You are in debt.", status: "declined" },
       null,
     ]);
   });
@@ -211,5 +211,41 @@ describe("memory review and forgetting", () => {
     expect(f.rows().find(row => row.id === "m-bp")).toMatchObject({ review_status: "archived" });
     expect(f.raw.prepare("SELECT forgotten_at FROM mission_private_memory WHERE id = 'm-bp'").get()).toMatchObject({ forgotten_at: expect.any(String) });
     expect(f.rows().find(row => row.id === "m-run")).toMatchObject({ review_status: "active" });
+  });
+});
+
+describe("memory shown to the owner", () => {
+  it("speaks to the owner in second person", () => {
+    expect(ownerFacingMemory("Owner's daughter is Mia.")).toBe("Your daughter is Mia.");
+    expect(ownerFacingMemory("Owner is in debt.")).toBe("You are in debt.");
+    expect(ownerFacingMemory("Owner has a back injury.")).toBe("You have a back injury.");
+    expect(ownerFacingMemory("Owner was born in Leeds.")).toBe("You were born in Leeds.");
+    expect(ownerFacingMemory("Owner doesn't drink coffee.")).toBe("You don't drink coffee.");
+    expect(ownerFacingMemory("The owner prefers short replies.")).toBe("You prefer short replies.");
+  });
+
+  it("conjugates the owner's verbs, past any adverbs", () => {
+    expect(ownerFacingMemory("Owner uses a standing desk.")).toBe("You use a standing desk.");
+    expect(ownerFacingMemory("Owner watches football on Sundays.")).toBe("You watch football on Sundays.");
+    expect(ownerFacingMemory("Owner studies Spanish.")).toBe("You study Spanish.");
+    expect(ownerFacingMemory("Owner goes running daily.")).toBe("You go running daily.");
+    expect(ownerFacingMemory("Owner plays tennis.")).toBe("You play tennis.");
+    expect(ownerFacingMemory("Owner usually prefers mornings.")).toBe("You usually prefer mornings.");
+    expect(ownerFacingMemory("Owner no longer drinks alcohol.")).toBe("You no longer drink alcohol.");
+    expect(ownerFacingMemory("Owner started a new job in October 2026.")).toBe("You started a new job in October 2026.");
+    expect(ownerFacingMemory("Owner can't eat gluten.")).toBe("You can't eat gluten.");
+  });
+
+  it("rewrites every reference to the owner in the sentence", () => {
+    expect(ownerFacingMemory("Owner's daughter is Mia; Owner picks her up on Fridays.")).toBe("Your daughter is Mia; you pick her up on Fridays.");
+    expect(ownerFacingMemory("Mia is Owner's daughter.")).toBe("Mia is your daughter.");
+    expect(ownerFacingMemory("Owner is the owner of a bakery.")).toBe("You are the owner of a bakery.");
+    expect(ownerFacingMemory("Owner pushes themselves too hard.")).toBe("You push yourself too hard.");
+  });
+
+  it("keeps the original wording when it can't be sure", () => {
+    for (const body of ["Keep replies short.", "Owner, a nurse, works nights.", "Sam emails Owner weekly.", "Owner Kieran runs a bakery.", ""]) {
+      expect(ownerFacingMemory(body)).toBe(body);
+    }
   });
 });

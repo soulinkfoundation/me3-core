@@ -14,7 +14,7 @@ import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages
 import { getAiSettings } from "./ai-providers";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
 import { loadAgentEmailDraft } from "./agent-email-draft";
-import { rememberFromTurn } from "./agent-memory";
+import { ownerFacingMemory, rememberFromTurn } from "./agent-memory";
 import { suggestAgentReplies } from "./agent-suggested-replies";
 import { getManagedAiBillingSettings, managedAllowanceNotice, syncManagedAiUsage, MANAGED_AI_FALLBACK_MODEL, type ManagedAiBillingSettings, type ManagedAllowanceNotice } from "./managed-ai-billing";
 import { createStableAgentSchedulingServices } from "./agent-domain-scheduling";
@@ -169,7 +169,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       :Promise.resolve(undefined);
     const [suggestedReplies,memory]=await Promise.all([followUps,remembered]);
     // At most one "Remember this?" card per reply: the most important memory held back this turn.
-    const memoryReview=memory?.held[0]?{memoryId:memory.held[0].id,id:memory.held[0].id,body:memory.held[0].body,status:"pending" as const}:null;
+    const memoryReview=memory?.held[0]?{memoryId:memory.held[0].id,id:memory.held[0].id,body:memory.held[0].body,displayBody:ownerFacingMemory(memory.held[0].body),status:"pending" as const}:null;
     return persistNewAgentResult(env,input,result,onEvent,allowanceNotice,suggestedReplies,memoryReview);
   } finally {await releaseManagedRuntimeWriteLease(env,lease);}
 }
@@ -269,7 +269,7 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
   return {managed,modelName,gateway,metadata,admitModel,plannerAdmitted,modelFor,model,backup,allowanceFallbackUsed:()=>allowanceFallbackUsed};
 }
 
-async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void,allowanceNotice:ManagedAllowanceNotice|null=null,suggestedReplies:string[]=[],memoryReview:{memoryId:string;id:string;body:string;status:"pending"}|null=null) {
+async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void,allowanceNotice:ManagedAllowanceNotice|null=null,suggestedReplies:string[]=[],memoryReview:{memoryId:string;id:string;body:string;displayBody:string;status:"pending"}|null=null) {
   const targetPresentation=result.targetPresentation||input.targetSelection?await loadAgentTargetPresentation(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId}):null;
   const imageAction=await loadAgentGeneratedImageAction(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId});
   const emailDraft=await loadAgentEmailDraft(env,{ownerId:input.userId,turnId:input.turnId});
