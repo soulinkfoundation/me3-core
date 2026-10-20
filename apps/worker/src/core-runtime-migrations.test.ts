@@ -42,6 +42,7 @@ describe("Core runtime migrations", () => {
     expect(db.columns.get("mission_private_memory")?.has("importance")).toBe(true);
     expect(db.columns.get("mission_private_memory")?.has("expires_at")).toBe(true);
     expect(db.migrations.get("0081_private_memory_importance")).toBe("2026-10-20-private-memory-importance-v1");
+    expect(db.columns.get("mission_private_memory")?.has("forgotten_at")).toBe(true);
     expect(db.columns.get("commerce_settings")?.has("default_currency")).toBe(true);
     expect(db.columns.get("commerce_settings")?.has("preferred_stripe_provider")).toBe(true);
     expect(db.tables.has("ai_usage_events")).toBe(true);

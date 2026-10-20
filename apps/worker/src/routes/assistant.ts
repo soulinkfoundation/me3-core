@@ -673,7 +673,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
   }
 
   async function serializePrivateAssistantMessage(env: Env, ownerId: string, threadId: string, row: AssistantMessageRow) {
-    const message = serializeAssistantMessage(row);
+    const message = await withMemoryReview(env, ownerId, row, serializeAssistantMessage(row));
     if (!message.imageAction && !message.targetPresentation) return message;
     let metadata: Record<string, unknown>;
     try { metadata = JSON.parse(row.metadata_json || "{}"); } catch { return message; }
@@ -682,6 +682,24 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     const { imageAction: _savedAction, targetPresentation: _savedTarget, ...rest } = message;
     if (typeof turnId !== "string" || !row.id.startsWith(`${turnId}:assistant:`)) return rest;
     return revalidateAgentTargetPayload(env, { ownerId, threadId, turnId }, await revalidateAgentImagePayload(env, { ownerId, threadId, turnId }, message));
+  }
+
+  // A reply can ask the owner to keep one sensitive memory. Its status is read live,
+  // so the card shows the owner's decision wherever the conversation is reopened.
+  async function withMemoryReview<T extends object>(env: Env, ownerId: string, row: AssistantMessageRow, message: T) {
+    let memoryId: unknown;
+    try {
+      const metadata = JSON.parse(row.metadata_json || "{}") as Record<string, unknown>;
+      const review = metadata.runtime === "agent" ? metadata.memoryReview : null;
+      memoryId = review && typeof review === "object" ? (review as Record<string, unknown>).memoryId : null;
+    } catch { return message; }
+    if (typeof memoryId !== "string" || !memoryId) return message;
+    const memory = await env.DB.prepare(
+      "SELECT id, body, review_status FROM mission_private_memory WHERE id = ? AND user_id = ?",
+    ).bind(memoryId, ownerId).first<{ id: string; body: string; review_status: string }>();
+    if (!memory) return message;
+    const status = memory.review_status === "needs_review" ? "pending" : memory.review_status === "active" ? "remembered" : "declined";
+    return { ...message, memoryReview: { id: memory.id, body: memory.body, status } };
   }
 
   function parseAssistantMessageMetadata(metadataJson: string | null | undefined): {

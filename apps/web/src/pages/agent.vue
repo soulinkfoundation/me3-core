@@ -18,7 +18,7 @@ definePage({
   },
 });
 
-type Memory = { id: string; body: string; reviewStatus: "active" | "needs_review" | "archived"; updatedAt: string };
+type Memory = { id: string; body: string; memoryKind: string; sourceKind: string; reviewStatus: "active" | "needs_review" | "archived"; updatedAt: string };
 type Approval = { id: string; pluginId: string; actionId: string; title: string; summary: string | null; requestedAt: string; payload?: Record<string, unknown> };
 type Run = { id: string; title: string; promptSummary: string | null; status: string; startedAt: string | null; finishedAt: string | null; createdAt: string };
 type Activity = { id: string; title: string; summary: string | null; status: string | null; relatedId: string | null; createdAt: string };
@@ -62,7 +62,11 @@ const reviewing = ref<Approval | null>(null);
 const approvalBusy = ref(false);
 const approvalError = ref("");
 
-const activeMemories = computed(() => memories.value.filter(item => item.reviewStatus === "active"));
+// Mirrors the agent's prompt: rules the owner gave versus facts ME3 picked up in conversation.
+const isInstruction = (item: Memory) => ["preference", "correction"].includes(item.memoryKind) || item.sourceKind === "manual";
+const activeMemories = computed(() => memories.value.filter(item => item.reviewStatus === "active" && isInstruction(item)));
+const rememberedFacts = computed(() => memories.value.filter(item => item.reviewStatus === "active" && !isInstruction(item)));
+const waitingMemories = computed(() => memories.value.filter(item => item.reviewStatus === "needs_review"));
 const work = computed<WorkItem[]>(() => {
   const runIds = new Set(runs.value.map(run => run.id));
   const done = [
@@ -134,7 +138,7 @@ async function addMemory() {
   if (!body || memoryBusy.value) return;
   memoryBusy.value = "new";
   try {
-    const { memory } = await api.post<{ memory: Memory }>("/mission-control/memory", { body, memoryKind: "owner_note" });
+    const { memory } = await api.post<{ memory: Memory }>("/mission-control/memory", { body, memoryKind: "preference" });
     memories.value = [memory, ...memories.value];
     memoryDraft.value = "";
     toastSuccess("Remembered");
@@ -150,6 +154,17 @@ async function forgetMemory(item: Memory) {
     memories.value = memories.value.filter(memory => memory.id !== item.id);
     toastSuccess("Forgotten");
   } catch (err) { toastFromUnknown(err, "Couldn't forget that"); }
+  finally { memoryBusy.value = ""; }
+}
+
+async function keepMemory(item: Memory) {
+  if (memoryBusy.value) return;
+  memoryBusy.value = item.id;
+  try {
+    const { memory } = await api.post<{ memory: Memory }>(`/mission-control/memory/${encodeURIComponent(item.id)}/approve`, {});
+    memories.value = memories.value.map(existing => existing.id === item.id ? memory : existing);
+    toastSuccess("Remembered");
+  } catch (err) { toastFromUnknown(err, "Couldn't remember that"); }
   finally { memoryBusy.value = ""; }
 }
 
@@ -244,7 +259,32 @@ onMounted(load);
             <button v-if="memoryDraft.trim()" type="submit" class="agent-go" aria-label="Remember this" :disabled="Boolean(memoryBusy)"><UiIcon name="ArrowUp" :size="16" /></button>
           </form>
         </div>
-        <p class="agent-note">Preferences and instructions {{ displayName }} follows in every chat. It may suggest one in Chat; nothing is saved until you say yes.</p>
+        <p class="agent-note">Preferences and instructions {{ displayName }} follows in every chat.</p>
+      </section>
+
+      <section v-if="waitingMemories.length" class="agent-section" aria-labelledby="agent-memory-waiting-title">
+        <h2 id="agent-memory-waiting-title">Waiting for your OK</h2>
+        <div class="agent-card">
+          <div v-for="item in waitingMemories" :key="item.id" class="agent-memory agent-memory--review">
+            <span>{{ item.body }}</span>
+            <div class="agent-memory__actions">
+              <button type="button" class="agent-text-button agent-text-button--accent" :disabled="Boolean(memoryBusy)" @click="keepMemory(item)">Remember</button>
+              <button type="button" class="agent-text-button" :disabled="Boolean(memoryBusy)" @click="forgetMemory(item)">Don't</button>
+            </div>
+          </div>
+        </div>
+        <p class="agent-note">Personal details {{ displayName }} won't use until you say yes.</p>
+      </section>
+
+      <section v-if="rememberedFacts.length" class="agent-section" aria-labelledby="agent-memory-facts-title">
+        <h2 id="agent-memory-facts-title">What {{ displayName }} remembers</h2>
+        <div class="agent-card">
+          <div v-for="item in rememberedFacts" :key="item.id" class="agent-memory">
+            <span>{{ item.body }}</span>
+            <button type="button" class="agent-icon-button" :aria-label="`Forget: ${item.body}`" :disabled="Boolean(memoryBusy)" @click="forgetMemory(item)"><UiIcon name="X" :size="16" /></button>
+          </div>
+        </div>
+        <p class="agent-note">Picked up from your chats. Forget anything here and {{ displayName }} won't learn it again.</p>
       </section>
 
       <section class="agent-card">
@@ -317,6 +357,14 @@ button.agent-row, a.agent-row, button.agent-work { cursor: pointer; }
 .agent-icon-button:disabled { opacity: .5; cursor: default; }
 .agent-memory { display: flex; align-items: flex-start; gap: 10px; padding: 12px 8px 12px 16px; font-size: 15px; line-height: 1.4; }
 .agent-memory span { flex: 1; padding-top: 6px; }
+.agent-memory--review { flex-direction: column; gap: 4px; }
+.agent-memory--review span { padding-top: 0; }
+.agent-memory__actions { display: flex; gap: 4px; margin-left: -8px; }
+.agent-text-button { min-height: 36px; border: 0; border-radius: 10px; padding: 6px 8px; background: none; color: var(--ui-text-muted); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.agent-text-button--accent { color: var(--ui-accent); }
+.agent-text-button:hover:not(:disabled) { background: var(--ui-surface-muted); }
+.agent-text-button:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+.agent-text-button:disabled { opacity: .5; cursor: default; }
 .agent-add { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 8px 6px 16px; }
 .agent-add input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--ui-text); font: inherit; font-size: 15px; }
 .agent-add input::placeholder { color: var(--ui-text-muted); }

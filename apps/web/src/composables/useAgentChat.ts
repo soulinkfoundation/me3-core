@@ -6,6 +6,7 @@ import type {
   AgentChatImageAction,
   AgentChatTurnTrace,
   AgentChatAllowanceNotice,
+  AgentChatMemoryReview,
 } from "../utils/agentChat";
 
 export type AgentChatMessageAttachment = {
@@ -32,6 +33,7 @@ export type AgentChatMessage = {
   imageAction?: AgentChatImageAction | null;
   targetPresentation?: AgentTargetPresentation | null;
   allowanceNotice?: AgentChatAllowanceNotice | null;
+  memoryReview?: AgentChatMemoryReview | null;
   emailDraftAction?: AgentChatEmailDraftAction | null;
   trace?: AgentChatTurnTrace | null;
   inboxLink?: boolean;

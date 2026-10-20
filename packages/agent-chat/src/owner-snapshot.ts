@@ -62,6 +62,7 @@ type ProjectSnapshotRow = {
 type MemorySnapshotRow = {
   id: string;
   memory_kind: string | null;
+  source_kind?: string | null;
   importance?: number | null;
   scope_kind: string | null;
   title: string | null;
@@ -83,6 +84,8 @@ const MAX_PROJECT_DESCRIPTION_CHARS = 240;
 const MAX_MEMORY_SNAPSHOT_ITEMS = 120;
 const MAX_MEMORY_SNAPSHOT_CHARS = 2_000;
 const INSTRUCTION_MEMORY_KINDS = new Set(["preference", "correction"]);
+// Preferences and corrections are instructions, and so is anything the owner wrote themselves.
+const isInstruction = (row: MemorySnapshotRow) => INSTRUCTION_MEMORY_KINDS.has(row.memory_kind || "") || row.source_kind === "manual";
 const MAX_MEMORY_ITEM_CHARS = 240;
 
 export async function loadOwnerSnapshotContext(input: {
@@ -109,8 +112,8 @@ export async function loadOwnerSnapshotContext(input: {
   const compactMeJson = compactMeJsonForPrompt(meJson);
   const lifeSnapshot = resolveLifeSnapshot(wheelRow);
   const projects = projectRows.map(toContextProject);
-  const instructions = selectMemoriesForPrompt(memoryRows.filter(row => INSTRUCTION_MEMORY_KINDS.has(row.memory_kind || "")));
-  const facts = selectMemoriesForPrompt(memoryRows.filter(row => !INSTRUCTION_MEMORY_KINDS.has(row.memory_kind || "")));
+  const instructions = selectMemoriesForPrompt(memoryRows.filter(isInstruction));
+  const facts = selectMemoriesForPrompt(memoryRows.filter(row => !isInstruction(row)));
   const memories = [...instructions, ...facts];
   const prompt = buildOwnerSnapshotPrompt({
     owner: input.owner,
@@ -284,7 +287,7 @@ async function loadMemorySnapshots(
   ownerId: string,
 ): Promise<MemorySnapshotRow[]> {
   const rows = await db.prepare(
-    `SELECT id, memory_kind, scope_kind, title, body, importance, updated_at
+    `SELECT id, memory_kind, source_kind, scope_kind, title, body, importance, updated_at
      FROM mission_private_memory
      WHERE user_id = ? AND review_status = 'active'
        AND (expires_at IS NULL OR expires_at > ?)
@@ -323,7 +326,7 @@ function toContextMemory(memory: SnapshotMemory): Me3AgentContextPrivateMemory {
       kind: "private_memory",
       label: "Saved memory",
       visibility: "private",
-      reason: INSTRUCTION_MEMORY_KINDS.has(memory.row.memory_kind || "")
+      reason: isInstruction(memory.row)
         ? "Owner preference for how ME3 works with the owner."
         : "Fact about the owner remembered from earlier conversations.",
       updatedAt: memory.row.updated_at,

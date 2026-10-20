@@ -14,6 +14,7 @@ import { MISSION_DRAFT_PROMPT, ownMissionStatement } from "../../utils/missionSt
 import Button from "../../components/Button.vue";
 import HomePanels from "../../components/home/HomePanels.vue";
 import AgentTargetChoices from "../../components/AgentTargetChoices.vue";
+import AgentMemoryReviewCard from "../../components/AgentMemoryReviewCard.vue";
 import { normalizeAgentTargetPresentation, targetChoiceRequest, type AgentTargetChoice, type AgentTargetPresentation } from "../../utils/agentTargetChoices";
 import ComposerPrompt from "../../components/ComposerPrompt.vue";
 import PageLoading from "../../components/PageLoading.vue";
@@ -41,6 +42,7 @@ import {
   type AgentChatActionCard,
   type AgentChatImageAction,
   type AgentChatAllowanceNotice,
+  type AgentChatMemoryReview,
   type AgentChatServerEmailDraft,
   type AgentChatTurnTrace,
 } from "../../utils/agentChat";
@@ -147,6 +149,7 @@ type AgentSandboxResponse = {
   imageAction?: AgentChatImageAction | null;
   targetPresentation?: AgentTargetPresentation | null;
   allowanceNotice?: AgentChatAllowanceNotice | null;
+  memoryReview?: AgentChatMemoryReview | null;
   emailDraft?: AgentChatServerEmailDraft | null;
   contentAction?: {
     kind: "previewed" | "saved";
@@ -179,6 +182,7 @@ type AssistantThreadMessage = {
   imageAction?: AgentChatImageAction | null;
   targetPresentation?: AgentTargetPresentation | null;
   allowanceNotice?: AgentChatAllowanceNotice | null;
+  memoryReview?: AgentChatMemoryReview | null;
   emailDraft?: AgentChatServerEmailDraft | null;
   siteAction?: AgentSandboxResponse["siteAction"];
   trace?: AgentChatTurnTrace | null;
@@ -781,6 +785,7 @@ function mapAssistantThreadMessages(messages: AssistantThreadMessage[]) {
       imageAction: AgentChatImageAction | null;
       targetPresentation: AgentTargetPresentation | null;
       allowanceNotice: AgentChatAllowanceNotice | null;
+      memoryReview: AgentChatMemoryReview | null;
       emailDraftAction: AgentChatEmailDraftAction | null;
       attachments: AgentChatMessageAttachment[];
       actionHref: string | null;
@@ -795,6 +800,7 @@ function mapAssistantThreadMessages(messages: AssistantThreadMessage[]) {
       imageAction: message.imageAction || null,
       targetPresentation: normalizeAgentTargetPresentation(message.targetPresentation),
       allowanceNotice: message.allowanceNotice || null,
+      memoryReview: message.memoryReview || null,
       emailDraftAction: null,
       actionHref: actionLink?.href || null,
       actionLabel: actionLink?.label || null,
@@ -1840,6 +1846,7 @@ function applyAssistantResultToMessage(
   message.imageAction = result.imageAction || null;
   message.targetPresentation = normalizeAgentTargetPresentation(result.targetPresentation);
   message.allowanceNotice = result.allowanceNotice || null;
+  message.memoryReview = result.memoryReview || null;
   message.emailDraftAction = result.emailDraft
     ? createServerAgentChatEmailDraftAction(message, result.emailDraft)
     : createAgentChatEmailDraftAction(message, previousUserTextForAssistantMessage(message));
@@ -2569,6 +2576,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
                 class="assistant-message__content"
                 v-html="renderAssistantMarkdown(assistantMessageDisplayText(message))"
               ></div>
+              <AgentMemoryReviewCard v-if="message.memoryReview" :key="message.memoryReview.id" :review="message.memoryReview" />
               <aside
                 v-if="message.allowanceNotice && isFirstAllowanceNotice(index)"
                 class="assistant-allowance-notice"

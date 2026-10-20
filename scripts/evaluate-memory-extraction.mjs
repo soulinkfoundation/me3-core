@@ -29,8 +29,8 @@ function database(memories = []) {
   for (const file of readdirSync(directory).filter(name => name.endsWith(".sql")).sort()) raw.exec(readFileSync(new URL(file, directory), "utf8"));
   raw.exec("INSERT INTO owner_profile(id,username) VALUES('owner','synthetic')");
   for (const [index, memory] of memories.entries()) {
-    raw.prepare("INSERT INTO mission_private_memory(id,user_id,memory_kind,body,source_kind,importance) VALUES(?,?,?,?,?,?)")
-      .run(memory.id || `seed-${index}`, "owner", memory.kind || "owner_note", memory.body, memory.source || "agent", memory.importance ?? 3);
+    raw.prepare("INSERT INTO mission_private_memory(id,user_id,memory_kind,body,source_kind,importance,review_status,forgotten_at) VALUES(?,?,?,?,?,?,?,?)")
+      .run(memory.id || `seed-${index}`, "owner", memory.kind || "owner_note", memory.body, memory.source || "agent", memory.importance ?? 3, memory.status || "active", memory.forgottenAt ?? null);
   }
   const db = { prepare(sql) {
     const query = raw.prepare(sql); let values = [];
@@ -74,6 +74,8 @@ const scenarios = [
     expect: "The assistant's suggestions are not saved as facts.", check: rows => mentions(rows, /Biscuit|Maple|Juno/).length === 0 },
   { id: "skip-snapshot-goal", snapshot: "Goals:\n- Run a half marathon in May 2027", message: "Help me plan this week's training runs for the half marathon.", reply: reply("Here's a plan for this week."),
     expect: "Does not duplicate the goal already in the snapshot.", check: rows => mentions(rows, /half marathon/i).length === 0 },
+  { id: "respect-declined", memories: [{ id: "m-bp", body: "Owner has high blood pressure.", status: "archived", forgottenAt: "2026-10-18T09:00:00Z" }], message: "Blood pressure was high again at the pharmacy today, so nothing too salty for dinner please.", reply: reply("Here are some low-salt dinner ideas."),
+    expect: "Does not propose the declined blood pressure memory again.", check: rows => rows.length === 1 },
   { id: "save-name-correction", message: "Please call me Kier, not Kieran.", reply: reply("Will do, Kier."),
     expect: "Saves that the owner wants to be called Kier.", check: rows => active(rows).some(row => /\bKier\b/.test(row.body)) },
 ];

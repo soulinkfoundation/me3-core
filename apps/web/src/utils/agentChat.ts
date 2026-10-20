@@ -28,6 +28,12 @@ export function shouldSendAssistantModelOverride(
 }
 
 /** Server-authored notice that this reply ran on the lighter model after the monthly AI allowance. */
+export type AgentChatMemoryReview = {
+  id: string;
+  body: string;
+  status: "pending" | "remembered" | "declined";
+};
+
 export type AgentChatAllowanceNotice = {
   kind: "allowance_used";
   title: string;

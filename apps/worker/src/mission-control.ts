@@ -1661,8 +1661,8 @@ export async function clearMissionActivity(env: Env, userId: string) {
   };
 }
 
-export async function listMissionMemory(env: Env, userId: string, limitInput = 50) {
-  const limit = Math.max(1, Math.min(limitInput, 100));
+export async function listMissionMemory(env: Env, userId: string, limitInput = 200) {
+  const limit = Math.max(1, Math.min(limitInput, 200));
   const rows = await env.DB.prepare(
     `SELECT id, user_id, memory_kind, scope_kind, scope_id, title, body, confidence,
             source_kind, source_ref, review_status, created_at, updated_at
@@ -1773,9 +1773,10 @@ export async function approveMissionMemory(env: Env, userId: string, memoryId: s
 }
 
 export async function deleteMissionMemory(env: Env, userId: string, memoryId: string) {
+  // The owner declined or forgot it: automatic memory must never learn it again.
   const result = await env.DB.prepare(
     `UPDATE mission_private_memory
-     SET review_status = 'archived', updated_at = datetime('now')
+     SET review_status = 'archived', forgotten_at = datetime('now'), updated_at = datetime('now')
      WHERE id = ? AND user_id = ?`,
   )
     .bind(memoryId, userId)

@@ -651,8 +651,19 @@ const runtimeMigrations: RuntimeMigration[] = [
     id: "0081_private_memory_importance",
     checksum: "2026-10-20-private-memory-importance-v1",
     async apply(db) {
+      // Memory belongs to Mission Control; an install without its table has nothing to upgrade.
+      if (!(await tableExists(db, "mission_private_memory"))) return;
       await addColumnIfMissing(db, "mission_private_memory", "importance", "INTEGER NOT NULL DEFAULT 3");
       await addColumnIfMissing(db, "mission_private_memory", "expires_at", "TEXT");
+    },
+  },
+  // Set when the owner declines or forgets a memory, so automatic memory never learns it again.
+  {
+    id: "0082_private_memory_forgotten",
+    checksum: "2026-10-20-private-memory-forgotten-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "mission_private_memory"))) return;
+      await addColumnIfMissing(db, "mission_private_memory", "forgotten_at", "TEXT");
     },
   },
 ];
