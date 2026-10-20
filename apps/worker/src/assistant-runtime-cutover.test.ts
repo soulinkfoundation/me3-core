@@ -93,7 +93,7 @@ describe("one current Worker chat runtime", () => {
     f.raw.prepare("UPDATE assistant_threads SET last_message_at='2000-01-01 00:00:00',updated_at='2000-01-02 00:00:00' WHERE id=?").run(primary.thread.id);
     f.raw.exec("CREATE TABLE test_thread_timestamp_writes(id INTEGER PRIMARY KEY); CREATE TRIGGER test_thread_timestamp_write AFTER UPDATE OF updated_at,last_message_at ON assistant_threads BEGIN INSERT INTO test_thread_timestamp_writes(id) VALUES(NULL); END;");
     const run = vi.fn(async () => ({ response: "Fresh runtime reply.", usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }));
-    Object.assign(f.env, { AI: { run }, CLOUDFLARE_AI_GATEWAY_ID: "synthetic", ME3_AGENT_FAST_PATH: "off", ME3_AGENT_SUGGESTED_REPLIES: "off" });
+    Object.assign(f.env, { AI: { run }, CLOUDFLARE_AI_GATEWAY_ID: "synthetic", ME3_AGENT_FAST_PATH: "off", ME3_AGENT_SUGGESTED_REPLIES: "off",ME3_AGENT_MEMORY:"off" });
     const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No external providers in this fixture"));
     try {
       f.fetch.mockImplementationOnce(async (_url, init) => {

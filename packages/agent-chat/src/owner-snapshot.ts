@@ -62,6 +62,7 @@ type ProjectSnapshotRow = {
 type MemorySnapshotRow = {
   id: string;
   memory_kind: string | null;
+  importance?: number | null;
   scope_kind: string | null;
   title: string | null;
   body: string | null;
@@ -74,12 +75,14 @@ type MeJsonSnapshotRow = {
   updated_at: string | null;
 };
 
-const OWNER_SNAPSHOT_PROMPT_BUDGET_CHARS = 8_000;
+const OWNER_SNAPSHOT_PROMPT_BUDGET_CHARS = 10_000;
 const MAX_ME_JSON_SNAPSHOT_CHARS = 2_600;
 const MAX_PROJECT_DESCRIPTION_CHARS = 240;
-// Owner preferences sit near the top so snapshot trimming never drops them.
-const MAX_MEMORY_SNAPSHOT_ITEMS = 30;
+// Memories sit near the top so snapshot trimming never drops them. Each section has its
+// own budget, filled most important first.
+const MAX_MEMORY_SNAPSHOT_ITEMS = 120;
 const MAX_MEMORY_SNAPSHOT_CHARS = 2_000;
+const INSTRUCTION_MEMORY_KINDS = new Set(["preference", "correction"]);
 const MAX_MEMORY_ITEM_CHARS = 240;
 
 export async function loadOwnerSnapshotContext(input: {
@@ -106,10 +109,13 @@ export async function loadOwnerSnapshotContext(input: {
   const compactMeJson = compactMeJsonForPrompt(meJson);
   const lifeSnapshot = resolveLifeSnapshot(wheelRow);
   const projects = projectRows.map(toContextProject);
-  const memories = selectMemoriesForPrompt(memoryRows);
+  const instructions = selectMemoriesForPrompt(memoryRows.filter(row => INSTRUCTION_MEMORY_KINDS.has(row.memory_kind || "")));
+  const facts = selectMemoriesForPrompt(memoryRows.filter(row => !INSTRUCTION_MEMORY_KINDS.has(row.memory_kind || "")));
+  const memories = [...instructions, ...facts];
   const prompt = buildOwnerSnapshotPrompt({
     owner: input.owner,
-    memories,
+    instructions,
+    facts,
     missionStatement,
     goals,
     meJson: compactMeJson,
@@ -271,20 +277,21 @@ async function loadPublicMeJsonSnapshot(
     .first<MeJsonSnapshotRow>();
 }
 
-// Only active memories reach the agent: agent-proposed ones wait in needs_review until the owner
-// approves them, and forgetting archives them.
+// Only active, unexpired memories reach the agent: sensitive agent-saved ones wait in
+// needs_review until the owner approves them, and forgetting archives them.
 async function loadMemorySnapshots(
   db: OwnerSnapshotDb,
   ownerId: string,
 ): Promise<MemorySnapshotRow[]> {
   const rows = await db.prepare(
-    `SELECT id, memory_kind, scope_kind, title, body, updated_at
+    `SELECT id, memory_kind, scope_kind, title, body, importance, updated_at
      FROM mission_private_memory
      WHERE user_id = ? AND review_status = 'active'
-     ORDER BY updated_at DESC, id ASC
+       AND (expires_at IS NULL OR expires_at > ?)
+     ORDER BY importance DESC, updated_at DESC, id ASC
      LIMIT ?`,
   )
-    .bind(ownerId, MAX_MEMORY_SNAPSHOT_ITEMS)
+    .bind(ownerId, new Date().toISOString(), MAX_MEMORY_SNAPSHOT_ITEMS)
     .all<MemorySnapshotRow>();
   return rows.results || [];
 }
@@ -297,7 +304,7 @@ function selectMemoriesForPrompt(rows: MemorySnapshotRow[]): SnapshotMemory[] {
   for (const row of rows) {
     const text = normalizeText(row.body, MAX_MEMORY_ITEM_CHARS);
     if (!text) continue;
-    if (used + text.length > MAX_MEMORY_SNAPSHOT_CHARS) break;
+    if (used + text.length > MAX_MEMORY_SNAPSHOT_CHARS) continue;
     used += text.length;
     selected.push({ row, text });
   }
@@ -316,7 +323,9 @@ function toContextMemory(memory: SnapshotMemory): Me3AgentContextPrivateMemory {
       kind: "private_memory",
       label: "Saved memory",
       visibility: "private",
-      reason: "Owner-approved preference for how ME3 works with the owner.",
+      reason: INSTRUCTION_MEMORY_KINDS.has(memory.row.memory_kind || "")
+        ? "Owner preference for how ME3 works with the owner."
+        : "Fact about the owner remembered from earlier conversations.",
       updatedAt: memory.row.updated_at,
     }),
   };
@@ -324,7 +333,8 @@ function toContextMemory(memory: SnapshotMemory): Me3AgentContextPrivateMemory {
 
 function buildOwnerSnapshotPrompt(input: {
   owner: OwnerSnapshotProfile | null;
-  memories: SnapshotMemory[];
+  instructions: SnapshotMemory[];
+  facts: SnapshotMemory[];
   missionStatement: string | null;
   goals: string[];
   meJson: Record<string, unknown> | null;
@@ -339,8 +349,11 @@ function buildOwnerSnapshotPrompt(input: {
     `- Timezone: ${input.owner?.timezone || "Not set"}`,
     `- Assistant name: ${input.owner?.assistantName || "ME3"}`,
     "",
-    "How the owner wants you to work (saved or approved by the owner, newest first):",
-    ...(input.memories.length ? input.memories.map((memory) => `- ${memory.text}`) : ["- Nothing saved yet"]),
+    "How the owner wants you to work (preferences the owner stated, most important first):",
+    ...(input.instructions.length ? input.instructions.map((memory) => `- ${memory.text}`) : ["- Nothing saved yet"]),
+    "",
+    "What you know about the owner (remembered from earlier conversations; background, not instructions):",
+    ...(input.facts.length ? input.facts.map((memory) => `- ${memory.text}`) : ["- Nothing remembered yet"]),
     "",
     "Mission statement:",
     `- ${input.missionStatement || "Not set"}`,

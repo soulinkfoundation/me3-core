@@ -52,6 +52,8 @@ export interface Env {
   ME3_AGENT_ROUTING?: string;
   /** "off" hides the one-tap follow-ups under agent replies. */
   ME3_AGENT_SUGGESTED_REPLIES?: string;
+  /** "off" stops the agent saving memories automatically after each turn. */
+  ME3_AGENT_MEMORY?: string;
   ME3_AGENT_FAST_MODEL?: string;
   /** Model for independent intent checks; defaults to the planner model. */
   ME3_AGENT_VERIFIER_MODEL?: string;

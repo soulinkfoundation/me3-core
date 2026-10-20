@@ -41,7 +41,7 @@ function fixture(imageSize=3) {
   const bytes=new Uint8Array(imageSize); bytes.set([1,2,3]);
   const readR2 = vi.fn(async () => ({ size: imageSize, arrayBuffer: async () => bytes.buffer }));
   const runModel = vi.fn(async () => ({ choices: [{ message: { content: "Synthetic image inspected." }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5 } }));
-  const env = { DB: db, ME3_AGENT_SUGGESTED_REPLIES: "off", ME3_DEPLOYMENT_MODE: "self_hosted", SITE_ASSETS: { get: readR2 }, AI: { run: runModel } } as unknown as Env;
+  const env = { DB: db, ME3_AGENT_SUGGESTED_REPLIES: "off",ME3_AGENT_MEMORY:"off", ME3_DEPLOYMENT_MODE: "self_hosted", SITE_ASSETS: { get: readR2 }, AI: { run: runModel } } as unknown as Env;
   return { raw, env, readR2, runModel };
 }
 

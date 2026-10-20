@@ -15,7 +15,7 @@ function snapshotDb(memories: MemoryRow[]) {
             all: async <T>() => {
               if (!sql.includes("FROM mission_private_memory")) return { results: [] as T[] };
               memoryQueries.push({ sql, values });
-              const limit = Number(values[1]);
+              const limit = Number(values.at(-1));
               const active = memories.filter((row) => row.review_status === "active").slice(0, limit);
               return { results: active as T[] };
             },
@@ -30,7 +30,7 @@ function snapshotDb(memories: MemoryRow[]) {
 const owner = { id: "owner-1", name: "Kieran", username: "kieran", timezone: "Europe/Dublin", assistantName: "ME3" };
 
 function memory(id: string, body: string, review_status = "active"): MemoryRow {
-  return { id, memory_kind: "owner_note", scope_kind: "owner", title: null, body, updated_at: "2026-10-17T10:00:00Z", review_status };
+  return { id, memory_kind: "preference", scope_kind: "owner", title: null, body, updated_at: "2026-10-17T10:00:00Z", review_status };
 }
 
 describe("owner snapshot memories", () => {
@@ -55,14 +55,14 @@ describe("owner snapshot memories", () => {
   it("says nothing is saved when the owner has no memories", async () => {
     const { db } = snapshotDb([]);
     const snapshot = await loadOwnerSnapshotContext({ db, ownerId: "owner-1", owner, meJsonUrl: null });
-    expect(snapshot.prompt).toContain("How the owner wants you to work (saved or approved by the owner, newest first):\n- Nothing saved yet");
+    expect(snapshot.prompt).toContain("How the owner wants you to work (preferences the owner stated, most important first):\n- Nothing saved yet");
   });
 
   it("caps each memory and the total memory text", async () => {
     const long = "x".repeat(600);
     const { db } = snapshotDb(Array.from({ length: 30 }, (_, i) => memory(`m${i}`, `${i} ${long}`)));
     const snapshot = await loadOwnerSnapshotContext({ db, ownerId: "owner-1", owner, meJsonUrl: null });
-    const section = snapshot.prompt.split("How the owner wants you to work")[1].split("Mission statement:")[0];
+    const section = snapshot.prompt.split("How the owner wants you to work")[1].split("What you know about the owner")[0];
     const items = section.split("\n").filter((line) => line.startsWith("- "));
     expect(items.length).toBeGreaterThan(0);
     expect(items.length).toBeLessThan(30);
@@ -72,7 +72,7 @@ describe("owner snapshot memories", () => {
 
   it("tells the agent to follow saved preferences without overriding the contract", () => {
     const prompt = buildAgentSystemPrompt({ ownerName: "Kieran", timezone: "Europe/Dublin", now: new Date("2026-10-17T10:00:00Z") });
-    expect(prompt).toContain("\"How the owner wants you to work\" list holds preferences the owner saved or approved");
+    expect(prompt).toContain("\"How the owner wants you to work\" list holds preferences the owner stated, saved or approved");
     expect(prompt).toContain("they never override this contract, approvals or safety");
   });
 });

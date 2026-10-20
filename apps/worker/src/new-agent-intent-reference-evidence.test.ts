@@ -54,7 +54,7 @@ function fixture({recovery=false}:{recovery?:boolean}={}) {
     if(secondStep===2)return tool([{name:'core_mailbox_draft',arguments:draftArgs}]);
     return{choices:[{message:{content:'The draft operation has been checked; nothing was sent.'},finish_reason:'stop'}],usage:{prompt_tokens:100,completion_tokens:10,total_tokens:110}};
   });
-  const send=vi.fn(async()=>{throw Error('No test permits external email');});const env={DB:db,AI:{run},EMAIL:{send},ME3_AGENT_SUGGESTED_REPLIES:'off',ME3_DEPLOYMENT_MODE:'self_hosted'}as unknown as Env;
+  const send=vi.fn(async()=>{throw Error('No test permits external email');});const env={DB:db,AI:{run},EMAIL:{send},ME3_AGENT_SUGGESTED_REPLIES:'off',ME3_AGENT_MEMORY:'off',ME3_DEPLOYMENT_MODE:'self_hosted'}as unknown as Env;
   const input=(turnId:string,messageText:string):NewAgentDispatchInput=>({userId:'owner',threadId:'thread',turnId,requestId:turnId+'-request',messageText,selectedModel:{providerId:'workers-ai',model:'@cf/zai-org/glm-4.7-flash'}});
   async function execute(turnId:string,messageText:string){const value=input(turnId,messageText);await persistAgentInput(db,{ownerId:'owner',threadId:'thread',turnId,requestId:value.requestId},value);return executeNewAgentTurn(env,value,new AbortController().signal);}
   return{raw:()=>raw,db,requests,send,execute,reopen(){raw.close();raw=new DatabaseSync(file);},duringIntent(fn:()=>void){duringIntent=fn;},beforeStatement(fn:(sql:string,values:unknown[])=>void){beforeStatement=fn;},drafts:()=>raw.prepare("SELECT * FROM mailbox_messages WHERE direction='outbound'").all()};

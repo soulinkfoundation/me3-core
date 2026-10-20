@@ -14,6 +14,7 @@ import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages
 import { getAiSettings } from "./ai-providers";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
 import { loadAgentEmailDraft } from "./agent-email-draft";
+import { rememberFromTurn } from "./agent-memory";
 import { suggestAgentReplies } from "./agent-suggested-replies";
 import { getManagedAiBillingSettings, managedAllowanceNotice, syncManagedAiUsage, MANAGED_AI_FALLBACK_MODEL, type ManagedAiBillingSettings, type ManagedAllowanceNotice } from "./managed-ai-billing";
 import { createStableAgentSchedulingServices } from "./agent-domain-scheduling";
@@ -64,9 +65,11 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const imageScope={ownerId:input.userId,threadId:input.threadId};
     const store=createD1TurnStore(env.DB,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId});
     let messages:AgentMessage[]=[];
+    let ownerSnapshot:string|undefined;
     if(!await store.load()) {
       const snapshot=await loadOwnerSnapshotContext({db:env.DB,ownerId:input.userId,owner:{id:owner.id,name:owner.name,username:owner.username,timezone,assistantName:owner.assistant_name||"ME3"},meJsonUrl:null});
       const recent=await loadAgentPlannerHistory(env.DB,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId},signal);
+      ownerSnapshot=snapshot.prompt;
       messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt})},...recent];
       const content=[input.messageText,input.attachmentTextContext].filter(Boolean).join("\n\n");
       const images=await prepareAgentImageInputs(env,imageScope,input.attachments||[],signal);
@@ -145,16 +148,21 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       onEvent?.(event.event,event.data,seq);
     }});
     const allowanceNotice=managed&&allowanceFallbackUsed()?managedAllowanceNotice(await getManagedAiBillingSettings(env,{syncUsage:false})):null;
-    let suggestedReplies:string[]=[];
-    if(result.status==="complete"&&result.replyText.trim()&&fastAllowed&&env.ME3_AGENT_SUGGESTED_REPLIES?.trim()!=="off"){
-      try{suggestedReplies=await suggestAgentReplies(modelFor(fastName,{purpose:"suggested_replies"}),{ownerMessage:input.messageText,replyText:result.replyText},AbortSignal.any([signal,AbortSignal.timeout(8_000)]));}
-      catch{suggestedReplies=[];}
-    }
+    // The reply has already streamed. Follow-ups and memory finish inside the turn so their
+    // usage receipts reconcile before the owner's next turn; a miss only means none this time.
+    const finished=result.status==="complete"&&Boolean(result.replyText.trim())&&fastAllowed;
+    const followUps=finished&&env.ME3_AGENT_SUGGESTED_REPLIES?.trim()!=="off"
+      ?suggestAgentReplies(modelFor(fastName,{purpose:"suggested_replies"}),{ownerMessage:input.messageText,replyText:result.replyText},AbortSignal.any([signal,AbortSignal.timeout(8_000)])).catch(()=>[] as string[])
+      :Promise.resolve([] as string[]);
+    const remembered=finished&&env.ME3_AGENT_MEMORY?.trim()!=="off"
+      ?rememberFromTurn(env.DB,modelFor(fastName,{purpose:"memory_extraction"}),{ownerId:input.userId,turnId:input.turnId,ownerMessage:input.messageText,replyText:result.replyText,ownerSnapshot},AbortSignal.any([signal,AbortSignal.timeout(10_000)])).catch(()=>{})
+      :Promise.resolve();
+    const [suggestedReplies]=await Promise.all([followUps,remembered]);
     return persistNewAgentResult(env,input,result,onEvent,allowanceNotice,suggestedReplies);
   } finally {await releaseManagedRuntimeWriteLease(env,lease);}
 }
 
-type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"fast_path"|"suggested_replies";onAdmission?(id:string):void;shadow?:{stage:string;argumentMode:string;sampleRate:number}};
+type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"fast_path"|"suggested_replies"|"memory_extraction";onAdmission?(id:string):void;shadow?:{stage:string;argumentMode:string;sampleRate:number}};
 export type AgentModelScope = Pick<NewAgentDispatchInput,"userId"|"threadId"|"turnId"|"requestId"|"selectedModel">;
 
 /**
