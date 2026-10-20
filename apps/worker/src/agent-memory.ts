@@ -59,7 +59,7 @@ const SYSTEM_PROMPT = [
   "Write each memory as one plain sentence starting with \"Owner\", for example \"Owner's daughter Mia started school in October 2026.\" Include absolute dates, not relative ones.",
   "importance: 5 = core identity or close people, 4 = strong preference or major commitment, 3 = useful context, 1-2 = minor detail.",
   "Set sensitive to true for health, finances, legal matters, relationship conflict or anything the owner may not want kept without being asked.",
-  "Set expiresAt for facts that will stop being true, such as travel or a temporary situation.",
+  "Set expiresAt only for facts that will stop being true, such as travel or a temporary situation. Never let a lasting fact expire because it arrived with a dated event: from \"my daughter Mia starts school on Monday\" keep \"Owner's daughter is Mia; she started school in October 2026.\" with no expiresAt.",
   "Most turns contain nothing worth keeping; return an empty list then. Call core_memory_ops exactly once with no prose.",
 ].join(" ");
 
