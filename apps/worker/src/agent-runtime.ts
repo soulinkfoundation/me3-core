@@ -122,9 +122,13 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       return {model:verifier,usageId:()=>usageId};
     }});
     // New calendar events, reminders and tasks are checked against what the owner asked (me3-ahsk.48).
+    // A model checking its own create approved DeepSeek's unrequested event; Haiku blocked it and
+    // allowed every requested Sol create, faster than Sol (20 Oct 2026). Managed installs offer Haiku.
+    const createVerifierName=env.ME3_AGENT_CREATE_VERIFIER_MODEL?.trim()
+      ||(managed?.models.some(item=>managedModelId(item.id)===managedModelId(CREATE_VERIFIER_MODEL))?CREATE_VERIFIER_MODEL:verifierName);
     const verifyCreateIntent=(evidence:Parameters<NonNullable<AgentToolContext["verifyCreateIntent"]>>[0],intentSignal:AbortSignal)=>{
       let usageId:string|undefined;
-      const verifier=modelFor(env.ME3_AGENT_CREATE_VERIFIER_MODEL?.trim()||verifierName,{purpose:"create_intent",onAdmission:id=>{usageId=id;}});
+      const verifier=modelFor(createVerifierName,{purpose:"create_intent",onAdmission:id=>{usageId=id;}});
       return createIntentVerifierFromModel(verifier,()=>usageId)(evidence,intentSignal);
     };
     const verifyOwnerCreateIntent=createOwnerCreateIntentVerifier({db:env.DB,scope:{...intentScope,ownerTimezone:timezone},tools:intentTools,admit:()=>{
@@ -319,6 +323,7 @@ function isToolAvailable(name:string,services:AgentDomainServices):boolean {
 function providerModel(provider:string,model:string):string {return provider==="workers-ai"?canonicalNativeModel(model):model.startsWith(`${provider}/`)?model:`${provider}/${model}`;}
 // These answer chat about as fast as the routed fast model, so routing only
 // added ~0.5 s to their tool turns (routing A/B, 20 Oct 2026, me3-ahsk.45).
+const CREATE_VERIFIER_MODEL="anthropic/claude-haiku-5.5";
 const UNROUTED_MAIN_MODELS=new Set(["openai/gpt-6.1-sol","anthropic/claude-sonnet-5.5","anthropic/claude-haiku-5.5"]);
 function managedModelId(model:string):string {return model.replace(/^@cf\//,"");}
 function canonicalNativeModel(model:string):string {

@@ -57,7 +57,7 @@ export interface Env {
   ME3_AGENT_FAST_MODEL?: string;
   /** Model for independent intent checks; defaults to the planner model. */
   ME3_AGENT_VERIFIER_MODEL?: string;
-  /** Model for the new-record intent check; defaults to ME3_AGENT_VERIFIER_MODEL, then the planner. */
+  /** Model for the new-record intent check; defaults to Haiku 5.5 on managed installs, else the intent verifier model. */
   ME3_AGENT_CREATE_VERIFIER_MODEL?: string;
   ME3_AI_REASONING_PROVIDER?: string;
   ME3_AI_REASONING_MODEL?: string;
