@@ -173,7 +173,11 @@ export async function notifyCalendarItemDue(env: Env, alert: CalendarPushAlert) 
       occurrenceId: alert.occurrenceId,
       error: error instanceof Error ? error.message : "Unknown push relay error",
     });
-    return { ok: false, skipped: true };
+    return {
+      ok: false,
+      skipped: true,
+      error: error instanceof Error ? error.message : "Unknown push relay error",
+    };
   }
 }
 

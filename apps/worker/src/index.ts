@@ -79,28 +79,10 @@ const worker = {
     const lease = await acquireBackgroundWriteLease(env, "SCHEDULED", "scheduled");
     if (shouldBlockManagedRuntimeBackground(env, lease)) return;
     try {
-      if (_event.cron === CAMPAIGN_DISPATCH_CRON) {
-        await dispatchDueCampaignJobs(env);
-        return;
-      }
-      await reconcileProductOrders(env);
-      await expireStaleAgentCheckouts(env).catch((error) => console.error("Agent checkout sweep failed", error));
-      await pollNetworkPurchases(env).catch(() => console.error("Network purchase sweep failed"));
-      await reconcileMailboxAttachmentStaging(env);
-      await retryPendingMailTriage(env).catch((error) => console.error("Mail triage retry failed", error));
-      await dispatchDueMorningCalendarPushes(env);
-      await dispatchDueGratitudeReminders(env);
-      await dispatchDueCalendarPushNotifications(env);
-      await retryAgentTurnNotifications(env);
-      await dispatchDueBookingReminders(env);
-      await dispatchDueSocialPublications(env);
-      await recoverStrandedQueuedSocialPublications(env);
-      await dispatchDueCalendarSourceRefreshes(env);
-      await syncDueSoulinkContacts(env);
-      await syncManagedAiUsage(env);
-      await refreshManagedBillingPolicyIfStale(env).catch(() => console.error("Managed billing refresh failed"));
-      await dispatchDueCampaignJobs(env);
-      await recoverManagedCampaignEvents(env).catch(() => undefined);
+      await runScheduledSteps(
+        env,
+        _event.cron === CAMPAIGN_DISPATCH_CRON ? MINUTE_SCHEDULED_STEPS : QUARTER_HOUR_SCHEDULED_STEPS,
+      );
     } finally {
       await releaseManagedRuntimeWriteLease(env, lease);
     }
@@ -133,6 +115,53 @@ const worker = {
     }
   },
 };
+
+type ScheduledStep = readonly [name: string, run: (env: Env) => Promise<unknown>];
+
+// Calendar pushes run every minute so reminders arrive on time. They also stay
+// on the quarter-hour list for installs without the minute cron; dispatch is
+// idempotent per alert, so the overlapping runs never send twice.
+const MINUTE_SCHEDULED_STEPS: readonly ScheduledStep[] = [
+  ["campaign dispatch", dispatchDueCampaignJobs],
+  ["calendar push dispatch", dispatchDueCalendarPushNotifications],
+];
+
+const QUARTER_HOUR_SCHEDULED_STEPS: readonly ScheduledStep[] = [
+  ["product order reconciliation", reconcileProductOrders],
+  ["agent checkout sweep", expireStaleAgentCheckouts],
+  ["network purchase sweep", pollNetworkPurchases],
+  ["mailbox attachment staging", reconcileMailboxAttachmentStaging],
+  ["mail triage retry", retryPendingMailTriage],
+  ["morning calendar push", dispatchDueMorningCalendarPushes],
+  ["gratitude reminders", dispatchDueGratitudeReminders],
+  ["calendar push dispatch", dispatchDueCalendarPushNotifications],
+  ["agent turn notification retry", retryAgentTurnNotifications],
+  ["booking reminders", dispatchDueBookingReminders],
+  ["social publication dispatch", dispatchDueSocialPublications],
+  ["stranded social publication recovery", recoverStrandedQueuedSocialPublications],
+  ["calendar source refresh", dispatchDueCalendarSourceRefreshes],
+  ["Soulink contact sync", syncDueSoulinkContacts],
+  ["managed AI usage sync", syncManagedAiUsage],
+  ["managed billing refresh", refreshManagedBillingPolicyIfStale],
+  ["campaign dispatch", dispatchDueCampaignJobs],
+  ["managed campaign event recovery", (env) => recoverManagedCampaignEvents(env).catch(() => undefined)],
+];
+
+// Each step runs even when an earlier one fails, so one broken job cannot
+// silently drop time-sensitive work such as reminder pushes for that tick.
+async function runScheduledSteps(env: Env, steps: readonly ScheduledStep[]) {
+  const errors: unknown[] = [];
+  for (const [name, run] of steps) {
+    try {
+      await run(env);
+    } catch (error) {
+      console.error(`Scheduled step failed: ${name}`, error);
+      errors.push(error);
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, `${errors.length} scheduled steps failed`);
+}
 
 async function acquireBackgroundWriteLease(
   env: Env,

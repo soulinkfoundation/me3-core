@@ -32,6 +32,10 @@ export type CalendarPushCandidate = CalendarPushAlert & {
 const LOOKBACK_MS = 20 * 60 * 1000;
 const QUERY_PADDING_MS = 2 * 24 * 60 * 60 * 1000;
 const EVENT_ALERT_OFFSET_MINUTES = 15;
+// Dispatch runs every minute. A failed or skipped alert is retried after this
+// backoff rather than every tick, so a device that rejected one copy is not
+// sent a fresh duplicate each minute while the alert is still in LOOKBACK_MS.
+const RETRY_BACKOFF_MS = 10 * 60 * 1000;
 
 export async function dispatchDueCalendarPushNotifications(
   env: Env,
@@ -48,7 +52,7 @@ export async function dispatchDueCalendarPushNotifications(
     for (const candidate of candidates) {
       const alertAtMs = new Date(candidate.alertAt).getTime();
       if (alertAtMs <= windowStart.getTime() || alertAtMs > now.getTime()) continue;
-      results.push(await dispatchCalendarPushCandidate(env, candidate));
+      results.push(await dispatchCalendarPushCandidate(env, candidate, now));
     }
   }
 
@@ -256,12 +260,16 @@ function timedCandidate(
   };
 }
 
-export async function dispatchCalendarPushCandidate(env: Env, candidate: CalendarPushCandidate) {
+export async function dispatchCalendarPushCandidate(
+  env: Env,
+  candidate: CalendarPushCandidate,
+  now = new Date(),
+) {
   const inserted = await env.DB.prepare(
     `INSERT OR IGNORE INTO calendar_push_dispatches
        (id, user_id, category, item_id, occurrence_id, alert_offset_minutes,
         alert_at, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', datetime(?), datetime(?))`,
   ).bind(
     crypto.randomUUID(),
     candidate.userId,
@@ -270,20 +278,25 @@ export async function dispatchCalendarPushCandidate(env: Env, candidate: Calenda
     candidate.occurrenceId,
     candidate.alertOffsetMinutes,
     candidate.alertAt,
+    now.toISOString(),
+    now.toISOString(),
   ).run();
   let claimed = (inserted.meta?.changes || 0) > 0;
   if (!claimed) {
     const retried = await env.DB.prepare(
       `UPDATE calendar_push_dispatches
-       SET status = 'pending', error_message = NULL, updated_at = CURRENT_TIMESTAMP
+       SET status = 'pending', error_message = NULL, updated_at = datetime(?)
        WHERE user_id = ? AND category = ? AND item_id = ? AND occurrence_id = ?
-         AND alert_offset_minutes = ? AND status IN ('failed', 'skipped')`,
+         AND alert_offset_minutes = ? AND status IN ('failed', 'skipped')
+         AND updated_at <= datetime(?)`,
     ).bind(
+      now.toISOString(),
       candidate.userId,
       candidate.category,
       candidate.itemId,
       candidate.occurrenceId,
       candidate.alertOffsetMinutes,
+      new Date(now.getTime() - RETRY_BACKOFF_MS).toISOString(),
     ).run();
     claimed = (retried.meta?.changes || 0) > 0;
   }
@@ -301,12 +314,13 @@ export async function dispatchCalendarPushCandidate(env: Env, candidate: Calenda
         : "failed";
   await env.DB.prepare(
     `UPDATE calendar_push_dispatches
-     SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+     SET status = ?, error_message = ?, updated_at = datetime(?)
      WHERE user_id = ? AND category = ? AND item_id = ? AND occurrence_id = ?
        AND alert_offset_minutes = ?`,
   ).bind(
     outcome,
-    outcome === "sent" ? null : "Native calendar notification was not delivered.",
+    calendarPushErrorMessage(outcome, delivery, matched, sent),
+    now.toISOString(),
     candidate.userId,
     candidate.category,
     candidate.itemId,
@@ -314,6 +328,25 @@ export async function dispatchCalendarPushCandidate(env: Env, candidate: Calenda
     candidate.alertOffsetMinutes,
   ).run();
   return { ...candidate, outcome };
+}
+
+function calendarPushErrorMessage(
+  outcome: "sent" | "skipped" | "failed",
+  delivery: { ok?: unknown; error?: unknown },
+  matched: number,
+  sent: number,
+) {
+  if (outcome === "sent") return null;
+  if (outcome === "skipped") {
+    return "No device accepted this alert: no registered iPhone, or notifications are off for this category.";
+  }
+  if (delivery.ok !== true) {
+    const reason = typeof delivery.error === "string" && delivery.error.trim()
+      ? delivery.error.trim()
+      : "Push relay did not confirm delivery";
+    return `Push relay failed: ${reason}`;
+  }
+  return `Delivered to ${sent} of ${matched} devices.`;
 }
 
 function localDateKey(value: string, timezone: string) {

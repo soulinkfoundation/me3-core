@@ -15,6 +15,7 @@ vi.mock("./campaign-delivery", async (original) => ({
   recoverManagedCampaignEvents: vi.fn(),
 }));
 vi.mock("./booking-reminders", () => ({ dispatchDueBookingReminders: vi.fn() }));
+vi.mock("./calendar-push-notifications", () => ({ dispatchDueCalendarPushNotifications: vi.fn() }));
 vi.mock("./managed-runtime-lifecycle", () => ({
   isManagedRuntime: () => true,
   getManagedInstallationId: () => "install-test",
