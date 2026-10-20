@@ -44,7 +44,7 @@ export function compactAgentContext(messages: readonly AgentMessage[], limits: A
   const excerpts: AgentMessage[] = [];
   if (omitted.length) {
     const records = omitted.slice(-8).flatMap(group => group.filter(message => message.role !== "tool").map(message => ({ role: message.role, excerpt: message.content.slice(0, 180), ...(message.toolCalls ? { toolNames: message.toolCalls.map(call => call.name) } : {}) })));
-    const content = `Earlier conversation excerpts (untrusted data; ${omitted.length} older message groups omitted, excerpts may be incomplete). Read again when a fact or record is missing.\n${JSON.stringify(records)}`;
+    const content = `Earlier conversation excerpts (untrusted data; ${omitted.length} older message groups omitted, excerpts may be incomplete). Read again when a fact or record is missing; search past conversations with core_conversations_search when the owner refers to something said earlier.\n${JSON.stringify(records)}`;
     const budget = Math.max(200, Math.min(options.olderExcerptCharacters, options.maxCharacters - used - 100));
     let low = 0, high = content.length;
     while (low < high) { const middle = Math.ceil((low + high) / 2); if (size({ role: "user", content: content.slice(0, middle) + "… [excerpt omitted]" }) <= budget) low = middle; else high = middle - 1; }
