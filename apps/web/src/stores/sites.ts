@@ -261,16 +261,6 @@ export interface SitePageRevision {
   document: LandingPageDocumentV3;
 }
 
-export interface WebsiteImportDraft {
-  ok: boolean;
-  sourceUrl: string;
-  canonicalUrl: string;
-  profile: NonNullable<SiteContent["profile"]>;
-  pages: SiteContent["pages"];
-  posts: SiteContent["posts"];
-  products: SiteContent["products"];
-}
-
 export interface SiteQuota {
   current: number;
   limit: number;
@@ -1258,27 +1248,6 @@ export const useSitesStore = defineStore("sites", () => {
     else sitePages.value.unshift(page);
   }
 
-  async function importWebsite(
-    username: string,
-    url: string,
-  ): Promise<WebsiteImportDraft | null> {
-    loading.value = true;
-    error.value = null;
-
-    try {
-      return await api.post<WebsiteImportDraft>(
-        `/sites/${username}/import-website`,
-        { url },
-      );
-    } catch (e: any) {
-      error.value = e.message || "Failed to import website";
-      console.error("Import website error:", e);
-      return null;
-    } finally {
-      loading.value = false;
-    }
-  }
-
   async function getSiteQuota(): Promise<SiteQuota | null> {
     try {
       return await api.get<SiteQuota>("/sites/quota");
@@ -1498,7 +1467,6 @@ export const useSitesStore = defineStore("sites", () => {
     getSitePageRevisions,
     restoreSitePageRevision,
     deleteSitePage,
-    importWebsite,
     // Site quota
     getSiteQuota,
     sendProductConfirmationTest,

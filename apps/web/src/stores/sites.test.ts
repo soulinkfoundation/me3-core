@@ -501,45 +501,6 @@ describe("sites store", () => {
     });
   });
 
-  describe("importWebsite", () => {
-    it("should import website drafts successfully", async () => {
-      const mockDraft = {
-        ok: true,
-        sourceUrl: "https://example.com",
-        canonicalUrl: "https://example.com",
-        profile: {
-          name: "Example",
-        },
-        pages: [],
-        posts: [],
-        products: [],
-      };
-      vi.mocked(api.post).mockResolvedValue(mockDraft as any);
-
-      const store = useSitesStore();
-      const result = await store.importWebsite("testuser", "https://example.com");
-
-      expect(result).toEqual(mockDraft);
-      expect(store.loading).toBe(false);
-      expect(store.error).toBeNull();
-      expect(api.post).toHaveBeenCalledWith(
-        "/sites/testuser/import-website",
-        { url: "https://example.com" },
-      );
-    });
-
-    it("should surface import errors", async () => {
-      vi.mocked(api.post).mockRejectedValue(new ApiError("Import denied", 403));
-
-      const store = useSitesStore();
-      const result = await store.importWebsite("testuser", "https://example.com");
-
-      expect(result).toBeNull();
-      expect(store.loading).toBe(false);
-      expect(store.error).toBe("Import denied");
-    });
-  });
-
   describe("uploadPageImage", () => {
     it("should upload page image successfully", async () => {
       const blob = new Blob(["image data"], { type: "image/png" });

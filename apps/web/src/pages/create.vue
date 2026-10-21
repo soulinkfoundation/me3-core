@@ -131,24 +131,6 @@ const previewActiveView = computed(() => {
   return null;
 });
 
-const importedDraftHost = computed(() => {
-  const sourceUrl = wizard.draftSourceUrl;
-  if (!sourceUrl) return null;
-
-  try {
-    return new URL(sourceUrl).hostname.replace(/^www\./, "");
-  } catch {
-    return sourceUrl;
-  }
-});
-
-const showImportedDraftRecovery = computed(
-  () =>
-    !!importedDraftHost.value &&
-    !wizard.lastPublishedAt &&
-    !showIntroScreen.value,
-);
-
 function hasMeaningfulRestoredDraft(): boolean {
   const profile = wizard.profile;
   return Boolean(
@@ -317,11 +299,6 @@ async function copySiteLink() {
   catch (error) { toastFromUnknown(error, "Couldn't copy the site link."); }
 }
 
-function clearImportedDraft() {
-  wizard.reset();
-  router.push("/sites");
-}
-
 let wizardOpenRequest = 0;
 let wizardMounted = false;
 
@@ -379,7 +356,6 @@ async function openWizardTarget() {
             content.products || [],
             targetSite.username,
             targetSite.published_at || null,
-            undefined,
             targetRole,
           );
         }
@@ -455,7 +431,6 @@ watch(
         <a v-if="siteIsPublic" class="wizard-live__view" :href="publishedSiteUrl" target="_blank" rel="noopener noreferrer"><UiIcon name="ExternalLink" :size="16" />View site</a>
         <RouterLink v-else class="wizard-live__view" :to="`/sites/${encodeURIComponent(wizard.username)}`">View site</RouterLink>
       </section>
-      <div v-if="showImportedDraftRecovery" class="draft-recovery-banner"><div><strong>Imported draft saved locally.</strong><p>Imported from {{ importedDraftHost }}. Publish, keep editing or start over.</p></div><button type="button" @click="clearImportedDraft">Start over</button></div>
       <p v-if="publishProgress" class="wizard-publish-status" role="status">{{ publishProgress }}</p>
       <p v-if="publishNeedsStorage" class="wizard-publish-error" role="alert">{{ publishError }}<RouterLink to="/settings?section=storage">Activate storage</RouterLink></p>
     </template>
@@ -575,7 +550,6 @@ watch(
 .nav-btn { min-height: 48px; padding: 0 28px; font: 600 15px var(--font-sans); }
 button:disabled { opacity: .45; cursor: not-allowed; } button:focus-visible, a:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 .wizard-publish-error, .wizard-publish-status { max-width: 960px; margin: 16px auto; padding: 0 16px; font-size: 14px; }.wizard-publish-error { color: var(--ui-danger); }.wizard-publish-error a { display: block; color: inherit; }
-.draft-recovery-banner { display: flex; align-items: center; gap: 12px; max-width: 960px; margin: 16px auto; padding: 16px; border-radius: 18px; background: var(--ui-surface-muted); font-size: 14px; }.draft-recovery-banner p { margin: 4px 0 0; }.draft-recovery-banner button { min-height: 44px; border: 0; background: transparent; color: var(--ui-text); font: inherit; cursor: pointer; }
 .wizard-intro { max-width: 960px; margin: 40px auto; padding: 24px; }.intro-panel { display: flex; align-items: center; gap: 40px; }.intro-image { width: 42%; max-width: 360px; border-radius: 24px; }.intro-copy { flex: 1; }.intro-copy h1 { font-size: 32px; font-weight: 600; }.intro-copy p { color: var(--ui-text-muted); font-size: 16px; line-height: 1.5; }.intro-button { min-height: 48px; border: 0; border-radius: 24px; padding: 12px 24px; background: var(--ui-primary); color: var(--ui-primary-contrast); font: 600 16px var(--font-sans); cursor: pointer; }
 .wizard-dialog-panel { width: min(560px, 100%); margin: auto; padding: 20px; box-sizing: border-box; border-radius: 24px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
 .wizard-dialog-panel header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }.wizard-dialog-panel h2 { flex: 1; margin: 0; font-size: 20px; font-weight: 600; }

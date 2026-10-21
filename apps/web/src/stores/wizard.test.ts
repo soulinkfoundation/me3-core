@@ -71,7 +71,6 @@ describe("wizard store", () => {
       expect(store.profile.navigationStyle).toBe("standard");
       expect(store.pages).toEqual([]);
       expect(store.username).toBe("");
-      expect(store.draftSourceUrl).toBeNull();
     });
 
     it("should load state from localStorage", () => {
@@ -102,7 +101,6 @@ describe("wizard store", () => {
         username: "testuser",
         vibe: "warm",
         accentOverride: null,
-        draftSourceUrl: "https://example.com",
       };
       localStorage.setItem("me3_wizard_state", JSON.stringify(savedState));
 
@@ -111,7 +109,6 @@ describe("wizard store", () => {
       expect(store.furthestStep).toBe(3);
       expect(store.profile.name).toBe("Test User");
       expect(store.username).toBe("testuser");
-      expect(store.draftSourceUrl).toBe("https://example.com");
     });
 
     it("keeps an older published draft on its original presentation", () => {
@@ -1207,7 +1204,6 @@ describe("wizard store", () => {
       expect(store.shopTitle).toBe("Products");
       expect(store.pages).toHaveLength(0);
       expect(localStorage.getItem("me3_wizard_state")).toBeNull();
-      expect(store.draftSourceUrl).toBeNull();
     });
   });
 
@@ -1264,7 +1260,6 @@ describe("wizard store", () => {
         [],
         "studio",
         null,
-        undefined,
         "organization",
       );
 
@@ -1317,26 +1312,6 @@ describe("wizard store", () => {
 
       expect(store.lastPublishedAt).toBeNull();
       expect(store.needsPublish).toBe(true);
-    });
-
-    it("should persist the imported source URL when provided", () => {
-      const store = useWizardStore();
-      const siteProfile = {
-        name: "Imported User",
-        handle: "imported",
-      };
-
-      store.loadFromSiteContent(
-        siteProfile,
-        [],
-        [],
-        [],
-        "imported",
-        undefined,
-        "https://example.com",
-      );
-
-      expect(store.draftSourceUrl).toBe("https://example.com");
     });
 
     it("excludes standalone / legacy social posts from wizard blog (slug and type)", () => {

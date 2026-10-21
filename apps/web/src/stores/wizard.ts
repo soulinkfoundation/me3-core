@@ -1574,7 +1574,6 @@ export const useWizardStore = defineStore("wizard", () => {
   const lastPublishedAt = ref<string | null>(null);
   const lastLocalEditAt = ref<string>(new Date().toISOString());
   const lastSiteEditAt = ref<string>(new Date().toISOString());
-  const draftSourceUrl = ref<string | null>(null);
 
   const steps = computed<WizardStepDefinition[]>(() => {
     const visibleSteps: WizardStepDefinition[] = [
@@ -4052,7 +4051,6 @@ export const useWizardStore = defineStore("wizard", () => {
         lastPublishedAt: lastPublishedAt.value,
         lastLocalEditAt: lastLocalEditAt.value,
         lastSiteEditAt: lastSiteEditAt.value,
-        draftSourceUrl: draftSourceUrl.value,
       };
       localStorage.setItem(activeStorageKey.value, JSON.stringify(state));
     } catch (e) {
@@ -4220,11 +4218,6 @@ export const useWizardStore = defineStore("wizard", () => {
         lastLocalEditAt.value =
           state.lastLocalEditAt || new Date().toISOString();
         lastSiteEditAt.value = state.lastSiteEditAt || lastLocalEditAt.value;
-        draftSourceUrl.value =
-          typeof state.draftSourceUrl === "string" &&
-          state.draftSourceUrl.trim().length > 0
-            ? state.draftSourceUrl
-            : null;
 
         const explicitCurrentStepId = normalizeWizardStepId(
           typeof state.currentStepId === "string" ? state.currentStepId : "",
@@ -4361,7 +4354,6 @@ export const useWizardStore = defineStore("wizard", () => {
     lastPublishedAt.value = null;
     lastLocalEditAt.value = new Date().toISOString();
     lastSiteEditAt.value = lastLocalEditAt.value;
-    draftSourceUrl.value = null;
     linksEnabled.value = false;
     callToActionEnabled.value = false;
     pagesEnabled.value = false;
@@ -4692,7 +4684,6 @@ export const useWizardStore = defineStore("wizard", () => {
     }>,
     siteUsername: string | null | undefined,
     sitePublishedAt?: string | null,
-    siteSourceUrl?: string | null,
     loadedSiteRole: WizardSiteRole = "profile",
   ) {
     const resolvedSiteUsername =
@@ -5178,11 +5169,6 @@ export const useWizardStore = defineStore("wizard", () => {
       lastSiteEditAt.value = sitePublishedAt;
     }
 
-    draftSourceUrl.value =
-      typeof siteSourceUrl === "string" && siteSourceUrl.trim().length > 0
-        ? siteSourceUrl.trim()
-        : null;
-
     // Save to storage so it persists
     saveToStorage();
   }
@@ -5213,7 +5199,6 @@ export const useWizardStore = defineStore("wizard", () => {
     lastPublishedAt,
     lastLocalEditAt,
     lastSiteEditAt,
-    draftSourceUrl,
     vibe,
     accentOverride,
     homeSections,
