@@ -157,6 +157,8 @@ export type CorePeopleSearchResult = {
   seller?: CorePeopleSearchSeller | null;
   /** Short owner-facing trust labels, such as "ME3 agent checkout" or "New seller". */
   badges?: string[];
+  /** The owner's own listing, returned only when they asked to see how they are found. */
+  self?: boolean;
 };
 
 export type CorePeopleSearchToolServices = {
@@ -166,6 +168,7 @@ export type CorePeopleSearchToolServices = {
     offeringKind?: "booking" | "event" | "product";
     countryCode?: string;
     limit?: number;
+    includeMe?: boolean;
   }): Promise<{
     query: string;
     results: CorePeopleSearchResult[];

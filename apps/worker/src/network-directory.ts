@@ -4,6 +4,7 @@ import type {
   CorePeopleSearchSeller,
   CorePeopleSearchToolServices,
 } from "@me3-core/plugin-agent-chat";
+import { isLocalDirectoryEnabled, ownerSiteOrigin, searchLocalDirectory } from "./local-directory";
 import { ensureSoulinkContactsFresh } from "./routes/channels";
 import { getMe3CloudApiOrigin } from "./sites";
 import type { DbContact, Env } from "./types";
@@ -90,20 +91,29 @@ export async function searchPeople(
 ): ReturnType<CorePeopleSearchToolServices["search"]> {
   const limit = Math.min(10, Math.max(1, Math.floor(input.limit || 5)));
   const publicLimit = Math.max(limit, 10);
-  const [linkState, publicState] = await Promise.all([
+  const includeMe = input.includeMe === true;
+  const [linkState, publicState, localResults, ownOrigin] = await Promise.all([
     loadSoulinkLinkCandidates(env, ownerId),
     searchPublicSoulinkDirectory(env, { ...input, limit: publicLimit }).then(
       (value) => ({ value, warning: null as string | null }),
       (error) => ({
         value: null,
         warning: error instanceof SoulinkDirectoryError && error.code === "me3_cloud_not_connected"
-          ? "Public Soulink profiles are unavailable until this installation is linked to me3.app."
+          // A local install searches its local directory instead; linking is not a step in its journey.
+          ? isLocalDirectoryEnabled(env) ? null : "Public Soulink profiles are unavailable until this installation is linked to me3.app."
           : "Public Soulink search is temporarily unavailable; these results include current Links only.",
       }),
     ),
+    searchLocalDirectory(env, ownerId, input),
+    includeMe ? ownerSiteOrigin(env, ownerId) : Promise.resolve(null),
   ]);
 
-  const publicResults = publicState.value?.results || [];
+  const publicResults = [...(publicState.value?.results || []), ...localResults].map((result) =>
+    // The owner's own listing comes back only when they asked to see it (includeSelf at Cloud, includeMe locally).
+    result.self || (ownOrigin && [result.publicUrl, result.profileUrl].some((url) => publicOrigin(url) === ownOrigin))
+      ? { ...result, self: true }
+      : result,
+  );
   const annotatedPublicResults = publicResults.map((result) => {
     const link = linkState.links.find((candidate) => publicResultMatchesLink(result, candidate));
     return link
@@ -119,11 +129,14 @@ export async function searchPeople(
     .filter((link) => linkMatchesQuery(link, input.query))
     .filter((link) => !annotatedPublicResults.some((result) => publicResultMatchesLink(result, link)))
     .map(linkCandidateToPeopleResult);
-  const merged = preferAgentCheckoutOnTies(deduplicatePeopleResults([
+  const ordered = preferAgentCheckoutOnTies(deduplicatePeopleResults([
     ...localMatches,
     ...annotatedPublicResults.filter((result) => result.relationshipTier === "link"),
     ...annotatedPublicResults.filter((result) => result.relationshipTier === "public"),
-  ])).slice(0, limit);
+  ]));
+  // The owner's own listing always makes the cut when they asked for it.
+  const own = ordered.filter((result) => result.self);
+  const merged = [...ordered.filter((result) => !result.self).slice(0, Math.max(0, limit - own.length)), ...own];
   const warnings = uniqueStrings([
     linkState.warning,
     publicState.warning,
@@ -159,6 +172,7 @@ export async function searchPublicSoulinkDirectory(
       ...(input.offeringKind ? { offeringKind: input.offeringKind } : {}),
       countryCode: input.countryCode?.trim().slice(0, 2).toUpperCase(),
       limit: Math.min(10, Math.max(1, Math.floor(input.limit || 5))),
+      ...(input.includeMe ? { includeSelf: true } : {}),
     }),
   });
   const data = await readJson(response);

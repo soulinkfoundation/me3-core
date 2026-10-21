@@ -87,7 +87,11 @@ async function main() {
   }
 
   step("Starting workers and web app");
-  startWorker(owner, { ME3_CLOUD_ORIGIN: cloudOrigin });
+  // The owner's people search also reads the stand-in's /me.json (local-only directory).
+  startWorker(owner, {
+    ME3_CLOUD_ORIGIN: cloudOrigin,
+    ...(withStandin ? { ME3_LOCAL_DIRECTORY_ORIGINS: `http://127.0.0.1:${standin.workerPort}` } : {}),
+  });
   if (withStandin) startWorker(standin, { ME3_CLOUD_ORIGIN: CLOUD_ORIGINS.none, ME3_SITE_USERNAME: STANDIN.username });
   children.push(start("pnpm", ["exec", "vite", "--port", "4000", "--strictPort"], resolve(root, "apps/web"), "web"));
 
@@ -165,6 +169,7 @@ async function seedStandin() {
     name: STANDIN.name,
     handle: STANDIN.username,
     bio: STANDIN.bio,
+    location: "Dublin, Ireland",
     visibility: "public",
     intents: {
       book: {

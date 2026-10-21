@@ -19,10 +19,21 @@ export interface AgentSchedulingServices {
   getRequest?(requestId: string): Promise<SchedulingRequest | null>;
   approve?(input: { requestId: string; option?: number; confirmed: true; expected: SchedulingRequest }, idempotencyKey: string): Promise<SchedulingRequest>;
   decline?(input: { requestId: string; reason?: string; expected: SchedulingRequest }, idempotencyKey: string): Promise<SchedulingRequest>;
+  /** A free call on another ME3 site, booked as a visitor would. See apps/worker/src/agent-free-call.ts. */
+  planFreeCall?(input: { profile: PeopleRecord; offeringId?: string; date?: string; time?: string; notes?: string }): Promise<FreeCallPlan>;
+  bookFreeCall?(plan: FreeCallPlan, idempotencyKey: string): Promise<FreeCallBooking>;
 }
+/** The exact time ME3 will book once the owner approves; the site, offer and slot are all pinned. */
+export type FreeCallPlan = {
+  with: string; handle: string; publicUrl: string; bookingUrl: string;
+  offering: { id: string; offerId: string; title: string; durationMinutes: number };
+  slot: { start: string; end: string; timezone: string; label: string };
+  notes: string | null;
+};
+export type FreeCallBooking = FreeCallPlan & { status: "booked"; bookingId: string | null; calendarEventId: string | null };
 export type PeopleRecord = { profileId: string | null; name: string; [key: string]: unknown };
 export interface AgentPeopleServices {
-  search(input: { query: string; offeringType?: "service" | "product"; offeringKind?: "booking" | "event" | "product"; countryCode?: string; limit?: number }): Promise<{ results: PeopleRecord[]; [key: string]: unknown }>;
+  search(input: { query: string; offeringType?: "service" | "product"; offeringKind?: "booking" | "event" | "product"; countryCode?: string; limit?: number; includeMe?: boolean }): Promise<{ results: PeopleRecord[]; [key: string]: unknown }>;
 }
 export type AgentGeneratedImageAsset = {
   id: string; attachmentId: string; name: string; mimeType: string; size: number;

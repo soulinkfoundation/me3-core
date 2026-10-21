@@ -27,6 +27,8 @@ export interface Env {
   ME3_MANAGED_EMAIL_GATEWAY_ORIGIN?: string;
   ME3_SOCIAL_OAUTH_ORIGIN?: string;
   ME3_LOCATION_SEARCH_ORIGIN?: string;
+  /** Local installs only: comma-separated origins whose /me.json the people search also reads. */
+  ME3_LOCAL_DIRECTORY_ORIGINS?: string;
 
   JWT_SECRET?: string;
   TOKEN_ENCRYPTION_KEY?: string;

@@ -281,6 +281,7 @@ function isToolAvailable(name:string,services:AgentDomainServices):boolean {
   if(name==="core_scheduling_request_read")return Boolean(services.scheduling?.getRequest);
   if(name==="core_scheduling_request")return Boolean(services.scheduling?.request);
   if(name==="core_scheduling_request_profile")return Boolean(services.scheduling?.requestNetwork);
+  if(name==="core_scheduling_book_free_call")return Boolean(services.scheduling?.planFreeCall&&services.scheduling?.bookFreeCall);
   if(name.startsWith("core_cards_"))return Boolean(services.cards);
   if(name.startsWith("core_coding_"))return Boolean(services.coding);
   if(name==="core_scheduling_approve")return Boolean(services.scheduling?.approve);

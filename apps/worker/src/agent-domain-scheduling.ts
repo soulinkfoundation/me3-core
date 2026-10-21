@@ -1,4 +1,5 @@
 import type { AgentSchedulingServices, SchedulingContact, SchedulingRequest } from "../../../packages/agent/src/tools/services";
+import { bookFreeCall, planFreeCall } from "./agent-free-call";
 import { createAgentSchedulingToolServices, performAgentSchedulingOwnerAction, requestAgentScheduling, requestNetworkAgentScheduling, searchAgentSchedulingContacts } from "./agent-scheduling";
 import { getSchedulingRequest } from "./scheduling";
 import { schedulingRequestValues } from "./scheduling-preconditions";
@@ -45,6 +46,8 @@ export function createStableAgentSchedulingServices(env: Env, ownerId: string): 
       const result = await requestNetworkAgentScheduling(env, ownerId, input, key);
       return await read(key) || { id: key, ...result };
     },
+    planFreeCall: input => planFreeCall(env, ownerId, input),
+    bookFreeCall: (plan, key) => bookFreeCall(env, ownerId, plan, key),
     approve: async (input, _key) => {
       if (input.confirmed !== true) throw new Error("Scheduling approval requires a durable owner decision.");
       const expected = await reviewed(input.requestId, input.expected);

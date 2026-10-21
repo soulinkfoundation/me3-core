@@ -112,6 +112,33 @@ describe("Soulink directory bridge", () => {
     expect(result.results[0].location).not.toHaveProperty("latitude");
   });
 
+  it("asks Cloud for the owner's own listing only when they want to see how they are found", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ query: "career coach in Leeds", results: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await searchPeople(createEnv(SECRETS), "owner-1", { query: "career coach in Leeds" });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).not.toHaveProperty("includeSelf");
+    await searchPeople(createEnv(SECRETS), "owner-1", { query: "career coach in Leeds", includeMe: true });
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toMatchObject({ includeSelf: true });
+  });
+
+  it("searches the local directory on a local install instead of asking the owner to link Cloud", async () => {
+    const standin = {
+      version: "0.3", kind: "person", visibility: "public", name: "Kieran (stand-in)", handle: "kieran", url: "http://127.0.0.1:8788/",
+      bio: "Builds ME3.", services: [{ id: "service:intro-call", title: "Free 20-minute call", durationMinutes: 20, status: "active" }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url === "http://127.0.0.1:8788/me.json" ? Response.json(standin) : new Response("", { status: 404 })));
+    const env = { ...createEnv({}), ENVIRONMENT: "local", ME3_LOCAL_DIRECTORY_ORIGINS: "http://127.0.0.1:8788" } as Env;
+
+    const result = await searchPeople(env, "owner-1", { query: "Kieran" });
+    expect(result.results).toEqual([expect.objectContaining({ relationshipTier: "public", profileId: "local:http://127.0.0.1:8788", name: "Kieran (stand-in)", publicUrl: "http://127.0.0.1:8788/" })]);
+    expect(result.warnings).toEqual([]);
+
+    const deployed = await searchPeople(createEnv({}), "owner-1", { query: "Kieran" });
+    expect(deployed.results).toEqual([]);
+    expect(deployed.warnings).toEqual(["Public Soulink profiles are unavailable until this installation is linked to me3.app."]);
+  });
+
   it("authorizes one exact stable profile for the private Soulink relay", async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({
       profileId: "profile-aoife",

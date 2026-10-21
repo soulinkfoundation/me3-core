@@ -57,7 +57,7 @@ const tool = (name:string):AgentTool => {
 describe("new agent domain tools", () => {
   it("ports all 40 active tools and declares safe external and destructive policies", () => {
     const tools = createDomainTools();
-    expect(tools.filter(tool => !["core_images_generate", "core_targets_present"].includes(tool.name))).toHaveLength(62); // Includes memory search and forget, past-conversation search, saving the owner's Mission, owner-supplied quote saving, the seven payment tools (three for ME3 network purchases), the five custom card tools, the two Send to Claude tools and the first-site draft.
+    expect(tools.filter(tool => !["core_images_generate", "core_targets_present"].includes(tool.name))).toHaveLength(63); // Includes memory search and forget, past-conversation search, saving the owner's Mission, owner-supplied quote saving, the seven payment tools (three for ME3 network purchases), the five custom card tools, the two Send to Claude tools, the first-site draft and free-call booking.
     expect(tool("core_targets_present")).toMatchObject({ effect: "read", approval: "none", endsTurn: true });
     expect(new Set(tools.map(tool => tool.name)).size).toBe(tools.length);
     for (const value of tools) {
