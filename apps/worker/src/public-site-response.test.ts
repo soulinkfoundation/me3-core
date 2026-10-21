@@ -30,3 +30,16 @@ describe('published snapshot caching', () => {
     expect((await response('changed image', undefined, true, `files/responsive/${hash}.webp`)).headers.get('Cache-Control')).not.toContain('immutable');
   });
 });
+
+describe('Made with ME3 badge', () => {
+  const page = (html: string) => publicSiteFileResponse({ content: new TextEncoder().encode(html).buffer, contentType: 'text/html', published: true, profileUrl: '/site/alex/me.json', showCreateSitePrompt: true }).then(r => r.text());
+  it('sits inline at the end of a hand-built page so it cannot cover a sticky bar', async () => {
+    const html = await page('<body><h1>Alex</h1></body>');
+    expect(html).toContain('Made with ME3');
+    expect(html).not.toContain('position:fixed');
+  });
+  it('is left off a rendered site whose footer already credits ME3', async () => {
+    const html = await page('<body><footer>Powered by <a href="https://me3.app">ME3</a></footer></body>');
+    expect(html).not.toContain('Made with ME3');
+  });
+});

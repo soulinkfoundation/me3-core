@@ -39,14 +39,16 @@ export async function publicSiteFileResponse(options: {
 }
 
 function addCreateSitePrompt(html: string): string {
-  // A small corner pill, quiet enough not to compete with the owner's own page.
+  // Rendered sites already credit ME3 in their footer, so only hand-built pages get the badge.
+  if (/<a\b[^>]*href=["']https:\/\/me3\.app\/?["']/i.test(html)) return html;
+  // Inline at the end of the page rather than fixed, so it never covers a sticky booking or buy bar.
   const prompt = `<style>
-    .me3-create-site-space{height:64px}
-    a.me3-create-site{box-sizing:border-box;position:fixed;z-index:1000;right:calc(16px + env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom));display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:4px 12px 4px 4px;border:1px solid rgba(0,0,0,.08);border-radius:999px;background:rgba(255,255,255,.88);color:#3d3d3d;box-shadow:0 2px 10px rgba(0,0,0,.08);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);font:500 12px/1 system-ui,-apple-system,sans-serif;text-decoration:none;white-space:nowrap;opacity:.92;transition:opacity .15s,box-shadow .15s}
-    a.me3-create-site:hover{opacity:1;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+    .me3-create-site-row{display:flex;justify-content:center;padding:24px 16px calc(24px + env(safe-area-inset-bottom))}
+    a.me3-create-site{box-sizing:border-box;display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:4px 12px 4px 4px;border:1px solid rgba(0,0,0,.08);border-radius:999px;background:rgba(255,255,255,.88);color:#3d3d3d;font:500 12px/1 system-ui,-apple-system,sans-serif;text-decoration:none;white-space:nowrap;opacity:.92;transition:opacity .15s}
+    a.me3-create-site:hover{opacity:1}
     a.me3-create-site:focus-visible{outline:2px solid #0b806e;outline-offset:2px}
     .me3-create-site-mark{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:50%;background:#171717;color:#fff;font-size:8px;font-weight:800;letter-spacing:-.04em}
     @media(prefers-color-scheme:dark){a.me3-create-site{border-color:rgba(255,255,255,.12);background:rgba(28,28,28,.82);color:#e8e8e8}.me3-create-site-mark{background:#fff;color:#171717}}
-  </style><div class="me3-create-site-space" aria-hidden="true"></div><a class="me3-create-site" href="https://me3.app/" aria-label="Made with ME3. Create your own site"><span class="me3-create-site-mark" aria-hidden="true">ME3</span><span>Made with ME3</span></a>`;
+  </style><div class="me3-create-site-row"><a class="me3-create-site" href="https://me3.app/" aria-label="Made with ME3. Create your own site"><span class="me3-create-site-mark" aria-hidden="true">ME3</span><span>Made with ME3</span></a></div>`;
   return /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${prompt}</body>`) : `${html}${prompt}`;
 }
