@@ -64,6 +64,17 @@ describe("site generator", () => {
     expect(withLogo["index.html"]).toContain('<span>Alex</span>');
   });
 
+  it("shows the owner's initials where the photo goes until they add one", async () => {
+    const base = { name: "Sam Rivera", extensions: { "me3.app/site": { layout: "card" as const } } };
+    const noPhoto = (await generateSiteHtml(base, []))["index.html"];
+    const withPhoto = (await generateSiteHtml({ ...base, avatar: "./files/avatar.jpg" }, []))["index.html"];
+    expect(noPhoto).toContain('<span class="site-hero__avatar site-hero__avatar--initials" aria-hidden="true">SR</span>');
+    expect(withPhoto).toContain('<img class="site-hero__avatar" src="./files/avatar.jpg"');
+    expect(withPhoto).not.toContain('class="site-hero__avatar site-hero__avatar--initials"');
+    const split = (await generateSiteHtml({ ...base, extensions: { "me3.app/site": { layout: "split" as const } } }, []))["index.html"];
+    expect(split).toContain('<div class="site-hero__portrait"><span class="site-hero__avatar site-hero__avatar--initials"');
+  });
+
   it.each(["warm", "paper", "meadow", "me3", "tech"] as const)("renders %s with light and dark tokens and a visitor switch", async (theme) => {
     const files = await generateSiteHtml({ name: "Alex", handle: "alex", extensions: { "me3.app/site": { theme, colorMode: "auto", visitorThemeToggle: true } } }, []);
     const html = files["index.html"];

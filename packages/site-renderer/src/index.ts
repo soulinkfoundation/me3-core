@@ -484,7 +484,10 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
   const avatarPath = profile.avatar ? filePathForHtml(profile.avatar) : "";
   const banner = bannerPath && layout !== "minimal" && layout !== "split"
     ? `<div class="site-hero__banner"><img src="${escapeHtml(bannerPath)}" alt="" loading="eager" decoding="async" fetchpriority="high"></div>` : "";
-  const avatar = avatarPath ? `<img class="site-hero__avatar" src="${escapeHtml(avatarPath)}" alt="" loading="eager" decoding="async">` : "";
+  // Until the owner adds a photo, their initials hold its place so the site already looks finished.
+  const initials = siteInitials(title);
+  const avatar = avatarPath ? `<img class="site-hero__avatar" src="${escapeHtml(avatarPath)}" alt="" loading="eager" decoding="async">`
+    : initials ? `<span class="site-hero__avatar site-hero__avatar--initials" aria-hidden="true">${escapeHtml(initials)}</span>` : "";
   const displayLocation = formatPublicLocation(profile);
   const location = displayLocation ? `<p class="location">${escapeHtml(displayLocation)}</p>` : "";
   const hero = `<section class="site-hero site-hero--${layout}">${banner}${layout === "split" ? `<div class="site-hero__portrait">${avatar}</div>` : ""}<div class="site-hero__intro">${layout === "split" ? location : avatar}<h1 class="name">${escapeHtml(title)}</h1>${profile.bio ? `<div class="bio">${renderRichText(profile.bio)}</div>` : ""}${layout === "split" ? "" : location}${generateButtons(profile)}${layout === "cover" ? "" : generateLinks(profile)}</div></section>`;
@@ -677,6 +680,11 @@ function pageShell(
   ${modern && siteSettings?.visitorThemeToggle !== false ? siteThemeToggleScript(profile) : ""}
 </body>
 </html>`;
+}
+
+/** "Sam Rivera" is "SR": the first letter or digit of each of the first two words that have one. */
+function siteInitials(name: string): string {
+  return name.split(/\s+/).map((word) => word.match(/[\p{L}\p{N}]/u)?.[0] || "").filter(Boolean).slice(0, 2).join("").toUpperCase();
 }
 
 function generateSiteTopbar(profile: Me3SiteProfile, activeSlug: string, basePath: string): string {

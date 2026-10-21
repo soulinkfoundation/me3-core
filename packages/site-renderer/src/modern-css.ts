@@ -64,7 +64,9 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-hero__banner{height:180px;overflow:hidden;border-radius:var(--radius);background:var(--raised)}
 .site-hero__banner img{display:block;width:100%;height:100%;object-fit:cover}
 .site-hero__intro{text-align:center}
-.site-hero__avatar{display:block;width:116px;height:116px;box-sizing:border-box;margin:-58px auto 0;border:5px solid var(--bg);border-radius:50%;object-fit:cover;background:var(--raised)}
+.site-hero__avatar{display:block;width:116px;height:116px;box-sizing:border-box;margin:0 auto;border:5px solid var(--bg);border-radius:50%;object-fit:cover;background:var(--raised)}
+.site-hero--card .site-hero__banner+.site-hero__intro .site-hero__avatar{margin-top:-58px}
+.site-hero__avatar--initials{display:flex;align-items:center;justify-content:center;font-family:var(--display-font);font-size:2.6rem;font-weight:600;letter-spacing:-.02em;color:var(--accent);background:var(--accent-soft)}
 .site-hero .name{margin:18px 0 12px}
 .site-hero .bio{max-width:600px;margin:0 auto 14px;font-size:1.13rem;line-height:1.5}
 .site-hero .location{margin:0 auto 14px;font-size:.9rem}
@@ -76,6 +78,7 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-hero--split{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);align-items:center;gap:64px;margin-top:56px}
 .site-hero--split .site-hero__portrait{aspect-ratio:4/5;overflow:hidden;border-radius:var(--radius);background:var(--raised)}
 .site-hero--split .site-hero__portrait .site-hero__avatar{width:100%;height:100%;margin:0;border:0;border-radius:0;object-fit:cover}
+.site-hero--split .site-hero__avatar--initials{font-size:clamp(4rem,9vw,7rem)}
 .site-hero--split .site-hero__intro{text-align:left}
 .site-hero--split .site-hero__intro .name{font-size:clamp(2.7rem,5vw,4.7rem)}
 .site-hero--split .bio,.site-hero--split .location{margin-left:0}
@@ -85,6 +88,7 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-hero--cover .site-hero__banner:after{content:"";position:absolute;inset:0;background:linear-gradient(transparent 20%,rgba(0,0,0,.76))}
 .site-hero--cover .site-hero__intro{position:relative;z-index:1;box-sizing:border-box;width:100%;padding:40px;color:#fff;text-align:left}
 .site-hero--cover .site-hero__avatar{display:inline-block;width:62px;height:62px;margin:0 14px 0 0;border:3px solid #fff;vertical-align:middle}
+.site-hero--cover .site-hero__avatar--initials{display:inline-flex;font-size:1.4rem;color:#fff;background:#ffffff33}
 .site-hero--cover .name{display:inline;vertical-align:middle;color:#fff}
 .site-hero--cover .bio,.site-hero--cover .location{margin-left:0;color:#fff}
 .site-hero--cover .buttons,.site-hero--cover .links{justify-content:flex-start}
@@ -96,6 +100,7 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-hero--minimal{margin-top:72px}
 .site-hero--minimal .site-hero__intro{text-align:left}
 .site-hero--minimal .site-hero__avatar{width:64px;height:64px;margin:0;border:0}
+.site-hero--minimal .site-hero__avatar--initials{font-size:1.4rem}
 .site-hero--minimal .name{font-size:clamp(3.4rem,8vw,6rem)}
 .site-hero--minimal .bio,.site-hero--minimal .location{margin-left:0}
 .site-hero--minimal .buttons,.site-hero--minimal .links{justify-content:flex-start}

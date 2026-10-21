@@ -21,7 +21,7 @@ export function siteTools() {
           kind: "site_draft", title: "Publish your website", summary: `${draft.name} at ${draft.publicUrl.replace(/^https?:\/\//, "")}`, ...draft,
           howItWorks: draft.hasPhoto
             ? "Nothing is live until you publish. Edit anything first; the free clarity call, newsletter and look can all change later."
-            : "Nothing is live until you publish. Add your photo first, then publish; the free clarity call, newsletter and look can all change later.",
+            : "Nothing is live until you publish. Your initials stand in for a photo until you add one; the free clarity call, newsletter and look can all change later.",
         } };
       }
       context.signal.throwIfAborted();
