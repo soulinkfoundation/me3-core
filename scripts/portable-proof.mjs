@@ -376,6 +376,9 @@ export function seedProofInstallation(database, r2Directory) {
     ["ME3_CLOUD_OWNER_ID", "managed-owner-123"],
     ["ME3_CLOUD_CORE_TOKEN", PROOF_PLATFORM_SECRET],
     ["ME3_MANAGED_CAMPAIGN_CALLBACK_SECRET", "a".repeat(64)],
+    ["ME3_MANAGED_AI_BILLING_POLICY", '{"policy":"managed-billing-must-not-export"}'],
+    ["ME3_MANAGED_SETUP_SESSION_USED:setup-session-1", "managed-setup-session-must-not-export"],
+    ["coding_agent_github_token", "coding-agent-token-must-not-export"],
   ];
   runSqlite(
     database,

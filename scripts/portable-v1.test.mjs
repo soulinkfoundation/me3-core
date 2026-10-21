@@ -333,7 +333,7 @@ test("exports sanitized owner data and restores the exact identity, D1 rows, and
     PROOF_SESSION_SECRET,
   );
   assert.equal(
-    queryScalar(target, "SELECT COUNT(*) FROM install_secrets WHERE name IN ('ME3_CLOUD_OWNER_ID', 'ME3_CLOUD_CORE_TOKEN', 'ME3_MANAGED_CAMPAIGN_CALLBACK_SECRET');"),
+    queryScalar(target, "SELECT COUNT(*) FROM install_secrets WHERE name IN ('ME3_CLOUD_OWNER_ID', 'ME3_CLOUD_CORE_TOKEN', 'ME3_MANAGED_CAMPAIGN_CALLBACK_SECRET', 'ME3_MANAGED_AI_BILLING_POLICY', 'ME3_MANAGED_SETUP_SESSION_USED:setup-session-1', 'coding_agent_github_token');"),
     "0",
   );
   assert.equal(readFileSync(join(targetR2, "assistant", "owner", "proof.txt"), "utf8"), "assistant proof\n");
@@ -911,6 +911,9 @@ test("archive omits platform, session, device, and managed-only credentials", ()
   assert.equal(textFiles.includes("ephemeral-confirmation-token"), false);
   assert.equal(textFiles.includes("managed-control-must-not-export"), false);
   assert.equal(textFiles.includes("managed-write-lease-must-not-export"), false);
+  assert.equal(textFiles.includes("managed-billing-must-not-export"), false);
+  assert.equal(textFiles.includes("managed-setup-session-must-not-export"), false);
+  assert.equal(textFiles.includes("coding-agent-token-must-not-export"), false);
 });
 
 test("export requires verified local password login before creating output", async () => {

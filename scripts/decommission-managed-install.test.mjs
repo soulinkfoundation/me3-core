@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   decommissionManagedInstall,
@@ -6,6 +7,8 @@ import {
   managedDecommissionTombstoneDeployArgs,
   managedDecommissionTombstoneMessage,
   managedDecommissionTombstoneTag,
+  managedDurableObjectDeleteMigrations,
+  MANAGED_DURABLE_OBJECT_MIGRATIONS,
   orderedDedicatedQueueNames,
 } from "./decommission-managed-install.mjs";
 
@@ -1438,3 +1441,61 @@ function missing() {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+test("Durable Object delete config replays the canonical history up to the Worker's current tag", () => {
+  const wranglerToml = readFileSync(
+    new URL("../apps/worker/wrangler.core.example.toml", import.meta.url),
+    "utf8",
+  );
+  const configured = [...wranglerToml.matchAll(/\[\[migrations\]\]\s*\ntag = "([^"]+)"\s*\n(new_sqlite_classes|deleted_classes) = \[([^\]]*)\]/g)]
+    .map(([, tag, kind, classes]) => ({ tag, kind, classes: [...classes.matchAll(/"([^"]+)"/g)].map((m) => m[1]) }));
+  assert.deepEqual(
+    MANAGED_DURABLE_OBJECT_MIGRATIONS.map(({ tag, newSqliteClasses, deletedClasses }) => ({
+      tag,
+      kind: newSqliteClasses ? "new_sqlite_classes" : "deleted_classes",
+      classes: newSqliteClasses || deletedClasses,
+    })),
+    configured,
+  );
+
+  const latest = managedDurableObjectDeleteMigrations({
+    currentTag: "2026-10-12-retire-sdk-user-agent",
+    deleteClasses: ["Me3UserAgent", "Me3Agent"],
+    operationId: OPERATION_ID,
+  }).join("\n");
+  assert.match(latest, /new_sqlite_classes = \["Me3UserAgent"\]/);
+  assert.match(latest, /tag = "2026-10-12-retire-sdk-user-agent"/);
+  assert.ok(
+    latest.endsWith(`tag = "managed-delete-${OPERATION_ID}"\ndeleted_classes = ["Me3UserAgent", "Me3Agent"]`),
+  );
+
+  // An install that never reached a later step must not have that step replayed onto it.
+  const older = managedDurableObjectDeleteMigrations({
+    currentTag: "2026-10-01-me3-sdk-user-agent",
+    deleteClasses: ["Me3UserAgent", "Me3SdkUserAgent"],
+    operationId: OPERATION_ID,
+  }).join("\n");
+  assert.doesNotMatch(older, /Me3Agent"/);
+  assert.doesNotMatch(older, /retire-sdk-user-agent/);
+
+  assert.deepEqual(
+    managedDurableObjectDeleteMigrations({ currentTag: null, deleteClasses: [], operationId: OPERATION_ID }),
+    [],
+  );
+  assert.throws(
+    () => managedDurableObjectDeleteMigrations({
+      currentTag: "unknown-tag",
+      deleteClasses: ["Me3UserAgent"],
+      operationId: OPERATION_ID,
+    }),
+    /not in the canonical Durable Object history/,
+  );
+  assert.throws(
+    () => managedDurableObjectDeleteMigrations({
+      currentTag: "2026-10-12-retire-sdk-user-agent",
+      deleteClasses: ["Me3SdkUserAgent"],
+      operationId: OPERATION_ID,
+    }),
+    /not live at the Worker's current migration tag/,
+  );
+});

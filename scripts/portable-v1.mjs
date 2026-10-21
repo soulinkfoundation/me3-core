@@ -101,6 +101,11 @@ export const RUNTIME_MIGRATIONS = [
   ["0076_agent_commerce", "2026-10-17-agent-commerce-v1"],
   ["0077_agent_network_purchases", "2026-10-18-agent-network-purchases-v1"],
   ["0078_home_cards", "2026-10-17-home-cards-v1"],
+  ["0079_site_badge", "2026-10-19-site-badge-v1"],
+  ["0080_mailbox_login_codes", "2026-10-20-mailbox-login-codes-v2"],
+  ["0081_private_memory_importance", "2026-10-20-private-memory-importance-v1"],
+  ["0082_private_memory_forgotten", "2026-10-20-private-memory-forgotten-v1"],
+  ["0083_mailbox_spam", "2026-10-21-mailbox-spam-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -239,6 +244,8 @@ const COPIED_TABLES = [
   // Agent-first Email owner state: triage decisions (resolved/snoozed/drafts), the handled log and owner rules.
   "mailbox_triage",
   "mailbox_handled_actions",
+  // Owner emails ME3 acted on, linked to the chat turn and emailed reply.
+  "mailbox_instructions",
   "mailbox_rules",
   "mailbox_attachment_staging",
   "mission_agent_run_events",
@@ -432,7 +439,18 @@ const KNOWN_INSTALL_SECRETS = new Map([
   ["ME3_CLOUD_OWNER_ID", "exclude"],
   ["ME3_CLOUD_CORE_TOKEN", "exclude"],
   ["ME3_MANAGED_CAMPAIGN_CALLBACK_SECRET", "exclude"],
+  // Host-owned managed billing policy; a new host sets its own.
+  ["ME3_MANAGED_AI_BILLING_POLICY", "exclude"],
+  // Owner credential for the coding agent; reconnect after restore.
+  ["coding_agent_github_token", "exclude"],
 ]);
+// One-time managed setup session markers, one per used session id.
+const EXCLUDED_INSTALL_SECRET_PREFIXES = ["ME3_MANAGED_SETUP_SESSION_USED:"];
+
+function installSecretPolicy(name) {
+  if (KNOWN_INSTALL_SECRETS.has(name)) return KNOWN_INSTALL_SECRETS.get(name);
+  return EXCLUDED_INSTALL_SECRET_PREFIXES.some((prefix) => name.startsWith(prefix)) ? "exclude" : null;
+}
 
 const FORBIDDEN_ARCHIVE_PATTERNS = [
   ["private key", /-----BEGIN [^-]*PRIVATE KEY-----/i],
@@ -574,7 +592,7 @@ export async function exportPortableV1({
       portableNames: ["ME3_CORE_INSTALL_ID", "TOKEN_ENCRYPTION_KEY"],
       rotatedNames: ["JWT_SECRET"],
       excludedNames: [...installSecrets.entries()]
-        .filter(([name]) => KNOWN_INSTALL_SECRETS.get(name) === "exclude")
+        .filter(([name]) => installSecretPolicy(name) === "exclude")
         .map(([name]) => name)
         .sort(),
     };
@@ -999,7 +1017,7 @@ function isSupportedPasswordHash(value) {
 
 function readInstallSecrets(database) {
   const rows = sqliteJson(database, "SELECT name, value FROM install_secrets ORDER BY name;");
-  const unknown = rows.map((row) => row.name).filter((name) => !KNOWN_INSTALL_SECRETS.has(name));
+  const unknown = rows.map((row) => row.name).filter((name) => !installSecretPolicy(name));
   if (unknown.length) {
     throw new PortableError(
       "SECRET_UNCLASSIFIED",

@@ -132,6 +132,8 @@ export async function decommissionManagedInstall(
       throw new Error("Durable Object namespace identity does not match the managed install");
     }
     await deployTombstone({
+      api,
+      accountId: input.accountId,
       workerName: contract.workerName,
       operationId: contract.operationId,
       deleteDurableObject: Boolean(namespace),
@@ -1333,7 +1335,58 @@ function namespaceId(namespace) {
   return String(namespace?.id || namespace?.namespace_id || "").toLowerCase();
 }
 
-export function deployDurableObjectTombstone({
+// Mirrors the [[migrations]] in apps/worker/wrangler.core.example.toml. Wrangler only
+// accepts deleted_classes for classes its config history created, and uploads the
+// steps after the Worker's current tag, so the delete config replays this history.
+export const MANAGED_DURABLE_OBJECT_MIGRATIONS = [
+  { tag: "2026-05-11-me3-core-user-agent", newSqliteClasses: ["Me3UserAgent"] },
+  { tag: "2026-10-01-me3-sdk-user-agent", newSqliteClasses: ["Me3SdkUserAgent"] },
+  { tag: "2026-10-10-me3-agent", newSqliteClasses: ["Me3Agent"] },
+  { tag: "2026-10-12-retire-sdk-user-agent", deletedClasses: ["Me3SdkUserAgent"] },
+];
+
+export function managedDurableObjectDeleteMigrations({ currentTag, deleteClasses, operationId }) {
+  if (!deleteClasses.length) return [];
+  const end = MANAGED_DURABLE_OBJECT_MIGRATIONS.findIndex((step) => step.tag === currentTag);
+  if (end === -1) {
+    throw new Error("Managed Worker migration tag is not in the canonical Durable Object history");
+  }
+  // Stop at the Worker's own tag so Wrangler uploads only the delete step.
+  const history = MANAGED_DURABLE_OBJECT_MIGRATIONS.slice(0, end + 1);
+  const live = new Set();
+  for (const step of history) {
+    for (const name of step.newSqliteClasses || []) live.add(name);
+    for (const name of step.deletedClasses || []) live.delete(name);
+  }
+  if (deleteClasses.some((name) => !live.has(name))) {
+    throw new Error("Durable Object class to delete is not live at the Worker's current migration tag");
+  }
+  const list = (names) => `[${names.map((name) => `"${name}"`).join(", ")}]`;
+  return [
+    ...history.flatMap((step) => [
+      "[[migrations]]",
+      `tag = "${step.tag}"`,
+      step.newSqliteClasses
+        ? `new_sqlite_classes = ${list(step.newSqliteClasses)}`
+        : `deleted_classes = ${list(step.deletedClasses)}`,
+    ]),
+    "[[migrations]]",
+    `tag = "managed-delete-${operationId}"`,
+    `deleted_classes = ${list(deleteClasses)}`,
+  ];
+}
+
+async function readManagedWorkerMigrationTag(api, accountId, workerName) {
+  const scripts = await api(`/accounts/${accountId}/workers/scripts`);
+  if (!Array.isArray(scripts)) throw new Error("Cloudflare Worker listing is invalid");
+  const script = scripts.find((item) => item?.id === workerName);
+  if (!script) throw new Error("Managed Worker is missing from the Cloudflare Worker listing");
+  return typeof script.migration_tag === "string" && script.migration_tag ? script.migration_tag : null;
+}
+
+export async function deployDurableObjectTombstone({
+  api,
+  accountId,
   workerName,
   operationId,
   deleteDurableObject = true,
@@ -1341,6 +1394,18 @@ export function deployDurableObjectTombstone({
   deleteAgentDurableObject = false,
   allowApiUpdatedWorker = false,
 }) {
+  const deleteClasses = [
+    ...(deleteDurableObject ? ["Me3UserAgent"] : []),
+    ...(deleteSdkDurableObject ? ["Me3SdkUserAgent"] : []),
+    ...(deleteAgentDurableObject ? ["Me3Agent"] : []),
+  ];
+  const migrations = managedDurableObjectDeleteMigrations({
+    currentTag: deleteClasses.length
+      ? await readManagedWorkerMigrationTag(api, accountId, workerName)
+      : null,
+    deleteClasses,
+    operationId,
+  });
   const root = mkdtempSync(join(tmpdir(), "me3-managed-do-delete-"));
   const configPath = join(root, "wrangler.toml");
   try {
@@ -1354,17 +1419,7 @@ export function deployDurableObjectTombstone({
       'main = "tombstone.mjs"',
       'compatibility_date = "2026-06-24"',
       "workers_dev = false",
-      ...(deleteDurableObject || deleteSdkDurableObject || deleteAgentDurableObject
-        ? [
-            "[[migrations]]",
-            `tag = "managed-delete-${operationId}"`,
-            `deleted_classes = [${[
-              ...(deleteDurableObject ? ['"Me3UserAgent"'] : []),
-              ...(deleteSdkDurableObject ? ['"Me3SdkUserAgent"'] : []),
-              ...(deleteAgentDurableObject ? ['"Me3Agent"'] : []),
-            ].join(", ")}]`,
-          ]
-        : []),
+      ...migrations,
       "",
     ];
     writeFileSync(configPath, config.join("\n"), { mode: 0o600 });

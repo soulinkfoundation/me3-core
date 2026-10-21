@@ -101,6 +101,8 @@ export async function cleanupFailedManagedProvision(
   if (namespace || sdkNamespaces.length || agentNamespaces.length || workerHasResourceBindings) {
     if (namespace) assertNamespaceIdentity(namespace, contract);
     await deployTombstone({
+      api,
+      accountId: input.accountId,
       workerName: contract.workerName,
       operationId: contract.operationId,
       deleteDurableObject: Boolean(namespace),
