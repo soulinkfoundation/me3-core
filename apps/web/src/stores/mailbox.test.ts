@@ -75,36 +75,39 @@ describe("mailbox cache", () => {
 
     await mailbox.loadFolderCounts();
 
-    expect(mailbox.folderCounts).toEqual({ inbox: 3, drafts: 2 });
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(mailbox.folderCounts).toEqual({ inbox: 3, drafts: 2, spam: 2 });
+    expect(api.get).toHaveBeenCalledTimes(3);
 
     await mailbox.loadFolderCounts();
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(api.get).toHaveBeenCalledTimes(3);
 
     await mailbox.loadFolderCounts(true);
-    expect(api.get).toHaveBeenCalledTimes(4);
+    expect(api.get).toHaveBeenCalledTimes(6);
   });
 
   it("queues a forced count refresh behind an in-flight load", async () => {
     const firstInbox = deferred<{ total: number }>();
     const firstDrafts = deferred<{ total: number }>();
+    const firstSpam = deferred<{ total: number }>();
     vi.mocked(api.get)
       .mockImplementationOnce(() => firstInbox.promise)
       .mockImplementationOnce(() => firstDrafts.promise)
+      .mockImplementationOnce(() => firstSpam.promise)
       .mockResolvedValue({ total: 3 });
     const mailbox = useMailboxCacheStore();
 
     const initial = mailbox.loadFolderCounts();
     const forced = mailbox.loadFolderCounts(true);
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(api.get).toHaveBeenCalledTimes(3);
 
     firstInbox.resolve({ total: 1 });
     firstDrafts.resolve({ total: 2 });
+    firstSpam.resolve({ total: 0 });
     await initial;
     await forced;
 
-    expect(api.get).toHaveBeenCalledTimes(4);
-    expect(mailbox.folderCounts).toEqual({ inbox: 3, drafts: 3 });
+    expect(api.get).toHaveBeenCalledTimes(6);
+    expect(mailbox.folderCounts).toEqual({ inbox: 3, drafts: 3, spam: 3 });
   });
 });
 

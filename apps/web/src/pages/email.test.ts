@@ -290,6 +290,7 @@ describe("EmailPage", () => {
       "drafts",
       "sent",
       "archive",
+      "spam",
       "trash",
       "campaigns",
     ]);

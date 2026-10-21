@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { API_BASE, api } from "../api";
 
-export type MailboxFolderCountKey = "inbox" | "drafts";
+export type MailboxFolderCountKey = "inbox" | "drafts" | "spam";
 
 export type MailboxFolderCounts = Record<MailboxFolderCountKey, number | null>;
 
@@ -16,6 +16,7 @@ const folderCountUrls: Record<MailboxFolderCountKey, string> = {
   inbox: "/mailbox/messages?folder=inbox&direction=all&unread=1&limit=0",
   drafts:
     "/mailbox/messages?folder=drafts&status=pending_approval%2Cfailed%2Capproved&direction=outbound&limit=0",
+  spam: "/mailbox/messages?folder=spam&direction=all&limit=0",
 };
 
 export type MailboxListRequest = {
@@ -58,6 +59,7 @@ export const useMailboxCacheStore = defineStore("mailboxCache", () => {
   const folderCounts = ref<MailboxFolderCounts>({
     inbox: null,
     drafts: null,
+    spam: null,
   });
   const loadingFolderCounts = ref(false);
   const folderInvalidationVersions = ref<Record<string, number>>({});

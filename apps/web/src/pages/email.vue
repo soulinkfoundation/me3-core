@@ -79,7 +79,10 @@ type InboxMessage = {
   body: string;
   htmlBody?: string | null;
   preview: string;
-  folder?: "inbox" | "drafts" | "sent" | "archive" | "trash";
+  folder?: "inbox" | "drafts" | "sent" | "archive" | "trash" | "spam";
+  /** Core 0.1.236+: spam waits in Trash with spamAt set, so a spam message reports folder "trash" plus spam: true. */
+  spam?: boolean;
+  spamAt?: string | null;
   readAt?: string | null;
   unread?: boolean;
   agentSummary?: string | null;
@@ -232,7 +235,9 @@ type ClearTelegramHistoryResponse = {
   deletedEvents: number;
 };
 
-type EmailTab = "inbox" | "drafts" | "sent" | "archive" | "trash";
+type EmailTab = "inbox" | "drafts" | "sent" | "archive" | "trash" | "spam";
+type MoveFolder = "inbox" | "archive" | "trash";
+type SpamTarget = { scope: "threads" | "messages"; id: string };
 type Tab = EmailTab | "telegram" | "brief";
 
 type TelegramChatBubble = {
@@ -443,7 +448,7 @@ const emailTabConfig: Record<
   EmailTab,
   {
     label: string;
-    folderParam: "inbox" | "drafts" | "sent" | "archive" | "trash";
+    folderParam: "inbox" | "drafts" | "sent" | "archive" | "trash" | "spam";
     statusParam?: string;
     directionParam: "outbound" | "all";
   }
@@ -470,6 +475,11 @@ const emailTabConfig: Record<
     folderParam: "archive",
     directionParam: "all",
   },
+  spam: {
+    label: "Spam",
+    folderParam: "spam",
+    directionParam: "all",
+  },
   trash: {
     label: "Trash",
     folderParam: "trash",
@@ -482,6 +492,7 @@ const emailTabOrder: EmailTab[] = [
   "drafts",
   "sent",
   "archive",
+  "spam",
   "trash",
 ];
 const emailTabIcons: Record<EmailTab, UiIconName> = {
@@ -489,6 +500,7 @@ const emailTabIcons: Record<EmailTab, UiIconName> = {
   drafts: "FileText",
   sent: "Send",
   archive: "Archive",
+  spam: "ShieldAlert",
   trash: "Trash2",
 };
 const mailFolderTabs = computed(() => {
@@ -729,9 +741,14 @@ function draftStatusLabel(message: InboxMessage): string {
 }
 
 function getFolderCount(tab: EmailTab): number | null {
-  return tab === "inbox" || tab === "drafts"
+  return tab === "inbox" || tab === "drafts" || tab === "spam"
     ? folderCounts.value[tab]
     : null;
+}
+
+/** The folder a message shows in: Spam for filtered mail, which Core stores in Trash with spamAt set. */
+function messageFolder(message: InboxMessage): InboxMessage["folder"] {
+  return message.spam && message.folder === "trash" ? "spam" : message.folder;
 }
 
 function getVisibleFolderCount(tab: EmailTab): number | null {
@@ -998,7 +1015,7 @@ async function undoMessageMoves(
 }
 
 function showMoveToast(
-  folder: "inbox" | "archive" | "trash",
+  folder: MoveFolder,
   moves: Array<{ id: string; folder: NonNullable<InboxMessage["folder"]> }>,
 ) {
   const count = moves.length;
@@ -1043,7 +1060,7 @@ async function undoThreadMoves(
 }
 
 function showThreadMoveToast(
-  folder: "inbox" | "archive" | "trash",
+  folder: MoveFolder,
   moves: Array<{ id: string; folder: NonNullable<InboxMessage["folder"]> }>,
 ) {
   const count = moves.length;
@@ -1834,7 +1851,7 @@ async function rejectMessage(msg: InboxMessage) {
 
 async function moveMessage(
   msg: InboxMessage,
-  folder: "inbox" | "archive" | "trash",
+  folder: MoveFolder,
 ) {
   if (inboxBusy.value) return;
   deletePending.value = msg.id;
@@ -1844,7 +1861,7 @@ async function moveMessage(
   const previousMobileThreadOpen = mobileThreadOpen.value;
   const previousSelectedMessageIds = new Set(selectedMessageIds.value);
   const previousFolder =
-    msg.folder ||
+    messageFolder(msg) ||
     (!isEmailTab(activeTab.value)
       ? "inbox"
       : emailTabConfig[activeTab.value].folderParam);
@@ -1894,14 +1911,14 @@ async function getConversationActionMessages(
     ? emailTabConfig[activeTab.value].folderParam
     : message.folder;
   const matching = detail.filter(
-    (candidate) => candidate.kind !== "draft" && candidate.folder === folder,
+    (candidate) => candidate.kind !== "draft" && messageFolder(candidate) === folder,
   );
   return matching.length ? matching : detail.filter((candidate) => candidate.kind !== "draft");
 }
 
 async function moveConversation(
   message: InboxMessage,
-  folder: "inbox" | "archive" | "trash",
+  folder: MoveFolder,
 ) {
   const thread = getThreadSummary(message);
   if (!thread) {
@@ -1959,7 +1976,7 @@ async function moveConversation(
   }
 }
 
-async function moveSelectedThreads(folder: "inbox" | "archive" | "trash") {
+async function moveSelectedThreads(folder: MoveFolder) {
   const selected = selectedMessages.value;
   if (inboxBusy.value || selected.length === 0) return;
   bulkActionPending.value = true;
@@ -2011,7 +2028,7 @@ async function moveSelectedThreads(folder: "inbox" | "archive" | "trash") {
   }
 }
 
-async function moveSelectedMessages(folder: "inbox" | "archive" | "trash") {
+async function moveSelectedMessages(folder: MoveFolder) {
   if (threadMode.value) {
     await moveSelectedThreads(folder);
     return;
@@ -2024,7 +2041,7 @@ async function moveSelectedMessages(folder: "inbox" | "archive" | "trash") {
   const undoMoves = selected.map((message) => ({
     id: message.id,
     folder:
-      message.folder ||
+      messageFolder(message) ||
       (!isEmailTab(activeTab.value)
         ? ("inbox" as const)
         : emailTabConfig[activeTab.value].folderParam),
@@ -2119,7 +2136,7 @@ async function deleteSelectedMessagesPermanently() {
       if (results.some((result) => result.status === "rejected")) {
         await loadMessages();
         error.value =
-          "Some conversations could not be deleted. Trash was refreshed.";
+          `Some conversations could not be deleted. ${activeFolderLabel.value} was refreshed.`;
       }
       await loadFolderCounts();
     } catch (err) {
@@ -2156,10 +2173,191 @@ async function deleteSelectedMessagesPermanently() {
     await loadMessages();
     toast.error(`${failedCount} ${
       failedCount === 1 ? "message" : "messages"
-    } could not be deleted. Trash was refreshed.`);
+    } could not be deleted. ${activeFolderLabel.value} was refreshed.`);
   }
   await loadFolderCounts();
   bulkActionPending.value = false;
+}
+
+// --- Spam. "Spam" blocks the sender and files the mail in Spam; "Not spam" brings it back and always shows them.
+
+function spamTargetFor(message: InboxMessage): SpamTarget {
+  const thread = getThreadSummary(message);
+  return thread ? { scope: "threads", id: thread.id } : { scope: "messages", id: message.id };
+}
+
+function senderLabel(message: InboxMessage): string {
+  return message.sender?.name || getDisplayText(message.fromAddress) || "this sender";
+}
+
+/** Takes conversations out of the list before their request returns; the returned function puts them back. */
+function removeConversationsFromList(selected: InboxMessage[]): () => void {
+  const previousMessages = messages.value;
+  const previousThreads = threadSummaries.value;
+  const previousTotal = total.value;
+  const previousExpandedId = expandedId.value;
+  const previousSelectedThreadId = selectedThreadId.value;
+  const previousLoadedThreadId = loadedThreadId.value;
+  const previousLoadedMessages = loadedThreadMessages.value;
+  const previousSelectedIds = new Set(selectedMessageIds.value);
+  const previousMobileThreadOpen = mobileThreadOpen.value;
+  const ids = new Set(selected.map((message) => message.id));
+  const threadIds = new Set(
+    selected.map((message) => getThreadSummary(message)?.id).filter((id): id is string => Boolean(id)),
+  );
+  const openThreadRemoved = Boolean(selectedThreadId.value && threadIds.has(selectedThreadId.value));
+  ignorePendingMessageResponses();
+  messages.value = messages.value.filter((message) => !ids.has(message.id));
+  threadSummaries.value = threadSummaries.value.filter((thread) => !threadIds.has(thread.id));
+  total.value = Math.max(0, total.value - ids.size);
+  if (!threadMode.value) selectNextMessageAfterRemoval(previousMessages, ids);
+  clearSelectedMessages();
+  syncSelectedMessages(messages.value);
+  if (openThreadRemoved) clearOpenConversation();
+  cacheActiveMessages();
+  return () => {
+    messages.value = previousMessages;
+    threadSummaries.value = previousThreads;
+    total.value = previousTotal;
+    expandedId.value = previousExpandedId;
+    selectedThreadId.value = previousSelectedThreadId;
+    loadedThreadId.value = previousLoadedThreadId;
+    loadedThreadMessages.value = previousLoadedMessages;
+    selectedMessageIds.value = previousSelectedIds;
+    mobileThreadOpen.value = previousMobileThreadOpen;
+    cacheActiveMessages();
+  };
+}
+
+function postSpamAction(targets: SpamTarget[], action: "spam" | "not-spam") {
+  return Promise.allSettled(
+    targets.map((target) => api.post(`/mailbox/${target.scope}/${encodeURIComponent(target.id)}/${action}`)),
+  );
+}
+
+/** Undo of "Spam": the mail comes back as not spam, then returns to the folder it was marked from. */
+async function undoSpamMarks(targets: SpamTarget[], fromFolder: NonNullable<InboxMessage["folder"]>) {
+  const results = await postSpamAction(targets, "not-spam");
+  if (fromFolder !== "inbox" && fromFolder !== "spam") {
+    await Promise.allSettled(
+      targets.map((target) =>
+        api.post(
+          `/mailbox/${target.scope}/${encodeURIComponent(target.id)}/move`,
+          target.scope === "threads" ? { folder: fromFolder, fromFolder: "inbox" } : { folder: fromFolder },
+        ),
+      ),
+    );
+  }
+  await Promise.all([loadMessages(), loadFolderCounts()]);
+  if (results.every((result) => result.status === "fulfilled")) {
+    toastSuccess(targets.length === 1 ? "Not spam. The sender is no longer blocked." : "Not spam. The senders are no longer blocked.");
+  } else {
+    toast.error("Some conversations could not be restored.");
+  }
+}
+
+async function undoNotSpamMarks(targets: SpamTarget[]) {
+  const results = await postSpamAction(targets, "spam");
+  await Promise.all([loadMessages(), loadFolderCounts()]);
+  if (results.every((result) => result.status === "fulfilled")) {
+    toastSuccess("Moved back to Spam.");
+  } else {
+    toast.error("Some conversations could not be moved back to Spam.");
+  }
+}
+
+async function setConversationsSpam(selected: InboxMessage[], spam: boolean) {
+  if (inboxBusy.value || selected.length === 0) return;
+  const single = selected.length === 1;
+  if (single) deletePending.value = selected[0].id;
+  else bulkActionPending.value = true;
+  const fromFolder = isEmailTab(activeTab.value)
+    ? emailTabConfig[activeTab.value].folderParam
+    : messageFolder(selected[0]) || "inbox";
+  const targets = selected.map(spamTargetFor);
+  const restore = removeConversationsFromList(selected);
+  try {
+    const results = await postSpamAction(targets, spam ? "spam" : "not-spam");
+    const done = targets.filter((_, index) => results[index]?.status === "fulfilled");
+    if (done.length < targets.length) {
+      if (done.length === 0) restore();
+      await loadMessages();
+      toast.error(
+        spam
+          ? `${single ? "This conversation" : "Some conversations"} could not be marked as spam. The folder was refreshed.`
+          : `${single ? "This conversation" : "Some conversations"} could not be moved to Inbox. The folder was refreshed.`,
+      );
+    }
+    if (done.length > 0) {
+      const sender = senderLabel(selected[0]);
+      toast.success(
+        spam
+          ? single
+            ? `Marked as spam. ${sender} is blocked from now on.`
+            : `${done.length} conversations marked as spam. Their senders are blocked from now on.`
+          : single
+            ? `Moved to Inbox. ME3 will always show ${sender}.`
+            : `${done.length} conversations moved to Inbox. ME3 will always show their senders.`,
+        {
+          action: {
+            label: "Undo",
+            onClick: () => void (spam ? undoSpamMarks(done, fromFolder) : undoNotSpamMarks(done)),
+          },
+        },
+      );
+    }
+    await loadFolderCounts();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Failed to update conversations";
+  } finally {
+    deletePending.value = null;
+    bulkActionPending.value = false;
+  }
+}
+
+function markConversationSpam(message: InboxMessage) {
+  threadMoreOpen.value = false;
+  return setConversationsSpam([message], true);
+}
+
+function markConversationNotSpam(message: InboxMessage) {
+  threadMoreOpen.value = false;
+  return setConversationsSpam([message], false);
+}
+
+function markSelectedSpam() {
+  return setConversationsSpam(selectedMessages.value, true);
+}
+
+function markSelectedNotSpam() {
+  return setConversationsSpam(selectedMessages.value, false);
+}
+
+/** Spam and Trash: one conversation gone for good, after a confirm. */
+async function deleteConversationPermanently(message: InboxMessage) {
+  if (inboxBusy.value) return;
+  const thread = getThreadSummary(message);
+  if (!window.confirm(`Permanently delete this ${thread ? "conversation" : "message"}?`)) return;
+  deletePending.value = message.id;
+  try {
+    const targets = thread ? await getConversationActionMessages(message) : [message];
+    const restore = removeConversationsFromList([message]);
+    const results = await Promise.allSettled(
+      targets.map((target) => api.delete(`/mailbox/messages/${target.id}`)),
+    );
+    if (results.some((result) => result.status === "rejected")) {
+      restore();
+      await loadMessages();
+      toast.error(`This ${thread ? "conversation" : "message"} could not be deleted. ${activeFolderLabel.value} was refreshed.`);
+    } else {
+      toastSuccess("Deleted forever.");
+    }
+    await loadFolderCounts();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "Failed to delete conversation";
+  } finally {
+    deletePending.value = null;
+  }
 }
 
 type PreviousReadState = Pick<InboxMessage, "id" | "readAt" | "unread">;
@@ -2329,6 +2527,9 @@ const threadSummaryLine = computed(() => {
 const latestEmailMessage = computed(() =>
   [...selectedThreadMessages.value].reverse().find((message) => message.kind === "email") || null,
 );
+
+/** Where the open conversation lives, with filtered mail shown as Spam rather than Trash. */
+const selectedMessageFolder = computed(() => (selectedMessage.value ? messageFolder(selectedMessage.value) : undefined));
 
 const latestInboundMessage = computed(() =>
   [...selectedThreadMessages.value].reverse().find((message) => message.kind === "email" && message.direction === "inbound") || null,
@@ -3689,7 +3890,16 @@ onBeforeUnmount(() => {
                       </label>
                       <div v-if="selectedMessageCount > 0" class="bulk-mail-actions">
                         <Button color="outline" shape="soft" size="compact" type="button"
-                          v-if="activeTab === 'archive' || activeTab === 'trash'"
+                          v-if="activeTab === 'spam'"
+                          :disabled="inboxBusy"
+                          title="Not spam: move selected to Inbox"
+                          @click="markSelectedNotSpam()"
+                        >
+                          <UiIcon name="ShieldCheck" :size="14" aria-hidden="true" />
+                          Not spam
+                        </Button>
+                        <Button color="outline" shape="soft" size="compact" type="button"
+                          v-else-if="activeTab === 'archive' || activeTab === 'trash'"
                           :disabled="inboxBusy"
                           title="Restore selected"
                           @click="moveSelectedMessages('inbox')"
@@ -3706,13 +3916,22 @@ onBeforeUnmount(() => {
                           <UiIcon name="Archive" :size="14" aria-hidden="true" />
                           Archive
                         </Button>
+                        <Button color="outline" shape="soft" size="compact" type="button"
+                          v-if="activeTab === 'inbox' || activeTab === 'archive'"
+                          :disabled="inboxBusy"
+                          title="Mark selected as spam"
+                          @click="markSelectedSpam()"
+                        >
+                          <UiIcon name="ShieldAlert" :size="14" aria-hidden="true" />
+                          Spam
+                        </Button>
                         <Button color="danger" shape="soft" size="compact" type="button"
                           :disabled="inboxBusy"
-                          :title="activeTab === 'trash' ? 'Delete selected forever' : 'Move selected to trash'"
-                          @click="activeTab === 'trash' ? deleteSelectedMessagesPermanently() : moveSelectedMessages('trash')"
+                          :title="activeTab === 'trash' || activeTab === 'spam' ? 'Delete selected forever' : 'Move selected to trash'"
+                          @click="activeTab === 'trash' || activeTab === 'spam' ? deleteSelectedMessagesPermanently() : moveSelectedMessages('trash')"
                         >
                           <UiIcon name="Trash2" :size="14" aria-hidden="true" />
-                          {{ activeTab === "trash" ? "Delete" : "Trash" }}
+                          {{ activeTab === "trash" || activeTab === "spam" ? "Delete" : "Trash" }}
                         </Button>
                       </div>
                       <button type="button" class="mail-quiet" @click="exitSelectMode">Done</button>
@@ -3778,7 +3997,25 @@ onBeforeUnmount(() => {
                           <span class="mail-row__preview">{{ getMessagePreview(message) }}</span>
                         </span>
                       </button>
-                      <div v-if="!isDraftMessage(message) && !selectMode" class="mail-row__actions" aria-label="Conversation actions">
+                      <div v-if="!isDraftMessage(message) && !selectMode && activeTab === 'spam'" class="mail-row__actions" aria-label="Conversation actions">
+                        <Button color="ghost" shape="soft" size="small" icon-only type="button"
+                          aria-label="Not spam: move conversation to Inbox"
+                          title="Not spam"
+                          :disabled="inboxBusy"
+                          @click.stop="markConversationNotSpam(message)"
+                        >
+                          <UiIcon name="ShieldCheck" :size="15" aria-hidden="true" />
+                        </Button>
+                        <Button color="ghost" shape="soft" size="small" icon-only type="button"
+                          aria-label="Delete conversation forever"
+                          title="Delete forever"
+                          :disabled="inboxBusy"
+                          @click.stop="deleteConversationPermanently(message)"
+                        >
+                          <UiIcon name="Trash2" :size="15" aria-hidden="true" />
+                        </Button>
+                      </div>
+                      <div v-else-if="!isDraftMessage(message) && !selectMode" class="mail-row__actions" aria-label="Conversation actions">
                         <Button color="ghost" shape="soft" size="small" icon-only type="button"
                           :aria-label="activeTab === 'archive' || activeTab === 'trash' ? 'Restore conversation to Inbox' : 'Archive conversation'"
                           :title="activeTab === 'archive' || activeTab === 'trash' ? 'Restore to Inbox' : 'Archive (E)'"
@@ -3795,11 +4032,19 @@ onBeforeUnmount(() => {
                         >
                           <UiIcon :name="getConversationUnreadCount(message) > 0 ? 'MailOpen' : 'Mail'" :size="15" aria-hidden="true" />
                         </Button>
-                        <Button color="ghost" shape="soft" size="small" icon-only type="button"
-                          aria-label="Move conversation to Trash"
-                          title="Move to Trash (#)"
+                        <Button v-if="activeTab === 'inbox' || activeTab === 'archive'" color="ghost" shape="soft" size="small" icon-only type="button"
+                          aria-label="Mark conversation as spam"
+                          title="Spam"
                           :disabled="inboxBusy"
-                          @click.stop="moveConversation(message, 'trash')"
+                          @click.stop="markConversationSpam(message)"
+                        >
+                          <UiIcon name="ShieldAlert" :size="15" aria-hidden="true" />
+                        </Button>
+                        <Button color="ghost" shape="soft" size="small" icon-only type="button"
+                          :aria-label="activeTab === 'trash' ? 'Delete conversation forever' : 'Move conversation to Trash'"
+                          :title="activeTab === 'trash' ? 'Delete forever' : 'Move to Trash (#)'"
+                          :disabled="inboxBusy"
+                          @click.stop="activeTab === 'trash' ? deleteConversationPermanently(message) : moveConversation(message, 'trash')"
                         >
                           <UiIcon name="Trash2" :size="15" aria-hidden="true" />
                         </Button>
@@ -3836,6 +4081,10 @@ onBeforeUnmount(() => {
                       <template v-else-if="activeTab === 'archive'">
                         <p>Nothing archived.</p>
                         <p class="empty-state__sub">Archived conversations stay searchable here.</p>
+                      </template>
+                      <template v-else-if="activeTab === 'spam'">
+                        <p>No spam.</p>
+                        <p class="empty-state__sub">Mail ME3 filters as spam waits here and is deleted after 30 days. Choose “Not spam” to bring one back.</p>
                       </template>
                       <template v-else-if="activeTab === 'trash'">
                         <p>Trash is empty.</p>
@@ -3914,7 +4163,17 @@ onBeforeUnmount(() => {
                         <span class="thread-action__label">Forward</span>
                       </Button>
                       <Button color="ghost" shape="soft" size="compact" type="button" class="thread-action"
-                        v-if="selectedMessage.folder === 'archive' || selectedMessage.folder === 'trash'"
+                        v-if="selectedMessageFolder === 'spam'"
+                        title="Not spam: move to Inbox"
+                        aria-label="Not spam"
+                        :disabled="inboxBusy || isDraftMessage(selectedMessage)"
+                        @click="markConversationNotSpam(selectedMessage)"
+                      >
+                        <UiIcon name="ShieldCheck" :size="16" aria-hidden="true" />
+                        <span class="thread-action__label">Not spam</span>
+                      </Button>
+                      <Button color="ghost" shape="soft" size="compact" type="button" class="thread-action"
+                        v-else-if="selectedMessageFolder === 'archive' || selectedMessageFolder === 'trash'"
                         title="Restore to Inbox"
                         aria-label="Restore to Inbox"
                         :disabled="inboxBusy || isDraftMessage(selectedMessage)"
@@ -3945,14 +4204,14 @@ onBeforeUnmount(() => {
                         <span class="thread-action__label">{{ selectedThreadIsUnread ? "Read" : "Unread" }}</span>
                       </Button>
                       <Button color="ghost" shape="soft" size="compact" type="button" class="thread-action"
-                        title="Move to Trash (#)"
-                        aria-label="Move to trash"
+                        :title="selectedMessageFolder === 'spam' ? 'Delete forever' : 'Move to Trash (#)'"
+                        :aria-label="selectedMessageFolder === 'spam' ? 'Delete forever' : 'Move to trash'"
                         aria-keyshortcuts="# Delete"
-                        :disabled="inboxBusy || isDraftMessage(selectedMessage) || selectedMessage.folder === 'trash'"
-                        @click="moveConversation(selectedMessage, 'trash')"
+                        :disabled="inboxBusy || isDraftMessage(selectedMessage) || selectedMessageFolder === 'trash'"
+                        @click="selectedMessageFolder === 'spam' ? deleteConversationPermanently(selectedMessage) : moveConversation(selectedMessage, 'trash')"
                       >
                         <UiIcon name="Trash2" :size="16" aria-hidden="true" />
-                        <span class="thread-action__label">Trash</span>
+                        <span class="thread-action__label">{{ selectedMessageFolder === "spam" ? "Delete" : "Trash" }}</span>
                       </Button>
                       <div class="thread-more" @keydown.esc="threadMoreOpen = false">
                         <Button color="ghost" shape="soft" size="compact" icon-only type="button"
@@ -3967,17 +4226,37 @@ onBeforeUnmount(() => {
                         <div v-if="threadMoreOpen" class="thread-more__menu" role="menu">
                           <button type="button" role="menuitem" :disabled="inboxBusy" @click="threadMoreOpen = false; markConversationRead(selectedMessage, false)">Mark as unread</button>
                           <button
-                            v-if="latestInboundMessage?.unsubscribeAction"
+                            v-if="selectedMessageFolder === 'spam'"
                             type="button"
                             role="menuitem"
                             :disabled="inboxBusy"
-                            @click="threadMoreOpen = false; unsubscribeFromMessage(latestInboundMessage)"
+                            @click="markConversationNotSpam(selectedMessage)"
                           >
-                            {{ unsubscribePending === latestInboundMessage?.id ? "Unsubscribing…" : "Unsubscribe" }}
+                            Not spam
                           </button>
-                          <button v-if="latestInboundMessage" type="button" role="menuitem" :disabled="inboxBusy" @click="alwaysArchiveSender(latestInboundMessage)">
-                            Always archive {{ latestInboundMessage.sender?.name || "this sender" }}
-                          </button>
+                          <template v-else>
+                            <button
+                              v-if="latestInboundMessage?.unsubscribeAction?.available"
+                              type="button"
+                              role="menuitem"
+                              :disabled="inboxBusy"
+                              @click="threadMoreOpen = false; unsubscribeFromMessage(latestInboundMessage)"
+                            >
+                              {{ unsubscribePending === latestInboundMessage?.id ? "Unsubscribing…" : "Unsubscribe" }}
+                            </button>
+                            <button
+                              v-if="latestInboundMessage && (selectedMessageFolder === 'inbox' || selectedMessageFolder === 'archive')"
+                              type="button"
+                              role="menuitem"
+                              :disabled="inboxBusy"
+                              @click="markConversationSpam(selectedMessage)"
+                            >
+                              Spam
+                            </button>
+                            <button v-if="latestInboundMessage" type="button" role="menuitem" :disabled="inboxBusy" @click="alwaysArchiveSender(latestInboundMessage)">
+                              Always archive {{ latestInboundMessage.sender?.name || "this sender" }}
+                            </button>
+                          </template>
                         </div>
                       </div>
                     </div>

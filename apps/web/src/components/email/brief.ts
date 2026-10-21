@@ -77,7 +77,7 @@ export type MailboxBrief = {
 
 export type MailboxRule = {
   id: string;
-  kind: "archive_sender" | "archive_domain" | "always_show_sender";
+  kind: "archive_sender" | "archive_domain" | "always_show_sender" | "spam_sender" | "spam_domain";
   matchValue: string;
   label: string;
   status: "active" | "paused";

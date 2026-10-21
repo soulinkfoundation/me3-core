@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import AppDialog from "../AppDialog.vue";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
@@ -13,6 +13,14 @@ const emit = defineEmits<{ close: [] }>();
 const { toastFromUnknown } = useAppToast();
 const rules = ref<MailboxRule[]>([]);
 const loading = ref(false);
+
+function isBlockRule(rule: MailboxRule): boolean {
+  return rule.kind === "spam_sender" || rule.kind === "spam_domain";
+}
+
+/** Blocked senders and domains are listed apart from the filing rules: they stop mail before ME3 reads it. */
+const handlingRules = computed(() => rules.value.filter((rule) => !isBlockRule(rule)));
+const blockedRules = computed(() => rules.value.filter(isBlockRule));
 
 async function load() {
   loading.value = true;
@@ -52,14 +60,30 @@ watch(() => props.open, (open) => { if (open) void load(); }, { immediate: true 
       </p>
       <h3>Your rules</h3>
       <p v-if="loading && rules.length === 0" class="rules-modal__muted">Loading…</p>
-      <p v-else-if="rules.length === 0" class="rules-modal__muted">
+      <p v-else-if="handlingRules.length === 0" class="rules-modal__muted">
         No rules yet. Open a conversation and choose “Always archive this sender” from More.
       </p>
       <ul v-else class="rules-modal__list">
-        <li v-for="rule in rules" :key="rule.id">
+        <li v-for="rule in handlingRules" :key="rule.id">
           <span class="rules-modal__rule">
             <strong>{{ rule.label }}</strong>
             <small>{{ rule.matchValue }}</small>
+          </span>
+          <button type="button" class="rules-modal__remove" @click="remove(rule)">Remove</button>
+        </li>
+      </ul>
+      <h3>Blocked as spam</h3>
+      <p class="rules-modal__muted rules-modal__muted--tight">
+        Mail from these goes straight to Spam, before ME3 reads it. Remove one to let them through again.
+      </p>
+      <p v-if="!loading && blockedRules.length === 0" class="rules-modal__muted">
+        Nothing blocked yet. Choose “Spam” on a conversation to block its sender.
+      </p>
+      <ul v-else-if="blockedRules.length" class="rules-modal__list" aria-label="Blocked senders and domains">
+        <li v-for="rule in blockedRules" :key="rule.id">
+          <span class="rules-modal__rule">
+            <strong>{{ rule.matchValue }}</strong>
+            <small>{{ rule.kind === "spam_domain" ? "Everyone at this domain" : "This sender" }}</small>
           </span>
           <button type="button" class="rules-modal__remove" @click="remove(rule)">Remove</button>
         </li>
@@ -96,6 +120,11 @@ watch(() => props.open, (open) => { if (open) void load(); }, { immediate: true 
   font-size: 14px;
   line-height: 1.5;
   color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.rules-modal__muted--tight {
+  margin-top: 0;
+  margin-bottom: 6px;
 }
 
 h3 {

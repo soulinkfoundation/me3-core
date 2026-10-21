@@ -162,7 +162,13 @@ async function perform(action: MailboxBriefAction, item: MailboxBriefItem) {
 async function undo(item: MailboxHandledItem) {
   try {
     await api.post(`/mailbox/handled/${encodeURIComponent(item.id)}/undo`);
-    toast.success(item.undo?.kind === "remove_ledger_entry" ? "Removed from Accounts." : "Moved back to Inbox.");
+    toast.success(
+      item.undo?.kind === "remove_ledger_entry"
+        ? "Removed from Accounts."
+        : item.kind === "spam"
+          ? "Moved back to Inbox. ME3 will show this sender from now on."
+          : "Moved back to Inbox.",
+    );
     await load(true);
   } catch (error) {
     toastFromUnknown(error, "That could not be undone");
@@ -189,6 +195,7 @@ function groupIcon(kind: string) {
     case "newsletter": return "FileText";
     case "notification": return "Archive";
     case "rule_reply": return "Send";
+    case "spam": return "ShieldAlert";
     default: return "Sparkles";
   }
 }
@@ -308,7 +315,7 @@ watch(() => props.active, (active) => { if (active) void load(); });
                   <span v-if="item.amountCents !== null && item.currency" class="brief-handled__amount">{{ formatMailMoney(item.amountCents, item.currency) }}</span>
                 </button>
                 <button v-if="item.undo" type="button" class="brief-quiet" @click="undo(item)">
-                  {{ item.undo.kind === "remove_ledger_entry" ? "Remove entry" : "Move to Inbox" }}
+                  {{ item.undo.kind === "remove_ledger_entry" ? "Remove entry" : item.kind === "spam" ? "Not spam" : "Move to Inbox" }}
                 </button>
                 <button v-else-if="item.kind === 'rule_reply'" type="button" class="brief-quiet" @click="emit('openRules')">Edit rule</button>
               </li>
