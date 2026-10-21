@@ -111,6 +111,19 @@ jobs:
         working-directory: source
         run: pnpm install --frozen-lockfile
 
+      - name: Start the pinned release build
+        working-directory: source
+        # The release passed its typechecks when it was cut, so an install builds only what the
+        # deploy ships: the llms files, the site renderer and the web assets. A tag laid out
+        # differently falls back to the full build. The build needs none of the Cloudflare
+        # resources, so it runs while they are provisioned and migrated.
+        run: |
+          bash ../control/scripts/managed-install-background.sh start release-build bash -c '
+            if ! { pnpm generate:llms && pnpm --filter @me3-core/site-renderer build && pnpm --filter @me3/web exec vite build; }; then
+              echo "Slim build failed; running the full release build."
+              pnpm build
+            fi'
+
       - name: Configure the private managed deployment
         run: node control/scripts/configure-managed-install.mjs source/wrangler.toml "$WORKER_NAME" false "$ME3_MANAGED_INSTALLATION_ID" "$ME3_MANAGED_EMAIL_GATEWAY_ORIGIN" "$ME3_MANAGED_ORIGIN"
 
@@ -145,19 +158,7 @@ jobs:
         env:
           ME3_MANAGED_STATUS: provisioning
           ME3_MANAGED_STAGE: resources
-        run: node control/scripts/managed-install-workflow-callback.mjs
-
-      - name: Build the pinned release
-        working-directory: source
-        # The release passed its typechecks when it was cut, so an install builds only what the
-        # deploy ships: the llms files, the site renderer and the web assets. A tag laid out
-        # differently falls back to the full build.
-        run: |
-          set -euo pipefail
-          if ! { pnpm generate:llms && pnpm --filter @me3-core/site-renderer build && pnpm --filter @me3/web exec vite build; }; then
-            echo "Slim build failed; running the full release build."
-            pnpm build
-          fi
+        run: bash control/scripts/managed-install-background.sh start report-resources node control/scripts/managed-install-workflow-callback.mjs
 
       - name: Apply D1 migrations before deployment
         working-directory: source
@@ -171,7 +172,10 @@ jobs:
         env:
           ME3_MANAGED_STATUS: provisioning
           ME3_MANAGED_STAGE: migrations
-        run: node control/scripts/managed-install-workflow-callback.mjs
+        run: bash control/scripts/managed-install-background.sh start report-migrations node control/scripts/managed-install-workflow-callback.mjs
+
+      - name: Finish the pinned release build
+        run: bash control/scripts/managed-install-background.sh wait release-build
 
       - name: Apply the Durable Object migration privately
         working-directory: source
@@ -188,48 +192,40 @@ jobs:
       - name: Resolve the dedicated Durable Object namespace
         run: node control/scripts/resolve-managed-do-namespace.mjs
 
-      - name: Install the recovery secret without exposing it
-        working-directory: source
-        run: |
-          set -euo pipefail
-          set +x
-          password_file="$RUNNER_TEMP/me3-setup-password"
-          openssl rand -hex 32 > "$password_file"
-          chmod 600 "$password_file"
-          pnpm exec wrangler secret put SETUP_PASSWORD --config wrangler.toml < "$password_file"
-          rm -f "$password_file"
-
-      - name: Install the hosted provider secrets
+      - name: Install the Worker secrets without exposing them
         working-directory: source
         env:
           ME3_MANAGED_PEXELS_API_KEY: ${{ secrets.ME3_MANAGED_PEXELS_API_KEY }}
           # Claude pays from the stored Anthropic key first, then Cloudflare credits.
           ME3_MANAGED_AI_GATEWAY_TOKEN: ${{ secrets.ME3_MANAGED_AI_GATEWAY_TOKEN }}
           ME3_MANAGED_ANTHROPIC_BYOK_ALIAS: ${{ secrets.ME3_MANAGED_ANTHROPIC_BYOK_ALIAS }}
+        # The recovery password and the hosted provider keys go up in one bulk request rather than
+        # one request each. Provider keys that aren't configured are left out.
         run: |
           set -euo pipefail
           set +x
-          if [ -n "$ME3_MANAGED_PEXELS_API_KEY" ]; then
-            pexels_key_file="$RUNNER_TEMP/me3-pexels-api-key"
-            printf '%s' "$ME3_MANAGED_PEXELS_API_KEY" > "$pexels_key_file"
-            chmod 600 "$pexels_key_file"
-            pnpm exec wrangler secret put PEXELS_API_KEY --config wrangler.toml < "$pexels_key_file"
-            rm -f "$pexels_key_file"
-          fi
-          if [ -n "$ME3_MANAGED_AI_GATEWAY_TOKEN" ]; then
-            gateway_token_file="$RUNNER_TEMP/me3-ai-gateway-token"
-            printf '%s' "$ME3_MANAGED_AI_GATEWAY_TOKEN" > "$gateway_token_file"
-            chmod 600 "$gateway_token_file"
-            pnpm exec wrangler secret put CLOUDFLARE_AI_GATEWAY_TOKEN --config wrangler.toml < "$gateway_token_file"
-            rm -f "$gateway_token_file"
-          fi
-          if [ -n "$ME3_MANAGED_ANTHROPIC_BYOK_ALIAS" ]; then
-            byok_alias_file="$RUNNER_TEMP/me3-anthropic-byok-alias"
-            printf '%s' "$ME3_MANAGED_ANTHROPIC_BYOK_ALIAS" > "$byok_alias_file"
-            chmod 600 "$byok_alias_file"
-            pnpm exec wrangler secret put ANTHROPIC_BYOK_ALIAS --config wrangler.toml < "$byok_alias_file"
-            rm -f "$byok_alias_file"
-          fi
+          secrets_file="$RUNNER_TEMP/me3-worker-secrets.json"
+          trap 'rm -f "$secrets_file"' EXIT
+          (
+            umask 077
+            ME3_SETUP_PASSWORD="$(openssl rand -hex 32)" node --input-type=module -e '
+              const secrets = { SETUP_PASSWORD: process.env.ME3_SETUP_PASSWORD };
+              for (const [source, name] of [
+                ["ME3_MANAGED_PEXELS_API_KEY", "PEXELS_API_KEY"],
+                ["ME3_MANAGED_AI_GATEWAY_TOKEN", "CLOUDFLARE_AI_GATEWAY_TOKEN"],
+                ["ME3_MANAGED_ANTHROPIC_BYOK_ALIAS", "ANTHROPIC_BYOK_ALIAS"],
+              ]) {
+                if (process.env[source]) secrets[name] = process.env[source];
+              }
+              if (!/^[0-9a-f]{64}$/.test(secrets.SETUP_PASSWORD || "")) throw new Error("recovery secret missing");
+              process.stdout.write(JSON.stringify(secrets));
+            ' > "$secrets_file"
+          )
+          pnpm exec wrangler secret bulk "$secrets_file" --config wrangler.toml
+
+      # A rejected resource or migration report stops the install before the Worker goes public.
+      - name: Confirm the resource and migration reports landed
+        run: bash control/scripts/managed-install-background.sh wait report-resources report-migrations
 
       - name: Publish the managed Worker
         run: |
@@ -250,7 +246,7 @@ jobs:
         env:
           ME3_MANAGED_STATUS: provisioning
           ME3_MANAGED_STAGE: verifying
-        run: node control/scripts/managed-install-workflow-callback.mjs
+        run: bash control/scripts/managed-install-background.sh start report-verifying node control/scripts/managed-install-workflow-callback.mjs
 
       - name: Verify the real managed origin
         run: |
@@ -272,6 +268,11 @@ jobs:
           }
           NODE
 
+      # Progress reports run in the background so they don't hold up the install. The last one must
+      # land before activation, or it could set a finished install back to provisioning.
+      - name: Confirm the verification report landed
+        run: bash control/scripts/managed-install-background.sh wait report-verifying
+
       - name: Activate through ME3 Cloud
         env:
           ME3_MANAGED_STATUS: ready
@@ -287,4 +288,8 @@ jobs:
         env:
           ME3_MANAGED_STATUS: failed
           ME3_MANAGED_ERROR_CODE: workflow_failed
-        run: node control/scripts/managed-install-workflow-callback.mjs
+        run: |
+          set -euo pipefail
+          # A progress report still in flight would otherwise land after this one.
+          bash control/scripts/managed-install-background.sh settle report-resources report-migrations report-verifying
+          node control/scripts/managed-install-workflow-callback.mjs

@@ -191,24 +191,69 @@ test("the workflow provisions the managed email install identity and HTTPS gatew
 });
 
 test("the workflow installs hosted provider keys as Worker secret bindings", () => {
-  const installSecret = getStep("Install the hosted provider secrets");
+  const installSecret = getStep("Install the Worker secrets without exposing them");
   const publish = getStep("Publish the managed Worker");
 
   assert.doesNotMatch(installSecret, /OPENAI_API_KEY/);
-  assert.match(
-    installSecret,
-    /ME3_MANAGED_PEXELS_API_KEY: \$\{\{ secrets\.ME3_MANAGED_PEXELS_API_KEY \}\}/,
-  );
-  assert.match(
-    installSecret,
-    /wrangler secret put PEXELS_API_KEY --config wrangler\.toml/,
-  );
-  for (const [source, secret] of [["ME3_MANAGED_AI_GATEWAY_TOKEN", "CLOUDFLARE_AI_GATEWAY_TOKEN"], ["ME3_MANAGED_ANTHROPIC_BYOK_ALIAS", "ANTHROPIC_BYOK_ALIAS"]]) {
+  assert.match(installSecret, /SETUP_PASSWORD: process\.env\.ME3_SETUP_PASSWORD/);
+  assert.match(installSecret, /openssl rand -hex 32/);
+  for (const [source, secret] of [
+    ["ME3_MANAGED_PEXELS_API_KEY", "PEXELS_API_KEY"],
+    ["ME3_MANAGED_AI_GATEWAY_TOKEN", "CLOUDFLARE_AI_GATEWAY_TOKEN"],
+    ["ME3_MANAGED_ANTHROPIC_BYOK_ALIAS", "ANTHROPIC_BYOK_ALIAS"],
+  ]) {
     assert.match(installSecret, new RegExp(`${source}: \\$\\{\\{ secrets\\.${source} \\}\\}`));
-    assert.match(installSecret, new RegExp(`wrangler secret put ${secret} --config wrangler\\.toml`));
+    assert.match(installSecret, new RegExp(`\\["${source}", "${secret}"\\]`));
   }
+  assert.match(installSecret, /umask 077/);
+  assert.match(installSecret, /trap 'rm -f "\$secrets_file"' EXIT/);
+  assert.match(installSecret, /wrangler secret bulk "\$secrets_file" --config wrangler\.toml/);
+  assert.doesNotMatch(workflow, /wrangler secret put/);
   assert.doesNotMatch(installSecret, /ME3_AI_IMAGE_GENERATION_/);
   assert.ok(workflow.indexOf(installSecret) < workflow.indexOf(publish));
+});
+
+test("the workflow builds while resources are provisioned and waits for it before deploying", () => {
+  const start = getStep("Start the pinned release build");
+  const finish = getStep("Finish the pinned release build");
+  assert.match(start, /managed-install-background\.sh start release-build/);
+  assert.match(start, /pnpm --filter @me3\/web exec vite build/);
+  assert.match(start, /pnpm build/);
+  assert.match(finish, /managed-install-background\.sh wait release-build/);
+  assert.ok(workflow.indexOf(getStep("Install the pinned release")) < workflow.indexOf(start));
+  assert.ok(workflow.indexOf(start) < workflow.indexOf(getStep("Provision isolated D1 and R2")));
+  assert.ok(workflow.indexOf(finish) < workflow.indexOf(getStep("Apply the Durable Object migration privately")));
+});
+
+test("progress reports run in the background but land before the Worker goes public and before activation", () => {
+  const reports = {
+    resources: getStep("Report resource provisioning"),
+    migrations: getStep("Report migration completion"),
+    verifying: getStep("Report deployment verification"),
+  };
+  for (const [stage, step] of Object.entries(reports)) {
+    assert.match(step, new RegExp(`ME3_MANAGED_STAGE: ${stage}`));
+    assert.match(
+      step,
+      new RegExp(`managed-install-background\\.sh start report-${stage} node control/scripts/managed-install-workflow-callback\\.mjs`),
+    );
+  }
+  const earlyGate = getStep("Confirm the resource and migration reports landed");
+  const lateGate = getStep("Confirm the verification report landed");
+  const publish = getStep("Publish the managed Worker");
+  const activation = getStep("Activate through ME3 Cloud");
+  const failure = getStep("Report a safe failure");
+  assert.match(earlyGate, /wait report-resources report-migrations/);
+  assert.match(lateGate, /wait report-verifying/);
+  assert.ok(workflow.indexOf(reports.migrations) < workflow.indexOf(earlyGate));
+  assert.ok(workflow.indexOf(earlyGate) < workflow.indexOf(publish));
+  assert.ok(workflow.indexOf(reports.verifying) < workflow.indexOf(lateGate));
+  assert.ok(workflow.indexOf(lateGate) < workflow.indexOf(activation));
+  assert.match(failure, /settle report-resources report-migrations report-verifying/);
+  assert.ok(
+    failure.indexOf("managed-install-background.sh settle") <
+      failure.indexOf("node control/scripts/managed-install-workflow-callback.mjs"),
+  );
 });
 
 test("the workflow keeps workers.dev private and attaches the exact managed hostname", () => {
