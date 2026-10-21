@@ -538,7 +538,7 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     if (!ownerId) return unauthorized(c);
 
     const row = await c.env.DB.prepare(
-      `SELECT m.id, m.direction, m.message_kind, m.raw_headers_json
+      `SELECT m.id, m.mailbox_id, m.direction, m.message_kind, m.to_address, m.raw_headers_json
        FROM mailbox_messages m
        JOIN mailbox_aliases a ON a.id = m.mailbox_id
        WHERE a.user_id = ? AND m.id = ?`,
@@ -546,8 +546,10 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
       .bind(ownerId, c.req.param("messageId"))
       .first<{
         id: string;
+        mailbox_id: string;
         direction: string;
         message_kind: string;
+        to_address: string | null;
         raw_headers_json: string | null;
       }>();
     if (!row) return c.json({ error: "Message not found" }, 404);
@@ -558,30 +560,16 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     const action = resolveMailboxUnsubscribeAction(row.raw_headers_json);
     if (!action) return c.json({ error: "This message does not include an unsubscribe action" }, 404);
 
+    // Every outcome is something the client can finish: done here, or a page or mail link to open.
+    // One-click first, then a mail ME3 sends itself, then the list's own page.
     if (action.mode === "one_click") {
-      try {
-        const response = await fetch(action.url, {
-          method: "POST",
-          headers: {
-            Accept: "text/plain, */*",
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: "List-Unsubscribe=One-Click",
-          redirect: "follow",
-        });
-        if (!response.ok) {
-          return c.json(
-            { error: `Unsubscribe request failed with status ${response.status}` },
-            502,
-          );
-        }
-        return c.json({ ok: true, mode: "one_click", status: response.status });
-      } catch (error) {
-        console.error("Mailbox one-click unsubscribe error:", error);
-        return c.json({ error: "Failed to send unsubscribe request" }, 502);
-      }
+      const status = await postOneClickUnsubscribe(action.url);
+      if (status !== null) return c.json({ ok: true, mode: "one_click", status });
     }
-
+    if (action.mailtoUrl) {
+      const sentTo = await sendMailtoUnsubscribe(c.env, ownerId, row, action.mailtoUrl);
+      if (sentTo) return c.json({ ok: true, mode: "mailto", sentTo });
+    }
     return c.json({ ok: true, mode: "open", url: action.url });
   });
 
@@ -858,4 +846,80 @@ async function reconcileMailboxDraftFromAudit(
     approvedByUserId: ownerId,
   });
   return !("error" in result) && result.draft?.status === "sent";
+}
+
+// RFC 8058 one-click: a POST the list answers without a page. Returns the status, or null when the list
+// did not accept it (an error status, a network failure, or no answer within a few seconds).
+async function postOneClickUnsubscribe(url: string): Promise<number | null> {
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Accept: "text/plain, */*",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: "List-Unsubscribe=One-Click",
+      redirect: "follow",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) {
+      console.warn("Mailbox one-click unsubscribe refused", { status: response.status });
+      return null;
+    }
+    return response.status;
+  } catch (error) {
+    console.error("Mailbox one-click unsubscribe error:", error);
+    return null;
+  }
+}
+
+// Sends the list's mailto unsubscribe from the address the mail was delivered to, which is how the list
+// knows the subscriber. Returns the address it went to, or null when ME3 could not send it.
+async function sendMailtoUnsubscribe(
+  env: Env,
+  ownerId: string,
+  row: { id: string; mailbox_id: string; to_address: string | null },
+  mailtoUrl: string,
+): Promise<string | null> {
+  const request = parseMailtoUnsubscribe(mailtoUrl);
+  if (!request) return null;
+  try {
+    const delivered = row.to_address?.trim().toLowerCase() || "";
+    await sendEmailWithProvider(env, ownerId, {
+      purpose: "workflow",
+      mailboxId: row.mailbox_id,
+      operationId: `mailbox-unsubscribe:${row.id}`,
+      fromAddress: delivered && !delivered.endsWith("@me3.local") ? delivered : null,
+      toAddress: request.toAddress,
+      subject: request.subject,
+      textBody: request.textBody,
+      metadata: { mailbox_message_id: row.id, me3_action: "list_unsubscribe" },
+      createdBy: "owner",
+      approvedByUserId: ownerId,
+    });
+    return request.toAddress;
+  } catch (error) {
+    console.warn("Mailbox mailto unsubscribe send failed; handing back the list's link", {
+      messageId: row.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+// `mailto:list@example.com?subject=unsubscribe%20token&body=...` as a message ME3 can send itself.
+export function parseMailtoUnsubscribe(
+  mailto: string,
+): { toAddress: string; subject: string; textBody: string } | null {
+  const trimmed = mailto.trim();
+  if (!/^mailto:/i.test(trimmed)) return null;
+  const rest = trimmed.slice("mailto:".length);
+  const queryIndex = rest.indexOf("?");
+  const addressPart = queryIndex === -1 ? rest : rest.slice(0, queryIndex);
+  const toAddress = decodeURIComponent(addressPart).split(",")[0]?.trim().toLowerCase() || "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toAddress)) return null;
+  const params = new URLSearchParams(queryIndex === -1 ? "" : rest.slice(queryIndex + 1));
+  const subject = params.get("subject")?.trim() || "Unsubscribe";
+  const textBody = params.get("body")?.trim() || subject;
+  return { toAddress, subject, textBody };
 }

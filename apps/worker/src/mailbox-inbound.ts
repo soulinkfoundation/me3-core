@@ -96,9 +96,9 @@ type ParsedInboundEmailAttachment = {
 };
 
 type MailboxUnsubscribeAction =
-  | { mode: "one_click"; url: string }
-  | { mode: "link"; url: string }
-  | { mode: "mailto"; url: string };
+  | { mode: "one_click"; url: string; mailtoUrl: string | null }
+  | { mode: "link"; url: string; mailtoUrl: string | null }
+  | { mode: "mailto"; url: string; mailtoUrl: string };
 
 export async function handleInboundEmail(
   message: ForwardableEmailMessageLike,
@@ -554,9 +554,10 @@ export function resolveMailboxUnsubscribeAction(
     getHeaderValue(headers, "list-unsubscribe-post")?.trim().toLowerCase() ===
     "list-unsubscribe=one-click";
 
-  if (oneClick && httpsUrl) return { mode: "one_click", url: httpsUrl };
-  if (httpsUrl) return { mode: "link", url: httpsUrl };
-  if (mailtoUrl) return { mode: "mailto", url: mailtoUrl };
+  const mailto = mailtoUrl?.trim() || null;
+  if (oneClick && httpsUrl) return { mode: "one_click", url: httpsUrl, mailtoUrl: mailto };
+  if (httpsUrl) return { mode: "link", url: httpsUrl, mailtoUrl: mailto };
+  if (mailto) return { mode: "mailto", url: mailto, mailtoUrl: mailto };
   return null;
 }
 

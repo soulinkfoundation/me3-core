@@ -12300,6 +12300,137 @@ describe("ME3 Worker auth", () => {
     }
   });
 
+  async function activateListMailbox(env: ReturnType<typeof createEnv>, session: string, headers: string[]) {
+    await app.fetch(
+      new Request("http://localhost/api/mailbox", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Cookie: session },
+        body: JSON.stringify({ aliasLocalPart: "name", forwardingEnabled: false }),
+      }),
+      env,
+    );
+    await app.fetch(
+      new Request("http://localhost/api/mailbox/activate", { method: "POST", headers: { Cookie: session } }),
+      env,
+    );
+    await emailWorker().email(
+      createInboundEmailMessage(
+        [
+          "From: List <news@example.com>",
+          "To: name@example.com",
+          "Subject: Newsletter",
+          "Message-ID: <newsletter@example.com>",
+          ...headers,
+          "Content-Type: text/plain; charset=utf-8",
+          "",
+          "Latest news.",
+        ].join("\r\n"),
+      ),
+      env,
+    );
+    const messagesResponse = await app.fetch(
+      new Request("http://localhost/api/mailbox/messages?folder=inbox&direction=inbound", {
+        headers: { Cookie: session },
+      }),
+      env,
+    );
+    const body = (await messagesResponse.json()) as { messages: Array<{ id: string }> };
+    return body.messages[0]!.id;
+  }
+
+  it("sends a mailto unsubscribe itself from the delivered-to address", async () => {
+    const env = createEnv();
+    const session = cookieHeader(await bootstrap(env));
+    await app.fetch(
+      new Request("http://localhost/api/email-provider-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Cookie: session },
+        body: JSON.stringify({
+          activeProviderId: "cloudflare-email",
+          providers: [
+            {
+              id: "cloudflare-email",
+              transport: "binding",
+              fromAddress: "owner@example.com",
+              fromName: "ME3 Owner",
+              sendingDomain: "example.com",
+            },
+          ],
+        }),
+      }),
+      env,
+    );
+    const messageId = await activateListMailbox(env, session, [
+      "List-Unsubscribe: <mailto:leave@list.example?subject=unsubscribe%20token-1>",
+    ]);
+
+    const response = await app.fetch(
+      new Request(`http://localhost/api/mailbox/messages/${messageId}/unsubscribe`, {
+        method: "POST",
+        headers: { Cookie: session },
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, mode: "mailto", sentTo: "leave@list.example" });
+    expect(env.emailSends[0]).toMatchObject({
+      from: { email: "name@example.com" },
+      to: "leave@list.example",
+      subject: "unsubscribe token-1",
+    });
+  });
+
+  it("hands back the list's page when one-click is refused and no mail can be sent", async () => {
+    const env = createEnv();
+    const session = cookieHeader(await bootstrap(env));
+    const messageId = await activateListMailbox(env, session, [
+      "List-Unsubscribe: <https://example.com/unsubscribe/token>",
+      "List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+    ]);
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 405 })));
+    try {
+      const response = await app.fetch(
+        new Request(`http://localhost/api/mailbox/messages/${messageId}/unsubscribe`, {
+          method: "POST",
+          headers: { Cookie: session },
+        }),
+        env,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        ok: true,
+        mode: "open",
+        url: "https://example.com/unsubscribe/token",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("opens the list's page for a plain link when the mailto send is not possible", async () => {
+    const env = createEnv();
+    const session = cookieHeader(await bootstrap(env));
+    const messageId = await activateListMailbox(env, session, [
+      "List-Unsubscribe: <mailto:leave@list.example>, <https://example.com/unsubscribe/page>",
+    ]);
+
+    const response = await app.fetch(
+      new Request(`http://localhost/api/mailbox/messages/${messageId}/unsubscribe`, {
+        method: "POST",
+        headers: { Cookie: session },
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      mode: "open",
+      url: "https://example.com/unsubscribe/page",
+    });
+    expect(env.emailSends).toHaveLength(0);
+  });
+
   it("forwards inbound mailbox copies when forwarding is enabled", async () => {
     const env = createEnv();
     const session = cookieHeader(await bootstrap(env));
