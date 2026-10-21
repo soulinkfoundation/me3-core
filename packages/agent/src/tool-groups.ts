@@ -14,7 +14,7 @@ export const DEFERRED_TOOL_GROUPS: Record<string, { prefix: string; summary: str
   coding: { prefix: "core_coding_", summary: "send a coding task to Claude Code in one of the owner's GitHub repositories (it opens a pull request to review) and check on tasks already sent. Use it whenever the owner asks Claude to build, change or fix something in a repo or app" },
   mission: { prefix: "core_mission_statement_", summary: "draft and save the owner's private Mission (who they help, the change they want, how, and why). Use it whenever the owner asks for help with their mission or mission statement, or agrees to draft one" },
   memory: { prefix: "core_memory_", summary: "check what you remember about the owner and forget something when they ask. Use it when the owner asks what you know or remember about them, or to forget or stop remembering something" },
-  social: { prefix: "core_social_", summary: "save social post drafts and post suggestions from a journal entry or task, search the social library, and plan or schedule posts. Use it when the owner wants a post saved, scheduled or found; brainstorming post ideas in chat needs no tools" },
+  social: { prefix: "core_social_", summary: "save social post drafts and post suggestions made from a journal entry or task, search the social library, and plan or schedule posts. Load it when the owner asks for a post draft or wants a post saved, scheduled or found; brainstorming post ideas in chat needs no tools" },
 };
 
 export function toolGroupFor(name: string): string | undefined {
