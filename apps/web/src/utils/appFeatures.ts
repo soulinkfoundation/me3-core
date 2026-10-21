@@ -29,6 +29,12 @@ export const APP_FEATURE_ICONS: Record<AppFeatureId, string> = {
   account: "⚙️",
 };
 
+/**
+ * Parked until after the first release (me3-5u97.6): built, not deleted, and not offered to new
+ * owners. Flip a flag to show its entry points again. The agent side is `ME3_PARKED_FEATURES` in the Worker.
+ */
+export const PARKED_FEATURES = { agentPayments: false } as const;
+
 type AppFeatureMatcher = {
   id: AppFeatureId;
   matches: (path: string) => boolean;

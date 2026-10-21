@@ -967,7 +967,7 @@ export const CORE_CHAT_CAPABILITIES = [
     pluginId: null,
     ownerFacingLabel: "Draft your website",
     summary:
-      "Draft the owner's whole first website in ONE call from their description of their work: bio, headline, location, links, an About page and their services. ME3 adds a free 30-minute clarity call with bookings on, a newsletter signup and a theme, keeps their existing photo, and shows a draft card the owner can restyle, edit and publish; nothing goes live until they publish. Before calling: open each public link the owner gave with core_web_open and use what you read; skip a link that needs a login and say so in one line. Ask at most one short follow-up, and only when you cannot tell what they offer. Invent no prices and no facts. Never mention the Mission.",
+      "Draft the owner's whole first website in ONE call from their description of their work: bio, headline, location, links, an About page and their services. ME3 adds a free 30-minute clarity call with bookings on, a newsletter signup and a theme, keeps their existing photo, and shows a draft card the owner can restyle, edit and publish; nothing goes live until they publish. Use it whenever the owner asks you to build, make or set up a website or site and says what they do, even in one sentence (\"I teach yoga in Galway\" is enough): call it straight away and do not interview them first, because the card lets them change anything. Never say you cannot build websites. Before calling: open each public link the owner gave with core_web_open and use what you read; skip a link that needs a login and say so in one line. Ask one short question only when you cannot tell what they offer. Invent no prices and no facts. Never mention the Mission.",
     category: "sites",
     handler: {
       surface: "chat",
@@ -1035,6 +1035,7 @@ export const CORE_CHAT_CAPABILITIES = [
       positive: [
         "Build my website. About my work: I'm a career coach in Leeds, I help people in their 30s and 40s work out what's next over 1:1 video calls.",
         "Draft my site from this: I run a small bakery in Cork and do wedding cakes to order.",
+        "I teach yoga in Galway. Build me a simple website where people can book a free 30-minute intro class.",
       ],
       negative: ["Add a landing page for my workshop.", "Change my site's banner."],
     },

@@ -46,6 +46,8 @@ export interface Env {
   ME3_AI_CHAT_BACKUP_MODEL?: string;
   /** "off" hides the one-tap follow-ups under agent replies. */
   ME3_AGENT_SUGGESTED_REPLIES?: string;
+  /** "on" offers features parked after the first release (custom Home cards, agent purchases). Unset hides them. */
+  ME3_PARKED_FEATURES?: string;
   /** "off" stops the agent saving memories automatically after each turn. */
   ME3_AGENT_MEMORY?: string;
   ME3_AGENT_FAST_MODEL?: string;

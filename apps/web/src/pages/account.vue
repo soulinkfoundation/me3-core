@@ -3,6 +3,7 @@ import { definePage } from "unplugin-vue-router/runtime";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api";
+import { PARKED_FEATURES } from "../utils/appFeatures";
 import { getEmailTestOperation, finishEmailTestOperation } from "../utils/emailTestOperation";
 import Button from "../components/Button.vue";
 import CodingAgentSettings from "../components/CodingAgentSettings.vue";
@@ -3636,7 +3637,7 @@ onBeforeUnmount(() => {
             aria-labelledby="account-trigger-payments"
             :hidden="!openSection.payments"
           >
-            <RouterLink to="/settings/payments" class="agent-payments-link">
+            <RouterLink v-if="PARKED_FEATURES.agentPayments" to="/settings/payments" class="agent-payments-link">
               <span>Purchases ME3 makes for you</span>
               <small>Spend limits, approvals and receipts. You always pay on your own device.</small>
             </RouterLink>
@@ -3857,7 +3858,7 @@ onBeforeUnmount(() => {
                   </Button>
                 </div>
 
-                <div v-if="commerceSettings?.agentCheckout" class="agent-checkout-setting">
+                <div v-if="PARKED_FEATURES.agentPayments && commerceSettings?.agentCheckout" class="agent-checkout-setting">
                   <label class="checkbox-row">
                     <input
                       type="checkbox"

@@ -6,6 +6,7 @@ import AppPageBar from "../components/AppPageBar.vue";
 import AgentDog from "../components/AgentDog.vue";
 import AssistantApprovalDialog from "../components/AssistantApprovalDialog.vue";
 import UiIcon from "../components/UiIcon.vue";
+import { PARKED_FEATURES } from "../utils/appFeatures";
 import { useAgentChat } from "../composables/useAgentChat";
 import { useAppToast } from "../composables/useAppToast";
 
@@ -238,7 +239,7 @@ onMounted(load);
         </RouterLink>
       </section>
 
-      <section class="agent-card" aria-label="Payments">
+      <section v-if="PARKED_FEATURES.agentPayments" class="agent-card" aria-label="Payments">
         <RouterLink to="/settings/payments" class="agent-row">
           <UiIcon name="CreditCard" :size="20" class="agent-row__icon" />
           <span class="agent-row__text"><small>Payments</small>Spend limits and receipts</span>
