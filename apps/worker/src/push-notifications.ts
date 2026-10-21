@@ -119,6 +119,8 @@ export async function unregisterPushNotificationDevice(
 export type DailyBriefingPushSummary = {
   // Local quote metadata is excluded from the hosted morning push payload.
   quote?: { text: string; author: string };
+  /** The push as ME3 says it, composed by Core so every platform shows the same words. */
+  alert?: { title: string; body: string };
   birthdayNames: string[];
   counts: {
     birthdays: number;
@@ -140,6 +142,7 @@ export async function notifyDailyBriefingReady(
       {
         method: "POST",
         body: summary ? JSON.stringify({
+          ...(summary.alert ? { alert: { title: summary.alert.title, body: summary.alert.body } } : {}),
           birthdayNames: summary.birthdayNames,
           counts: {
             birthdays: summary.counts.birthdays,
