@@ -3,8 +3,6 @@ import { preflightTargetIntent, savedTargetIntentProgress, TargetIntentOrderMism
 import { canonicalJson, toolIdempotencyKey, validateArguments } from "./schema";
 import { compactAgentContext } from "./context";
 import { validateTargetSelection } from "./presentations";
-import { startFastPathShadow } from "./fast-path";
-import { decideRoute } from "./router";
 import { requireEnabledPlugin } from "./plugin-authorization";
 import { visibleTools, withToolLoader } from "./tool-groups";
 import { withOwnerLocalToolTimes } from "./owner-times";
@@ -19,7 +17,6 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted) abort();
   const timeout = setTimeout(() => controller.abort("Agent time budget exceeded"), input.timeBudgetMs ?? 300_000);
-  const tools = withToolLoader(input.tools.filter(tool => !tool.pluginId || input.context.enabledPluginIds.has(tool.pluginId)));
   let model: AgentModel = input.model;
   let state = await input.store.load();
   const freshTurn = !state;
@@ -28,6 +25,9 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     trace: { model: model.id, steps: 0, toolCalls: [], startedAt: new Date().toISOString(), totalDurationMs: 0, timeToFirstTokenMs: null, usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, estimatedCostUsd: 0 } },
   };
   const checkpoint = state;
+  if (freshTurn && input.preloadedToolGroups?.length) checkpoint.trace.toolGroups = [...input.preloadedToolGroups];
+  // Groups already visible this turn are left out of the loader, so the model is not told to load them first.
+  const tools = withToolLoader(input.tools.filter(tool => !tool.pluginId || input.context.enabledPluginIds.has(tool.pluginId)), checkpoint.trace.toolGroups ?? []);
   const measureModel = async (selected: AgentModel, step: Parameters<AgentModel["step"]>[0]) => {
     const began = performance.now();
     try {
@@ -39,7 +39,6 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       throw error;
     }
   };
-  let shadow: ReturnType<typeof startFastPathShadow>;
   const emit = async (event: Parameters<NonNullable<AgentTurnInput["onEvent"]>>[0]) => { await input.onEvent?.(event); };
   const save = () => input.store.save(checkpoint);
   const cancelled = async () => {
@@ -47,7 +46,6 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     return controller.signal.aborted;
   };
   const finish = async (status: AgentCheckpoint["status"], text?: string) => {
-    if (shadow && !checkpoint.trace.fastPath) checkpoint.trace.fastPath = shadow.snapshot([]);
     checkpoint.status = status;
     if (text) checkpoint.messages.push({role:"assistant",content:text});
     checkpoint.trace.totalDurationMs += performance.now() - started;
@@ -144,42 +142,15 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       }
       if (checkpoint.steps >= (input.maxSteps ?? 30)) return finish("failed", "I reached the turn's step limit. Completed tool results are saved; the remaining work is unfinished.");
       let emittedText = false;
-      const stepInput = { messages: compactAgentContext(withOwnerLocalToolTimes(checkpoint.messages, input.context.ownerTimezone), input.contextWindow), tools: visibleTools(tools, checkpoint.messages), signal: controller.signal, onDelta: async (text: string) => {
+      const stepInput = { messages: compactAgentContext(withOwnerLocalToolTimes(checkpoint.messages, input.context.ownerTimezone), input.contextWindow), tools: visibleTools(tools, checkpoint.messages, checkpoint.trace.toolGroups ?? []), signal: controller.signal, onDelta: async (text: string) => {
         if (!text) return;
         emittedText = true;
         checkpoint.trace.timeToFirstTokenMs ??= performance.now() - started;
         await emit({event:"delta",data:{text,source:"model"}});
       } };
       let response;
-      if (freshTurn && !input.context.targetSelection && checkpoint.steps === 0) shadow = startFastPathShadow(input.fastPath, { messageText: input.context.messageText, recentMessages: checkpoint.messages, tools, ownerTimezone: input.context.ownerTimezone, now: new Date(), signal: controller.signal });
-      // Routing happens once, before the first model call of a fresh turn.
-      let active = model;
-      if (freshTurn && !input.context.targetSelection && checkpoint.steps === 0 && input.router && !checkpoint.trace.route) {
-        checkpoint.trace.route = await decideRoute(input.router, { messageText: input.context.messageText, recentMessages: checkpoint.messages, signal: controller.signal, hasImages: checkpoint.messages.some(message => message.images?.length) });
-        if (checkpoint.trace.route.route === "fast") active = input.router.fastModel;
-      }
-      try {
-        if (active === model) response = await measureModel(model, stepInput);
-        else {
-          const fast = await fastStep(active, stepInput);
-          if (fast.handedBack) {
-            addUsage(fast.response.usage);
-            checkpoint.trace.route = { ...checkpoint.trace.route!, route: "main", reason: "needs_tools" };
-            active = model;
-            response = await measureModel(model, stepInput);
-          } else response = fast.response;
-        }
-      }
+      try { response = await measureModel(model, stepInput); }
       catch (error) {
-        if (active !== model) {
-          // The fast route never retries itself: the main model takes the turn.
-          checkpoint.trace.usage.estimatedCostUsd = null;
-          if (await cancelled()) return finish("cancelled", "The turn was cancelled before completion.");
-          checkpoint.trace.route = { ...checkpoint.trace.route!, route: "main", reason: "error" };
-          active = model;
-          if (emittedText) await emit({event:"status",data:{state:"retrying",replaceText:true}});
-          response = await measureModel(model, stepInput);
-        } else {
         // A failed request can still be billable, with no complete usage receipt.
         checkpoint.trace.usage.estimatedCostUsd = null;
         if (await cancelled()) return finish("cancelled", "The turn was cancelled before completion.");
@@ -188,11 +159,8 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         checkpoint.trace.model = model.id;
         if (emittedText) await emit({event:"status",data:{state:"retrying",replaceText:true}});
         response = await measureModel(model, stepInput);
-        active = model;
-        }
       }
-      checkpoint.trace.model = active.id;
-      if (shadow && checkpoint.steps === 0) checkpoint.trace.fastPath = shadow.snapshot(response.toolCalls);
+      checkpoint.trace.model = model.id;
       checkpoint.steps++;
       checkpoint.trace.steps = checkpoint.steps;
       addUsage(response.usage);
@@ -205,7 +173,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       checkpoint.pendingCalls = response.toolCalls;
       checkpoint.nextCallIndex = 0;
       await save();
-      await emit({event:"step",data:{step:checkpoint.steps,model:active.id}});
+      await emit({event:"step",data:{step:checkpoint.steps,model:model.id}});
       if (!response.toolCalls.length) {
         if (!response.text.trim()) return finish("failed", "The model returned no answer. No completion is claimed.");
         return finish("complete");
@@ -215,7 +183,6 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     if (await cancelled()) return finish("cancelled", "The turn was cancelled before completion.");
     return finish("failed", `I couldn't complete this turn: ${error instanceof Error ? error.message : "agent failure"}`);
   } finally {
-    shadow?.close();
     clearTimeout(timeout);
     input.signal?.removeEventListener("abort", abort);
   }
@@ -227,22 +194,6 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     checkpoint.trace.usage.cachedInputTokens += usage.cachedInputTokens;
     checkpoint.trace.usage.cacheWriteInputTokens = (checkpoint.trace.usage.cacheWriteInputTokens ?? 0) + (usage.cacheWriteInputTokens ?? 0);
     checkpoint.trace.usage.estimatedCostUsd = usage.estimatedCostUsd === null || checkpoint.trace.usage.estimatedCostUsd === null ? null : checkpoint.trace.usage.estimatedCostUsd + usage.estimatedCostUsd;
-  }
-
-  /** Runs a tool-free fast step; `handedBack` means the main model must answer. */
-  async function fastStep(fast: AgentModel, step: Parameters<AgentModel["step"]>[0]) {
-    let held = "", released = false, handedBack = false;
-    const response = await measureModel(fast, { ...step, tools: [], messages: [...step.messages, { role: "system", content: FAST_ROUTE_RULE }], onDelta: async (text: string) => {
-      if (released) return step.onDelta(text);
-      held += text;
-      if (held.length < FAST_ROUTE_SENTINEL.length && FAST_ROUTE_SENTINEL.startsWith(held.trimStart())) return;
-      if (held.trimStart().startsWith(FAST_ROUTE_SENTINEL)) { handedBack = true; return; }
-      released = true;
-      await step.onDelta(held);
-    } });
-    if (handedBack || response.text.trimStart().startsWith(FAST_ROUTE_SENTINEL)) return { response, handedBack: true };
-    if (!released && held) await step.onDelta(held);
-    return { response, handedBack: false };
   }
 
   async function execute(call: AgentToolCall, tool?: AgentTool): Promise<AgentToolResult> {
@@ -359,6 +310,3 @@ function result(state: AgentCheckpoint): AgentTurnResult {
   const replyText = state.status === "needs_approval" ? "This action needs your approval before I can continue." : [...state.messages].reverse().find(message => message.role === "assistant" && !message.toolCalls?.length)?.content ?? "";
   return {replyText,source:"agent",toolCalls:state.trace.toolCalls,usage:state.trace.usage,modelRequestCount:state.steps+(state.trace.targetIntentRequests?.length??0),trace:state.trace,status:state.status,...(state.approvalId?{approvalId:state.approvalId}:{}),...(state.targetPresentation?{targetPresentation:state.targetPresentation}:{})};
 }
-
-const FAST_ROUTE_SENTINEL = "NEEDS_TOOLS";
-const FAST_ROUTE_RULE = `No tools are available for this reply. Never claim to have read, checked, changed, sent, saved or scheduled anything. If answering needs the owner's records, an action, an image or current web information, reply with exactly ${FAST_ROUTE_SENTINEL} and nothing else.`;

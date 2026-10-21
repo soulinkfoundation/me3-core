@@ -1,7 +1,7 @@
-import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createIntentVerifierFromModel, createClefDecider, createClefRouter, createD1TurnStore, runAgentTurn, sampleFastPathTurn, type AgentDecider, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
+import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createIntentVerifierFromModel, createD1TurnStore, runAgentTurn, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import { createCodingAgentServices } from "./coding-agent";
-import type { AgentFastPathRequestMeasurement } from "../../../packages/agent/src/fast-path";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
+import { TOOL_LOADER_NAME } from "../../../packages/agent/src/tool-groups";
 import { saveOwnerQuote } from "./quotes";
 import { createAgentHomeCardServices } from "./home-cards";
 import { createAgentPaymentServices } from "./agent-payments";
@@ -30,7 +30,7 @@ import { beginManagedRuntimeWriteLease, isManagedRuntime, releaseManagedRuntimeW
 import type { Env, OwnerProfile } from "./types";
 import { loadAgentTargetPresentation, revalidateAgentTargetPayload } from "./agent-target-projection";
 import { parseAgentTargetSelection } from "./agent-target-selection";
-import type { AgentTargetSelection } from "../../../packages/agent/src/types";
+import type { AgentTargetSelection, AgentTrace } from "../../../packages/agent/src/types";
 import { notifyAgentTurnFinished } from "./agent-notifications";
 import { createTargetIntentVerifier, loadTargetIntentOwnerInputs } from "./agent-target-intent";
 import { loadAgentPlannerHistory } from "./agent-planner-history";
@@ -55,64 +55,46 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
   const lease=await beginManagedRuntimeWriteLease(env,"POST","assistant_agent");
   if(isManagedRuntime(env)&&!lease)throw new Error("Managed runtime is not accepting agent writes");
   try {
-    const owner=await env.DB.prepare("SELECT * FROM owner_profile WHERE id=?").bind(input.userId).first<OwnerProfile>();
+    const intentScope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId};
+    const d1Store=createD1TurnStore(env.DB,intentScope);
+    // The loop loads the checkpoint once more; hand it the copy loaded below instead of a second round trip.
+    let loaded:Awaited<ReturnType<typeof d1Store.load>>|undefined;
+    const store={...d1Store,load:async()=>{if(loaded!==undefined){const value=loaded;loaded=undefined;return value;}return d1Store.load();}};
+    // Every load here is independent, so they share one round trip instead of
+    // queueing before the first model call (20 Oct 2026 probe: 20 serial statements).
+    const [owner,thread,plugins,models,checkpoint,recent,threadGroups,services]=await Promise.all([
+      env.DB.prepare("SELECT * FROM owner_profile WHERE id=?").bind(input.userId).first<OwnerProfile>(),
+      env.DB.prepare("SELECT id FROM assistant_threads WHERE id=? AND owner_id=? AND status='active'").bind(input.threadId,input.userId).first(),
+      listCorePluginRecords(env),
+      createAgentModels(env,input),
+      d1Store.load(),
+      loadAgentPlannerHistory(env.DB,intentScope,signal),
+      loadThreadToolGroups(env,intentScope),
+      newAgentServices(env,input.userId,computerHost),
+    ]);
     if(!owner)throw new Error("Agent owner not found");
-    const thread=await env.DB.prepare("SELECT id FROM assistant_threads WHERE id=? AND owner_id=? AND status='active'").bind(input.threadId,input.userId).first();
     if(!thread)throw new Error("Agent conversation is not available for this owner");
+    loaded=checkpoint;
     const timezone=owner.timezone||"UTC";
-    const plugins=await listCorePluginRecords(env);
     const enabledPluginIds=new Set(plugins.filter(plugin=>plugin.enabled&&plugin.status==="installed").map(plugin=>plugin.id));
-    const {managed,modelName,gateway,metadata,admitModel,plannerAdmitted,modelFor,model,backup,allowanceFallbackUsed}=await createAgentModels(env,input);
+    const {managed,modelName,gateway,metadata,admitModel,modelFor,model,backup,allowanceFallbackUsed}=models;
     const imageScope={ownerId:input.userId,threadId:input.threadId};
-    const store=createD1TurnStore(env.DB,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId});
     let messages:AgentMessage[]=[];
     let ownerSnapshot:string|undefined;
-    if(!await store.load()) {
-      const snapshot=await loadOwnerSnapshotContext({db:env.DB,ownerId:input.userId,owner:{id:owner.id,name:owner.name,username:owner.username,timezone,assistantName:owner.assistant_name||"ME3"},meJsonUrl:null});
-      const recent=await loadAgentPlannerHistory(env.DB,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId},signal);
+    if(!checkpoint) {
+      const [snapshot,images,attachments]=await Promise.all([
+        loadOwnerSnapshotContext({db:env.DB,ownerId:input.userId,owner:{id:owner.id,name:owner.name,username:owner.username,timezone,assistantName:owner.assistant_name||"ME3"},meJsonUrl:null}),
+        prepareAgentImageInputs(env,imageScope,input.attachments||[],signal),
+        loadAgentAttachmentManifest(env,imageScope,input.attachments||[]),
+      ]);
       ownerSnapshot=snapshot.prompt;
-      messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt})},...recent];
       const content=[input.messageText,input.attachmentTextContext].filter(Boolean).join("\n\n");
-      const images=await prepareAgentImageInputs(env,imageScope,input.attachments||[],signal);
-      messages.push({role:"user",content,...(images.length?{images}:{})});
-      const attachments=await loadAgentAttachmentManifest(env,imageScope,input.attachments||[]);
+      messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt})},...recent,{role:"user",content,...(images.length?{images}:{})}];
       await env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").bind(`${input.turnId}:user`,input.userId,input.threadId,input.messageText,JSON.stringify({requestId:input.requestId,runtime:"agent",...(attachments.length?{attachments}:{})})).run();
     }
-    const services=await newAgentServices(env,input.userId,computerHost);
     const tools=[...createDomainTools(),...computerChatTools()].filter(tool=>isToolAvailable(tool.name,services));
-    // Shadow waits for planner admission, never the other way round. Its receipt
-    // remains billable, but cannot change this turn's routing or admission.
-    const sampleRate=env.ME3_AGENT_FAST_PATH_SAMPLE_RATE===undefined?1:Number(env.ME3_AGENT_FAST_PATH_SAMPLE_RATE);
-    const until=env.ME3_AGENT_FAST_PATH_UNTIL;
-    const pilotActive=!until||Date.now()<Date.parse(until);
-    const makeDecider=(variant:"clef"|"clef-flash"):AgentDecider=>({id:`@cf/cloudflare/${variant}`,async decide(step){
-      let receipt:((usage:AgentUsage,measurement?:AgentFastPathRequestMeasurement)=>Promise<void>)|undefined;
-      const argumentMode=variant==="clef"&&env.ME3_AGENT_FAST_PATH_ARGUMENTS==="conditional"?"conditional":"fanout";
-      const work=createClefDecider({model:variant,argumentMode,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,purpose:"fast_path"},recordUsage:(usage,measurement)=>receipt?.(usage,measurement),ai:{async run(selected,payload,options){
-        receipt=undefined;
-        await new Promise<void>(resolve=>{
-          const done=()=>{step.signal.removeEventListener("abort",done);resolve();};
-          step.signal.addEventListener("abort",done,{once:true});
-          if(step.signal.aborted)done();else void plannerAdmitted.then(done);
-        });
-        step.signal.throwIfAborted();
-        if(managed){
-          const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
-          if(!policy.available||policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)throw new Error("Shadow inference unavailable under managed policy");
-        }
-        const count=managed?await managedUsageReportCount(env,input.userId,input.turnId):0;
-        step.signal.throwIfAborted();
-        const questions=(payload as {questions:Record<string,unknown>}).questions;
-        const stage=questions.tool?(Object.keys(questions).some(id=>id.startsWith("args_"))?"fanout":"routing"):"arguments";
-        receipt=await admitModel(selected,count,{purpose:"fast_path",shadow:{stage,argumentMode,sampleRate}},true);
-        return env.AI!.run(selected as never,payload as never,options as never);
-      }}}).decide(step);
-      waitUntil?.(work.then(()=>{},()=>{}));
-      return work;
-    }});
-    const fastPath=env.ME3_AGENT_FAST_PATH==="shadow"&&pilotActive&&sampleFastPathTurn(input.turnId,sampleRate)&&!input.attachments?.length&&!input.attachmentTextContext?{mode:"shadow" as const,decider:makeDecider("clef"),additionalDeciders:[makeDecider("clef-flash")],sampleRate}:undefined;
+    const preloadedToolGroups=[...new Set([...threadGroups,...TOOL_GROUP_HINTS.filter(([pattern])=>pattern.test(input.messageText)).map(([,group])=>group)])];
     const intentTools=tools.filter(tool=>!tool.pluginId||enabledPluginIds.has(tool.pluginId));
-    const intentScope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId};
     const loadIntentOwnerInputs=(references:Parameters<typeof loadTargetIntentOwnerInputs>[2],intentSignal:AbortSignal)=>
       loadTargetIntentOwnerInputs(env.DB,intentScope,references,intentSignal);
     // Independent intent checks default to the planner model; a faster verifier can be set per installation.
@@ -137,28 +119,14 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       const verifier=modelFor(verifierName,{purpose:"owner_create_intent",onAdmission:id=>{usageId=id;}});
       return {model:verifier,usageId:()=>usageId};
     }});
-    // Routing uses the same unreconciled-receipt exclusions as fast-path
-    // decisions, so a late or timed-out routing call never blocks the planner.
+    // The fast model answers follow-up suggestions and memory extraction after the reply.
     const fastName=env.ME3_AGENT_FAST_MODEL?.trim()||"anthropic/claude-haiku-5.5";
     const fastAllowed=!managed||managed.models.some(item=>managedModelId(item.id)===managedModelId(fastName));
-    let routingReceipt:((usage:AgentUsage)=>Promise<void>)|undefined;
-    const router=env.ME3_AGENT_ROUTING?.trim()==="on"&&fastAllowed&&managedModelId(fastName)!==managedModelId(model.id)&&!UNROUTED_MAIN_MODELS.has(managedModelId(model.id))?createClefRouter({model:"clef-flash",fastModel:modelFor(fastName),
-      gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,purpose:"routing"},recordUsage:usage=>routingReceipt?.(usage),
-      ai:{async run(selected,payload,options){
-        routingReceipt=undefined;
-        if(managed){
-          const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
-          if(!policy.available||policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)throw new Error("Routing unavailable under managed policy");
-        }
-        const count=managed?await managedUsageReportCount(env,input.userId,input.turnId):0;
-        routingReceipt=await admitModel(selected,count,{purpose:"fast_path",shadow:{stage:"routing",argumentMode:"route",sampleRate:1}},true);
-        return env.AI!.run(selected as never,payload as never,options as never);
-      }}}):undefined;
-    const result=await runAgentTurn({model,backupModel:backup,fastPath,router,tools,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,verifyCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
+    const result=await runAgentTurn({model,backupModel:backup,tools,preloadedToolGroups,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,verifyCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
       const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event.event,event.data);
       onEvent?.(event.event,event.data,seq);
     }});
-    const allowanceNotice=managed&&allowanceFallbackUsed()?managedAllowanceNotice(await getManagedAiBillingSettings(env,{syncUsage:false})):null;
+    const allowanceNotice=managed&&allowanceFallbackUsed()?getManagedAiBillingSettings(env,{syncUsage:false}).then(managedAllowanceNotice):Promise.resolve(null);
     // The reply has already streamed. Follow-ups and memory finish inside the turn so their
     // usage receipts reconcile before the owner's next turn; a miss only means none this time.
     const finished=result.status==="complete"&&Boolean(result.replyText.trim())&&fastAllowed;
@@ -168,14 +136,13 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const remembered=finished&&env.ME3_AGENT_MEMORY?.trim()!=="off"
       ?rememberFromTurn(env.DB,modelFor(fastName,{purpose:"memory_extraction"}),{ownerId:input.userId,turnId:input.turnId,ownerMessage:input.messageText,replyText:result.replyText,ownerSnapshot},AbortSignal.any([signal,AbortSignal.timeout(10_000)])).catch(()=>undefined)
       :Promise.resolve(undefined);
-    const [suggestedReplies,memory]=await Promise.all([followUps,remembered]);
     // At most one "Remember this?" card per reply: the most important memory held back this turn.
-    const memoryReview=memory?.held[0]?{memoryId:memory.held[0].id,id:memory.held[0].id,body:memory.held[0].body,displayBody:ownerFacingMemory(memory.held[0].body),status:"pending" as const}:null;
-    return persistNewAgentResult(env,input,result,onEvent,allowanceNotice,suggestedReplies,memoryReview);
+    const memoryReview=remembered.then(memory=>memory?.held[0]?{memoryId:memory.held[0].id,id:memory.held[0].id,body:memory.held[0].body,displayBody:ownerFacingMemory(memory.held[0].body),status:"pending" as const}:null);
+    return persistNewAgentResult(env,input,result,onEvent,allowanceNotice,followUps,memoryReview);
   } finally {await releaseManagedRuntimeWriteLease(env,lease);}
 }
 
-type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"create_intent"|"fast_path"|"suggested_replies"|"memory_extraction";onAdmission?(id:string):void;shadow?:{stage:string;argumentMode:string;sampleRate:number}};
+type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"create_intent"|"suggested_replies"|"memory_extraction";onAdmission?(id:string):void};
 export type AgentModelScope = Pick<NewAgentDispatchInput,"userId"|"threadId"|"turnId"|"requestId"|"selectedModel">;
 
 /**
@@ -184,8 +151,7 @@ export type AgentModelScope = Pick<NewAgentDispatchInput,"userId"|"threadId"|"tu
  * job's model steps are billed and capped exactly like a turn's.
  */
 export async function createAgentModels(env:Env,scope:AgentModelScope) {
-  const settings=await getAiSettings(env,scope.userId);
-  const managed=isManagedRuntime(env)?await getManagedAiBillingSettings(env):null;
+  const [settings,managed,gateway]=await Promise.all([getAiSettings(env,scope.userId),isManagedRuntime(env)?getManagedAiBillingSettings(env):null,getAiGatewayRuntimeConfig(env,scope.userId)]);
   // `eligible` only says whether paid Stripe overages can be enabled. Trial,
   // App Store and complimentary owners use the included allowance, and
   // effectiveMaximumCents plus the fallback model still cap every owner's spend.
@@ -193,49 +159,41 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
   const route=settings.defaults.chat;
   const modelName=scope.selectedModel?providerModel(scope.selectedModel.providerId,scope.selectedModel.model):managed?.defaultModel||providerModel(route.providerId,route.model);
   if(managed){await assertManagedCostsReconciled(env,scope.userId,true);resolveManagedModel(managed,modelName);}
-  const gateway=await getAiGatewayRuntimeConfig(env,scope.userId);
   if(!env.AI)throw new Error("Cloudflare AI binding is not configured");
   const metadata={me3_runtime:"agent",me3_turn_id:scope.turnId,me3_request_id:scope.requestId,me3_thread_id:scope.threadId};
   const imageScope={ownerId:scope.userId,threadId:scope.threadId};
   let usageIndex=0;
-  let firstAdmission: (()=>void)|undefined;
-  const plannerAdmitted = new Promise<void>(resolve=>{firstAdmission=resolve;});
-  const admitModel=async(selected:string,reportCount=0,purpose?:ModelPurpose,shadow=false)=>{
+  const admitModel=async(selected:string,reportCount=0,purpose?:ModelPurpose)=>{
     const usageId=`${scope.turnId}:model:${crypto.randomUUID()}:${usageIndex++}`;
-    const callMetadata={...metadata,...(purpose?{purpose:purpose.purpose}:{}),...(purpose?.shadow?{shadowRequest:purpose.shadow}:{})};
+    const callMetadata={...metadata,...(purpose?{purpose:purpose.purpose}:{})};
     const receiptMetadata={...callMetadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0]};
     const billingFeeRate=managed&&!selected.startsWith("@cf/")?0.05:0;
     // An interrupted or unpriced paid request must remain visibly unreconciled.
-    // Planner calls ignore shadow receipts from every turn, so a late or unpriced
-    // shadow can only stop later shadows, never the owner's own turns.
+    // Receipts left by the removed Clef routing pilot (purpose fast_path) never gate the planner.
     const admitted=await env.DB.prepare(`INSERT INTO ai_usage_events(id,user_id,kind,provider,model,tokens_in,tokens_out,estimated_cost_usd,metadata_json)
       SELECT ?,?,'text','workers-ai',?,0,0,0,? WHERE ?=0 OR (NOT EXISTS(
         SELECT 1 FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month')
         AND json_extract(metadata_json,'$.me3_runtime')='agent'
         AND json_extract(metadata_json,'$.billingManaged')=1
         AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL
-        AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'
-          AND (?=0 OR coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?))
-        AND NOT (?=1 AND coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?)
+        AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'
       ) AND ?=(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=?
         AND created_at >= datetime('now','start of month')
         AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
-        AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'
-          AND (?=0 OR coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?))
-      ))`).bind(usageId,scope.userId,selected,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:null,costKnown:false,usageReported:false}),managed?1:0,scope.userId,shadow?1:0,scope.turnId,shadow?1:0,scope.turnId,reportCount,scope.userId,shadow?1:0,scope.turnId).run();
+        AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'
+      ))`).bind(usageId,scope.userId,selected,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:null,costKnown:false,usageReported:false}),managed?1:0,scope.userId,reportCount,scope.userId).run();
     if(managed&&!admitted.meta.changes){
-      if(!shadow)await assertManagedCostsReconciled(env,scope.userId,true);
+      await assertManagedCostsReconciled(env,scope.userId,true);
       throw new Error("Managed AI budget policy changed before model admission; retry this turn");
     }
     purpose?.onAdmission?.(usageId);
-    if(!purpose){firstAdmission?.();firstAdmission=undefined;}
-    return Object.assign(async(usage:AgentUsage,measurement?:AgentFastPathRequestMeasurement)=>{
-      const tokensKnown=!(purpose?.purpose==="fast_path"&&usage.estimatedCostUsd===null)&&[usage.inputTokens,usage.outputTokens,usage.cachedInputTokens,usage.cacheWriteInputTokens??0].every(value=>typeof value==="number"&&Number.isFinite(value)&&value>=0);
+    return Object.assign(async(usage:AgentUsage)=>{
+      const tokensKnown=[usage.inputTokens,usage.outputTokens,usage.cachedInputTokens,usage.cacheWriteInputTokens??0].every(value=>typeof value==="number"&&Number.isFinite(value)&&value>=0);
       const baseCostUsd=usage.estimatedCostUsd;
       const billedCostUsd=baseCostUsd===null?null:baseCostUsd*(1+billingFeeRate);
       const costKnown=tokensKnown&&billedCostUsd!==null&&Number.isFinite(billedCostUsd)&&billedCostUsd>=0;
       await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,metadata_json=? WHERE id=?")
-        .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,...(measurement?{shadowRequest:{...purpose?.shadow,...measurement}}:{}),billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
+        .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
     },{usageId});
   };
   const cloudflareModel=(selected:string,reportCount=0,purpose?:ModelPurpose):AgentModel=>({id:selected,async step(step){
@@ -251,12 +209,12 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
   const modelFor=(requested:string,purpose?:ModelPurpose):AgentModel=>{
     if(!managed)return cloudflareModel(canonicalNativeModel(requested),0,purpose);
     const model:AgentModel={id:resolveManagedModel(managed,requested),async step(step){
-      await assertManagedCostsReconciled(env,scope.userId,false);
-      await syncManagedAiUsage(env,{deferFastPathTurnId:scope.turnId});
-      const reportCount=await managedUsageReportCount(env,scope.userId,scope.turnId,true);
-      const policy=await getManagedAiBillingSettings(env,{syncUsage:false});
+      // The bridge answers a usage report with the current policy, so a step that
+      // reported the previous step's receipt skips the separate policy fetch.
+      const [,synced]=await Promise.all([assertManagedCostsReconciled(env,scope.userId,false),syncManagedAiUsage(env)]);
+      const [reportCount,policy]=await Promise.all([managedUsageReportCount(env,scope.userId),synced??getManagedAiBillingSettings(env,{syncUsage:false})]);
       model.id=resolveManagedModel(policy,requested);
-      // Haiku also answers routed chat turns; only a budget switch counts here.
+      // Only a budget switch to the fallback model counts here.
       if(managedModelId(model.id)===managedModelId(MANAGED_AI_FALLBACK_MODEL)&&managedModelId(requested)!==managedModelId(model.id))allowanceFallbackUsed=true;
       await assertManagedCostsReconciled(env,scope.userId,true);
       step.signal.throwIfAborted();
@@ -267,15 +225,20 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
   const model=modelFor(modelName);
   const backupName=env.ME3_AI_CHAT_BACKUP_MODEL;
   const backup=backupName&&(!managed||managed.models.some(model=>managedModelId(model.id)===managedModelId(backupName)))?modelFor(backupName):undefined;
-  return {managed,modelName,gateway,metadata,admitModel,plannerAdmitted,modelFor,model,backup,allowanceFallbackUsed:()=>allowanceFallbackUsed};
+  return {managed,modelName,gateway,metadata,admitModel,modelFor,model,backup,allowanceFallbackUsed:()=>allowanceFallbackUsed};
 }
 
-async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void,allowanceNotice:ManagedAllowanceNotice|null=null,suggestedReplies:string[]=[],memoryReview:{memoryId:string;id:string;body:string;displayBody:string;status:"pending"}|null=null) {
-  const targetPresentation=result.targetPresentation||input.targetSelection?await loadAgentTargetPresentation(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId}):null;
-  const imageAction=await loadAgentGeneratedImageAction(env,{ownerId:input.userId,threadId:input.threadId,turnId:input.turnId});
-  const emailDraft=await loadAgentEmailDraft(env,{ownerId:input.userId,turnId:input.turnId});
+async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void,allowanceNotice:Promise<ManagedAllowanceNotice|null>=Promise.resolve(null),followUps:Promise<string[]>=Promise.resolve([]),memoryReview:Promise<{memoryId:string;id:string;body:string;displayBody:string;status:"pending"}|null>=Promise.resolve(null)) {
+  const scope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId};
+  // The record loads overlap the follow-up and memory model calls rather than waiting behind them.
+  const [targetPresentation,imageAction,emailDraft,notice,suggestedReplies,memory]=await Promise.all([
+    result.targetPresentation||input.targetSelection?loadAgentTargetPresentation(env,scope):null,
+    loadAgentGeneratedImageAction(env,scope),
+    loadAgentEmailDraft(env,{ownerId:input.userId,turnId:input.turnId}),
+    allowanceNotice,followUps,memoryReview,
+  ]);
   const messageId=`${input.turnId}:assistant:${result.status}:${result.approvalId||"final"}`;
-  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(allowanceNotice?{allowanceNotice}:{}),...(emailDraft?{emailDraft}:{}),...(suggestedReplies.length?{suggestedReplies}:{}),...(memoryReview?{memoryReview}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
+  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(notice?{allowanceNotice:notice}:{}),...(emailDraft?{emailDraft}:{}),...(suggestedReplies.length?{suggestedReplies}:{}),...(memory?{memoryReview:memory}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
   await env.DB.batch([
     env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)").bind(messageId,input.userId,input.threadId,result.replyText,JSON.stringify(payload)),
     env.DB.prepare("UPDATE me3_agent_turns SET response_json=?,trace_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND turn_id=?").bind(JSON.stringify(payload),JSON.stringify(result.trace),input.userId,input.turnId),
@@ -324,25 +287,37 @@ function isToolAvailable(name:string,services:AgentDomainServices):boolean {
   if(name==="core_scheduling_decline")return Boolean(services.scheduling?.decline);
   return true;
 }
+// Deferred tool groups this conversation already loaded stay visible on later
+// turns, and the first-run site build (the web app's "Build me a landing page
+// site for" starter) starts with the sites group, so neither pays a loader step.
+const THREAD_TOOL_GROUP_TURNS=8;
+const TOOL_GROUP_HINTS:Array<[RegExp,string]>=[[/\b(?:landing page|web ?site|web ?page|home ?page|my site)\b/i,"sites"]];
+async function loadThreadToolGroups(env:Env,scope:{ownerId:string;threadId:string;turnId:string}):Promise<string[]> {
+  const rows=await env.DB.prepare("SELECT trace_json FROM me3_agent_turns WHERE owner_id=? AND thread_id=? AND turn_id<>? AND trace_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?").bind(scope.ownerId,scope.threadId,scope.turnId,THREAD_TOOL_GROUP_TURNS).all<{trace_json:string}>();
+  const groups=new Set<string>();
+  for(const row of rows.results||[]) {
+    let trace:AgentTrace;
+    try {trace=JSON.parse(row.trace_json) as AgentTrace;} catch {continue;}
+    for(const group of trace.toolGroups??[])groups.add(group);
+    for(const step of trace.modelSteps??[])for(const call of step.toolCalls)if(call.name===TOOL_LOADER_NAME&&Array.isArray(call.arguments.groups))for(const group of call.arguments.groups)groups.add(String(group));
+  }
+  return [...groups];
+}
 function providerModel(provider:string,model:string):string {return provider==="workers-ai"?canonicalNativeModel(model):model.startsWith(`${provider}/`)?model:`${provider}/${model}`;}
-// These answer chat about as fast as the routed fast model, so routing only
-// added ~0.5 s to their tool turns (routing A/B, 20 Oct 2026, me3-ahsk.45).
 const CREATE_VERIFIER_MODEL="anthropic/claude-haiku-5.5";
-const UNROUTED_MAIN_MODELS=new Set(["openai/gpt-6.1-sol","anthropic/claude-sonnet-5.5","anthropic/claude-haiku-5.5"]);
 function managedModelId(model:string):string {return model.replace(/^@cf\//,"");}
 function canonicalNativeModel(model:string):string {
   const nativeModel=`@cf/${managedModelId(model)}`;
   return modelCapabilitiesFor("workers-ai",nativeModel).includes("text")?nativeModel:model;
 }
-async function managedUsageReportCount(env:Env,ownerId:string,shadowTurnId:string,planner=false):Promise<number> {
+async function managedUsageReportCount(env:Env,ownerId:string):Promise<number> {
   const row=await env.DB.prepare(`SELECT COUNT(*) AS count FROM ai_usage_events WHERE user_id=?
     AND created_at >= datetime('now','start of month')
     AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
-    AND NOT (coalesce(json_extract(metadata_json,'$.purpose'),'')='fast_path'
-      AND (?=1 OR coalesce(json_extract(metadata_json,'$.me3_turn_id'),'')=?))`).bind(ownerId,planner?1:0,shadowTurnId).first<{count:number}>();
+    AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'`).bind(ownerId).first<{count:number}>();
   return row?.count??0;
 }
-// Only planner admission uses this gate; shadow receipts never block it.
+// Receipts from the removed Clef routing pilot (purpose fast_path) never block this gate.
 async function assertManagedCostsReconciled(env:Env,ownerId:string,requireReported=false):Promise<void> {
   const pending=await env.DB.prepare(`SELECT json_extract(metadata_json,'$.costKnown') AS costKnown FROM ai_usage_events WHERE user_id=?
     AND created_at >= datetime('now','start of month')

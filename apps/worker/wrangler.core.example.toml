@@ -94,11 +94,6 @@ crons = ["*/15 * * * *", "* * * * *"]
 name = "EMAIL"
 
 [vars]
-ME3_AGENT_FAST_PATH = "off" # "off" (default) or "shadow": measurement only.
-# Shadow pairs Clef + Flash with frozen cutoffs on the same sampled turns.
-# ME3_AGENT_FAST_PATH_SAMPLE_RATE = "0.1" # fraction [0,1]; unset preserves full sampling.
-# ME3_AGENT_FAST_PATH_UNTIL = "2026-10-27T00:00:00Z" # set the pilot's automatic expiry.
-# ME3_AGENT_FAST_PATH_ARGUMENTS = "conditional" # Clef routes first, then asks only selected read arguments; Flash stays fanout.
 ENVIRONMENT = "local"
 ME3_DEPLOYMENT_MODE = "self_hosted"
 # Managed-fleet provisioning sets both values below. Self-hosted installs must

@@ -44,12 +44,6 @@ export interface Env {
   /** Installation ceiling for agent computer limits (JSON); managed plans set it, self-hosted uses the defaults. */
   ME3_AGENT_COMPUTER_LIMITS?: string;
   ME3_AI_CHAT_BACKUP_MODEL?: string;
-  ME3_AGENT_FAST_PATH?: string;
-  ME3_AGENT_FAST_PATH_SAMPLE_RATE?: string;
-  ME3_AGENT_FAST_PATH_ARGUMENTS?: string;
-  ME3_AGENT_FAST_PATH_UNTIL?: string;
-  /** "on" sends confident conversation-only turns to ME3_AGENT_FAST_MODEL. */
-  ME3_AGENT_ROUTING?: string;
   /** "off" hides the one-tap follow-ups under agent replies. */
   ME3_AGENT_SUGGESTED_REPLIES?: string;
   /** "off" stops the agent saving memories automatically after each turn. */
