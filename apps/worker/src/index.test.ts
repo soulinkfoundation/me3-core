@@ -9850,6 +9850,7 @@ describe("ME3 Worker auth", () => {
       "me3.agent-chat",
       "me3.mission-control",
       "me3.journal",
+      "me3.accounts",
       "me3.calendar",
       "me3.landing-pages",
       "me3.email-campaigns",

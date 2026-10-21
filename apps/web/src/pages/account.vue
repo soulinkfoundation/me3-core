@@ -2385,7 +2385,10 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="card accordion-card plugins-section">
+        <section
+          v-if="pluginsLoading || pluginsError || visibleAccountPlugins.length"
+          class="card accordion-card plugins-section"
+        >
           <button
             id="account-trigger-plugins"
             class="accordion-trigger"
@@ -2414,15 +2417,11 @@ onBeforeUnmount(() => {
             <p v-else-if="pluginsError" class="error">{{ pluginsError }}</p>
             <template v-else>
               <PluginList
-                v-if="visibleAccountPlugins.length"
                 :plugins="visibleAccountPlugins"
                 :busy-plugin-ids="pluginBusyIds"
                 :show-coming-soon="true"
                 @toggle="togglePlugin"
               />
-              <p v-else-if="plugins.length === 0" class="field-hint">
-                No curated plugins are registered in this Core build.
-              </p>
             </template>
           </div>
         </section>
@@ -2473,6 +2472,29 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="account-resources">
+              <div
+                v-if="me3Connection?.connected"
+                class="account-deletion-row"
+              >
+                <div>
+                  <h3>Export or delete your account</h3>
+                  <p class="hint">
+                    Download a portable copy of your ME3, then review everything
+                    before it is deleted. This opens on ME3.app.
+                  </p>
+                </div>
+                <Button
+                  color="outline"
+                  shape="soft"
+                  size="compact"
+                  :href="me3AccountURL"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Export or delete
+                </Button>
+              </div>
+
               <nav class="account-resource-links" aria-label="Account resources">
                 <a
                   v-if="me3Connection?.connected"
@@ -4301,6 +4323,23 @@ onBeforeUnmount(() => {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--ui-border, var(--color-border));
+}
+
+.account-deletion-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-deletion-row h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.account-deletion-row .hint {
+  margin: 0;
 }
 
 .account-resources__billing-note {
