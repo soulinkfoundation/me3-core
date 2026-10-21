@@ -256,6 +256,7 @@ async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:
   return visiblePayload;
 }
 
+export function parkedFeaturesOn(env:Pick<Env,"ME3_PARKED_FEATURES">):boolean {return env.ME3_PARKED_FEATURES?.trim().toLowerCase()==="on";}
 async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJobHost):Promise<AgentDomainServices> {
   return {
     // Hidden unless the installation has Browser Run and the turn runs in the owner's agent instance.
@@ -264,15 +265,16 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     scheduling:createStableAgentSchedulingServices(env,ownerId),
     mailbox:createAgentMailboxServices(env,ownerId),
     images:createAgentImageGenerationServices(env,ownerId),
-    payments:{...createAgentPaymentServices(env,ownerId),...createAgentNetworkPaymentServices(env,ownerId)},
+    payments:parkedFeaturesOn(env)?{...createAgentPaymentServices(env,ownerId),...createAgentNetworkPaymentServices(env,ownerId)}:undefined,
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
     web:createWebResearchToolServices(env,ownerId),landingPageEnv:env as never,
     sites:{draft:input=>draftStarterSite(env,ownerId,input),publish:()=>publishStarterSite(env,ownerId)},
-    cards:createAgentHomeCardServices(env,ownerId),
+    // Parked after the first release (me3-5u97.6): tools hide until ME3_PARKED_FEATURES is "on".
+    cards:parkedFeaturesOn(env)?createAgentHomeCardServices(env,ownerId):undefined,
     coding:await createCodingAgentServices(env),
   };
 }
-function isToolAvailable(name:string,services:AgentDomainServices):boolean {
+export function isToolAvailable(name:string,services:AgentDomainServices):boolean {
   if(name==="core_quotes_save")return Boolean(services.quotes);
   if(name==="core_images_generate")return Boolean(services.images);
   if(name.startsWith("core_mailbox_"))return Boolean(services.mailbox);
