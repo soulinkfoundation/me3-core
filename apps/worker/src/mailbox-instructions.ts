@@ -14,6 +14,10 @@ import type { Env } from "./types";
  * verifies and aligns with that address's domain. The owner's note is the
  * request; the forwarded email and its attachments reach the agent as
  * attached information, so the intent checks only ever read the owner's words.
+ *
+ * Like a human assistant, ME3 reads a cc as information: when the owner writes
+ * to someone else and only copies ME3 (Cc or Bcc), nothing starts unless the
+ * note speaks to ME3 by name.
  */
 
 export const MAILBOX_INSTRUCTIONS_SCHEMA = [
@@ -84,6 +88,34 @@ export type OwnerInstructionMessage = {
 };
 
 export type OwnerInstructionStart = { note: string; threadId: string; turnId: string };
+/** The owner copied ME3 on mail to someone else: kept for information, nothing started. */
+export type OwnerInstructionCopy = { copied: true; note: string };
+
+/** ME3's own address for a message: where it was delivered, else the To address. */
+export function me3DeliveryAddress(row: Pick<OwnerInstructionMessage, "to_address" | "metadata_json">): string | null {
+  const envelopeTo = parseRecord(row.metadata_json).envelopeTo;
+  const address = typeof envelopeTo === "string" && envelopeTo.includes("@") ? envelopeTo : row.to_address;
+  return address?.trim().toLowerCase() || null;
+}
+
+/** True when the To line names other people and not ME3, so ME3 was only in Cc or Bcc. */
+export function me3OnlyCopied(headers: Record<string, unknown>, me3Address: string | null): boolean {
+  const to: string[] = (headerString(headers, "to") || "").toLowerCase().match(/[^\s<>,;:"'()]+@[^\s<>,;:"'()]+/g) || [];
+  return Boolean(me3Address) && to.length > 0 && !to.includes(me3Address as string);
+}
+
+async function noteSpeaksToMe3(env: Pick<Env, "DB">, ownerId: string, note: string, me3Address: string | null): Promise<boolean> {
+  const owner = await env.DB.prepare("SELECT assistant_name FROM owner_profile WHERE id = ?").bind(ownerId)
+    .first<{ assistant_name: string | null }>().catch(() => null);
+  const names = ["ME3", owner?.assistant_name, me3Address?.split("@")[0]]
+    .map(name => (name || "").trim()).filter(name => name.length >= 2);
+  return names.some(name => {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // "cc'ing ME3" tells the other person ME3 is copied; it is not a request.
+    const copyNote = new RegExp(`\\b(?:cc(?:'?(?:ing|ed|d))?|bcc(?:'?(?:ing|ed|d))?|copying|copied|looping in|adding)\\s+(?:in\\s+)?@?${escaped}(?![\\p{L}\\p{N}])`, "giu");
+    return new RegExp(`(?:^|[^\\p{L}\\p{N}])@?${escaped}(?![\\p{L}\\p{N}])`, "iu").test(note.replace(copyNote, " "));
+  });
+}
 
 /**
  * Starts ME3 on an owner's email, or returns null when the mail is not an
@@ -94,7 +126,7 @@ export async function startOwnerInstruction(
   env: Env,
   row: OwnerInstructionMessage,
   options: { dispatch?: OwnerInstructionDispatcher; now?: Date } = {},
-): Promise<OwnerInstructionStart | null> {
+): Promise<OwnerInstructionStart | OwnerInstructionCopy | null> {
   const from = (row.from_address || "").trim().toLowerCase();
   if (!from || !(await ownerInstructionAddresses(env, row.user_id)).includes(from)) return null;
   const metadata = parseRecord(row.metadata_json);
@@ -110,6 +142,10 @@ export async function startOwnerInstruction(
     : plainSubject;
 
   const headers = parseRecord(row.raw_headers_json);
+  const me3Address = me3DeliveryAddress(row);
+  if (me3OnlyCopied(headers, me3Address) && !(await noteSpeaksToMe3(env, row.user_id, split.note || plainSubject, me3Address))) {
+    return { copied: true, note: messageText };
+  }
   const messageIdHeader = headerString(headers, "message-id");
   const references = headerString(headers, "references");
   const message = await env.DB.prepare("SELECT thread_key FROM mailbox_messages WHERE id = ?").bind(row.message_id)
@@ -139,7 +175,7 @@ export async function startOwnerInstruction(
           subject, message_id_header, references_header, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?)`,
     ).bind(
-      row.message_id, row.user_id, threadKey, threadId, crypto.randomUUID(), from, (row.to_address || "").trim().toLowerCase() || null,
+      row.message_id, row.user_id, threadKey, threadId, crypto.randomUUID(), from, me3Address,
       subject || null, messageIdHeader, references, nowIso, nowIso,
     ).run();
     existing = await env.DB.prepare("SELECT assistant_thread_id, turn_id FROM mailbox_instructions WHERE message_id = ?")

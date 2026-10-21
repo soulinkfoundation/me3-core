@@ -15,7 +15,8 @@ import type { Env } from "./types";
 // forwarded text reaches the agent as the owner's words instead of as data; a
 // bare forward starts a turn instead of being filed; the owner's reply to ME3
 // starts a new conversation; ME3 emails the owner twice for one turn, or
-// replies outside the thread.
+// replies outside the thread; ME3 acts on, or drafts a reply to, mail it was
+// only copied on, or ignores a note that speaks to it by name.
 const databases: DatabaseSync[] = [];
 afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMocks(); });
 
@@ -98,6 +99,32 @@ describe("owner email is an instruction", () => {
     expect(f.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_instructions").get()).toEqual({ n: 0 });
     expect(f.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_triage WHERE status = 'done' AND handled_kind IS NOT 'instruction'").get()).toEqual({ n: 4 });
     expect(f.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_messages WHERE folder = 'inbox'").get()).toEqual({ n: 4 });
+  });
+
+  it("keeps mail the owner only copied ME3 on as information, unless the note speaks to ME3", async () => {
+    const f = fixture();
+    const toSam = { to: "Sam Reyes <sam@example.test>", cc: "ME3 <kieran@me3.test>" };
+    insertMail(f.raw, { id: "cc", from: "kieran@gmail.test", subject: "Quote for the kitchen", body: "Hi Sam, here's the quote. Can you confirm by Friday?", dkim: "pass", headers: toSam });
+    insertMail(f.raw, { id: "bcc", from: "kieran@gmail.test", subject: "Quote for the kitchen", body: "Hi Sam, cc'ing ME3 so it has this. Can you reply by Friday?", dkim: "pass", headers: { to: "sam@example.test" } });
+    insertMail(f.raw, { id: "asked", from: "kieran@gmail.test", subject: "Quote for the kitchen", body: "Hi Sam, here's the quote.\n\nME3, chase Sam if there's no reply by Friday.", dkim: "pass", headers: toSam });
+    for (const id of ["cc", "bcc", "asked"]) await runMailTriage(f.env, id, { classify: modelMustNotRun, dispatchInstruction: f.dispatch });
+
+    expect(f.turns.map(turn => turn.requestId)).toEqual(["email:asked"]);
+    expect(f.raw.prepare("SELECT reply_from_address FROM mailbox_instructions").all()).toEqual([{ reply_from_address: "kieran@me3.test" }]);
+    for (const id of ["cc", "bcc"]) {
+      const row = f.raw.prepare("SELECT category, handled_kind, primary_action_json, draft_id, context_json FROM mailbox_triage WHERE message_id = ?").get(id) as Record<string, string | null>;
+      expect(row).toMatchObject({ category: "fyi", handled_kind: null, primary_action_json: null, draft_id: null });
+      expect(JSON.parse(row.context_json || "{}")).toMatchObject({ copiedMe3: true });
+    }
+  });
+
+  it("never drafts a reply to someone else's mail that only copied ME3", async () => {
+    const f = fixture();
+    insertMail(f.raw, { id: "copied", from: "sam@example.test", subject: "Kitchen", body: "Kieran, can you confirm the start date?", headers: { to: "kieran@gmail.test", cc: "kieran@me3.test" } });
+    const needsYou = vi.fn<MailTriageClassifier>(async () => ({ category: "needs_you", urgency: "normal", summary: "Sam wants the start date.", action: { kind: "draft_reply", label: "Draft a reply" }, secondary: null, reply: "Monday works.", url: null }));
+    await runMailTriage(f.env, "copied", { classify: needsYou, dispatchInstruction: f.dispatch });
+    expect(f.raw.prepare("SELECT category, draft_id FROM mailbox_triage WHERE message_id = 'copied'").get()).toEqual({ category: "fyi", draft_id: null });
+    expect(f.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_messages WHERE direction = 'outbound'").get()).toEqual({ n: 0 });
   });
 
   it("continues the same conversation when the owner replies to ME3, and reuses the turn on replay", async () => {

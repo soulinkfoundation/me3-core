@@ -1,5 +1,5 @@
 import { createAgentMailboxDraft, deleteAgentMailboxMessage } from "@me3-core/plugin-agent-chat";
-import { MAILBOX_INSTRUCTIONS_SCHEMA, startOwnerInstruction, type OwnerInstructionDispatcher } from "./mailbox-instructions";
+import { MAILBOX_INSTRUCTIONS_SCHEMA, me3DeliveryAddress, me3OnlyCopied, startOwnerInstruction, type OwnerInstructionDispatcher } from "./mailbox-instructions";
 import { parseEmailAddressHeader } from "../../../shared/email-headers";
 import { triageInboundInvoiceEmail } from "./accounts-email-triage";
 import { generateAiText, hasConfiguredAiProvider } from "./ai-providers";
@@ -401,6 +401,10 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
 
   // 0. The owner's own (verified) email is a request ME3 acts on, before any rule or signal.
   const instruction = await startOwnerInstruction(env, row, { dispatch: options.dispatchInstruction, now: options.now });
+  if (instruction && "copied" in instruction) {
+    // The owner copied ME3 on mail to someone else: information, never a reply.
+    return outcome("fyi", "low", instruction.note.replace(/\s+/g, " ") || subject, "signal", null, null, null, null, { ...context, copiedMe3: true });
+  }
   if (instruction) {
     await archiveMessage(env, row);
     await logHandledAction(env, row, { kind: "instruction", label: "Request from you", detail: instruction.note.replace(/\s+/g, " ").slice(0, 300), undo: { kind: "move_to_inbox" } });
@@ -514,6 +518,11 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
     await spamMessage(env, row, options.now);
     await logHandledAction(env, row, { kind: "spam", label: "Spam filtered", detail: decision.summary || subject, undo: { kind: "move_to_inbox" } });
     return outcome("handled", "low", decision.summary || subject, "model", "spam", null, null, null, { ...context, spamSignals: ["model"] });
+  }
+
+  // Someone who only copied ME3 is writing to the people in To, so it is information for the owner.
+  if (me3OnlyCopied(headers, me3DeliveryAddress(row)) && decision.category === "needs_you") {
+    return outcome("fyi", decision.urgency, decision.summary || subject, "model", null, null, null, null, { ...context, copiedMe3: true, url: decision.url });
   }
 
   let draftId: string | null = null;
