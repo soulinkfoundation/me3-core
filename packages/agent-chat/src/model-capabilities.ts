@@ -107,6 +107,11 @@ const AI_MODEL_CAPABILITY_RECORDS: readonly AiModelCapabilityRecord[] = [
   },
   {
     providerId: "workers-ai",
+    model: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+    capabilities: ["text", "image_input", "long-context", "reasoning", "tool-use"],
+  },
+  {
+    providerId: "workers-ai",
     model: "@cf/zai-org/glm-4.7-flash",
     capabilities: ["text", "long-context", "reasoning", "tool-use"],
   },

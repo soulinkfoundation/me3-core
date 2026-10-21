@@ -28,7 +28,7 @@ ME3 is a Cloudflare Worker app. The web app is built into Worker assets and mana
 | Custom Domains | Public site host and `me3.<domain>` owner/admin host | [Worker Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/) |
 | Email Routing | Incoming mailbox mail routed to the Worker email handler | [Email Routing](https://developers.cloudflare.com/email-routing/get-started/enable-email-routing/) |
 | Email Service | Optional Cloudflare outbound email sender binding | [Email Sending](https://developers.cloudflare.com/email-service/get-started/send-emails/) |
-| Workers AI | Default no-key model provider when the `AI` binding exists | [Workers AI](https://developers.cloudflare.com/workers-ai/) |
+| Workers AI | Default no-key model provider when the `AI` binding exists (DeepSeek V4.1 Flash) | [Workers AI](https://developers.cloudflare.com/workers-ai/) |
 | AI Gateway | Usage, token, and cost visibility for model calls | [AI Gateway](https://developers.cloudflare.com/ai-gateway/) |
 | Pages | Related Cloudflare product; useful context for the dashboard, but not the current deploy target | [Pages](https://developers.cloudflare.com/pages/) |
 

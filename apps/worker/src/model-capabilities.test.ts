@@ -9,6 +9,8 @@ describe("shared model capabilities", () => {
     expect(
       modelCapabilitiesFor("workers-ai", "@cf/zai-org/glm-4.7-flash"),
     ).toContain("tool-use");
+    expect(modelSupportsToolUse("workers-ai", "@cf/deepseek-ai/deepseek-v4.1-flash-1017")).toBe(true);
+    expect(modelSupportsImageInput("workers-ai", "@cf/deepseek-ai/deepseek-v4.1-flash-1017")).toBe(true);
   });
 
   it("registers the managed Kimi K3 model with vision-input capabilities", () => {

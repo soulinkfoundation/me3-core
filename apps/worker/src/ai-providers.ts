@@ -10,7 +10,11 @@ import {
   type AiGatewayRuntimeConfig,
 } from "./ai-gateway";
 
-export const DEFAULT_WORKERS_AI_TEXT_MODEL = "@cf/zai-org/glm-4.7-flash";
+// Self-hosted default: works with only the Workers AI binding, no gateway credits.
+// 20 Oct 2026 portability eval (85 scenarios x3): DeepSeek V4.1 Flash 206/255 pass,
+// GLM 4.7 Flash 11/39. Haiku 5.5 scored 217/255 with no unsafe writes but needs
+// prepaid AI Gateway credits with Unified Billing (me3-ahsk.5).
+export const DEFAULT_WORKERS_AI_TEXT_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
 const BYOK_DEFAULT_CLAUDE_MODEL = "claude-sonnet-5.5";
 
 export const AI_ROUTE_IDS = [

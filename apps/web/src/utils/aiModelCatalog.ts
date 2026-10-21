@@ -74,6 +74,18 @@ export const AI_AGENT_MODEL_OPTIONS: AiAgentModelOption[] = [
     description: "OpenAI flagship for complex reasoning, coding, and agentic workflows.",
   },
   {
+    id: "workers-deepseek-v4-1-flash",
+    label: "DeepSeek V4.1 Flash",
+    providerId: "workers-ai",
+    model: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+    runtimeLabel: "Cloudflare Workers AI",
+    costLabel: "Low cost",
+    capabilities: ["text", "image_input", "long-context", "reasoning", "tool-use"],
+    badge: "Default",
+    description:
+      "DeepSeek V4.1 Flash on Workers AI: the recommended no-key model for everyday chat, tool use and images.",
+  },
+  {
     id: "workers-glm-4-7-flash",
     label: "GLM 4.7 Flash",
     providerId: "workers-ai",
@@ -81,9 +93,8 @@ export const AI_AGENT_MODEL_OPTIONS: AiAgentModelOption[] = [
     runtimeLabel: "Cloudflare Workers AI",
     costLabel: "Fast",
     capabilities: ["text", "long-context", "reasoning", "tool-use"],
-    badge: "Default",
     description:
-      "Fast, efficient GLM model on Workers AI for dialogue, instruction following, and tool use.",
+      "Small GLM model on Workers AI for dialogue and instruction following; weaker with tools.",
   },
   {
     id: "workers-gemma-4-26b",
