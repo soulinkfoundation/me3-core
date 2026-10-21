@@ -120,6 +120,9 @@ async function completePlanTask(task: HomeTask) {
 async function focusPlanGoal(id: string) {
   try { await plan.makeFocus(id); } catch (error) { toastPlanError(error, "Couldn't change your focus goal"); }
 }
+async function setPlanGoalProgress(id: string, progress: number) {
+  try { await plan.changeGoal(id, goal => { goal.progress = progress; }); } catch (error) { toastPlanError(error, "Couldn't save your progress"); }
+}
 // Today's page: the focus goal and tasks sit between the title and your notes.
 const showsDayPlan = computed(() => !currentArticle.value && currentDateIsToday.value && planReady.value);
 const dayTitle = computed(() => new Date(`${selectedDate.value}T12:00:00`).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" }));
@@ -165,7 +168,6 @@ const datePickerMonth = ref(monthKey(selectedDate.value));
 const title = ref("");
 const description = ref("");
 const loadedEntry = ref<JournalEntry | null>(null);
-const dailyGratitude = computed(() => writtenGratitude(loadedEntry.value?.metadata));
 const archiveEntries = ref<JournalArchiveEntry[]>([]);
 const archiveOpen = ref(false);
 const archiveMobileDetailOpen = ref(false);
@@ -1507,10 +1509,6 @@ onBeforeUnmount(() => {
           class="journal__editor-wrap"
           :class="{ 'is-loading': loading }"
         >
-          <div v-if="!currentArticle && (dailyGratitude.gratitude.length || dailyGratitude.goodThings.length)" class="journal__gratitude" aria-label="Gratitude and three good things">
-            <section v-if="dailyGratitude.gratitude.length"><h3>Grateful for</h3><ol><li v-for="(line, index) in dailyGratitude.gratitude" :key="index">{{ line }}</li></ol></section>
-            <section v-if="dailyGratitude.goodThings.length"><h3>Three good things</h3><ol><li v-for="(line, index) in dailyGratitude.goodThings" :key="index">{{ line }}</li></ol></section>
-          </div>
           <TiptapEditor
             ref="editorRef"
             v-model="description"
@@ -1530,7 +1528,7 @@ onBeforeUnmount(() => {
               <span v-if="!loading" class="journal__title-meta">{{ wordCount.toLocaleString() }} {{ wordCount === 1 ? 'word' : 'words' }}<template v-if="saveStatusText"> · <strong>{{ saveStatusText }}</strong></template></span>
             </template>
             <template #after-title>
-              <JournalDayPlan v-if="showsDayPlan" :tasks="plan.tasks.value" :goals="plan.goals.value" :busy="plan.busy.value" @complete="completePlanTask" @focus="focusPlanGoal" />
+              <JournalDayPlan v-if="showsDayPlan" :tasks="plan.tasks.value" :goals="plan.goals.value" :busy="plan.busy.value" @complete="completePlanTask" @focus="focusPlanGoal" @progress="setPlanGoalProgress" />
             </template>
           </TiptapEditor>
           <div v-if="movedTask" class="journal__moved" role="status">Moved to tasks<button type="button" @click="undoMove">Undo</button></div>
@@ -1737,9 +1735,6 @@ onBeforeUnmount(() => {
 .journal__focus { margin: 6px 0 4px; }
 .journal__tasks { margin: 4px 0 20px; }
 /* Same plain section titles as the Today card. */
-.journal__gratitude { display: grid; gap: 12px; margin: 10px 0 4px; }
-.journal__gratitude h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ui-text-muted); }
-.journal__gratitude ol { margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.5; }
 .journal {
   --workspace-topbar-height: 0px;
   display: flex;

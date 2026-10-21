@@ -7,18 +7,26 @@ import { focusGoal, homeTodayTasks, localDateKey, type HomeGoal, type HomeTask }
 // Today's page is where you work: the focus goal, then today's tasks, then your notes.
 // Tasks are added from the editor (the task button, or Task on selected text), so there's no add row.
 const props = withDefaults(defineProps<{ tasks: HomeTask[]; goals: HomeGoal[]; busy?: string[] }>(), { busy: () => [] });
-const emit = defineEmits<{ complete: [task: HomeTask]; focus: [goalId: string] }>();
+const emit = defineEmits<{ complete: [task: HomeTask]; focus: [goalId: string]; progress: [goalId: string, progress: number] }>();
 const picking = ref(false);
-const activeGoals = computed(() => props.goals.filter(goal => goal.status !== "completed"));
 const focus = computed(() => focusGoal(props.goals));
+const otherGoals = computed(() => props.goals.filter(goal => goal.status !== "completed" && goal.id !== focus.value?.id));
+// The slider moves freely and the goal saves once you let go, so a drag is one save, not twenty.
+const dragging = ref<number | null>(null);
+const shownProgress = computed(() => dragging.value ?? focus.value?.progress ?? 0);
+function commitProgress() {
+  if (dragging.value === null || !focus.value) return;
+  const value = dragging.value; dragging.value = null;
+  if (value !== (focus.value.progress || 0)) emit("progress", focus.value.id, value);
+}
 const doneToday = computed(() => props.tasks.filter(task => !task.archivedAt && task.status === "done" && task.updatedAt && localDateKey(new Date(task.updatedAt)) === localDateKey(new Date())));
 const dayTasks = computed(() => [...doneToday.value, ...homeTodayTasks(props.tasks)]);
-function choose(id: string) { picking.value = false; if (id !== focus.value?.id) emit("focus", id); }
+function choose(id: string) { if (id !== focus.value?.id) emit("focus", id); }
 </script>
 
 <template>
   <section class="day-plan" aria-label="Today's plan">
-    <button v-if="focus" type="button" class="day-plan__goal" :aria-label="`Focus goal: ${focus.title}, ${focus.progress || 0} percent. Choose a different focus goal`" @click="picking = true">
+    <button v-if="focus" type="button" class="day-plan__goal" :aria-label="`Focus goal: ${focus.title}, ${focus.progress || 0} percent. Update progress or change focus`" @click="picking = true">
       <span class="day-plan__goal-title"><UiIcon name="Goal" :size="18" class="day-plan__goal-icon" />{{ focus.title }}</span>
       <span class="day-plan__bar" aria-hidden="true"><i :style="{ width: `${focus.progress || 0}%` }" /></span>
     </button>
@@ -30,14 +38,27 @@ function choose(id: string) { picking.value = false; if (id !== focus.value?.id)
       <RouterLink :to="`/tasks?task=${encodeURIComponent(task.id)}`">{{ task.title }}</RouterLink>
     </div>
     <p v-if="!dayTasks.length" class="day-plan__empty">Nothing for today. Select text and choose Task, or use the task button.</p>
-    <AppDialog :open="picking" aria-label="Focus goal" @close="picking = false">
-      <section class="day-plan__picker">
-        <header><h2>Focus goal</h2><button type="button" aria-label="Close" @click="picking = false"><UiIcon name="X" :size="18" /></button></header>
-        <button v-for="goal in activeGoals" :key="goal.id" type="button" class="day-plan__option" :aria-pressed="goal.id === focus?.id" @click="choose(goal.id)">
-          <span class="day-plan__goal-title">{{ goal.title }}<UiIcon v-if="goal.id === focus?.id" name="Check" :size="16" class="day-plan__check" /></span>
-          <span class="day-plan__bar" aria-hidden="true"><i :style="{ width: `${goal.progress || 0}%` }" /></span>
-        </button>
-        <RouterLink to="/mission" class="day-plan__mission" @click="picking = false">Open Mission</RouterLink>
+    <AppDialog :open="picking" labelled-by="day-plan-goal-title" close-on-backdrop @close="picking = false">
+      <section class="goal-sheet">
+        <header class="goal-sheet__head">
+          <h2 id="day-plan-goal-title">Focus goal</h2>
+          <button type="button" class="goal-sheet__close" aria-label="Close" @click="picking = false"><UiIcon name="X" :size="18" /></button>
+        </header>
+        <div v-if="focus" class="goal-sheet__focus">
+          <p class="goal-sheet__title">{{ focus.title }}</p>
+          <label class="goal-sheet__range"><span>Progress</span><output>{{ shownProgress }}%</output>
+            <input type="range" min="0" max="100" step="5" :value="shownProgress" :aria-label="`Progress for ${focus.title}`"
+              @input="dragging = Number(($event.target as HTMLInputElement).value)" @change="commitProgress" />
+          </label>
+        </div>
+        <template v-if="otherGoals.length">
+          <h3 class="goal-sheet__label">Switch focus</h3>
+          <button v-for="goal in otherGoals" :key="goal.id" type="button" class="goal-sheet__option" :aria-label="`Make ${goal.title} the focus goal, ${goal.progress || 0} percent`" @click="choose(goal.id)">
+            <span class="goal-sheet__option-title">{{ goal.title }}</span>
+            <span class="goal-sheet__meta"><span class="day-plan__bar" aria-hidden="true"><i :style="{ width: `${goal.progress || 0}%` }" /></span>{{ goal.progress || 0 }}%</span>
+          </button>
+        </template>
+        <footer class="goal-sheet__foot"><RouterLink to="/mission" @click="picking = false">Open Mission<UiIcon name="ChevronRight" :size="16" /></RouterLink></footer>
       </section>
     </AppDialog>
   </section>
@@ -45,8 +66,7 @@ function choose(id: string) { picking.value = false; if (id !== focus.value?.id)
 
 <style scoped>
 .day-plan { display: flex; flex-direction: column; margin: 4px 0 18px; }
-.day-plan__goal, .day-plan__option { display: grid; gap: 8px; width: 100%; min-height: 44px; padding: 6px 0; border: 0; background: transparent; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer; }
-.day-plan__goal { margin-bottom: 12px; }
+.day-plan__goal { display: grid; gap: 8px; width: 100%; min-height: 44px; margin-bottom: 12px; padding: 6px 0; border: 0; background: transparent; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer; }
 .day-plan__goal-title { display: flex; align-items: flex-start; gap: 8px; font-size: 15px; font-weight: 600; line-height: 1.35; }
 .day-plan__goal-icon { flex-shrink: 0; margin-top: 1px; color: var(--ui-accent); }
 .day-plan__bar { display: block; height: 4px; margin-left: 26px; border-radius: 4px; background: var(--ui-surface-muted); overflow: hidden; }
@@ -61,14 +81,26 @@ function choose(id: string) { picking.value = false; if (id !== focus.value?.id)
 .day-plan__task.is-done button { color: var(--ui-accent); cursor: default; }
 .day-plan__task.is-done a { color: var(--ui-text-muted); text-decoration: line-through; }
 .day-plan__empty { margin: 4px 0; color: var(--ui-text-muted); font-size: 14px; }
-.day-plan__picker { display: grid; gap: 4px; width: min(480px, 100%); padding: 18px; }
-.day-plan__picker header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-.day-plan__picker h2 { margin: 0; font-size: 17px; }
-.day-plan__picker header button { display: grid; place-items: center; min-width: 44px; min-height: 44px; border: 0; border-radius: 12px; background: transparent; color: var(--ui-text); cursor: pointer; }
-.day-plan__option { padding: 10px 12px; border-radius: 14px; }
-.day-plan__option[aria-pressed="true"] { background: var(--ui-accent-soft); }
-.day-plan__option .day-plan__bar { margin-left: 0; }
-.day-plan__check { margin-left: auto; flex-shrink: 0; color: var(--ui-accent); }
-.day-plan__mission { min-height: 44px; display: flex; align-items: center; padding: 0 12px; color: var(--ui-accent); font-weight: 600; text-decoration: none; }
+.goal-sheet { box-sizing: border-box; display: grid; gap: 4px; width: min(100%, 440px); padding: 8px 20px 12px; border-radius: var(--ui-radius-lg); background: var(--ui-surface); color: var(--ui-text); box-shadow: var(--ui-shadow-md); }
+.goal-sheet__head { display: flex; align-items: center; justify-content: space-between; margin-right: -12px; }
+.goal-sheet__head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.goal-sheet__close { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: var(--ui-radius-md); background: transparent; color: var(--ui-text-muted); cursor: pointer; }
+.goal-sheet__close:hover { background: var(--ui-surface-muted); color: var(--ui-text); }
+.goal-sheet__focus { display: grid; gap: 12px; padding: 14px 16px 10px; border-radius: var(--ui-radius-md); background: var(--ui-accent-soft); }
+.goal-sheet__title { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.35; }
+.goal-sheet__range { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; color: var(--ui-text-muted); font-size: 13px; }
+.goal-sheet__range output { color: var(--ui-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.goal-sheet__range input { grid-column: 1 / -1; width: 100%; min-height: 32px; margin: 0; accent-color: var(--ui-accent); cursor: pointer; }
+.goal-sheet__label { margin: 14px 0 2px; color: var(--ui-text-muted); font-size: 13px; font-weight: 600; }
+.goal-sheet__option { display: grid; gap: 6px; width: calc(100% + 16px); min-height: 52px; margin: 0 -8px; padding: 8px; border: 0; border-radius: var(--ui-radius-md); background: transparent; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer; }
+.goal-sheet__option:hover { background: var(--ui-surface-muted); }
+.goal-sheet__option-title { font-size: 15px; font-weight: 500; line-height: 1.35; }
+.goal-sheet__meta { display: flex; align-items: center; gap: 8px; color: var(--ui-text-muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.goal-sheet__meta .day-plan__bar { flex: 0 1 160px; margin-left: 0; }
+.goal-sheet__foot { display: flex; justify-content: flex-end; margin-top: 8px; padding-top: 4px; border-top: 1px solid var(--ui-border); }
+.goal-sheet__foot a { display: inline-flex; align-items: center; gap: 2px; min-height: 44px; color: var(--ui-accent); font-size: 14px; font-weight: 600; text-decoration: none; }
+@media (max-width: 640px) {
+  .goal-sheet { width: 100%; padding-bottom: max(12px, env(safe-area-inset-bottom)); border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0; }
+}
 button:focus-visible, a:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 </style>

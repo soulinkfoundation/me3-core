@@ -13,6 +13,7 @@ import {
 } from "../journal";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { isCorePluginEnabled } from "../plugins";
+import { backfillGratitudeText } from "../gratitude";
 
 export function registerJournalRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.get("/api/journal/articles", async (c) => {
@@ -92,7 +93,8 @@ export function registerJournalRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (blocked) return blocked;
 
     try {
-      const result = await getJournalDay(c.env, ownerId, c.req.param("date"));
+      let result = await getJournalDay(c.env, ownerId, c.req.param("date"));
+      if (await backfillGratitudeText(c.env, ownerId, result.entry)) result = await getJournalDay(c.env, ownerId, c.req.param("date"));
       c.header("ETag", journalRevisionETag(result.entry?.revision));
       c.header("Cache-Control", "private, no-cache");
       c.header("Vary", "Authorization");

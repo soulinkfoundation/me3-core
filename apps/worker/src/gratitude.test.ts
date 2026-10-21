@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getGratitudeState, updateGratitudeLines, updateGratitudeSettings, dispatchDueGratitudeReminders } from "./gratitude";
+import { backfillGratitudeText, getGratitudeState, updateGratitudeLines, updateGratitudeSettings, dispatchDueGratitudeReminders, withGratitudeText } from "./gratitude";
 import { getBriefingQuote } from "./quotes";
 import { notifyCalendarItemDue, notifyDailyBriefingReady } from "./push-notifications";
 import { dispatchDueMorningCalendarPushes } from "./morning-calendar-push";
@@ -49,12 +49,34 @@ describe("Gratitude persistence and reminders", () => {
     await updateGratitudeLines(f.env, "owner", { date: "2026-10-14", gratitude: [" Tea ", "", ""] }, evening);
     await updateGratitudeLines(f.env, "owner", { date: "2026-10-14", goodThings: ["A walk", "", ""] }, evening);
     const row = f.raw.prepare("SELECT * FROM journal_entries WHERE id='day'").get()!;
-    expect(row.body).toBe("My own writing"); expect(row.title).toBe("My day");
-    expect(JSON.parse(String(row.metadata_json))).toEqual({ other: 42, gratitude: ["Tea", "", ""], goodThings: ["A walk", "", ""] });
+    expect(row.body).toBe("My own writing\n\n### Grateful for\n\n1. Tea\n\n### Three good things\n\n1. A walk"); expect(row.title).toBe("My day");
+    expect(JSON.parse(String(row.metadata_json))).toEqual({ other: 42, gratitude: ["Tea", "", ""], goodThings: ["A walk", "", ""], gratitudeInBody: true });
     const state = await getGratitudeState(f.env, "owner", evening);
     expect(state.date).toBe("2026-10-14"); expect(state.days).toHaveLength(7);
     expect(state.days.at(-1)).toEqual({ date: "2026-10-14", written: true });
     await expect(updateGratitudeLines(f.env, "owner", { date: "2026-10-13", gratitude: ["old"] }, evening)).rejects.toThrow();
+  });
+
+  it("keeps the lines as one section of the day's writing, replacing it on each save and leaving the rest alone", () => {
+    const html = withGratitudeText("<p>Before</p>", "html", "gratitude", ["Tea & <cake>", "", "Rain"]);
+    expect(html).toBe("<p>Before</p><h3>Grateful for</h3><ol><li><p>Tea &amp; &lt;cake&gt;</p></li><li><p>Rain</p></li></ol>");
+    expect(withGratitudeText(`${html}<p>After</p>`, "html", "gratitude", ["Sun $&"])).toBe("<p>Before</p><h3>Grateful for</h3><ol><li><p>Sun $&amp;</p></li></ol><p>After</p>");
+    expect(withGratitudeText(`${html}<p>After</p>`, "html", "gratitude", ["", "", ""])).toBe("<p>Before</p><p>After</p>");
+    expect(withGratitudeText("<p></p>", "html", "goodThings", ["Gym"])).toBe("<h3>Three good things</h3><ol><li><p>Gym</p></li></ol>");
+    const markdown = "Morning\n\n### Three good things\n\n1. Gym\n2. Coffee\n\nEvening";
+    expect(withGratitudeText(markdown, "markdown", "goodThings", ["Walk"])).toBe("Morning\n\n### Three good things\n\n1. Walk\n\nEvening");
+    expect(withGratitudeText(markdown, "markdown", "goodThings", [])).toBe("Morning\n\nEvening");
+  });
+
+  it("moves an older day's lines into its writing once, and not again after the owner deletes them", async () => {
+    const f = fixture();
+    f.raw.exec(`INSERT INTO journal_entries(id,user_id,entry_date,body,body_format,metadata_json) VALUES('old','owner','2026-10-01','<p>Hi</p>','html','{"gratitude":["Tea","",""],"goodThings":["","",""]}')`);
+    const entry = () => { const row = f.raw.prepare("SELECT body, metadata_json FROM journal_entries WHERE id='old'").get()!; return { date: "2026-10-01", body: String(row.body), metadata: JSON.parse(String(row.metadata_json)) }; };
+    expect(await backfillGratitudeText(f.env, "owner", entry())).toBe(true);
+    expect(entry().body).toBe("<p>Hi</p><h3>Grateful for</h3><ol><li><p>Tea</p></li></ol>");
+    f.raw.exec("UPDATE journal_entries SET body='<p>Hi</p>' WHERE id='old'");
+    expect(await backfillGratitudeText(f.env, "owner", entry())).toBe(false);
+    expect(entry().body).toBe("<p>Hi</p>");
   });
 
   it("defaults briefing quotes on and the evening reminder off, and honours both switches", async () => {
@@ -109,14 +131,14 @@ describe("Gratitude persistence and reminders", () => {
     await updateGratitudeLines(f.env, "owner", { date: "2026-10-13", gratitude: ["coffee"] }, morning);
 
     const row = f.raw.prepare("SELECT title, body, archived_at, metadata_json FROM journal_entries").get()!;
-    expect(row).toMatchObject({ title: null, body: "", archived_at: null });
-    expect(JSON.parse(String(row.metadata_json))).toEqual({ gratitude: ["coffee", "", ""] });
+    expect(row).toMatchObject({ title: null, body: "<h3>Grateful for</h3><ol><li><p>coffee</p></li></ol>", archived_at: null });
+    expect(JSON.parse(String(row.metadata_json))).toEqual({ gratitude: ["coffee", "", ""], gratitudeInBody: true });
 
     // A live page keeps its writing.
     f.raw.exec("UPDATE journal_entries SET title = 'Kept', body = '<p>today</p>'");
     await updateGratitudeLines(f.env, "owner", { date: "2026-10-13", goodThings: ["sun"] }, morning);
     expect(f.raw.prepare("SELECT title, body, metadata_json FROM journal_entries").get()).toMatchObject({
-      title: "Kept", body: "<p>today</p>", metadata_json: JSON.stringify({ gratitude: ["coffee", "", ""], goodThings: ["sun", "", ""] }),
+      title: "Kept", body: "<p>today</p><h3>Three good things</h3><ol><li><p>sun</p></li></ol>", metadata_json: JSON.stringify({ gratitude: ["coffee", "", ""], gratitudeInBody: true, goodThings: ["sun", "", ""] }),
     });
   });
 

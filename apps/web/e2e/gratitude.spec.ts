@@ -35,7 +35,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       if (path === "/quotes/mine") data = { quotes: quotes.filter(quote => quote.savedAt) };
       if (path === "/quotes/another") { quoteIndex = 1 - quoteIndex; data = { quote: quotes[quoteIndex] }; }
       if (/^\/quotes\/[^/]+\/save$/.test(path)) { const quote = quotes.find(q => path.includes(q.id))!; quote.savedAt = method === "PUT" ? "2026-10-13T08:00:00Z" : null; data = { quote }; }
-      if (path === "/journal/days/2026-10-13") data = { entry: { id: "day", date: "2026-10-13", title: "My day", body: "<p>My own writing.</p>", bodyFormat: "html", metadata: lists, revision: 1 } };
+      if (path === "/journal/days/2026-10-13") data = { entry: { id: "day", date: "2026-10-13", title: "My day", body: `<p>My own writing.</p><h3>Grateful for</h3><ol><li><p>${lists.gratitude[0]}</p></li></ol><h3>Three good things</h3><ol><li><p>${lists.goodThings[0]}</p></li></ol>`, bodyFormat: "html", metadata: { ...lists, gratitudeInBody: true }, revision: 1 } };
       if (path.includes("/journal-links")) data = { links: [] };
       await route.fulfill({ status: 200, json: data });
     });
@@ -73,9 +73,11 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await expect(page.getByRole("textbox", { name: "Good thing 1" })).toHaveValue("A walk");
     await page.screenshot({ path: testInfo.outputPath("evening.png"), fullPage: true });
     await page.goto("/journal?date=2026-10-13");
-    await expect(page.locator(".journal__gratitude")).toContainText("Coffee with Ada");
-    await expect(page.locator(".journal__gratitude")).toContainText("A walk");
+    // The lines are part of the day's writing, so they show in the editor as text.
     await expect(page.locator(".journal__editor-wrap")).toContainText("My own writing.");
+    await expect(page.locator(".journal__editor-wrap h3", { hasText: "Grateful for" })).toBeVisible();
+    await expect(page.locator(".journal__editor-wrap")).toContainText("Coffee with Ada");
+    await expect(page.locator(".journal__editor-wrap")).toContainText("A walk");
     await page.screenshot({ path: testInfo.outputPath("daily-page.png"), fullPage: true });
     await page.goto("/calendar");
     await expect(page.locator(".cal-card-reminders")).toContainText("Three good things");

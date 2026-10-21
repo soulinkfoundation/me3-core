@@ -31,13 +31,26 @@ describe("Journal day plan", () => {
     expect(plan.text()).not.toContain("40%");
     expect(plan.find(".day-plan__bar i").attributes("style")).toContain("width: 40%");
   });
-  it("opens a goal picker and makes the chosen goal the focus", async () => {
+  it("opens the focus goal with its progress, and lets you switch to another goal", async () => {
     const plan = render();
     await plan.find(".day-plan__goal").trigger("click");
-    const options = [...document.body.querySelectorAll<HTMLButtonElement>(".day-plan__option")];
-    expect(options.map(option => option.textContent)).toEqual([expect.stringContaining("Launch"), expect.stringContaining("half marathon")]);
-    options[1].click();
+    expect(document.body.querySelector(".goal-sheet__focus")?.textContent).toContain("Launch");
+    const options = [...document.body.querySelectorAll<HTMLButtonElement>(".goal-sheet__option")];
+    expect(options.map(option => option.textContent)).toEqual([expect.stringContaining("half marathon")]);
+    options[0].click();
     expect(plan.emitted("focus")).toEqual([["g2"]]);
+  });
+  it("saves the focus goal's progress once, when you let go of the slider", async () => {
+    const plan = render();
+    await plan.find(".day-plan__goal").trigger("click");
+    const slider = document.body.querySelector<HTMLInputElement>(".goal-sheet__range input")!;
+    expect(slider.value).toBe("40");
+    for (const value of ["45", "50", "55"]) { slider.value = value; slider.dispatchEvent(new Event("input")); }
+    await plan.vm.$nextTick();
+    expect(document.body.querySelector(".goal-sheet__range output")?.textContent).toBe("55%");
+    expect(plan.emitted("progress")).toBeUndefined();
+    slider.dispatchEvent(new Event("change"));
+    expect(plan.emitted("progress")).toEqual([["g1", 55]]);
   });
   it("lists today's open and finished tasks, links to all tasks, and has no add row", async () => {
     const plan = render();
@@ -46,7 +59,7 @@ describe("Journal day plan", () => {
     expect(rows[0].classes()).toContain("is-done");
     expect(plan.text()).not.toContain("Someday idea");
     expect(plan.find('a[to="/tasks"]').text()).toBe("All tasks");
-    expect(plan.find("input").exists()).toBe(false);
+    expect(plan.find("input:not([type=range])").exists()).toBe(false);
     await rows[1].find("button").trigger("click");
     expect(plan.emitted("complete")?.[0]?.[0]).toMatchObject({ id: "open" });
   });
