@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { draftStarterSite, getOwnerProfileSite, publishStarterSite, renderDraftPreviewHtml, setDraftTheme } from "./site-starter";
+import { draftStarterSite, getOwnerProfileSite, publishStarterSite, renderDraftPreviewHtml, setDraftTheme, starterSearchQuery } from "./site-starter";
 import { getSiteFileText } from "./sites";
 import type { Env } from "./types";
 
@@ -53,11 +53,20 @@ const answer = {
   missionWho: "people who've outgrown their job", missionChange: "work out what's next", missionHow: "1:1 coaching over video",
 };
 
+describe("the search someone would type to find the owner", () => {
+  it("keeps the headline's first clause and the town", () => {
+    expect(starterSearchQuery("Career coach · Leeds and online", "Leeds, UK", [])).toBe("Career coach in Leeds");
+    expect(starterSearchQuery("Career coach helping growth-focused professionals in their 30s", "Leeds, UK", [])).toBe("Career coach in Leeds");
+    expect(starterSearchQuery("", "", [{ title: "Wedding cakes" }])).toBe("Wedding cakes");
+    expect(starterSearchQuery("", "Cork, Ireland", [])).toBe("Cork");
+  });
+});
+
 describe("the chat-drafted first site", () => {
   it("writes the source without publishing and keeps the photo", async () => {
     const f = fixture();
     const draft = await draftStarterSite(f.env, "owner", answer);
-    expect(draft).toMatchObject({ username: "samrivera", theme: "warm", newsletter: true, previewPath: "/api/sites/samrivera/draft-preview-html" });
+    expect(draft).toMatchObject({ username: "samrivera", theme: "warm", newsletter: true, previewPath: "/api/sites/samrivera/draft-preview-html", searchQuery: "Career coach in Leeds" });
     expect(draft.services).toEqual([{ title: "Free 30-minute clarity call", bookable: true }, { title: "6-week programme", bookable: false }]);
     const site = (await getOwnerProfileSite(f.env, "owner"))!;
     expect(site.published_at).toBeNull();
@@ -101,6 +110,7 @@ describe("the chat-drafted first site", () => {
 
     const published = await publishStarterSite(f.env, "owner");
     expect(published.publishedAt).toBeTruthy();
+    expect(published.searchQuery).toBe("Career coach in Leeds");
     expect((await getOwnerProfileSite(f.env, "owner"))!.published_at).toBeTruthy();
     const html = (await getSiteFileText(f.env, "site-1", "public/index.html"))!;
     expect(html).toContain('data-vibe="meadow"');

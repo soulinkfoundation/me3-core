@@ -544,6 +544,10 @@ export const CORE_CHAT_CAPABILITIES = [
           type: "integer",
           description: "Maximum matches to return, from 1 to 10. Defaults to 5.",
         },
+        includeMe: {
+          type: "boolean",
+          description: "Also return the owner's own public listing (marked self: true), only when they want to see how an assistant finds them. Defaults to false.",
+        },
       },
       additionalProperties: false,
     },
@@ -618,6 +622,65 @@ export const CORE_CHAT_CAPABILITIES = [
       negative: [
         "Tell me more about the second result.",
         "Add that person to my contacts.",
+      ],
+    },
+    chat: {
+      intentKind: "write_action",
+      sideEffectLevel: "write",
+    },
+  }),
+  defineCoreChatCapability({
+    id: "core.scheduling.book_free_call",
+    owner: "core",
+    pluginId: null,
+    ownerFacingLabel: "Book a free call",
+    summary:
+      "Book a free one-to-one call on another ME3 site for the owner, the way a visitor books from that site. Use it for a free offering (no price) of a person found with core_people_search, never for the owner's own listing. Call it as soon as the owner asks to book, without asking for a date or time: ME3 reads that site's live times, picks the earliest that fits any wish they gave, and shows it for approval; after approval it books the time with the owner's name and email and adds it to their calendar. Paid offerings are booked on the person's own site instead: give the owner the link.",
+    category: "calendar",
+    handler: {
+      surface: "chat",
+      route: "core.scheduling.book_free_call",
+    },
+    sideEffect: "external_send",
+    approvalMode: "approval_required",
+    requiresSetup: [],
+    inputSchema: {
+      type: "object",
+      required: ["profileId"],
+      properties: {
+        profileId: {
+          type: "string",
+          description: "Stable profileId copied exactly from one core_people_search result.",
+        },
+        offeringId: {
+          type: "string",
+          description: "The free offering's id from that result, such as service:intro-call. Defaults to the person's first free call.",
+        },
+        date: {
+          type: "string",
+          description: "Optional day the owner asked for as YYYY-MM-DD in their timezone. Defaults to the next free time within a week.",
+          format: "date",
+        },
+        time: {
+          type: "string",
+          description: "Optional earliest time of day the owner asked for as HH:MM in their timezone.",
+        },
+        notes: {
+          type: "string",
+          description: "Optional one-line note for the person, in the owner's words.",
+        },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "core_free_call_booked",
+    examples: {
+      positive: [
+        "Book Kieran's free call for me.",
+        "Book the free 20-minute call with the first result on Thursday afternoon.",
+      ],
+      negative: [
+        "Tell me more about the first result.",
+        "Buy the second result's workshop.",
       ],
     },
     chat: {

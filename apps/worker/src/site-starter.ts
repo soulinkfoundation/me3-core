@@ -46,6 +46,8 @@ export type StarterSiteDraft = {
   username: string; name: string; publicUrl: string; previewPath: string; theme: SiteThemeId;
   themes: Array<{ id: SiteThemeId; name: string }>;
   services: Array<{ title: string; bookable: boolean }>; newsletter: boolean;
+  /** What someone would search to find the owner; the Show me demo after publishing uses it. */
+  searchQuery: string;
 };
 
 /** A site-level offer that is not booked through the calendar; me.json lists it as a manual service. */
@@ -245,7 +247,16 @@ export async function draftStarterSite(env: Env, ownerId: string, input: Record<
     themes: [...STARTER_THEMES],
     services: [{ title: CLARITY_CALL_TITLE, bookable: true }, ...services.map((service) => ({ title: service.title, bookable: false }))],
     newsletter: true,
+    searchQuery: starterSearchQuery(headline, location, services),
   };
+}
+
+/** What someone would type to find this owner, e.g. "Career coach in Leeds"; the Show me demo searches for it. */
+export function starterSearchQuery(headline: string, location: string, services: readonly { title: string }[]): string {
+  // The headline's first clause ("Career coach", not "Career coach helping people who…"), at most five words.
+  const what = (headline.split(/\s*[·•|–—,-]\s*|\s+(?:helping|for|who|that|with)\s+/i)[0] || services[0]?.title || "").trim().split(/\s+/).slice(0, 5).join(" ");
+  const where = location.split(",")[0].trim();
+  return [what, where].filter(Boolean).join(" in ");
 }
 
 /** The Mission is private: it is saved quietly, only when the owner has none, and never published. */
@@ -263,7 +274,7 @@ async function saveMissionIfUnset(env: Env, ownerId: string, input: Record<strin
   }
 }
 
-export async function publishStarterSite(env: Env, ownerId: string): Promise<{ username: string; name: string; publicUrl: string; publishedAt: string }> {
+export async function publishStarterSite(env: Env, ownerId: string): Promise<{ username: string; name: string; publicUrl: string; publishedAt: string; searchQuery: string }> {
   const site = await getOwnerProfileSite(env, ownerId);
   if (!site) throw new Error("Draft the site first.");
   const { profile, fromSource } = await readSourceProfile(env, site);
@@ -272,7 +283,12 @@ export async function publishStarterSite(env: Env, ownerId: string): Promise<{ u
   const result = await publishSiteFromSource(env, site, manifest);
   if (!result.publishedAt) throw new Error("The site is set to private, so it was not published.");
   if (result.networkProfile) void syncPublishedProfile(env, site, result.networkProfile);
-  return { username: site.username, name: profile.name || site.username, publicUrl: await getPublishedSiteBaseUrl(env, site), publishedAt: result.publishedAt };
+  const headline = /^\*\*(.+?)\*\*/.exec(profile.bio || "")?.[1] || "";
+  const offers = (profile.intents?.book?.offers || []).filter((offer) => offer.title && offer.title !== CLARITY_CALL_TITLE).map((offer) => ({ title: offer.title! }));
+  return {
+    username: site.username, name: profile.name || site.username, publicUrl: await getPublishedSiteBaseUrl(env, site), publishedAt: result.publishedAt,
+    searchQuery: starterSearchQuery(headline, profile.location || "", offers),
+  };
 }
 
 /** The draft card's swatches save straight to the source, so Edit and Publish see the same look. */
