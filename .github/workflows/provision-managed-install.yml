@@ -149,7 +149,15 @@ jobs:
 
       - name: Build the pinned release
         working-directory: source
-        run: pnpm build
+        # The release passed its typechecks when it was cut, so an install builds only what the
+        # deploy ships: the llms files, the site renderer and the web assets. A tag laid out
+        # differently falls back to the full build.
+        run: |
+          set -euo pipefail
+          if ! { pnpm generate:llms && pnpm --filter @me3-core/site-renderer build && pnpm --filter @me3/web exec vite build; }; then
+            echo "Slim build failed; running the full release build."
+            pnpm build
+          fi
 
       - name: Apply D1 migrations before deployment
         working-directory: source
