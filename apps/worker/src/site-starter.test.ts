@@ -66,7 +66,7 @@ describe("the chat-drafted first site", () => {
   it("writes the source without publishing and keeps the photo", async () => {
     const f = fixture();
     const draft = await draftStarterSite(f.env, "owner", answer);
-    expect(draft).toMatchObject({ username: "samrivera", theme: "warm", newsletter: true, previewPath: "/api/sites/samrivera/draft-preview-html", searchQuery: "Career coach in Leeds" });
+    expect(draft).toMatchObject({ username: "samrivera", theme: "warm", newsletter: true, previewPath: "/api/sites/samrivera/draft-preview-html", searchQuery: "Career coach in Leeds", hasPhoto: true });
     expect(draft.services).toEqual([{ title: "Free 30-minute clarity call", bookable: true }, { title: "6-week programme", bookable: false }]);
     const site = (await getOwnerProfileSite(f.env, "owner"))!;
     expect(site.published_at).toBeNull();

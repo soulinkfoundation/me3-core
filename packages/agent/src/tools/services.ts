@@ -105,8 +105,10 @@ export interface AgentDomainServices {
 export type AgentSiteStarterDraft = {
   username: string; name: string; publicUrl: string; previewPath: string; theme: string; themes: Array<{ id: string; name: string }>;
   services: Array<{ title: string; bookable: boolean }>; newsletter: boolean;
+  /** The site already has a photo; without one the card sends the owner to add it before publishing. */
+  hasPhoto?: boolean;
 };
 export interface AgentSiteStarterServices {
   draft(input: Record<string, unknown>): Promise<AgentSiteStarterDraft>;
-  publish(): Promise<{ username: string; name: string; publicUrl: string; publishedAt: string }>;
+  publish(): Promise<{ username: string; name: string; publicUrl: string; publishedAt: string; hasPhoto?: boolean }>;
 }

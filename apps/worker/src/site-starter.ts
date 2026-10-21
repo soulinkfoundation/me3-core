@@ -48,6 +48,8 @@ export type StarterSiteDraft = {
   services: Array<{ title: string; bookable: boolean }>; newsletter: boolean;
   /** What someone would search to find the owner; the Show me demo after publishing uses it. */
   searchQuery: string;
+  /** The site already has a photo. Without one the owner adds it in the editor before publishing. */
+  hasPhoto: boolean;
 };
 
 /** A site-level offer that is not booked through the calendar; me.json lists it as a manual service. */
@@ -248,6 +250,7 @@ export async function draftStarterSite(env: Env, ownerId: string, input: Record<
     services: [{ title: CLARITY_CALL_TITLE, bookable: true }, ...services.map((service) => ({ title: service.title, bookable: false }))],
     newsletter: true,
     searchQuery: starterSearchQuery(headline, location, services),
+    hasPhoto: Boolean(text(profile.avatar, 2000)),
   };
 }
 
@@ -274,7 +277,7 @@ async function saveMissionIfUnset(env: Env, ownerId: string, input: Record<strin
   }
 }
 
-export async function publishStarterSite(env: Env, ownerId: string): Promise<{ username: string; name: string; publicUrl: string; publishedAt: string; searchQuery: string }> {
+export async function publishStarterSite(env: Env, ownerId: string): Promise<{ username: string; name: string; publicUrl: string; publishedAt: string; searchQuery: string; hasPhoto: boolean }> {
   const site = await getOwnerProfileSite(env, ownerId);
   if (!site) throw new Error("Draft the site first.");
   const { profile, fromSource } = await readSourceProfile(env, site);
@@ -288,6 +291,7 @@ export async function publishStarterSite(env: Env, ownerId: string): Promise<{ u
   return {
     username: site.username, name: profile.name || site.username, publicUrl: await getPublishedSiteBaseUrl(env, site), publishedAt: result.publishedAt,
     searchQuery: starterSearchQuery(headline, profile.location || "", offers),
+    hasPhoto: Boolean(text(profile.avatar, 2000)),
   };
 }
 

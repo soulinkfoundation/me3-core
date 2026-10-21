@@ -19,12 +19,15 @@ export function siteTools() {
         const draft = await service.draft(args);
         return { status: "needs_approval", approval: {
           kind: "site_draft", title: "Publish your website", summary: `${draft.name} at ${draft.publicUrl.replace(/^https?:\/\//, "")}`, ...draft,
-          howItWorks: "Nothing is live until you publish. Edit anything first; the free clarity call, newsletter and look can all change later.",
+          howItWorks: draft.hasPhoto
+            ? "Nothing is live until you publish. Edit anything first; the free clarity call, newsletter and look can all change later."
+            : "Nothing is live until you publish. Add your photo first, then publish; the free clarity call, newsletter and look can all change later.",
         } };
       }
       context.signal.throwIfAborted();
       const published = await service.publish();
-      return ok({ ...published, clarityCall: "Free 30-minute clarity call", next: "In one or two sentences tell the owner they're live (not a draft), with the link, and that people and the AI assistants they use can now find them and book the free 30-minute clarity call. Offer to show them by having an assistant find and book them. End with one tip: add a photo so people recognise you. Suggest nothing else (no emails, campaigns or posts). Do not mention the Mission." });
+      const photoTip = published.hasPhoto ? "" : " End with one tip: add a photo so people recognise you.";
+      return ok({ ...published, clarityCall: "Free 30-minute clarity call", next: `In one or two sentences tell the owner they're live (not a draft), with the link, and that people and the AI assistants they use can now find them and book the free 30-minute clarity call. Offer to show them by having an assistant find and book them.${photoTip} Suggest nothing else (no emails, campaigns or posts). Do not mention the Mission.` });
     }),
     domainTool("core.sites.landing_page.designs", async () => ok({ designs: listAgentLandingPageDesigns() })),
     domainTool("core.sites.landing_page.list", async (args, context) => {
