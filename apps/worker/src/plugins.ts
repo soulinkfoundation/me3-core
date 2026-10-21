@@ -1373,6 +1373,12 @@ const JOURNAL_PLUGIN: CorePluginManifestSummary = {
       auth: "owner",
     },
     {
+      id: "journal.day.append.api",
+      path: "/api/journal/days/:date/append",
+      methods: ["POST"],
+      auth: "owner",
+    },
+    {
       id: "journal.archive.api",
       path: "/api/journal/archive",
       methods: ["GET"],

@@ -1,4 +1,4 @@
-import { JOURNAL_PLUGIN_ID } from "@me3-core/plugin-journal";
+import { JOURNAL_PLUGIN_ID, saveJournalDayForAgent } from "@me3-core/plugin-journal";
 import { createJournalArticle, deleteJournalArticle, getJournalArticle, listJournalArticles, updateJournalArticle } from "../journal-articles";
 import { runJournalAssist } from "../journal-assist";
 import {
@@ -118,6 +118,39 @@ export function registerJournalRoutes(app: AppHono, deps: OwnerRouteDeps) {
       );
       c.header("ETag", journalRevisionETag(result.entry.revision));
       return c.json(result);
+    } catch (error) {
+      return journalErrorResponse(c, error);
+    }
+  });
+
+  // Adds text to the end of a day, as "Add to journal" on a chat message does. Matches the
+  // day's own format, and a retry with the same writeId never adds the text twice.
+  app.post("/api/journal/days/:date/append", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+
+    try {
+      const input = await c.req.json().catch(() => ({})) as { text?: unknown; writeId?: unknown };
+      const text = typeof input.text === "string" ? input.text : "";
+      if (!text.trim()) return c.json({ ok: false, error: "Nothing to add to the journal." }, 400);
+      const writeId = typeof input.writeId === "string" && input.writeId ? `append:${input.writeId}` : `append:${crypto.randomUUID()}`;
+      const date = c.req.param("date");
+      for (let attempt = 0; ; attempt++) {
+        const { entry } = await getJournalDay(c.env, ownerId, date);
+        try {
+          const result = await saveJournalDayForAgent(c.env.DB, ownerId, {
+            date, mode: entry ? "append" : "create", body: text, bodyFormat: "markdown", expectedRevision: entry?.revision ?? null,
+          }, writeId);
+          c.header("ETag", journalRevisionETag(result.entry.revision));
+          return c.json(result);
+        } catch (error) {
+          // Someone saved the day in between: read it again and append to that.
+          if (error instanceof JournalConflictError && attempt < 2) continue;
+          throw error;
+        }
+      }
     } catch (error) {
       return journalErrorResponse(c, error);
     }

@@ -292,3 +292,33 @@ describe("daily Journal writes through the new agent and native API", () => {
     }
   });
 });
+
+describe("appending a chat message to a Journal day", () => {
+  const path = "/api/journal/days/2026-10-08/append";
+  const headers = { "X-Test-Owner": "alice", "Content-Type": "application/json" };
+  const append = (f: ReturnType<typeof fixture>, body: Record<string, unknown>) =>
+    f.app.request(path, { method: "POST", headers, body: JSON.stringify(body) }, f.env);
+
+  it("creates a missing day, then adds to the end without repeating a retried write", async () => {
+    const f = fixture();
+    expect((await append(f, { text: "> First", writeId: "w1" })).status).toBe(200);
+    expect((await append(f, { text: "> Second", writeId: "w2" })).status).toBe(200);
+    expect((await append(f, { text: "> Second", writeId: "w2" })).status).toBe(200);
+    const { entry } = await getJournalDay(f.env, "alice", "2026-10-08");
+    expect(entry).toMatchObject({ body: "> First\n\n> Second", bodyFormat: "markdown" });
+  });
+
+  it("keeps an HTML day in HTML", async () => {
+    const f = fixture();
+    await updateJournalDay(f.env, "alice", "2026-10-08", { body: "<p>Mine</p>", bodyFormat: "html" });
+    expect((await append(f, { text: "Saved <answer>" })).status).toBe(200);
+    const { entry } = await getJournalDay(f.env, "alice", "2026-10-08");
+    expect(entry).toMatchObject({ body: "<p>Mine</p>\n<p>Saved &lt;answer&gt;</p>", bodyFormat: "html" });
+  });
+
+  it("rejects empty text", async () => {
+    const f = fixture();
+    expect((await append(f, { text: "  " })).status).toBe(400);
+    expect(f.snapshot()).toEqual([]);
+  });
+});
