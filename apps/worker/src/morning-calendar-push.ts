@@ -1,6 +1,7 @@
 import { addDaysToDateString, getUtcMsForLocalTime, normalizeTimeZone } from "./calendar";
 import { loadCalendarPushItems } from "./calendar-push-notifications";
 import { recordOwnerActivity } from "./mission-activity";
+import { composeMorningMessage } from "./morning-message";
 import { notifyDailyBriefingReady, type DailyBriefingPushSummary } from "./push-notifications";
 import type { Env } from "./types";
 import { getBriefingQuote } from "./quotes";
@@ -21,8 +22,8 @@ export function normalizeDailyBriefingTime(value: unknown): string | null {
 
 export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date()) {
   const owners = await env.DB.prepare(
-    "SELECT id, timezone, daily_briefing_time FROM owner_profile ORDER BY created_at ASC",
-  ).all<{ id: string; timezone: string | null; daily_briefing_time: string | null }>();
+    "SELECT id, name, timezone, daily_briefing_time FROM owner_profile ORDER BY created_at ASC",
+  ).all<{ id: string; name: string | null; timezone: string | null; daily_briefing_time: string | null }>();
   let sent = 0;
   let failed = 0;
   for (const owner of owners.results || []) {
@@ -55,9 +56,22 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
       const items = await loadCalendarPushItems(env, owner.id, midnight(dateKey), midnight(addDaysToDateString(dateKey, 1)));
       const birthdays = items.events.filter(event => event.kind === "birthday");
       const quote = await getBriefingQuote(env, owner.id, now);
+      const birthdayNames = birthdays.map(event => event.title.replace(/['’]s birthday$/i, "").trim());
+      const startsAt = (event: { all_day: number; starts_at: string }) => (event.all_day === 1 ? null : event.starts_at);
       summary = {
         ...(quote ? { quote: { text: quote.text, author: quote.author } } : {}),
-        birthdayNames: birthdays.map(event => event.title.replace(/['’]s birthday$/i, "").trim()),
+        alert: composeMorningMessage({
+          ownerName: owner.name,
+          timezone,
+          birthdayNames,
+          schedule: [
+            ...items.events.filter(event => event.kind !== "birthday").map(event => ({ title: event.title, startsAt: startsAt(event), timezone: event.timezone })),
+            ...items.importedEvents.map(event => ({ title: event.title, startsAt: startsAt(event), timezone: event.timezone })),
+            ...items.bookings.map(booking => ({ title: `Booking with ${booking.guest_name}`, startsAt: booking.starts_at })),
+          ],
+          reminders: items.reminders.map(reminder => ({ title: reminder.title, startsAt: reminder.remind_at, timezone: reminder.timezone })),
+        }),
+        birthdayNames,
         counts: {
           birthdays: birthdays.length,
           events: items.events.length - birthdays.length + items.importedEvents.length,

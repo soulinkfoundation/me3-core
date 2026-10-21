@@ -195,6 +195,9 @@ jobs:
         working-directory: source
         env:
           ME3_MANAGED_PEXELS_API_KEY: ${{ secrets.ME3_MANAGED_PEXELS_API_KEY }}
+          # Claude pays from the stored Anthropic key first, then Cloudflare credits.
+          ME3_MANAGED_AI_GATEWAY_TOKEN: ${{ secrets.ME3_MANAGED_AI_GATEWAY_TOKEN }}
+          ME3_MANAGED_ANTHROPIC_BYOK_ALIAS: ${{ secrets.ME3_MANAGED_ANTHROPIC_BYOK_ALIAS }}
         run: |
           set -euo pipefail
           set +x
@@ -204,6 +207,20 @@ jobs:
             chmod 600 "$pexels_key_file"
             pnpm exec wrangler secret put PEXELS_API_KEY --config wrangler.toml < "$pexels_key_file"
             rm -f "$pexels_key_file"
+          fi
+          if [ -n "$ME3_MANAGED_AI_GATEWAY_TOKEN" ]; then
+            gateway_token_file="$RUNNER_TEMP/me3-ai-gateway-token"
+            printf '%s' "$ME3_MANAGED_AI_GATEWAY_TOKEN" > "$gateway_token_file"
+            chmod 600 "$gateway_token_file"
+            pnpm exec wrangler secret put CLOUDFLARE_AI_GATEWAY_TOKEN --config wrangler.toml < "$gateway_token_file"
+            rm -f "$gateway_token_file"
+          fi
+          if [ -n "$ME3_MANAGED_ANTHROPIC_BYOK_ALIAS" ]; then
+            byok_alias_file="$RUNNER_TEMP/me3-anthropic-byok-alias"
+            printf '%s' "$ME3_MANAGED_ANTHROPIC_BYOK_ALIAS" > "$byok_alias_file"
+            chmod 600 "$byok_alias_file"
+            pnpm exec wrangler secret put ANTHROPIC_BYOK_ALIAS --config wrangler.toml < "$byok_alias_file"
+            rm -f "$byok_alias_file"
           fi
 
       - name: Publish the managed Worker

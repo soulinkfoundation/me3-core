@@ -91,7 +91,7 @@ test("installs hosted provider secrets before deploying the target", () => {
   const deploy = getStep("Deploy the target to the existing Worker");
   const secretWrites = workflow.match(/wrangler secret put/g) || [];
 
-  assert.equal(secretWrites.length, 1);
+  assert.equal(secretWrites.length, 3);
   assert.doesNotMatch(installSecret, /OPENAI_API_KEY/);
   assert.match(
     installSecret,
@@ -101,6 +101,10 @@ test("installs hosted provider secrets before deploying the target", () => {
     installSecret,
     /wrangler secret put PEXELS_API_KEY --config wrangler\.toml/,
   );
+  for (const [source, secret] of [["ME3_MANAGED_AI_GATEWAY_TOKEN", "CLOUDFLARE_AI_GATEWAY_TOKEN"], ["ME3_MANAGED_ANTHROPIC_BYOK_ALIAS", "ANTHROPIC_BYOK_ALIAS"]]) {
+    assert.match(installSecret, new RegExp(`${source}: \\$\\{\\{ secrets\\.${source} \\}\\}`));
+    assert.match(installSecret, new RegExp(`wrangler secret put ${secret} --config wrangler\\.toml`));
+  }
   assert.match(
     installSecret,
     /ME3_MANAGED_FAILURE_STAGE=preparing/,

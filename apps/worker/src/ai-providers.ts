@@ -11,6 +11,7 @@ import {
 } from "./ai-gateway";
 
 export const DEFAULT_WORKERS_AI_TEXT_MODEL = "@cf/zai-org/glm-4.7-flash";
+const BYOK_DEFAULT_CLAUDE_MODEL = "claude-sonnet-5.5";
 
 export const AI_ROUTE_IDS = [
   "default",
@@ -518,9 +519,17 @@ function resolveRoute(
     routeId === "image_generation"
       ? undefined
       : providers.find((provider) => provider.configured)?.id;
+  // An owner paying Claude from their own Anthropic key defaults to Claude.
+  const byokDefault =
+    routeId !== "image_generation" &&
+    !storedProviderId &&
+    !envProviderId &&
+    Boolean(env.ANTHROPIC_BYOK_ALIAS?.trim()) &&
+    normalizeMe3DeploymentMode(env.ME3_DEPLOYMENT_MODE) !== "managed";
   const providerId =
     storedProviderId ||
     envProviderId ||
+    (byokDefault ? "anthropic" : null) ||
     inheritedRoute?.providerId ||
     firstConfiguredProvider ||
     "workers-ai";
@@ -534,6 +543,7 @@ function resolveRoute(
   const model =
     normalizeModel(storedDefault?.model) ||
     envModel ||
+    (byokDefault ? BYOK_DEFAULT_CLAUDE_MODEL : null) ||
     inheritedRoute?.model ||
     adapter.recommendedModels[routeId];
   const configured = Boolean(provider?.configured && model);

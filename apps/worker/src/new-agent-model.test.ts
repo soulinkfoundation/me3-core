@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createCloudflareModel } from "../../../packages/agent/src/model";
+import { beforeEach, describe, expect, it } from "vitest";
+import { createCloudflareModel, resetAnthropicByokPause } from "../../../packages/agent/src/model";
 import type { AgentTool } from "../../../packages/agent/src/types";
 
 const tool: AgentTool = {name:"save",description:"Save",effect:"write",approval:"none",parameters:{type:"object",properties:{title:{type:"string"}},required:["title"],additionalProperties:false},execute:async()=>({status:"ok"})};
@@ -193,5 +193,48 @@ describe("new agent Cloudflare model transport", () => {
       const result=await model.step({messages:[],tools:[],signal:new AbortController().signal,onDelta:async()=>{}});
       expect(result.usage?.estimatedCostUsd,name).toBeCloseTo(expected,12);
     }
+  });
+});
+
+describe("Anthropic stored key before Cloudflare credits", () => {
+  const reply = [{type:"content_block_delta",index:0,delta:{type:"text_delta",text:"Hi"}},{type:"message_stop"}];
+  const step = {messages:[{role:"user" as const,content:"Hello"}],tools:[],signal:new AbortController().signal,onDelta:async()=>{}};
+  function setup(model: string, responses: Array<() => Response>) {
+    const calls = {byok:[] as Array<{url:string;init:RequestInit}>,unified:0};
+    const fetch = (async (url: string, init: RequestInit) => {calls.byok.push({url,init});return responses[Math.min(calls.byok.length-1,responses.length-1)]();}) as unknown as typeof globalThis.fetch;
+    const agentModel = createCloudflareModel({model,gatewayId:"gw",anthropicByok:{baseUrl:"https://gateway.example/v1/acct/gw/anthropic",token:"aig",alias:"anthropic-max",fetch},ai:{run:async()=>{calls.unified++;return stream(reply);}}});
+    return {calls,agentModel};
+  }
+  beforeEach(() => resetAnthropicByokPause());
+  it("pays with the stored key when it works", async () => {
+    const {calls,agentModel} = setup("anthropic/claude-sonnet-5.5", [() => new Response(stream(reply))]);
+    expect((await agentModel.step(step)).text).toBe("Hi");
+    expect(calls.unified).toBe(0);
+    expect(calls.byok[0].url).toBe("https://gateway.example/v1/acct/gw/anthropic/v1/messages");
+    expect(calls.byok[0].init.headers).toMatchObject({"cf-aig-byok-alias":"anthropic-max","cf-aig-authorization":"Bearer aig"});
+    expect(JSON.parse(String(calls.byok[0].init.body))).toMatchObject({model:"claude-sonnet-5-5",stream:true});
+  });
+  it.each([
+    ["out of credit", 400, '{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}'],
+    ["rejected", 401, '{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'],
+  ])("falls back to Cloudflare credits when the key is %s and stops retrying it", async (_, status, body) => {
+    const {calls,agentModel} = setup("anthropic/claude-sonnet-5.5", [() => new Response(body,{status})]);
+    expect((await agentModel.step(step)).text).toBe("Hi");
+    await agentModel.step(step);
+    expect(calls.byok).toHaveLength(1);
+    expect(calls.unified).toBe(2);
+  });
+  it("falls back for one step on a transient failure and tries the key again next step", async () => {
+    const {calls,agentModel} = setup("anthropic/claude-sonnet-5.5", [() => new Response('{"error":{"type":"overloaded_error"}}',{status:529}), () => new Response(stream(reply))]);
+    expect((await agentModel.step(step)).text).toBe("Hi");
+    expect((await agentModel.step(step)).text).toBe("Hi");
+    expect(calls.byok).toHaveLength(2);
+    expect(calls.unified).toBe(1);
+  });
+  it("leaves other providers on Cloudflare credits", async () => {
+    const {calls,agentModel} = setup("openai/gpt-5.5", [() => new Response(stream(reply))]);
+    await agentModel.step(step).catch(() => {});
+    expect(calls.byok).toHaveLength(0);
+    expect(calls.unified).toBe(1);
   });
 });

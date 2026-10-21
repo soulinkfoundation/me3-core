@@ -85,6 +85,10 @@ export interface Env {
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_AI_GATEWAY_ID?: string;
   CLOUDFLARE_API_TOKEN?: string;
+  /** Gateway auth token for requests that use a stored provider key. Falls back to CLOUDFLARE_API_TOKEN. */
+  CLOUDFLARE_AI_GATEWAY_TOKEN?: string;
+  /** Name of an Anthropic key stored in the AI Gateway; Claude uses it before Cloudflare credits. */
+  ANTHROPIC_BYOK_ALIAS?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   ME3_COMMERCE_BRIDGE_ORIGIN?: string;

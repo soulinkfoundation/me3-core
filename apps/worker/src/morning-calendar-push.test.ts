@@ -13,7 +13,7 @@ afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.unstubAllGlo
 function fixture(timezone = "Europe/Dublin", time = "07:30") {
   const raw = new DatabaseSync(":memory:"); databases.push(raw);
   raw.exec(`
-    CREATE TABLE owner_profile(id TEXT PRIMARY KEY, timezone TEXT, daily_briefing_time TEXT, created_at TEXT);
+    CREATE TABLE owner_profile(id TEXT PRIMARY KEY, name TEXT, timezone TEXT, daily_briefing_time TEXT, created_at TEXT);
     CREATE TABLE install_secrets(name TEXT, value TEXT);
     INSERT INTO install_secrets VALUES('ME3_CLOUD_OWNER_ID','cloud-owner'),('ME3_CORE_INSTALL_ID','install'),('ME3_CLOUD_CORE_TOKEN','test-token');
     CREATE TABLE user_calendar_events(id TEXT, user_id TEXT, title TEXT, notes TEXT, location TEXT,
@@ -32,7 +32,7 @@ function fixture(timezone = "Europe/Dublin", time = "07:30") {
       activity_type TEXT NOT NULL, title TEXT NOT NULL, summary TEXT, status TEXT, related_id TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
   `);
-  raw.prepare("INSERT INTO owner_profile VALUES('owner',?,?, '2026-01-01')").run(timezone, time);
+  raw.prepare("INSERT INTO owner_profile VALUES('owner','Kieran Butler',?,?, '2026-01-01')").run(timezone, time);
   for (const sql of MORNING_CALENDAR_PUSH_SCHEMA) raw.exec(sql);
   const queries: string[] = [];
   const env = { DB: { prepare(sql: string) {
@@ -72,6 +72,7 @@ describe("morning calendar push with real SQLite", () => {
     const f = fixture(); await Promise.all([f.dispatch(), f.dispatch()]); await f.dispatch("2026-10-13T23:00:00Z");
     expect(f.fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(f.fetch.mock.calls[0][1]?.body))).toEqual({
+      alert: { title: "☀️ Good morning, Kieran", body: "Nothing on your calendar today, so the day is yours. I'll keep an eye on the day from here." },
       birthdayNames: [], counts: { birthdays: 0, events: 0, bookings: 0, reminders: 0 },
     });
     await f.dispatch("2026-10-14T06:30:00Z"); expect(f.fetch).toHaveBeenCalledTimes(2);
@@ -121,7 +122,7 @@ describe("morning calendar push with real SQLite", () => {
     expect(JSON.parse(String(f.fetch.mock.calls[1][1]?.body)).counts.birthdays).toBe(0);
   });
 
-  it("uses complete calendar counts, recurring birthdays, and subscribed events without sending other titles", async () => {
+  it("uses complete calendar counts, recurring birthdays, and subscribed events, and writes the day as a message without notes", async () => {
     const f = fixture();
     f.raw.exec(`
       INSERT INTO user_calendar_events VALUES('dad','owner','Dad\u2019s birthday','private notes',NULL,
@@ -140,10 +141,14 @@ describe("morning calendar push with real SQLite", () => {
     for (let i = 0; i < 15; i++) f.raw.prepare("INSERT INTO user_calendar_events VALUES(?, 'owner','Private event','private notes',NULL,'2026-10-13T09:00:00.000Z','2026-10-13T10:00:00.000Z',NULL,0,'event',NULL,'2026-01-01')").run(`event-${i}`);
     await f.dispatch();
     expect(JSON.parse(String(f.fetch.mock.calls[0][1]?.body))).toEqual({
+      alert: {
+        title: "☀️ Good morning, Kieran",
+        body: "🎂 It's Dad's and Sam's birthday today. You have Booking with Private Guest at 23:00, then Private subscribed event at 09:00, Private event at 10:00 and 14 more. Reminder: Private reminder at 21:00. I'll keep an eye on the day from here.",
+      },
       birthdayNames: ["Dad", "Sam"], counts: { birthdays: 2, events: 16, bookings: 1, reminders: 1 },
     });
     expect(f.queries.some(sql => sql.includes("mission_tasks"))).toBe(false);
-    expect(String(f.fetch.mock.calls[0][1]?.body)).not.toMatch(/Private|notes|Guest/);
+    expect(String(f.fetch.mock.calls[0][1]?.body)).not.toMatch(/notes|Cancelled|Dismissed|Inactive/);
   });
 
   it.each([

@@ -203,6 +203,10 @@ test("the workflow installs hosted provider keys as Worker secret bindings", () 
     installSecret,
     /wrangler secret put PEXELS_API_KEY --config wrangler\.toml/,
   );
+  for (const [source, secret] of [["ME3_MANAGED_AI_GATEWAY_TOKEN", "CLOUDFLARE_AI_GATEWAY_TOKEN"], ["ME3_MANAGED_ANTHROPIC_BYOK_ALIAS", "ANTHROPIC_BYOK_ALIAS"]]) {
+    assert.match(installSecret, new RegExp(`${source}: \\$\\{\\{ secrets\\.${source} \\}\\}`));
+    assert.match(installSecret, new RegExp(`wrangler secret put ${secret} --config wrangler\\.toml`));
+  }
   assert.doesNotMatch(installSecret, /ME3_AI_IMAGE_GENERATION_/);
   assert.ok(workflow.indexOf(installSecret) < workflow.indexOf(publish));
 });
