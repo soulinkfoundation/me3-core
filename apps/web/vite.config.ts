@@ -59,6 +59,11 @@ export default defineConfig({
             target: remoteApiUrl?.origin || 'http://127.0.0.1:8787',
             changeOrigin: true,
           },
+          // The published me.json names the web origin, so serve it from there too.
+          '^/(\\.well-known/)?me\\.json$': {
+            target: remoteApiUrl?.origin || 'http://127.0.0.1:8787',
+            changeOrigin: true,
+          },
         },
   },
   preview: {

@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --parallel --filter @me3-core/worker --filter @me3/web dev",
+    "dev:fresh": "node scripts/dev-fresh.mjs",
     "dev:worker": "pnpm --filter @me3-core/worker dev",
     "dev:web": "pnpm --filter @me3/web dev",
     "init:cloudflare": "node scripts/init-cloudflare.mjs",
