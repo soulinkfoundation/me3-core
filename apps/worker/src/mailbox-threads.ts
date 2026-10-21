@@ -1,11 +1,13 @@
 import {
+  MAILBOX_FOLDERS,
   listAgentMailboxThreadMessages,
+  mailboxFolderSet,
+  mailboxFolderWhere,
   type AgentMailboxMessage,
 } from "@me3-core/plugin-agent-chat";
 import type { Env } from "./types";
 import { decodeMimeHeaderValue } from "../../../shared/email-headers";
 
-const MAILBOX_FOLDERS = new Set(["inbox", "drafts", "sent", "archive", "trash"]);
 const DEFAULT_THREAD_LIMIT = 50;
 const MAX_THREAD_LIMIT = 100;
 
@@ -79,8 +81,9 @@ export async function listMailboxThreads(
   const bindings: (string | number)[] = [ownerId];
 
   if (folder) {
-    matchingConditions.push("m.folder = ?");
-    bindings.push(folder);
+    const where = mailboxFolderWhere(folder, "m.");
+    matchingConditions.push(where.sql);
+    bindings.push(...where.bindings);
   }
   if (query) {
     matchingConditions.push(
@@ -280,15 +283,17 @@ export async function moveMailboxThread(
   const fromFolder = normalizeFolder(fromFolderInput);
   if (!fromFolder) return { error: "Invalid source folder", status: 400 };
 
+  const set = mailboxFolderSet(folder);
+  const from = mailboxFolderWhere(fromFolder);
   const result = await env.DB.prepare(
     `UPDATE mailbox_messages
-     SET folder = ?, updated_at = CURRENT_TIMESTAMP
+     SET ${set.sql}, updated_at = CURRENT_TIMESTAMP
      WHERE mailbox_id IN (SELECT id FROM mailbox_aliases WHERE user_id = ?)
        AND ${mailboxCanonicalThreadKeySql("mailbox_messages")} = ?
-       AND folder = ?
+       AND ${from.sql}
        AND message_kind != 'draft'`,
   )
-    .bind(folder, ownerId, threadId, fromFolder)
+    .bind(...set.bindings, ownerId, threadId, ...from.bindings)
     .run();
   if ((result.meta?.changes || 0) === 0) return { error: "Thread not found", status: 404 };
   return { ok: true, id: threadId, folder, fromFolder };

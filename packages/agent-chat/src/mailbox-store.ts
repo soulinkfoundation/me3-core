@@ -54,7 +54,7 @@ export function agentMailboxMessageSelectSql(): string {
   return `SELECT id, direction, message_kind, status, thread_key, from_address,
                  provider_id, provider_message_id, to_address, subject, text_body,
                  html_body, raw_headers_json, metadata_json,
-                 agent_idempotency_key, source_id, folder, read_at,
+                 agent_idempotency_key, source_id, folder, spam_at, read_at,
                  agent_summary, agent_labels_json, forwarded_to, error_message,
                  created_by, approved_by_user_id, received_at, approved_at,
                  sent_at, created_at
@@ -105,4 +105,24 @@ export function normalizeFolder(value: unknown): string | null {
   return MAILBOX_FOLDERS.has(folder) ? folder : null;
 }
 
-export const MAILBOX_FOLDERS = new Set(["inbox", "drafts", "sent", "archive", "trash"]);
+export const MAILBOX_FOLDERS = new Set(["inbox", "drafts", "sent", "archive", "trash", "spam"]);
+
+/**
+ * Spam is stored in Trash with spam_at set (the folder constraint predates Spam), so "spam" and
+ * "trash" are the two halves of folder = 'trash'. Every folder filter and move goes through here.
+ */
+export function mailboxFolderWhere(folder: string, prefix = ""): { sql: string; bindings: string[] } {
+  if (folder === "spam") return { sql: `(${prefix}folder = 'trash' AND ${prefix}spam_at IS NOT NULL)`, bindings: [] };
+  if (folder === "trash") return { sql: `(${prefix}folder = 'trash' AND ${prefix}spam_at IS NULL)`, bindings: [] };
+  return { sql: `${prefix}folder = ?`, bindings: [folder] };
+}
+
+export function mailboxFolderSet(folder: string, now = new Date()): { sql: string; bindings: string[] } {
+  if (folder === "spam") return { sql: "folder = 'trash', spam_at = ?", bindings: [now.toISOString()] };
+  return { sql: "folder = ?, spam_at = NULL", bindings: [folder] };
+}
+
+/** The folder a message shows in: Spam for filtered mail, otherwise the stored folder. */
+export function presentedMailboxFolder(row: { folder: string; spam_at?: string | null }): string {
+  return row.folder === "trash" && row.spam_at ? "spam" : row.folder;
+}

@@ -85,7 +85,10 @@ export function serializeAgentMailboxMessage(row: DbMailboxMessageRow) {
     metadata,
     unsubscribeAction,
     sourceId: row.source_id,
+    // Older clients know five folders, so spam keeps "trash" here and says so beside it.
     folder: row.folder,
+    spam: Boolean(row.spam_at),
+    spamAt: row.spam_at ?? null,
     readAt: row.read_at,
     unread: row.direction === "inbound" && !row.read_at,
     agentSummary: row.agent_summary,

@@ -1,6 +1,6 @@
 import { type CoreAgentChatEnv, clampNumber, normalizeNullableText } from "./domain-store";
 import { type AgentMailboxMessageListOptions, type AgentMailboxMessage, type DbMailboxMessageRow } from "./mailbox-types";
-import { getAgentMailboxRow, agentMailboxMessageSelectSql, getAgentMailboxMessageById, normalizeFolder, getMailboxAttachmentMetadata, getMailboxRawStorageKey } from "./mailbox-store";
+import { getAgentMailboxRow, agentMailboxMessageSelectSql, getAgentMailboxMessageById, normalizeFolder, getMailboxAttachmentMetadata, getMailboxRawStorageKey, mailboxFolderSet, mailboxFolderWhere } from "./mailbox-store";
 import { serializeAgentMailboxMessage } from "./mailbox-format";
 
 export async function listAgentMailboxMessages(
@@ -121,12 +121,13 @@ export async function moveAgentMailboxMessage(
   const folder = normalizeFolder(folderInput);
   if (!folder) return { error: "Invalid folder", status: 400 };
 
+  const set = mailboxFolderSet(folder);
   const result = await env.DB.prepare(
     `UPDATE mailbox_messages
-     SET folder = ?, updated_at = CURRENT_TIMESTAMP
+     SET ${set.sql}, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND mailbox_id = ?`,
   )
-    .bind(folder, messageId, mailbox.id)
+    .bind(...set.bindings, messageId, mailbox.id)
     .run();
 
   if ((result.meta?.changes || 0) === 0) return { error: "Message not found", status: 404 };
@@ -143,7 +144,7 @@ export async function trashAgentMailboxMessage(
 
   const result = await env.DB.prepare(
     `UPDATE mailbox_messages
-     SET folder = 'trash', updated_at = CURRENT_TIMESTAMP
+     SET folder = 'trash', spam_at = NULL, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND mailbox_id = ?`,
   )
     .bind(messageId, mailbox.id)
@@ -211,8 +212,9 @@ export function buildAgentMailboxMessageFilters(
   const bindings: (string | number)[] = [mailboxId];
   const folder = normalizeFolder(options.folder);
   if (folder) {
-    conditions.push("folder = ?");
-    bindings.push(folder);
+    const where = mailboxFolderWhere(folder);
+    conditions.push(where.sql);
+    bindings.push(...where.bindings);
   }
   if (options.status) {
     const statuses = options.status.split(",").map((status) => status.trim()).filter(Boolean);

@@ -16,6 +16,7 @@ function setup() {
   for (const name of ["0021_managed_email_inbound_deliveries", "0048_mailbox_attachment_staging"]) {
     db.exec(readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), "utf8"));
   }
+  db.exec("ALTER TABLE mailbox_messages ADD COLUMN spam_at TEXT");
   db.exec("INSERT INTO owner_profile (id) VALUES ('owner')");
   db.exec(`INSERT INTO mailbox_aliases (id, alias_local_part, forwarding_email, status) VALUES ('mailbox-1', 'owner', '', 'active')`);
   const objects = new Map<string, Uint8Array>();

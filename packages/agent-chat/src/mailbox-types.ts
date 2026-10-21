@@ -115,6 +115,8 @@ export type DbMailboxMessageRow = {
   agent_idempotency_key?: string | null;
   source_id: string | null;
   folder: "inbox" | "drafts" | "sent" | "archive" | "trash";
+  /** Set while the message is spam (stored in Trash); 0083 adds the column. */
+  spam_at?: string | null;
   read_at: string | null;
   agent_summary: string | null;
   agent_labels_json: string | null;

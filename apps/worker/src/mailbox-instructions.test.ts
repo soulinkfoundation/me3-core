@@ -22,6 +22,7 @@ afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMo
 function fixture() {
   const raw = new DatabaseSync(":memory:"); databases.push(raw);
   raw.exec(readFileSync(new URL("../migrations/0001_initial_public_schema.sql", import.meta.url), "utf8"));
+  raw.exec("ALTER TABLE mailbox_messages ADD COLUMN spam_at TEXT");
   for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...ACCOUNTS_REMOVALS_SCHEMA, ...MAIL_TRIAGE_SCHEMA, ...AGENT_SCHEMA_STATEMENTS]) raw.exec(sql);
   raw.exec(`INSERT INTO owner_profile(id, email, timezone) VALUES('owner', 'Kieran@Gmail.test', 'UTC');
     INSERT INTO mailbox_aliases(id,user_id,alias_local_part,forwarding_email,status) VALUES('mailbox','owner','kieran','','active');`);

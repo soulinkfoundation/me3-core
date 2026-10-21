@@ -10,6 +10,7 @@ import {
 } from "./mailbox-sender-identity";
 import { mailboxCanonicalThreadKeySql } from "./mailbox-threads";
 import {
+  MAX_TRIAGE_ATTEMPTS,
   formatMoney,
   type MailHandledKind,
   type MailHandledUndo,
@@ -119,6 +120,7 @@ const HANDLED_TITLES: Record<MailHandledKind, [string, string]> = {
   notification: ["notification archived", "notifications archived"],
   login_code: ["login code archived", "login codes archived"],
   instruction: ["request from you", "requests from you"],
+  spam: ["spam filtered", "spam filtered"],
   rule_archive: ["email archived", "emails archived"],
   rule_reply: ["reply sent", "replies sent"],
 };
@@ -145,10 +147,10 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
      JOIN mailbox_messages m ON m.id = t.message_id
      WHERE t.user_id = ? AND m.folder = 'inbox' AND t.resolved_at IS NULL
        AND (t.snoozed_until IS NULL OR t.snoozed_until <= ?)
-       AND (t.category = 'needs_you' OR t.status IN ('pending', 'failed'))
+       AND (t.category = 'needs_you' OR t.status = 'pending' OR (t.status = 'failed' AND t.attempts < ?))
      ORDER BY CASE t.urgency WHEN 'urgent' THEN 0 ELSE 1 END, COALESCE(m.received_at, m.created_at) DESC
      LIMIT 50`,
-  ).bind(ownerId, now.toISOString()).all<NeedsYouRow>();
+  ).bind(ownerId, now.toISOString(), MAX_TRIAGE_ATTEMPTS).all<NeedsYouRow>();
   const allNeedsYou = needsYouRows.results || [];
   // The same alert firing three times is one thing to deal with, not three: keep the newest
   // (urgent first) per sender and subject and fold the rest into it.
@@ -317,8 +319,8 @@ async function briefItemMessageIds(env: Pick<Env, "DB">, ownerId: string, messag
   const siblings = await env.DB.prepare(
     `SELECT m.id, m.subject FROM mailbox_triage t JOIN mailbox_messages m ON m.id = t.message_id
      WHERE t.user_id = ? AND t.resolved_at IS NULL AND m.folder = 'inbox' AND LOWER(TRIM(m.from_address)) = ?
-       AND (t.category = 'needs_you' OR t.status IN ('pending', 'failed'))`,
-  ).bind(ownerId, message.from_address.trim().toLowerCase()).all<{ id: string; subject: string | null }>().catch(() => ({ results: [] as Array<{ id: string; subject: string | null }> }));
+       AND (t.category = 'needs_you' OR t.status = 'pending' OR (t.status = 'failed' AND t.attempts < ?))`,
+  ).bind(ownerId, message.from_address.trim().toLowerCase(), MAX_TRIAGE_ATTEMPTS).all<{ id: string; subject: string | null }>().catch(() => ({ results: [] as Array<{ id: string; subject: string | null }> }));
   const ids = new Set([messageId, ...(siblings.results || []).filter(row => briefDuplicateKey(message.from_address, row.subject) === key).map(row => row.id)]);
   return [...ids];
 }
@@ -376,10 +378,12 @@ export async function undoHandledAction(env: Env, ownerId: string, actionId: str
   }
   // A filed invoice was also archived, so its undo brings it back to Inbox too (unless the owner moved it since).
   await env.DB.prepare(
-    `UPDATE mailbox_messages SET folder = 'inbox', updated_at = CURRENT_TIMESTAMP
+    `UPDATE mailbox_messages SET folder = 'inbox', spam_at = NULL, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND (? = 'move_to_inbox' OR folder = 'archive') AND mailbox_id IN (SELECT id FROM mailbox_aliases WHERE user_id = ?)`,
   ).bind(row.message_id, undo.kind, ownerId).run();
   await env.DB.prepare("UPDATE mailbox_handled_actions SET undone_at = ? WHERE id = ?").bind(now.toISOString(), row.id).run();
+  // "Not spam" is a lesson: the sender is shown from now on, whatever filtered them.
+  if (row.kind === "spam") await trustSender(env, ownerId, await messageSender(env, ownerId, row.message_id), now);
   // The message stays visible in Inbox as plain mail; it is not re-handled and not pushed to needs-you.
   await env.DB.prepare(
     "UPDATE mailbox_triage SET category = 'fyi', handled_kind = NULL, summary = NULL, updated_at = ? WHERE user_id = ? AND message_id = ?",
@@ -389,9 +393,128 @@ export async function undoHandledAction(env: Env, ownerId: string, actionId: str
 
 // --- Rules ("How ME3 handles mail") -----------------------------------------
 
-export type MailboxRule = { id: string; kind: "archive_sender" | "archive_domain" | "always_show_sender"; matchValue: string; label: string; status: "active" | "paused"; createdAt: string };
+export type MailboxRuleKind = "archive_sender" | "archive_domain" | "always_show_sender" | "spam_sender" | "spam_domain";
+export type MailboxRule = { id: string; kind: MailboxRuleKind; matchValue: string; label: string; status: "active" | "paused"; createdAt: string };
 
-const RULE_KINDS = new Set(["archive_sender", "archive_domain", "always_show_sender"]);
+const RULE_KINDS = new Set<MailboxRuleKind>(["archive_sender", "archive_domain", "always_show_sender", "spam_sender", "spam_domain"]);
+
+function defaultRuleLabel(kind: MailboxRuleKind, matchValue: string): string {
+  switch (kind) {
+    case "always_show_sender": return `Always show mail from ${matchValue}`;
+    case "spam_sender": return `Spam from ${matchValue}`;
+    case "spam_domain": return `Spam from anyone at ${matchValue}`;
+    default: return `Always archive mail from ${matchValue}`;
+  }
+}
+
+async function upsertRule(env: Env, ownerId: string, kind: MailboxRuleKind, matchValue: string, label: string, now: Date): Promise<{ id: string; created_at: string }> {
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO mailbox_rules (id, user_id, kind, match_value, label, status, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'active', 'owner', ?, ?)
+     ON CONFLICT(user_id, kind, match_value) DO UPDATE SET label = excluded.label, status = 'active', updated_at = excluded.updated_at`,
+  ).bind(id, ownerId, kind, matchValue, label, now.toISOString(), now.toISOString()).run();
+  const stored = await env.DB.prepare("SELECT id, created_at FROM mailbox_rules WHERE user_id = ? AND kind = ? AND match_value = ?")
+    .bind(ownerId, kind, matchValue).first<{ id: string; created_at: string }>();
+  return { id: stored?.id || id, created_at: stored?.created_at || now.toISOString() };
+}
+
+async function logHandled(env: Env, ownerId: string, messageId: string, action: { kind: MailHandledKind; label: string; detail: string | null; undo: MailHandledUndo | null }, now: Date): Promise<void> {
+  await env.DB.prepare("DELETE FROM mailbox_handled_actions WHERE user_id = ? AND message_id = ? AND kind = ? AND undone_at IS NULL")
+    .bind(ownerId, messageId, action.kind).run();
+  await env.DB.prepare(
+    `INSERT INTO mailbox_handled_actions (id, user_id, message_id, kind, label, detail, undo_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(crypto.randomUUID(), ownerId, messageId, action.kind, action.label, action.detail?.slice(0, 300) || null, action.undo ? JSON.stringify(action.undo) : null, now.toISOString()).run();
+}
+
+async function messageSender(env: Pick<Env, "DB">, ownerId: string, messageId: string): Promise<string | null> {
+  const row = await env.DB.prepare(
+    `SELECT m.from_address FROM mailbox_messages m JOIN mailbox_aliases a ON a.id = m.mailbox_id WHERE a.user_id = ? AND m.id = ?`,
+  ).bind(ownerId, messageId).first<{ from_address: string | null }>().catch(() => null);
+  const address = (row?.from_address || "").trim().toLowerCase();
+  return address.includes("@") ? address : null;
+}
+
+/** The owner says this sender is wanted: their spam rule goes, and an always-show rule wins over any domain rule or signal. */
+async function trustSender(env: Env, ownerId: string, address: string | null, now: Date): Promise<void> {
+  if (!address) return;
+  await env.DB.prepare("DELETE FROM mailbox_rules WHERE user_id = ? AND kind = 'spam_sender' AND match_value = ?").bind(ownerId, address).run();
+  await upsertRule(env, ownerId, "always_show_sender", address, defaultRuleLabel("always_show_sender", address), now);
+}
+
+/** The owner says this sender is spam: their always-show rule goes, and a spam rule filters them before the model. */
+async function blockSender(env: Env, ownerId: string, address: string, now: Date): Promise<void> {
+  await env.DB.prepare("DELETE FROM mailbox_rules WHERE user_id = ? AND kind = 'always_show_sender' AND match_value = ?").bind(ownerId, address).run();
+  await upsertRule(env, ownerId, "spam_sender", address, defaultRuleLabel("spam_sender", address), now);
+}
+
+type SpamTargetRow = { id: string; from_address: string | null; subject: string | null; folder: string; spam_at: string | null };
+
+/** The inbound emails "Spam" or "Not spam" acts on: one message, or every message of a thread. */
+async function spamTargets(env: Env, ownerId: string, target: { messageId?: string; threadId?: string }): Promise<SpamTargetRow[]> {
+  const match = target.threadId ? `${mailboxCanonicalThreadKeySql("m")} = ?` : "m.id = ?";
+  const value = target.threadId || target.messageId;
+  if (!value) return [];
+  const rows = await env.DB.prepare(
+    `SELECT m.id, m.from_address, m.subject, m.folder, m.spam_at FROM mailbox_messages m
+     JOIN mailbox_aliases a ON a.id = m.mailbox_id
+     WHERE a.user_id = ? AND m.direction = 'inbound' AND m.message_kind = 'email' AND ${match}`,
+  ).bind(ownerId, value).all<SpamTargetRow>();
+  return rows.results || [];
+}
+
+/** "Spam": the mail goes to Spam (undoable from the Brief) and its sender is blocked from now on. */
+export async function markMailboxSpam(
+  env: Env, ownerId: string, target: { messageId?: string; threadId?: string }, now = new Date(),
+): Promise<{ ok: true; moved: number; blocked: string[] } | ServiceError> {
+  const rows = await spamTargets(env, ownerId, target);
+  if (rows.length === 0) return { error: "Message not found", status: 404 };
+  const blocked = new Set<string>();
+  let moved = 0;
+  for (const row of rows) {
+    const address = (row.from_address || "").trim().toLowerCase();
+    if (address.includes("@")) blocked.add(address);
+    if (row.spam_at) continue;
+    await env.DB.prepare("UPDATE mailbox_messages SET folder = 'trash', spam_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(now.toISOString(), row.id).run();
+    await logHandled(env, ownerId, row.id, { kind: "spam", label: "Marked as spam", detail: row.subject, undo: { kind: "move_to_inbox" } }, now);
+    await env.DB.prepare(
+      "UPDATE mailbox_triage SET category = 'handled', handled_kind = 'spam', resolved_at = ?, updated_at = ? WHERE user_id = ? AND message_id = ?",
+    ).bind(now.toISOString(), now.toISOString(), ownerId, row.id).run();
+    moved += 1;
+  }
+  for (const address of blocked) await blockSender(env, ownerId, address, now);
+  return { ok: true, moved, blocked: [...blocked] };
+}
+
+/** "Not spam": the mail returns to Inbox as plain mail and its sender is always shown from now on. */
+export async function markMailboxNotSpam(
+  env: Env, ownerId: string, target: { messageId?: string; threadId?: string }, now = new Date(),
+): Promise<{ ok: true; restored: number; trusted: string[] } | ServiceError> {
+  const rows = await spamTargets(env, ownerId, target);
+  if (rows.length === 0) return { error: "Message not found", status: 404 };
+  const trusted = new Set<string>();
+  let restored = 0;
+  for (const row of rows) {
+    const address = (row.from_address || "").trim().toLowerCase();
+    if (address.includes("@")) trusted.add(address);
+    if (!row.spam_at) continue;
+    const handled = await env.DB.prepare(
+      "SELECT id FROM mailbox_handled_actions WHERE user_id = ? AND message_id = ? AND kind = 'spam' AND undone_at IS NULL ORDER BY created_at DESC LIMIT 1",
+    ).bind(ownerId, row.id).first<{ id: string }>();
+    if (handled) {
+      // The Brief's undo path: the handled entry is marked undone and the sender trusted there.
+      await undoHandledAction(env, ownerId, handled.id, now);
+    } else {
+      await env.DB.prepare("UPDATE mailbox_messages SET folder = 'inbox', spam_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(row.id).run();
+      await env.DB.prepare("UPDATE mailbox_triage SET category = 'fyi', handled_kind = NULL, summary = NULL, updated_at = ? WHERE user_id = ? AND message_id = ?")
+        .bind(now.toISOString(), ownerId, row.id).run();
+    }
+    restored += 1;
+  }
+  for (const address of trusted) await trustSender(env, ownerId, address, now);
+  return { ok: true, restored, trusted: [...trusted] };
+}
 
 export async function listMailboxRules(env: Env, ownerId: string): Promise<{ rules: MailboxRule[] }> {
   const rows = await env.DB.prepare(
@@ -406,8 +529,9 @@ export async function createMailboxRule(
   input: { kind?: unknown; matchValue?: unknown; messageId?: unknown; label?: unknown },
   now = new Date(),
 ): Promise<{ rule: MailboxRule; applied: boolean } | ServiceError> {
-  const kind = typeof input.kind === "string" && RULE_KINDS.has(input.kind) ? input.kind as MailboxRule["kind"] : null;
+  const kind = typeof input.kind === "string" && RULE_KINDS.has(input.kind as MailboxRuleKind) ? input.kind as MailboxRuleKind : null;
   if (!kind) return { error: "Unknown rule kind", status: 400 };
+  const domainRule = kind === "archive_domain" || kind === "spam_domain";
   let matchValue = typeof input.matchValue === "string" ? input.matchValue.trim().toLowerCase() : "";
   const messageId = typeof input.messageId === "string" ? input.messageId : null;
   let message: { id: string; from_address: string | null; folder: string; subject: string | null; mailbox_id: string } | null = null;
@@ -419,35 +543,27 @@ export async function createMailboxRule(
     if (!message) return { error: "Message not found", status: 404 };
     if (!matchValue) {
       const address = (message.from_address || "").trim().toLowerCase();
-      matchValue = kind === "archive_domain" ? address.split("@")[1] || "" : address;
+      matchValue = domainRule ? address.split("@")[1] || "" : address;
     }
   }
-  if (!matchValue || (kind !== "archive_domain" && !matchValue.includes("@")) || (kind === "archive_domain" && matchValue.includes("@"))) {
+  if (!matchValue || (!domainRule && !matchValue.includes("@")) || (domainRule && matchValue.includes("@"))) {
     return { error: "Rule needs a sender address or domain", status: 400 };
   }
-  const label = typeof input.label === "string" && input.label.trim()
-    ? input.label.trim().slice(0, 120)
-    : kind === "always_show_sender" ? `Always show mail from ${matchValue}` : `Always archive mail from ${matchValue}`;
-  const id = crypto.randomUUID();
-  await env.DB.prepare(
-    `INSERT INTO mailbox_rules (id, user_id, kind, match_value, label, status, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'active', 'owner', ?, ?)
-     ON CONFLICT(user_id, kind, match_value) DO UPDATE SET label = excluded.label, status = 'active', updated_at = excluded.updated_at`,
-  ).bind(id, ownerId, kind, matchValue, label, now.toISOString(), now.toISOString()).run();
-  const stored = await env.DB.prepare("SELECT id, created_at FROM mailbox_rules WHERE user_id = ? AND kind = ? AND match_value = ?")
-    .bind(ownerId, kind, matchValue).first<{ id: string; created_at: string }>();
+  const label = typeof input.label === "string" && input.label.trim() ? input.label.trim().slice(0, 120) : defaultRuleLabel(kind, matchValue);
+  const stored = await upsertRule(env, ownerId, kind, matchValue, label, now);
 
   let applied = false;
   if (message && kind !== "always_show_sender" && message.folder === "inbox") {
-    await env.DB.prepare("UPDATE mailbox_messages SET folder = 'archive', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND folder = 'inbox'").bind(message.id).run();
-    await env.DB.prepare(
-      `INSERT INTO mailbox_handled_actions (id, user_id, message_id, kind, label, detail, undo_json, created_at) VALUES (?, ?, ?, 'rule_archive', ?, ?, ?, ?)`,
-    ).bind(crypto.randomUUID(), ownerId, message.id, label, message.subject, JSON.stringify({ kind: "move_to_inbox" }), now.toISOString()).run();
-    await env.DB.prepare("UPDATE mailbox_triage SET category = 'handled', handled_kind = 'rule_archive', resolved_at = ?, updated_at = ? WHERE user_id = ? AND message_id = ?")
-      .bind(now.toISOString(), now.toISOString(), ownerId, message.id).run();
+    const spam = kind === "spam_sender" || kind === "spam_domain";
+    await env.DB.prepare(`UPDATE mailbox_messages SET ${spam ? "folder = 'trash', spam_at = ?" : "folder = 'archive', spam_at = NULL"}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND folder = 'inbox'`)
+      .bind(...(spam ? [now.toISOString()] : []), message.id).run();
+    const handledKind: MailHandledKind = spam ? "spam" : "rule_archive";
+    await logHandled(env, ownerId, message.id, { kind: handledKind, label, detail: message.subject, undo: { kind: "move_to_inbox" } }, now);
+    await env.DB.prepare("UPDATE mailbox_triage SET category = 'handled', handled_kind = ?, resolved_at = ?, updated_at = ? WHERE user_id = ? AND message_id = ?")
+      .bind(handledKind, now.toISOString(), now.toISOString(), ownerId, message.id).run();
     applied = true;
   }
-  return { rule: { id: stored?.id || id, kind, matchValue, label, status: "active", createdAt: stored?.created_at || now.toISOString() }, applied };
+  return { rule: { id: stored.id, kind, matchValue, label, status: "active", createdAt: stored.created_at }, applied };
 }
 
 export async function deleteMailboxRule(env: Env, ownerId: string, ruleId: string): Promise<{ ok: true } | ServiceError> {

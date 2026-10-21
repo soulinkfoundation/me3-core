@@ -16,7 +16,7 @@ import { AGENT_PAYMENTS_SCHEMA } from "./agent-payments";
 import { AGENT_COMPUTER_SCHEMA } from "./agent-computer";
 import { AGENT_COMMERCE_SCHEMA } from "./agent-commerce-store";
 import { AGENT_NETWORK_COMMERCE_SCHEMA } from "./agent-network-commerce";
-import { MAIL_TRIAGE_SCHEMA, MAILBOX_LOGIN_CODES_STATEMENTS } from "./mailbox-triage";
+import { MAIL_TRIAGE_SCHEMA, MAILBOX_LOGIN_CODES_STATEMENTS, MAILBOX_SPAM_HANDLED_STATEMENTS, MAILBOX_SPAM_RULES_STATEMENTS } from "./mailbox-triage";
 import { MAILBOX_INSTRUCTIONS_SCHEMA } from "./mailbox-instructions";
 import type { Env } from "./types";
 
@@ -664,6 +664,28 @@ const runtimeMigrations: RuntimeMigration[] = [
     async apply(db) {
       if (!(await tableExists(db, "mission_private_memory"))) return;
       await addColumnIfMissing(db, "mission_private_memory", "forgotten_at", "TEXT");
+    },
+  },
+  // Spam: filtered mail waits in Trash with spam_at set; rules learn spam_sender / spam_domain and
+  // the handled log learns "spam". mailbox_messages itself is never rebuilt (its children cascade).
+  {
+    id: "0083_mailbox_spam",
+    checksum: "2026-10-21-mailbox-spam-v1",
+    async apply(db) {
+      // An install without a mailbox yet gets the spam-aware schema when mail is first set up.
+      if (!(await tableExists(db, "mailbox_messages"))) return;
+      await addColumnIfMissing(db, "mailbox_messages", "spam_at", "TEXT");
+      await db.prepare("CREATE INDEX IF NOT EXISTS idx_mailbox_messages_spam ON mailbox_messages(mailbox_id, spam_at) WHERE spam_at IS NOT NULL").run();
+      const definition = (name: string) =>
+        db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").bind(name).first<SqliteDefinitionRow>();
+      const rules = await definition("mailbox_rules");
+      if (!rules?.sql) {
+        await db.batch(MAIL_TRIAGE_SCHEMA.map(sql => db.prepare(sql)));
+        return;
+      }
+      if (!rules.sql.includes("'spam_sender'")) await db.batch(MAILBOX_SPAM_RULES_STATEMENTS.map(sql => db.prepare(sql)));
+      const handled = await definition("mailbox_handled_actions");
+      if (handled?.sql && !handled.sql.includes("'spam'")) await db.batch(MAILBOX_SPAM_HANDLED_STATEMENTS.map(sql => db.prepare(sql)));
     },
   },
 ];

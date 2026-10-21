@@ -23,6 +23,7 @@ function fixture() {
   for (const name of ["0021_managed_email_inbound_deliveries", "0048_mailbox_attachment_staging"]) {
     raw.exec(readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), "utf8"));
   }
+  raw.exec("ALTER TABLE mailbox_messages ADD COLUMN spam_at TEXT");
   for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...ACCOUNTS_REMOVALS_SCHEMA, ...MAIL_TRIAGE_SCHEMA]) raw.exec(sql);
   raw.exec(`INSERT INTO owner_profile(id) VALUES('owner'),('other');
     INSERT INTO mailbox_aliases(id,user_id,alias_local_part,forwarding_email,status) VALUES('mailbox','owner','owner','','active');

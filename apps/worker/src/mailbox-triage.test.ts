@@ -3,11 +3,14 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
-import { getMailboxBrief, resolveBriefItem, snoozeBriefItem, undoHandledAction } from "./mailbox-brief";
+import { listAgentMailboxMessages } from "@me3-core/plugin-agent-chat";
+import { getMailboxBrief, markMailboxNotSpam, markMailboxSpam, resolveBriefItem, snoozeBriefItem, undoHandledAction } from "./mailbox-brief";
+import { listMailboxThreads, moveMailboxThread } from "./mailbox-threads";
 import {
   MAIL_TRIAGE_SCHEMA,
   archiveStaleLoginCodes,
   enqueueMailTriage,
+  purgeStaleSpam,
   retryPendingMailTriage,
   runMailTriage,
   type MailTriageClassifier,
@@ -25,13 +28,19 @@ import type { Env } from "./types";
 // reply drafted on a forward is addressed to whoever forwarded it; a filed
 // invoice stays in Inbox, or its undo leaves it archived; a sign-in code is
 // archived before the owner can use it, never archived at all, or a booking
-// confirmation code is mistaken for one.
+// confirmation code is mistaken for one; spam with a body-only unsubscribe
+// link reaches needs-you, or a contact's mail is filtered as spam; "Not spam"
+// restores the mail but the sender is filtered again next time; "Spam" from
+// the owner moves the mail but their next mail still reaches the model; spam
+// shows in Trash or Archive, or never gets deleted; a pass that failed five
+// times sits in the Brief for good; with no model, marketing claims needs-you.
 const databases: DatabaseSync[] = [];
 afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMocks(); });
 
 function fixture() {
   const raw = new DatabaseSync(":memory:"); databases.push(raw);
-  for (const name of ["0001_initial_public_schema", "0015_agent_runtime_idempotency"]) {
+  // The real migration chain for mail, so 0083's table rebuilds run against the shipped schema.
+  for (const name of ["0001_initial_public_schema", "0015_agent_runtime_idempotency", "0072_mailbox_triage", "0080_mailbox_login_codes", "0083_mailbox_spam"]) {
     raw.exec(readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), "utf8"));
   }
   for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...ACCOUNTS_REMOVALS_SCHEMA, ...MAIL_TRIAGE_SCHEMA]) raw.exec(sql);
@@ -220,6 +229,148 @@ describe("mail triage pipeline", () => {
     expect((await getMailboxBrief(f.env, "owner")).needsYou.map(item => item.messageId)).toEqual(["other"]);
     await resolveBriefItem(f.env, "owner", "other");
     expect(f.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_triage WHERE resolved_at IS NULL AND snoozed_until IS NULL").get()).toEqual({ n: 0 });
+  });
+
+  const never = () => vi.fn<MailTriageClassifier>(async () => { throw new Error("model must not run"); });
+  const needsYou = () => vi.fn<MailTriageClassifier>(async () => ({ category: "needs_you", urgency: "normal", summary: "Wants an answer.", action: { kind: "draft_reply", label: "Draft a reply" }, secondary: null, reply: null, url: null }));
+  const stored = (raw: DatabaseSync, id: string) => raw.prepare("SELECT folder, spam_at FROM mailbox_messages WHERE id = ?").get(id) as { folder: string; spam_at: string | null };
+  const rules = (raw: DatabaseSync) => (raw.prepare("SELECT kind, match_value FROM mailbox_rules ORDER BY kind").all() as Array<{ kind: string; match_value: string }>);
+  const threadIds = async (env: Env, folder: string) => { const list = await listMailboxThreads(env, "owner", { folder }); return "error" in list ? [] : list.threads.map(thread => thread.id); };
+
+  it("filters bulk mail that hides from list tooling before the model, and undo trusts the sender", async () => {
+    const f = fixture();
+    const classifier = never();
+    insertMail(f.raw, { id: "watches", from: "ameliy@ds3.qcqfzx.test", subject: "[Black Friday Early Access] Luxury watches from $250", body: "<html><body><h1>Timeless watches.</h1><p>Explore now.</p><p><a href=\"https://ds3.qcqfzx.test/u/unsubscribe?x=1\">Unsubscribe</a></p></body></html>" });
+    await runMailTriage(f.env, "watches", { classify: classifier });
+    expect(classifier).not.toHaveBeenCalled();
+    expect(triageRows(f.raw)[0]).toMatchObject({ status: "done", category: "handled", handled_kind: "spam", decided_by: "signal" });
+    expect(JSON.parse(String(triageRows(f.raw)[0].context_json)).spamSignals).toEqual(["unsubscribe_without_list_headers"]);
+    expect(stored(f.raw, "watches")).toMatchObject({ folder: "trash", spam_at: expect.any(String) });
+
+    // The Spam folder is that slice of Trash; Trash, Archive and Inbox never show it.
+    expect(await threadIds(f.env, "spam")).toEqual(["<watches@example.test>"]);
+    for (const folder of ["trash", "archive", "inbox"]) expect(await threadIds(f.env, folder)).toEqual([]);
+    const messages = await listAgentMailboxMessages(f.env, "owner", { folder: "spam", direction: "inbound" });
+    expect(messages.messages).toEqual([expect.objectContaining({ id: "watches", folder: "trash", spam: true })]);
+    expect((await listAgentMailboxMessages(f.env, "owner", { folder: "trash", direction: "inbound" })).total).toBe(0);
+
+    const brief = await getMailboxBrief(f.env, "owner");
+    expect(brief.needsYou).toEqual([]);
+    expect(brief.handled.groups).toEqual([expect.objectContaining({ kind: "spam", title: "1 spam filtered", count: 1 })]);
+    expect(brief.handled.groups[0].items[0].undo).toEqual({ kind: "move_to_inbox" });
+
+    await undoHandledAction(f.env, "owner", brief.handled.groups[0].items[0].id);
+    expect(stored(f.raw, "watches")).toEqual({ folder: "inbox", spam_at: null });
+    expect(rules(f.raw)).toEqual([{ kind: "always_show_sender", match_value: "ameliy@ds3.qcqfzx.test" }]);
+    expect((await getMailboxBrief(f.env, "owner")).handled.groups).toEqual([]);
+
+    // The trusted sender's next mail goes to the model like anyone else's.
+    const model = needsYou();
+    insertMail(f.raw, { id: "watches2", from: "ameliy@ds3.qcqfzx.test", subject: "Cyber Monday", body: "More watches. https://ds3.qcqfzx.test/u/unsubscribe?x=2" });
+    await runMailTriage(f.env, "watches2", { classify: model });
+    expect(model).toHaveBeenCalledTimes(1);
+    expect(stored(f.raw, "watches2").folder).toBe("inbox");
+  });
+
+  it("trusts Cloudflare's score and a bulk precedence, never a contact or the owner's own forward", async () => {
+    const f = fixture();
+    const classifier = needsYou();
+    insertMail(f.raw, { id: "scored", from: "winner@prizes.test", subject: "You won", body: "Claim your prize today.", headers: { "x-cf-spamh-score": "4.6" } });
+    insertMail(f.raw, { id: "bulk", from: "sophie@growth-agency.test", subject: "Quick question about your site", body: "We help sites like yours rank.", headers: { precedence: "bulk" } });
+    insertMail(f.raw, { id: "robot", from: "noreply@status.test", subject: "Weekly status digest", body: "All systems normal.", headers: { precedence: "bulk" } });
+    insertMail(f.raw, { id: "maya", from: "maya@example.test", subject: "Workshop notes", body: `Here are the notes. ${"Details. ".repeat(200)}You can unsubscribe from these notes any time.` });
+    insertMail(f.raw, { id: "fwd", from: "me@owner.test", subject: "Fwd: Is this legit?", body: "Thoughts?\n\n---------- Forwarded message ---------\nFrom: Luxury Watches <ameliy@ds3.qcqfzx.test>\nSubject: Watches\n\nExplore now. https://ds3.qcqfzx.test/unsubscribe" });
+    insertMail(f.raw, { id: "short", from: "bob@client.test", subject: "Please unsubscribe me", body: "Hi, could you unsubscribe me from the newsletter? Thanks, Bob" });
+    for (const id of ["scored", "bulk", "robot", "maya", "fwd", "short"]) await runMailTriage(f.env, id, { classify: classifier });
+    const row = (id: string) => triageRows(f.raw).find(entry => entry.message_id === id)!;
+    expect(row("scored")).toMatchObject({ handled_kind: "spam" });
+    expect(JSON.parse(String(row("scored").context_json)).spamSignals).toEqual(["cloudflare_score"]);
+    expect(row("bulk")).toMatchObject({ handled_kind: "spam" });
+    expect(JSON.parse(String(row("bulk").context_json)).spamSignals).toEqual(["bulk_precedence_without_list_headers"]);
+    expect(row("robot")).toMatchObject({ handled_kind: "notification" });
+    for (const id of ["maya", "fwd", "short"]) expect(row(id)).toMatchObject({ category: "needs_you", decided_by: "model" });
+    expect(classifier).toHaveBeenCalledTimes(3);
+  });
+
+  it("acts on the model's spam verdict for strangers only", async () => {
+    const f = fixture();
+    const classifier = vi.fn<MailTriageClassifier>(async () => ({ category: "spam", urgency: "low", summary: "Crypto scheme.", action: null, secondary: null, reply: null, url: null }));
+    insertMail(f.raw, { id: "stranger", from: "sam@wallet-recovery.test", subject: "Your wallet", body: "Recover your lost crypto with us." });
+    insertMail(f.raw, { id: "maya", from: "maya@example.test", subject: "Crypto?", body: "Have you looked at crypto lately?" });
+    for (const id of ["stranger", "maya"]) await runMailTriage(f.env, id, { classify: classifier });
+    expect(triageRows(f.raw).find(row => row.message_id === "stranger")).toMatchObject({ category: "handled", handled_kind: "spam", decided_by: "model" });
+    expect(stored(f.raw, "stranger")).toMatchObject({ folder: "trash", spam_at: expect.any(String) });
+    expect(triageRows(f.raw).find(row => row.message_id === "maya")).toMatchObject({ category: "noise", handled_kind: null });
+    expect(stored(f.raw, "maya")).toEqual({ folder: "inbox", spam_at: null });
+    expect((await getMailboxBrief(f.env, "owner")).handled.groups.map(group => group.count)).toEqual([1]);
+  });
+
+  it("'Spam' blocks the sender before the model and 'Not spam' restores and trusts them", async () => {
+    const f = fixture();
+    const model = needsYou();
+    insertMail(f.raw, { id: "pitch", from: "sophie@growth-agency.test", subject: "Quick question", body: "Can I send you a proposal?" });
+    await runMailTriage(f.env, "pitch", { classify: model });
+    expect((await getMailboxBrief(f.env, "owner")).needsYou).toHaveLength(1);
+
+    expect(await markMailboxSpam(f.env, "owner", { messageId: "pitch" })).toEqual({ ok: true, moved: 1, blocked: ["sophie@growth-agency.test"] });
+    expect(stored(f.raw, "pitch")).toMatchObject({ folder: "trash", spam_at: expect.any(String) });
+    expect(rules(f.raw)).toEqual([{ kind: "spam_sender", match_value: "sophie@growth-agency.test" }]);
+    let brief = await getMailboxBrief(f.env, "owner");
+    expect(brief.needsYou).toEqual([]);
+    expect(brief.handled.groups).toEqual([expect.objectContaining({ kind: "spam", count: 1, items: [expect.objectContaining({ label: "Marked as spam" })] })]);
+    expect(await markMailboxSpam(f.env, "owner", { messageId: "missing" })).toEqual({ error: "Message not found", status: 404 });
+
+    const classifier = never();
+    insertMail(f.raw, { id: "pitch2", from: "sophie@growth-agency.test", subject: "Following up", body: "Did you see my proposal?" });
+    await runMailTriage(f.env, "pitch2", { classify: classifier });
+    expect(classifier).not.toHaveBeenCalled();
+    expect(triageRows(f.raw).find(row => row.message_id === "pitch2")).toMatchObject({ category: "handled", handled_kind: "spam", decided_by: "rule" });
+    expect(stored(f.raw, "pitch2").folder).toBe("trash");
+
+    expect(await markMailboxNotSpam(f.env, "owner", { threadId: "<pitch2@example.test>" })).toEqual({ ok: true, restored: 1, trusted: ["sophie@growth-agency.test"] });
+    expect(stored(f.raw, "pitch2")).toEqual({ folder: "inbox", spam_at: null });
+    expect(rules(f.raw)).toEqual([{ kind: "always_show_sender", match_value: "sophie@growth-agency.test" }]);
+    expect(triageRows(f.raw).find(row => row.message_id === "pitch2")).toMatchObject({ category: "fyi", handled_kind: null });
+    brief = await getMailboxBrief(f.env, "owner");
+    expect(brief.needsYou).toEqual([]);
+    expect(brief.handled.groups.map(group => group.count)).toEqual([1]);
+
+    // The plain move API knows the Spam folder on both sides.
+    expect(await moveMailboxThread(f.env, "owner", "<pitch@example.test>", "inbox", "spam")).toMatchObject({ ok: true });
+    expect(stored(f.raw, "pitch")).toEqual({ folder: "inbox", spam_at: null });
+    expect(await moveMailboxThread(f.env, "owner", "<pitch@example.test>", "spam", "inbox")).toMatchObject({ ok: true });
+    expect(stored(f.raw, "pitch")).toMatchObject({ folder: "trash", spam_at: expect.any(String) });
+  });
+
+  it("without a model keeps bulk mail out of the Brief and a person in it; a pass that failed for good leaves it", async () => {
+    const f = fixture();
+    insertMail(f.raw, { id: "promo", from: "deals@shop.test", subject: "Weekend deals", body: "Shop now.", headers: { precedence: "list" } });
+    insertMail(f.raw, { id: "person", from: "bob@client.test", subject: "Invoice?", body: "Could you send the invoice?" });
+    for (const id of ["promo", "person"]) await runMailTriage(f.env, id, { classify: null });
+    expect(triageRows(f.raw).find(row => row.message_id === "promo")).toMatchObject({ category: "noise", decided_by: "signal" });
+    expect(triageRows(f.raw).find(row => row.message_id === "person")).toMatchObject({ category: "needs_you", decided_by: "signal" });
+    expect((await getMailboxBrief(f.env, "owner")).needsYou.map(item => item.messageId)).toEqual(["person"]);
+
+    insertMail(f.raw, { id: "stuck", from: "sam@example.test", subject: "Hello", body: "Still there?" });
+    const broken = vi.fn<MailTriageClassifier>(async () => { throw new Error("model down"); });
+    for (let attempt = 0; attempt < 4; attempt += 1) await runMailTriage(f.env, "stuck", { classify: broken });
+    expect((await getMailboxBrief(f.env, "owner")).needsYou.map(item => item.messageId)).toEqual(["stuck", "person"]);
+    await runMailTriage(f.env, "stuck", { classify: broken });
+    expect(triageRows(f.raw).find(row => row.message_id === "stuck")).toMatchObject({ status: "failed", attempts: 5 });
+    expect((await getMailboxBrief(f.env, "owner")).needsYou.map(item => item.messageId)).toEqual(["person"]);
+    expect(stored(f.raw, "stuck").folder).toBe("inbox");
+  });
+
+  it("deletes spam after thirty days and nothing sooner", async () => {
+    const f = fixture();
+    const now = new Date("2026-11-21T09:00:00.000Z");
+    insertMail(f.raw, { id: "old", from: "a@spam.test", subject: "Old", body: "x https://spam.test/unsubscribe" });
+    insertMail(f.raw, { id: "fresh", from: "b@spam.test", subject: "Fresh", body: "y https://spam.test/unsubscribe" });
+    await runMailTriage(f.env, "old", { classify: never(), now: new Date("2026-10-20T09:00:00.000Z") });
+    await runMailTriage(f.env, "fresh", { classify: never(), now: new Date("2026-11-01T09:00:00.000Z") });
+    expect(await purgeStaleSpam(f.env, { now })).toEqual({ purged: 1 });
+    expect(f.raw.prepare("SELECT id FROM mailbox_messages ORDER BY id").all()).toEqual([{ id: "fresh" }]);
+    expect(await purgeStaleSpam(f.env, { now })).toEqual({ purged: 0 });
   });
 
   it("summarises a newsletter with the model, never leaks its stylesheet, and claims no summary during a model outage", async () => {

@@ -88,7 +88,7 @@ describe("mailbox threads", () => {
       listMailboxThreads({ DB: fake.db } as never, "owner", { cursor: "not-json" }),
     ).resolves.toEqual({ error: "Invalid cursor", status: 400 });
     await expect(
-      listMailboxThreads({ DB: fake.db } as never, "owner", { folder: "spam" }),
+      listMailboxThreads({ DB: fake.db } as never, "owner", { folder: "junk" }),
     ).resolves.toEqual({ error: "Invalid folder", status: 400 });
     expect(fake.calls).toHaveLength(0);
   });
@@ -387,6 +387,8 @@ function message(overrides: Partial<AgentMailboxMessage>): AgentMailboxMessage {
     unsubscribeAction: null,
     sourceId: null,
     folder: "sent",
+    spam: false,
+    spamAt: null,
     readAt: null,
     unread: false,
     agentSummary: null,
@@ -585,6 +587,7 @@ const MAILBOX_SQLITE_SCHEMA = `
     agent_idempotency_key TEXT,
     source_id TEXT,
     folder TEXT NOT NULL,
+    spam_at TEXT,
     read_at TEXT,
     agent_summary TEXT,
     agent_labels_json TEXT,

@@ -42,6 +42,8 @@ import {
   draftBriefReply,
   getMailboxBrief,
   listMailboxRules,
+  markMailboxNotSpam,
+  markMailboxSpam,
   resolveBriefItem,
   resolveMailboxTriageForDraft,
   snoozeBriefItem,
@@ -373,6 +375,24 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
     return c.json(result);
   });
+
+  // "Spam" moves the mail to Spam and blocks its sender; "Not spam" brings it back and always shows them.
+  for (const [scope, param] of [["messages", "messageId"], ["threads", "threadId"]] as const) {
+    app.post(`/api/mailbox/${scope}/:${param}/spam`, async (c) => {
+      const ownerId = await requireOwner(c);
+      if (!ownerId) return unauthorized(c);
+      const result = await markMailboxSpam(c.env, ownerId, { [param]: c.req.param(param) });
+      if ("error" in result) return c.json({ error: result.error }, result.status as any);
+      return c.json(result);
+    });
+    app.post(`/api/mailbox/${scope}/:${param}/not-spam`, async (c) => {
+      const ownerId = await requireOwner(c);
+      if (!ownerId) return unauthorized(c);
+      const result = await markMailboxNotSpam(c.env, ownerId, { [param]: c.req.param(param) });
+      if ("error" in result) return c.json({ error: result.error }, result.status as any);
+      return c.json(result);
+    });
+  }
 
   // Signed and cacheable: the Worker fetched the logo once, so clients never contact the sender.
   app.get("/api/mailbox/sender-avatars/:domain", async (c) => {
