@@ -70,6 +70,25 @@ function reasoningEffort(model: string, override?: string): string | undefined {
   return override ?? REASONING_EFFORT.find(([pattern]) => pattern.test(model))?.[1];
 }
 
+/**
+ * The gateway or provider refused the request before streaming anything (no balance, bad request, model
+ * unavailable), so nothing was generated or billed. Transport failures, 5xx and timeouts are not: the provider
+ * may have started, so their cost stays unknown.
+ */
+export class ModelRequestRejectedError extends Error {
+  override readonly name = "ModelRequestRejectedError";
+  readonly rejectedBeforeGeneration = true;
+}
+const REJECTION = /\b4(?:0[0-4]|09|13|22|29)\b|insufficient balance|permission_error|invalid_request|authentication_error|not_found_error|rate_limit|quota|credit balance/i;
+function rejectedBeforeGeneration(error: unknown): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof Error && /^(AbortError|TimeoutError)$/.test(error.name) || /time(?:d)?\s*out|timeout/i.test(message) || !REJECTION.test(message)) return error;
+  return new ModelRequestRejectedError(message, {cause: error});
+}
+export function isModelRequestRejected(error: unknown): error is ModelRequestRejectedError {
+  return error instanceof Error && (error as {rejectedBeforeGeneration?: unknown}).rejectedBeforeGeneration === true;
+}
+
 export function createCloudflareModel(options: CloudflareModelOptions): AgentModel {
   const model = options.model;
   const anthropic = model.startsWith("anthropic/");
@@ -86,7 +105,15 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
       // Each protocol names a forced tool differently; all of them suppress prose.
       if (toolChoice && !FORCED_TOOL_UNSUPPORTED.some(pattern => pattern.test(model))) request.tool_choice = anthropic ? {type:"tool",name:toolChoice} : responses ? {type:"function",name:toolChoice} : {type:"function",function:{name:toolChoice}};
       const byok = anthropic && options.anthropicByok ? await runAnthropicByok(options.anthropicByok, model, {...request,stream:true}, options.metadata, signal) : null;
-      const result = byok ?? await options.ai.run(model, {...request,stream:true}, options.gatewayId ?{gateway:{id:options.gatewayId,metadata:options.metadata ?? {},requestTimeoutMs:60_000,retries:{maxAttempts:1}}} : undefined);
+      let result: unknown = byok;
+      if (!result) {
+        try {
+          result = await options.ai.run(model, {...request,stream:true}, options.gatewayId ?{gateway:{id:options.gatewayId,metadata:options.metadata ?? {},requestTimeoutMs:60_000,retries:{maxAttempts:1}}} : undefined);
+        } catch (error) {
+          signal.throwIfAborted();
+          throw rejectedBeforeGeneration(error);
+        }
+      }
       signal.throwIfAborted();
       const response = isStream(result) ? await consumeStream(result, anthropic, onDelta, signal) : parseResponse(result, anthropic);
       if (anthropic) response.toolCalls = unwrapAnthropicToolCalls(response.toolCalls, tools);

@@ -1,4 +1,4 @@
-import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, createIntentVerifierFromModel, createD1TurnStore, runAgentTurn, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
+import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, isModelRequestRejected, createIntentVerifierFromModel, createD1TurnStore, runAgentTurn, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import { createCodingAgentServices } from "./coding-agent";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { TOOL_LOADER_NAME } from "../../../packages/agent/src/tool-groups";
@@ -187,6 +187,12 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
       throw new Error("Managed AI budget policy changed before model admission; retry this turn");
     }
     purpose?.onAdmission?.(usageId);
+    // The provider refused before generating, so nothing was billed: close the receipt at zero so it reports
+    // and cannot hold later calls. Unknown outcomes (timeouts, broken streams) stay unreconciled.
+    const rejected=async(error:string)=>{
+      await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=0,tokens_out=0,estimated_cost_usd=0,metadata_json=? WHERE id=? AND json_extract(metadata_json,'$.costKnown')=0")
+        .bind(JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:0,cachedInputTokens:0,cacheWriteInputTokens:0,costKnown:true,usageReported:true,rejectedBeforeGeneration:true,failure:error.slice(0,200)}),usageId).run();
+    };
     return Object.assign(async(usage:AgentUsage)=>{
       const tokensKnown=[usage.inputTokens,usage.outputTokens,usage.cachedInputTokens,usage.cacheWriteInputTokens??0].every(value=>typeof value==="number"&&Number.isFinite(value)&&value>=0);
       const baseCostUsd=usage.estimatedCostUsd;
@@ -194,7 +200,7 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
       const costKnown=tokensKnown&&billedCostUsd!==null&&Number.isFinite(billedCostUsd)&&billedCostUsd>=0;
       await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,metadata_json=? WHERE id=?")
         .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
-    },{usageId});
+    },{usageId,rejected});
   };
   const gatewayId=gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default";
   // Claude pays from the installation's stored Anthropic key first. Managed
@@ -208,7 +214,13 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
     const messages=await resolveAgentImageInputs(env,imageScope,step.messages,step.signal);
     step.signal.throwIfAborted();
     const recordUsage=await admitModel(selected,reportCount,purpose);
-    const response=await createCloudflareModel({ai:env.AI as never,model:selected,gatewayId,anthropicByok,metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
+    let response;
+    try {
+      response=await createCloudflareModel({ai:env.AI as never,model:selected,gatewayId,anthropicByok,metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
+    } catch(error) {
+      if(isModelRequestRejected(error))await recordUsage.rejected(error.message);
+      throw error;
+    }
     return {...response,billingUsageId:recordUsage.usageId};
   }});
   let allowanceFallbackUsed=false;

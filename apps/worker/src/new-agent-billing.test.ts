@@ -154,6 +154,28 @@ describe("new agent managed billing boundary", () => {
     expect(models).toEqual(["openai/gpt-5.5"]);
     expect(JSON.parse(String(raw.prepare("SELECT metadata_json FROM ai_usage_events").get()!.metadata_json))).toMatchObject({ me3_runtime: "agent", costKnown: false });
   });
+  it("closes a call the provider rejects before generating at zero cost, so it never blocks the next turn", async () => {
+    let rejectNext = true;
+    const { env, models, raw } = fixture(settings(), model => {
+      if (rejectNext) { rejectNext = false; throw new Error("403: Insufficient balance; add money to your gateway or use BYOK"); }
+      return completion(model);
+    });
+    expect(await executeNewAgentTurn(env, input, new AbortController().signal)).toMatchObject({ status: "failed", replyText: expect.stringContaining("Insufficient balance") });
+    const rejected = raw.prepare("SELECT estimated_cost_usd,metadata_json FROM ai_usage_events").get()!;
+    expect(Number(rejected.estimated_cost_usd)).toBe(0);
+    expect(JSON.parse(String(rejected.metadata_json))).toMatchObject({ costKnown: true, usageReported: true, rejectedBeforeGeneration: true });
+    expect(await executeNewAgentTurn(env, { ...input, turnId: "next-turn", requestId: "next-request" }, new AbortController().signal)).toMatchObject({ status: "complete" });
+    expect(models).toEqual(["openai/gpt-5.5", "openai/gpt-5.5"]);
+  });
+  it("gives the backup a clean attempt after a rejected call and reports the provider's error when both are rejected", async () => {
+    const backup = "anthropic/claude-opus-5.5";
+    const { env, models } = fixture(settings(), () => { throw new Error("403: Insufficient balance; add money to your gateway or use BYOK"); });
+    (env as unknown as Record<string, string>).ME3_AI_CHAT_BACKUP_MODEL = backup;
+    const result = await executeNewAgentTurn(env, input, new AbortController().signal);
+    expect(result).toMatchObject({ status: "failed", replyText: expect.stringContaining("Insufficient balance") });
+    expect(result.replyText).not.toContain("awaiting reconciliation");
+    expect(models).toEqual(["openai/gpt-5.5", backup]);
+  });
   it("blocks resumed inference for current owner new-agent unknown costs", async () => {
     const { env, raw, models } = fixture();
     raw.prepare("INSERT INTO ai_usage_events(id,user_id,kind,provider,model,estimated_cost_usd,metadata_json) VALUES('uncertain','owner','text','workers-ai','openai/gpt-5.5',0,?)").run(JSON.stringify({ me3_runtime: "agent", billingManaged: true, costKnown: false }));
