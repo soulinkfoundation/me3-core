@@ -9,7 +9,19 @@ export interface CloudflareModelOptions {
   pricing?: { input: number; output: number; cachedInput?: number; cacheWriteInput?: number };
   /** Overrides the per-model reasoning effort table, for evaluations. */
   reasoningEffort?: string;
+  /** Tried first for anthropic/ models; any failure hands the step to Unified Billing. */
+  anthropicByok?: AnthropicByokOptions;
   recordUsage?(usage: AgentUsage): Promise<void> | void;
+}
+
+export interface AnthropicByokOptions {
+  /** Provider-native gateway base: https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/anthropic */
+  baseUrl: string;
+  /** cf-aig-authorization token; stored keys only work on an authenticated gateway. */
+  token: string;
+  /** Name of the Anthropic key stored in the gateway. */
+  alias: string;
+  fetch?: typeof fetch;
 }
 
 // Catalog prices per million tokens, excluding infrastructure and Gateway fees.
@@ -73,7 +85,8 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
       const request = anthropic ? anthropicRequest(messages, tools, options.maxOutputTokens ?? 4096, reasoningEffort(model, options.reasoningEffort)) : responses ? responsesRequest(messages,tools,options.maxOutputTokens??4096,model,options.reasoningEffort) : openAiRequest(messages, tools, options.maxOutputTokens ?? 4096, model, options.reasoningEffort);
       // Each protocol names a forced tool differently; all of them suppress prose.
       if (toolChoice && !FORCED_TOOL_UNSUPPORTED.some(pattern => pattern.test(model))) request.tool_choice = anthropic ? {type:"tool",name:toolChoice} : responses ? {type:"function",name:toolChoice} : {type:"function",function:{name:toolChoice}};
-      const result = await options.ai.run(model, {...request,stream:true}, options.gatewayId ? {gateway:{id:options.gatewayId,metadata:options.metadata ?? {},requestTimeoutMs:60_000,retries:{maxAttempts:1}}} : undefined);
+      const byok = anthropic && options.anthropicByok ? await runAnthropicByok(options.anthropicByok, model, {...request,stream:true}, options.metadata, signal) : null;
+      const result = byok ?? await options.ai.run(model, {...request,stream:true}, options.gatewayId ?{gateway:{id:options.gatewayId,metadata:options.metadata ?? {},requestTimeoutMs:60_000,retries:{maxAttempts:1}}} : undefined);
       signal.throwIfAborted();
       const response = isStream(result) ? await consumeStream(result, anthropic, onDelta, signal) : parseResponse(result, anthropic);
       if (anthropic) response.toolCalls = unwrapAnthropicToolCalls(response.toolCalls, tools);
@@ -85,6 +98,29 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
       return response;
     },
   };
+}
+
+// The owner's stored Anthropic key pays first. A missing, rejected or exhausted
+// key pauses BYOK so later steps skip the failing round trip; any other failure
+// falls back for this step only. Unified Billing then pays from Cloudflare credits.
+const BYOK_PAUSE_MS = 10 * 60_000;
+const byokPausedUntil = new Map<string, number>();
+export function resetAnthropicByokPause(): void {byokPausedUntil.clear();}
+async function runAnthropicByok(byok: AnthropicByokOptions, model: string, body: Record<string, unknown>, metadata: CloudflareModelOptions["metadata"], signal: AbortSignal): Promise<ReadableStream<Uint8Array>|null> {
+  if ((byokPausedUntil.get(byok.alias) ?? 0) > Date.now()) return null;
+  let response: Response;
+  try {
+    response = await (byok.fetch ?? fetch)(`${byok.baseUrl}/v1/messages`, {method:"POST",signal,headers:{"content-type":"application/json","anthropic-version":"2023-06-01","cf-aig-authorization":`Bearer ${byok.token}`,"cf-aig-byok-alias":byok.alias,"cf-aig-metadata":JSON.stringify(metadata ?? {})},
+      // The gateway catalog names claude-sonnet-5.5; Anthropic names claude-sonnet-5-5.
+      body:JSON.stringify({...body,model:model.slice("anthropic/".length).replace(/\./g,"-")})});
+  } catch {
+    signal.throwIfAborted();
+    return null;
+  }
+  if (response.ok && response.body) return response.body;
+  const detail = await response.text().catch(() => "");
+  if ([401,402,403].includes(response.status) || /credit|billing|api[ _-]?key|byok/i.test(detail)) byokPausedUntil.set(byok.alias, Date.now() + BYOK_PAUSE_MS);
+  return null;
 }
 
 function responsesRequest(messages:readonly AgentMessage[],tools:readonly AgentTool[],maxTokens:number,model:string,effortOverride?:string):Record<string,unknown> {

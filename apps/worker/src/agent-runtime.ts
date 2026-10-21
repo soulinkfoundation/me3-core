@@ -196,13 +196,18 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
         .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
     },{usageId});
   };
+  const gatewayId=gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default";
+  // Self-hosted owners can pay Claude from their own Anthropic credits first;
+  // managed installs bill everything through Cloudflare.
+  const byokAlias=env.ANTHROPIC_BYOK_ALIAS?.trim(),byokToken=env.CLOUDFLARE_AI_GATEWAY_TOKEN?.trim()||gateway.apiToken;
+  const anthropicByok=!managed&&byokAlias&&byokToken&&gateway.accountId?{baseUrl:`https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(gateway.accountId)}/${encodeURIComponent(gatewayId)}/anthropic`,token:byokToken,alias:byokAlias}:undefined;
   const cloudflareModel=(selected:string,reportCount=0,purpose?:ModelPurpose):AgentModel=>({id:selected,async step(step){
     step.signal.throwIfAborted();
     if(step.messages.some(message=>message.images?.length)&&!bindingModelSupportsImageInput(selected))throw new Error("This model cannot read images. Choose an image-input model for this turn.");
     const messages=await resolveAgentImageInputs(env,imageScope,step.messages,step.signal);
     step.signal.throwIfAborted();
     const recordUsage=await admitModel(selected,reportCount,purpose);
-    const response=await createCloudflareModel({ai:env.AI as never,model:selected,gatewayId:gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default",metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
+    const response=await createCloudflareModel({ai:env.AI as never,model:selected,gatewayId,anthropicByok,metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
     return {...response,billingUsageId:recordUsage.usageId};
   }});
   let allowanceFallbackUsed=false;

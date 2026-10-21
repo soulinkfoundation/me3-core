@@ -24,6 +24,16 @@ export type AiAgentModelOption = {
 
 export const AI_AGENT_MODEL_OPTIONS: AiAgentModelOption[] = [
   {
+    id: "anthropic-sonnet-5-5",
+    label: "Claude Sonnet 5.5",
+    providerId: "anthropic",
+    model: "claude-sonnet-5.5",
+    runtimeLabel: "Anthropic",
+    costLabel: "Paid",
+    capabilities: ["text", "image_input", "long-context", "reasoning", "tool-use"],
+    description: "Paid Claude model for everyday agent work with tools and images.",
+  },
+  {
     id: "anthropic-sonnet-4-6",
     label: "Claude Sonnet 4.6",
     providerId: "anthropic",
