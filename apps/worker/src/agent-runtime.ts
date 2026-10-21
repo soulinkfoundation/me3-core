@@ -197,10 +197,11 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
     },{usageId});
   };
   const gatewayId=gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default";
-  // Self-hosted owners can pay Claude from their own Anthropic credits first;
-  // managed installs bill everything through Cloudflare.
+  // Claude pays from the installation's stored Anthropic key first. Managed
+  // usage is still metered at catalog price; only the payer changes.
   const byokAlias=env.ANTHROPIC_BYOK_ALIAS?.trim(),byokToken=env.CLOUDFLARE_AI_GATEWAY_TOKEN?.trim()||gateway.apiToken;
-  const anthropicByok=!managed&&byokAlias&&byokToken&&gateway.accountId?{baseUrl:`https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(gateway.accountId)}/${encodeURIComponent(gatewayId)}/anthropic`,token:byokToken,alias:byokAlias}:undefined;
+  const byokBaseUrl=byokAlias&&byokToken?await anthropicGatewayUrl(env,gateway.accountId,gatewayId):null;
+  const anthropicByok=byokAlias&&byokToken&&byokBaseUrl?{baseUrl:byokBaseUrl,token:byokToken,alias:byokAlias}:undefined;
   const cloudflareModel=(selected:string,reportCount=0,purpose?:ModelPurpose):AgentModel=>({id:selected,async step(step){
     step.signal.throwIfAborted();
     if(step.messages.some(message=>message.images?.length)&&!bindingModelSupportsImageInput(selected))throw new Error("This model cannot read images. Choose an image-input model for this turn.");
@@ -307,6 +308,12 @@ async function loadThreadToolGroups(env:Env,scope:{ownerId:string;threadId:strin
     for(const step of trace.modelSteps??[])for(const call of step.toolCalls)if(call.name===TOOL_LOADER_NAME&&Array.isArray(call.arguments.groups))for(const group of call.arguments.groups)groups.add(String(group));
   }
   return [...groups];
+}
+// Managed Workers carry no account id, so the AI binding names the gateway URL.
+async function anthropicGatewayUrl(env:Env,accountId:string|null,gatewayId:string):Promise<string|null> {
+  if(accountId)return `https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(gatewayId)}/anthropic`;
+  try {return (await (env.AI as unknown as {gateway(id:string):{getUrl(provider:string):Promise<string>}}).gateway(gatewayId).getUrl("anthropic")).replace(/\/$/,"");}
+  catch {return null;}
 }
 function providerModel(provider:string,model:string):string {return provider==="workers-ai"?canonicalNativeModel(model):model.startsWith(`${provider}/`)?model:`${provider}/${model}`;}
 const CREATE_VERIFIER_MODEL="anthropic/claude-haiku-5.5";
