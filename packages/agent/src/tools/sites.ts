@@ -24,7 +24,7 @@ export function siteTools() {
       }
       context.signal.throwIfAborted();
       const published = await service.publish();
-      return ok({ ...published, next: "In one or two sentences tell the owner they're live, with the link, and that people and the AI assistants they use can now find them and book the clarity call. Offer to show them by having an assistant find and book them. End with one tip: add a photo so people recognise you. Do not mention the Mission." });
+      return ok({ ...published, clarityCall: "Free 30-minute clarity call", next: "In one or two sentences tell the owner they're live (not a draft), with the link, and that people and the AI assistants they use can now find them and book the free 30-minute clarity call. Offer to show them by having an assistant find and book them. End with one tip: add a photo so people recognise you. Suggest nothing else (no emails, campaigns or posts). Do not mention the Mission." });
     }),
     domainTool("core.sites.landing_page.designs", async () => ok({ designs: listAgentLandingPageDesigns() })),
     domainTool("core.sites.landing_page.list", async (args, context) => {
