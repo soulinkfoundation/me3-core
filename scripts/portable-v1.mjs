@@ -410,9 +410,11 @@ const SENSITIVE_FIELD_POLICIES = new Map([
   ["mailbox_aliases.cf_rule_id", "reset host-bound platform configuration"],
   ["mailbox_aliases.cf_last_synced_at", "reset host-bound platform configuration"],
   ["mailbox_aliases.cf_last_error", "reset host-bound platform configuration"],
+  ["me3_install_claim_states.credential_generation", "exclude one-time state"],
   ["me3_install_claim_states.state", "exclude one-time state"],
   ["mission_daemon_pairings.token_hash", "exclude and re-pair"],
   ["mobile_pairings.code_hash", "exclude and re-pair"],
+  ["mobile_refresh_tokens.credential_generation", "exclude and re-pair"],
   ["mobile_refresh_tokens.token_hash", "exclude and re-pair"],
   ["owner_profile.password_hash", "preserve local owner login"],
   ["sites.custom_domain_cf_id", "reset host-bound platform configuration"],
@@ -448,6 +450,8 @@ const KNOWN_INSTALL_SECRETS = new Map([
   ["ME3_MANAGED_AI_BILLING_POLICY", "exclude"],
   // Owner credential for the coding agent; reconnect after restore.
   ["coding_agent_github_token", "exclude"],
+  // Restore rotates JWT_SECRET and re-pairs devices, so the owner credential counter starts fresh.
+  ["OWNER_CREDENTIAL_GENERATION", "exclude"],
 ]);
 // One-time managed setup session markers, one per used session id.
 const EXCLUDED_INSTALL_SECRET_PREFIXES = ["ME3_MANAGED_SETUP_SESSION_USED:"];
