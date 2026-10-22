@@ -22,6 +22,10 @@ export type SenderAuthResult = {
   domain: string | null;
   /** On a pass: the From address the signature was aligned with. */
   address?: string;
+  /** On a pass: SHA-256 (hex) of the b= value, the same for every copy of one signed message. */
+  signatureHash?: string;
+  /** On a pass: the Date header, when the signature covers it (ISO 8601). */
+  signedAt?: string;
   reason?: string;
 };
 
@@ -98,7 +102,17 @@ async function verifySignature(
   const valid = algorithm === "rsa-sha256"
     ? await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signatureBytes, data)
     : await crypto.subtle.verify("Ed25519", key, signatureBytes, new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
-  return valid ? { dkim: "pass", domain, address: from.address } : fail("Signature does not verify");
+  if (!valid) return fail("Signature does not verify");
+  const signatureHash = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(tags.b.replace(/\s+/g, "")))));
+  const signedAt = signedHeaders.includes("date") ? signedDate(headers, signature) : null;
+  return { dkim: "pass", domain, address: from.address, signatureHash, ...(signedAt ? { signedAt } : {}) };
+}
+
+/** The Date header the signature covered: the bottom-most one, as dkimHeaderSigningInput picks it. */
+function signedDate(headers: Header[], signature: Header): string | null {
+  const date = [...headers].reverse().find(header => header !== signature && header.name.toLowerCase() === "date");
+  const parsed = date ? new Date(headerValue(date.raw).trim()) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
 /** Relaxed alignment: the same domain, or one a subdomain of the other. */
@@ -265,6 +279,10 @@ function base64Decode(value: string): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(new ArrayBuffer(binary.length));
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+
+function hex(bytes: Uint8Array): string {
+  return [...bytes].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function base64Encode(bytes: Uint8Array): string {

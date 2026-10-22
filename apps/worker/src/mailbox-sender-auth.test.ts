@@ -48,7 +48,20 @@ describe("DKIM canonicalization (RFC 6376 section 3.4.6 example)", () => {
 describe("verifyDkim", () => {
   it("passes a signature from the From domain", async () => {
     const { sign, resolveTxt } = await signer();
-    expect(await verifyDkim(await sign(MAIL), { resolveTxt })).toEqual({ dkim: "pass", domain: "gmail.test", address: "kieran@gmail.test" });
+    expect(await verifyDkim(await sign(MAIL), { resolveTxt })).toMatchObject({ dkim: "pass", domain: "gmail.test", address: "kieran@gmail.test" });
+  });
+
+  it("identifies a pass by its signature and reports the Date only when it is signed (me3-faoe)", async () => {
+    const { sign, resolveTxt } = await signer();
+    const signed = await sign(MAIL);
+    const first = await verifyDkim(signed, { resolveTxt });
+    expect(first.signatureHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(first.signedAt).toBe("2026-10-20T09:00:00.000Z");
+    // A re-sent copy is the same signature.
+    expect((await verifyDkim(signed, { resolveTxt })).signatureHash).toBe(first.signatureHash);
+    const undated = await verifyDkim(await sign(MAIL, { headers: "from:to:subject" }), { resolveTxt });
+    expect(undated).toMatchObject({ dkim: "pass" });
+    expect(undated.signedAt).toBeUndefined();
   });
 
   it("fails when the body or a signed header changed after signing", async () => {
@@ -121,7 +134,7 @@ describe("one From identity for alignment and the owner check", () => {
   it("passes a signed owner email with an encoded display name only for that address", async () => {
     const { sign, resolveTxt } = await signer();
     const named = await sign(MAIL.replace("From: Kieran", "From: =?utf-8?q?Kier=C3=A1n?="));
-    expect(await verifyDkim(named, { resolveTxt, expectedAddress: "kieran@gmail.test" })).toEqual({ dkim: "pass", domain: "gmail.test", address: "kieran@gmail.test" });
+    expect(await verifyDkim(named, { resolveTxt, expectedAddress: "kieran@gmail.test" })).toMatchObject({ dkim: "pass", domain: "gmail.test", address: "kieran@gmail.test" });
     expect(await verifyDkim(named, { resolveTxt, expectedAddress: "owner@gmail.test" })).toMatchObject({ dkim: "none" });
   });
 });

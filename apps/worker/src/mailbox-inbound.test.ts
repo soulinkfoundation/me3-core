@@ -136,7 +136,10 @@ describe("inbound MIME and attachment persistence", () => {
     const lookups = vi.fn(resolveTxt);
     const stranger = await deliverInboundEmail(message(raw), env, { resolveTxt: lookups });
     if (signed.status !== "accepted" || forged.status !== "accepted" || stranger.status !== "accepted") throw new Error("not accepted");
-    expect(senderAuth(signed.messageId)).toEqual({ dkim: "pass", domain: "gmail.test", address: "kieran@gmail.test" });
+    expect(senderAuth(signed.messageId)).toEqual({
+      dkim: "pass", domain: "gmail.test", address: "kieran@gmail.test",
+      signatureHash: expect.stringMatching(/^[0-9a-f]{64}$/), signedAt: "2026-10-20T09:00:00.000Z",
+    });
     expect(senderAuth(forged.messageId)).toMatchObject({ dkim: "none" });
     expect(senderAuth(stranger.messageId)).toBeUndefined();
     expect(lookups).not.toHaveBeenCalled();

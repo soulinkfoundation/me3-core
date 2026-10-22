@@ -18,6 +18,10 @@ import type { Env } from "./types";
  * Like a human assistant, ME3 reads a cc as information: when the owner writes
  * to someone else and only copies ME3 (Cc or Bcc), nothing starts unless the
  * note speaks to ME3 by name.
+ *
+ * Anyone holding a copy of a signed owner email can re-send it, and it still
+ * verifies. So a signature starts at most one request (signature_key), and
+ * only while its signed Date is recent.
  */
 
 export const MAILBOX_INSTRUCTIONS_SCHEMA = [
@@ -32,6 +36,7 @@ export const MAILBOX_INSTRUCTIONS_SCHEMA = [
     subject TEXT,
     message_id_header TEXT,
     references_header TEXT,
+    signature_key TEXT,
     status TEXT NOT NULL DEFAULT 'started' CHECK (status IN ('started', 'replying', 'replied', 'failed')),
     reply_error TEXT,
     replied_at TEXT,
@@ -41,7 +46,16 @@ export const MAILBOX_INSTRUCTIONS_SCHEMA = [
   `CREATE INDEX IF NOT EXISTS idx_mailbox_instructions_thread ON mailbox_instructions(user_id, thread_key, created_at DESC)`,
 ] as const;
 
+/** One owner signature starts one request: copies of the same signed email are replays (0085). */
+export const MAILBOX_INSTRUCTION_REPLAY_STATEMENTS = [
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_mailbox_instructions_signature ON mailbox_instructions(user_id, signature_key) WHERE signature_key IS NOT NULL`,
+] as const;
+
 const CONTEXT_BODY_LIMIT = 8000;
+/** An owner email is a request only this long after its signed Date. */
+export const INSTRUCTION_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+/** Clock skew allowed for a signed Date in the future. */
+const INSTRUCTION_FUTURE_SKEW_MS = 24 * 60 * 60_000;
 
 /** The addresses whose mail ME3 treats as the owner's: for now, the account email. */
 export async function ownerInstructionAddresses(env: Pick<Env, "DB">, ownerId: string): Promise<string[]> {
@@ -94,6 +108,8 @@ export type OwnerInstructionMessage = {
 export type OwnerInstructionStart = { note: string; threadId: string; turnId: string };
 /** The owner copied ME3 on mail to someone else: kept for information, nothing started. */
 export type OwnerInstructionCopy = { copied: true; note: string };
+/** A copy of a signed owner email that already started a request: nothing starts again. */
+export type OwnerInstructionReplay = { replayed: true; note: string };
 
 /** ME3's own address for a message: where it was delivered, else the To address. */
 export function me3DeliveryAddress(row: Pick<OwnerInstructionMessage, "to_address" | "metadata_json">): string | null {
@@ -130,7 +146,7 @@ export async function startOwnerInstruction(
   env: Env,
   row: OwnerInstructionMessage,
   options: { dispatch?: OwnerInstructionDispatcher; now?: Date } = {},
-): Promise<OwnerInstructionStart | OwnerInstructionCopy | null> {
+): Promise<OwnerInstructionStart | OwnerInstructionCopy | OwnerInstructionReplay | null> {
   const from = (row.from_address || "").trim().toLowerCase();
   if (!from || !(await ownerInstructionAddresses(env, row.user_id)).includes(from)) return null;
   const metadata = parseRecord(row.metadata_json);
@@ -138,6 +154,11 @@ export async function startOwnerInstruction(
   // The signature must be for this exact address, from a domain aligned with it.
   if (auth.dkim !== "pass" || auth.address !== from || typeof auth.domain !== "string") return null;
   if (!dkimDomainAligned(from.slice(from.lastIndexOf("@") + 1), auth.domain)) return null;
+  // A replayable signature needs an identity and a signed, recent Date.
+  const signatureKey = typeof auth.signatureHash === "string" && auth.signatureHash ? auth.signatureHash : null;
+  const signedAt = typeof auth.signedAt === "string" ? Date.parse(auth.signedAt) : Number.NaN;
+  const nowMs = (options.now || new Date()).getTime();
+  if (!signatureKey || Number.isNaN(signedAt) || signedAt < nowMs - INSTRUCTION_MAX_AGE_MS || signedAt > nowMs + INSTRUCTION_FUTURE_SKEW_MS) return null;
 
   const subject = (row.subject || "").trim();
   const split = splitOwnerNote(row.text_body, subject);
@@ -161,6 +182,10 @@ export async function startOwnerInstruction(
 
   let existing = await env.DB.prepare("SELECT assistant_thread_id, turn_id FROM mailbox_instructions WHERE message_id = ?")
     .bind(row.message_id).first<{ assistant_thread_id: string; turn_id: string }>();
+  const replayed = async () => Boolean(await env.DB.prepare(
+    "SELECT 1 AS found FROM mailbox_instructions WHERE user_id = ? AND signature_key = ? AND message_id <> ? LIMIT 1",
+  ).bind(row.user_id, signatureKey, row.message_id).first());
+  if (!existing && await replayed()) return { replayed: true, note: messageText };
   if (!existing) {
     // A reply to ME3's answer carries on the same conversation.
     const earlier = await env.DB.prepare(
@@ -178,14 +203,16 @@ export async function startOwnerInstruction(
     await env.DB.prepare(
       `INSERT OR IGNORE INTO mailbox_instructions
          (message_id, user_id, thread_key, assistant_thread_id, turn_id, reply_to_address, reply_from_address,
-          subject, message_id_header, references_header, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?)`,
+          subject, message_id_header, references_header, signature_key, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?)`,
     ).bind(
       row.message_id, row.user_id, threadKey, threadId, crypto.randomUUID(), from, me3Address,
-      subject || null, messageIdHeader, references, nowIso, nowIso,
+      subject || null, messageIdHeader, references, signatureKey, nowIso, nowIso,
     ).run();
     existing = await env.DB.prepare("SELECT assistant_thread_id, turn_id FROM mailbox_instructions WHERE message_id = ?")
       .bind(row.message_id).first<{ assistant_thread_id: string; turn_id: string }>();
+    // Two copies triaged at once: the unique signature index let only one in.
+    if (!existing && await replayed()) return { replayed: true, note: messageText };
     if (!existing) throw new Error("Could not record the owner's request");
   }
 

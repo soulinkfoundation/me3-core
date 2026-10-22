@@ -17,7 +17,7 @@ import { AGENT_COMPUTER_SCHEMA } from "./agent-computer";
 import { AGENT_COMMERCE_SCHEMA } from "./agent-commerce-store";
 import { AGENT_NETWORK_COMMERCE_SCHEMA } from "./agent-network-commerce";
 import { MAIL_TRIAGE_SCHEMA, MAILBOX_LOGIN_CODES_STATEMENTS, MAILBOX_MODEL_CALLS_SCHEMA, MAILBOX_SPAM_HANDLED_STATEMENTS, MAILBOX_SPAM_RULES_STATEMENTS } from "./mailbox-triage";
-import { MAILBOX_INSTRUCTIONS_SCHEMA } from "./mailbox-instructions";
+import { MAILBOX_INSTRUCTION_REPLAY_STATEMENTS, MAILBOX_INSTRUCTIONS_SCHEMA } from "./mailbox-instructions";
 import type { Env } from "./types";
 
 type RuntimeMigration = {
@@ -698,6 +698,15 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.batch(MAILBOX_MODEL_CALLS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
+  // Owner email replay: each request records its DKIM signature, and one signature starts one request.
+  {
+    id: "0085_mailbox_instruction_replay",
+    checksum: "2026-10-22-mailbox-instruction-replay-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "mailbox_instructions"))) return;
+      await addColumnIfMissing(db, "mailbox_instructions", "signature_key", "TEXT");
+      await db.batch(MAILBOX_INSTRUCTION_REPLAY_STATEMENTS.map(sql => db.prepare(sql)));
+    },
   },
 ];
 

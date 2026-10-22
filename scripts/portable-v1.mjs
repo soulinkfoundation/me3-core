@@ -107,6 +107,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0082_private_memory_forgotten", "2026-10-20-private-memory-forgotten-v1"],
   ["0083_mailbox_spam", "2026-10-21-mailbox-spam-v1"],
   ["0084_mailbox_model_calls", "2026-10-22-mailbox-model-calls-v1"],
+  ["0085_mailbox_instruction_replay", "2026-10-22-mailbox-instruction-replay-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];

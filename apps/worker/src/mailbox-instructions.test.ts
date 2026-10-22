@@ -5,7 +5,7 @@ import { AGENT_SCHEMA_STATEMENTS } from "../../../packages/agent/src/store";
 import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import { getMailboxBrief } from "./mailbox-brief";
-import { replyToOwnerInstruction, type OwnerInstructionDispatcher, type OwnerInstructionTurn } from "./mailbox-instructions";
+import { MAILBOX_INSTRUCTION_REPLAY_STATEMENTS, replyToOwnerInstruction, type OwnerInstructionDispatcher, type OwnerInstructionTurn } from "./mailbox-instructions";
 import { splitOwnerNote } from "./mailbox-sender-identity";
 import { MAIL_TRIAGE_SCHEMA, runMailTriage, type MailTriageClassifier } from "./mailbox-triage";
 import type { Env } from "./types";
@@ -16,7 +16,8 @@ import type { Env } from "./types";
 // bare forward starts a turn instead of being filed; the owner's reply to ME3
 // starts a new conversation; ME3 emails the owner twice for one turn, or
 // replies outside the thread; ME3 acts on, or drafts a reply to, mail it was
-// only copied on, or ignores a note that speaks to it by name.
+// only copied on, or ignores a note that speaks to it by name; a re-sent copy
+// of a signed owner email, or an old one, starts another request.
 const databases: DatabaseSync[] = [];
 afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMocks(); });
 
@@ -24,7 +25,7 @@ function fixture() {
   const raw = new DatabaseSync(":memory:"); databases.push(raw);
   raw.exec(readFileSync(new URL("../migrations/0001_initial_public_schema.sql", import.meta.url), "utf8"));
   raw.exec("ALTER TABLE mailbox_messages ADD COLUMN spam_at TEXT");
-  for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...ACCOUNTS_REMOVALS_SCHEMA, ...MAIL_TRIAGE_SCHEMA, ...AGENT_SCHEMA_STATEMENTS]) raw.exec(sql);
+  for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...ACCOUNTS_REMOVALS_SCHEMA, ...MAIL_TRIAGE_SCHEMA, ...MAILBOX_INSTRUCTION_REPLAY_STATEMENTS, ...AGENT_SCHEMA_STATEMENTS]) raw.exec(sql);
   raw.exec(`INSERT INTO owner_profile(id, email, timezone) VALUES('owner', 'Kieran@Gmail.test', 'UTC');
     INSERT INTO mailbox_aliases(id,user_id,alias_local_part,forwarding_email,status) VALUES('mailbox','owner','kieran','','active');`);
   const prepare = (sql: string) => {
@@ -49,7 +50,7 @@ function insertMail(raw: DatabaseSync, input: { id: string; from: string; subjec
      VALUES (?,?, 'inbound','email','received',?,?,?,?,?,?,?,'inbox','provider',?)`,
   ).run(input.id, "mailbox", input.threadKey || `<${input.id}@mail.test>`, input.from, "kieran@me3.test", input.subject, input.body,
     JSON.stringify({ from: input.from, subject: input.subject, "message-id": `<${input.id}@mail.test>`, ...(input.headers || {}) }),
-    JSON.stringify(input.dkim ? { senderAuth: { dkim: input.dkim, domain: "gmail.test", address: input.from, ...input.auth }, attachments: [{ filename: "booking.pdf" }] } : {}),
+    JSON.stringify(input.dkim ? { senderAuth: { dkim: input.dkim, domain: "gmail.test", address: input.from, signatureHash: `sig-${input.id}`, signedAt: new Date().toISOString(), ...input.auth }, attachments: [{ filename: "booking.pdf" }] } : {}),
     new Date().toISOString());
 }
 
@@ -67,6 +68,31 @@ const FORWARD = [
 ].join("\n");
 
 describe("owner email is an instruction", () => {
+  it("starts one request per owner signature, and none from an old or undated one (me3-faoe)", async () => {
+    const f = fixture();
+    const copy = { from: "kieran@gmail.test", subject: "Book a table", body: "Friday at 7 for four, please.", dkim: "pass" as const, auth: { signatureHash: "same-signature" } };
+    insertMail(f.raw, { id: "original", ...copy });
+    insertMail(f.raw, { id: "replay-1", ...copy });
+    insertMail(f.raw, { id: "replay-2", ...copy });
+    for (const id of ["original", "replay-1", "replay-2"]) await runMailTriage(f.env, id, { classify: modelMustNotRun, dispatchInstruction: f.dispatch });
+    expect(f.turns.map(turn => turn.requestId)).toEqual(["email:original"]);
+    expect(f.raw.prepare("SELECT message_id FROM mailbox_instructions").all()).toEqual([{ message_id: "original" }]);
+    const replay = f.raw.prepare("SELECT category, context_json FROM mailbox_triage WHERE message_id = 'replay-1'").get() as { category: string; context_json: string };
+    expect(replay.category).toBe("fyi");
+    expect(JSON.parse(replay.context_json)).toMatchObject({ replayedInstruction: true });
+    // The original's own retry still reuses its turn.
+    await f.raw.exec("UPDATE mailbox_triage SET status = 'failed' WHERE message_id = 'original'");
+    await runMailTriage(f.env, "original", { classify: modelMustNotRun, dispatchInstruction: f.dispatch });
+    expect(f.turns).toHaveLength(2);
+    expect(f.turns[1].turnId).toBe(f.turns[0].turnId);
+
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60_000).toISOString();
+    insertMail(f.raw, { id: "old", from: "kieran@gmail.test", subject: "Pay this now", body: "Send it.", dkim: "pass", auth: { signedAt: eightDaysAgo } });
+    insertMail(f.raw, { id: "undated", from: "kieran@gmail.test", subject: "Pay this now", body: "Send it.", dkim: "pass", auth: { signedAt: undefined } });
+    for (const id of ["old", "undated"]) await runMailTriage(f.env, id, { classify: fyi, dispatchInstruction: f.dispatch });
+    expect(f.turns).toHaveLength(2);
+  });
+
   it("starts ME3 on a verified owner's note, with the forward as information only", async () => {
     const f = fixture();
     insertMail(f.raw, { id: "ask", from: "kieran@gmail.test", subject: "Fwd: Dinner Friday", body: FORWARD, dkim: "pass" });

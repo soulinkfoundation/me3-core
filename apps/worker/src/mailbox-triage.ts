@@ -450,6 +450,10 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
 
   // 0. The owner's own (verified) email is a request ME3 acts on, before any rule or signal.
   const instruction = await startOwnerInstruction(env, row, { dispatch: options.dispatchInstruction, now: options.now });
+  if (instruction && "replayed" in instruction) {
+    // A re-sent copy of an owner email ME3 already acted on: information, never a second request.
+    return outcome("fyi", "low", instruction.note.replace(/\s+/g, " ") || subject, "signal", null, null, null, null, { ...context, replayedInstruction: true });
+  }
   if (instruction && "copied" in instruction) {
     // The owner copied ME3 on mail to someone else: information, never a reply.
     return outcome("fyi", "low", instruction.note.replace(/\s+/g, " ") || subject, "signal", null, null, null, null, { ...context, copiedMe3: true });
