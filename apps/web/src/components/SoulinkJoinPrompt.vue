@@ -141,14 +141,17 @@ function continueToSoulink() {
 <style scoped>
 .soulink-banner {
   position: fixed;
-  top: 12px;
+  /* Sits just above the chat composer when a page has one (see useComposerClearance). */
+  bottom: calc(
+    var(--app-composer-clearance, max(12px, env(safe-area-inset-bottom))) + 10px
+  );
   left: 50%;
   z-index: 45;
   display: flex;
   align-items: center;
   gap: 8px;
   width: max-content;
-  max-width: min(680px, calc(100vw - 144px));
+  max-width: min(620px, calc(100vw - 28px));
   min-height: 42px;
   padding: 4px 4px 4px 14px;
   border: 1px solid var(--ui-border, var(--color-border));
@@ -322,9 +325,7 @@ function continueToSoulink() {
 
 @media (max-width: 640px) {
   .soulink-banner {
-    top: auto;
     right: 12px;
-    bottom: max(12px, env(safe-area-inset-bottom));
     left: 12px;
     width: auto;
     max-width: none;

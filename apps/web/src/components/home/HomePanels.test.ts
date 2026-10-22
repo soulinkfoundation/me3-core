@@ -172,16 +172,15 @@ describe("Home Today card", () => {
     gratitudeInToday = true; render(); await flushPromises();
     expect(gratitude()).toBeTruthy();
   });
-  it("keeps a way into the calendar when nothing is scheduled", async () => {
+  it("shows one quiet line when nothing is scheduled", async () => {
     feed([]); render(); await flushPromises();
     expect(today().textContent).toContain("Nothing scheduled");
-    expect(today().textContent).toContain("Open calendar");
     expect(today().textContent).not.toContain("Connect a calendar");
   });
-  it("offers only the way to connect when no calendar is connected", async () => {
+  it("leaves connecting a calendar to Settings when none is connected", async () => {
     render(); await flushPromises();
-    expect(today().textContent).toContain("Connect a calendar");
-    expect(today().textContent).not.toContain("Nothing scheduled");
+    expect(today().textContent).toContain("Today's events will show here");
+    expect(today().textContent).not.toContain("Connect a calendar");
   });
   it("fades finished events and points to tomorrow once the day's schedule is over", async () => {
     const start = new Date(); start.setHours(0, 30, 0, 0); const end = new Date(start.getTime() + 15 * 60_000);

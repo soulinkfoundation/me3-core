@@ -28,6 +28,7 @@ import { useAppToast } from "../../composables/useAppToast";
 import { useAgentChatPresence } from "../../composables/useAgentChatPresence";
 import { useInboxDraftCount } from "../../composables/useInboxDraftCount";
 import { useVoiceDictation } from "../../composables/useVoiceDictation";
+import { useComposerClearance } from "../../composables/useComposerClearance";
 import { useContactsStore, type Contact } from "../../stores/contacts";
 import { useSitesStore } from "../../stores/sites";
 import {
@@ -622,6 +623,8 @@ const canSendAssistantMessage = computed(
     !assistantThreadLoading.value &&
     !assistantAttachmentIssue.value,
 );
+const assistantComposerFooterRef = ref<HTMLElement | null>(null);
+useComposerClearance(assistantComposerFooterRef);
 onMounted(() => {
   void loadMissionStarter();
   void loadUpcomingEvent();
@@ -3048,6 +3051,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
           <Button color="primary" shape="pill" @click="stopVoiceDictation()">Done</Button>
         </section>
         <footer
+          ref="assistantComposerFooterRef"
           class="assistant-composer"
           :class="{
             'assistant-composer--drag-active': assistantComposerDragActive,

@@ -434,11 +434,11 @@ onBeforeUnmount(() => {
                 <button v-else type="button" class="home-approval__go" :disabled="busy.includes(approval.id)" @click="confirm(approval.id)">Confirm</button>
                 <button type="button" class="home-approval__x" :aria-label="`Dismiss ${approval.title}`" :disabled="busy.includes(approval.id)" @click="dismiss(approval)"><UiIcon name="X" :size="16" /></button>
               </div>
-              <RouterLink v-if="!calendarConnected && !events.length" to="/calendar" class="home-quiet"><UiIcon name="Plus" :size="16" />Connect a calendar</RouterLink>
+              <!-- The title already opens Calendar, so the empty day is one quiet line. Calendars connect from Settings. -->
+              <p v-if="!events.length" class="home-empty-line">{{ calendarConnected ? 'Nothing scheduled' : "Today's events will show here" }}</p>
               <template v-else>
                 <RouterLink v-for="event in todayEvents" :key="event.id" :to="`/calendar?date=${day}`" class="home-line home-event" :class="eventState(event)"><span class="home-time">{{ event.allDay ? 'All day' : new Date(event.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</span><i class="home-event__bar" aria-hidden="true" /><span class="home-event__title">{{ event.title }}<template v-if="eventState(event) === 'is-now'"> · now</template></span></RouterLink>
-                <p v-if="!events.length" class="home-empty-line">Nothing scheduled · <RouterLink :to="`/calendar?date=${day}`">Open calendar</RouterLink></p>
-                <p v-else-if="dayOver" class="home-empty-line">Nothing else today · <RouterLink :to="`/calendar?date=${tomorrowKey}`" aria-label="Open tomorrow in Calendar">Tomorrow</RouterLink></p>
+                <p v-if="dayOver" class="home-empty-line">Nothing else today · <RouterLink :to="`/calendar?date=${tomorrowKey}`" aria-label="Open tomorrow in Calendar">Tomorrow</RouterLink></p>
               </template>
               <GratitudeCard v-if="showGratitude" section :active="active" @unavailable="unavailable.push('gratitude')" />
               <RouterLink to="/journal" class="home-tasksline" :aria-label="tasksLine.label">
