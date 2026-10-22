@@ -885,6 +885,8 @@ const me3AccountURL = computed(() => {
   }
 });
 
+const me3MoveURL = computed(() => `${me3AccountURL.value}?move=1`);
+
 const localPasswordSaveDisabled = computed(
   () =>
     localPasswordSaving.value ||
@@ -2472,6 +2474,29 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="account-resources">
+              <div
+                v-if="me3Connection?.connected && aiDeploymentMode === 'managed'"
+                class="account-deletion-row"
+              >
+                <div>
+                  <h3>Move to your own hosting</h3>
+                  <p class="hint">
+                    Run ME3 in your own Cloudflare and GitHub accounts and bring
+                    everything with you. This opens on ME3.app.
+                  </p>
+                </div>
+                <Button
+                  color="outline"
+                  shape="soft"
+                  size="compact"
+                  :href="me3MoveURL"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Move ME3
+                </Button>
+              </div>
+
               <div
                 v-if="me3Connection?.connected"
                 class="account-deletion-row"
