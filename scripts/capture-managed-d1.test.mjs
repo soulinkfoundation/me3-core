@@ -19,7 +19,12 @@ test("exports only classified tables at one bookmark and materializes filtered S
   const outputDatabase = join(root, "capture.sqlite");
   const calls = [];
   let polls = 0;
+  // A real D1 export carries the Core seed quotes the migrated target already has.
+  const seededQuote = sqliteJson(fixtureDatabase, "SELECT * FROM quotes ORDER BY id LIMIT 1;")[0];
+  const seededQuoteCount = sqliteScalar(fixtureDatabase, "SELECT COUNT(*) FROM quotes;");
   const exportedSql = `
+    INSERT INTO "quotes" (${Object.keys(seededQuote).join(", ")})
+    VALUES (${Object.values(seededQuote).map((value) => (value === null ? "NULL" : `'${String(value).replaceAll("'", "''")}'`)).join(", ")});
     INSERT INTO managed_runtime_state
       (id, installation_id, state, generation, quiesced_at, suspended_at,
        credentials_revoked_at, storage_purged_at, last_request_id, created_at, updated_at)
@@ -79,6 +84,8 @@ test("exports only classified tables at one bookmark and materializes filtered S
       ),
       "mi-1234567890abcdef:quiesced",
     );
+    assert.equal(sqliteScalar(outputDatabase, "SELECT COUNT(*) FROM quotes;"), "1");
+    assert.notEqual(seededQuoteCount, "0");
     const exportBody = JSON.parse(calls.find((call) => call.url.endsWith("/export")).init.body);
     assert.equal(exportBody.output_format, "polling");
     assert.equal(exportBody.dump_options.no_schema, true);

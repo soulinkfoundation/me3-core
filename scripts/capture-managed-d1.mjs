@@ -132,9 +132,15 @@ export async function captureManagedD1(
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "me3-managed-d1-"));
   try {
     const migrated = createDatabase(join(temporaryDirectory, "migrated"));
+    // Empty every table the export fills, so rows migrations seed (Core quotes) don't collide.
     runSqlite(
       migrated,
-      "PRAGMA foreign_keys=OFF; DELETE FROM d1_migrations; DELETE FROM core_runtime_migrations;",
+      [
+        "PRAGMA foreign_keys=OFF;",
+        "DELETE FROM d1_migrations;",
+        "DELETE FROM core_runtime_migrations;",
+        ...actualTables.map((name) => `DELETE FROM "${name.replaceAll('"', '""')}";`),
+      ].join("\n"),
     );
     readSqliteFile(migrated, outputSql);
     if (runSqlite(migrated, "PRAGMA integrity_check;").trim() !== "ok") {
@@ -178,7 +184,13 @@ function readSqliteFile(database, sqlPath) {
     encoding: "utf8",
     maxBuffer: 128 * 1024 * 1024,
   });
-  if (result.status !== 0) throw new Error("managed D1 SQL materialization failed");
+  if (result.status !== 0) {
+    // The workflow log is public: name the failing constraint or schema object, never row data.
+    const reason = String(result.stderr || "").match(
+      /(?:UNIQUE|NOT NULL|CHECK|FOREIGN KEY) constraint failed: [\w., ]+|no such (?:table|column): \w+|table \w+ has no column named \w+/,
+    )?.[0];
+    throw new Error(`managed D1 SQL materialization failed${reason ? ` (${reason})` : ""}`);
+  }
 }
 
 function isSafeSignedUrl(value) {
