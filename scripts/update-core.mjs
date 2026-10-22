@@ -120,7 +120,10 @@ console.log("");
 console.log("  git push origin main");
 
 async function connectUnrelatedHistory() {
-  const baseTag = args.baseTag || (installedVersion ? `v${installedVersion}` : "");
+  const baseTag =
+    args.baseTag ||
+    findCopiedUpstreamCommit(targetCommit) ||
+    (installedVersion ? `v${installedVersion}` : "");
   if (!baseTag) {
     fail("This repo has unrelated upstream history and no installed version was found for a safe base tag.");
   }
@@ -136,7 +139,7 @@ async function connectUnrelatedHistory() {
 
   console.log("");
   console.log("This looks like a Deploy-button-created repository with copied files but no upstream ancestry.");
-  console.log(`Connecting Git history at the installed Core version: ${baseTag}`);
+  console.log(`Connecting Git history at the ME3 version this repo was copied from: ${baseTag}`);
   console.log("Your current files are kept; this only records the common base for future updates.");
   await confirmProceed(`Connect upstream history at ${baseTag}?`);
 
@@ -149,6 +152,24 @@ async function connectUnrelatedHistory() {
     "-m",
     `Connect ME3 upstream history at ${baseTag}`,
   ]);
+}
+
+// A Deploy-button copy starts with one commit holding the exact upstream tree
+// it was copied from. That can be an unreleased commit newer than the
+// installed version's tag, so the tag alone is the wrong merge base.
+function findCopiedUpstreamCommit(target) {
+  const roots = capture("git", ["rev-list", "--max-parents=0", "HEAD"], { allowFailure: true })
+    .split(/\s+/)
+    .filter(Boolean);
+  if (roots.length !== 1) return "";
+  const tree = capture("git", ["rev-parse", `${roots[0]}^{tree}`], { allowFailure: true }).trim();
+  if (!tree) return "";
+  const history = capture("git", ["log", "--format=%H %T", target], { allowFailure: true });
+  for (const line of history.split("\n")) {
+    const [commit, commitTree] = line.split(" ");
+    if (commitTree === tree) return commit;
+  }
+  return "";
 }
 
 function ensureUpstreamRemote() {
