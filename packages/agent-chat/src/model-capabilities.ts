@@ -27,7 +27,7 @@ type AiModelCapabilityRecord = {
 
 export const DEFAULT_WORKERS_AI_IMAGE_GENERATION_MODEL =
   "@cf/black-forest-labs/flux-2-klein-4b";
-export const DEFAULT_OPENAI_IMAGE_GENERATION_MODEL = "gpt-image-2";
+export const DEFAULT_OPENAI_IMAGE_GENERATION_MODEL = "gpt-image-2.5-sunburst";
 
 const AI_MODEL_CAPABILITY_RECORDS: readonly AiModelCapabilityRecord[] = [
   ...["openai/gpt-6.1-sol", "openai/gpt-6-astra", "anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "@cf/zai-org/glm-5.3-flash"].map(model => ({
@@ -73,6 +73,16 @@ const AI_MODEL_CAPABILITY_RECORDS: readonly AiModelCapabilityRecord[] = [
   {
     providerId: "openai",
     model: DEFAULT_OPENAI_IMAGE_GENERATION_MODEL,
+    capabilities: ["image_generation"],
+    image: {
+      generation: true,
+      sizes: ["1024x1024"],
+      formats: ["png"],
+    },
+  },
+  {
+    providerId: "openai",
+    model: "gpt-image-2",
     capabilities: ["image_generation"],
     image: {
       generation: true,
@@ -161,6 +171,16 @@ const AI_MODEL_CAPABILITY_RECORDS: readonly AiModelCapabilityRecord[] = [
   {
     providerId: "workers-ai",
     model: "openai/gpt-image-2",
+    capabilities: ["image_generation"],
+    image: {
+      generation: true,
+      sizes: ["1024x1024"],
+      formats: ["png"],
+    },
+  },
+  {
+    providerId: "workers-ai",
+    model: "openai/gpt-image-2.5-sunburst",
     capabilities: ["image_generation"],
     image: {
       generation: true,

@@ -35,6 +35,7 @@ const MANAGED_IMAGE_MODELS = [
   "black-forest-labs/flux-2-klein-4b",
   "gpt-image-2",
   "openai/gpt-image-2",
+  "openai/gpt-image-2.5-sunburst",
 ] as const;
 
 export type ManagedAiModelOption = {

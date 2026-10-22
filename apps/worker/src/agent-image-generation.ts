@@ -74,7 +74,7 @@ export function createAgentImageGenerationServices(env: Env, ownerId: string): A
       let model = route.model;
       if (route.providerId === "openai") model = model.startsWith("openai/") ? model : `openai/${model}`;
       if (route.providerId === "workers-ai" && /^black-forest-labs\/flux-2-(klein-4b|dev)$/.test(model)) model = `@cf/${model}`;
-      if (!route.configured || !["openai/gpt-image-2", "@cf/black-forest-labs/flux-2-klein-4b", "@cf/black-forest-labs/flux-2-dev"].includes(model)) throw new Error("Configured image model is unavailable for private generation");
+      if (!route.configured || !["openai/gpt-image-2.5-sunburst", "openai/gpt-image-2", "@cf/black-forest-labs/flux-2-klein-4b", "@cf/black-forest-labs/flux-2-dev"].includes(model)) throw new Error("Configured image model is unavailable for private generation");
       const managed = isManagedRuntime(env);
       const reportCount = managed ? await managedAdmission(env, ownerId, input.signal) : 0;
       const gateway = await getAiGatewayRuntimeConfig(env, ownerId);

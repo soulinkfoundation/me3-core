@@ -70,17 +70,18 @@ export async function generateAgentProviderImage(env: Env, model: string, prompt
 export function verifiedImageCost(model: string, image: GeneratedProviderImage): { baseCostUsd: number; inputTokens: number; outputTokens: number; pricingBasis: string; usageReported: boolean } | null {
   // Official native output-tile price: https://developers.cloudflare.com/workers-ai/platform/pricing/
   if (model === "@cf/black-forest-labs/flux-2-klein-4b" && image.width === 1024 && image.height === 1024) return { baseCostUsd: 4 * 0.000287, inputTokens: 0, outputTokens: 0, pricingBasis: "workers-ai-flux-2-klein-4b-verified-output-tiles", usageReported: false };
-  if (model !== "openai/gpt-image-2") return null;
-  // Direct Images API has text-only input here and no cache.
+  if (model !== "openai/gpt-image-2" && model !== "openai/gpt-image-2.5-sunburst") return null;
+  // Direct Images API has text-only input here and no cache. Sunburst uses the same token rates.
   // https://developers.cloudflare.com/ai/models/openai/gpt-image-2/
+  // https://developers.cloudflare.com/ai/models/openai/gpt-image-2.5-sunburst/
   // https://developers.openai.com/api/docs/guides/image-generation
   // The AI binding returns only an image URL with no token usage, so price the
   // requested medium 1024 square at the fixed estimate. Malformed usage still holds.
-  if (image.usage === undefined) return image.width === 1024 && image.height === 1024 ? { baseCostUsd: 0.053, inputTokens: 0, outputTokens: 0, pricingBasis: "gpt-image-2-medium-1024x1024-estimate", usageReported: false } : null;
+  if (image.usage === undefined) return image.width === 1024 && image.height === 1024 ? { baseCostUsd: 0.053, inputTokens: 0, outputTokens: 0, pricingBasis: `${model.slice("openai/".length)}-medium-1024x1024-estimate`, usageReported: false } : null;
   const usage = record(image.usage); const details = record(usage?.input_tokens_details);
   const integer = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
   if (!usage || !details || ![usage.input_tokens, usage.output_tokens, usage.total_tokens, details.text_tokens, details.image_tokens].every(integer)) return null;
   const input = usage.input_tokens as number; const output = usage.output_tokens as number;
   if (details.image_tokens !== 0 || details.text_tokens !== input || usage.total_tokens !== input + output || output <= 0) return null;
-  return { baseCostUsd: (input * 5 + output * 30) / 1_000_000, inputTokens: input, outputTokens: output, pricingBasis: "gpt-image-2-verified-text-input-image-output-tokens", usageReported: true };
+  return { baseCostUsd: (input * 5 + output * 30) / 1_000_000, inputTokens: input, outputTokens: output, pricingBasis: `${model.slice("openai/".length)}-verified-text-input-image-output-tokens`, usageReported: true };
 }
