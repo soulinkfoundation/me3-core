@@ -89,7 +89,23 @@ export async function sendManagedInstallWorkflowCallback(
   });
 
   if (!response.ok) {
-    throw new Error(`managed callback returned ${response.status}`);
+    const failureCode = await readFailureCode(response);
+    throw new Error(
+      `managed callback returned ${response.status}` +
+        (failureCode ? ` (${failureCode})` : ""),
+    );
+  }
+}
+
+// Only a bare error code leaves the response, so the run log names the failing
+// step without echoing anything else ME3 Cloud returned.
+async function readFailureCode(response) {
+  try {
+    const body = await response.json();
+    const code = typeof body?.errorCode === "string" ? body.errorCode : "";
+    return /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : "";
+  } catch {
+    return "";
   }
 }
 

@@ -24,7 +24,7 @@ const callbackEnv = {
   ME3_MANAGED_DO_NAMESPACE_ID: "a".repeat(32),
 };
 
-test("a rejected activation callback fails without exposing its response or secret", async () => {
+test("a rejected activation callback names only its error code, never the response or secret", async () => {
   let requestBody;
 
   await assert.rejects(
@@ -32,13 +32,20 @@ test("a rejected activation callback fails without exposing its response or secr
       assert.equal(init.headers.Authorization, "Bearer test-callback-secret");
       requestBody = JSON.parse(init.body);
       return new Response(
-        JSON.stringify({ ok: false, errorCode: "activation_failed" }),
+        JSON.stringify({
+          ok: false,
+          errorCode: "activation_claim_apply_unavailable",
+          detail: "private-detail",
+        }),
         { status: 409 },
       );
     }),
     (error) => {
-      assert.equal(error.message, "managed callback returned 409");
-      assert.doesNotMatch(error.message, /activation_failed|test-callback-secret/);
+      assert.equal(
+        error.message,
+        "managed callback returned 409 (activation_claim_apply_unavailable)",
+      );
+      assert.doesNotMatch(error.message, /private-detail|test-callback-secret/);
       return true;
     },
   );
@@ -52,6 +59,22 @@ test("a rejected activation callback fails without exposing its response or secr
     queueNames: ["me3-mi-1234567890abcdef-booking-reminders"],
     durableObjectNamespaceId: "a".repeat(32),
   });
+});
+
+test("a rejected callback drops an error code that is not a bare code token", async () => {
+  for (const body of [
+    JSON.stringify({ errorCode: "Bearer test-callback-secret" }),
+    JSON.stringify({ error: "Unauthorized" }),
+    "not json",
+  ]) {
+    await assert.rejects(
+      sendManagedInstallWorkflowCallback(
+        callbackEnv,
+        async () => new Response(body, { status: 409 }),
+      ),
+      { message: "managed callback returned 409" },
+    );
+  }
 });
 
 test("every callback status reports the exact managed release tag", async () => {
