@@ -20,7 +20,6 @@ import { useAuthStore } from "../stores/auth";
 import { findInlineTextMatch } from "../utils/inlineJournalChips";
 import { parseJournalReminderCapture } from "../utils/journalReminderCapture";
 import { journalBodyForEditor } from "../utils/journalContent";
-import { reorderJournalBlocks } from "../utils/journalWriting";
 import { writtenGratitude } from "../utils/gratitude";
 import JournalDayPlan from "../components/today/JournalDayPlan.vue";
 import { useAppToast } from "../composables/useAppToast";
@@ -50,11 +49,6 @@ type JournalEntry = {
 };
 
 type Article = Omit<JournalEntry, "date">;
-type AssistMode = "structure" | "outline" | "feedback" | "restructure";
-type AssistGroup = { label: string; phrases: string[] };
-type AssistNote = { id: string; paragraphId: string; quote: string; category: string; comment: string };
-type AssistResult = { groups?: AssistGroup[]; notes?: AssistNote[]; order?: string[]; reason?: string };
-type AssistParagraph = { id: string; text: string; pos: number };
 
 type JournalArchiveEntry = JournalEntry & {
   preview: string;
@@ -175,17 +169,6 @@ const archiveLoaded = ref(false);
 const libraryTab = ref<"daily" | "articles">("daily");
 const articles = ref<Article[]>([]);
 const currentArticle = ref<Article | null>(null);
-const assistOpen = ref(false);
-const assistTab = ref<"structure" | "outline" | "feedback">("structure");
-const assistBusy = ref(false);
-const assistError = ref("");
-const assistResults = ref<Record<string, { result: AssistResult; content: string; editVersion: number; paragraphs: AssistParagraph[] } | undefined>>({});
-const editVersions = ref<Record<string, number>>({});
-const dismissedNotes = ref<Record<string, string[]>>({});
-const dictatedText = ref("");
-const dictationDuration = ref("");
-const dictationRange = ref<{ from: number; to: number } | null>(null);
-const assistFocus = ref("");
 const loading = ref(false);
 const archiveLoading = ref(false);
 const archiveActionDate = ref<string | null>(null);
@@ -235,16 +218,6 @@ const hasLoadedEntry = computed(
   () => !currentArticle.value && loadedEntry.value?.date === selectedDate.value,
 );
 const wordCount = computed(() => htmlToPlainText(description.value).split(/\s+/).filter(Boolean).length);
-const documentKey = computed(() => currentArticle.value ? `article:${currentArticle.value.id}` : `day:${selectedDate.value}`);
-const documentContent = computed(() => `${title.value}\n${description.value}`);
-const editVersion = computed(() => editVersions.value[documentKey.value] || 0);
-const assistKey = computed(() => `${documentKey.value}:${assistTab.value}`);
-const currentAssist = computed(() => assistResults.value[assistKey.value]);
-const assistStale = computed(() => !!currentAssist.value && (currentAssist.value.content !== documentContent.value || currentAssist.value.editVersion !== editVersion.value));
-const currentDismissedNotes = computed(() => dismissedNotes.value[`${documentKey.value}:feedback`] || []);
-const visibleFeedbackNotes = computed(() => currentAssist.value?.result.notes
-  ?.map((note, index) => ({ note, number: index + 1 }))
-  .filter(({ note }) => !currentDismissedNotes.value.includes(note.id)) || []);
 const nonEmptyArchiveEntries = computed(() =>
   archiveEntries.value.filter(entryHasContent),
 );
@@ -290,7 +263,6 @@ const {
   disabled: () => loading.value,
   filenamePrefix: "journal-dictation",
   onTranscript: insertVoiceTranscript,
-  onStart: () => { dictatedText.value = ""; },
 });
 
 function dateToKey(date: Date): string {
@@ -416,34 +388,7 @@ function htmlToPlainText(value: string): string {
 }
 
 function insertVoiceTranscript(text: string) {
-  dictatedText.value = text.trim();
-  dictationDuration.value = voiceRecordingElapsedLabel.value;
-  const before = editorRef.value?.editor?.state.selection.from;
   editorRef.value?.insertText(text);
-  const after = editorRef.value?.editor?.state.selection.from;
-  dictationRange.value = before !== undefined && after !== undefined ? { from: before, to: after } : null;
-  void nextTick().then(markDictation);
-}
-
-function clearDictationMark() {
-  editorWrap.value?.querySelectorAll(".journal-dictation-anchor").forEach((element) => element.classList.remove("journal-dictation-anchor"));
-}
-
-function markDictation() {
-  clearDictationMark();
-  const editor = editorRef.value?.editor;
-  const range = dictationRange.value;
-  if (!editor || !range || !dictatedText.value) return;
-  const dom = editor.view.domAtPos(range.from).node;
-  const element = dom instanceof HTMLElement ? dom : dom.parentElement;
-  element?.closest("p, li, blockquote")?.classList.add("journal-dictation-anchor");
-}
-
-function keepDictation() {
-  assistResults.value[`${documentKey.value}:structure`] = undefined;
-  dictatedText.value = "";
-  dictationRange.value = null;
-  clearDictationMark();
 }
 
 function defaultCaptureTitle(text: string): string {
@@ -584,10 +529,6 @@ async function loadDay(date: string) {
     );
     if (token !== currentLoadToken) return;
     hydratingEntry.value = true;
-    clearFeedbackMarks();
-    clearDictationMark();
-    dictatedText.value = "";
-    dictationRange.value = null;
     currentArticle.value = null;
     loadedEntry.value = response.entry;
     title.value = response.entry?.title || "";
@@ -675,18 +616,6 @@ async function openCapture(mode: CaptureMode) {
     captureReminderTime.value = draft.time;
   }
   captureOpen.value = true;
-}
-
-async function makeTaskFromPhrase(phrase: string) {
-  await flushPendingSave();
-  if (!loadedEntry.value && !currentArticle.value) { error.value = "Save this page first."; return; }
-  try {
-    await loadProjects();
-    captureText.value = phrase;
-    captureTitle.value = defaultCaptureTitle(captureText.value);
-    captureMode.value = "task";
-    captureOpen.value = true;
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not load projects."; }
 }
 
 function hideSelectionToolbar() {
@@ -1039,10 +968,6 @@ async function openArticle(id: string) {
     const response = await api.get<{ article: Article }>(`/journal/articles/${encodeURIComponent(id)}`);
     if (token !== currentLoadToken) return;
     hydratingEntry.value = true;
-    clearFeedbackMarks();
-    clearDictationMark();
-    dictatedText.value = "";
-    dictationRange.value = null;
     currentArticle.value = response.article;
     libraryTab.value = "articles";
     title.value = response.article.title || "";
@@ -1075,133 +1000,6 @@ async function deleteArticle(article: Article) {
   } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not delete article."; }
 }
 
-function editorParagraphs(): AssistParagraph[] {
-  const editor = editorRef.value?.editor;
-  const paragraphs: AssistParagraph[] = [];
-  editor?.state.doc.forEach((node, offset) => {
-    if (node.textContent.trim()) paragraphs.push({ id: String(offset), text: node.textContent, pos: offset });
-  });
-  return paragraphs;
-}
-
-function selectedEditorText() {
-  const editor = editorRef.value?.editor;
-  if (!editor) return "";
-  const { from, to } = editor.state.selection;
-  return from === to ? "" : editor.state.doc.textBetween(from, to, "\n").trim();
-}
-
-function clearFeedbackMarks() {
-  editorWrap.value?.querySelectorAll("[data-feedback-number]").forEach((element) => {
-    element.removeAttribute("data-feedback-number");
-    element.classList.remove("journal-feedback-anchor");
-  });
-}
-
-function markFeedback() {
-  clearFeedbackMarks();
-  const editor = editorRef.value?.editor;
-  const stored = assistResults.value[`${documentKey.value}:feedback`];
-  if (!editor || !stored || stored.content !== documentContent.value || stored.editVersion !== editVersion.value) return;
-  stored.result.notes?.forEach((note, index) => {
-    if (currentDismissedNotes.value.includes(note.id)) return;
-    const paragraph = stored.paragraphs.find((item) => item.id === note.paragraphId);
-    const element = paragraph && editor.view.nodeDOM(paragraph.pos);
-    if (element instanceof HTMLElement) {
-      element.classList.add("journal-feedback-anchor");
-      element.setAttribute("data-feedback-number", String(index + 1));
-    }
-  });
-}
-
-async function runAssist(mode: AssistMode, source?: string) {
-  const paragraphs = source ? [{ id: "dictation", text: source, pos: 0 }] : editorParagraphs();
-  if (!paragraphs.length) { assistError.value = "Write something first."; return; }
-  const sourceContent = documentContent.value;
-  const sourceDocument = documentKey.value;
-  const sourceVersion = editVersion.value;
-  assistBusy.value = true;
-  assistError.value = "";
-  try {
-    const response = await api.post<{ result: AssistResult }>("/journal/assist", {
-      mode, paragraphs: paragraphs.map(({ id, text }) => ({ id, text })), focus: assistFocus.value.trim(),
-    });
-    assistResults.value[`${sourceDocument}:${mode === "restructure" ? "outline" : mode}`] = {
-      result: response.result, content: sourceContent, editVersion: sourceVersion, paragraphs,
-    };
-    if (mode === "feedback") dismissedNotes.value[`${sourceDocument}:feedback`] = [];
-    if (mode === "feedback") await nextTick().then(markFeedback);
-  } catch (cause) { assistError.value = cause instanceof Error ? cause.message : "Assist could not run."; }
-  finally { assistBusy.value = false; }
-}
-
-function structureThis() {
-  assistOpen.value = true;
-  assistTab.value = "structure";
-  const range = dictationRange.value;
-  markDictation();
-  if (range) editorRef.value?.editor?.chain().focus().setTextSelection(range).scrollIntoView().run();
-  void runAssist("structure", dictatedText.value);
-}
-
-function applyStructure(replace: boolean) {
-  const editor = editorRef.value?.editor;
-  const groups = currentAssist.value?.result.groups;
-  if (!editor || !groups || assistStale.value) return;
-  const nodes = groups.flatMap((group) => [
-    { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: group.label }] },
-    ...group.phrases.map((phrase) => ({ type: "paragraph", content: [{ type: "text", text: phrase }] })),
-  ]);
-  const text = dictatedText.value;
-  if (replace) {
-    const range = dictationRange.value;
-    if (!range || !editor.state.doc.textBetween(range.from, range.to).includes(text)) {
-      assistError.value = "The dictation changed. Run Structure again.";
-      return;
-    }
-    editor.chain().focus().insertContentAt(range, nodes).run();
-  } else editor.chain().focus().insertContentAt(editor.state.doc.content.size, nodes).run();
-  dictatedText.value = "";
-  dictationRange.value = null;
-  clearDictationMark();
-}
-
-function addHeadings() {
-  const editor = editorRef.value?.editor;
-  const groups = currentAssist.value?.result.groups;
-  if (!editor || !groups || assistStale.value) return;
-  editor.chain().focus().insertContentAt(0, groups.map((group) => ({
-    type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: group.label }],
-  }))).run();
-}
-
-function applyOrder() {
-  const editor = editorRef.value?.editor;
-  const order = currentAssist.value?.result.order;
-  if (!editor || !order || assistStale.value) return;
-  const original: Array<{ id: string; text: string; node: ReturnType<typeof editor.state.doc.child> }> = [];
-  editor.state.doc.forEach((node, offset) => original.push({ id: String(offset), text: node.textContent, node }));
-  const arranged = reorderJournalBlocks(original, order);
-  if (!arranged) return;
-  editor.chain().focus().command(({ tr }) => {
-    tr.replaceWith(0, tr.doc.content.size, arranged.map(({ node }) => node));
-    return true;
-  }).run();
-}
-
-function showFeedback(note: AssistNote) {
-  const editor = editorRef.value?.editor;
-  const paragraph = currentAssist.value?.paragraphs.find((item) => item.id === note.paragraphId);
-  if (!editor || !paragraph || assistStale.value) return;
-  const index = paragraph.text.indexOf(note.quote);
-  if (index < 0) return;
-  editor.chain().focus().setTextSelection({ from: paragraph.pos + 1 + index, to: paragraph.pos + 1 + index + note.quote.length }).scrollIntoView().run();
-}
-
-function dismissFeedback(id: string) {
-  dismissedNotes.value[`${documentKey.value}:feedback`] = [...currentDismissedNotes.value, id];
-}
-
 function handleWindowClick() {
   datePickerOpen.value = false;
   closeArchiveActions();
@@ -1223,11 +1021,7 @@ function handleWindowKeydown(event: KeyboardEvent) {
   }
 }
 
-watch([title, description], () => {
-  if (!hydratingEntry.value) editVersions.value[documentKey.value] = editVersion.value + 1;
-  scheduleSave();
-});
-watch([documentContent, dismissedNotes], () => { void nextTick().then(markFeedback); }, { flush: "post", deep: true });
+watch([title, description], scheduleSave);
 watch([entryLinks, description, projects], scheduleInlineJournalChips, {
   flush: "post",
 });
@@ -1355,20 +1149,6 @@ onBeforeUnmount(() => {
             :name="voiceDictationState === 'listening' ? 'Square' : 'Mic'"
             :size="16"
           />
-        </Button>
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          :active="assistOpen"
-          aria-label="Assist"
-          :aria-pressed="assistOpen ? 'true' : 'false'"
-          title="Assist"
-          type="button"
-          @click="assistOpen = !assistOpen"
-        >
-          <UiIcon name="Sparkles" :size="16" />
         </Button>
         <Button
           color="ghost"
@@ -1559,52 +1339,11 @@ onBeforeUnmount(() => {
           <span v-else-if="voiceDictationState === 'processing'">
             Transcribing
           </span>
-          <span v-else-if="dictatedText">
-            Transcribed · {{ dictationDuration }}
-            <button type="button" @click="structureThis">Structure this</button>
-            <button type="button" @click="keepDictation">Dismiss</button>
-          </span>
           <span v-else-if="voiceDictationStatusText">
             {{ voiceDictationStatusText }}
           </span>
         </div>
       </section>
-      <aside v-if="assistOpen" class="journal__assist" aria-label="Writing Assist">
-        <div class="journal__archive-head"><div class="journal__tabs" aria-label="Assist mode"><button v-for="tab in (['structure', 'outline', 'feedback'] as const)" :key="tab" type="button" :aria-pressed="assistTab === tab" @click="assistTab = tab">{{ tab[0].toUpperCase() + tab.slice(1) }}</button></div><Button color="ghost" shape="soft" size="compact" icon-only type="button" aria-label="Close Assist" @click="assistOpen = false"><UiIcon name="X" :size="16" /></Button></div>
-        <div class="journal__assist-body">
-          <p v-if="assistTab === 'structure' && dictatedText" class="journal__empty">From your dictation, {{ dictationDuration }}. Every line below a heading is in your own words.</p>
-          <p v-else-if="assistTab === 'feedback' && currentAssist?.result.notes" class="journal__empty">{{ currentAssist.result.notes.length }} notes on this {{ currentArticle ? 'article' : 'daily page' }}. Assist points at things; it does not rewrite them.</p>
-        </div>
-        <label class="journal__assist-focus">Focus (optional)<input v-model="assistFocus" type="text" maxlength="200" placeholder="e.g. the opening" /></label>
-        <p v-if="assistError" class="journal__message is-error">{{ assistError }}</p>
-        <p v-if="assistStale" class="journal__empty">Your writing changed. Run again for current results.</p>
-        <template v-if="assistTab === 'structure'">
-          <button type="button" class="journal__panel-action" :disabled="assistBusy" @click="runAssist('structure', dictatedText || selectedEditorText() || undefined)">{{ assistBusy ? 'Working…' : 'Structure dictation or selection' }}</button>
-          <div v-if="currentAssist && !assistStale" class="journal__assist-result">
-            <div v-for="(group, index) in currentAssist.result.groups" :key="index"><h3>{{ group.label }}</h3><p v-for="phrase in group.phrases" :key="phrase">{{ phrase }} <button v-if="/to.?do|tasks?|actions?/i.test(group.label) || /^(?:#task|to.?do:)/i.test(phrase)" type="button" @click="makeTaskFromPhrase(phrase)">Make task</button></p></div>
-            <button v-if="dictatedText" type="button" @click="applyStructure(true)">Replace dictation</button>
-            <button type="button" @click="applyStructure(false)">Insert below</button>
-            <button type="button" @click="keepDictation">Keep it as it was</button>
-            <button type="button" @click="editorRef?.editor?.chain().focus().undo().run()">Undo</button>
-          </div>
-          <p v-else-if="!assistBusy" class="journal__empty">Choose Structure to organize your own words.</p>
-        </template>
-        <template v-else-if="assistTab === 'outline'">
-          <button type="button" class="journal__panel-action" :disabled="assistBusy" @click="runAssist('outline')">Suggest outline</button>
-          <button type="button" class="journal__panel-action" :disabled="assistBusy" @click="runAssist('restructure')">Suggest new order</button>
-          <div v-if="currentAssist && !assistStale" class="journal__assist-result">
-            <template v-if="currentAssist.result.groups"><div v-for="(group, index) in currentAssist.result.groups" :key="index"><h3>{{ group.label }}</h3><p v-for="phrase in group.phrases" :key="phrase">{{ phrase }}</p></div><button type="button" @click="addHeadings">Add headings</button></template>
-            <template v-if="currentAssist.result.order"><p>{{ currentAssist.result.reason }}</p><ol><li v-for="id in currentAssist.result.order" :key="id">{{ currentAssist.paragraphs.find((p) => p.id === id)?.text }} <small>was {{ currentAssist.paragraphs.findIndex((p) => p.id === id) + 1 }}</small></li></ol><button type="button" @click="applyOrder">Apply order</button><button type="button" @click="assistResults[assistKey] = undefined">Keep mine</button></template>
-            <button type="button" @click="editorRef?.editor?.chain().focus().undo().run()">Undo</button>
-          </div>
-        </template>
-        <template v-else>
-          <button type="button" class="journal__panel-action" :disabled="assistBusy" @click="runAssist('feedback')">Get feedback</button>
-          <div v-if="currentAssist && !assistStale" class="journal__assist-result">
-            <div v-for="{ note, number } in visibleFeedbackNotes" :key="note.id"><h3>{{ number }}. {{ note.category }}</h3><p>“{{ note.quote }}”</p><p>{{ note.comment }}</p><button type="button" @click="showFeedback(note)">Show</button><button type="button" @click="dismissFeedback(note.id)">Dismiss</button></div>
-          </div>
-        </template>
-      </aside>
     </div>
 
     <a
@@ -1838,50 +1577,20 @@ onBeforeUnmount(() => {
   align-items: stretch;
 }
 
-.journal__workspace:has(.journal__assist) {
-  grid-template-columns: minmax(0, 628px) minmax(220px, 280px);
-  width: min(100%, 980px);
-}
-
-.journal__workspace:has(.journal__archive):has(.journal__assist) {
-  grid-template-columns: minmax(220px, 280px) minmax(0, 628px) minmax(220px, 280px);
-  width: min(100%, 1284px);
-}
-
 .journal__tabs { display: flex; gap: 4px; padding: 3px; border-radius: var(--ui-radius-sm, 8px); background: var(--ui-surface-muted, var(--color-surface-muted)); }
-.journal__tabs button, .journal__panel-action, .journal__assist-result button, .journal__status button {
+.journal__tabs button, .journal__panel-action, .journal__status button {
   border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 7px 8px;
   background: transparent; color: var(--ui-text, var(--color-text));
   font: inherit; cursor: pointer;
 }
 .journal__tabs button[aria-pressed="true"] { background: var(--ui-primary); color: var(--ui-primary-contrast); font-weight: 600; }
-.journal__assist-body { padding: 0 8px; }
-.journal__tabs button:focus-visible, .journal__panel-action:focus-visible, .journal__assist-result button:focus-visible, .journal__status button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
+.journal__tabs button:focus-visible, .journal__panel-action:focus-visible, .journal__status button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
 .journal__panel-action { width: 100%; text-align: left; color: var(--ui-accent-strong, var(--ui-accent)); }
-.journal__assist {
-  position: sticky; top: calc(var(--app-topbar-height) + var(--workspace-topbar-height));
-  min-height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
-  border-left: 1px solid var(--ui-border, var(--color-border));
-  padding-left: 14px; overflow-y: auto;
-}
-.journal__assist-focus { display: grid; gap: 6px; margin: 16px 8px; font-size: .82rem; color: var(--ui-text-muted); }
-.journal__assist-focus input { min-width: 0; padding: 8px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); color: var(--ui-text); }
-.journal__assist-result { padding: 8px; font-size: .86rem; }
-.journal__assist-result > div { padding: 12px; margin: 10px 0; border-radius: var(--ui-radius-sm, 8px); background: var(--ui-surface-muted, var(--color-surface-muted)); }
-.journal__assist-result h3 { margin: 16px 0 6px; font-size: .9rem; }
-.journal__assist-result p { margin: 6px 0; line-height: 1.45; }
-.journal__assist-result button, .journal__status button { color: var(--ui-accent-strong, var(--ui-accent)); }
-.journal__assist-result > button:first-of-type { background: var(--ui-primary); color: var(--ui-primary-contrast); font-weight: 600; }
-.journal__assist-result > button:nth-of-type(2) { border: 1px solid var(--ui-border, var(--color-border)); }
-.journal__assist-result ol { padding-left: 20px; }
-.journal__assist-result li { margin: 10px 0; }
+.journal__status button { color: var(--ui-accent-strong, var(--ui-accent)); }
 .journal__month { margin: 18px 8px 6px; color: var(--ui-text-muted); font-size: .78rem; font-weight: 700; }
 .journal__library-row-head { display: flex; justify-content: space-between; gap: 8px; }
 .journal__library-row-head small { flex-shrink: 0; color: var(--ui-text-muted); font-size: .78rem; }
 .journal__archive > .journal__panel-action { margin-top: 12px; border: 1px solid var(--ui-border, var(--color-border)); text-align: center; color: var(--ui-text, var(--color-text)); }
-.journal__editor-wrap :deep(.journal-feedback-anchor) { position: relative; background: var(--ui-accent-soft, color-mix(in srgb, var(--ui-accent) 12%, transparent)); }
-.journal__editor-wrap :deep(.journal-feedback-anchor::before) { content: attr(data-feedback-number); position: absolute; right: calc(100% + 8px); top: 0; color: var(--ui-accent-strong, var(--ui-accent)); font-size: .75rem; font-weight: 700; }
-.journal__editor-wrap :deep(.journal-dictation-anchor) { background: color-mix(in srgb, var(--ui-accent) 14%, transparent); border-radius: var(--ui-radius-sm, 8px); }
 
 .journal__archive {
   position: sticky;
@@ -2076,7 +1785,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.journal__workspace:has(.journal__archive, .journal__assist)
+.journal__workspace:has(.journal__archive)
   .journal__editor-wrap
   :deep(.tiptap-editor--workspace .editor-toolbar) {
   width: 100%;
@@ -2276,9 +1985,7 @@ onBeforeUnmount(() => {
   }
 
   .journal__workspace,
-  .journal__workspace:has(.journal__archive),
-  .journal__workspace:has(.journal__assist),
-  .journal__workspace:has(.journal__archive):has(.journal__assist) {
+  .journal__workspace:has(.journal__archive) {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
     padding: 0 14px 12px;
@@ -2305,9 +2012,6 @@ onBeforeUnmount(() => {
     display: none;
   }
 
-  .journal__assist { position: static; min-height: 0; border-left: 0; padding: 12px 0; }
-  .journal__workspace:has(.journal__assist) .journal__archive { display: none; }
-  .journal__workspace:has(.journal__assist) .journal__sheet { display: none; }
 
   .journal__mobile-detail-nav {
     display: flex;

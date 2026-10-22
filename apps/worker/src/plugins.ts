@@ -1397,12 +1397,6 @@ const JOURNAL_PLUGIN: CorePluginManifestSummary = {
       methods: ["GET", "PATCH", "DELETE"],
       auth: "owner",
     },
-    {
-      id: "journal.assist.api",
-      path: "/api/journal/assist",
-      methods: ["POST"],
-      auth: "owner",
-    },
   ],
   uiSlots: [
     {

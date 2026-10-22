@@ -2,7 +2,6 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createJournalArticle, deleteJournalArticle, getJournalArticle, listJournalArticles, updateJournalArticle } from "./journal-articles";
-import { validateJournalAssistResult } from "./journal-assist";
 import type { Env } from "./types";
 
 const databases: DatabaseSync[] = [];
@@ -37,26 +36,5 @@ describe("journal articles", () => {
     await expect(deleteJournalArticle(env, "alice", first.id, 1)).rejects.toThrow("changed");
     await deleteJournalArticle(env, "alice", first.id, 2);
     await expect(getJournalArticle(env, "alice", first.id)).rejects.toThrow("not found");
-  });
-});
-
-describe("journal Assist validation", () => {
-  const paragraphs = [{ id: "a", text: "My exact words" }, { id: "b", text: "Second paragraph" }];
-  it("rejects invented structure and outline phrases", () => {
-    for (const mode of ["structure", "outline"] as const) {
-      expect(() => validateJournalAssistResult(mode, { groups: [{ label: "Topic", phrases: ["invented prose"] }] }, paragraphs)).toThrow();
-      expect(validateJournalAssistResult(mode, { groups: [{ label: "Topic", phrases: ["My exact words"] }] }, paragraphs)).toEqual({ groups: [{ label: "Topic", phrases: ["My exact words"] }] });
-    }
-  });
-  it("accepts only a permutation of paragraph ids", () => {
-    expect(() => validateJournalAssistResult("restructure", { order: ["a", "a"], reason: "Flow" }, paragraphs)).toThrow();
-    expect(validateJournalAssistResult("restructure", { order: ["b", "a"], reason: "Flow" }, paragraphs)).toEqual({ order: ["b", "a"], reason: "Flow" });
-  });
-  it("anchors feedback to exact text and discards replacement fields", () => {
-    const note = { id: "1", paragraphId: "a", quote: "exact words", category: "Clarity", comment: "Expand this thought." };
-    expect(validateJournalAssistResult("feedback", { notes: [note] }, paragraphs)).toEqual({ notes: [note] });
-    expect(() => validateJournalAssistResult("feedback", { notes: [{ ...note, quote: "other" }] }, paragraphs)).toThrow();
-    expect(() => validateJournalAssistResult("feedback", { notes: [{ ...note, replacement: "New words" }] }, paragraphs)).toThrow();
-    expect(() => validateJournalAssistResult("feedback", { notes: [note, note] }, paragraphs)).toThrow();
   });
 });

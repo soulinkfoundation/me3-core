@@ -1,6 +1,5 @@
 import { JOURNAL_PLUGIN_ID, saveJournalDayForAgent } from "@me3-core/plugin-journal";
 import { createJournalArticle, deleteJournalArticle, getJournalArticle, listJournalArticles, updateJournalArticle } from "../journal-articles";
-import { runJournalAssist } from "../journal-assist";
 import {
   JournalConflictError,
   JournalInputError,
@@ -75,15 +74,6 @@ export function registerJournalRoutes(app: AppHono, deps: OwnerRouteDeps) {
       if (revision === undefined || revision === null) throw new JournalConflictError();
       return c.json(await deleteJournalArticle(c.env, ownerId, c.req.param("id"), revision));
     } catch (error) { return journalErrorResponse(c, error); }
-  });
-
-  app.post("/api/journal/assist", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    const blocked = await requireJournalPlugin(c);
-    if (blocked) return blocked;
-    try { return c.json(await runJournalAssist(c.env, ownerId, await c.req.json().catch(() => ({})))); }
-    catch (error) { return journalErrorResponse(c, error); }
   });
 
   app.get("/api/journal/days/:date", async (c) => {
