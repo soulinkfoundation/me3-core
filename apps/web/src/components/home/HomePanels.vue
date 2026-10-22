@@ -80,6 +80,10 @@ const busy = ref<string[]>([]);
 const dialog = ref<"add" | null>(null);
 const panels = ref<HTMLElement | null>(null);
 const unavailable = ref<HomeResource[]>([]);
+// Resources that have answered at least once (or failed); until then their card shows a skeleton, as on iOS.
+const settled = ref<HomeResource[]>([]);
+const cardResources: Partial<Record<HomeCard, HomeResource[]>> = { mission: ["mission", "wheel"] };
+const cardPending = (card: HomeCard) => (cardResources[card] ?? [card]).some(id => !settled.value.includes(id));
 const offline = ref(!navigator.onLine);
 const lastRefresh = ref("");
 const orderAnnouncement = ref("");
@@ -271,6 +275,8 @@ async function resource(card: HomeResource, load: () => Promise<void>) {
     if (disposed) return;
     if (error instanceof ApiError && [403, 404].includes(error.status) && !["today", "inbox"].includes(card)) { unavailable.value.push(card); delete errors.value[card]; }
     else errors.value[card] = error instanceof Error ? error.message : "Couldn't refresh";
+  } finally {
+    if (!disposed && !settled.value.includes(card)) settled.value.push(card);
   }
 }
 async function loadToday() {
@@ -427,7 +433,8 @@ onBeforeUnmount(() => {
             <button type="button" role="menuitem" class="home-danger" @click="remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
           </div>
           <div class="home-card__body">
-            <template v-if="card === 'today'">
+            <div v-if="cardPending(card)" class="home-skeleton" role="status" aria-label="Loading content"><i /><i /><i /></div>
+            <template v-else-if="card === 'today'">
               <div v-for="approval in approvals.slice(0, 3)" :key="approval.id" class="home-approval">
                 <span class="home-approval__what"><strong>{{ approval.title }}</strong><span v-if="approval.summary" class="home-muted"> · {{ journalPreview(approval.summary) }}</span></span>
                 <button v-if="approval.pluginId === 'me3.core'" type="button" class="home-approval__go" :disabled="busy.includes(approval.id)" @click="reviewApproval = approval; approvalError = ''">Review</button>
@@ -549,6 +556,12 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
   .home-card:hover .home-card__controls, .home-card:focus-within .home-card__controls { opacity: 1; }
 }
 .home-card__body { padding: 0 18px 16px; font-size: 15px; line-height: 1.45; }
+.home-skeleton { display: grid; gap: 12px; padding: 4px 0 2px; }
+.home-skeleton i { display: block; height: 24px; border-radius: 8px; background: color-mix(in srgb, var(--ui-text) 8%, transparent); animation: home-skeleton-pulse 1.4s ease-in-out infinite; }
+.home-skeleton i:first-child { height: 42px; }
+.home-skeleton i:last-child { width: 62%; }
+@keyframes home-skeleton-pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .home-skeleton i { animation: none; } }
 p { margin: 4px 0; }
 .home-muted { color: var(--ui-text-muted); font-size: 14px; }
 .home-inbox-row { display: flex; align-items: flex-start; gap: 12px; min-width: 0; min-height: 44px; padding: 8px 0; color: var(--ui-text); text-decoration: none; }

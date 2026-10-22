@@ -50,7 +50,7 @@ function continueToSoulink() {
     aria-label="Soulink network"
   >
     <p>
-      Meditate, call and chat with conscious communities on Soulink.
+      Find your people on Soulink. Meditate, call and chat with conscious communities.
       <button type="button" class="soulink-banner__link" aria-label="Join Soulink" @click="openDialog">
         Join
       </button>

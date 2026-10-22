@@ -8,7 +8,8 @@
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b0d13" media="(prefers-color-scheme: dark)" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="ME3" />
@@ -110,7 +111,7 @@
       :root[data-theme="dark"] body,
       :root[data-theme="dark"] #app,
       :root[data-theme="dark"] .app-launch-splash {
-        background: #0f1412;
+        background: #0b0d13;
       }
 
       :root[data-theme="dark"] .app-launch-splash__logo--light {
@@ -126,7 +127,7 @@
         :root:not([data-theme]) body,
         :root:not([data-theme]) #app,
         :root:not([data-theme]) .app-launch-splash {
-          background: #0f1412;
+          background: #0b0d13;
         }
 
         :root:not([data-theme]) .app-launch-splash__logo--light {

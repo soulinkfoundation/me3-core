@@ -2179,8 +2179,9 @@ defineExpose({
 
 .editor-content-wrapper :deep(.ProseMirror blockquote) {
   margin: 1em 0;
-  padding: 0.1em 0 0.1em 1em;
-  border-left: 3px solid var(--ui-border-strong, var(--color-border, #ddd));
+  padding: 0.1em 0 0.1em 14px;
+  /* Matches the iOS journal: an accent bar beside muted text. */
+  border-left: 3px solid var(--ui-accent, var(--color-accent, #1f9d91));
   color: var(--ui-text-muted, var(--color-text-muted, #5d6368));
 }
 

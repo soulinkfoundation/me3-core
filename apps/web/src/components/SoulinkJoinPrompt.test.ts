@@ -39,7 +39,7 @@ describe("SoulinkJoinPrompt", () => {
     const wrapper = mountPrompt();
 
     expect(wrapper.get(".soulink-banner").text()).toContain(
-      "Meditate, call and chat with conscious communities on Soulink.",
+      "Find your people on Soulink. Meditate, call and chat with conscious communities.",
     );
 
     await wrapper.get(".soulink-banner__link").trigger("click");
