@@ -45,6 +45,8 @@ describe("Core runtime migrations", () => {
     expect(db.columns.get("mission_private_memory")?.has("forgotten_at")).toBe(true);
     expect(db.columns.get("mailbox_messages")?.has("spam_at")).toBe(true);
     expect(db.migrations.get("0083_mailbox_spam")).toBe("2026-10-21-mailbox-spam-v1");
+    expect(db.tables.has("mailbox_model_calls")).toBe(true);
+    expect(db.migrations.get("0084_mailbox_model_calls")).toBe("2026-10-22-mailbox-model-calls-v1");
     expect(db.columns.get("commerce_settings")?.has("default_currency")).toBe(true);
     expect(db.columns.get("commerce_settings")?.has("preferred_stripe_provider")).toBe(true);
     expect(db.tables.has("ai_usage_events")).toBe(true);

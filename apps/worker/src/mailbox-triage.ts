@@ -24,6 +24,22 @@ import type { Env } from "./types";
  * whatever is left. The Brief is a live read of these records.
  */
 
+/**
+ * One row per triage model call (classifier or newsletter summary). Anyone can
+ * send mail, so these calls are capped per owner and per sender over a rolling
+ * day (0084); past the cap triage falls back to its deterministic signals.
+ */
+export const MAILBOX_MODEL_CALLS_SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS mailbox_model_calls (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_mailbox_model_calls_user_created ON mailbox_model_calls(user_id, created_at)`,
+] as const;
+
 export const MAIL_TRIAGE_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS mailbox_triage (
     message_id TEXT PRIMARY KEY REFERENCES mailbox_messages(id) ON DELETE CASCADE,
@@ -63,6 +79,7 @@ export const MAIL_TRIAGE_SCHEMA = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_mailbox_handled_actions_user_created ON mailbox_handled_actions(user_id, created_at DESC)`,
   ...MAILBOX_INSTRUCTIONS_SCHEMA,
+  ...MAILBOX_MODEL_CALLS_SCHEMA,
   `CREATE TABLE IF NOT EXISTS mailbox_rules (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
@@ -239,6 +256,7 @@ type TriageMessageRow = MailTriageRecord & {
   created_at: string;
   alias_local_part: string;
   forwarding_email: string | null;
+  daily_inbound_limit: number | null;
   owner_email: string | null;
   owner_name: string | null;
 };
@@ -264,6 +282,11 @@ export const SPAM_RETENTION_MS = 30 * 24 * 60 * 60_000;
 export const SPAM_SCORE_THRESHOLD = 4;
 /** A sign-in code stays in Inbox this long, so it is there while the owner is signing in. */
 export const LOGIN_CODE_KEEP_MS = 60 * 60_000;
+/** Triage model calls per owner per rolling day when the mailbox sets no daily_inbound_limit. */
+export const MODEL_CALLS_DAILY_LIMIT = 200;
+/** Triage model calls per sender address per rolling day. */
+export const MODEL_CALLS_SENDER_DAILY_LIMIT = 10;
+const DAY_MS = 24 * 60 * 60_000;
 
 /** Records the message for triage (replay-safe) and runs it, in the background when possible. */
 export async function enqueueMailTriage(
@@ -361,10 +384,36 @@ export async function retryPendingMailTriage(
   return { retried };
 }
 
+/**
+ * Records a triage model call, or returns false when the owner's or this
+ * sender's rolling-day cap is reached. Fails closed: no record, no call.
+ */
+async function admitModelCall(env: Env, row: TriageMessageRow, sender: string, at = new Date()): Promise<boolean> {
+  const since = new Date(at.getTime() - DAY_MS).toISOString();
+  const ownerLimit = row.daily_inbound_limit && row.daily_inbound_limit > 0 ? row.daily_inbound_limit : MODEL_CALLS_DAILY_LIMIT;
+  try {
+    await env.DB.prepare("DELETE FROM mailbox_model_calls WHERE user_id = ? AND created_at <= ?").bind(row.user_id, since).run();
+    const usage = await env.DB.prepare(
+      `SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN sender = ? THEN 1 ELSE 0 END), 0) AS from_sender
+       FROM mailbox_model_calls WHERE user_id = ? AND created_at > ?`,
+    ).bind(sender, row.user_id, since).first<{ total: number; from_sender: number }>();
+    if (Number(usage?.total || 0) >= ownerLimit || Number(usage?.from_sender || 0) >= MODEL_CALLS_SENDER_DAILY_LIMIT) {
+      console.warn("Mail triage model cap reached", { messageId: row.message_id });
+      return false;
+    }
+    await env.DB.prepare("INSERT INTO mailbox_model_calls (id, user_id, message_id, sender, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), row.user_id, row.message_id, sender, at.toISOString()).run();
+    return true;
+  } catch (error) {
+    console.error("Mail triage model cap check failed", error);
+    return false;
+  }
+}
+
 async function loadTriageMessage(env: Env, messageId: string): Promise<TriageMessageRow | null> {
   return (await env.DB.prepare(
     `SELECT t.*, m.subject, m.from_address, m.to_address, m.text_body, m.raw_headers_json, m.metadata_json,
-            m.folder, m.received_at, m.created_at, a.alias_local_part, a.forwarding_email,
+            m.folder, m.received_at, m.created_at, a.alias_local_part, a.forwarding_email, a.daily_inbound_limit,
             o.email AS owner_email, o.name AS owner_name
      FROM mailbox_triage t
      JOIN mailbox_messages m ON m.id = t.message_id
@@ -474,7 +523,9 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
     // One small model call says what the issue is about. A model outage must not stall the pass;
     // the Brief then shows the subject rather than whatever text the email happens to start with.
     const summarize = options.summarize === undefined ? createModelNewsletterSummarizer(env) : options.summarize;
-    const written = summarize
+    const admitted = summarize ? await admitModelCall(env, row, address, options.now) : false;
+    if (summarize && !admitted) context.modelSkipped = "daily_limit";
+    const written = summarize && admitted
       ? await summarize({ ownerId: row.user_id, subject, from: { name: senderName, address }, body: cleanMailPreview(body, { maxLength: MODEL_BODY_LIMIT, subject }) })
         .catch((error: unknown) => { console.warn("Newsletter summary failed", { messageId: row.message_id, error: error instanceof Error ? error.message : String(error) }); return null; })
       : null;
@@ -492,7 +543,9 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
 
   // 3. One small model call for the rest.
   const classify = options.classify === undefined ? createModelClassifier(env) : options.classify;
-  const decision = classify
+  const admitted = classify ? await admitModelCall(env, row, address, options.now) : false;
+  if (classify && !admitted) context.modelSkipped = "daily_limit";
+  const decision = classify && admitted
     ? await classify({
       ownerId: row.user_id,
       ownerName: row.owner_name,

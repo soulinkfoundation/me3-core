@@ -33,14 +33,15 @@ import type { Env } from "./types";
 // restores the mail but the sender is filtered again next time; "Spam" from
 // the owner moves the mail but their next mail still reaches the model; spam
 // shows in Trash or Archive, or never gets deleted; a pass that failed five
-// times sits in the Brief for good; with no model, marketing claims needs-you.
+// times sits in the Brief for good; with no model, marketing claims needs-you;
+// strangers' mail runs the model without limit (one sender, or many).
 const databases: DatabaseSync[] = [];
 afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMocks(); });
 
 function fixture() {
   const raw = new DatabaseSync(":memory:"); databases.push(raw);
   // The real migration chain for mail, so 0083's table rebuilds run against the shipped schema.
-  for (const name of ["0001_initial_public_schema", "0015_agent_runtime_idempotency", "0072_mailbox_triage", "0080_mailbox_login_codes", "0083_mailbox_spam"]) {
+  for (const name of ["0001_initial_public_schema", "0015_agent_runtime_idempotency", "0072_mailbox_triage", "0080_mailbox_login_codes", "0083_mailbox_spam", "0084_mailbox_model_calls"]) {
     raw.exec(readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), "utf8"));
   }
   for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...ACCOUNTS_REMOVALS_SCHEMA, ...MAIL_TRIAGE_SCHEMA]) raw.exec(sql);
@@ -83,6 +84,33 @@ describe("mail triage pipeline", () => {
     expect(triageRows(f.raw)).toHaveLength(1);
     expect(classifier).toHaveBeenCalledTimes(1);
     expect(triageRows(f.raw)[0]).toMatchObject({ status: "done", category: "needs_you", decided_by: "model", attempts: 1 });
+  });
+
+  it("caps triage model calls per sender and per owner over a rolling day", async () => {
+    const f = fixture();
+    const now = new Date("2026-10-22T09:00:00.000Z");
+    const classifier = vi.fn<MailTriageClassifier>(async () => ({ category: "fyi", urgency: "low", summary: "A note.", action: null, secondary: null, reply: null, url: null }));
+    for (let index = 0; index < 12; index += 1) {
+      insertMail(f.raw, { id: `same-${index}`, from: "pest@stranger.test", subject: `Quick question ${index}`, body: "Can you help?" });
+      await runMailTriage(f.env, `same-${index}`, { classify: classifier, now });
+    }
+    expect(classifier).toHaveBeenCalledTimes(10);
+    const capped = triageRows(f.raw).find(row => row.message_id === "same-11");
+    expect(capped).toMatchObject({ status: "done", category: "needs_you", decided_by: "signal" });
+    expect(JSON.parse(String(capped?.context_json))).toMatchObject({ modelSkipped: "daily_limit" });
+
+    // Many senders: the mailbox's daily limit bounds the total.
+    f.raw.exec("UPDATE mailbox_aliases SET daily_inbound_limit = 13");
+    for (let index = 0; index < 5; index += 1) {
+      insertMail(f.raw, { id: `many-${index}`, from: `sender${index}@stranger.test`, subject: "Hello", body: "Hi there" });
+      await runMailTriage(f.env, `many-${index}`, { classify: classifier, now });
+    }
+    expect(classifier).toHaveBeenCalledTimes(13);
+
+    // A day later the window has moved on.
+    insertMail(f.raw, { id: "tomorrow", from: "pest@stranger.test", subject: "Again", body: "Hi" });
+    await runMailTriage(f.env, "tomorrow", { classify: classifier, now: new Date("2026-10-23T09:00:01.000Z") });
+    expect(classifier).toHaveBeenCalledTimes(14);
   });
 
   it("files a receipt to Accounts, archives it, and undo restores both", async () => {

@@ -106,6 +106,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0081_private_memory_importance", "2026-10-20-private-memory-importance-v1"],
   ["0082_private_memory_forgotten", "2026-10-20-private-memory-forgotten-v1"],
   ["0083_mailbox_spam", "2026-10-21-mailbox-spam-v1"],
+  ["0084_mailbox_model_calls", "2026-10-22-mailbox-model-calls-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -141,6 +142,8 @@ const EXCLUDED_TABLES = [
   "managed_email_inbound_deliveries",
   // Cache of public BIMI/favicon logos keyed by sender domain; its R2 keys are host-bound and rows refetch lazily.
   "mailbox_sender_avatars",
+  // Rolling-day counter of mail-triage model calls; disposable like the other rate limits.
+  "mailbox_model_calls",
   "email_campaign_transport_state",
   "managed_runtime_control_requests",
   "managed_runtime_state",
