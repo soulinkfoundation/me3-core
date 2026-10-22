@@ -1,4 +1,5 @@
 import { getManagedCommerceBridgeConfig } from "./commerce-bridge";
+import { reconcileUnknownManagedAiCosts } from "./managed-ai-reconciliation";
 import type { Env } from "./types";
 
 export const MANAGED_AI_BILLING_POLICY_SECRET = "ME3_MANAGED_AI_BILLING_POLICY";
@@ -147,6 +148,8 @@ export async function syncManagedAiUsage(env: Env): Promise<ManagedAiBillingSett
   if (!isManaged(env)) return null;
   const bridge = await getManagedCommerceBridgeConfig(env);
   if (!bridge) return null;
+  // Settled receipts join this outbox and report under their original ids below.
+  await reconcileUnknownManagedAiCosts(env, bridge);
 
   let rows: LocalUsageRow[];
   try {

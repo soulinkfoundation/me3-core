@@ -82,7 +82,7 @@ export function createAgentImageGenerationServices(env: Env, ownerId: string): A
       const id = `agent-image:${await hash(new TextEncoder().encode(JSON.stringify([ownerId, input.idempotencyKey])))}`;
       const usageId = `${id}:usage`;
       const billingFeeRate = managed && !model.startsWith("@cf/") ? 0.05 : 0;
-      const metadata = { me3_runtime: "agent", me3_turn_id: input.turnId, me3_request_id: input.requestId, me3_thread_id: input.threadId, operationId: id, billingManaged: managed, modelAuthor: model.replace(/^@cf\//, "").split("/")[0], billingFeeRate, baseCostUsd: null as number | null, costKnown: false, usageReported: false };
+      const metadata = { me3_runtime: "agent", me3_turn_id: input.turnId, me3_request_id: input.requestId, me3_thread_id: input.threadId, operationId: id, billingManaged: managed, modelAuthor: model.replace(/^@cf\//, "").split("/")[0], gatewayId: gateway.gatewayId || env.CLOUDFLARE_AI_GATEWAY_ID || "default", gatewayCorrelation: "operationId", billingFeeRate, baseCostUsd: null as number | null, costKnown: false, usageReported: false };
       const admitted = await env.DB.batch([
         env.DB.prepare(`INSERT OR IGNORE INTO me3_agent_image_operations(id,owner_id,thread_id,turn_id,request_id,idempotency_key,prompt,model,billing_managed,status,usage_event_id)
           SELECT ?,?,?,?,?,?,?,?,?, 'admitted',? WHERE NOT EXISTS(SELECT 1 FROM me3_agent_image_operations WHERE owner_id=? AND turn_id=? AND status IN ('admitted','unknown'))
@@ -107,7 +107,7 @@ export function createAgentImageGenerationServices(env: Env, ownerId: string): A
       providerStarted = true;
       const image = await generateAgentProviderImage(env, model, prompt, gateway.gatewayId || env.CLOUDFLARE_AI_GATEWAY_ID || "default", input.signal, { me3_runtime: "agent", operationId: id, me3_turn_id: input.turnId, me3_request_id: input.requestId, me3_thread_id: input.threadId });
       const cost = verifiedImageCost(model, image);
-      await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,successful_request_count=1,metadata_json=? WHERE id=? AND user_id=?")
+      await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,successful_request_count=1,metadata_json=? WHERE id=? AND user_id=? AND json_extract(metadata_json,'$.settlementId') IS NULL")
         .bind(cost?.inputTokens || 0, cost?.outputTokens || 0, cost ? cost.baseCostUsd * (1 + billingFeeRate) : 0, JSON.stringify({ ...metadata, costKnown: Boolean(cost), usageReported: cost?.usageReported || false, baseCostUsd: cost?.baseCostUsd ?? null, pricingBasis: cost?.pricingBasis ?? null }), usageId, ownerId).run();
       const attachmentId = `${id}:asset`; const storageKey = `assistant/${ownerId}/generated/${id.replace(":", "-")}`;
       const sha256 = await hash(image.bytes); const filename = `Generated image.${image.mimeType === "image/jpeg" ? "jpg" : image.mimeType.split("/")[1]}`;

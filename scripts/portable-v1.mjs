@@ -109,6 +109,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0084_mailbox_model_calls", "2026-10-22-mailbox-model-calls-v1"],
   ["0085_mailbox_instruction_replay", "2026-10-22-mailbox-instruction-replay-v1"],
   ["0086_owner_credential_generation", "2026-10-22-owner-credential-generation-v1"],
+  ["0087_ai_usage_settlements", "2026-10-22-ai-usage-settlements-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -213,6 +214,8 @@ const COPIED_TABLES = [
   "ai_model_defaults",
   "ai_provider_credentials",
   "ai_usage_events",
+  // Gateway evidence that settled unpriced receipts; it travels with the receipts it audits.
+  "ai_usage_settlements",
   "assistant_attachments",
   "assistant_message_assets",
   "assistant_messages",

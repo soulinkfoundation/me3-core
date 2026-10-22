@@ -17,6 +17,7 @@ import { AGENT_COMPUTER_SCHEMA } from "./agent-computer";
 import { AGENT_COMMERCE_SCHEMA } from "./agent-commerce-store";
 import { AGENT_NETWORK_COMMERCE_SCHEMA } from "./agent-network-commerce";
 import { MAIL_TRIAGE_SCHEMA, MAILBOX_LOGIN_CODES_STATEMENTS, MAILBOX_MODEL_CALLS_SCHEMA, MAILBOX_SPAM_HANDLED_STATEMENTS, MAILBOX_SPAM_RULES_STATEMENTS } from "./mailbox-triage";
+import { AI_USAGE_SETTLEMENTS_SCHEMA } from "./managed-ai-reconciliation";
 import { MAILBOX_INSTRUCTION_REPLAY_STATEMENTS, MAILBOX_INSTRUCTIONS_SCHEMA } from "./mailbox-instructions";
 import type { Env } from "./types";
 
@@ -720,6 +721,15 @@ const runtimeMigrations: RuntimeMigration[] = [
         await addColumnIfMissing(db, "me3_install_claim_states", "initiated_by", "TEXT NOT NULL DEFAULT 'anonymous'");
         await addColumnIfMissing(db, "me3_install_claim_states", "credential_generation", "TEXT");
       }
+    },
+  },
+  // Append-only gateway evidence that priced managed agent receipts left unpriced by an interrupted call.
+  {
+    id: "0087_ai_usage_settlements",
+    checksum: "2026-10-22-ai-usage-settlements-v1",
+    async apply(db) {
+      if (await tableExists(db, "ai_usage_settlements")) return;
+      await db.batch(AI_USAGE_SETTLEMENTS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];

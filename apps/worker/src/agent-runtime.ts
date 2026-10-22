@@ -170,7 +170,8 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
   const admitModel=async(selected:string,reportCount=0,purpose?:ModelPurpose)=>{
     const usageId=`${scope.turnId}:model:${crypto.randomUUID()}:${usageIndex++}`;
     const callMetadata={...metadata,...(purpose?{purpose:purpose.purpose}:{})};
-    const receiptMetadata={...callMetadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0]};
+    // gatewayCorrelation names the AI Gateway log metadata key that identifies this exact attempt.
+    const receiptMetadata={...callMetadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0],gatewayId,gatewayCorrelation:"me3_usage_id"};
     const billingFeeRate=managed&&!selected.startsWith("@cf/")?0.05:0;
     // An interrupted or unpriced paid request must remain visibly unreconciled.
     // Receipts left by the removed Clef routing pilot (purpose fast_path) never gate the planner.
@@ -202,7 +203,8 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
       const baseCostUsd=usage.estimatedCostUsd;
       const billedCostUsd=baseCostUsd===null?null:baseCostUsd*(1+billingFeeRate);
       const costKnown=tokensKnown&&billedCostUsd!==null&&Number.isFinite(billedCostUsd)&&billedCostUsd>=0;
-      await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,metadata_json=? WHERE id=?")
+      // A receipt already settled from gateway evidence keeps that settlement; a late completion cannot charge twice.
+      await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,metadata_json=? WHERE id=? AND json_extract(metadata_json,'$.settlementId') IS NULL")
         .bind(tokensKnown?usage.inputTokens:0,tokensKnown?usage.outputTokens:0,costKnown?billedCostUsd:0,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:costKnown?baseCostUsd:null,cachedInputTokens:tokensKnown?usage.cachedInputTokens:0,cacheWriteInputTokens:tokensKnown?(usage.cacheWriteInputTokens??0):0,costKnown,usageReported:tokensKnown}),usageId).run();
     },{usageId,rejected});
   };
@@ -212,6 +214,9 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
   const byokAlias=env.ANTHROPIC_BYOK_ALIAS?.trim(),byokToken=env.CLOUDFLARE_AI_GATEWAY_TOKEN?.trim()||gateway.apiToken;
   const byokBaseUrl=byokAlias&&byokToken?await anthropicGatewayUrl(env,gateway.accountId,gatewayId):null;
   const anthropicByok=byokAlias&&byokToken&&byokBaseUrl?{baseUrl:byokBaseUrl,token:byokToken,alias:byokAlias}:undefined;
+  // AI Gateway keeps at most five metadata entries. The thread is recoverable from the turn, so
+  // its slot carries the attempt's usage id for reconciling an interrupted call.
+  const gatewayMetadata=(usageId:string,purpose?:ModelPurpose)=>({me3_runtime:metadata.me3_runtime,me3_turn_id:metadata.me3_turn_id,me3_request_id:metadata.me3_request_id,me3_usage_id:usageId,...(purpose?{purpose:purpose.purpose}:{})});
   const cloudflareModel=(selected:string,reportCount=0,purpose?:ModelPurpose):AgentModel=>({id:selected,async step(step){
     step.signal.throwIfAborted();
     if(step.messages.some(message=>message.images?.length)&&!bindingModelSupportsImageInput(selected))throw new Error("This model cannot read images. Choose an image-input model for this turn.");
@@ -220,7 +225,7 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
     const recordUsage=await admitModel(selected,reportCount,purpose);
     let response;
     try {
-      response=await createCloudflareModel({ai:env.AI as never,model:selected,gatewayId,anthropicByok,metadata:{...metadata,...(purpose?{purpose:purpose.purpose}:{})},recordUsage}).step({...step,messages});
+      response=await createCloudflareModel({ai:env.AI as never,model:selected,gatewayId,anthropicByok,metadata:gatewayMetadata(recordUsage.usageId,purpose),recordUsage}).step({...step,messages});
     } catch(error) {
       if(isModelRequestRejected(error))await recordUsage.rejected(error.message);
       throw error;

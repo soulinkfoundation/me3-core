@@ -5,6 +5,7 @@ import { createD1TurnStore } from "../../../packages/agent/src/store";
 import type { AgentCheckpoint, AgentDb, AgentTool } from "../../../packages/agent/src/types";
 import { executeNewAgentTurn, type NewAgentDispatchInput } from "./agent-runtime";
 import { syncManagedAiUsage, type ManagedAiBillingSettings } from "./managed-ai-billing";
+import { applyManagedAiSettlement } from "./managed-ai-reconciliation";
 import type { Env } from "./types";
 
 const fixtureTools = vi.hoisted(() => ({ value: [] as AgentTool[] }));
@@ -38,8 +39,8 @@ function database() {
   }, async batch(statements) { raw.exec("BEGIN"); try { const results = []; for (const statement of statements) results.push(await statement.run()); raw.exec("COMMIT"); return results; } catch (error) { raw.exec("ROLLBACK"); throw error; } } };
   return { raw, db };
 }
-function fixture(policy = settings(), response?: (model: string, index: number) => unknown) {
-  const { raw, db } = database(); const models: string[] = []; const events: Array<Record<string, unknown>> = [];
+function fixture(policy = settings(), response?: (model: string, index: number) => unknown, reconcile?: (events: Array<Record<string, unknown>>) => unknown) {
+  const { raw, db } = database(); const models: string[] = []; const events: Array<Record<string, unknown>> = []; const gatewayMetadata: Array<Record<string, unknown>> = []; const reconcileRequests: Array<Array<Record<string, unknown>>> = [];
   const accepted = new Set<string>();
   const bridge = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/usage")) {
@@ -47,12 +48,17 @@ function fixture(policy = settings(), response?: (model: string, index: number) 
       for (const event of incoming) if (!accepted.has(String(event.id))) { accepted.add(String(event.id)); events.push(event); policy.currentMonthUsageMicrousd += Number(event.costMicrousd); }
       return Response.json({ acceptedEventIds: incoming.map(event => event.id), settings: policy });
     }
+    if (url.endsWith("/reconcile")) {
+      const incoming = JSON.parse(String(init?.body)).events as Array<Record<string, unknown>>;
+      reconcileRequests.push(incoming);
+      return Response.json(reconcile?.(incoming) ?? { settlements: [] });
+    }
     return Response.json(policy);
   });
   vi.stubGlobal("fetch", bridge);
   // Suggested replies make their own model call; these tests count planner calls only.
-  const env = { DB: db, ME3_AGENT_SUGGESTED_REPLIES: "off",ME3_AGENT_MEMORY:"off", ME3_DEPLOYMENT_MODE: "managed", ME3_COMMERCE_BRIDGE_ORIGIN: "https://billing.example.invalid", ME3_COMMERCE_BRIDGE_TOKEN: "synthetic-fixture", AI: { async run(model: string) { models.push(model); return response?.(model, models.length - 1) ?? completion(model); } } } as unknown as Env;
-  return { raw, db, env, models, events, bridge };
+  const env = { DB: db, ME3_AGENT_SUGGESTED_REPLIES: "off",ME3_AGENT_MEMORY:"off", ME3_DEPLOYMENT_MODE: "managed", ME3_COMMERCE_BRIDGE_ORIGIN: "https://billing.example.invalid", ME3_COMMERCE_BRIDGE_TOKEN: "synthetic-fixture", AI: { async run(model: string, _input: unknown, options?: { gateway?: { metadata?: Record<string, unknown> } }) { models.push(model); gatewayMetadata.push(options?.gateway?.metadata ?? {}); return response?.(model, models.length - 1) ?? completion(model); } } } as unknown as Env;
+  return { raw, db, env, models, events, bridge, gatewayMetadata, reconcileRequests };
 }
 function completion(model: string, tool = false) {
   if (model.startsWith("anthropic/")) return { content: [{ type: "text", text: "Read complete." }], usage: { input_tokens: 100, output_tokens: 10 } };
@@ -276,5 +282,132 @@ describe("new agent managed billing boundary", () => {
     const imported = raw.prepare("SELECT metadata_json FROM ai_usage_events WHERE id NOT LIKE 'managed-turn:%'").all();
     expect(imported).toHaveLength(2);
     for (const row of imported) expect(JSON.parse(String(row.metadata_json))).toMatchObject({ billingManaged: false });
+  });
+});
+
+describe("unknown managed cost reconciliation", () => {
+  const hash = (char: string) => char.repeat(64);
+  const unpriced = (model: string) => { const { usage: _usage, ...response } = completion(model); return response; };
+  const age = (raw: DatabaseSync, minutes = 20) => raw.exec(`UPDATE ai_usage_events SET created_at=datetime('now','-${minutes} minutes')`);
+  const receipt = (raw: DatabaseSync) => raw.prepare("SELECT * FROM ai_usage_events").get()!;
+  const meta = (row: Record<string, unknown>) => JSON.parse(String(row.metadata_json));
+  const charged = (id: unknown, overrides: Record<string, unknown> = {}) => ({ settlements: [{ id, resolution: "charged", evidenceId: "log-1", evidenceHash: hash("a"), inputTokens: 100, outputTokens: 10, baseCostUsd: 0.0004, ...overrides }] });
+
+  it("tags each gateway call with its usage id within the five-entry metadata limit", async () => {
+    const { env, raw, gatewayMetadata } = fixture();
+    await executeNewAgentTurn(env, input, new AbortController().signal);
+    const row = receipt(raw);
+    expect(gatewayMetadata[0]).toMatchObject({ me3_runtime: "agent", me3_turn_id: "turn", me3_request_id: "request", me3_usage_id: row.id });
+    expect(Object.keys(gatewayMetadata[0]).length).toBeLessThanOrEqual(5);
+    expect(meta(row)).toMatchObject({ gatewayCorrelation: "me3_usage_id", gatewayId: "fixture", me3_thread_id: "thread" });
+  });
+
+  it("holds an interrupted call until gateway evidence settles the original receipt, then resumes without rerunning it", async () => {
+    let settle = false;
+    const { env, raw, models, events, reconcileRequests } = fixture(settings(), (model, index) => index === 0 ? unpriced(model) : completion(model), incoming => settle ? charged(incoming[0].id) : { settlements: [] });
+    await executeNewAgentTurn(env, input, new AbortController().signal);
+    const original = receipt(raw);
+    const next = { ...input, turnId: "next-turn", requestId: "next-request" };
+    // Too recent to settle: the call could still be finishing.
+    await expect(executeNewAgentTurn(env, next, new AbortController().signal)).rejects.toThrow(/awaiting reconciliation/);
+    expect(reconcileRequests).toHaveLength(0);
+    age(raw);
+    const occurredAt = receipt(raw).created_at;
+    // No evidence yet: the hold stays and the receipt is not priced.
+    await expect(executeNewAgentTurn(env, next, new AbortController().signal)).rejects.toThrow(/awaiting reconciliation/);
+    expect(reconcileRequests[0]).toEqual([expect.objectContaining({ id: original.id, kind: "text", gatewayId: "fixture", correlation: { key: "me3_usage_id", value: original.id } })]);
+    expect(meta(receipt(raw))).toMatchObject({ costKnown: false });
+    // Held receipts wait before asking ME3 Cloud again.
+    await syncManagedAiUsage(env);
+    expect(reconcileRequests).toHaveLength(1);
+    raw.exec("UPDATE ai_usage_events SET metadata_json=json_remove(metadata_json,'$.reconcileAttemptedAt')");
+    settle = true;
+    expect(await executeNewAgentTurn(env, next, new AbortController().signal)).toMatchObject({ status: "complete" });
+    expect(models).toEqual(["openai/gpt-5.5", "openai/gpt-5.5"]);
+    const settled = raw.prepare("SELECT * FROM ai_usage_events WHERE id=?").get(original.id)!;
+    expect(settled.created_at).toBe(occurredAt);
+    expect(Number(settled.estimated_cost_usd)).toBeCloseTo(0.0004 * 1.05, 10);
+    expect(meta(settled)).toMatchObject({ costKnown: true, baseCostUsd: 0.0004, pricingBasis: "ai-gateway-log-cost", settlementId: "ai-gateway-log:log-1" });
+    expect(events.filter(event => event.id === original.id)).toEqual([expect.objectContaining({ costMicrousd: 420, inputTokens: 100, outputTokens: 10 })]);
+    expect(raw.prepare("SELECT resolution,evidence_hash,actor FROM ai_usage_settlements").all()).toEqual([{ resolution: "charged", evidence_hash: hash("a"), actor: "me3-cloud:ai-gateway-evidence" }]);
+  });
+
+  it("settles explicit no-charge evidence at zero and rejects zero claims that carry output", async () => {
+    const { env, raw } = fixture(settings(), unpriced);
+    await executeNewAgentTurn(env, input, new AbortController().signal);
+    const id = String(receipt(raw).id);
+    expect(await applyManagedAiSettlement(env, "owner", { id, resolution: "no_charge", evidenceId: "log-2", evidenceHash: hash("b"), inputTokens: 0, outputTokens: 0, baseCostUsd: 0 })).toBe(true);
+    expect(Number(receipt(raw).estimated_cost_usd)).toBe(0);
+    expect(meta(receipt(raw))).toMatchObject({ costKnown: true, pricingBasis: "ai-gateway-no-charge" });
+
+    const second = fixture(settings(), unpriced, events => ({ settlements: [{ id: events[0].id, resolution: "no_charge", evidenceId: "log-3", evidenceHash: hash("c"), inputTokens: 5, outputTokens: 7, baseCostUsd: 0 }] }));
+    await executeNewAgentTurn(second.env, input, new AbortController().signal);
+    age(second.raw);
+    await syncManagedAiUsage(second.env);
+    expect(meta(receipt(second.raw))).toMatchObject({ costKnown: false });
+    expect(second.raw.prepare("SELECT COUNT(*) count FROM ai_usage_settlements").get()).toMatchObject({ count: 0 });
+  });
+
+  it("keeps the first settlement when evidence is replayed, conflicts, or the original call completes late", async () => {
+    const { env, raw } = fixture(settings(), unpriced);
+    await executeNewAgentTurn(env, input, new AbortController().signal);
+    const id = String(receipt(raw).id);
+    const evidence = charged(id).settlements[0] as Parameters<typeof applyManagedAiSettlement>[2];
+    expect(await applyManagedAiSettlement(env, "owner", evidence)).toBe(true);
+    const settled = receipt(raw);
+    expect(await applyManagedAiSettlement(env, "owner", evidence)).toBe(false);
+    expect(await applyManagedAiSettlement(env, "owner", { ...evidence, evidenceHash: hash("d"), baseCostUsd: 9 })).toBe(false);
+    raw.prepare("UPDATE ai_usage_events SET estimated_cost_usd=99 WHERE id=? AND json_extract(metadata_json,'$.settlementId') IS NULL").run(id);
+    expect(receipt(raw)).toEqual(settled);
+    expect(() => raw.exec("UPDATE ai_usage_settlements SET base_cost_usd=0")).toThrow(/append-only/);
+    expect(raw.prepare("SELECT COUNT(*) count FROM ai_usage_settlements").get()).toMatchObject({ count: 1 });
+  });
+
+  it("never settles another owner's receipt or one that is already priced", async () => {
+    const { env, raw } = fixture(settings(), unpriced);
+    await executeNewAgentTurn(env, input, new AbortController().signal);
+    const id = String(receipt(raw).id);
+    const evidence = charged(id).settlements[0] as Parameters<typeof applyManagedAiSettlement>[2];
+    expect(await applyManagedAiSettlement(env, "someone-else", evidence)).toBe(false);
+    expect(raw.prepare("SELECT COUNT(*) count FROM ai_usage_settlements").get()).toMatchObject({ count: 0 });
+    const known = fixture();
+    await executeNewAgentTurn(known.env, input, new AbortController().signal);
+    const before = receipt(known.raw);
+    expect(await applyManagedAiSettlement(known.env, "owner", { ...evidence, id: String(before.id) })).toBe(false);
+    expect(receipt(known.raw)).toEqual(before);
+  });
+
+  it("rolls back the audit row when the receipt write fails", async () => {
+    const { env, raw } = fixture(settings(), unpriced);
+    await executeNewAgentTurn(env, input, new AbortController().signal);
+    const id = String(receipt(raw).id);
+    raw.exec("CREATE TRIGGER fail_receipt BEFORE UPDATE ON ai_usage_events BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END");
+    await expect(applyManagedAiSettlement(env, "owner", charged(id).settlements[0] as Parameters<typeof applyManagedAiSettlement>[2])).rejects.toThrow(/synthetic write failure/);
+    expect(raw.prepare("SELECT COUNT(*) count FROM ai_usage_settlements").get()).toMatchObject({ count: 0 });
+  });
+
+  it("ignores settlements for receipts it did not ask about and never sends self-hosted receipts", async () => {
+    const { env, raw, reconcileRequests } = fixture(settings(), unpriced, () => charged("not-requested"));
+    await executeNewAgentTurn(env, input, new AbortController().signal);
+    raw.prepare("INSERT INTO ai_usage_events(id,user_id,kind,provider,model,metadata_json) VALUES('self-hosted','owner','text','workers-ai','openai/gpt-5.5',?)").run(JSON.stringify({ me3_runtime: "agent", billingManaged: false, costKnown: false }));
+    age(raw);
+    await syncManagedAiUsage(env);
+    expect(reconcileRequests[0].map(event => event.id)).not.toContain("self-hosted");
+    expect(raw.prepare("SELECT COUNT(*) count FROM ai_usage_settlements").get()).toMatchObject({ count: 0 });
+  });
+
+  it("matches legacy receipts by request only when that request made one call to the model", async () => {
+    const { env, raw, reconcileRequests } = fixture();
+    const insert = raw.prepare("INSERT INTO ai_usage_events(id,user_id,kind,provider,model,metadata_json,created_at) VALUES(?,'owner',?,'workers-ai',?,?,datetime('now','-1 hour'))");
+    const legacy = (request: string) => JSON.stringify({ me3_runtime: "agent", billingManaged: true, costKnown: false, me3_request_id: request });
+    insert.run("single", "text", "anthropic/claude-haiku-5.5", legacy("request-a"));
+    insert.run("double-1", "text", "anthropic/claude-haiku-5.5", legacy("request-b"));
+    insert.run("double-2", "text", "anthropic/claude-haiku-5.5", legacy("request-b"));
+    insert.run("image", "image", "openai/gpt-image-2", JSON.stringify({ me3_runtime: "agent", billingManaged: true, costKnown: false, operationId: "agent-image:op" }));
+    await syncManagedAiUsage(env);
+    expect(reconcileRequests[0].map(event => [event.id, event.correlation])).toEqual([
+      ["single", { key: "me3_request_id", value: "request-a" }],
+      ["image", { key: "operationId", value: "agent-image:op" }],
+    ]);
   });
 });
