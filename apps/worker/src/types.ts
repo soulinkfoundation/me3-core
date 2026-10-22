@@ -34,8 +34,6 @@ export interface Env {
   TOKEN_ENCRYPTION_KEY?: string;
   SETUP_PASSWORD?: string;
 
-  ME3_ASSISTANT_DEBUG_TRACE?: string;
-  ME3_ASSISTANT_TRACE?: string;
   ME3_AI_RAW_MODEL_SELECTION_ENABLED?: string;
   ME3_AI_MODEL?: string;
   ME3_AI_DEFAULT_PROVIDER?: string;
