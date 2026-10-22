@@ -7,6 +7,7 @@ import {
   listAgentContacts,
   markAgentMailboxDraftSent,
   updateAgentContact,
+  upsertAgentContact,
 } from "@me3-core/plugin-agent-chat";
 import { registerContactsRoutes } from "./routes/contacts";
 import { getSoulinkPersonalInviteLink, syncSoulinkContacts } from "./routes/channels";
@@ -216,6 +217,53 @@ describe("People data", () => {
     links[0].context.lastActiveAt = "2026-06-01T00:00:00Z";
     await syncSoulinkContacts(env, "alice");
     expect(lastInteraction("c-ada")).toBe("2026-10-02T18:00:00.000Z");
+  });
+
+  it("never binds a Soulink peer to an existing contact by the email it claims", async () => {
+    const { raw, env, addContact } = fixture();
+    addContact("c-dana", "alice", "Dana", "dana@accounting.example", {
+      metadata: JSON.stringify({ closeness: "close" }),
+    });
+    raw.exec(`INSERT INTO agent_channel_connections (id, user_id, channel, status, setup_token, provider_user_id, provider_metadata_json)
+      VALUES ('conn-1', 'alice', 'soulink', 'active', 'token', 'node-alice', '{"ownerNodeId":"node-alice"}')`);
+    const links = [{
+      id: "link-mallory",
+      status: "active",
+      otherNode: { id: "node-mallory", me3Url: "https://mallory.example" },
+    }];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
+      String(input).startsWith("https://mallory.example")
+        ? Response.json({ name: "Mallory", links: { email: "Dana@Accounting.example" } })
+        : Response.json({ ok: true, links })));
+    (env as Env & { SOULINK_API_ORIGIN: string }).SOULINK_API_ORIGIN = "https://soulink.test";
+
+    expect(await syncSoulinkContacts(env, "alice")).toMatchObject({ ok: true, created: 1, updated: 0 });
+    expect(await syncSoulinkContacts(env, "alice")).toMatchObject({ ok: true, created: 0, updated: 1 });
+    const dana = raw.prepare("SELECT name, email, source, metadata FROM contacts WHERE id = 'c-dana'").get() as Record<string, string>;
+    expect(dana).toMatchObject({ name: "Dana", email: "dana@accounting.example", source: "manual" });
+    expect(JSON.parse(dana.metadata)).toEqual({ closeness: "close" });
+    const peer = raw.prepare("SELECT name, email, metadata FROM contacts WHERE source = 'soulink'").get() as Record<string, string>;
+    expect(peer).toMatchObject({ name: "Mallory", email: null });
+    expect(JSON.parse(peer.metadata)).toMatchObject({ soulinkNodeId: "node-mallory" });
+  });
+
+  it("refuses to rebind a Soulink contact that already belongs to a different node", async () => {
+    const { raw, env, addContact } = fixture();
+    addContact("c-ada", "alice", "Ada", null, {
+      source: "soulink",
+      source_ref: "link-1",
+      metadata: JSON.stringify({ soulinkNodeId: "node-ada" }),
+    });
+
+    expect(await upsertAgentContact(env, "alice", {
+      name: "Mallory",
+      source: "soulink",
+      sourceRef: "link-1",
+      metadata: { soulinkNodeId: "node-mallory" },
+    })).toMatchObject({ status: 409 });
+    const ada = raw.prepare("SELECT name, metadata FROM contacts WHERE id = 'c-ada'").get() as Record<string, string>;
+    expect(ada.name).toBe("Ada");
+    expect(JSON.parse(ada.metadata)).toEqual({ soulinkNodeId: "node-ada" });
   });
 
   it("records 'We talked' for the owner's contact only", async () => {

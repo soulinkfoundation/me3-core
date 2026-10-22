@@ -166,6 +166,11 @@ export async function upsertAgentContact(
   const sourceRef = input.sourceRef || null;
   const email = input.email || null;
   const { contacts } = await listAgentContacts(env, userId);
+  const sameEmail = (contact: AgentContact) =>
+    Boolean(email && contact.email?.trim().toLowerCase() === email);
+  // A Soulink peer asserts its own email, so it is never proof of identity:
+  // Soulink contacts match only by node, and never adopt another contact by email.
+  const peerAsserted = source === "soulink";
   const existing =
     (sourceRef
       ? contacts.find(
@@ -173,28 +178,37 @@ export async function upsertAgentContact(
             contact.source === source && contact.sourceRef === sourceRef,
         )
       : null) ||
-    (sourceRef && source === "soulink"
+    (sourceRef && peerAsserted
       ? contacts.find((contact) => contact.metadata?.soulinkNodeId === sourceRef)
       : null) ||
-    (email
-      ? contacts.find(
-          (contact) => contact.email?.trim().toLowerCase() === email,
-        )
-      : null);
+    (!peerAsserted ? contacts.find(sameEmail) : null);
+
+  // A claimed email that already belongs to someone else stays off the Soulink contact.
+  const claimedEmailTaken =
+    peerAsserted && contacts.some((contact) => contact !== existing && sameEmail(contact));
 
   if (!existing) {
-    const created = await createAgentContact(env, userId, input);
+    const created = await createAgentContact(
+      env,
+      userId,
+      claimedEmailTaken ? { ...input, email: null } : input,
+    );
     if ("error" in created) return created;
     return { contact: created, created: true };
   }
 
   const incomingMetadata = normalizeContactMetadata(input) || {};
   const existingMetadata = existing.metadata || {};
+  const existingNodeId = existingMetadata.soulinkNodeId;
+  const incomingNodeId = incomingMetadata.soulinkNodeId;
+  if (existingNodeId && incomingNodeId && existingNodeId !== incomingNodeId) {
+    return { error: "Contact is linked to a different Soulink node", status: 409 };
+  }
   const canRefreshIdentity =
     existing.source === source || existing.source === "soulink";
   const merged = await updateAgentContact(env, userId, existing.id, {
     name: canRefreshIdentity ? input.name || existing.name : existing.name,
-    email: existing.email || input.email || null,
+    email: existing.email || (claimedEmailTaken ? null : input.email) || null,
     phone: existing.phone,
     source: existing.source,
     sourceRef: canRefreshIdentity
