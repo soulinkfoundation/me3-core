@@ -19,6 +19,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   readSync,
   readdirSync,
   renameSync,
@@ -244,7 +245,15 @@ export async function verifyManagedExportEnvelope({
   }
 }
 
-export async function extractManagedExportEnvelope({ envelope, output, passphrase }) {
+// coreFromArchive checks the archive against the ME3 version it was exported
+// from, for a restore that runs at that version instead of this repository's.
+export async function extractManagedExportEnvelope({
+  envelope,
+  output,
+  passphrase,
+  core,
+  coreFromArchive = false,
+}) {
   requireSecret(passphrase, "Managed export passphrase");
   const destination = resolve(output);
   if (existsSync(destination)) throw new Error("managed export extraction output already exists");
@@ -283,7 +292,11 @@ export async function extractManagedExportEnvelope({ envelope, output, passphras
     }
     cpSync(portableRoot, destination, { recursive: true, errorOnExist: true, force: false });
     copied = true;
-    const portable = validateArchive(destination, passphrase);
+    const portable = validateArchive(destination, passphrase, {
+      core: coreFromArchive
+        ? JSON.parse(readFileSync(join(destination, "manifest.json"), "utf8")).core
+        : core,
+    });
     return {
       ok: true,
       format: verified.format,
@@ -415,6 +428,7 @@ async function main() {
           envelope: required(args, "envelope"),
           output: required(args, "output"),
           passphrase: process.env.ME3_MANAGED_EXPORT_PASSPHRASE,
+          coreFromArchive: args["core-from"] === "archive",
         }),
       ),
     );

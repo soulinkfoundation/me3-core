@@ -1001,6 +1001,36 @@ test("owner can decrypt a managed envelope into a verified portable-v1 archive",
   assert.equal(validateArchive(extracted, PROOF_PASSPHRASE).manifest.format, "me3-portable-v1");
 });
 
+test("a move extracts an export made by a different ME3 version", async () => {
+  const envelope = join(root, "older-version.me3export");
+  await createManagedExportEnvelope({
+    archive,
+    output: envelope,
+    passphrase: PROOF_PASSPHRASE,
+    installationId: "mi-1234567890abcdef",
+    operationId: "99999999-9999-4999-8999-999999999999",
+    keyVersion: "v1",
+  });
+  const newerCore = { ...resolveCoreInfo(), version: "999.0.0" };
+  await assert.rejects(
+    extractManagedExportEnvelope({
+      envelope,
+      output: join(root, "older-version-strict"),
+      passphrase: PROOF_PASSPHRASE,
+      core: newerCore,
+    }),
+    { code: "CORE_VERSION_MISMATCH" },
+  );
+  const result = await extractManagedExportEnvelope({
+    envelope,
+    output: join(root, "older-version-move"),
+    passphrase: PROOF_PASSPHRASE,
+    core: newerCore,
+    coreFromArchive: true,
+  });
+  assert.equal(result.logicalInstallId, PROOF_INSTALL_ID);
+});
+
 test("wrong passphrases, tampering, version mismatches, and non-clean targets fail before mutation", () => {
   const wrongKeyTarget = freshTarget("wrong-key");
   const wrongKeyBefore = fileHash(wrongKeyTarget);

@@ -77,7 +77,8 @@ jobs:
           set -euo pipefail
           node scripts/managed-export-envelope.mjs extract \
             --envelope "$MOVE_DIR/owner.me3export" \
-            --output "$MOVE_DIR/portable" > /dev/null
+            --output "$MOVE_DIR/portable" \
+            --core-from archive > /dev/null
           rm -f "$MOVE_DIR/owner.me3export"
           tag="$(node scripts/move-restore.mjs core-tag --archive "$MOVE_DIR/portable")"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
