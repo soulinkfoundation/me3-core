@@ -1,4 +1,4 @@
-import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, createCloudflareModel, isModelRequestRejected, createIntentVerifierFromModel, createD1TurnStore, runAgentTurn, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
+import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, coalesceAgentStreamEvents, createCloudflareModel, isModelRequestRejected, createIntentVerifierFromModel, createD1TurnStore, runAgentTurn, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import { createCodingAgentServices } from "./coding-agent";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { TOOL_LOADER_NAME } from "../../../packages/agent/src/tool-groups";
@@ -122,10 +122,14 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     // The fast model answers follow-up suggestions and memory extraction after the reply.
     const fastName=env.ME3_AGENT_FAST_MODEL?.trim()||"anthropic/claude-haiku-5.5";
     const fastAllowed=!managed||managed.models.some(item=>managedModelId(item.id)===managedModelId(fastName));
-    const result=await runAgentTurn({model,backupModel:backup,tools,preloadedToolGroups,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,verifyCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:async event=>{
-      const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event.event,event.data);
-      onEvent?.(event.event,event.data,seq);
-    }});
+    // Model text is forwarded in ~100ms batches so the phone is not paced by one D1 write per token.
+    const stream=coalesceAgentStreamEvents(async(event,data)=>{
+      const seq=await appendAgentStreamEvent(env.DB,input.userId,input.turnId,event,data);
+      onEvent?.(event,data,seq);
+    });
+    let result:AgentTurnResult;
+    try {result=await runAgentTurn({model,backupModel:backup,tools,preloadedToolGroups,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,verifyCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:stream.push});}
+    finally {await stream.flush();}
     const allowanceNotice=managed&&allowanceFallbackUsed()?getManagedAiBillingSettings(env,{syncUsage:false}).then(managedAllowanceNotice):Promise.resolve(null);
     // The reply has already streamed. Follow-ups and memory finish inside the turn so their
     // usage receipts reconcile before the owner's next turn; a miss only means none this time.

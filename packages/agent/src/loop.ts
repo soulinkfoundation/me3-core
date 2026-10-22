@@ -149,6 +149,8 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
         await emit({event:"delta",data:{text,source:"model"}});
       } };
       let response;
+      // Clients show "Writing a response…" from the model call, not from its first token.
+      await emit({event:"status",data:{state:"model_started",modelStep:checkpoint.steps + 1}});
       try { response = await measureModel(model, stepInput); }
       catch (error) {
         // A failed request can still be billable, with no complete usage receipt.

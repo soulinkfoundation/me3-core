@@ -4,6 +4,7 @@ export { buildAgentSystemPrompt } from "./prompt";
 export { createIntentVerifierFromModel } from "./create-intent";
 export { compactAgentContext, AGENT_CONTEXT_LIMITS, type AgentContextLimits } from "./context";
 export { AGENT_SCHEMA_STATEMENTS, AgentInputConflictError, createD1TurnStore, decideAgentApproval, persistAgentInput, appendAgentStreamEvent, requestAgentCancellation, isAgentCancellationRequested } from "./store";
+export { coalesceAgentStreamEvents } from "./stream";
 export * from "./types";
 export { AGENT_PRESENTATION_SCHEMA_STATEMENTS, prepareTargetPresentation, loadTargetPresentation, validateTargetSelection, targetSelectionEligibility, targetSelectionClaimStatement, targetPresentationCard, type AgentTargetPresentation } from "./presentations";
 export { verifyTargetIntent, preflightTargetIntent, savedTargetIntentProgress, nextTargetIntentAction, targetIntentActions, connectedTargetIntentSources, TargetIntentMismatch, TargetIntentOrderMismatch } from "./target-intent";
