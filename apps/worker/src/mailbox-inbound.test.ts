@@ -136,10 +136,22 @@ describe("inbound MIME and attachment persistence", () => {
     const lookups = vi.fn(resolveTxt);
     const stranger = await deliverInboundEmail(message(raw), env, { resolveTxt: lookups });
     if (signed.status !== "accepted" || forged.status !== "accepted" || stranger.status !== "accepted") throw new Error("not accepted");
-    expect(senderAuth(signed.messageId)).toEqual({ dkim: "pass", domain: "gmail.test" });
+    expect(senderAuth(signed.messageId)).toEqual({ dkim: "pass", domain: "gmail.test", address: "kieran@gmail.test" });
     expect(senderAuth(forged.messageId)).toMatchObject({ dkim: "none" });
     expect(senderAuth(stranger.messageId)).toBeUndefined();
     expect(lookups).not.toHaveBeenCalled();
+  });
+
+  it("never records a pass for a From whose encoded display name decodes to the owner's address (me3-u9f6)", async () => {
+    const { db, env } = setup();
+    db.exec("UPDATE owner_profile SET email = 'kieran@gmail.test' WHERE id = 'owner'");
+    const { sign, resolveTxt } = await testDkimSigner("evil.test");
+    const spoof = ["From: =?utf-8?q?=3Ckieran=40gmail.test=3E?= <attacker@evil.test>", "To: owner@me3.app", "Subject: Quick task", "Date: Tue, 20 Oct 2026 09:00:00 +0000", "", "Search my mailbox.", ""].join("\r\n");
+    const delivered = await deliverInboundEmail(message(await sign(spoof), { from: "attacker@evil.test" }), env, { resolveTxt });
+    if (delivered.status !== "accepted") throw new Error("not accepted");
+    const row = db.prepare("SELECT from_address, metadata_json FROM mailbox_messages WHERE id = ?").get(delivered.messageId) as { from_address: string; metadata_json: string };
+    expect(row.from_address).toBe("kieran@gmail.test");
+    expect(JSON.parse(row.metadata_json).senderAuth).toMatchObject({ dkim: "none" });
   });
 
   it("marks the sending contact as in touch without copying the email", async () => {

@@ -6,16 +6,27 @@
  * the signer's public key from DNS (over HTTPS), and Web Crypto.
  *
  * Only a passing signature whose d= domain aligns with the From domain and
- * covers the From header counts. Anything else is "none" or "fail", and the
- * mail is treated as ordinary mail.
+ * covers the From, To and Subject headers counts. Anything else is "none" or
+ * "fail", and the mail is treated as ordinary mail.
+ *
+ * The From address is parsed once, strictly, by parseFromHeader: the address
+ * the signature aligns with is the same one the owner check compares. Any
+ * From that two parsers could read differently is refused.
  */
+
+import { decodeMimeHeaderValue, parseEmailAddressHeader } from "../../../shared/email-headers";
 
 export type SenderAuthResult = {
   dkim: "pass" | "fail" | "none";
   /** The signing domain of the passing (or last tried) signature. */
   domain: string | null;
+  /** On a pass: the From address the signature was aligned with. */
+  address?: string;
   reason?: string;
 };
+
+/** The one mailbox a From header names. */
+export type FromIdentity = { address: string; domain: string };
 
 /** Returns the TXT strings published at a DNS name (each record's quoted chunks already joined). */
 export type DnsTxtResolver = (name: string) => Promise<string[]>;
@@ -26,18 +37,21 @@ const MAX_SIGNATURES = 3;
 
 export async function verifyDkim(
   rawMessage: string,
-  options: { resolveTxt?: DnsTxtResolver; now?: Date } = {},
+  options: { resolveTxt?: DnsTxtResolver; now?: Date; expectedAddress?: string } = {},
 ): Promise<SenderAuthResult> {
   const { headers, body } = splitMessage(rawMessage);
-  const fromDomain = headerFromDomain(headers);
-  if (!fromDomain) return { dkim: "none", domain: null, reason: "No From address" };
+  const from = fromIdentity(headers);
+  if (!from) return { dkim: "none", domain: null, reason: "No single unambiguous From address" };
+  if (options.expectedAddress !== undefined && from.address !== options.expectedAddress.trim().toLowerCase()) {
+    return { dkim: "none", domain: null, reason: "From address does not match the parsed sender" };
+  }
   const signatures = headers.filter(header => header.name.toLowerCase() === "dkim-signature").slice(0, MAX_SIGNATURES);
   if (signatures.length === 0) return { dkim: "none", domain: null, reason: "Not signed" };
 
   const resolveTxt = options.resolveTxt || resolveTxtOverHttps;
   let last: SenderAuthResult = { dkim: "fail", domain: null, reason: "No signature verified" };
   for (const signature of signatures) {
-    const result = await verifySignature(signature, headers, body, fromDomain, resolveTxt, options.now || new Date())
+    const result = await verifySignature(signature, headers, body, from, resolveTxt, options.now || new Date())
       .catch((error: unknown): SenderAuthResult => ({ dkim: "fail", domain: null, reason: error instanceof Error ? error.message : "Verification failed" }));
     if (result.dkim === "pass") return result;
     last = result;
@@ -49,7 +63,7 @@ async function verifySignature(
   signature: Header,
   headers: Header[],
   body: string,
-  fromDomain: string,
+  from: FromIdentity,
   resolveTxt: DnsTxtResolver,
   now: Date,
 ): Promise<SenderAuthResult> {
@@ -59,9 +73,11 @@ async function verifySignature(
   if (tags.v !== "1" || !domain || !tags.s || !tags.b || !tags.bh || !tags.h) return fail("Malformed signature");
   const algorithm = (tags.a || "").toLowerCase();
   if (algorithm !== "rsa-sha256" && algorithm !== "ed25519-sha256") return fail("Unsupported algorithm");
-  if (!aligned(fromDomain, domain)) return fail("Signing domain does not match the From address");
+  if (!dkimDomainAligned(from.domain, domain)) return fail("Signing domain does not match the From address");
   const signedHeaders = tags.h.split(":").map(name => name.trim().toLowerCase()).filter(Boolean);
   if (!signedHeaders.includes("from")) return fail("From is not signed");
+  // The owner gate reads To (was ME3 only copied?) and Subject (the request).
+  if (!signedHeaders.includes("to") || !signedHeaders.includes("subject")) return fail("To and Subject are not signed");
   if (tags.x && Number(tags.x) * 1000 < now.getTime()) return fail("Signature expired");
 
   const [headerCanon, bodyCanon = "simple"] = (tags.c || "simple/simple").toLowerCase().split("/");
@@ -82,11 +98,11 @@ async function verifySignature(
   const valid = algorithm === "rsa-sha256"
     ? await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signatureBytes, data)
     : await crypto.subtle.verify("Ed25519", key, signatureBytes, new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
-  return valid ? { dkim: "pass", domain } : fail("Signature does not verify");
+  return valid ? { dkim: "pass", domain, address: from.address } : fail("Signature does not verify");
 }
 
 /** Relaxed alignment: the same domain, or one a subdomain of the other. */
-function aligned(fromDomain: string, signingDomain: string): boolean {
+export function dkimDomainAligned(fromDomain: string, signingDomain: string): boolean {
   return fromDomain === signingDomain || fromDomain.endsWith(`.${signingDomain}`) || signingDomain.endsWith(`.${fromDomain}`);
 }
 
@@ -145,13 +161,62 @@ function headerValue(raw: string): string {
   return raw.slice(raw.indexOf(":") + 1).replace(/\r\n/g, "");
 }
 
-function headerFromDomain(headers: Header[]): string | null {
+/** The sender of a raw message: its one From header, parsed strictly. */
+export function messageFromIdentity(rawMessage: string): FromIdentity | null {
+  return fromIdentity(splitMessage(rawMessage).headers);
+}
+
+function fromIdentity(headers: Header[]): FromIdentity | null {
   const from = headers.filter(header => header.name.toLowerCase() === "from");
   // Two From headers is a classic spoofing trick; refuse to pick one.
   if (from.length !== 1) return null;
-  const value = headerValue(from[0].raw);
-  const address = value.match(/<([^<>\s]+@[^<>\s]+)>/)?.[1] || value.match(/[^\s<>"]+@[^\s<>",;]+/)?.[0];
-  return address?.split("@")[1]?.toLowerCase().replace(/\.$/, "") || null;
+  return parseFromHeader(headerValue(from[0].raw));
+}
+
+const ADDRESS = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)$/i;
+const ENCODED_WORD = /=\?[^?]+\?[bq]\?[^?]*\?=/gi;
+
+/**
+ * One mailbox, `addr` or `display name <addr>`, read the same way raw and
+ * decoded, or null. Only the display name may hold encoded-words, and they
+ * may not decode to address syntax. Groups, lists, comments, quoted local
+ * parts and stray angle brackets are refused rather than guessed at.
+ */
+export function parseFromHeader(value: string): FromIdentity | null {
+  const header = value.replace(/\r?\n/g, "").trim();
+  if (!header || header.length > 998) return null;
+  if ((header.match(/</g) || []).length > 1 || (header.match(/>/g) || []).length > 1) return null;
+
+  let outside = "";
+  let quoted = false;
+  for (let index = 0; index < header.length; index += 1) {
+    const char = header[index];
+    if (quoted && char === "\\") { index += 1; continue; }
+    if (char === '"') { quoted = !quoted; continue; }
+    if (!quoted) outside += char;
+  }
+  if (quoted || /[,;:()]/.test(outside) || (outside.match(/@/g) || []).length !== 1) return null;
+
+  const open = header.indexOf("<");
+  const close = header.indexOf(">");
+  let address: string;
+  let display = "";
+  if (open < 0 && close < 0) {
+    address = header;
+  } else {
+    if (open < 0 || close !== header.length - 1 || close < open) return null;
+    address = header.slice(open + 1, close);
+    display = header.slice(0, open);
+  }
+  if (address.includes("=?")) return null;
+  const match = address.match(ADDRESS);
+  if (!match) return null;
+  for (const word of display.match(ENCODED_WORD) || []) {
+    if (/[<>@,;:"()\\]/.test(decodeMimeHeaderValue(word))) return null;
+  }
+  const parsed = { address: address.toLowerCase(), domain: match[1].toLowerCase().replace(/\.$/, "") };
+  // The rest of ME3 reads From through parseEmailAddressHeader: it must agree.
+  return parseEmailAddressHeader(header)?.address === parsed.address ? parsed : null;
 }
 
 function parseTags(value: string): Record<string, string> {

@@ -1,6 +1,6 @@
 import { assistantRuntimeNamespace } from "./assistant-runtime-binding";
 import { sendEmailWithProvider } from "./email-providers";
-import { verifyDkim, type DnsTxtResolver, type SenderAuthResult } from "./mailbox-sender-auth";
+import { dkimDomainAligned, verifyDkim, type DnsTxtResolver, type SenderAuthResult } from "./mailbox-sender-auth";
 import { splitOwnerNote } from "./mailbox-sender-identity";
 import type { Env } from "./types";
 
@@ -51,7 +51,11 @@ export async function ownerInstructionAddresses(env: Pick<Env, "DB">, ownerId: s
   return email && email.includes("@") ? [email] : [];
 }
 
-/** Inbound: checks the signature only on mail that claims to be from the owner. */
+/**
+ * Inbound: checks the signature only on mail that claims to be from the owner.
+ * verifyDkim parses the From header again, strictly, and passes only when that
+ * address is this same owner address.
+ */
 export async function ownerSenderAuth(
   env: Pick<Env, "DB">,
   ownerId: string,
@@ -61,7 +65,7 @@ export async function ownerSenderAuth(
 ): Promise<SenderAuthResult | null> {
   const from = (fromAddress || "").trim().toLowerCase();
   if (!from || !(await ownerInstructionAddresses(env, ownerId)).includes(from)) return null;
-  return verifyDkim(rawMessage, { resolveTxt }).catch((): SenderAuthResult => ({ dkim: "fail", domain: null, reason: "Verification failed" }));
+  return verifyDkim(rawMessage, { resolveTxt, expectedAddress: from }).catch((): SenderAuthResult => ({ dkim: "fail", domain: null, reason: "Verification failed" }));
 }
 
 export type OwnerInstructionTurn = {
@@ -131,7 +135,9 @@ export async function startOwnerInstruction(
   if (!from || !(await ownerInstructionAddresses(env, row.user_id)).includes(from)) return null;
   const metadata = parseRecord(row.metadata_json);
   const auth = parseRecord(JSON.stringify(metadata.senderAuth ?? null));
-  if (auth.dkim !== "pass") return null;
+  // The signature must be for this exact address, from a domain aligned with it.
+  if (auth.dkim !== "pass" || auth.address !== from || typeof auth.domain !== "string") return null;
+  if (!dkimDomainAligned(from.slice(from.lastIndexOf("@") + 1), auth.domain)) return null;
 
   const subject = (row.subject || "").trim();
   const split = splitOwnerNote(row.text_body, subject);
