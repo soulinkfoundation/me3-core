@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { confirmEvent, confirmReminder, confirmTask, withOneStepConfirmation } from "../src/confirmations.ts";
+import { confirmEvent, confirmPeopleFound, confirmReminder, confirmTask, withOneStepConfirmation } from "../src/confirmations.ts";
 
 test("confirmations read the saved record in the owner's time zone", () => {
   assert.equal(confirmReminder({ reminder: { title: "Call Alex", remindAt: "2026-10-21T08:00:00.000Z", timezone: "Europe/Dublin", recurrenceRule: null } }, "UTC"), "Reminder set: Call Alex, Wed 21 Oct, 09:00.");
@@ -18,4 +18,13 @@ test("the finalStep flag reaches neither the domain service nor the effect ident
   assert.deepEqual(received, { title: "x" });
   assert.deepEqual(tool.idempotencyArguments?.({ title: "x", finalStep: true }), { title: "x" });
   assert.ok("finalStep" in (tool.parameters.properties as Record<string, unknown>));
+});
+
+test("a people search the owner only wanted to see ends with a line under the cards", () => {
+  const person = (name: string) => ({ name, offerings: [] });
+  assert.equal(confirmPeopleFound({ results: [person("Kieran Butler")] }, "UTC"), "Here’s Kieran Butler on ME3.");
+  assert.equal(confirmPeopleFound({ results: [person("Kieran Butler"), person("Kate Doyle")] }, "UTC"), "I found 2 people on ME3.");
+  // Nothing found and the owner's own listing still need ME3's own words.
+  assert.equal(confirmPeopleFound({ results: [] }, "UTC"), null);
+  assert.equal(confirmPeopleFound({ results: [{ ...person("Sam Rivera"), self: true }] }, "UTC"), null);
 });

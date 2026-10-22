@@ -13,6 +13,7 @@ const OWNER_SECRET = "ME3_CLOUD_OWNER_ID";
 const INSTALL_SECRET = "ME3_CORE_INSTALL_ID";
 const TOKEN_SECRET = "ME3_CLOUD_CORE_TOKEN";
 const REQUEST_TIMEOUT_MS = 5_000;
+const LINKS_REFRESH_WAIT_MS = 1_500;
 
 type SoulinkDirectoryBridgeConfig = {
   origin: string;
@@ -419,8 +420,13 @@ async function loadSoulinkLinkCandidates(
   ownerId: string,
 ): Promise<{ links: SoulinkLinkCandidate[]; warning: string | null }> {
   let warning: string | null = null;
+  // A stale list refreshes from Soulink, which can take seconds; search with the Links already saved
+  // rather than hold up the owner's search for it.
   try {
-    await ensureSoulinkContactsFresh(env, ownerId);
+    await Promise.race([
+      ensureSoulinkContactsFresh(env, ownerId),
+      new Promise((resolve) => setTimeout(resolve, LINKS_REFRESH_WAIT_MS)),
+    ]);
   } catch {
     warning = "Soulink Links could not be refreshed; results may use the last synchronized Links.";
   }

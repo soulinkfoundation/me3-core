@@ -176,7 +176,9 @@ export async function draftStarterSite(env: Env, ownerId: string, input: Record<
 
   const site = await ensureOwnerProfileSite(env, owner);
   const { profile: existing } = await readSourceProfile(env, site);
-  const name = text(owner.name, 100) || text(existing.name, 100) || site.username;
+  // The name on the site is the one the owner typed at setup; the account name can be guessed from their email.
+  const siteName = text(existing.name, 100);
+  const name = (siteName && siteName.toLowerCase() !== site.username.toLowerCase() ? siteName : "") || text(owner.name, 100) || siteName || site.username;
   const headline = text(input.headline, 120);
   const location = text(input.location, 120) || text(existing.location, 120);
   const theme = starterTheme(input.theme, existing.extensions?.["me3.app/site"]?.theme);

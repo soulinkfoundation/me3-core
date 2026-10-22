@@ -17,7 +17,7 @@ import { taskTools } from "./tasks";
 import { webTools } from "./web";
 import { targetPresentationTool } from "./presentations";
 import { toolGroupFor } from "../tool-groups";
-import { confirmEvent, confirmReminder, confirmTask, withOneStepConfirmation } from "../confirmations";
+import { confirmEvent, confirmPeopleFound, confirmReminder, confirmTask, withOneStepConfirmation } from "../confirmations";
 
 // Only single-ID domain adapters can offer this exact-action selection contract.
 const targetContracts: Record<string, AgentTargetMetadata> = {
@@ -40,6 +40,7 @@ const oneStepConfirmations: Record<string, (data: unknown, timezone: string) => 
   core_reminders_create: confirmReminder,
   core_calendar_event_create: confirmEvent,
   core_mission_task_create: confirmTask,
+  core_people_search: confirmPeopleFound,
 };
 
 const ALWAYS_VISIBLE_TOOLS = new Set(["core_sites_starter_draft"]);

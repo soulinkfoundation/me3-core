@@ -88,6 +88,14 @@ describe("the chat-drafted first site", () => {
     expect(again.extensions["me3.app/site"].theme).toBe("paper");
   });
 
+  it("keeps the name the owner typed over one guessed from their email", async () => {
+    const f = fixture();
+    f.raw.prepare("UPDATE owner_profile SET name = 'Samrivera' WHERE id = 'owner'").run();
+    expect((await draftStarterSite(f.env, "owner", answer)).name).toBe("Sam Rivera");
+    const bare = fixture({ avatar: false });
+    expect((await draftStarterSite(bare.env, "owner", answer)).name).toBe("Sam Rivera");
+  });
+
   it("fills an unset or template Mission and leaves a written one alone", async () => {
     const template = fixture({ mission: "I help [who] [the change you want for them] by [how you help]." });
     await draftStarterSite(template.env, "owner", answer);

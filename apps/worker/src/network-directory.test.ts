@@ -8,6 +8,9 @@ import {
   syncPublishedProfileToSoulinkDirectory,
 } from "./network-directory";
 import type { Env } from "./types";
+import { ensureSoulinkContactsFresh } from "./routes/channels";
+
+vi.mock("./routes/channels", () => ({ ensureSoulinkContactsFresh: vi.fn().mockResolvedValue(null) }));
 
 const SECRETS = {
   ME3_CLOUD_OWNER_ID: "owner-1",
@@ -216,6 +219,20 @@ describe("unified people search", () => {
       profileId: "profile-link",
       reasons: ["One of your Soulink Links", "Offers Software development"],
     });
+  });
+
+  it("searches the Links it has instead of waiting on a slow Links refresh", async () => {
+    vi.useFakeTimers();
+    vi.mocked(ensureSoulinkContactsFresh).mockReturnValueOnce(new Promise(() => {}));
+    const search = searchPeople(
+      createEnv({}, [soulinkContact({ name: "Sarah Byrne", handle: "sarah", me3Url: "https://sarah.example/" })]),
+      "owner",
+      { query: "Sarah" },
+    );
+    await vi.advanceTimersByTimeAsync(1_600);
+    const result = await search;
+    vi.useRealTimers();
+    expect(result.results.map((item) => item.name)).toEqual(["Sarah Byrne"]);
   });
 
   it("still finds a named Link when public search is unavailable", async () => {

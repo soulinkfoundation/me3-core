@@ -26,8 +26,7 @@ export function siteTools() {
       }
       context.signal.throwIfAborted();
       const published = await service.publish();
-      const photoTip = published.hasPhoto ? "" : " End with one tip: add a photo so people recognise you.";
-      return ok({ ...published, clarityCall: "Free 30-minute clarity call", next: `In one or two sentences tell the owner they're live (not a draft), with the link, and that people and the AI assistants they use can now find them and book the free 30-minute clarity call. Offer to show them by having an assistant find and book them.${photoTip} Suggest nothing else (no emails, campaigns or posts). Do not mention the Mission.` });
+      return ok({ ...published, clarityCall: "Free 30-minute clarity call", next: "Reply with one short sentence saying the site is live. The owner's app already shows the link, who can book them and the next steps under your reply, so do not repeat any of that, offer anything or give tips. Do not mention the Mission." });
     }),
     domainTool("core.sites.landing_page.designs", async () => ok({ designs: listAgentLandingPageDesigns() })),
     domainTool("core.sites.landing_page.list", async (args, context) => {
