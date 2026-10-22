@@ -160,6 +160,44 @@ export const CORE_CHAT_CAPABILITIES = [
     },
   }),
   defineCoreChatCapability({
+    id: "core.docs.read",
+    owner: "core",
+    pluginId: null,
+    ownerFacingLabel: "Read the ME3 docs",
+    summary:
+      "Read ME3's own help docs: setting up email, a custom domain, file storage and AI, self-hosting and its costs, moving to your own hosting, the ME3 apps, and deleting an account. Use it before answering how ME3 itself works or how to set it up, instead of guessing or searching the web. If one of your tools can do the step, do it; use the docs for the steps the owner must take themselves, and link the web version.",
+    category: "assistant",
+    handler: {
+      surface: "chat",
+      route: "core.docs.read",
+    },
+    sideEffect: "read_external",
+    approvalMode: "none",
+    requiresSetup: [],
+    inputSchema: {
+      type: "object",
+      properties: {
+        section: {
+          type: "string",
+          description: "Optional section title, such as Email or Delete your account. Leave it out to read all the docs.",
+        },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "core_docs_read",
+    examples: {
+      positive: [
+        "How do I set up email on my own domain?",
+        "How do I move to my own hosting?",
+      ],
+      negative: ["Search my mailbox for the Cloudflare invoice."],
+    },
+    chat: {
+      intentKind: "read_action",
+      sideEffectLevel: "read",
+    },
+  }),
+  defineCoreChatCapability({
     id: "core.mailbox.search",
     owner: "core",
     pluginId: null,
