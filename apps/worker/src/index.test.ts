@@ -17,6 +17,7 @@ import {
   updateAiSettings,
 } from "./ai-providers";
 import { ME3_CORE_VERSION } from "./core-version";
+import { getOwnerCredentialGeneration } from "./owner-credentials";
 import {
   CORE_PLUGIN_CATALOG,
   validateCorePluginAgentToolContracts,
@@ -261,6 +262,8 @@ type StoredMe3ClaimState = {
   redirect_path: string | null;
   install_id: string | null;
   expires_at: string;
+  initiated_by?: string | null;
+  credential_generation?: string | null;
 };
 type StoredAuthRateLimit = {
   key: string;
@@ -583,7 +586,9 @@ function createEnv(): Env & {
                 ) {
                   state.owner = {
                     id: existingOwner.id,
-                    email: values[1] as string | null,
+                    email: existingOwner.password_hash
+                      ? existingOwner.email
+                      : (values[1] as string | null),
                     name: values[2] as string | null,
                     username: existingOwner.username || (values[3] as string | null),
                     bio: existingOwner.bio,
@@ -955,6 +960,8 @@ function createEnv(): Env & {
                   redirect_path: values[1] as string | null,
                   install_id: values[2] as string | null,
                   expires_at: values[3] as string,
+                  initiated_by: values[4] as string | null,
+                  credential_generation: values[5] as string | null,
                 };
                 if (existingIndex >= 0) {
                   state.me3ClaimStates[existingIndex] = entry;
@@ -964,9 +971,9 @@ function createEnv(): Env & {
               }
 
               if (sql.includes("DELETE FROM me3_install_claim_states")) {
-                state.me3ClaimStates = state.me3ClaimStates.filter(
-                  (entry) => entry.state !== values[0],
-                );
+                state.me3ClaimStates = sql.includes("WHERE")
+                  ? state.me3ClaimStates.filter((entry) => entry.state !== values[0])
+                  : [];
               }
 
               if (sql.includes("INSERT INTO auth_rate_limits")) {
@@ -3410,6 +3417,22 @@ function cookieHeader(response: Response): string {
   return setCookie!.split(";")[0];
 }
 
+async function signLegacyOwnerSession(secret: string): Promise<string> {
+  const encode = (value: unknown) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  const now = Math.floor(Date.now() / 1000);
+  const data = `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ sub: "owner", iat: now, exp: now + 3600 })}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+  return `${data}.${Buffer.from(signature).toString("base64url")}`;
+}
+
 function responseCookieCleared(response: Response): boolean {
   const setCookie = response.headers.get("set-cookie") || "";
   return setCookie.includes("me3_core_session=") && setCookie.includes("Max-Age=0");
@@ -4558,7 +4581,7 @@ describe("ME3 Worker auth", () => {
   it("lets an authenticated managed owner establish verified local login", async () => {
     const env = createEnv();
     env.ME3_DEPLOYMENT_MODE = "managed";
-    const session = cookieHeader(await bootstrap(env));
+    let session = cookieHeader(await bootstrap(env));
     env.SETUP_PASSWORD = "operator-secret-must-not-return";
     env.owner!.password_hash = null;
     env.installSecrets.set("ME3_CLOUD_OWNER_ID", "managed-owner");
@@ -4579,6 +4602,8 @@ describe("ME3 Worker auth", () => {
     const body = JSON.parse(responseText) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
+    // Changing the password renews this browser's session and retires older ones.
+    session = cookieHeader(response);
     expect(body).toMatchObject({
       ok: true,
       localPasswordConfigured: true,
@@ -5059,6 +5084,76 @@ describe("ME3 Worker auth", () => {
     expect(env.installSecrets.get("ME3_CLOUD_OWNER_ID")).toBe("user123");
     expect(env.installSecrets.get("ME3_CLOUD_CORE_TOKEN")).toBe("core-update-token-123");
     expect(env.me3ClaimStates).toHaveLength(0);
+
+    fetchMock.mockRestore();
+  });
+
+  it("rejects a ME3 claim started before the owner set up a password", async () => {
+    const env = createEnv();
+    env.ME3_CLOUD_ORIGIN = "https://me3.example";
+    env.ME3_CLOUD_API_ORIGIN = "https://api.me3.example";
+
+    const startResponse = await app.fetch(
+      new Request("https://core.example/api/auth/me3/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ redirect: "/account" }),
+      }),
+      env,
+    );
+    const startBody = (await startResponse.json()) as { state: string };
+    const pendingClaim = { ...env.me3ClaimStates[0] };
+    expect((await bootstrap(env)).status).toBe(200);
+    expect(env.me3ClaimStates).toHaveLength(0);
+
+    const signedClaim = await createSignedMe3ClaimToken({
+      issuer: "https://api.me3.example",
+      userId: "user456",
+      state: startBody.state,
+      installId: pendingClaim.install_id || "",
+      coreOrigin: "http://localhost:4000",
+      callbackUrl: "http://localhost:8787/api/auth/me3/callback",
+      email: "attacker@example.com",
+      handle: "attacker",
+      coreUpdateToken: "attacker-core-update-token",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ keys: [signedClaim.publicJwk] }), {
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const callback = () =>
+      app.fetch(
+        new Request(
+          `http://localhost:8787/api/auth/me3/callback?state=${encodeURIComponent(
+            startBody.state,
+          )}&claim_token=${encodeURIComponent(signedClaim.token)}`,
+        ),
+        env,
+      );
+    const expectRejected = async (response: Response) => {
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toContain("me3_claim_error=");
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expect(env.owner?.email).toBe("owner@example.com");
+      expect(env.installSecrets.get("ME3_CLOUD_OWNER_ID")).toBeUndefined();
+      expect(env.installSecrets.get("ME3_CLOUD_CORE_TOKEN")).toBeUndefined();
+    };
+
+    // Bootstrap dropped the pending claim.
+    await expectRejected(await callback());
+
+    // A claim from before the password, even if its row survived, is from an older generation.
+    env.me3ClaimStates.push({ ...pendingClaim });
+    await expectRejected(await callback());
+
+    // An anonymous claim cannot attach a ME3 account to a password-only Core.
+    env.me3ClaimStates.push({
+      ...pendingClaim,
+      initiated_by: "anonymous",
+      credential_generation: await getOwnerCredentialGeneration(env),
+    });
+    await expectRejected(await callback());
 
     fetchMock.mockRestore();
   });
@@ -5900,6 +5995,99 @@ describe("ME3 Worker auth", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("signs out older owner sessions when the password is reset with the bootstrap code", async () => {
+    const env = createEnv();
+    const staleSession = cookieHeader(await bootstrap(env));
+
+    const resetResponse = await app.fetch(
+      new Request("http://localhost/api/auth/password-reset/bootstrap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "owner@example.com",
+          bootstrapCode: "owner-code",
+          password: "new-correct-horse",
+        }),
+      }),
+      env,
+    );
+    expect(resetResponse.status).toBe(200);
+
+    const meResponse = await app.fetch(
+      new Request("http://localhost/api/auth/me", { headers: { Cookie: staleSession } }),
+      env,
+    );
+    expect(meResponse.status).toBe(401);
+  });
+
+  it("signs out other owner sessions when the password changes and keeps the one that changed it", async () => {
+    const env = createEnv();
+    const otherSession = cookieHeader(await bootstrap(env));
+    const loginResponse = await app.fetch(
+      new Request("http://localhost/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "owner@example.com", password: "correct-horse-battery" }),
+      }),
+      env,
+    );
+    const changingSession = cookieHeader(loginResponse);
+
+    const changeResponse = await app.fetch(
+      new Request("http://localhost/api/account/password", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Cookie: changingSession },
+        body: JSON.stringify({
+          password: "new-correct-horse",
+          passwordConfirmation: "new-correct-horse",
+        }),
+      }),
+      env,
+    );
+    expect(changeResponse.status).toBe(200);
+    const renewedSession = cookieHeader(changeResponse);
+
+    const me = (cookie: string) =>
+      app.fetch(new Request("http://localhost/api/auth/me", { headers: { Cookie: cookie } }), env);
+    expect((await me(otherSession)).status).toBe(401);
+    expect((await me(changingSession)).status).toBe(401);
+    expect((await me(renewedSession)).status).toBe(200);
+  });
+
+  it("signs out every owner session on sign out everywhere", async () => {
+    const env = createEnv();
+    const session = cookieHeader(await bootstrap(env));
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/account/sign-out-everywhere", {
+        method: "POST",
+        headers: { Cookie: session, Origin: "http://localhost:4000" },
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(responseCookieCleared(response)).toBe(true);
+
+    const meResponse = await app.fetch(
+      new Request("http://localhost/api/auth/me", { headers: { Cookie: session } }),
+      env,
+    );
+    expect(meResponse.status).toBe(401);
+  });
+
+  it("keeps owner sessions issued before credential generations until the first reset", async () => {
+    const env = createEnv();
+    await bootstrap(env);
+    env.installSecrets.delete("OWNER_CREDENTIAL_GENERATION");
+    const legacySession = `me3_core_session=${await signLegacyOwnerSession(env.JWT_SECRET!)}`;
+    const me = () =>
+      app.fetch(new Request("http://localhost/api/auth/me", { headers: { Cookie: legacySession } }), env);
+
+    expect((await me()).status).toBe(200);
+    env.installSecrets.set("OWNER_CREDENTIAL_GENERATION", "1");
+    expect((await me()).status).toBe(401);
   });
 
   it("resets the owner password with the bootstrap code", async () => {

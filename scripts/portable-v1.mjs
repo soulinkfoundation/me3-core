@@ -108,6 +108,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0083_mailbox_spam", "2026-10-21-mailbox-spam-v1"],
   ["0084_mailbox_model_calls", "2026-10-22-mailbox-model-calls-v1"],
   ["0085_mailbox_instruction_replay", "2026-10-22-mailbox-instruction-replay-v1"],
+  ["0086_owner_credential_generation", "2026-10-22-owner-credential-generation-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];

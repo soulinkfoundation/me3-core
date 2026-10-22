@@ -120,6 +120,10 @@ authenticated Worker calls `PUT /api/account/password`, verifies the newly gener
 storing it, and returns only readiness state. Passwords and hashes are never returned by the API or
 written to logs.
 
+Changing the password signs out every other browser and paired phone; the browser or phone that
+made the change stays signed in. `POST /api/account/sign-out-everywhere` signs out every browser
+and phone, including the one that calls it.
+
 Use the recovery flow below only when there is no authenticated owner session:
 
 1. Make sure the current `SETUP_PASSWORD` is known. If it is not known, rotate it with `wrangler secret put SETUP_PASSWORD`.
@@ -127,7 +131,7 @@ Use the recovery flow below only when there is no authenticated owner session:
 3. Use the reset or advanced custom password option shown by the login UI.
 4. Enter the owner email, the setup password, and a new account password.
 
-On success, the Worker calls `POST /api/auth/password-reset/bootstrap`, updates `owner_profile.password_hash`, and clears the existing owner session.
+On success, the Worker calls `POST /api/auth/password-reset/bootstrap`, updates `owner_profile.password_hash`, and signs out every owner session and paired phone.
 
 ### Rotate The Setup Password
 

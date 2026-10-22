@@ -2,13 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import {
   approveMobilePairing,
   authenticateMobileOwner,
+  authenticateMobileSession,
   claimMobilePairing,
   claimMobileTokenFromHostedSession,
   getMobileConfig,
   refreshMobileToken,
+  revokeMobileRefreshTokenById,
   revokeMobileToken,
   startMobilePairing,
 } from "./mobile-pairing";
+import { advanceOwnerCredentialGeneration } from "./owner-credentials";
 import type { Env } from "./types";
 
 type PairingRow = {
@@ -42,6 +45,7 @@ type RefreshTokenRow = {
   revoked_at: string | null;
   created_at: string;
   updated_at: string;
+  credential_generation?: string | null;
 };
 
 type TestState = {
@@ -106,6 +110,79 @@ describe("mobile pairing", () => {
       env,
       `Bearer ${refreshResponse.accessToken}`,
     )).toBeNull();
+  });
+
+  it("keeps refresh tokens issued before credential generations until the first reset", async () => {
+    const env = createEnv();
+    const tokens = await pairDevice(env, "ios-legacy-1");
+    const state = (env as unknown as { DB: { state: TestState } }).DB.state;
+    state.refreshTokens[0].credential_generation = null;
+
+    const refreshed = await refreshMobileToken(env, {
+      refreshToken: tokens.refreshToken,
+      deviceId: "ios-legacy-1",
+    }, origins);
+    expect(state.refreshTokens[0].credential_generation).toMatch(/^0\./);
+
+    state.refreshTokens[0].credential_generation = null;
+    state.installSecrets.set("OWNER_CREDENTIAL_GENERATION", "1");
+    await expect(
+      refreshMobileToken(env, {
+        refreshToken: refreshed.refreshToken,
+        deviceId: "ios-legacy-1",
+      }, origins),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("signs out other devices on a credential reset and keeps the device that made it", async () => {
+    const env = createEnv();
+    const phone = await pairDevice(env, "ios-phone");
+    const tablet = await pairDevice(env, "ios-tablet");
+    const phoneRow = (env as unknown as { DB: { state: TestState } }).DB.state.refreshTokens
+      .find((token) => token.device_id === "ios-phone")!;
+
+    await advanceOwnerCredentialGeneration(env, { keepMobileTokenId: phoneRow.id });
+
+    expect(await authenticateMobileOwner(env, `Bearer ${tablet.accessToken}`)).toBeNull();
+    await expect(
+      refreshMobileToken(env, { refreshToken: tablet.refreshToken, deviceId: "ios-tablet" }, origins),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(await authenticateMobileOwner(env, `Bearer ${phone.accessToken}`)).toBe("owner");
+    await expect(
+      refreshMobileToken(env, { refreshToken: phone.refreshToken, deviceId: "ios-phone" }, origins),
+    ).resolves.toMatchObject({ refreshToken: expect.stringMatching(/^me3mrt_/) });
+
+    await advanceOwnerCredentialGeneration(env);
+    expect(await authenticateMobileOwner(env, `Bearer ${phone.accessToken}`)).toBeNull();
+  });
+
+  it("signs a device out from its own access token on logout", async () => {
+    const env = createEnv();
+    const tokens = await pairDevice(env, "ios-logout-1");
+
+    const session = await authenticateMobileSession(env, `Bearer ${tokens.accessToken}`);
+    expect(session).toMatchObject({ ownerId: "owner" });
+    await revokeMobileRefreshTokenById(env, session!.refreshTokenId);
+
+    expect(await authenticateMobileOwner(env, `Bearer ${tokens.accessToken}`)).toBeNull();
+    await expect(
+      refreshMobileToken(env, { refreshToken: tokens.refreshToken, deviceId: "ios-logout-1" }, origins),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("rejects refresh tokens after the session secret is rotated", async () => {
+    const env = createEnv();
+    const tokens = await pairDevice(env, "ios-rotate-1");
+    const state = (env as unknown as { DB: { state: TestState } }).DB.state;
+
+    state.installSecrets.delete("JWT_SECRET");
+
+    await expect(
+      refreshMobileToken(env, {
+        refreshToken: tokens.refreshToken,
+        deviceId: "ios-rotate-1",
+      }, origins),
+    ).rejects.toMatchObject({ status: 401 });
   });
 
   it("rejects approval with the wrong code", async () => {
@@ -258,8 +335,22 @@ function createEnv(): Env {
   } as Env;
 }
 
+async function pairDevice(env: Env, deviceId: string) {
+  const challenge = await startMobilePairing(env, {
+    device: { id: deviceId, name: "iPhone", platform: "ios" },
+  }, origins);
+  await approveMobilePairing(env, "owner", challenge.pairingId, {
+    userCode: challenge.userCode,
+  });
+  return claimMobilePairing(env, {
+    pairingId: challenge.pairingId,
+    userCode: challenge.userCode,
+    deviceId,
+  }, origins);
+}
+
 class MobilePairingDb {
-  constructor(private readonly state: TestState) {}
+  constructor(readonly state: TestState) {}
 
   prepare(sql: string) {
     return new MobilePairingStatement(this.state, sql);
@@ -407,6 +498,7 @@ class MobilePairingStatement {
         expiresAt,
         createdAt,
         updatedAt,
+        credentialGeneration,
       ] = this.values as string[];
       this.state.refreshTokens.push({
         id,
@@ -423,12 +515,14 @@ class MobilePairingStatement {
         revoked_at: null,
         created_at: createdAt,
         updated_at: updatedAt,
+        credential_generation: credentialGeneration ?? null,
       });
       return result(1);
     }
 
     if (this.sql.includes("SET token_hash = ?")) {
-      const [tokenHash, expiresAt, lastUsedAt, updatedAt, id] = this.values as string[];
+      const [tokenHash, expiresAt, lastUsedAt, updatedAt, credentialGeneration, id] =
+        this.values as string[];
       const row = this.state.refreshTokens.find(
         (token) => token.id === id && token.status === "active",
       );
@@ -437,10 +531,34 @@ class MobilePairingStatement {
       row.expires_at = expiresAt;
       row.last_used_at = lastUsedAt;
       row.updated_at = updatedAt;
+      row.credential_generation = credentialGeneration;
+      return result(1);
+    }
+
+    if (this.sql.includes("SET credential_generation = ?")) {
+      const [credentialGeneration, updatedAt, id] = this.values as string[];
+      const row = this.state.refreshTokens.find(
+        (token) => token.id === id && token.status === "active",
+      );
+      if (!row) return result(0);
+      row.credential_generation = credentialGeneration;
+      row.updated_at = updatedAt;
       return result(1);
     }
 
     if (this.sql.includes("SET status = 'revoked'")) {
+      if (this.sql.includes("WHERE status = 'active' AND id != ?")) {
+        const [revokedAt, updatedAt, keepId] = this.values as string[];
+        const rows = this.state.refreshTokens.filter(
+          (token) => token.status === "active" && token.id !== keepId,
+        );
+        for (const row of rows) {
+          row.status = "revoked";
+          row.revoked_at = revokedAt;
+          row.updated_at = updatedAt;
+        }
+        return result(rows.length);
+      }
       if (this.sql.includes("WHERE user_id = ? AND device_id = ?")) {
         const [revokedAt, updatedAt, userId, deviceId] = this.values as string[];
         const rows = this.state.refreshTokens.filter(

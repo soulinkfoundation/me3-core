@@ -1,6 +1,10 @@
 import { getOrCreateInstallSessionSecret } from "./install-secrets";
 import { verifyMe3CloudJwt } from "./me3-cloud-jwt";
 import {
+  getOwnerCredentialGeneration,
+  isCurrentOwnerCredentialGeneration,
+} from "./owner-credentials";
+import {
   getStoredMe3CloudOwnerId,
   getOwnerProfile,
   normalizeNullableText,
@@ -54,6 +58,7 @@ type MobileRefreshTokenRow = {
   scope_json: string;
   expires_at: string;
   last_used_at: string | null;
+  credential_generation: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -333,10 +338,17 @@ export async function refreshMobileToken(
 
   await env.DB.prepare(
     `UPDATE mobile_refresh_tokens
-     SET token_hash = ?, expires_at = ?, last_used_at = ?, updated_at = ?
+     SET token_hash = ?, expires_at = ?, last_used_at = ?, updated_at = ?, credential_generation = ?
      WHERE id = ? AND status = 'active'`,
   )
-    .bind(await sha256Text(newRefreshToken), expiresAt, now, now, row.id)
+    .bind(
+      await sha256Text(newRefreshToken),
+      expiresAt,
+      now,
+      now,
+      await getOwnerCredentialGeneration(env),
+      row.id,
+    )
     .run();
 
   return {
@@ -392,15 +404,35 @@ export async function authenticateMobileOwner(
   env: Env,
   authorizationHeader: string | null,
 ): Promise<string | null> {
+  return (await authenticateMobileSession(env, authorizationHeader))?.ownerId || null;
+}
+
+/** The owner and refresh-token row behind a mobile bearer, so a route can act on that device. */
+export async function authenticateMobileSession(
+  env: Env,
+  authorizationHeader: string | null,
+): Promise<{ ownerId: string; refreshTokenId: string } | null> {
   const token = bearerToken(authorizationHeader);
   if (!token) return null;
 
   try {
     const payload = await verifyMobileAccessToken(env, token);
-    return payload?.sub || null;
+    return payload?.sub ? { ownerId: payload.sub, refreshTokenId: payload.rid } : null;
   } catch {
     return null;
   }
+}
+
+/** Signs one device out: its refresh token stops refreshing and its access tokens stop verifying. */
+export async function revokeMobileRefreshTokenById(env: Env, refreshTokenId: string): Promise<void> {
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE mobile_refresh_tokens
+     SET status = 'revoked', revoked_at = ?, updated_at = ?
+     WHERE id = ?`,
+  )
+    .bind(now, now, refreshTokenId)
+    .run();
 }
 
 async function issueMobileTokens(
@@ -424,8 +456,8 @@ async function issueMobileTokens(
 
   await env.DB.prepare(
     `INSERT INTO mobile_refresh_tokens
-       (id, user_id, device_id, device_name, platform, app_version, token_hash, status, scope_json, expires_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+       (id, user_id, device_id, device_name, platform, app_version, token_hash, status, scope_json, expires_at, created_at, updated_at, credential_generation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
   )
     .bind(
       refreshTokenId,
@@ -439,6 +471,7 @@ async function issueMobileTokens(
       refreshExpiresAt,
       now,
       now,
+      await getOwnerCredentialGeneration(env),
     )
     .run();
 
@@ -477,18 +510,24 @@ async function verifyMobileAccessToken(
   if (!payload || payload.exp <= currentUnixTime()) return null;
 
   const row = await env.DB.prepare(
-    `SELECT id, device_id, status, expires_at
+    `SELECT id, device_id, status, expires_at, credential_generation
      FROM mobile_refresh_tokens
      WHERE id = ?
      LIMIT 1`,
   )
     .bind(payload.rid)
-    .first<Pick<MobileRefreshTokenRow, "id" | "device_id" | "status" | "expires_at">>();
+    .first<
+      Pick<
+        MobileRefreshTokenRow,
+        "id" | "device_id" | "status" | "expires_at" | "credential_generation"
+      >
+    >();
   if (
     !row ||
     row.status !== "active" ||
     row.device_id !== payload.did ||
-    Date.parse(row.expires_at) <= Date.now()
+    Date.parse(row.expires_at) <= Date.now() ||
+    !(await isCurrentOwnerCredentialGeneration(env, row.credential_generation))
   ) {
     return null;
   }
@@ -525,6 +564,10 @@ async function requireRefreshTokenRow(
     throw new MobilePairingInputError("Refresh token has expired", 401);
   }
   if (!constantTimeEqual(await sha256Text(refreshToken), row.token_hash)) {
+    throw new MobilePairingInputError("Refresh token was not accepted", 401);
+  }
+  // A password change, reset, "sign out everywhere" or session-secret rotation retires the token.
+  if (!(await isCurrentOwnerCredentialGeneration(env, row.credential_generation))) {
     throw new MobilePairingInputError("Refresh token was not accepted", 401);
   }
 

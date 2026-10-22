@@ -84,7 +84,17 @@ import {
   VoiceDictationInputError,
   transcribeVoiceDictation,
 } from "./voice-dictation";
-import { authenticateMobileOwner } from "./mobile-pairing";
+import {
+  authenticateMobileOwner,
+  authenticateMobileSession,
+  revokeMobileRefreshTokenById,
+} from "./mobile-pairing";
+import {
+  advanceOwnerCredentialGeneration,
+  deleteAllMe3ClaimStates,
+  getOwnerCredentialGeneration,
+  isCurrentOwnerCredentialGeneration,
+} from "./owner-credentials";
 import { verifyMe3CloudJwt } from "./me3-cloud-jwt";
 import { registerAccountsRoutes } from "./routes/accounts";
 import { registerAssistantRoutes } from "./routes/assistant";
@@ -266,7 +276,10 @@ type Me3ClaimStateRecord = {
   redirect_path: string | null;
   install_id: string | null;
   expires_at: string;
+  initiated_by: Me3ClaimInitiator | null;
+  credential_generation: string | null;
 };
+type Me3ClaimInitiator = "anonymous" | "owner";
 type OwnerAuthState = {
   configured: boolean;
   passwordConfigured: boolean;
@@ -283,7 +296,7 @@ type Me3AppConnectionDetails = {
   meJsonSource: "core_install" | "hosted_profile";
 };
 type AccountUpdateBody = { timezone?: unknown; locale?: unknown; dailyBriefingTime?: unknown };
-type SessionPayload = { sub: string; iat: number; exp: number };
+type SessionPayload = { sub: string; iat: number; exp: number; gen?: string };
 type OwnerRecord = OwnerProfile & { password_hash: string | null };
 type AuthRateLimitPolicy = {
   route: string;
@@ -644,7 +657,7 @@ app.post("/api/auth/me3/start", async (c) => {
   }
 
   const body = await c.req.json<Me3ClaimStartBody>().catch((): Me3ClaimStartBody => ({}));
-  return createMe3ClaimStartResponse(c, body.redirect);
+  return createMe3ClaimStartResponse(c, body.redirect, "anonymous");
 });
 
 app.get("/api/auth/me3/callback", async (c) => {
@@ -658,6 +671,19 @@ app.get("/api/auth/me3/callback", async (c) => {
   const pending = await getMe3ClaimState(c.env, state);
   if (!pending || new Date(pending.expires_at).getTime() <= Date.now()) {
     return redirectMe3ClaimError(c, "claim_expired");
+  }
+
+  // Re-check the start-route rule at consumption time: once a password owner exists, only that
+  // owner can attach a ME3 account, and a claim started before a credential change is stale.
+  const claimAuthState = await getOwnerAuthState(c.env);
+  if (
+    !(await isCurrentOwnerCredentialGeneration(c.env, pending.credential_generation)) ||
+    (pending.initiated_by !== "owner" &&
+      claimAuthState.passwordConfigured &&
+      !claimAuthState.me3Configured)
+  ) {
+    await deleteMe3ClaimState(c.env, state);
+    return redirectMe3ClaimError(c, "claim_expired", pending.redirect_path);
   }
 
   let payload: Me3ClaimTokenPayload;
@@ -823,6 +849,9 @@ app.post("/api/admin/bootstrap", async (c) => {
     .bind(owner.id, owner.email, owner.name, owner.username, owner.bio, owner.avatar_url, owner.timezone, passwordHash)
     .run();
 
+  // Setting up the password retires anything issued before it, including ME3 claims started
+  // while the Core was unclaimed.
+  await advanceOwnerCredentialGeneration(c.env);
   await getOrCreateInstallEncryptionKey(c.env);
   await clearAuthRateLimit(c.env, rateLimitScope);
   await setOwnerSession(c, owner.id);
@@ -901,6 +930,7 @@ app.post("/api/auth/password-reset/bootstrap", async (c) => {
     .bind(await hashPassword(password), owner.id)
     .run();
 
+  await advanceOwnerCredentialGeneration(c.env);
   await clearAuthRateLimit(c.env, rateLimitScope);
   clearOwnerSession(c);
 
@@ -925,7 +955,22 @@ app.get("/api/auth/me", async (c) => {
   });
 });
 
-app.post("/api/auth/logout", (c) => {
+app.post("/api/auth/logout", async (c) => {
+  const mobileSession = await authenticateMobileSession(
+    c.env,
+    c.req.header("Authorization") || null,
+  );
+  if (mobileSession) await revokeMobileRefreshTokenById(c.env, mobileSession.refreshTokenId);
+  clearOwnerSession(c);
+  return c.json({ ok: true });
+});
+
+// Signs out every browser and paired device, including this one.
+app.post("/api/account/sign-out-everywhere", async (c) => {
+  const ownerId = await requireOwner(c);
+  if (!ownerId) return unauthorized(c);
+
+  await advanceOwnerCredentialGeneration(c.env);
   clearOwnerSession(c);
   return c.json({ ok: true });
 });
@@ -981,6 +1026,16 @@ app.put("/api/account/password", async (c) => {
     .bind(passwordHash, ownerId)
     .run();
 
+  // Every other browser and device is signed out; the one that changed the password stays in.
+  const cookieSession = Boolean(await getSessionOwnerId(c));
+  const mobileSession = cookieSession
+    ? null
+    : await authenticateMobileSession(c.env, c.req.header("Authorization") || null);
+  await advanceOwnerCredentialGeneration(c.env, {
+    keepMobileTokenId: mobileSession?.refreshTokenId,
+  });
+  if (cookieSession) await setOwnerSession(c, ownerId);
+
   return c.json({
     ok: true,
     localPasswordConfigured: true,
@@ -1007,7 +1062,7 @@ app.post("/api/account/app-connections/me3/start", async (c) => {
   if (!ownerId) return unauthorized(c);
 
   const body = await c.req.json<Me3ClaimStartBody>().catch((): Me3ClaimStartBody => ({}));
-  return createMe3ClaimStartResponse(c, body.redirect || "/account?section=connections");
+  return createMe3ClaimStartResponse(c, body.redirect || "/account?section=connections", "owner");
 });
 
 app.delete("/api/account/app-connections/me3", async (c) => {
@@ -1023,6 +1078,7 @@ app.delete("/api/account/app-connections/me3", async (c) => {
   }
 
   await deleteStoredMe3CloudOwnerId(c.env);
+  await deleteAllMe3ClaimStates(c.env);
   return c.json({ ok: true });
 });
 
@@ -1936,7 +1992,11 @@ async function getOwnerByEmail(env: Env, email: string): Promise<OwnerRecord | n
   return result ?? null;
 }
 
-async function createMe3ClaimStartResponse(c: AppContext, rawRedirect?: unknown): Promise<Response> {
+async function createMe3ClaimStartResponse(
+  c: AppContext,
+  rawRedirect: unknown,
+  initiatedBy: Me3ClaimInitiator,
+): Promise<Response> {
   const rateLimitScope = await createAuthRateLimitScope(c, AUTH_RATE_LIMITS.claimStart);
   const rateLimitBlock = await checkAuthRateLimit(c, rateLimitScope);
   if (rateLimitBlock) return rateLimitBlock;
@@ -1949,7 +2009,7 @@ async function createMe3ClaimStartResponse(c: AppContext, rawRedirect?: unknown)
   const claimUrl = new URL("/core/claim", getMe3CloudOrigin(c.env));
   const redirect = normalizeClaimRedirect(rawRedirect);
 
-  await storeMe3ClaimState(c.env, state, redirect, installId);
+  await storeMe3ClaimState(c.env, state, redirect, installId, initiatedBy);
 
   claimUrl.searchParams.set("install_id", installId);
   claimUrl.searchParams.set("core_origin", webOrigin);
@@ -2034,17 +2094,29 @@ async function storeMe3ClaimState(
   state: string,
   redirectPath: string,
   installId: string,
+  initiatedBy: Me3ClaimInitiator,
 ): Promise<void> {
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  // The claim is bound to who started it and to the credential generation at the time, so
+  // setting up or changing the password retires claims started before it.
   await env.DB.prepare(
-    `INSERT INTO me3_install_claim_states (state, redirect_path, install_id, expires_at, created_at)
-     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `INSERT INTO me3_install_claim_states (state, redirect_path, install_id, expires_at, created_at, initiated_by, credential_generation)
+     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
      ON CONFLICT(state) DO UPDATE SET
        redirect_path = excluded.redirect_path,
        install_id = excluded.install_id,
-       expires_at = excluded.expires_at`,
+       expires_at = excluded.expires_at,
+       initiated_by = excluded.initiated_by,
+       credential_generation = excluded.credential_generation`,
   )
-    .bind(state, redirectPath || null, installId, expiresAt)
+    .bind(
+      state,
+      redirectPath || null,
+      installId,
+      expiresAt,
+      initiatedBy,
+      await getOwnerCredentialGeneration(env),
+    )
     .run();
 }
 
@@ -2053,7 +2125,7 @@ async function getMe3ClaimState(
   state: string,
 ): Promise<Me3ClaimStateRecord | null> {
   const result = await env.DB.prepare(
-    "SELECT state, redirect_path, install_id, expires_at FROM me3_install_claim_states WHERE state = ?",
+    "SELECT state, redirect_path, install_id, expires_at, initiated_by, credential_generation FROM me3_install_claim_states WHERE state = ?",
   )
     .bind(state)
     .first<Me3ClaimStateRecord>();
@@ -2170,7 +2242,7 @@ async function upsertMe3ClaimedOwner(
     `INSERT INTO owner_profile (id, email, name, username, bio, avatar_url, timezone, password_hash, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(id) DO UPDATE SET
-       email = excluded.email,
+       email = CASE WHEN owner_profile.password_hash IS NULL THEN excluded.email ELSE owner_profile.email END,
        name = excluded.name,
        username = COALESCE(owner_profile.username, excluded.username),
        updated_at = CURRENT_TIMESTAMP`,
@@ -2239,6 +2311,7 @@ async function setOwnerSession(
       sub: ownerId,
       iat: currentUnixTime(),
       exp: currentUnixTime() + ttlSeconds,
+      gen: await getOwnerCredentialGeneration(c.env),
     },
     sessionSecret,
   );
@@ -2262,14 +2335,14 @@ function clearOwnerSession(c: AppContext) {
 
 /** Issue time of a valid owner web session; payment approvals require a recent one. */
 async function ownerSessionIssuedAt(c: AppContext): Promise<number | null> {
-  const token = getCookie(c, SESSION_COOKIE_NAME);
-  if (!token) return null;
-  const payload = await verifySessionToken(token, await getOrCreateInstallSessionSecret(c.env));
-  if (!payload || payload.exp <= currentUnixTime() || payload.sub !== "owner") return null;
-  return payload.iat;
+  return (await getOwnerSessionPayload(c))?.iat ?? null;
 }
 
 async function getSessionOwnerId(c: AppContext): Promise<string | null> {
+  return (await getOwnerSessionPayload(c))?.sub ?? null;
+}
+
+async function getOwnerSessionPayload(c: AppContext): Promise<SessionPayload | null> {
   const token = getCookie(c, SESSION_COOKIE_NAME);
   if (!token) return null;
 
@@ -2279,8 +2352,10 @@ async function getSessionOwnerId(c: AppContext): Promise<string | null> {
   );
   if (!payload || payload.exp <= currentUnixTime()) return null;
   if (payload.sub !== "owner") return null;
+  // A password change, reset or "sign out everywhere" retires sessions issued before it.
+  if (!(await isCurrentOwnerCredentialGeneration(c.env, payload.gen))) return null;
 
-  return payload.sub;
+  return payload;
 }
 
 async function signSessionToken(payload: SessionPayload, secret: string): Promise<string> {

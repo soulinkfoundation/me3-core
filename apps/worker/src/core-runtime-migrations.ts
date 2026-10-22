@@ -708,6 +708,20 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.batch(MAILBOX_INSTRUCTION_REPLAY_STATEMENTS.map(sql => db.prepare(sql)));
     },
   },
+  // Owner credential generation: password changes retire older sessions, phone tokens and ME3 claims.
+  {
+    id: "0086_owner_credential_generation",
+    checksum: "2026-10-22-owner-credential-generation-v1",
+    async apply(db) {
+      if (await tableExists(db, "mobile_refresh_tokens")) {
+        await addColumnIfMissing(db, "mobile_refresh_tokens", "credential_generation", "TEXT");
+      }
+      if (await tableExists(db, "me3_install_claim_states")) {
+        await addColumnIfMissing(db, "me3_install_claim_states", "initiated_by", "TEXT NOT NULL DEFAULT 'anonymous'");
+        await addColumnIfMissing(db, "me3_install_claim_states", "credential_generation", "TEXT");
+      }
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;
