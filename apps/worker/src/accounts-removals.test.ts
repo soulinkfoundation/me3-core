@@ -6,7 +6,8 @@ import type { Env } from "./types";
 
 // Failure modes: a deleted website payment is re-created by the next sync; removing a
 // customer leaves them listed or drops a different customer; removing a customer
-// silently deletes real income the owner kept; a removed customer who books again stays hidden.
+// silently deletes real income the owner kept; a removed customer who books again stays hidden;
+// every Accounts open rewrites all past sales, or skipping unchanged sales misses a later change.
 const databases: DatabaseSync[] = [];
 afterEach(() => { databases.splice(0).forEach((db) => db.close()); });
 
@@ -46,10 +47,32 @@ function fixture() {
      'confirmed', 'pi_${id}', 500, 'eur', 'succeeded', '${paidAt}', '${paidAt}')`);
   const income = async () => (await listFinancialEntries(env, "owner", new URLSearchParams("entryType=income"))).entries;
   const customers = async () => (await listAccountCustomers(env, "owner", new URLSearchParams())).customers;
-  return { env, book, income, customers };
+  return { env, raw, book, income, customers };
 }
 
 describe("Accounts removals with real SQLite", () => {
+  it("writes only new or changed website sales when Accounts opens", async () => {
+    const f = fixture();
+    const batch = f.env.DB.batch.bind(f.env.DB);
+    let written = 0;
+    f.env.DB.batch = (async (statements: D1PreparedStatement[]) => { written += statements.length; return batch(statements); }) as typeof f.env.DB.batch;
+    f.book("b1", "a@example.com", "2026-06-22T10:00:00Z");
+    f.book("b2", "b@example.com", "2026-06-23T10:00:00Z");
+    expect(await f.income()).toHaveLength(2);
+    expect(written).toBe(2);
+
+    written = 0;
+    await f.income();
+    await f.customers();
+    expect(written).toBe(0);
+
+    f.raw.exec("UPDATE bookings SET amount_paid = 900 WHERE id = 'b2'");
+    const entries = await f.income();
+    expect(written).toBe(1);
+    expect(entries.find((entry) => entry.customerEmail === "b@example.com")).toMatchObject({ amountCents: 900 });
+    expect(entries).toHaveLength(2);
+  });
+
   it("keeps a deleted website payment deleted across syncs", async () => {
     const f = fixture();
     f.book("b1", "test@example.com", "2026-06-22T10:00:00Z");

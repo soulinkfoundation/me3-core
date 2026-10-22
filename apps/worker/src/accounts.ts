@@ -915,89 +915,114 @@ export async function syncWebsiteIncomeEntries(env: Env, userId: string) {
        AND b.payment_status = 'succeeded' AND COALESCE(b.amount_paid, 0) > 0`,
   ).bind(userId, userId).all<WebsiteIncomeSource>();
 
-  let synced = 0;
-  for (const source of result.results || []) {
-    if (!(await upsertWebsiteIncomeEntry(env, userId, source))) continue;
-    synced++;
+  const sources = result.results || [];
+  if (!sources.length) return { synced: 0 };
+
+  // Read what Accounts already holds once, then write only new or changed sales in one batch,
+  // so opening Accounts no longer rewrites every past order and booking.
+  const [existingResult, removalsResult] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, source_ref, payment_intent_id, date, amount_cents, gross_amount_cents, refunded_amount_cents,
+              currency, status, customer_name, customer_email, site_id, item_ref, item_title
+       FROM financial_entries
+       WHERE user_id = ? AND (source_ref LIKE 'website:%' OR payment_intent_id IS NOT NULL)`,
+    ).bind(userId).all<WebsiteIncomeEntryRow>(),
+    env.DB.prepare("SELECT source_ref, payment_intent_id FROM financial_entry_removals WHERE user_id = ?")
+      .bind(userId).all<{ source_ref: string; payment_intent_id: string | null }>(),
+  ]);
+  const bySourceRef = new Map<string, WebsiteIncomeEntryRow>();
+  const byPaymentIntent = new Map<string, WebsiteIncomeEntryRow>();
+  const remember = (row: WebsiteIncomeEntryRow) => {
+    if (row.source_ref) bySourceRef.set(row.source_ref, row);
+    if (row.payment_intent_id && !byPaymentIntent.has(row.payment_intent_id)) byPaymentIntent.set(row.payment_intent_id, row);
+  };
+  (existingResult.results || []).forEach(remember);
+  const removedRefs = new Set((removalsResult.results || []).map((row) => row.source_ref));
+  const removedPaymentIntents = new Set((removalsResult.results || []).flatMap((row) => row.payment_intent_id ? [row.payment_intent_id] : []));
+
+  const statements: D1PreparedStatement[] = [];
+  for (const source of sources) {
+    const currency = parseCurrency(source.currency);
+    const customerEmail = normalizeCustomerEmail(source.customer_email);
+    const gross = Number(source.gross_amount_cents);
+    const refunded = Math.min(gross, Math.max(0, Number(source.refunded_amount_cents) || 0));
+    if (!currency || !customerEmail || !Number.isSafeInteger(gross) || gross <= 0) continue;
+    const sourceRef = `website:${source.source_kind}:${source.source_id}`;
+    const existing = bySourceRef.get(sourceRef) || (source.payment_intent_id ? byPaymentIntent.get(source.payment_intent_id) : undefined);
+    if (!existing && (removedRefs.has(sourceRef) || (source.payment_intent_id && removedPaymentIntents.has(source.payment_intent_id)))) continue;
+    const next: WebsiteIncomeEntryRow = {
+      id: existing?.id || crypto.randomUUID(),
+      source_ref: existing ? existing.source_ref : sourceRef,
+      payment_intent_id: source.payment_intent_id || existing?.payment_intent_id || null,
+      date: source.date,
+      amount_cents: gross - refunded,
+      gross_amount_cents: gross,
+      refunded_amount_cents: refunded,
+      currency,
+      status: source.status,
+      customer_name: source.customer_name.trim() || null,
+      customer_email: customerEmail,
+      site_id: source.site_id,
+      item_ref: source.item_ref,
+      item_title: source.item_title,
+    };
+    if (existing && WEBSITE_INCOME_SYNCED_FIELDS.every((field) => existing[field] === next[field])) continue;
+    statements.push(existing
+      ? env.DB.prepare(
+        `UPDATE financial_entries
+         SET date = ?, amount_cents = ?, gross_amount_cents = ?, refunded_amount_cents = ?,
+             currency = ?, status = ?, customer_name = ?, customer_email = ?,
+             payment_intent_id = ?, site_id = ?, item_ref = ?, item_title = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND user_id = ?`,
+      ).bind(
+        next.date, next.amount_cents, next.gross_amount_cents, next.refunded_amount_cents,
+        next.currency, next.status, next.customer_name, next.customer_email,
+        next.payment_intent_id, next.site_id, next.item_ref, next.item_title,
+        next.id, userId,
+      )
+      : env.DB.prepare(
+        `INSERT OR IGNORE INTO financial_entries
+           (id, user_id, entry_type, date, description, amount_cents, gross_amount_cents,
+            refunded_amount_cents, currency, status, source, source_ref, customer_name,
+            customer_email, payment_intent_id, site_id, item_ref, item_title)
+         VALUES (?, ?, 'income', ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        next.id, userId, next.date, source.description, next.amount_cents, next.gross_amount_cents,
+        next.refunded_amount_cents, next.currency, next.status, sourceRef, next.customer_name,
+        next.customer_email, next.payment_intent_id, next.site_id, next.item_ref, next.item_title,
+      ));
+    // A later order or booking paid with the same intent updates this row rather than adding another.
+    remember(next);
   }
-  return { synced };
+  for (let index = 0; index < statements.length; index += WEBSITE_INCOME_BATCH_SIZE) {
+    await env.DB.batch(statements.slice(index, index + WEBSITE_INCOME_BATCH_SIZE));
+  }
+  return { synced: statements.length };
 }
 
-async function upsertWebsiteIncomeEntry(
-  env: Env,
-  userId: string,
-  source: WebsiteIncomeSource,
-) {
-  const currency = parseCurrency(source.currency);
-  const customerEmail = normalizeCustomerEmail(source.customer_email);
-  const gross = Number(source.gross_amount_cents);
-  const refunded = Math.min(gross, Math.max(0, Number(source.refunded_amount_cents) || 0));
-  if (!currency || !customerEmail || !Number.isSafeInteger(gross) || gross <= 0) return false;
-  const sourceRef = `website:${source.source_kind}:${source.source_id}`;
-  const existing = await env.DB.prepare(
-    `SELECT id FROM financial_entries
-     WHERE user_id = ? AND (source_ref = ? OR (? IS NOT NULL AND payment_intent_id = ?))
-     ORDER BY CASE WHEN source_ref = ? THEN 0 ELSE 1 END LIMIT 1`,
-  ).bind(
-    userId,
-    sourceRef,
-    source.payment_intent_id,
-    source.payment_intent_id,
-    sourceRef,
-  ).first<{ id: string }>();
-  if (!existing && await isFinancialEntryRemoved(env, userId, sourceRef, source.payment_intent_id)) return false;
-  if (existing) {
-    await env.DB.prepare(
-      `UPDATE financial_entries
-       SET date = ?, amount_cents = ?, gross_amount_cents = ?, refunded_amount_cents = ?,
-           currency = ?, status = ?, customer_name = ?, customer_email = ?,
-           payment_intent_id = COALESCE(?, payment_intent_id), site_id = ?, item_ref = ?, item_title = ?,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ? AND user_id = ?`,
-    ).bind(
-      source.date,
-      gross - refunded,
-      gross,
-      refunded,
-      currency,
-      source.status,
-      source.customer_name.trim() || null,
-      customerEmail,
-      source.payment_intent_id,
-      source.site_id,
-      source.item_ref,
-      source.item_title,
-      existing.id,
-      userId,
-    ).run();
-    return true;
-  }
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO financial_entries
-       (id, user_id, entry_type, date, description, amount_cents, gross_amount_cents,
-        refunded_amount_cents, currency, status, source, source_ref, customer_name,
-        customer_email, payment_intent_id, site_id, item_ref, item_title)
-     VALUES (?, ?, 'income', ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(
-    crypto.randomUUID(),
-    userId,
-    source.date,
-    source.description,
-    gross - refunded,
-    gross,
-    refunded,
-    currency,
-    source.status,
-    sourceRef,
-    source.customer_name.trim() || null,
-    customerEmail,
-    source.payment_intent_id,
-    source.site_id,
-    source.item_ref,
-    source.item_title,
-  ).run();
-  return true;
-}
+type WebsiteIncomeEntryRow = {
+  id: string;
+  source_ref: string | null;
+  payment_intent_id: string | null;
+  date: string;
+  amount_cents: number;
+  gross_amount_cents: number | null;
+  refunded_amount_cents: number | null;
+  currency: string;
+  status: string;
+  customer_name: string | null;
+  customer_email: string | null;
+  site_id: string | null;
+  item_ref: string | null;
+  item_title: string | null;
+};
+
+const WEBSITE_INCOME_SYNCED_FIELDS = [
+  "payment_intent_id", "date", "amount_cents", "gross_amount_cents", "refunded_amount_cents", "currency",
+  "status", "customer_name", "customer_email", "site_id", "item_ref", "item_title",
+] as const satisfies readonly (keyof WebsiteIncomeEntryRow)[];
+const WEBSITE_INCOME_BATCH_SIZE = 50;
 
 export async function getFinancialStats(env: Env, userId: string, entryTypeValue: string | null) {
   const entryType = parseEntryType(entryTypeValue);
