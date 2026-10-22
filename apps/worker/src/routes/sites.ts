@@ -2116,7 +2116,7 @@ function siteStorageActivationRequired(c: AppContext) {
   );
 }
 
-export function registerPublicSiteRoutes(app: AppHono) {
+export function registerPublicSiteRoutes(app: AppHono, deps: Pick<OwnerRouteDeps, "requireOwner">) {
   app.get("/", async (c) => {
     const requestHost = new URL(c.req.url).hostname;
     const site = await getPublicSiteForHost(c.env, requestHost);
@@ -2131,6 +2131,11 @@ export function registerPublicSiteRoutes(app: AppHono) {
     const username = normalizeUsername(c.req.param("username"));
     const site = await getSiteByUsername(c.env, username);
     if (!site) return c.html(renderNotFoundPage("Site not found"), 404);
+    // Unpublished and private snapshots are the owner's working copy, so only their session may preview them.
+    if (!site.published_at && (await deps.requireOwner(c)) !== site.user_id) {
+      c.header("Cache-Control", "no-store");
+      return c.html(renderNotFoundPage("Site not found"), 404);
+    }
 
     const requestedPath = c.req.path.replace(`/preview/${username}/`, "") || "index.html";
     return serveSiteFileResponse(c.env, site, requestedPath, false, "", c.req.raw);

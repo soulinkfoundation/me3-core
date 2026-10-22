@@ -4079,6 +4079,29 @@ describe("ME3 Worker auth", () => {
     expect(revoked.headers.get("Cache-Control")).toBe("no-store");
   });
 
+  it("only previews unpublished site snapshots for the owner session", async () => {
+    const env = createEnv();
+    const session = cookieHeader(await bootstrap(env));
+    addBookableSite(env);
+    const site = env.sites.find(candidate => candidate.id === "site-booking")!;
+    site.user_id = env.owner!.id;
+    site.published_at = null;
+    addSiteFileText(env, "site-booking", "public/index.html", "<html>Private draft</html>", "text/html");
+    const preview = (headers?: HeadersInit) =>
+      app.fetch(new Request("http://localhost/preview/owner/", { headers }), env);
+
+    const anonymous = await preview();
+    expect(anonymous.status).toBe(404);
+    expect(anonymous.headers.get("Cache-Control")).toBe("no-store");
+    expect(await anonymous.text()).not.toContain("Private draft");
+    const anonymousJson = await app.fetch(new Request("http://localhost/preview/owner/me.json"), env);
+    expect(anonymousJson.status).toBe(404);
+
+    const owner = await preview({ Cookie: session });
+    expect(owner.status).toBe(200);
+    expect(await owner.text()).toContain("Private draft");
+  });
+
   it("revalidates mutable public site images while adding safe response headers", async () => {
     const env = createEnv();
     addBookableSite(env);

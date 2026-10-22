@@ -1544,7 +1544,7 @@ registerLocationsRoutes(app, { requireOwner, unauthorized });
 
 registerCoreGithubUpdaterRoutes(app, { requireOwner, unauthorized });
 
-registerPublicSiteRoutes(app);
+registerPublicSiteRoutes(app, { requireOwner });
 
 app.notFound(async (c) => {
   if (await isPublicSiteHost(c.env, c.req.url)) {
