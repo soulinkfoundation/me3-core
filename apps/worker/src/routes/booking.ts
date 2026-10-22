@@ -41,6 +41,7 @@ import {
   isEventBookingType,
 } from "../event-booking";
 import { validExternalMeetingUrl } from "../booking-meetings";
+import { BookingChangeError, cancelOwnerBooking, rescheduleOwnerBooking } from "../booking-changes";
 
 export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized }: OwnerRouteDeps) {
   app.get("/api/sites/:username/booking-meetings", async (c) => {
@@ -75,6 +76,29 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
       ).bind(site.id, setting.offerId, setting.meetingUrl)),
     ]);
     return c.json({ ok: true });
+  });
+
+  // The calendar's "Cancel booking" action. The guest is emailed and their join link stops working.
+  app.delete("/api/book/cancel/:id", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    try { return c.json(await cancelOwnerBooking(c.env, ownerId, c.req.param("id"))); }
+    catch (error) {
+      if (error instanceof BookingChangeError) return c.json({ error: error.message }, error.status);
+      throw error;
+    }
+  });
+
+  // Moves a booking in place so the guest's existing join link keeps working at the new time.
+  app.post("/api/bookings/:id/reschedule", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const body = await c.req.json<{ startsAt?: unknown }>().catch(() => null);
+    try { return c.json(await rescheduleOwnerBooking(c.env, ownerId, c.req.param("id"), body?.startsAt)); }
+    catch (error) {
+      if (error instanceof BookingChangeError) return c.json({ error: error.message }, error.status);
+      throw error;
+    }
   });
 
   app.get("/api/book/:username/slots", async (c) => {

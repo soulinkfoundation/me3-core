@@ -267,6 +267,7 @@ const calendarLoaded = ref(false);
 const error = ref("");
 const updatingReminderId = ref<string | null>(null);
 const cancellingBookingId = ref<string | null>(null);
+const reschedulingBookingId = ref<string | null>(null);
 const deletingEventId = ref<string | null>(null);
 const removingSourceId = ref<string | null>(null);
 const removingImportedEventId = ref<string | null>(null);
@@ -1593,6 +1594,22 @@ async function handleCancelBooking(event: CalendarAgendaEvent) {
           : "Failed to cancel booking";
   } finally {
     cancellingBookingId.value = null;
+  }
+}
+
+async function handleRescheduleBooking(event: CalendarAgendaEvent, startsAt: string) {
+  if (event.entryType !== "booking" && event.sourceLabel !== "Booking") return;
+  if (reschedulingBookingId.value) return;
+  reschedulingBookingId.value = event.id;
+  try {
+    await api.post(`/bookings/${event.id}/reschedule`, { startsAt });
+    toastSuccess("Booking moved. The guest's link still works.");
+    closeBoardContext();
+    await reloadCalendar();
+  } catch (err) {
+    toastFromUnknown(err, "Failed to move booking");
+  } finally {
+    reschedulingBookingId.value = null;
   }
 }
 
@@ -3657,10 +3674,12 @@ onBeforeUnmount(() => {
       :event="selectedContextEvent"
       :anchor="boardContextAnchor"
       :cancelling-booking="cancellingBookingId === selectedContextEvent.id"
+      :rescheduling-booking="reschedulingBookingId === selectedContextEvent.id"
       @close="closeBoardContext"
       @event-action="handleEventAction"
       @event-danger-action="handleEventDangerAction"
       @cancel-booking="handleCancelBooking"
+      @reschedule-booking="handleRescheduleBooking"
     />
 
     <CalendarQuickEventPopover

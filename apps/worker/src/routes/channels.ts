@@ -477,8 +477,14 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
       return c.json({ error: "This booking link is no longer valid" }, 403);
     }
     const now = Date.now();
-    if (now < Date.parse(booking.starts_at) - 15 * 60_000 || now > Date.parse(booking.ends_at) + 30 * 60_000) {
-      return c.json({ error: "This call is available from 15 minutes before its start until 30 minutes after it ends", startsAt: booking.starts_at }, 403);
+    const opensAt = Date.parse(booking.starts_at) - 15 * 60_000;
+    // The window follows the booking's current time, so a moved booking's existing link opens at its new time.
+    if (now < opensAt) {
+      return c.json({ error: "This call opens 15 minutes before it starts", code: "booking_not_open",
+        startsAt: booking.starts_at, opensAt: new Date(opensAt).toISOString() }, 403);
+    }
+    if (now > Date.parse(booking.ends_at) + 30 * 60_000) {
+      return c.json({ error: "This booking call has ended", code: "booking_ended", startsAt: booking.starts_at }, 403);
     }
     return c.json({ booking: {
       id: booking.id, title: booking.meeting_title || "Booking", guestName: booking.guest_name,

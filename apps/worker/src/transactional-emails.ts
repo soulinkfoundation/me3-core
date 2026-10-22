@@ -193,6 +193,51 @@ You can reply to this email to contact ${details.hostName}.
   });
 }
 
+/** Tells the guest their booking moved or was cancelled. A moved Soulink booking keeps its join link. */
+export async function sendGuestBookingChangeEmail(
+  env: Env,
+  details: BookingEmailDetails & { change: "rescheduled" | "cancelled"; previousStartsAt?: string | null },
+): Promise<TransactionalEmailResult> {
+  const startTime = formatBookingTime(details.startsAt, details.timezone);
+  const previousTime = details.previousStartsAt ? formatBookingTime(details.previousStartsAt, details.timezone) : null;
+  const moved = details.change === "rescheduled";
+  const calendarUrl = moved ? googleCalendarUrl(details) : null;
+  const subject = `${moved ? "Booking moved" : "Booking cancelled"}: ${details.bookingTitle}`;
+  const textBody = `Hi ${details.guestName},
+
+${moved ? `${details.hostName} moved your booking.` : `${details.hostName} cancelled your booking.`}
+
+${details.bookingTitle} with ${details.hostName}
+${moved ? `New time: ${startTime}${previousTime ? `\nWas: ${previousTime}` : ""}` : startTime}
+${moved && details.meetingUrl ? `Join call (same link as before): ${details.meetingUrl}\n` : ""}${calendarUrl ? `Add to Google Calendar: ${calendarUrl}\n` : ""}
+You can reply to this email to contact ${details.hostName}.
+
+- ${details.hostName}`;
+  const htmlBody = bookingEmailHtml({
+    title: moved ? "Booking moved" : "Booking cancelled",
+    subtitle: moved ? "Your meeting has a new time" : "This meeting will not go ahead",
+    rows: [
+      ["With", details.hostName],
+      [moved ? "New time" : "When", startTime],
+      ...(moved && previousTime ? [["Was", previousTime] as [string, string]] : []),
+      ...(moved && details.meetingUrl ? [["Join call", details.meetingUrl] as [string, string]] : []),
+    ],
+    notesLabel: "Your notes",
+    calendarUrl,
+    footer: `Reply to this email to contact ${escapeHtml(details.hostName)}.`,
+  });
+  return sendWorkflowEmail(env, details.ownerId, {
+    operationId: details.bookingId ? `booking:${details.bookingId}:${details.change}:${details.startsAt}` : undefined,
+    toAddress: details.guestEmail,
+    subject,
+    textBody,
+    htmlBody,
+    fromName: details.hostName,
+    replyToAddress: details.hostEmail || null,
+    metadata: { booking_id: details.bookingId, booking_email: `guest_${details.change}` },
+  });
+}
+
 export async function sendHostBookingConfirmationEmail(
   env: Env,
   details: BookingEmailDetails,

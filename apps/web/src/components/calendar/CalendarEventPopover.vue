@@ -7,6 +7,7 @@ const props = defineProps<{
   event: CalendarAgendaEvent;
   anchor: CalendarContextAnchor;
   cancellingBooking?: boolean;
+  reschedulingBooking?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -14,7 +15,26 @@ const emit = defineEmits<{
   (e: "event-action", event: CalendarAgendaEvent): void;
   (e: "event-danger-action", event: CalendarAgendaEvent): void;
   (e: "cancel-booking", event: CalendarAgendaEvent): void;
+  (e: "reschedule-booking", event: CalendarAgendaEvent, startsAt: string): void;
 }>();
+
+// Moving keeps the booking (and the guest's join link); only its time changes.
+const moving = ref(false);
+const newStart = ref("");
+function localInputValue(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+function startMoving() {
+  newStart.value = localInputValue(props.event.startsAt);
+  moving.value = true;
+}
+function confirmMove() {
+  const date = new Date(newStart.value);
+  if (Number.isNaN(date.getTime())) return;
+  emit("reschedule-booking", props.event, date.toISOString());
+}
+watch(() => props.event.id, () => { moving.value = false; });
 
 const closeButton = ref<HTMLButtonElement | null>(null);
 const resolvedTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -143,15 +163,27 @@ watch(
         >
           {{ event.dangerActionLabel }}
         </button>
-        <button
-          v-if="event.sourceLabel === 'Booking'"
-          type="button"
-          class="is-danger"
-          :disabled="cancellingBooking"
-          @click="emit('cancel-booking', event)"
-        >
-          {{ cancellingBooking ? "Cancelling…" : "Cancel booking" }}
-        </button>
+        <template v-if="event.sourceLabel === 'Booking' && moving">
+          <label class="booking-move">
+            <span>New start</span>
+            <input v-model="newStart" type="datetime-local" required />
+          </label>
+          <button type="button" :disabled="reschedulingBooking || !newStart" @click="confirmMove">
+            {{ reschedulingBooking ? "Moving…" : "Move and email guest" }}
+          </button>
+          <button type="button" :disabled="reschedulingBooking" @click="moving = false">Keep time</button>
+        </template>
+        <template v-else-if="event.sourceLabel === 'Booking'">
+          <button type="button" :disabled="cancellingBooking" @click="startMoving">Move booking</button>
+          <button
+            type="button"
+            class="is-danger"
+            :disabled="cancellingBooking"
+            @click="emit('cancel-booking', event)"
+          >
+            {{ cancellingBooking ? "Cancelling…" : "Cancel booking" }}
+          </button>
+        </template>
       </footer>
     </aside>
   </Teleport>
@@ -301,6 +333,25 @@ footer button {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.booking-move {
+  display: grid;
+  gap: 4px;
+  flex-basis: 100%;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.booking-move input {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--ui-border, var(--color-border));
+  border-radius: var(--ui-radius-sm, 8px);
+  background: var(--ui-surface, var(--color-bg));
+  color: var(--ui-text, var(--color-text));
+  font: inherit;
 }
 
 footer button.is-danger {
