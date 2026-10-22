@@ -12301,7 +12301,7 @@ describe("ME3 Worker auth", () => {
     }
   });
 
-  async function activateListMailbox(env: ReturnType<typeof createEnv>, session: string, headers: string[]) {
+  async function activateListMailbox(env: ReturnType<typeof createEnv>, session: string, headers: string[], toHeader = "name@example.com") {
     await app.fetch(
       new Request("http://localhost/api/mailbox", {
         method: "PUT",
@@ -12318,7 +12318,7 @@ describe("ME3 Worker auth", () => {
       createInboundEmailMessage(
         [
           "From: List <news@example.com>",
-          "To: name@example.com",
+          `To: ${toHeader}`,
           "Subject: Newsletter",
           "Message-ID: <newsletter@example.com>",
           ...headers,
@@ -12339,7 +12339,7 @@ describe("ME3 Worker auth", () => {
     return body.messages[0]!.id;
   }
 
-  it("sends a mailto unsubscribe itself from the delivered-to address", async () => {
+  it("sends a plain mailto unsubscribe to the sender's domain from the delivered-to address", async () => {
     const env = createEnv();
     const session = cookieHeader(await bootstrap(env));
     await app.fetch(
@@ -12362,8 +12362,8 @@ describe("ME3 Worker auth", () => {
       env,
     );
     const messageId = await activateListMailbox(env, session, [
-      "List-Unsubscribe: <mailto:leave@list.example?subject=unsubscribe%20token-1>",
-    ]);
+      "List-Unsubscribe: <mailto:leave@lists.example.com?subject=Change%20payout&body=Send%20the%20money>",
+    ], "ceo@example.com");
 
     const response = await app.fetch(
       new Request(`http://localhost/api/mailbox/messages/${messageId}/unsubscribe`, {
@@ -12373,12 +12373,41 @@ describe("ME3 Worker auth", () => {
       env,
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, mode: "mailto", sentTo: "leave@list.example" });
+    expect(await response.json()).toEqual({ ok: true, mode: "mailto", sentTo: "leave@lists.example.com" });
+    // The sender wrote the To header, subject and body; none of them reaches the sent mail (me3-t2x8).
+    expect(env.emailSends).toHaveLength(1);
     expect(env.emailSends[0]).toMatchObject({
       from: { email: "name@example.com" },
-      to: "leave@list.example",
-      subject: "unsubscribe token-1",
+      to: "leave@lists.example.com",
+      subject: "Unsubscribe",
     });
+    expect(JSON.stringify(env.emailSends[0])).not.toMatch(/money|payout/i);
+  });
+
+  it("opens a mailto to another domain for the owner instead of sending it (me3-t2x8)", async () => {
+    const env = createEnv();
+    const session = cookieHeader(await bootstrap(env));
+    await app.fetch(
+      new Request("http://localhost/api/email-provider-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Cookie: session },
+        body: JSON.stringify({
+          activeProviderId: "cloudflare-email",
+          providers: [{ id: "cloudflare-email", transport: "binding", fromAddress: "owner@example.com", fromName: "ME3 Owner", sendingDomain: "example.com" }],
+        }),
+      }),
+      env,
+    );
+    const mailto = "mailto:accounts@bank.example?subject=Change%20of%20payout%20account&body=Please%20update%20my%20IBAN";
+    const messageId = await activateListMailbox(env, session, [`List-Unsubscribe: <${mailto}>`], "ceo@example.com");
+
+    const response = await app.fetch(
+      new Request(`http://localhost/api/mailbox/messages/${messageId}/unsubscribe`, { method: "POST", headers: { Cookie: session } }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, mode: "open", url: mailto });
+    expect(env.emailSends).toHaveLength(0);
   });
 
   it("hands back the list's page when one-click is refused and no mail can be sent", async () => {

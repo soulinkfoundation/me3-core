@@ -1,4 +1,7 @@
+import { parseEmailAddressHeader } from "../../../../shared/email-headers";
 import { ownerInstructionAddresses } from "../mailbox-instructions";
+import { dkimDomainAligned } from "../mailbox-sender-auth";
+import { parseJsonRecord } from "../workspace-input";
 import {
   activateAgentMailbox,
   createAgentMailboxDraft,
@@ -28,6 +31,7 @@ import {
 } from "../email-providers";
 import type { AppContext, AppHono } from "../http/types";
 import {
+  getHeaderValue,
   getStoredMailboxAttachments,
   loadDraftProviderAttachments,
   resolveMailboxUnsubscribeAction,
@@ -538,7 +542,7 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     if (!ownerId) return unauthorized(c);
 
     const row = await c.env.DB.prepare(
-      `SELECT m.id, m.mailbox_id, m.direction, m.message_kind, m.to_address, m.raw_headers_json
+      `SELECT m.id, m.mailbox_id, m.direction, m.message_kind, m.raw_headers_json, m.metadata_json
        FROM mailbox_messages m
        JOIN mailbox_aliases a ON a.id = m.mailbox_id
        WHERE a.user_id = ? AND m.id = ?`,
@@ -549,8 +553,8 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
         mailbox_id: string;
         direction: string;
         message_kind: string;
-        to_address: string | null;
         raw_headers_json: string | null;
+        metadata_json: string | null;
       }>();
     if (!row) return c.json({ error: "Message not found" }, 404);
     if (row.direction !== "inbound" || row.message_kind !== "email") {
@@ -561,12 +565,14 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     if (!action) return c.json({ error: "This message does not include an unsubscribe action" }, 404);
 
     // Every outcome is something the client can finish: done here, or a page or mail link to open.
-    // One-click first, then a mail ME3 sends itself, then the list's own page.
+    // One-click first, then the list's own page. The sender wrote the mailto, so ME3 sends it itself
+    // only when there is no page and it is a plain "Unsubscribe" to the sender's own domain; any other
+    // mailto opens in the owner's mail app, where they see who it goes to and what it says.
     if (action.mode === "one_click") {
       const status = await postOneClickUnsubscribe(action.url);
       if (status !== null) return c.json({ ok: true, mode: "one_click", status });
     }
-    if (action.mailtoUrl) {
+    if (action.mode === "mailto" && action.mailtoUrl) {
       const sentTo = await sendMailtoUnsubscribe(c.env, ownerId, row, action.mailtoUrl);
       if (sentTo) return c.json({ ok: true, mode: "mailto", sentTo });
     }
@@ -873,31 +879,38 @@ async function postOneClickUnsubscribe(url: string): Promise<number | null> {
   }
 }
 
-// Sends the list's mailto unsubscribe from the address the mail was delivered to, which is how the list
-// knows the subscriber. Returns the address it went to, or null when ME3 could not send it.
+// Sends a plain "Unsubscribe" to the list's mailto address, from the address the mail was delivered to
+// (the envelope recipient, never the sender-written To header), which is how the list knows the
+// subscriber. Only a recipient on the From domain is mailed; the mailto's subject and body are never
+// used. Returns the address it went to, or null when ME3 will not or could not send it.
 async function sendMailtoUnsubscribe(
   env: Env,
   ownerId: string,
-  row: { id: string; mailbox_id: string; to_address: string | null },
+  row: { id: string; mailbox_id: string; raw_headers_json: string | null; metadata_json: string | null },
   mailtoUrl: string,
 ): Promise<string | null> {
-  const request = parseMailtoUnsubscribe(mailtoUrl);
-  if (!request) return null;
+  const toAddress = parseMailtoUnsubscribeAddress(mailtoUrl);
+  if (!toAddress) return null;
+  const headers = parseJsonRecord(row.raw_headers_json);
+  const fromDomain = parseEmailAddressHeader(getHeaderValue(headers, "from") || "")?.address.split("@")[1] || "";
+  const toDomain = toAddress.slice(toAddress.lastIndexOf("@") + 1);
+  if (!fromDomain || !dkimDomainAligned(fromDomain, toDomain)) return null;
   try {
-    const delivered = row.to_address?.trim().toLowerCase() || "";
+    const envelopeTo = parseJsonRecord(row.metadata_json).envelopeTo;
+    const delivered = typeof envelopeTo === "string" ? envelopeTo.trim().toLowerCase() : "";
     await sendEmailWithProvider(env, ownerId, {
       purpose: "workflow",
       mailboxId: row.mailbox_id,
       operationId: `mailbox-unsubscribe:${row.id}`,
-      fromAddress: delivered && !delivered.endsWith("@me3.local") ? delivered : null,
-      toAddress: request.toAddress,
-      subject: request.subject,
-      textBody: request.textBody,
+      fromAddress: delivered.includes("@") && !delivered.endsWith("@me3.local") ? delivered : null,
+      toAddress,
+      subject: "Unsubscribe",
+      textBody: "Unsubscribe",
       metadata: { mailbox_message_id: row.id, me3_action: "list_unsubscribe" },
       createdBy: "owner",
       approvedByUserId: ownerId,
     });
-    return request.toAddress;
+    return toAddress;
   } catch (error) {
     console.warn("Mailbox mailto unsubscribe send failed; handing back the list's link", {
       messageId: row.id,
@@ -907,19 +920,19 @@ async function sendMailtoUnsubscribe(
   }
 }
 
-// `mailto:list@example.com?subject=unsubscribe%20token&body=...` as a message ME3 can send itself.
-export function parseMailtoUnsubscribe(
-  mailto: string,
-): { toAddress: string; subject: string; textBody: string } | null {
+// The one recipient of `mailto:list@example.com?subject=...`; its query is ignored.
+export function parseMailtoUnsubscribeAddress(mailto: string): string | null {
   const trimmed = mailto.trim();
   if (!/^mailto:/i.test(trimmed)) return null;
   const rest = trimmed.slice("mailto:".length);
   const queryIndex = rest.indexOf("?");
-  const addressPart = queryIndex === -1 ? rest : rest.slice(0, queryIndex);
-  const toAddress = decodeURIComponent(addressPart).split(",")[0]?.trim().toLowerCase() || "";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toAddress)) return null;
-  const params = new URLSearchParams(queryIndex === -1 ? "" : rest.slice(queryIndex + 1));
-  const subject = params.get("subject")?.trim() || "Unsubscribe";
-  const textBody = params.get("body")?.trim() || subject;
-  return { toAddress, subject, textBody };
+  let addressPart: string;
+  try {
+    addressPart = decodeURIComponent(queryIndex === -1 ? rest : rest.slice(0, queryIndex));
+  } catch {
+    return null;
+  }
+  const addresses = addressPart.split(",").map(address => address.trim().toLowerCase()).filter(Boolean);
+  if (addresses.length !== 1) return null;
+  return /^[^\s@<>,;:"()]+@[^\s@<>,;:"()]+\.[^\s@<>,;:"()]+$/.test(addresses[0]) ? addresses[0] : null;
 }

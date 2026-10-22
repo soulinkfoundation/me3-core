@@ -760,7 +760,7 @@ function parseRawEmailHeaders(rawHeaders: string): Record<string, string> {
   return headers;
 }
 
-function getHeaderValue(headers: Record<string, unknown>, name: string): string | null {
+export function getHeaderValue(headers: Record<string, unknown>, name: string): string | null {
   const lowerName = name.toLowerCase();
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() === lowerName && typeof value === "string") {
