@@ -13657,6 +13657,7 @@ describe("ME3 Worker auth", () => {
     const failedRuntimeBody = JSON.parse(String(runtimeFetch.mock.calls[1]?.[1]?.body));
     const retriedRuntimeBody = JSON.parse(String(runtimeFetch.mock.calls[2]?.[1]?.body));
     expect(retriedRuntimeBody.sourceEventId).toBe(failedRuntimeBody.sourceEventId);
+    expect(retriedRuntimeBody.turnId).toBe(failedRuntimeBody.turnId);
   });
 
   it("downloads and transcribes Soulink voice turns once across runtime retries", async () => {

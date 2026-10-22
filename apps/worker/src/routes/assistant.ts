@@ -2010,7 +2010,8 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       .bind(connection.id)
       .run();
 
-    const turnId = crypto.randomUUID();
+    // Soulink retries the same message; the agent store binds a request to its first turn id.
+    const turnId = claimed.id;
     await updateAgentChannelInboundDispatchStatus(c.env, claimed.id, "pending", null);
     let resolution = readStoredSoulinkTurnResolution(claimed.event, turnInput);
     if (!resolution) {
