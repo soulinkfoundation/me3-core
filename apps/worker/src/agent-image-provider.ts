@@ -47,7 +47,8 @@ export async function generateAgentProviderImage(env: Env, model: string, prompt
     bytes = output instanceof ArrayBuffer ? new Uint8Array(output) : new Uint8Array(output.buffer, output.byteOffset, output.byteLength);
   } else if (typeof source === "string" && source.startsWith("https://")) {
     const url = new URL(source);
-    if (!url.hostname.endsWith(".r2.dev") || url.username || url.password) throw new Error("Image provider output URL is not an approved private transport");
+    // Unified Billing returns a presigned R2 URL (*.r2.cloudflarestorage.com); catalog examples use *.r2.dev.
+    if (!(url.hostname.endsWith(".r2.dev") || url.hostname.endsWith(".r2.cloudflarestorage.com")) || url.username || url.password) throw new Error("Image provider output URL is not an approved private transport");
     const response = await fetch(url, { redirect: "error", signal });
     bytes = await boundedResponseBytes(response, signal);
   } else {
@@ -70,9 +71,12 @@ export function verifiedImageCost(model: string, image: GeneratedProviderImage):
   // Official native output-tile price: https://developers.cloudflare.com/workers-ai/platform/pricing/
   if (model === "@cf/black-forest-labs/flux-2-klein-4b" && image.width === 1024 && image.height === 1024) return { baseCostUsd: 4 * 0.000287, inputTokens: 0, outputTokens: 0, pricingBasis: "workers-ai-flux-2-klein-4b-verified-output-tiles", usageReported: false };
   if (model !== "openai/gpt-image-2") return null;
-  // Direct Images API has text-only input here and no cache. Do not use per-image estimates.
+  // Direct Images API has text-only input here and no cache.
   // https://developers.cloudflare.com/ai/models/openai/gpt-image-2/
   // https://developers.openai.com/api/docs/guides/image-generation
+  // The AI binding returns only an image URL with no token usage, so price the
+  // requested medium 1024 square at the fixed estimate. Malformed usage still holds.
+  if (image.usage === undefined) return image.width === 1024 && image.height === 1024 ? { baseCostUsd: 0.053, inputTokens: 0, outputTokens: 0, pricingBasis: "gpt-image-2-medium-1024x1024-estimate", usageReported: false } : null;
   const usage = record(image.usage); const details = record(usage?.input_tokens_details);
   const integer = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
   if (!usage || !details || ![usage.input_tokens, usage.output_tokens, usage.total_tokens, details.text_tokens, details.image_tokens].every(integer)) return null;
