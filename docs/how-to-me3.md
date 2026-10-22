@@ -440,6 +440,16 @@ the staged counts/checksums/foreign keys/identity, and only then replaces the lo
 optional import SQL is mode `0600` and contains freshly generated installation credentials; treat
 it as a temporary secret and never commit or retain it as evidence.
 
+### Moving From Hosted By ME3
+
+Owners move a hosted install to their own accounts from ME3 Cloud: the installer creates an empty
+install in their Cloudflare and GitHub accounts and dispatches `restore-portable.yml` in the new
+repository with short-lived move secrets. The workflow downloads the retained `.me3export`, unlocks
+it, checks out the exact Core tag recorded in the archive, restores there, brings the database
+forward with this repository's D1 migrations, imports it into the empty remote D1 database, uploads
+the files to `SITE_ASSETS`, and deploys. ME3 Cloud removes the move secrets afterwards. The owner
+signs in with the export passphrase and changes it. `pnpm move-restore:test` proves the local steps.
+
 ### Explicitly Opt-In Cloudflare Drill
 
 The CLI never provisions resources or applies changes remotely. After the local restore passes,
