@@ -302,7 +302,9 @@ export function importIntoCloudflare({ database, r2Directory, work, root = REPO_
     }
     for (const file of objects) {
       const key = relative(r2Directory, file).split(sep).join("/");
-      wrangler(["r2", "object", "put", `${bucket}/${key}`, "--file", file, "--remote", "--config", "wrangler.toml"], root);
+      withRetries(() =>
+        wrangler(["r2", "object", "put", `${bucket}/${key}`, "--file", file, "--remote", "--config", "wrangler.toml"], root),
+      );
     }
   }
   return { objects: objects.length };
@@ -316,6 +318,21 @@ export function readSiteAssetsBucket(toml) {
     }
   }
   return null;
+}
+
+// Cloudflare's R2 API sometimes returns a 500 for an upload that works on a
+// second try; uploading the same object again is safe.
+const RETRY_DELAYS_MS = [2_000, 5_000, 15_000];
+
+function withRetries(action, delays = RETRY_DELAYS_MS) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return action();
+    } catch (error) {
+      if (attempt >= delays.length) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delays[attempt]);
+    }
+  }
 }
 
 function defaultWrangler(args, cwd) {

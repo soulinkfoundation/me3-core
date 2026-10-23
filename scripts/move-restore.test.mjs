@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
   buildD1Import,
+  importIntoCloudflare,
   downloadMoveExport,
   migrateRestoredDatabase,
   readArchiveCoreTag,
@@ -73,6 +74,37 @@ test("the D1 import creates every table first and leaves out Wrangler tables", (
       "1",
     );
     assert.doesNotMatch(query("SELECT name FROM sqlite_master;"), /_me3_import_value/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a file upload that Cloudflare fails once is retried", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "me3-move-r2-"));
+  try {
+    const database = path.join(directory, "restored.sqlite");
+    spawnSync("sqlite3", [database, "CREATE TABLE notes (id TEXT PRIMARY KEY);"]);
+    const r2Directory = path.join(directory, "r2");
+    mkdirSync(path.join(r2Directory, "sites"), { recursive: true });
+    writeFileSync(path.join(r2Directory, "sites", "avatar.jpg"), "image");
+    writeFileSync(
+      path.join(directory, "wrangler.toml"),
+      '[[r2_buckets]]\nbinding = "SITE_ASSETS"\nbucket_name = "owner-files"\n',
+    );
+    const work = path.join(directory, "work");
+    mkdirSync(work);
+    const uploads = [];
+    const wrangler = (args) => {
+      if (args[0] !== "r2") return { stdout: "" };
+      uploads.push(args[3]);
+      if (uploads.length === 1) throw new Error("500: Internal Server Error");
+      return { stdout: "" };
+    };
+
+    const result = importIntoCloudflare({ database, r2Directory, work, root: directory, wrangler });
+
+    assert.equal(result.objects, 1);
+    assert.deepEqual(uploads, ["owner-files/sites/avatar.jpg", "owner-files/sites/avatar.jpg"]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
