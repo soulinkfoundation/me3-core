@@ -4,6 +4,7 @@ import {
   PortableError,
   comparePortableArchives,
   exportPortableV1,
+  resolveCoreInfo,
   restorePortableV1,
   validateArchive,
 } from "./portable-v1.mjs";
@@ -21,6 +22,7 @@ try {
       installId: args["install-id"],
       passphrase: process.env.ME3_PORTABLE_PASSPHRASE,
       managedHosted: Boolean(args["managed-hosted"]),
+      core: coreFromArgs(args),
     });
     console.log(JSON.stringify({ ok: true, archive: result.archive, manifest: result.manifest }, null, 2));
   } else if (command === "restore") {
@@ -33,7 +35,9 @@ try {
     });
     console.log(JSON.stringify(result, null, 2));
   } else if (command === "verify") {
-    const result = validateArchive(required(args, "archive"), process.env.ME3_PORTABLE_PASSPHRASE);
+    const result = validateArchive(required(args, "archive"), process.env.ME3_PORTABLE_PASSPHRASE, {
+      core: coreFromArgs(args),
+    });
     console.log(
       JSON.stringify(
         {
@@ -99,6 +103,12 @@ try {
     ),
   );
   process.exitCode = 1;
+}
+
+// --core-root names the checkout of the ME3 release the data came from, when
+// these scripts run from a different checkout (the hosted lifecycle controls).
+function coreFromArgs(args) {
+  return args["core-root"] ? resolveCoreInfo(args["core-root"]) : undefined;
 }
 
 function parseArgs(values) {

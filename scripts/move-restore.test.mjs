@@ -13,13 +13,14 @@ import {
   readArchiveCoreTag,
   readSiteAssetsBucket,
   restoreAtSourceVersion,
+  sourceCoreForArchive,
 } from "./move-restore.mjs";
 import {
   PROOF_PASSPHRASE,
   createMigratedDatabase,
   seedProofInstallation,
 } from "./portable-proof.mjs";
-import { exportPortableV1 } from "./portable-v1.mjs";
+import { exportPortableV1, resolveCoreInfo } from "./portable-v1.mjs";
 
 const rootDir = path.resolve(import.meta.dirname, "..");
 const workflow = readFileSync(path.join(rootDir, ".github/workflows/restore-portable.yml"), "utf8");
@@ -136,6 +137,39 @@ test("an export restores, migrates forward and imports as valid SQL", async () =
       count(imported, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '\\_cf\\_%' ESCAPE '\\';"),
       "0",
     );
+    assert.ok(restored.restored.r2Objects > 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a hosted export restores at its release even when it recorded another commit", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "me3-move-core-"));
+  try {
+    const source = createMigratedDatabase(path.join(root, "source"));
+    const sourceR2 = path.join(root, "source-r2");
+    seedProofInstallation(source, sourceR2);
+    const releaseCore = resolveCoreInfo();
+    const archive = path.join(root, "snapshot.me3-portable");
+    await exportPortableV1({
+      database: source,
+      r2Directory: sourceR2,
+      output: archive,
+      passphrase: PROOF_PASSPHRASE,
+      core: { ...releaseCore, commit: "0".repeat(40) },
+    });
+
+    assert.equal(sourceCoreForArchive(releaseCore, archive).commit, "0".repeat(40));
+    assert.equal(
+      sourceCoreForArchive({ ...releaseCore, version: "999.0.0" }, archive).version,
+      "999.0.0",
+    );
+    const restored = await restoreAtSourceVersion({
+      source: rootDir,
+      archive,
+      work: path.join(root, "work"),
+      passphrase: PROOF_PASSPHRASE,
+    });
     assert.ok(restored.restored.r2Objects > 0);
   } finally {
     rmSync(root, { recursive: true, force: true });

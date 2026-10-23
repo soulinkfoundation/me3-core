@@ -482,8 +482,9 @@ jobs:
             --db "$RUNNER_TEMP/managed-d1.sqlite" \
             --r2-dir "$RUNNER_TEMP/managed-r2" \
             --output "$RUNNER_TEMP/managed-portable-v1" \
-            --managed-hosted
-          node control/scripts/portable.mjs verify --archive "$RUNNER_TEMP/managed-portable-v1"
+            --managed-hosted \
+            --core-root source
+          node control/scripts/portable.mjs verify --archive "$RUNNER_TEMP/managed-portable-v1" --core-root source
 
       - name: Report managed export encryption
         if: inputs.operation == 'export'

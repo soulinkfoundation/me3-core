@@ -90,20 +90,27 @@ export async function restoreAtSourceVersion({ source, archive, work, passphrase
   const proof = await import(pathToFileURL(join(source, "scripts/portable-proof.mjs")).href);
   const database = proof.createMigratedDatabase(join(work, "source-d1"));
   const r2Directory = join(work, "r2");
-  const result = run("node", [
-    join(source, "scripts/portable.mjs"),
-    "restore",
-    "--archive",
+  const portable = await import(pathToFileURL(join(source, "scripts/portable-v1.mjs")).href);
+  const restored = await portable.restorePortableV1({
     archive,
-    "--target-db",
-    database,
-    "--target-r2-dir",
-    r2Directory,
-  ], { cwd: source, env: { ...process.env, ME3_PORTABLE_PASSPHRASE: passphrase } });
-  const restored = JSON.parse(result.stdout);
+    targetDatabase: database,
+    targetR2Directory: r2Directory,
+    passphrase,
+    core: sourceCoreForArchive(portable.resolveCoreInfo(source), archive),
+  });
   const output = join(work, "restored.sqlite");
   copyFileSync(database, output);
   return { database: output, r2Directory, restored };
+}
+
+// Hosted exports made before the export recorded its release checkout carry
+// the commit of the lifecycle controls that ran it instead. The release
+// version and tag still have to match exactly; only that commit is taken
+// from the archive.
+export function sourceCoreForArchive(sourceCore, archive) {
+  const archiveCore = JSON.parse(readFileSync(join(archive, "manifest.json"), "utf8")).core || {};
+  if (sourceCore.version !== archiveCore.version || sourceCore.tag !== archiveCore.tag) return sourceCore;
+  return { ...sourceCore, commit: archiveCore.commit };
 }
 
 // Brings the restored database forward with this repository's migrations by
