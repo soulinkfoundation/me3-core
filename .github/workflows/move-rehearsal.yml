@@ -1,0 +1,56 @@
+name: Move rehearsal
+
+# Rehearses moving a Hosted by ME3 install to self-hosting with local D1 and R2,
+# from the last release to this commit. It needs no Cloudflare or GitHub
+# account. Install repositories copied from ME3 skip it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - "apps/worker/migrations/**"
+      - ".github/workflows/restore-portable.yml"
+      - ".github/workflows/move-rehearsal.yml"
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "apps/worker/migrations/**"
+      - ".github/workflows/restore-portable.yml"
+      - ".github/workflows/move-rehearsal.yml"
+  workflow_dispatch:
+    inputs:
+      from:
+        description: Hosted release tag to move from. Leave blank for the latest stable release.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    if: github.repository == 'soulinkfoundation/me3-core'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Rehearse a move
+        env:
+          FROM_TAG: ${{ inputs.from }}
+        run: pnpm move:rehearsal ${FROM_TAG:+--from "$FROM_TAG"}
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: move-rehearsal-report
+          path: .move-rehearsal/*/report.*
+          if-no-files-found: ignore

@@ -20,6 +20,9 @@ apps/web/site-ui-results/
 # Owner-private portability staging
 .me3-portable/
 
+# Move rehearsal reports and scratch data
+.move-rehearsal/
+
 # Local web-research evaluation outputs
 .me3-evals/
 

@@ -32,6 +32,7 @@
     "portable:proof": "node scripts/portable.mjs proof",
     "portable:test": "node --test scripts/portable-v1.test.mjs",
     "move-restore:test": "node --test scripts/move-restore.test.mjs",
+    "move:rehearsal": "node scripts/move-rehearsal.mjs",
     "update-core:test": "node --test scripts/update-core-workflow.test.mjs scripts/update-core-copied-base.test.mjs",
     "managed-install:test": "node --test scripts/attach-managed-custom-domain.test.mjs scripts/configure-managed-install.test.mjs scripts/managed-install-workflow-callback.test.mjs scripts/provision-managed-queues.test.mjs scripts/verify-managed-cloudflare-placement.test.mjs",
     "managed-upgrade:test": "node --test scripts/managed-upgrade-recovery.test.mjs scripts/configure-managed-upgrade-origin.test.mjs scripts/managed-upgrade-contract.test.mjs scripts/managed-upgrade-workflow-callback.test.mjs scripts/managed-upgrade-workflow.test.mjs scripts/verify-managed-upgrade-config.test.mjs scripts/verify-managed-upgrade-release.test.mjs scripts/verify-managed-upgrade-resources.test.mjs scripts/verify-managed-upgrade-runtime.test.mjs",
