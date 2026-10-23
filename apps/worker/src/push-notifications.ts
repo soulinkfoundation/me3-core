@@ -7,6 +7,8 @@ const TOKEN_SECRET = "ME3_CLOUD_CORE_TOKEN";
 const DEVICE_ID = /^[A-Za-z0-9._:-]{8,200}$/;
 const APNS_TOKEN = /^[0-9a-f]{64}$/;
 const FCM_TOKEN = /^[^\s\u0000-\u001f\u007f]{20,4096}$/;
+// The relay owns the list of bundled booking and sale sounds; Core only bounds the value.
+const PAYMENT_SOUND = /^[a-z_]{1,32}$/;
 
 export class PushNotificationInputError extends Error {
   constructor(message: string, readonly status: 400 | 409 | 502) {
@@ -98,8 +100,14 @@ export async function registerPushNotificationDevice(
       paymentNotificationsEnabled,
       agentNotificationsEnabled,
       calendarNotifications,
+      ...paymentSound("bookingSound", input.bookingSound),
+      ...paymentSound("saleSound", input.saleSound),
     }),
   });
+}
+
+function paymentSound(key: "bookingSound" | "saleSound", value: unknown) {
+  return typeof value === "string" && PAYMENT_SOUND.test(value) ? { [key]: value } : {};
 }
 
 export async function unregisterPushNotificationDevice(

@@ -72,12 +72,15 @@ describe("push notification relay client", () => {
       provider: "fcm",
       platform: "android",
       dailyBriefingEnabled: true,
+      bookingSound: "soulink_bell",
+      saleSound: "<script>",
     });
 
     const body = JSON.parse(String(
       (fetchMock.mock.calls as unknown as Array<[URL, RequestInit]>)[0]?.[1]?.body,
     ));
-    expect(body).toMatchObject({ token, provider: "fcm", platform: "android" });
+    expect(body).toMatchObject({ token, provider: "fcm", platform: "android", bookingSound: "soulink_bell" });
+    expect(body).not.toHaveProperty("saleSound");
   });
 
   it("forwards bounded briefing summary metadata and never fails the completed briefing", async () => {
