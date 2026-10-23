@@ -102,11 +102,12 @@ export async function registerPushNotificationDevice(
       calendarNotifications,
       ...paymentSound("bookingSound", input.bookingSound),
       ...paymentSound("saleSound", input.saleSound),
+      ...paymentSound("freeBookingSound", input.freeBookingSound),
     }),
   });
 }
 
-function paymentSound(key: "bookingSound" | "saleSound", value: unknown) {
+function paymentSound(key: "bookingSound" | "saleSound" | "freeBookingSound", value: unknown) {
   return typeof value === "string" && PAYMENT_SOUND.test(value) ? { [key]: value } : {};
 }
 

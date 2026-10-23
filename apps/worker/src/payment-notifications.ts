@@ -6,7 +6,9 @@ export async function dispatchWebsitePaymentNotification(
   userId: string,
   payment: WebsitePaymentPush,
 ) {
-  if (!Number.isSafeInteger(payment.amountCents) || payment.amountCents <= 0) {
+  // A free booking still tells the owner; an order always has a price.
+  const minimumCents = payment.sourceKind === "booking" ? 0 : 1;
+  if (!Number.isSafeInteger(payment.amountCents) || payment.amountCents < minimumCents) {
     return { outcome: "skipped" as const };
   }
   const inserted = await env.DB.prepare(

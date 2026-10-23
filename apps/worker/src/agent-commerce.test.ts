@@ -66,6 +66,7 @@ vi.mock("./payment-notifications", () => ({
 }));
 
 const { default: app } = await import("./app");
+const { dispatchWebsitePaymentNotification } = await import("./payment-notifications");
 const { setAgentCheckoutEnabled } = await import("./agent-commerce-store");
 const { getCommerceSettings, updateCommerceSettings } = await import("./commerce-settings");
 const { buildPublicMe3Profile } = await import("./public-me-profile");
@@ -574,6 +575,9 @@ describe("agent checkouts", () => {
     expect(raw.prepare("SELECT offer_id, status, is_free_booking, campaign FROM bookings").get())
       .toEqual({ offer_id: "intro-call", status: "confirmed", is_free_booking: 1, campaign: "agent-commerce" });
     expect(stripeState.created).toHaveLength(0);
+    expect(dispatchWebsitePaymentNotification).toHaveBeenCalledWith(env, expect.any(String), expect.objectContaining({
+      sourceKind: "booking", amountCents: 0, itemTitle: expect.any(String),
+    }));
   });
 
   it("holds class spaces for several attendees and respects capacity", async () => {
@@ -592,6 +596,9 @@ describe("agent checkouts", () => {
 
     const free = await createCheckout(env, { offeringId: "service:silent-weekend", slot: undefined, quantity: 2, expectedAmount: 0, idempotencyKey: "approval-0008" });
     expect(free.body).toMatchObject({ status: "paid", quantity: 2, reference: { type: "booking" } });
+    expect(dispatchWebsitePaymentNotification).toHaveBeenCalledWith(env, expect.any(String), expect.objectContaining({
+      sourceKind: "booking", sourceId: free.body.reference.id, amountCents: 0,
+    }));
   });
 
   it("checks out a product and reports the paid order", async () => {

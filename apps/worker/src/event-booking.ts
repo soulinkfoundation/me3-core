@@ -400,6 +400,15 @@ export async function createConfirmedEventBooking(
       offer: input.offer,
       booking,
     });
+    await dispatchWebsitePaymentNotification(env, input.site.user_id, {
+      sourceKind: "booking",
+      sourceId: booking.id,
+      amountCents: 0,
+      currency: String(booking.currency || "USD").toUpperCase(),
+      customerName: booking.guest_name?.trim() || null,
+      itemTitle: input.offer.title,
+      siteName: input.site.username,
+    }).catch((error) => console.error("Free booking notification failed", error));
   }
   return booking;
 }

@@ -74,12 +74,13 @@ describe("push notification relay client", () => {
       dailyBriefingEnabled: true,
       bookingSound: "soulink_bell",
       saleSound: "<script>",
+      freeBookingSound: "sparkle",
     });
 
     const body = JSON.parse(String(
       (fetchMock.mock.calls as unknown as Array<[URL, RequestInit]>)[0]?.[1]?.body,
     ));
-    expect(body).toMatchObject({ token, provider: "fcm", platform: "android", bookingSound: "soulink_bell" });
+    expect(body).toMatchObject({ token, provider: "fcm", platform: "android", bookingSound: "soulink_bell", freeBookingSound: "sparkle" });
     expect(body).not.toHaveProperty("saleSound");
   });
 
