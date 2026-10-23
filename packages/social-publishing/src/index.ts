@@ -3427,9 +3427,21 @@ export type SocialPublishedEvent = {
   platformPostUrl: string | null;
 };
 
+export type SocialPublishFailedEvent = {
+  userId: string;
+  publicationId: string;
+  variantId: string;
+  platform: SocialPlatform;
+  platformLabel: string;
+  title: string | null;
+  failureClass: import("./adapters").SocialPublishFailureClass;
+};
+
 /** Lets the host record what the plugin did without the plugin knowing about host tables. */
 export type SocialPublishHooks = {
   onPublished?(event: SocialPublishedEvent): Promise<void>;
+  /** Once per Publication that ends failed, after retries; hosts alert the owner (iOS push) here. */
+  onFailed?(event: SocialPublishFailedEvent): Promise<void>;
 };
 
 export async function processSocialPublishBatch(
@@ -3803,7 +3815,18 @@ export async function publishQueuedPublication(
       validation.error,
       "publishing",
     );
-    if (failed) await revokeSocialVariantApproval(env, row.variant_id);
+    if (failed) {
+      await revokeSocialVariantApproval(env, row.variant_id);
+      await hooks.onFailed?.({
+        userId: row.user_id,
+        publicationId: row.publication_id,
+        variantId: row.variant_id,
+        platform: row.platform,
+        platformLabel: platformLabel(row.platform),
+        title: row.title?.trim() || null,
+        failureClass,
+      }).catch((error) => console.warn("Social failure hook failed", error));
+    }
     await releaseManagedReservation();
     return;
   }
@@ -4005,6 +4028,17 @@ export async function publishQueuedPublication(
       )
         .bind(row.account_id)
         .run();
+    }
+    if (failed) {
+      await hooks.onFailed?.({
+        userId: row.user_id,
+        publicationId: row.publication_id,
+        variantId: row.variant_id,
+        platform: row.platform,
+        platformLabel: platformLabel(row.platform),
+        title: row.title?.trim() || null,
+        failureClass,
+      }).catch((error) => console.warn("Social failure hook failed", error));
     }
     return;
   }
