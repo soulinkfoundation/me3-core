@@ -49,7 +49,8 @@ export async function generateAgentProviderImage(env: Env, model: string, prompt
     const url = new URL(source);
     // Unified Billing returns a presigned R2 URL (*.r2.cloudflarestorage.com); catalog examples use *.r2.dev.
     if (!(url.hostname.endsWith(".r2.dev") || url.hostname.endsWith(".r2.cloudflarestorage.com")) || url.username || url.password) throw new Error("Image provider output URL is not an approved private transport");
-    const response = await fetch(url, { redirect: "error", signal });
+    // workerd throws on redirect "error"; "manual" returns a 3xx, which the ok check refuses.
+    const response = await fetch(url, { redirect: "manual", signal });
     bytes = await boundedResponseBytes(response, signal);
   } else {
     if (typeof source !== "string") throw new Error("Image provider returned no single image");
