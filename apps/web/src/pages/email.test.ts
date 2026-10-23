@@ -31,11 +31,6 @@ vi.mock("../composables/useAppToast", () => ({
   }),
 }));
 
-let campaignsPluginEnabled = true;
-vi.mock("../utils/pluginAccess", () => ({
-  isPluginAccessEnabled: vi.fn(async () => campaignsPluginEnabled),
-}));
-
 const routerReplace = vi.fn();
 const routerPush = vi.fn();
 let routeTab = "sent";
@@ -249,33 +244,15 @@ describe("EmailPage", () => {
     expect(wrapper.text()).toContain("ME3");
   });
 
-  it("keeps Campaigns out of the folders and routes to its nested page from the title menu", async () => {
+  it("leaves Campaigns out of the rail and the folder menu", async () => {
     const wrapper = mountEmailPage();
     await flushPromises();
 
-    const rail = wrapper.get('[data-folder="campaigns"]');
-    expect(rail.classes()).not.toContain("mail-rail__folder--active");
-    expect(rail.classes()).not.toContain("mail-rail__folder--active");
-
+    expect(wrapper.find('[data-folder="campaigns"]').exists()).toBe(false);
     (document.querySelector(".mail-title-menu__button") as HTMLElement).click();
     await flushPromises();
-    const menuItem = document.querySelector('[data-menu-folder="campaigns"]') as HTMLElement;
-    expect(menuItem.textContent).toContain("Campaigns");
-    menuItem.click();
-
-    expect(routerPush).toHaveBeenCalledWith("/email/campaigns");
-  });
-
-  it("hides Campaigns when the Email Campaigns plugin is off", async () => {
-    campaignsPluginEnabled = false;
-    try {
-      const wrapper = mountEmailPage();
-      await flushPromises();
-
-      expect(wrapper.find('[data-folder="campaigns"]').exists()).toBe(false);
-    } finally {
-      campaignsPluginEnabled = true;
-    }
+    expect(document.querySelector('[data-menu-folder="campaigns"]')).toBeNull();
+    expect(document.querySelector(".mail-title-menu")?.textContent).not.toContain("Campaigns");
   });
 
   it("lists the Brief first, then every mailbox folder, in one rail", async () => {
@@ -292,7 +269,6 @@ describe("EmailPage", () => {
       "archive",
       "spam",
       "trash",
-      "campaigns",
     ]);
     expect(wrapper.text()).not.toContain("More");
   });

@@ -8,6 +8,7 @@ export type AppFeatureId =
   | "calendar"
   | "people"
   | "email"
+  | "campaigns"
   | "files"
   | "sites"
   | "social"
@@ -22,6 +23,7 @@ export const APP_FEATURE_ICONS: Record<AppFeatureId, string> = {
   calendar: pluginNavEmojiById("me3.calendar"),
   people: "🫶",
   email: "📧",
+  campaigns: "📣",
   files: "📂",
   sites: pluginNavEmojiById("me3.landing-pages"),
   social: pluginNavEmojiById("me3.social-publishing"),
@@ -63,6 +65,8 @@ const APP_FEATURE_MATCHERS: AppFeatureMatcher[] = [
     matches: (path) =>
       matchesPathPrefix(path, "/people") || matchesPathPrefix(path, "/contacts"),
   },
+  // Campaigns lives under /email for its routes but is its own destination.
+  { id: "campaigns", matches: (path) => matchesPathPrefix(path, "/email/campaigns") },
   { id: "email", matches: (path) => matchesPathPrefix(path, "/email") },
   { id: "files", matches: (path) => matchesPathPrefix(path, "/files") },
   {

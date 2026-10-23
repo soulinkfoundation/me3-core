@@ -49,13 +49,15 @@ const editSite = computed(() => {
 });
 function installed(id: string) { return plugins.value.some(plugin => plugin.id === id && plugin.enabled && plugin.status === "installed"); }
 // One Go to list shared with iOS (ProfileMenu.swift), ordered by likely use. Socials/Accounts are
-// plugin-owned; Email and Files are Core features. Wheel of Life lives in Mission, Edit site is in the
+// plugin-owned; Email and Files are Core features. Campaigns is its own
+// destination after Email (Business); until plan gating lands its plugin record is the visibility gate. Wheel of Life lives in Mission, Edit site is in the
 // header and Chat is the top switch, so none of them repeat here. No hosted entitlement is inferred.
 const destinations = computed(() => [
   { label: "Calendar", path: "/calendar", emoji: APP_FEATURE_ICONS.calendar, visible: installed("me3.calendar") },
   { label: "Writing", path: "/journal", emoji: APP_FEATURE_ICONS.journal, visible: installed("me3.journal") },
   { label: "People", path: "/people", emoji: APP_FEATURE_ICONS.people, visible: true },
   { label: "Email", path: "/email", emoji: APP_FEATURE_ICONS.email, visible: true },
+  { label: "Campaigns", path: "/email/campaigns", emoji: APP_FEATURE_ICONS.campaigns, visible: installed("me3.email-campaigns") },
   { label: "Mission", path: "/mission", emoji: "🚀", visible: installed("me3.mission-control") },
   { label: "Tasks", path: "/tasks", emoji: "✅", visible: installed("me3.mission-control") },
   { label: "Accounts", path: "/accounts", emoji: APP_FEATURE_ICONS.accounts, visible: installed("me3.accounts") },

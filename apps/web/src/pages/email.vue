@@ -21,7 +21,6 @@ import {
   type MailboxListRequest,
 } from "../stores/mailbox";
 import type { UiIconName } from "../utils/icons";
-import { isPluginAccessEnabled } from "../utils/pluginAccess";
 import { decodeMimeHeaderValue } from "../../../../shared/email-headers";
 
 definePage({
@@ -1745,10 +1744,6 @@ function switchTab(tab: Tab) {
 
 function switchMailFolderTab(tabId: string) {
   mobileMenuOpen.value = false;
-  if (tabId === "campaigns") {
-    void router.push("/email/campaigns");
-    return;
-  }
   if (tabId === "rules") {
     rulesOpen.value = true;
     return;
@@ -3558,10 +3553,6 @@ async function resolveUnconfirmedDelivery(
   }
 }
 
-// Campaigns is an optional plugin; only link to it when the owner has it switched on.
-const campaignsEnabled = ref(false);
-void isPluginAccessEnabled("me3.email-campaigns").then((enabled) => { campaignsEnabled.value = enabled; }).catch(() => {});
-
 onMounted(() => {
   const routeTab = typeof route.query.tab === "string" ? route.query.tab : "";
   const routeMessage = typeof route.query.message === "string" ? route.query.message.trim() : "";
@@ -3647,9 +3638,6 @@ onBeforeUnmount(() => {
               <span v-if="tab.count" class="mail-title-menu__count">{{ tab.count }}</span>
             </button>
             <hr />
-            <button v-if="campaignsEnabled" type="button" role="menuitem" class="mail-title-menu__item" data-menu-folder="campaigns" @click="switchMailFolderTab('campaigns')">
-              <UiIcon name="Send" :size="16" aria-hidden="true" /><span>Campaigns</span>
-            </button>
             <button type="button" role="menuitem" class="mail-title-menu__item" @click="switchMailFolderTab('rules')">
               <UiIcon name="Sparkles" :size="16" aria-hidden="true" /><span>How ME3 handles mail</span>
             </button>
@@ -3825,10 +3813,6 @@ onBeforeUnmount(() => {
                   </button>
                 </nav>
                 <div class="mail-rail__secondary">
-                  <router-link v-if="campaignsEnabled" to="/email/campaigns" class="mail-rail__folder" data-folder="campaigns">
-                    <UiIcon name="Send" :size="16" aria-hidden="true" />
-                    <span class="mail-rail__label">Campaigns</span>
-                  </router-link>
                   <button type="button" class="mail-rail__folder" @click="rulesOpen = true">
                     <UiIcon name="Sparkles" :size="16" aria-hidden="true" />
                     <span class="mail-rail__label">How ME3 handles mail</span>
