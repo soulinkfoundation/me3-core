@@ -528,6 +528,7 @@ function optionalPlatform(value: unknown): SocialPlatform | null {
     platform === "linkedin" ||
     platform === "instagram" ||
     platform === "instagram_business" ||
+    platform === "facebook" ||
     platform === "youtube" ||
     platform === "tiktok"
   ) {
@@ -1210,6 +1211,7 @@ function platformLabel(platform: SocialPlatform): string {
   if (platform === "linkedin") return "LinkedIn";
   if (platform === "instagram_business") return "Instagram Business";
   if (platform === "instagram") return "Instagram";
+  if (platform === "facebook") return "Facebook";
   if (platform === "youtube") return "YouTube";
   if (platform === "tiktok") return "TikTok";
   return "X";

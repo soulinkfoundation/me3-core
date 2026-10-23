@@ -748,6 +748,12 @@ const runtimeMigrations: RuntimeMigration[] = [
         ON journal_articles(user_id, project_id, updated_at DESC)`).run();
     },
   },
+  // Facebook Pages join the checked social platform lists (me3-bli3.3.9).
+  {
+    id: "0090_social_facebook_pages",
+    checksum: "2026-10-23-social-facebook-pages-v1",
+    apply: applySocialFacebookPagesMigration,
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;
@@ -2667,6 +2673,71 @@ async function applyDriveFilesReuseTrashedNamesMigration(db: D1Database): Promis
     ...[...dependents].reverse().map((table) => `DELETE FROM ${table}`),
     ...dependents.map((table) => `INSERT INTO ${table} SELECT * FROM ${table}_0088_backup`),
     ...dependents.map((table) => `DROP TABLE ${table}_0088_backup`),
+    "PRAGMA defer_foreign_keys = OFF",
+  ];
+  await db.batch(statements.map((statement) => db.prepare(statement)));
+}
+
+/**
+ * Adds 'facebook' to the platform CHECK of every social table that has one. Each table is rebuilt from its own
+ * current definition, so columns added since 0030 stay. Same as migrations/0090_social_facebook_pages.sql.
+ */
+async function applySocialFacebookPagesMigration(db: D1Database): Promise<void> {
+  const checkedTables = [
+    "social_accounts",
+    "social_oauth_states",
+    "social_provider_settings",
+    "social_variants",
+    "social_publications",
+  ];
+  const rebuilds: Array<{ table: string; definition: string; indexes: string[] }> = [];
+  for (const table of checkedTables) {
+    if (!(await tableExists(db, table))) return;
+    const definition = await tableDefinition(db, table);
+    if (!definition || definition.includes("'facebook'")) continue;
+    const platformList = /((?:platform|provider_id) IN \([^)]*'instagram_business')/;
+    if (!platformList.test(definition)) {
+      throw new Error(`Cannot apply 0090_social_facebook_pages: ${table} has an unexpected platform list`);
+    }
+    const indexes = await db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL")
+      .bind(table)
+      .all<SqliteDefinitionRow>();
+    rebuilds.push({
+      table,
+      definition: definition
+        .replace(/^CREATE TABLE (?:IF NOT EXISTS )?"?\w+"?/i, `CREATE TABLE ${table}_0090_new`)
+        .replace(platformList, "$1, 'facebook'"),
+      indexes: (indexes.results || []).map((row) => row.sql).filter((sql): sql is string => Boolean(sql)),
+    });
+  }
+  if (rebuilds.length === 0) return;
+
+  // Rebuilding a parent fires its ON DELETE actions in D1 even while validation is deferred.
+  const dependents: string[] = [];
+  for (const table of [
+    "social_posting_preferences",
+    "social_posting_plans",
+    "social_posting_reservations",
+    "social_posting_plan_items",
+    "social_media_delivery_grants",
+  ]) {
+    if (await tableExists(db, table)) dependents.push(table);
+  }
+  const statements = [
+    "PRAGMA defer_foreign_keys = ON",
+    ...dependents.map((table) => `CREATE TABLE ${table}_0090_backup AS SELECT * FROM ${table}`),
+    ...rebuilds.flatMap(({ table, definition, indexes }) => [
+      definition,
+      `INSERT INTO ${table}_0090_new SELECT * FROM ${table}`,
+      `DROP TABLE ${table}`,
+      `ALTER TABLE ${table}_0090_new RENAME TO ${table}`,
+      ...indexes,
+    ]),
+    // Children before parents on delete, parents before children on restore.
+    ...[...dependents].reverse().map((table) => `DELETE FROM ${table}`),
+    ...dependents.map((table) => `INSERT INTO ${table} SELECT * FROM ${table}_0090_backup`),
+    ...dependents.map((table) => `DROP TABLE ${table}_0090_backup`),
     "PRAGMA defer_foreign_keys = OFF",
   ];
   await db.batch(statements.map((statement) => db.prepare(statement)));

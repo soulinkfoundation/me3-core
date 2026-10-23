@@ -10020,10 +10020,10 @@ describe("ME3 Worker auth", () => {
           implementationStatus: "bundled",
         }),
         expect.objectContaining({
-          // Experimental plugins stay out of the list until switched on.
+          // Social is a plan feature: self-hosted installs include it, with no switch in the plugin list.
           id: "me3.social-publishing",
           showInPluginList: false,
-          status: "available",
+          status: "installed",
           implementationStatus: "bundled",
         }),
         expect.objectContaining({
@@ -10477,6 +10477,13 @@ describe("ME3 Worker auth", () => {
         reason: null,
       }),
       expect.objectContaining({
+        platform: "facebook",
+        schedule: true,
+        publish: true,
+        deliveryLabel: "Publishes to your Page",
+        reason: null,
+      }),
+      expect.objectContaining({
         platform: "youtube",
         draft: true,
         schedule: false,
@@ -10501,7 +10508,7 @@ describe("ME3 Worker auth", () => {
     ]);
     expect(statusBody.hostedOAuth).toEqual({
       configured: true,
-      platforms: ["linkedin", "instagram", "youtube", "tiktok"],
+      platforms: ["linkedin", "instagram", "facebook", "youtube", "tiktok"],
     });
 
     const response = await app.fetch(
