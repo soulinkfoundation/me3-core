@@ -732,6 +732,11 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.batch(AI_USAGE_SETTLEMENTS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
+  {
+    id: "0088_drive_files_reuse_trashed_names",
+    checksum: "2026-10-23-drive-files-reuse-trashed-names-v1",
+    apply: applyDriveFilesReuseTrashedNamesMigration,
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;
@@ -2594,6 +2599,66 @@ async function applySocialYoutubeTikTokMigration(db: D1Database): Promise<void> 
     .filter(Boolean)
     .map((statement) => db.prepare(statement));
   await db.batch(statements);
+}
+
+/**
+ * drive_files kept UNIQUE(owner_id, folder_id, filename) regardless of status, so a trashed file held its name inside
+ * a folder. Rebuild without it; partial unique indexes keep the name rule for ready files only. Same as
+ * migrations/0088_drive_files_reuse_trashed_names.sql.
+ */
+async function applyDriveFilesReuseTrashedNamesMigration(db: D1Database): Promise<void> {
+  const definition = await tableDefinition(db, "drive_files");
+  if (!definition || !/UNIQUE\s*\(\s*owner_id\s*,\s*folder_id\s*,\s*filename\s*\)/i.test(definition)) return;
+
+  // Dropping drive_files fires its ON DELETE CASCADE actions in D1 even while validation is deferred.
+  const dependents: string[] = [];
+  for (const table of ["drive_multipart_uploads", "drive_multipart_parts", "social_media_delivery_grants"]) {
+    if (await tableExists(db, table)) dependents.push(table);
+  }
+  const columns =
+    "id, owner_id, folder_id, filename, mime_type, size, storage_key, etag, sha256, " +
+    "status, preview_kind, extracted_text, metadata_json, created_at, updated_at";
+  const statements = [
+    "PRAGMA defer_foreign_keys = ON",
+    ...dependents.map((table) => `CREATE TABLE ${table}_0088_backup AS SELECT * FROM ${table}`),
+    `CREATE TABLE drive_files_0088_new (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL DEFAULT 'owner',
+      folder_id TEXT REFERENCES drive_folders(id) ON DELETE SET NULL,
+      filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+      size INTEGER NOT NULL DEFAULT 0,
+      storage_key TEXT NOT NULL,
+      etag TEXT,
+      sha256 TEXT,
+      status TEXT NOT NULL DEFAULT 'ready'
+        CHECK (status IN ('uploading', 'ready', 'trashed', 'failed')),
+      preview_kind TEXT NOT NULL DEFAULT 'download'
+        CHECK (preview_kind IN ('image', 'pdf', 'text', 'markdown', 'csv', 'spreadsheet', 'download')),
+      extracted_text TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (owner_id) REFERENCES owner_profile(id) ON DELETE CASCADE
+    )`,
+    `INSERT INTO drive_files_0088_new (${columns}) SELECT ${columns} FROM drive_files`,
+    "DROP TABLE drive_files",
+    "ALTER TABLE drive_files_0088_new RENAME TO drive_files",
+    `CREATE UNIQUE INDEX idx_drive_files_root_filename
+       ON drive_files(owner_id, filename)
+       WHERE folder_id IS NULL AND status = 'ready'`,
+    `CREATE UNIQUE INDEX idx_drive_files_folder_filename
+       ON drive_files(owner_id, folder_id, filename)
+       WHERE folder_id IS NOT NULL AND status = 'ready'`,
+    "CREATE INDEX idx_drive_files_owner_folder ON drive_files(owner_id, folder_id, status, filename)",
+    "CREATE INDEX idx_drive_files_owner_updated ON drive_files(owner_id, updated_at DESC)",
+    // Children before parents on delete, parents before children on restore.
+    ...[...dependents].reverse().map((table) => `DELETE FROM ${table}`),
+    ...dependents.map((table) => `INSERT INTO ${table} SELECT * FROM ${table}_0088_backup`),
+    ...dependents.map((table) => `DROP TABLE ${table}_0088_backup`),
+    "PRAGMA defer_foreign_keys = OFF",
+  ];
+  await db.batch(statements.map((statement) => db.prepare(statement)));
 }
 
 async function applySocialPublicationFormatsMigration(db: D1Database): Promise<void> {
