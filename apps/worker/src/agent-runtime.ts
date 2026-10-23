@@ -17,6 +17,7 @@ import { loadAgentEmailDraft } from "./agent-email-draft";
 import { ownerFacingMemory, rememberFromTurn } from "./agent-memory";
 import { suggestAgentReplies } from "./agent-suggested-replies";
 import { getManagedAiBillingSettings, managedAllowanceNotice, syncManagedAiUsage, MANAGED_AI_FALLBACK_MODEL, type ManagedAiBillingSettings, type ManagedAllowanceNotice } from "./managed-ai-billing";
+import { assertProvisionalHoldsCovered, MAX_PROVISIONAL_HOLDS } from "./managed-ai-holds";
 import { createStableAgentSchedulingServices } from "./agent-domain-scheduling";
 import { createAgentMailboxServices } from "./agent-mailbox-services";
 import { prepareAgentImageInputs, resolveAgentImageInputs, loadAgentAttachmentManifest, type AgentAttachmentInput } from "./agent-image-input";
@@ -162,7 +163,7 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
   if(managed&&!managed.available)throw new Error(managed.ineligibleReason||"Managed AI is unavailable");
   const route=settings.defaults.chat;
   const modelName=scope.selectedModel?providerModel(scope.selectedModel.providerId,scope.selectedModel.model):managed?.defaultModel||providerModel(route.providerId,route.model);
-  if(managed){await assertManagedCostsReconciled(env,scope.userId,true);resolveManagedModel(managed,modelName);}
+  if(managed)resolveManagedModel(managed,modelName,await assertManagedCostsReconciled(env,scope.userId,true));
   if(!env.AI)throw new Error("Cloudflare AI binding is not configured");
   const metadata={me3_runtime:"agent",me3_turn_id:scope.turnId,me3_request_id:scope.requestId,me3_thread_id:scope.threadId};
   const imageScope={ownerId:scope.userId,threadId:scope.threadId};
@@ -173,7 +174,8 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
     // gatewayCorrelation names the AI Gateway log metadata key that identifies this exact attempt.
     const receiptMetadata={...callMetadata,billingManaged:Boolean(managed),modelAuthor:selected.replace(/^@cf\//,"").split("/")[0],gatewayId,gatewayCorrelation:"me3_usage_id"};
     const billingFeeRate=managed&&!selected.startsWith("@cf/")?0.05:0;
-    // An interrupted or unpriced paid request must remain visibly unreconciled.
+    // An interrupted or unpriced paid request must remain visibly unreconciled. It holds its
+    // worst-case price rather than blocking the owner, up to MAX_PROVISIONAL_HOLDS at once.
     // Receipts left by the removed Clef routing pilot (purpose fast_path) never gate the planner.
     const admitted=await env.DB.prepare(`INSERT INTO ai_usage_events(id,user_id,kind,provider,model,tokens_in,tokens_out,estimated_cost_usd,metadata_json)
       SELECT ?,?,'text','workers-ai',?,0,0,0,? WHERE ?=0 OR (NOT EXISTS(
@@ -181,12 +183,18 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
         AND json_extract(metadata_json,'$.me3_runtime')='agent'
         AND json_extract(metadata_json,'$.billingManaged')=1
         AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL
+        AND coalesce(json_extract(metadata_json,'$.costKnown'),1)<>0
+        AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'
+      ) AND ?>(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month')
+        AND json_extract(metadata_json,'$.me3_runtime')='agent'
+        AND json_extract(metadata_json,'$.billingManaged')=1
+        AND json_extract(metadata_json,'$.costKnown')=0
         AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'
       ) AND ?=(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=?
         AND created_at >= datetime('now','start of month')
         AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
         AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'
-      ))`).bind(usageId,scope.userId,selected,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:null,costKnown:false,usageReported:false}),managed?1:0,scope.userId,reportCount,scope.userId).run();
+      ))`).bind(usageId,scope.userId,selected,JSON.stringify({...receiptMetadata,billingFeeRate,baseCostUsd:null,costKnown:false,usageReported:false}),managed?1:0,scope.userId,MAX_PROVISIONAL_HOLDS,scope.userId,reportCount,scope.userId).run();
     if(managed&&!admitted.meta.changes){
       await assertManagedCostsReconciled(env,scope.userId,true);
       throw new Error("Managed AI budget policy changed before model admission; retry this turn");
@@ -240,10 +248,9 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
       // reported the previous step's receipt skips the separate policy fetch.
       const [,synced]=await Promise.all([assertManagedCostsReconciled(env,scope.userId,false),syncManagedAiUsage(env)]);
       const [reportCount,policy]=await Promise.all([managedUsageReportCount(env,scope.userId),synced??getManagedAiBillingSettings(env,{syncUsage:false})]);
-      model.id=resolveManagedModel(policy,requested);
+      model.id=resolveManagedModel(policy,requested,await assertManagedCostsReconciled(env,scope.userId,true));
       // Only a budget switch to the fallback model counts here.
       if(managedModelId(model.id)===managedModelId(MANAGED_AI_FALLBACK_MODEL)&&managedModelId(requested)!==managedModelId(model.id))allowanceFallbackUsed=true;
-      await assertManagedCostsReconciled(env,scope.userId,true);
       step.signal.throwIfAborted();
       return cloudflareModel(model.id,reportCount,purpose).step(step);
     }};
@@ -354,19 +361,23 @@ async function managedUsageReportCount(env:Env,ownerId:string):Promise<number> {
   return row?.count??0;
 }
 // Receipts from the removed Clef routing pilot (purpose fast_path) never block this gate.
-async function assertManagedCostsReconciled(env:Env,ownerId:string,requireReported=false):Promise<void> {
-  const pending=await env.DB.prepare(`SELECT json_extract(metadata_json,'$.costKnown') AS costKnown FROM ai_usage_events WHERE user_id=?
+// Unpriced receipts hold their worst-case price instead (managed-ai-holds.ts); the
+// returned microdollars are that reserved budget.
+async function assertManagedCostsReconciled(env:Env,ownerId:string,requireReported=false):Promise<number> {
+  const pending=requireReported&&await env.DB.prepare(`SELECT 1 FROM ai_usage_events WHERE user_id=?
     AND created_at >= datetime('now','start of month')
     AND json_extract(metadata_json,'$.me3_runtime')='agent'
     AND json_extract(metadata_json,'$.billingManaged')=1
     AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'
-    AND ${requireReported?"json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL":"json_extract(metadata_json,'$.costKnown')=0"} LIMIT 1`).bind(ownerId).first<{costKnown:number}>();
-  if(pending)throw new Error(`Managed AI ${pending.costKnown===0?"cost":"usage"} is awaiting reconciliation before another model call`);
+    AND coalesce(json_extract(metadata_json,'$.costKnown'),1)<>0
+    AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL LIMIT 1`).bind(ownerId).first();
+  if(pending)throw new Error("Managed AI usage is awaiting reconciliation before another model call");
+  return assertProvisionalHoldsCovered(env,ownerId);
 }
-function resolveManagedModel(policy:ManagedAiBillingSettings,requested:string):string {
+function resolveManagedModel(policy:ManagedAiBillingSettings,requested:string,reservedMicrousd=0):string {
   if(!policy.available)throw new Error(policy.ineligibleReason||"Managed AI is unavailable");
   if(!policy.models.some(model=>managedModelId(model.id)===managedModelId(requested)))throw new Error("Selected model is not permitted by this installation's managed policy");
-  if(policy.fallbackActive||policy.currentMonthUsageMicrousd>=policy.effectiveMaximumCents*10_000)return MANAGED_AI_FALLBACK_MODEL;
+  if(policy.fallbackActive||policy.currentMonthUsageMicrousd+reservedMicrousd>=policy.effectiveMaximumCents*10_000)return MANAGED_AI_FALLBACK_MODEL;
   return canonicalNativeModel(requested);
 }
 export function bindingModelSupportsImageInput(model:string):boolean {

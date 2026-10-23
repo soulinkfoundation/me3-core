@@ -1,12 +1,15 @@
 import type { Env } from "./types";
 import type { ManagedCommerceBridgeConfig } from "./commerce-bridge";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
+import { provisionalHoldUsd } from "./managed-ai-holds";
 
 // A managed agent receipt is written before inference and priced when the call finishes. An
 // interrupted stream, a timeout or a crash leaves it unpriced, and admission holds every later
 // managed call until it is settled. ME3 Cloud looks up the exact attempt in AI Gateway logs and
 // returns authoritative evidence; missing, ambiguous or unpriced evidence keeps the hold.
-// Receipts older than 35 days fall outside the usage outbox and are left for an operator.
+// A receipt still without evidence a day later is charged at its provisional hold
+// (managed-ai-holds.ts), the most that call could have cost. Receipts older than 35 days fall
+// outside the usage outbox and are left for an operator.
 
 export const AI_USAGE_SETTLEMENTS_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS ai_usage_settlements (
@@ -35,8 +38,10 @@ const SETTLE_AFTER_MINUTES = 15;
 // Each attempt queries AI Gateway logs in ME3 Cloud; held receipts retry on this interval.
 const RETRY_AFTER_MINUTES = 10;
 const MAX_RECEIPTS_PER_ATTEMPT = 20;
+const CHARGE_HOLD_AFTER_HOURS = 24;
 const SETTLEMENT_ACTOR = "me3-cloud:ai-gateway-evidence";
 const EVIDENCE_SOURCE = "ai-gateway-log";
+const HOLD_SOURCE = { evidenceSource: "provisional-hold", actor: "me3-core:provisional-hold", pricingBasis: "provisional-hold" };
 
 type UnknownReceiptRow = {
   id: string;
@@ -109,9 +114,32 @@ export async function reconcileUnknownManagedAiCosts(
       "UPDATE ai_usage_events SET metadata_json = json_set(metadata_json, '$.reconcileAttemptedAt', ?) WHERE id = ? AND json_extract(metadata_json, '$.costKnown') = 0",
     ).bind(attemptedAt, row.id).run().catch(() => {});
   }
-  if (events.length === 0) return 0;
+  const settlements = events.length ? await requestGatewaySettlements(bridge, events, receipts) : [];
+  let settled = 0;
+  for (const settlement of settlements) {
+    try {
+      if (await applyManagedAiSettlement(env, receipts.get(settlement.id)!.user_id, settlement)) settled += 1;
+    } catch (error) {
+      console.error("Managed AI settlement write failed", settlement.id, error);
+    }
+  }
+  const evidenced = new Set(settlements.map(settlement => settlement.id));
+  for (const row of rows) {
+    if (evidenced.has(row.id)) continue;
+    try {
+      if (await chargeExpiredHold(env, row)) settled += 1;
+    } catch (error) {
+      console.error("Managed AI hold charge failed", row.id, error);
+    }
+  }
+  return settled;
+}
 
-  let settlements: ManagedAiSettlement[];
+async function requestGatewaySettlements(
+  bridge: ManagedCommerceBridgeConfig,
+  events: ManagedAiReconcileEvent[],
+  receipts: Map<string, UnknownReceiptRow>,
+): Promise<ManagedAiSettlement[]> {
   try {
     const response = await fetch(`${bridge.origin}/v1/ai-billing/reconcile`, {
       method: "POST",
@@ -122,23 +150,25 @@ export async function reconcileUnknownManagedAiCosts(
     const raw = (payload as { settlements?: unknown } | null)?.settlements;
     if (!response.ok || !Array.isArray(raw)) {
       console.error("Managed AI reconciliation rejected", response.status);
-      return 0;
+      return [];
     }
-    settlements = raw.map(parseSettlement).filter((item): item is ManagedAiSettlement => Boolean(item && receipts.has(item.id)));
+    return raw.map(parseSettlement).filter((item): item is ManagedAiSettlement => Boolean(item && receipts.has(item.id)));
   } catch (error) {
     console.error("Managed AI reconciliation failed", error);
-    return 0;
+    return [];
   }
+}
 
-  let settled = 0;
-  for (const settlement of settlements) {
-    try {
-      if (await applyManagedAiSettlement(env, receipts.get(settlement.id)!.user_id, settlement)) settled += 1;
-    } catch (error) {
-      console.error("Managed AI settlement write failed", settlement.id, error);
-    }
-  }
-  return settled;
+async function chargeExpiredHold(env: Env, row: UnknownReceiptRow): Promise<boolean> {
+  const createdAt = Date.parse(`${row.created_at.replace(" ", "T")}Z`);
+  if (!(Date.now() - createdAt >= CHARGE_HOLD_AFTER_HOURS * 3_600_000)) return false;
+  const hold = provisionalHoldUsd(row.kind, row.model);
+  if (hold === null) return false;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([row.id, row.model, hold])));
+  const evidenceHash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  return applyManagedAiSettlement(env, row.user_id, {
+    id: row.id, resolution: "charged", evidenceId: row.id, evidenceHash, inputTokens: 0, outputTokens: 0, baseCostUsd: hold,
+  }, HOLD_SOURCE);
 }
 
 /**
@@ -150,6 +180,7 @@ export async function applyManagedAiSettlement(
   env: Env,
   ownerId: string,
   settlement: ManagedAiSettlement,
+  source?: { evidenceSource: string; actor: string; pricingBasis: string },
 ): Promise<boolean> {
   const existing = await env.DB.prepare(
     "SELECT evidence_hash FROM ai_usage_settlements WHERE usage_event_id = ?",
@@ -161,8 +192,9 @@ export async function applyManagedAiSettlement(
     return false;
   }
   const charged = settlement.resolution === "charged";
-  const pricingBasis = charged ? "ai-gateway-log-cost" : "ai-gateway-no-charge";
-  const settlementId = `${EVIDENCE_SOURCE}:${settlement.evidenceId}`;
+  const evidenceSource = source?.evidenceSource ?? EVIDENCE_SOURCE;
+  const pricingBasis = source?.pricingBasis ?? (charged ? "ai-gateway-log-cost" : "ai-gateway-no-charge");
+  const settlementId = `${evidenceSource}:${settlement.evidenceId}`;
   const results = await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO ai_usage_settlements (
@@ -174,8 +206,8 @@ export async function applyManagedAiSettlement(
        WHERE id = ? AND user_id = ? AND json_extract(metadata_json, '$.costKnown') = 0
        ON CONFLICT(usage_event_id) DO NOTHING`,
     ).bind(
-      settlement.resolution, EVIDENCE_SOURCE, settlement.evidenceId, settlement.evidenceHash,
-      settlement.inputTokens, settlement.outputTokens, settlement.baseCostUsd, SETTLEMENT_ACTOR,
+      settlement.resolution, evidenceSource, settlement.evidenceId, settlement.evidenceHash,
+      settlement.inputTokens, settlement.outputTokens, settlement.baseCostUsd, source?.actor ?? SETTLEMENT_ACTOR,
       settlement.id, ownerId,
     ),
     env.DB.prepare(

@@ -1,5 +1,5 @@
 export { runAgentTurn } from "./loop";
-export { createCloudflareModel, isModelRequestRejected, ModelRequestRejectedError } from "./model";
+export { createCloudflareModel, isModelRequestRejected, modelPricing, ModelRequestRejectedError } from "./model";
 export { buildAgentSystemPrompt } from "./prompt";
 export { createIntentVerifierFromModel } from "./create-intent";
 export { compactAgentContext, AGENT_CONTEXT_LIMITS, type AgentContextLimits } from "./context";

@@ -153,12 +153,31 @@ describe("new agent managed billing boundary", () => {
     expect(events).toEqual([expect.objectContaining({ id: "known", costMicrousd: 800 })]);
     expect(raw.prepare("SELECT COUNT(*) count FROM ai_usage_events WHERE id LIKE 'unknown-%' AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL").get()).toMatchObject({ count: 0 });
   });
-  it("blocks the next paid call when a new-agent model returns no cost receipt", async () => {
+  it("keeps the turn going while an unpriced call holds its worst-case price", async () => {
     fixtureTools.value = [{ name: "fixture_read", description: "Read synthetic", parameters: { type: "object" }, effect: "read", approval: "none", async execute() { return { status: "ok" }; } }];
-    const { env, models, raw } = fixture(settings(), model => { const { usage: _usage, ...response } = completion(model, true); return response; });
-    expect(await executeNewAgentTurn(env, input, new AbortController().signal)).toMatchObject({ status: "failed", replyText: expect.stringContaining("cost is awaiting reconciliation") });
+    const { env, models, raw, events } = fixture(settings(), (model, index) => { if (index > 0) return completion(model); const { usage: _usage, ...response } = completion(model, true); return response; });
+    expect(await executeNewAgentTurn(env, input, new AbortController().signal)).toMatchObject({ status: "complete" });
+    expect(models).toEqual(["openai/gpt-5.5", "openai/gpt-5.5"]);
+    const rows = raw.prepare("SELECT id,metadata_json FROM ai_usage_events ORDER BY created_at,rowid").all().map(row => ({ id: row.id, ...JSON.parse(String(row.metadata_json)) }));
+    expect(rows.map(row => row.costKnown)).toEqual([false, true]);
+    // The hold is not a charge: only the priced receipt is reported.
+    await syncManagedAiUsage(env);
+    expect(events.map(event => event.id)).toEqual([rows[1].id]);
+  });
+  it("stops admitting paid calls while three unpriced calls are held", async () => {
+    const { env, raw, models } = fixture();
+    const insert = raw.prepare("INSERT INTO ai_usage_events(id,user_id,kind,provider,model,estimated_cost_usd,metadata_json) VALUES(?,'owner','text','workers-ai','openai/gpt-5.5',0,?)");
+    for (const id of ["held-1", "held-2"]) insert.run(id, JSON.stringify({ me3_runtime: "agent", billingManaged: true, costKnown: false }));
+    expect(await executeNewAgentTurn(env, input, new AbortController().signal)).toMatchObject({ status: "complete" });
+    insert.run("held-3", JSON.stringify({ me3_runtime: "agent", billingManaged: true, costKnown: false }));
+    await expect(executeNewAgentTurn(env, { ...input, turnId: "next-turn", requestId: "next-request" }, new AbortController().signal)).rejects.toThrow("cost is awaiting reconciliation");
     expect(models).toEqual(["openai/gpt-5.5"]);
-    expect(JSON.parse(String(raw.prepare("SELECT metadata_json FROM ai_usage_events").get()!.metadata_json))).toMatchObject({ me3_runtime: "agent", costKnown: false });
+  });
+  it("counts holds against the monthly maximum, so a hold near the limit switches to the fallback model", async () => {
+    const { env, raw, models } = fixture(settings({ currentMonthUsageMicrousd: 4_600_000 }));
+    raw.prepare("INSERT INTO ai_usage_events(id,user_id,kind,provider,model,estimated_cost_usd,metadata_json) VALUES('held','owner','text','workers-ai','openai/gpt-5.5',0,?)").run(JSON.stringify({ me3_runtime: "agent", billingManaged: true, costKnown: false, billingFeeRate: 0.05 }));
+    expect(await executeNewAgentTurn(env, input, new AbortController().signal)).toMatchObject({ status: "complete", model: fallback });
+    expect(models).toEqual([fallback]);
   });
   it("closes a call the provider rejects before generating at zero cost, so it never blocks the next turn", async () => {
     let rejectNext = true;
@@ -182,9 +201,9 @@ describe("new agent managed billing boundary", () => {
     expect(result.replyText).not.toContain("awaiting reconciliation");
     expect(models).toEqual(["openai/gpt-5.5", backup]);
   });
-  it("blocks resumed inference for current owner new-agent unknown costs", async () => {
+  it("blocks resumed inference while an unknown cost has no price ceiling", async () => {
     const { env, raw, models } = fixture();
-    raw.prepare("INSERT INTO ai_usage_events(id,user_id,kind,provider,model,estimated_cost_usd,metadata_json) VALUES('uncertain','owner','text','workers-ai','openai/gpt-5.5',0,?)").run(JSON.stringify({ me3_runtime: "agent", billingManaged: true, costKnown: false }));
+    raw.prepare("INSERT INTO ai_usage_events(id,user_id,kind,provider,model,estimated_cost_usd,metadata_json) VALUES('uncertain','owner','text','workers-ai','synthetic/unpriced-model',0,?)").run(JSON.stringify({ me3_runtime: "agent", billingManaged: true, costKnown: false }));
     await expect(executeNewAgentTurn(env, input, new AbortController().signal)).rejects.toThrow("cost is awaiting reconciliation");
     expect(models).toEqual([]);
   });
@@ -195,10 +214,12 @@ describe("new agent managed billing boundary", () => {
     expect(await executeNewAgentTurn(env, input, new AbortController().signal)).toMatchObject({ status: "failed", replyText: expect.stringContaining("usage is awaiting reconciliation") });
     expect(models).toEqual(["openai/gpt-5.5"]);
   });
-  it("atomically admits one same-owner managed paid request and allows another after reconciliation", async () => {
+  it("atomically admits only the last free hold to concurrent same-owner requests and allows another after reconciliation", async () => {
     let release!: () => void; let entered!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; }); const started = new Promise<void>(resolve => { entered = resolve; });
-    const { env, models } = fixture(settings(), async model => { entered(); await gate; return completion(model); });
+    const { env, raw, models } = fixture(settings(), async model => { entered(); await gate; return completion(model); });
+    const insert = raw.prepare("INSERT INTO ai_usage_events(id,user_id,kind,provider,model,estimated_cost_usd,metadata_json) VALUES(?,'owner','text','workers-ai','openai/gpt-5.5',0,?)");
+    for (const id of ["held-1", "held-2"]) insert.run(id, JSON.stringify({ me3_runtime: "agent", billingManaged: true, costKnown: false }));
     const first = executeNewAgentTurn(env, input, new AbortController().signal);
     const second = executeNewAgentTurn(env, { ...input, turnId: "second-turn", requestId: "second-request" }, new AbortController().signal);
     try { await started; await new Promise(resolve => setTimeout(resolve, 0)); expect(models).toHaveLength(1); }
@@ -308,13 +329,13 @@ describe("unknown managed cost reconciliation", () => {
     await executeNewAgentTurn(env, input, new AbortController().signal);
     const original = receipt(raw);
     const next = { ...input, turnId: "next-turn", requestId: "next-request" };
-    // Too recent to settle: the call could still be finishing.
-    await expect(executeNewAgentTurn(env, next, new AbortController().signal)).rejects.toThrow(/awaiting reconciliation/);
+    // Too recent to settle: the call could still be finishing. The owner keeps going meanwhile.
+    expect(await executeNewAgentTurn(env, next, new AbortController().signal)).toMatchObject({ status: "complete" });
     expect(reconcileRequests).toHaveLength(0);
     age(raw);
     const occurredAt = receipt(raw).created_at;
     // No evidence yet: the hold stays and the receipt is not priced.
-    await expect(executeNewAgentTurn(env, next, new AbortController().signal)).rejects.toThrow(/awaiting reconciliation/);
+    await syncManagedAiUsage(env);
     expect(reconcileRequests[0]).toEqual([expect.objectContaining({ id: original.id, kind: "text", gatewayId: "fixture", correlation: { key: "me3_usage_id", value: original.id } })]);
     expect(meta(receipt(raw))).toMatchObject({ costKnown: false });
     // Held receipts wait before asking ME3 Cloud again.
@@ -322,7 +343,7 @@ describe("unknown managed cost reconciliation", () => {
     expect(reconcileRequests).toHaveLength(1);
     raw.exec("UPDATE ai_usage_events SET metadata_json=json_remove(metadata_json,'$.reconcileAttemptedAt')");
     settle = true;
-    expect(await executeNewAgentTurn(env, next, new AbortController().signal)).toMatchObject({ status: "complete" });
+    await syncManagedAiUsage(env);
     expect(models).toEqual(["openai/gpt-5.5", "openai/gpt-5.5"]);
     const settled = raw.prepare("SELECT * FROM ai_usage_events WHERE id=?").get(original.id)!;
     expect(settled.created_at).toBe(occurredAt);
@@ -330,6 +351,23 @@ describe("unknown managed cost reconciliation", () => {
     expect(meta(settled)).toMatchObject({ costKnown: true, baseCostUsd: 0.0004, pricingBasis: "ai-gateway-log-cost", settlementId: "ai-gateway-log:log-1" });
     expect(events.filter(event => event.id === original.id)).toEqual([expect.objectContaining({ costMicrousd: 420, inputTokens: 100, outputTokens: 10 })]);
     expect(raw.prepare("SELECT resolution,evidence_hash,actor FROM ai_usage_settlements").all()).toEqual([{ resolution: "charged", evidence_hash: hash("a"), actor: "me3-cloud:ai-gateway-evidence" }]);
+  });
+
+  it("charges a hold at its worst-case price once a day passes without gateway evidence", async () => {
+    const { env, raw, events } = fixture(settings(), unpriced);
+    await executeNewAgentTurn(env, input, new AbortController().signal);
+    const id = String(receipt(raw).id);
+    age(raw, 60 * 23);
+    await syncManagedAiUsage(env);
+    expect(meta(receipt(raw))).toMatchObject({ costKnown: false });
+    age(raw, 60 * 25);
+    raw.exec("UPDATE ai_usage_events SET metadata_json=json_remove(metadata_json,'$.reconcileAttemptedAt')");
+    await syncManagedAiUsage(env);
+    const hold = (64_000 * 5 + 4_096 * 30) / 1_000_000;
+    expect(meta(receipt(raw))).toMatchObject({ costKnown: true, baseCostUsd: hold, pricingBasis: "provisional-hold", settlementId: `provisional-hold:${id}` });
+    expect(Number(receipt(raw).estimated_cost_usd)).toBeCloseTo(hold * 1.05, 10);
+    expect(events.filter(event => event.id === id)).toEqual([expect.objectContaining({ costMicrousd: Math.round(hold * 1.05 * 1_000_000) })]);
+    expect(raw.prepare("SELECT resolution,evidence_source,actor FROM ai_usage_settlements").all()).toEqual([{ resolution: "charged", evidence_source: "provisional-hold", actor: "me3-core:provisional-hold" }]);
   });
 
   it("settles explicit no-charge evidence at zero and rejects zero claims that carry output", async () => {

@@ -53,6 +53,9 @@ const PRICING: Record<string, {input:number;output:number;cachedInput?:number;ca
   "@cf/deepseek-ai/deepseek-v4.1-flash-1017": {input:0.3,output:1.2,cachedInput:0.006},
 };
 
+/** Catalog price per million tokens, or null when the model has no known price. */
+export function modelPricing(model: string): {input:number;output:number;cachedInput?:number;cacheWriteInput?:number} | null {return PRICING[model] ?? null;}
+
 // Reasoning effort each provider receives. Providers default very differently
 // (DeepSeek V4 and V4.1 think at "high" unless told otherwise), so agent latency stays
 // comparable only when every reasoning model is set explicitly.

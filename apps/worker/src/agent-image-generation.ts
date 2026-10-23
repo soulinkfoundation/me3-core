@@ -3,7 +3,8 @@ import { getAiSettings } from "./ai-providers";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
 import { getManagedAiBillingSettings, syncManagedAiUsage } from "./managed-ai-billing";
 import { isManagedRuntime } from "./managed-runtime-lifecycle";
-import { generateAgentProviderImage, verifiedImageCost } from "./agent-image-provider";
+import { generateAgentProviderImage, requestedImageCostUsd, verifiedImageCost } from "./agent-image-provider";
+import { assertProvisionalHoldsCovered, MAX_PROVISIONAL_HOLDS } from "./managed-ai-holds";
 import type { Env } from "./types";
 export { AGENT_IMAGE_SCHEMA_STATEMENTS } from "./agent-image-schema";
 
@@ -40,14 +41,15 @@ async function assertActiveScope(env: Env, ownerId: string, input: Parameters<Ag
   input.signal.throwIfAborted();
 }
 // Shadow receipts are excluded so an in-flight or unpriced shadow cannot block images.
+// Unpriced agent receipts reserve their worst-case price (managed-ai-holds.ts).
 async function managedAdmission(env: Env, ownerId: string, signal: AbortSignal): Promise<number> {
   await syncManagedAiUsage(env);
   const snapshot = await env.DB.prepare(`SELECT COUNT(*) AS count FROM ai_usage_events WHERE user_id=?
     AND created_at >= datetime('now','start of month') AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
     AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path'`).bind(ownerId).first<{ count: number }>();
-  const policy = await getManagedAiBillingSettings(env, { syncUsage: false });
+  const [policy, reserved] = await Promise.all([getManagedAiBillingSettings(env, { syncUsage: false }), assertProvisionalHoldsCovered(env, ownerId)]);
   signal.throwIfAborted();
-  if (!policy.available || policy.fallbackActive || policy.currentMonthUsageMicrousd >= policy.effectiveMaximumCents * 10_000) throw new Error(policy.ineligibleReason || "Managed image generation is unavailable at the current budget");
+  if (!policy.available || policy.fallbackActive || policy.currentMonthUsageMicrousd + reserved >= policy.effectiveMaximumCents * 10_000) throw new Error(policy.ineligibleReason || "Managed image generation is unavailable at the current budget");
   return snapshot?.count || 0;
 }
 
@@ -90,10 +92,13 @@ export function createAgentImageGenerationServices(env: Env, ownerId: string): A
           AND NOT EXISTS(SELECT 1 FROM me3_agent_cancellations WHERE owner_id=? AND request_id=?)
           AND (?=0 OR (NOT EXISTS(SELECT 1 FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month')
             AND json_extract(metadata_json,'$.me3_runtime')='agent' AND json_extract(metadata_json,'$.billingManaged')=1 AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NULL
+            AND coalesce(json_extract(metadata_json,'$.costKnown'),1)<>0 AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path')
+            AND ?>(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month')
+            AND json_extract(metadata_json,'$.me3_runtime')='agent' AND json_extract(metadata_json,'$.billingManaged')=1 AND json_extract(metadata_json,'$.costKnown')=0
             AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path')
             AND ?=(SELECT COUNT(*) FROM ai_usage_events WHERE user_id=? AND created_at >= datetime('now','start of month') AND json_extract(metadata_json,'$.managedBillingReportedAt') IS NOT NULL
             AND coalesce(json_extract(metadata_json,'$.purpose'),'')<>'fast_path')))`)
-          .bind(id, ownerId, input.threadId, input.turnId, input.requestId, input.idempotencyKey, prompt, model, managed ? 1 : 0, usageId, ownerId, input.turnId, usageId, ownerId, input.requestId, managed ? 1 : 0, ownerId, reportCount, ownerId),
+          .bind(id, ownerId, input.threadId, input.turnId, input.requestId, input.idempotencyKey, prompt, model, managed ? 1 : 0, usageId, ownerId, input.turnId, usageId, ownerId, input.requestId, managed ? 1 : 0, ownerId, MAX_PROVISIONAL_HOLDS, ownerId, reportCount, ownerId),
         env.DB.prepare(`INSERT OR IGNORE INTO ai_usage_events(id,user_id,kind,provider,model,successful_request_count,metadata_json)
           SELECT ?,?,'image','workers-ai',?,0,? WHERE EXISTS(SELECT 1 FROM me3_agent_image_operations WHERE id=? AND status='admitted')`).bind(usageId, ownerId, model, JSON.stringify(metadata), id),
       ]);
@@ -105,7 +110,15 @@ export function createAgentImageGenerationServices(env: Env, ownerId: string): A
       operation = await readOperation(env, ownerId, input.idempotencyKey);
       await assertActiveScope(env, ownerId, input);
       providerStarted = true;
-      const image = await generateAgentProviderImage(env, model, prompt, gateway.gatewayId || env.CLOUDFLARE_AI_GATEWAY_ID || "default", input.signal, { me3_runtime: "agent", operationId: id, me3_turn_id: input.turnId, me3_request_id: input.requestId, me3_thread_id: input.threadId });
+      // A completed provider call has charged its fixed price whatever happens to the download,
+      // so price the receipt now rather than leave it holding for reconciliation.
+      const requestedCost = requestedImageCostUsd(model);
+      const priceRequested = async () => {
+        if (requestedCost === null) return;
+        await env.DB.prepare("UPDATE ai_usage_events SET estimated_cost_usd=?,successful_request_count=1,metadata_json=? WHERE id=? AND user_id=? AND json_extract(metadata_json,'$.costKnown')=0 AND json_extract(metadata_json,'$.settlementId') IS NULL")
+          .bind(requestedCost * (1 + billingFeeRate), JSON.stringify({ ...metadata, costKnown: true, baseCostUsd: requestedCost, pricingBasis: "requested-1024x1024-on-completion" }), usageId, ownerId).run();
+      };
+      const image = await generateAgentProviderImage(env, model, prompt, gateway.gatewayId || env.CLOUDFLARE_AI_GATEWAY_ID || "default", input.signal, { me3_runtime: "agent", operationId: id, me3_turn_id: input.turnId, me3_request_id: input.requestId, me3_thread_id: input.threadId }, priceRequested);
       const cost = verifiedImageCost(model, image);
       await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,successful_request_count=1,metadata_json=? WHERE id=? AND user_id=? AND json_extract(metadata_json,'$.settlementId') IS NULL")
         .bind(cost?.inputTokens || 0, cost?.outputTokens || 0, cost ? cost.baseCostUsd * (1 + billingFeeRate) : 0, JSON.stringify({ ...metadata, costKnown: Boolean(cost), usageReported: cost?.usageReported || false, baseCostUsd: cost?.baseCostUsd ?? null, pricingBasis: cost?.pricingBasis ?? null }), usageId, ownerId).run();

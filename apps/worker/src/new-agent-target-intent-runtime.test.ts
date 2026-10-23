@@ -122,14 +122,16 @@ describe("new Worker independent target verification through actual admission",(
     expect(f.raw().prepare("SELECT COUNT(*) count FROM test_intent_effects").get()).toMatchObject({count:0});
     expect(f.requests).toHaveLength(3);
   });
-  it("keeps unknown verifier usage under the admitted ID and blocks the next managed turn",async()=>{
+  it("keeps unknown verifier usage under the admitted ID as a hold the next managed turn runs under",async()=>{
     const f=fixture({unknownUsage:true});await f.persist();const result=await executeNewAgentTurn(f.env,cleanInput,new AbortController().signal);
-    expect(result).toMatchObject({status:"failed",streamMetrics:{modelRequestCount:3},trace:{usage:{estimatedCostUsd:null},targetIntentRequests:[{uncertain:true}]}});
+    // The planner continues under the hold; the uncertain verdict still keeps the move from running.
+    expect(result).toMatchObject({status:"failed",streamMetrics:{modelRequestCount:4},trace:{usage:{estimatedCostUsd:null},targetIntentRequests:[{uncertain:true}]}});
     const receipt=f.receipts().find(row=>row.metadata.purpose==="target_intent")!;expect(receipt.metadata).toMatchObject({costKnown:false,billingManaged:true});
     expect(f.intentReceipt()).toMatchObject({status:"running"});expect(JSON.parse(String(f.intentReceipt()!.result_json))).toMatchObject({uncertain:true,inference:{usageId:receipt.id}});
     expect(f.raw().prepare("SELECT COUNT(*) count FROM test_intent_effects").get()).toMatchObject({count:0});
-    f.reopen();await expect(executeNewAgentTurn(f.env,{...cleanInput,turnId:"next",requestId:"next-request"},new AbortController().signal)).rejects.toThrow(/awaiting reconciliation/);
-    expect(f.requests).toHaveLength(3);expect(f.bridgeEvents.some(event=>event.id===receipt.id)).toBe(false);
+    f.reopen();const next={...cleanInput,turnId:"next",requestId:"next-request"};await f.persist(next);await executeNewAgentTurn(f.env,next,new AbortController().signal);
+    expect(f.requests.length).toBeGreaterThan(4);expect(f.bridgeEvents.some(event=>event.id===receipt.id)).toBe(false);
+    expect(f.receipts().find(row=>row.id===receipt.id)!.metadata).toMatchObject({costKnown:false});
   });
   it("rechecks actual hosted budget fallback before isolated verifier admission",async()=>{
     const f=fixture();await f.persist();f.onRequest(request=>{if(!request.intent&&f.requests.length===2)f.policy.fallbackActive=true;});
@@ -144,6 +146,9 @@ describe("new Worker independent target verification through actual admission",(
   });
   it("shares the atomic hosted admission barrier with a concurrent ordinary turn during verifier inference",async()=>{
     const f=fixture();await f.persist();let release!:()=>void;let entered!:()=>void;
+    // Two held calls leave the in-flight verifier the last free hold.
+    const held=f.raw().prepare("INSERT INTO ai_usage_events(id,user_id,kind,provider,model,estimated_cost_usd,metadata_json) VALUES(?,'owner','text','workers-ai','openai/gpt-5.5',0,?)");
+    for(const id of ["held-1","held-2"])held.run(id,JSON.stringify({me3_runtime:"agent",billingManaged:true,costKnown:false}));
     const gate=new Promise<void>(resolve=>{release=resolve;});const started=new Promise<void>(resolve=>{entered=resolve;});
     f.onRequest(async request=>{if(request.intent){entered();await gate;}});
     const first=executeNewAgentTurn(f.env,cleanInput,new AbortController().signal);
