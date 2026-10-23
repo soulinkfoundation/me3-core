@@ -147,7 +147,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
   } finally {await releaseManagedRuntimeWriteLease(env,lease);}
 }
 
-type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"create_intent"|"suggested_replies"|"memory_extraction";onAdmission?(id:string):void};
+type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"create_intent"|"suggested_replies"|"memory_extraction"|"goal_suggestions";onAdmission?(id:string):void};
 export type AgentModelScope = Pick<NewAgentDispatchInput,"userId"|"threadId"|"turnId"|"requestId"|"selectedModel">;
 
 /**
