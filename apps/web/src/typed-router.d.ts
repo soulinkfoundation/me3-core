@@ -45,7 +45,8 @@ declare module 'vue-router/auto-routes' {
     '/sites/[username]/business-site': RouteRecordInfo<'/sites/[username]/business-site', '/sites/:username/business-site', { username: ParamValue<true> }, { username: ParamValue<false> }>,
     '/sites/[username]/landing-pages/new': RouteRecordInfo<'/sites/[username]/landing-pages/new', '/sites/:username/landing-pages/new', { username: ParamValue<true> }, { username: ParamValue<false> }>,
     '/sites/[username]/pages/[pageId]': RouteRecordInfo<'/sites/[username]/pages/[pageId]', '/sites/:username/pages/:pageId', { username: ParamValue<true>, pageId: ParamValue<true> }, { username: ParamValue<false>, pageId: ParamValue<false> }>,
-    '/social': RouteRecordInfo<'/social', '/social', Record<never, never>, Record<never, never>>,
+    '/social/': RouteRecordInfo<'/social/', '/social', Record<never, never>, Record<never, never>>,
+    '/social/[postId]': RouteRecordInfo<'/social/[postId]', '/social/:postId', { postId: ParamValue<true> }, { postId: ParamValue<false> }>,
     '/tasks': RouteRecordInfo<'/tasks', '/tasks', Record<never, never>, Record<never, never>>,
     '/wheel-of-life': RouteRecordInfo<'/wheel-of-life', '/wheel-of-life', Record<never, never>, Record<never, never>>,
   }
