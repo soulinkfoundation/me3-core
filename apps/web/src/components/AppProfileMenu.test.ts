@@ -71,7 +71,7 @@ describe("AppProfileMenu optional plugin links", () => {
     invalidatePluginAccess();
   });
 
-  it("shows Socials and Accounts when both plugins are enabled", async () => {
+  it("shows Social and Accounts when both plugins are enabled", async () => {
     const wrapper = await mountProfileMenu([
       {
         id: "me3.social-publishing",
@@ -85,7 +85,7 @@ describe("AppProfileMenu optional plugin links", () => {
       },
     ]);
 
-    expect(wrapper.find('[aria-label="Socials"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="Social"]').exists()).toBe(true);
     expect(wrapper.find('[aria-label="Accounts"]').exists()).toBe(true);
     wrapper.unmount();
   });
@@ -110,11 +110,11 @@ describe("AppProfileMenu optional plugin links", () => {
       "People",
       "Email",
       "Campaigns",
+      "Social",
       "Mission",
       "Tasks",
       "Accounts",
       "Files",
-      "Socials",
     ]);
     // Edit site is in the header and Chat is the top switch, so neither repeats in Go to.
     expect(wrapper.find('nav [aria-label="Website"]').exists()).toBe(false);
@@ -174,7 +174,7 @@ describe("AppProfileMenu optional plugin links", () => {
     wrapper.unmount();
   });
 
-  it("hides Socials and Accounts when both plugins are disabled", async () => {
+  it("hides Social and Accounts when both plugins are disabled", async () => {
     const wrapper = await mountProfileMenu([
       {
         id: "me3.social-publishing",
@@ -188,7 +188,7 @@ describe("AppProfileMenu optional plugin links", () => {
       },
     ]);
 
-    expect(wrapper.find('[aria-label="Socials"]').exists()).toBe(false);
+    expect(wrapper.find('[aria-label="Social"]').exists()).toBe(false);
     expect(wrapper.find('[aria-label="Accounts"]').exists()).toBe(false);
     wrapper.unmount();
   });
