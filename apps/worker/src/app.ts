@@ -122,6 +122,7 @@ import {
 import {
   getManagedAiBillingSettings,
   ManagedAiBillingInputError,
+  startManagedAiCardSetup,
   updateManagedAiBillingSettings,
 } from "./managed-ai-billing";
 import { registerMobileRoutes } from "./routes/mobile";
@@ -1367,6 +1368,20 @@ app.put("/api/managed-ai-billing-settings", async (c) => {
         monthlyMaximumCents: input.monthlyMaximumCents,
       }),
     );
+  } catch (error) {
+    if (error instanceof ManagedAiBillingInputError) {
+      return c.json({ error: error.message }, error.status as any);
+    }
+    throw error;
+  }
+});
+
+app.post("/api/managed-ai-billing-settings/card", async (c) => {
+  const ownerId = await requireOwner(c);
+  if (!ownerId) return unauthorized(c);
+  const returnUrl = new URL("/account", c.req.url).toString();
+  try {
+    return c.json({ url: await startManagedAiCardSetup(c.env, returnUrl) });
   } catch (error) {
     if (error instanceof ManagedAiBillingInputError) {
       return c.json({ error: error.message }, error.status as any);

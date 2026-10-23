@@ -56,6 +56,8 @@ export type ManagedAiBillingSettings = {
   models: ManagedAiModelOption[];
   eligible: boolean;
   ineligibleReason: string | null;
+  // App Store subscribers save a card on the web before turning on overages.
+  paymentMethodRequired?: boolean;
   overagesEnabled: boolean;
   includedMonthlyCents: number;
   monthlyMaximumCents: number;
@@ -142,6 +144,34 @@ export async function updateManagedAiBillingSettings(
   }
   await cacheManagedAiBillingPolicy(env, payload);
   return payload;
+}
+
+/** Starts a Stripe card setup for App Store subscribers and returns its URL. */
+export async function startManagedAiCardSetup(env: Env, returnUrl: string): Promise<string> {
+  if (!isManaged(env)) throw new ManagedAiBillingInputError("Managed AI billing is unavailable", 404);
+  const bridge = await getManagedCommerceBridgeConfig(env);
+  if (!bridge) {
+    throw new ManagedAiBillingInputError("Managed billing connection is unavailable", 503);
+  }
+  let response: Response;
+  let payload: unknown;
+  try {
+    response = await fetch(`${bridge.origin}/v1/ai-billing/payment-method`, {
+      method: "POST",
+      headers: { ...bridge.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ returnUrl }),
+    });
+    payload = await response.json<unknown>().catch(() => null);
+  } catch (error) {
+    console.error("Managed AI card setup failed", error);
+    throw new ManagedAiBillingInputError("Managed billing is temporarily unavailable", 503);
+  }
+  if (!response.ok) throw new ManagedAiBillingInputError(apiError(payload), response.status);
+  const url = asRecord(payload)?.url;
+  if (typeof url !== "string" || !url.startsWith("https://")) {
+    throw new ManagedAiBillingInputError("Managed billing returned an invalid response", 502);
+  }
+  return url;
 }
 
 export async function syncManagedAiUsage(env: Env): Promise<ManagedAiBillingSettings | null> {

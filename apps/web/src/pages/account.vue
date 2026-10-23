@@ -181,6 +181,7 @@ type ManagedAiBillingSettings = {
   models: ManagedAiModelOption[];
   eligible: boolean;
   ineligibleReason: string | null;
+  paymentMethodRequired?: boolean;
   overagesEnabled: boolean;
   includedMonthlyCents: number;
   monthlyMaximumCents: number;
@@ -1542,6 +1543,28 @@ async function loadAiSettings() {
   }
 }
 
+const managedAiCardStarting = ref(false);
+
+async function addManagedAiCard() {
+  managedAiCardStarting.value = true;
+  try {
+    const { url } = await api.post<{ url: string }>("/managed-ai-billing-settings/card", {});
+    window.location.assign(url);
+  } catch (e: unknown) {
+    toastFromUnknown(e, "Couldn't open card setup. Try again.");
+    managedAiCardStarting.value = false;
+  }
+}
+
+function completeManagedAiCardReturn() {
+  const result = route.query.ai_card;
+  if (result !== "added" && result !== "cancelled") return;
+  if (result === "added") toastSuccess("Card added. You can now turn on additional usage.");
+  const query = { ...route.query };
+  delete query.ai_card;
+  void router.replace({ path: route.path, query, hash: route.hash });
+}
+
 async function saveManagedAiBillingSettings() {
   if (managedAiBillingSaveDisabled.value) return;
   aiSettingsSaving.value = true;
@@ -2251,6 +2274,7 @@ onMounted(async () => {
   });
   void loadCoreStorageStatus();
   void completeStripeConnectReturn();
+  completeManagedAiCardReturn();
   openRouteSection();
   await scrollToRouteHash();
 });
@@ -3508,8 +3532,26 @@ onBeforeUnmount(() => {
                         </label>
                       </fieldset>
 
+                      <div
+                        v-if="managedAiBilling.paymentMethodRequired"
+                        class="managed-ai-card"
+                      >
+                        <p class="managed-ai-help">
+                          Your plan is billed by Apple. Add a card to pay for
+                          usage above your allowance, up to a limit you set.
+                        </p>
+                        <Button
+                          color="secondary"
+                          size="compact"
+                          type="button"
+                          :disabled="managedAiCardStarting"
+                          @click="addManagedAiCard"
+                        >
+                          {{ managedAiCardStarting ? "Opening..." : "Add a card" }}
+                        </Button>
+                      </div>
                       <p
-                        v-if="!managedAiBilling.eligible"
+                        v-else-if="!managedAiBilling.eligible"
                         class="managed-ai-unavailable"
                       >
                         {{
@@ -4683,6 +4725,12 @@ onBeforeUnmount(() => {
 }
 
 .managed-ai-help,
+.managed-ai-card {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
 .managed-ai-unavailable {
   margin: 0;
   color: var(--ui-text-muted, var(--color-text-muted));
