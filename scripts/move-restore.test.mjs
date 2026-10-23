@@ -25,24 +25,47 @@ import { exportPortableV1, resolveCoreInfo } from "./portable-v1.mjs";
 const rootDir = path.resolve(import.meta.dirname, "..");
 const workflow = readFileSync(path.join(rootDir, ".github/workflows/restore-portable.yml"), "utf8");
 
-test("the D1 import drops transaction control and Wrangler tables", () => {
-  const dump = [
-    "PRAGMA foreign_keys=OFF;",
-    "BEGIN TRANSACTION;",
-    "CREATE TABLE _cf_KV (",
-    "  key TEXT PRIMARY KEY,",
-    "  value BLOB",
-    ");",
-    "INSERT INTO _cf_KV VALUES('a','b');",
-    "CREATE TABLE notes (id TEXT PRIMARY KEY);",
-    "INSERT INTO notes VALUES('n1');",
-    "COMMIT;",
-  ].join("\n");
-  const sql = buildD1Import(dump);
-  assert.equal(sql.split("\n")[0], "PRAGMA defer_foreign_keys = true;");
-  assert.doesNotMatch(sql, /BEGIN TRANSACTION|COMMIT|foreign_keys=OFF|_cf_KV/);
-  assert.match(sql, /CREATE TABLE notes/);
-  assert.match(sql, /INSERT INTO notes VALUES\('n1'\);/);
+test("the D1 import creates every table first and leaves out Wrangler tables", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "me3-move-import-"));
+  try {
+    const database = path.join(directory, "source.sqlite");
+    const setup = spawnSync("sqlite3", [database], {
+      encoding: "utf8",
+      input: [
+        "CREATE TABLE notes (id TEXT PRIMARY KEY, owner_id TEXT REFERENCES owners(id), body TEXT);",
+        "CREATE TABLE owners (id TEXT PRIMARY KEY);",
+        "CREATE TABLE _cf_KV (key TEXT PRIMARY KEY, value BLOB);",
+        "CREATE TABLE counters (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT);",
+        "CREATE VIRTUAL TABLE notes_search USING fts5(body);",
+        "CREATE TRIGGER notes_search_insert AFTER INSERT ON notes BEGIN INSERT INTO notes_search(body) VALUES (new.body); END;",
+        "INSERT INTO owners VALUES ('o1');",
+        "INSERT INTO notes VALUES ('n1', 'o1', 'line one' || char(10) || 'it''s two');",
+        "INSERT INTO _cf_KV VALUES ('a', 'b');",
+        "INSERT INTO counters (label) VALUES ('first');",
+      ].join("\n"),
+    });
+    assert.equal(setup.status, 0, setup.stderr);
+
+    const sql = buildD1Import(database);
+    assert.equal(sql.split("\n")[0], "PRAGMA defer_foreign_keys = true;");
+    assert.doesNotMatch(sql, /_cf_KV|writable_schema|sqlite_sequence|notes_search_data/);
+    assert.ok(sql.indexOf("CREATE TABLE owners") < sql.indexOf('INSERT INTO "notes"'));
+    assert.ok(sql.indexOf('INSERT INTO "notes"') < sql.indexOf("CREATE TRIGGER notes_search_insert"));
+
+    const imported = path.join(directory, "imported.sqlite");
+    const load = spawnSync("sqlite3", [imported], {
+      encoding: "utf8",
+      input: `PRAGMA foreign_keys = ON;\n${sql}`,
+    });
+    assert.equal(load.status, 0, load.stderr);
+    const query = (statement) =>
+      spawnSync("sqlite3", [imported, statement], { encoding: "utf8" }).stdout.trim();
+    assert.equal(query("SELECT body FROM notes;"), "line one\nit's two");
+    assert.equal(query("SELECT COUNT(*) FROM notes_search WHERE notes_search MATCH 'two';"), "1");
+    assert.equal(query("SELECT seq FROM sqlite_sequence WHERE name = 'counters';"), "1");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("the restored files go to the SITE_ASSETS bucket only", () => {
@@ -125,7 +148,10 @@ test("an export restores, migrates forward and imports as valid SQL", async () =
     const dump = spawnSync("sqlite3", [migrated.database, ".dump"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
     assert.equal(dump.status, 0);
     const imported = path.join(root, "imported.sqlite");
-    const load = spawnSync("sqlite3", [imported], { input: buildD1Import(dump.stdout), encoding: "utf8" });
+    const load = spawnSync("sqlite3", [imported], {
+      input: `PRAGMA foreign_keys = ON;\n${buildD1Import(migrated.database)}`,
+      encoding: "utf8",
+    });
     assert.equal(load.status, 0, load.stderr);
 
     const count = (database, sql) =>

@@ -29,12 +29,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const TAG_PATTERN = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
-const IMPORT_SKIPPED_STATEMENTS = new Set([
-  "PRAGMA foreign_keys=OFF;",
-  "BEGIN TRANSACTION;",
-  "COMMIT;",
-  "ROLLBACK; -- due to errors",
-]);
 
 export class MoveRestoreError extends Error {
   constructor(code, message) {
@@ -131,31 +125,107 @@ export function migrateRestoredDatabase({ database, work, root = REPO_ROOT, wran
   return { database: files[0] };
 }
 
-// D1 imports run in their own transaction and reject transaction control and
-// Wrangler's internal tables, so the SQLite dump is adjusted for import.
-export function buildD1Import(dump) {
-  const lines = [];
-  let skipping = false;
-  for (const line of dump.split("\n")) {
-    if (IMPORT_SKIPPED_STATEMENTS.has(line.trim())) continue;
-    if (/^CREATE TABLE (IF NOT EXISTS )?["'`]?_cf_/i.test(line)) {
-      skipping = !line.trim().endsWith(";");
-      continue;
-    }
-    if (skipping) {
-      if (line.trim().endsWith(";")) skipping = false;
-      continue;
-    }
-    if (/^INSERT INTO ["'`]?_cf_/i.test(line)) continue;
-    lines.push(line);
+// Builds the D1 import from the database itself rather than a SQLite .dump.
+// D1 enforces foreign keys while importing, so every table is created before
+// any row is inserted; it also rejects the writable_schema trick .dump uses
+// for full-text search tables, so those are recreated with CREATE VIRTUAL
+// TABLE and refilled. Triggers, indexes and views come last so inserting rows
+// doesn't fire them. Wrangler's own _cf_ tables and sqlite_sequence are left
+// out; D1 rebuilds sqlite_sequence from the inserted rows.
+export function buildD1Import(database) {
+  const objects = sqliteJson(
+    database,
+    "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid;",
+  );
+  const virtualTables = objects
+    .filter((object) => object.type === "table" && /^CREATE VIRTUAL TABLE/i.test(object.sql))
+    .map((object) => object.name);
+  const internal = (name) =>
+    name.startsWith("sqlite_") ||
+    name.startsWith("_cf_") ||
+    virtualTables.some((table) => FTS_SHADOW_SUFFIXES.some((suffix) => name === `${table}${suffix}`));
+  const tables = objects.filter((object) => object.type === "table" && !internal(object.name));
+  const statements = ["PRAGMA defer_foreign_keys = true;"];
+  for (const table of tables) statements.push(`${table.sql};`);
+  for (const table of inDependencyOrder(database, tables)) {
+    const rows = insertStatements(database, table.name, virtualTables.includes(table.name));
+    if (rows) statements.push(rows);
   }
-  return ["PRAGMA defer_foreign_keys = true;", ...lines].join("\n");
+  for (const type of ["index", "trigger", "view"]) {
+    for (const object of objects) {
+      if (object.type === type && !internal(object.name) && !internal(object.tbl_name || "")) {
+        statements.push(`${object.sql};`);
+      }
+    }
+  }
+  return statements.join("\n");
+}
+
+const FTS_SHADOW_SUFFIXES = ["_data", "_idx", "_content", "_docsize", "_config"];
+
+// Parents before children, so each row's foreign keys already exist even
+// where the import isn't one deferred transaction. Cycles keep their order.
+function inDependencyOrder(database, tables) {
+  const names = new Set(tables.map((table) => table.name));
+  const parents = new Map(
+    tables.map((table) => [
+      table.name,
+      new Set(
+        sqliteJson(database, `PRAGMA foreign_key_list(${quoteSqlString(table.name)});`)
+          .map((key) => key.table)
+          .filter((parent) => parent !== table.name && names.has(parent)),
+      ),
+    ]),
+  );
+  const ordered = [];
+  const placed = new Set();
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (const table of tables) {
+      if (placed.has(table.name)) continue;
+      if ([...parents.get(table.name)].every((parent) => placed.has(parent))) {
+        ordered.push(table);
+        placed.add(table.name);
+        progress = true;
+      }
+    }
+  }
+  return [...ordered, ...tables.filter((table) => !placed.has(table.name))];
+}
+
+function insertStatements(database, table, keepRowid) {
+  const columns = sqliteJson(database, `PRAGMA table_xinfo(${quoteSqlString(table)});`)
+    .filter((column) => Number(column.hidden) === 0)
+    .map((column) => column.name);
+  const names = keepRowid ? ["rowid", ...columns] : columns;
+  if (names.length === 0) return "";
+  const columnList = names.map(quoteSqlIdentifier).join(", ");
+  const values = names.map((name) => `quote(${quoteSqlIdentifier(name)})`).join(" || ', ' || ");
+  const select =
+    `SELECT 'INSERT INTO ${quoteSqlIdentifier(table).replaceAll("'", "''")} (${columnList.replaceAll("'", "''")}) VALUES (' || ` +
+    `${values} || ');' FROM ${quoteSqlIdentifier(table)};`;
+  return run("sqlite3", ["-batch", "-noheader", database, select], {
+    maxBuffer: 2 * 1024 * 1024 * 1024,
+  }).stdout.trim();
+}
+
+function sqliteJson(database, sql) {
+  const output = run("sqlite3", ["-batch", "-json", database, sql]).stdout.trim();
+  return output ? JSON.parse(output) : [];
+}
+
+function quoteSqlIdentifier(name) {
+  return `"${String(name).replaceAll('"', '""')}"`;
+}
+
+function quoteSqlString(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 export function importIntoCloudflare({ database, r2Directory, work, root = REPO_ROOT, wrangler = defaultWrangler }) {
-  const dump = run("sqlite3", [database, ".dump"], { maxBuffer: 2 * 1024 * 1024 * 1024 }).stdout;
   const importFile = join(work, "import.sql");
-  writeFileSync(importFile, buildD1Import(dump), { mode: 0o600 });
+  writeFileSync(importFile, buildD1Import(database), { mode: 0o600 });
   wrangler(["d1", "execute", "DB", "--remote", "--config", "wrangler.toml", "--file", importFile, "--yes"], root);
   rmSync(importFile, { force: true });
 
