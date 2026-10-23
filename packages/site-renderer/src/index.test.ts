@@ -916,6 +916,9 @@ describe("site generator", () => {
     expect(files["index.html"]).toContain("'/free'");
     expect(files["index.html"]).toContain("form.reset();dateInput.value='';selectedTime='';timeInput.value=''");
     expect(files["index.html"]).toContain("'Your booking is confirmed.'");
+    // Progress shows once, on the button, not again in the status line.
+    expect(files["index.html"]).toContain("submitButton.textContent=busy?'Confirming…':submitLabel");
+    expect(files["index.html"]).not.toContain("setStatus('Confirming booking...')");
     expect(files["index.html"]).toContain("Your booking is confirmed.");
     expect(files["index.html"]).toContain("data-booking-status");
     expect(files["index.html"]).toContain("clearBookingParams()");

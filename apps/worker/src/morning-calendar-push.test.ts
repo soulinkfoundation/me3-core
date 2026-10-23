@@ -62,10 +62,16 @@ describe("morning calendar push with real SQLite", () => {
     expect(String(f.fetch.mock.calls[0][0])).toContain(encodeURIComponent(`daily:${date}`));
   });
 
-  it("uses the owner's configured time and still catches up later that day", async () => {
+  it("uses the owner's configured time and still catches up later that morning", async () => {
     const f = fixture("UTC", "10:45"); await f.dispatch("2026-10-13T10:44:59Z");
-    expect(f.fetch).not.toHaveBeenCalled(); await f.dispatch("2026-10-13T16:00:00Z");
+    expect(f.fetch).not.toHaveBeenCalled(); await f.dispatch("2026-10-13T13:00:00Z");
     expect(f.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not say good morning to a phone set up in the evening", async () => {
+    const f = fixture(); await f.dispatch("2026-10-13T17:20:00Z"); await f.dispatch("2026-10-13T22:59:00Z");
+    expect(f.fetch).not.toHaveBeenCalled();
+    await f.dispatch("2026-10-14T06:30:00Z"); expect(f.fetch).toHaveBeenCalledTimes(1);
   });
 
   it("sends an empty day once across concurrent cron runs and later retries, then again next day", async () => {

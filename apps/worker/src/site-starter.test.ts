@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { draftStarterSite, getOwnerProfileSite, publishStarterSite, renderDraftPreviewHtml, setDraftTheme, starterSearchQuery } from "./site-starter";
+import { draftStarterSite, getOwnerProfileSite, inlineDraftImages, publishStarterSite, renderDraftPreviewHtml, setDraftTheme, starterSearchQuery } from "./site-starter";
 import { getSiteFileText } from "./sites";
 import type { Env } from "./types";
 
@@ -132,5 +132,22 @@ describe("the chat-drafted first site", () => {
       expect.objectContaining({ id: "service:offer-6-week-programme", title: "6-week programme", availability: "manual" }),
     ]);
     expect(meJson.services.some((service: { price?: unknown }) => service.price)).toBe(false);
+  });
+});
+
+describe("inlineDraftImages", () => {
+  // Failure modes: an unpublished site's photo shows broken in the app's draft card;
+  // remote, missing or non-image files get swapped; oversized files bloat the page.
+  it("inlines the site's own images and leaves everything else alone", async () => {
+    const html = '<img class="site-hero__avatar" src="https://me.example/media/a.png"><img src="media/b.png"><img src="https://cdn.example/x.png"><img src="media/missing.png"><img src="media/page.html">';
+    const read = async (path: string) => path === "media/a.png" || path === "media/b.png"
+      ? new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } })
+      : path === "media/page.html" ? new Response("<p>", { headers: { "Content-Type": "text/html" } }) : new Response(null, { status: 404 });
+    const out = await inlineDraftImages(html, "https://me.example/", read);
+    expect(out).toContain('class="site-hero__avatar" src="data:image/png;base64,AQID"');
+    expect(out).toContain('<img src="data:image/png;base64,AQID">');
+    expect(out).toContain('src="https://cdn.example/x.png"');
+    expect(out).toContain('src="media/missing.png"');
+    expect(out).toContain('src="media/page.html"');
   });
 });

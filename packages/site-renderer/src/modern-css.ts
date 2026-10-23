@@ -204,6 +204,7 @@ body[data-layout=minimal] .site-offer button{grid-column:2;grid-row:1/4;align-se
   body[data-page=home][data-layout=card] .site-topbar .site-menu-trigger{background:var(--surface);border-radius:50%;box-shadow:var(--ui-shadow-sm)}
   .site-main{width:100%}
   .site-hero{margin:0}
+  .site-hero--card>.site-hero__intro:first-child{padding-top:32px}
   .site-hero__banner{height:190px;border-radius:0 0 var(--radius) var(--radius)}
   .site-hero__intro{padding:0 20px}
   .site-hero .name{font-size:clamp(2.2rem,9vw,3rem)}

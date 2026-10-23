@@ -308,6 +308,39 @@ export async function setDraftTheme(env: Env, site: DbSite, value: unknown): Pro
 }
 
 /** Renders the unpublished source with the real renderer. Owner-only; never cached or indexed. */
+const DRAFT_IMAGE_LIMIT = 8;
+const DRAFT_IMAGE_MAX_BYTES = 1_500_000;
+
+/** Swaps the site's own <img> files for data URIs, so the page shows them without a session. */
+export async function inlineDraftImages(
+  html: string,
+  siteBaseUrl: string,
+  readFile: (path: string) => Promise<Response>,
+): Promise<string> {
+  const base = siteBaseUrl.replace(/\/+$/, "");
+  const sitePath = (src: string) => {
+    if (base && src.startsWith(`${base}/`)) return src.slice(base.length + 1);
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(src)) return null;
+    return src.replace(/^\.?\//, "");
+  };
+  const sources = [...new Set([...html.matchAll(/<img\b[^>]*?\ssrc="([^"]+)"/gi)].map(match => match[1]))]
+    .slice(0, DRAFT_IMAGE_LIMIT);
+  let result = html;
+  for (const src of sources) {
+    const path = sitePath(src.replace(/&amp;/g, "&"));
+    if (!path) continue;
+    const response = await readFile(path.split(/[?#]/)[0]).catch(() => null);
+    const type = response?.headers.get("Content-Type")?.split(";")[0].trim() || "";
+    if (!response?.ok || !type.startsWith("image/")) continue;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > DRAFT_IMAGE_MAX_BYTES) continue;
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    result = result.split(`src="${src}"`).join(`src="data:${type};base64,${btoa(binary)}"`);
+  }
+  return result;
+}
+
 export async function renderDraftPreviewHtml(env: Env, site: DbSite, theme?: unknown): Promise<string | null> {
   const sourceFiles = await loadSiteSourceFiles(env, site.id);
   const { profile: stored } = await readSourceProfile(env, site);

@@ -26,7 +26,7 @@ export function bookingConfirmationRuntime(): string {
 }
 
 export const bookingConfirmationCss = `
-.booking-confirmation{box-sizing:border-box;width:calc(100% - 32px);max-width:440px;max-height:calc(100dvh - 32px);overflow:auto;padding:28px;border:1px solid var(--border);border-radius:var(--radius-md,12px);background:var(--surface);color:var(--text);text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.booking-confirmation{box-sizing:border-box;width:calc(100% - 32px);max-width:440px;max-height:calc(100dvh - 32px);overflow:auto;padding:28px;border:1px solid var(--border);border-radius:min(var(--radius,16px),24px);background:var(--surface);color:var(--text);text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.25)}
 .booking-confirmation::backdrop{background:rgba(0,0,0,.55)}
 .booking-confirmation__icon{display:grid;place-items:center;width:48px;height:48px;margin:0 auto 20px;border-radius:50%;background:var(--accent);color:var(--accent-text,#fff);font-size:28px}
 .booking-confirmation h2{margin:0 0 16px;font-size:1.5rem;line-height:1.25}

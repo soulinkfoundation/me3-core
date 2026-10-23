@@ -34,7 +34,11 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
     }).formatToParts(now);
     const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)!.value;
     const dateKey = `${part("year")}-${part("month")}-${part("day")}`;
-    if (`${part("hour")}:${part("minute")}` < (normalizeDailyBriefingTime(owner.daily_briefing_time) || "07:30")) continue;
+    // A missed cron catches up, but only while it is still morning: a phone set up in
+    // the evening should not be told "Good morning".
+    const localTime = `${part("hour")}:${part("minute")}`;
+    const briefingTime = normalizeDailyBriefingTime(owner.daily_briefing_time) || "07:30";
+    if (localTime < briefingTime || localTime >= briefingDeadline(briefingTime)) continue;
 
     const claim = await env.DB.prepare(
       `INSERT INTO morning_calendar_push_dispatches (user_id, date_key, status, claimed_at)
@@ -102,6 +106,13 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
     });
   }
   return { checkedAt: now.toISOString(), sent, failed };
+}
+
+/** Noon, or three hours after a late briefing time, whichever is later. */
+function briefingDeadline(briefingTime: string) {
+  const [hour, minute] = briefingTime.split(":").map(Number);
+  const end = Math.min(Math.max(12 * 60, hour * 60 + minute + 180), 24 * 60);
+  return `${String(Math.floor(end / 60)).padStart(2, "0")}:${String(end % 60).padStart(2, "0")}`;
 }
 
 function describeBriefingDay(summary: DailyBriefingPushSummary) {

@@ -153,7 +153,7 @@ import {
 } from "../campaign-audience";
 import { listLatestSiteBuilderThreads } from "../site-builder-threads";
 import { publishSiteFromSource } from "../site-publish";
-import { renderDraftPreviewHtml, setDraftTheme } from "../site-starter";
+import { inlineDraftImages, renderDraftPreviewHtml, setDraftTheme } from "../site-starter";
 import {
   confirmDoubleOptInSubscriber,
   getDoubleOptInConfirmationStatus,
@@ -1656,7 +1656,10 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (!html) return c.body(null, 204);
     c.header("X-Robots-Tag", "noindex, nofollow");
     c.header("Cache-Control", "no-store");
-    return c.html(injectBaseHref(html, `/preview/${site.username}/`));
+    // The app shows this page without the owner's session, so an unpublished site's photos come inline.
+    const inlined = await inlineDraftImages(html, await getPublishedSiteBaseUrl(c.env, site),
+      path => serveSiteFileResponse(c.env, site, path, false));
+    return c.html(injectBaseHref(inlined, `/preview/${site.username}/`));
   });
 
   app.put("/api/sites/:username/draft-theme", async (c) => {
