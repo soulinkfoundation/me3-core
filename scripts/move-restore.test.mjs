@@ -42,6 +42,8 @@ test("the D1 import creates every table first and leaves out Wrangler tables", (
         "INSERT INTO notes VALUES ('n1', 'o1', 'line one' || char(10) || 'it''s two');",
         "INSERT INTO _cf_KV VALUES ('a', 'b');",
         "INSERT INTO counters (label) VALUES ('first');",
+        "CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB NOT NULL, note TEXT);",
+        "INSERT INTO files VALUES ('big.bin', randomblob(250000), replace(printf('%.300000c', 'x'), 'x', 'é'));",
       ].join("\n"),
     });
     assert.equal(setup.status, 0, setup.stderr);
@@ -63,6 +65,14 @@ test("the D1 import creates every table first and leaves out Wrangler tables", (
     assert.equal(query("SELECT body FROM notes;"), "line one\nit's two");
     assert.equal(query("SELECT COUNT(*) FROM notes_search WHERE notes_search MATCH 'two';"), "1");
     assert.equal(query("SELECT seq FROM sqlite_sequence WHERE name = 'counters';"), "1");
+    // D1 rejects statements over 100 KB, so big rows arrive in pieces intact.
+    assert.ok(sql.split("\n").every((line) => Buffer.byteLength(line) < 100_000));
+    assert.equal(query("SELECT length(content), length(note) FROM files;"), "250000|300000");
+    assert.equal(
+      query(`ATTACH '${database}' AS source; SELECT COUNT(*) FROM files f JOIN source.files s ON s.path = f.path WHERE s.content = f.content AND s.note = f.note;`),
+      "1",
+    );
+    assert.doesNotMatch(query("SELECT name FROM sqlite_master;"), /_me3_import_value/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

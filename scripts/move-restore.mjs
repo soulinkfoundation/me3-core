@@ -147,10 +147,13 @@ export function buildD1Import(database) {
   const tables = objects.filter((object) => object.type === "table" && !internal(object.name));
   const statements = ["PRAGMA defer_foreign_keys = true;"];
   for (const table of tables) statements.push(`${table.sql};`);
+  statements.push(`CREATE TABLE ${IMPORT_STAGING_TABLE} (id INTEGER PRIMARY KEY, v TEXT NOT NULL);`);
+  const staging = { next: 0 };
   for (const table of inDependencyOrder(database, tables)) {
-    const rows = insertStatements(database, table.name, virtualTables.includes(table.name));
+    const rows = insertStatements(database, table.name, virtualTables.includes(table.name), staging);
     if (rows) statements.push(rows);
   }
+  statements.push(`DROP TABLE ${IMPORT_STAGING_TABLE};`);
   for (const type of ["index", "trigger", "view"]) {
     for (const object of objects) {
       if (object.type === type && !internal(object.name) && !internal(object.tbl_name || "")) {
@@ -194,20 +197,82 @@ function inDependencyOrder(database, tables) {
   return [...ordered, ...tables.filter((table) => !placed.has(table.name))];
 }
 
-function insertStatements(database, table, keepRowid) {
+// D1 rejects any SQL statement over 100 KB, so a row that would be larger
+// (a big site file or note) is staged in pieces in a helper table and then
+// inserted from there.
+const D1_ROW_BYTES = 90_000;
+const D1_VALUE_BYTES = 20_000;
+const TEXT_CHUNK_CHARS = 10_000;
+const BLOB_CHUNK_BYTES = 20_000;
+const IMPORT_STAGING_TABLE = "_me3_import_value";
+
+function insertStatements(database, table, keepRowid, staging) {
   const columns = sqliteJson(database, `PRAGMA table_xinfo(${quoteSqlString(table)});`)
     .filter((column) => Number(column.hidden) === 0)
     .map((column) => column.name);
   const names = keepRowid ? ["rowid", ...columns] : columns;
   if (names.length === 0) return "";
+  const tableName = quoteSqlIdentifier(table);
   const columnList = names.map(quoteSqlIdentifier).join(", ");
+  const rowBytes = names
+    .map((name) => `length(CAST(quote(${quoteSqlIdentifier(name)}) AS BLOB))`)
+    .join(" + ");
   const values = names.map((name) => `quote(${quoteSqlIdentifier(name)})`).join(" || ', ' || ");
   const select =
-    `SELECT 'INSERT INTO ${quoteSqlIdentifier(table).replaceAll("'", "''")} (${columnList.replaceAll("'", "''")}) VALUES (' || ` +
-    `${values} || ');' FROM ${quoteSqlIdentifier(table)};`;
-  return run("sqlite3", ["-batch", "-noheader", database, select], {
-    maxBuffer: 2 * 1024 * 1024 * 1024,
-  }).stdout.trim();
+    `SELECT 'INSERT INTO ${tableName.replaceAll("'", "''")} (${columnList.replaceAll("'", "''")}) VALUES (' || ` +
+    `${values} || ');' FROM ${tableName} WHERE ${rowBytes} <= ${D1_ROW_BYTES};`;
+  const statements = [
+    run("sqlite3", ["-batch", "-noheader", database, select], {
+      maxBuffer: 2 * 1024 * 1024 * 1024,
+    }).stdout.trim(),
+  ];
+  const largeRows = sqliteJson(
+    database,
+    `SELECT rowid AS id FROM ${tableName} WHERE ${rowBytes} > ${D1_ROW_BYTES};`,
+  );
+  for (const { id } of largeRows) {
+    const expressions = names.map((name) =>
+      valueExpression(database, tableName, quoteSqlIdentifier(name), id, staging, statements),
+    );
+    statements.push(`INSERT INTO ${tableName} (${columnList}) VALUES (${expressions.join(", ")});`);
+  }
+  return statements.filter(Boolean).join("\n");
+}
+
+function valueExpression(database, tableName, column, rowid, staging, statements) {
+  const [info] = sqliteJson(
+    database,
+    `SELECT typeof(${column}) AS type, length(CAST(quote(${column}) AS BLOB)) AS bytes,
+            length(${column}) AS size
+     FROM ${tableName} WHERE rowid = ${Number(rowid)};`,
+  );
+  if (info.bytes <= D1_VALUE_BYTES || !["text", "blob"].includes(info.type)) {
+    return sqliteValue(database, `quote(${column})`, tableName, rowid);
+  }
+  const key = ++staging.next;
+  const blob = info.type === "blob";
+  const step = blob ? BLOB_CHUNK_BYTES : TEXT_CHUNK_CHARS;
+  for (let start = 1; start <= info.size; start += step) {
+    const piece = blob
+      ? quoteSqlString(sqliteValue(database, `hex(substr(${column}, ${start}, ${step}))`, tableName, rowid))
+      : sqliteValue(database, `quote(substr(${column}, ${start}, ${step}))`, tableName, rowid);
+    statements.push(
+      start === 1
+        ? `INSERT INTO ${IMPORT_STAGING_TABLE} (id, v) VALUES (${key}, ${piece});`
+        : `UPDATE ${IMPORT_STAGING_TABLE} SET v = v || ${piece} WHERE id = ${key};`,
+    );
+  }
+  const staged = `(SELECT v FROM ${IMPORT_STAGING_TABLE} WHERE id = ${key})`;
+  return blob ? `unhex(${staged})` : staged;
+}
+
+function sqliteValue(database, expression, tableName, rowid) {
+  return run("sqlite3", [
+    "-batch",
+    "-noheader",
+    database,
+    `SELECT ${expression} FROM ${tableName} WHERE rowid = ${Number(rowid)};`,
+  ]).stdout.replace(/\n$/, "");
 }
 
 function sqliteJson(database, sql) {
