@@ -204,3 +204,15 @@ describe("managed Everyday AI billing", () => {
     ]);
   });
 });
+
+describe("managed allowance notice", () => {
+  it("tells a trial owner the lighter model lasts for the rest of the trial", async () => {
+    const { managedAllowanceNotice } = await import("./managed-ai-billing");
+    const notice = managedAllowanceNotice({ allowancePeriod: "trial", billingSource: "trial", eligible: false, overagesEnabled: false } as any, new Date("2026-10-23T12:00:00Z"));
+    expect(notice).toMatchObject({
+      title: "Your trial's AI allowance is used",
+      message: "Replies now use a lighter model for the rest of your trial.",
+      action: { kind: "subscribe" },
+    });
+  });
+});

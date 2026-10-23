@@ -188,6 +188,7 @@ type ManagedAiBillingSettings = {
   minimumMonthlyMaximumCents: number;
   maximumMonthlyMaximumCents: number;
   currentMonth: string;
+  allowancePeriod?: "month" | "trial";
   currentMonthUsageMicrousd: number;
   currentMonthBillableMicrousd: number;
   effectiveMaximumCents: number;
@@ -3452,7 +3453,14 @@ onBeforeUnmount(() => {
                           :style="{ width: `${managedAiUsagePercent}%` }"
                         />
                       </div>
-                      <p class="managed-ai-help">
+                      <p
+                        v-if="managedAiBilling.allowancePeriod === 'trial'"
+                        class="managed-ai-help"
+                      >
+                        Your trial includes $5 of AI. At the limit, ME3 switches
+                        to a lower-cost backup model for the rest of the trial.
+                      </p>
+                      <p v-else class="managed-ai-help">
                         Resets each calendar month. At the limit, ME3 switches
                         to a lower-cost backup model until the next month.
                       </p>

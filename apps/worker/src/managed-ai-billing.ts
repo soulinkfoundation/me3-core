@@ -64,6 +64,9 @@ export type ManagedAiBillingSettings = {
   minimumMonthlyMaximumCents: number;
   maximumMonthlyMaximumCents: number;
   currentMonth: string;
+  // A trial's allowance covers the whole trial; usage then counts from its start.
+  allowancePeriod?: "month" | "trial";
+  allowanceEndsAt?: string | null;
   currentMonthUsageMicrousd: number;
   currentMonthBillableMicrousd: number;
   effectiveMaximumCents: number;
@@ -392,6 +395,15 @@ export function managedAllowanceNotice(policy: ManagedAiBillingSettings, now = n
     : policy.billingSource === "trial" || policy.billingSource === "complimentary"
       ? { kind: "subscribe" as const, label: "Subscribe" }
       : null;
+  if (policy.allowancePeriod === "trial") {
+    return {
+      kind: "allowance_used",
+      title: "Your trial's AI allowance is used",
+      message: "Replies now use a lighter model for the rest of your trial.",
+      resetsOn,
+      action,
+    };
+  }
   return {
     kind: "allowance_used",
     title: "This month's AI allowance is used",
