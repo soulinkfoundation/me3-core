@@ -49,6 +49,8 @@ describe("Core runtime migrations", () => {
     expect(db.migrations.get("0084_mailbox_model_calls")).toBe("2026-10-22-mailbox-model-calls-v1");
     expect(db.statements.some(sql => sql.includes("idx_mailbox_instructions_signature"))).toBe(true);
     expect(db.migrations.get("0085_mailbox_instruction_replay")).toBe("2026-10-22-mailbox-instruction-replay-v1");
+    expect(db.columns.get("journal_articles")?.has("project_id")).toBe(true);
+    expect(db.migrations.get("0089_journal_article_projects")).toBe("2026-10-23-journal-article-projects-v1");
     expect(db.columns.get("commerce_settings")?.has("default_currency")).toBe(true);
     expect(db.columns.get("commerce_settings")?.has("preferred_stripe_provider")).toBe(true);
     expect(db.tables.has("ai_usage_events")).toBe(true);
@@ -483,6 +485,7 @@ class RuntimeMigrationDb {
     "commerce_settings",
     "financial_entries",
     "journal_entries",
+    "journal_articles",
     "mission_tasks",
     "mailbox_messages",
     "owner_profile",
@@ -772,7 +775,8 @@ class RuntimeMigrationStatement {
     if (
       this.sql.includes("ALTER TABLE email_campaigns") ||
       this.sql.includes("ALTER TABLE mobile_push_preferences") ||
-      this.sql.includes("ALTER TABLE mission_private_memory")
+      this.sql.includes("ALTER TABLE mission_private_memory") ||
+      this.sql.includes("ALTER TABLE journal_articles")
     ) {
       const match = this.sql.match(/ALTER TABLE (\w+) ADD COLUMN (\w+)/);
       if (!match) throw new Error("invalid accounts alter statement");

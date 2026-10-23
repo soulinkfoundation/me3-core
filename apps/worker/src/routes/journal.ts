@@ -20,7 +20,7 @@ export function registerJournalRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (!ownerId) return deps.unauthorized(c);
     const blocked = await requireJournalPlugin(c);
     if (blocked) return blocked;
-    try { return c.json(await listJournalArticles(c.env, ownerId)); }
+    try { return c.json(await listJournalArticles(c.env, ownerId, c.req.query("projectId") || undefined)); }
     catch (error) { return journalErrorResponse(c, error); }
   });
 

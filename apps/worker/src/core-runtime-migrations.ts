@@ -737,6 +737,17 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-23-drive-files-reuse-trashed-names-v1",
     apply: applyDriveFilesReuseTrashedNamesMigration,
   },
+  // A note (journal article) can belong to one project.
+  {
+    id: "0089_journal_article_projects",
+    checksum: "2026-10-23-journal-article-projects-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "journal_articles"))) return;
+      await addColumnIfMissing(db, "journal_articles", "project_id", "TEXT");
+      await db.prepare(`CREATE INDEX IF NOT EXISTS idx_journal_articles_owner_project
+        ON journal_articles(user_id, project_id, updated_at DESC)`).run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;
