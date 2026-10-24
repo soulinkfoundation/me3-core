@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
-import { useRoute, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { api } from "../../../api";
+import AppDialog from "../../../components/AppDialog.vue";
 import Button from "../../../components/Button.vue";
 import CampaignEmailPreview from "../../../components/CampaignEmailPreview.vue";
 import PageLoading from "../../../components/PageLoading.vue";
 import TiptapEditor from "../../../components/TiptapEditor.vue";
-import UiIcon from "../../../components/UiIcon.vue";
 import { useAppToast } from "../../../composables/useAppToast";
 import { useAuthStore } from "../../../stores/auth";
 import { useSitesStore } from "../../../stores/sites";
@@ -16,12 +16,13 @@ import {
   campaignEditorHtmlToBlocks,
   type CampaignDocument,
 } from "../../../utils/campaignDocument";
+import { formatCount } from "../../../utils/campaigns";
 
 definePage({
   meta: {
     requiresAuth: true,
-    title: "Create campaign | ME3",
-    description: "Compose and schedule an email campaign.",
+    title: "Campaign | ME3",
+    description: "Write an email campaign.",
     robots: "noindex,follow",
   },
 });
@@ -61,11 +62,27 @@ type Review = {
   transport: TransportStatus;
 };
 
+const EXCLUSION_LABELS: Record<string, string> = {
+  pending_permission: "haven't confirmed",
+  unsubscribed: "unsubscribed",
+  bounced: "bounced",
+  complained: "marked it as spam",
+  suppressed: "blocked",
+  invalid_email: "invalid address",
+  duplicate: "listed twice",
+};
+
+/** Mirrors the Worker's default so a new draft shows the name it will be saved with. */
+function defaultSenderName(username: string) {
+  const name = username.replace(/^@/, "").replace(/[-_.]+/g, " ").replace(/\s+/g, " ").trim();
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : "";
+}
+
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const sites = useSitesStore();
-const { toastError, toastFromUnknown } = useAppToast();
+const { toastError, toastFromUnknown, toastSuccess } = useAppToast();
 const remoteApiHost = import.meta.env.DEV
   ? import.meta.env.VITE_REMOTE_API_HOST || ""
   : "";
@@ -74,14 +91,18 @@ const loadFailed = ref(false);
 const campaign = ref<Campaign | null>(null);
 const transport = ref<TransportStatus | null>(null);
 const review = ref<Review | null>(null);
-const step = ref<1 | 2 | 3>(1);
 const creating = ref(false);
 const saving = ref(false);
+const savedOnce = ref(false);
 const testing = ref(false);
-const testMessage = ref("");
 const sending = ref(false);
 const hydrating = ref(true);
+const reviewOpen = ref(false);
+const fromSheetOpen = ref(false);
+// Until the owner picks a sender name, a new draft keeps the one the Worker gives it.
+let senderNameChosen = false;
 let saveTimer: number | null = null;
+let reviewRequest = 0;
 
 const selectedSiteId = ref("");
 const audienceKind = ref<"all" | "customers">("all");
@@ -103,29 +124,51 @@ const brand = ref<CampaignDocument["brand"]>({
 });
 const sendMode = ref<"now" | "schedule">("now");
 const scheduledLocal = ref("");
+const fromSheetName = ref("");
+const fromSheetReplyTo = ref("");
+const fromSheetTitleId = `campaign-from-title-${useId()}`;
 
 const ownerEmail = computed(() => auth.user?.email?.trim().toLowerCase() || "");
 const canDraftCampaign = computed(() => Boolean(transport.value || remoteApiHost));
-const canCreate = computed(() => Boolean(selectedSiteId.value && canDraftCampaign.value));
-const canReview = computed(() =>
-  Boolean(brand.value.name.trim() && subject.value.trim() && campaign.value),
-);
-const stepName = computed(() => ({
-  1: "Email list",
-  2: "Compose",
-  3: "Review",
-})[step.value]);
+const selectedSite = computed(() => sites.sites.find((site) => site.id === selectedSiteId.value));
+const siteUsername = computed(() => campaign.value?.siteUsername || selectedSite.value?.username || "");
+const sendingReady = computed(() => Boolean((review.value?.transport || transport.value)?.ready));
+const eligibleCount = computed(() => review.value?.audience.eligibleCount ?? null);
 const excludedReasons = computed(() =>
-  Object.entries(review.value?.audience.exclusionCounts || {}).filter(([, count]) => count > 0),
+  Object.entries(review.value?.audience.exclusionCounts || {})
+    .filter(([, count]) => count > 0)
+    .map(([reason, count]) => ({
+      reason,
+      label: `${formatCount(count)} ${EXCLUSION_LABELS[reason] || reason.replace(/_/g, " ")}`,
+    })),
+);
+const audienceLabel = computed(() =>
+  audienceKind.value === "customers" ? "customers" : "subscribers",
 );
 const previewFromAddress = computed(() => transport.value?.sender?.fromAddress || "");
 const previewToLabel = computed(() =>
-  campaign.value
-    ? audienceKind.value === "customers"
-      ? `@${campaign.value.siteUsername} customers`
-      : `@${campaign.value.siteUsername} subscribers`
-    : "Subscribers",
+  siteUsername.value ? `@${siteUsername.value} ${audienceLabel.value}` : "Subscribers",
 );
+const saveState = computed(() => {
+  if (saving.value || creating.value) return "Saving…";
+  return savedOnce.value ? "Saved" : "";
+});
+const sendLabel = computed(() => {
+  if (sending.value) return sendMode.value === "schedule" ? "Scheduling…" : "Sending…";
+  if (sendMode.value === "schedule") {
+    if (!scheduledLocal.value) return "Schedule";
+    const when = new Intl.DateTimeFormat(undefined, {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(scheduledLocal.value));
+    return `Schedule for ${when}`;
+  }
+  const count = eligibleCount.value || 0;
+  return `Send to ${formatCount(count)} ${count === 1 ? "person" : "people"}`;
+});
 const currentRendererVersion = "me3.email-renderer.v2";
 
 async function initialize() {
@@ -142,10 +185,11 @@ async function initialize() {
     else {
       selectedSiteId.value = sites.sites[0]?.id || "";
       replyToAddress.value = ownerEmail.value;
+      brand.value.name = defaultSenderName(selectedSite.value?.username || "") || brand.value.name;
     }
   } catch (caught) {
     loadFailed.value = true;
-    toastFromUnknown(caught, "Unable to open the campaign builder.");
+    toastFromUnknown(caught, "Couldn't open this campaign.");
   } finally {
     hydrating.value = false;
     loading.value = false;
@@ -171,14 +215,17 @@ async function loadCampaign(campaignId: string) {
   const response = await api.get<{ campaign: Campaign }>(
     `/email/campaigns/${encodeURIComponent(campaignId)}`,
   );
+  // Only drafts are edited; anything already sent or scheduled has its own page.
+  if (response.campaign.status !== "draft") {
+    await router.replace(`/email/campaigns/${encodeURIComponent(response.campaign.id)}`);
+    return;
+  }
   applyCampaign(response.campaign);
-  step.value = 2;
-  if (
-    response.campaign.status === "draft" &&
-    response.campaign.revision.rendererVersion !== currentRendererVersion
-  ) {
+  savedOnce.value = true;
+  if (response.campaign.revision.rendererVersion !== currentRendererVersion) {
     await saveDraft();
   }
+  void loadReview();
 }
 
 function applyCampaign(next: Campaign) {
@@ -201,22 +248,36 @@ function applyCampaign(next: Campaign) {
   });
 }
 
-async function createDraft() {
-  if (!canCreate.value || creating.value) return;
+/** A new campaign is saved the first time the owner changes something, not when the page opens. */
+async function ensureCampaign(): Promise<Campaign | null> {
+  if (campaign.value) return campaign.value;
+  if (!selectedSiteId.value || !canDraftCampaign.value) return null;
+  if (creating.value) {
+    await new Promise<void>((resolve) => {
+      const stop = watch(creating, (active) => {
+        if (active) return;
+        stop();
+        resolve();
+      });
+    });
+    return campaign.value;
+  }
   creating.value = true;
   try {
     const response = await api.post<{ campaign: Campaign }>("/email/campaigns", {
       siteId: selectedSiteId.value,
       audienceFilter: { kind: audienceKind.value, itemRef: audienceItem.value || null },
     });
-    applyCampaign(response.campaign);
-    step.value = 2;
+    campaign.value = response.campaign;
+    if (!senderNameChosen) brand.value.name = response.campaign.revision.document.brand.name;
     await router.replace({
       path: "/email/campaigns/create",
       query: { campaign: response.campaign.id },
     });
+    return campaign.value;
   } catch (caught) {
-    toastFromUnknown(caught, "Unable to create campaign.");
+    toastFromUnknown(caught, "Couldn't save this campaign.");
+    return null;
   } finally {
     creating.value = false;
   }
@@ -231,7 +292,7 @@ function buildDocument(): CampaignDocument {
 }
 
 async function saveDraft(): Promise<boolean> {
-  if (!campaign.value || campaign.value.status !== "draft") return true;
+  if (campaign.value && campaign.value.status !== "draft") return true;
   if (saving.value) {
     await waitForCurrentSave();
     return saveDraft();
@@ -240,13 +301,15 @@ async function saveDraft(): Promise<boolean> {
     window.clearTimeout(saveTimer);
     saveTimer = null;
   }
+  const current = await ensureCampaign();
+  if (!current) return false;
   saving.value = true;
   try {
     const response = await api.put<{ campaign: Campaign }>(
-      `/email/campaigns/${encodeURIComponent(campaign.value.id)}`,
+      `/email/campaigns/${encodeURIComponent(current.id)}`,
       {
         siteId: selectedSiteId.value,
-        name: subject.value.trim() || campaign.value.name,
+        name: subject.value.trim() || current.name,
         subject: subject.value,
         previewText: previewText.value,
         replyToAddress: replyToAddress.value || null,
@@ -255,9 +318,10 @@ async function saveDraft(): Promise<boolean> {
       },
     );
     campaign.value = response.campaign;
+    savedOnce.value = true;
     return true;
   } catch (caught) {
-    toastFromUnknown(caught, "Unable to save campaign.");
+    toastFromUnknown(caught, "Couldn't save this campaign.");
     return false;
   } finally {
     saving.value = false;
@@ -275,90 +339,70 @@ function waitForCurrentSave(): Promise<void> {
   });
 }
 
+// The body editor normalises its HTML on mount, so a new campaign waits for real content.
+function hasContent() {
+  const bodyText = richTextHtml.value.replace(/<(?!img\b)[^>]*>/gi, "").trim();
+  return Boolean(subject.value.trim() || previewText.value.trim() || bodyText || senderNameChosen);
+}
+
 function scheduleSave() {
-  if (hydrating.value || !campaign.value || campaign.value.status !== "draft") return;
+  if (hydrating.value || (campaign.value && campaign.value.status !== "draft")) return;
+  if (!campaign.value && !hasContent()) return;
   if (saveTimer !== null) window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(() => void saveDraft(), 900);
 }
 
-async function continueToReview() {
+async function loadReview() {
+  if (!campaign.value) return;
+  const request = ++reviewRequest;
+  try {
+    const response = await api.get<Review>(
+      `/email/campaigns/${encodeURIComponent(campaign.value.id)}/review`,
+    );
+    if (request !== reviewRequest) return;
+    review.value = response;
+    transport.value = response.transport;
+  } catch (caught) {
+    if (reviewOpen.value) toastFromUnknown(caught, "Couldn't count who this goes to.");
+  }
+}
+
+async function openReview() {
   if (!brand.value.name.trim()) {
-    toastError("Add a sender name before continuing.");
+    toastError("Add a sender name first.");
+    openFromSheet();
     return;
   }
   if (!subject.value.trim()) {
-    toastError("Add a subject before continuing.");
+    toastError("Add a subject first.");
     return;
   }
-  if (!(await saveDraft()) || !campaign.value) return;
-  try {
-    await loadReview();
-    step.value = 3;
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  } catch (caught) {
-    toastFromUnknown(caught, "Unable to review this campaign.");
-  }
-}
-
-async function saveAndExit() {
-  if (await saveDraft()) await router.push("/email/campaigns");
-}
-
-async function exitWizard() {
-  if (campaign.value) await saveAndExit();
-  else await router.push("/email/campaigns");
-}
-
-async function continueFromList() {
-  if (!selectedSiteId.value) {
-    toastError("Choose an email list before continuing.");
-    return;
-  }
-  if (!campaign.value) {
-    await createDraft();
-    return;
-  }
-  if (await saveDraft()) step.value = 2;
-}
-
-async function goToPreviousStep(target: number) {
-  if (target !== 1 && target !== 2) return;
-  if (target >= step.value) return;
-  if (step.value === 2 && !(await saveDraft())) return;
-  step.value = target;
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
-async function loadReview() {
-  if (!campaign.value) return;
-  review.value = await api.get<Review>(
-    `/email/campaigns/${encodeURIComponent(campaign.value.id)}/review`,
-  );
-  transport.value = review.value.transport;
+  if (!(await saveDraft())) return;
+  await loadReview();
+  reviewOpen.value = true;
 }
 
 async function sendTest() {
-  if (!campaign.value || testing.value) return;
+  if (testing.value) return;
+  if (!(await saveDraft()) || !campaign.value) return;
   testing.value = true;
-  testMessage.value = "";
   try {
     const response = await api.post<{ test: { status: string } }>(
       `/email/campaigns/${encodeURIComponent(campaign.value.id)}/test`,
     );
-    testMessage.value = response.test.status === "accepted"
-      ? `Test sent to ${ownerEmail.value}.`
-      : `Test status: ${response.test.status}.`;
+    if (response.test.status === "accepted") toastSuccess(`Test sent to ${ownerEmail.value}.`);
+    else toastError(`The test wasn't sent (${response.test.status}).`);
   } catch (caught) {
-    toastFromUnknown(caught, "Unable to send test.");
+    toastFromUnknown(caught, "Couldn't send the test.");
   } finally {
     testing.value = false;
   }
 }
 
 async function approveSend() {
-  if (!campaign.value || sending.value || !review.value?.transport.ready) return;
-  if (review.value.audience.eligibleCount === 0) {
-    toastError("This Site has no eligible subscribers.");
+  if (!campaign.value || sending.value || !sendingReady.value) return;
+  if (!eligibleCount.value) {
+    toastError("Nobody on this list can be emailed yet.");
     return;
   }
   if (sendMode.value === "schedule" && !scheduledLocal.value) {
@@ -378,10 +422,28 @@ async function approveSend() {
     );
     await router.push("/email/campaigns");
   } catch (caught) {
-    toastFromUnknown(caught, "Unable to queue campaign.");
+    toastFromUnknown(caught, "Couldn't send this campaign.");
   } finally {
     sending.value = false;
   }
+}
+
+function openFromSheet() {
+  fromSheetName.value = brand.value.name;
+  fromSheetReplyTo.value = replyToAddress.value;
+  fromSheetOpen.value = true;
+}
+
+function saveFromSheet() {
+  const name = fromSheetName.value.trim();
+  if (!name) {
+    toastError("Add the name subscribers will see.");
+    return;
+  }
+  brand.value.name = name;
+  senderNameChosen = true;
+  replyToAddress.value = fromSheetReplyTo.value.trim();
+  fromSheetOpen.value = false;
 }
 
 async function uploadCampaignImage(input: {
@@ -389,22 +451,30 @@ async function uploadCampaignImage(input: {
   filename: string;
   mimeType: string;
 }) {
-  if (!campaign.value) throw new Error("Create the campaign before adding an image.");
+  const current = await ensureCampaign();
+  if (!current) throw new Error("Save the campaign before adding an image.");
   const form = new FormData();
   form.append("file", input.blob, input.filename);
   const response = await api.upload<{
     asset: { id: string; url: string };
-  }>(`/email/campaigns/${encodeURIComponent(campaign.value.id)}/assets`, form);
+  }>(`/email/campaigns/${encodeURIComponent(current.id)}/assets`, form);
   return { id: response.asset.id, src: response.asset.url };
 }
 
 watch([subject, previewText, replyToAddress, richTextHtml, brand], scheduleSave, {
   deep: true,
 });
-watch(selectedSiteId, (siteId, previousSiteId) => {
-  if (previousSiteId && previousSiteId !== siteId) audienceItem.value = "";
-  void loadAudienceItems(siteId);
+watch([selectedSiteId, audienceKind, audienceItem], async (next, previous) => {
+  if (previous[0] && previous[0] !== next[0]) audienceItem.value = "";
+  if (next[0] !== previous[0]) void loadAudienceItems(next[0]);
+  if (hydrating.value || !campaign.value) return;
+  // Who it goes to changes the count, so save straight away and recount.
+  if (await saveDraft()) await loadReview();
 });
+// Any edit after opening the send controls means they have to be looked at again.
+watch([subject, previewText, richTextHtml, brand, replyToAddress], () => {
+  if (!hydrating.value) reviewOpen.value = false;
+}, { deep: true });
 
 onMounted(() => void initialize());
 onBeforeUnmount(() => {
@@ -413,319 +483,234 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="campaign-wizard-page">
-    <header class="wizard-header">
-      <div class="header-center">
-        <div class="step-indicator" aria-live="polite">
-          <span class="step-current">{{ step }}</span>
-          <span class="step-divider">/</span>
-          <span class="step-total">3</span>
-          <span class="step-name">{{ stepName }}</span>
-        </div>
-      </div>
-      <div class="header-right">
-        <button class="exit-btn" type="button" @click="exitWizard">Exit</button>
+  <main class="campaign-editor-page">
+    <header class="campaign-editor-bar">
+      <RouterLink class="campaign-editor-bar__back" to="/email/campaigns">← Campaigns</RouterLink>
+      <div v-if="!loading && !loadFailed && canDraftCampaign" class="campaign-editor-bar__actions">
+        <span class="campaign-editor-bar__saved" aria-live="polite">{{ saveState }}</span>
+        <Button
+          color="secondary"
+          shape="pill"
+          size="compact"
+          :disabled="testing || !sendingReady"
+          :title="!sendingReady ? 'Sending isn\'t set up yet' : undefined"
+          @click="sendTest"
+        >{{ testing ? "Sending…" : "Send test" }}</Button>
+        <Button
+          color="primary"
+          shape="pill"
+          size="compact"
+          :disabled="saving || creating"
+          @click="openReview"
+        >Review and send</Button>
       </div>
     </header>
 
-    <div class="progress-bar" role="navigation" aria-label="Campaign wizard progress">
-      <div class="progress-track" aria-hidden="true">
-        <div class="progress-fill" :style="{ width: `${((step - 1) / 2) * 100}%` }" />
-      </div>
-      <div class="progress-steps">
-        <button
-          v-for="number in [1, 2, 3]"
-          :key="number"
-          type="button"
-          class="progress-step"
-          :class="{
-            'is-current': step === number,
-            'is-visited': number <= step,
-            'is-jumpable': number < step,
-          }"
-          :aria-label="number === 1 ? 'Choose email list' : number === 2 ? 'Compose campaign' : 'Review campaign'"
-          :aria-current="step === number ? 'step' : undefined"
-          :disabled="number > step"
-          @click="goToPreviousStep(number)"
-        >
-          <span class="progress-step-dot" aria-hidden="true">
-            <span v-if="step === number" class="progress-step-core" />
-            <span v-else-if="number < step" class="progress-step-check">✓</span>
-          </span>
-        </button>
-      </div>
-    </div>
+    <PageLoading v-if="loading" label="Opening campaign…" />
 
-    <main class="campaign-wizard-shell">
+    <section v-else-if="loadFailed" class="campaign-editor-state">
+      <h1>This campaign didn't open</h1>
+      <p>Check your connection and try again.</p>
+      <Button color="ghost" shape="soft" size="compact" @click="initialize">Try again</Button>
+    </section>
 
-      <PageLoading v-if="loading" label="Opening campaign builder…" />
-      <section v-else-if="loadFailed" class="availability-card" aria-labelledby="campaign-builder-load-failed">
-        <UiIcon name="Info" :size="22" aria-hidden="true" />
-        <div>
-          <h1 id="campaign-builder-load-failed">Campaign builder could not be opened</h1>
-          <p>Check your connection and try again.</p>
-          <Button color="primary" shape="soft" @click="initialize">Try again</Button>
+    <section v-else-if="!canDraftCampaign" class="campaign-editor-state">
+      <h1>Campaigns isn't available on this account yet</h1>
+      <RouterLink to="/email/campaigns">Back to Campaigns</RouterLink>
+    </section>
+
+    <div v-else class="campaign-editor">
+      <section v-if="reviewOpen" class="campaign-send" aria-labelledby="campaign-send-title">
+        <div class="campaign-send__head">
+          <h2 id="campaign-send-title">Ready to send</h2>
+          <Button color="ghost" shape="soft" size="compact" @click="reviewOpen = false">Close</Button>
+        </div>
+        <p v-if="!sendingReady" class="campaign-send__note">
+          Sending isn't set up yet, so this can't go out. It stays saved as a draft.
+        </p>
+        <dl class="campaign-send__grid">
+          <dt>To</dt>
+          <dd>{{ formatCount(eligibleCount || 0) }} {{ audienceLabel }} of @{{ siteUsername }}</dd>
+          <dt>When</dt>
+          <dd>
+            <div class="campaign-send__when" role="radiogroup" aria-label="When to send">
+              <label><input v-model="sendMode" type="radio" value="now" /> Now</label>
+              <label><input v-model="sendMode" type="radio" value="schedule" /> Later</label>
+            </div>
+            <label v-if="sendMode === 'schedule'" class="campaign-send__time">
+              <span class="sr-only">Send time</span>
+              <input v-model="scheduledLocal" type="datetime-local" />
+            </label>
+          </dd>
+        </dl>
+        <div class="campaign-send__actions">
+          <Button
+            color="primary"
+            shape="pill"
+            size="medium"
+            :disabled="sending || !sendingReady || !eligibleCount"
+            @click="approveSend"
+          >{{ sendLabel }}</Button>
         </div>
       </section>
 
-      <template v-else>
-        <section v-if="!canDraftCampaign && !campaign" class="availability-card">
-          <UiIcon name="Info" :size="22" aria-hidden="true" />
-          <div>
-            <h1>Campaign drafting is not ready</h1>
-            <p>Return to Campaigns and activate the Email Campaigns plugin first.</p>
-            <Button color="outline" shape="soft" to="/email/campaigns">View campaign history</Button>
-          </div>
+      <div class="campaign-editor__grid">
+        <section class="campaign-editor__main" aria-label="Email">
+          <label class="campaign-field campaign-field--subject">
+            <span>Subject</span>
+            <input v-model="subject" maxlength="200" placeholder="What's this email about?" />
+          </label>
+          <label class="campaign-field">
+            <span>Preview line</span>
+            <input v-model="previewText" maxlength="240" placeholder="Shown after the subject in the inbox" />
+          </label>
+          <TiptapEditor
+            v-model="richTextHtml"
+            class="campaign-editor__body"
+            variant="campaign"
+            placeholder="Write your email…"
+            :upload-image="uploadCampaignImage"
+          />
         </section>
 
-        <section v-else-if="step === 1" class="start-card">
-          <h1>{{ campaign ? "Choose email list" : "Create Email Campaign" }}</h1>
-          <label class="field">
-            <span>Email list</span>
-            <select v-model="selectedSiteId">
-              <option disabled value="">Choose an email list</option>
-              <option v-for="site in sites.sites" :key="site.id" :value="site.id">@{{ site.username }}</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Recipients</span>
-            <select v-model="audienceKind">
-              <option value="all">All eligible subscribers</option>
-              <option value="customers">Eligible customers</option>
-            </select>
-            <small>A purchase alone never subscribes someone to marketing email.</small>
-          </label>
-          <label v-if="audienceKind === 'customers' && audienceItems.length" class="field">
-            <span>Product or service</span>
-            <select v-model="audienceItem">
-              <option value="">All products and services</option>
-              <option v-for="item in audienceItems" :key="item.value" :value="item.value">{{ item.label }}</option>
-            </select>
-          </label>
-          <Button
-            color="neutral"
-            shape="soft"
-            size="large"
-            :disabled="campaign ? !selectedSiteId || saving : !canCreate || creating"
-            @click="continueFromList"
-          >
-            {{ creating ? "Creating…" : campaign ? "Next" : "Start composing" }}
-          </Button>
-        </section>
-
-        <template v-else-if="campaign && step === 2">
-          <section class="compose-heading">
-            <h1>Compose campaign</h1>
+        <aside class="campaign-editor__side" aria-label="Details">
+          <section class="campaign-side-block" aria-labelledby="campaign-to-title">
+            <h2 id="campaign-to-title">To</h2>
+            <p v-if="eligibleCount !== null" class="campaign-side-block__value">
+              <b>{{ formatCount(eligibleCount) }}</b> {{ audienceLabel }}
+            </p>
+            <p v-else class="campaign-side-block__value">All {{ audienceLabel }}<template v-if="siteUsername"> of @{{ siteUsername }}</template></p>
+            <ul v-if="excludedReasons.length" class="campaign-side-block__reasons" aria-label="Left out">
+              <li v-for="item in excludedReasons" :key="item.reason">{{ item.label }} · left out</li>
+            </ul>
+            <label v-if="sites.sites.length > 1" class="campaign-side-field">
+              <span>List</span>
+              <select v-model="selectedSiteId">
+                <option v-for="site in sites.sites" :key="site.id" :value="site.id">@{{ site.username }}</option>
+              </select>
+            </label>
+            <label class="campaign-side-field">
+              <span>Who</span>
+              <select v-model="audienceKind">
+                <option value="all">Everyone who subscribed</option>
+                <option value="customers">Customers who subscribed</option>
+              </select>
+            </label>
+            <label v-if="audienceKind === 'customers' && audienceItems.length" class="campaign-side-field">
+              <span>Bought</span>
+              <select v-model="audienceItem">
+                <option value="">Anything</option>
+                <option v-for="item in audienceItems" :key="item.value" :value="item.value">{{ item.label }}</option>
+              </select>
+            </label>
           </section>
 
-          <div class="compose-grid">
-            <section class="campaign-form">
-              <div class="field-grid">
-                <label class="field field--wide">
-                  <span>Sender name</span>
-                  <input
-                    v-model="brand.name"
-                    maxlength="120"
-                    placeholder="The name subscribers will see"
-                  />
-                </label>
-                <label class="field field--wide"><span>Subject</span><input v-model="subject" maxlength="200" placeholder="A useful update" /></label>
-                <label class="field field--wide"><span>Preview text</span><input v-model="previewText" maxlength="240" placeholder="A short line shown beside the subject" /></label>
-                <label class="field field--wide">
-                  <span>Reply-to</span>
-                  <input v-model="replyToAddress" type="email" :placeholder="ownerEmail" />
-                  <small>Leave blank if you don’t want replies.</small>
-                </label>
-              </div>
+          <section class="campaign-side-block" aria-labelledby="campaign-from-title">
+            <div class="campaign-side-block__head">
+              <h2 id="campaign-from-title">From</h2>
+              <button type="button" class="campaign-side-block__change" @click="openFromSheet">Change</button>
+            </div>
+            <p class="campaign-side-block__value">{{ brand.name }}</p>
+            <p class="campaign-side-block__hint">
+              {{ replyToAddress ? `Replies go to ${replyToAddress}` : "Replies aren't collected" }}
+            </p>
+          </section>
 
-              <div class="section-label">
-                <span>Message</span>
-              </div>
-              <TiptapEditor
-                v-model="richTextHtml"
-                variant="campaign"
-                placeholder="Write your campaign…"
-                :upload-image="uploadCampaignImage"
-              />
-            </section>
-
-            <aside class="compose-preview">
-              <CampaignEmailPreview
-                :subject="subject"
-                :sender-name="brand.name"
-                :from-address="previewFromAddress"
-                :reply-to-address="replyToAddress"
-                :to-label="previewToLabel"
-                :html="campaign.revision.renderedHtml || ''"
-              />
-            </aside>
-          </div>
-
-          <nav class="wizard-actions" aria-label="Campaign steps">
-            <Button color="secondary" shape="soft" size="large" :disabled="saving" @click="goToPreviousStep(1)">Back</Button>
-            <Button color="neutral" shape="soft" size="large" :disabled="!canReview || saving" @click="continueToReview">Next</Button>
-          </nav>
-        </template>
-
-        <template v-else-if="campaign">
-          <div class="send-review">
-            <section class="review-heading">
-              <h1>Review and schedule</h1>
-              <p>Check the email and audience before you send it.</p>
-            </section>
-
+          <section class="campaign-side-block campaign-side-block--preview" aria-labelledby="campaign-preview-title">
+            <h2 id="campaign-preview-title">Preview</h2>
             <CampaignEmailPreview
-              :subject="campaign.revision.subject"
+              :subject="subject"
               :sender-name="brand.name"
               :from-address="previewFromAddress"
-              :reply-to-address="campaign.revision.replyToAddress || ''"
+              :reply-to-address="replyToAddress"
               :to-label="previewToLabel"
-              :html="campaign.revision.renderedHtml || ''"
+              :html="campaign?.revision.renderedHtml || ''"
             />
+          </section>
+        </aside>
+      </div>
+    </div>
 
-            <section class="review-details">
-              <div v-if="review && !review.transport.ready" class="delivery-notice">
-                <div>
-                  <strong>Delivery is not active</strong>
-                  <p>{{ review.transport.instructions[0] || "You can keep this draft. Activate or configure delivery from the Campaigns page before sending." }}</p>
-                </div>
-                <Button color="outline" shape="soft" size="small" to="/email/campaigns">Manage delivery</Button>
-              </div>
-              <div class="audience-count">
-                <strong>{{ review?.audience.eligibleCount || 0 }}</strong>
-                <span>
-                  eligible {{ review?.audience.eligibleCount === 1 ? "subscriber" : "subscribers" }}
-                  in
-                  <router-link :to="`/sites/${encodeURIComponent(campaign.siteUsername)}`">
-                    @{{ campaign.siteUsername }}
-                  </router-link>
-                </span>
-              </div>
-              <details v-if="review?.audience.excludedCount">
-                <summary>{{ review.audience.excludedCount }} excluded</summary>
-                <ul><li v-for="[reason, count] in excludedReasons" :key="reason">{{ count }} · {{ reason.replace(/_/g, ' ') }}</li></ul>
-              </details>
-
-              <div class="test-send">
-                <div><strong>Send a test</strong><p>Send a test to {{ ownerEmail }}.</p></div>
-                <Button
-                  color="outline"
-                  shape="soft"
-                  size="small"
-                  :disabled="testing || !review?.transport.ready"
-                  :title="!review?.transport.ready ? review?.transport.instructions[0] : undefined"
-                  @click="sendTest"
-                >{{ testing ? "Sending…" : "Send test" }}</Button>
-              </div>
-              <p v-if="testMessage" class="test-message" role="status">{{ testMessage }}</p>
-
-              <fieldset class="send-choice">
-                <legend>When should it send?</legend>
-                <label><input v-model="sendMode" type="radio" value="now" /> Send now</label>
-                <label><input v-model="sendMode" type="radio" value="schedule" /> Schedule</label>
-                <label v-if="sendMode === 'schedule'" class="field"><span>Send time</span><input v-model="scheduledLocal" type="datetime-local" /></label>
-              </fieldset>
-            </section>
-
-            <nav class="send-actions" aria-label="Campaign steps">
-              <Button class="send-action-primary" color="neutral" shape="soft" size="large" :disabled="sending || !review?.transport.ready || !review?.audience.eligibleCount" @click="approveSend">
-                {{ sending ? "Queuing…" : sendMode === "schedule" ? "Schedule campaign" : "Send campaign" }}
-              </Button>
-              <Button class="send-action-back" color="secondary" shape="soft" size="large" @click="goToPreviousStep(2)">Back</Button>
-            </nav>
-          </div>
-        </template>
-      </template>
-    </main>
-  </div>
+    <AppDialog :open="fromSheetOpen" :labelled-by="fromSheetTitleId" close-on-backdrop @close="fromSheetOpen = false">
+      <form class="campaign-from-sheet" @submit.prevent="saveFromSheet">
+        <h2 :id="fromSheetTitleId">Who it's from</h2>
+        <label class="campaign-field">
+          <span>Sender name</span>
+          <input v-model="fromSheetName" maxlength="120" placeholder="The name subscribers will see" />
+        </label>
+        <label class="campaign-field">
+          <span>Replies go to</span>
+          <input v-model="fromSheetReplyTo" type="email" :placeholder="ownerEmail" />
+          <small>Leave blank if you don't want replies.</small>
+        </label>
+        <div class="campaign-from-sheet__actions">
+          <Button color="outline" shape="soft" size="compact" type="button" @click="fromSheetOpen = false">Cancel</Button>
+          <Button color="primary" shape="soft" size="compact" type="submit">Done</Button>
+        </div>
+      </form>
+    </AppDialog>
+  </main>
 </template>
 
 <style scoped>
-.campaign-wizard-page { display: flex; flex-direction: column; min-height: 100vh; background: var(--ui-bg, var(--color-bg)); color: var(--ui-text, var(--color-text)); }
-.campaign-wizard-shell { width: min(100%, 1080px); box-sizing: border-box; margin: 0 auto; padding: 32px 24px 64px; }
-.wizard-header { display: grid; grid-template-columns: 1fr minmax(0, auto) 1fr; align-items: center; padding: 16px 24px; }
-.header-center { grid-column: 2; justify-self: center; }
-.header-right { display: flex; grid-column: 3; justify-self: end; }
-.step-indicator { display: flex; align-items: center; gap: 6px; font-size: 14px; }
-.step-current { color: var(--ui-text, var(--color-text)); font-weight: 700; }
-.step-divider, .step-total, .step-name { color: var(--ui-text-muted, var(--color-text-muted)); }
-.step-name { margin-left: 8px; }
-.exit-btn { min-height: 44px; margin-right: 4px; padding: 6px 14px; border: 0; border-radius: 999px; background: var(--ui-border, var(--color-border)); color: var(--ui-text, var(--color-text)); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-.exit-btn:hover { background: var(--ui-text-muted, var(--color-text-muted)); color: var(--ui-bg, var(--color-bg)); }
-.exit-btn:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 2px; }
-.progress-bar { position: relative; padding: 10px 24px 6px; }
-.progress-track { position: absolute; top: 31px; right: 40px; left: 40px; height: 3px; border-radius: 999px; background: var(--ui-border, var(--color-border)); }
-.progress-fill { height: 100%; border-radius: 999px; background: var(--ui-text, var(--color-text)); transition: width .3s ease; }
-.progress-steps { position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; }
-.progress-step { position: relative; display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 8px 0; border: 0; background: none; color: var(--ui-text-muted, var(--color-text-muted)); cursor: default; }
-.progress-step.is-jumpable { cursor: pointer; }
-.progress-step-dot { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 2px solid currentColor; border-radius: 999px; background: var(--ui-bg, var(--color-bg)); }
-.progress-step.is-visited .progress-step-dot { color: var(--ui-text, var(--color-text)); }
-.progress-step.is-visited:not(.is-current) .progress-step-dot { border-color: var(--ui-text, var(--color-text)); background: var(--ui-text, var(--color-text)); color: var(--ui-bg, var(--color-bg)); }
-.progress-step.is-current .progress-step-dot { width: 22px; height: 22px; border-color: var(--ui-text, var(--color-text)); color: var(--ui-text, var(--color-text)); box-shadow: 0 0 0 4px var(--ui-border, var(--color-border)); }
-.progress-step:focus-visible { outline: none; }
-.progress-step:focus-visible .progress-step-dot { box-shadow: 0 0 0 4px var(--ui-border, var(--color-border)); }
-.progress-step-core { width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
-.progress-step-check { font-size: 11px; font-weight: 700; line-height: 1; }
-.availability-card { margin-bottom: 20px; padding: 15px 16px; border: 1px solid var(--ui-border, var(--color-border)); border-radius: var(--ui-radius-md, 12px); background: var(--ui-surface-muted, var(--color-bg-subtle)); }
-.availability-card { display: flex; max-width: 680px; gap: 16px; margin: 70px auto; }
-.availability-card h1, .availability-card p { margin: 0 0 10px; }
-.availability-card p { color: var(--ui-text-muted, var(--color-text-muted)); line-height: 1.55; }
-.start-card { display: grid; max-width: 640px; gap: 20px; margin: 42px auto; }
-.start-card h1 { margin: 0 0 6px; }
-.compose-heading, .review-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
-.compose-heading h1, .review-heading h1 { margin: 0; letter-spacing: -.035em; }
-.review-heading { display: block; text-align: center; }
-.review-heading p { margin: 5px 0 0; color: var(--ui-text-muted, var(--color-text-muted)); }
-.compose-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(310px, 390px); align-items: start; gap: 24px; }
-.compose-preview { position: sticky; top: calc(var(--workspace-topbar-height) + 18px); min-width: 0; }
-.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 22px; }
-.field--wide { grid-column: 1 / -1; }
-.field { display: grid; gap: 6px; min-width: 0; }
-.field > span, .section-label > span, .send-choice legend { font-size: .8rem; font-weight: 750; }
-.field small, .section-label small { color: var(--ui-text-muted, var(--color-text-muted)); font-size: .74rem; }
-.field input, .field select { width: 100%; min-height: 42px; box-sizing: border-box; padding: 9px 11px; border: 1px solid var(--ui-border, var(--color-border)); border-radius: 9px; background: var(--ui-surface, var(--color-bg)); color: var(--ui-text, var(--color-text)); font: inherit; }
-.field input:focus, .field select:focus { outline: 2px solid var(--ui-primary, var(--ui-accent)); outline-offset: 1px; }
-.section-label { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
-.wizard-actions { display: flex; justify-content: space-between; gap: 12px; padding-top: 40px; }
-.send-review { display: grid; width: min(100%, 720px); gap: 28px; margin: 0 auto; }
-.send-review .review-heading { margin-bottom: 0; }
-.review-details { display: grid; gap: 16px; width: min(100%, 560px); margin: 0 auto; }
-.audience-count { display: flex; align-items: baseline; gap: 8px; }
-.audience-count strong { font-size: 2rem; letter-spacing: -.04em; }
-.audience-count span { color: var(--ui-text-muted, var(--color-text-muted)); }
-.audience-count a { color: var(--ui-accent, var(--color-primary)); font-weight: 700; }
-.audience-count a:hover { color: var(--ui-accent-strong, var(--ui-accent, var(--color-primary))); }
-.audience-count a:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 2px; }
-details summary { cursor: pointer; font-weight: 700; }
-details ul { margin-bottom: 0; color: var(--ui-text-muted, var(--color-text-muted)); font-size: .82rem; }
-.test-send { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-top: 14px; border-top: 1px solid var(--ui-border, var(--color-border)); }
-.test-send p, .test-message { margin: 3px 0 0; color: var(--ui-text-muted, var(--color-text-muted)); font-size: .78rem; line-height: 1.4; }
-.delivery-notice { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px; border: 1px solid var(--ui-border, var(--color-border)); border-radius: var(--ui-radius-md, 12px); background: var(--ui-surface-muted, var(--color-bg-subtle)); }
-.delivery-notice strong, .delivery-notice p { margin: 0; }
-.delivery-notice p { margin-top: 3px; color: var(--ui-text-muted, var(--color-text-muted)); font-size: .8rem; line-height: 1.4; }
-.send-choice { display: grid; gap: 10px; padding: 16px 0 0; border: 0; border-top: 1px solid var(--ui-border, var(--color-border)); margin: 0; }
-.send-choice label { display: flex; align-items: center; gap: 8px; font-size: .86rem; }
-.send-choice .field { display: grid; align-items: stretch; }
-.send-actions { display: flex; flex-direction: column; align-items: center; gap: 16px; width: min(100%, 560px); margin: 4px auto 0; }
-.send-actions :deep(.send-action-primary) { width: 100%; }
-.send-actions :deep(.send-action-back) { min-width: 180px; }
-@media (max-width: 820px) {
-  .campaign-wizard-shell { padding-inline: 16px; }
-  .compose-grid { grid-template-columns: 1fr; }
-  .compose-preview { position: static; }
+/* Lives in the Campaigns destination: the app top bar, then this page's own back link and actions. */
+.campaign-editor-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
+.campaign-editor-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; box-sizing: border-box; width: min(100%, 1040px); margin: 0 auto; padding: 4px 16px 8px; }
+.campaign-editor-bar__back { display: inline-flex; min-height: 36px; align-items: center; color: var(--ui-text-muted); font-size: 14px; text-decoration: none; }
+.campaign-editor-bar__back:hover { color: var(--ui-text); }
+.campaign-editor-bar__actions { display: flex; align-items: center; gap: 8px; }
+.campaign-editor-bar__saved { color: var(--ui-text-muted); font-size: 12px; }
+.campaign-editor-bar a:focus-visible, .campaign-side-block__change:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; border-radius: 6px; }
+.campaign-editor { box-sizing: border-box; width: min(100%, 1040px); margin: 0 auto; padding: 0 16px 96px; }
+.campaign-editor__grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; align-items: start; gap: 32px; margin-top: 8px; }
+.campaign-editor__main { display: grid; gap: 14px; min-width: 0; }
+.campaign-field { display: grid; gap: 4px; min-width: 0; }
+.campaign-field > span { color: var(--ui-text-muted); font-size: 12px; font-weight: 600; }
+.campaign-field input { box-sizing: border-box; width: 100%; min-height: 40px; padding: 6px 0; border: 0; border-bottom: 1px solid var(--ui-border); border-radius: 0; background: transparent; color: var(--ui-text); font: inherit; font-size: 15px; }
+.campaign-field--subject input { font-size: 20px; font-weight: 600; }
+.campaign-field input:focus { outline: none; border-bottom-color: var(--ui-accent); box-shadow: 0 1px 0 var(--ui-accent); }
+.campaign-field small { color: var(--ui-text-muted); font-size: 12px; }
+.campaign-editor__body { margin-top: 4px; }
+.campaign-editor__side { position: sticky; top: calc(var(--app-topbar-height) + 12px); display: grid; min-width: 0; font-size: 14px; }
+.campaign-side-block { display: grid; gap: 6px; padding: 14px 0; border-bottom: 1px solid var(--ui-border); }
+.campaign-side-block:first-child { padding-top: 0; }
+.campaign-side-block--preview { border-bottom: 0; }
+.campaign-side-block h2 { margin: 0; color: var(--ui-text-muted); font-size: 12px; font-weight: 600; }
+.campaign-side-block__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.campaign-side-block__change { min-height: 28px; padding: 0; border: 0; background: none; color: var(--ui-accent-strong, var(--ui-accent)); font: 600 13px var(--font-sans); cursor: pointer; }
+.campaign-side-block__value { margin: 0; overflow-wrap: anywhere; }
+.campaign-side-block__value b { font-weight: 650; font-variant-numeric: tabular-nums; }
+.campaign-side-block__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; overflow-wrap: anywhere; }
+.campaign-side-block__reasons { margin: 0; padding: 0; list-style: none; color: var(--ui-text-muted); font-size: 13px; }
+.campaign-side-field { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--ui-text-muted); font-size: 13px; }
+.campaign-side-field select { min-width: 0; min-height: 34px; padding: 4px 8px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); color: var(--ui-text); font: inherit; font-size: 13px; }
+.campaign-side-field select:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 1px; }
+.campaign-send { margin: 4px 0 16px; padding: 14px 16px; border-radius: var(--ui-radius-lg); background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
+.campaign-send__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.campaign-send__head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.campaign-send__note { margin: 6px 0 0; color: var(--ui-text-muted); font-size: 13px; }
+.campaign-send__grid { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px 10px; margin: 10px 0 0; font-size: 14px; }
+.campaign-send__grid dt { color: var(--ui-text-muted); }
+.campaign-send__grid dd { margin: 0; min-width: 0; }
+.campaign-send__when { display: flex; gap: 16px; }
+.campaign-send__when label { display: inline-flex; align-items: center; gap: 6px; }
+.campaign-send__time input { margin-top: 8px; min-height: 36px; padding: 4px 8px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); color: var(--ui-text); font: inherit; }
+.campaign-send__actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.campaign-editor-state { box-sizing: border-box; width: min(100%, 560px); margin: 32px auto 0; padding: 0 16px; }
+.campaign-editor-state h1 { margin: 0; font-size: 20px; }
+.campaign-editor-state p { margin: 6px 0 0; color: var(--ui-text-muted); }
+.campaign-editor-state a { display: inline-block; margin-top: 10px; color: var(--ui-accent-strong, var(--ui-accent)); font-weight: 600; text-decoration: none; }
+.campaign-from-sheet { box-sizing: border-box; display: grid; gap: 16px; width: min(100%, 420px); padding: 20px; border-radius: var(--ui-radius-lg); background: var(--ui-surface); color: var(--ui-text); box-shadow: var(--ui-shadow-md); }
+.campaign-from-sheet h2 { margin: 0; font-size: 18px; }
+.campaign-from-sheet__actions { display: flex; justify-content: flex-end; gap: 8px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 860px) {
+  .campaign-editor__grid { grid-template-columns: 1fr; gap: 8px; }
+  .campaign-editor__side { position: static; }
+  .campaign-side-block:first-child { padding-top: 14px; border-top: 1px solid var(--ui-border); }
 }
-@media (max-width: 560px) {
-  .wizard-header { padding: 14px 16px; }
-  .step-indicator { font-size: 13px; }
-  .step-name { display: none; }
-  .progress-bar { padding: 8px 14px 4px; }
-  .progress-track { top: 27px; right: 26px; left: 26px; }
-  .progress-step-dot { width: 16px; height: 16px; }
-  .progress-step.is-current .progress-step-dot { width: 20px; height: 20px; }
-  .field-grid { grid-template-columns: 1fr; }
-  .wizard-actions { flex-direction: column-reverse; }
-  .wizard-actions :deep(.me3-btn) { width: 100%; }
-  .audience-count { align-items: flex-start; }
+@media (max-width: 480px) {
+  .campaign-editor-bar__saved { display: none; }
+  .campaign-send__actions :deep(.me3-btn) { width: 100%; }
 }
 </style>

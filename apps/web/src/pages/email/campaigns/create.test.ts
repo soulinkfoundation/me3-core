@@ -3,21 +3,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiGet = vi.fn();
 const apiPut = vi.fn();
+const apiPost = vi.fn();
 const routerPush = vi.fn();
 const routerReplace = vi.fn();
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+let routeQuery: Record<string, string> = { campaign: "campaign-1" };
 
 vi.mock("unplugin-vue-router/runtime", () => ({ definePage: vi.fn() }));
 vi.mock("vue-router", () => ({
-  useRoute: () => ({ query: { campaign: "campaign-1" } }),
+  RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' },
+  useRoute: () => ({ query: routeQuery }),
   useRouter: () => ({ push: routerPush, replace: routerReplace }),
 }));
 vi.mock("../../../api", () => ({
   api: {
     get: (...args: unknown[]) => apiGet(...args),
     put: (...args: unknown[]) => apiPut(...args),
-    post: vi.fn(),
+    post: (...args: unknown[]) => apiPost(...args),
     upload: vi.fn(),
   },
+}));
+vi.mock("../../../composables/useAppToast", () => ({
+  useAppToast: () => ({ toastSuccess, toastError, toastFromUnknown: vi.fn() }),
 }));
 vi.mock("../../../stores/auth", () => ({
   useAuthStore: () => ({ user: { email: "owner@example.com" } }),
@@ -40,168 +48,255 @@ vi.mock("../../../components/TiptapEditor.vue", () => ({
   },
 }));
 
-import CampaignCreatePage from "./create.vue";
+import CampaignEditorPage from "./create.vue";
 
-const campaign = {
-  id: "campaign-1",
-  siteId: "site-1",
-  siteUsername: "kieran",
-  name: "August update",
-  status: "draft",
-  revision: {
-    id: "revision-1",
-    subject: "August update",
-    previewText: "A short preview",
-    replyToAddress: "hello@example.com",
-    rendererVersion: "me3.email-renderer.v1",
-    document: {
-      version: "me3.campaign-document.v1",
-      brand: {
-        name: "Kieran Studio",
-        homeUrl: "https://kieran.example.com/",
-        logoUrl: "https://kieran.example.com/logo.png",
-        logoAlignment: "center",
-        backgroundColor: "#f4f5f4",
-        surfaceColor: "#ffffff",
-        textColor: "#18201d",
-        accentColor: "#147d64",
-      },
-      blocks: [{
-        id: "intro",
-        type: "text",
-        paragraphs: [{ style: "body", spans: [{ text: "Hello readers" }] }],
-      }],
-    },
-    renderedHtml: "<p>Hello readers</p>",
-    renderedText: "Hello readers",
-  },
+const transport = {
+  managed: true,
+  ready: true,
+  reason: null,
+  sender: { ref: "sender-1", fromAddress: "campaign@example.com", domain: "example.com" },
+  addOn: null,
+  instructions: [],
 };
 
-describe("campaign creation wizard", () => {
+function makeCampaign(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "campaign-1",
+    siteId: "site-1",
+    siteUsername: "kieran",
+    name: "August update",
+    status: "draft",
+    audienceFilter: { kind: "all", itemRef: null },
+    revision: {
+      id: "revision-1",
+      subject: "August update",
+      previewText: "A short preview",
+      replyToAddress: "hello@example.com",
+      rendererVersion: "me3.email-renderer.v2",
+      document: {
+        version: "me3.campaign-document.v1",
+        brand: {
+          name: "Kieran Studio",
+          homeUrl: "https://kieran.example.com/",
+          logoUrl: null,
+          logoAlignment: "center",
+          backgroundColor: "#f4f5f4",
+          surfaceColor: "#ffffff",
+          textColor: "#18201d",
+          accentColor: "#147d64",
+        },
+        blocks: [{
+          id: "intro",
+          type: "text",
+          paragraphs: [{ style: "body", spans: [{ text: "Hello readers" }] }],
+        }],
+      },
+      renderedHtml: "<p>Hello readers</p>",
+      renderedText: "Hello readers",
+    },
+    ...overrides,
+  };
+}
+
+const AppDialogStub = {
+  props: ["open"],
+  template: '<div v-if="open" data-test="dialog"><slot /></div>',
+};
+
+function mountEditor() {
+  return mount(CampaignEditorPage, {
+    attachTo: document.body,
+    global: { stubs: { AppDialog: AppDialogStub } },
+  });
+}
+
+describe("campaign editor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubGlobal("scrollTo", vi.fn());
+    routeQuery = { campaign: "campaign-1" };
     apiGet.mockImplementation((path: string) => {
-      if (path === "/email/campaigns/transport") {
-        return Promise.resolve({
-          transport: {
-            managed: true,
-            ready: true,
-            reason: null,
-            sender: {
-              ref: "sender-1",
-              fromAddress: "campaign@example.com",
-              domain: "example.com",
-            },
-            addOn: null,
-            instructions: [],
-          },
-        });
-      }
+      if (path === "/email/campaigns/transport") return Promise.resolve({ transport });
+      if (path.startsWith("/email/campaigns/audience-items")) return Promise.resolve({ items: [] });
       if (path.endsWith("/review")) {
         return Promise.resolve({
-          audience: { eligibleCount: 42, excludedCount: 0, exclusionCounts: {} },
-          transport: {
-            managed: true,
-            ready: true,
-            reason: null,
-            sender: {
-              ref: "sender-1",
-              fromAddress: "campaign@example.com",
-              domain: "example.com",
-            },
-            addOn: null,
-            instructions: [],
+          audience: {
+            eligibleCount: 42,
+            excludedCount: 5,
+            exclusionCounts: { unsubscribed: 3, bounced: 2, duplicate: 0 },
           },
+          transport,
         });
       }
-      return Promise.resolve({ campaign });
+      return Promise.resolve({ campaign: makeCampaign() });
     });
-    apiPut.mockResolvedValue({ campaign });
+    apiPut.mockImplementation((_path: string, body: Record<string, unknown>) =>
+      Promise.resolve({ campaign: makeCampaign({ name: body.name }) }),
+    );
   });
 
-  it("shows the email preview while composing and a centered send flow at review", async () => {
-    const wrapper = mount(CampaignCreatePage, {
-      global: {
-        stubs: {
-          UiIcon: true,
-          RouterLink: {
-            props: ["to"],
-            template: '<a :href="to"><slot /></a>',
-          },
-        },
-      },
-    });
+  it("is one page: subject, preview line and body with To, From and Preview beside them", async () => {
+    const wrapper = mountEditor();
     await flushPromises();
 
-    expect(wrapper.find(".compose-preview").exists()).toBe(true);
+    expect(wrapper.find(".progress-bar").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Exit");
+    expect(wrapper.get(".campaign-editor-bar__back").attributes("href")).toBe("/email/campaigns");
+    const fields = wrapper.findAll(".campaign-editor__main input");
+    expect(fields.map((field) => (field.element as HTMLInputElement).value)).toEqual([
+      "August update",
+      "A short preview",
+    ]);
+    expect(wrapper.find('[data-test="editor"]').exists()).toBe(true);
+    expect(wrapper.findAll(".campaign-side-block h2").map((heading) => heading.text())).toEqual([
+      "To",
+      "From",
+      "Preview",
+    ]);
     expect(wrapper.text()).toContain("Kieran Studio <campaign@example.com>");
-    expect(wrapper.find(".brand-card").exists()).toBe(false);
-    expect(wrapper.text()).not.toContain("Email header image");
-    expect(wrapper.find('.campaign-logo-settings').exists()).toBe(false);
-
-    const senderName = wrapper.find<HTMLInputElement>('input[maxlength="120"]');
-    expect(senderName.element.value).toBe("Kieran Studio");
-    await senderName.setValue("Kieran Butler");
-    expect(wrapper.text()).toContain("Kieran Butler <campaign@example.com>");
-
-    const nextButton = wrapper.findAll("button").find((button) =>
-      button.text().trim() === "Next",
-    );
-    expect(nextButton).toBeDefined();
-    await nextButton!.trigger("click");
-    await flushPromises();
-
-    expect(apiPut).toHaveBeenCalledWith(
-      "/email/campaigns/campaign-1",
-      expect.objectContaining({
-        document: expect.objectContaining({
-          brand: expect.objectContaining({
-            name: "Kieran Butler",
-            logoUrl: null,
-          }),
-        }),
-      }),
-    );
-
-    expect(wrapper.find(".send-review").exists()).toBe(true);
-    expect(wrapper.text()).toContain("Review and schedule");
-    expect(wrapper.text()).toMatch(/42 eligible subscribers in\s+@kieran/);
-    expect(wrapper.find('.audience-count a[href="/sites/kieran"]').exists()).toBe(true);
-    expect(
-      wrapper.findAll(".send-actions button").map((button) => button.text().trim()),
-    ).toEqual(["Send campaign", "Back"]);
-
     wrapper.unmount();
   });
 
-  it("lets an existing draft return to step one and change its email list", async () => {
-    const wrapper = mount(CampaignCreatePage, {
-      global: {
-        stubs: {
-          UiIcon: true,
-          RouterLink: true,
-        },
-      },
+  it("shows who it goes to and who is left out", async () => {
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    const to = wrapper.findAll(".campaign-side-block")[0]!;
+    expect(to.text()).toContain("42 subscribers");
+    expect(to.findAll(".campaign-side-block__reasons li").map((item) => item.text())).toEqual([
+      "3 unsubscribed · left out",
+      "2 bounced · left out",
+    ]);
+    wrapper.unmount();
+  });
+
+  it("changes the sender name and reply-to from the From sheet and saves them", async () => {
+    vi.useFakeTimers();
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    await wrapper.get(".campaign-side-block__change").trigger("click");
+    const inputs = wrapper.findAll('[data-test="dialog"] input');
+    await inputs[0]!.setValue("Kieran Butler");
+    await inputs[1]!.setValue("");
+    await wrapper.get('[data-test="dialog"] form').trigger("submit");
+    expect(wrapper.find('[data-test="dialog"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("Replies aren't collected");
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiPut).toHaveBeenLastCalledWith(
+      "/email/campaigns/campaign-1",
+      expect.objectContaining({
+        replyToAddress: null,
+        document: expect.objectContaining({
+          brand: expect.objectContaining({ name: "Kieran Butler" }),
+        }),
+      }),
+    );
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("opens the send controls inline and names what the button does", async () => {
+    apiPost.mockResolvedValue({ ok: true });
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    const reviewButton = wrapper.findAll("button").find((button) => button.text() === "Review and send")!;
+    await reviewButton.trigger("click");
+    await flushPromises();
+
+    const panel = wrapper.get(".campaign-send");
+    expect(panel.text()).toContain("42 subscribers of @kieran");
+    const send = panel.findAll("button").find((button) => button.text() === "Send to 42 people")!;
+    await send.trigger("click");
+    await flushPromises();
+
+    expect(apiPost).toHaveBeenCalledWith("/email/campaigns/campaign-1/send", { scheduledFor: null });
+    expect(routerPush).toHaveBeenCalledWith("/email/campaigns");
+    wrapper.unmount();
+  });
+
+  it("sends a test from the top bar", async () => {
+    apiPost.mockResolvedValue({ test: { status: "accepted" } });
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    await wrapper.findAll("button").find((button) => button.text() === "Send test")!.trigger("click");
+    await flushPromises();
+
+    expect(apiPost).toHaveBeenCalledWith("/email/campaigns/campaign-1/test");
+    expect(toastSuccess).toHaveBeenCalledWith("Test sent to owner@example.com.");
+    wrapper.unmount();
+  });
+
+  it("only saves a new campaign once the owner has written something", async () => {
+    routeQuery = {};
+    apiPost.mockResolvedValue({ campaign: makeCampaign({ id: "campaign-new", name: "Untitled campaign" }) });
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(wrapper.findAll(".campaign-side-block")[1]!.text()).toContain("Kieran");
+
+    await wrapper.get(".campaign-field--subject input").setValue("Autumn retreat");
+    await wrapper.findAll("button").find((button) => button.text() === "Review and send")!.trigger("click");
+    await flushPromises();
+
+    expect(apiPost).toHaveBeenCalledWith("/email/campaigns", {
+      siteId: "site-1",
+      audienceFilter: { kind: "all", itemRef: null },
     });
+    expect(routerReplace).toHaveBeenCalledWith({
+      path: "/email/campaigns/create",
+      query: { campaign: "campaign-new" },
+    });
+    expect(apiPut).toHaveBeenCalledWith(
+      "/email/campaigns/campaign-new",
+      expect.objectContaining({ subject: "Autumn retreat" }),
+    );
+    wrapper.unmount();
+  });
+
+  it("does not save an empty new campaign when the editor tidies its blank body", async () => {
+    routeQuery = {};
+    vi.useFakeTimers();
+    const wrapper = mountEditor();
     await flushPromises();
 
-    await wrapper.findAll(".progress-step")[0]!.trigger("click");
-    await flushPromises();
+    wrapper.getComponent({ name: "TiptapEditor" }).vm.$emit("update:modelValue", "<p><br></p>");
+    await vi.advanceTimersByTimeAsync(1_000);
 
-    expect(wrapper.text()).toContain("Choose email list");
-    const list = wrapper.get<HTMLSelectElement>(".start-card select");
-    expect(list.element.value).toBe("site-1");
-    await list.setValue("site-2");
-    await wrapper.get(".start-card button").trigger("click");
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(apiPut).not.toHaveBeenCalled();
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("recounts when the list changes", async () => {
+    const wrapper = mountEditor();
+    await flushPromises();
+    apiGet.mockClear();
+
+    await wrapper.get(".campaign-side-field select").setValue("site-2");
     await flushPromises();
 
     expect(apiPut).toHaveBeenLastCalledWith(
       "/email/campaigns/campaign-1",
       expect.objectContaining({ siteId: "site-2" }),
     );
-    expect(wrapper.find(".compose-grid").exists()).toBe(true);
+    expect(apiGet).toHaveBeenCalledWith("/email/campaigns/campaign-1/review");
+    wrapper.unmount();
+  });
 
+  it("sends a campaign that already went out to its own page", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path === "/email/campaigns/transport") return Promise.resolve({ transport });
+      return Promise.resolve({ campaign: makeCampaign({ status: "sent" }) });
+    });
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    expect(routerReplace).toHaveBeenCalledWith("/email/campaigns/campaign-1");
     wrapper.unmount();
   });
 });

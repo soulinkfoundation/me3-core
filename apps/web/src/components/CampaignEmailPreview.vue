@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 const props = withDefaults(
   defineProps<{
@@ -21,6 +21,30 @@ const props = withDefaults(
 );
 
 const previewWidth = ref<"desktop" | "mobile">("desktop");
+// Narrow columns (the editor's side column, phones) show the email at its real width, scaled down.
+const NATURAL_WIDTH = { desktop: 640, mobile: 375 } as const;
+const FRAME_HEIGHT = 570;
+const viewport = ref<HTMLElement | null>(null);
+const viewportWidth = ref(0);
+let resizeObserver: ResizeObserver | null = null;
+const frameStyle = computed(() => {
+  const natural = NATURAL_WIDTH[previewWidth.value];
+  if (!viewportWidth.value || viewportWidth.value >= natural) return {};
+  const scale = viewportWidth.value / natural;
+  return {
+    width: `${natural}px`,
+    height: `${Math.round(FRAME_HEIGHT / scale)}px`,
+    transform: `scale(${scale})`,
+  };
+});
+onMounted(() => {
+  if (!viewport.value || typeof ResizeObserver === "undefined") return;
+  resizeObserver = new ResizeObserver(([entry]) => {
+    viewportWidth.value = entry?.contentRect.width || 0;
+  });
+  resizeObserver.observe(viewport.value);
+});
+onBeforeUnmount(() => resizeObserver?.disconnect());
 const fromLine = computed(() => {
   const address = props.fromAddress || "Sender unavailable";
   return props.senderName ? `${props.senderName} <${address}>` : address;
@@ -70,11 +94,14 @@ const fromLine = computed(() => {
             </div>
           </dl>
         </header>
-        <iframe
-          title="Rendered campaign email"
-          sandbox=""
-          :srcdoc="html"
-        />
+        <div ref="viewport" class="email-frame__viewport">
+          <iframe
+            title="Rendered campaign email"
+            sandbox=""
+            :srcdoc="html"
+            :style="frameStyle"
+          />
+        </div>
       </div>
     </div>
   </section>
@@ -181,12 +208,19 @@ const fromLine = computed(() => {
   font-weight: 650;
 }
 
+.email-frame__viewport {
+  height: 570px;
+  overflow: hidden;
+  background: #f4f5f4;
+}
+
 .email-frame iframe {
   display: block;
   width: 100%;
-  min-height: 570px;
+  height: 570px;
   border: 0;
   background: #f4f5f4;
+  transform-origin: top left;
 }
 
 @media (max-width: 520px) {
@@ -198,8 +232,8 @@ const fromLine = computed(() => {
     grid-template-columns: 52px minmax(0, 1fr);
   }
 
-  .email-frame iframe {
-    min-height: 500px;
+  .email-frame__viewport {
+    height: 500px;
   }
 }
 </style>
