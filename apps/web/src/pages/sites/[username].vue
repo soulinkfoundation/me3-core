@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { definePage } from "unplugin-vue-router/runtime";
 import { ref, computed, onBeforeUnmount, onMounted } from "vue";
-import { RouterView, useRoute, useRouter } from "vue-router";
+import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { useSitesStore, type SiteContent } from "../../stores/sites";
 import {
   AGENT_LANDING_PAGE_SITE_TEMPLATE_ID,
@@ -19,6 +19,7 @@ import {
   resolvePublicSiteUrl,
 } from "../../utils/publicSiteUrl";
 import { useAppToast } from "../../composables/useAppToast";
+import { isPluginAccessEnabled } from "../../utils/pluginAccess";
 import { compressImage, resizeImage } from "../../utils/imageCompression";
 import { cloneSiteProfile, withoutCurrentSiteImage } from "../../utils/siteProfile";
 
@@ -48,6 +49,15 @@ const isNestedSitesTool = computed(
 );
 
 const username = computed(() => route.params.username as string);
+// With Campaigns on, subscribers are managed there; this page only links to them.
+const campaignsEnabled = ref(false);
+const subscriberCount = ref<number | null>(null);
+void isPluginAccessEnabled("me3.email-campaigns")
+  .then(async (enabled) => {
+    campaignsEnabled.value = enabled;
+    if (enabled && username.value) subscriberCount.value = await sites.getSubscriberCount(username.value);
+  })
+  .catch(() => {});
 const site = computed(() =>
   sites.sites.find((s) => s.username === username.value),
 );
@@ -762,7 +772,14 @@ async function unpublishLandingPage() {
         v-if="site?.published_at && isPersistentSite"
         class="subscribers-section"
       >
-        <NewsletterSubscribers :username="username" />
+        <div v-if="campaignsEnabled" class="subscribers-link">
+          <div>
+            <h2>Subscribers</h2>
+            <p>{{ subscriberCount === null ? "People on this site's email list." : `${subscriberCount} ${subscriberCount === 1 ? "person" : "people"} on this site's email list.` }}</p>
+          </div>
+          <RouterLink :to="{ path: '/email/campaigns', query: { view: 'subscribers', site: username } }">Manage in Campaigns</RouterLink>
+        </div>
+        <NewsletterSubscribers v-else :username="username" />
       </section>
 
       <!-- Danger Zone -->
@@ -1443,6 +1460,11 @@ async function unpublishLandingPage() {
 }
 
 /* Subscribers Section */
+.subscribers-link { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.subscribers-link h2 { margin: 0; font-size: 16px; }
+.subscribers-link p { margin: 4px 0 0; color: var(--ui-text-muted, var(--color-text-muted)); font-size: 14px; }
+.subscribers-link a { color: var(--ui-accent-strong, var(--ui-accent)); font-weight: 600; text-decoration: none; }
+.subscribers-link a:hover { text-decoration: underline; }
 .subscribers-section {
   margin-bottom: 24px;
   padding: 20px;

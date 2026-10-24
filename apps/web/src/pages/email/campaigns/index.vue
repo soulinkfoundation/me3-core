@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 import {
   EMAIL_CAMPAIGNS_PLUGIN_ID,
   type CampaignAddOnStatus,
 } from "@me3-core/plugin-email-campaigns";
 import { api } from "../../../api";
 import Button from "../../../components/Button.vue";
+import CampaignSubscribers from "../../../components/campaigns/CampaignSubscribers.vue";
 import ConfirmationDialog from "../../../components/ConfirmationDialog.vue";
 import PageLoading from "../../../components/PageLoading.vue";
 import { useAppToast } from "../../../composables/useAppToast";
@@ -53,7 +54,10 @@ const available = ref(false);
 const campaigns = ref<CampaignSummary[]>([]);
 const transport = ref<TransportStatus | null>(null);
 const settingUpSender = ref(false);
-const view = ref<View>("campaigns");
+const route = useRoute();
+// The Site page links straight to one site's subscribers.
+const view = ref<View>(route.query.view === "subscribers" ? "subscribers" : "campaigns");
+const initialSite = typeof route.query.site === "string" ? route.query.site : undefined;
 const { toastFromUnknown } = useAppToast();
 const actions = useCampaignActions({
   cancelled: () => loadCampaigns(true),
@@ -293,16 +297,13 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section
+        <CampaignSubscribers
           v-else
           id="campaigns-panel-subscribers"
           role="tabpanel"
           aria-labelledby="campaigns-view-subscribers"
-          class="campaigns-empty"
-        >
-          <p>Your subscribers will be listed here soon. For now you'll find them on your site's page.</p>
-          <RouterLink to="/sites">Open Sites</RouterLink>
-        </section>
+          :initial-site="initialSite"
+        />
       </template>
     </div>
 

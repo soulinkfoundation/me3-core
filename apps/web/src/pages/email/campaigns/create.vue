@@ -16,7 +16,7 @@ import {
   campaignEditorHtmlToBlocks,
   type CampaignDocument,
 } from "../../../utils/campaignDocument";
-import { formatCount } from "../../../utils/campaigns";
+import { exclusionSentence, formatCount } from "../../../utils/campaigns";
 
 definePage({
   meta: {
@@ -62,16 +62,6 @@ type Review = {
   transport: TransportStatus;
 };
 
-const EXCLUSION_LABELS: Record<string, string> = {
-  pending_permission: "haven't confirmed",
-  unsubscribed: "unsubscribed",
-  bounced: "bounced",
-  complained: "marked it as spam",
-  suppressed: "blocked",
-  invalid_email: "invalid address",
-  duplicate: "listed twice",
-};
-
 /** Mirrors the Worker's default so a new draft shows the name it will be saved with. */
 function defaultSenderName(username: string) {
   const name = username.replace(/^@/, "").replace(/[-_.]+/g, " ").replace(/\s+/g, " ").trim();
@@ -99,6 +89,8 @@ const sending = ref(false);
 const hydrating = ref(true);
 const reviewOpen = ref(false);
 const fromSheetOpen = ref(false);
+const audienceSheetOpen = ref(false);
+const audienceSheetTitleId = `campaign-audience-title-${useId()}`;
 // Until the owner picks a sender name, a new draft keeps the one the Worker gives it.
 let senderNameChosen = false;
 let saveTimer: number | null = null;
@@ -134,14 +126,7 @@ const selectedSite = computed(() => sites.sites.find((site) => site.id === selec
 const siteUsername = computed(() => campaign.value?.siteUsername || selectedSite.value?.username || "");
 const sendingReady = computed(() => Boolean((review.value?.transport || transport.value)?.ready));
 const eligibleCount = computed(() => review.value?.audience.eligibleCount ?? null);
-const excludedReasons = computed(() =>
-  Object.entries(review.value?.audience.exclusionCounts || {})
-    .filter(([, count]) => count > 0)
-    .map(([reason, count]) => ({
-      reason,
-      label: `${formatCount(count)} ${EXCLUSION_LABELS[reason] || reason.replace(/_/g, " ")}`,
-    })),
-);
+const leftOut = computed(() => exclusionSentence(review.value?.audience.exclusionCounts));
 const audienceLabel = computed(() =>
   audienceKind.value === "customers" ? "customers" : "subscribers",
 );
@@ -575,34 +560,15 @@ onBeforeUnmount(() => {
 
         <aside class="campaign-editor__side" aria-label="Details">
           <section class="campaign-side-block" aria-labelledby="campaign-to-title">
-            <h2 id="campaign-to-title">To</h2>
+            <div class="campaign-side-block__head">
+              <h2 id="campaign-to-title">To</h2>
+              <button type="button" class="campaign-side-block__change" @click="audienceSheetOpen = true">Change</button>
+            </div>
             <p v-if="eligibleCount !== null" class="campaign-side-block__value">
-              <b>{{ formatCount(eligibleCount) }}</b> {{ audienceLabel }}
+              <b>{{ formatCount(eligibleCount) }}</b> {{ audienceLabel }}<template v-if="siteUsername"> of @{{ siteUsername }}</template>
             </p>
             <p v-else class="campaign-side-block__value">All {{ audienceLabel }}<template v-if="siteUsername"> of @{{ siteUsername }}</template></p>
-            <ul v-if="excludedReasons.length" class="campaign-side-block__reasons" aria-label="Left out">
-              <li v-for="item in excludedReasons" :key="item.reason">{{ item.label }} · left out</li>
-            </ul>
-            <label v-if="sites.sites.length > 1" class="campaign-side-field">
-              <span>List</span>
-              <select v-model="selectedSiteId">
-                <option v-for="site in sites.sites" :key="site.id" :value="site.id">@{{ site.username }}</option>
-              </select>
-            </label>
-            <label class="campaign-side-field">
-              <span>Who</span>
-              <select v-model="audienceKind">
-                <option value="all">Everyone who subscribed</option>
-                <option value="customers">Customers who subscribed</option>
-              </select>
-            </label>
-            <label v-if="audienceKind === 'customers' && audienceItems.length" class="campaign-side-field">
-              <span>Bought</span>
-              <select v-model="audienceItem">
-                <option value="">Anything</option>
-                <option v-for="item in audienceItems" :key="item.value" :value="item.value">{{ item.label }}</option>
-              </select>
-            </label>
+            <p v-if="leftOut" class="campaign-side-block__hint campaign-side-block__left-out">{{ leftOut }}</p>
           </section>
 
           <section class="campaign-side-block" aria-labelledby="campaign-from-title">
@@ -630,6 +596,38 @@ onBeforeUnmount(() => {
         </aside>
       </div>
     </div>
+
+    <AppDialog :open="audienceSheetOpen" :labelled-by="audienceSheetTitleId" close-on-backdrop @close="audienceSheetOpen = false">
+      <form class="campaign-from-sheet" @submit.prevent="audienceSheetOpen = false">
+        <h2 :id="audienceSheetTitleId">Who gets this</h2>
+        <label v-if="sites.sites.length > 1" class="campaign-side-field">
+          <span>List</span>
+          <select v-model="selectedSiteId">
+            <option v-for="site in sites.sites" :key="site.id" :value="site.id">@{{ site.username }}</option>
+          </select>
+        </label>
+        <fieldset class="campaign-audience-options">
+          <legend class="sr-only">Audience</legend>
+          <label><input v-model="audienceKind" type="radio" value="all" /> Everyone who subscribed</label>
+          <label><input v-model="audienceKind" type="radio" value="customers" /> Customers who subscribed</label>
+        </fieldset>
+        <label v-if="audienceKind === 'customers' && audienceItems.length" class="campaign-side-field">
+          <span>Bought</span>
+          <select v-model="audienceItem">
+            <option value="">Anything</option>
+            <option v-for="item in audienceItems" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </label>
+        <p class="campaign-audience-count" aria-live="polite">
+          <template v-if="eligibleCount !== null"><b>{{ formatCount(eligibleCount) }}</b> {{ eligibleCount === 1 ? "person" : "people" }} will get it.</template>
+          <template v-else>The count shows once the email is saved.</template>
+          <template v-if="leftOut">{{ ` ${leftOut}` }}</template>
+        </p>
+        <div class="campaign-from-sheet__actions">
+          <Button color="primary" shape="soft" size="compact" type="submit">Done</Button>
+        </div>
+      </form>
+    </AppDialog>
 
     <AppDialog :open="fromSheetOpen" :labelled-by="fromSheetTitleId" close-on-backdrop @close="fromSheetOpen = false">
       <form class="campaign-from-sheet" @submit.prevent="saveFromSheet">
@@ -681,7 +679,10 @@ onBeforeUnmount(() => {
 .campaign-side-block__value { margin: 0; overflow-wrap: anywhere; }
 .campaign-side-block__value b { font-weight: 650; font-variant-numeric: tabular-nums; }
 .campaign-side-block__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; overflow-wrap: anywhere; }
-.campaign-side-block__reasons { margin: 0; padding: 0; list-style: none; color: var(--ui-text-muted); font-size: 13px; }
+.campaign-audience-options { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; font-size: 14px; }
+.campaign-audience-options label { display: flex; align-items: center; gap: 8px; }
+.campaign-audience-count { margin: 0; color: var(--ui-text-muted); font-size: 13px; }
+.campaign-audience-count b { color: var(--ui-text); font-variant-numeric: tabular-nums; }
 .campaign-side-field { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--ui-text-muted); font-size: 13px; }
 .campaign-side-field select { min-width: 0; min-height: 34px; padding: 4px 8px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); color: var(--ui-text); font: inherit; font-size: 13px; }
 .campaign-side-field select:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 1px; }

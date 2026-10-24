@@ -136,3 +136,28 @@ export function deleteCampaignMessage(campaign: { subject: string; status: Campa
     ? `“${campaignTitle(campaign)}” will be removed. This can't be undone.`
     : `“${campaignTitle(campaign)}” and its delivery history will be removed. This can't be undone.`;
 }
+
+const EXCLUSION_LABELS: Record<string, string> = {
+  pending_permission: "haven't confirmed",
+  unsubscribed: "unsubscribed",
+  bounced: "bounced",
+  complained: "marked it as spam",
+  suppressed: "blocked",
+  invalid_email: "invalid address",
+  duplicate: "listed twice",
+};
+
+/** "9 left out: 6 unsubscribed, 2 bounced and 1 hasn't confirmed." */
+export function exclusionSentence(counts: Record<string, number> | undefined) {
+  const parts = Object.entries(counts || {})
+    .filter(([, count]) => count > 0)
+    .sort(([, a], [, b]) => b - a)
+    .map(([reason, count]) => {
+      const label = EXCLUSION_LABELS[reason] || reason.replace(/_/g, " ");
+      return `${formatCount(count)} ${count === 1 ? label.replace("haven't", "hasn't") : label}`;
+    });
+  if (!parts.length) return "";
+  const total = Object.values(counts || {}).reduce((sum, count) => sum + count, 0);
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+  return `${formatCount(total)} left out: ${list}.`;
+}

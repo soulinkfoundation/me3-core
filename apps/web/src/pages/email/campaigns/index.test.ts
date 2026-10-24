@@ -7,7 +7,9 @@ const apiPost = vi.fn();
 const apiDelete = vi.fn();
 
 vi.mock("unplugin-vue-router/runtime", () => ({ definePage: vi.fn() }));
+let routeQuery: Record<string, string> = {};
 vi.mock("vue-router", () => ({
+  useRoute: () => ({ query: routeQuery }),
   RouterLink: {
     props: ["to"],
     template: '<a :data-to="typeof to === \'string\' ? to : JSON.stringify(to)"><slot /></a>',
@@ -67,6 +69,7 @@ describe("Campaigns page", () => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     pluginEnabled = true;
+    routeQuery = {};
     transport = {
       managed: true,
       ready: true,

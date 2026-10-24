@@ -48,3 +48,9 @@ export function campaignAddOnPlan(key: unknown) {
 export function campaignAddOnPlanForAllowance(allowance: number) {
   return CAMPAIGN_ADD_ON_PLANS.find((plan) => plan.allowance === allowance) || null;
 }
+
+/** What the owner confirms before people they add or import can be emailed. */
+export const MARKETING_PERMISSION_ATTESTATION_VERSION =
+  "me3.marketing-permission-attestation.v1";
+export const MARKETING_PERMISSION_ATTESTATION_STATEMENT =
+  "I confirm these people asked to receive marketing email from this site.";

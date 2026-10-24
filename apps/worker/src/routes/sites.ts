@@ -169,6 +169,21 @@ type LandingPageGenerateBody = {
   feedback?: string | null;
 };
 
+/**
+ * People the owner adds or imports can only be emailed once the owner confirms they asked for it.
+ * The confirmation covers just those rows, never form signups still waiting on their own email.
+ */
+function ownerPermissionFor(
+  input: { confirmed?: unknown; statementVersion?: unknown } | undefined,
+  source: string,
+): [string, string | null, string | null, string | null] {
+  if (input?.confirmed !== true || input.statementVersion !== MARKETING_PERMISSION_ATTESTATION_VERSION) {
+    return ["pending", null, null, null];
+  }
+  const attestedAt = new Date().toISOString();
+  return ["marketable", "import_attested", attestedAt, createImportAttestationEvidence({ attestedAt, source })];
+}
+
 export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.get("/api/sites/:id/booking-reminders", async (c) => {
     const ownerId = await deps.requireOwner(c);
@@ -815,10 +830,15 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (!site) return c.json({ error: "Site not found or unauthorized" }, 404);
 
     try {
-      const body = await c.req
-        .json<{ email?: unknown; firstName?: unknown; lastName?: unknown }>()
-        .catch((): { email?: unknown; firstName?: unknown; lastName?: unknown } => ({}));
+      type AddSubscriberBody = {
+        email?: unknown;
+        firstName?: unknown;
+        lastName?: unknown;
+        marketingPermission?: { confirmed?: unknown; statementVersion?: unknown };
+      };
+      const body = await c.req.json<AddSubscriberBody>().catch((): AddSubscriberBody => ({}));
       if (typeof body.email !== "string") return c.json({ error: "Email is required" }, 400);
+      const permission = ownerPermissionFor(body.marketingPermission, "manual");
       const email = body.email.toLowerCase().trim();
       if (!EMAIL_REGEX.test(email)) return c.json({ error: "Invalid email address" }, 400);
 
@@ -835,13 +855,13 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
              SET unsubscribed_at = NULL,
                  subscribed_at = CURRENT_TIMESTAMP,
                  source = 'manual',
-                 marketing_status = 'pending',
-                 marketing_permission_method = NULL,
-                 marketing_permission_granted_at = NULL,
-                 marketing_permission_evidence_json = NULL
+                 marketing_status = ?,
+                 marketing_permission_method = ?,
+                 marketing_permission_granted_at = ?,
+                 marketing_permission_evidence_json = ?
              WHERE id = ?`,
           )
-            .bind(existing.id)
+            .bind(...permission, existing.id)
             .run();
           return c.json({ ok: true, resubscribed: true });
         }
@@ -849,10 +869,17 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       }
 
       await c.env.DB.prepare(
-        `INSERT INTO subscribers (site_id, email, first_name, last_name, source)
-         VALUES (?, ?, ?, ?, 'manual')`,
+        `INSERT INTO subscribers (site_id, email, first_name, last_name, source, marketing_status,
+           marketing_permission_method, marketing_permission_granted_at, marketing_permission_evidence_json)
+         VALUES (?, ?, ?, ?, 'manual', ?, ?, ?, ?)`,
       )
-        .bind(site.id, email, normalizeNullableText(body.firstName), normalizeNullableText(body.lastName))
+        .bind(
+          site.id,
+          email,
+          normalizeNullableText(body.firstName),
+          normalizeNullableText(body.lastName),
+          ...permission,
+        )
         .run();
 
       return c.json({ ok: true, resubscribed: false });
@@ -896,6 +923,13 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       const file = formData.get("file");
       if (!(file instanceof File)) return c.json({ error: "CSV file is required" }, 400);
 
+      const permission = ownerPermissionFor(
+        {
+          confirmed: formData.get("confirmed") === "true",
+          statementVersion: formData.get("statementVersion"),
+        },
+        "import",
+      );
       const lines = (await file.text()).split(/\r?\n/).filter((line) => line.trim());
       if (lines.length < 2) {
         return c.json({ error: "CSV must have a header row and at least one data row" }, 400);
@@ -933,8 +967,10 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
         const name = fullNameIndex >= 0 ? splitImportedName(values[fullNameIndex]) : { firstName: null, lastName: null };
         const subscribedAt = subscribedAtIndex >= 0 ? normalizeImportedTimestamp(values[subscribedAtIndex]) : null;
         const result = await c.env.DB.prepare(
-          `INSERT OR IGNORE INTO subscribers (site_id, email, first_name, last_name, source, subscribed_at)
-           VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))`,
+          `INSERT OR IGNORE INTO subscribers (site_id, email, first_name, last_name, source, subscribed_at,
+             marketing_status, marketing_permission_method, marketing_permission_granted_at,
+             marketing_permission_evidence_json)
+           VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?)`,
         )
           .bind(
             site.id,
@@ -943,6 +979,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
             lastNameIndex >= 0 ? normalizeNullableText(values[lastNameIndex]) : name.lastName,
             source,
             subscribedAt,
+            ...permission,
           )
           .run();
         if (Number(result.meta.changes || 0) > 0) imported++;

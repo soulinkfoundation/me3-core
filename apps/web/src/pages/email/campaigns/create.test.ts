@@ -161,11 +161,10 @@ describe("campaign editor", () => {
     await flushPromises();
 
     const to = wrapper.findAll(".campaign-side-block")[0]!;
-    expect(to.text()).toContain("42 subscribers");
-    expect(to.findAll(".campaign-side-block__reasons li").map((item) => item.text())).toEqual([
-      "3 unsubscribed · left out",
-      "2 bounced · left out",
-    ]);
+    expect(to.text()).toContain("42 subscribers of @kieran");
+    expect(to.get(".campaign-side-block__left-out").text()).toBe(
+      "5 left out: 3 unsubscribed and 2 bounced.",
+    );
     wrapper.unmount();
   });
 
@@ -174,7 +173,7 @@ describe("campaign editor", () => {
     const wrapper = mountEditor();
     await flushPromises();
 
-    await wrapper.get(".campaign-side-block__change").trigger("click");
+    await wrapper.findAll(".campaign-side-block__change")[1]!.trigger("click");
     const inputs = wrapper.findAll('[data-test="dialog"] input');
     await inputs[0]!.setValue("Kieran Butler");
     await inputs[1]!.setValue("");
@@ -277,7 +276,10 @@ describe("campaign editor", () => {
     await flushPromises();
     apiGet.mockClear();
 
-    await wrapper.get(".campaign-side-field select").setValue("site-2");
+    await wrapper.findAll(".campaign-side-block__change")[0]!.trigger("click");
+    const sheet = wrapper.get('[data-test="dialog"]');
+    expect(sheet.text()).toContain("42 people will get it. 5 left out: 3 unsubscribed and 2 bounced.");
+    await sheet.get("select").setValue("site-2");
     await flushPromises();
 
     expect(apiPut).toHaveBeenLastCalledWith(

@@ -1,3 +1,8 @@
+import {
+  MARKETING_PERMISSION_ATTESTATION_STATEMENT,
+  MARKETING_PERMISSION_ATTESTATION_VERSION,
+} from "@me3-core/plugin-email-campaigns";
+
 export const CAMPAIGN_PERMISSION_METHODS = [
   "single_opt_in",
   "double_opt_in",
@@ -50,11 +55,7 @@ export type CampaignAudienceEvaluation = {
   exclusionCounts: Record<CampaignAudienceExclusionReason, number>;
 };
 
-export const MARKETING_PERMISSION_ATTESTATION_VERSION =
-  "me3.marketing-permission-attestation.v1";
-
-export const MARKETING_PERMISSION_ATTESTATION_STATEMENT =
-  "I confirm these people asked to receive marketing email from this site.";
+export { MARKETING_PERMISSION_ATTESTATION_STATEMENT, MARKETING_PERMISSION_ATTESTATION_VERSION };
 
 const EMAIL_ADDRESS_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

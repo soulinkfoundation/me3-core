@@ -1,5 +1,6 @@
 import { getEmailTestOperation, finishEmailTestOperation } from "../utils/emailTestOperation";
 import { appendResponsiveImageVariants } from "@/utils/imageVariants";
+import { MARKETING_PERMISSION_ATTESTATION_VERSION } from "@me3-core/plugin-email-campaigns";
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { useWizardStore } from "./wizard";
@@ -295,6 +296,9 @@ export interface Subscriber {
   page_id?: string | null;
   action_id?: string | null;
   campaign?: string | null;
+  marketing_status?: "pending" | "marketable";
+  marketing_permission_method?: string | null;
+  delivery_status?: "deliverable" | "bounced" | "complained" | "suppressed";
 }
 
 export interface SubscriberList {
@@ -1378,11 +1382,19 @@ export const useSitesStore = defineStore("sites", () => {
     email: string,
     firstName?: string,
     lastName?: string,
+    permissionConfirmed = false,
   ): Promise<{ ok: boolean; resubscribed?: boolean } | null> {
     try {
       const result = await api.post<{ ok: boolean; resubscribed: boolean }>(
         `/sites/${username}/subscribers`,
-        { email, firstName: firstName || undefined, lastName: lastName || undefined },
+        {
+          email,
+          firstName: firstName || undefined,
+          lastName: lastName || undefined,
+          marketingPermission: permissionConfirmed
+            ? { confirmed: true, statementVersion: MARKETING_PERMISSION_ATTESTATION_VERSION }
+            : undefined,
+        },
       );
       return result;
     } catch (e: any) {
@@ -1394,10 +1406,15 @@ export const useSitesStore = defineStore("sites", () => {
   async function importSubscribers(
     username: string,
     file: File,
+    permissionConfirmed = false,
   ): Promise<{ imported: number; skipped: number; total: number } | null> {
     try {
       const formData = new FormData();
       formData.append("file", file);
+      if (permissionConfirmed) {
+        formData.append("confirmed", "true");
+        formData.append("statementVersion", MARKETING_PERMISSION_ATTESTATION_VERSION);
+      }
 
       const result = await api.upload<{
         ok: boolean;
