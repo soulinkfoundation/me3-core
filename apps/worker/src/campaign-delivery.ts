@@ -245,10 +245,18 @@ export async function startCampaignDelivery(
   env: Env,
   ownerId: string,
   campaignId: string,
-  input: { scheduledFor?: unknown },
+  input: { scheduledFor?: unknown; revisionId?: unknown; recipientCount?: unknown },
   fetcher: typeof fetch = fetch,
 ) {
   const campaign = await requireDraftCampaign(env, ownerId, campaignId);
+  // The owner approves one revision for one count. If either moved since they looked, ask again.
+  if (input.revisionId !== campaign.revision.id) {
+    throw new CampaignInputError(
+      "This email changed after you reviewed it. Check it and approve again.",
+      409,
+      "campaign_changed",
+    );
+  }
   if (!campaign.revision.subject.trim()) {
     throw new CampaignInputError("Add a subject before sending", 400, "subject_required");
   }
@@ -269,6 +277,13 @@ export async function startCampaignDelivery(
       "audience_empty",
     );
   }
+  if (input.recipientCount !== audience.eligible.length) {
+    throw new CampaignInputError(
+      `This would now go to ${audience.eligible.length.toLocaleString()} people. Check the count and approve again.`,
+      409,
+      "audience_changed",
+    );
+  }
   if (transport.addOn && audience.eligible.length > transport.addOn.remaining) {
     throw new CampaignInputError(
       `This campaign needs ${audience.eligible.length.toLocaleString()} deliveries, but ${transport.addOn.remaining.toLocaleString()} remain this month`,
@@ -283,8 +298,9 @@ export async function startCampaignDelivery(
   const claimed = await env.DB.prepare(
     `UPDATE email_campaigns
      SET status = ?, scheduled_for = ?, sender_ref = ?, from_address = ?,
-         failure_reason = NULL, updated_at = ?
-     WHERE id = ? AND status = 'draft'`,
+         failure_reason = NULL, updated_at = ?,
+         approved_revision_id = ?, approved_at = ?, approved_recipient_count = ?
+     WHERE id = ? AND status = 'draft' AND current_revision_id = ?`,
   )
     .bind(
       initialStatus,
@@ -292,7 +308,11 @@ export async function startCampaignDelivery(
       transport.sender!.ref,
       transport.sender!.fromAddress,
       now,
+      campaign.revision.id,
+      now,
+      audience.eligible.length,
       campaign.id,
+      campaign.revision.id,
     )
     .run();
   if (changeCount(claimed) === 0) {

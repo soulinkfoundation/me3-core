@@ -38,6 +38,7 @@ type Campaign = {
   cancelledAt: string | null;
   failureReason: string | null;
   sender: { fromAddress: string } | null;
+  approval?: { approvedAt: string; recipientCount: number | null } | null;
   updatedAt: string;
   revision: {
     subject: string;
@@ -116,6 +117,12 @@ const resultNotes = computed(() => {
   }
   return notes;
 });
+const approvalLine = computed(() => {
+  const approval = campaign.value?.approval;
+  if (!approval) return "";
+  const count = approval.recipientCount ?? 0;
+  return `You approved it for ${formatCount(count)} ${count === 1 ? "person" : "people"} on ${formatCampaignDate(approval.approvedAt)}.`;
+});
 const canSendAgain = computed(() => campaign.value?.status === "sent");
 
 async function load() {
@@ -184,6 +191,7 @@ onMounted(() => void load());
           <div>
             <h1>{{ campaignTitle(campaign.revision) }}</h1>
             <p>{{ when }}</p>
+            <p v-if="approvalLine" class="campaign-header__approval">{{ approvalLine }}</p>
           </div>
           <span class="campaign-pill" :class="`campaign-pill--${campaignStatusTone(campaign.status)}`">
             {{ campaignStatusLabel(campaign.status) }}
@@ -286,6 +294,7 @@ onMounted(() => void load());
 .campaign-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 8px; }
 .campaign-header h1 { margin: 0; font-size: 22px; font-weight: 650; line-height: 1.25; overflow-wrap: anywhere; }
 .campaign-header p { margin: 4px 0 0; color: var(--ui-text-muted); font-size: 14px; }
+.campaign-header .campaign-header__approval { margin-top: 2px; font-size: 13px; }
 .campaign-pill { --tone: var(--ui-text-muted); flex: 0 0 auto; margin-top: 4px; padding: 2px 8px; border-radius: 999px; background: var(--ui-surface-muted); color: var(--tone); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .campaign-pill--ok { --tone: var(--ui-success, color-mix(in oklab, #1f8a5b 70%, var(--ui-text))); }
 .campaign-pill--go { --tone: var(--ui-accent-strong, var(--ui-accent)); }

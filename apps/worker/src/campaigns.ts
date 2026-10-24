@@ -64,6 +64,9 @@ export type OwnedCampaign = {
   from_address: string | null;
   failure_reason: string | null;
   audience_filter_json: string;
+  approved_revision_id: string | null;
+  approved_at: string | null;
+  approved_recipient_count: number | null;
   created_at: string;
   updated_at: string;
   revision: CampaignRevisionRow;
@@ -495,6 +498,12 @@ export async function getOwnedCampaign(
     audience_filter_json: typeof row.audience_filter_json === "string"
       ? row.audience_filter_json
       : '{"kind":"all"}',
+    approved_revision_id: nullableString(row.approved_revision_id),
+    approved_at: nullableString(row.approved_at),
+    approved_recipient_count:
+      row.approved_recipient_count === null || row.approved_recipient_count === undefined
+        ? null
+        : Number(row.approved_recipient_count),
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
     revision: {
@@ -578,6 +587,13 @@ export function serializeCampaign(
     audienceFilter: parseCampaignAudienceFilter(campaign.audience_filter_json),
     sender: campaign.sender_ref
       ? { ref: campaign.sender_ref, fromAddress: campaign.from_address }
+      : null,
+    approval: campaign.approved_at
+      ? {
+        revisionId: campaign.approved_revision_id,
+        approvedAt: campaign.approved_at,
+        recipientCount: campaign.approved_recipient_count,
+      }
       : null,
     createdAt: campaign.created_at,
     updatedAt: campaign.updated_at,

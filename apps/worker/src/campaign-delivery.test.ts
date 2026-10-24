@@ -23,6 +23,7 @@ const migrationFiles = [
   "../migrations/0042_email_campaign_assets.sql",
   "../migrations/0043_email_campaign_delivery.sql",
   "../migrations/0044_site_branding.sql",
+  "../migrations/0091_email_campaign_approvals.sql",
 ];
 const migrations = migrationFiles.map((path) =>
   readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"),
@@ -225,8 +226,47 @@ describe("campaign delivery lifecycle", () => {
 
   afterEach(() => database.close());
 
+  /** What the owner saw when they approved: this revision, to this many people. */
+  async function approved(extra: Record<string, unknown> = {}) {
+    const current = await getCampaign(env, "owner", campaignId);
+    return { revisionId: current!.revision.id, recipientCount: 1, ...extra };
+  }
+
+  it("records the owner's approval of the exact revision and count", async () => {
+    await startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher);
+
+    const current = await getCampaign(env, "owner", campaignId);
+    expect(current?.approval).toMatchObject({ revisionId: current?.revision.id, recipientCount: 1 });
+  });
+
+  it("refuses to send a revision the owner didn't approve", async () => {
+    const stale = await approved();
+    const current = await getCampaign(env, "owner", campaignId);
+    await saveCampaignDraft(env, "owner", campaignId, {
+      subject: "Edited after review",
+      document: current!.revision.document,
+    });
+
+    await expect(startCampaignDelivery(env, "owner", campaignId, stale, fetcher)).rejects.toMatchObject({
+      code: "campaign_changed",
+      status: 409,
+    });
+    await expect(
+      startCampaignDelivery(env, "owner", campaignId, { scheduledFor: null }, fetcher),
+    ).rejects.toMatchObject({ code: "campaign_changed" });
+    expect(database.prepare("SELECT status FROM email_campaigns WHERE id = ?").get(campaignId)).toEqual({
+      status: "draft",
+    });
+  });
+
+  it("refuses to send when the audience no longer matches the approved count", async () => {
+    await expect(
+      startCampaignDelivery(env, "owner", campaignId, await approved({ recipientCount: 2 }), fetcher),
+    ).rejects.toMatchObject({ code: "audience_changed", status: 409 });
+  });
+
   it("snapshots only eligible recipients and sends the protocol-v2 permission", async () => {
-    const queued = await startCampaignDelivery(env, "owner", campaignId, {}, fetcher);
+    const queued = await startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher);
     expect(queued).toMatchObject({ eligibleCount: 1, excludedCount: 1 });
     expect(
       database.prepare("SELECT COUNT(*) AS count FROM email_campaign_audience_members").get(),
@@ -283,7 +323,7 @@ describe("campaign delivery lifecycle", () => {
     "marketing_status = 'pending'",
     "email = 'changed@example.com'",
   ])("rechecks recipient permission before dispatch: %s", async (change) => {
-    await startCampaignDelivery(env, "owner", campaignId, {}, fetcher);
+    await startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher);
     database.exec(`UPDATE subscribers SET ${change} WHERE id = 1`);
 
     await dispatchDueCampaignJobs(env, fetcher);
@@ -294,7 +334,7 @@ describe("campaign delivery lifecycle", () => {
   });
 
   it("does not dispatch an incomplete audience snapshot", async () => {
-    await startCampaignDelivery(env, "owner", campaignId, {}, fetcher);
+    await startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher);
     database.prepare("UPDATE email_campaigns SET audience_snapshot_id = NULL WHERE id = ?").run(campaignId);
 
     await dispatchDueCampaignJobs(env, fetcher);
@@ -308,9 +348,9 @@ describe("campaign delivery lifecycle", () => {
   });
 
   it("keeps future delivery scheduled and honors cancellation before dispatch", async () => {
-    await startCampaignDelivery(env, "owner", campaignId, {
+    await startCampaignDelivery(env, "owner", campaignId, await approved({
       scheduledFor: new Date(Date.now() + 60_000).toISOString(),
-    }, fetcher);
+    }), fetcher);
     await dispatchDueCampaignJobs(env, fetcher);
     expect(requests).toHaveLength(0);
     await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "scheduled" });
@@ -341,7 +381,7 @@ describe("campaign delivery lifecycle", () => {
       }
       return response;
     };
-    await startCampaignDelivery(env, "owner", campaignId, {}, earlyCallbackFetcher);
+    await startCampaignDelivery(env, "owner", campaignId, await approved(), earlyCallbackFetcher);
     await dispatchDueCampaignJobs(env, earlyCallbackFetcher);
 
     expect(database.prepare("SELECT status FROM email_campaign_recipient_jobs").get())
@@ -389,7 +429,7 @@ describe("campaign delivery lifecycle", () => {
   });
 
   it("applies delivery outcomes idempotently to local campaign and subscriber truth", async () => {
-    await startCampaignDelivery(env, "owner", campaignId, {}, fetcher);
+    await startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher);
     await dispatchDueCampaignJobs(env, fetcher);
     const operationId = requests[0]!.operationId;
     const recipientRef = requests[0]!.recipient.ref;
@@ -448,7 +488,7 @@ describe("campaign delivery lifecycle", () => {
     transportRemaining = 0;
 
     await expect(
-      startCampaignDelivery(env, "owner", campaignId, {}, fetcher),
+      startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher),
     ).rejects.toMatchObject({ code: "campaign_allowance_insufficient" });
     expect(
       database.prepare("SELECT status FROM email_campaigns WHERE id = ?").get(campaignId),

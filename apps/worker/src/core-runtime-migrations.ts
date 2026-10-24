@@ -754,6 +754,17 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-10-23-social-facebook-pages-v1",
     apply: applySocialFacebookPagesMigration,
   },
+  // A campaign records the owner's approval of the exact revision and count it sends (me3-bli3.2.4).
+  {
+    id: "0091_email_campaign_approvals",
+    checksum: "2026-10-24-email-campaign-approvals-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "email_campaigns"))) return;
+      await addColumnIfMissing(db, "email_campaigns", "approved_revision_id", "TEXT");
+      await addColumnIfMissing(db, "email_campaigns", "approved_at", "TEXT");
+      await addColumnIfMissing(db, "email_campaigns", "approved_recipient_count", "INTEGER");
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

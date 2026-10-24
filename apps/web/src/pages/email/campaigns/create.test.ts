@@ -205,13 +205,17 @@ describe("campaign editor", () => {
     await reviewButton.trigger("click");
     await flushPromises();
 
-    const panel = wrapper.get(".campaign-send");
+    const panel = wrapper.get(".campaign-approval");
     expect(panel.text()).toContain("42 subscribers of @kieran");
     const send = panel.findAll("button").find((button) => button.text() === "Send to 42 people")!;
     await send.trigger("click");
     await flushPromises();
 
-    expect(apiPost).toHaveBeenCalledWith("/email/campaigns/campaign-1/send", { scheduledFor: null });
+    expect(apiPost).toHaveBeenCalledWith("/email/campaigns/campaign-1/send", {
+      revisionId: "revision-1",
+      recipientCount: 42,
+      scheduledFor: null,
+    });
     expect(routerPush).toHaveBeenCalledWith("/email/campaigns");
     wrapper.unmount();
   });

@@ -6,6 +6,7 @@ import { api } from "../../../api";
 import AppDialog from "../../../components/AppDialog.vue";
 import Button from "../../../components/Button.vue";
 import CampaignEmailPreview from "../../../components/CampaignEmailPreview.vue";
+import CampaignApprovalCard from "../../../components/campaigns/CampaignApprovalCard.vue";
 import PageLoading from "../../../components/PageLoading.vue";
 import TiptapEditor from "../../../components/TiptapEditor.vue";
 import { useAppToast } from "../../../composables/useAppToast";
@@ -85,7 +86,6 @@ const creating = ref(false);
 const saving = ref(false);
 const savedOnce = ref(false);
 const testing = ref(false);
-const sending = ref(false);
 const hydrating = ref(true);
 const reviewOpen = ref(false);
 const fromSheetOpen = ref(false);
@@ -118,8 +118,6 @@ const brand = ref<CampaignDocument["brand"]>({
   textColor: "#18201d",
   accentColor: "#147d64",
 });
-const sendMode = ref<"now" | "schedule">("now");
-const scheduledLocal = ref("");
 const fromSheetName = ref("");
 const fromSheetRepliesOn = ref(true);
 const fromSheetTitleId = `campaign-from-title-${useId()}`;
@@ -129,6 +127,12 @@ const canDraftCampaign = computed(() => Boolean(transport.value || remoteApiHost
 const selectedSite = computed(() => sites.sites.find((site) => site.id === selectedSiteId.value));
 const siteUsername = computed(() => campaign.value?.siteUsername || selectedSite.value?.username || "");
 const sendingReady = computed(() => Boolean((review.value?.transport || transport.value)?.ready));
+const sendsLeft = computed(() => {
+  const current = review.value?.transport || transport.value;
+  return current?.managed && current.addOn?.entitled ? current.addOn.remaining : null;
+});
+// Scheduled times are the owner's wall-clock time, wherever this browser is.
+const ownerTimeZone = auth.user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const eligibleCount = computed(() => review.value?.audience.eligibleCount ?? null);
 const leftOut = computed(() => exclusionSentence(review.value?.audience.exclusionCounts));
 const audienceLabel = computed(() =>
@@ -141,22 +145,6 @@ const previewToLabel = computed(() =>
 const saveState = computed(() => {
   if (saving.value || creating.value) return "Saving…";
   return savedOnce.value ? "Saved" : "";
-});
-const sendLabel = computed(() => {
-  if (sending.value) return sendMode.value === "schedule" ? "Scheduling…" : "Sending…";
-  if (sendMode.value === "schedule") {
-    if (!scheduledLocal.value) return "Schedule";
-    const when = new Intl.DateTimeFormat(undefined, {
-      weekday: "short",
-      day: "numeric",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(scheduledLocal.value));
-    return `Schedule for ${when}`;
-  }
-  const count = eligibleCount.value || 0;
-  return `Send to ${formatCount(count)} ${count === 1 ? "person" : "people"}`;
 });
 const currentRendererVersion = "me3.email-renderer.v2";
 
@@ -406,33 +394,18 @@ async function sendTest() {
   }
 }
 
-async function approveSend() {
-  if (!campaign.value || sending.value || !sendingReady.value) return;
-  if (!eligibleCount.value) {
-    toastError("Nobody on this list can be emailed yet.");
-    return;
-  }
-  if (sendMode.value === "schedule" && !scheduledLocal.value) {
-    toastError("Choose a send time.");
-    return;
-  }
-  sending.value = true;
+/** The server refused because the email or its count moved: reload both so the card shows the truth. */
+async function refreshAfterStale() {
+  if (!campaign.value) return;
   try {
-    await api.post(
-      `/email/campaigns/${encodeURIComponent(campaign.value.id)}/send`,
-      {
-        scheduledFor:
-          sendMode.value === "schedule"
-            ? new Date(scheduledLocal.value).toISOString()
-            : null,
-      },
+    const response = await api.get<{ campaign: Campaign }>(
+      `/email/campaigns/${encodeURIComponent(campaign.value.id)}`,
     );
-    await router.push("/email/campaigns");
-  } catch (caught) {
-    toastFromUnknown(caught, "Couldn't send this campaign.");
-  } finally {
-    sending.value = false;
+    campaign.value = response.campaign;
+  } catch {
+    // The toast already explained; the next save will catch up.
   }
+  await loadReview();
 }
 
 function openFromSheet() {
@@ -528,39 +501,23 @@ onBeforeUnmount(() => {
     </section>
 
     <div v-else class="campaign-editor">
-      <section v-if="reviewOpen" class="campaign-send" aria-labelledby="campaign-send-title">
-        <div class="campaign-send__head">
-          <h2 id="campaign-send-title">Ready to send</h2>
-          <Button color="ghost" shape="soft" size="compact" @click="reviewOpen = false">Close</Button>
-        </div>
-        <p v-if="!sendingReady" class="campaign-send__note">
-          Sending isn't set up yet, so this can't go out. It stays saved as a draft.
-        </p>
-        <dl class="campaign-send__grid">
-          <dt>To</dt>
-          <dd>{{ formatCount(eligibleCount || 0) }} {{ audienceLabel }} of @{{ siteUsername }}</dd>
-          <dt>When</dt>
-          <dd>
-            <div class="campaign-send__when" role="radiogroup" aria-label="When to send">
-              <label><input v-model="sendMode" type="radio" value="now" /> Now</label>
-              <label><input v-model="sendMode" type="radio" value="schedule" /> Later</label>
-            </div>
-            <label v-if="sendMode === 'schedule'" class="campaign-send__time">
-              <span class="sr-only">Send time</span>
-              <input v-model="scheduledLocal" type="datetime-local" />
-            </label>
-          </dd>
-        </dl>
-        <div class="campaign-send__actions">
-          <Button
-            color="primary"
-            shape="pill"
-            size="medium"
-            :disabled="sending || !sendingReady || !eligibleCount"
-            @click="approveSend"
-          >{{ sendLabel }}</Button>
-        </div>
-      </section>
+      <CampaignApprovalCard
+        v-if="reviewOpen && campaign"
+        class="campaign-editor__approval"
+        :campaign-id="campaign.id"
+        :revision-id="campaign.revision.id"
+        :recipient-count="eligibleCount"
+        :audience-line="`${formatCount(eligibleCount || 0)} ${audienceLabel} of @${siteUsername}`"
+        :left-out="leftOut"
+        :sender-ready="sendingReady"
+        :sends-left="sendsLeft"
+        :time-zone="ownerTimeZone"
+        :testing="testing"
+        @edit="reviewOpen = false"
+        @test="sendTest"
+        @sent="router.push('/email/campaigns')"
+        @stale="refreshAfterStale"
+      />
 
       <div class="campaign-editor__grid">
         <section class="campaign-editor__main" aria-label="Email">
@@ -715,6 +672,7 @@ onBeforeUnmount(() => {
 .campaign-side-block__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; overflow-wrap: anywhere; }
 .campaign-audience-options { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; font-size: 14px; }
 .campaign-audience-options label { display: flex; align-items: center; gap: 8px; }
+.campaign-editor__approval { margin: 4px 0 16px; }
 .campaign-audience-options__check { display: flex; align-items: center; gap: 8px; }
 .campaign-from-sheet__replies { display: flex; align-items: center; gap: 8px; font-size: 14px; overflow-wrap: anywhere; }
 .campaign-from-sheet__hint { margin-top: -8px; color: var(--ui-text-muted); font-size: 12px; }
@@ -723,17 +681,6 @@ onBeforeUnmount(() => {
 .campaign-side-field { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--ui-text-muted); font-size: 13px; }
 .campaign-side-field select { min-width: 0; min-height: 34px; padding: 4px 8px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); color: var(--ui-text); font: inherit; font-size: 13px; }
 .campaign-side-field select:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 1px; }
-.campaign-send { margin: 4px 0 16px; padding: 14px 16px; border-radius: var(--ui-radius-lg); background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
-.campaign-send__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.campaign-send__head h2 { margin: 0; font-size: 15px; font-weight: 600; }
-.campaign-send__note { margin: 6px 0 0; color: var(--ui-text-muted); font-size: 13px; }
-.campaign-send__grid { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px 10px; margin: 10px 0 0; font-size: 14px; }
-.campaign-send__grid dt { color: var(--ui-text-muted); }
-.campaign-send__grid dd { margin: 0; min-width: 0; }
-.campaign-send__when { display: flex; gap: 16px; }
-.campaign-send__when label { display: inline-flex; align-items: center; gap: 6px; }
-.campaign-send__time input { margin-top: 8px; min-height: 36px; padding: 4px 8px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); color: var(--ui-text); font: inherit; }
-.campaign-send__actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 .campaign-editor-state { box-sizing: border-box; width: min(100%, 560px); margin: 32px auto 0; padding: 0 16px; }
 .campaign-editor-state h1 { margin: 0; font-size: 20px; }
 .campaign-editor-state p { margin: 6px 0 0; color: var(--ui-text-muted); }
@@ -749,6 +696,5 @@ onBeforeUnmount(() => {
 }
 @media (max-width: 480px) {
   .campaign-editor-bar__saved { display: none; }
-  .campaign-send__actions :deep(.me3-btn) { width: 100%; }
-}
+  }
 </style>
