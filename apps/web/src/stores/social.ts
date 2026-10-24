@@ -7,6 +7,7 @@ export type SocialPlatform =
   | "linkedin"
   | "instagram"
   | "instagram_business"
+  | "facebook"
   | "youtube"
   | "tiktok";
 
@@ -124,6 +125,8 @@ export type SocialLinkPreview = {
 };
 
 export type SocialStatus = {
+  /** "locked": the owner's plan doesn't include Social. */
+  access?: "included" | "locked";
   plugin: {
     status: string;
     enabled: boolean;
@@ -646,6 +649,26 @@ export const useSocialStore = defineStore("social", () => {
     return data.posts || [];
   }
 
+  async function fetchSocialPost(postId: string): Promise<SocialPostDetail> {
+    error.value = null;
+    const data = await api.get<{ post: SocialPostDetail }>(`/social/posts/${encodeURIComponent(postId)}`);
+    if (!data.post) throw new Error("No Social Post returned");
+    return data.post;
+  }
+
+  async function reschedulePublication(
+    publicationId: string,
+    input: { scheduledFor: string; timezone: string | null; expectedUpdatedAt?: string },
+  ): Promise<Publication> {
+    error.value = null;
+    const data = await api.patch<{ publication: Publication }>(
+      `/social/publications/${encodeURIComponent(publicationId)}`,
+      input,
+    );
+    if (!data.publication) throw new Error("No Publication returned");
+    return data.publication;
+  }
+
   async function createSocialPost(input: CreateSocialPostInput): Promise<SocialPostDetail> {
     error.value = null;
     const data = await api.post<{ post: SocialPostDetail }>("/social/posts", input);
@@ -1052,6 +1075,8 @@ export const useSocialStore = defineStore("social", () => {
     fetchSocialAccounts,
     fetchProviderSettings,
     fetchSocialPosts,
+    fetchSocialPost,
+    reschedulePublication,
     fetchCarouselRenderSet,
     listCarouselMedia,
     uploadCarouselMedia,

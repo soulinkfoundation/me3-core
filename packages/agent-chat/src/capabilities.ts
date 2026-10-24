@@ -1992,6 +1992,116 @@ export const CORE_CHAT_CAPABILITIES = [
     },
   }),
   defineCoreChatCapability({
+    id: "core.social.queue.read",
+    owner: "plugin",
+    pluginId: "me3.social-publishing",
+    ownerFacingLabel: "Read the social queue",
+    summary: "Read Social counts (Ideas, Drafts, Scheduled, Posted), what's scheduled this week, posts that need attention, saved ideas, posts from Posted worth reposting, and whether a weekly nudge is due. Set recordNudge only when you are about to nudge the owner.",
+    category: "content",
+    handler: {
+      surface: "chat",
+      route: "core.social.queue.read",
+    },
+    sideEffect: "read_private",
+    approvalMode: "none",
+    requiresSetup: ["social-publishing"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordNudge: {
+          type: "boolean",
+          description: "True when this read is for a nudge, so ME3 nudges at most once a week.",
+        },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "social_queue_read",
+    examples: {
+      positive: ["What have I got scheduled on social this week?", "Anything worth reposting?"],
+      negative: ["Write me a post about productivity."],
+    },
+    chat: {
+      intentKind: "read_action",
+      sideEffectLevel: "read",
+    },
+  }),
+  defineCoreChatCapability({
+    id: "core.social.draft.from_message",
+    owner: "plugin",
+    pluginId: "me3.social-publishing",
+    ownerFacingLabel: "Save a post in the owner's words",
+    summary: "Save a social draft from words the owner wrote in this chat. Pass their words; ME3 fits them to each platform without adding any. Every word must come from the owner's messages. Never write a post from nothing. Nothing is scheduled or posted: the owner reviews it in Social.",
+    category: "content",
+    handler: {
+      surface: "chat",
+      route: "core.social.draft.from_message",
+    },
+    sideEffect: "write_internal_draft",
+    approvalMode: "none",
+    requiresSetup: ["social-publishing"],
+    inputSchema: {
+      type: "object",
+      required: ["text", "platforms"],
+      properties: {
+        text: {
+          type: "string",
+          description: "The owner's own words for the post, copied from their message. You may remove words or reorder sentences, never add words.",
+        },
+        platforms: {
+          type: "array",
+          description: "Platforms the owner wants, from x, linkedin, instagram and facebook. Use the ones they named, otherwise their connected accounts.",
+          items: { type: "string" },
+        },
+        title: {
+          type: "string",
+          description: "Optional short title taken from the owner's words.",
+        },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "social_content_draft_saved",
+    examples: {
+      positive: ["Turn this into a post: we're opening the studio on Saturday 8 Nov, 10 till 4."],
+      negative: ["Write a viral post about AI for me.", "Post something about my week."],
+    },
+    chat: {
+      intentKind: "write_action",
+      sideEffectLevel: "write",
+    },
+  }),
+  defineCoreChatCapability({
+    id: "core.social.nudges.set",
+    owner: "plugin",
+    pluginId: "me3.social-publishing",
+    ownerFacingLabel: "Switch social nudges on or off",
+    summary: "Switch ME3's weekly social nudge (sent when little is scheduled) on or off.",
+    category: "content",
+    handler: {
+      surface: "chat",
+      route: "core.social.nudges.set",
+    },
+    sideEffect: "write_internal_active",
+    approvalMode: "none",
+    requiresSetup: ["social-publishing"],
+    inputSchema: {
+      type: "object",
+      required: ["on"],
+      properties: {
+        on: { type: "boolean", description: "False stops social nudges; true turns them back on." },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "social_nudges_set",
+    examples: {
+      positive: ["Stop nudging me about social posts."],
+      negative: ["Schedule my post for Thursday."],
+    },
+    chat: {
+      intentKind: "write_action",
+      sideEffectLevel: "write",
+    },
+  }),
+  defineCoreChatCapability({
     id: "core.social.suggestions.create",
     owner: "plugin",
     pluginId: "me3.social-publishing",

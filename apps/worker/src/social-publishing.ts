@@ -1,5 +1,6 @@
 import { SOCIAL_PUBLISHING_PLUGIN_ID, type SocialPublishHooks } from "@me3-core/plugin-social-publishing";
 import { recordOwnerActivity } from "./mission-activity";
+import { notifySocialPostFailed } from "./push-notifications";
 import type { Env } from "./types";
 
 export {
@@ -160,6 +161,19 @@ export function socialPublishActivityHooks(env: Env): SocialPublishHooks {
         summary: `Live on ${event.platformLabel}.`,
         status: "succeeded",
         relatedId: event.publicationId,
+      });
+    },
+    async onFailed(event) {
+      const version = await env.DB.prepare("SELECT package_id FROM social_variants WHERE id = ?")
+        .bind(event.variantId)
+        .first<{ package_id: string }>();
+      if (!version) return;
+      await notifySocialPostFailed(env, {
+        publicationId: event.publicationId,
+        postId: version.package_id,
+        platform: event.platform,
+        platformLabel: event.platformLabel,
+        failureClass: event.failureClass,
       });
     },
   };

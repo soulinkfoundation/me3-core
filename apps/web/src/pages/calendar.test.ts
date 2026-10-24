@@ -67,24 +67,29 @@ describe("Calendar Social Publishing source", () => {
     sites.ensureSites = vi.fn(async () => undefined) as never;
   });
 
-  it("shows a toggleable source and manages the exact projected Publication", async () => {
-    vi.mocked(api.get).mockResolvedValue(calendarFeed(true));
+  it("shows one Social entry per post that opens the post", async () => {
+    const feed = calendarFeed(true);
+    const [first] = feed.socialPublishing.publications as Array<Record<string, unknown>>;
+    feed.socialPublishing.publications.push({ ...first, id: "publication-2", versionId: "version-2", platform: "x" } as never);
+    vi.mocked(api.get).mockResolvedValue(feed);
     const wrapper = mountPage();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("Social publishing");
+    expect(wrapper.text()).toContain("Social");
+    expect(wrapper.text()).not.toContain("New Social Publication");
     const monthBoard = wrapper.getComponent(CalendarMonthBoardStub);
     const projected = (monthBoard.props("events") as Array<Record<string, unknown>>)
-      .find((event) => event.entryType === "social_publication");
-    expect(projected).toMatchObject({
-      id: "social-publication:publication-1",
-      recordId: "publication-1",
+      .filter((event) => event.entryType === "social_publication");
+    expect(projected).toHaveLength(1);
+    expect(projected[0]).toMatchObject({
+      recordId: "post-1",
       title: "A source-backed launch Post",
-      summary: "Planned · LinkedIn · Kieran Butler",
-      actionLabel: "Manage schedule",
+      summary: "Scheduled · LinkedIn, X",
+      actionLabel: "Open post",
     });
+    expect(JSON.stringify(projected[0])).not.toMatch(/version-1|publication-1|Version|Publication/);
 
-    monthBoard.vm.$emit("select-event", projected?.id, {
+    monthBoard.vm.$emit("select-event", projected[0]?.id, {
       left: 20,
       right: 40,
       top: 20,
@@ -92,187 +97,22 @@ describe("Calendar Social Publishing source", () => {
       trigger: document.createElement("button"),
     });
     await flushPromises();
-    const action = wrapper
-      .findAll("button")
-      .find((button) => button.text().trim() === "Manage schedule");
-    expect(action).toBeTruthy();
+    const action = wrapper.findAll("button").find((button) => button.text().trim() === "Open post");
     await action!.trigger("click");
-    await flushPromises();
 
-    expect(wrapper.text()).toContain("Reschedule Publication");
-    expect(wrapper.text()).toContain(
-      "The approved Version, account, copy, and media stay unchanged.",
-    );
-    const open = wrapper
-      .findAll("button")
-      .find((button) => button.text().trim() === "Open in Social Publishing");
-    await open!.trigger("click");
-
-    expect(router.push).toHaveBeenCalledWith({
-      path: "/social",
-      query: {
-        siteId: "site-1",
-        postId: "post-1",
-        versionId: "version-1",
-        publicationId: "publication-1",
-      },
-    });
+    expect(router.push).toHaveBeenCalledWith("/social/post-1");
   });
 
-  it("reschedules with the Publication timezone and stale-state token", async () => {
-    vi.mocked(api.get).mockResolvedValue(calendarFeed(true));
-    vi.mocked(api.patch).mockResolvedValue({
-      publication: { id: "publication-1" },
-      result: { action: "rescheduled", approvalPreserved: true },
-    });
+  it("marks a post that wasn't sent", async () => {
+    const feed = calendarFeed(true);
+    Object.assign(feed.socialPublishing.publications[0] as object, { publicationStatus: "failed", calendarState: "failed" });
+    vi.mocked(api.get).mockResolvedValue(feed);
     const wrapper = mountPage();
     await flushPromises();
 
-    await openProjectedPublication(wrapper);
-    const form = wrapper.get("#quick-create-panel-social");
-    await form.get('input[type="date"]').setValue("2099-07-21");
-    await form.get('input[type="time"]').setValue("10:30");
-    await form.trigger("submit");
-    await flushPromises();
-
-    expect(api.patch).toHaveBeenCalledWith(
-      "/social/publications/publication-1",
-      {
-        scheduledFor: "2099-07-21T09:30:00.000Z",
-        timezone: "Europe/Dublin",
-        expectedUpdatedAt: "2026-07-18T08:00:00.000Z",
-        requestContext: { surface: "calendar", view: "month" },
-      },
-    );
-  });
-
-  it("cancels a planned Publication by exact Publication id", async () => {
-    vi.mocked(api.get).mockResolvedValue(calendarFeed(true));
-    vi.mocked(api.delete).mockResolvedValue({
-      result: { action: "cancelled", publicationId: "publication-1" },
-    });
-    const wrapper = mountPage();
-    await flushPromises();
-
-    await openProjectedPublication(wrapper);
-    const cancel = wrapper
-      .findAll("button")
-      .find((button) => button.text().trim() === "Cancel Publication");
-    await cancel!.trigger("click");
-    await flushPromises();
-
-    expect(window.confirm).toHaveBeenCalledWith(
-      "Cancel this planned Publication?",
-    );
-    expect(api.delete).toHaveBeenCalledWith(
-      "/social/publications/publication-1",
-    );
-  });
-
-  it("keeps a stale scheduling error visible for the owner", async () => {
-    vi.mocked(api.get).mockResolvedValue(calendarFeed(true));
-    vi.mocked(api.patch).mockRejectedValue(
-      new Error(
-        "This Publication changed after Calendar loaded it. Refresh and try again.",
-      ),
-    );
-    const wrapper = mountPage();
-    await flushPromises();
-
-    await openProjectedPublication(wrapper);
-    const form = wrapper.get("#quick-create-panel-social");
-    await form.get('input[type="date"]').setValue("2099-07-21");
-    await form.trigger("submit");
-    await flushPromises();
-
-    const alert = wrapper
-      .findAll('[role="alert"]')
-      .find((node) => node.text().includes("changed after Calendar loaded"));
-    expect(alert?.text()).toContain("Refresh and try again.");
-  });
-
-  it("opens an approved-Version chooser from an empty Calendar slot", async () => {
-    vi.mocked(api.get).mockImplementation((endpoint: string) => {
-      if (endpoint.startsWith("/calendar/feed?")) {
-        return Promise.resolve(calendarFeed(true));
-      }
-      if (endpoint === "/social/scheduling/approved-versions") {
-        return Promise.resolve({ versions: [approvedVersion()] });
-      }
-      throw new Error(`Unexpected GET ${endpoint}`);
-    });
-    vi.mocked(api.post).mockResolvedValue({
-      publication: { id: "publication-new" },
-      result: { action: "scheduled" },
-    });
-    const wrapper = mountPage();
-    await flushPromises();
-
-    wrapper
-      .getComponent(CalendarMonthBoardStub)
-      .vm.$emit("select-day", "2099-07-20");
-    await flushPromises();
-    const scheduleSocial = wrapper
-      .findAll("button")
-      .find((button) => button.text().trim() === "Schedule social");
-    await scheduleSocial!.trigger("click");
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("Choose an exact approved Version.");
-    expect(wrapper.text()).toContain("A source-backed launch Post");
-    const form = wrapper.get("#quick-create-panel-social");
-    expect(form.text().toLowerCase()).not.toContain("package");
-    expect(form.text().toLowerCase()).not.toContain("variant");
-    expect(form.text().toLowerCase()).not.toContain("occurrence");
-    await form.get('input[type="time"]').setValue("10:30");
-    await form.get('input[type="text"]').setValue("Europe/Dublin");
-    await form.trigger("submit");
-    await flushPromises();
-
-    expect(api.post).toHaveBeenCalledWith(
-      "/social/versions/version-1/publications",
-      {
-        scheduledFor: "2099-07-20T09:30:00.000Z",
-        timezone: "Europe/Dublin",
-        requestContext: { surface: "calendar", view: "month" },
-      },
-    );
-  });
-
-  it("asks the owner to choose another time when fall-back repeats a wall time", async () => {
-    vi.mocked(api.get).mockImplementation((endpoint: string) => {
-      if (endpoint.startsWith("/calendar/feed?")) {
-        return Promise.resolve(calendarFeed(true));
-      }
-      if (endpoint === "/social/scheduling/approved-versions") {
-        return Promise.resolve({ versions: [approvedVersion()] });
-      }
-      throw new Error(`Unexpected GET ${endpoint}`);
-    });
-    const wrapper = mountPage();
-    await flushPromises();
-
-    wrapper
-      .getComponent(CalendarMonthBoardStub)
-      .vm.$emit("select-day", "2099-11-01");
-    await flushPromises();
-    const scheduleSocial = wrapper
-      .findAll("button")
-      .find((button) => button.text().trim() === "Schedule social");
-    await scheduleSocial!.trigger("click");
-    await flushPromises();
-
-    const form = wrapper.get("#quick-create-panel-social");
-    await form.get('input[type="time"]').setValue("01:30");
-    await form.get('input[type="text"]').setValue("America/New_York");
-    await form.trigger("submit");
-    await flushPromises();
-
-    const alert = wrapper
-      .findAll('[role="alert"]')
-      .find((node) => node.text().includes("occurs twice"));
-    expect(alert?.text()).toContain("clocks move back");
-    expect(api.post).not.toHaveBeenCalled();
+    const projected = (wrapper.getComponent(CalendarMonthBoardStub).props("events") as Array<Record<string, unknown>>)
+      .find((event) => event.entryType === "social_publication");
+    expect(projected).toMatchObject({ summary: "Not posted · LinkedIn", color: "#c2412d" });
   });
 
   it("shows neither the source nor records when the plugin is not ready", async () => {
@@ -280,7 +120,7 @@ describe("Calendar Social Publishing source", () => {
     const wrapper = mountPage();
     await flushPromises();
 
-    expect(wrapper.text()).not.toContain("Social publishing");
+    expect(wrapper.text()).not.toContain("Social");
     const events = wrapper
       .getComponent(CalendarMonthBoardStub)
       .props("events") as Array<Record<string, unknown>>;
@@ -349,40 +189,6 @@ function mountPage() {
       },
     },
   });
-}
-
-async function openProjectedPublication(wrapper: ReturnType<typeof mountPage>) {
-  const monthBoard = wrapper.getComponent(CalendarMonthBoardStub);
-  const projected = (monthBoard.props("events") as Array<Record<string, unknown>>)
-    .find((event) => event.entryType === "social_publication");
-  monthBoard.vm.$emit("select-event", projected?.id, {
-    left: 20,
-    right: 40,
-    top: 20,
-    bottom: 40,
-    trigger: document.createElement("button"),
-  });
-  await flushPromises();
-  const action = wrapper
-    .findAll("button")
-    .find((button) => button.text().trim() === "Manage schedule");
-  await action!.trigger("click");
-  await flushPromises();
-}
-
-function approvedVersion() {
-  return {
-    versionId: "version-1",
-    postId: "post-1",
-    siteId: "site-1",
-    postTitle: "A source-backed launch Post",
-    versionLabel: "LinkedIn Version",
-    platform: "linkedin",
-    accountId: "account-1",
-    accountLabel: "Kieran Butler",
-    sourceLabel: "Journal",
-    approvedAt: "2026-07-18T07:30:00.000Z",
-  };
 }
 
 function calendarFeed(ready: boolean, importedEvents: unknown[] = []) {

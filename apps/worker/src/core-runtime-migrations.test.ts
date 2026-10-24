@@ -281,6 +281,13 @@ describe("Core runtime migrations", () => {
     expect(
       db.statements.some(
         (sql) =>
+          sql.includes("CREATE TABLE social_accounts_0090_new") &&
+          sql.includes("'instagram_business', 'facebook'"),
+      ),
+    ).toBe(true);
+    expect(
+      db.statements.some(
+        (sql) =>
           sql.includes("CREATE TABLE social_publications_0031_new") &&
           sql.includes("'image'") &&
           sql.includes("'short_video'"),

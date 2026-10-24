@@ -228,6 +228,7 @@ export const SOCIAL_PUBLISHING_RUNTIME = {
     "linkedin",
     "instagram",
     "instagram_business",
+    "facebook",
     "youtube",
     "tiktok",
   ],
@@ -311,6 +312,7 @@ export const SOCIAL_PLATFORMS = [
   "linkedin",
   "instagram",
   "instagram_business",
+  "facebook",
   "youtube",
   "tiktok",
 ] as const;
@@ -1100,7 +1102,7 @@ export async function listSocialPublishingAccounts(
      FROM social_accounts account
      LEFT JOIN owner_profile owner ON owner.id = account.user_id
      WHERE account.user_id = ?
-       AND account.platform IN ('x', 'linkedin', 'instagram', 'instagram_business', 'youtube', 'tiktok')
+       AND account.platform IN ('x', 'linkedin', 'instagram', 'instagram_business', 'facebook', 'youtube', 'tiktok')
      ORDER BY account.updated_at DESC`,
   )
     .bind(ownerId)
@@ -1416,7 +1418,7 @@ export async function startSocialOAuth(
   const useHostedOAuth =
     credentialSource === "managed" ||
     (credentialSource === null && Boolean(options.hostedOAuthOrigin));
-  if ((platform === "youtube" || platform === "tiktok") && !useHostedOAuth) {
+  if ((platform === "youtube" || platform === "tiktok" || platform === "facebook") && !useHostedOAuth) {
     throw new SocialPublishingInputError(
       `${platformLabel(platform)} connects securely through ME3 Cloud`,
       424,
@@ -3425,9 +3427,21 @@ export type SocialPublishedEvent = {
   platformPostUrl: string | null;
 };
 
+export type SocialPublishFailedEvent = {
+  userId: string;
+  publicationId: string;
+  variantId: string;
+  platform: SocialPlatform;
+  platformLabel: string;
+  title: string | null;
+  failureClass: import("./adapters").SocialPublishFailureClass;
+};
+
 /** Lets the host record what the plugin did without the plugin knowing about host tables. */
 export type SocialPublishHooks = {
   onPublished?(event: SocialPublishedEvent): Promise<void>;
+  /** Once per Publication that ends failed, after retries; hosts alert the owner (iOS push) here. */
+  onFailed?(event: SocialPublishFailedEvent): Promise<void>;
 };
 
 export async function processSocialPublishBatch(
@@ -3801,7 +3815,18 @@ export async function publishQueuedPublication(
       validation.error,
       "publishing",
     );
-    if (failed) await revokeSocialVariantApproval(env, row.variant_id);
+    if (failed) {
+      await revokeSocialVariantApproval(env, row.variant_id);
+      await hooks.onFailed?.({
+        userId: row.user_id,
+        publicationId: row.publication_id,
+        variantId: row.variant_id,
+        platform: row.platform,
+        platformLabel: platformLabel(row.platform),
+        title: row.title?.trim() || null,
+        failureClass,
+      }).catch((error) => console.warn("Social failure hook failed", error));
+    }
     await releaseManagedReservation();
     return;
   }
@@ -4003,6 +4028,17 @@ export async function publishQueuedPublication(
       )
         .bind(row.account_id)
         .run();
+    }
+    if (failed) {
+      await hooks.onFailed?.({
+        userId: row.user_id,
+        publicationId: row.publication_id,
+        variantId: row.variant_id,
+        platform: row.platform,
+        platformLabel: platformLabel(row.platform),
+        title: row.title?.trim() || null,
+        failureClass,
+      }).catch((error) => console.warn("Social failure hook failed", error));
     }
     return;
   }
@@ -4249,7 +4285,7 @@ async function buildAuthorizeUrl(
   codeVerifier: string | null,
   apiOrigin: string,
 ): Promise<string> {
-  if (platform === "youtube" || platform === "tiktok") {
+  if (platform === "youtube" || platform === "tiktok" || platform === "facebook") {
     throw new SocialPublishingInputError(
       `${platformLabel(platform)} connects securely through ME3 Cloud`,
       424,
@@ -4316,7 +4352,7 @@ async function exchangeOAuthCode(
   codeVerifier: string | null,
   options: SocialCallbackOptions,
 ): Promise<{ accessToken: string; refreshToken: string | null; expiresAt: string | null; scopes: string[] }> {
-  if (platform === "youtube" || platform === "tiktok") {
+  if (platform === "youtube" || platform === "tiktok" || platform === "facebook") {
     throw new SocialPublishingInputError(
       `${platformLabel(platform)} OAuth must complete through ME3 Cloud`,
       424,
@@ -4422,7 +4458,7 @@ async function fetchSocialProfile(
   avatarUrl: string | null;
   accessToken?: string;
 }> {
-  if (platform === "youtube" || platform === "tiktok") {
+  if (platform === "youtube" || platform === "tiktok" || platform === "facebook") {
     throw new SocialPublishingInputError(
       `${platformLabel(platform)} profiles are resolved through ME3 Cloud`,
       424,
@@ -5703,6 +5739,8 @@ function platformLabel(platform: SocialPlatform): string {
       return "Instagram";
     case "instagram_business":
       return "Instagram Business";
+    case "facebook":
+      return "Facebook";
     case "youtube":
       return "YouTube";
     case "tiktok":

@@ -1,5 +1,6 @@
 import { getManagedCommerceBridgeConfig } from "./commerce-bridge";
 import { reconcileUnknownManagedAiCosts } from "./managed-ai-reconciliation";
+import { syncSocialPlanAccess } from "./plan-features";
 import type { Env } from "./types";
 
 export const MANAGED_AI_BILLING_POLICY_SECRET = "ME3_MANAGED_AI_BILLING_POLICY";
@@ -50,6 +51,8 @@ export type ManagedAiBillingSettings = {
   available: boolean;
   managed: boolean;
   currency: "usd";
+  // ME3 Cloud reports the owner's plan tier once me3-bli3.1 lands: `pro` is shown as Starter, `business` as Business.
+  tier?: string | null;
   // ME3 Cloud reports the owner's entitlement source.
   billingSource: "internal" | "storekit" | "stripe" | "google_play" | "trial" | "complimentary" | null;
   defaultModel: string;
@@ -293,26 +296,33 @@ async function cacheManagedAiBillingPolicy(
         overagesEnabled: settings.overagesEnabled,
         monthlyMaximumCents: settings.monthlyMaximumCents,
         billingSource: settings.billingSource,
+        tier: typeof settings.tier === "string" ? settings.tier : null,
         cachedAt: new Date().toISOString(),
       }),
     )
     .run();
+  await syncSocialPlanAccess(env).catch((error) => console.error("Social plan sync failed", error));
 }
 
 async function readCachedManagedBillingPolicy(
   env: Env,
-): Promise<{ billingSource: ManagedAiBillingSettings["billingSource"]; cachedAt: string | null } | null> {
+): Promise<{
+  billingSource: ManagedAiBillingSettings["billingSource"];
+  tier: string | null;
+  cachedAt: string | null;
+} | null> {
   try {
     const row = await env.DB.prepare("SELECT value FROM install_secrets WHERE name = ?")
       .bind(MANAGED_AI_BILLING_POLICY_SECRET)
       .first<{ value: string }>();
     if (!row?.value) return null;
-    const parsed = JSON.parse(row.value) as { billingSource?: unknown; cachedAt?: unknown };
+    const parsed = JSON.parse(row.value) as { billingSource?: unknown; tier?: unknown; cachedAt?: unknown };
     const sources = ["internal", "storekit", "stripe", "google_play", "trial", "complimentary"];
     return {
       billingSource: typeof parsed.billingSource === "string" && sources.includes(parsed.billingSource)
         ? parsed.billingSource as ManagedAiBillingSettings["billingSource"]
         : null,
+      tier: typeof parsed.tier === "string" && parsed.tier.trim() ? parsed.tier.trim().toLowerCase() : null,
       cachedAt: typeof parsed.cachedAt === "string" ? parsed.cachedAt : null,
     };
   } catch {
@@ -325,6 +335,11 @@ export async function readCachedManagedBillingSource(
   env: Env,
 ): Promise<ManagedAiBillingSettings["billingSource"]> {
   return (await readCachedManagedBillingPolicy(env))?.billingSource ?? null;
+}
+
+/** The owner's last known plan tier from ME3 Cloud, or null before Cloud reports one. */
+export async function readCachedManagedPlanTier(env: Env): Promise<string | null> {
+  return (await readCachedManagedBillingPolicy(env))?.tier ?? null;
 }
 
 const BILLING_POLICY_MAX_AGE_MS = 6 * 60 * 60 * 1000;

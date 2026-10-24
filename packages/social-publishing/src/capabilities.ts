@@ -180,6 +180,20 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
     ],
     reason: null,
   },
+  facebook: {
+    platform: "facebook",
+    draft: true,
+    schedule: true,
+    publish: true,
+    deliveryMode: "direct_publish",
+    deliveryLabel: "Publishes to your Page",
+    contentRules: [
+      textRule(63_206, "Publishes as a post on the connected Facebook Page."),
+      imageRule(63_206, "Publishes as a photo post on the connected Facebook Page."),
+      carouselRule(63_206, 10, "Two to ten ordered images publish as one Page post."),
+    ],
+    reason: null,
+  },
   youtube: {
     platform: "youtube",
     draft: true,
@@ -223,6 +237,7 @@ export function getSocialPlatformCapabilities(): SocialPlatformCapabilities[] {
     PLATFORM_CAPABILITIES.x,
     PLATFORM_CAPABILITIES.instagram,
     PLATFORM_CAPABILITIES.instagram_business,
+    PLATFORM_CAPABILITIES.facebook,
     PLATFORM_CAPABILITIES.youtube,
     PLATFORM_CAPABILITIES.tiktok,
   ];

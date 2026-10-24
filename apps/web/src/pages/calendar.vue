@@ -37,10 +37,6 @@ import type {
 } from "../components/calendar/calendarWeek";
 import { ApiError, api } from "../api";
 import { useSitesStore, type SiteContent } from "../stores/sites";
-import {
-  instantToLocalDateTimeParts,
-  resolveLocalDateTimeToUtc,
-} from "../utils/timezone";
 
 definePage({
   meta: {
@@ -48,7 +44,7 @@ definePage({
     requiresPlugin: "me3.calendar",
     title: "Calendar | ME3",
     description:
-      "View bookings, reminders, events, tasks, social Publications, and imported calendars across your ME3 workspace.",
+      "View bookings, reminders, events, tasks, social posts, and imported calendars across your ME3 workspace.",
     robots: "noindex,follow",
   },
 });
@@ -164,7 +160,7 @@ interface CalendarSocialPublicationRow {
   postTitle: string;
   versionId: string;
   versionLabel: string;
-  platform: "x" | "linkedin" | "instagram" | "instagram_business";
+  platform: "x" | "linkedin" | "instagram" | "instagram_business" | "facebook" | "youtube";
   accountId: string | null;
   accountLabel: string;
   publicationStatus: "scheduled" | "queued" | "publishing" | "published" | "failed";
@@ -179,19 +175,6 @@ interface CalendarSocialPublicationRow {
   platformPostUrl: string | null;
   errorMessage: string | null;
   updatedAt: string;
-}
-
-interface ApprovedPostVersionScheduleOption {
-  versionId: string;
-  postId: string;
-  siteId: string;
-  postTitle: string;
-  versionLabel: string;
-  platform: CalendarSocialPublicationRow["platform"];
-  accountId: string;
-  accountLabel: string;
-  sourceLabel: string;
-  approvedAt: string;
 }
 
 interface CalendarSocialPublishingFeed {
@@ -220,7 +203,6 @@ type CreateMode =
   | "reminder"
   | "event"
   | "birthday"
-  | "social"
   | "import"
   | null;
 type QuickCreateMode = Exclude<CreateMode, "import" | null>;
@@ -235,14 +217,12 @@ const SCHEDULE_WINDOW_INCREMENT_DAYS = 60;
 const SCHEDULE_MAX_WINDOW_DAYS = 365;
 const QUICK_CREATE_MODES: QuickCreateMode[] = [
   "event",
-  "social",
   "birthday",
   "reminder",
   "booking",
 ];
 const QUICK_CREATE_LABELS: Record<QuickCreateMode, string> = {
   event: "Event",
-  social: "Social Publication",
   birthday: "Birthday",
   reminder: "Reminder",
   booking: "Booking",
@@ -257,11 +237,7 @@ const sources = ref<CalendarSourceRow[]>([]);
 const tasks = ref<CalendarTaskRow[]>([]);
 const socialPublishingReady = ref(false);
 const socialPublications = ref<CalendarSocialPublicationRow[]>([]);
-const visibleQuickCreateModes = computed(() =>
-  QUICK_CREATE_MODES.filter(
-    (mode) => mode !== "social" || socialPublishingReady.value,
-  ),
-);
+const visibleQuickCreateModes = computed(() => QUICK_CREATE_MODES);
 const loading = ref(false);
 const calendarLoaded = ref(false);
 const error = ref("");
@@ -458,34 +434,6 @@ const newEventForm = ref({
 });
 const editingEventId = ref<string | null>(null);
 
-const socialScheduleOptions = ref<ApprovedPostVersionScheduleOption[]>([]);
-const socialScheduleLoading = ref(false);
-const socialScheduleSubmitting = ref(false);
-const socialScheduleCancelling = ref(false);
-const socialScheduleError = ref("");
-const reschedulingPublicationId = ref<string | null>(null);
-const socialScheduleForm = ref({
-  versionId: "",
-  date: "",
-  time: "",
-  timezone: defaultFormTimeZone,
-  expectedUpdatedAt: "",
-});
-
-const reschedulingSocialPublication = computed(() =>
-  reschedulingPublicationId.value
-    ? socialPublications.value.find(
-        (publication) => publication.id === reschedulingPublicationId.value,
-      ) || null
-    : null,
-);
-
-const selectedSocialScheduleOption = computed(() =>
-  socialScheduleOptions.value.find(
-    (option) => option.versionId === socialScheduleForm.value.versionId,
-  ) || null,
-);
-
 const newBirthdayForm = ref({
   name: "",
   date: "",
@@ -597,9 +545,6 @@ const quickCreateTitle = computed(() => `Add to ${quickCreateDateLabel.value}`);
 
 const quickCreateHeading = computed(() => {
   const mode = activeCreateMode.value;
-  if (mode === "social" && reschedulingPublicationId.value) {
-    return "Reschedule Publication";
-  }
   if ((editingEventId.value || editingReminderId.value) && isQuickCreateMode(mode)) {
     return `Edit ${QUICK_CREATE_LABELS[mode].toLowerCase()}`;
   }
@@ -1008,63 +953,60 @@ function mapTaskToCalendarEvent(task: CalendarTaskRow): CalendarAgendaEvent {
   };
 }
 
-function mapSocialPublicationToCalendarEvent(
-  publication: CalendarSocialPublicationRow,
-): CalendarAgendaEvent {
-  const state = formatSocialPublicationState(publication.calendarState);
-  const platform = formatSocialPlatform(publication.platform);
-  return {
-    id: `social-publication:${publication.id}`,
-    entryType: "social_publication",
-    recordId: publication.id,
-    sourceLabel: "Social Publication",
-    title: publication.postTitle,
-    siteKey: SOCIAL_PUBLISHING_KEY,
-    siteLabel: "Social publishing",
-    startsAt: publication.displayAt,
-    endsAt: publication.displayAt,
-    color: siteDotColor(SOCIAL_PUBLISHING_KEY),
-    summary: `${state} · ${platform} · ${publication.accountLabel}`,
-    detailLines: [
-      { label: "Post", value: publication.postTitle },
-      {
-        label: "Version",
-        value: `${publication.versionLabel} · ${publication.versionId}`,
-      },
-      { label: "Platform", value: platform },
-      { label: "Account", value: publication.accountLabel },
-      { label: "Delivery", value: state },
-      {
-        label: "Source",
-        value: publication.sourceRef
-          ? `${publication.sourceLabel} · ${publication.sourceRef}`
-          : publication.sourceLabel,
-      },
-      ...(publication.timezone
-        ? [{ label: "Timezone", value: publication.timezone }]
-        : []),
-    ],
-    notes: publication.errorMessage,
-    actionLabel:
-      publication.publicationStatus === "scheduled"
-        ? "Manage schedule"
-        : "Open Publication",
-  };
-}
-
-function formatSocialPublicationState(
-  state: CalendarSocialPublicationRow["calendarState"],
-): string {
-  if (state === "needs_attention") return "Needs attention";
-  return state[0]!.toUpperCase() + state.slice(1);
+/**
+ * One entry per post on the Social calendar: a post scheduled to four platforms at 12:30 shows once.
+ * Opening it goes to the post, where the time is moved or cancelled.
+ */
+function mapSocialPublicationsToCalendarEvents(
+  publications: CalendarSocialPublicationRow[],
+): CalendarAgendaEvent[] {
+  const groups = new Map<string, CalendarSocialPublicationRow[]>();
+  for (const publication of publications) {
+    const key = `${publication.postId}:${publication.displayAt.slice(0, 16)}`;
+    groups.set(key, [...(groups.get(key) || []), publication]);
+  }
+  return [...groups.values()].map((group) => {
+    const first = group[0]!;
+    const platforms = [...new Set(group.map((publication) => formatSocialPlatform(publication.platform)))];
+    const failed = group.some(
+      (publication) => publication.calendarState === "failed" || publication.calendarState === "needs_attention",
+    );
+    const state = failed
+      ? "Not posted"
+      : group.every((publication) => publication.calendarState === "published")
+        ? "Posted"
+        : group.some((publication) => publication.calendarState === "publishing")
+          ? "Posting"
+          : "Scheduled";
+    return {
+      id: `social-post:${first.postId}:${first.displayAt}`,
+      entryType: "social_publication",
+      recordId: first.postId,
+      sourceLabel: "Social",
+      title: first.postTitle,
+      siteKey: SOCIAL_PUBLISHING_KEY,
+      siteLabel: "Social",
+      startsAt: first.displayAt,
+      endsAt: first.displayAt,
+      color: failed ? "#c2412d" : siteDotColor(SOCIAL_PUBLISHING_KEY),
+      summary: `${state} · ${platforms.join(", ")}`,
+      detailLines: [
+        { label: "Platforms", value: platforms.join(", ") },
+        { label: "Status", value: state },
+      ],
+      notes: failed ? "Open the post to see what went wrong." : null,
+      actionLabel: "Open post",
+    };
+  });
 }
 
 function formatSocialPlatform(
   platform: CalendarSocialPublicationRow["platform"],
 ): string {
   if (platform === "linkedin") return "LinkedIn";
-  if (platform === "instagram_business") return "Instagram Business";
-  if (platform === "instagram") return "Instagram";
+  if (platform === "instagram" || platform === "instagram_business") return "Instagram";
+  if (platform === "facebook") return "Facebook";
+  if (platform === "youtube") return "YouTube";
   return "X";
 }
 
@@ -1176,7 +1118,7 @@ const siteOptions = computed<CalendarSiteOption[]>(() => {
     { value: REMINDERS_KEY, label: "Reminders" },
     { value: PROJECT_TASKS_KEY, label: "Tasks" },
     ...(socialPublishingReady.value
-      ? [{ value: SOCIAL_PUBLISHING_KEY, label: "Social publishing" }]
+      ? [{ value: SOCIAL_PUBLISHING_KEY, label: "Social" }]
       : []),
     ...sources.value.map((source) => ({
       value: `import:${source.id}`,
@@ -1254,10 +1196,9 @@ function calendarFeedAgendaEvents(
     ...(response.importedEvents || []).map(mapEventToCalendarEvent),
     ...(response.reminders || []).filter(reminder => reminder.contextType !== "card").map(mapReminderToCalendarEvent),
     ...(response.tasks || []).map(mapTaskToCalendarEvent),
-    ...(response.socialPublishing?.ready
-      ? response.socialPublishing.publications || []
-      : []
-    ).map(mapSocialPublicationToCalendarEvent),
+    ...mapSocialPublicationsToCalendarEvents(
+      response.socialPublishing?.ready ? response.socialPublishing.publications || [] : [],
+    ),
   ].sort(
     (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
@@ -1448,15 +1389,7 @@ async function removeImportedCalendarEvent(event: CalendarAgendaEvent) {
 function handleEventAction(event: CalendarAgendaEvent) {
   closeBoardContext(false);
   if (event.entryType === "social_publication") {
-    const publicationId = event.recordId || event.id;
-    const publication = socialPublications.value.find(
-      (item) => item.id === publicationId,
-    );
-    if (publication?.publicationStatus === "scheduled") {
-      openSocialPublicationSchedule(publication);
-    } else {
-      openSocialPublication(publicationId);
-    }
+    if (event.recordId) openSocialPost(event.recordId);
     return;
   }
 
@@ -1488,53 +1421,8 @@ function handleEventAction(event: CalendarAgendaEvent) {
   }
 }
 
-function openSocialPublication(publicationId: string) {
-  const publication = socialPublications.value.find(
-    (item) => item.id === publicationId,
-  );
-  if (!publication) return;
-  void router.push({
-    path: "/social",
-    query: {
-      siteId: publication.siteId,
-      postId: publication.postId,
-      versionId: publication.versionId,
-      publicationId: publication.id,
-    },
-  });
-}
-
-function openSocialPublicationSchedule(
-  publication: CalendarSocialPublicationRow,
-) {
-  if (
-    publication.publicationStatus !== "scheduled" ||
-    !publication.scheduledFor
-  ) {
-    socialScheduleError.value =
-      "Only a planned Publication can be rescheduled from Calendar.";
-    return;
-  }
-  const timezone = publication.timezone || defaultFormTimeZone;
-  const local = instantToLocalDateTimeParts(publication.scheduledFor, timezone);
-  if (!local) {
-    socialScheduleError.value =
-      "Calendar could not read this Publication timezone. Open Social Publishing for details.";
-    return;
-  }
-  reschedulingPublicationId.value = publication.id;
-  socialScheduleOptions.value = [];
-  socialScheduleError.value = "";
-  quickCreateDayKey.value = local.date;
-  socialScheduleForm.value = {
-    versionId: publication.versionId,
-    date: local.date,
-    time: local.time,
-    timezone,
-    expectedUpdatedAt: publication.updatedAt,
-  };
-  compactEventCreate.value = false;
-  activeCreateMode.value = "social";
+function openSocialPost(postId: string) {
+  void router.push(`/social/${encodeURIComponent(postId)}`);
 }
 
 function handleEventDangerAction(event: CalendarAgendaEvent) {
@@ -2341,197 +2229,6 @@ function resetEventForm() {
   };
 }
 
-function resetSocialScheduleForm() {
-  const date = quickCreateDayKey.value || preferredCreateDate();
-  const eventTime =
-    newEventForm.value.startDate === date &&
-    /^\d{2}:\d{2}$/.test(newEventForm.value.startTime)
-      ? newEventForm.value.startTime
-      : defaultTimeInput();
-  reschedulingPublicationId.value = null;
-  socialScheduleError.value = "";
-  socialScheduleOptions.value = [];
-  socialScheduleForm.value = {
-    versionId: "",
-    date,
-    time: eventTime,
-    timezone: defaultFormTimeZone,
-    expectedUpdatedAt: "",
-  };
-  void loadApprovedPostVersionsForScheduling();
-}
-
-async function loadApprovedPostVersionsForScheduling() {
-  if (!socialPublishingReady.value || socialScheduleLoading.value) return;
-  socialScheduleLoading.value = true;
-  socialScheduleError.value = "";
-  try {
-    const response = await api.get<{
-      versions: ApprovedPostVersionScheduleOption[];
-    }>("/social/scheduling/approved-versions");
-    socialScheduleOptions.value = response.versions || [];
-    if (
-      !socialScheduleOptions.value.some(
-        (option) => option.versionId === socialScheduleForm.value.versionId,
-      )
-    ) {
-      socialScheduleForm.value.versionId =
-        socialScheduleOptions.value[0]?.versionId || "";
-    }
-  } catch (err) {
-    socialScheduleError.value =
-      err instanceof ApiError
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : "Could not load approved Versions.";
-  } finally {
-    socialScheduleLoading.value = false;
-  }
-}
-
-async function submitSocialSchedule() {
-  socialScheduleError.value = "";
-  const form = socialScheduleForm.value;
-  const resolution = resolveLocalDateTimeToUtc(
-    form.date,
-    form.time,
-    form.timezone,
-  );
-  if (!resolution.ok) {
-    socialScheduleError.value = resolution.reason === "ambiguous"
-      ? "This local time occurs twice because clocks move back. Choose a different time."
-      : resolution.reason === "nonexistent"
-        ? "This local time does not exist because clocks move forward. Choose a different time."
-        : "Choose a valid date, time, and timezone.";
-    return;
-  }
-  const scheduledFor = resolution.value;
-  if (Date.parse(scheduledFor) <= Date.now()) {
-    socialScheduleError.value = "Schedule time must be in the future.";
-    return;
-  }
-  if (!reschedulingPublicationId.value && !form.versionId) {
-    socialScheduleError.value = "Choose an approved Version.";
-    return;
-  }
-
-  socialScheduleSubmitting.value = true;
-  try {
-    const requestContext = {
-      surface: "calendar",
-      view: rangeMode.value,
-    };
-    if (reschedulingPublicationId.value) {
-      const publicationId = reschedulingPublicationId.value;
-      const response = await api.patch<{
-        publication: CalendarSocialPublicationRow;
-        result: {
-          action: "rescheduled";
-          approvalPreserved: true;
-        };
-      }>(`/social/publications/${encodeURIComponent(publicationId)}`, {
-        scheduledFor,
-        timezone: form.timezone,
-        expectedUpdatedAt: form.expectedUpdatedAt,
-        requestContext,
-      });
-      if (response.result?.action !== "rescheduled") {
-        throw new Error("Calendar did not receive a reschedule result.");
-      }
-      toastSuccess(
-        response.result.approvalPreserved
-          ? "Publication rescheduled. Exact-Version approval remains valid."
-          : "Publication rescheduled.",
-      );
-      closeCreateMode();
-      await reloadCalendar();
-      highlightSavedCalendarItem(`social-publication:${publicationId}`);
-      return;
-    }
-
-    const response = await api.post<{
-      publication: { id: string };
-      result: { action: "scheduled" };
-    }>(
-      `/social/versions/${encodeURIComponent(form.versionId)}/publications`,
-      {
-        scheduledFor,
-        timezone: form.timezone,
-        requestContext,
-      },
-    );
-    if (response.result?.action !== "scheduled") {
-      throw new Error("Calendar did not receive a schedule result.");
-    }
-    toastSuccess("Approved Version scheduled as a new Publication.");
-    closeCreateMode();
-    await reloadCalendar();
-    highlightSavedCalendarItem(`social-publication:${response.publication.id}`);
-  } catch (err) {
-    socialScheduleError.value =
-      err instanceof ApiError
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : "Could not update this Publication schedule.";
-  } finally {
-    socialScheduleSubmitting.value = false;
-  }
-}
-
-async function cancelManagedSocialPublication() {
-  const publication = reschedulingSocialPublication.value;
-  if (!publication || socialScheduleCancelling.value) return;
-  if (!window.confirm("Cancel this planned Publication?")) return;
-
-  socialScheduleCancelling.value = true;
-  socialScheduleError.value = "";
-  try {
-    const response = await api.delete<{
-      result: { action: "cancelled"; publicationId: string };
-    }>(`/social/publications/${encodeURIComponent(publication.id)}`);
-    if (response.result?.action !== "cancelled") {
-      throw new Error("Calendar did not receive a cancellation result.");
-    }
-    toastSuccess("Publication cancelled.");
-    closeCreateMode();
-    await reloadCalendar();
-  } catch (err) {
-    socialScheduleError.value =
-      err instanceof ApiError
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : "Could not cancel this Publication.";
-  } finally {
-    socialScheduleCancelling.value = false;
-  }
-}
-
-function openSelectedPostVersion() {
-  const option = selectedSocialScheduleOption.value;
-  const publication = reschedulingSocialPublication.value;
-  closeCreateMode();
-  void router.push({
-    path: "/social",
-    query: option
-      ? {
-          siteId: option.siteId,
-          postId: option.postId,
-          versionId: option.versionId,
-        }
-      : publication
-        ? {
-            siteId: publication.siteId,
-            postId: publication.postId,
-            versionId: publication.versionId,
-            publicationId: publication.id,
-          }
-        : {},
-  });
-}
-
 function dateTimeInputFromDayMinutes(dayKey: string, minutes: number) {
   const [year, month, day] = dayKey.split("-").map(Number);
   const date = new Date(year, month - 1, day, 0, minutes, 0, 0);
@@ -2622,7 +2319,6 @@ function openCreateMode(
   if (mode === "booking") resetBookingForm();
   if (mode === "reminder") resetReminderForm();
   if (mode === "event") resetEventForm();
-  if (mode === "social") resetSocialScheduleForm();
   if (mode === "birthday") resetBirthdayForm();
   if (mode === "import") resetImportForm();
 
@@ -2635,7 +2331,6 @@ function switchQuickCreateMode(mode: QuickCreateMode) {
   if (mode === "booking") resetBookingForm();
   if (mode === "reminder") resetReminderForm();
   if (mode === "event") resetEventForm();
-  if (mode === "social") resetSocialScheduleForm();
   if (mode === "birthday") resetBirthdayForm();
   compactEventCreate.value = false;
   activeCreateMode.value = mode;
@@ -2705,7 +2400,6 @@ function openEditEvent(eventId: string) {
 function isQuickCreateMode(mode: CreateMode): mode is QuickCreateMode {
   return (
     mode === "event" ||
-    mode === "social" ||
     mode === "birthday" ||
     mode === "reminder" ||
     mode === "booking"
@@ -2722,9 +2416,6 @@ function closeCreateMode() {
   quickCreateDayKey.value = null;
   editingEventId.value = null;
   editingReminderId.value = null;
-  reschedulingPublicationId.value = null;
-  socialScheduleOptions.value = [];
-  socialScheduleError.value = "";
 }
 
 function highlightSavedCalendarItem(id: string) {
@@ -3296,13 +2987,6 @@ onBeforeUnmount(() => {
             <button type="button" @click="openCreateMode('event')">
               New event
             </button>
-            <button
-              v-if="socialPublishingReady"
-              type="button"
-              @click="openCreateMode('social')"
-            >
-              New Social Publication
-            </button>
             <button type="button" @click="openCreateMode('birthday')">
               New birthday
             </button>
@@ -3467,13 +3151,6 @@ onBeforeUnmount(() => {
               <button type="button" @click="openCreateMode('event')">
                 New event
               </button>
-              <button
-                v-if="socialPublishingReady"
-                type="button"
-                @click="openCreateMode('social')"
-              >
-                New Social Publication
-              </button>
               <button type="button" @click="openCreateMode('birthday')">
                 New birthday
               </button>
@@ -3621,7 +3298,7 @@ onBeforeUnmount(() => {
                 v-else-if="rangeMode === 'day'"
                 :events="visibleEvents"
                 title="Daily schedule"
-                description="Bookings, reminders, events, tasks, social Publications, and imported calendars."
+                description="Bookings, reminders, events, tasks, social posts, and imported calendars."
                 range-label="Day"
                 range-mode="day"
                 :start-day-key="calendarWindowStartDayKey"
@@ -3802,7 +3479,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div
-          v-if="!compactEventCreate && !reschedulingPublicationId"
+          v-if="!compactEventCreate"
           class="create-tabs"
           role="group"
           aria-label="Create type"
@@ -3869,15 +3546,6 @@ onBeforeUnmount(() => {
               @click="compactEventCreate = false"
             >
               More options
-            </Button>
-            <Button
-              v-if="socialPublishingReady"
-              size="small"
-              type="button"
-              color="outline"
-              @click="switchQuickCreateMode('social')"
-            >
-              Schedule social
             </Button>
             <Button
               size="small"
@@ -4203,182 +3871,6 @@ onBeforeUnmount(() => {
                   : editingReminderId
                     ? "Update reminder"
                     : "Create reminder"
-              }}
-            </Button>
-          </div>
-        </form>
-
-        <form
-          v-else-if="activeCreateMode === 'social'"
-          id="quick-create-panel-social"
-          class="booking-form social-schedule-form"
-          @submit.prevent="submitSocialSchedule"
-        >
-          <p class="form-hint">
-            <template v-if="reschedulingPublicationId">
-              Change only the planned time and timezone. The approved Version,
-              account, copy, and media stay unchanged.
-            </template>
-            <template v-else>
-              Choose an exact approved Version. Calendar creates a Publication;
-              it never creates a blank Post or edits the approved content.
-            </template>
-          </p>
-
-          <p v-if="socialScheduleLoading" role="status" class="form-hint">
-            Loading approved Versions…
-          </p>
-
-          <template v-else>
-            <label v-if="!reschedulingPublicationId && socialScheduleOptions.length">
-              <span>Approved Version</span>
-              <select v-model="socialScheduleForm.versionId" required autofocus>
-                <option
-                  v-for="option in socialScheduleOptions"
-                  :key="option.versionId"
-                  :value="option.versionId"
-                >
-                  {{ option.postTitle }} · {{ option.versionLabel }} ·
-                  {{ option.accountLabel }}
-                </option>
-              </select>
-            </label>
-
-            <dl
-              v-if="selectedSocialScheduleOption"
-              class="social-schedule-summary"
-            >
-              <div>
-                <dt>Post</dt>
-                <dd>{{ selectedSocialScheduleOption.postTitle }}</dd>
-              </div>
-              <div>
-                <dt>Version</dt>
-                <dd>{{ selectedSocialScheduleOption.versionLabel }}</dd>
-              </div>
-              <div>
-                <dt>Account</dt>
-                <dd>{{ selectedSocialScheduleOption.accountLabel }}</dd>
-              </div>
-              <div>
-                <dt>Source</dt>
-                <dd>{{ selectedSocialScheduleOption.sourceLabel }}</dd>
-              </div>
-            </dl>
-
-            <dl
-              v-else-if="reschedulingSocialPublication"
-              class="social-schedule-summary"
-            >
-              <div>
-                <dt>Post</dt>
-                <dd>{{ reschedulingSocialPublication.postTitle }}</dd>
-              </div>
-              <div>
-                <dt>Version</dt>
-                <dd>{{ reschedulingSocialPublication.versionLabel }}</dd>
-              </div>
-              <div>
-                <dt>Account</dt>
-                <dd>{{ reschedulingSocialPublication.accountLabel }}</dd>
-              </div>
-            </dl>
-
-            <div
-              v-if="!reschedulingPublicationId && socialScheduleOptions.length === 0"
-              class="social-schedule-empty"
-            >
-              <p>
-                No approved, connected Version is ready to schedule. Approve a
-                supported Version in Social Publishing first.
-              </p>
-              <Button
-                size="small"
-                type="button"
-                color="outline"
-                @click="openSelectedPostVersion"
-              >
-                Open Social Publishing
-              </Button>
-            </div>
-
-            <template
-              v-if="reschedulingPublicationId || socialScheduleOptions.length > 0"
-            >
-              <div class="field-row">
-                <label>
-                  <span>Date</span>
-                  <input v-model="socialScheduleForm.date" type="date" required />
-                </label>
-                <label>
-                  <span>Time</span>
-                  <input v-model="socialScheduleForm.time" type="time" required />
-                </label>
-              </div>
-
-              <label>
-                <span>Timezone</span>
-                <input
-                  v-model="socialScheduleForm.timezone"
-                  type="text"
-                  autocomplete="off"
-                  required
-                />
-              </label>
-            </template>
-          </template>
-
-          <p v-if="socialScheduleError" class="form-error" role="alert">
-            {{ socialScheduleError }}
-          </p>
-
-          <div class="modal-actions social-schedule-actions">
-            <Button
-              v-if="reschedulingPublicationId || selectedSocialScheduleOption"
-              size="small"
-              type="button"
-              color="ghost"
-              @click="openSelectedPostVersion"
-            >
-              Open in Social Publishing
-            </Button>
-            <Button
-              v-if="reschedulingPublicationId"
-              size="small"
-              type="button"
-              color="danger"
-              :disabled="socialScheduleSubmitting || socialScheduleCancelling"
-              @click="cancelManagedSocialPublication"
-            >
-              {{ socialScheduleCancelling ? "Cancelling…" : "Cancel Publication" }}
-            </Button>
-            <Button
-              size="small"
-              type="button"
-              color="outline"
-              @click="closeCreateMode"
-            >
-              Close
-            </Button>
-            <Button
-              v-if="reschedulingPublicationId || socialScheduleOptions.length > 0"
-              size="small"
-              type="submit"
-              color="primary"
-              :disabled="
-                socialScheduleLoading ||
-                socialScheduleSubmitting ||
-                socialScheduleCancelling
-              "
-            >
-              {{
-                socialScheduleSubmitting
-                  ? reschedulingPublicationId
-                    ? "Rescheduling…"
-                    : "Scheduling…"
-                  : reschedulingPublicationId
-                    ? "Reschedule Publication"
-                    : "Schedule Publication"
               }}
             </Button>
           </div>
@@ -5419,59 +4911,6 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 13px;
   color: #b33b2e;
-}
-
-.social-schedule-summary {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 12px;
-  border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: var(--ui-radius-sm, 8px);
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-}
-
-.social-schedule-summary div {
-  display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
-  gap: 10px;
-  font-size: 13px;
-}
-
-.social-schedule-summary dt {
-  color: var(--ui-text-muted, var(--color-text-muted));
-}
-
-.social-schedule-summary dd {
-  min-width: 0;
-  margin: 0;
-  color: var(--ui-text, var(--color-text));
-  overflow-wrap: anywhere;
-}
-
-.social-schedule-empty {
-  display: grid;
-  justify-items: start;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: var(--ui-radius-sm, 8px);
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-}
-
-.social-schedule-empty p {
-  margin: 0;
-  color: var(--ui-text-muted, var(--color-text-muted));
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.social-schedule-actions {
-  flex-wrap: wrap;
-}
-
-.social-schedule-actions :deep(.me3-btn) {
-  min-height: 44px;
 }
 
 .modal-actions {

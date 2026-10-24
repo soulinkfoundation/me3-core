@@ -67,6 +67,7 @@ import {
   startSocialOAuth,
   updateSocialProviderSettings,
 } from "./social-publishing";
+import { syncSocialPlanAccess } from "./plan-features";
 import {
   getOrCreateInstallEncryptionKey,
   getOrCreateInstallSessionSecret,
@@ -1087,6 +1088,8 @@ app.get("/api/plugins", async (c) => {
   const ownerId = await requireOwner(c);
   if (!ownerId) return unauthorized(c);
 
+  // Plan-included features switch on here, so the menu shows them without a plugin to activate.
+  await syncSocialPlanAccess(c.env).catch((error) => console.error("Social plan sync failed", error));
   return c.json({
     catalogVersion: CORE_PLUGIN_CATALOG_VERSION,
     plugins: await listCorePluginRecords(c.env),
@@ -1165,6 +1168,7 @@ registerSocialMediaDeliveryRoutes(app);
 app.get("/api/social/status", async (c) => {
   const ownerId = await requireOwner(c);
   if (!ownerId) return unauthorized(c);
+  const access = await syncSocialPlanAccess(c.env);
   const [hostedOAuthOrigin, managedXUsage] = await Promise.all([
     resolveHostedSocialOAuthOrigin(c.env),
     getManagedXUsageWarning(c.env),
@@ -1173,6 +1177,8 @@ app.get("/api/social/status", async (c) => {
     c.env.ME3_DEPLOYMENT_MODE?.trim().toLowerCase() === "managed";
 
   return c.json({
+    // "locked": the owner's plan doesn't include Social (web shows the Business page, mobile no prices).
+    access,
     plugin: await getSocialPublishingRuntimeStatus(c.env),
     hostedOAuth: {
       configured: Boolean(hostedOAuthOrigin),
@@ -1181,6 +1187,7 @@ app.get("/api/social/status", async (c) => {
             ...(managedDeployment ? ["x"] : []),
             "linkedin",
             "instagram",
+            "facebook",
             "youtube",
             "tiktok",
           ]
