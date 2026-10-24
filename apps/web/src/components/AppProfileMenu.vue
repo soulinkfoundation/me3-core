@@ -58,11 +58,12 @@ const destinations = computed(() => [
   { label: "People", path: "/people", emoji: APP_FEATURE_ICONS.people, visible: true },
   { label: "Email", path: "/email", emoji: APP_FEATURE_ICONS.email, visible: true },
   { label: "Campaigns", path: "/email/campaigns", emoji: APP_FEATURE_ICONS.campaigns, visible: installed("me3.email-campaigns") },
+  // Social is on for every owner whose plan includes it; the Worker switches its plugin record on (plan-features.ts).
+  { label: "Social", path: "/social", emoji: APP_FEATURE_ICONS.social, visible: installed("me3.social-publishing") },
   { label: "Mission", path: "/mission", emoji: "🚀", visible: installed("me3.mission-control") },
   { label: "Tasks", path: "/tasks", emoji: "✅", visible: installed("me3.mission-control") },
   { label: "Accounts", path: "/accounts", emoji: APP_FEATURE_ICONS.accounts, visible: installed("me3.accounts") },
   { label: "Files", path: "/files", emoji: APP_FEATURE_ICONS.files, visible: true },
-  { label: "Socials", path: "/social", emoji: APP_FEATURE_ICONS.social, visible: installed("me3.social-publishing") },
 ].filter(destination => destination.visible));
 
 async function loadNavigation() {

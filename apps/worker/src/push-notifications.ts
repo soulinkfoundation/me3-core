@@ -201,6 +201,31 @@ export async function notifyAgentTurnReady(env: Env, turn: { threadId: string; t
   }
 }
 
+export type SocialFailurePush = {
+  publicationId: string;
+  postId: string;
+  platform: string;
+  platformLabel: string;
+  failureClass: string;
+};
+
+/** Phones hear about social posts only when one wasn't sent (me3-bli3.3.7). */
+export async function notifySocialPostFailed(env: Env, failure: SocialFailurePush) {
+  try {
+    return await relayRequest(env, "/api/push/social-failures", {
+      method: "POST",
+      body: JSON.stringify(failure),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    console.warn("Social failure push was skipped", {
+      publicationId: failure.publicationId,
+      error: error instanceof Error ? error.message : "Unknown push relay error",
+    });
+    return { ok: false, skipped: true };
+  }
+}
+
 export type WebsitePaymentPush = {
   sourceKind: "order" | "booking";
   sourceId: string;

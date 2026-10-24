@@ -1,5 +1,5 @@
 import { confirmPostingPlan, createPostingPlan, getPostingPlan, searchPostLibrary, type PostingPlan } from "@me3-core/plugin-social-publishing";
-import { createAgentSocialPost, createAgentSocialSuggestions, readAgentSocialSource, type AgentSocialSource, type AgentSocialSourceType, type CreateAgentSocialPostInput, type CreateAgentSocialSuggestionsInput } from "../../../agent-chat/src/social-content";
+import { createAgentSocialPost, createAgentSocialPostFromOwnerText, createAgentSocialSuggestions, readAgentSocialQueue, readAgentSocialSource, setAgentSocialNudges, type AgentSocialPlatform, type AgentSocialSource, type AgentSocialSourceType, type CreateAgentSocialPostInput, type CreateAgentSocialSuggestionsInput } from "../../../agent-chat/src/social-content";
 import { domainTool, idProperty, objectSchema, ok, optionalString, requiredString } from "./common";
 import { approval, assertUnchanged, rememberTargets, requireTarget } from "./targets";
 import type { AgentToolContext } from "../types";
@@ -20,8 +20,30 @@ async function reviewedSource(args: Record<string, unknown>, context: AgentToolC
   await sourcePlugin(context, sourceType);
   return expected.source;
 }
+/** Everything the owner wrote in this chat: the only words a message-based draft may use. */
+function ownerWords(context: AgentToolContext): string {
+  return [...context.messages.filter(message => message.role === "user").map(message => message.content), context.messageText].join("\n");
+}
 export function socialTools() {
   return [
+    domainTool("core.social.queue.read", async (args, context) => {
+      context.signal.throwIfAborted();
+      return ok(await readAgentSocialQueue(context.db, context.ownerId, { recordNudge: args.recordNudge === true }));
+    }),
+    domainTool("core.social.draft.from_message", async (args, context) => {
+      const platforms = Array.isArray(args.platforms) ? args.platforms.filter((value): value is AgentSocialPlatform => typeof value === "string") : [];
+      context.signal.throwIfAborted();
+      const post = await createAgentSocialPostFromOwnerText(context.db, context.ownerId, ownerWords(context), {
+        text: requiredString(args.text, "Text"),
+        platforms,
+        title: optionalString(args.title),
+      });
+      return ok({ post, published: false, scheduled: false, reviewPath: `/social/${post.post.id}` });
+    }),
+    domainTool("core.social.nudges.set", async (args, context) => {
+      if (typeof args.on !== "boolean") throw new Error("on must be true or false.");
+      return ok(await setAgentSocialNudges(context.db, args.on));
+    }),
     domainTool("core.social.source.read", async (args, context) => {
       const sourceType = await sourcePlugin(context, args.sourceType); const sourceId = requiredString(args.sourceId, "Source ID");
       const source = await readAgentSocialSource(context.db, context.ownerId, sourceType, sourceId, context.ownerTimezone);

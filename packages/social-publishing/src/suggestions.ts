@@ -98,6 +98,7 @@ const SUPPORTED_PLATFORMS = new Set<SocialPlatform>([
   "linkedin",
   "instagram",
   "instagram_business",
+  "facebook",
   "youtube",
   "tiktok",
 ]);

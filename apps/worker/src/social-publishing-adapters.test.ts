@@ -1433,3 +1433,92 @@ describe("TikTok draft upload adapter", () => {
     });
   });
 });
+
+describe("Facebook Page publishing adapter", () => {
+  function graphFetcher(responses: Array<{ status?: number; body: unknown }>) {
+    const calls: Array<{ url: string; body: Record<string, string> }> = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: Object.fromEntries(new URLSearchParams(String(init?.body))) });
+      const next = responses.shift() || { body: {} };
+      return new Response(JSON.stringify(next.body), { status: next.status || 200 });
+    });
+    return { fetcher, calls };
+  }
+
+  it("posts text with its first link to the Page feed", async () => {
+    const { fetcher, calls } = graphFetcher([{ body: { id: "page_1" } }]);
+    const result = await adapterFor("facebook").publish({
+      accessToken: "page-token",
+      accountId: "page",
+      bodyText: "Booking page is live: https://maya.me3.app/book.",
+      assets: [],
+      fetcher: fetcher as typeof fetch,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      platformPostId: "page_1",
+      platformPostUrl: "https://www.facebook.com/page_1",
+    });
+    expect(calls).toEqual([{
+      url: "https://graph.facebook.com/v25.0/page/feed",
+      body: {
+        message: "Booking page is live: https://maya.me3.app/book.",
+        link: "https://maya.me3.app/book",
+        access_token: "page-token",
+      },
+    }]);
+  });
+
+  it("publishes several images in order as one post", async () => {
+    const { fetcher, calls } = graphFetcher([
+      { body: { id: "photo-1" } },
+      { body: { id: "photo-2" } },
+      { body: { id: "page_2" } },
+    ]);
+    const result = await adapterFor("facebook").publish({
+      accessToken: "page-token",
+      accountId: "page",
+      bodyText: "Open day",
+      assets: [
+        { url: "https://media.example/one.jpg", kind: "image", altText: "The studio" },
+        { url: "https://media.example/two.jpg", kind: "image" },
+      ],
+      fetcher: fetcher as typeof fetch,
+    });
+
+    expect(result).toMatchObject({ ok: true, platformPostId: "page_2" });
+    expect(calls.map((call) => call.body)).toEqual([
+      { url: "https://media.example/one.jpg", published: "false", alt_text_custom: "The studio", access_token: "page-token" },
+      { url: "https://media.example/two.jpg", published: "false", access_token: "page-token" },
+      {
+        message: "Open day",
+        "attached_media[0]": JSON.stringify({ media_fbid: "photo-1" }),
+        "attached_media[1]": JSON.stringify({ media_fbid: "photo-2" }),
+        access_token: "page-token",
+      },
+    ]);
+  });
+
+  it("asks to reconnect when the Page token was revoked", async () => {
+    const { fetcher } = graphFetcher([
+      { status: 400, body: { error: { message: "Session has expired", code: 190 } } },
+    ]);
+    const result = await adapterFor("facebook").publish({
+      accessToken: "page-token",
+      accountId: "page",
+      bodyText: "Hello",
+      assets: [],
+      fetcher: fetcher as typeof fetch,
+    });
+
+    expect(result).toMatchObject({ ok: false, failureClass: "reconnect_required" });
+  });
+
+  it("rejects video", () => {
+    expect(adapterFor("facebook").validateDraft({
+      bodyText: "Clip",
+      assets: [{ url: "https://media.example/a.mp4", kind: "video" }],
+    })).toEqual({ ok: false, error: "Facebook posts from ME3 support images, not video." });
+  });
+});

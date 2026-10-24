@@ -69,6 +69,9 @@ const INSTAGRAM_VIDEO_MIME_TYPES = new Set([
   "video/quicktime",
 ]);
 const INSTAGRAM_GRAPH_VERSION = "v25.0";
+const FACEBOOK_MAX_CHARS = 63_206;
+const FACEBOOK_IMAGE_COUNT_LIMIT = 10;
+const FACEBOOK_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const TIKTOK_UPLOAD_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/";
 const TIKTOK_DIRECT_POST_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/";
 const TIKTOK_CREATOR_INFO_URL =
@@ -95,6 +98,7 @@ export function adapterFor(platform: SocialPlatform): SocialPublishAdapter {
   if (platform === "linkedin") return linkedInAdapter;
   if (platform === "tiktok") return tikTokAdapter;
   if (platform === "youtube") return youtubeAdapter;
+  if (platform === "facebook") return facebookAdapter;
   return createInstagramAdapter(platform);
 }
 
@@ -2276,5 +2280,184 @@ async function waitForInstagramContainer(
       undefined,
       "retryable",
     ),
+  };
+}
+
+const facebookAdapter: SocialPublishAdapter = {
+  validateDraft: validateFacebookDraft,
+  publish: publishFacebookPage,
+};
+
+function validateFacebookDraft(input: {
+  bodyText: string;
+  assets: SocialMediaAsset[];
+}): { ok: true } | { ok: false; error: string } {
+  const body = input.bodyText.trim();
+  if (!body && input.assets.length === 0) return { ok: false, error: "This Facebook post is empty." };
+  if (characterLength(body) > FACEBOOK_MAX_CHARS) {
+    return { ok: false, error: `This Facebook post is too long (max ${FACEBOOK_MAX_CHARS} characters).` };
+  }
+  if (input.assets.some((asset) => asset.kind === "video")) {
+    return { ok: false, error: "Facebook posts from ME3 support images, not video." };
+  }
+  if (input.assets.length > FACEBOOK_IMAGE_COUNT_LIMIT) {
+    return { ok: false, error: `Facebook posts from ME3 support up to ${FACEBOOK_IMAGE_COUNT_LIMIT} images.` };
+  }
+  if (input.assets.some((asset) => !asset.url?.trim())) {
+    return { ok: false, error: "Every Facebook image needs a delivery URL." };
+  }
+  for (const asset of input.assets) {
+    const mimeType = normalizeMimeType(asset.mimeType);
+    if (mimeType && !FACEBOOK_IMAGE_MIME_TYPES.has(mimeType)) {
+      return { ok: false, error: "Facebook images must be JPEG, PNG, GIF or WebP." };
+    }
+  }
+  return { ok: true };
+}
+
+type FacebookGraphBody = { id?: string; post_id?: string; error?: { message?: string; code?: number } };
+
+function facebookFailureClass(status: number, body: FacebookGraphBody): SocialPublishFailureClass {
+  // 190: token expired or revoked; 200-299: a permission was removed.
+  const code = body.error?.code;
+  if (code === 190 || (typeof code === "number" && code >= 200 && code < 300)) return "reconnect_required";
+  if (code === 4 || code === 17 || code === 32 || code === 613) return "retryable";
+  return failureClassForStatus(status);
+}
+
+function facebookPostUrl(postId: string): string {
+  return `https://www.facebook.com/${encodeURIComponent(postId)}`;
+}
+
+function firstLink(body: string): string | null {
+  const match = body.match(/https?:\/\/[^\s<>"]+/i);
+  return match ? match[0].replace(/[.,;:!?)\]]+$/, "") : null;
+}
+
+async function facebookGraphPost(
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+  path: string,
+  parameters: Record<string, string>,
+): Promise<{ ok: true; body: FacebookGraphBody } | { ok: false; status: number; body: FacebookGraphBody; error: unknown }> {
+  try {
+    const response = await input.fetcher(
+      `https://graph.facebook.com/${INSTAGRAM_GRAPH_VERSION}/${path}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ ...parameters, access_token: input.accessToken }),
+      },
+    );
+    const body = await readJson<FacebookGraphBody>(response);
+    return response.ok ? { ok: true, body } : { ok: false, status: response.status, body, error: null };
+  } catch (error) {
+    return { ok: false, status: 0, body: {}, error };
+  }
+}
+
+async function publishFacebookPage(
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+): Promise<SocialPublishAdapterResult> {
+  const pageId = encodeURIComponent(input.accountId);
+  const images = input.assets.filter((asset) => asset.kind !== "video");
+  const message = input.bodyText.trim();
+
+  if (images.length === 1) {
+    const image = images[0]!;
+    await input.markProviderWriteStarted?.();
+    const photo = await facebookGraphPost(input, `${pageId}/photos`, {
+      url: image.url,
+      ...(message ? { caption: message } : {}),
+      ...(image.altText?.trim() ? { alt_text_custom: image.altText.trim() } : {}),
+    });
+    if (!photo.ok) {
+      if (photo.status === 0) {
+        return providerError(
+          "facebook_outcome_unknown",
+          "Facebook did not confirm whether the post was published. Check your Page before trying again.",
+          { message: describeFetchError(photo.error).message },
+          "outcome_unknown",
+        );
+      }
+      return providerError(
+        "facebook_photo",
+        photo.body.error?.message || `Facebook photo post failed (${photo.status}).`,
+        photo.body,
+        facebookFailureClass(photo.status, photo.body),
+      );
+    }
+    const postId = photo.body.post_id || photo.body.id;
+    if (!postId) {
+      return providerError(
+        "facebook_missing_post_id",
+        "Facebook accepted the post but did not return its id. Check your Page before trying again.",
+        photo.body,
+        "outcome_unknown",
+      );
+    }
+    return { ok: true, platformPostId: postId, platformPostUrl: facebookPostUrl(postId), providerResponse: photo.body };
+  }
+
+  // Several images upload unpublished first, then publish together as one Page post.
+  const attached: string[] = [];
+  const uploads: unknown[] = [];
+  for (const image of images) {
+    const upload = await facebookGraphPost(input, `${pageId}/photos`, {
+      url: image.url,
+      published: "false",
+      ...(image.altText?.trim() ? { alt_text_custom: image.altText.trim() } : {}),
+    });
+    if (!upload.ok || !upload.body.id) {
+      const status = upload.ok ? 502 : upload.status;
+      return providerError(
+        "facebook_photo_upload",
+        upload.body.error?.message || "Facebook could not prepare an image. ME3 can safely try again.",
+        { uploads, failed: upload.body },
+        status === 0 ? "retryable" : facebookFailureClass(status, upload.body),
+      );
+    }
+    attached.push(upload.body.id);
+    uploads.push(upload.body);
+  }
+
+  const link = attached.length === 0 ? firstLink(message) : null;
+  const feedParameters: Record<string, string> = {
+    ...(message ? { message } : {}),
+    ...(link ? { link } : {}),
+  };
+  attached.forEach((id, index) => {
+    feedParameters[`attached_media[${index}]`] = JSON.stringify({ media_fbid: id });
+  });
+  await input.markProviderWriteStarted?.();
+  const feed = await facebookGraphPost(input, `${pageId}/feed`, feedParameters);
+  if (!feed.ok) {
+    if (feed.status === 0) {
+      return providerError(
+        "facebook_outcome_unknown",
+        "Facebook did not confirm whether the post was published. Check your Page before trying again.",
+        { message: describeFetchError(feed.error).message, uploads },
+        "outcome_unknown",
+      );
+    }
+    return providerError(
+      "facebook_feed",
+      feed.body.error?.message || `Facebook post failed (${feed.status}).`,
+      { uploads, feed: feed.body },
+      facebookFailureClass(feed.status, feed.body),
+    );
+  }
+  if (!feed.body.id) {
+    return providerError(
+      "facebook_missing_post_id",
+      "Facebook accepted the post but did not return its id. Check your Page before trying again.",
+      { uploads, feed: feed.body },
+      "outcome_unknown",
+    );
+  }
+  return {
+    ok: true,
+    platformPostId: feed.body.id,
+    platformPostUrl: facebookPostUrl(feed.body.id),
+    providerResponse: { uploads, feed: feed.body },
   };
 }

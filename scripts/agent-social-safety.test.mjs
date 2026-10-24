@@ -8,7 +8,12 @@ const plugins = new Set(["me3.social-publishing", "me3.journal", "me3.mission-co
 const tables = ["social_packages", "social_variants", "social_suggestions", "social_publications", "social_posting_plans", "social_posting_plan_items"];
 const snapshot = seed => tables.map(table => seed.raw.prepare(`SELECT * FROM ${table} ORDER BY id`).all());
 const read = (sourceType = "journal", sourceId = "eval-journal") => ({ name: "core_social_source_read", arguments: { sourceType, sourceId } });
-const draft = (sourceType = "journal", sourceId = "eval-journal") => ({ name: "core_social_draft_create", arguments: { sourceType, sourceId, ideaText: "A calmer launch", linkedinBody: "Make room for a calmer launch week.", xBody: "Choose a calmer launch.", instagramBody: "A calmer launch begins with one deliberate step." } });
+// Drafts reuse only the owner's own words (me3-bli3.3.5).
+const OWN_WORDS = {
+  journal: { linkedinBody: "I need a calmer launch week.", xBody: "A calmer launch week.", instagramBody: "Calmer launch week." },
+  mission_task: { linkedinBody: "Review launch plan.", xBody: "Launch plan.", instagramBody: "Review plan." },
+};
+const draft = (sourceType = "journal", sourceId = "eval-journal") => ({ name: "core_social_draft_create", arguments: { sourceType, sourceId, ideaText: "A calmer launch", ...OWN_WORDS[sourceType] } });
 async function turn(seed, id, prompt, calls, options = {}) {
   return createRuntimeAdapter("new").runTurn({ seed, ownerId: seed.ownerId, turnId: id, requestId: id,
     messages: [{ role: "user", content: prompt }], canonicalOwnerInputs: [{ turnId: id, requestId: id, messageText: prompt }],
@@ -110,5 +115,51 @@ test("new posting plan is review-only and changed reviewed items cannot schedule
     assert.equal(resumed.status, "failed");
     assert.ok(resumed.toolCalls.some(call => call.name === "core_social_posting_plan_confirm" && call.status === "error"));
     assert.deepEqual(snapshot(seed), before);
+  } finally { seed.close(); }
+});
+
+test("social drafts never add words the owner didn't write", async () => {
+  const seed = createSeededAgentEvalInstallation("2026-10-14");
+  try {
+    const invented = { ...draft().arguments, xBody: "Ten secrets to a viral calmer launch week!" };
+    const response = await turn(seed, "invented-words", "Turn my journal into posts.", [read(), { name: "core_social_draft_create", arguments: invented }]);
+    assert.ok(response.toolResults.some(result => result.status === "failed" && /didn't write/.test(result.error_message || "")));
+    seed.reopen();
+    assert.equal(seed.raw.prepare("SELECT COUNT(*) AS n FROM social_packages").get().n, 0);
+  } finally { seed.close(); }
+});
+
+test("a draft from the owner's message keeps their words and fits each platform", async () => {
+  const seed = createSeededAgentEvalInstallation("2026-10-14");
+  const message = "Turn this into a post: We're opening the studio on Saturday 8 Nov, 10 till 4. Coffee, the autumn work on the walls, and free design reviews. Come and say hello, bring a friend, and stay as long as you like because there will be plenty of coffee and the kettle is always on, plus a few surprises we have been saving all year for the people who make this studio what it is.";
+  const text = message.replace("Turn this into a post: ", "");
+  try {
+    const ok = await turn(seed, "from-message", message, [{ name: "core_social_draft_from_message", arguments: { text, platforms: ["x", "linkedin"] } }]);
+    assert.ok(ok.toolCalls.every(call => call.status === "ok"));
+    seed.reopen();
+    const versions = seed.raw.prepare("SELECT platform, body_text, approval_status FROM social_variants ORDER BY platform").all();
+    assert.deepEqual(versions.map(row => row.platform), ["linkedin", "x"]);
+    assert.equal(versions[0].body_text, text);
+    assert.ok(versions[1].body_text.length <= 280 && text.startsWith(versions[1].body_text.replace(/…$/, "").trim()));
+    assert.ok(versions.every(row => row.approval_status === "draft"));
+    assert.equal(seed.raw.prepare("SELECT COUNT(*) AS n FROM social_publications").get().n, 0);
+
+    const before = snapshot(seed);
+    const invented = await turn(seed, "from-nothing", "Post something about productivity.", [{ name: "core_social_draft_from_message", arguments: { text: "Productivity is a habit, not a hack.", platforms: ["x"] } }]);
+    assert.ok(invented.toolCalls.some(call => call.status === "error"));
+    seed.reopen(); assert.deepEqual(snapshot(seed), before);
+  } finally { seed.close(); }
+});
+
+test("the social nudge is due at most weekly, only when little is scheduled, and can be switched off", async () => {
+  const seed = createSeededAgentEvalInstallation("2026-10-14");
+  try {
+    const first = await turn(seed, "nudge-1", "How's my social looking?", [{ name: "core_social_queue_read", arguments: { recordNudge: true } }]);
+    const nudge = (response) => JSON.parse(response.toolResults[0].result_json).result.nudge;
+    assert.equal(nudge(first).due, true);
+    const second = await turn(seed, "nudge-2", "And now?", [{ name: "core_social_queue_read", arguments: { recordNudge: true } }]);
+    assert.equal(nudge(second).due, false);
+    const off = await turn(seed, "nudge-off", "Stop nudging me about social.", [{ name: "core_social_nudges_set", arguments: { on: false } }]);
+    assert.equal(off.toolCalls[0].status, "ok");
   } finally { seed.close(); }
 });
