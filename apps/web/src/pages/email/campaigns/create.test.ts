@@ -176,7 +176,8 @@ describe("campaign editor", () => {
     await wrapper.findAll(".campaign-side-block__change")[1]!.trigger("click");
     const inputs = wrapper.findAll('[data-test="dialog"] input');
     await inputs[0]!.setValue("Kieran Butler");
-    await inputs[1]!.setValue("");
+    expect(wrapper.get('[data-test="dialog"]').text()).toContain("Send replies to owner@example.com");
+    await inputs[1]!.setValue(false);
     await wrapper.get('[data-test="dialog"] form').trigger("submit");
     expect(wrapper.find('[data-test="dialog"]').exists()).toBe(false);
     expect(wrapper.text()).toContain("Replies aren't collected");
@@ -243,7 +244,7 @@ describe("campaign editor", () => {
 
     expect(apiPost).toHaveBeenCalledWith("/email/campaigns", {
       siteId: "site-1",
-      audienceFilter: { kind: "all", itemRef: null },
+      audienceFilter: { kind: "all", itemRef: null, notSentBy: null },
     });
     expect(routerReplace).toHaveBeenCalledWith({
       path: "/email/campaigns/create",
@@ -254,6 +255,37 @@ describe("campaign editor", () => {
       expect.objectContaining({ subject: "Autumn retreat" }),
     );
     wrapper.unmount();
+  });
+
+  it("keeps a send-again draft limited to people the first campaign missed", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path === "/email/campaigns/transport") return Promise.resolve({ transport });
+      if (path.startsWith("/email/campaigns/audience-items")) return Promise.resolve({ items: [] });
+      if (path.endsWith("/review")) {
+        return Promise.resolve({ audience: { eligibleCount: 4, excludedCount: 0, exclusionCounts: {} }, transport });
+      }
+      if (path === "/email/campaigns/campaign-sent") {
+        return Promise.resolve({ campaign: makeCampaign({ id: "campaign-sent", status: "sent", revision: { ...makeCampaign().revision, subject: "September newsletter" } }) });
+      }
+      return Promise.resolve({
+        campaign: makeCampaign({ audienceFilter: { kind: "all", itemRef: null, notSentBy: "campaign-sent" } }),
+      });
+    });
+    vi.useFakeTimers();
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    expect(wrapper.findAll(".campaign-side-block")[0]!.text()).toContain(
+      "Only people who didn't get “September newsletter”",
+    );
+    await wrapper.get(".campaign-field--subject input").setValue("September newsletter (again)");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiPut).toHaveBeenLastCalledWith(
+      "/email/campaigns/campaign-1",
+      expect.objectContaining({ audienceFilter: { kind: "all", itemRef: null, notSentBy: "campaign-sent" } }),
+    );
+    wrapper.unmount();
+    vi.useRealTimers();
   });
 
   it("does not save an empty new campaign when the editor tidies its blank body", async () => {

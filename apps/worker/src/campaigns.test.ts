@@ -76,9 +76,9 @@ describe("campaign deletion", () => {
     );
   });
 
-  it("retains sent history and campaigns with active delivery jobs", async () => {
+  it("keeps scheduled campaigns and campaigns with active delivery jobs", async () => {
     await expect(
-      deleteCampaign(campaignEnv({ status: "sent" }).env, "owner-1", "campaign-1"),
+      deleteCampaign(campaignEnv({ status: "scheduled" }).env, "owner-1", "campaign-1"),
     ).rejects.toMatchObject({
       code: "campaign_not_deletable",
       status: 409,

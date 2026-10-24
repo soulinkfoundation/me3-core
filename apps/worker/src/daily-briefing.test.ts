@@ -37,6 +37,7 @@ describe("live Daily Briefing", () => {
     const detail = briefing.sections.find(section => section.kind === "tasks")?.items[0]?.detail;
     expect(detail).toHaveLength(180);
     expect(detail).toMatch(/…$/);
-    expect(queries).toHaveLength(5);
+    // Owner, calendar, bookings, reminders, tasks, and campaigns sent in the last day.
+    expect(queries).toHaveLength(6);
   });
 });

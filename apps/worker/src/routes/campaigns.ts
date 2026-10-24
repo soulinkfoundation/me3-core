@@ -18,6 +18,7 @@ import {
   CampaignInputError,
   createCampaign,
   deleteCampaign,
+  duplicateCampaign,
   getCampaign,
   listCampaignCustomerItems,
   listCampaigns,
@@ -28,6 +29,7 @@ import {
   EMAIL_CAMPAIGNS_PLUGIN_ID,
   type CampaignAddOnPlanKey,
 } from "@me3-core/plugin-email-campaigns";
+import { getCampaignResults } from "../campaign-results";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { isCorePluginEnabled } from "../plugins";
 
@@ -178,6 +180,34 @@ export function registerCampaignRoutes(app: AppHono, deps: OwnerRouteDeps) {
         ok: true,
         ...(await deleteCampaign(c.env, ownerId, c.req.param("campaignId"))),
       });
+    } catch (error) {
+      return campaignError(c, error);
+    }
+  });
+
+  app.get("/api/email/campaigns/:campaignId/results", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const pluginError = await requireCampaignPlugin(c);
+    if (pluginError) return pluginError;
+    const campaign = await getCampaign(c.env, ownerId, c.req.param("campaignId"));
+    if (!campaign) return c.json({ error: "Campaign not found", code: "campaign_not_found" }, 404);
+    return c.json({ results: await getCampaignResults(c.env, campaign.id) });
+  });
+
+  app.post("/api/email/campaigns/:campaignId/duplicate", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const pluginError = await requireCampaignPlugin(c);
+    if (pluginError) return pluginError;
+    try {
+      const campaign = await duplicateCampaign(
+        c.env,
+        ownerId,
+        c.req.param("campaignId"),
+        await c.req.json().catch(() => ({})),
+      );
+      return c.json({ campaign });
     } catch (error) {
       return campaignError(c, error);
     }

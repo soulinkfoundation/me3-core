@@ -74,9 +74,10 @@ type SiteRow = Pick<
   "id" | "username" | "custom_domain" | "custom_domain_status"
 >;
 
+/** `notSentBy` limits a send to subscribers an earlier campaign didn't reach ("send again to new subscribers"). */
 export type CampaignAudienceFilter =
-  | { kind: "all" }
-  | { kind: "customers"; itemRef: string | null };
+  | { kind: "all"; notSentBy?: string | null }
+  | { kind: "customers"; itemRef: string | null; notSentBy?: string | null };
 
 export async function listCampaigns(env: Env, ownerId: string) {
   const rows = await env.DB.prepare(
@@ -205,6 +206,64 @@ export async function createCampaign(
   return getCampaign(env, ownerId, campaignId);
 }
 
+/**
+ * A new draft with the same subject, body and images. With `onlyNewSubscribers`, it goes only to
+ * people the original didn't reach.
+ */
+export async function duplicateCampaign(
+  env: Env,
+  ownerId: string,
+  campaignId: string,
+  input: { onlyNewSubscribers?: unknown },
+) {
+  const source = await getCampaign(env, ownerId, campaignId);
+  if (!source) throw new CampaignInputError("Campaign not found", 404, "campaign_not_found");
+  const copy = await createCampaign(env, ownerId, { siteId: source.siteId, name: source.name });
+  if (!copy) throw new CampaignInputError("Campaign not found", 404, "campaign_not_found");
+
+  const document = source.revision.document as CampaignDocumentV1;
+  const assetIds = new Map<string, string>();
+  const statements: D1PreparedStatement[] = [];
+  for (const assetId of campaignAssetIds(document)) {
+    const nextId = crypto.randomUUID();
+    assetIds.set(assetId, nextId);
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO email_campaign_assets
+         (id, campaign_id, site_id, content_hash, storage_path, filename, content_type, size, created_at)
+         SELECT ?, ?, site_id, content_hash, storage_path, filename, content_type, size, ?
+         FROM email_campaign_assets WHERE id = ? AND campaign_id = ?`,
+      ).bind(nextId, copy.id, new Date().toISOString(), assetId, source.id),
+    );
+  }
+  if (statements.length) await runStatements(env.DB, statements);
+
+  const sourceFilter = normalizeCampaignAudienceFilter(source.audienceFilter);
+  return saveCampaignDraft(env, ownerId, copy.id, {
+    name: source.name,
+    subject: source.revision.subject,
+    previewText: source.revision.previewText,
+    replyToAddress: source.revision.replyToAddress,
+    document: {
+      ...document,
+      blocks: document.blocks.map((block) =>
+        block.type === "image" && assetIds.has(block.assetId)
+          ? {
+            ...block,
+            assetId: assetIds.get(block.assetId)!,
+            // Image URLs are served by asset id, so the copy points at its own rows.
+            src: block.src.split(block.assetId).join(assetIds.get(block.assetId)!),
+          }
+          : block,
+      ),
+    },
+    audienceFilter: {
+      ...sourceFilter,
+      notSentBy: input.onlyNewSubscribers === true ? source.id : null,
+    },
+  });
+}
+
 export async function saveCampaignDraft(
   env: Env,
   ownerId: string,
@@ -314,9 +373,9 @@ export async function deleteCampaign(
   if (!campaign) {
     throw new CampaignInputError("Campaign not found", 404, "campaign_not_found");
   }
-  if (!["draft", "failed", "cancelled"].includes(campaign.status)) {
+  if (!["draft", "failed", "cancelled", "sent"].includes(campaign.status)) {
     throw new CampaignInputError(
-      "Only drafts, failed campaigns, and cancelled campaigns can be deleted",
+      "Only drafts and finished campaigns can be deleted",
       409,
       "campaign_not_deletable",
     );
@@ -340,8 +399,14 @@ export async function deleteCampaign(
     );
   }
 
+  // A duplicated campaign shares its images' files, so only remove files nothing else uses.
   const assets = await env.DB.prepare(
-    "SELECT storage_path FROM email_campaign_assets WHERE campaign_id = ?",
+    `SELECT DISTINCT storage_path FROM email_campaign_assets asset
+     WHERE campaign_id = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM email_campaign_assets other
+         WHERE other.storage_path = asset.storage_path AND other.campaign_id != asset.campaign_id
+       )`,
   )
     .bind(campaignId)
     .all<{ storage_path: string }>();
@@ -472,14 +537,21 @@ export async function listSiteAudience(
         )
       )`
     : "";
+  const notSentFilter = filter.notSentBy
+    ? `AND LOWER(TRIM(subscribers.email)) NOT IN (
+        SELECT LOWER(TRIM(recipient_email)) FROM email_campaign_recipient_jobs
+        WHERE campaign_id = ? AND kind = 'campaign'
+      )`
+    : "";
   const params: string[] = [siteId];
   if (filter.kind === "customers" && filter.itemRef) params.push(filter.itemRef);
+  if (filter.notSentBy) params.push(filter.notSentBy);
   const result = await env.DB.prepare(
     `SELECT id, email, first_name, last_name, subscribed_at, unsubscribed_at,
             marketing_status, marketing_permission_method,
             marketing_permission_granted_at,
             marketing_permission_evidence_json, delivery_status
-     FROM subscribers WHERE site_id = ? ${customerFilter} ORDER BY id`,
+     FROM subscribers WHERE site_id = ? ${customerFilter} ${notSentFilter} ORDER BY id`,
   )
     .bind(...params)
     .all<CampaignAudienceSubscriber>();
@@ -546,12 +618,14 @@ export async function listCampaignCustomerItems(env: Env, ownerId: string, siteI
 export function normalizeCampaignAudienceFilter(value: unknown): CampaignAudienceFilter {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { kind: "all" };
   const input = value as Record<string, unknown>;
-  if (input.kind !== "customers") return { kind: "all" };
+  const notSentBy = normalizeReference(input.notSentBy);
+  const extra = notSentBy ? { notSentBy } : {};
+  if (input.kind !== "customers") return { kind: "all", ...extra };
   const itemRef = normalizeReference(input.itemRef);
   if (itemRef && !itemRef.startsWith("product:") && !itemRef.startsWith("booking:")) {
     throw new CampaignInputError("Choose a valid product or service");
   }
-  return { kind: "customers", itemRef: itemRef || null };
+  return { kind: "customers", itemRef: itemRef || null, ...extra };
 }
 
 export function parseCampaignAudienceFilter(value: string): CampaignAudienceFilter {

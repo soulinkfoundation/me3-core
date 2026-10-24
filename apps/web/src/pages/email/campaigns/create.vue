@@ -33,7 +33,7 @@ type Campaign = {
   siteUsername: string;
   name: string;
   status: string;
-  audienceFilter: { kind: "all" | "customers"; itemRef?: string | null };
+  audienceFilter: { kind: "all" | "customers"; itemRef?: string | null; notSentBy?: string | null };
   revision: {
     id: string;
     subject: string;
@@ -99,6 +99,10 @@ let reviewRequest = 0;
 const selectedSiteId = ref("");
 const audienceKind = ref<"all" | "customers">("all");
 const audienceItem = ref("");
+// Set when this draft came from "Send to new subscribers": only people that campaign didn't reach.
+const notSentBy = ref<string | null>(null);
+const notSentByOriginal = ref<string | null>(null);
+const notSentBySubject = ref("");
 const audienceItems = ref<Array<{ value: string; label: string }>>([]);
 const subject = ref("");
 const previewText = ref("");
@@ -117,7 +121,7 @@ const brand = ref<CampaignDocument["brand"]>({
 const sendMode = ref<"now" | "schedule">("now");
 const scheduledLocal = ref("");
 const fromSheetName = ref("");
-const fromSheetReplyTo = ref("");
+const fromSheetRepliesOn = ref(true);
 const fromSheetTitleId = `campaign-from-title-${useId()}`;
 
 const ownerEmail = computed(() => auth.user?.email?.trim().toLowerCase() || "");
@@ -219,9 +223,14 @@ function applyCampaign(next: Campaign) {
   selectedSiteId.value = next.siteId;
   audienceKind.value = next.audienceFilter?.kind === "customers" ? "customers" : "all";
   audienceItem.value = next.audienceFilter?.itemRef || "";
+  notSentBy.value = next.audienceFilter?.notSentBy || null;
+  if (notSentBy.value && !notSentByOriginal.value) {
+    notSentByOriginal.value = notSentBy.value;
+    void loadNotSentBySubject(notSentBy.value);
+  }
   subject.value = next.revision.subject;
   previewText.value = next.revision.previewText;
-  replyToAddress.value = next.revision.replyToAddress || ownerEmail.value;
+  replyToAddress.value = next.revision.replyToAddress || "";
   brand.value = {
     ...next.revision.document.brand,
     logoUrl: null,
@@ -251,7 +260,7 @@ async function ensureCampaign(): Promise<Campaign | null> {
   try {
     const response = await api.post<{ campaign: Campaign }>("/email/campaigns", {
       siteId: selectedSiteId.value,
-      audienceFilter: { kind: audienceKind.value, itemRef: audienceItem.value || null },
+      audienceFilter: currentAudienceFilter(),
     });
     campaign.value = response.campaign;
     if (!senderNameChosen) brand.value.name = response.campaign.revision.document.brand.name;
@@ -265,6 +274,19 @@ async function ensureCampaign(): Promise<Campaign | null> {
     return null;
   } finally {
     creating.value = false;
+  }
+}
+
+function currentAudienceFilter() {
+  return { kind: audienceKind.value, itemRef: audienceItem.value || null, notSentBy: notSentBy.value };
+}
+
+async function loadNotSentBySubject(campaignId: string) {
+  try {
+    const response = await api.get<{ campaign: Campaign }>(`/email/campaigns/${encodeURIComponent(campaignId)}`);
+    notSentBySubject.value = response.campaign.revision.subject.trim();
+  } catch {
+    notSentBySubject.value = "";
   }
 }
 
@@ -298,7 +320,7 @@ async function saveDraft(): Promise<boolean> {
         subject: subject.value,
         previewText: previewText.value,
         replyToAddress: replyToAddress.value || null,
-        audienceFilter: { kind: audienceKind.value, itemRef: audienceItem.value || null },
+        audienceFilter: currentAudienceFilter(),
         document: buildDocument(),
       },
     );
@@ -415,7 +437,7 @@ async function approveSend() {
 
 function openFromSheet() {
   fromSheetName.value = brand.value.name;
-  fromSheetReplyTo.value = replyToAddress.value;
+  fromSheetRepliesOn.value = Boolean(replyToAddress.value);
   fromSheetOpen.value = true;
 }
 
@@ -427,7 +449,8 @@ function saveFromSheet() {
   }
   brand.value.name = name;
   senderNameChosen = true;
-  replyToAddress.value = fromSheetReplyTo.value.trim();
+  // The Worker only accepts the owner's own address as reply-to.
+  replyToAddress.value = fromSheetRepliesOn.value ? ownerEmail.value : "";
   fromSheetOpen.value = false;
 }
 
@@ -449,7 +472,7 @@ async function uploadCampaignImage(input: {
 watch([subject, previewText, replyToAddress, richTextHtml, brand], scheduleSave, {
   deep: true,
 });
-watch([selectedSiteId, audienceKind, audienceItem], async (next, previous) => {
+watch([selectedSiteId, audienceKind, audienceItem, notSentBy], async (next, previous) => {
   if (previous[0] && previous[0] !== next[0]) audienceItem.value = "";
   if (next[0] !== previous[0]) void loadAudienceItems(next[0]);
   if (hydrating.value || !campaign.value) return;
@@ -568,6 +591,7 @@ onBeforeUnmount(() => {
               <b>{{ formatCount(eligibleCount) }}</b> {{ audienceLabel }}<template v-if="siteUsername"> of @{{ siteUsername }}</template>
             </p>
             <p v-else class="campaign-side-block__value">All {{ audienceLabel }}<template v-if="siteUsername"> of @{{ siteUsername }}</template></p>
+            <p v-if="notSentBy" class="campaign-side-block__hint">Only people who didn't get {{ notSentBySubject ? `“${notSentBySubject}”` : "the earlier email" }}</p>
             <p v-if="leftOut" class="campaign-side-block__hint campaign-side-block__left-out">{{ leftOut }}</p>
           </section>
 
@@ -611,6 +635,16 @@ onBeforeUnmount(() => {
           <label><input v-model="audienceKind" type="radio" value="all" /> Everyone who subscribed</label>
           <label><input v-model="audienceKind" type="radio" value="customers" /> Customers who subscribed</label>
         </fieldset>
+        <label v-if="notSentByOriginal" class="campaign-audience-options">
+          <span class="campaign-audience-options__check">
+            <input
+              type="checkbox"
+              :checked="Boolean(notSentBy)"
+              @change="notSentBy = ($event.target as HTMLInputElement).checked ? notSentByOriginal : null"
+            />
+            Only people who didn't get {{ notSentBySubject ? `“${notSentBySubject}”` : "the earlier email" }}
+          </span>
+        </label>
         <label v-if="audienceKind === 'customers' && audienceItems.length" class="campaign-side-field">
           <span>Bought</span>
           <select v-model="audienceItem">
@@ -636,11 +670,11 @@ onBeforeUnmount(() => {
           <span>Sender name</span>
           <input v-model="fromSheetName" maxlength="120" placeholder="The name subscribers will see" />
         </label>
-        <label class="campaign-field">
-          <span>Replies go to</span>
-          <input v-model="fromSheetReplyTo" type="email" :placeholder="ownerEmail" />
-          <small>Leave blank if you don't want replies.</small>
+        <label class="campaign-from-sheet__replies">
+          <input v-model="fromSheetRepliesOn" type="checkbox" />
+          <span>Send replies to {{ ownerEmail }}</span>
         </label>
+        <small v-if="!fromSheetRepliesOn" class="campaign-from-sheet__hint">Replies won't be collected.</small>
         <div class="campaign-from-sheet__actions">
           <Button color="outline" shape="soft" size="compact" type="button" @click="fromSheetOpen = false">Cancel</Button>
           <Button color="primary" shape="soft" size="compact" type="submit">Done</Button>
@@ -681,6 +715,9 @@ onBeforeUnmount(() => {
 .campaign-side-block__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; overflow-wrap: anywhere; }
 .campaign-audience-options { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; font-size: 14px; }
 .campaign-audience-options label { display: flex; align-items: center; gap: 8px; }
+.campaign-audience-options__check { display: flex; align-items: center; gap: 8px; }
+.campaign-from-sheet__replies { display: flex; align-items: center; gap: 8px; font-size: 14px; overflow-wrap: anywhere; }
+.campaign-from-sheet__hint { margin-top: -8px; color: var(--ui-text-muted); font-size: 12px; }
 .campaign-audience-count { margin: 0; color: var(--ui-text-muted); font-size: 13px; }
 .campaign-audience-count b { color: var(--ui-text); font-variant-numeric: tabular-nums; }
 .campaign-side-field { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--ui-text-muted); font-size: 13px; }

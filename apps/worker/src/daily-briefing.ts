@@ -1,7 +1,8 @@
 import type { Env } from "./types";
 import { getBriefingQuote } from "./quotes";
+import { recentCampaignBriefingLines } from "./campaign-results";
 
-const DEFAULT_DAILY_BRIEFING_MESSAGE_TEMPLATE = "{{calendar.summary}}\n\n{{calendar.events}}\n{{calendar.reminders}}\n{{mission.tasks}}\n\n{{quote.today}}\n\nI'll keep an eye on the day from here.";
+const DEFAULT_DAILY_BRIEFING_MESSAGE_TEMPLATE = "{{calendar.summary}}\n\n{{calendar.events}}\n{{calendar.reminders}}\n{{mission.tasks}}\n{{campaigns.recent}}\n\n{{quote.today}}\n\nI'll keep an eye on the day from here.";
 
 type DailyBriefingReminderRow = {
   id: string;
@@ -20,6 +21,7 @@ type DailyBriefingRenderContext = {
   calendarEvents: string;
   calendarReminders: string;
   missionTasks: string;
+  recentCampaigns: string;
   quote: string;
   sections: DailyBriefingSection[];
 };
@@ -93,12 +95,14 @@ async function buildDailyBriefingRenderContext(
   const dateKey = dateKeyInTimezone(now, timezone);
   const dateLabel = formatFriendlyDate(dateKey, timezone);
   const { start, end } = utcWindowForLocalDate(dateKey, timezone);
-  const [events, bookings, reminders, tasks, quote] = await Promise.all([
+  const since = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const [events, bookings, reminders, tasks, quote, campaignLines] = await Promise.all([
     loadDailyBriefingEvents(env, userId, start, end),
     loadDailyBriefingBookings(env, userId, start, end, timezone),
     loadDailyBriefingReminders(env, userId, start, end),
     loadDailyBriefingTasks(env, userId),
     getBriefingQuote(env, userId, now),
+    recentCampaignBriefingLines(env, since).catch(() => []),
   ]);
   const calendarEvents = [...events, ...bookings].sort((a, b) => a.starts_at.localeCompare(b.starts_at));
   return {
@@ -109,6 +113,7 @@ async function buildDailyBriefingRenderContext(
     calendarEvents: formatDailyCalendarEvents(calendarEvents, timezone),
     calendarReminders: formatDailyReminders(reminders, timezone),
     missionTasks: formatDailyTasks(tasks, dateKey),
+    recentCampaigns: campaignLines.join("\n"),
     quote: quote ? `“${quote.text}”${quote.author ? `\n— ${quote.author}` : ""}` : "",
     sections: buildDailyBriefingSections(
       calendarEvents,
@@ -179,6 +184,7 @@ function renderDailyBriefingMessage(context: DailyBriefingRenderContext, templat
     "calendar.events": context.calendarEvents,
     "calendar.reminders": context.calendarReminders,
     "mission.tasks": context.missionTasks,
+    "campaigns.recent": context.recentCampaigns,
     "quote.today": context.quote,
   };
   const rendered = template.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, key: string) => {
