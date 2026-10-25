@@ -23,6 +23,7 @@ import {
   ideaTitle,
   lastPostedAt,
   networkLabel,
+  youtubeTitleFrom,
   nextScheduledAt,
   postRowDetail,
   postTab,
@@ -147,6 +148,11 @@ function platformFor(network: SocialNetwork): SocialPlatform {
   return (account?.platform as SocialPlatform) || network;
 }
 
+/** Every network except YouTube, plus YouTube once it's connected (it needs a video, so it starts unticked). */
+const composerChoices = computed(() =>
+  SOCIAL_NETWORKS.filter((network) => network.id !== "youtube" || connectedNetworks.value.includes("youtube")),
+);
+
 function openComposer() {
   composerText.value = "";
   composerNetworks.value = connectedNetworks.value.filter((network) => network !== "youtube");
@@ -171,7 +177,12 @@ async function createPost() {
       sourceSnapshot: text,
       sourceText: text,
       ideaText: text,
-      versions: composerNetworks.value.map((network) => ({ platform: platformFor(network), bodyText: text })),
+      versions: composerNetworks.value.map((network) => ({
+        platform: platformFor(network),
+        bodyText: text,
+        // A Short needs a title and one video; the owner adds the video on the next screen.
+        ...(network === "youtube" ? { format: "short_video" as const, title: youtubeTitleFrom(text) } : {}),
+      })),
     });
     composerOpen.value = false;
     await router.push(`/social/${encodeURIComponent(detail.post.id)}`);
@@ -333,6 +344,7 @@ onMounted(async () => {
       :posts="posts"
       :site-id="siteId"
       :hosted-platforms="hostedPlatforms"
+      :x-allowance="data.status.value?.managedXAllowance"
       @close="accountsOpen = false"
       @changed="refresh"
     />
@@ -349,7 +361,7 @@ onMounted(async () => {
         <textarea id="social-composer-text" v-model="composerText" rows="5" placeholder="What do you want to say?" />
         <fieldset class="social-composer__networks">
           <legend class="visually-hidden">Post to</legend>
-          <label v-for="network in SOCIAL_NETWORKS.filter((item) => item.id !== 'youtube')" :key="network.id">
+          <label v-for="network in composerChoices" :key="network.id">
             <input
               type="checkbox"
               :checked="composerNetworks.includes(network.id)"

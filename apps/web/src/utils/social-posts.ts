@@ -42,6 +42,15 @@ export const SOCIAL_NETWORKS: ReadonlyArray<{
   },
 ];
 
+export const YOUTUBE_TITLE_LIMIT = 100;
+
+/** A Short's starting title: the first line of the owner's text, cut to YouTube's limit. */
+export function youtubeTitleFrom(text: string): string {
+  const firstLine = text.split("\n").map((line) => line.trim()).find(Boolean) || "";
+  const chars = Array.from(firstLine);
+  return chars.length > YOUTUBE_TITLE_LIMIT ? `${chars.slice(0, YOUTUBE_TITLE_LIMIT - 1).join("").trimEnd()}…` : firstLine;
+}
+
 export function socialNetwork(platform: SocialPlatform | string): SocialNetwork | null {
   if (platform === "instagram_business") return "instagram";
   return SOCIAL_NETWORKS.some((network) => network.id === platform) ? (platform as SocialNetwork) : null;
@@ -282,6 +291,13 @@ export function versionChecks(
   }
   if (version.platform === "youtube" && videos.length === 0) {
     checks.push({ message: "YouTube Shorts needs a video.", blocking: true, field: "images" });
+  }
+  if (version.platform === "youtube") {
+    const titleLength = Array.from(version.title?.trim() || "").length;
+    if (!titleLength) checks.push({ message: "Give the Short a title.", blocking: true, field: "text" });
+    else if (titleLength > YOUTUBE_TITLE_LIMIT) {
+      checks.push({ message: `The title is ${titleLength} characters, YouTube's limit is ${YOUTUBE_TITLE_LIMIT}.`, blocking: true, field: "text" });
+    }
   }
   const allowed = maxImages(version.platform, capabilities);
   if (images.length > allowed && version.platform !== "youtube") {

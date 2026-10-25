@@ -175,4 +175,41 @@ describe("Social review", () => {
     expect(buttons.some((label) => /^Schedule 1 post for /.test(label))).toBe(true);
     expect(buttons.some((label) => /Approve/.test(label))).toBe(false);
   });
+
+  it("adds YouTube to a post as a Short that needs a title and a video", async () => {
+    const withShort = post([
+      version({ id: "x-1" }),
+      version({ id: "yt-1", platform: "youtube", format: "short_video", title: "Studio open day on Saturday.", bodyText: "Studio open day on Saturday." }),
+    ]);
+    let current = post([version({ id: "x-1" })]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x"), account("youtube")] },
+      "/social/posts/post-1": { get post() { return current; } },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPost.mockImplementation(() => {
+      current = withShort;
+      return Promise.resolve({ post: withShort });
+    });
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    const add = wrapper.findAll(".post-tabs__add");
+    expect(add.map((button) => button.text())).toEqual(["YouTube"]);
+    await add[0]!.trigger("click");
+    await flushPromises();
+
+    expect(apiPost).toHaveBeenCalledWith("/social/posts/post-1/versions", {
+      platform: "youtube",
+      targetAccountId: "account-youtube",
+      bodyText: "Studio open day on Saturday.",
+      format: "short_video",
+      title: "Studio open day on Saturday.",
+    });
+    expect(wrapper.find(".post-tabs__add").exists()).toBe(false);
+    expect(wrapper.find('input[type="file"][accept="video/*"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("YouTube Shorts needs a video.");
+  });
 });

@@ -12,7 +12,7 @@ import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue
 import SocialMarks from "../../components/social/SocialMarks.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { useSocialData } from "../../composables/useSocialData";
-import type { DriveFile, PostVersion, SocialMediaAsset, SocialPostDetail } from "../../stores/social";
+import type { DriveFile, PostVersion, SocialMediaAsset, SocialPlatform, SocialPostDetail } from "../../stores/social";
 import { uploadDriveFiles } from "../../utils/drive-upload";
 import {
   accountName,
@@ -22,10 +22,15 @@ import {
   networkLabel,
   postTitle,
   resultFor,
+  SOCIAL_NETWORKS,
+  socialNetwork,
   suggestedTime,
   versionChecks,
   versionTextLimit,
   visibleVersions,
+  YOUTUBE_TITLE_LIMIT,
+  youtubeTitleFrom,
+  type SocialNetwork,
   type VersionResult,
 } from "../../utils/social-posts";
 import { resolveLocalDateTimeToUtc } from "../../utils/timezone";
@@ -51,12 +56,13 @@ const missing = ref(false);
 const activeId = ref<string>("");
 const texts = ref<Record<string, string>>({});
 const savingIds = ref(new Set<string>());
-const busy = ref<"schedule" | "post" | "move" | "cancel" | "delete" | "upload" | null>(null);
+const busy = ref<"schedule" | "post" | "move" | "cancel" | "delete" | "upload" | "add" | null>(null);
 const accountsOpen = ref(false);
 const confirmDelete = ref(false);
 const confirmCancel = ref(false);
 const editor = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+const videoInput = ref<HTMLInputElement | null>(null);
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const when = ref(localParts(suggestedTime()));
 const saveChains = new Map<string, Promise<unknown>>();
@@ -98,6 +104,15 @@ const results = computed(() =>
 );
 const activeChecks = computed(() => (active.value ? versionChecks(withText(active.value), capabilities.value, accounts.value) : []));
 const activeImages = computed(() => (active.value?.assetManifest || []).filter((asset) => asset.kind !== "video"));
+const activeVideo = computed(() => (active.value?.assetManifest || []).find((asset) => asset.kind === "video") || null);
+/** Connected platforms this post doesn't go to yet, so the owner can add one. */
+const addableNetworks = computed(() =>
+  SOCIAL_NETWORKS.filter(
+    (network) =>
+      activeAccount(network.id, accounts.value) &&
+      !versions.value.some((version) => socialNetwork(version.platform) === network.id),
+  ),
+);
 const activeLimit = computed(() => (active.value ? versionTextLimit(active.value, capabilities.value) : null));
 const activeLength = computed(() => (active.value ? Array.from(texts.value[active.value.id] ?? "").length : 0));
 const activeAccountLabel = computed(() => {
@@ -290,6 +305,72 @@ async function addImages(event: Event) {
   } finally {
     busy.value = null;
   }
+}
+
+async function addPlatform(network: SocialNetwork) {
+  if (busy.value || !detail.value) return;
+  const account = activeAccount(network, accounts.value);
+  if (!account) return;
+  busy.value = "add";
+  try {
+    await flushAll();
+    const text = active.value ? texts.value[active.value.id] ?? active.value.bodyText : "";
+    const next = await social.addPostVersion(detail.value.post.id, {
+      platform: account.platform as SocialPlatform,
+      targetAccountId: account.id,
+      bodyText: text,
+      ...(network === "youtube" ? { format: "short_video" as const, title: youtubeTitleFrom(text) } : {}),
+    });
+    setDetail(next);
+    activeId.value = visibleVersions(next).find((version) => socialNetwork(version.platform) === network)?.id || activeId.value;
+  } catch (caught) {
+    toastFromUnknown(caught, `Couldn't add ${networkLabel(network)}.`);
+  } finally {
+    busy.value = null;
+  }
+}
+
+function setTitle(version: PostVersion, title: string) {
+  replaceVersion({ ...version, title });
+  void saveVersion(version, { title });
+}
+
+async function addVideo(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = Array.from(input.files || []).find((item) => item.type.startsWith("video/"));
+  input.value = "";
+  const version = active.value;
+  if (!file || !version || busy.value) return;
+  busy.value = "upload";
+  try {
+    const [uploaded] = await uploadDriveFiles<DriveFile>([file], { folderId: null });
+    if (!uploaded) throw new Error("The video didn't upload.");
+    const video: SocialMediaAsset = {
+      url: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(uploaded.id)}/content`,
+      fileId: uploaded.id,
+      filename: uploaded.filename,
+      mimeType: uploaded.mimeType,
+      kind: "video",
+      altText: "",
+      contentHash: uploaded.sha256 ? `sha256:${uploaded.sha256.toLowerCase()}` : undefined,
+      byteLength: uploaded.size,
+      assetIndex: 0,
+    };
+    // A Short is exactly one video.
+    replaceVersion({ ...version, assetManifest: [video] });
+    await saveVersion(version, { assetManifest: [video] });
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't add that video.");
+  } finally {
+    busy.value = null;
+  }
+}
+
+function removeVideo() {
+  const version = active.value;
+  if (!version) return;
+  replaceVersion({ ...version, assetManifest: [] });
+  void saveVersion(version, { assetManifest: [] });
 }
 
 async function approve(version: PostVersion): Promise<PostVersion> {
@@ -530,6 +611,16 @@ onMounted(async () => {
             <span>{{ networkLabel(version.platform) }}</span>
             <span v-if="tabCount(version)" class="post-tabs__count">{{ tabCount(version) }}</span>
           </button>
+          <button
+            v-for="network in addableNetworks"
+            :key="`add-${network.id}`"
+            type="button"
+            class="post-tabs__add"
+            :disabled="busy !== null"
+            @click="addPlatform(network.id)"
+          >
+            <UiIcon name="Plus" :size="14" /> {{ networkLabel(network.id) }}
+          </button>
         </div>
 
         <section v-if="active" class="post-editor" role="tabpanel">
@@ -608,7 +699,37 @@ onMounted(async () => {
                 </li>
               </ul>
             </div>
-            <p v-else class="post-note">Uploads as a private draft. You publish it in YouTube.</p>
+            <div v-else class="post-video">
+              <label class="post-video__label" :for="`post-title-${active.id}`">Title</label>
+              <input
+                :id="`post-title-${active.id}`"
+                class="post-field post-video__title"
+                :class="{ 'post-field--problem': activeChecks.some((check) => check.message.includes('title')) }"
+                :value="active.title || ''"
+                :maxlength="YOUTUBE_TITLE_LIMIT + 20"
+                :readonly="activeLocked"
+                placeholder="What's this Short called?"
+                @change="setTitle(active, ($event.target as HTMLInputElement).value)"
+              >
+              <div v-if="activeVideo" class="post-video__file">
+                <UiIcon name="Youtube" :size="16" />
+                <span>{{ activeVideo.filename || "Video" }}</span>
+                <Button v-if="!activeLocked" color="ghost" shape="soft" size="small" icon-only aria-label="Remove video" @click="removeVideo">
+                  <UiIcon name="X" :size="15" />
+                </Button>
+              </div>
+              <input ref="videoInput" class="visually-hidden" type="file" accept="video/*" @change="addVideo">
+              <button v-if="!activeLocked" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="videoInput?.click()">
+                <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeVideo ? "Replace video" : "Add your video" }}
+              </button>
+              <ul v-if="activeChecks.some((check) => check.field === 'images')" class="post-checks">
+                <li v-for="check in activeChecks.filter((item) => item.field === 'images')" :key="check.message">
+                  <span class="post-checks__icon" aria-hidden="true">!</span>
+                  <span>{{ check.message }}</span>
+                </li>
+              </ul>
+              <p class="post-note">Uploads as a private draft. You publish it in YouTube.</p>
+            </div>
           </div>
 
           <aside class="post-preview" aria-label="Preview">
@@ -662,6 +783,7 @@ onMounted(async () => {
       :posts="detail ? [detail] : []"
       :site-id="siteId"
       :hosted-platforms="hostedPlatforms"
+      :x-allowance="data.status.value?.managedXAllowance"
       :return-path="route.fullPath"
       @close="accountsOpen = false"
       @changed="data.loadAccounts"
@@ -694,6 +816,13 @@ onMounted(async () => {
 .post-column { box-sizing: border-box; width: min(100%, 880px); margin: 0 auto; padding: 16px 16px 96px; }
 .post-header__back { color: var(--ui-text-muted); font-weight: 500; text-decoration: none; }
 .post-header__back:hover { color: var(--ui-text); }
+.post-tabs__add { display: inline-flex; align-items: center; gap: 4px; padding: 8px 10px; border: 0; background: none; color: var(--ui-text-muted); font: inherit; font-size: 13px; cursor: pointer; }
+.post-tabs__add:hover { color: var(--ui-text); }
+.post-video { display: grid; gap: 10px; }
+.post-video__label { font-size: 13px; font-weight: 600; color: var(--ui-text-muted); }
+.post-video__title { padding: 10px 12px; }
+.post-video__file { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--ui-text); }
+.post-video__file span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .post-header__sep { color: var(--ui-text-muted); font-weight: 400; }
 .post-header__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 :deep(.post-header__quiet) { color: var(--ui-text-muted); font-weight: 500; }

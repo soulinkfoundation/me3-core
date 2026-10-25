@@ -23,6 +23,7 @@ const props = defineProps<{
   siteId: string;
   hostedPlatforms: string[];
   returnPath?: string;
+  xAllowance?: { postsLeft: number; linkPostsLeft: number; resetsAt: string } | null;
 }>();
 const emit = defineEmits<{ close: []; changed: [] }>();
 
@@ -40,10 +41,20 @@ const rows = computed(() =>
     const paused = pausedPostCount(network.id, props.posts, props.accounts);
     let detail = network.note;
     if (state === "connected" && connected) detail = accountName(connected);
+    if (state === "connected" && network.id === "x" && props.xAllowance) detail = `${detail} · ${xAllowanceText(props.xAllowance)}`;
     if (state === "disconnected") detail = paused ? `Disconnected · ${paused} post${paused === 1 ? "" : "s"} paused` : "Disconnected";
     return { ...network, state, connected, detail };
   }),
 );
+
+/** ME3 pays for X posting; each owner gets a monthly share, shown as posts rather than money. */
+function xAllowanceText(allowance: { postsLeft: number; linkPostsLeft: number; resetsAt: string }): string {
+  if (allowance.postsLeft <= 0) {
+    const resets = new Date(allowance.resetsAt).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+    return `No X posts left until ${resets}`;
+  }
+  return `About ${allowance.postsLeft} posts left this month, ${allowance.linkPostsLeft} with a link`;
+}
 
 async function connect(network: SocialNetwork) {
   if (connecting.value) return;

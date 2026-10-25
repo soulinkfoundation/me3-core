@@ -57,7 +57,7 @@ import {
   SocialPublishingInputError,
   completeSocialOAuth,
   dispatchDueSocialPublications,
-  getManagedXUsageWarning,
+  getManagedXUsage,
   getSocialPublishingRuntimeStatus,
   listSocialProviderSettings,
   listSocialPublishingAccounts,
@@ -1169,9 +1169,9 @@ app.get("/api/social/status", async (c) => {
   const ownerId = await requireOwner(c);
   if (!ownerId) return unauthorized(c);
   const access = await syncSocialPlanAccess(c.env);
-  const [hostedOAuthOrigin, managedXUsage] = await Promise.all([
+  const [hostedOAuthOrigin, managedX] = await Promise.all([
     resolveHostedSocialOAuthOrigin(c.env),
-    getManagedXUsageWarning(c.env),
+    getManagedXUsage(c.env),
   ]);
   const managedDeployment =
     c.env.ME3_DEPLOYMENT_MODE?.trim().toLowerCase() === "managed";
@@ -1193,7 +1193,8 @@ app.get("/api/social/status", async (c) => {
           ]
         : [],
     },
-    managedXUsage,
+    managedXUsage: managedX.warning,
+    managedXAllowance: managedX.allowance,
     localDemo: c.env.ENVIRONMENT === "local",
   });
 });

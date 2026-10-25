@@ -307,6 +307,14 @@ export type ManagedXUsageWarning = {
   resetsAt: string;
 };
 
+/** This month's shared X allowance as post counts (me3-bli3.3.19). */
+export type ManagedXAllowance = {
+  postsLeft: number;
+  linkPostsLeft: number;
+  usedPercent: number;
+  resetsAt: string;
+};
+
 export const SOCIAL_PLATFORMS = [
   "x",
   "linkedin",
@@ -808,20 +816,31 @@ export async function getManagedXUsageWarning(
   env: SocialPublishingEnv,
   fetcher: typeof fetch = fetchWithGlobalContext,
 ): Promise<ManagedXUsageWarning | null> {
-  if (!isManagedDeployment(env)) return null;
+  return (await getManagedXUsage(env, fetcher)).warning;
+}
+
+/** The shared X allowance from ME3 Cloud: a warning near the limit, and posts left this month. */
+export async function getManagedXUsage(
+  env: SocialPublishingEnv,
+  fetcher: typeof fetch = fetchWithGlobalContext,
+): Promise<{ warning: ManagedXUsageWarning | null; allowance: ManagedXAllowance | null }> {
+  if (!isManagedDeployment(env)) return { warning: null, allowance: null };
   try {
     const { response, body } = await managedXUsageRequest<{
       warning?: ManagedXUsageWarning | null;
+      usage?: ManagedXAllowance | null;
     }>(
       env,
       "/api/social/x/usage",
       { method: "GET" },
       fetcher,
     );
-    if (!response.ok) return null;
-    return body?.warning || null;
+    if (!response.ok) return { warning: null, allowance: null };
+    const usage = body?.usage;
+    const allowance = usage && Number.isFinite(usage.postsLeft) && Number.isFinite(usage.linkPostsLeft) ? usage : null;
+    return { warning: body?.warning || null, allowance };
   } catch {
-    return null;
+    return { warning: null, allowance: null };
   }
 }
 
@@ -1085,6 +1104,45 @@ export async function getSocialPublishingRuntimeStatus(
   return createGate("installed", true);
 }
 
+/**
+ * Accounts connected under a site that no longer exists can't post (publishing looks them up by site).
+ * Move each active one to the owner's profile site, or retire it when that site already has the same
+ * account (the owner reconnected), so the accounts sheet never shows Connected for an account that can't post.
+ */
+export async function rehomeOrphanedSocialAccounts(env: SocialPublishingEnv, ownerId: string): Promise<void> {
+  const home = await env.DB.prepare(
+    `SELECT id FROM sites WHERE user_id = ?
+     ORDER BY CASE WHEN site_role = 'profile' THEN 0 WHEN site_type = 'profile' THEN 1 ELSE 2 END, created_at
+     LIMIT 1`,
+  )
+    .bind(ownerId)
+    .first<{ id: string }>()
+    .catch(() => null);
+  if (!home) return;
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE social_accounts SET status = 'revoked', updated_at = datetime('now')
+       WHERE user_id = ? AND status = 'active'
+         AND site_id NOT IN (SELECT id FROM sites)
+         AND EXISTS (
+           SELECT 1 FROM social_accounts current
+           WHERE current.user_id = social_accounts.user_id AND current.site_id = ?
+             AND current.platform = social_accounts.platform AND current.status = 'active'
+         )`,
+    ).bind(ownerId, home.id),
+    env.DB.prepare(
+      `UPDATE social_accounts SET site_id = ?, updated_at = datetime('now')
+       WHERE user_id = ? AND status = 'active'
+         AND site_id NOT IN (SELECT id FROM sites)
+         AND NOT EXISTS (
+           SELECT 1 FROM social_accounts current
+           WHERE current.site_id = ? AND current.platform = social_accounts.platform
+             AND current.platform_account_id = social_accounts.platform_account_id
+         )`,
+    ).bind(home.id, ownerId, home.id),
+  ]);
+}
+
 export async function listSocialPublishingAccounts(
   env: SocialPublishingEnv,
   ownerId: string,
@@ -1093,6 +1151,9 @@ export async function listSocialPublishingAccounts(
   if (!gate.ready) {
     throw new SocialPublishingGateError(gate);
   }
+  await rehomeOrphanedSocialAccounts(env, ownerId).catch((error) => {
+    console.error("Social account rehome failed", error);
+  });
 
   const rows = await env.DB.prepare(
     `SELECT account.id, account.site_id, account.platform, account.platform_account_id,

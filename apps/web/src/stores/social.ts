@@ -143,6 +143,13 @@ export type SocialStatus = {
     blocked: boolean;
     resetsAt: string;
   } | null;
+  /** Posts left this month on ME3's shared X app; text-only posts cost less than posts with a link. */
+  managedXAllowance?: {
+    postsLeft: number;
+    linkPostsLeft: number;
+    usedPercent: number;
+    resetsAt: string;
+  } | null;
   localDemo?: boolean;
 };
 

@@ -2172,8 +2172,28 @@ async function publishInstagram(
   return {
     ok: true,
     platformPostId: publishJson.id,
+    platformPostUrl: await instagramPermalink(origin, input, publishJson.id),
     providerResponse: { created, publish: publishJson },
   };
+}
+
+/** The post's public link, so results can show View. The post is already live, so a failed lookup only loses the link. */
+async function instagramPermalink(
+  origin: string,
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+  mediaId: string,
+): Promise<string | undefined> {
+  try {
+    const url = new URL(`${origin}/${encodeURIComponent(mediaId)}`);
+    url.searchParams.set("fields", "permalink");
+    url.searchParams.set("access_token", input.accessToken);
+    const response = await input.fetcher(url, { method: "GET" });
+    if (!response.ok) return undefined;
+    const body = await readJson<{ permalink?: string }>(response);
+    return body.permalink?.startsWith("https://") ? body.permalink : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function createInstagramMediaContainer(

@@ -861,6 +861,9 @@ describe("Instagram publishing adapter", () => {
         expect(String(init?.body)).toContain("creation_id=container-3");
         return Response.json({ id: "instagram-post-1" });
       }
+      if (url.includes("/instagram-post-1?fields=permalink")) {
+        return Response.json({ permalink: "https://www.instagram.com/p/abc123/" });
+      }
       throw new Error(`Unexpected Instagram request: ${url}`);
     });
 
@@ -876,7 +879,11 @@ describe("Instagram publishing adapter", () => {
       markProviderWriteStarted,
     });
 
-    expect(result).toMatchObject({ ok: true, platformPostId: "instagram-post-1" });
+    expect(result).toMatchObject({
+      ok: true,
+      platformPostId: "instagram-post-1",
+      platformPostUrl: "https://www.instagram.com/p/abc123/",
+    });
     expect(mediaBodies.map((body) => Object.fromEntries(body))).toEqual([
       {
         image_url: "https://media.example/one.jpg",
@@ -908,6 +915,7 @@ describe("Instagram publishing adapter", () => {
       "https://graph.instagram.com/v25.0/ig-owner/media",
       expect.stringContaining("/container-3?fields=status_code"),
       "https://graph.instagram.com/v25.0/ig-owner/media_publish",
+      expect.stringContaining("/instagram-post-1?fields=permalink"),
     ]);
   });
 
@@ -940,6 +948,8 @@ describe("Instagram publishing adapter", () => {
       "https://graph.instagram.com/v25.0/ig-owner/media",
       expect.stringContaining("/single-image-container?fields=status_code"),
       "https://graph.instagram.com/v25.0/ig-owner/media_publish",
+      // The link lookup fails here, which keeps the publish successful without a View link.
+      expect.stringContaining("/instagram-image-1?fields=permalink"),
     ]);
   });
 

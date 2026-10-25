@@ -51,6 +51,7 @@ export {
   getPostingPlan,
   getPreferredPostingTimes,
   getSocialPublishingRuntimeStatus,
+  getManagedXUsage,
   getManagedXUsageWarning,
   listApprovedPostVersionsForScheduling,
   listSocialCarouselMedia,
