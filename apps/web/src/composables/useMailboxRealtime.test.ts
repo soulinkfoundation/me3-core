@@ -77,7 +77,7 @@ describe("useMailboxRealtime", () => {
     expect(mailbox.getList<string>(otherScope, inbox)?.messages).toEqual([
       "other-message",
     ]);
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(api.get).toHaveBeenCalledTimes(3);
 
     mailbox.setList(ownerScope, inbox, { messages: ["stale-after-loss"], total: 1 });
     vi.mocked(api.get).mockClear();
@@ -85,7 +85,7 @@ describe("useMailboxRealtime", () => {
     await flushPromises();
 
     expect(mailbox.getList(ownerScope, inbox)).toBeNull();
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(api.get).toHaveBeenCalledTimes(3);
 
     wrapper.unmount();
     expect(close).toHaveBeenCalledOnce();

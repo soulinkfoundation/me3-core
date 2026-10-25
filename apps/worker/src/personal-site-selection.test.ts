@@ -46,7 +46,7 @@ function fixture() {
 }
 
 const source = { sourceType: "journal" as const, requestedRef: "entry", id: "entry", title: "Journal", content: "Entry", snapshot: "{}" };
-const draft = { ideaText: "Idea", linkedinBody: "Draft" };
+const draft = { ideaText: "Entry", linkedinBody: "Entry" };
 
 describe("personal site selection", () => {
   it("keeps newer business content and other owners out of the owner snapshot", async () => {
