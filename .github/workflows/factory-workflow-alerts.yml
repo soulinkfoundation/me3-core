@@ -1,0 +1,53 @@
+name: Factory workflow alerts
+
+# A failed nightly eval or main-branch check opens one factory issue that mentions @claude, so claude.yml
+# triages it; the next green run of that workflow on main closes it. FACTORY_GITHUB_TOKEN is a person's
+# fine-grained token: issues opened with GITHUB_TOKEN start no workflows.
+on:
+  workflow_run:
+    workflows: [Seeded agent integration eval, Move rehearsal, Site content regression checks]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  issue:
+    if: contains(fromJSON('["failure","success"]'), github.event.workflow_run.conclusion) && github.event.workflow_run.event != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency: factory-${{ github.event.workflow_run.name }}
+    env:
+      GH_TOKEN: ${{ secrets.FACTORY_GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      WORKFLOW: ${{ github.event.workflow_run.name }}
+      WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+      CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_URL: ${{ github.event.workflow_run.html_url }}
+    steps:
+      - name: Open or close the factory issue
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then echo "FACTORY_GITHUB_TOKEN is not set; skipping."; exit 0; fi
+          key="workflow:$(basename "$WORKFLOW_PATH" .yml)"
+          open=$(gh issue list --state open --label factory --label "$key" --json number --jq '.[].number')
+          if [ "$CONCLUSION" = success ]; then
+            for number in $open; do gh issue close "$number" --comment "$WORKFLOW passed again on $SHA: $RUN_URL"; done
+            exit 0
+          fi
+          [ -z "$open" ] || exit 0
+          gh label create factory --color B60205 --description "Failure opened by the software factory" --force
+          gh label create "$key" --color EDEDED --force
+          cat > "$RUNNER_TEMP/issue.md" <<EOF
+          @claude The \`$WORKFLOW\` workflow failed on main at $SHA. Triage it.
+
+          Run: $RUN_URL
+
+          1. Read the failing run (\`gh run view $RUN_ID --log-failed\`, \`gh run download $RUN_ID\`), \`$WORKFLOW_PATH\`, and the code it tests.
+          2. Decide whether this is a flaky test, a test bug, a product bug, or infrastructure (credentials, quotas or credit such as a 402 from the model provider, a provider outage).
+          3. For a flaky test or a test bug, fix the test. For a product bug, fix it with a test that fails before the fix and passes after. For infrastructure, change nothing and say exactly what the owner must do.
+          4. Start your reply with the category and the evidence for it. Never merge or deploy. This issue closes itself when \`$WORKFLOW\` passes again on main.
+          EOF
+          gh issue create --title "Workflow failing: $WORKFLOW" --label factory --label "$key" --body-file "$RUNNER_TEMP/issue.md"

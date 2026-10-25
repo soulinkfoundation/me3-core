@@ -42,7 +42,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
-            --allowedTools "Bash(gh pr create:*)"
+            --allowedTools "Bash(gh pr create:*),Bash(gh run view:*),Bash(gh run download:*)"
             --append-system-prompt "Follow AGENTS.md in this repository, except work on the branch this run gives you rather than main. Requests sent from ME3 are short notes, often captured on a phone; read the related code before changing it and keep the change to what the note asks. After you push, open a pull request for your branch with gh pr create against the default branch, with a body that starts with Closes #<issue number>, and link it in your reply instead of a Create PR link. Say in your reply what you could not build or test on this runner."
 
       - name: Link Claude's pull request on the issue
