@@ -185,7 +185,7 @@ describe("event booking capacity", () => {
       occurrence,
       quantity: 3,
       holdToken: "paid-retreat-hold",
-      expiresAt: "2026-10-24T08:30:00.000Z",
+      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
     });
     expect(held).toBe(true);
     database.raw
