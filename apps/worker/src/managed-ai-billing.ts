@@ -47,12 +47,22 @@ export type ManagedAiModelOption = {
   recommended: boolean;
 };
 
+/** The owner's plan as ME3 Cloud names it (me3-bli3.11). `checkedAt` is set when this is the last cached copy. */
+export type ManagedPlanSummary = {
+  tier: string;
+  name: string;
+  source: "paid" | "trial" | "granted" | "free";
+  expiresAt: string | null;
+  checkedAt?: string | null;
+};
+
 export type ManagedAiBillingSettings = {
   available: boolean;
   managed: boolean;
   currency: "usd";
   // ME3 Cloud reports the owner's plan tier once me3-bli3.1 lands: `pro` is shown as Starter, `business` as Business.
   tier?: string | null;
+  plan?: ManagedPlanSummary | null;
   // ME3 Cloud reports the owner's entitlement source.
   billingSource: "internal" | "storekit" | "stripe" | "google_play" | "trial" | "complimentary" | null;
   defaultModel: string;
@@ -89,6 +99,17 @@ type LocalUsageRow = {
 };
 
 export async function getManagedAiBillingSettings(
+  env: Env,
+  options: { syncUsage?: boolean } = {},
+): Promise<ManagedAiBillingSettings> {
+  const settings = await fetchManagedAiBillingSettings(env, options);
+  if (settings.managed && !settings.plan) {
+    return { ...settings, plan: await readCachedManagedPlan(env) };
+  }
+  return settings;
+}
+
+async function fetchManagedAiBillingSettings(
   env: Env,
   options: { syncUsage?: boolean } = {},
 ): Promise<ManagedAiBillingSettings> {
@@ -297,6 +318,7 @@ async function cacheManagedAiBillingPolicy(
         monthlyMaximumCents: settings.monthlyMaximumCents,
         billingSource: settings.billingSource,
         tier: typeof settings.tier === "string" ? settings.tier : null,
+        plan: parseManagedPlan(settings.plan),
         cachedAt: new Date().toISOString(),
       }),
     )
@@ -309,6 +331,7 @@ async function readCachedManagedBillingPolicy(
 ): Promise<{
   billingSource: ManagedAiBillingSettings["billingSource"];
   tier: string | null;
+  plan: ManagedPlanSummary | null;
   cachedAt: string | null;
 } | null> {
   try {
@@ -316,13 +339,14 @@ async function readCachedManagedBillingPolicy(
       .bind(MANAGED_AI_BILLING_POLICY_SECRET)
       .first<{ value: string }>();
     if (!row?.value) return null;
-    const parsed = JSON.parse(row.value) as { billingSource?: unknown; tier?: unknown; cachedAt?: unknown };
+    const parsed = JSON.parse(row.value) as { billingSource?: unknown; tier?: unknown; plan?: unknown; cachedAt?: unknown };
     const sources = ["internal", "storekit", "stripe", "google_play", "trial", "complimentary"];
     return {
       billingSource: typeof parsed.billingSource === "string" && sources.includes(parsed.billingSource)
         ? parsed.billingSource as ManagedAiBillingSettings["billingSource"]
         : null,
       tier: typeof parsed.tier === "string" && parsed.tier.trim() ? parsed.tier.trim().toLowerCase() : null,
+      plan: parseManagedPlan(parsed.plan),
       cachedAt: typeof parsed.cachedAt === "string" ? parsed.cachedAt : null,
     };
   } catch {
@@ -335,6 +359,25 @@ export async function readCachedManagedBillingSource(
   env: Env,
 ): Promise<ManagedAiBillingSettings["billingSource"]> {
   return (await readCachedManagedBillingPolicy(env))?.billingSource ?? null;
+}
+
+function parseManagedPlan(value: unknown): ManagedPlanSummary | null {
+  const root = asRecord(value);
+  if (!root || typeof root.tier !== "string" || typeof root.name !== "string") return null;
+  const sources = ["paid", "trial", "granted", "free"];
+  if (typeof root.source !== "string" || !sources.includes(root.source)) return null;
+  return {
+    tier: root.tier,
+    name: root.name,
+    source: root.source as ManagedPlanSummary["source"],
+    expiresAt: typeof root.expiresAt === "string" ? root.expiresAt : null,
+  };
+}
+
+/** The plan to show when Cloud can't be reached: the last copy Cloud sent, with when it was checked. */
+export async function readCachedManagedPlan(env: Env): Promise<ManagedPlanSummary | null> {
+  const cached = await readCachedManagedBillingPolicy(env);
+  return cached?.plan ? { ...cached.plan, checkedAt: cached.cachedAt } : null;
 }
 
 /** The owner's last known plan tier from ME3 Cloud, or null before Cloud reports one. */

@@ -172,10 +172,19 @@ type AiSettingsResponse = {
   defaults: Record<AiRouteId, AiRouteRecord>;
 };
 
+type ManagedPlan = {
+  tier: string;
+  name: string;
+  source: "paid" | "trial" | "granted" | "free";
+  expiresAt: string | null;
+  checkedAt?: string | null;
+};
+
 type ManagedAiBillingSettings = {
   available: boolean;
   managed: boolean;
   currency: "usd";
+  plan?: ManagedPlan | null;
   billingSource: "internal" | "storekit" | "stripe" | null;
   defaultModel: string;
   models: ManagedAiModelOption[];
@@ -1544,6 +1553,38 @@ async function loadAiSettings() {
   }
 }
 
+const planChecking = ref(false);
+const planCheckFailed = ref(false);
+
+const managedPlanDetail = computed(() => {
+  const plan = managedAiBilling.value?.plan;
+  if (!plan) return "";
+  if (plan.source === "free") return "No paid plan";
+  const label = { paid: "Paid", trial: "Trial", granted: "Granted" }[plan.source];
+  const verb = { paid: "renews", trial: "ends", granted: "until" }[plan.source];
+  const parsed = plan.expiresAt
+    ? Date.parse(plan.expiresAt.includes("T") ? plan.expiresAt : `${plan.expiresAt.replace(" ", "T")}Z`)
+    : NaN;
+  if (!Number.isFinite(parsed)) return label;
+  const date = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(parsed);
+  return `${label} · ${verb} ${date}`;
+});
+
+// Cloud sends the plan on every settings read; a cached copy (checkedAt) means Cloud could not be reached.
+async function checkPlanAgain() {
+  planChecking.value = true;
+  planCheckFailed.value = false;
+  try {
+    const billing = await api.get<ManagedAiBillingSettings>("/managed-ai-billing-settings");
+    syncManagedAiBilling(billing);
+    planCheckFailed.value = !billing.plan || Boolean(billing.plan.checkedAt);
+  } catch {
+    planCheckFailed.value = true;
+  } finally {
+    planChecking.value = false;
+  }
+}
+
 const managedAiCardStarting = ref(false);
 
 async function addManagedAiCard() {
@@ -2474,6 +2515,24 @@ onBeforeUnmount(() => {
             aria-labelledby="account-trigger-account"
             :hidden="!openSection.account"
           >
+            <div v-if="managedAiBilling?.plan" class="account-plan-row" data-testid="account-plan">
+              <span class="account-plan-label">Plan</span>
+              <strong>{{ managedAiBilling.plan.name }}</strong>
+              <span class="account-plan-detail">{{ managedPlanDetail }}</span>
+              <Button
+                color="secondary"
+                shape="soft"
+                size="compact"
+                type="button"
+                :disabled="planChecking"
+                @click="checkPlanAgain"
+              >
+                {{ planChecking ? "Checking…" : "Check again" }}
+              </Button>
+              <span v-if="planCheckFailed" class="account-plan-detail" role="status">
+                Couldn't reach ME3 Cloud. Showing the last plan it sent.
+              </span>
+            </div>
             <p class="hint account-signin-hint">
               Used for signing in to this ME3 account.
             </p>
@@ -4610,6 +4669,20 @@ onBeforeUnmount(() => {
 
 .accordion-panel {
   padding: 10px 16px 16px;
+}
+
+.account-plan-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-bottom: 16px;
+}
+
+.account-plan-label,
+.account-plan-detail {
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 14px;
 }
 
 .account-signin-hint {
