@@ -1,6 +1,6 @@
 import { getManagedCommerceBridgeConfig } from "./commerce-bridge";
 import { reconcileUnknownManagedAiCosts } from "./managed-ai-reconciliation";
-import { syncSocialPlanAccess } from "./plan-features";
+import { syncPlanFeatures } from "./plan-features";
 import type { Env } from "./types";
 
 export const MANAGED_AI_BILLING_POLICY_SECRET = "ME3_MANAGED_AI_BILLING_POLICY";
@@ -323,7 +323,7 @@ async function cacheManagedAiBillingPolicy(
       }),
     )
     .run();
-  await syncSocialPlanAccess(env).catch((error) => console.error("Social plan sync failed", error));
+  await syncPlanFeatures(env);
 }
 
 async function readCachedManagedBillingPolicy(

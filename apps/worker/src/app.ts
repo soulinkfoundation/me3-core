@@ -67,7 +67,7 @@ import {
   startSocialOAuth,
   updateSocialProviderSettings,
 } from "./social-publishing";
-import { syncSocialPlanAccess } from "./plan-features";
+import { syncPlanFeatures, syncSocialPlanAccess } from "./plan-features";
 import {
   getOrCreateInstallEncryptionKey,
   getOrCreateInstallSessionSecret,
@@ -1089,7 +1089,7 @@ app.get("/api/plugins", async (c) => {
   if (!ownerId) return unauthorized(c);
 
   // Plan-included features switch on here, so the menu shows them without a plugin to activate.
-  await syncSocialPlanAccess(c.env).catch((error) => console.error("Social plan sync failed", error));
+  await syncPlanFeatures(c.env);
   return c.json({
     catalogVersion: CORE_PLUGIN_CATALOG_VERSION,
     plugins: await listCorePluginRecords(c.env),

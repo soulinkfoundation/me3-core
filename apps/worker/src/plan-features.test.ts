@@ -1,10 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { MANAGED_AI_BILLING_POLICY_SECRET } from "./managed-ai-billing";
-import { socialPlanAccess, syncSocialPlanAccess } from "./plan-features";
+import { socialPlanAccess, syncCampaignPlanAccess, syncSocialPlanAccess } from "./plan-features";
 import type { Env } from "./types";
 
-function fixture(options: { managed: boolean; tier?: string | null; plugin?: { enabled: number; source?: string } }) {
+function fixture(options: {
+  managed: boolean;
+  tier?: string | null;
+  plugin?: { enabled: number; source?: string; id?: string };
+}) {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec(`
     CREATE TABLE install_secrets (name TEXT PRIMARY KEY, value TEXT, created_at TEXT, updated_at TEXT);
@@ -15,6 +19,11 @@ function fixture(options: { managed: boolean; tier?: string | null; plugin?: { e
     );
     CREATE TABLE social_publications (id TEXT PRIMARY KEY, status TEXT, error_code TEXT, error_message TEXT, updated_at TEXT);
     INSERT INTO social_publications (id, status) VALUES ('scheduled-1', 'scheduled'), ('posted-1', 'published');
+    CREATE TABLE email_campaigns (id TEXT PRIMARY KEY, status TEXT, cancelled_at TEXT, failure_reason TEXT, updated_at TEXT);
+    CREATE TABLE email_campaign_recipient_jobs (id TEXT PRIMARY KEY, campaign_id TEXT, status TEXT, provider_reason TEXT, updated_at TEXT);
+    INSERT INTO email_campaigns (id, status) VALUES ('campaign-scheduled', 'scheduled'), ('campaign-sent', 'sent');
+    INSERT INTO email_campaign_recipient_jobs (id, campaign_id, status)
+      VALUES ('job-queued', 'campaign-scheduled', 'queued'), ('job-delivered', 'campaign-sent', 'delivered');
   `);
   if (options.tier !== undefined) {
     sqlite.prepare("INSERT INTO install_secrets (name, value) VALUES (?, ?)")
@@ -23,8 +32,9 @@ function fixture(options: { managed: boolean; tier?: string | null; plugin?: { e
   if (options.plugin) {
     sqlite.prepare(
       `INSERT INTO plugin_installations (plugin_id, version, enabled, status, setup_state_json)
-       VALUES ('me3.social-publishing', '0.1.0', ?, ?, ?)`,
+       VALUES (?, '0.1.0', ?, ?, ?)`,
     ).run(
+      options.plugin.id || "me3.social-publishing",
       options.plugin.enabled,
       options.plugin.enabled ? "installed" : "disabled",
       JSON.stringify(options.plugin.source ? { source: options.plugin.source } : {}),
@@ -47,9 +57,13 @@ function fixture(options: { managed: boolean; tier?: string | null; plugin?: { e
     sqlite.prepare("SELECT enabled, status, setup_state_json FROM plugin_installations").get() as
       | { enabled: number; status: string; setup_state_json: string }
       | undefined;
+  const campaign = (id: string) =>
+    (sqlite.prepare("SELECT status FROM email_campaigns WHERE id = ?").get(id) as { status: string }).status;
+  const job = (id: string) =>
+    (sqlite.prepare("SELECT status FROM email_campaign_recipient_jobs WHERE id = ?").get(id) as { status: string }).status;
   const publication = (id: string) =>
     (sqlite.prepare("SELECT status FROM social_publications WHERE id = ?").get(id) as { status: string }).status;
-  return { env, plugin, publication };
+  return { env, plugin, publication, campaign, job };
 }
 
 describe("Social plan access", () => {
@@ -82,5 +96,34 @@ describe("Social plan access", () => {
   it("includes Social on self-hosted installs", async () => {
     const { env } = fixture({ managed: false });
     expect(await socialPlanAccess(env)).toBe("included");
+  });
+});
+
+describe("Campaigns plan access", () => {
+  it("switches Campaigns on for a Business owner without a plugin to activate", async () => {
+    const { env, plugin } = fixture({ managed: true, tier: "business" });
+    expect(await syncCampaignPlanAccess(env)).toBe("included");
+    expect(plugin()).toMatchObject({ enabled: 1, status: "installed", setup_state_json: '{"source":"plan"}' });
+  });
+
+  it("switches it off after a downgrade, cancelling scheduled sends and keeping sent history", async () => {
+    const { env, plugin, campaign, job } = fixture({
+      managed: true,
+      tier: "pro",
+      plugin: { enabled: 1, source: "plan", id: "me3.email-campaigns" },
+    });
+    expect(await syncCampaignPlanAccess(env)).toBe("locked");
+    expect(plugin()).toMatchObject({ enabled: 0, status: "disabled" });
+    expect(campaign("campaign-scheduled")).toBe("cancelled");
+    expect(job("job-queued")).toBe("cancelled");
+    expect(campaign("campaign-sent")).toBe("sent");
+    expect(job("job-delivered")).toBe("delivered");
+  });
+
+  it("keeps Campaigns on for self-hosted installs and leaves an owner's own switch alone", async () => {
+    expect(await syncCampaignPlanAccess(fixture({ managed: false }).env)).toBe("included");
+    const owned = fixture({ managed: true, tier: "pro", plugin: { enabled: 1, id: "me3.email-campaigns" } });
+    expect(await syncCampaignPlanAccess(owned.env)).toBe("locked");
+    expect(owned.plugin()).toMatchObject({ enabled: 1 });
   });
 });

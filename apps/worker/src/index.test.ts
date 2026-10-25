@@ -10035,14 +10035,15 @@ describe("ME3 Worker auth", () => {
           activationAllowed: true,
           enabled: false,
         }),
+        // Self-hosted owners get Campaigns with no plugin to activate (plan-features.ts).
         expect.objectContaining({
           id: "me3.email-campaigns",
           showInPluginList: false,
-          status: "available",
+          status: "installed",
           implementationStatus: "bundled",
           releaseStage: "available",
           activationAllowed: true,
-          enabled: false,
+          enabled: true,
         }),
       ]),
     );

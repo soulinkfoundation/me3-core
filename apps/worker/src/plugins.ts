@@ -1145,7 +1145,8 @@ const EMAIL_CAMPAIGNS_PLUGIN: CorePluginManifestSummary = {
   trustTier: "first_party",
   distribution: "workspace_package",
   installMode: "enabled_by_owner_config",
-  showInPluginList: true,
+  // On for every owner whose plan includes it (plan-features.ts), so there is no switch in the plugin list.
+  showInPluginList: false,
   experimental: true,
   defaultEnabled: false,
   releaseStage: "available",
