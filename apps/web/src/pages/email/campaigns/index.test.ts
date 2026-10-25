@@ -23,6 +23,14 @@ vi.mock("../../../api", () => ({
   },
 }));
 
+vi.mock("../../../stores/sites", () => ({
+  useSitesStore: () => ({
+    sites: [{ id: "site-1", username: "willowyoga", site_role: "profile" }],
+    ensureSites: vi.fn(async () => undefined),
+    getSubscriberCount: vi.fn(async () => 214),
+  }),
+}));
+
 import CampaignsPage from "./index.vue";
 
 const ConfirmationDialogStub = {
@@ -68,6 +76,7 @@ describe("Campaigns page", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    document.body.innerHTML = '<div id="app-page-controls"></div>';
     pluginEnabled = true;
     routeQuery = {};
     transport = {
@@ -128,11 +137,16 @@ describe("Campaigns page", () => {
     expect(wrapper.find(".workspace-tabs").exists()).toBe(false);
     expect(wrapper.get("h1").text()).toBe("Campaigns");
     expect(wrapper.text()).not.toMatch(/plugin|Activate|Choose plan|USD|\$/i);
+    // Like Tasks: tabs with counts, and the title and + in the app top bar.
     expect(wrapper.findAll('[role="tab"]').map((tab) => tab.text())).toEqual([
-      "Campaigns",
-      "Subscribers",
+      "Campaigns3",
+      "Subscribers214",
     ]);
-    expect(wrapper.get('a[data-to="/email/campaigns/create"]').text()).toBe("New campaign");
+    const topBar = document.querySelector("#app-page-controls")!;
+    expect(topBar.textContent).toContain("Campaigns");
+    expect(topBar.querySelector('[aria-label="New campaign"]')?.getAttribute("data-to")).toBe(
+      "/email/campaigns/create",
+    );
     wrapper.unmount();
   });
 

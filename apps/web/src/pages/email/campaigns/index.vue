@@ -8,11 +8,13 @@ import {
 } from "@me3-core/plugin-email-campaigns";
 import { api } from "../../../api";
 import Button from "../../../components/Button.vue";
+import UiIcon from "../../../components/UiIcon.vue";
 import CampaignSubscribers from "../../../components/campaigns/CampaignSubscribers.vue";
 import ConfirmationDialog from "../../../components/ConfirmationDialog.vue";
 import PageLoading from "../../../components/PageLoading.vue";
 import { useAppToast } from "../../../composables/useAppToast";
 import { useCampaignActions } from "../../../composables/useCampaignActions";
+import { useSitesStore } from "../../../stores/sites";
 import {
   CAMPAIGN_GROUPS,
   campaignDetail,
@@ -60,6 +62,8 @@ const route = useRoute();
 // The Site page links straight to one site's subscribers.
 const view = ref<View>(route.query.view === "subscribers" ? "subscribers" : "campaigns");
 const initialSite = typeof route.query.site === "string" ? route.query.site : undefined;
+const sites = useSitesStore();
+const subscriberCount = ref<number | null>(null);
 const { toastFromUnknown } = useAppToast();
 const actions = useCampaignActions({
   cancelled: () => loadCampaigns(true),
@@ -108,13 +112,21 @@ async function loadPage() {
     available.value = Boolean(
       response.plugins.find((plugin) => plugin.id === EMAIL_CAMPAIGNS_PLUGIN_ID)?.enabled,
     );
-    if (available.value) await loadCampaigns();
+    if (available.value) await Promise.all([loadCampaigns(), loadSubscriberCount()]);
   } catch (caught) {
     loadFailed.value = true;
     toastFromUnknown(caught, "Couldn't load campaigns.");
   } finally {
     loading.value = false;
   }
+}
+
+async function loadSubscriberCount() {
+  await sites.ensureSites();
+  const site = sites.sites.find((item) => item.username === initialSite)
+    || sites.sites.find((item) => item.site_role === "profile")
+    || sites.sites[0];
+  subscriberCount.value = site ? await sites.getSubscriberCount(site.username) : null;
 }
 
 async function loadCampaigns(silent = false) {
@@ -180,6 +192,27 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="campaigns-page">
+    <!-- Same pattern as Tasks: the title and the add button live in the app top bar. -->
+    <Teleport to="#app-page-controls" defer>
+      <header class="campaigns-topbar">
+        <div aria-hidden="true" />
+        <p class="campaigns-topbar__title">Campaigns</p>
+        <div class="campaigns-topbar__actions">
+          <Button
+            v-if="available && !loading"
+            color="ghost"
+            shape="soft"
+            size="compact"
+            icon-only
+            to="/email/campaigns/create"
+            aria-label="New campaign"
+            title="New campaign"
+          >
+            <UiIcon name="Plus" :size="19" />
+          </Button>
+        </div>
+      </header>
+    </Teleport>
     <div class="campaigns-column">
       <PageLoading v-if="loading" label="Loading campaigns…" />
 
@@ -199,12 +232,7 @@ onBeforeUnmount(() => {
       </section>
 
       <template v-else>
-        <header class="campaigns-header">
-          <h1>Campaigns</h1>
-          <Button color="primary" shape="pill" size="compact" to="/email/campaigns/create">
-            New campaign
-          </Button>
-        </header>
+        <h1 class="sr-only">Campaigns</h1>
 
         <div class="campaigns-switch" role="tablist" aria-label="Campaigns views" @keydown="moveView">
           <button
@@ -215,7 +243,7 @@ onBeforeUnmount(() => {
             aria-controls="campaigns-panel-campaigns"
             :tabindex="view === 'campaigns' ? 0 : -1"
             @click="selectView('campaigns')"
-          >Campaigns</button>
+          ><span>Campaigns</span><strong>{{ campaigns.length }}</strong></button>
           <button
             id="campaigns-view-subscribers"
             type="button"
@@ -224,7 +252,7 @@ onBeforeUnmount(() => {
             aria-controls="campaigns-panel-subscribers"
             :tabindex="view === 'subscribers' ? 0 : -1"
             @click="selectView('subscribers')"
-          >Subscribers</button>
+          ><span>Subscribers</span><strong v-if="subscriberCount !== null">{{ formatCount(subscriberCount) }}</strong></button>
         </div>
 
         <section
@@ -326,13 +354,17 @@ onBeforeUnmount(() => {
 <style scoped>
 /* Own destination: plain page flow so the app scrolls it at every size (no Email shell, no fixed height). */
 .campaigns-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
-.campaigns-column { box-sizing: border-box; width: min(100%, 560px); margin: 0 auto; padding: 16px 16px 96px; }
-.campaigns-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.campaigns-header h1 { margin: 0; font-size: 22px; font-weight: 650; line-height: 1.2; }
-.campaigns-switch { display: inline-flex; gap: 2px; margin-top: 14px; padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
-.campaigns-switch button { min-height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: var(--ui-text-muted); font: 500 13px var(--font-sans); cursor: pointer; }
-.campaigns-switch button[aria-selected="true"] { background: var(--ui-primary); color: var(--ui-primary-contrast); font-weight: 600; }
-.campaigns-switch button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.campaigns-column { box-sizing: border-box; width: min(100%, 560px); margin: 0 auto; padding: 18px 16px 96px; }
+.campaigns-topbar { display: grid; grid-template-columns: 80px minmax(0, 1fr) 80px; align-items: center; width: 100%; }
+.campaigns-topbar__title { margin: 0; justify-self: center; color: var(--ui-text); font-size: 15px; font-weight: 750; }
+.campaigns-topbar__actions { display: flex; gap: 4px; justify-self: end; }
+/* Tabs match Tasks: full width, counts beside the labels, the selected one raised. */
+.campaigns-switch { display: grid; grid-template-columns: repeat(2, 1fr); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
+.campaigns-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 38px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
+.campaigns-switch button strong { font-weight: 750; font-variant-numeric: tabular-nums; }
+.campaigns-switch button:hover { color: var(--ui-text); }
+.campaigns-switch button[aria-selected="true"] { background: var(--ui-surface); color: var(--ui-text); font-weight: 750; box-shadow: var(--ui-shadow-sm); }
+.campaigns-switch button:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--ui-focus, var(--ui-accent)); }
 .campaigns-meter { display: flex; align-items: center; gap: 10px; margin: 14px 0 0; color: var(--ui-text-muted); font-size: 13px; }
 .campaigns-meter b { color: var(--ui-text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .campaigns-meter__bar { flex: 0 0 120px; height: 5px; overflow: hidden; border-radius: 99px; background: var(--ui-surface-muted); }
@@ -372,4 +404,5 @@ onBeforeUnmount(() => {
   .campaign-row { align-items: flex-start; }
   .campaign-row__side { flex-direction: column; align-items: flex-end; gap: 0; padding-top: 10px; }
 }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 </style>
