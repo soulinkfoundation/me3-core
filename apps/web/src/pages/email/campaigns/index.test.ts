@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiGet = vi.fn();
 const apiPost = vi.fn();
+const apiPut = vi.fn();
 const apiDelete = vi.fn();
 
 vi.mock("unplugin-vue-router/runtime", () => ({ definePage: vi.fn() }));
@@ -19,6 +20,7 @@ vi.mock("../../../api", () => ({
   api: {
     get: (...args: unknown[]) => apiGet(...args),
     post: (...args: unknown[]) => apiPost(...args),
+    put: (...args: unknown[]) => apiPut(...args),
     delete: (...args: unknown[]) => apiDelete(...args),
   },
 }));
@@ -219,21 +221,93 @@ describe("Campaigns page", () => {
     wrapper.unmount();
   });
 
-  it("asks a self-hosted owner to connect a sender, without an allowance", async () => {
+  it("lets a self-hosted owner connect their own sender, without an allowance", async () => {
     transport = {
       managed: false,
       ready: false,
-      reason: "managed_installation_required",
+      reason: "sender_not_connected",
       sender: null,
+      provider: null,
       addOn: null,
-      instructions: ["Activate the plugin, then connect an owner-supplied provider."],
+      instructions: [],
     };
+    const provider = (id: string, label: string) => ({
+      id,
+      label,
+      configured: false,
+      secretLabel: id === "smtp" ? "SMTP password" : "API token",
+      config: {
+        transport: id === "smtp" ? "smtp" : "rest",
+        fromAddress: "",
+        fromName: "ME3",
+        sendingDomain: "",
+        accountId: "",
+        messageStream: "",
+        smtpHost: "",
+        smtpPort: 587,
+        smtpSecurity: "starttls",
+        smtpUsername: "",
+        mailgunRegion: "us",
+      },
+    });
+    const baseGet = apiGet.getMockImplementation()!;
+    apiGet.mockImplementation((path: string) => {
+      if (path === "/email-provider-settings") {
+        return Promise.resolve({
+          encryptionConfigured: true,
+          activeProviderId: "smtp",
+          providers: [
+            provider("smtp", "SMTP"),
+            provider("mailgun", "Mailgun"),
+            provider("postmark", "Postmark"),
+            provider("cloudflare-email", "Cloudflare Email Service"),
+          ],
+          futureProviders: [],
+        });
+      }
+      return baseGet(path);
+    });
+    apiPut.mockImplementation(async () => {
+      transport = {
+        managed: false,
+        ready: true,
+        reason: null,
+        sender: { ref: "provider:postmark", fromAddress: "news@willowyoga.com", domain: "willowyoga.com" },
+        provider: {
+          id: "postmark",
+          label: "Postmark",
+          tracksDelivery: true,
+          deliveryEventsUrl: "https://api.willowyoga.com/api/public/campaigns/provider-events/postmark/abc",
+        },
+        addOn: null,
+        instructions: [],
+      };
+      return {};
+    });
     const wrapper = mountPage();
     await flushPromises();
 
     expect(wrapper.find(".campaigns-meter").exists()).toBe(false);
-    expect(wrapper.text()).toContain("Connect an email provider before your first send.");
-    expect(wrapper.text()).not.toMatch(/plugin|Activate/i);
+    expect(wrapper.text()).toContain("Connect a sender");
+    expect(wrapper.text()).not.toMatch(/plugin|Activate|sends left|\$/i);
+
+    await wrapper.get('[data-test="sender-provider"]').setValue("postmark");
+    await wrapper.get('[data-test="sender-from"]').setValue("news@willowyoga.com");
+    await wrapper.get('[data-test="sender-secret"]').setValue("pm-server-token");
+    await wrapper.get('[data-test="sender-connect"]').trigger("click");
+    await flushPromises();
+
+    expect(apiPut).toHaveBeenCalledWith("/email-provider-settings", {
+      activeProviderId: "postmark",
+      providers: [expect.objectContaining({
+        id: "postmark",
+        fromAddress: "news@willowyoga.com",
+        apiToken: "pm-server-token",
+      })],
+    });
+    expect(wrapper.text()).not.toContain("Connect a sender");
+    expect(wrapper.text()).toContain("Sending through Postmark from news@willowyoga.com");
+    expect(wrapper.text()).toContain("/api/public/campaigns/provider-events/postmark/abc");
     wrapper.unmount();
   });
 
