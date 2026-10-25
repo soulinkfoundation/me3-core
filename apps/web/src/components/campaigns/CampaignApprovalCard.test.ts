@@ -72,6 +72,7 @@ describe("Campaign approval card", () => {
 
   it.each([
     [{ senderReady: false }, "Sending isn't set up yet, so this stays a draft."],
+    [{ mailingAddressMissing: true }, "Add a mailing address in From before sending."],
     [{ recipientCount: 0 }, "Nobody on this list can be emailed yet."],
     [{ sendsLeft: 100 }, "This needs 214 sends and 100 are left this month."],
   ])("says why it can't send: %o", (overrides, reason) => {

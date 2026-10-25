@@ -48,6 +48,7 @@ export type CampaignDocument = {
     surfaceColor: string;
     textColor: string;
     accentColor: string;
+    mailingAddress?: string;
   };
   blocks: Array<CampaignTextBlock | CampaignExtraBlock>;
 };

@@ -17,6 +17,7 @@ const props = defineProps<{
   audienceLine: string;
   leftOut?: string;
   senderReady: boolean;
+  mailingAddressMissing?: boolean;
   sendsLeft?: number | null;
   timeZone: string;
   testing?: boolean;
@@ -42,6 +43,7 @@ const scheduledFor = computed(() => {
 const count = computed(() => props.recipientCount || 0);
 const blocker = computed(() => {
   if (!props.senderReady) return "Sending isn't set up yet, so this stays a draft.";
+  if (props.mailingAddressMissing) return "Add a mailing address in From before sending.";
   if (!count.value) return "Nobody on this list can be emailed yet.";
   if (props.sendsLeft !== null && props.sendsLeft !== undefined && count.value > props.sendsLeft) {
     return `This needs ${formatCount(count.value)} sends and ${formatCount(props.sendsLeft)} are left this month.`;

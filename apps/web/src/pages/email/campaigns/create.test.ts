@@ -84,6 +84,7 @@ function makeCampaign(overrides: Record<string, unknown> = {}) {
           surfaceColor: "#ffffff",
           textColor: "#18201d",
           accentColor: "#147d64",
+          mailingAddress: "PO Box 12, Dublin 2",
         },
         blocks: [{
           id: "intro",
@@ -189,6 +190,29 @@ describe("campaign editor", () => {
         replyToAddress: null,
         document: expect.objectContaining({
           brand: expect.objectContaining({ name: "Kieran Butler" }),
+        }),
+      }),
+    );
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("saves the footer mailing address from the From sheet", async () => {
+    vi.useFakeTimers();
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    expect(wrapper.findAll(".campaign-side-block")[1]!.text()).toContain("PO Box 12, Dublin 2");
+    await wrapper.findAll(".campaign-side-block__change")[1]!.trigger("click");
+    await wrapper.get('[data-test="dialog"] textarea').setValue("Unit 4\nMain Street\nCork");
+    await wrapper.get('[data-test="dialog"] form').trigger("submit");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(apiPut).toHaveBeenLastCalledWith(
+      "/email/campaigns/campaign-1",
+      expect.objectContaining({
+        document: expect.objectContaining({
+          brand: expect.objectContaining({ mailingAddress: "Unit 4, Main Street, Cork" }),
         }),
       }),
     );

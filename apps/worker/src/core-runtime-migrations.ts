@@ -765,6 +765,15 @@ const runtimeMigrations: RuntimeMigration[] = [
       await addColumnIfMissing(db, "email_campaigns", "approved_recipient_count", "INTEGER");
     },
   },
+  // A site remembers the postal address its campaigns show in the footer (me3-bli3.2.14).
+  {
+    id: "0092_campaign_mailing_address",
+    checksum: "2026-10-26-campaign-mailing-address-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "sites"))) return;
+      await addColumnIfMissing(db, "sites", "campaign_mailing_address", "TEXT");
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

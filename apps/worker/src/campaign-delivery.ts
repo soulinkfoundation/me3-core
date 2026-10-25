@@ -257,6 +257,13 @@ export async function startCampaignDelivery(
       "campaign_changed",
     );
   }
+  if (!campaignMailingAddress(campaign.revision.document_json)) {
+    throw new CampaignInputError(
+      "Add a mailing address to the footer before sending.",
+      409,
+      "mailing_address_required",
+    );
+  }
   if (!campaign.revision.subject.trim()) {
     throw new CampaignInputError("Add a subject before sending", 400, "subject_required");
   }
@@ -1064,6 +1071,16 @@ async function getCampaignJob(env: Env, jobId: string) {
   )
     .bind(jobId)
     .first<Record<string, unknown>>();
+}
+
+/** Marketing email must carry a postal address (CAN-SPAM); test sends to the owner don't need one. */
+function campaignMailingAddress(documentJson: string): string {
+  try {
+    const brand = (JSON.parse(documentJson) as { brand?: { mailingAddress?: unknown } }).brand;
+    return typeof brand?.mailingAddress === "string" ? brand.mailingAddress.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 async function requireDraftCampaign(env: Env, ownerId: string, campaignId: string) {

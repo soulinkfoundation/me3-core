@@ -131,6 +131,7 @@ const brand = ref<CampaignDocument["brand"]>({
 });
 const fromSheetName = ref("");
 const fromSheetRepliesOn = ref(true);
+const fromSheetAddress = ref("");
 const fromSheetTitleId = `campaign-from-title-${useId()}`;
 
 const ownerEmail = computed(() => auth.user?.email?.trim().toLowerCase() || "");
@@ -263,6 +264,10 @@ async function ensureCampaign(): Promise<Campaign | null> {
     });
     campaign.value = response.campaign;
     if (!senderNameChosen) brand.value.name = response.campaign.revision.document.brand.name;
+    // The site remembers its footer address, so a new campaign starts with it.
+    if (!brand.value.mailingAddress && response.campaign.revision.document.brand.mailingAddress) {
+      brand.value.mailingAddress = response.campaign.revision.document.brand.mailingAddress;
+    }
     await router.replace({
       path: "/email/campaigns/create",
       query: { campaign: response.campaign.id },
@@ -438,6 +443,7 @@ async function refreshAfterStale() {
 function openFromSheet() {
   fromSheetName.value = brand.value.name;
   fromSheetRepliesOn.value = Boolean(replyToAddress.value);
+  fromSheetAddress.value = brand.value.mailingAddress || "";
   fromSheetOpen.value = true;
 }
 
@@ -448,6 +454,7 @@ function saveFromSheet() {
     return;
   }
   brand.value.name = name;
+  brand.value.mailingAddress = fromSheetAddress.value.split(/\n+/).map((part) => part.trim()).filter(Boolean).join(", ");
   senderNameChosen = true;
   // The Worker only accepts the owner's own address as reply-to.
   replyToAddress.value = fromSheetRepliesOn.value ? ownerEmail.value : "";
@@ -539,6 +546,7 @@ onBeforeUnmount(() => {
         :audience-line="`${formatCount(eligibleCount || 0)} ${audienceLabel} of @${siteUsername}`"
         :left-out="leftOut"
         :sender-ready="sendingReady"
+        :mailing-address-missing="!brand.mailingAddress"
         :sends-left="sendsLeft"
         :time-zone="ownerTimeZone"
         :testing="testing"
@@ -589,6 +597,10 @@ onBeforeUnmount(() => {
             <p class="campaign-side-block__value">{{ brand.name }}</p>
             <p class="campaign-side-block__hint">
               {{ replyToAddress ? `Replies go to ${replyToAddress}` : "Replies aren't collected" }}
+            </p>
+            <p v-if="brand.mailingAddress" class="campaign-side-block__hint">{{ brand.mailingAddress }}</p>
+            <p v-else class="campaign-side-block__hint campaign-side-block__missing">
+              Add a mailing address before sending.
             </p>
           </section>
 
@@ -691,6 +703,11 @@ onBeforeUnmount(() => {
           <span>Send replies to {{ ownerEmail }}</span>
         </label>
         <small v-if="!fromSheetRepliesOn" class="campaign-from-sheet__hint">Replies won't be collected.</small>
+        <label class="campaign-field">
+          <span>Mailing address</span>
+          <textarea v-model="fromSheetAddress" rows="3" maxlength="300" placeholder="PO Box 12, Dublin 2, Ireland" />
+          <small>Shown at the bottom of every email. Marketing email needs a postal address; a PO box or business address is fine.</small>
+        </label>
         <div class="campaign-from-sheet__actions">
           <Button color="outline" shape="soft" size="compact" type="button" @click="fromSheetOpen = false">Cancel</Button>
           <Button color="primary" shape="soft" size="compact" type="submit">Done</Button>
@@ -733,6 +750,9 @@ onBeforeUnmount(() => {
 .campaign-audience-options label { display: flex; align-items: center; gap: 8px; }
 .campaign-editor__approval { margin: 4px 0 16px; }
 .campaign-audience-options__check { display: flex; align-items: center; gap: 8px; }
+.campaign-field textarea { box-sizing: border-box; width: 100%; padding: 8px 10px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-bg); color: var(--ui-text); font: inherit; font-size: 14px; resize: vertical; }
+.campaign-field textarea:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 1px; }
+.campaign-side-block__missing { color: var(--ui-warning, color-mix(in oklab, #b26a00 70%, var(--ui-text))); }
 .campaign-from-sheet__replies { display: flex; align-items: center; gap: 8px; font-size: 14px; overflow-wrap: anywhere; }
 .campaign-from-sheet__hint { margin-top: -8px; color: var(--ui-text-muted); font-size: 12px; }
 .campaign-audience-count { margin: 0; color: var(--ui-text-muted); font-size: 13px; }
