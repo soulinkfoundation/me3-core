@@ -126,7 +126,7 @@ describe("AppProfileMenu optional plugin links", () => {
     expect(wrapper.find('nav img').exists()).toBe(false);
     expect(wrapper.get('[aria-label="Settings"]').attributes("href")).toBe("/settings");
     expect(wrapper.get('[aria-label="Campaigns"]').attributes("href")).toBe("/email/campaigns");
-    expect(wrapper.get('[aria-label="Campaigns"]').text()).toContain("📣");
+    expect(wrapper.get('[aria-label="Campaigns"]').text()).toContain("📮");
     expect(wrapper.find('[aria-label="App connections"]').exists()).toBe(false);
     expect(wrapper.find('[aria-label="Plugins"]').exists()).toBe(false);
     wrapper.unmount();

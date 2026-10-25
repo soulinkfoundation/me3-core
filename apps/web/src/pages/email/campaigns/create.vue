@@ -17,11 +17,13 @@ import {
   campaignEditorHtmlToBlocks,
   type CampaignDocument,
 } from "../../../utils/campaignDocument";
-import { exclusionSentence, formatCount } from "../../../utils/campaigns";
+import { exclusionReasonLabel, exclusionSentence, formatCount } from "../../../utils/campaigns";
 
 definePage({
   meta: {
     requiresAuth: true,
+    // Email hides the top bar on wide screens; Campaigns is its own destination and keeps it (with Home).
+    hideTopBarOnWide: false,
     title: "Campaign | ME3",
     description: "Write an email campaign.",
     robots: "noindex,follow",
@@ -90,6 +92,15 @@ const hydrating = ref(true);
 const reviewOpen = ref(false);
 const fromSheetOpen = ref(false);
 const audienceSheetOpen = ref(false);
+type Recipients = {
+  eligibleCount: number;
+  excludedCount: number;
+  eligible: Array<{ email: string; name: string | null }>;
+  excluded: Array<{ email: string; reason: string }>;
+};
+const recipients = ref<Recipients | null>(null);
+const recipientsOpen = ref(false);
+const recipientsLoading = ref(false);
 const audienceSheetTitleId = `campaign-audience-title-${useId()}`;
 // Until the owner picks a sender name, a new draft keeps the one the Worker gives it.
 let senderNameChosen = false;
@@ -146,7 +157,7 @@ const saveState = computed(() => {
   if (saving.value || creating.value) return "Saving…";
   return savedOnce.value ? "Saved" : "";
 });
-const currentRendererVersion = "me3.email-renderer.v2";
+const currentRendererVersion = "me3.email-renderer.v3";
 
 async function initialize() {
   loading.value = true;
@@ -394,6 +405,22 @@ async function sendTest() {
   }
 }
 
+async function toggleRecipients() {
+  recipientsOpen.value = !recipientsOpen.value;
+  if (!recipientsOpen.value || recipients.value || !campaign.value) return;
+  recipientsLoading.value = true;
+  try {
+    recipients.value = await api.get<Recipients>(
+      `/email/campaigns/${encodeURIComponent(campaign.value.id)}/recipients`,
+    );
+  } catch (caught) {
+    recipientsOpen.value = false;
+    toastFromUnknown(caught, "Couldn't load who this goes to.");
+  } finally {
+    recipientsLoading.value = false;
+  }
+}
+
 /** The server refused because the email or its count moved: reload both so the card shows the truth. */
 async function refreshAfterStale() {
   if (!campaign.value) return;
@@ -450,6 +477,8 @@ watch([selectedSiteId, audienceKind, audienceItem, notSentBy], async (next, prev
   if (next[0] !== previous[0]) void loadAudienceItems(next[0]);
   if (hydrating.value || !campaign.value) return;
   // Who it goes to changes the count, so save straight away and recount.
+  recipients.value = null;
+  recipientsOpen.value = false;
   if (await saveDraft()) await loadReview();
 });
 // Any edit after opening the send controls means they have to be looked at again.
@@ -614,6 +643,36 @@ onBeforeUnmount(() => {
           <template v-else>The count shows once the email is saved.</template>
           <template v-if="leftOut">{{ ` ${leftOut}` }}</template>
         </p>
+        <button
+          v-if="campaign && eligibleCount !== null"
+          type="button"
+          class="campaign-side-block__change campaign-recipients__toggle"
+          :aria-expanded="recipientsOpen"
+          @click="toggleRecipients"
+        >{{ recipientsOpen ? "Hide who" : "See who" }}</button>
+        <div v-if="recipientsOpen" class="campaign-recipients">
+          <p v-if="recipientsLoading" class="campaign-audience-count">Loading…</p>
+          <template v-else-if="recipients">
+            <ul aria-label="Will get it">
+              <li v-for="person in recipients.eligible" :key="person.email">
+                <span>{{ person.email }}</span>
+                <span v-if="person.name" class="campaign-recipients__muted">{{ person.name }}</span>
+              </li>
+            </ul>
+            <template v-if="recipients.excluded.length">
+              <h3>Left out</h3>
+              <ul aria-label="Left out">
+                <li v-for="person in recipients.excluded" :key="`${person.email}-${person.reason}`">
+                  <span>{{ person.email }}</span>
+                  <span class="campaign-recipients__muted">{{ exclusionReasonLabel(person.reason) }}</span>
+                </li>
+              </ul>
+            </template>
+            <p v-if="recipients.eligibleCount > recipients.eligible.length" class="campaign-audience-count">
+              Showing the first {{ formatCount(recipients.eligible.length) }}.
+            </p>
+          </template>
+        </div>
         <div class="campaign-from-sheet__actions">
           <Button color="primary" shape="soft" size="compact" type="submit">Done</Button>
         </div>
@@ -677,6 +736,12 @@ onBeforeUnmount(() => {
 .campaign-from-sheet__replies { display: flex; align-items: center; gap: 8px; font-size: 14px; overflow-wrap: anywhere; }
 .campaign-from-sheet__hint { margin-top: -8px; color: var(--ui-text-muted); font-size: 12px; }
 .campaign-audience-count { margin: 0; color: var(--ui-text-muted); font-size: 13px; }
+.campaign-recipients__toggle { justify-self: start; }
+.campaign-recipients { max-height: 240px; overflow-y: auto; padding: 4px 0; border-top: 1px solid var(--ui-border); font-size: 13px; }
+.campaign-recipients ul { margin: 0; padding: 0; list-style: none; }
+.campaign-recipients li { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; overflow-wrap: anywhere; }
+.campaign-recipients h3 { margin: 10px 0 2px; color: var(--ui-text-muted); font-size: 12px; font-weight: 600; }
+.campaign-recipients__muted { flex: 0 0 auto; color: var(--ui-text-muted); }
 .campaign-audience-count b { color: var(--ui-text); font-variant-numeric: tabular-nums; }
 .campaign-side-field { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--ui-text-muted); font-size: 13px; }
 .campaign-side-field select { min-width: 0; min-height: 34px; padding: 4px 8px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); color: var(--ui-text); font: inherit; font-size: 13px; }

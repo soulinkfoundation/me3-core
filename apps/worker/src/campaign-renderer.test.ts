@@ -85,6 +85,20 @@ describe("campaign document", () => {
 });
 
 describe("campaign renderer", () => {
+  it("ends with one quiet unsubscribe line and no second sender link", () => {
+    const rendered = renderCampaign({
+      document: documentFixture(),
+      unsubscribeUrl: "https://example.com/unsubscribe",
+    });
+
+    expect(rendered.html.match(/Unsubscribe<\/a>/g)).toHaveLength(1);
+    expect(rendered.html).toContain("You're getting this because you subscribed to Example Studio.");
+    expect(rendered.html).not.toContain("Sent by");
+    expect(rendered.text).toContain(
+      "You're getting this because you subscribed to Example Studio. Unsubscribe: https://example.com/unsubscribe",
+    );
+  });
+
   it("produces deterministic table-based HTML and useful plain text", () => {
     const first = renderCampaign({
       document: documentFixture(),
@@ -98,7 +112,7 @@ describe("campaign renderer", () => {
     });
 
     expect(first).toEqual(second);
-    expect(first.rendererVersion).toBe("me3.email-renderer.v2");
+    expect(first.rendererVersion).toBe("me3.email-renderer.v3");
     expect(first.html).toContain('role="presentation"');
     expect(first.html).toContain("The short preview");
     expect(first.html).toContain("A useful update");

@@ -161,3 +161,18 @@ export function exclusionSentence(counts: Record<string, number> | undefined) {
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
   return `${formatCount(total)} left out: ${list}.`;
 }
+
+const EXCLUSION_REASON_LABELS: Record<string, string> = {
+  pending_permission: "hasn't confirmed",
+  unsubscribed: "unsubscribed",
+  bounced: "bounced",
+  complained: "marked it as spam",
+  suppressed: "blocked",
+  invalid_email: "invalid address",
+  duplicate: "listed twice",
+};
+
+/** Why one person is left out, for the "See who" list. */
+export function exclusionReasonLabel(reason: string) {
+  return EXCLUSION_REASON_LABELS[reason] || reason.replace(/_/g, " ");
+}

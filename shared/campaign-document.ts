@@ -1,5 +1,5 @@
 export const CAMPAIGN_DOCUMENT_VERSION = "me3.campaign-document.v1" as const;
-export const CAMPAIGN_RENDERER_VERSION = "me3.email-renderer.v2" as const;
+export const CAMPAIGN_RENDERER_VERSION = "me3.email-renderer.v3" as const;
 
 export const CAMPAIGN_TEXT_STYLES = ["body", "heading1", "heading2", "bullet"] as const;
 export const CAMPAIGN_TEXT_MARKS = ["bold", "italic", "underline"] as const;

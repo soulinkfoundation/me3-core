@@ -31,6 +31,8 @@ import type { PluginsResponse } from "../../../utils/plugins";
 definePage({
   meta: {
     requiresAuth: true,
+    // Email hides the top bar on wide screens; Campaigns is its own destination and keeps it (with Home).
+    hideTopBarOnWide: false,
     title: "Campaigns | ME3",
     description: "Write, approve and send emails to your subscribers.",
     robots: "noindex,follow",

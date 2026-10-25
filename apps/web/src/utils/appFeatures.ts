@@ -23,7 +23,7 @@ export const APP_FEATURE_ICONS: Record<AppFeatureId, string> = {
   calendar: pluginNavEmojiById("me3.calendar"),
   people: "🫶",
   email: "📧",
-  campaigns: "📣",
+  campaigns: "📮",
   files: "📂",
   sites: pluginNavEmojiById("me3.landing-pages"),
   social: pluginNavEmojiById("me3.social-publishing"),

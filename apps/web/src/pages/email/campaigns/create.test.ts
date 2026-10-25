@@ -72,7 +72,7 @@ function makeCampaign(overrides: Record<string, unknown> = {}) {
       subject: "August update",
       previewText: "A short preview",
       replyToAddress: "hello@example.com",
-      rendererVersion: "me3.email-renderer.v2",
+      rendererVersion: "me3.email-renderer.v3",
       document: {
         version: "me3.campaign-document.v1",
         brand: {
@@ -305,6 +305,33 @@ describe("campaign editor", () => {
     expect(apiPut).not.toHaveBeenCalled();
     wrapper.unmount();
     vi.useRealTimers();
+  });
+
+  it("lists who will get it and who is left out", async () => {
+    const original = apiGet.getMockImplementation()!;
+    apiGet.mockImplementation((path: string) =>
+      path.endsWith("/recipients")
+        ? Promise.resolve({
+          eligibleCount: 1,
+          excludedCount: 1,
+          eligible: [{ email: "sam@example.com", name: "Sam Rivers" }],
+          excluded: [{ email: "old@example.com", reason: "unsubscribed" }],
+        })
+        : original(path),
+    );
+    const wrapper = mountEditor();
+    await flushPromises();
+
+    await wrapper.findAll(".campaign-side-block__change")[0]!.trigger("click");
+    await wrapper.get(".campaign-recipients__toggle").trigger("click");
+    await flushPromises();
+
+    const list = wrapper.get(".campaign-recipients");
+    expect(apiGet).toHaveBeenCalledWith("/email/campaigns/campaign-1/recipients");
+    expect(list.text()).toContain("sam@example.comSam Rivers");
+    expect(list.text()).toContain("Left out");
+    expect(list.text()).toContain("old@example.comunsubscribed");
+    wrapper.unmount();
   });
 
   it("recounts when the list changes", async () => {

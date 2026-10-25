@@ -23,6 +23,8 @@ import {
 definePage({
   meta: {
     requiresAuth: true,
+    // Email hides the top bar on wide screens; Campaigns is its own destination and keeps it (with Home).
+    hideTopBarOnWide: false,
     title: "Campaign | ME3",
     description: "A campaign and how it went.",
     robots: "noindex,follow",

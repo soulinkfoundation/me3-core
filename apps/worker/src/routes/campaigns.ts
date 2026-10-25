@@ -213,6 +213,32 @@ export function registerCampaignRoutes(app: AppHono, deps: OwnerRouteDeps) {
     }
   });
 
+  // Who this campaign would go to right now, and who is left out and why ("See who" in the editor).
+  app.get("/api/email/campaigns/:campaignId/recipients", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const pluginError = await requireCampaignPlugin(c);
+    if (pluginError) return pluginError;
+    try {
+      const audience = await previewCampaignAudience(c.env, ownerId, c.req.param("campaignId"));
+      const limit = 500;
+      return c.json({
+        eligibleCount: audience.eligible.length,
+        excludedCount: audience.excluded.length,
+        eligible: audience.eligible.slice(0, limit).map((person) => ({
+          email: person.normalizedEmail,
+          name: [person.first_name, person.last_name].filter(Boolean).join(" ") || null,
+        })),
+        excluded: audience.excluded.slice(0, limit).map((person) => ({
+          email: person.email,
+          reason: person.reason,
+        })),
+      });
+    } catch (error) {
+      return campaignError(c, error);
+    }
+  });
+
   app.get("/api/email/campaigns/:campaignId/review", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
