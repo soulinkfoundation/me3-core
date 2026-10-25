@@ -1,5 +1,5 @@
 export const CAMPAIGN_DOCUMENT_VERSION = "me3.campaign-document.v1" as const;
-export const CAMPAIGN_RENDERER_VERSION = "me3.email-renderer.v3" as const;
+export const CAMPAIGN_RENDERER_VERSION = "me3.email-renderer.v4" as const;
 
 export const CAMPAIGN_TEXT_STYLES = ["body", "heading1", "heading2", "bullet"] as const;
 export const CAMPAIGN_TEXT_MARKS = ["bold", "italic", "underline"] as const;
@@ -13,6 +13,9 @@ export type CampaignBrand = {
   name: string;
   homeUrl: string;
   logoUrl: string | null;
+  /** Display size of the email logo copy in CSS pixels (the PNG is 2x). */
+  logoWidth?: number;
+  logoHeight?: number;
   logoAlignment: "left" | "center";
   backgroundColor: string;
   surfaceColor: string;
@@ -101,6 +104,7 @@ export function createEmptyCampaignDocument(brand: Partial<CampaignBrand> = {}):
       name: normalizeText(brand.name, 120) || "ME3",
       homeUrl: normalizeHttpUrl(brand.homeUrl) || "https://me3.app/",
       logoUrl: normalizeHttpUrl(brand.logoUrl),
+      ...logoSize(brand),
       logoAlignment: brand.logoAlignment === "left" ? "left" : "center",
       backgroundColor: normalizeColor(brand.backgroundColor, "#f4f5f4"),
       surfaceColor: normalizeColor(brand.surfaceColor, "#ffffff"),
@@ -126,6 +130,8 @@ export function parseCampaignDocument(input: unknown): CampaignDocumentV1 {
     name: stringValue(brandInput.name),
     homeUrl: stringValue(brandInput.homeUrl),
     logoUrl: stringValue(brandInput.logoUrl),
+    logoWidth: numberValue(brandInput.logoWidth),
+    logoHeight: numberValue(brandInput.logoHeight),
     logoAlignment: brandInput.logoAlignment === "left" ? "left" : "center",
     backgroundColor: stringValue(brandInput.backgroundColor),
     surfaceColor: stringValue(brandInput.surfaceColor),
@@ -330,6 +336,19 @@ function normalizeHttpUrl(value: unknown): string | null {
 
 function normalizeColor(value: unknown, fallback: string): string {
   return typeof value === "string" && HEX_COLOR.test(value) ? value.toLowerCase() : fallback;
+}
+
+/** Logos show at most 200x64; a size only makes sense alongside a logo. */
+function logoSize(brand: Partial<CampaignBrand>): Pick<CampaignBrand, "logoWidth" | "logoHeight"> {
+  if (!normalizeHttpUrl(brand.logoUrl)) return {};
+  const width = Math.round(Number(brand.logoWidth));
+  const height = Math.round(Number(brand.logoHeight));
+  if (!(width >= 1 && width <= 200 && height >= 1 && height <= 64)) return {};
+  return { logoWidth: width, logoHeight: height };
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function stringValue(value: unknown): string {

@@ -1,3 +1,4 @@
+import { campaignBrandFromSite } from "../../../shared/campaign-brand";
 import {
   createEmptyCampaignDocument,
   parseCampaignDocument,
@@ -9,7 +10,8 @@ import {
   type CampaignAudienceEvaluation,
   type CampaignAudienceSubscriber,
 } from "./campaign-audience";
-import { renderCampaign } from "./campaign-renderer";
+import { campaignLayouts } from "../../../shared/campaign-layouts";
+import { renderCampaign, renderCampaignLayoutPreview } from "./campaign-renderer";
 import { getSiteBranding } from "./site-branding";
 import { getOwnerProfile, getPublicSiteOrigin, getR2SiteFileKey } from "./sites";
 import type { DbSite, Env } from "./types";
@@ -158,6 +160,7 @@ export async function createCampaign(
   const revisionId = newId("campaign-revision");
   const name = normalizeText(input.name, 160) || "Untitled campaign";
   const audienceFilter = normalizeCampaignAudienceFilter(input.audienceFilter);
+  const look = campaignBrandFromSite(branding);
   const document = createEmptyCampaignDocument({
     name: defaultCampaignSenderName(site.username),
     mailingAddress: site.campaign_mailing_address || "",
@@ -165,11 +168,10 @@ export async function createCampaign(
       custom_domain:
         site.custom_domain_status === "active" ? site.custom_domain : null,
     }) || "https://me3.app/",
-    logoUrl: null,
-    accentColor: branding.accentColor,
-    backgroundColor: branding.backgroundColor,
-    surfaceColor: branding.surfaceColor,
-    textColor: branding.textColor,
+    ...look,
+    ...(look.logoUrl && branding.emailLogoWidth && branding.emailLogoHeight
+      ? { logoWidth: branding.emailLogoWidth, logoHeight: branding.emailLogoHeight }
+      : {}),
   });
   document.blocks.push({
     id: "intro",
@@ -211,14 +213,50 @@ export async function createCampaign(
 }
 
 /**
- * A new draft with the same subject, body and images. With `onlyNewSubscribers`, it goes only to
- * people the original didn't reach.
+ * The starting layouts for a Site, with its name filled in and rendered in its own logo and colours
+ * for the editor's "Start from" thumbnails.
+ */
+export async function listCampaignLayouts(
+  env: Env,
+  ownerId: string,
+  input: { siteId?: unknown; month?: unknown },
+) {
+  const siteId = normalizeReference(input.siteId);
+  const site = siteId ? await getOwnedSite(env, ownerId, siteId) : null;
+  if (!site) throw new CampaignInputError("Site not found", 404, "site_not_found");
+  const branding = await getSiteBranding(env, site);
+  const look = campaignBrandFromSite(branding);
+  const homeUrl = getPublicSiteOrigin(env, {
+    custom_domain: site.custom_domain_status === "active" ? site.custom_domain : null,
+  }) || "https://me3.app/";
+  const name = branding.displayName.trim() || defaultCampaignSenderName(site.username);
+  const month = normalizeText(input.month, 20)
+    || new Intl.DateTimeFormat("en-GB", { month: "long", timeZone: "UTC" }).format(new Date());
+  const brand = {
+    ...look,
+    ...(look.logoUrl && branding.emailLogoWidth && branding.emailLogoHeight
+      ? { logoWidth: branding.emailLogoWidth, logoHeight: branding.emailLogoHeight }
+      : {}),
+    name,
+    homeUrl,
+    mailingAddress: site.campaign_mailing_address || "",
+  };
+  return campaignLayouts({ businessName: name, homeUrl, month }).map((layout) => ({
+    ...layout,
+    html: renderCampaignLayoutPreview(brand, layout.blocks),
+  }));
+}
+
+/**
+ * A new draft with the same subject, body and images, wearing the Site's current logo and colours.
+ * With `onlyNewSubscribers`, it goes only to people the original didn't reach; with `allSubscribers`
+ * ("Start from a past email"), it goes to everyone on the list.
  */
 export async function duplicateCampaign(
   env: Env,
   ownerId: string,
   campaignId: string,
-  input: { onlyNewSubscribers?: unknown },
+  input: { onlyNewSubscribers?: unknown; allSubscribers?: unknown },
 ) {
   const source = await getCampaign(env, ownerId, campaignId);
   if (!source) throw new CampaignInputError("Campaign not found", 404, "campaign_not_found");
@@ -250,6 +288,11 @@ export async function duplicateCampaign(
     replyToAddress: source.revision.replyToAddress,
     document: {
       ...document,
+      brand: {
+        ...copy.revision.document.brand,
+        name: document.brand.name,
+        ...(document.brand.mailingAddress ? { mailingAddress: document.brand.mailingAddress } : {}),
+      },
       blocks: document.blocks.map((block) =>
         block.type === "image" && assetIds.has(block.assetId)
           ? {
@@ -261,10 +304,12 @@ export async function duplicateCampaign(
           : block,
       ),
     },
-    audienceFilter: {
-      ...sourceFilter,
-      notSentBy: input.onlyNewSubscribers === true ? source.id : null,
-    },
+    audienceFilter: input.allSubscribers === true
+      ? { kind: "all" }
+      : {
+        ...sourceFilter,
+        notSentBy: input.onlyNewSubscribers === true ? source.id : null,
+      },
   });
 }
 

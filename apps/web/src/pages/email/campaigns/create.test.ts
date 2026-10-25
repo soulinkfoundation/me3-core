@@ -151,6 +151,7 @@ describe("campaign editor", () => {
     expect(wrapper.findAll(".campaign-side-block h2").map((heading) => heading.text())).toEqual([
       "To",
       "From",
+      "Look",
       "Preview",
     ]);
     expect(wrapper.text()).toContain("Kieran Studio <campaign@example.com>");
@@ -387,5 +388,130 @@ describe("campaign editor", () => {
 
     expect(routerReplace).toHaveBeenCalledWith("/email/campaigns/campaign-1");
     wrapper.unmount();
+  });
+
+  describe("templates and brand (me3-bli3.2.12)", () => {
+    const branding = {
+      logoRef: "./files/logo.webp",
+      logoUrl: "https://kieran.example.com/files/logo.webp",
+      emailLogoUrl: "https://kieran.example.com/files/email-logo.png?v=abc",
+      emailLogoWidth: 180,
+      emailLogoHeight: 48,
+      accentColor: "#3d7a5c",
+      backgroundColor: "#f4f5f4",
+      textColor: "#18201d",
+    };
+    const layouts = [{
+      id: "event",
+      name: "Event or offer",
+      description: "When, where, price and a button",
+      subject: "Coming up at Kieran",
+      html: "<html></html>",
+      blocks: [
+        { id: "event-intro", type: "text", paragraphs: [{ style: "heading1", spans: [{ text: "Name of the event or offer" }] }] },
+        { id: "event-photo", type: "photo-slot" },
+        { id: "event-details", type: "text", paragraphs: [{ style: "bullet", spans: [{ text: "Price", marks: ["bold"] }, { text: " · Cost, or Free" }] }] },
+      ],
+    }];
+
+    function withBrand(next: (path: string) => unknown) {
+      const fallback = apiGet.getMockImplementation()!;
+      apiGet.mockImplementation((path: string) => {
+        if (path === "/sites/kieran/branding") return Promise.resolve({ branding });
+        if (path.startsWith("/email/campaigns/layouts")) return Promise.resolve({ layouts });
+        const result = next(path);
+        return result === undefined ? fallback(path) : Promise.resolve(result);
+      });
+    }
+
+    it("saves the Site's email logo and colour instead of dropping the logo", async () => {
+      withBrand(() => undefined);
+      const wrapper = mountEditor();
+      await flushPromises();
+
+      const saved = apiPut.mock.calls.at(-1)?.[1] as { document: { brand: Record<string, unknown> } };
+      expect(saved.document.brand).toMatchObject({
+        logoUrl: "https://kieran.example.com/files/email-logo.png?v=abc",
+        logoWidth: 180,
+        logoHeight: 48,
+        accentColor: "#3d7a5c",
+        name: "Kieran Studio",
+      });
+      const look = wrapper.findAll(".campaign-side-block")[2]!;
+      expect(look.text()).toContain("Logo and colour from your Site");
+      expect(look.get("img").attributes("src")).toBe(branding.emailLogoUrl);
+      expect(look.get("a").attributes("target")).toBe("_blank");
+      wrapper.unmount();
+    });
+
+    it("offers layouts and a past email while the body is empty, and a layout fills it", async () => {
+      routeQuery = {};
+      withBrand(() => undefined);
+      const wrapper = mountEditor();
+      await flushPromises();
+
+      const tiles = wrapper.findAll(".campaign-start__tile");
+      expect(tiles.map((tile) => tile.get(".campaign-start__name").text())).toEqual(["Event or offer", "A past email"]);
+      await tiles[0]!.trigger("click");
+      await flushPromises();
+
+      expect((wrapper.get(".campaign-field--subject input").element as HTMLInputElement).value).toBe("Coming up at Kieran");
+      const body = wrapper.getComponent({ name: "TiptapEditor" }).props("modelValue") as string;
+      expect(body).toContain("<h1>Name of the event or offer</h1>");
+      expect(body).toContain('alt="Photo slot"');
+      expect(wrapper.find(".campaign-start").exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("starts from a past email by copying it for all subscribers", async () => {
+      routeQuery = {};
+      withBrand((path) =>
+        path === "/email/campaigns"
+          ? {
+            campaigns: [
+              { id: "old-draft", status: "draft", subject: "Draft", previewText: "", sentAt: null, scheduledFor: null, updatedAt: "2026-10-01T00:00:00Z" },
+              { id: "sept", status: "sent", subject: "September news", previewText: "", sentAt: "2026-09-12T09:00:00Z", scheduledFor: null, updatedAt: "2026-09-12T09:00:00Z" },
+            ],
+          }
+          : undefined,
+      );
+      apiPost.mockResolvedValue({ campaign: makeCampaign({ id: "copy-1" }) });
+      const wrapper = mountEditor();
+      await flushPromises();
+
+      await wrapper.findAll(".campaign-start__tile").at(-1)!.trigger("click");
+      await flushPromises();
+      const rows = wrapper.findAll(".campaign-past__list button");
+      expect(rows.map((row) => row.get(".campaign-past__subject").text())).toEqual(["September news"]);
+      await rows[0]!.trigger("click");
+      await flushPromises();
+
+      expect(apiPost).toHaveBeenCalledWith("/email/campaigns/sept/duplicate", { allSubscribers: true });
+      expect(routerReplace).toHaveBeenCalledWith({ path: "/email/campaigns/create", query: { campaign: "copy-1" } });
+      wrapper.unmount();
+    });
+
+    it("won't send while starter text is left, but still sends a test", async () => {
+      withBrand(() => undefined);
+      apiPost.mockResolvedValue({ test: { status: "accepted" } });
+      const wrapper = mountEditor();
+      await flushPromises();
+      wrapper.getComponent({ name: "TiptapEditor" }).vm.$emit(
+        "update:modelValue",
+        "<h1>Autumn retreat</h1><ul><li><strong>Price</strong> · Cost, or Free</li></ul>",
+      );
+      await flushPromises();
+
+      await wrapper.findAll("button").find((button) => button.text() === "Review and send")!.trigger("click");
+      await flushPromises();
+      const panel = wrapper.get(".campaign-approval");
+      expect(panel.text()).toContain("Replace the starter text “Cost, or Free” first.");
+      expect(panel.text()).toContain("1 thing to fix");
+      const send = panel.findAll("button").find((button) => button.text().startsWith("Send to"))!;
+      expect(send.attributes("disabled")).toBeDefined();
+      const test = panel.findAll("button").find((button) => button.text() === "Send test")!;
+      expect(test.attributes("disabled")).toBeUndefined();
+      wrapper.unmount();
+    });
   });
 });

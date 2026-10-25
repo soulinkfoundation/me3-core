@@ -774,6 +774,17 @@ const runtimeMigrations: RuntimeMigration[] = [
       await addColumnIfMissing(db, "sites", "campaign_mailing_address", "TEXT");
     },
   },
+  // The email copy of a Site's logo, a PNG on white with its display size (me3-bli3.2.12).
+  {
+    id: "0093_site_branding_email_logo",
+    checksum: "2026-10-25-site-branding-email-logo-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "site_branding"))) return;
+      await addColumnIfMissing(db, "site_branding", "email_logo_ref", "TEXT");
+      await addColumnIfMissing(db, "site_branding", "email_logo_width", "INTEGER");
+      await addColumnIfMissing(db, "site_branding", "email_logo_height", "INTEGER");
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

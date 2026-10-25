@@ -18,6 +18,8 @@ const props = defineProps<{
   leftOut?: string;
   senderReady: boolean;
   mailingAddressMissing?: boolean;
+  /** Layout starter text still in the email; Send waits until it's replaced (Send test still works). */
+  starterText?: string;
   sendsLeft?: number | null;
   timeZone: string;
   testing?: boolean;
@@ -44,6 +46,7 @@ const count = computed(() => props.recipientCount || 0);
 const blocker = computed(() => {
   if (!props.senderReady) return "Sending isn't set up yet, so this stays a draft.";
   if (props.mailingAddressMissing) return "Add a mailing address in From before sending.";
+  if (props.starterText) return `Replace the starter text “${props.starterText}” first.`;
   if (!count.value) return "Nobody on this list can be emailed yet.";
   if (props.sendsLeft !== null && props.sendsLeft !== undefined && count.value > props.sendsLeft) {
     return `This needs ${formatCount(count.value)} sends and ${formatCount(props.sendsLeft)} are left this month.`;
@@ -100,7 +103,7 @@ async function approve() {
   <section class="campaign-approval" :aria-labelledby="titleId">
     <div class="campaign-approval__head">
       <h2 :id="titleId">Ready to send</h2>
-      <span class="campaign-approval__pill">Needs your OK</span>
+      <span class="campaign-approval__pill">{{ starterText ? "1 thing to fix" : "Needs your OK" }}</span>
     </div>
     <dl class="campaign-approval__grid">
       <dt>To</dt>

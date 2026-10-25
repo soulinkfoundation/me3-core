@@ -19,6 +19,7 @@ import {
   createCampaign,
   deleteCampaign,
   duplicateCampaign,
+  listCampaignLayouts,
   getCampaign,
   listCampaignCustomerItems,
   listCampaigns,
@@ -29,6 +30,7 @@ import {
   EMAIL_CAMPAIGNS_PLUGIN_ID,
   type CampaignAddOnPlanKey,
 } from "@me3-core/plugin-email-campaigns";
+import { findCampaignStarterText } from "../../../../shared/campaign-layouts";
 import { getCampaignResults } from "../campaign-results";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { isCorePluginEnabled } from "../plugins";
@@ -136,6 +138,24 @@ export function registerCampaignRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (pluginError) return pluginError;
     try {
       return c.json({ items: await listCampaignCustomerItems(c.env, ownerId, c.req.query("siteId") || "") });
+    } catch (error) {
+      return campaignError(c, error);
+    }
+  });
+
+  // Newsletter, News and Event or offer, filled in for the Site and rendered in its brand.
+  app.get("/api/email/campaigns/layouts", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const pluginError = await requireCampaignPlugin(c);
+    if (pluginError) return pluginError;
+    try {
+      return c.json({
+        layouts: await listCampaignLayouts(c.env, ownerId, {
+          siteId: c.req.query("siteId"),
+          month: c.req.query("month"),
+        }),
+      });
     } catch (error) {
       return campaignError(c, error);
     }
@@ -250,7 +270,10 @@ export function registerCampaignRoutes(app: AppHono, deps: OwnerRouteDeps) {
         ownerId,
         c.req.param("campaignId"),
       );
+      const campaign = await getCampaign(c.env, ownerId, c.req.param("campaignId"));
       return c.json({
+        // Starter text from a layout that hasn't been replaced yet; Send waits until it is.
+        starterText: campaign ? findCampaignStarterText(campaign.revision.document) : [],
         audience: {
           eligibleCount: audience.eligible.length,
           excludedCount: audience.excluded.length,

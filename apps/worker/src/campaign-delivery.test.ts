@@ -15,7 +15,7 @@ import {
   startCampaignAddOnCheckout,
   startCampaignDelivery,
 } from "./campaign-delivery";
-import { createCampaign, deleteCampaign, getCampaign, saveCampaignDraft } from "./campaigns";
+import { createCampaign, deleteCampaign, duplicateCampaign, getCampaign, listCampaignLayouts, saveCampaignDraft } from "./campaigns";
 import type { Env } from "./types";
 
 const migrationFiles = [
@@ -25,6 +25,7 @@ const migrationFiles = [
   "../migrations/0044_site_branding.sql",
   "../migrations/0091_email_campaign_approvals.sql",
   "../migrations/0092_campaign_mailing_address.sql",
+  "../migrations/0093_site_branding_email_logo.sql",
 ];
 const migrations = migrationFiles.map((path) =>
   readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"),
@@ -280,6 +281,60 @@ describe("campaign delivery lifecycle", () => {
       code: "mailing_address_required",
       status: 409,
     });
+  });
+
+  it("refuses a real send while layout starter text is left in", async () => {
+    const current = await getCampaign(env, "owner", campaignId);
+    await saveCampaignDraft(env, "owner", campaignId, {
+      subject: "A useful update",
+      document: {
+        ...current!.revision.document,
+        blocks: [{
+          id: "details",
+          type: "text",
+          paragraphs: [
+            { style: "bullet", spans: [{ text: "When", marks: ["bold"] }, { text: " · Fri 14 November" }] },
+            { style: "bullet", spans: [{ text: "Price", marks: ["bold"] }, { text: " · Cost, or Free" }] },
+          ],
+        }],
+      },
+    });
+
+    await expect(startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher)).rejects.toMatchObject({
+      code: "starter_text_left",
+      message: 'Replace the starter text "Cost, or Free" first.',
+    });
+  });
+
+  it("wears the Site's email logo and current colours, also when starting from a past email", async () => {
+    database.exec(`UPDATE site_branding SET logo_ref = './files/logo.webp',
+      email_logo_ref = './files/email-logo.png?v=abc', email_logo_width = 180, email_logo_height = 48`);
+    const branded = await createCampaign(env, "owner", { siteId: "site-1" });
+    expect(branded?.revision.document.brand).toMatchObject({
+      logoUrl: "https://publisher.example.com/files/email-logo.png?v=abc",
+      logoWidth: 180,
+      logoHeight: 48,
+    });
+    expect(branded?.revision.renderedHtml).toContain('src="https://publisher.example.com/files/email-logo.png?v=abc"');
+
+    database.exec("UPDATE site_branding SET accent_color = '#993311'");
+    database.exec(`UPDATE email_campaigns SET audience_filter_json = '{"kind":"customers","itemRef":null}' WHERE id = '${campaignId}'`);
+    const copy = await duplicateCampaign(env, "owner", campaignId, { allSubscribers: true });
+    expect(copy?.revision.subject).toBe("A useful update");
+    expect(copy?.audienceFilter).toEqual({ kind: "all" });
+    expect(copy?.revision.document.brand).toMatchObject({
+      accentColor: "#993311",
+      logoUrl: "https://publisher.example.com/files/email-logo.png?v=abc",
+      mailingAddress: "PO Box 12, Dublin 2",
+    });
+  });
+
+  it("offers the three starting layouts filled in for the Site", async () => {
+    const layouts = await listCampaignLayouts(env, "owner", { siteId: "site-1", month: "October" });
+    expect(layouts.map((layout) => layout.name)).toEqual(["Newsletter", "News", "Event or offer"]);
+    expect(layouts[0].subject).toBe("October at Publisher brand");
+    expect(layouts[0].html).toContain("Your photo");
+    expect(layouts[2].html).toContain("Cost, or Free");
   });
 
   it("refuses to send when the audience no longer matches the approved count", async () => {

@@ -22,6 +22,7 @@ import { useAppToast } from "../../composables/useAppToast";
 import { isPluginAccessEnabled } from "../../utils/pluginAccess";
 import { compressImage, resizeImage } from "../../utils/imageCompression";
 import { cloneSiteProfile, withoutCurrentSiteImage } from "../../utils/siteProfile";
+import { saveEmailLogo } from "../../utils/emailLogo";
 
 definePage({
   meta: {
@@ -119,6 +120,9 @@ type SiteBranding = {
   displayName: string;
   logoRef: string | null;
   logoUrl: string | null;
+  emailLogoUrl?: string | null;
+  emailLogoWidth?: number | null;
+  emailLogoHeight?: number | null;
   accentColor: string;
   backgroundColor: string;
   surfaceColor: string;
@@ -310,10 +314,9 @@ async function handleSiteLogoSelect(event: Event) {
     const nextProfile = cloneSiteProfile(currentProfile);
     nextProfile.logo = `./${uploaded.path}`;
     if (await saveSiteProfile(nextProfile)) {
-      await saveSiteBranding(
-        { logoRef: nextProfile.logo },
-        "Site logo updated.",
-      );
+      if (await saveSiteBranding({ logoRef: nextProfile.logo }, "Site logo updated.")) {
+        await refreshEmailLogo(image);
+      }
     }
   } catch (caught) {
     siteLogoError.value = caught instanceof Error
@@ -322,6 +325,15 @@ async function handleSiteLogoSelect(event: Event) {
     toastError(siteLogoError.value);
   } finally {
     siteLogoSaving.value = false;
+  }
+}
+
+/** Campaign emails use a PNG copy of the logo on white; a failure here only affects email. */
+async function refreshEmailLogo(source?: Blob) {
+  try {
+    siteBranding.value = await saveEmailLogo<SiteBranding>(username.value, source);
+  } catch {
+    // The campaign editor makes the copy the next time it opens.
   }
 }
 
@@ -337,12 +349,13 @@ async function removeSiteImage() {
 
     const nextProfile = withoutCurrentSiteImage(currentProfile);
     if (await saveSiteProfile(nextProfile)) {
-      await saveSiteBranding(
+      const saved = await saveSiteBranding(
         { logoRef: nextProfile.avatar || null },
         nextProfile.avatar
           ? "The site avatar is now used as the logo."
           : "Site image removed.",
       );
+      if (saved && nextProfile.avatar) await refreshEmailLogo();
     }
   } finally {
     siteLogoSaving.value = false;

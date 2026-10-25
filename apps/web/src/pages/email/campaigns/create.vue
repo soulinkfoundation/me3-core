@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { api } from "../../../api";
@@ -9,14 +9,24 @@ import CampaignEmailPreview from "../../../components/CampaignEmailPreview.vue";
 import CampaignApprovalCard from "../../../components/campaigns/CampaignApprovalCard.vue";
 import PageLoading from "../../../components/PageLoading.vue";
 import TiptapEditor from "../../../components/TiptapEditor.vue";
+import UiIcon from "../../../components/UiIcon.vue";
 import { useAppToast } from "../../../composables/useAppToast";
 import { useAuthStore } from "../../../stores/auth";
 import { useSitesStore } from "../../../stores/sites";
 import {
   campaignDocumentToEditorHtml,
   campaignEditorHtmlToBlocks,
+  campaignLayoutToEditorHtml,
   type CampaignDocument,
 } from "../../../utils/campaignDocument";
+import { needsEmailLogo, saveEmailLogo } from "../../../utils/emailLogo";
+import { campaignBrandFromSite } from "../../../../../../shared/campaign-brand";
+import { CAMPAIGN_RENDERER_VERSION } from "../../../../../../shared/campaign-document";
+import {
+  CAMPAIGN_STARTER_STRINGS,
+  findCampaignStarterText,
+  type CampaignLayout,
+} from "../../../../../../shared/campaign-layouts";
 import { exclusionReasonLabel, exclusionSentence, formatCount } from "../../../utils/campaigns";
 
 definePage({
@@ -57,12 +67,34 @@ type TransportStatus = {
   instructions: string[];
 };
 type Review = {
+  starterText?: string[];
   audience: {
     eligibleCount: number;
     excludedCount: number;
     exclusionCounts: Record<string, number>;
   };
   transport: TransportStatus;
+};
+
+type SiteBranding = {
+  logoRef: string | null;
+  logoUrl: string | null;
+  emailLogoUrl: string | null;
+  emailLogoWidth: number | null;
+  emailLogoHeight: number | null;
+  accentColor: string;
+  backgroundColor: string;
+  textColor: string;
+};
+type StartLayout = CampaignLayout & { html: string };
+type PastCampaign = {
+  id: string;
+  status: string;
+  subject: string;
+  previewText: string;
+  sentAt: string | null;
+  scheduledFor: string | null;
+  updatedAt: string;
 };
 
 /** Mirrors the Worker's default so a new draft shows the name it will be saved with. */
@@ -129,6 +161,18 @@ const brand = ref<CampaignDocument["brand"]>({
   textColor: "#18201d",
   accentColor: "#147d64",
 });
+const siteBranding = ref<SiteBranding | null>(null);
+const lookLogoFailed = ref<string | null>(null);
+const layouts = ref<StartLayout[]>([]);
+const pastOpen = ref(false);
+const pastLoading = ref(false);
+const pastCampaigns = ref<PastCampaign[]>([]);
+const pastCopying = ref("");
+const pastTitleId = `campaign-past-title-${useId()}`;
+const bodyRef = ref<HTMLElement | null>(null);
+const startTilesRef = ref<HTMLElement | null>(null);
+const thumbScale = ref(0.25);
+let thumbObserver: ResizeObserver | null = null;
 const fromSheetName = ref("");
 const fromSheetRepliesOn = ref(true);
 const fromSheetAddress = ref("");
@@ -158,7 +202,18 @@ const saveState = computed(() => {
   if (saving.value || creating.value) return "Saving…";
   return savedOnce.value ? "Saved" : "";
 });
-const currentRendererVersion = "me3.email-renderer.v3";
+const currentRendererVersion = CAMPAIGN_RENDERER_VERSION;
+const isDraft = computed(() => !campaign.value || campaign.value.status === "draft");
+// The "Start from" row shows only while the body is empty: no words and no photos.
+const bodyEmpty = computed(() =>
+  !/<img\b/i.test(richTextHtml.value) && !richTextHtml.value.replace(/<[^>]*>|&nbsp;|\u200b/gi, "").trim(),
+);
+const starterLeft = computed(() =>
+  findCampaignStarterText({ blocks: campaignEditorHtmlToBlocks(richTextHtml.value) }),
+);
+const brandSettingsPath = computed(() =>
+  siteUsername.value ? `/sites/${encodeURIComponent(siteUsername.value)}` : "/sites",
+);
 
 async function initialize() {
   loading.value = true;
@@ -175,6 +230,7 @@ async function initialize() {
       selectedSiteId.value = sites.sites[0]?.id || "";
       replyToAddress.value = ownerEmail.value;
       brand.value.name = defaultSenderName(selectedSite.value?.username || "") || brand.value.name;
+      void refreshSiteBrand();
     }
   } catch (caught) {
     loadFailed.value = true;
@@ -211,6 +267,7 @@ async function loadCampaign(campaignId: string) {
   }
   applyCampaign(response.campaign);
   savedOnce.value = true;
+  await refreshSiteBrand();
   if (response.campaign.revision.rendererVersion !== currentRendererVersion) {
     await saveDraft();
   }
@@ -231,11 +288,7 @@ function applyCampaign(next: Campaign) {
   subject.value = next.revision.subject;
   previewText.value = next.revision.previewText;
   replyToAddress.value = next.revision.replyToAddress || "";
-  brand.value = {
-    ...next.revision.document.brand,
-    logoUrl: null,
-    logoAlignment: "center",
-  };
+  brand.value = { ...next.revision.document.brand, logoAlignment: "center" };
   richTextHtml.value = campaignDocumentToEditorHtml(next.revision.document);
   queueMicrotask(() => {
     hydrating.value = false;
@@ -297,7 +350,7 @@ async function loadNotSentBySubject(campaignId: string) {
 function buildDocument(): CampaignDocument {
   return {
     version: "me3.campaign-document.v1",
-    brand: { ...brand.value, logoUrl: null, logoAlignment: "center" },
+    brand: { ...brand.value, logoAlignment: "center" },
     blocks: campaignEditorHtmlToBlocks(richTextHtml.value),
   };
 }
@@ -461,6 +514,134 @@ function saveFromSheet() {
   fromSheetOpen.value = false;
 }
 
+/**
+ * Every campaign wears its Site's logo and Primary colour (Site → Branding); there's no colour
+ * picker here. A draft follows the Site, and the email copy of the logo is made the first time.
+ */
+async function refreshSiteBrand() {
+  const username = siteUsername.value;
+  if (!username || !isDraft.value) return;
+  try {
+    let branding = (await api.get<{ branding: SiteBranding }>(
+      `/sites/${encodeURIComponent(username)}/branding`,
+    )).branding;
+    if (needsEmailLogo(branding)) {
+      branding = await saveEmailLogo<SiteBranding>(username).catch(() => branding);
+    }
+    if (username !== siteUsername.value) return;
+    siteBranding.value = branding;
+    const look = campaignBrandFromSite(branding);
+    const size = look.logoUrl && branding.emailLogoWidth && branding.emailLogoHeight
+      ? { logoWidth: branding.emailLogoWidth, logoHeight: branding.emailLogoHeight }
+      : { logoWidth: undefined, logoHeight: undefined };
+    const next = { ...brand.value, ...look, ...size };
+    if (!next.logoWidth) {
+      delete next.logoWidth;
+      delete next.logoHeight;
+    }
+    if (JSON.stringify(next) !== JSON.stringify(brand.value)) brand.value = next;
+  } catch {
+    // The email keeps the look it was saved with.
+  }
+  void loadLayouts();
+}
+
+async function loadLayouts() {
+  if (!selectedSiteId.value) return;
+  try {
+    const month = new Intl.DateTimeFormat("en-GB", { month: "long", timeZone: ownerTimeZone }).format(new Date());
+    const response = await api.get<{ layouts: StartLayout[] }>(
+      `/email/campaigns/layouts?siteId=${encodeURIComponent(selectedSiteId.value)}&month=${encodeURIComponent(month)}`,
+    );
+    layouts.value = response.layouts || [];
+  } catch {
+    layouts.value = [];
+  }
+}
+
+function pickLayout(layout: StartLayout) {
+  richTextHtml.value = campaignLayoutToEditorHtml(layout.blocks);
+  if (!subject.value.trim()) subject.value = layout.subject;
+}
+
+async function openPastEmails() {
+  pastOpen.value = true;
+  pastLoading.value = true;
+  try {
+    const response = await api.get<{ campaigns: PastCampaign[] }>("/email/campaigns");
+    const when = (item: PastCampaign) => Date.parse(item.sentAt || item.scheduledFor || item.updatedAt) || 0;
+    pastCampaigns.value = (response.campaigns || [])
+      .filter((item) => item.status === "sent" || item.status === "scheduled")
+      .sort((a, b) => when(b) - when(a))
+      .slice(0, 20);
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't load your past emails.");
+    pastOpen.value = false;
+  } finally {
+    pastLoading.value = false;
+  }
+}
+
+/** Copies a sent or scheduled email into a new draft for everyone on the list, in today's brand. */
+async function startFromPast(item: PastCampaign) {
+  if (pastCopying.value) return;
+  pastCopying.value = item.id;
+  try {
+    const response = await api.post<{ campaign: Campaign }>(
+      `/email/campaigns/${encodeURIComponent(item.id)}/duplicate`,
+      { allSubscribers: true },
+    );
+    pastOpen.value = false;
+    await router.replace({ path: "/email/campaigns/create", query: { campaign: response.campaign.id } });
+    applyCampaign(response.campaign);
+    savedOnce.value = true;
+    void loadReview();
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't copy that email.");
+  } finally {
+    pastCopying.value = "";
+  }
+}
+
+function pastLabel(item: PastCampaign) {
+  const at = item.sentAt || item.scheduledFor;
+  const date = at
+    ? new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: ownerTimeZone }).format(new Date(at))
+    : "";
+  return item.status === "scheduled" ? `Scheduled · ${date}` : `Sent · ${date}`;
+}
+
+/** Tints starter text the owner hasn't replaced, without touching the editor's own DOM. */
+function tintStarterText() {
+  const highlights = (globalThis as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+  const HighlightCtor = (globalThis as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
+  if (!highlights || !HighlightCtor) return;
+  const root = bodyRef.value?.querySelector(".ProseMirror");
+  if (!root || !starterLeft.value.length) {
+    highlights.delete("campaign-starter");
+    return;
+  }
+  const ranges: Range[] = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.textContent || "";
+    for (const phrase of CAMPAIGN_STARTER_STRINGS) {
+      if (!starterLeft.value.includes(phrase)) continue;
+      for (let at = text.indexOf(phrase); at >= 0; at = text.indexOf(phrase, at + phrase.length)) {
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.setEnd(node, at + phrase.length);
+        ranges.push(range);
+      }
+    }
+  }
+  highlights.set("campaign-starter", new HighlightCtor(...ranges));
+}
+
+function refreshBrandOnReturn() {
+  if (document.visibilityState === "visible") void refreshSiteBrand();
+}
+
 async function uploadCampaignImage(input: {
   blob: Blob;
   filename: string;
@@ -482,6 +663,7 @@ watch([subject, previewText, replyToAddress, richTextHtml, brand], scheduleSave,
 watch([selectedSiteId, audienceKind, audienceItem, notSentBy], async (next, previous) => {
   if (previous[0] && previous[0] !== next[0]) audienceItem.value = "";
   if (next[0] !== previous[0]) void loadAudienceItems(next[0]);
+  if (previous[0] && next[0] !== previous[0]) void refreshSiteBrand();
   if (hydrating.value || !campaign.value) return;
   // Who it goes to changes the count, so save straight away and recount.
   recipients.value = null;
@@ -493,9 +675,43 @@ watch([subject, previewText, richTextHtml, brand, replyToAddress], () => {
   if (!hydrating.value) reviewOpen.value = false;
 }, { deep: true });
 
-onMounted(() => void initialize());
+// The editor renders its DOM on its own schedule, so the tint follows the DOM, not the model.
+let tintObserver: MutationObserver | null = null;
+let tintFrame = 0;
+watch(bodyRef, (body) => {
+  tintObserver?.disconnect();
+  if (!body || typeof MutationObserver === "undefined") return;
+  tintObserver = new MutationObserver(() => {
+    cancelAnimationFrame(tintFrame);
+    tintFrame = requestAnimationFrame(tintStarterText);
+  });
+  tintObserver.observe(body, { childList: true, subtree: true, characterData: true });
+  void nextTick(tintStarterText);
+});
+// Thumbnails are the real 600px email, scaled to the tile width.
+watch(startTilesRef, (tiles) => {
+  thumbObserver?.disconnect();
+  tintObserver?.disconnect();
+  cancelAnimationFrame(tintFrame);
+  thumbObserver = null;
+  if (!tiles || typeof ResizeObserver === "undefined") return;
+  thumbObserver = new ResizeObserver(() => {
+    const thumb = tiles.querySelector<HTMLElement>(".campaign-start__thumb");
+    if (thumb?.clientWidth) thumbScale.value = thumb.clientWidth / 600;
+  });
+  thumbObserver.observe(tiles);
+});
+
+onMounted(() => {
+  void initialize();
+  // Change opens Site → Branding in a new tab; coming back picks up the new look.
+  document.addEventListener("visibilitychange", refreshBrandOnReturn);
+});
 onBeforeUnmount(() => {
   if (saveTimer !== null) window.clearTimeout(saveTimer);
+  document.removeEventListener("visibilitychange", refreshBrandOnReturn);
+  thumbObserver?.disconnect();
+  (globalThis as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights?.delete("campaign-starter");
 });
 </script>
 
@@ -547,6 +763,7 @@ onBeforeUnmount(() => {
         :left-out="leftOut"
         :sender-ready="sendingReady"
         :mailing-address-missing="!brand.mailingAddress"
+        :starter-text="starterLeft[0] || review?.starterText?.[0] || ''"
         :sends-left="sendsLeft"
         :time-zone="ownerTimeZone"
         :testing="testing"
@@ -566,13 +783,38 @@ onBeforeUnmount(() => {
             <span>Preview line</span>
             <input v-model="previewText" maxlength="240" placeholder="Shown after the subject in the inbox" />
           </label>
-          <TiptapEditor
-            v-model="richTextHtml"
-            class="campaign-editor__body"
-            variant="campaign"
-            placeholder="Write your email…"
-            :upload-image="uploadCampaignImage"
-          />
+          <div ref="bodyRef" class="campaign-editor__body-wrap">
+            <TiptapEditor
+              v-model="richTextHtml"
+              class="campaign-editor__body"
+              variant="campaign"
+              placeholder="Write your email…"
+              :upload-image="uploadCampaignImage"
+            />
+            <section v-if="isDraft && bodyEmpty" class="campaign-start" aria-labelledby="campaign-start-title">
+              <h2 id="campaign-start-title">Or start from</h2>
+              <div ref="startTilesRef" class="campaign-start__tiles">
+                <button
+                  v-for="layout in layouts"
+                  :key="layout.id"
+                  type="button"
+                  class="campaign-start__tile"
+                  @click="pickLayout(layout)"
+                >
+                  <span class="campaign-start__thumb" aria-hidden="true">
+                    <iframe :srcdoc="layout.html" sandbox="" tabindex="-1" title="" :style="{ transform: `scale(${thumbScale})` }" />
+                  </span>
+                  <span class="campaign-start__name">{{ layout.name }}</span>
+                  <span class="campaign-start__desc">{{ layout.description }}</span>
+                </button>
+                <button type="button" class="campaign-start__tile campaign-start__tile--past" @click="openPastEmails">
+                  <span class="campaign-start__thumb" aria-hidden="true"><UiIcon name="Copy" :size="22" /></span>
+                  <span class="campaign-start__name">A past email</span>
+                  <span class="campaign-start__desc">Copy one you've sent</span>
+                </button>
+              </div>
+            </section>
+          </div>
         </section>
 
         <aside class="campaign-editor__side" aria-label="Details">
@@ -604,6 +846,31 @@ onBeforeUnmount(() => {
             </p>
           </section>
 
+          <section class="campaign-side-block" aria-labelledby="campaign-look-title">
+            <div class="campaign-side-block__head">
+              <h2 id="campaign-look-title">Look</h2>
+              <RouterLink
+                class="campaign-side-block__change"
+                :to="brandSettingsPath"
+                target="_blank"
+                rel="noopener"
+              >Change</RouterLink>
+            </div>
+            <div class="campaign-look">
+              <img
+                v-if="brand.logoUrl && lookLogoFailed !== brand.logoUrl"
+                class="campaign-look__logo"
+                :src="brand.logoUrl"
+                alt=""
+                @error="lookLogoFailed = brand.logoUrl"
+              />
+              <span class="campaign-look__swatch" :style="{ background: brand.accentColor }" aria-hidden="true" />
+            </div>
+            <p class="campaign-side-block__hint">
+              {{ brand.logoUrl || siteBranding?.logoRef ? "Logo and colour from your Site" : "Add your logo on your Site" }}
+            </p>
+          </section>
+
           <section class="campaign-side-block campaign-side-block--preview" aria-labelledby="campaign-preview-title">
             <h2 id="campaign-preview-title">Preview</h2>
             <CampaignEmailPreview
@@ -618,6 +885,28 @@ onBeforeUnmount(() => {
         </aside>
       </div>
     </div>
+
+    <AppDialog :open="pastOpen" :labelled-by="pastTitleId" close-on-backdrop @close="pastOpen = false">
+      <div class="campaign-from-sheet campaign-past">
+        <div>
+          <h2 :id="pastTitleId">Start from a past email</h2>
+          <p class="campaign-past__sub">Copies the subject, preview line, words and photos. It goes to all subscribers unless you change it.</p>
+        </div>
+        <p v-if="pastLoading" class="campaign-audience-count">Loading…</p>
+        <p v-else-if="!pastCampaigns.length" class="campaign-audience-count">Emails you've sent or scheduled show here.</p>
+        <ul v-else class="campaign-past__list">
+          <li v-for="item in pastCampaigns" :key="item.id">
+            <button type="button" :disabled="Boolean(pastCopying)" @click="startFromPast(item)">
+              <span class="campaign-past__subject">{{ item.subject || "No subject" }}</span>
+              <span class="campaign-past__meta">{{ pastCopying === item.id ? "Copying…" : pastLabel(item) }}</span>
+            </button>
+          </li>
+        </ul>
+        <div class="campaign-from-sheet__actions">
+          <Button color="outline" shape="soft" size="compact" type="button" @click="pastOpen = false">Cancel</Button>
+        </div>
+      </div>
+    </AppDialog>
 
     <AppDialog :open="audienceSheetOpen" :labelled-by="audienceSheetTitleId" close-on-backdrop @close="audienceSheetOpen = false">
       <form class="campaign-from-sheet" @submit.prevent="audienceSheetOpen = false">
@@ -773,13 +1062,48 @@ onBeforeUnmount(() => {
 .campaign-from-sheet { box-sizing: border-box; display: grid; gap: 16px; width: min(100%, 420px); padding: 20px; border-radius: var(--ui-radius-lg); background: var(--ui-surface); color: var(--ui-text); box-shadow: var(--ui-shadow-md); }
 .campaign-from-sheet h2 { margin: 0; font-size: 18px; }
 .campaign-from-sheet__actions { display: flex; justify-content: flex-end; gap: 8px; }
+.campaign-editor__body-wrap { position: relative; min-width: 0; }
+.campaign-start { margin-top: 14px; }
+.campaign-start h2 { margin: 0 0 8px; color: var(--ui-text-muted); font-size: 12px; font-weight: 600; }
+.campaign-start__tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.campaign-start__tile { display: grid; align-content: start; gap: 2px; min-width: 0; padding: 6px 6px 8px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); background: var(--ui-surface); color: var(--ui-text); font: inherit; text-align: left; cursor: pointer; }
+.campaign-start__tile:hover { border-color: var(--ui-accent); }
+.campaign-start__tile:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.campaign-start__thumb { position: relative; display: grid; place-items: center; height: 118px; margin-bottom: 4px; overflow: hidden; border-radius: var(--ui-radius-sm); background: #f4f5f4; color: var(--ui-text-muted); }
+.campaign-start__tile--past .campaign-start__thumb { background: var(--ui-surface-muted); }
+/* The email is 600px wide and scaled down to the tile. */
+.campaign-start__thumb iframe { position: absolute; top: 0; left: 0; width: 600px; height: 1200px; border: 0; transform-origin: 0 0; pointer-events: none; color-scheme: light; }
+.campaign-start__name { font-size: 13px; font-weight: 600; }
+.campaign-start__desc { color: var(--ui-text-muted); font-size: 12px; line-height: 1.35; }
+.campaign-look { display: flex; align-items: center; gap: 8px; }
+.campaign-look__logo { width: auto; max-width: 160px; height: 32px; object-fit: contain; border: 1px solid var(--ui-border); border-radius: 6px; background: #ffffff; }
+.campaign-look__swatch { width: 16px; height: 16px; border: 1px solid var(--ui-border); border-radius: 50%; }
+a.campaign-side-block__change { display: inline-flex; align-items: center; text-decoration: none; }
+.campaign-past { width: min(100%, 460px); }
+.campaign-past h2 { margin: 0; font-size: 18px; }
+.campaign-past__sub { margin: 4px 0 0; color: var(--ui-text-muted); font-size: 13px; }
+.campaign-past__list { display: grid; max-height: 360px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.campaign-past__list li + li { border-top: 1px solid var(--ui-border); }
+.campaign-past__list button { display: grid; gap: 2px; width: 100%; min-height: 48px; padding: 8px 4px; border: 0; background: none; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer; }
+.campaign-past__list button:hover:not(:disabled) { background: var(--ui-surface-muted); }
+.campaign-past__list button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: -2px; border-radius: 6px; }
+.campaign-past__subject { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.campaign-past__meta { color: var(--ui-text-muted); font-size: 12px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (max-width: 860px) {
   .campaign-editor__grid { grid-template-columns: 1fr; gap: 8px; }
   .campaign-editor__side { position: static; }
   .campaign-side-block:first-child { padding-top: 14px; border-top: 1px solid var(--ui-border); }
 }
+@media (max-width: 560px) {
+  .campaign-start__tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 480px) {
   .campaign-editor-bar__saved { display: none; }
   }
+</style>
+
+<style>
+/* Starter text left from a layout (CSS Custom Highlight API; needs to be unscoped). */
+::highlight(campaign-starter) { background-color: color-mix(in srgb, var(--ui-warning, #b26a00) 22%, transparent); }
 </style>
