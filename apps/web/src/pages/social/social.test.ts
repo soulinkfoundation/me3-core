@@ -9,6 +9,7 @@ const apiPatch = vi.fn();
 const routeState = { query: {} as Record<string, string>, params: {} as Record<string, string>, fullPath: "/social" };
 const routerReplace = vi.fn();
 const routerPush = vi.fn();
+const toastError = vi.fn();
 
 vi.mock("unplugin-vue-router/runtime", () => ({ definePage: vi.fn() }));
 vi.mock("vue-router", () => ({
@@ -25,6 +26,10 @@ vi.mock("../../api", () => ({
     patch: (...args: unknown[]) => apiPatch(...args),
     delete: vi.fn(),
   },
+}));
+
+vi.mock("../../composables/useAppToast", () => ({
+  useAppToast: () => ({ toastError, toastSuccess: vi.fn(), toastFromUnknown: vi.fn(), toast: vi.fn() }),
 }));
 
 import SocialIndex from "./index.vue";
@@ -83,6 +88,22 @@ describe("Social page", () => {
     await tabs[1]!.trigger("click");
     expect(wrapper.findAll(".social-row--link").map((row) => row.attributes("data-to"))).toEqual(["/social/draft"]);
     expect(wrapper.text()).not.toMatch(/Version|Publication|Source/);
+  });
+
+  it("says in plain words why an account didn't connect", async () => {
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [] },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [] },
+      "/social/suggestions": { suggestions: [] },
+    });
+    routeState.query = { social_error: "x_config" };
+    mount(SocialIndex, { global: { stubs } });
+    await flushPromises();
+
+    expect(toastError).toHaveBeenCalledWith("X isn't available to connect yet. ME3 needs to finish setting it up.");
+    expect(routerReplace).toHaveBeenCalledWith({ query: {} });
   });
 
   it("shows Needs attention when an account with scheduled posts is disconnected", async () => {

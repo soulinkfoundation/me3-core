@@ -7,6 +7,7 @@ import Button from "../../components/Button.vue";
 import ConfirmationDialog from "../../components/ConfirmationDialog.vue";
 import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
+import AppPageBar from "../../components/AppPageBar.vue";
 import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue";
 import SocialMarks from "../../components/social/SocialMarks.vue";
 import { useAppToast } from "../../composables/useAppToast";
@@ -477,11 +478,16 @@ onMounted(async () => {
       </section>
 
       <template v-else>
-        <header class="post-header">
-          <RouterLink class="post-header__back" to="/social"><UiIcon name="ArrowLeft" :size="16" /> Social</RouterLink>
-          <h1>{{ title }}</h1>
-          <Button class="post-header__quiet" color="ghost" shape="soft" size="small" @click="confirmDelete = true">Delete</Button>
-        </header>
+        <AppPageBar>
+          <template #title>
+            <RouterLink class="post-header__back" to="/social">Social</RouterLink>
+            <span class="post-header__sep" aria-hidden="true">/</span>
+            <span class="post-header__title">{{ title }}</span>
+          </template>
+          <template #actions>
+            <Button class="post-header__quiet" color="ghost" shape="soft" size="small" @click="confirmDelete = true">Delete</Button>
+          </template>
+        </AppPageBar>
 
         <section v-if="results.length" class="post-results" aria-label="Results">
           <ul>
@@ -686,12 +692,11 @@ onMounted(async () => {
 <style scoped>
 .post-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
 .post-column { box-sizing: border-box; width: min(100%, 880px); margin: 0 auto; padding: 16px 16px 96px; }
-.post-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; }
-.post-header h1 { margin: 0; overflow: hidden; font-size: 17px; font-weight: 650; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
-.post-header__back { display: inline-flex; align-items: center; gap: 4px; color: var(--ui-text-muted); font-size: 14px; text-decoration: none; }
+.post-header__back { color: var(--ui-text-muted); font-weight: 500; text-decoration: none; }
 .post-header__back:hover { color: var(--ui-text); }
-.post-header > :last-child { justify-self: end; }
-.post-column :deep(.post-header__quiet) { color: var(--ui-text-muted); font-weight: 500; }
+.post-header__sep { color: var(--ui-text-muted); font-weight: 400; }
+.post-header__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+:deep(.post-header__quiet) { color: var(--ui-text-muted); font-weight: 500; }
 
 .post-results { margin-top: 16px; padding: 4px 14px; border-radius: var(--ui-radius-lg); background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
 .post-results ul { margin: 0; padding: 0; list-style: none; }

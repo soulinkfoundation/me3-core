@@ -3,6 +3,7 @@ import { computed, onMounted, ref, useId, watch } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import AppDialog from "../../components/AppDialog.vue";
+import AppPageBar from "../../components/AppPageBar.vue";
 import Button from "../../components/Button.vue";
 import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
@@ -116,17 +117,24 @@ async function refresh() {
   await Promise.all([data.loadAccounts(), data.loadPosts(), loadIdeas()]);
 }
 
+/** Plain words for the error codes the hosted sign-in bridge sends back. */
+function connectErrorMessage(code: string): string {
+  const network = code.split("_")[0] || "";
+  const label = ["x", "linkedin", "instagram", "facebook", "youtube"].includes(network) ? networkLabel(network) : "That account";
+  if (code === "facebook_no_page") return "Facebook didn't share a Page ME3 can post to. Try again and pick a Page.";
+  if (code === "config" || code.endsWith("_config")) return `${label} isn't available to connect yet. ME3 needs to finish setting it up.`;
+  if (code === "access_denied" || code === "user_denied") return `${label} wasn't connected because access wasn't allowed.`;
+  if (code === "state_expired") return "That took too long. Try connecting again.";
+  return `${label} didn't connect. Try again.`;
+}
+
 function handleOAuthReturn() {
   const connected = typeof route.query.social_connected === "string" ? route.query.social_connected : "";
   const failed = typeof route.query.social_error === "string" ? route.query.social_error : "";
   if (!connected && !failed) return;
   if (connected) toastSuccess(`${networkLabel(connected)} connected.`);
   if (failed) {
-    toastError(
-      failed === "facebook_no_page"
-        ? "Facebook didn't share a Page ME3 can post to. Try again and pick a Page."
-        : "That account didn't connect. Try again.",
-    );
+    toastError(connectErrorMessage(failed));
   }
   const query = { ...route.query };
   delete query.social_connected;
@@ -240,9 +248,8 @@ onMounted(async () => {
       </section>
 
       <template v-else>
-        <header class="social-header">
-          <h1>Social</h1>
-          <div class="social-header__actions">
+        <AppPageBar title="Social">
+          <template #actions>
             <button type="button" class="social-accounts-button" aria-label="Social accounts" @click="accountsOpen = true">
               <SocialMarks v-if="connectedNetworks.length" :platforms="connectedNetworks" />
               <span v-else>Accounts</span>
@@ -250,8 +257,8 @@ onMounted(async () => {
             <Button color="ghost" shape="soft" size="compact" icon-only aria-label="New post" title="New post" @click="openComposer">
               <UiIcon name="Plus" :size="19" />
             </Button>
-          </div>
-        </header>
+          </template>
+        </AppPageBar>
 
         <ul v-if="attention.length" class="social-attention" aria-label="Needs attention">
           <li v-for="item in attention" :key="item.kind === 'failed' ? item.postId : item.network">
@@ -370,9 +377,6 @@ onMounted(async () => {
 <style scoped>
 .social-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
 .social-column { box-sizing: border-box; width: min(100%, 640px); margin: 0 auto; padding: 16px 16px 96px; }
-.social-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.social-header h1 { margin: 0; font-size: 22px; font-weight: 650; line-height: 1.2; }
-.social-header__actions { display: flex; align-items: center; gap: 6px; }
 .social-accounts-button {
   display: inline-flex;
   align-items: center;
