@@ -377,9 +377,28 @@ export function isMissingSubscribersTableError(error: unknown): boolean {
   return message.includes("subscribers") && /no such table|does not exist/i.test(message);
 }
 
+// Each request used to ask D1 whether its host is a public site, including
+// every script, stylesheet and image. The answer only changes when a site is
+// published or its domain changes, so it is kept per isolate for a short while
+// and cleared by the routes that change it.
+const PUBLIC_SITE_HOST_CACHE_TTL_MS = 30_000;
+const publicSiteHostCache = new Map<string, { value: boolean; expiresAt: number }>();
+
+export function clearPublicSiteHostCache(): void {
+  publicSiteHostCache.clear();
+}
+
 export async function isPublicSiteHost(env: Env, requestUrl: string): Promise<boolean> {
   const requestHost = hostnameFromUrl(requestUrl);
   if (!requestHost) return false;
+  const cached = publicSiteHostCache.get(requestHost);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const value = await resolvePublicSiteHost(env, requestHost);
+  publicSiteHostCache.set(requestHost, { value, expiresAt: Date.now() + PUBLIC_SITE_HOST_CACHE_TTL_MS });
+  return value;
+}
+
+async function resolvePublicSiteHost(env: Env, requestHost: string): Promise<boolean> {
   const configuredAdminHost = normalizeHost(env.ME3_ADMIN_HOST) || hostnameFromUrl(env.CORE_WEB_ORIGIN);
   const configuredApiHost = normalizeHost(env.ME3_API_HOST) || hostnameFromUrl(env.CORE_API_ORIGIN);
   if (hostsMatch(requestHost, configuredAdminHost) || hostsMatch(requestHost, configuredApiHost)) {

@@ -41,7 +41,7 @@ export function updateFeatureFavicon(path: string) {
   element.setAttribute("rel", "icon");
   element.setAttribute(
     "type",
-    feature === "assistant" ? "image/png" : "image/svg+xml",
+    feature === "assistant" ? "image/webp" : "image/svg+xml",
   );
   element.setAttribute("sizes", "any");
   element.href =
