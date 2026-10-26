@@ -24,6 +24,8 @@ type Approval = { id: string; pluginId: string; actionId: string; title: string;
 type Run = { id: string; title: string; promptSummary: string | null; status: string; startedAt: string | null; finishedAt: string | null; createdAt: string };
 type Activity = { id: string; title: string; summary: string | null; status: string | null; relatedId: string | null; createdAt: string };
 type WorkItem = { id: string; title: string; at: string; waiting: boolean; approval?: Approval };
+type ArchivedThread = { id: string; title: string | null; archivedAt: string | null; lastMessageAt: string | null; updatedAt: string };
+type ArchivedMessage = { id: string; role: string; text: string };
 
 // Memory is behavioural: how ME3 should work with the owner. Facts already live in ME3 data, which the
 // agent reads fresh each turn (see "Where it learns from"). Only active memories reach the agent.
@@ -58,6 +60,12 @@ const runs = ref<Run[]>([]);
 const activity = ref<Activity[]>([]);
 const showAllWork = ref(false);
 const showSources = ref(false);
+// Chats put away by Start fresh. They open read-only here: the main chat is never swapped back.
+const showArchived = ref(false);
+const archived = ref<ArchivedThread[] | null>(null);
+const archivedError = ref("");
+const openArchivedId = ref("");
+const archivedMessages = ref<ArchivedMessage[] | null>(null);
 const clearing = ref(false);
 const reviewing = ref<Approval | null>(null);
 const approvalBusy = ref(false);
@@ -79,6 +87,28 @@ const work = computed<WorkItem[]>(() => {
 });
 const visibleWork = computed(() => showAllWork.value ? work.value : work.value.slice(0, RECENT_COUNT));
 const nameInvalid = computed(() => nameDraft.value.trim().length > NAME_MAX);
+
+async function toggleArchived() {
+  showArchived.value = !showArchived.value;
+  if (!showArchived.value || archived.value) return;
+  archivedError.value = "";
+  try {
+    archived.value = (await api.get<{ threads: ArchivedThread[] }>("/assistant/threads?status=archived&limit=80")).threads;
+  } catch (err) {
+    archivedError.value = err instanceof ApiError ? err.message : "Couldn't load archived chats.";
+  }
+}
+
+async function openArchived(id: string) {
+  if (openArchivedId.value === id) { openArchivedId.value = ""; return; }
+  openArchivedId.value = id; archivedMessages.value = null; archivedError.value = "";
+  try {
+    const response = await api.get<{ messages: ArchivedMessage[] }>(`/assistant/threads/${encodeURIComponent(id)}/messages?limit=50`);
+    if (openArchivedId.value === id) archivedMessages.value = response.messages.filter(message => message.text.trim());
+  } catch (err) {
+    if (openArchivedId.value === id) archivedError.value = err instanceof ApiError ? err.message : "Couldn't load this chat.";
+  }
+}
 
 async function load() {
   loading.value = true; error.value = "";
@@ -324,6 +354,26 @@ onMounted(load);
             <span class="agent-row__text">{{ showAllWork ? 'Show less' : 'All activity' }}</span>
             <UiIcon :name="showAllWork ? 'ChevronUp' : 'ChevronDown'" :size="18" class="agent-row__chev" />
           </button>
+          <button type="button" class="agent-row" :aria-expanded="showArchived" @click="toggleArchived">
+            <UiIcon name="Archive" :size="20" class="agent-row__icon" />
+            <span class="agent-row__text">Archived chats</span>
+            <UiIcon :name="showArchived ? 'ChevronUp' : 'ChevronDown'" :size="18" class="agent-row__chev" />
+          </button>
+          <template v-if="showArchived">
+            <p v-if="archivedError" class="agent-empty">{{ archivedError }}</p>
+            <p v-else-if="!archived" class="agent-empty">Loading…</p>
+            <p v-else-if="!archived.length" class="agent-empty">No archived chats yet. Start fresh in Chat puts the current one here.</p>
+            <template v-for="thread in archived || []" :key="thread.id">
+              <button type="button" class="agent-work" :aria-expanded="openArchivedId === thread.id" @click="openArchived(thread.id)">
+                <span class="agent-row__text">{{ thread.title || 'Chat' }}<small>Archived · {{ when(thread.archivedAt || thread.lastMessageAt || thread.updatedAt) }}</small></span>
+                <UiIcon :name="openArchivedId === thread.id ? 'ChevronUp' : 'ChevronDown'" :size="18" class="agent-row__chev" />
+              </button>
+              <div v-if="openArchivedId === thread.id && archivedMessages" class="agent-transcript">
+                <p v-if="!archivedMessages.length" class="agent-note">This chat has no messages.</p>
+                <p v-for="message in archivedMessages" :key="message.id" class="agent-transcript__message" :class="{ 'is-owner': message.role === 'user' }">{{ message.text }}</p>
+              </div>
+            </template>
+          </template>
         </div>
         <button v-if="showAllWork && (runs.length || activity.length)" type="button" class="agent-quiet" :disabled="clearing" @click="clearActivity">{{ clearing ? 'Clearing…' : 'Clear activity' }}</button>
       </section>
@@ -377,6 +427,9 @@ button.agent-row, a.agent-row, button.agent-work { cursor: pointer; }
 .agent-sources .agent-note { margin: 4px 16px 0; }
 .agent-work__mark { display: grid; flex: 0 0 auto; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--ui-accent-soft, var(--ui-surface-muted)); color: var(--ui-accent); }
 .agent-work__mark.is-waiting { background: var(--ui-warning-soft, var(--ui-surface-muted)); color: var(--ui-warning, #b45309); }
+.agent-transcript { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow-y: auto; padding: 4px 16px 16px; }
+.agent-transcript__message { margin: 0; color: var(--ui-text); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-transcript__message.is-owner { align-self: flex-end; max-width: 85%; padding: 8px 12px; border-radius: 16px; background: color-mix(in oklab, var(--ui-accent) 16%, var(--ui-surface)); }
 .agent-empty { margin: 0; padding: 16px; color: var(--ui-text-muted); font-size: 14px; }
 .agent-quiet { align-self: flex-start; min-height: 44px; padding: 0 4px; border: 0; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
 .agent-quiet:hover { color: var(--ui-text); }

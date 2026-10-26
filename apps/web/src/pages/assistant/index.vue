@@ -734,6 +734,7 @@ async function startFresh() {
     await api.patch(`/assistant/threads/${encodeURIComponent(threadId)}`, { status: "archived" });
     assistantThreadId.value = null;
     agentChat.resetMessages();
+    toastSuccess("Chat archived. Find it in Your agent.");
     await router.replace({ query: { ...route.query, thread: undefined, project: undefined, new: undefined, view: "chat" } });
     await loadAssistantThreadFromRoute();
   } catch (err) {
