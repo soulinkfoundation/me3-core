@@ -18,6 +18,8 @@ export type CampaignBrand = {
   surfaceColor: string;
   textColor: string;
   accentColor: string;
+  /** Postal address shown in the footer; required before a real send (CAN-SPAM). */
+  mailingAddress?: string;
 };
 
 export type CampaignTextSpan = {
@@ -104,6 +106,9 @@ export function createEmptyCampaignDocument(brand: Partial<CampaignBrand> = {}):
       surfaceColor: normalizeColor(brand.surfaceColor, "#ffffff"),
       textColor: normalizeColor(brand.textColor, "#18201d"),
       accentColor: normalizeColor(brand.accentColor, "#147d64"),
+      ...(normalizeMailingAddress(brand.mailingAddress)
+        ? { mailingAddress: normalizeMailingAddress(brand.mailingAddress) }
+        : {}),
     },
     blocks: [],
   };
@@ -126,6 +131,7 @@ export function parseCampaignDocument(input: unknown): CampaignDocumentV1 {
     surfaceColor: stringValue(brandInput.surfaceColor),
     textColor: stringValue(brandInput.textColor),
     accentColor: stringValue(brandInput.accentColor),
+    mailingAddress: stringValue(brandInput.mailingAddress),
   }).brand;
   validateBrandInput(brandInput, issues);
 
@@ -283,6 +289,18 @@ function campaignBlockTextLength(block: CampaignBlock): number {
   if (block.type === "button") return block.label.length;
   if (block.type === "image") return block.alt.length + (block.caption?.length || 0);
   return 0;
+}
+
+/** One line, comma-separated, so the footer stays a quiet single line in every mail client. */
+export function normalizeMailingAddress(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value
+    .split(/[\r\n]+/)
+    .map((part) => part.trim().replace(/,+$/, ""))
+    .filter(Boolean)
+    .join(", ")
+    .replace(/\s+/g, " ")
+    .slice(0, 300);
 }
 
 function normalizeText(value: unknown, maxLength: number, trim = true): string {

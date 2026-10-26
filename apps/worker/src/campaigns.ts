@@ -75,7 +75,7 @@ export type OwnedCampaign = {
 type SiteRow = Pick<
   DbSite,
   "id" | "username" | "custom_domain" | "custom_domain_status"
->;
+> & { campaign_mailing_address?: string | null };
 
 /** `notSentBy` limits a send to subscribers an earlier campaign didn't reach ("send again to new subscribers"). */
 export type CampaignAudienceFilter =
@@ -160,6 +160,7 @@ export async function createCampaign(
   const audienceFilter = normalizeCampaignAudienceFilter(input.audienceFilter);
   const document = createEmptyCampaignDocument({
     name: defaultCampaignSenderName(site.username),
+    mailingAddress: site.campaign_mailing_address || "",
     homeUrl: getPublicSiteOrigin(env, {
       custom_domain:
         site.custom_domain_status === "active" ? site.custom_domain : null,
@@ -348,6 +349,13 @@ export async function saveCampaignDraft(
        WHERE id = ?`,
     ).bind(siteId, name, revisionId, JSON.stringify(audienceFilter), now, campaignId),
   ];
+  if (document.brand.mailingAddress) {
+    // Remember it so the site's next campaign starts with the same footer address.
+    statements.push(
+      env.DB.prepare("UPDATE sites SET campaign_mailing_address = ? WHERE id = ?")
+        .bind(document.brand.mailingAddress, siteId),
+    );
+  }
   for (const assetId of campaignAssetIds(document)) {
     statements.push(
       env.DB.prepare(
@@ -654,7 +662,7 @@ export function parseCampaignAudienceFilter(value: string): CampaignAudienceFilt
 
 async function getOwnedSite(env: Env, ownerId: string, siteId: string) {
   return env.DB.prepare(
-    `SELECT id, username, custom_domain, custom_domain_status
+    `SELECT id, username, custom_domain, custom_domain_status, campaign_mailing_address
      FROM sites WHERE id = ? AND user_id = ?`,
   )
     .bind(siteId, ownerId)

@@ -110,6 +110,8 @@ import { registerChannelRoutes } from "./routes/channels";
 import { registerAgentSchedulingRoutes } from "./routes/agent-scheduling";
 import { registerAssistantSkillsRoutes } from "./routes/assistant-skills";
 import { registerContactsRoutes } from "./routes/contacts";
+import { registerContactAvatarRoutes } from "./routes/contact-avatar";
+import { registerBatchRoutes } from "./routes/batch";
 import { registerLocationsRoutes } from "./routes/locations";
 import { registerCoreGithubUpdaterRoutes } from "./routes/core-github-updater";
 import { registerFilesRoutes } from "./routes/files";
@@ -214,6 +216,12 @@ import {
   type PublishManifest,
 } from "./sites";
 import { generateSiteHtml, type Me3SiteProfile } from "@me3-core/site-renderer";
+import {
+  OWNER_APP_ASSET_PATHS,
+  isOwnerAppStaticAssetPath,
+  isSpaFallbackResponse,
+  ownerAppAssetCacheControl,
+} from "./owner-app-assets";
 import type {
   BookingReminderQueueMessage,
   DbAgentChannelConnection,
@@ -389,14 +397,7 @@ const OWNER_APP_ROUTE_PREFIXES = [
   "/socials",
   "/wheel-of-life",
 ];
-// Every top-level entry in apps/web/public except the public site's own robots.txt, sitemap.xml and llms.txt;
-// anything missing here 404s on the installation host because the public site answers it.
-const OWNER_APP_ASSET_PATHS = [
-  "/assets", "/icons", "/images", "/landing-page-lab", "/manifest.webmanifest", "/sw.js",
-  "/favicon.ico", "/favicon.png", "/flower.png", "/me3protocol.jpg",
-  "/me3-logo-light.png", "/me3-logo-dark.png",
-  "/me3-dog-head-emoji-smooth.png", "/me3-dog-head-panting.gif", "/me3-dog-head-panting.webp",
-];
+// Owner app static file paths live in owner-app-assets.ts so the fast path and the SPA fallback agree.
 const STRICT_TRANSPORT_SECURITY_HEADER = "max-age=31536000";
 const fetchWithWorkerGlobalContext: typeof fetch = (input, init) =>
   globalThis.fetch(input, init);
@@ -460,6 +461,35 @@ app.use(
     credentials: true,
   }),
 );
+
+// Owner app static files (Vite output, icons, brand images) never depend on
+// D1 or the request host, so they skip every lookup below. The ASSETS binding
+// answers unknown paths with the SPA shell; those fall through so the public
+// site or the SPA fallback can decide.
+app.use("*", async (c, next) => {
+  if (!c.env.ASSETS) return next();
+  const method = c.req.method;
+  if (method !== "GET" && method !== "HEAD") return next();
+  const requestUrl = new URL(c.req.url);
+  const pathname = requestUrl.pathname;
+  if (!isOwnerAppStaticAssetPath(pathname)) return next();
+  const response = await c.env.ASSETS.fetch(c.req.raw);
+  if (response.status === 404 || isSpaFallbackResponse(response, pathname)) return next();
+  const served = applyOwnerAppAssetCachePolicy(response, pathname);
+  served.headers.set("X-Content-Type-Options", "nosniff");
+  if (requestUrl.protocol === "https:") {
+    served.headers.set("Strict-Transport-Security", STRICT_TRANSPORT_SECURITY_HEADER);
+  }
+  return served;
+});
+
+// Worker time is visible in the browser's network tab as Server-Timing, so a
+// slow request can be told apart from a slow network.
+app.use("*", async (c, next) => {
+  const startedAt = Date.now();
+  await next();
+  c.res.headers.append("Server-Timing", `worker;dur=${Date.now() - startedAt}`);
+});
 
 app.use("*", async (c, next) => {
   await next();
@@ -1563,6 +1593,8 @@ registerCalendarRoutes(app, { requireOwner, unauthorized });
 registerCalendarSourceRoutes(app, { requireOwner, unauthorized });
 
 registerContactsRoutes(app, { requireOwner, unauthorized });
+registerContactAvatarRoutes(app, { requireOwner, unauthorized });
+registerBatchRoutes(app, { requireOwner, unauthorized });
 registerLocationsRoutes(app, { requireOwner, unauthorized });
 
 registerCoreGithubUpdaterRoutes(app, { requireOwner, unauthorized });
@@ -1872,16 +1904,12 @@ function applyOwnerAppAssetCachePolicy(
   response: Response,
   pathname: string,
 ): Response {
-  if (
-    response.status < 200 ||
-    response.status >= 400 ||
-    !/^\/assets\/.+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/.test(pathname)
-  ) {
-    return response;
-  }
+  if (response.status < 200 || response.status >= 400) return response;
+  const cacheControl = ownerAppAssetCacheControl(pathname);
+  if (!cacheControl) return response;
 
   const headers = new Headers(response.headers);
-  headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  headers.set("Cache-Control", cacheControl);
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,

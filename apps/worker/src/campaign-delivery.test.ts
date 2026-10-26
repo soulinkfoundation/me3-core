@@ -28,6 +28,7 @@ const migrationFiles = [
   "../migrations/0043_email_campaign_delivery.sql",
   "../migrations/0044_site_branding.sql",
   "../migrations/0091_email_campaign_approvals.sql",
+  "../migrations/0092_campaign_mailing_address.sql",
 ];
 const migrations = migrationFiles.map((path) =>
   readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"),
@@ -224,7 +225,7 @@ describe("campaign delivery lifecycle", () => {
       subject: "A useful update",
       previewText: "A short preview",
       replyToAddress: "owner@example.com",
-      document,
+      document: { ...document, brand: { ...document?.brand, mailingAddress: "PO Box 12\nDublin 2" } },
     });
   });
 
@@ -260,6 +261,28 @@ describe("campaign delivery lifecycle", () => {
     ).rejects.toMatchObject({ code: "campaign_changed" });
     expect(database.prepare("SELECT status FROM email_campaigns WHERE id = ?").get(campaignId)).toEqual({
       status: "draft",
+    });
+  });
+
+  it("puts the mailing address in the footer and remembers it for the site's next campaign", async () => {
+    const current = await getCampaign(env, "owner", campaignId);
+    expect(current?.revision.document.brand.mailingAddress).toBe("PO Box 12, Dublin 2");
+    expect(current?.revision.renderedHtml).toContain("PO Box 12, Dublin 2");
+
+    const next = await createCampaign(env, "owner", { siteId: "site-1" });
+    expect(next?.revision.document.brand.mailingAddress).toBe("PO Box 12, Dublin 2");
+  });
+
+  it("refuses a real send without a mailing address", async () => {
+    const current = await getCampaign(env, "owner", campaignId);
+    await saveCampaignDraft(env, "owner", campaignId, {
+      subject: "A useful update",
+      document: { ...current!.revision.document, brand: { ...current!.revision.document.brand, mailingAddress: "" } },
+    });
+
+    await expect(startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher)).rejects.toMatchObject({
+      code: "mailing_address_required",
+      status: 409,
     });
   });
 

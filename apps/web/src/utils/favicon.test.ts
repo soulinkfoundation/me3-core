@@ -34,9 +34,9 @@ describe("favicon utilities", () => {
     const element = document.querySelector<HTMLLinkElement>(
       "#me3-feature-favicon",
     );
-    expect(element?.type).toBe("image/png");
+    expect(element?.type).toBe("image/webp");
     expect(element?.href).toBe(
-      `${window.location.origin}/me3-dog-head-emoji-smooth.png`,
+      `${window.location.origin}/me3-dog-head-emoji-smooth.webp`,
     );
   });
 

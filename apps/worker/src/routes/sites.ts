@@ -54,6 +54,7 @@ import {
   type ManagedSiteDomainStatus,
 } from "../managed-site-domains";
 import {
+  clearPublicSiteHostCache,
   EMAIL_REGEX,
   MAX_SITE_AUDIO_BYTES,
   USERNAME_REGEX,
@@ -1277,6 +1278,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     )
       .bind(domain, status, site.id)
       .run();
+      clearPublicSiteHostCache();
 
     return c.json({
       ok: true,
@@ -1352,6 +1354,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     )
       .bind(site.id)
       .run();
+      clearPublicSiteHostCache();
 
     return c.json({ ok: true });
   });
@@ -2024,6 +2027,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       )
         .bind(site.id)
         .run();
+        clearPublicSiteHostCache();
       if (profileJson) {
         queueNetworkDirectoryProfileSync(
           c,
@@ -2046,6 +2050,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     )
       .bind(site.id)
       .run();
+      clearPublicSiteHostCache();
     const publicProfileJson = await getSiteFileText(c.env, site.id, "public/me.json");
     if (publicProfileJson) {
       try {
@@ -2069,6 +2074,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     )
       .bind(site.id)
       .run();
+      clearPublicSiteHostCache();
     if (site.site_role === "profile") queueNetworkDirectoryProfileRemoval(c);
     return c.json({ ok: true });
   });
@@ -2252,6 +2258,7 @@ async function syncManagedDomainSite(
     )
       .bind(domainStatus.domain, domainStatus.status, site.id)
       .run();
+      clearPublicSiteHostCache();
     return;
   }
 
@@ -2266,6 +2273,7 @@ async function syncManagedDomainSite(
   )
     .bind(site.id)
     .run();
+    clearPublicSiteHostCache();
 }
 
 function managedSiteDomainHttpStatus(

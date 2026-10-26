@@ -46,7 +46,8 @@
     "deploy": "pnpm db:migrations:apply && wrangler deploy --config wrangler.toml",
     "deploy:cloudflare": "pnpm deploy:prepare && pnpm build && pnpm db:migrations:apply && wrangler deploy --config wrangler.toml",
     "deploy:cloudflare:d1-only": "pnpm deploy:cloudflare",
-    "deploy:cloudflare:with-r2": "pnpm deploy:prepare -- --with-r2 && pnpm build && pnpm db:migrations:apply && wrangler deploy --config wrangler.toml"
+    "deploy:cloudflare:with-r2": "pnpm deploy:prepare -- --with-r2 && pnpm build && pnpm db:migrations:apply && wrangler deploy --config wrangler.toml",
+    "perf:check": "node scripts/perf-check.mjs"
   },
   "cloudflare": {
     "bindings": {

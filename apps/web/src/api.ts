@@ -134,6 +134,104 @@ async function request<T>(
   return data as T
 }
 
+// ---------------------------------------------------------------------------
+// Read coalescing. A page issues its reads in the same tick, so identical GETs
+// share one promise and distinct GETs travel together in one POST /api/batch.
+// The Worker answers all of them in a single round trip. Development and test
+// builds keep one request per read so route mocks keep working.
+// ---------------------------------------------------------------------------
+const BATCHING_ENABLED = !import.meta.env.DEV && import.meta.env.MODE !== 'test'
+const BATCH_WINDOW_MS = 4
+const MAX_BATCH_SIZE = 25
+
+type PendingGet = {
+  endpoint: string
+  resolve: (value: unknown) => void
+  reject: (error: unknown) => void
+}
+type BatchResult = { status: number; body: unknown }
+
+const inflightGets = new Map<string, Promise<unknown>>()
+let pendingGets: PendingGet[] = []
+let batchTimer: ReturnType<typeof setTimeout> | null = null
+let batchSupported = true
+
+function isPlainGet(options: RequestInit): boolean {
+  return Object.keys(options).every((key) => key === 'method')
+}
+
+function coalescedGet<T>(endpoint: string): Promise<T> {
+  const existing = inflightGets.get(endpoint)
+  if (existing) return existing as Promise<T>
+  const promise = new Promise<T>((resolve, reject) => {
+    if (BATCHING_ENABLED && batchSupported) {
+      pendingGets.push({ endpoint, resolve: resolve as (value: unknown) => void, reject })
+      if (!batchTimer) batchTimer = setTimeout(flushBatch, BATCH_WINDOW_MS)
+    } else {
+      request<T>(endpoint, { method: 'GET' }).then(resolve, reject)
+    }
+  })
+  inflightGets.set(endpoint, promise)
+  promise.then(
+    () => inflightGets.delete(endpoint),
+    () => inflightGets.delete(endpoint)
+  )
+  return promise
+}
+
+function sendIndividually(group: PendingGet[]) {
+  for (const item of group) {
+    request<unknown>(item.endpoint, { method: 'GET' }).then(item.resolve, item.reject)
+  }
+}
+
+async function flushBatch() {
+  batchTimer = null
+  const group = pendingGets.splice(0, MAX_BATCH_SIZE)
+  if (pendingGets.length && !batchTimer) batchTimer = setTimeout(flushBatch, 0)
+  if (!group.length) return
+  if (group.length === 1) {
+    sendIndividually(group)
+    return
+  }
+  let results: BatchResult[]
+  try {
+    const response = await request<{ results?: BatchResult[] }>('/batch', {
+      method: 'POST',
+      body: JSON.stringify({ requests: group.map((item) => item.endpoint) }),
+    })
+    results = Array.isArray(response.results) ? response.results : []
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      for (const item of group) item.reject(error)
+      return
+    }
+    // An older Worker without /api/batch, or a failed batch: fall back to one request per read.
+    if (error instanceof ApiError && (error.status === 404 || error.status === 405)) batchSupported = false
+    sendIndividually(group)
+    return
+  }
+  group.forEach((item, index) => {
+    const result = results[index]
+    if (!result) {
+      request<unknown>(item.endpoint, { method: 'GET' }).then(item.resolve, item.reject)
+      return
+    }
+    if (result.status >= 200 && result.status < 300) {
+      item.resolve(result.body ?? {})
+      return
+    }
+    const body = (result.body && typeof result.body === 'object' ? result.body : {}) as { error?: unknown; code?: unknown }
+    item.reject(
+      new ApiError(
+        sanitizeErrorMessage(body.error, 'Request failed'),
+        result.status,
+        typeof body.code === 'string' ? body.code : undefined
+      )
+    )
+  })
+}
+
 async function streamEvents(
   endpoint: string,
   body: unknown,
@@ -370,6 +468,7 @@ export async function searchLocations(
 
 export const api = {
   get<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    if (isPlainGet(options)) return coalescedGet<T>(endpoint)
     return request<T>(endpoint, { ...options, method: 'GET' })
   },
 

@@ -65,7 +65,7 @@ function renderCampaignHtml(
           <tr><td class="me3-email-pad" style="padding:32px 40px 16px">${blocks}</td></tr>
           <tr>
             <td class="me3-email-pad" style="padding:8px 40px 28px;color:#8a938f;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6">
-              You're getting this because you subscribed to ${escapeHtml(brand.name)}. <a href="${escapeAttribute(unsubscribeUrl)}" style="color:#8a938f;text-decoration:underline">Unsubscribe</a>
+              You're getting this because you subscribed to ${escapeHtml(brand.name)}. <a href="${escapeAttribute(unsubscribeUrl)}" style="color:#8a938f;text-decoration:underline">Unsubscribe</a>${brand.mailingAddress ? `<br>${escapeHtml(brand.mailingAddress)}` : ""}
             </td>
           </tr>
         </table>
@@ -156,6 +156,7 @@ function renderCampaignText(document: CampaignDocumentV1, unsubscribeUrl: string
   sections.push(
     `You're getting this because you subscribed to ${document.brand.name}. Unsubscribe: ${unsubscribeUrl}`,
   );
+  if (document.brand.mailingAddress) sections.push(document.brand.mailingAddress);
   return sections.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 

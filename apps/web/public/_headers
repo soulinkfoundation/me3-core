@@ -1,2 +1,22 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+/icons/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+/images/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+/favicon.ico
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+/favicon.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+/me3-logo-light.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+/me3-logo-dark.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+/me3-dog-head-emoji-smooth.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+/me3-dog-head-emoji-smooth.webp
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+/me3-dog-head-panting.gif
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+/me3-dog-head-panting.webp
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
