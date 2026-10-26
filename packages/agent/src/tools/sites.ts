@@ -58,10 +58,10 @@ export function siteTools() {
     domainTool("core.owner_content.search", async (args, context) => {
       const journalEnabled = context.enabledPluginIds.has("me3.journal"); const tasksEnabled = context.enabledPluginIds.has("me3.mission-control");
       let sourceType = (args.sourceType || "all") as AgentOwnerContentSearchInput["sourceType"];
-      if (sourceType === "journal" && !journalEnabled || sourceType === "mission_task" && !tasksEnabled || !journalEnabled && !tasksEnabled) throw new Error("Requested content plugin must be installed and enabled.");
+      const journalSource = sourceType === "journal" || sourceType === "note";
+      if (journalSource && !journalEnabled || sourceType === "mission_task" && !tasksEnabled || !journalEnabled && !tasksEnabled) throw new Error("Requested content plugin must be installed and enabled.");
       if (sourceType === "all" && !journalEnabled) sourceType = "mission_task";
-      if (sourceType === "all" && !tasksEnabled) sourceType = "journal";
-      const dependencies = sourceType === "all" ? ["me3.journal", "me3.mission-control"] : [sourceType === "journal" ? "me3.journal" : "me3.mission-control"];
+      const dependencies = sourceType === "all" ? ["me3.journal", "me3.mission-control"] : [journalSource ? "me3.journal" : "me3.mission-control"];
       if ((args.projectId || args.projectName) && !dependencies.includes("me3.mission-control")) dependencies.push("me3.mission-control");
       const requireSources = async () => {
         for (const plugin of dependencies) await requireEnabledPlugin(context, plugin);

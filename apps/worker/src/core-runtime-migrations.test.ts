@@ -51,6 +51,11 @@ describe("Core runtime migrations", () => {
     expect(db.migrations.get("0085_mailbox_instruction_replay")).toBe("2026-10-22-mailbox-instruction-replay-v1");
     expect(db.columns.get("journal_articles")?.has("project_id")).toBe(true);
     expect(db.migrations.get("0089_journal_article_projects")).toBe("2026-10-23-journal-article-projects-v1");
+    expect(db.statements.some(sql => sql.includes("owner_content_search_note_insert"))).toBe(true);
+    expect(db.migrations.get("0093_owner_content_search_notes")).toBe("2026-10-26-owner-content-search-notes-v1");
+    expect(db.tables.has("journal_folders")).toBe(true);
+    expect(db.columns.get("journal_articles")?.has("folder_id")).toBe(true);
+    expect(db.migrations.get("0094_journal_folders")).toBe("2026-10-26-journal-folders-v1");
     expect(db.columns.get("commerce_settings")?.has("default_currency")).toBe(true);
     expect(db.columns.get("commerce_settings")?.has("preferred_stripe_provider")).toBe(true);
     expect(db.tables.has("ai_usage_events")).toBe(true);

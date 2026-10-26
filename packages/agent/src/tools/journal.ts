@@ -1,4 +1,4 @@
-import { readJournalEntriesForAgent, saveJournalDayForAgent, type JournalAgentEntry, type JournalAgentReadInput } from "@me3-core/plugin-journal";
+import { readJournalEntriesForAgent, readJournalNotesForAgent, saveJournalDayForAgent, type JournalAgentEntry, type JournalAgentNotesReadInput, type JournalAgentReadInput } from "@me3-core/plugin-journal";
 import { domainTool, ok, requiredString } from "./common";
 import { approval, rememberTargets, requireTarget } from "./targets";
 
@@ -7,6 +7,11 @@ export function journalTools() {
     domainTool("core.journal.read", async (args, context) => {
       const result = await readJournalEntriesForAgent(context.db, context.ownerId, args as JournalAgentReadInput);
       await rememberTargets(context, "journal day", result.entries.map(entry => ({ ...entry, id: entry.date })));
+      return ok(result);
+    }),
+    domainTool("core.journal.notes.read", async (args, context) => {
+      const result = await readJournalNotesForAgent(context.db, context.ownerId, args as JournalAgentNotesReadInput);
+      await rememberTargets(context, "note", result.notes, note => note.title);
       return ok(result);
     }),
     domainTool("core.journal.save", async (args, context) => {

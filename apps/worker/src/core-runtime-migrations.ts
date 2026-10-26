@@ -774,6 +774,31 @@ const runtimeMigrations: RuntimeMigration[] = [
       await addColumnIfMissing(db, "sites", "campaign_mailing_address", "TEXT");
     },
   },
+  // Notes join the owner content search index so the agent can find them by their words.
+  {
+    id: "0093_owner_content_search_notes",
+    checksum: "2026-10-26-owner-content-search-notes-v1",
+    apply: applyOwnerContentSearchNotesMigration,
+  },
+  // Notes can be filed into folders inside a project (me3-y6ai).
+  {
+    id: "0094_journal_folders",
+    checksum: "2026-10-26-journal-folders-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "journal_articles"))) return;
+      await db.prepare(`CREATE TABLE IF NOT EXISTS journal_folders (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT, name TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`).run();
+      await db.prepare(`CREATE INDEX IF NOT EXISTS idx_journal_folders_owner_project
+        ON journal_folders(user_id, project_id, sort_order, name)`).run();
+      await addColumnIfMissing(db, "journal_articles", "folder_id", "TEXT");
+      await db.prepare(`CREATE INDEX IF NOT EXISTS idx_journal_articles_owner_folder
+        ON journal_articles(user_id, folder_id, updated_at DESC)`).run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;
@@ -2227,6 +2252,54 @@ async function rebuildSocialPublicationEventsForReusableMigration(
     .run();
   await db.prepare(`DROP TABLE ${tableName}`).run();
   await db.prepare(`ALTER TABLE ${stagingTableName} RENAME TO ${tableName}`).run();
+}
+
+async function applyOwnerContentSearchNotesMigration(db: D1Database): Promise<void> {
+  if (!(await tableExists(db, "owner_content_search")) || !(await tableExists(db, "journal_articles"))) return;
+  const noteRow = `NEW.user_id, 'note', NEW.id,
+        COALESCE(NULLIF(TRIM(NEW.title), ''), 'Untitled note'),
+        NEW.body, NEW.project_id,
+        COALESCE((SELECT name FROM mission_projects WHERE id = NEW.project_id AND user_id = NEW.user_id LIMIT 1), ''),
+        NULL, substr(NEW.updated_at, 1, 10), NEW.updated_at`;
+  const statements = [
+    `CREATE TRIGGER IF NOT EXISTS owner_content_search_note_insert
+    AFTER INSERT ON journal_articles
+    BEGIN
+      INSERT INTO owner_content_search
+        (user_id, source_type, source_id, title, body, project_id, project_name, status, source_date, updated_at)
+      VALUES (${noteRow});
+    END`,
+    `CREATE TRIGGER IF NOT EXISTS owner_content_search_note_update
+    AFTER UPDATE ON journal_articles
+    BEGIN
+      DELETE FROM owner_content_search
+      WHERE user_id = OLD.user_id AND source_type = 'note' AND source_id = OLD.id;
+      INSERT INTO owner_content_search
+        (user_id, source_type, source_id, title, body, project_id, project_name, status, source_date, updated_at)
+      VALUES (${noteRow});
+    END`,
+    `CREATE TRIGGER IF NOT EXISTS owner_content_search_note_delete
+    AFTER DELETE ON journal_articles
+    BEGIN
+      DELETE FROM owner_content_search
+      WHERE user_id = OLD.user_id AND source_type = 'note' AND source_id = OLD.id;
+    END`,
+    `CREATE TRIGGER IF NOT EXISTS owner_content_search_project_rename_notes
+    AFTER UPDATE OF name ON mission_projects
+    BEGIN
+      UPDATE owner_content_search SET project_name = NEW.name
+      WHERE user_id = NEW.user_id AND source_type = 'note' AND project_id = NEW.id;
+    END`,
+    `DELETE FROM owner_content_search WHERE source_type = 'note'`,
+    `INSERT INTO owner_content_search
+      (user_id, source_type, source_id, title, body, project_id, project_name, status, source_date, updated_at)
+    SELECT a.user_id, 'note', a.id,
+           COALESCE(NULLIF(TRIM(a.title), ''), 'Untitled note'),
+           a.body, a.project_id, COALESCE(p.name, ''), NULL, substr(a.updated_at, 1, 10), a.updated_at
+    FROM journal_articles a
+    LEFT JOIN mission_projects p ON p.id = a.project_id AND p.user_id = a.user_id`,
+  ];
+  for (const statement of statements) await db.prepare(statement).run();
 }
 
 async function applyOwnerContentSearchMigration(db: D1Database): Promise<void> {

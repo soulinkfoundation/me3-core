@@ -1,4 +1,4 @@
-export type AgentOwnerContentSourceType = "journal" | "mission_task";
+export type AgentOwnerContentSourceType = "journal" | "note" | "mission_task";
 
 export type AgentOwnerContentSearchInput = {
   query: string;
@@ -73,6 +73,7 @@ const SEARCH_STOP_WORDS = new Set([
   "journal",
   "me",
   "my",
+  "note",
   "of",
   "on",
   "or",
@@ -91,14 +92,17 @@ export async function searchAgentOwnerContent(
 ): Promise<AgentOwnerContentSearchResponse> {
   const query = requiredText(input.query, "Owner content search query is required.");
   const sourceType = input.sourceType || "all";
-  if (sourceType !== "all" && sourceType !== "journal" && sourceType !== "mission_task") {
+  if (sourceType !== "all" && sourceType !== "journal" && sourceType !== "note" && sourceType !== "mission_task") {
     throw new Error(`Invalid owner content source type "${sourceType}".`);
   }
   if (input.status && !SEARCH_STATUSES.has(input.status)) {
     throw new Error(`Invalid Mission task status "${input.status}".`);
   }
   if (sourceType === "journal" && (input.projectId || input.status)) {
-    throw new Error("Project and status filters apply only to tasks.");
+    throw new Error("Project and status filters apply only to tasks and notes.");
+  }
+  if (sourceType === "note" && input.status) {
+    throw new Error("The status filter applies only to tasks.");
   }
   assertIsoDate(input.dateFrom, "dateFrom");
   assertIsoDate(input.dateTo, "dateTo");

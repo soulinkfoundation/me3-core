@@ -1607,7 +1607,7 @@ export const CORE_CHAT_CAPABILITIES = [
     pluginId: "me3.journal",
     ownerFacingLabel: "Read Journal entries",
     summary:
-      "Read the owner's private Journal entries by latest entries, one exact date, or an inclusive date range.",
+      "Read the owner's private daily Journal entries (one dated page per day) by latest entries, one exact date, or an inclusive date range. Notes, the owner's longer undated writing in Journal > Notes, are read with core_journal_notes_read instead.",
     category: "assistant",
     handler: {
       surface: "chat",
@@ -1664,11 +1664,40 @@ export const CORE_CHAT_CAPABILITIES = [
     },
   }),
   defineCoreChatCapability({
+    id: "core.journal.notes.read",
+    owner: "plugin",
+    pluginId: "me3.journal",
+    ownerFacingLabel: "Read Notes",
+    summary:
+      "Read the owner's Notes: the longer, undated pieces of writing in Journal > Notes (articles, drafts, plans). Without noteId it lists the latest notes with a short preview, optionally one project's or one folder's notes, and says which project and folder each note is filed in; with noteId it returns that note's full text. Use it whenever the owner mentions a note, an article, a draft or a piece they are writing. Daily dated entries use core_journal_read instead.",
+    category: "assistant",
+    handler: { surface: "chat", route: "core.journal.notes.read" },
+    sideEffect: "read_private",
+    approvalMode: "none",
+    requiresSetup: [],
+    inputSchema: {
+      type: "object",
+      properties: {
+        noteId: { type: "string", description: "Stable note ID from a previous list or search, to read one note in full. Never infer an ID from a title." },
+        projectId: { type: "string", description: "Optional stable project ID to list only that project's notes." },
+        folderId: { type: "string", description: "Optional stable folder ID from a previous list, to list only the notes filed in that folder." },
+        limit: { type: "integer", description: "Maximum notes to list, defaults to 20 and is capped at 50." },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "journal_notes_read",
+    examples: {
+      positive: ["What notes have I been writing?", "Read my article about agent context.", "Show the notes for the Launch project."],
+      negative: ["Read today's Journal entry.", "Save a note."],
+    },
+    chat: { intentKind: "read_action", sideEffectLevel: "read" },
+  }),
+  defineCoreChatCapability({
     id: "core.owner_content.search",
     owner: "core",
     pluginId: null,
     ownerFacingLabel: "Search owner content",
-    summary: "Search the owner's tasks and Journal entries for specific words in the title or body, returning lightweight candidates with stable IDs. Requires non-empty search words; to list, rank or prioritise tasks use core_mission_task_list instead.",
+    summary: "Search the owner's tasks, daily Journal entries and Notes for specific words in the title or body, returning lightweight candidates with stable IDs. Requires non-empty search words; to list, rank or prioritise tasks use core_mission_task_list instead. Read a matching note in full with core_journal_notes_read.",
     category: "assistant",
     handler: {
       surface: "chat",
@@ -1683,12 +1712,12 @@ export const CORE_CHAT_CAPABILITIES = [
       properties: {
         query: {
           type: "string",
-          description: "Remembered title words or content to find in tasks and Journal entries.",
+          description: "Remembered title words or content to find in tasks, Journal entries and Notes.",
         },
         sourceType: {
           type: "string",
-          description: "Optional source kind, or all to search both tasks and Journal entries.",
-          enum: ["all", "journal", "mission_task"],
+          description: "Optional source kind: journal for daily entries, note for Notes, mission_task for tasks, or all.",
+          enum: ["all", "journal", "note", "mission_task"],
         },
         projectId: {
           type: "string",

@@ -32,3 +32,12 @@ export {
   type JournalAgentReadInput,
   type JournalAgentReadResult,
 } from "./agent-read";
+
+export {
+  readJournalNotesForAgent,
+  htmlToText as journalHtmlToText,
+  type JournalAgentNote,
+  type JournalAgentNoteSummary,
+  type JournalAgentNotesReadInput,
+  type JournalAgentNotesReadResult,
+} from "./agent-read-notes";
