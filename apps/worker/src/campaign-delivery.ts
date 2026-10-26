@@ -18,12 +18,28 @@ import {
 } from "@me3-core/plugin-email-campaigns";
 import { evaluateCampaignAudience, type CampaignAudienceSubscriber } from "./campaign-audience";
 import {
+  campaignUnsubscribeUrl,
+  getOwnerCampaignSender,
+  hmacHex,
+  isOwnerSenderRef,
+  parsePostmarkCampaignEvent,
+  resolveInstallOwnerId,
+  verifyCampaignUnsubscribeToken,
+  verifyProviderEventsToken,
+  type OwnerCampaignSender,
+} from "./campaign-owner-sender";
+import {
   CampaignInputError,
   getOwnedCampaign,
   listSiteAudience,
   parseCampaignAudienceFilter,
   type OwnedCampaign,
 } from "./campaigns";
+import {
+  EmailProviderDeliveryUnknownError,
+  EmailProviderInputError,
+  sendEmailWithProvider,
+} from "./email-providers";
 import { isManagedRuntime } from "./managed-runtime-lifecycle";
 import { getMe3CloudApiOrigin, getOwnerProfile } from "./sites";
 import type { Env } from "./types";
@@ -34,6 +50,7 @@ const CALLBACK_SECRET = "ME3_MANAGED_CAMPAIGN_CALLBACK_SECRET";
 const MAX_DISPATCH_BATCH = 20;
 export const CAMPAIGN_DISPATCH_CRON = "* * * * *";
 const CALLBACK_MAX_CLOCK_SKEW_SECONDS = 300;
+const OWN_PROVIDER_MAX_ATTEMPTS = 5;
 
 export type CampaignTransportStatus = {
   available: boolean;
@@ -46,6 +63,8 @@ export type CampaignTransportStatus = {
     fromAddress: string;
     status: string;
   };
+  /** Self-hosted only: the owner's own provider that sends campaigns. */
+  provider: OwnerCampaignSender["provider"] | null;
   addOn: CampaignAddOnStatus | null;
   instructions: string[];
 };
@@ -83,18 +102,29 @@ type RecipientJobRow = {
 export async function getCampaignTransportStatus(
   env: Env,
   fetcher: typeof fetch = fetch,
+  ownerId?: string | null,
+  requestUrl?: string,
 ): Promise<CampaignTransportStatus> {
   if (!isManagedRuntime(env)) {
+    // Self-hosted: campaigns go out through the owner's own provider. No allowance, no Cloud calls.
+    const own = await getOwnerCampaignSender(
+      env,
+      ownerId ?? (await resolveInstallOwnerId(env)),
+      requestUrl,
+    );
+    if (!own) {
+      return unavailableTransport(false, "sender_not_connected", null, [
+        "Connect a sender before your first send.",
+      ]);
+    }
     return {
-      available: false,
+      available: true,
       managed: false,
-      ready: false,
-      reason: "managed_installation_required",
-      sender: null,
+      ready: true,
+      reason: null,
+      ...own,
       addOn: null,
-      instructions: [
-        "Activate the plugin to create campaign drafts. Configure an owner-supplied campaign provider before sending from a self-hosted installation.",
-      ],
+      instructions: [],
     };
   }
   const config = await getManagedCampaignConfig(env).catch(() => null);
@@ -159,6 +189,7 @@ export async function getCampaignTransportStatus(
     const status: CampaignTransportStatus = {
       available: Boolean(body.connected),
       managed: true,
+      provider: null,
       ready: Boolean(body.ready && sender),
       reason: body.ready && sender ? null : "sender_not_ready",
       sender: sender
@@ -270,7 +301,7 @@ export async function startCampaignDelivery(
   if (!campaign.revision.rendered_html || !campaign.revision.rendered_text) {
     throw new CampaignInputError("Save the campaign before sending", 409, "render_required");
   }
-  const transport = await requireReadyTransport(env, fetcher);
+  const transport = await requireReadyTransport(env, fetcher, ownerId);
   const scheduledFor = normalizeSchedule(input.scheduledFor);
   const audience = evaluateCampaignAudience(await listSiteAudience(
     env,
@@ -439,7 +470,7 @@ export async function sendCampaignTest(
       "test_recipient_unavailable",
     );
   }
-  const transport = await requireReadyTransport(env, fetcher);
+  const transport = await requireReadyTransport(env, fetcher, ownerId);
   const now = new Date().toISOString();
   const jobId = newId("campaign-test-operation");
   await env.DB.prepare(
@@ -459,7 +490,6 @@ export async function dispatchDueCampaignJobs(
   fetcher: typeof fetch = fetch,
   limit = MAX_DISPATCH_BATCH,
 ) {
-  if (!isManagedRuntime(env)) return { processed: 0, paused: 0 };
   const pending = await env.DB.prepare(
     `SELECT 1 AS pending FROM email_campaign_recipient_jobs
      WHERE status IN ('queued', 'retry_wait', 'paused', 'submitting',
@@ -484,7 +514,7 @@ export async function dispatchDueCampaignJobs(
      WHERE status = 'paused' AND provider_reason IN (
        'managed_transport_unavailable', 'managed_transport_unreachable',
        'managed_transport_not_configured', 'sender_not_ready',
-       'campaign_add_on_required'
+       'campaign_add_on_required', 'sender_not_connected'
      ) OR (status = 'paused' AND provider_reason LIKE 'sender_status_%')
         OR (status = 'paused' AND provider_reason LIKE 'campaign_billing_status_%')`,
   ).run();
@@ -762,6 +792,7 @@ async function dispatchCampaignJob(
       .bind(job.campaign_id)
       .run();
   }
+  if (!transport.managed) return dispatchOwnProviderJob(env, job);
 
   let requestJson = job.request_json;
   if (!requestJson) {
@@ -851,6 +882,158 @@ async function dispatchCampaignJob(
   await applySubmissionResult(env, job, result);
   await refreshCampaignStatus(env, job.campaign_id);
   return true;
+}
+
+/** Self-hosted: one recipient through the owner's provider, with Core's one-click unsubscribe link. */
+async function dispatchOwnProviderJob(env: Env, job: RecipientJobRow): Promise<boolean> {
+  const owner = await env.DB.prepare(
+    `SELECT site.user_id FROM email_campaigns campaign
+     JOIN sites site ON site.id = campaign.site_id WHERE campaign.id = ?`,
+  )
+    .bind(job.campaign_id)
+    .first<{ user_id: string }>();
+  const unsubscribeUrl = await campaignUnsubscribeUrl(env, job.id);
+  if (!owner?.user_id || !unsubscribeUrl) {
+    await pauseJob(env, job.id, owner?.user_id ? "unsubscribe_url_unavailable" : "sender_not_connected");
+    await refreshCampaignStatus(env, job.campaign_id);
+    return true;
+  }
+  const document = parseCampaignDocument(JSON.parse(job.document_json));
+  const withLink = (value: string) =>
+    value.split(MANAGED_CAMPAIGN_UNSUBSCRIBE_PLACEHOLDER).join(unsubscribeUrl);
+  const now = new Date().toISOString();
+  try {
+    await sendEmailWithProvider(env, owner.user_id, {
+      purpose: "workflow",
+      operationId: job.id,
+      fromName: document.brand.name || null,
+      replyToAddress: job.reply_to_address,
+      toAddress: job.recipient_email,
+      subject: job.subject,
+      textBody: withLink(job.rendered_text),
+      htmlBody: withLink(job.rendered_html),
+      headers: {
+        "List-Unsubscribe": `<${unsubscribeUrl}>`,
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+      },
+      // Postmark only accepts bulk mail on a broadcast stream; other providers ignore this.
+      messageStream: "broadcast",
+      metadata: { me3_campaign_id: job.campaign_id, me3_campaign_job: job.id },
+      createdBy: "campaign",
+      approvedByUserId: owner.user_id,
+    });
+    await updateJob(env, job.id, "accepted", null, now, null, now);
+  } catch (error) {
+    const status = error instanceof EmailProviderInputError ? error.status : 0;
+    if (!(error instanceof EmailProviderInputError) || error instanceof EmailProviderDeliveryUnknownError) {
+      // The provider may have it: never send twice.
+      await markJobUnknown(env, job.id, "unknown_acceptance");
+    } else if (status === 401 || status === 403 || status === 503) {
+      await pauseJob(env, job.id, "sender_not_connected");
+    } else if ((status === 429 || status >= 500) && job.attempt_count < OWN_PROVIDER_MAX_ATTEMPTS) {
+      await env.DB.prepare(
+        `UPDATE email_campaign_recipient_jobs
+         SET status = 'retry_wait', provider_reason = ?, next_attempt_at = ?,
+             updated_at = ? WHERE id = ? AND status = 'submitting'`,
+      )
+        .bind(
+          status === 429 ? "rate_limited" : "temporary_transport_failure",
+          new Date(Date.now() + 60_000 * job.attempt_count).toISOString(),
+          now,
+          job.id,
+        )
+        .run();
+    } else {
+      await updateJob(env, job.id, status >= 500 || status === 429 ? "failed" : "rejected", "transport_rejected", now, now);
+    }
+  }
+  await refreshCampaignStatus(env, job.campaign_id);
+  return true;
+}
+
+/** Self-hosted one-click unsubscribe (RFC 8058). GET only shows a button, so link scanners can't unsubscribe anyone. */
+export async function handleCampaignUnsubscribe(
+  env: Env,
+  token: string,
+  request: Request,
+): Promise<Response> {
+  if (isManagedRuntime(env)) return new Response("Not found", { status: 404 });
+  const jobId = await verifyCampaignUnsubscribeToken(env, token);
+  const job = jobId
+    ? await env.DB.prepare(
+        `SELECT id, kind, campaign_id, recipient_ref FROM email_campaign_recipient_jobs WHERE id = ?`,
+      )
+        .bind(jobId)
+        .first<{ id: string; kind: string; campaign_id: string; recipient_ref: string }>()
+    : null;
+  if (!job) {
+    return unsubscribePage("This link doesn't work", "It may be old or copied incompletely.", null, 404);
+  }
+  if (job.kind === "test") {
+    return unsubscribePage("This was a test email", "Nothing changed. Subscribers get a working link.");
+  }
+  if (request.method !== "POST") {
+    return unsubscribePage("Unsubscribe?", "You won't get these emails any more.", request.url);
+  }
+  const now = new Date().toISOString();
+  await applyManagedCampaignEvent(env, {
+    version: MANAGED_CAMPAIGN_PROTOCOL_VERSION,
+    eventId: `unsubscribe-${job.id}`,
+    sequence: Date.now(),
+    occurredAt: now,
+    operationId: job.id,
+    campaignRef: job.campaign_id,
+    recipientRef: job.recipient_ref,
+    type: "recipient.unsubscribed",
+    reason: "unsubscribe",
+  });
+  return unsubscribePage("You're unsubscribed", "You won't get these emails any more.");
+}
+
+/** Self-hosted Postmark webhook: delivered, bounced, spam complaints and Postmark-managed unsubscribes. */
+export async function receivePostmarkCampaignEvent(
+  env: Env,
+  token: string,
+  request: Request,
+): Promise<Response> {
+  if (isManagedRuntime(env)) return new Response("Not found", { status: 404 });
+  if (!(await verifyProviderEventsToken(env, "postmark", token))) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  const outcome = parsePostmarkCampaignEvent(safeJson(await request.text()));
+  // Postmark retries anything that isn't 2xx, so events we don't track are acknowledged too.
+  if (!outcome) return new Response(null, { status: 204 });
+  const job = await env.DB.prepare(
+    "SELECT id, campaign_id, recipient_ref FROM email_campaign_recipient_jobs WHERE id = ?",
+  )
+    .bind(outcome.jobId)
+    .first<{ id: string; campaign_id: string; recipient_ref: string }>();
+  if (job) {
+    await applyManagedCampaignEvent(env, {
+      version: MANAGED_CAMPAIGN_PROTOCOL_VERSION,
+      eventId: outcome.eventId,
+      sequence: Math.max(1, Date.parse(outcome.occurredAt)),
+      occurredAt: outcome.occurredAt,
+      operationId: job.id,
+      campaignRef: job.campaign_id,
+      recipientRef: job.recipient_ref,
+      type: outcome.type,
+      reason: outcome.reason,
+    });
+  }
+  return new Response(null, { status: 204 });
+}
+
+function unsubscribePage(title: string, body: string, confirmUrl: string | null = null, status = 200) {
+  const escape = (value: string) =>
+    value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
+  const form = confirmUrl
+    ? `<form method="post" action="${escape(confirmUrl)}"><input type="hidden" name="List-Unsubscribe" value="One-Click"><button type="submit" style="font:inherit;padding:10px 18px;border-radius:999px;border:0;background:#18201d;color:#fff;cursor:pointer">Unsubscribe</button></form>`
+    : "";
+  return new Response(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)}</title></head><body style="font-family:system-ui;max-width:420px;margin:0 auto;padding:48px 16px;text-align:center"><h1 style="font-size:22px">${escape(title)}</h1><p>${escape(body)}</p>${form}</body></html>`,
+    { status, headers: { "Content-Type": "text/html; charset=utf-8" } },
+  );
 }
 
 async function applySubmissionResult(
@@ -991,10 +1174,10 @@ async function updateSubscriberDeliveryStatus(
 
 async function refreshCampaignStatus(env: Env, campaignId: string) {
   const campaign = await env.DB.prepare(
-    "SELECT status, scheduled_for FROM email_campaigns WHERE id = ?",
+    "SELECT status, scheduled_for, sender_ref FROM email_campaigns WHERE id = ?",
   )
     .bind(campaignId)
-    .first<{ status: string; scheduled_for: string | null }>();
+    .first<{ status: string; scheduled_for: string | null; sender_ref: string | null }>();
   if (!campaign || campaign.status === "cancelled" || campaign.status === "draft") return;
   const counts = await env.DB.prepare(
     `SELECT status, COUNT(*) AS count FROM email_campaign_recipient_jobs
@@ -1005,14 +1188,15 @@ async function refreshCampaignStatus(env: Env, campaignId: string) {
   const values = Object.fromEntries(
     (counts.results || []).map((row) => [row.status, Number(row.count)]),
   );
+  // The owner's own provider may never report back, so its acceptance (or an unknown outcome,
+  // which is never retried) finishes the recipient.
+  const ownProvider = isOwnerSenderRef(campaign.sender_ref);
   const active = [
     "queued",
     "submitting",
-    "accepted",
+    ...(ownProvider ? [] : ["accepted", "delivery_unknown", "unresolved"]),
     "delayed",
     "retry_wait",
-    "delivery_unknown",
-    "unresolved",
     "paused",
   ].reduce((total, key) => total + (values[key] || 0), 0);
   let status = campaign.status;
@@ -1025,6 +1209,7 @@ async function refreshCampaignStatus(env: Env, campaignId: string) {
         : "sending";
   } else {
     const delivered =
+      (ownProvider ? values.accepted || 0 : 0) +
       (values.delivered || 0) +
       (values.bounced || 0) +
       (values.complained || 0) +
@@ -1096,18 +1281,11 @@ async function requireDraftCampaign(env: Env, ownerId: string, campaignId: strin
   return campaign;
 }
 
-async function requireReadyTransport(env: Env, fetcher: typeof fetch) {
-  const status = await getCampaignTransportStatus(env, fetcher);
-  if (!status.managed) {
-    throw new CampaignInputError(
-      "Campaign sending requires a managed ME3 installation",
-      409,
-      "managed_installation_required",
-    );
-  }
+async function requireReadyTransport(env: Env, fetcher: typeof fetch, ownerId: string) {
+  const status = await getCampaignTransportStatus(env, fetcher, ownerId);
   if (!status.ready || !status.sender) {
     throw new CampaignInputError(
-      "The campaign sender is not ready",
+      status.managed ? "The campaign sender is not ready" : "Connect a sender before your first send",
       409,
       status.reason || "sender_not_ready",
     );
@@ -1219,24 +1397,6 @@ async function verifyCallbackSignature(
   const expected = await hmacHex(secret, `${timestamp}.${raw}`);
   const supplied = signature.startsWith("sha256=") ? signature.slice(7) : "";
   return constantTimeEqual(expected, supplied);
-}
-
-async function hmacHex(secret: string, value: string) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(value),
-  );
-  return Array.from(new Uint8Array(signature), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
 }
 
 function constantTimeEqual(left: string, right: string) {
@@ -1385,6 +1545,7 @@ function unavailableTransport(
     ready: false,
     reason,
     sender: null,
+    provider: null,
     addOn,
     instructions,
   };

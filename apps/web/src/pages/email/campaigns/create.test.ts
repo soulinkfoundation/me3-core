@@ -388,4 +388,48 @@ describe("campaign editor", () => {
     expect(routerReplace).toHaveBeenCalledWith("/email/campaigns/campaign-1");
     wrapper.unmount();
   });
+  it("names the owner's own provider in From, and offers to connect one when self-hosted", async () => {
+    let selfHosted: Record<string, unknown> = {
+      managed: false,
+      ready: false,
+      reason: "sender_not_connected",
+      sender: null,
+      provider: null,
+      addOn: null,
+      instructions: [],
+    };
+    const baseGet = apiGet.getMockImplementation()!;
+    apiGet.mockImplementation((path: string) => {
+      if (path === "/email/campaigns/transport") return Promise.resolve({ transport: selfHosted });
+      if (path === "/email-provider-settings") {
+        return Promise.resolve({ encryptionConfigured: true, activeProviderId: "smtp", providers: [], futureProviders: [] });
+      }
+      if (path.endsWith("/review")) {
+        return Promise.resolve({
+          audience: { eligibleCount: 42, excludedCount: 0, exclusionCounts: {} },
+          transport: selfHosted,
+        });
+      }
+      return baseGet(path);
+    });
+    const notReady = mountEditor();
+    await flushPromises();
+    await notReady.findAll(".campaign-side-block__change")[1]!.trigger("click");
+    expect(notReady.get('[data-test="dialog"]').text()).toContain("Connect a sender");
+    notReady.unmount();
+
+    selfHosted = {
+      ...selfHosted,
+      ready: true,
+      reason: null,
+      sender: { ref: "provider:postmark", fromAddress: "news@owner.test", domain: "owner.test" },
+      provider: { id: "postmark", label: "Postmark", tracksDelivery: true, deliveryEventsUrl: null },
+    };
+    const ready = mountEditor();
+    await flushPromises();
+    expect(ready.get('[aria-labelledby="campaign-from-title"]').text())
+      .toContain("Sends through Postmark from news@owner.test");
+    expect(ready.text()).not.toMatch(/sends left/i);
+    ready.unmount();
+  });
 });

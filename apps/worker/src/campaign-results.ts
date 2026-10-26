@@ -1,3 +1,4 @@
+import { isOwnerSenderRef } from "./campaign-owner-sender";
 import type { Env } from "./types";
 
 export type CampaignReply = {
@@ -25,20 +26,22 @@ const MAX_REPLY_MESSAGES = 20;
  * tracking: replies are inbound mail from a recipient whose subject contains the campaign's.
  * A job only keeps its latest status, so someone who unsubscribed or marked it as spam still
  * counts as delivered (it had to arrive for them to do that). Dates are compared through
- * datetime() because rows mix ISO and SQLite timestamp formats.
+ * datetime() because rows mix ISO and SQLite timestamp formats. A self-hosted owner's own provider
+ * may never report delivery, so there its acceptance counts as delivered.
  */
 export async function getCampaignResults(
   env: Env,
   campaignId: string,
 ): Promise<CampaignResults> {
   const campaign = await env.DB.prepare(
-    `SELECT campaign.sent_at, campaign.updated_at, revision.subject
+    `SELECT campaign.sent_at, campaign.updated_at, campaign.sender_ref, revision.subject
      FROM email_campaigns campaign
      LEFT JOIN email_campaign_revisions revision ON revision.id = campaign.current_revision_id
      WHERE campaign.id = ?`,
   )
     .bind(campaignId)
-    .first<{ sent_at: string | null; updated_at: string; subject: string | null }>();
+    .first<{ sent_at: string | null; updated_at: string; sender_ref: string | null; subject: string | null }>();
+  const acceptedIsDelivered = isOwnerSenderRef(campaign?.sender_ref);
   const since = campaign?.sent_at || campaign?.updated_at || "1970-01-01";
 
   const jobs = await env.DB.prepare(
@@ -70,7 +73,7 @@ export async function getCampaignResults(
     const unsubscribedAfter = Number(row.unsubscribed_after) === 1;
     results.sentTo += count;
     if (unsubscribedAfter) results.unsubscribed += count;
-    if (row.status === "delivered") results.delivered += count;
+    if (row.status === "delivered" || (acceptedIsDelivered && row.status === "accepted")) results.delivered += count;
     else if (row.status === "complained") {
       results.delivered += count;
       results.markedSpam += count;
