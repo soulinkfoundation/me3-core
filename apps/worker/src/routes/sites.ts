@@ -78,6 +78,7 @@ import {
   getGeneratedSiteContentType,
   getMe3CloudUsernamePublishBlockReason,
   getSiteByUsername,
+  getR2SiteFile,
   getSiteFile,
   getSiteFileText,
   getSiteForOwner,
@@ -143,8 +144,10 @@ import {
   assignBusinessSiteProfile,
 } from "../site-lifecycle";
 import {
+  EMAIL_LOGO_PATH,
   SiteBrandingInputError,
   getSiteBranding,
+  saveSiteEmailLogo,
   updateSiteBranding,
 } from "../site-branding";
 import {
@@ -277,6 +280,64 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       }
       console.error("Site branding update error:", error);
       return c.json({ error: "Could not update Site branding" }, 500);
+    }
+  });
+
+  // The Site logo's bytes, same-origin, so the browser can draw the email copy on a canvas.
+  app.get("/api/sites/:username/branding/logo", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    const { logoRef } = await getSiteBranding(c.env, site);
+    const relative = logoRef && /^\.?\//.test(logoRef)
+      ? logoRef.replace(/^\.?\//, "").split(/[?#]/)[0]
+      : "";
+    if (!relative || relative.includes("..")) return c.json({ error: "No Site logo to copy" }, 404);
+    const path = `public/${relative}`;
+    const file = await getR2SiteFile(c.env, site, path) || await getSiteFile(c.env, site.id, path);
+    if (!file || !String(file.content_type).startsWith("image/")) {
+      return c.json({ error: "No Site logo to copy" }, 404);
+    }
+    return new Response(siteFileContentToBytes(file.content) as Uint8Array<ArrayBuffer>, {
+      headers: { "Content-Type": file.content_type, "Cache-Control": "private, no-store" },
+    });
+  });
+
+  // Stores the email copy of the logo (PNG on white, 2x) that the browser made from the Site logo.
+  app.post("/api/sites/:username/branding/email-logo", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    try {
+      const form = await c.req.formData();
+      const file = form.get("file");
+      if (!(file instanceof File)) return c.json({ error: "Email logo file is required" }, 400);
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      // Classic Outlook can't show WebP, so only PNG is accepted.
+      const isPng = bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+      if (!isPng) return c.json({ error: "The email logo must be a PNG" }, 400);
+      if (buffer.byteLength > 512_000) return c.json({ error: "The email logo is too large" }, 413);
+      const hash = await sha256Buffer(buffer);
+      await putSiteMediaFile(c.env, site, `public/${EMAIL_LOGO_PATH}`, buffer, "image/png");
+      const manifest = (await loadPublishManifest(c.env, site.id)) || createEmptyPublishManifest();
+      manifest.assetFiles[EMAIL_LOGO_PATH] = hash;
+      manifest.updatedAt = new Date().toISOString();
+      await savePublishManifest(c.env, site.id, manifest);
+      return c.json({
+        branding: await saveSiteEmailLogo(c.env, site, {
+          width: form.get("width"),
+          height: form.get("height"),
+          version: hash.slice(0, 12),
+        }),
+      });
+    } catch (error) {
+      if (error instanceof SiteBrandingInputError) return c.json({ error: error.message }, error.status);
+      if (isMissingSiteFilesTableError(error)) return siteStorageSetupRequired(c);
+      if (isD1SiteFileLimitError(error)) return siteStorageActivationRequired(c);
+      throw error;
     }
   });
 

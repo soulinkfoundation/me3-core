@@ -6,7 +6,9 @@ import {
   parseCampaignDocument,
   type CampaignDocumentV1,
 } from "../../../shared/campaign-document";
-import { renderCampaign } from "./campaign-renderer";
+import { campaignLayoutDocumentBlocks, campaignLayouts } from "../../../shared/campaign-layouts";
+import { contrastRatio } from "../../../shared/campaign-brand";
+import { renderCampaign, renderCampaignLayoutPreview } from "./campaign-renderer";
 
 function documentFixture(): CampaignDocumentV1 {
   return {
@@ -112,12 +114,12 @@ describe("campaign renderer", () => {
     });
 
     expect(first).toEqual(second);
-    expect(first.rendererVersion).toBe("me3.email-renderer.v3");
+    expect(first.rendererVersion).toBe("me3.email-renderer.v4");
     expect(first.html).toContain('role="presentation"');
     expect(first.html).toContain("The short preview");
     expect(first.html).toContain("A useful update");
     expect(first.html).toContain("{{unsubscribe_url}}");
-    expect(first.html).not.toContain("https://example.com/logo.png");
+    expect(first.html).toContain('<img src="https://example.com/logo.png" alt="Example Studio"');
     expect(first.html).toContain('align="center"');
     expect(first.text.startsWith("Example Studio")).toBe(false);
     expect(first.text).toContain("• One clear point");
@@ -141,4 +143,83 @@ describe("campaign renderer", () => {
     expect(rendered.html).not.toContain("<script>alert");
     expect(rendered.html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
   });
+
+  it("shows the Site logo at the top, linking to the site, or the name in bold without one", () => {
+    const withLogo = renderCampaign({ document: documentFixture(), unsubscribeUrl: "#" }).html;
+    expect(withLogo).toMatch(/<a href="https:\/\/example\.com\/" style="text-decoration:none"><img src="https:\/\/example\.com\/logo\.png"[^>]*width="200"/);
+
+    const document = documentFixture();
+    document.brand.logoUrl = null;
+    const withoutLogo = renderCampaign({ document, unsubscribeUrl: "#" }).html;
+    expect(withoutLogo).not.toContain("<img src=\"https://example.com/logo.png\"");
+    expect(withoutLogo).toMatch(/<a href="https:\/\/example\.com\/" class="me3-txt"[^>]*font-weight:700[^>]*>Example Studio<\/a>/);
+  });
+
+  it("puts the footer below the card, centred, with the mailing address on its own line", () => {
+    const document = documentFixture();
+    document.brand.mailingAddress = "PO Box 12, Dublin 2, Ireland";
+    const { html, text } = renderCampaign({ document, unsubscribeUrl: "https://example.com/u" });
+    const cardEnd = html.indexOf("</table>\n      </td>\n    </tr>");
+    const footer = html.indexOf("You're getting this because");
+    expect(cardEnd).toBeGreaterThan(0);
+    expect(footer).toBeGreaterThan(cardEnd);
+    expect(html).toContain('Unsubscribe</a><br>PO Box 12, Dublin 2, Ireland</td>');
+    expect(html.slice(html.lastIndexOf("<td", footer), footer)).toContain('align="center"');
+    expect(text.endsWith("PO Box 12, Dublin 2, Ireland")).toBe(true);
+  });
+
+  it("carries the dark version, Outlook.com copies and classic Outlook fallbacks", () => {
+    const { html } = renderCampaign({ document: documentFixture(), unsubscribeUrl: "#" });
+    expect(html).toContain('<meta name="color-scheme" content="light dark">');
+    expect(html).toContain("@media (prefers-color-scheme: dark)");
+    expect(html).toContain(".me3-card { background:#1c201f !important; }");
+    expect(html).toContain(".me3-txt { color:#e6ebe8 !important; }");
+    expect(html).toContain("[data-ogsc] .me3-txt");
+    expect(html).toContain("[data-ogsb] .me3-card");
+    expect(html).toContain("<!--[if mso]><style>* { font-family:Arial,Helvetica,sans-serif !important; }</style><![endif]-->");
+    expect(html).toContain('bgcolor="#ffffff" class="me3-shell me3-card"');
+    expect(html).toContain("mso-line-height-rule:exactly");
+    expect(html).toContain("-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif");
+  });
+
+  it("keeps text, links and button labels readable whatever the brand colours are", () => {
+    const document = documentFixture();
+    document.brand.accentColor = "#f5d90a";
+    document.brand.textColor = "#888888";
+    document.brand.backgroundColor = "#202020";
+    const { html } = renderCampaign({ document, unsubscribeUrl: "#" });
+    const link = html.match(/class="me3-lnk" style="color:(#[0-9a-f]{6})/)?.[1] || "";
+    expect(contrastRatio(link, "#ffffff")).toBeGreaterThanOrEqual(4.5);
+    expect(html).toMatch(/<a href="https:\/\/example\.com\/story" style="[^"]*color:#111111/);
+    expect(html).toContain("color:#18201d;font-family");
+    expect(html).not.toContain("#888888");
+    expect(html).toContain('<body class="me3-bg" style="margin:0;padding:0;background:#f4f5f4');
+  });
+
+  for (const layout of campaignLayouts({ businessName: "Willow Yoga", homeUrl: "https://willow.example/", month: "October" })) {
+    for (const logo of [true, false]) {
+      it(`renders the ${layout.name} layout ${logo ? "with" : "without"} a logo under 60 KB`, () => {
+        const brand = {
+          ...documentFixture().brand,
+          name: "Willow Yoga",
+          homeUrl: "https://willow.example/",
+          logoUrl: logo ? "https://willow.example/files/email-logo.png?v=1" : null,
+          ...(logo ? { logoWidth: 180, logoHeight: 48 } : {}),
+          mailingAddress: "Unit 4, The Old Mill, Wicklow",
+        };
+        const sent = renderCampaign({
+          document: { ...documentFixture(), brand, blocks: campaignLayoutDocumentBlocks(layout.blocks) },
+          previewText: layout.subject,
+          unsubscribeUrl: "{{unsubscribe_url}}",
+        });
+        expect(new TextEncoder().encode(sent.html).length).toBeLessThan(60_000);
+        expect(sent.html).toContain("prefers-color-scheme: dark");
+        expect(sent.html).not.toContain("Your photo");
+        expect(sent.html).toMatchSnapshot();
+
+        const thumbnail = renderCampaignLayoutPreview(brand, layout.blocks);
+        expect(thumbnail).toContain("Your photo");
+      });
+    }
+  }
 });

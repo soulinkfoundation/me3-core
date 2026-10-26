@@ -10,6 +10,7 @@ import {
   type ManagedCampaignSubmissionResponse,
 } from "../../../shared/managed-campaign-contract";
 import { parseCampaignDocument } from "../../../shared/campaign-document";
+import { findCampaignStarterText } from "../../../shared/campaign-layouts";
 import {
   CAMPAIGN_ADD_ON_PLANS,
   campaignAddOnPlan,
@@ -293,6 +294,14 @@ export async function startCampaignDelivery(
       "Add a mailing address to the footer before sending.",
       409,
       "mailing_address_required",
+    );
+  }
+  const starterText = campaignStarterText(campaign.revision.document_json);
+  if (starterText) {
+    throw new CampaignInputError(
+      `Replace the starter text "${starterText}" first.`,
+      409,
+      "starter_text_left",
     );
   }
   if (!campaign.revision.subject.trim()) {
@@ -1259,6 +1268,18 @@ async function getCampaignJob(env: Env, jobId: string) {
 }
 
 /** Marketing email must carry a postal address (CAN-SPAM); test sends to the owner don't need one. */
+/** The first layout starter string still in the email, or "" when it has all been replaced. */
+function campaignStarterText(documentJson: string): string {
+  try {
+    const document = JSON.parse(documentJson) as { blocks?: unknown };
+    return Array.isArray(document.blocks)
+      ? findCampaignStarterText(document as Parameters<typeof findCampaignStarterText>[0])[0] || ""
+      : "";
+  } catch {
+    return "";
+  }
+}
+
 function campaignMailingAddress(documentJson: string): string {
   try {
     const brand = (JSON.parse(documentJson) as { brand?: { mailingAddress?: unknown } }).brand;

@@ -1,0 +1,271 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`campaign renderer > renders the Event or offer layout with a logo under 60 KB 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title>Willow Yoga</title>
+  <style>
+    :root { color-scheme: light dark; supported-color-schemes: light dark; }
+    body { margin:0; }
+    @media only screen and (max-width:620px) {
+      .me3-shell { width:100% !important; }
+      .me3-pad { padding-left:22px !important; padding-right:22px !important; }
+      .me3-outer { padding:0 !important; }
+      .me3-card { border-radius:0 !important; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .me3-bg { background:#121514 !important; } .me3-card { background:#1c201f !important; } .me3-txt { color:#e6ebe8 !important; } .me3-muted { color:#9aa39f !important; } .me3-lnk { color:#4f9e8b !important; } .me3-rule { border-top-color:#2e3532 !important; }
+    }
+    [data-ogsb] .me3-bg { background:#121514 !important; } [data-ogsb] .me3-card { background:#1c201f !important; } [data-ogsc] .me3-txt { color:#e6ebe8 !important; } [data-ogsc] .me3-muted { color:#9aa39f !important; } [data-ogsc] .me3-lnk { color:#4f9e8b !important; } [data-ogsb] .me3-rule { border-top-color:#2e3532 !important; }
+  </style>
+  <!--[if mso]><style>* { font-family:Arial,Helvetica,sans-serif !important; }</style><![endif]-->
+</head>
+<body class="me3-bg" style="margin:0;padding:0;background:#f4f5f4;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">Coming up at Willow Yoga&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f4f5f4" class="me3-bg" style="width:100%;border-collapse:collapse;background:#f4f5f4">
+    <tr>
+      <td align="center" class="me3-outer" style="padding:28px 12px 0">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" class="me3-shell me3-card" style="width:600px;max-width:600px;border-collapse:separate;background:#ffffff;border-radius:12px">
+          <tr><td align="center" class="me3-pad" style="padding:28px 36px 6px"><a href="https://willow.example/" style="text-decoration:none"><img src="https://willow.example/files/email-logo.png?v=1" alt="Willow Yoga" class="me3-txt" width="180" height="48" style="display:block;width:180px;max-width:180px;height:auto;border:0;border-radius:8px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:20px;font-weight:700"></a></td></tr>
+          <tr><td class="me3-pad" style="padding:20px 36px 12px"><h1 class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:28px;line-height:1.25;font-weight:700">Name of the event or offer</h1><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">One or two lines on why it&#39;s worth coming.</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td width="20" valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">&#8226;</td><td valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><strong style="font-weight:700">When</strong> · Date and time</td></tr></table><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td width="20" valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">&#8226;</td><td valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><strong style="font-weight:700">Where</strong> · Place or link</td></tr></table><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td width="20" valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">&#8226;</td><td valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><strong style="font-weight:700">Price</strong> · Cost, or Free</td></tr></table><table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="border-collapse:collapse;margin:8px auto 26px"><tr><td bgcolor="#147d64" style="border-radius:8px;background:#147d64"><a href="https://willow.example/" style="display:inline-block;padding:14px 24px;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.2;font-weight:700;text-decoration:none;border-radius:8px;mso-line-height-rule:exactly">Book your spot</a></td></tr></table><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><em>Any deadline, like when the early price ends.</em></p><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">Sign off with your name</p></td></tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" class="me3-pad me3-muted" style="padding:20px 32px 34px;color:#6b7470;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;mso-line-height-rule:exactly">You're getting this because you subscribed to Willow Yoga. <a href="{{unsubscribe_url}}" class="muted" style="color:#6b7470;text-decoration:underline">Unsubscribe</a><br>Unit 4, The Old Mill, Wicklow</td>
+    </tr>
+  </table>
+</body>
+</html>"
+`;
+
+exports[`campaign renderer > renders the Event or offer layout without a logo under 60 KB 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title>Willow Yoga</title>
+  <style>
+    :root { color-scheme: light dark; supported-color-schemes: light dark; }
+    body { margin:0; }
+    @media only screen and (max-width:620px) {
+      .me3-shell { width:100% !important; }
+      .me3-pad { padding-left:22px !important; padding-right:22px !important; }
+      .me3-outer { padding:0 !important; }
+      .me3-card { border-radius:0 !important; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .me3-bg { background:#121514 !important; } .me3-card { background:#1c201f !important; } .me3-txt { color:#e6ebe8 !important; } .me3-muted { color:#9aa39f !important; } .me3-lnk { color:#4f9e8b !important; } .me3-rule { border-top-color:#2e3532 !important; }
+    }
+    [data-ogsb] .me3-bg { background:#121514 !important; } [data-ogsb] .me3-card { background:#1c201f !important; } [data-ogsc] .me3-txt { color:#e6ebe8 !important; } [data-ogsc] .me3-muted { color:#9aa39f !important; } [data-ogsc] .me3-lnk { color:#4f9e8b !important; } [data-ogsb] .me3-rule { border-top-color:#2e3532 !important; }
+  </style>
+  <!--[if mso]><style>* { font-family:Arial,Helvetica,sans-serif !important; }</style><![endif]-->
+</head>
+<body class="me3-bg" style="margin:0;padding:0;background:#f4f5f4;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">Coming up at Willow Yoga&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f4f5f4" class="me3-bg" style="width:100%;border-collapse:collapse;background:#f4f5f4">
+    <tr>
+      <td align="center" class="me3-outer" style="padding:28px 12px 0">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" class="me3-shell me3-card" style="width:600px;max-width:600px;border-collapse:separate;background:#ffffff;border-radius:12px">
+          <tr><td align="center" class="me3-pad" style="padding:28px 36px 6px"><a href="https://willow.example/" class="me3-txt" style="color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:1.2;font-weight:700;text-decoration:none;mso-line-height-rule:exactly">Willow Yoga</a></td></tr>
+          <tr><td class="me3-pad" style="padding:20px 36px 12px"><h1 class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:28px;line-height:1.25;font-weight:700">Name of the event or offer</h1><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">One or two lines on why it&#39;s worth coming.</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td width="20" valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">&#8226;</td><td valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><strong style="font-weight:700">When</strong> · Date and time</td></tr></table><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td width="20" valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">&#8226;</td><td valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><strong style="font-weight:700">Where</strong> · Place or link</td></tr></table><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td width="20" valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">&#8226;</td><td valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><strong style="font-weight:700">Price</strong> · Cost, or Free</td></tr></table><table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="border-collapse:collapse;margin:8px auto 26px"><tr><td bgcolor="#147d64" style="border-radius:8px;background:#147d64"><a href="https://willow.example/" style="display:inline-block;padding:14px 24px;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.2;font-weight:700;text-decoration:none;border-radius:8px;mso-line-height-rule:exactly">Book your spot</a></td></tr></table><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><em>Any deadline, like when the early price ends.</em></p><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">Sign off with your name</p></td></tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" class="me3-pad me3-muted" style="padding:20px 32px 34px;color:#6b7470;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;mso-line-height-rule:exactly">You're getting this because you subscribed to Willow Yoga. <a href="{{unsubscribe_url}}" class="muted" style="color:#6b7470;text-decoration:underline">Unsubscribe</a><br>Unit 4, The Old Mill, Wicklow</td>
+    </tr>
+  </table>
+</body>
+</html>"
+`;
+
+exports[`campaign renderer > renders the News layout with a logo under 60 KB 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title>Willow Yoga</title>
+  <style>
+    :root { color-scheme: light dark; supported-color-schemes: light dark; }
+    body { margin:0; }
+    @media only screen and (max-width:620px) {
+      .me3-shell { width:100% !important; }
+      .me3-pad { padding-left:22px !important; padding-right:22px !important; }
+      .me3-outer { padding:0 !important; }
+      .me3-card { border-radius:0 !important; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .me3-bg { background:#121514 !important; } .me3-card { background:#1c201f !important; } .me3-txt { color:#e6ebe8 !important; } .me3-muted { color:#9aa39f !important; } .me3-lnk { color:#4f9e8b !important; } .me3-rule { border-top-color:#2e3532 !important; }
+    }
+    [data-ogsb] .me3-bg { background:#121514 !important; } [data-ogsb] .me3-card { background:#1c201f !important; } [data-ogsc] .me3-txt { color:#e6ebe8 !important; } [data-ogsc] .me3-muted { color:#9aa39f !important; } [data-ogsc] .me3-lnk { color:#4f9e8b !important; } [data-ogsb] .me3-rule { border-top-color:#2e3532 !important; }
+  </style>
+  <!--[if mso]><style>* { font-family:Arial,Helvetica,sans-serif !important; }</style><![endif]-->
+</head>
+<body class="me3-bg" style="margin:0;padding:0;background:#f4f5f4;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">News from Willow Yoga&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f4f5f4" class="me3-bg" style="width:100%;border-collapse:collapse;background:#f4f5f4">
+    <tr>
+      <td align="center" class="me3-outer" style="padding:28px 12px 0">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" class="me3-shell me3-card" style="width:600px;max-width:600px;border-collapse:separate;background:#ffffff;border-radius:12px">
+          <tr><td align="center" class="me3-pad" style="padding:28px 36px 6px"><a href="https://willow.example/" style="text-decoration:none"><img src="https://willow.example/files/email-logo.png?v=1" alt="Willow Yoga" class="me3-txt" width="180" height="48" style="display:block;width:180px;max-width:180px;height:auto;border:0;border-radius:8px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:20px;font-weight:700"></a></td></tr>
+          <tr><td class="me3-pad" style="padding:20px 36px 12px"><h1 class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:28px;line-height:1.25;font-weight:700">Your news in a few words</h1><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">What&#39;s new, and when does it start?</p><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">One more detail people need to know.</p><table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="border-collapse:collapse;margin:8px auto 26px"><tr><td bgcolor="#147d64" style="border-radius:8px;background:#147d64"><a href="https://willow.example/" style="display:inline-block;padding:14px 24px;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.2;font-weight:700;text-decoration:none;border-radius:8px;mso-line-height-rule:exactly">Book now</a></td></tr></table><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">Sign off with your name</p></td></tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" class="me3-pad me3-muted" style="padding:20px 32px 34px;color:#6b7470;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;mso-line-height-rule:exactly">You're getting this because you subscribed to Willow Yoga. <a href="{{unsubscribe_url}}" class="muted" style="color:#6b7470;text-decoration:underline">Unsubscribe</a><br>Unit 4, The Old Mill, Wicklow</td>
+    </tr>
+  </table>
+</body>
+</html>"
+`;
+
+exports[`campaign renderer > renders the News layout without a logo under 60 KB 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title>Willow Yoga</title>
+  <style>
+    :root { color-scheme: light dark; supported-color-schemes: light dark; }
+    body { margin:0; }
+    @media only screen and (max-width:620px) {
+      .me3-shell { width:100% !important; }
+      .me3-pad { padding-left:22px !important; padding-right:22px !important; }
+      .me3-outer { padding:0 !important; }
+      .me3-card { border-radius:0 !important; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .me3-bg { background:#121514 !important; } .me3-card { background:#1c201f !important; } .me3-txt { color:#e6ebe8 !important; } .me3-muted { color:#9aa39f !important; } .me3-lnk { color:#4f9e8b !important; } .me3-rule { border-top-color:#2e3532 !important; }
+    }
+    [data-ogsb] .me3-bg { background:#121514 !important; } [data-ogsb] .me3-card { background:#1c201f !important; } [data-ogsc] .me3-txt { color:#e6ebe8 !important; } [data-ogsc] .me3-muted { color:#9aa39f !important; } [data-ogsc] .me3-lnk { color:#4f9e8b !important; } [data-ogsb] .me3-rule { border-top-color:#2e3532 !important; }
+  </style>
+  <!--[if mso]><style>* { font-family:Arial,Helvetica,sans-serif !important; }</style><![endif]-->
+</head>
+<body class="me3-bg" style="margin:0;padding:0;background:#f4f5f4;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">News from Willow Yoga&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f4f5f4" class="me3-bg" style="width:100%;border-collapse:collapse;background:#f4f5f4">
+    <tr>
+      <td align="center" class="me3-outer" style="padding:28px 12px 0">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" class="me3-shell me3-card" style="width:600px;max-width:600px;border-collapse:separate;background:#ffffff;border-radius:12px">
+          <tr><td align="center" class="me3-pad" style="padding:28px 36px 6px"><a href="https://willow.example/" class="me3-txt" style="color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:1.2;font-weight:700;text-decoration:none;mso-line-height-rule:exactly">Willow Yoga</a></td></tr>
+          <tr><td class="me3-pad" style="padding:20px 36px 12px"><h1 class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:28px;line-height:1.25;font-weight:700">Your news in a few words</h1><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">What&#39;s new, and when does it start?</p><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">One more detail people need to know.</p><table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="border-collapse:collapse;margin:8px auto 26px"><tr><td bgcolor="#147d64" style="border-radius:8px;background:#147d64"><a href="https://willow.example/" style="display:inline-block;padding:14px 24px;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.2;font-weight:700;text-decoration:none;border-radius:8px;mso-line-height-rule:exactly">Book now</a></td></tr></table><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">Sign off with your name</p></td></tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" class="me3-pad me3-muted" style="padding:20px 32px 34px;color:#6b7470;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;mso-line-height-rule:exactly">You're getting this because you subscribed to Willow Yoga. <a href="{{unsubscribe_url}}" class="muted" style="color:#6b7470;text-decoration:underline">Unsubscribe</a><br>Unit 4, The Old Mill, Wicklow</td>
+    </tr>
+  </table>
+</body>
+</html>"
+`;
+
+exports[`campaign renderer > renders the Newsletter layout with a logo under 60 KB 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title>Willow Yoga</title>
+  <style>
+    :root { color-scheme: light dark; supported-color-schemes: light dark; }
+    body { margin:0; }
+    @media only screen and (max-width:620px) {
+      .me3-shell { width:100% !important; }
+      .me3-pad { padding-left:22px !important; padding-right:22px !important; }
+      .me3-outer { padding:0 !important; }
+      .me3-card { border-radius:0 !important; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .me3-bg { background:#121514 !important; } .me3-card { background:#1c201f !important; } .me3-txt { color:#e6ebe8 !important; } .me3-muted { color:#9aa39f !important; } .me3-lnk { color:#4f9e8b !important; } .me3-rule { border-top-color:#2e3532 !important; }
+    }
+    [data-ogsb] .me3-bg { background:#121514 !important; } [data-ogsb] .me3-card { background:#1c201f !important; } [data-ogsc] .me3-txt { color:#e6ebe8 !important; } [data-ogsc] .me3-muted { color:#9aa39f !important; } [data-ogsc] .me3-lnk { color:#4f9e8b !important; } [data-ogsb] .me3-rule { border-top-color:#2e3532 !important; }
+  </style>
+  <!--[if mso]><style>* { font-family:Arial,Helvetica,sans-serif !important; }</style><![endif]-->
+</head>
+<body class="me3-bg" style="margin:0;padding:0;background:#f4f5f4;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">October at Willow Yoga&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f4f5f4" class="me3-bg" style="width:100%;border-collapse:collapse;background:#f4f5f4">
+    <tr>
+      <td align="center" class="me3-outer" style="padding:28px 12px 0">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" class="me3-shell me3-card" style="width:600px;max-width:600px;border-collapse:separate;background:#ffffff;border-radius:12px">
+          <tr><td align="center" class="me3-pad" style="padding:28px 36px 6px"><a href="https://willow.example/" style="text-decoration:none"><img src="https://willow.example/files/email-logo.png?v=1" alt="Willow Yoga" class="me3-txt" width="180" height="48" style="display:block;width:180px;max-width:180px;height:auto;border:0;border-radius:8px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:20px;font-weight:700"></a></td></tr>
+          <tr><td class="me3-pad" style="padding:20px 36px 12px"><h1 class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:28px;line-height:1.25;font-weight:700">October at Willow Yoga</h1><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">Say hello and sum up this month in a line.</p><h2 class="me3-txt" style="margin:4px 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:20px;line-height:1.3;font-weight:700">Your first story</h2><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">A few sentences about it. Add a link if there&#39;s more to read.</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td class="me3-rule" style="padding:8px 0 22px;border-top:1px solid #e1e5e3;font-size:0;line-height:0">&nbsp;</td></tr></table><h2 class="me3-txt" style="margin:4px 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:20px;line-height:1.3;font-weight:700">Your second story</h2><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">Keep each story short. Most people read on their phone.</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td class="me3-rule" style="padding:8px 0 22px;border-top:1px solid #e1e5e3;font-size:0;line-height:0">&nbsp;</td></tr></table><h2 class="me3-txt" style="margin:4px 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:20px;line-height:1.3;font-weight:700">Dates for your diary</h2><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td width="20" valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">&#8226;</td><td valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><strong style="font-weight:700">Date</strong> · What&#39;s happening</td></tr></table><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td width="20" valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">&#8226;</td><td valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><strong style="font-weight:700">Date</strong> · What&#39;s happening</td></tr></table><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">Sign off with your name</p></td></tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" class="me3-pad me3-muted" style="padding:20px 32px 34px;color:#6b7470;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;mso-line-height-rule:exactly">You're getting this because you subscribed to Willow Yoga. <a href="{{unsubscribe_url}}" class="muted" style="color:#6b7470;text-decoration:underline">Unsubscribe</a><br>Unit 4, The Old Mill, Wicklow</td>
+    </tr>
+  </table>
+</body>
+</html>"
+`;
+
+exports[`campaign renderer > renders the Newsletter layout without a logo under 60 KB 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title>Willow Yoga</title>
+  <style>
+    :root { color-scheme: light dark; supported-color-schemes: light dark; }
+    body { margin:0; }
+    @media only screen and (max-width:620px) {
+      .me3-shell { width:100% !important; }
+      .me3-pad { padding-left:22px !important; padding-right:22px !important; }
+      .me3-outer { padding:0 !important; }
+      .me3-card { border-radius:0 !important; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .me3-bg { background:#121514 !important; } .me3-card { background:#1c201f !important; } .me3-txt { color:#e6ebe8 !important; } .me3-muted { color:#9aa39f !important; } .me3-lnk { color:#4f9e8b !important; } .me3-rule { border-top-color:#2e3532 !important; }
+    }
+    [data-ogsb] .me3-bg { background:#121514 !important; } [data-ogsb] .me3-card { background:#1c201f !important; } [data-ogsc] .me3-txt { color:#e6ebe8 !important; } [data-ogsc] .me3-muted { color:#9aa39f !important; } [data-ogsc] .me3-lnk { color:#4f9e8b !important; } [data-ogsb] .me3-rule { border-top-color:#2e3532 !important; }
+  </style>
+  <!--[if mso]><style>* { font-family:Arial,Helvetica,sans-serif !important; }</style><![endif]-->
+</head>
+<body class="me3-bg" style="margin:0;padding:0;background:#f4f5f4;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">October at Willow Yoga&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;&#847; &zwnj; &nbsp;</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f4f5f4" class="me3-bg" style="width:100%;border-collapse:collapse;background:#f4f5f4">
+    <tr>
+      <td align="center" class="me3-outer" style="padding:28px 12px 0">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" class="me3-shell me3-card" style="width:600px;max-width:600px;border-collapse:separate;background:#ffffff;border-radius:12px">
+          <tr><td align="center" class="me3-pad" style="padding:28px 36px 6px"><a href="https://willow.example/" class="me3-txt" style="color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:1.2;font-weight:700;text-decoration:none;mso-line-height-rule:exactly">Willow Yoga</a></td></tr>
+          <tr><td class="me3-pad" style="padding:20px 36px 12px"><h1 class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:28px;line-height:1.25;font-weight:700">October at Willow Yoga</h1><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">Say hello and sum up this month in a line.</p><h2 class="me3-txt" style="margin:4px 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:20px;line-height:1.3;font-weight:700">Your first story</h2><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">A few sentences about it. Add a link if there&#39;s more to read.</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td class="me3-rule" style="padding:8px 0 22px;border-top:1px solid #e1e5e3;font-size:0;line-height:0">&nbsp;</td></tr></table><h2 class="me3-txt" style="margin:4px 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:20px;line-height:1.3;font-weight:700">Your second story</h2><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">Keep each story short. Most people read on their phone.</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td class="me3-rule" style="padding:8px 0 22px;border-top:1px solid #e1e5e3;font-size:0;line-height:0">&nbsp;</td></tr></table><h2 class="me3-txt" style="margin:4px 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:20px;line-height:1.3;font-weight:700">Dates for your diary</h2><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td width="20" valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">&#8226;</td><td valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><strong style="font-weight:700">Date</strong> · What&#39;s happening</td></tr></table><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse"><tr><td width="20" valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">&#8226;</td><td valign="top" class="me3-txt" style="padding:0 0 10px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6"><strong style="font-weight:700">Date</strong> · What&#39;s happening</td></tr></table><p class="me3-txt" style="margin:0 0 16px;color:#18201d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;mso-line-height-rule:exactly;font-size:16px;line-height:1.6">Sign off with your name</p></td></tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" class="me3-pad me3-muted" style="padding:20px 32px 34px;color:#6b7470;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;mso-line-height-rule:exactly">You're getting this because you subscribed to Willow Yoga. <a href="{{unsubscribe_url}}" class="muted" style="color:#6b7470;text-decoration:underline">Unsubscribe</a><br>Unit 4, The Old Mill, Wicklow</td>
+    </tr>
+  </table>
+</body>
+</html>"
+`;

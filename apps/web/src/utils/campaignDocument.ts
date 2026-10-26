@@ -43,6 +43,8 @@ export type CampaignDocument = {
     name: string;
     homeUrl: string;
     logoUrl: string | null;
+    logoWidth?: number;
+    logoHeight?: number;
     logoAlignment: "left" | "center";
     backgroundColor: string;
     surfaceColor: string;
@@ -56,6 +58,27 @@ export type CampaignDocument = {
 export function campaignDocumentToEditorHtml(document: CampaignDocument): string {
   const html = document.blocks.map((block) => blockToEditorHtml(block)).join("");
   return html || "<p></p>";
+}
+
+/**
+ * An editor-only "add a photo" placeholder for starting layouts. It has no asset id, so it is
+ * dropped when the email is saved.
+ */
+export const CAMPAIGN_PHOTO_SLOT_SRC = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="300" viewBox="0 0 1040 300"><rect x="2" y="2" width="1036" height="296" rx="16" fill="#f6f8f7" stroke="#c9d0cd" stroke-width="3" stroke-dasharray="12 10"/><text x="520" y="160" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="30" fill="#6b7470">Your photo: select this and use Image to add one. Left out if empty.</text></svg>',
+)}`;
+
+/** A starting layout's blocks as editor HTML, with photo slots shown as placeholders. */
+export function campaignLayoutToEditorHtml(
+  blocks: Array<CampaignTextBlock | CampaignExtraBlock | { id: string; type: "photo-slot" }>,
+): string {
+  return blocks
+    .map((block) =>
+      block.type === "photo-slot"
+        ? `<img src="${CAMPAIGN_PHOTO_SLOT_SRC}" alt="Photo slot">`
+        : blockToEditorHtml(block),
+    )
+    .join("") || "<p></p>";
 }
 
 export function campaignEditorHtmlToBlocks(

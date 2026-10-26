@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getSiteBranding, updateSiteBranding } from "./site-branding";
+import { getSiteBranding, saveSiteEmailLogo, updateSiteBranding } from "./site-branding";
 import type { DbSite, Env } from "./types";
 
 type SqliteValue = null | number | string | Uint8Array;
@@ -56,6 +56,9 @@ describe("Site branding", () => {
         site_id TEXT PRIMARY KEY,
         display_name TEXT NOT NULL,
         logo_ref TEXT,
+        email_logo_ref TEXT,
+        email_logo_width INTEGER,
+        email_logo_height INTEGER,
         accent_color TEXT NOT NULL,
         background_color TEXT NOT NULL,
         surface_color TEXT NOT NULL,
@@ -140,5 +143,28 @@ describe("Site branding", () => {
       backgroundColor: "#f4f5f4",
       surfaceColor: "#ffffff",
     });
+  });
+
+  it("keeps the email logo copy until the Site logo changes", async () => {
+    await updateSiteBranding(env, site, { logoRef: "./media/logo.png", accentColor: "#112233", textColor: "#101010" });
+    const withEmailLogo = await saveSiteEmailLogo(env, site, { width: 180, height: 48, version: "abc" });
+    expect(withEmailLogo).toMatchObject({
+      emailLogoRef: "./files/email-logo.png?v=abc",
+      emailLogoUrl: "https://sites.example.com/files/email-logo.png?v=abc",
+      emailLogoWidth: 180,
+      emailLogoHeight: 48,
+    });
+
+    const colourOnly = await updateSiteBranding(env, site, { logoRef: "./media/logo.png", accentColor: "#445566", textColor: "#101010" });
+    expect(colourOnly.emailLogoUrl).toBe("https://sites.example.com/files/email-logo.png?v=abc");
+
+    const newLogo = await updateSiteBranding(env, site, { logoRef: "./media/new.png", accentColor: "#445566", textColor: "#101010" });
+    expect(newLogo).toMatchObject({ emailLogoRef: null, emailLogoUrl: null, emailLogoWidth: null });
+  });
+
+  it("refuses an email logo bigger than the 200 by 64 slot", async () => {
+    await expect(saveSiteEmailLogo(env, site, { width: 400, height: 128, version: "x" })).rejects.toThrow(
+      "at most 200 by 64",
+    );
   });
 });
