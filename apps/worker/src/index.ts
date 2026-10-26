@@ -44,6 +44,7 @@ import {
   isManagedRuntime,
   releaseManagedRuntimeWriteLease,
 } from "./managed-runtime-lifecycle";
+import { isOwnerAppStaticAssetPath } from "./owner-app-assets";
 import type {
   BookingReminderQueueMessage,
   Env,
@@ -55,8 +56,11 @@ export { getMe3CloudUsernamePublishBlockReason } from "./sites";
 
 const worker = {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext) {
-    const migrationResponse = await ensureCoreRuntimeMigrationsForRequest(request, env);
-    if (migrationResponse) return migrationResponse;
+    // Static files never touch D1, so they do not wait for the migration gate.
+    if (!isOwnerAppStaticAssetPath(new URL(request.url).pathname)) {
+      const migrationResponse = await ensureCoreRuntimeMigrationsForRequest(request, env);
+      if (migrationResponse) return migrationResponse;
+    }
     return app.fetch(request, env, ctx);
   },
   async email(message: ForwardableEmailMessageLike, env: Env, _ctx?: ExecutionContext) {

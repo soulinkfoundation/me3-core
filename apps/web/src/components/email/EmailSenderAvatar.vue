@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { mailInitials } from "./brief";
+import { proxiedAvatarUrl } from "../../utils/avatarUrl";
 
 /** Contact photo or brand logo served by the Worker, otherwise initials from the display name. */
 const props = withDefaults(defineProps<{ name: string; avatarUrl?: string | null; size?: number }>(), {
@@ -10,7 +11,8 @@ const props = withDefaults(defineProps<{ name: string; avatarUrl?: string | null
 const failed = ref(false);
 watch(() => props.avatarUrl, () => { failed.value = false; });
 const initials = computed(() => mailInitials(props.name));
-const showImage = computed(() => Boolean(props.avatarUrl) && !failed.value);
+const src = computed(() => proxiedAvatarUrl(props.avatarUrl));
+const showImage = computed(() => Boolean(src.value) && !failed.value);
 </script>
 
 <template>
@@ -19,7 +21,7 @@ const showImage = computed(() => Boolean(props.avatarUrl) && !failed.value);
     :style="{ width: `${size}px`, height: `${size}px`, fontSize: `${Math.round(size * 0.36)}px` }"
     aria-hidden="true"
   >
-    <img v-if="showImage" :src="avatarUrl || undefined" alt="" loading="lazy" referrerpolicy="no-referrer" @error="failed = true" />
+    <img v-if="showImage" :src="src || undefined" alt="" loading="lazy" referrerpolicy="no-referrer" @error="failed = true" />
     <template v-else>{{ initials }}</template>
   </span>
 </template>
