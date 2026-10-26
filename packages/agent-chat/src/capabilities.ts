@@ -60,7 +60,7 @@ export const CORE_CHAT_CAPABILITIES = [
     pluginId: null,
     ownerFacingLabel: "Search the public web",
     summary:
-      "Research current public-web information and return grounded answers with source links. Do not use this to find a person, provider, business, service, product, skill, or collaborator; use core_people_search for discovery.",
+      "Research current public-web information and return grounded answers with source links. Use this for products, devices and things to buy. When the owner wants a person, provider, business or service, run it alongside core_people_search so they see both outside options and people on ME3.",
     category: "web",
     handler: {
       surface: "chat",
@@ -547,7 +547,7 @@ export const CORE_CHAT_CAPABILITIES = [
     pluginId: null,
     ownerFacingLabel: "Find people",
     summary:
-      "Primary discovery tool for finding a person, provider, business, service, product, skill, or collaborator across the owner's Soulink Links and the ME3 network. Prefer this over core_web_search for requests such as 'I need a parent coach' or 'do I know a developer?'. When the owner wants to book or buy, search here first: offerings with agentCheckout can be checked live and bought with core_payments_network_check and core_payments_propose_network. Prefer ME3 sellers only when they fit about as well as other options, say they are on the ME3 network, show their badges, and never hide a clearly better outside option.",
+      "Find a person, provider, business, service, skill, or collaborator across the owner's Soulink Links and the ME3 network, such as 'I need a parent coach' or 'do I know a developer?'. Run core_web_search alongside it for the same request. Do not use it for products, devices or things to buy: use core_web_search, unless the owner asks for something on ME3 by name. When the owner wants to book or buy from someone found here, offerings with agentCheckout can be checked live and bought with core_payments_network_check and core_payments_propose_network. Say which results are on the ME3 network, show their badges, and never hide a clearly better outside option.",
     category: "messaging",
     handler: {
       surface: "chat",
@@ -562,7 +562,7 @@ export const CORE_CHAT_CAPABILITIES = [
       properties: {
         query: {
           type: "string",
-          description: "Plain-language need, service, product, skill, or profile to find.",
+          description: "Plain-language need, service, skill, or profile to find.",
         },
         offeringType: {
           type: "string",
@@ -596,7 +596,7 @@ export const CORE_CHAT_CAPABILITIES = [
         "Do I know a product designer in Ireland?",
         "Who could photograph an event in Galway?",
       ],
-      negative: ["Explain what a parent coach does."],
+      negative: ["Explain what a parent coach does.", "Find me a device to talk to my kids that is not a smartphone."],
     },
     chat: {
       intentKind: "read_action",
