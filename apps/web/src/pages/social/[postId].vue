@@ -285,11 +285,6 @@ function removeImage(index: number) {
   setImages(activeImages.value.filter((_, position) => position !== index));
 }
 
-function describeImage(index: number, altText: string) {
-  const images = activeImages.value.map((asset, position) => (position === index ? { ...asset, altText } : asset));
-  setImages(images);
-}
-
 async function addImages(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files || []).filter((file) => file.type.startsWith("image/"));
@@ -675,15 +670,6 @@ onMounted(async () => {
                     <img :src="asset.url" :alt="asset.altText || ''" loading="lazy">
                     <small>{{ index + 1 }}</small>
                   </span>
-                  <label class="visually-hidden" :for="`social-image-alt-${index}`">Description for image {{ index + 1 }}</label>
-                  <input
-                    :id="`social-image-alt-${index}`"
-                    class="post-image__alt"
-                    :value="asset.altText || ''"
-                    :readonly="activeLocked"
-                    placeholder="Description (optional)"
-                    @change="describeImage(index, ($event.target as HTMLInputElement).value)"
-                  >
                   <span v-if="!activeLocked" class="post-image__tools">
                     <Button color="ghost" shape="soft" size="small" icon-only :aria-label="`Move image ${index + 1} earlier`" :disabled="index === 0" @click="moveImage(index, -1)">
                       <UiIcon name="ChevronLeft" :size="15" />
@@ -868,7 +854,7 @@ onMounted(async () => {
 
 .post-editor { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; margin-top: 14px; }
 .post-editor__main { display: grid; align-content: start; gap: 10px; min-width: 0; }
-.post-field, .post-image__alt, .post-bar__when input {
+.post-field, .post-bar__when input {
   box-sizing: border-box;
   border: 1px solid var(--ui-border-strong);
   border-radius: var(--ui-radius-md);
@@ -895,12 +881,11 @@ onMounted(async () => {
 .post-checks__icon { display: inline-grid; flex: none; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: var(--ui-danger); color: #fff; font-size: 10px; font-weight: 700; }
 
 .post-images { display: grid; gap: 8px; }
-.post-images__list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.post-image { display: flex; align-items: center; gap: 8px; }
-.post-image__thumb { position: relative; flex: none; width: 48px; height: 48px; overflow: hidden; border-radius: var(--ui-radius-sm); background: var(--ui-surface-muted); }
+.post-images__list { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.post-image { display: grid; justify-items: center; gap: 2px; }
+.post-image__thumb { position: relative; flex: none; width: 72px; height: 72px; overflow: hidden; border-radius: var(--ui-radius-sm); background: var(--ui-surface-muted); }
 .post-image__thumb img { width: 100%; height: 100%; object-fit: cover; }
 .post-image__thumb small { position: absolute; top: 2px; left: 4px; color: #fff; font-size: 10px; font-weight: 700; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }
-.post-image__alt { flex: 1 1 auto; min-width: 0; padding: 6px 10px; font-size: 13px; }
 .post-image__tools { display: inline-flex; flex: none; }
 .post-images__add {
   display: inline-flex;
