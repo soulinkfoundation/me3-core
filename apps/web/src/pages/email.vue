@@ -3790,7 +3790,6 @@ onBeforeUnmount(() => {
               <aside class="mail-rail" aria-label="Mailbox">
                 <router-link to="/assistant" class="mail-rail__home" aria-label="Home">
                   <UiIcon name="ArrowLeft" :size="16" aria-hidden="true" />
-                  <span>Home</span>
                 </router-link>
                 <Button color="primary" shape="pill" size="compact" type="button" class="mail-rail__compose" @click="openComposeModal()">
                   <UiIcon name="SquarePen" :size="16" aria-hidden="true" />
@@ -6439,10 +6438,11 @@ onBeforeUnmount(() => {
 .mail-rail__home {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  width: 36px;
   min-height: 36px;
   margin: 0 0 8px;
-  padding: 0 10px;
+  padding: 0;
   border-radius: 10px;
   color: var(--ui-text-muted, var(--color-text-muted));
   font-size: 14px;

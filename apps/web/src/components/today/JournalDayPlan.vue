@@ -1,13 +1,26 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import AppDialog from "../AppDialog.vue";
 import UiIcon from "../UiIcon.vue";
 import { focusGoal, homeTodayTasks, localDateKey, type HomeGoal, type HomeTask } from "../../utils/homeSummary";
 
 // Today's page is where you work: the focus goal, then today's tasks, then your notes.
-// Tasks are added from the editor (the task button, or Task on selected text), so there's no add row.
-const props = withDefaults(defineProps<{ tasks: HomeTask[]; goals: HomeGoal[]; busy?: string[] }>(), { busy: () => [] });
-const emit = defineEmits<{ complete: [task: HomeTask]; focus: [goalId: string]; progress: [goalId: string, progress: number] }>();
+// Tasks are added from the editor: Task on selected text, or the task button. On an empty line
+// the task button opens the add row here. With no tasks the section isn't shown at all.
+const props = withDefaults(defineProps<{ tasks: HomeTask[]; goals: HomeGoal[]; busy?: string[]; adding?: boolean }>(), { busy: () => [], adding: false });
+const emit = defineEmits<{ complete: [task: HomeTask]; focus: [goalId: string]; progress: [goalId: string, progress: number]; add: [title: string]; "cancel-add": [] }>();
+const newTask = ref("");
+const addInput = ref<HTMLInputElement | null>(null);
+watch(() => props.adding, async (adding) => {
+  newTask.value = "";
+  if (adding) { await nextTick(); addInput.value?.focus(); }
+});
+function submitNewTask() {
+  const title = newTask.value.trim();
+  if (title) emit("add", title);
+  else emit("cancel-add");
+  newTask.value = "";
+}
 const picking = ref(false);
 const focus = computed(() => focusGoal(props.goals));
 const otherGoals = computed(() => props.goals.filter(goal => goal.status !== "completed" && goal.id !== focus.value?.id));
@@ -21,23 +34,27 @@ function commitProgress() {
 }
 const doneToday = computed(() => props.tasks.filter(task => !task.archivedAt && task.status === "done" && task.updatedAt && localDateKey(new Date(task.updatedAt)) === localDateKey(new Date())));
 const dayTasks = computed(() => [...doneToday.value, ...homeTodayTasks(props.tasks)]);
+const visible = computed(() => Boolean(focus.value) || dayTasks.value.length > 0 || props.adding);
 function choose(id: string) { if (id !== focus.value?.id) emit("focus", id); }
 </script>
 
 <template>
-  <section class="day-plan" aria-label="Today's plan">
+  <section v-if="visible || picking" class="day-plan" aria-label="Today's plan">
     <button v-if="focus" type="button" class="day-plan__goal" :aria-label="`Focus goal: ${focus.title}, ${focus.progress || 0} percent. Update progress or change focus`" @click="picking = true">
       <span class="day-plan__goal-title"><UiIcon name="Goal" :size="18" class="day-plan__goal-icon" />{{ focus.title }}</span>
       <span class="day-plan__bar" aria-hidden="true"><i :style="{ width: `${focus.progress || 0}%` }" /></span>
     </button>
-    <div class="day-plan__head"><h3>Tasks</h3><RouterLink to="/tasks">All tasks</RouterLink></div>
     <div v-for="task in dayTasks" :key="task.id" class="day-plan__task" :class="{ 'is-done': task.status === 'done' }">
       <button type="button" :disabled="task.status === 'done' || busy.includes(task.id)" :aria-label="task.status === 'done' ? `${task.title}, done` : `Complete ${task.title}`" @click="emit('complete', task)">
         <UiIcon :name="task.status === 'done' ? 'CircleCheck' : 'Circle'" :size="20" />
       </button>
       <RouterLink :to="`/tasks?task=${encodeURIComponent(task.id)}`">{{ task.title }}</RouterLink>
     </div>
-    <p v-if="!dayTasks.length" class="day-plan__empty">Nothing for today. Select text and choose Task, or use the task button.</p>
+    <form v-if="adding" class="day-plan__task day-plan__add" @submit.prevent="submitNewTask">
+      <UiIcon name="Circle" :size="20" class="day-plan__add-icon" />
+      <input ref="addInput" v-model="newTask" type="text" maxlength="180" placeholder="New task" aria-label="New task" enterkeyhint="done" @keydown.esc.prevent="emit('cancel-add')" @blur="submitNewTask" />
+    </form>
+    <RouterLink v-if="dayTasks.length || adding" to="/tasks" class="day-plan__all">All tasks</RouterLink>
     <AppDialog :open="picking" labelled-by="day-plan-goal-title" close-on-backdrop @close="picking = false">
       <section class="goal-sheet">
         <header class="goal-sheet__head">
@@ -71,16 +88,17 @@ function choose(id: string) { if (id !== focus.value?.id) emit("focus", id); }
 .day-plan__goal-icon { flex-shrink: 0; margin-top: 1px; color: var(--ui-accent); }
 .day-plan__bar { display: block; height: 4px; margin-left: 26px; border-radius: 4px; background: var(--ui-surface-muted); overflow: hidden; }
 .day-plan__bar i { display: block; height: 100%; border-radius: inherit; background: var(--ui-accent); }
-.day-plan__head { display: flex; align-items: center; justify-content: space-between; min-height: 32px; }
-.day-plan__head h3 { margin: 0; color: var(--ui-text-muted); font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
-.day-plan__head a { color: var(--ui-accent); font-size: 14px; font-weight: 600; text-decoration: none; }
+.day-plan__all { align-self: flex-end; color: var(--ui-text-muted); font-size: 13px; text-decoration: none; }
+.day-plan__all:hover { color: var(--ui-text); }
+.day-plan__add-icon { flex-shrink: 0; width: 36px; margin-left: -8px; color: var(--ui-text-muted); }
+.day-plan__add input { flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ui-text); font: inherit; outline: none; }
+.day-plan__add input::placeholder { color: var(--ui-text-muted); }
 .day-plan__task { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 16px; }
 .day-plan__task button { display: grid; place-items: center; width: 36px; min-height: 40px; margin-left: -8px; padding: 0; border: 0; border-radius: 12px; background: transparent; color: var(--ui-text-muted); cursor: pointer; }
 .day-plan__task button:hover:not(:disabled) { background: var(--ui-surface-muted); }
 .day-plan__task a { flex: 1; min-width: 0; color: var(--ui-text); text-decoration: none; }
 .day-plan__task.is-done button { color: var(--ui-accent); cursor: default; }
 .day-plan__task.is-done a { color: var(--ui-text-muted); text-decoration: line-through; }
-.day-plan__empty { margin: 4px 0; color: var(--ui-text-muted); font-size: 14px; }
 .goal-sheet { box-sizing: border-box; display: grid; gap: 4px; width: min(100%, 440px); padding: 8px 20px 12px; border-radius: var(--ui-radius-lg); background: var(--ui-surface); color: var(--ui-text); box-shadow: var(--ui-shadow-md); }
 .goal-sheet__head { display: flex; align-items: center; justify-content: space-between; margin-right: -12px; }
 .goal-sheet__head h2 { margin: 0; font-size: 17px; font-weight: 600; }
