@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { API_BASE } from "../../api";
@@ -67,6 +67,7 @@ const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const when = ref(localParts(suggestedTime()));
 const saveChains = new Map<string, Promise<unknown>>();
 const saveTimers = new Map<string, number>();
+let postingPoll: number | undefined;
 
 const IN_FLIGHT = new Set(["scheduled", "queued", "publishing"]);
 
@@ -171,6 +172,19 @@ function replaceVersion(version: PostVersion) {
 
 async function reload() {
   setDetail(await social.fetchSocialPost(postId.value));
+  watchPosting();
+}
+
+/** Publishing finishes in the background; check back until every platform has an outcome. */
+function watchPosting() {
+  window.clearTimeout(postingPoll);
+  postingPoll = undefined;
+  const posting = versions.value.some((version) => version.publicationStatus === "queued" || version.publicationStatus === "publishing");
+  if (!posting) return;
+  postingPoll = window.setTimeout(() => {
+    if (!busy.value) void reload().catch(() => watchPosting());
+    else watchPosting();
+  }, 3000);
 }
 
 /** Saves run one after another per platform; any edit returns that platform to a draft on the server. */
@@ -276,11 +290,6 @@ function describeImage(index: number, altText: string) {
   setImages(images);
 }
 
-function focusFirstEmptyDescription() {
-  const index = activeImages.value.findIndex((asset) => !asset.altText?.trim());
-  if (index >= 0) document.getElementById(`social-image-alt-${index}`)?.focus();
-}
-
 async function addImages(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files || []).filter((file) => file.type.startsWith("image/"));
@@ -288,7 +297,7 @@ async function addImages(event: Event) {
   if (!files.length || !active.value || busy.value) return;
   busy.value = "upload";
   try {
-    const uploaded = await uploadDriveFiles<DriveFile>(files, { folderId: null });
+    const uploaded = await uploadDriveFiles<DriveFile>(files, { folderId: null, onConflict: "rename" });
     const added: SocialMediaAsset[] = uploaded.map((file) => ({
       url: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(file.id)}/content`,
       fileId: file.id,
@@ -343,7 +352,7 @@ async function addVideo(event: Event) {
   if (!file || !version || busy.value) return;
   busy.value = "upload";
   try {
-    const [uploaded] = await uploadDriveFiles<DriveFile>([file], { folderId: null });
+    const [uploaded] = await uploadDriveFiles<DriveFile>([file], { folderId: null, onConflict: "rename" });
     if (!uploaded) throw new Error("The video didn't upload.");
     const video: SocialMediaAsset = {
       url: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(uploaded.id)}/content`,
@@ -537,6 +546,8 @@ watch(activeId, (next) => {
   if (platform && route.query.platform !== platform) void router.replace({ query: { ...route.query, platform } });
 });
 
+onBeforeUnmount(() => window.clearTimeout(postingPoll));
+
 onMounted(async () => {
   await data.load();
   if (data.locked.value || data.loadFailed.value) return;
@@ -668,10 +679,9 @@ onMounted(async () => {
                   <input
                     :id="`social-image-alt-${index}`"
                     class="post-image__alt"
-                    :class="{ 'post-field--problem': !asset.altText?.trim() }"
                     :value="asset.altText || ''"
                     :readonly="activeLocked"
-                    placeholder="Describe this image"
+                    placeholder="Description (optional)"
                     @change="describeImage(index, ($event.target as HTMLInputElement).value)"
                   >
                   <span v-if="!activeLocked" class="post-image__tools">
@@ -695,7 +705,6 @@ onMounted(async () => {
                 <li v-for="check in activeChecks.filter((item) => item.field === 'images')" :key="check.message">
                   <span class="post-checks__icon" aria-hidden="true">!</span>
                   <span>{{ check.message }}</span>
-                  <button v-if="check.message.includes('description')" type="button" @click="focusFirstEmptyDescription">Add</button>
                 </li>
               </ul>
             </div>

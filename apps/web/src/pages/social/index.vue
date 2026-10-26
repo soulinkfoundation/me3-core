@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, useId, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import AppDialog from "../../components/AppDialog.vue";
@@ -11,7 +11,9 @@ import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue
 import SocialMarks from "../../components/social/SocialMarks.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { useSocialData } from "../../composables/useSocialData";
-import type { SocialPlatform, SocialSuggestion } from "../../stores/social";
+import { API_BASE } from "../../api";
+import type { DriveFile, SocialMediaAsset, SocialPlatform, SocialSuggestion } from "../../stores/social";
+import { uploadDriveFiles } from "../../utils/drive-upload";
 import {
   SOCIAL_NETWORKS,
   SOCIAL_TABS,
@@ -54,6 +56,8 @@ const composerOpen = ref(false);
 const composerText = ref("");
 const composerNetworks = ref<SocialNetwork[]>([]);
 const composerBusy = ref(false);
+const composerMedia = ref<Array<{ file: File; preview: string }>>([]);
+const composerMediaInput = ref<HTMLInputElement | null>(null);
 const ideaBusy = ref<string | null>(null);
 const composerTitleId = `social-new-post-${useId()}`;
 
@@ -85,10 +89,10 @@ const connectedNetworks = computed(() =>
   SOCIAL_NETWORKS.filter((network) => accountState(network.id, accounts.value) !== "not_connected").map((network) => network.id),
 );
 const emptyText = computed(() => {
-  if (tab.value === "ideas") return "No ideas saved. Tell ME3 an idea in Chat and it keeps it here.";
-  if (tab.value === "drafts") return "No drafts. Ask ME3 in Chat to turn something you wrote into a post.";
-  if (tab.value === "scheduled") return "Nothing scheduled.";
-  return "Nothing posted yet.";
+  if (tab.value === "ideas") return "No ideas yet";
+  if (tab.value === "drafts") return "No drafts";
+  if (tab.value === "scheduled") return "Nothing scheduled";
+  return "Nothing posted yet";
 });
 
 watch(tab, (next) => {
@@ -155,6 +159,7 @@ const composerChoices = computed(() =>
 
 function openComposer() {
   composerText.value = "";
+  clearComposerMedia();
   composerNetworks.value = connectedNetworks.value.filter((network) => network !== "youtube");
   if (!composerNetworks.value.length) composerNetworks.value = ["x", "linkedin"];
   composerOpen.value = true;
@@ -166,11 +171,55 @@ function toggleComposerNetwork(network: SocialNetwork) {
     : [...composerNetworks.value, network];
 }
 
+const composerImages = computed(() => composerMedia.value.filter((item) => item.file.type.startsWith("image/")));
+const composerVideo = computed(() => composerMedia.value.find((item) => item.file.type.startsWith("video/")) || null);
+
+function addComposerMedia(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const picked = Array.from(input.files || []).filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
+  input.value = "";
+  for (const file of picked) {
+    // One video per post: a new one replaces the old.
+    if (file.type.startsWith("video/")) composerMedia.value = composerMedia.value.filter((item) => !item.file.type.startsWith("video/"));
+    composerMedia.value = [...composerMedia.value, { file, preview: URL.createObjectURL(file) }];
+  }
+}
+
+function removeComposerMedia(index: number) {
+  const [removed] = composerMedia.value.splice(index, 1);
+  if (removed) URL.revokeObjectURL(removed.preview);
+  composerMedia.value = [...composerMedia.value];
+}
+
+function clearComposerMedia() {
+  for (const item of composerMedia.value) URL.revokeObjectURL(item.preview);
+  composerMedia.value = [];
+}
+
+function mediaAsset(file: DriveFile, kind: "image" | "video", assetIndex: number): SocialMediaAsset {
+  return {
+    url: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(file.id)}/content`,
+    fileId: file.id,
+    filename: file.filename,
+    mimeType: file.mimeType,
+    kind,
+    altText: "",
+    contentHash: file.sha256 ? `sha256:${file.sha256.toLowerCase()}` : undefined,
+    byteLength: file.size,
+    assetIndex,
+  };
+}
+
 async function createPost() {
   const text = composerText.value.trim();
   if (!text || !composerNetworks.value.length || composerBusy.value) return;
   composerBusy.value = true;
   try {
+    const images = (await uploadDriveFiles<DriveFile>(composerImages.value.map((item) => item.file), { folderId: null, onConflict: "rename" }))
+      .map((file, index) => mediaAsset(file, "image", index));
+    const [video] = composerVideo.value
+      ? await uploadDriveFiles<DriveFile>([composerVideo.value.file], { folderId: null, onConflict: "rename" })
+      : [];
     const detail = await social.createSocialPost({
       siteId: siteId.value,
       sourceType: "pasted",
@@ -184,7 +233,15 @@ async function createPost() {
         ...(network === "youtube" ? { format: "short_video" as const, title: youtubeTitleFrom(text) } : {}),
       })),
     });
+    // Images go to every platform but YouTube; the video goes to YouTube.
+    await Promise.all(visibleVersions(detail).map((version) => {
+      const assetManifest = version.platform === "youtube"
+        ? (video ? [mediaAsset(video, "video", 0)] : [])
+        : images;
+      return assetManifest.length ? social.updatePostVersion(version.id, { assetManifest }) : null;
+    }));
     composerOpen.value = false;
+    clearComposerMedia();
     await router.push(`/social/${encodeURIComponent(detail.post.id)}`);
   } catch (caught) {
     toastFromUnknown(caught, "Couldn't save the draft. Try again.");
@@ -220,6 +277,8 @@ async function discardIdea(idea: SocialSuggestion) {
     ideaBusy.value = null;
   }
 }
+
+onBeforeUnmount(clearComposerMedia);
 
 onMounted(async () => {
   // Older links (calendar, chat) still point at /social?postId=…
@@ -332,7 +391,9 @@ onMounted(async () => {
 
           <div v-else class="social-empty">
             <p>{{ emptyText }}</p>
-            <RouterLink v-if="tab !== 'posted'" to="/assistant">Open Chat</RouterLink>
+            <Button color="ghost" shape="soft" size="compact" icon-only aria-label="New post" title="New post" @click="openComposer">
+              <UiIcon name="Plus" :size="20" />
+            </Button>
           </div>
         </section>
       </template>
@@ -359,6 +420,23 @@ onMounted(async () => {
         </header>
         <label class="visually-hidden" for="social-composer-text">What do you want to say?</label>
         <textarea id="social-composer-text" v-model="composerText" rows="5" placeholder="What do you want to say?" />
+        <ul v-if="composerMedia.length" class="social-composer__media" aria-label="Media">
+          <li v-for="(item, index) in composerMedia" :key="item.preview">
+            <video v-if="item.file.type.startsWith('video/')" :src="item.preview" muted />
+            <img v-else :src="item.preview" :alt="item.file.name">
+            <button type="button" :aria-label="`Remove ${item.file.name}`" @click="removeComposerMedia(index)">
+              <UiIcon name="X" :size="12" />
+            </button>
+          </li>
+        </ul>
+        <input
+          ref="composerMediaInput"
+          class="visually-hidden"
+          type="file"
+          :accept="composerNetworks.includes('youtube') ? 'image/*,video/*' : 'image/*'"
+          multiple
+          @change="addComposerMedia"
+        >
         <fieldset class="social-composer__networks">
           <legend class="visually-hidden">Post to</legend>
           <label v-for="network in composerChoices" :key="network.id">
@@ -372,14 +450,16 @@ onMounted(async () => {
           </label>
         </fieldset>
         <footer class="social-composer__footer">
-          <RouterLink to="/assistant">Or ask ME3 in Chat</RouterLink>
+          <button type="button" class="social-composer__attach" :disabled="composerBusy" @click="composerMediaInput?.click()">
+            <UiIcon name="Image" :size="16" /> {{ composerNetworks.includes("youtube") ? "Photo or video" : "Photos" }}
+          </button>
           <Button
             type="submit"
             color="primary"
             shape="pill"
             size="compact"
             :disabled="composerBusy || !composerText.trim() || !composerNetworks.length"
-          >{{ composerBusy ? "Saving…" : "Review" }}</Button>
+          >{{ composerBusy ? (composerMedia.length ? "Uploading…" : "Saving…") : "Review" }}</Button>
         </footer>
       </form>
     </AppDialog>
@@ -388,7 +468,7 @@ onMounted(async () => {
 
 <style scoped>
 .social-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
-.social-column { box-sizing: border-box; width: min(100%, 640px); margin: 0 auto; padding: 16px 16px 96px; }
+.social-column { box-sizing: border-box; width: min(100%, 640px); margin: 0 auto; padding: 4px 16px 96px; }
 .social-accounts-button {
   display: inline-flex;
   align-items: center;
@@ -404,7 +484,7 @@ onMounted(async () => {
 .social-accounts-button:hover, .social-accounts-button:focus-visible { background: var(--ui-surface-muted); outline: none; }
 .social-accounts-button:focus-visible { box-shadow: 0 0 0 2px var(--ui-focus); }
 
-.social-attention { display: grid; gap: 6px; margin: 14px 0 0; padding: 0; list-style: none; }
+.social-attention { display: grid; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; }
 .social-attention li {
   display: flex;
   align-items: center;
@@ -419,7 +499,7 @@ onMounted(async () => {
 .social-attention__text b { color: var(--ui-danger); font-weight: 600; }
 
 /* Same segmented control as Tasks (Backlog · Now · Done). */
-.social-tabs { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 14px; padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
+.social-tabs { display: grid; grid-template-columns: repeat(4, 1fr); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
 .social-tabs button {
   display: inline-flex;
   align-items: center;
@@ -440,7 +520,7 @@ onMounted(async () => {
 .social-tabs button:focus-visible { box-shadow: inset 0 0 0 2px var(--ui-focus); }
 .social-tabs button[aria-selected="true"] { background: var(--ui-surface); color: var(--ui-text); font-weight: 750; box-shadow: var(--ui-shadow-sm); }
 
-.social-panel { margin-top: 10px; }
+.social-panel { margin-top: 12px; }
 .social-list { margin: 0; padding: 0; list-style: none; }
 .social-list > li + li { border-top: 1px solid var(--ui-border); }
 .social-row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 2px; }
@@ -454,9 +534,9 @@ onMounted(async () => {
 .social-row__when { flex: none; color: var(--ui-text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .social-row :deep(.social-row__quiet) { min-height: 30px; padding-inline: 6px; color: var(--ui-text-muted); font-weight: 500; }
 
-.social-empty { margin-top: 28px; color: var(--ui-text-muted); font-size: 14px; }
-.social-empty p { margin: 0 0 6px; }
-.social-empty a, .social-composer__footer a { color: var(--ui-text-muted); font-weight: 500; }
+.social-empty { display: grid; justify-items: center; gap: 10px; margin-top: 56px; color: var(--ui-text-muted); font-size: 14px; text-align: center; }
+.social-empty p { margin: 0; }
+.social-empty :deep(button) { border: 1px solid var(--ui-border-strong); border-radius: 50%; }
 
 .social-state { display: grid; justify-items: start; gap: 10px; max-width: 460px; margin-top: 40px; }
 .social-state h1 { margin: 0; font-size: 20px; font-weight: 650; line-height: 1.3; }
@@ -490,6 +570,37 @@ onMounted(async () => {
 .social-composer__networks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 0; border: 0; }
 .social-composer__networks label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 .social-composer__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.social-composer__attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-muted);
+  font: 500 13px var(--font-sans);
+  cursor: pointer;
+}
+.social-composer__attach:hover, .social-composer__attach:focus-visible { background: var(--ui-surface-muted); color: var(--ui-text); outline: none; }
+.social-composer__media { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.social-composer__media li { position: relative; width: 64px; height: 64px; overflow: hidden; border-radius: var(--ui-radius-sm); background: var(--ui-surface-muted); }
+.social-composer__media img, .social-composer__media video { width: 100%; height: 100%; object-fit: cover; }
+.social-composer__media button {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, .6);
+  color: #fff;
+  cursor: pointer;
+}
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 @media (max-width: 640px) {

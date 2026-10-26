@@ -342,18 +342,22 @@ export async function uploadDriveFiles(
 
   const folderId = normalizeOptionalId(form.get("folderId"));
   const folder = folderId ? await requireActiveFolder(env, ownerId, folderId) : null;
+  const renameOnConflict = form.get("onConflict") === "rename";
   const entries = [...form.getAll("files"), ...form.getAll("file")];
   const files = entries.filter((entry): entry is File => entry instanceof File);
   if (files.length === 0) throw new DriveInputError("Choose at least one file.");
 
   const uploaded: DriveFile[] = [];
   for (const [index, file] of files.entries()) {
-    const filename = normalizeFilename(file.name || `file-${index + 1}`);
+    const requestedName = normalizeFilename(file.name || `file-${index + 1}`);
     if (file.size > MAX_DRIVE_UPLOAD_BYTES) {
-      throw new DriveInputError(`${filename} is larger than ${formatByteLimit(MAX_DRIVE_UPLOAD_BYTES)}.`, 413);
+      throw new DriveInputError(`${requestedName} is larger than ${formatByteLimit(MAX_DRIVE_UPLOAD_BYTES)}.`, 413);
     }
 
-    await assertFileNameAvailable(env, ownerId, folderId, filename);
+    const filename = renameOnConflict
+      ? await availableFileName(env, ownerId, folderId, requestedName)
+      : requestedName;
+    if (!renameOnConflict) await assertFileNameAvailable(env, ownerId, folderId, filename);
 
     const id = crypto.randomUUID();
     const mimeType = normalizeFileMimeType(file.type, filename);
@@ -430,8 +434,12 @@ export async function createDriveMultipartUpload(
   }
 
   const body = assertRecord(input, "Multipart upload payload is required");
-  const filename = normalizeFilename(body.filename);
+  const requestedName = normalizeFilename(body.filename);
   const folderId = normalizeOptionalId(body.folderId);
+  const renameOnConflict = body.onConflict === "rename";
+  const filename = renameOnConflict
+    ? await availableFileName(env, ownerId, folderId, requestedName)
+    : requestedName;
   const folder = folderId ? await requireActiveFolder(env, ownerId, folderId) : null;
   const totalSize = normalizePositiveInteger(body.size, "File size");
   if (totalSize > MAX_DRIVE_MULTIPART_UPLOAD_BYTES) {
@@ -440,7 +448,7 @@ export async function createDriveMultipartUpload(
       413,
     );
   }
-  await assertFileNameAvailable(env, ownerId, folderId, filename);
+  if (!renameOnConflict) await assertFileNameAvailable(env, ownerId, folderId, filename);
 
   const fileId = crypto.randomUUID();
   const uploadId = crypto.randomUUID();
@@ -1229,6 +1237,27 @@ async function assertFolderNameAvailable(
     .bind(...compactBindValues([ownerId, name, parentId, exceptId || null]))
     .first<{ id: string }>();
   if (row) throw new DriveInputError("A folder with that name already exists here.", 409);
+}
+
+/** "photo.jpg" → "photo (2).jpg" → … until the name is free in that folder. */
+async function availableFileName(
+  env: Env,
+  ownerId: string,
+  folderId: string | null,
+  filename: string,
+): Promise<string> {
+  const dot = filename.lastIndexOf(".");
+  const stem = dot > 0 ? filename.slice(0, dot) : filename;
+  const extension = dot > 0 ? filename.slice(dot) : "";
+  for (let copy = 1; copy <= 50; copy += 1) {
+    const candidate = copy === 1 ? filename : `${stem} (${copy})${extension}`;
+    const taken = await assertFileNameAvailable(env, ownerId, folderId, candidate).then(
+      () => false,
+      (error) => (error instanceof DriveInputError && error.status === 409 ? true : Promise.reject(error)),
+    );
+    if (!taken) return candidate;
+  }
+  return `${stem} (${crypto.randomUUID().slice(0, 8)})${extension}`;
 }
 
 async function assertFileNameAvailable(

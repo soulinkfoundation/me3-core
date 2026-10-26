@@ -322,11 +322,6 @@ export function versionChecks(
       });
     }
   });
-  images.forEach((asset, index) => {
-    if (!asset.altText?.trim()) {
-      checks.push({ message: `Image ${index + 1} needs a description.`, blocking: false, field: "images" });
-    }
-  });
   if (accounts && !activeAccount(version.platform, accounts)) {
     const state = accountState(socialNetwork(version.platform)!, accounts);
     checks.push({

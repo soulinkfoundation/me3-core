@@ -27,6 +27,8 @@ type MultipartUpload = {
 
 type UploadOptions = {
   folderId: string | null;
+  /** "rename" saves "photo (2).jpg" instead of failing when the name is taken. */
+  onConflict?: "rename";
   onProgress?: (progress: DriveUploadProgress) => void;
 };
 
@@ -60,6 +62,7 @@ async function uploadSimpleFile<T extends DriveUploadRecord>(
 ): Promise<T> {
   const form = new FormData();
   if (options.folderId) form.append("folderId", options.folderId);
+  if (options.onConflict) form.append("onConflict", options.onConflict);
   form.append("files", file);
   const response = await api.upload<{ ok: true; files: T[] }>("/files/upload", form);
   const uploaded = response.files[0];
@@ -84,6 +87,7 @@ async function uploadMultipartFile<T extends DriveUploadRecord>(
           mimeType: file.type || "application/octet-stream",
           size: file.size,
           folderId: options.folderId,
+          onConflict: options.onConflict,
         }),
       },
     );

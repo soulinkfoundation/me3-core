@@ -33,7 +33,7 @@ describe("social posts", () => {
     expect(versionChecks(long, capabilities)).toContainEqual({ message: "300 characters, X's limit is 280.", blocking: true, field: "text" });
     expect(versionChecks(version({ platform: "instagram" }), capabilities)).toContainEqual({ message: "Instagram needs an image.", blocking: true, field: "images" });
     const undescribed = version({ assetManifest: [{ url: "a", kind: "image", mimeType: "image/png" }] });
-    expect(versionChecks(undescribed, capabilities)).toEqual([{ message: "Image 1 needs a description.", blocking: false, field: "images" }]);
+    expect(versionChecks(undescribed, capabilities)).toEqual([]);
     const svg = version({ assetManifest: [{ url: "a", kind: "image", mimeType: "image/svg+xml", altText: "Logo" }] });
     expect(versionChecks(svg, capabilities)[0]).toMatchObject({ message: "X can't use image 1 (SVG).", blocking: true });
     expect(versionChecks(version(), capabilities, [account("x", "expired")])).toContainEqual({ message: "Reconnect X to post.", blocking: true, field: "account" });
