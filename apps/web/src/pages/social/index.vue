@@ -7,6 +7,8 @@ import AppPageBar from "../../components/AppPageBar.vue";
 import Button from "../../components/Button.vue";
 import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
+import FilesMediaPicker from "../../components/files/FilesMediaPicker.vue";
+import SocialAccountAvatar from "../../components/social/SocialAccountAvatar.vue";
 import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue";
 import SocialMarks from "../../components/social/SocialMarks.vue";
 import { useAppToast } from "../../composables/useAppToast";
@@ -56,7 +58,10 @@ const composerOpen = ref(false);
 const composerText = ref("");
 const composerNetworks = ref<SocialNetwork[]>([]);
 const composerBusy = ref(false);
-const composerMedia = ref<Array<{ file: File; preview: string }>>([]);
+/** Media for the new post: a device upload (`file`) or something already in Files (`driveFile`). */
+type ComposerMedia = { kind: "image" | "video"; name: string; preview: string; file?: File; driveFile?: DriveFile };
+const composerMedia = ref<ComposerMedia[]>([]);
+const composerPickerOpen = ref(false);
 const composerMediaInput = ref<HTMLInputElement | null>(null);
 const ideaBusy = ref<string | null>(null);
 const composerTitleId = `social-new-post-${useId()}`;
@@ -171,28 +176,62 @@ function toggleComposerNetwork(network: SocialNetwork) {
     : [...composerNetworks.value, network];
 }
 
-const composerImages = computed(() => composerMedia.value.filter((item) => item.file.type.startsWith("image/")));
-const composerVideo = computed(() => composerMedia.value.find((item) => item.file.type.startsWith("video/")) || null);
+const composerImages = computed(() => composerMedia.value.filter((item) => item.kind === "image"));
+const composerVideo = computed(() => composerMedia.value.find((item) => item.kind === "video") || null);
+
+/** Avatar and name for each network in the New post dialog; falls back to the owner's picture from another network. */
+function composerAccount(network: SocialNetwork) {
+  const account = activeAccount(network as SocialPlatform, accounts.value);
+  const fallback = accounts.value.find((item) => item.status === "active" && item.avatarUrl);
+  return {
+    avatarUrl: account?.avatarUrl || fallback?.avatarUrl || null,
+    name: account?.displayName || account?.handle || fallback?.displayName || fallback?.handle || null,
+    handle: account?.handle || null,
+  };
+}
+
+function addComposerItem(item: ComposerMedia) {
+  // One video per post: a new one replaces the old.
+  if (item.kind === "video") {
+    for (const old of composerMedia.value.filter((media) => media.kind === "video")) releasePreview(old);
+    composerMedia.value = composerMedia.value.filter((media) => media.kind !== "video");
+  }
+  composerMedia.value = [...composerMedia.value, item];
+}
+
+function releasePreview(item: ComposerMedia) {
+  if (item.file) URL.revokeObjectURL(item.preview);
+}
+
+function addComposerFiles(files: DriveFile[]) {
+  for (const driveFile of files) {
+    if (composerMedia.value.some((item) => item.driveFile?.id === driveFile.id)) continue;
+    addComposerItem({
+      kind: driveFile.mimeType.startsWith("video/") ? "video" : "image",
+      name: driveFile.filename,
+      preview: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(driveFile.id)}/content`,
+      driveFile,
+    });
+  }
+}
 
 function addComposerMedia(event: Event) {
   const input = event.target as HTMLInputElement;
   const picked = Array.from(input.files || []).filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
   input.value = "";
   for (const file of picked) {
-    // One video per post: a new one replaces the old.
-    if (file.type.startsWith("video/")) composerMedia.value = composerMedia.value.filter((item) => !item.file.type.startsWith("video/"));
-    composerMedia.value = [...composerMedia.value, { file, preview: URL.createObjectURL(file) }];
+    addComposerItem({ kind: file.type.startsWith("video/") ? "video" : "image", name: file.name, preview: URL.createObjectURL(file), file });
   }
 }
 
 function removeComposerMedia(index: number) {
   const [removed] = composerMedia.value.splice(index, 1);
-  if (removed) URL.revokeObjectURL(removed.preview);
+  if (removed) releasePreview(removed);
   composerMedia.value = [...composerMedia.value];
 }
 
 function clearComposerMedia() {
-  for (const item of composerMedia.value) URL.revokeObjectURL(item.preview);
+  for (const item of composerMedia.value) releasePreview(item);
   composerMedia.value = [];
 }
 
@@ -210,16 +249,22 @@ function mediaAsset(file: DriveFile, kind: "image" | "video", assetIndex: number
   };
 }
 
+/** Files picks are already in Files; device picks upload first. */
+async function driveFileFor(item: ComposerMedia): Promise<DriveFile> {
+  if (item.driveFile) return item.driveFile;
+  const [uploaded] = await uploadDriveFiles<DriveFile>([item.file!], { folderId: null, onConflict: "rename" });
+  if (!uploaded) throw new Error(`${item.name} didn't upload.`);
+  return uploaded;
+}
+
 async function createPost() {
   const text = composerText.value.trim();
   if (!text || !composerNetworks.value.length || composerBusy.value) return;
   composerBusy.value = true;
   try {
-    const images = (await uploadDriveFiles<DriveFile>(composerImages.value.map((item) => item.file), { folderId: null, onConflict: "rename" }))
+    const images = (await Promise.all(composerImages.value.map(driveFileFor)))
       .map((file, index) => mediaAsset(file, "image", index));
-    const [video] = composerVideo.value
-      ? await uploadDriveFiles<DriveFile>([composerVideo.value.file], { folderId: null, onConflict: "rename" })
-      : [];
+    const video = composerVideo.value ? await driveFileFor(composerVideo.value) : null;
     const detail = await social.createSocialPost({
       siteId: siteId.value,
       sourceType: "pasted",
@@ -422,9 +467,9 @@ onMounted(async () => {
         <textarea id="social-composer-text" v-model="composerText" rows="5" placeholder="What do you want to say?" />
         <ul v-if="composerMedia.length" class="social-composer__media" aria-label="Media">
           <li v-for="(item, index) in composerMedia" :key="item.preview">
-            <video v-if="item.file.type.startsWith('video/')" :src="item.preview" muted />
-            <img v-else :src="item.preview" :alt="item.file.name">
-            <button type="button" :aria-label="`Remove ${item.file.name}`" @click="removeComposerMedia(index)">
+            <video v-if="item.kind === 'video'" :src="item.preview" muted preload="metadata" />
+            <img v-else :src="item.preview" :alt="item.name">
+            <button type="button" :aria-label="`Remove ${item.name}`" @click="removeComposerMedia(index)">
               <UiIcon name="X" :size="12" />
             </button>
           </li>
@@ -437,22 +482,33 @@ onMounted(async () => {
           multiple
           @change="addComposerMedia"
         >
-        <fieldset class="social-composer__networks">
-          <legend class="visually-hidden">Post to</legend>
-          <label v-for="network in composerChoices" :key="network.id">
-            <input
-              type="checkbox"
-              :checked="composerNetworks.includes(network.id)"
-              @change="toggleComposerNetwork(network.id)"
-            >
-            <SocialMarks :platforms="[network.id]" />
-            <span>{{ network.label }}</span>
-          </label>
-        </fieldset>
-        <footer class="social-composer__footer">
-          <button type="button" class="social-composer__attach" :disabled="composerBusy" @click="composerMediaInput?.click()">
-            <UiIcon name="Image" :size="16" /> {{ composerNetworks.includes("youtube") ? "Photo or video" : "Photos" }}
+        <div class="social-composer__networks" role="group" aria-label="Post to">
+          <button
+            v-for="network in composerChoices"
+            :key="network.id"
+            type="button"
+            :aria-pressed="composerNetworks.includes(network.id)"
+            :aria-label="composerAccount(network.id).handle ? `${network.label}, ${composerAccount(network.id).handle}` : network.label"
+            :title="network.label"
+            @click="toggleComposerNetwork(network.id)"
+          >
+            <SocialAccountAvatar
+              :network="network.id"
+              :avatar-url="composerAccount(network.id).avatarUrl"
+              :name="composerAccount(network.id).name || network.label"
+              :selected="composerNetworks.includes(network.id)"
+            />
           </button>
+        </div>
+        <footer class="social-composer__footer">
+          <div class="social-composer__attachments">
+            <button type="button" class="social-composer__attach" :disabled="composerBusy" @click="composerMediaInput?.click()">
+              <UiIcon name="Image" :size="16" /> {{ composerNetworks.includes("youtube") ? "Photo or video" : "Photos" }}
+            </button>
+            <button type="button" class="social-composer__attach" :disabled="composerBusy" @click="composerPickerOpen = true">
+              <UiIcon name="Folder" :size="16" /> From Files
+            </button>
+          </div>
           <Button
             type="submit"
             color="primary"
@@ -463,6 +519,13 @@ onMounted(async () => {
         </footer>
       </form>
     </AppDialog>
+
+    <FilesMediaPicker
+      :open="composerPickerOpen"
+      :kinds="composerNetworks.includes('youtube') ? ['image', 'video'] : ['image']"
+      @close="composerPickerOpen = false"
+      @select="addComposerFiles"
+    />
   </main>
 </template>
 
@@ -567,8 +630,10 @@ onMounted(async () => {
   font: 14px/1.5 var(--font-sans);
   resize: vertical;
 }
-.social-composer__networks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 0; border: 0; }
-.social-composer__networks label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.social-composer__networks { display: flex; flex-wrap: wrap; gap: 10px; }
+.social-composer__networks button { display: inline-grid; padding: 3px; border: 0; border-radius: 50%; background: none; cursor: pointer; }
+.social-composer__networks button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 1px; }
+.social-composer__attachments { display: flex; flex-wrap: wrap; gap: 2px; }
 .social-composer__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .social-composer__attach {
   display: inline-flex;

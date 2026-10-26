@@ -8,6 +8,7 @@ import ConfirmationDialog from "../../components/ConfirmationDialog.vue";
 import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import AppPageBar from "../../components/AppPageBar.vue";
+import FilesMediaPicker from "../../components/files/FilesMediaPicker.vue";
 import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue";
 import SocialMarks from "../../components/social/SocialMarks.vue";
 import { useAppToast } from "../../composables/useAppToast";
@@ -63,6 +64,7 @@ const confirmCancel = ref(false);
 const editor = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const videoInput = ref<HTMLInputElement | null>(null);
+const filesPickerOpen = ref(false);
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const when = ref(localParts(suggestedTime()));
 const saveChains = new Map<string, Promise<unknown>>();
@@ -285,6 +287,32 @@ function removeImage(index: number) {
   setImages(activeImages.value.filter((_, position) => position !== index));
 }
 
+function driveAsset(file: DriveFile, kind: "image" | "video"): SocialMediaAsset {
+  return {
+    url: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(file.id)}/content`,
+    fileId: file.id,
+    filename: file.filename,
+    mimeType: file.mimeType,
+    kind,
+    altText: "",
+    contentHash: file.sha256 ? `sha256:${file.sha256.toLowerCase()}` : undefined,
+    byteLength: file.size,
+    ...(kind === "video" ? { assetIndex: 0 } : {}),
+  };
+}
+
+/** Photos or a video the owner picked from Files; nothing re-uploads. */
+async function addFromFiles(files: DriveFile[]) {
+  const version = active.value;
+  if (!version || !files.length) return;
+  if (version.platform === "youtube") {
+    await setVideo(version, driveAsset(files[0]!, "video"));
+    return;
+  }
+  const have = new Set(activeImages.value.map((asset) => asset.fileId));
+  setImages([...activeImages.value, ...files.filter((file) => !have.has(file.id)).map((file) => driveAsset(file, "image"))]);
+}
+
 async function addImages(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files || []).filter((file) => file.type.startsWith("image/"));
@@ -293,17 +321,7 @@ async function addImages(event: Event) {
   busy.value = "upload";
   try {
     const uploaded = await uploadDriveFiles<DriveFile>(files, { folderId: null, onConflict: "rename" });
-    const added: SocialMediaAsset[] = uploaded.map((file) => ({
-      url: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(file.id)}/content`,
-      fileId: file.id,
-      filename: file.filename,
-      mimeType: file.mimeType,
-      kind: "image",
-      altText: "",
-      contentHash: file.sha256 ? `sha256:${file.sha256.toLowerCase()}` : undefined,
-      byteLength: file.size,
-    }));
-    setImages([...activeImages.value, ...added]);
+    setImages([...activeImages.value, ...uploaded.map((file) => driveAsset(file, "image"))]);
   } catch (caught) {
     toastFromUnknown(caught, "Couldn't add those images.");
   } finally {
@@ -339,6 +357,12 @@ function setTitle(version: PostVersion, title: string) {
   void saveVersion(version, { title });
 }
 
+async function setVideo(version: PostVersion, video: SocialMediaAsset) {
+  // A Short is exactly one video.
+  replaceVersion({ ...version, assetManifest: [video] });
+  await saveVersion(version, { assetManifest: [video] });
+}
+
 async function addVideo(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = Array.from(input.files || []).find((item) => item.type.startsWith("video/"));
@@ -349,20 +373,7 @@ async function addVideo(event: Event) {
   try {
     const [uploaded] = await uploadDriveFiles<DriveFile>([file], { folderId: null, onConflict: "rename" });
     if (!uploaded) throw new Error("The video didn't upload.");
-    const video: SocialMediaAsset = {
-      url: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(uploaded.id)}/content`,
-      fileId: uploaded.id,
-      filename: uploaded.filename,
-      mimeType: uploaded.mimeType,
-      kind: "video",
-      altText: "",
-      contentHash: uploaded.sha256 ? `sha256:${uploaded.sha256.toLowerCase()}` : undefined,
-      byteLength: uploaded.size,
-      assetIndex: 0,
-    };
-    // A Short is exactly one video.
-    replaceVersion({ ...version, assetManifest: [video] });
-    await saveVersion(version, { assetManifest: [video] });
+    await setVideo(version, driveAsset(uploaded, "video"));
   } catch (caught) {
     toastFromUnknown(caught, "Couldn't add that video.");
   } finally {
@@ -684,9 +695,14 @@ onMounted(async () => {
                 </li>
               </ol>
               <input ref="fileInput" class="visually-hidden" type="file" accept="image/*" multiple @change="addImages">
-              <button v-if="!activeLocked" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="fileInput?.click()">
-                <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeImages.length ? "Add image" : "Add your own images" }}
-              </button>
+              <div v-if="!activeLocked" class="post-images__adds">
+                <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="fileInput?.click()">
+                  <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeImages.length ? "Add image" : "Add your own images" }}
+                </button>
+                <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="filesPickerOpen = true">
+                  <UiIcon name="Folder" :size="15" /> From Files
+                </button>
+              </div>
               <ul v-if="activeChecks.some((check) => check.field === 'images')" class="post-checks">
                 <li v-for="check in activeChecks.filter((item) => item.field === 'images')" :key="check.message">
                   <span class="post-checks__icon" aria-hidden="true">!</span>
@@ -714,9 +730,14 @@ onMounted(async () => {
                 </Button>
               </div>
               <input ref="videoInput" class="visually-hidden" type="file" accept="video/*" @change="addVideo">
-              <button v-if="!activeLocked" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="videoInput?.click()">
-                <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeVideo ? "Replace video" : "Add your video" }}
-              </button>
+              <div v-if="!activeLocked" class="post-images__adds">
+                <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="videoInput?.click()">
+                  <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeVideo ? "Replace video" : "Add your video" }}
+                </button>
+                <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="filesPickerOpen = true">
+                  <UiIcon name="Folder" :size="15" /> From Files
+                </button>
+              </div>
               <ul v-if="activeChecks.some((check) => check.field === 'images')" class="post-checks">
                 <li v-for="check in activeChecks.filter((item) => item.field === 'images')" :key="check.message">
                   <span class="post-checks__icon" aria-hidden="true">!</span>
@@ -803,6 +824,13 @@ onMounted(async () => {
       @cancel="confirmCancel = false"
       @confirm="cancelSchedule"
     />
+    <FilesMediaPicker
+      :open="filesPickerOpen"
+      :kinds="active?.platform === 'youtube' ? ['video'] : ['image']"
+      :title="active?.platform === 'youtube' ? 'Choose a video' : 'Choose photos'"
+      @close="filesPickerOpen = false"
+      @select="addFromFiles"
+    />
   </main>
 </template>
 
@@ -887,6 +915,7 @@ onMounted(async () => {
 .post-image__thumb img { width: 100%; height: 100%; object-fit: cover; }
 .post-image__thumb small { position: absolute; top: 2px; left: 4px; color: #fff; font-size: 10px; font-weight: 700; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }
 .post-image__tools { display: inline-flex; flex: none; }
+.post-images__adds { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .post-images__add {
   display: inline-flex;
   align-items: center;
