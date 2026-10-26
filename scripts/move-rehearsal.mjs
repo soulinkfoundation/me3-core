@@ -216,7 +216,7 @@ function renderReport(value) {
       const shown = Object.entries(item.detail).filter(([, v]) => typeof v !== "object");
       if (shown.length) lines.push(`  ${shown.map(([k, v]) => `${k}: ${v}`).join(", ")}`);
     }
-    if (item.error) lines.push(`  ${item.error.split("\n")[0]}`);
+    if (item.error) for (const line of item.error.split("\n")) lines.push(`  ${line}`);
   }
   return `${lines.join("\n")}\n`;
 }
