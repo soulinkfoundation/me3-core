@@ -9,6 +9,7 @@ import {
 import { api } from "../../../api";
 import Button from "../../../components/Button.vue";
 import UiIcon from "../../../components/UiIcon.vue";
+import CampaignSenderSetup from "../../../components/campaigns/CampaignSenderSetup.vue";
 import CampaignSubscribers from "../../../components/campaigns/CampaignSubscribers.vue";
 import ConfirmationDialog from "../../../components/ConfirmationDialog.vue";
 import PageLoading from "../../../components/PageLoading.vue";
@@ -46,6 +47,8 @@ type TransportStatus = {
   ready: boolean;
   reason: string | null;
   sender: { fromAddress: string } | null;
+  /** Self-hosted: the owner's own provider. */
+  provider: { id: string; label: string; tracksDelivery: boolean; deliveryEventsUrl: string | null } | null;
   addOn: CampaignAddOnStatus | null;
   instructions: string[];
 };
@@ -58,13 +61,14 @@ const available = ref(false);
 const campaigns = ref<CampaignSummary[]>([]);
 const transport = ref<TransportStatus | null>(null);
 const settingUpSender = ref(false);
+const changingOwnSender = ref(false);
 const route = useRoute();
 // The Site page links straight to one site's subscribers.
 const view = ref<View>(route.query.view === "subscribers" ? "subscribers" : "campaigns");
 const initialSite = typeof route.query.site === "string" ? route.query.site : undefined;
 const sites = useSitesStore();
 const subscriberCount = ref<number | null>(null);
-const { toastFromUnknown } = useAppToast();
+const { toastFromUnknown, toastSuccess } = useAppToast();
 const actions = useCampaignActions({
   cancelled: () => loadCampaigns(true),
   deleted: (id) => {
@@ -98,10 +102,19 @@ const allowance = computed(() => {
 });
 const senderNote = computed(() => {
   const current = transport.value;
-  if (!current || current.ready) return null;
-  // Server instructions still describe the old plugin setup, so the page words this itself.
-  if (!current.managed) return "Connect an email provider before your first send.";
+  if (!current || current.ready || !current.managed) return null;
   return "Sending isn't set up yet. Drafts are saved in the meantime.";
+});
+// Self-hosted installs send through the owner's own provider: connect one first, change it any time.
+const ownSender = computed(() => {
+  const current = transport.value;
+  if (!current || current.managed) return null;
+  return {
+    connect: !current.ready || changingOwnSender.value,
+    label: current.provider?.label || "",
+    fromAddress: current.sender?.fromAddress || "",
+    eventsUrl: current.provider?.deliveryEventsUrl || "",
+  };
 });
 
 async function loadPage() {
@@ -164,6 +177,24 @@ async function setupSender() {
     toastFromUnknown(caught, "Couldn't set up sending.");
   } finally {
     settingUpSender.value = false;
+  }
+}
+
+async function ownSenderConnected() {
+  changingOwnSender.value = false;
+  try {
+    transport.value = (await api.get<{ transport: TransportStatus }>("/email/campaigns/transport")).transport;
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't check the sender.");
+  }
+}
+
+async function copyEventsUrl(url: string) {
+  try {
+    await navigator.clipboard.writeText(url);
+    toastSuccess("Webhook address copied");
+  } catch {
+    toastFromUnknown(null, "Couldn't copy. Select the address instead.");
   }
 }
 
@@ -276,6 +307,23 @@ onBeforeUnmount(() => {
               @click="setupSender"
             >{{ settingUpSender ? "Setting up…" : "Set up sending" }}</Button>
           </p>
+          <div v-if="ownSender" class="campaigns-own-sender">
+            <CampaignSenderSetup v-if="ownSender.connect" @connected="ownSenderConnected" />
+            <template v-else>
+              <p class="campaigns-note">
+                <span>Sending through {{ ownSender.label }} from {{ ownSender.fromAddress }}</span>
+                <Button color="ghost" shape="soft" size="compact" @click="changingOwnSender = true">Change</Button>
+              </p>
+              <details v-if="ownSender.eventsUrl" class="campaigns-own-sender__events">
+                <summary>See delivered and bounced</summary>
+                <p>In {{ ownSender.label }}, add a webhook for deliveries, bounces and spam complaints on the broadcast stream, sent to:</p>
+                <p class="campaigns-own-sender__url">
+                  <code>{{ ownSender.eventsUrl }}</code>
+                  <Button color="ghost" shape="soft" size="compact" @click="copyEventsUrl(ownSender.eventsUrl)">Copy</Button>
+                </p>
+              </details>
+            </template>
+          </div>
 
           <section
             v-for="group in groups"
@@ -371,6 +419,14 @@ onBeforeUnmount(() => {
 .campaigns-meter__bar i { display: block; height: 100%; border-radius: inherit; background: var(--ui-accent); }
 .campaigns-meter--low .campaigns-meter__bar i { background: var(--ui-warning, #b26a00); }
 .campaigns-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; margin: 12px 0 0; color: var(--ui-text-muted); font-size: 13px; }
+.campaigns-own-sender { margin-top: 14px; }
+.campaigns-own-sender > :deep(.sender-setup) { padding: 14px 16px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md, 12px); }
+.campaigns-own-sender .campaigns-note { margin-top: 0; }
+.campaigns-own-sender__events { margin-top: 6px; color: var(--ui-text-muted); font-size: 13px; }
+.campaigns-own-sender__events summary { cursor: pointer; }
+.campaigns-own-sender__events p { margin: 6px 0 0; line-height: 1.45; }
+.campaigns-own-sender__url { display: flex; align-items: center; gap: 8px; }
+.campaigns-own-sender__url code { min-width: 0; padding: 4px 6px; overflow-wrap: anywhere; border-radius: var(--ui-radius-sm); background: var(--ui-surface-muted); color: var(--ui-text); font-size: 12px; }
 .campaigns-group { margin-top: 22px; }
 .campaigns-group h2 { margin: 0 0 4px; color: var(--ui-text-muted); font-size: 12px; font-weight: 600; letter-spacing: .02em; }
 .campaigns-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--ui-border); }

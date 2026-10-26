@@ -7,6 +7,7 @@ import AppDialog from "../../../components/AppDialog.vue";
 import Button from "../../../components/Button.vue";
 import CampaignEmailPreview from "../../../components/CampaignEmailPreview.vue";
 import CampaignApprovalCard from "../../../components/campaigns/CampaignApprovalCard.vue";
+import CampaignSenderSetup from "../../../components/campaigns/CampaignSenderSetup.vue";
 import PageLoading from "../../../components/PageLoading.vue";
 import TiptapEditor from "../../../components/TiptapEditor.vue";
 import UiIcon from "../../../components/UiIcon.vue";
@@ -63,6 +64,8 @@ type TransportStatus = {
   ready: boolean;
   reason: string | null;
   sender: { ref: string; fromAddress: string; domain: string } | null;
+  /** Self-hosted: the owner's own provider. */
+  provider?: { id: string; label: string } | null;
   addOn: { allowance: number; remaining: number; entitled: boolean } | null;
   instructions: string[];
 };
@@ -195,6 +198,14 @@ const audienceLabel = computed(() =>
   audienceKind.value === "customers" ? "customers" : "subscribers",
 );
 const previewFromAddress = computed(() => transport.value?.sender?.fromAddress || "");
+// Self-hosted installs send through the owner's own provider, which is connected from the From sheet.
+const ownSenderMissing = computed(() => Boolean(transport.value && !transport.value.managed && !transport.value.ready));
+const ownSenderLine = computed(() => {
+  const current = transport.value;
+  if (!current || current.managed) return "";
+  if (!current.ready) return "No sender connected yet";
+  return `Sends through ${current.provider?.label || "your provider"} from ${current.sender?.fromAddress || ""}`;
+});
 const previewToLabel = computed(() =>
   siteUsername.value ? `@${siteUsername.value} ${audienceLabel.value}` : "Subscribers",
 );
@@ -429,6 +440,15 @@ async function loadReview() {
     transport.value = response.transport;
   } catch (caught) {
     if (reviewOpen.value) toastFromUnknown(caught, "Couldn't count who this goes to.");
+  }
+}
+
+async function ownSenderConnected() {
+  try {
+    transport.value = (await api.get<{ transport: TransportStatus }>("/email/campaigns/transport")).transport;
+    if (review.value) await loadReview();
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't check the sender.");
   }
 }
 
@@ -841,6 +861,7 @@ onBeforeUnmount(() => {
             <p class="campaign-side-block__hint">
               {{ replyToAddress ? `Replies go to ${replyToAddress}` : "Replies aren't collected" }}
             </p>
+            <p v-if="ownSenderLine" class="campaign-side-block__hint">{{ ownSenderLine }}</p>
             <p v-if="brand.mailingAddress" class="campaign-side-block__hint">{{ brand.mailingAddress }}</p>
             <p v-else class="campaign-side-block__hint campaign-side-block__missing">
               Add a mailing address before sending.
@@ -982,27 +1003,31 @@ onBeforeUnmount(() => {
     </AppDialog>
 
     <AppDialog :open="fromSheetOpen" :labelled-by="fromSheetTitleId" close-on-backdrop @close="fromSheetOpen = false">
-      <form class="campaign-from-sheet" @submit.prevent="saveFromSheet">
-        <h2 :id="fromSheetTitleId">Who it's from</h2>
-        <label class="campaign-field">
-          <span>Sender name</span>
-          <input v-model="fromSheetName" maxlength="120" placeholder="The name subscribers will see" />
-        </label>
-        <label class="campaign-from-sheet__replies">
-          <input v-model="fromSheetRepliesOn" type="checkbox" />
-          <span>Send replies to {{ ownerEmail }}</span>
-        </label>
-        <small v-if="!fromSheetRepliesOn" class="campaign-from-sheet__hint">Replies won't be collected.</small>
-        <label class="campaign-field">
-          <span>Mailing address</span>
-          <textarea v-model="fromSheetAddress" rows="3" maxlength="300" placeholder="PO Box 12, Dublin 2, Ireland" />
-          <small>Shown at the bottom of every email. Marketing email needs a postal address; a PO box or business address is fine.</small>
-        </label>
-        <div class="campaign-from-sheet__actions">
-          <Button color="outline" shape="soft" size="compact" type="button" @click="fromSheetOpen = false">Cancel</Button>
-          <Button color="primary" shape="soft" size="compact" type="submit">Done</Button>
-        </div>
-      </form>
+      <div class="campaign-from-sheet">
+        <CampaignSenderSetup v-if="ownSenderMissing" class="campaign-from-sheet__sender" @connected="ownSenderConnected" />
+        <form class="campaign-from-sheet__form" @submit.prevent="saveFromSheet">
+          <h2 :id="fromSheetTitleId">Who it's from</h2>
+          <label class="campaign-field">
+            <span>Sender name</span>
+            <input v-model="fromSheetName" maxlength="120" placeholder="The name subscribers will see" />
+          </label>
+          <label class="campaign-from-sheet__replies">
+            <input v-model="fromSheetRepliesOn" type="checkbox" />
+            <span>Send replies to {{ ownerEmail }}</span>
+          </label>
+          <small v-if="!fromSheetRepliesOn" class="campaign-from-sheet__hint">Replies won't be collected.</small>
+          <small v-if="ownSenderLine && !ownSenderMissing" class="campaign-from-sheet__hint">{{ ownSenderLine }}</small>
+          <label class="campaign-field">
+            <span>Mailing address</span>
+            <textarea v-model="fromSheetAddress" rows="3" maxlength="300" placeholder="PO Box 12, Dublin 2, Ireland" />
+            <small>Shown at the bottom of every email. Marketing email needs a postal address; a PO box or business address is fine.</small>
+          </label>
+          <div class="campaign-from-sheet__actions">
+            <Button color="outline" shape="soft" size="compact" type="button" @click="fromSheetOpen = false">Cancel</Button>
+            <Button color="primary" shape="soft" size="compact" type="submit">Done</Button>
+          </div>
+        </form>
+      </div>
     </AppDialog>
   </main>
 </template>
@@ -1062,6 +1087,9 @@ onBeforeUnmount(() => {
 .campaign-editor-state a { display: inline-block; margin-top: 10px; color: var(--ui-accent-strong, var(--ui-accent)); font-weight: 600; text-decoration: none; }
 .campaign-from-sheet { box-sizing: border-box; display: grid; gap: 16px; width: min(100%, 420px); padding: 20px; border-radius: var(--ui-radius-lg); background: var(--ui-surface); color: var(--ui-text); box-shadow: var(--ui-shadow-md); }
 .campaign-from-sheet h2 { margin: 0; font-size: 18px; }
+.campaign-from-sheet__form { display: grid; gap: 16px; }
+.campaign-from-sheet__sender { padding-bottom: 16px; border-bottom: 1px solid var(--ui-border); }
+.campaign-from-sheet__sender :deep(h2) { font-size: 18px; }
 .campaign-from-sheet__actions { display: flex; justify-content: flex-end; gap: 8px; }
 .campaign-editor__body-wrap { position: relative; min-width: 0; }
 .campaign-start { margin-top: 14px; }

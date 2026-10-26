@@ -7,8 +7,10 @@ import {
   cancelCampaignDelivery,
   dispatchDueCampaignJobs,
   getCampaignTransportStatus,
+  handleCampaignUnsubscribe,
   openCampaignAddOnPortal,
   receiveManagedCampaignEvent,
+  receivePostmarkCampaignEvent,
   sendCampaignTest,
   setupManagedCampaignSender,
   startCampaignAddOnCheckout,
@@ -45,6 +47,14 @@ export function registerCampaignRoutes(app: AppHono, deps: OwnerRouteDeps) {
     receiveManagedCampaignEvent(c.env, c.req.raw),
   );
 
+  // Self-hosted sending: the one-click unsubscribe link in every campaign, and Postmark's delivery webhook.
+  app.on(["GET", "POST"], "/api/public/campaigns/unsubscribe/:token", async (c) =>
+    handleCampaignUnsubscribe(c.env, c.req.param("token"), c.req.raw),
+  );
+  app.post("/api/public/campaigns/provider-events/postmark/:token", async (c) =>
+    receivePostmarkCampaignEvent(c.env, c.req.param("token"), c.req.raw),
+  );
+
   app.get("/api/public/campaign-assets/:assetId/:filename", async (c) => {
     const loaded = await loadPublicCampaignAsset(c.env, c.req.param("assetId"));
     if (!loaded) return c.json({ error: "Campaign image not found" }, 404);
@@ -64,7 +74,7 @@ export function registerCampaignRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (!ownerId) return deps.unauthorized(c);
     const pluginError = await requireCampaignPlugin(c);
     if (pluginError) return pluginError;
-    return c.json({ transport: await getCampaignTransportStatus(c.env) });
+    return c.json({ transport: await getCampaignTransportStatus(c.env, fetch, ownerId, c.req.url) });
   });
 
   app.get("/api/email/campaigns", async (c) => {
@@ -279,7 +289,7 @@ export function registerCampaignRoutes(app: AppHono, deps: OwnerRouteDeps) {
           excludedCount: audience.excluded.length,
           exclusionCounts: audience.exclusionCounts,
         },
-        transport: await getCampaignTransportStatus(c.env),
+        transport: await getCampaignTransportStatus(c.env, fetch, ownerId, c.req.url),
       });
     } catch (error) {
       return campaignError(c, error);

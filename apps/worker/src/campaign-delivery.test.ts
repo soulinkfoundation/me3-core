@@ -11,11 +11,15 @@ import {
   cancelCampaignDelivery,
   dispatchDueCampaignJobs,
   getCampaignTransportStatus,
+  handleCampaignUnsubscribe,
+  receivePostmarkCampaignEvent,
   sendCampaignTest,
   startCampaignAddOnCheckout,
   startCampaignDelivery,
 } from "./campaign-delivery";
+import { getCampaignResults } from "./campaign-results";
 import { createCampaign, deleteCampaign, duplicateCampaign, getCampaign, listCampaignLayouts, saveCampaignDraft } from "./campaigns";
+import { updateEmailProviderSettings } from "./email-providers";
 import type { Env } from "./types";
 
 const migrationFiles = [
@@ -543,12 +547,12 @@ describe("campaign delivery lifecycle", () => {
     });
   });
 
-  it("fails closed when campaign transport is not managed", async () => {
+  it("never asks ME3 Cloud about sending from a self-hosted installation", async () => {
     env.ME3_DEPLOYMENT_MODE = "self_hosted";
     await expect(getCampaignTransportStatus(env, fetcher)).resolves.toMatchObject({
       managed: false,
       ready: false,
-      reason: "managed_installation_required",
+      addOn: null,
     });
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -571,5 +575,238 @@ describe("campaign delivery lifecycle", () => {
     expect(
       database.prepare("SELECT status FROM email_campaigns WHERE id = ?").get(campaignId),
     ).toEqual({ status: "draft" });
+  });
+  describe("self-hosted sending through the owner's own provider", () => {
+    let providerRequests: Array<{ url: string; body: Record<string, unknown> }>;
+    let providerResponse: () => Response;
+
+    beforeEach(() => {
+      env.ME3_DEPLOYMENT_MODE = "self_hosted";
+      env.CORE_API_ORIGIN = "https://api.owner.test";
+      database.exec(`
+        CREATE TABLE email_provider_settings (
+          user_id TEXT NOT NULL, provider_id TEXT NOT NULL,
+          is_active INTEGER NOT NULL DEFAULT 0, encrypted_secret TEXT,
+          secret_hint TEXT, secret_updated_at TEXT, config_json TEXT,
+          last_status TEXT, last_status_checked_at TEXT, last_test_sent_at TEXT,
+          last_test_error TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (user_id, provider_id)
+        );
+        CREATE TABLE email_send_audit (
+          id TEXT PRIMARY KEY, user_id TEXT NOT NULL, mailbox_id TEXT,
+          mailbox_message_id TEXT, provider_id TEXT NOT NULL,
+          provider_message_id TEXT, provider_status TEXT,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'sent', 'failed')),
+          purpose TEXT NOT NULL DEFAULT 'test'
+            CHECK (purpose IN ('test', 'draft', 'reply', 'workflow')),
+          from_address TEXT, to_address TEXT, subject TEXT, thread_key TEXT,
+          message_id_header TEXT, in_reply_to TEXT, references_header TEXT,
+          metadata_json TEXT, error_message TEXT,
+          created_by TEXT NOT NULL DEFAULT 'owner', approved_by_user_id TEXT,
+          requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      providerRequests = [];
+      providerResponse = () =>
+        Response.json({ ErrorCode: 0, Message: "OK", MessageID: crypto.randomUUID() });
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        providerRequests.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+        return providerResponse();
+      }));
+    });
+
+    afterEach(() => vi.unstubAllGlobals());
+
+    async function connectPostmark() {
+      await updateEmailProviderSettings(env, "owner", {
+        activeProviderId: "postmark",
+        providers: [{ id: "postmark", fromAddress: "news@owner.test", serverToken: "pm-server-token" }],
+      });
+    }
+
+    async function sendToReader() {
+      await connectPostmark();
+      await startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher);
+      await dispatchDueCampaignJobs(env, fetcher);
+      return database.prepare("SELECT id, status FROM email_campaign_recipient_jobs").get() as {
+        id: string;
+        status: string;
+      };
+    }
+
+    function unsubscribeUrl() {
+      const html = String(providerRequests[0]!.body.HtmlBody);
+      return html.match(/https:\/\/api\.owner\.test\/api\/public\/campaigns\/unsubscribe\/[^"]+/)![0];
+    }
+
+    it("asks for a sender until the owner connects their own provider", async () => {
+      await expect(getCampaignTransportStatus(env, fetcher, "owner")).resolves.toMatchObject({
+        managed: false,
+        ready: false,
+        reason: "sender_not_connected",
+        sender: null,
+        addOn: null,
+      });
+
+      await connectPostmark();
+
+      await expect(getCampaignTransportStatus(env, fetcher, "owner")).resolves.toMatchObject({
+        available: true,
+        managed: false,
+        ready: true,
+        reason: null,
+        sender: { ref: "provider:postmark", fromAddress: "news@owner.test", domain: "owner.test" },
+        provider: { id: "postmark", label: "Postmark", tracksDelivery: true },
+        addOn: null,
+      });
+      expect(fetcher).not.toHaveBeenCalled();
+    });
+
+    it("keeps the campaign a draft when no sender is connected", async () => {
+      await expect(
+        startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher),
+      ).rejects.toMatchObject({ code: "sender_not_connected" });
+      await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "draft" });
+    });
+
+    it("sends the approved email through the owner's Postmark with one-click unsubscribe", async () => {
+      const job = await sendToReader();
+
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(providerRequests).toHaveLength(1);
+      const { url, body } = providerRequests[0]!;
+      expect(url).toBe("https://api.postmarkapp.com/email");
+      expect(body).toMatchObject({
+        From: expect.stringContaining("news@owner.test"),
+        To: "reader@example.com",
+        Subject: "A useful update",
+        ReplyTo: "owner@example.com",
+        MessageStream: "broadcast",
+        Metadata: expect.objectContaining({ me3_campaign_job: job.id }),
+      });
+      const link = unsubscribeUrl();
+      expect(String(body.HtmlBody)).not.toContain("{{ME3_MANAGED_UNSUBSCRIBE_URL}}");
+      expect(String(body.TextBody)).toContain(link);
+      expect(body.Headers).toEqual(expect.arrayContaining([
+        { Name: "List-Unsubscribe", Value: `<${link}>` },
+        { Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click" },
+      ]));
+      expect(job.status).toBe("accepted");
+      await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "sent" });
+      await expect(getCampaignResults(env, campaignId)).resolves.toMatchObject({
+        sentTo: 1,
+        delivered: 1,
+        didntArrive: 0,
+      });
+    });
+
+    it("sends a test to the owner through their provider", async () => {
+      await connectPostmark();
+
+      await expect(sendCampaignTest(env, "owner", campaignId, fetcher)).resolves.toMatchObject({
+        kind: "test",
+        status: "accepted",
+      });
+      expect(providerRequests[0]!.body).toMatchObject({ To: "owner@example.com" });
+      await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "draft" });
+    });
+
+    it("unsubscribes on the one-click POST but only shows a button on GET", async () => {
+      await sendToReader();
+      const link = unsubscribeUrl();
+      const token = link.split("/").pop()!;
+      const reader = () =>
+        database.prepare(
+          "SELECT unsubscribed_at FROM subscribers WHERE lower(email) = 'reader@example.com'",
+        ).get() as { unsubscribed_at: string | null };
+
+      const page = await handleCampaignUnsubscribe(env, token, new Request(link));
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain("<form");
+      expect(reader().unsubscribed_at).toBeNull();
+
+      const oneClick = await handleCampaignUnsubscribe(env, token, new Request(link, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "List-Unsubscribe=One-Click",
+      }));
+      expect(oneClick.status).toBe(200);
+      expect(reader().unsubscribed_at).not.toBeNull();
+      await expect(getCampaignResults(env, campaignId)).resolves.toMatchObject({ unsubscribed: 1 });
+
+      const forged = await handleCampaignUnsubscribe(env, `${token.split(".")[0]}.${"0".repeat(32)}`, new Request(link, {
+        method: "POST",
+        body: "List-Unsubscribe=One-Click",
+      }));
+      expect(forged.status).toBe(404);
+    });
+
+    it("records Postmark delivery and bounce webhooks, and refuses a wrong token", async () => {
+      const job = await sendToReader();
+      const transport = await getCampaignTransportStatus(env, fetcher, "owner");
+      const eventsUrl = transport.provider!.deliveryEventsUrl!;
+      expect(eventsUrl).toMatch(/^https:\/\/api\.owner\.test\/api\/public\/campaigns\/provider-events\/postmark\//);
+      const token = eventsUrl.split("/").pop()!;
+      const post = (body: Record<string, unknown>, withToken = token) =>
+        receivePostmarkCampaignEvent(env, withToken, new Request(eventsUrl, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }));
+
+      expect((await post({ RecordType: "Delivery" }, "wrong")).status).toBe(401);
+
+      const delivered = await post({
+        RecordType: "Delivery",
+        MessageID: "pm-1",
+        Recipient: "reader@example.com",
+        DeliveredAt: "2026-08-26T12:01:00Z",
+        Metadata: { me3_campaign_job: job.id },
+      });
+      expect(delivered.status).toBe(204);
+      expect(database.prepare("SELECT status FROM email_campaign_recipient_jobs").get())
+        .toEqual({ status: "delivered" });
+
+      database.exec("UPDATE email_campaign_recipient_jobs SET status = 'accepted'");
+      await post({
+        RecordType: "Bounce",
+        ID: 42,
+        Type: "HardBounce",
+        MessageID: "pm-1",
+        Email: "reader@example.com",
+        BouncedAt: "2026-08-26T12:02:00Z",
+        Metadata: { me3_campaign_job: job.id },
+      });
+      expect(database.prepare("SELECT status FROM email_campaign_recipient_jobs").get())
+        .toEqual({ status: "bounced" });
+      expect(
+        database.prepare(
+          "SELECT delivery_status FROM subscribers WHERE lower(email) = 'reader@example.com'",
+        ).get(),
+      ).toEqual({ delivery_status: "bounced" });
+      await expect(getCampaignResults(env, campaignId)).resolves.toMatchObject({
+        delivered: 0,
+        didntArrive: 1,
+        didntArriveReasons: { bounced: 1 },
+      });
+    });
+
+    it("waits and retries when the provider is busy, and stops on a refused address", async () => {
+      providerResponse = () => Response.json({ ErrorCode: 429, Message: "Rate limit" }, { status: 429 });
+      const busy = await sendToReader();
+      expect(busy.status).toBe("retry_wait");
+      await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "sending" });
+
+      providerResponse = () =>
+        Response.json({ ErrorCode: 406, Message: "Inactive recipient" }, { status: 422 });
+      database.exec("UPDATE email_campaign_recipient_jobs SET next_attempt_at = '2000-01-01T00:00:00Z'");
+      await dispatchDueCampaignJobs(env, fetcher);
+      expect(database.prepare("SELECT status FROM email_campaign_recipient_jobs").get())
+        .toEqual({ status: "rejected" });
+      await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "failed" });
+    });
   });
 });

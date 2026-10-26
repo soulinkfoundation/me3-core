@@ -101,6 +101,10 @@ export type EmailProviderSendRequest = {
   messageIdHeader?: string | null;
   inReplyTo?: string | null;
   referencesHeader?: string | null;
+  /** Extra headers such as List-Unsubscribe. Not sent through the managed gateway. */
+  headers?: Record<string, string> | null;
+  /** Postmark only: overrides the configured stream, e.g. "broadcast" for campaigns. */
+  messageStream?: string | null;
   metadata?: Record<string, unknown> | null;
   createdBy?: string | null;
   approvedByUserId?: string | null;
@@ -163,6 +167,8 @@ type EmailProviderSendMessage = {
   messageIdHeader: string | null;
   inReplyTo: string | null;
   referencesHeader: string | null;
+  headers: Record<string, string>;
+  messageStream: string | null;
   approvedByUserId: string | null;
   metadata: Record<string, string>;
 };
@@ -412,6 +418,7 @@ function cloudflareEmailHeaders(message: EmailProviderSendMessage) {
       : {}),
     ...(message.inReplyTo ? { "In-Reply-To": message.inReplyTo } : {}),
     ...(message.referencesHeader ? { References: message.referencesHeader } : {}),
+    ...message.headers,
   };
 }
 
@@ -491,7 +498,7 @@ const POSTMARK_PROVIDER: EmailProviderAdapter = {
           ContentType: attachment.mimeType,
         })),
         ReplyTo: message.replyToAddress || undefined,
-        MessageStream: config.messageStream || "outbound",
+        MessageStream: message.messageStream || config.messageStream || "outbound",
         Metadata: message.metadata,
         Headers: [
           { Name: "X-ME3-Audit-ID", Value: message.auditId },
@@ -503,6 +510,7 @@ const POSTMARK_PROVIDER: EmailProviderAdapter = {
           ...(message.referencesHeader
             ? [{ Name: "References", Value: message.referencesHeader }]
             : []),
+          ...Object.entries(message.headers).map(([Name, Value]) => ({ Name, Value })),
         ],
       }),
     });
@@ -656,6 +664,7 @@ const MAILGUN_PROVIDER: EmailProviderAdapter = {
     if (message.messageIdHeader) form.append("h:Message-ID", message.messageIdHeader);
     if (message.inReplyTo) form.append("h:In-Reply-To", message.inReplyTo);
     if (message.referencesHeader) form.append("h:References", message.referencesHeader);
+    for (const [name, value] of Object.entries(message.headers)) form.append(`h:${name}`, value);
     for (const [key, value] of Object.entries(message.metadata)) {
       const variableName = normalizeMailgunVariableName(key);
       if (variableName) form.append(`v:${variableName}`, value);
@@ -988,6 +997,8 @@ export async function sendEmailWithProvider(
     messageIdHeader: input.messageIdHeader || null,
     inReplyTo: input.inReplyTo || null,
     referencesHeader: input.referencesHeader || null,
+    headers: sanitizeExtraHeaders(input.headers),
+    messageStream: input.messageStream?.trim() || null,
     approvedByUserId: input.approvedByUserId || null,
     metadata: stringifyMetadata({
       me3_audit_id: auditId,
@@ -1762,6 +1773,7 @@ function buildSmtpMessage(
     message.referencesHeader ? headerLine("References", message.referencesHeader) : null,
     headerLine("X-ME3-Audit-ID", message.auditId),
     headerLine("X-ME3-Provider", "smtp"),
+    ...Object.entries(message.headers).map(([name, value]) => headerLine(name, value)),
     "MIME-Version: 1.0",
   ].filter((header): header is string => Boolean(header));
   const bodyParts = buildSmtpBodyParts(message, `me3-alt-${message.auditId}`);
@@ -1844,6 +1856,14 @@ function buildSmtpBodyParts(
     normalizeSmtpBody(message.htmlBody),
     `--${alternativeBoundary}--`,
   ]];
+}
+
+function sanitizeExtraHeaders(headers: Record<string, string> | null | undefined) {
+  const clean: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers || {})) {
+    if (/^[A-Za-z][A-Za-z0-9-]{0,63}$/.test(name)) clean[name] = sanitizeHeaderValue(String(value));
+  }
+  return clean;
 }
 
 function headerLine(name: string, value: string): string {
