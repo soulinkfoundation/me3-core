@@ -29,7 +29,7 @@ const migrationFiles = [
   "../migrations/0044_site_branding.sql",
   "../migrations/0091_email_campaign_approvals.sql",
   "../migrations/0092_campaign_mailing_address.sql",
-  "../migrations/0093_site_branding_email_logo.sql",
+  "../migrations/0095_site_branding_email_logo.sql",
 ];
 const migrations = migrationFiles.map((path) =>
   readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"),

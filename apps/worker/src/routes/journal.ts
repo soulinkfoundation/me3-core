@@ -1,4 +1,5 @@
 import { JOURNAL_PLUGIN_ID, saveJournalDayForAgent } from "@me3-core/plugin-journal";
+import { createJournalFolder, deleteJournalFolder, listJournalFolders, renameJournalFolder } from "../journal-folders";
 import { createJournalArticle, deleteJournalArticle, getJournalArticle, listJournalArticles, updateJournalArticle } from "../journal-articles";
 import {
   JournalConflictError,
@@ -74,6 +75,43 @@ export function registerJournalRoutes(app: AppHono, deps: OwnerRouteDeps) {
       if (revision === undefined || revision === null) throw new JournalConflictError();
       return c.json(await deleteJournalArticle(c.env, ownerId, c.req.param("id"), revision));
     } catch (error) { return journalErrorResponse(c, error); }
+  });
+
+  // Folders file Notes inside a project (me3-y6ai). Deleting one keeps its notes.
+  app.get("/api/journal/folders", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+    try { return c.json(await listJournalFolders(c.env, ownerId)); }
+    catch (error) { return journalErrorResponse(c, error); }
+  });
+
+  app.post("/api/journal/folders", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+    try { return c.json(await createJournalFolder(c.env, ownerId, await c.req.json().catch(() => ({}))), 201); }
+    catch (error) { return journalErrorResponse(c, error); }
+  });
+
+  app.patch("/api/journal/folders/:id", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+    try { return c.json(await renameJournalFolder(c.env, ownerId, c.req.param("id"), await c.req.json().catch(() => ({})))); }
+    catch (error) { return journalErrorResponse(c, error); }
+  });
+
+  app.delete("/api/journal/folders/:id", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireJournalPlugin(c);
+    if (blocked) return blocked;
+    try { return c.json(await deleteJournalFolder(c.env, ownerId, c.req.param("id"))); }
+    catch (error) { return journalErrorResponse(c, error); }
   });
 
   app.get("/api/journal/days/:date", async (c) => {

@@ -193,7 +193,7 @@ export type AgentChatRuntimeStreamOptions = {
 };
 
 export type AgentOwnerContentSourceReference = {
-  sourceType: "journal" | "mission_task";
+  sourceType: "journal" | "note" | "mission_task";
   sourceId: string;
 };
 

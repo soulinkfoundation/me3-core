@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { searchAgentOwnerContent } from "@me3-core/plugin-agent-chat";
@@ -122,6 +123,38 @@ describe("owner content search", () => {
     expect(migration).toMatch(/owner_content_search_task_update[\s\S]*DELETE FROM owner_content_search[\s\S]*WHERE NEW\.archived_at IS NULL/);
     expect(migration).toMatch(/FROM journal_entries\s+WHERE archived_at IS NULL/);
     expect(migration).toMatch(/FROM mission_tasks t[\s\S]*WHERE t\.archived_at IS NULL/);
+  });
+});
+
+describe("owner content search notes", () => {
+  it("indexes notes as source_type note, keeps the index on edit and delete, and backfills", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(readFileSync(new URL("../migrations/0056_journal_articles.sql", import.meta.url), "utf8"));
+    db.exec(readFileSync(new URL("../migrations/0089_journal_article_projects.sql", import.meta.url), "utf8"));
+    db.exec("CREATE TABLE mission_projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL)");
+    db.exec("INSERT INTO mission_projects (id, user_id, name) VALUES ('project_launch', 'alice', 'Launch')");
+    db.exec(`CREATE VIRTUAL TABLE owner_content_search USING fts5(
+      user_id UNINDEXED, source_type UNINDEXED, source_id UNINDEXED, title, body, project_id UNINDEXED,
+      project_name, status UNINDEXED, source_date UNINDEXED, updated_at UNINDEXED)`);
+    const insert = db.prepare("INSERT INTO journal_articles (id, user_id, title, body, project_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
+    insert.run("article_old", "alice", "Before the index", "<p>agent context</p>", "project_launch", "2026-10-20T10:00:00Z");
+    db.exec(readFileSync(new URL("../migrations/0093_owner_content_search_notes.sql", import.meta.url), "utf8"));
+    const rows = () => db.prepare("SELECT source_type, source_id, title, project_name, source_date FROM owner_content_search ORDER BY source_id").all();
+
+    expect(rows()).toEqual([{ source_type: "note", source_id: "article_old", title: "Before the index", project_name: "Launch", source_date: "2026-10-20" }]);
+
+    insert.run("article_new", "alice", null, "<p>resilient agent context</p>", null, "2026-10-26T10:00:00Z");
+    expect(rows()[0]).toMatchObject({ source_id: "article_new", title: "Untitled note", project_name: "" });
+    expect(db.prepare("SELECT source_id FROM owner_content_search WHERE owner_content_search MATCH 'resilient'").all()).toEqual([{ source_id: "article_new" }]);
+
+    db.prepare("UPDATE journal_articles SET title = 'Named', project_id = 'project_launch' WHERE id = 'article_new'").run();
+    expect(rows()[0]).toMatchObject({ source_id: "article_new", title: "Named", project_name: "Launch" });
+    db.prepare("UPDATE mission_projects SET name = 'Launch 2' WHERE id = 'project_launch'").run();
+    expect(rows().map((row) => (row as { project_name: string }).project_name)).toEqual(["Launch 2", "Launch 2"]);
+
+    db.prepare("DELETE FROM journal_articles WHERE id = 'article_old'").run();
+    expect(rows().map((row) => (row as { source_id: string }).source_id)).toEqual(["article_new"]);
+    db.close();
   });
 });
 

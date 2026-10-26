@@ -8,7 +8,7 @@ import {
   watch,
 } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute } from "vue-router";
 import type { Editor } from "@tiptap/core";
 import { ApiError, api } from "../api";
 import Button from "../components/Button.vue";
@@ -22,6 +22,9 @@ import { parseJournalReminderCapture } from "../utils/journalReminderCapture";
 import { journalBodyForEditor } from "../utils/journalContent";
 import { writtenGratitude } from "../utils/gratitude";
 import JournalDayPlan from "../components/today/JournalDayPlan.vue";
+import JournalNoteMoveMenu from "../components/journal/JournalNoteMoveMenu.vue";
+import JournalNotesTree from "../components/journal/JournalNotesTree.vue";
+import type { NoteFolder, NotePlacement } from "../utils/journalNotes";
 import { useAppToast } from "../composables/useAppToast";
 import { useTodayPlan } from "../composables/useTodayPlan";
 import { plainPreview, type HomeTask } from "../utils/homeSummary";
@@ -48,7 +51,7 @@ type JournalEntry = {
   revision: number;
 };
 
-type Article = Omit<JournalEntry, "date">;
+type Article = Omit<JournalEntry, "date"> & { projectId?: string | null; folderId?: string | null };
 
 type JournalArchiveEntry = JournalEntry & {
   preview: string;
@@ -99,7 +102,6 @@ type TiptapEditorExpose = {
 };
 
 const route = useRoute();
-const router = useRouter();
 // Today's page shows the focus goal and today's tasks above your notes, like the Home Today card.
 const plan = useTodayPlan();
 const planReady = ref(false);
@@ -134,7 +136,13 @@ async function moveToTask() {
   // Nothing selected: the task button takes the whole line the cursor is on.
   if (from === to) { const $from = editor.state.selection.$from; from = $from.start(); to = $from.end(); }
   const title = taskTitleFrom(editor.state.doc.textBetween(from, to, " "));
-  if (!title) { error.value = "Write the task on a line, then use the task button."; return; }
+  // An empty line just adds a task: type it in Today's list, or name it here on other pages.
+  if (!title) {
+    if (showsDayPlan.value) { addingTask.value = true; return; }
+    const typed = window.prompt("New task")?.trim();
+    if (typed) await addPlanTask(typed);
+    return;
+  }
   const previous = description.value;
   editor.chain().focus().deleteRange({ from, to }).run();
   try {
@@ -147,6 +155,14 @@ async function moveToTask() {
     description.value = previous;
     toastPlanError(cause, "Couldn't create the task");
   }
+}
+const addingTask = ref(false);
+async function addPlanTask(title: string) {
+  addingTask.value = false;
+  try {
+    const result = await api.post<{ task: HomeTask }>("/mission-control/tasks", { title: title.slice(0, 180), status: "in_progress" });
+    plan.tasks.value = [...plan.tasks.value, result.task];
+  } catch (cause) { toastPlanError(cause, "Couldn't create the task"); }
 }
 async function undoMove() {
   const moved = movedTask.value; if (!moved) return;
@@ -164,11 +180,30 @@ const description = ref("");
 const loadedEntry = ref<JournalEntry | null>(null);
 const archiveEntries = ref<JournalArchiveEntry[]>([]);
 const archiveOpen = ref(false);
+// At desktop widths the library is always visible beside a page-centred editor (see the CSS breakpoint).
+const WIDE_SCREEN_QUERY = "(min-width: 1180px)";
+const wideScreen = ref(typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(WIDE_SCREEN_QUERY).matches);
+const libraryVisible = computed(() => wideScreen.value || archiveOpen.value);
 const archiveMobileDetailOpen = ref(false);
 const archiveLoaded = ref(false);
 const libraryTab = ref<"daily" | "articles">("daily");
 const articles = ref<Article[]>([]);
 const currentArticle = ref<Article | null>(null);
+const folders = ref<NoteFolder[]>([]);
+const noteLocationOpen = ref(false);
+// Where the open note is filed, for the topbar location button.
+const currentNotePlacement = computed<NotePlacement>(() => {
+  const article = currentArticle.value;
+  const projectId = article?.projectId && projects.value.some((item) => item.id === article.projectId) ? article.projectId : null;
+  const folderId = article?.folderId && folders.value.some((item) => item.id === article.folderId) ? article.folderId : null;
+  return { projectId, folderId };
+});
+const currentNoteLocation = computed(() => {
+  const { projectId, folderId } = currentNotePlacement.value;
+  const project = projects.value.find((item) => item.id === projectId)?.name || "No project";
+  const folder = folders.value.find((item) => item.id === folderId)?.name;
+  return folder ? `${project} / ${folder}` : project;
+});
 const loading = ref(false);
 const archiveLoading = ref(false);
 const archiveActionDate = ref<string | null>(null);
@@ -366,6 +401,16 @@ function formatArchiveMonth(value: string): string {
 
 function archiveWordCount(entry: JournalArchiveEntry) {
   return htmlToPlainText(entry.body).split(/\s+/).filter(Boolean).length;
+}
+
+function articleWordCount(article: Article): number {
+  return htmlToPlainText(article.body).split(/\s+/).filter(Boolean).length;
+}
+
+// The tree already shows each note's project and folder, so the row shows its words.
+function noteSubtitle(article: Article): string {
+  const preview = plainPreview(htmlToPlainText(article.body));
+  return preview ? preview : articleEditedLabel(article.updatedAt);
 }
 
 function articleEditedLabel(value: string) {
@@ -942,22 +987,42 @@ function toggleDatePicker() {
 }
 
 async function toggleArchive() {
-  archiveOpen.value = !archiveOpen.value;
   datePickerOpen.value = false;
   archiveMobileDetailOpen.value = false;
   closeArchiveActions();
+  if (wideScreen.value) return;
+  archiveOpen.value = !archiveOpen.value;
   if (archiveOpen.value) {
     await flushPendingSave();
-    await loadArchive();
-    await loadArticles();
+    await loadLibrary();
+  }
+}
+
+async function loadLibrary() {
+  await loadArchive();
+  await loadArticles();
+}
+
+let wideScreenMedia: MediaQueryList | null = null;
+function handleWideScreenChange(event: MediaQueryListEvent) {
+  wideScreen.value = event.matches;
+  if (event.matches) {
+    archiveMobileDetailOpen.value = false;
+    void loadLibrary();
   }
 }
 
 async function loadArticles() {
   try {
-    const response = await api.get<{ articles: Article[] }>("/journal/articles");
+    const [response, folderResponse] = await Promise.all([
+      api.get<{ articles: Article[] }>("/journal/articles"),
+      api.get<{ folders: NoteFolder[] }>("/journal/folders"),
+      // Notes still list without projects when Projects is turned off.
+      loadProjects().catch(() => undefined),
+    ]);
     articles.value = response.articles || [];
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not load articles."; }
+    folders.value = folderResponse.folders || [];
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not load notes."; }
 }
 
 async function openArticle(id: string) {
@@ -976,32 +1041,89 @@ async function openArticle(id: string) {
     await nextTick();
     archiveMobileDetailOpen.value = true;
     saveState.value = "saved";
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not load article."; }
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not load note."; }
   finally { hydratingEntry.value = false; if (token === currentLoadToken) loading.value = false; }
 }
 
-async function createArticle() {
+async function createArticle(placement?: NotePlacement) {
   await flushPendingSave();
   try {
-    const response = await api.post<{ article: Article }>("/journal/articles", { title: null, body: "", bodyFormat: "html" });
+    const where = placement?.folderId ? { folderId: placement.folderId } : { projectId: placement?.projectId ?? null };
+    const response = await api.post<{ article: Article }>("/journal/articles", { title: null, body: "", bodyFormat: "html", ...where });
     articles.value = [response.article, ...articles.value];
     await openArticle(response.article.id);
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not create article."; }
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not create note."; }
 }
 
 async function deleteArticle(article: Article) {
-  if (!window.confirm(`Delete "${article.title || "Untitled article"}"?`)) return;
+  if (!window.confirm(`Delete "${article.title || "Untitled note"}"?`)) return;
   try {
     await flushPendingSave();
     const revision = articles.value.find((item) => item.id === article.id)?.revision ?? article.revision;
     await api.delete(`/journal/articles/${encodeURIComponent(article.id)}`, { headers: { "If-Match": `"journal-${revision}"` } });
     articles.value = articles.value.filter((item) => item.id !== article.id);
     if (currentArticle.value?.id === article.id) await loadDay(selectedDate.value);
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not delete article."; }
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not delete note."; }
+}
+
+// Moves go through the save queue so they never race the editor's autosave.
+async function moveArticle(article: Article, placement: NotePlacement) {
+  noteLocationOpen.value = false;
+  await flushPendingSave();
+  const move = async () => {
+    const isOpen = currentArticle.value?.id === article.id;
+    const source = isOpen ? currentArticle.value! : articles.value.find((item) => item.id === article.id) ?? article;
+    const response = await api.patch<{ article: Article }>(
+      `/journal/articles/${encodeURIComponent(article.id)}`,
+      {
+        title: isOpen ? title.value.trim() || null : source.title,
+        body: isOpen ? description.value : source.body,
+        bodyFormat: isOpen ? "html" : source.bodyFormat,
+        ...(placement.folderId ? { folderId: placement.folderId } : { projectId: placement.projectId, folderId: null }),
+      },
+      { headers: { "If-Match": `"journal-${source.revision}"` } },
+    );
+    if (currentArticle.value?.id === article.id) currentArticle.value = response.article;
+    articles.value = [response.article, ...articles.value.filter((item) => item.id !== article.id)];
+  };
+  const next = saveQueue.then(move);
+  saveQueue = next.catch(() => {});
+  try { await next; } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not move note."; }
+}
+
+async function createFolder(projectId: string | null) {
+  noteLocationOpen.value = false;
+  const name = window.prompt("Folder name")?.trim();
+  if (!name) return;
+  try {
+    const response = await api.post<{ folder: NoteFolder }>("/journal/folders", { name, projectId });
+    folders.value = [...folders.value, response.folder];
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not create folder."; }
+}
+
+async function renameFolder(folder: NoteFolder) {
+  const name = window.prompt("Rename folder", folder.name)?.trim();
+  if (!name || name === folder.name) return;
+  try {
+    const response = await api.patch<{ folder: NoteFolder }>(`/journal/folders/${encodeURIComponent(folder.id)}`, { name });
+    folders.value = folders.value.map((item) => (item.id === folder.id ? response.folder : item));
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not rename folder."; }
+}
+
+// Deleting a folder keeps its notes, loose in the same project.
+async function deleteFolder(folder: NoteFolder) {
+  if (!window.confirm(`Delete the folder "${folder.name}"? Its notes stay in the project.`)) return;
+  try {
+    await api.delete(`/journal/folders/${encodeURIComponent(folder.id)}`);
+    folders.value = folders.value.filter((item) => item.id !== folder.id);
+    articles.value = articles.value.map((item) => (item.folderId === folder.id ? { ...item, folderId: null } : item));
+    if (currentArticle.value?.folderId === folder.id) currentArticle.value = { ...currentArticle.value, folderId: null };
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not delete folder."; }
 }
 
 function handleWindowClick() {
   datePickerOpen.value = false;
+  noteLocationOpen.value = false;
   closeArchiveActions();
 }
 
@@ -1029,6 +1151,12 @@ watch([entryLinks, description, projects], scheduleInlineJournalChips, {
 onMounted(() => {
   void loadDay(selectedDate.value);
   void loadPlan();
+  if (typeof window.matchMedia === "function") {
+    wideScreenMedia = window.matchMedia(WIDE_SCREEN_QUERY);
+    wideScreen.value = wideScreenMedia.matches;
+    wideScreenMedia.addEventListener("change", handleWideScreenChange);
+  }
+  if (wideScreen.value) void loadLibrary();
   window.addEventListener("click", handleWindowClick);
   window.addEventListener("keydown", handleWindowKeydown);
   document.addEventListener("selectionchange", updateSelectionToolbar);
@@ -1042,6 +1170,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearSaveTimer();
+  wideScreenMedia?.removeEventListener("change", handleWideScreenChange);
   if (inlineChipFrame !== null) {
     window.cancelAnimationFrame(inlineChipFrame);
   }
@@ -1062,7 +1191,29 @@ onBeforeUnmount(() => {
     <Teleport to="#app-page-controls" defer>
     <header class="journal__topbar">
       <div class="journal__topbar-spacer" />
-      <div v-if="currentArticle" class="journal__day-switcher" aria-label="Article">Article</div>
+      <div v-if="currentArticle" class="journal__day-switcher journal__note-location" @click.stop>
+        <button
+          type="button"
+          class="journal__note-location-button"
+          aria-haspopup="menu"
+          :aria-expanded="noteLocationOpen ? 'true' : 'false'"
+          :title="`Filed in ${currentNoteLocation}. Move to…`"
+          @click="noteLocationOpen = !noteLocationOpen"
+        >
+          <UiIcon :name="currentNotePlacement.folderId ? 'Folder' : currentNotePlacement.projectId ? 'Target' : 'FileText'" :size="15" aria-hidden="true" />
+          <span>{{ currentNoteLocation }}</span>
+          <UiIcon name="ChevronDown" :size="15" aria-hidden="true" />
+        </button>
+        <JournalNoteMoveMenu
+          v-if="noteLocationOpen"
+          class="journal__note-location-menu"
+          :projects="projects"
+          :folders="folders"
+          :current="currentNotePlacement"
+          @move="moveArticle(currentArticle, $event)"
+          @new-folder="createFolder"
+        />
+      </div>
       <div v-else class="journal__day-switcher" aria-label="Selected day" @click.stop>
         <Button
           color="ghost"
@@ -1114,18 +1265,6 @@ onBeforeUnmount(() => {
       </div>
       <div class="journal__topbar-actions">
         <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          aria-label="Open Calendar"
-          title="Calendar"
-          type="button"
-          @click="router.push('/calendar')"
-        >
-          <UiIcon name="Calendar" :size="16" />
-        </Button>
-        <Button
           :color="voiceDictationState === 'listening' ? 'accent' : 'ghost'"
           shape="soft"
           size="compact"
@@ -1151,6 +1290,7 @@ onBeforeUnmount(() => {
           />
         </Button>
         <Button
+          v-if="!wideScreen"
           color="ghost"
           shape="soft"
           size="compact"
@@ -1178,18 +1318,18 @@ onBeforeUnmount(() => {
       }"
     >
       <aside
-        v-if="archiveOpen"
+        v-if="libraryVisible"
         class="journal__archive"
         aria-label="Writing library"
       >
         <div class="journal__archive-head">
           <div class="journal__tabs" aria-label="Library sections">
             <button type="button" :aria-pressed="libraryTab === 'daily'" @click="libraryTab = 'daily'">Daily</button>
-            <button type="button" :aria-pressed="libraryTab === 'articles'" @click="libraryTab = 'articles'; loadArticles()">Articles</button>
+            <button type="button" :aria-pressed="libraryTab === 'articles'" @click="libraryTab = 'articles'; loadArticles()">Notes</button>
           </div>
           <span v-if="archiveLoading">Loading</span>
-          <Button v-if="libraryTab === 'articles'" color="ghost" shape="soft" size="compact" icon-only type="button" aria-label="New article" title="New article" @click="createArticle"><UiIcon name="Plus" :size="16" /></Button>
-          <Button color="ghost" shape="soft" size="compact" icon-only type="button" aria-label="Close library" @click="archiveOpen = false"><UiIcon name="X" :size="16" /></Button>
+          <Button v-if="libraryTab === 'articles'" color="ghost" shape="soft" size="compact" icon-only type="button" aria-label="New note" title="New note" @click="createArticle()"><UiIcon name="Plus" :size="16" /></Button>
+          <Button v-if="!wideScreen" color="ghost" shape="soft" size="compact" icon-only type="button" aria-label="Close library" @click="archiveOpen = false"><UiIcon name="X" :size="16" /></Button>
         </div>
         <template v-if="libraryTab === 'daily'">
         <template v-for="(entry, index) in nonEmptyArchiveEntries" :key="entry.id">
@@ -1219,7 +1359,7 @@ onBeforeUnmount(() => {
               :aria-expanded="
                 archiveActionDate === entry.date ? 'true' : 'false'
               "
-              title="Note actions"
+              title="Entry actions"
               type="button"
               :disabled="deletingDate === entry.date"
               @click="toggleArchiveActions(entry.date)"
@@ -1239,7 +1379,7 @@ onBeforeUnmount(() => {
                 @click="deleteArchiveEntry(entry)"
               >
                 <UiIcon name="Trash2" :size="15" aria-hidden="true" />
-                Delete note
+                Delete entry
               </button>
             </div>
           </div>
@@ -1254,19 +1394,26 @@ onBeforeUnmount(() => {
         </p>
         <button v-if="libraryTab === 'daily'" type="button" class="journal__panel-action" @click="toggleDatePicker">Jump to date</button>
         <template v-if="libraryTab === 'articles'">
-          <h3 class="journal__month">Recent</h3>
-          <div v-for="article in articles" :key="article.id" class="journal__archive-row" :class="{ 'is-active': currentArticle?.id === article.id }">
-            <button type="button" class="journal__archive-row-main" @click="openArticle(article.id)">
-              <strong>{{ article.title || 'Untitled' }}</strong>
-              <span>{{ htmlToPlainText(article.body).split(/\s+/).filter(Boolean).length.toLocaleString() }} words · {{ articleEditedLabel(article.updatedAt) }}</span>
-            </button>
-            <Button color="ghost" shape="soft" size="compact" icon-only type="button" :aria-label="`Delete ${article.title || 'Untitled article'}`" @click="deleteArticle(article)"><UiIcon name="Trash2" :size="15" /></Button>
-          </div>
-          <p v-if="articles.length === 0" class="journal__empty">No articles yet.</p>
+          <JournalNotesTree
+            :notes="articles"
+            :folders="folders"
+            :projects="projects"
+            :active-id="currentArticle?.id ?? null"
+            :word-count="articleWordCount"
+            :subtitle="noteSubtitle"
+            @open="openArticle"
+            @delete="deleteArticle"
+            @move="moveArticle"
+            @new-note="createArticle"
+            @new-folder="createFolder"
+            @rename-folder="renameFolder"
+            @delete-folder="deleteFolder"
+          />
+          <p v-if="articles.length === 0" class="journal__empty">No notes yet. <button type="button" class="journal__empty-action" @click="createArticle()">Write your first note</button></p>
         </template>
       </aside>
 
-      <section class="journal__sheet" :aria-label="currentArticle ? 'Article' : 'Daily page'">
+      <section class="journal__sheet" :aria-label="currentArticle ? 'Note' : 'Daily page'">
         <div v-if="archiveOpen" class="journal__mobile-detail-nav">
           <Button
             color="ghost"
@@ -1295,20 +1442,20 @@ onBeforeUnmount(() => {
             v-model:title="title"
             show-title-field
             variant="workspace"
-            :title-placeholder="currentArticle ? 'Untitled article' : dayTitle"
+            :title-placeholder="currentArticle ? 'Untitled note' : dayTitle"
             :title-prefilled="!currentArticle"
             :title-max-length="180"
             :title-disabled="loading"
             :task-button="showsDayPlan ? 'emit' : 'list'"
             :upload-image="uploadJournalImage"
-            :placeholder="currentArticle ? 'Write your article here...' : 'Write your note here...'"
+            :placeholder="currentArticle ? 'Write your note here...' : 'Write about your day...'"
             @task-command="moveToTask"
           >
             <template #title-meta>
               <span v-if="!loading" class="journal__title-meta">{{ wordCount.toLocaleString() }} {{ wordCount === 1 ? 'word' : 'words' }}<template v-if="saveStatusText"> · <strong>{{ saveStatusText }}</strong></template></span>
             </template>
             <template #after-title>
-              <JournalDayPlan v-if="showsDayPlan" :tasks="plan.tasks.value" :goals="plan.goals.value" :busy="plan.busy.value" @complete="completePlanTask" @focus="focusPlanGoal" @progress="setPlanGoalProgress" />
+              <JournalDayPlan v-if="showsDayPlan" :tasks="plan.tasks.value" :goals="plan.goals.value" :busy="plan.busy.value" @complete="completePlanTask" @focus="focusPlanGoal" @progress="setPlanGoalProgress" :adding="addingTask" @add="addPlanTask" @cancel-add="addingTask = false" />
             </template>
           </TiptapEditor>
           <div v-if="movedTask" class="journal__moved" role="status">Moved to tasks<button type="button" @click="undoMove">Undo</button></div>
@@ -1577,6 +1724,28 @@ onBeforeUnmount(() => {
   align-items: stretch;
 }
 
+/* Desktop: the library is always open on the left and the editor stays centred on the page. */
+@media (min-width: 1180px) {
+  .journal__workspace,
+  .journal__workspace:has(.journal__archive) {
+    width: 100%;
+    grid-template-columns: minmax(240px, 1fr) minmax(0, 700px) minmax(240px, 1fr);
+    align-items: stretch;
+    gap: 24px;
+    padding: 0 24px 16px;
+  }
+
+  .journal__archive {
+    grid-column: 1;
+    width: min(100%, 300px);
+  }
+
+  .journal__sheet {
+    grid-column: 2;
+    width: 100%;
+  }
+}
+
 .journal__tabs { display: flex; gap: 4px; padding: 3px; border-radius: var(--ui-radius-sm, 8px); background: var(--ui-surface-muted, var(--color-surface-muted)); }
 .journal__tabs button, .journal__panel-action, .journal__status button {
   border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 7px 8px;
@@ -1587,7 +1756,7 @@ onBeforeUnmount(() => {
 .journal__tabs button:focus-visible, .journal__panel-action:focus-visible, .journal__status button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
 .journal__panel-action { width: 100%; text-align: left; color: var(--ui-accent-strong, var(--ui-accent)); }
 .journal__status button { color: var(--ui-accent-strong, var(--ui-accent)); }
-.journal__month { margin: 18px 8px 6px; color: var(--ui-text-muted); font-size: .78rem; font-weight: 700; }
+.journal__month { margin: 16px 10px 4px; color: var(--ui-text-muted); font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .journal__library-row-head { display: flex; justify-content: space-between; gap: 8px; }
 .journal__library-row-head small { flex-shrink: 0; color: var(--ui-text-muted); font-size: .78rem; }
 .journal__archive > .journal__panel-action { margin-top: 12px; border: 1px solid var(--ui-border, var(--color-border)); text-align: center; color: var(--ui-text, var(--color-text)); }
@@ -1607,12 +1776,78 @@ onBeforeUnmount(() => {
 }
 
 .journal__archive-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 8px 10px;
+  padding: 0 4px 10px;
+  background: var(--ui-bg, var(--color-bg));
   color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.journal__archive-head .journal__tabs {
+  flex: 1;
+}
+
+.journal__archive-head .journal__tabs button {
+  flex: 1;
+}
+
+.journal__empty-action {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ui-accent-strong, var(--ui-accent));
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.journal__empty-action:focus-visible {
+  outline: 2px solid var(--ui-focus, var(--ui-accent));
+  border-radius: 4px;
+}
+
+.journal__note-location-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(420px, 50vw);
+  min-height: 36px;
+  border: 0;
+  border-radius: var(--ui-radius-sm, 8px);
+  padding: 0 10px;
+  background: transparent;
+  color: var(--ui-text, var(--color-text));
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.journal__note-location-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journal__note-location-button:hover,
+.journal__note-location-button[aria-expanded="true"] {
+  background: var(--ui-surface-muted, var(--color-surface-muted));
+}
+
+.journal__note-location-button:focus-visible {
+  outline: 2px solid var(--ui-focus, var(--ui-accent));
+}
+
+.journal__note-location-menu {
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .journal__archive-head h2 {
@@ -1646,13 +1881,21 @@ onBeforeUnmount(() => {
   background: var(--ui-surface-muted, var(--color-surface-muted));
 }
 
+.journal__archive-row.is-active {
+  box-shadow: inset 3px 0 0 var(--ui-accent);
+}
+
+.journal__archive-row.is-active .journal__archive-row-main strong {
+  color: var(--ui-accent-strong, var(--ui-accent));
+}
+
 .journal__archive-row-main {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
   border: 0;
-  padding: 10px 8px;
+  padding: 9px 10px;
   background: transparent;
   color: inherit;
   text-align: left;

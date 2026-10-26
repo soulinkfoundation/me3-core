@@ -1337,6 +1337,7 @@ const JOURNAL_PLUGIN: CorePluginManifestSummary = {
     "workspace.journal",
     "journal.entries.manage",
     "journal.entries.read",
+    "journal.notes.read",
   ],
   permissions: [
     {
@@ -1440,6 +1441,17 @@ const JOURNAL_PLUGIN: CorePluginManifestSummary = {
           "Show my latest seven Journal entries.",
         ],
         negative: ["Write a Journal entry for today."],
+      },
+    }),
+    agentTool({
+      id: "journal.notes.read",
+      label: "Read Notes",
+      sideEffect: "read_private",
+      approvalMode: "none",
+      auditEventKind: "journal_notes_read",
+      examples: {
+        positive: ["What notes have I been writing?", "Read my article about agent context."],
+        negative: ["Read today's Journal entry."],
       },
     }),
   ],
