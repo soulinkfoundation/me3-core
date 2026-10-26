@@ -205,9 +205,10 @@ const saveState = computed(() => {
 const currentRendererVersion = CAMPAIGN_RENDERER_VERSION;
 const isDraft = computed(() => !campaign.value || campaign.value.status === "draft");
 // The "Start from" row shows only while the body is empty: no words and no photos.
-const bodyEmpty = computed(() =>
-  !/<img\b/i.test(richTextHtml.value) && !richTextHtml.value.replace(/<[^>]*>|&nbsp;|\u200b/gi, "").trim(),
-);
+const bodyEmpty = computed(() => {
+  const body = new DOMParser().parseFromString(richTextHtml.value, "text/html").body;
+  return !body.querySelector("img") && !(body.textContent || "").replace(/\u200b/g, "").trim();
+});
 const starterLeft = computed(() =>
   findCampaignStarterText({ blocks: campaignEditorHtmlToBlocks(richTextHtml.value) }),
 );
