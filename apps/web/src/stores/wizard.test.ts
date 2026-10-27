@@ -27,7 +27,7 @@ describe("wizard store", () => {
     expect(source.intents?.book?.offers?.[0].pricing?.regionalPrices).toEqual(regionalPrices);
     expect(source.intents?.book?.classes?.[0].pricing?.regionalPrices).toEqual(regionalPrices);
     expect(source.intents?.book?.retreats?.[0].pricing?.regionalPrices).toEqual(regionalPrices);
-    store.loadFromSiteContent({ ...source, name: "Example" } as Parameters<typeof store.loadFromSiteContent>[0], [], [], [{ ...store.products[0] }], "example");
+    store.loadFromSiteContent({ ...source, name: "Example" } as Parameters<typeof store.loadFromSiteContent>[0], [], [], [{ ...store.products[0], images: [] }], "example");
     expect(store.products[0].regionalPrices).toEqual(regionalPrices);
     expect(store.profile.booking.classOffers[0].pricing?.regionalPrices).toEqual(regionalPrices);
     store.saveToStorage();

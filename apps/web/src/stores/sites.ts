@@ -5,6 +5,7 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { useWizardStore } from "./wizard";
 import { API_BASE, ApiError, api } from "../api";
+import type { ProductDownloadFile } from "../../../../shared/product-delivery";
 import type { SiteUploadFile } from "../utils/siteUpload";
 import type {
   LandingPageDocument,
@@ -1321,6 +1322,27 @@ export const useSitesStore = defineStore("sites", () => {
     );
   }
 
+  async function uploadProductDownload(
+    username: string,
+    file: File,
+  ): Promise<{ ok: boolean; file: ProductDownloadFile }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    return api.upload<{ ok: boolean; file: ProductDownloadFile }>(
+      `/sites/${username}/products/download`,
+      formData,
+    );
+  }
+
+  async function getShopAvailability(
+    username: string,
+  ): Promise<Record<string, { remaining: number | null; options?: Record<string, number | null> }>> {
+    const result = await api.get<{ products?: Record<string, { remaining: number | null; options?: Record<string, number | null> }> }>(
+      `/shop/${encodeURIComponent(username)}/availability`,
+    );
+    return result.products || {};
+  }
+
   async function sendNewsletterWelcomeTest(
     username: string,
     payload: {
@@ -1483,6 +1505,8 @@ export const useSitesStore = defineStore("sites", () => {
     uploadPageImage,
     uploadContentAsset,
     uploadNewsletterDownload,
+    uploadProductDownload,
+    getShopAvailability,
     sendNewsletterWelcomeTest,
     createStreamUpload,
     finalizeStreamUpload,

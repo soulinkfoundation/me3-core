@@ -1,3 +1,4 @@
+import { productPhotoPaths } from "@me3-core/site-renderer/product-shop";
 import {
   ME3_SCHEMA_URL,
   ME3_VERSION,
@@ -300,6 +301,7 @@ export function buildPublicMe3Profile(
       ...(text(product.excerpt, 1000) ? { description: text(product.excerpt, 1000) } : {}),
       url: `./${sectionPaths.shop}/${product.slug}.html`,
       price: productMoney(product.price, product.currency),
+      ...(productPhotoPaths(product).length ? { images: productPhotoPaths(product).map((path) => `./${path}`) } : {}),
       ...(typeof product.available === "boolean" ? { available: product.available } : {}),
     }));
 

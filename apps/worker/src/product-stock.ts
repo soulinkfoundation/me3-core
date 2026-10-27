@@ -14,11 +14,14 @@ export type ProductAvailability = {
   options?: Record<string, number | null>;
 };
 
+function optionSetAt(product: StockedProduct, option: { stockSetAt?: string }): string | undefined {
+  return option.stockSetAt || product.stockSetAt;
+}
+
 export function isCountedProduct(product: StockedProduct): boolean {
-  if (!product.stockSetAt) return false;
   return product.options?.length
-    ? product.options.some((option) => option.stock !== undefined)
-    : product.stock !== undefined;
+    ? product.options.some((option) => option.stock !== undefined && Boolean(optionSetAt(product, option)))
+    : product.stock !== undefined && Boolean(product.stockSetAt);
 }
 
 /** Paid orders, open checkouts and pending manual payments since the owner last set the count. */
@@ -60,9 +63,10 @@ export async function productAvailability(
   if (product.options?.length) {
     const options: Record<string, number | null> = {};
     for (const option of product.options) {
-      options[option.id] = option.stock === undefined
+      const setAt = optionSetAt(product, option);
+      options[option.id] = option.stock === undefined || !setAt
         ? null
-        : Math.max(0, option.stock - await heldSince(db, siteId, slug, option.id, product.stockSetAt!, now));
+        : Math.max(0, option.stock - await heldSince(db, siteId, slug, option.id, setAt, now));
     }
     const counts = Object.values(options);
     return { remaining: counts.every((count) => count !== null) ? counts.reduce((sum, count) => sum! + count!, 0) : null, options };
@@ -84,6 +88,7 @@ export async function isOversold(
   if (!product.slug || !isCountedProduct(product)) return false;
   const option = optionId ? product.options?.find((candidate) => candidate.id === optionId) : undefined;
   const stock = product.options?.length ? option?.stock : product.stock;
-  if (stock === undefined) return false;
-  return await heldSince(db, siteId, product.slug, product.options?.length ? optionId : null, product.stockSetAt!, now) > stock;
+  const setAt = product.options?.length ? option && optionSetAt(product, option) : product.stockSetAt;
+  if (stock === undefined || !setAt) return false;
+  return await heldSince(db, siteId, product.slug, product.options?.length ? optionId : null, setAt, now) > stock;
 }

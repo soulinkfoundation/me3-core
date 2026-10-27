@@ -47,3 +47,18 @@ describe("copies left", () => {
     expect(result.remaining).toBeNull();
   });
 });
+
+describe("option counts set at different times", () => {
+  it("keeps one option's sales when another option's count is changed", async () => {
+    const db = sqliteD1(COMMERCE_TEST_SCHEMA);
+    await db.prepare("INSERT INTO commerce_orders (id, site_id, product_slug, status, created_at, option_id) VALUES ('o1', 'site-1', 'print', 'paid', '2026-10-27 10:30:00', 'a3')").run();
+    const result = await productAvailability(db, "site-1", {
+      slug: "print",
+      options: [
+        { id: "a3", label: "A3", price: 3500, stock: 2, stockSetAt: "2026-10-27T10:00:00.000Z" },
+        { id: "a2", label: "A2", price: 6000, stock: 4, stockSetAt: "2026-10-27T11:00:00.000Z" },
+      ],
+    }, new Date("2026-10-27T12:00:00Z"));
+    expect(result.options).toEqual({ a3: 1, a2: 4 });
+  });
+});

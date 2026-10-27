@@ -8,6 +8,8 @@ export type ProductOption = {
   price: number;
   /** Copies of this option, counted from stockSetAt. Blank means unlimited. */
   stock?: number;
+  /** When this option's count was last set, so editing one option leaves the others' sales alone. */
+  stockSetAt?: string;
 };
 
 export type ProductOffer = {
@@ -22,9 +24,9 @@ const isCount = (value: unknown) => Number.isSafeInteger(value) && (value as num
 
 export function productOfferError(product: ProductOffer): string | null {
   const options = product.options;
-  const counted = product.stock !== undefined || (options || []).some((option) => option.stock !== undefined);
+  const isTime = (value: unknown) => typeof value === "string" && !Number.isNaN(Date.parse(value));
   if (product.stock !== undefined && !isCount(product.stock)) return "Copies left must be a whole number, or blank for unlimited.";
-  if (counted && (typeof product.stockSetAt !== "string" || Number.isNaN(Date.parse(product.stockSetAt)))) return "Set how many copies are left again.";
+  if (product.stock !== undefined && !isTime(product.stockSetAt)) return "Set how many copies are left again.";
   if (options === undefined) return null;
   if (!Array.isArray(options) || options.length > MAX_PRODUCT_OPTIONS) return `Add up to ${MAX_PRODUCT_OPTIONS} options.`;
   const ids = new Set<string>();
@@ -34,6 +36,7 @@ export function productOfferError(product: ProductOffer): string | null {
     if (typeof option.label !== "string" || !option.label.trim() || option.label.length > 60) return "Name each option (up to 60 characters).";
     if (!Number.isSafeInteger(option.price) || option.price < 50) return `Set a price for ${option.label.trim()}.`;
     if (option.stock !== undefined && !isCount(option.stock)) return `Copies left for ${option.label.trim()} must be a whole number, or blank.`;
+    if (option.stock !== undefined && !isTime(option.stockSetAt ?? product.stockSetAt)) return `Set how many ${option.label.trim()} copies are left again.`;
   }
   return null;
 }

@@ -35,7 +35,7 @@ export function renderProductCheckout(product: ProductPurchase): string {
       : "<p>This product is currently unavailable.</p>"}</section>`;
   }
   const stock = publishedStock(product);
-  const counted = Boolean(product.stockSetAt) && (stock !== null || options.some((option) => option.stock !== undefined));
+  const counted = options.length ? options.some((option) => option.stock !== undefined) : stock !== null && Boolean(product.stockSetAt);
   const soldOut = stock === 0 || (options.length > 0 && options.every((option) => option.stock === 0));
   const stockLine = counted
     ? `<p class="product-stock${!soldOut && stock !== null && stock <= LOW_STOCK_THRESHOLD ? " is-low" : ""}" data-product-availability>${soldOut ? "Sold out" : stock !== null && stock <= LOW_STOCK_THRESHOLD ? `Only ${stock} left` : ""}</p>`

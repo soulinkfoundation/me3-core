@@ -601,7 +601,7 @@ function generateCollectionIndex(
     activeSlug,
     basePath: "../",
     body: `${profile.extensions?.["me3.app/site"] ? "" : `<header class="page-header"><a class="back-link" href="../">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, "../"))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, activeSlug, "../", "header")}</header>`}
-      <main class="content"><h1>${escapeHtml(title)}</h1><div class="${listClass}">${cards}</div>${activeSlug === "shop" && capabilities.productCheckoutEnabled && items.some((item) => (item as Me3Product).stockSetAt) ? renderShopAvailabilityScript(profile.handle || "") : ""}${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
+      <main class="content"><h1>${escapeHtml(title)}</h1><div class="${listClass}">${cards}</div>${activeSlug === "shop" && capabilities.productCheckoutEnabled && items.some((item) => (item as Me3Product).stock !== undefined || ((item as Me3Product).options || []).some((option) => option.stock !== undefined)) ? renderShopAvailabilityScript(profile.handle || "") : ""}${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
     vibe: getVibe(profile),
   });

@@ -1,6 +1,7 @@
 import { productDeliveryError } from "../../../../shared/product-delivery";
+import { productOfferError } from "../../../../shared/product-offer";
 import { computed, ref } from "vue";
-import { useWizardStore } from "../stores/wizard";
+import { productPhotoPath, useWizardStore } from "../stores/wizard";
 import { productSendsPurchaseConfirmation } from "../../../../shared/product-purchase-confirmation";
 import { useSitesStore, type PublishManifest } from "../stores/sites";
 import { api } from "../api";
@@ -54,6 +55,8 @@ function validateShopConfirmationEmails(
   for (const p of wizard.products) {
     const deliveryError = productDeliveryError(p.delivery);
     if (p.available && deliveryError) return `Offerings — "${p.title}": ${deliveryError}`;
+    const offerError = productOfferError(p);
+    if (p.available && offerError) return `Offerings — "${p.title}": ${offerError}`;
     const ce = p.confirmationEmail;
     if (ce?.enabled === true && !productSendsPurchaseConfirmation(ce)) {
       return `Offerings — "${p.title}": add both a subject and message for the purchase confirmation email, or turn the option off.`;
@@ -323,11 +326,23 @@ export function usePublish() {
           }))
         : [];
 
+      // New product photos are data URLs until their first publish.
+      const productPhotoAssets: ExportedSiteContentAsset[] = [];
+      for (const { product } of exportedProducts) {
+        for (const photo of product.photos || []) {
+          const relativePath = productPhotoPath(photo);
+          if (!relativePath || !photo.src.startsWith("data:")) continue;
+          const blob = await (await fetch(photo.src)).blob();
+          productPhotoAssets.push({ id: photo.id, kind: "image", relativePath, mimeType: blob.type, blob });
+        }
+      }
+
       const localContentAssets = new Map(
         [
           ...exportedPages.flatMap((entry) => entry.exported.assets),
           ...exportedPosts.flatMap((entry) => entry.exported.assets),
           ...exportedProducts.flatMap((entry) => entry.exported.assets),
+          ...productPhotoAssets,
         ]
           .filter(
             (asset): asset is typeof asset & { blob: Blob } =>

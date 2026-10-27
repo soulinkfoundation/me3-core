@@ -16,6 +16,10 @@
       "types": "./dist/product-offer.d.ts",
       "import": "./dist/product-offer.js"
     },
+    "./product-shop": {
+      "types": "./dist/product-shop.d.ts",
+      "import": "./dist/product-shop.js"
+    },
     "./regional-pricing": {
       "types": "./dist/regional-pricing.d.ts",
       "import": "./dist/regional-pricing.js"

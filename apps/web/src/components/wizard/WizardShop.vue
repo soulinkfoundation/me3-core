@@ -2,6 +2,9 @@
 import RegionalPriceFields from "./RegionalPriceFields.vue";
 import type { RegionalPrice } from "../../../../../shared/regional-pricing";
 import ProductDeliveryFields from "./ProductDeliveryFields.vue";
+import ProductPhotos from "./ProductPhotos.vue";
+import ProductStockFields from "./ProductStockFields.vue";
+import type { ProductOption } from "../../../../../shared/product-offer";
 import { ref, computed, watch, nextTick } from "vue";
 import {
   useWizardStore,
@@ -84,6 +87,39 @@ function formatProductPrice(product: WizardProduct): string {
   const cents = Number(product.price);
   const safeCents = Number.isFinite(cents) && cents >= 0 ? cents : 0;
   return `${(safeCents / 100).toFixed(2)} ${product.currency}`;
+}
+
+const liveAvailability = ref<Record<string, { remaining: number | null; options?: Record<string, number | null> }>>({});
+
+async function loadLiveAvailability() {
+  const username = wizard.username.trim();
+  if (!username) return;
+  liveAvailability.value = await sites.getShopAvailability(username).catch(() => ({}));
+}
+
+const deliveryKind = computed(() => selectedProduct.value?.delivery?.kind || "manual");
+const sellsDirectly = computed(() => deliveryKind.value !== "external");
+const countsCopies = computed(() => deliveryKind.value === "physical" || deliveryKind.value === "manual");
+
+const productHasOptions = computed({
+  get: () => Boolean(selectedProduct.value?.options?.length),
+  set: (enabled: boolean) => {
+    if (selectedProductIndex.value === null || !selectedProduct.value) return;
+    const product = selectedProduct.value;
+    setStock(enabled
+      ? { options: [{ id: "standard", label: "Standard", price: product.price, ...(product.stock !== undefined ? { stock: product.stock, stockSetAt: new Date().toISOString() } : {}) }], stock: undefined, stockSetAt: undefined }
+      : { options: undefined });
+  },
+});
+
+function setStock(update: { stock?: number; stockSetAt?: string; options?: ProductOption[] }) {
+  if (selectedProductIndex.value === null) return;
+  const lowest = update.options?.length ? Math.min(...update.options.map((option) => option.price)) : undefined;
+  wizard.updateProduct(selectedProductIndex.value, {
+    ...update,
+    // The lowest option price stays the product's price, so older readers still see one.
+    ...(lowest !== undefined ? { price: lowest, regionalPrices: undefined } : {}),
+  });
 }
 
 function setRegionalPrices(regionalPrices: RegionalPrice[] | undefined) {
@@ -234,6 +270,7 @@ function handleContentAssetAdded(asset: WizardContentAsset) {
 
 watch(selectedProductIndex, (newIndex) => {
   if (newIndex !== null && wizard.products[newIndex]) {
+    void loadLiveAvailability();
     const product = wizard.products[newIndex];
     editingTitle.value = product.title;
     editingSlug.value = product.slug;
@@ -427,7 +464,8 @@ defineExpose({
         class="product-item"
       >
         <div class="product-header">
-          <span class="product-icon" aria-hidden="true">
+          <img v-if="product.photos?.[0]" class="product-thumb" :src="product.photos[0].src" alt="" />
+          <span v-else class="product-icon" aria-hidden="true">
             <UiIcon name="ShoppingCart" :size="18" />
           </span>
           <div class="product-details">
@@ -519,8 +557,15 @@ defineExpose({
           </template>
         </div>
 
+        <ProductPhotos
+          :model-value="selectedProduct.photos"
+          @update:model-value="wizard.updateProduct(selectedProductIndex, { photos: $event })"
+        />
+
+        <ProductDeliveryFields :model-value="selectedProduct.delivery" @update:model-value="wizard.updateProduct(selectedProductIndex, { delivery: $event })" />
+
         <div class="form-grid">
-          <div class="form-group">
+          <div v-if="!productHasOptions" class="form-group">
             <label for="product-price">{{ selectedProduct.regionalPrices?.length ? "Default price" : "Price" }}</label>
             <input
               id="product-price"
@@ -546,10 +591,29 @@ defineExpose({
           </div>
         </div>
 
-        <RegionalPriceFields :model-value="selectedProduct.regionalPrices" :default-currency="selectedProduct.currency" :input-id="`product-${selectedProduct.slug}`" :shipping="selectedProduct.delivery?.kind === 'physical'" @update:model-value="setRegionalPrices" />
+        <template v-if="sellsDirectly">
+          <div class="toggle-row">
+            <label class="toggle">
+              <input v-model="productHasOptions" type="checkbox" />
+              <span class="toggle-ui" />
+            </label>
+            <span>Sizes or editions with their own price</span>
+          </div>
+          <ProductStockFields
+            v-if="countsCopies || productHasOptions"
+            :stock="countsCopies ? selectedProduct.stock : undefined"
+            :options="selectedProduct.options"
+            :currency="selectedProduct.currency"
+            :price="selectedProduct.price"
+            :live="liveAvailability[selectedProduct.slug]"
+            @update="setStock"
+          />
+        </template>
+
+        <RegionalPriceFields v-if="!productHasOptions" :model-value="selectedProduct.regionalPrices" :default-currency="selectedProduct.currency" :input-id="`product-${selectedProduct.slug}`" :shipping="selectedProduct.delivery?.kind === 'physical'" @update:model-value="setRegionalPrices" />
 
         <PaymentCollectionFields
-          v-if="selectedProductIsPaid"
+          v-if="selectedProductIsPaid && sellsDirectly"
           v-model="productPaymentMethod"
           v-model:instructions="productPaymentInstructions"
           :input-id="`product-${selectedProduct.slug}`"
@@ -573,9 +637,7 @@ defineExpose({
           <span>Available for purchase</span>
         </div>
 
-        <ProductDeliveryFields :model-value="selectedProduct.delivery" @update:model-value="wizard.updateProduct(selectedProductIndex, { delivery: $event })" />
-
-        <div class="confirmation-email-section">
+        <div v-if="sellsDirectly" class="confirmation-email-section">
           <h3 class="confirmation-email-title">Customer email</h3>
           <p class="confirmation-email-lead">
             {{
@@ -707,6 +769,14 @@ defineExpose({
   gap: 6px;
   max-width: 320px;
   margin-bottom: 20px;
+}
+
+.product-thumb {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: var(--ui-radius-sm, 8px);
+  object-fit: cover;
 }
 
 .shop-menu-title-label {

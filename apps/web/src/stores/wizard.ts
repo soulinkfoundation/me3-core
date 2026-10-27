@@ -1,5 +1,6 @@
 import { regionalPricingError, type RegionalPrice } from "../../../../shared/regional-pricing";
 import type { ProductDelivery } from "../../../../shared/product-delivery";
+import type { ProductOption } from "../../../../shared/product-offer";
 import { defineStore } from "pinia";
 import { ref, computed, watch } from "vue";
 import {
@@ -24,7 +25,7 @@ import {
 import {
   resolveSiteSectionPaths,
 } from "../utils/site-sections";
-import type { SiteContentAsset } from "../utils/siteContentAssets";
+import { siteContentAssetPathFromUrl, stableContentAssetPath, type SiteContentAsset } from "../utils/siteContentAssets";
 
 export type Me3Button = {
   text: string;
@@ -412,7 +413,23 @@ export type WizardProductConfirmationEmail = {
   message?: string;
 };
 
+/** A product photo: a data URL until published, then the site's URL for it. */
+export type WizardProductPhoto = { id: string; src: string };
+
+const PHOTO_EXTENSIONS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+
+/** Where a product photo lives on the published site. */
+export function productPhotoPath(photo: WizardProductPhoto): string | null {
+  const mime = photo.src.match(/^data:([^;,]+)[;,]/)?.[1];
+  if (mime) return PHOTO_EXTENSIONS[mime] ? stableContentAssetPath({ id: photo.id, ext: PHOTO_EXTENSIONS[mime] }) : null;
+  return siteContentAssetPathFromUrl(photo.src);
+}
+
 export interface WizardProduct {
+  photos?: WizardProductPhoto[];
+  stock?: number;
+  stockSetAt?: string;
+  options?: ProductOption[];
   regionalPrices?: RegionalPrice[];
   delivery?: ProductDelivery;
   title: string;
@@ -3383,8 +3400,11 @@ export const useWizardStore = defineStore("wizard", () => {
             file: `shop/${p.slug}.md`,
             price: normalizeProductPriceCents(p.price),
             currency: p.currency,
-            regionalPrices: p.regionalPrices,
-            images: undefined,
+            regionalPrices: p.options?.length ? undefined : p.regionalPrices,
+            images: (p.photos || []).map(productPhotoPath).filter((path): path is string => Boolean(path)),
+            stock: p.options?.length ? undefined : p.stock,
+            stockSetAt: p.options?.length ? undefined : p.stockSetAt,
+            options: p.options?.length ? p.options : undefined,
             available: undefined,
             publishedAt: undefined,
             excerpt: undefined,
@@ -4732,6 +4752,10 @@ export const useWizardStore = defineStore("wizard", () => {
       confirmationEmail?: WizardProductConfirmationEmail;
       paymentMethod?: WizardPaymentMethod;
       paymentInstructions?: string;
+      images?: string[];
+      stock?: number;
+      stockSetAt?: string;
+      options?: ProductOption[];
     }>,
     siteUsername: string | null | undefined,
     sitePublishedAt?: string | null,
@@ -5173,6 +5197,14 @@ export const useWizardStore = defineStore("wizard", () => {
         price: normalizeProductPriceCents(p.price),
         currency: p.currency,
         regionalPrices: p.regionalPrices,
+        photos: (p.images || []).flatMap((path) => {
+          const src = resolveLoadedSiteAssetUrl(path);
+          const id = path.split("/").pop()?.replace(/\.[a-z0-9]+$/i, "") || "";
+          return src && id ? [{ id, src }] : [];
+        }),
+        stock: p.stock,
+        stockSetAt: p.stockSetAt,
+        options: p.options,
         available: p.available ?? true,
         paymentMethod: normalizeWizardPaymentMethod(p.paymentMethod),
         paymentInstructions: normalizeWizardPaymentInstructions(
