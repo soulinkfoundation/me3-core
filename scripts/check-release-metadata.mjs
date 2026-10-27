@@ -11,6 +11,16 @@ import { fileURLToPath } from "node:url";
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const MIGRATION_PATHS = ["apps/worker/migrations", "apps/worker/src/core-runtime-migrations.ts"];
 
+// Managed upgrades reject a release whose me3-core.json does not name its own tag.
+export function coreMetadataProblem({ coreMetadata, latest }) {
+  if (!latest?.tag) return null;
+  const notesUrl = `https://github.com/soulinkfoundation/me3-core/releases/tag/${latest.tag}`;
+  if (coreMetadata?.version !== latest.version || coreMetadata?.releaseNotesUrl !== notesUrl) {
+    return `me3-core.json must have version ${latest.version} and releaseNotesUrl ${notesUrl}.`;
+  }
+  return null;
+}
+
 export function releaseMetadataProblem({ latest, previous, changedMigrationFiles }) {
   if (!latest || !previous) return null;
   if (changedMigrationFiles.length && latest.migrationRequired !== true) {
@@ -40,6 +50,13 @@ async function main() {
     ...newest,
     migrationRequired: newest.migrationRequired === true && manifest.latest?.migrationRequired === true,
   };
+  const coreMetadata = JSON.parse(await readFile(path.join(rootDir, "me3-core.json"), "utf8"));
+  const coreProblem = coreMetadataProblem({ coreMetadata, latest });
+  if (coreProblem) {
+    console.error(coreProblem);
+    process.exitCode = 1;
+    return;
+  }
   if (!previous?.tag || !tagExists(previous.tag)) {
     console.log("No earlier tagged release to compare against.");
     return;
