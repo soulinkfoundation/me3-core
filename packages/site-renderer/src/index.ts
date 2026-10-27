@@ -8,6 +8,8 @@ import { bookingConfirmationMarkup, bookingConfirmationRuntime, bookingConfirmat
 export { normalizeSiteTheme, siteThemes } from "./themes.js";
 export type { SiteColorMode, SiteThemeId } from "./themes.js";
 import { renderProductCheckout, productCheckoutCss } from "./product-checkout.js";
+import type { ProductOption } from "./product-offer.js";
+import { productShopCss, renderProductGallery, renderShopAvailabilityScript, renderShopCard } from "./product-shop.js";
 import { localizeRegionalPrices, regionalPricingCountries, type RegionalPrice } from "./regional-pricing.js";
 import { applyImageMetadata, type SiteImageMetadata } from "./image-metadata.js";
 export * from "./image-metadata.js";
@@ -73,6 +75,9 @@ type Me3Product = Me3Page & {
   paymentMethod?: "stripe" | "manual";
   paymentInstructions?: string;
   publishedAt?: string;
+  stock?: number;
+  stockSetAt?: string;
+  options?: ProductOption[];
 };
 
 export type SiteSectionPaths = {
@@ -570,7 +575,7 @@ function generateContentPageHtml(
     activeSlug,
     basePath,
     body: `${profile.extensions?.["me3.app/site"] ? "" : `<header class="page-header"><a class="back-link" href="${basePath}">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, basePath))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, activeSlug, basePath, "header")}</header>`}
-      <main class="content"><h1>${escapeHtml(title)}</h1>${htmlContent}${product ? renderProductCheckout({ ...product, username: profile.handle || "", slug: product.slug || "", enabled: capabilities.productCheckoutEnabled }) : ""}${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
+      <main class="content">${product ? renderProductGallery(product, title, basePath) : ""}<h1>${escapeHtml(title)}</h1>${htmlContent}${product ? renderProductCheckout({ ...product, username: profile.handle || "", slug: product.slug || "", enabled: capabilities.productCheckoutEnabled }) : ""}${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
     vibe: getVibe(profile),
     afterContainer: htmlContent.includes("<img") ? buildContentLightbox() : "",
@@ -596,7 +601,7 @@ function generateCollectionIndex(
     activeSlug,
     basePath: "../",
     body: `${profile.extensions?.["me3.app/site"] ? "" : `<header class="page-header"><a class="back-link" href="../">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, "../"))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, activeSlug, "../", "header")}</header>`}
-      <main class="content"><h1>${escapeHtml(title)}</h1><div class="${listClass}">${cards}</div>${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
+      <main class="content"><h1>${escapeHtml(title)}</h1><div class="${listClass}">${cards}</div>${activeSlug === "shop" && capabilities.productCheckoutEnabled && items.some((item) => (item as Me3Product).stockSetAt) ? renderShopAvailabilityScript(profile.handle || "") : ""}${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
     vibe: getVibe(profile),
   });
@@ -612,9 +617,8 @@ function generateCollectionCard(
   const markdown = item.file ? fileMap.get(normalizeSitePath(item.file)) || "" : "";
   if (activeSlug === "shop") {
     const product = item as Me3Product;
-    const price = formatProductPrice(product);
     const excerpt = getCollectionExcerpt(product.excerpt, markdown, 140);
-    return `<a class="shop-item" href="./${escapeHtml(slug)}"><div class="shop-item-title">${title}</div>${price ? `<div class="shop-item-price">${escapeHtml(price)}</div>` : ""}${excerpt ? `<div class="shop-item-excerpt">${escapeHtml(excerpt)}</div>` : ""}</a>`;
+    return renderShopCard(product, { slug, title: item.title || titleFromSlug(slug), excerpt, basePath: "../" });
   }
 
   const post = item as Me3Post;
@@ -678,7 +682,7 @@ function pageShell(
   <meta name="description" content="${escapeHtml(options.description)}">
   ${headLinks}
   ${modern ? siteThemeHeadScript(profile) : ""}
-  <style>${siteCss(modern ? "__modern" : options.vibe, profile.links?._accent)}${!modern && options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(modern ? "__modern" : options.vibe)}${contentImageCss()}${contentAudioCss()}${profilePolishCss(modern)}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}.main.no-banner .profile-header{margin-top:0}${modern ? modernSiteCss(themeId, siteSettings?.colorMode || "auto", siteSettings?.accent) : ""}${bookingConfirmationCss}</style>
+  <style>${siteCss(modern ? "__modern" : options.vibe, profile.links?._accent)}${!modern && options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(modern ? "__modern" : options.vibe)}${contentImageCss()}${contentAudioCss()}${profilePolishCss(modern)}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}${productShopCss}.main.no-banner .profile-header{margin-top:0}${modern ? modernSiteCss(themeId, siteSettings?.colorMode || "auto", siteSettings?.accent) : ""}${bookingConfirmationCss}</style>
 </head>
 <body data-vibe="${escapeHtml(modern ? themeId : options.vibe)}" data-navigation-style="${navigationStyle}" data-layout="${modern ? modernSiteLayout(profile) : normalizeSiteLayout(profile.links?.[SITE_LAYOUT_LINK_KEY])}" data-page="${options.activeSlug ? "inner" : "home"}">
   <div class="container">
@@ -2294,11 +2298,6 @@ function formatPostDate(value?: string): string {
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return "";
   return new Intl.DateTimeFormat("en-US").format(new Date(parsed));
-}
-
-function formatProductPrice(product: Me3Product): string {
-  if (typeof product.price !== "number" || !Number.isFinite(product.price)) return "";
-  return `${(product.price / 100).toFixed(2)} ${product.currency || "USD"}`;
 }
 
 function getCollectionExcerpt(explicitExcerpt: string | undefined, source: string, limit: number): string {

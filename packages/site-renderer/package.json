@@ -12,6 +12,10 @@
       "types": "./dist/product-delivery.d.ts",
       "import": "./dist/product-delivery.js"
     },
+    "./product-offer": {
+      "types": "./dist/product-offer.d.ts",
+      "import": "./dist/product-offer.js"
+    },
     "./regional-pricing": {
       "types": "./dist/regional-pricing.d.ts",
       "import": "./dist/regional-pricing.js"
