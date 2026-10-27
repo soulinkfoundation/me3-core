@@ -1,4 +1,5 @@
 import { productDeliveryError, type ProductDelivery } from "../../../shared/product-delivery";
+import { productOfferError } from "../../../shared/product-offer";
 import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import { isCommerceReady } from "./commerce-settings";
 import type { Env } from "./types";
@@ -57,7 +58,9 @@ export function profileRequiresCommerce(profile: Me3SiteProfile): boolean {
   if (
     ((profile.products || []) as CommerceProduct[]).some(
       (product) =>
-        product.available !== false && product.paymentMethod !== "manual",
+        product.available !== false &&
+        product.paymentMethod !== "manual" &&
+        product.delivery?.kind !== "external",
     )
   ) {
     return true;
@@ -90,7 +93,7 @@ export async function getProfileCommercePublishBlockReason(
   const pricingError = regionalPricingError(profile);
   if (pricingError) return pricingError;
   for (const product of profile.products || []) {
-    const error = productDeliveryError(product.delivery);
+    const error = productDeliveryError(product.delivery) || productOfferError(product);
     if (product.available !== false && error) return error;
   }
   const manualPaymentError = profileManualPaymentBlockReason(profile);

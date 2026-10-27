@@ -114,7 +114,7 @@ export function renderShopAvailabilityScript(username: string): string {
 export { externalShopLabel };
 
 export const productShopCss = `
-.shop-items{grid-template-columns:repeat(auto-fill,minmax(min(100%,180px),1fr))}
+.shop-items{grid-template-columns:repeat(auto-fill,minmax(min(100%,180px),1fr));align-items:start}
 .shop-item{align-content:start;position:relative}
 .shop-item--with-cover{padding:0 0 14px;overflow:hidden}
 .shop-item--with-cover>:not(.shop-item-cover){margin-inline:14px}

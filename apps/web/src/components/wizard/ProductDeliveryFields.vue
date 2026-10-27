@@ -46,6 +46,7 @@ async function onFileSelected(event: Event) {
     const result = await sites.uploadProductDownload(username, file);
     update({ file: result.file });
   } catch (error) {
+    if (error instanceof Error && /site not found/i.test(error.message)) return toastError('Publish your site once, then add the download.');
     toastFromUnknown(error, 'Couldn’t upload that file');
   } finally {
     uploading.value = false;
@@ -113,7 +114,7 @@ async function onFileSelected(event: Event) {
 legend,label{font-weight:600}legend{margin-bottom:12px}p{margin:0 0 8px;color:var(--ui-text-muted,var(--color-text-muted));font-size:.9rem}
 input,select,textarea{width:100%;box-sizing:border-box;min-height:44px;padding:12px;font:inherit;border:1px solid var(--ui-border,var(--color-border));border-radius:var(--ui-radius-sm,8px);background:var(--ui-surface,var(--color-bg));color:var(--ui-text,var(--color-text))}
 textarea{min-height:100px}input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--ui-focus,var(--color-accent));outline-offset:2px}
-.delivery-kinds{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:8px}
+.delivery-kinds{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:8px}
 .delivery-kind{position:relative;display:grid;gap:2px;padding:12px;border:1px solid var(--ui-border);border-radius:var(--ui-radius-md,12px);cursor:pointer;font-weight:400}
 .delivery-kind input{position:absolute;opacity:0;width:1px;height:1px;min-height:0;padding:0}
 .delivery-kind.is-selected{border-color:var(--ui-primary);box-shadow:inset 0 0 0 1px var(--ui-primary)}

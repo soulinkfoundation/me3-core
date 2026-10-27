@@ -80,3 +80,12 @@ describe("profile commerce readiness", () => {
     })).toBe(false);
   });
 });
+
+describe("products sold on another platform", () => {
+  it("never need Stripe because ME3 takes no payment", () => {
+    expect(profileRequiresCommerce({
+      name: "Shop",
+      products: [{ slug: "book", title: "Book", price: 999, currency: "GBP", delivery: { kind: "external", instructions: "", url: "https://www.etsy.com/listing/1" } }],
+    } as Parameters<typeof profileRequiresCommerce>[0])).toBe(false);
+  });
+});

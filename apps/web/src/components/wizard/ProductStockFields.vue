@@ -89,7 +89,7 @@ function removeOption(index: number) {
         <input :id="`product-option-${option.id}-label`" type="text" maxlength="60" :value="option.label" :aria-label="`Option ${index + 1} name`" @change="setOptionLabel(index, ($event.target as HTMLInputElement).value)" />
         <input :id="`product-option-${option.id}-price`" type="number" min="0.5" step="0.01" :value="option.price / 100" :aria-label="`${option.label} price`" @change="setOptionPrice(index, ($event.target as HTMLInputElement).value)" />
         <div class="option-stock">
-          <input :id="`product-option-${option.id}-stock`" type="number" min="0" step="1" inputmode="numeric" placeholder="Unlimited" :value="option.stock ?? ''" :aria-label="`${option.label} copies left`" @change="setOptionStock(index, ($event.target as HTMLInputElement).value)" />
+          <input :id="`product-option-${option.id}-stock`" type="number" min="0" step="1" inputmode="numeric" placeholder="No limit" :value="option.stock ?? ''" :aria-label="`${option.label} copies left`" @change="setOptionStock(index, ($event.target as HTMLInputElement).value)" />
           <span v-if="liveNote(option.stock, live?.options?.[option.id])" class="stock-hint">{{ liveNote(option.stock, live?.options?.[option.id]) }}</span>
         </div>
         <button type="button" class="option-remove" :aria-label="`Remove ${option.label}`" :disabled="options!.length <= 1" @click="removeOption(index)">
