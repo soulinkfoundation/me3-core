@@ -156,6 +156,14 @@ import {
   createSiteFormPermissionEvidence,
 } from "../campaign-audience";
 import { listLatestSiteBuilderThreads } from "../site-builder-threads";
+import {
+  NEWSLETTER_DOWNLOAD_MAX_BYTES,
+  isPdf,
+  newsletterDownload,
+  newsletterDownloadPath,
+  sendNewsletterWelcome,
+  siteBaseUrlForEmail,
+} from "../newsletter-welcome";
 import { publishSiteFromSource } from "../site-publish";
 import { inlineDraftImages, renderDraftPreviewHtml, setDraftTheme } from "../site-starter";
 import {
@@ -595,6 +603,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
               existing.id,
             )
             .run();
+          await queueNewsletterWelcome(c, site, profile, normalizedEmail);
           return c.json({
             ok: true,
             message: existing.unsubscribed_at
@@ -626,6 +635,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
         )
         .run();
 
+      await queueNewsletterWelcome(c, site, profile, normalizedEmail);
       return c.json({ ok: true, message: "Subscribed successfully!" });
     } catch (error) {
       if (isMissingSubscribersTableError(error)) return subscribersSetupRequired(c);
@@ -652,8 +662,22 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       const status = isPost
         ? await confirmDoubleOptInSubscriber(c.env, input)
         : await getDoubleOptInConfirmationStatus(c.env, input);
-      if (status === "confirmed") {
-        return confirmationHtml("Subscription confirmed", "You're subscribed and can close this page.");
+      if (status === "confirmed" || status === "already_confirmed") {
+        // Consent is already recorded, so a profile read failure only drops the extras.
+        const profile = await loadSiteProfileForSubscribe(c.env, site).catch(() => null);
+        const siteBaseUrl = await siteBaseUrlForEmail(c.env, site, c.req.url);
+        // Only the reader's first confirming POST sends it; a GET here is a revisit or a link preview.
+        if (isPost && status === "confirmed") await queueNewsletterWelcome(c, site, profile, email, siteBaseUrl);
+        const download = newsletterDownload(profile?.intents?.subscribe, siteBaseUrl);
+        return confirmationHtml(
+          "Subscription confirmed",
+          download
+            ? `You're subscribed. Here's ${download.name}.`
+            : "You're subscribed and can close this page.",
+          200,
+          undefined,
+          { download, siteUrl: siteBaseUrl },
+        );
       }
       if (status !== "ready") {
         return confirmationHtml("Invalid confirmation link", "This link is invalid or expired.", 400);
@@ -1643,6 +1667,103 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     }
   });
 
+  // A free download for new subscribers. It is public: anyone with the link can open it.
+  app.post("/api/sites/:username/newsletter/download", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+
+    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
+    if (!site) return c.json({ error: "Site not found" }, 404);
+
+    try {
+      const form = await c.req.formData();
+      const file = form.get("file");
+      if (!(file instanceof File)) return c.json({ error: "Choose a PDF to upload" }, 400);
+      if (file.size > NEWSLETTER_DOWNLOAD_MAX_BYTES) {
+        return c.json({ error: "PDFs must be 25 MB or smaller" }, 413);
+      }
+      const buffer = await file.arrayBuffer();
+      if (!isPdf(new Uint8Array(buffer))) return c.json({ error: "Choose a PDF file" }, 400);
+
+      const relativePath = newsletterDownloadPath(file.name);
+      const storage = await putSiteMediaFile(c.env, site, `public/${relativePath}`, buffer, "application/pdf");
+      const manifest = (await loadPublishManifest(c.env, site.id)) || createEmptyPublishManifest();
+      manifest.assetFiles[relativePath] = await sha256Buffer(buffer);
+      manifest.updatedAt = new Date().toISOString();
+      await savePublishManifest(c.env, site.id, manifest);
+
+      return c.json({ ok: true, path: relativePath, size: buffer.byteLength, storage });
+    } catch (error) {
+      if (isMissingSiteFilesTableError(error)) return siteStorageSetupRequired(c);
+      if (isD1SiteFileLimitError(error)) return siteStorageActivationRequired(c);
+      throw error;
+    }
+  });
+
+  app.post("/api/sites/:username/newsletter/welcome-email/test", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+
+    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
+    if (!site) return c.json({ error: "Site not found" }, 404);
+
+    const body = await c.req
+      .json<{
+        to?: unknown;
+        siteName?: unknown;
+        newsletterTitle?: unknown;
+        subject?: unknown;
+        message?: unknown;
+        downloadPath?: unknown;
+        downloadName?: unknown;
+      }>()
+      .catch(() => null);
+    if (!body) return c.json({ error: "Invalid request body" }, 400);
+
+    const owner = await getOwnerContact(c.env, ownerId);
+    const recipient =
+      (typeof body.to === "string" ? body.to.trim().toLowerCase() : "") ||
+      owner.email?.trim().toLowerCase() ||
+      "";
+    if (!EMAIL_REGEX.test(recipient)) {
+      return c.json({ error: "Enter a valid test recipient email address" }, 400);
+    }
+    const subject = normalizeShortEmailText(body.subject, 200);
+    const message = normalizeLongEmailText(body.message, 8000);
+    if (!subject || !message) {
+      return c.json({ error: "Add a subject and message before sending a test" }, 400);
+    }
+    const downloadPath = normalizeShortEmailText(body.downloadPath, 200);
+    const profile: Me3SiteProfile = {
+      name: normalizeShortEmailText(body.siteName, 120) || owner.name || site.username,
+      intents: {
+        subscribe: {
+          enabled: true,
+          title: normalizeShortEmailText(body.newsletterTitle, 100) || undefined,
+          welcomeEmail: {
+            enabled: true,
+            subject,
+            message,
+            download: downloadPath
+              ? { path: downloadPath, name: normalizeShortEmailText(body.downloadName, 120) || undefined }
+              : undefined,
+          },
+        },
+      },
+    };
+    const result = await sendNewsletterWelcome(c.env, {
+      site,
+      profile,
+      email: recipient,
+      siteBaseUrl: await siteBaseUrlForEmail(c.env, site, c.req.url),
+      test: true,
+    });
+    if (result.status !== "sent") {
+      return c.json({ error: result.error || "Failed to send test email" }, 502);
+    }
+    return c.json({ ok: true, sentTo: recipient, providerMessageId: result.providerMessageId });
+  });
+
   app.get("/api/sites/:username/content", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
@@ -2171,6 +2292,41 @@ function siteLifecycleErrorResponse(c: AppContext, error: SiteLifecycleError) {
   return c.json({ error: error.message, code: error.code }, status);
 }
 
+async function loadSiteProfileForSubscribe(env: Env, site: DbSite): Promise<Me3SiteProfile | null> {
+  const profileJson =
+    (await getSiteFileText(env, site.id, "src/me.json")) ||
+    (await getSiteFileText(env, site.id, "public/me.json"));
+  return profileJson ? parseSiteProfile(profileJson, site.username) : null;
+}
+
+async function queueNewsletterWelcome(
+  c: AppContext,
+  site: DbSite,
+  profile: Me3SiteProfile | null,
+  email: string,
+  siteBaseUrl?: string,
+): Promise<void> {
+  if (!profile?.intents?.subscribe?.welcomeEmail?.enabled) return;
+  const send = (async () => {
+    const result = await sendNewsletterWelcome(c.env, {
+      site,
+      profile,
+      email,
+      siteBaseUrl: siteBaseUrl || (await siteBaseUrlForEmail(c.env, site, c.req.url)),
+    });
+    if (result.status === "failed") console.error("Newsletter welcome email failed:", result.error);
+  })().catch((error) => console.error("Newsletter welcome email failed:", error));
+  let executionCtx: { waitUntil(promise: Promise<unknown>): void };
+  try {
+    executionCtx = c.executionCtx;
+  } catch {
+    // Local/unit Hono invocations do not always provide an ExecutionContext.
+    await send;
+    return;
+  }
+  executionCtx.waitUntil(send);
+}
+
 function queueNetworkDirectoryProfileSync(c: AppContext, site: DbSite, profile: unknown): void {
   // Only the personal site owns the installation's directory identity.
   if (site.site_role !== "profile") return;
@@ -2374,12 +2530,19 @@ function confirmationHtml(
   body: string,
   status = 200,
   form?: { username: string; email: string; token: string },
+  done?: { download: { url: string; name: string } | null; siteUrl: string },
 ): Response {
   const confirmationForm = form
     ? `<form method="post" action="/api/sites/${encodeURIComponent(form.username)}/subscribe/confirm"><input type="hidden" name="email" value="${escapeHtml(form.email)}"><input type="hidden" name="token" value="${escapeHtml(form.token)}"><button type="submit" style="font:inherit;padding:12px 18px;border:0;border-radius:8px;background:#111;color:#fff;cursor:pointer;">Confirm subscription</button></form>`
     : "";
+  const downloadLink = done?.download
+    ? `<p><a href="${escapeHtml(done.download.url)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#111;color:#fff;font-weight:700;text-decoration:none;">Download ${escapeHtml(done.download.name)}</a></p>`
+    : "";
+  const siteLink = done?.siteUrl
+    ? `<p><a href="${escapeHtml(done.siteUrl)}" style="color:#555;">Back to the site</a></p>`
+    : "";
   return new Response(
-    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head><body style="font-family:system-ui;padding:40px;text-align:center;"><main style="max-width:520px;margin:0 auto;"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(body)}</p>${confirmationForm}</main></body></html>`,
+    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head><body style="font-family:system-ui;padding:40px;text-align:center;"><main style="max-width:520px;margin:0 auto;"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(body)}</p>${confirmationForm}${downloadLink}${siteLink}</main></body></html>`,
     { status, headers: { "Content-Type": "text/html; charset=utf-8" } },
   );
 }

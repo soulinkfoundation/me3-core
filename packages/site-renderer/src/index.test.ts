@@ -1030,6 +1030,28 @@ describe("site generator", () => {
     expect(files["index.html"]).toContain("Confirm by email. Unsubscribe anytime.");
   });
 
+  it("renders the owner's newsletter button, placeholder and image", async () => {
+    const files = await generateSiteHtml(
+      {
+        name: "Guide Giver",
+        handle: "guide-giver",
+        intents: {
+          subscribe: {
+            enabled: true,
+            buttonLabel: "Send me the guide",
+            placeholder: "Your best email",
+            image: "./files/newsletter.webp",
+          },
+        },
+      },
+      [],
+    );
+
+    expect(files["index.html"]).toContain('<section class="newsletter has-image" id="newsletter"><img class="newsletter-image" src="./files/newsletter.webp"');
+    expect(files["index.html"]).toContain('placeholder="Your best email"');
+    expect(files["index.html"]).toContain('<button type="submit">Send me the guide</button>');
+  });
+
   it("confirms pay-separately bookings without checkout and keeps instructions private", async () => {
     const files = await generateSiteHtml(
       {

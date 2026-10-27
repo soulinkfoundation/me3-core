@@ -103,6 +103,53 @@ If you did not request this, you can ignore this email.`;
   });
 }
 
+export type NewsletterWelcomeEmailDetails = {
+  operationId?: string;
+  ownerId: string;
+  siteId: string;
+  siteName: string;
+  newsletterName: string;
+  subscriberEmail: string;
+  replyToAddress?: string | null;
+  subject: string;
+  messageText: string;
+  download?: { url: string; name: string } | null;
+  test?: boolean;
+};
+
+export async function sendNewsletterWelcomeEmail(
+  env: Env,
+  details: NewsletterWelcomeEmailDetails,
+): Promise<TransactionalEmailResult> {
+  const message = applyBookingEmailTokens(details.messageText, {
+    email: details.subscriberEmail,
+    newsletterName: details.newsletterName,
+    siteName: details.siteName,
+  }).trim();
+  const download = details.download;
+  const textBody = `${message}${download ? `\n\n${download.name}: ${download.url}` : ""}`;
+  const htmlBody = emailShell(`
+    ${message ? `<div style="margin:0 0 24px;color:#333;font-size:15px;line-height:1.6;">${renderPlainText(message)}</div>` : ""}
+    ${download ? `<p style="margin:0 0 24px;"><a href="${escapeHtml(download.url)}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;border-radius:8px;padding:12px 18px;font-size:14px;font-weight:700;">Download ${escapeHtml(download.name)}</a></p>` : ""}
+    <p style="margin:0;color:#666;font-size:13px;line-height:1.6;">You're receiving this because you subscribed to ${escapeHtml(details.newsletterName)}.</p>
+  `);
+
+  return sendWorkflowEmail(env, details.ownerId, {
+    operationId: details.operationId,
+    toAddress: details.subscriberEmail,
+    subject: `${details.test ? "[Test] " : ""}${details.subject}`,
+    textBody,
+    htmlBody,
+    fromName: details.siteName,
+    replyToAddress: details.replyToAddress || null,
+    metadata: {
+      site_id: details.siteId,
+      newsletter_email: "welcome",
+      test: details.test || false,
+    },
+  });
+}
+
 export async function sendBookingConfirmationEmails(
   env: Env,
   details: BookingEmailDetails,

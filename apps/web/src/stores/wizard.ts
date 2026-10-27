@@ -120,12 +120,34 @@ export interface WizardLocationData {
   };
 }
 
+export interface WizardNewsletterWelcomeEmail {
+  enabled: boolean;
+  subject: string;
+  message: string;
+  /** Uploaded site path, e.g. ./files/downloads/guide.pdf */
+  downloadPath: string;
+  downloadName: string;
+}
+
 export interface WizardNewsletterConfig {
   enabled: boolean;
   title: string;
   description: string;
   doubleOptIn: boolean;
+  buttonLabel: string;
+  placeholder: string;
+  /** Uploaded site path, e.g. ./files/newsletter.webp */
+  image: string;
+  welcomeEmail: WizardNewsletterWelcomeEmail;
 }
+
+const defaultNewsletterWelcomeEmail: WizardNewsletterWelcomeEmail = {
+  enabled: false,
+  subject: "",
+  message: "",
+  downloadPath: "",
+  downloadName: "",
+};
 
 export interface WizardBookingPricing {
   regionalPrices?: RegionalPrice[];
@@ -621,7 +643,7 @@ function normalizeAssetSiteUsername(value: unknown): string | null {
   return trimmed;
 }
 
-function resolveWizardSiteAssetUrl(
+export function resolveWizardSiteAssetUrl(
   value: string | null | undefined,
   siteUsername: string | null | undefined,
 ): string | null {
@@ -1464,6 +1486,10 @@ const defaultProfile: WizardProfile = {
     title: "",
     description: "",
     doubleOptIn: true,
+    buttonLabel: "",
+    placeholder: "",
+    image: "",
+    welcomeEmail: { ...defaultNewsletterWelcomeEmail },
   },
   booking: normalizeWizardBookingConfig({
     enabled: true,
@@ -3520,6 +3546,27 @@ export const useWizardStore = defineStore("wizard", () => {
         subscribe.description = profile.value.newsletter.description.trim();
       }
       subscribe.doubleOptIn = profile.value.newsletter.doubleOptIn;
+      const { buttonLabel, placeholder, image, welcomeEmail } = profile.value.newsletter;
+      if (buttonLabel?.trim()) subscribe.buttonLabel = buttonLabel.trim();
+      if (placeholder?.trim()) subscribe.placeholder = placeholder.trim();
+      if (image?.trim()) subscribe.image = image.trim();
+      if (welcomeEmail?.enabled) {
+        subscribe.welcomeEmail = {
+          enabled: true,
+          subject: welcomeEmail.subject.trim(),
+          message: welcomeEmail.message.trim(),
+          ...(welcomeEmail.downloadPath.trim()
+            ? {
+                download: {
+                  path: welcomeEmail.downloadPath.trim(),
+                  ...(welcomeEmail.downloadName.trim()
+                    ? { name: welcomeEmail.downloadName.trim() }
+                    : {}),
+                },
+              }
+            : {}),
+        };
+      }
 
       intents.subscribe = subscribe;
     }
@@ -4109,6 +4156,10 @@ export const useWizardStore = defineStore("wizard", () => {
               storedProfile.newsletter
                 ? storedProfile.newsletter.doubleOptIn === true
                 : defaultProfile.newsletter.doubleOptIn,
+            welcomeEmail: {
+              ...defaultNewsletterWelcomeEmail,
+              ...(storedProfile.newsletter?.welcomeEmail || {}),
+            },
           },
           gift: {
             ...defaultProfile.gift,
@@ -4774,12 +4825,23 @@ export const useWizardStore = defineStore("wizard", () => {
 
     // Extract newsletter/intents config
     const rawIntents = siteProfile.intents;
-    const newsletter: WizardNewsletterConfig = rawIntents?.subscribe?.enabled
+    const rawSubscribe = rawIntents?.subscribe as Me3IntentSubscribe | undefined;
+    const newsletter: WizardNewsletterConfig = rawSubscribe?.enabled
       ? {
           enabled: true,
-          title: rawIntents.subscribe.title || "",
-          description: rawIntents.subscribe.description || "",
-          doubleOptIn: rawIntents.subscribe.doubleOptIn === true,
+          title: rawSubscribe.title || "",
+          description: rawSubscribe.description || "",
+          doubleOptIn: rawSubscribe.doubleOptIn === true,
+          buttonLabel: rawSubscribe.buttonLabel || "",
+          placeholder: rawSubscribe.placeholder || "",
+          image: rawSubscribe.image || "",
+          welcomeEmail: {
+            enabled: rawSubscribe.welcomeEmail?.enabled === true,
+            subject: rawSubscribe.welcomeEmail?.subject || "",
+            message: rawSubscribe.welcomeEmail?.message || "",
+            downloadPath: rawSubscribe.welcomeEmail?.download?.path || "",
+            downloadName: rawSubscribe.welcomeEmail?.download?.name || "",
+          },
         }
       : { ...defaultProfile.newsletter, enabled: false };
 

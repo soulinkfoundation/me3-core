@@ -9,6 +9,7 @@ import {
   getDoubleOptInConfirmationStatus,
   requestDoubleOptInSubscription,
 } from "./subscriber-confirmations";
+import * as transactionalEmails from "./transactional-emails";
 import type {
   NewsletterSubscriptionConfirmationEmailDetails,
   TransactionalEmailResult,
@@ -158,7 +159,7 @@ describe("subscriber double opt-in", () => {
       pageId: "home",
       actionId: "newsletter",
     });
-    expect(await confirmDoubleOptInSubscriber(env, confirmation)).toBe("confirmed");
+    expect(await confirmDoubleOptInSubscriber(env, confirmation)).toBe("already_confirmed");
     expect(database.prepare(
       "SELECT marketing_permission_evidence_json FROM subscribers WHERE email = ?",
     ).get(confirmation.email)).toEqual({
@@ -255,6 +256,97 @@ describe("subscriber double opt-in", () => {
     const successfulSend = vi.fn(async () => ({ status: "sent" }) satisfies TransactionalEmailResult);
     expect(await requestDoubleOptInSubscription(env, requestInput(site), successfulSend)).toBe("accepted");
     expect(successfulSend).toHaveBeenCalledOnce();
+  });
+
+  describe("welcome email", () => {
+    const welcomeProfile = (doubleOptIn: boolean) => JSON.stringify({
+      name: "Publisher",
+      intents: {
+        subscribe: {
+          enabled: true,
+          title: "Letters",
+          doubleOptIn,
+          welcomeEmail: {
+            enabled: true,
+            subject: "Your free guide",
+            message: "Thanks for joining {{newsletterName}}.",
+            download: { path: "./files/downloads/guide.pdf", name: "the guide" },
+          },
+        },
+      },
+    });
+
+    function siteApp(profileJson: string) {
+      vi.spyOn(sites, "getSiteByUsername").mockResolvedValue(site);
+      vi.spyOn(sites, "getSiteFileText").mockImplementation(async (_env, _siteId, path) =>
+        path === "src/me.json" ? profileJson : null);
+      vi.spyOn(sites, "getPublishedSiteBaseUrl").mockResolvedValue("https://publisher.example.com");
+      vi.spyOn(transactionalEmails, "getOwnerContact").mockResolvedValue({ name: "Pub", email: "owner@example.com" });
+      const welcome = vi.spyOn(transactionalEmails, "sendNewsletterWelcomeEmail")
+        .mockResolvedValue({ status: "sent" });
+      const app = new Hono<AppBindings>();
+      registerSiteRoutes(app, {
+        requireOwner: async () => site.user_id,
+        unauthorized: (c) => c.json({ error: "Unauthorized" }, 401),
+      });
+      return { app, welcome };
+    }
+
+    it("sends the welcome and download once, on first confirmation", async () => {
+      const { app, welcome } = siteApp(welcomeProfile(true));
+      const send = vi.fn(async (_env: Env, _details: NewsletterSubscriptionConfirmationEmailDetails) => (
+        { status: "sent" } satisfies TransactionalEmailResult
+      ));
+      await requestDoubleOptInSubscription(env, requestInput(site), send);
+      const confirmationUrl = new URL(send.mock.calls[0][1].confirmationUrl);
+      const token = confirmationUrl.searchParams.get("token")!;
+      const confirm = () => app.request(confirmationUrl.toString(), {
+        method: "POST",
+        body: new URLSearchParams({ email: "reader@example.com", token }),
+      }, env);
+
+      const first = await confirm();
+      expect(await first.text()).toContain('href="https://publisher.example.com/files/downloads/guide.pdf"');
+      expect(welcome).toHaveBeenCalledOnce();
+      expect(welcome.mock.calls[0][1]).toMatchObject({
+        subscriberEmail: "reader@example.com",
+        newsletterName: "Letters",
+        replyToAddress: "owner@example.com",
+        subject: "Your free guide",
+        download: { url: "https://publisher.example.com/files/downloads/guide.pdf", name: "the guide" },
+      });
+
+      const again = await confirm();
+      expect(await again.text()).toContain("Download the guide");
+      const revisit = await app.request(confirmationUrl.toString(), {}, env);
+      expect(await revisit.text()).toContain("Download the guide");
+      expect(welcome).toHaveBeenCalledOnce();
+    });
+
+    it("sends the welcome right away without confirmation", async () => {
+      const { app, welcome } = siteApp(welcomeProfile(false));
+      const response = await app.request("https://publisher.example.com/api/sites/publisher/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "reader@example.com" }),
+      }, env);
+
+      expect(response.status).toBe(200);
+      expect(welcome).toHaveBeenCalledOnce();
+    });
+
+    it("sends nothing generic when the owner has not written the email", async () => {
+      const profile = JSON.parse(welcomeProfile(false));
+      profile.intents.subscribe.welcomeEmail.message = " ";
+      const { app, welcome } = siteApp(JSON.stringify(profile));
+      await app.request("https://publisher.example.com/api/sites/publisher/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "reader@example.com" }),
+      }, env);
+
+      expect(welcome).not.toHaveBeenCalled();
+    });
   });
 });
 

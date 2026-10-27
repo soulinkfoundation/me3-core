@@ -142,9 +142,10 @@ async function confirmationStatus(
 export async function confirmDoubleOptInSubscriber(
   env: Env,
   input: { siteId: string; email: string; token: string },
-): Promise<"confirmed" | "invalid"> {
+): Promise<"confirmed" | "already_confirmed" | "invalid"> {
   const subscriber = await getSubscriber(env, input.siteId, input.email);
   const status = await confirmationStatus(subscriber, input.token);
+  if (status === "confirmed") return "already_confirmed";
   if (status !== "ready") return status;
   if (!subscriber) return "invalid";
   const confirmedAt = new Date().toISOString();

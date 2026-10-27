@@ -106,12 +106,14 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-hero--minimal .buttons,.site-hero--minimal .links{justify-content:flex-start}
 .site-home-sections{margin:52px 0 80px}
 .site-home-sections>section{margin:56px 0}
-.site-home-sections .newsletter{display:grid;grid-template-columns:1fr 1fr;grid-template-areas:"title form" "desc form" "privacy form" "status status";align-items:center;gap:0 24px;padding:30px;background:var(--raised)}
+.site-home-sections .newsletter{display:grid;grid-template-columns:minmax(0,1fr);grid-template-areas:"title" "desc" "form" "privacy" "status";align-items:start;gap:0;padding:32px;background:var(--raised)}
+.site-home-sections .newsletter.has-image{grid-template-columns:minmax(120px,180px) minmax(0,1fr);grid-template-areas:"image title" "image desc" "image form" "image privacy" "image status";column-gap:28px}
+.site-home-sections .newsletter-image{grid-area:image;display:block;width:100%;height:auto;margin:0;border-radius:var(--radius,8px);box-shadow:0 10px 24px rgba(0,0,0,.12)}
 .site-home-sections .newsletter-title{grid-area:title;margin:0;text-align:left}
-.site-home-sections .newsletter-desc{grid-area:desc;margin:8px 0;color:var(--muted);text-align:left}
-.site-home-sections .newsletter-form{grid-area:form;display:flex;max-width:none;margin:0}
+.site-home-sections .newsletter-desc{grid-area:desc;max-width:60ch;margin:8px 0;color:var(--muted);text-align:left}
+.site-home-sections .newsletter-form{grid-area:form;display:flex;max-width:560px;margin:18px 0 0}
 .site-home-sections .newsletter-privacy{grid-area:privacy;margin:8px 0 0;text-align:left}
-.site-home-sections .newsletter-status{grid-area:status}
+.site-home-sections .newsletter-status{grid-area:status;text-align:left}
 .site-home-sections .booking,.site-home-sections .testimonials{background:transparent;padding:0}
 .site-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:18px}
 .site-section-heading h2{margin:0;font-family:var(--display-font);font-size:1.7rem}
@@ -231,6 +233,7 @@ body[data-layout=minimal] .site-offer button{grid-column:2;grid-row:1/4;align-se
   .site-writing-row{grid-template-columns:1fr;gap:4px}
   body[data-layout=minimal] .site-offer{display:flex}
   .site-home-sections .newsletter{display:block;padding:22px}
+  .site-home-sections .newsletter-image{width:140px;margin:0 0 18px}
   .site-home-sections .newsletter-form{display:flex;margin:22px 0 12px}
   .content{width:calc(100% - 40px);margin:40px auto 80px}
   .blog-item{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;padding:20px 12px}

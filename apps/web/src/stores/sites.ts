@@ -37,7 +37,7 @@ export interface UploadImageResult {
   path: string;
   url: string;
   storage?: "d1" | "r2";
-  type: "logo" | "avatar" | "banner" | "favicon" | "hero" | "section" | "testimonial";
+  type: "logo" | "avatar" | "banner" | "favicon" | "hero" | "section" | "testimonial" | "newsletter";
 }
 
 export interface UploadPageImageResult {
@@ -577,7 +577,7 @@ export const useSitesStore = defineStore("sites", () => {
   async function uploadImage(
     username: string,
     file: Blob,
-    type: "logo" | "avatar" | "banner" | "hero" | "section" | "testimonial",
+    type: "logo" | "avatar" | "banner" | "hero" | "section" | "testimonial" | "newsletter",
     options: { variant?: number; testimonialIndex?: number } = {},
   ): Promise<UploadImageResult | null> {
     loading.value = true;
@@ -1309,6 +1309,36 @@ export const useSitesStore = defineStore("sites", () => {
     }
   }
 
+  async function uploadNewsletterDownload(
+    username: string,
+    file: File,
+  ): Promise<{ ok: boolean; path: string; size: number }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    return api.upload<{ ok: boolean; path: string; size: number }>(
+      `/sites/${username}/newsletter/download`,
+      formData,
+    );
+  }
+
+  async function sendNewsletterWelcomeTest(
+    username: string,
+    payload: {
+      to: string;
+      siteName: string;
+      newsletterTitle: string;
+      subject: string;
+      message: string;
+      downloadPath: string;
+      downloadName: string;
+    },
+  ): Promise<{ ok: boolean; sentTo: string }> {
+    return api.post<{ ok: boolean; sentTo: string }>(
+      `/sites/${username}/newsletter/welcome-email/test`,
+      payload,
+    );
+  }
+
   // Subscriber management
   async function getSubscriberCount(username: string): Promise<number> {
     try {
@@ -1452,6 +1482,8 @@ export const useSitesStore = defineStore("sites", () => {
     uploadFavicon,
     uploadPageImage,
     uploadContentAsset,
+    uploadNewsletterDownload,
+    sendNewsletterWelcomeTest,
     createStreamUpload,
     finalizeStreamUpload,
     deleteStreamVideo,
