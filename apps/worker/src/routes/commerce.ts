@@ -2,8 +2,11 @@ import {
   CommerceOrderInputError,
   completeProductCheckout,
   createProductCheckout,
+  productDownloadLink,
 } from "../commerce-orders";
-import { getSiteByUsername } from "../booking";
+import { getSiteByUsername, loadSiteProfileForCommerce } from "../booking";
+import { productAvailability } from "../product-stock";
+import { downloadResponse, ProductDownloadError, storeProductDownload } from "../product-downloads";
 import {
   CommerceSettingsInputError,
   getCommerceSettings,
@@ -19,7 +22,7 @@ import { requestCountry } from "../../../../shared/regional-pricing";
 import { parseMe3Json, type Me3Profile } from "me3-protocol";
 import { applyAgentCheckoutSetting } from "../agent-commerce";
 import { syncPublishedProfileToSoulinkDirectory } from "../network-directory";
-import { getSiteFileText } from "../sites";
+import { getSiteFileText, getSiteForOwner, isMissingSiteFilesTableError } from "../sites";
 
 type CommerceRouteDeps = OwnerRouteDeps & {
   getCoreWebOrigin(env: Env, requestUrl?: string): string;
@@ -115,6 +118,41 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     startProductOrder,
   );
 
+  // Live copies left, so a published page never sells what is gone.
+  app.get("/api/shop/:username/availability", async (c) => {
+    const site = await getSiteByUsername(c.env, c.req.param("username"));
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    const profile = await loadSiteProfileForCommerce(c.env, site);
+    const products: Record<string, Awaited<ReturnType<typeof productAvailability>>> = {};
+    for (const product of (profile?.products || []) as Array<Parameters<typeof productAvailability>[2]>) {
+      if (product.slug) products[product.slug] = await productAvailability(c.env.DB, site.id, product);
+    }
+    c.header("Cache-Control", "no-store");
+    return c.json({ products });
+  });
+
+  app.get("/api/shop/download/:token", (c) => downloadResponse(c.env, c.req.param("token")));
+
+  // The owner's paid download. It is stored privately and only released per order.
+  app.post("/api/sites/:username/products/download", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    try {
+      const form = await c.req.formData();
+      const file = form.get("file");
+      if (!(file instanceof File)) return c.json({ error: "Choose a file to upload" }, 400);
+      return c.json({ ok: true, file: await storeProductDownload(c.env, site, file) });
+    } catch (error) {
+      if (error instanceof ProductDownloadError) return c.json({ error: error.message }, error.status as 400);
+      if (isMissingSiteFilesTableError(error) || (error instanceof Error && error.message.includes("too large for Core D1 storage"))) {
+        return c.json({ error: "Activate storage in Account settings to upload downloads larger than a few MB." }, 413);
+      }
+      throw error;
+    }
+  });
+
   app.post("/api/shop/:username/complete-checkout", async (c) => {
     const site = await getSiteByUsername(c.env, c.req.param("username"));
     if (!site) return c.json({ error: "Site not found" }, 404);
@@ -123,7 +161,9 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     if (!sessionId) return c.json({ error: "Checkout session ID is required" }, 400);
     try {
       const result = await completeProductCheckout(c.env, site, sessionId);
-      return c.json(result.ok ? { ok: true, order: { status: result.order.status, product_slug: result.order.product_slug }, alreadyCompleted: result.alreadyCompleted } : result);
+      if (!result.ok) return c.json(result);
+      const downloadUrl = await productDownloadLink(c.env, site, result.order).catch(() => null);
+      return c.json({ ok: true, order: { status: result.order.status, product_slug: result.order.product_slug }, alreadyCompleted: result.alreadyCompleted, ...(downloadUrl ? { downloadUrl } : {}) });
     } catch (error) {
       if (error instanceof CommerceOrderInputError) {
         return c.json({ error: error.message }, error.status as 400);

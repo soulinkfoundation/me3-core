@@ -1,5 +1,9 @@
 import { localizeRegionalPrices, regionalPricingError, type RegionalPrice } from "../../../shared/regional-pricing";
 import { productDeliveryError, parseDeliveryAddress, type ProductDelivery } from "../../../shared/product-delivery";
+import { productOfferError, productOption, type ProductOption } from "../../../shared/product-offer";
+import { isCountedProduct, isOversold, productAvailability } from "./product-stock";
+import { DOWNLOAD_LINK_DAYS, DOWNLOAD_LINK_USES, issueDownloadToken } from "./product-downloads";
+import { getPublishedSiteBaseUrl } from "./sites";
 import type Stripe from "stripe";
 import {
   appendQueryParams,
@@ -32,6 +36,7 @@ type ProductCheckoutBody = {
   expectedCurrency?: unknown;
   expectedAmount?: unknown;
   deliveryAddress?: unknown;
+  optionId?: unknown;
   buyerName?: unknown;
   buyerEmail?: unknown;
   buyerNote?: unknown;
@@ -52,6 +57,9 @@ type ProductRecord = {
   paymentMethod?: "stripe" | "manual";
   paymentInstructions?: string;
   confirmationEmail?: ProductPurchaseConfirmationEmail;
+  stock?: number;
+  stockSetAt?: string;
+  options?: ProductOption[];
 };
 
 export type ProductCheckoutOptions = {
@@ -95,9 +103,24 @@ export async function createProductCheckout(
   if (!sourceProduct || sourceProduct.available === false) {
     throw new CommerceOrderInputError("Product is not available.", 404);
   }
+  if (sourceProduct.delivery?.kind === "external") {
+    throw new CommerceOrderInputError("This product is sold on another site.", 409);
+  }
   const pricingError = regionalPricingError(sourceProduct);
   if (pricingError) throw new CommerceOrderInputError(pricingError, 409);
-  const product = localizeRegionalPrices(sourceProduct, country);
+  const offerError = productOfferError(sourceProduct);
+  if (offerError) throw new CommerceOrderInputError(offerError, 409);
+  const option = sourceProduct.options?.length ? productOption(sourceProduct, body.optionId) : null;
+  if (sourceProduct.options?.length && !option) throw new CommerceOrderInputError("Choose an option.");
+  const product = option
+    ? { ...sourceProduct, price: option.price, title: `${sourceProduct.title || sourceProduct.slug} (${option.label})` }
+    : localizeRegionalPrices(sourceProduct, country);
+  const counted = isCountedProduct(sourceProduct);
+  if (counted) {
+    const availability = await productAvailability(env.DB, site.id, sourceProduct);
+    const left = option ? availability.options?.[option.id] : availability.remaining;
+    if (left === 0) throw new CommerceOrderInputError("Sold out.", 409);
+  }
   if ((body.expectedCurrency !== undefined && String(body.expectedCurrency).toUpperCase() !== String(product.currency).toUpperCase()) || (body.expectedAmount !== undefined && body.expectedAmount !== product.price)) {
     throw new CommerceOrderInputError("The price has changed for your location. Reload the page before paying.", 409);
   }
@@ -151,6 +174,7 @@ export async function createProductCheckout(
       .run();
 
     await env.DB.prepare("UPDATE commerce_orders SET delivery_json = ? WHERE id = ?").bind(deliverySnapshot, orderId).run();
+    await holdStock(env, site, sourceProduct, option, orderId, counted);
     const owner = await getOwnerContact(env, site.user_id);
     const tokens = {
       buyerName,
@@ -226,6 +250,9 @@ export async function createProductCheckout(
     .run();
 
   await env.DB.prepare("UPDATE commerce_orders SET delivery_json = ? WHERE id = ?").bind(deliverySnapshot, orderId).run();
+  await holdStock(env, site, sourceProduct, option, orderId, counted);
+  // Counted products keep checkout short, so an abandoned one frees its copy quickly.
+  const holdUntilSeconds = counted ? Math.floor(Date.now() / 1000) + 31 * 60 : undefined;
   const returnUrl = normalizeSiteCheckoutReturnUrl(
     body.returnUrl,
     requestUrl,
@@ -247,7 +274,7 @@ export async function createProductCheckout(
           actionId,
           campaign,
           returnUrl,
-          expiresAtSeconds: options.sessionExpiresAtSeconds,
+          expiresAtSeconds: options.sessionExpiresAtSeconds ?? holdUntilSeconds,
         })
       : await createManagedCheckout(env, {
           orderId,
@@ -262,7 +289,7 @@ export async function createProductCheckout(
           actionId,
           campaign,
           returnUrl,
-          managedExpiresAt: options.managedSessionExpiresAt,
+          managedExpiresAt: options.managedSessionExpiresAt ?? (holdUntilSeconds ? new Date(holdUntilSeconds * 1000).toISOString() : undefined),
         });
     await env.DB.prepare(
       `UPDATE commerce_orders
@@ -387,6 +414,34 @@ async function finalizeProductOrder(
   await sendProductConfirmation(env, site, updated);
   await queueProductPaymentNotification(env, site, updated);
   return { ok: true as const, order: updated };
+}
+
+/** Records the chosen option, then gives up the order if it took the last copy someone else already held. */
+async function holdStock(
+  env: Env,
+  site: DbSite,
+  product: ProductRecord,
+  option: ProductOption | null,
+  orderId: string,
+  counted: boolean,
+): Promise<void> {
+  if (option) {
+    await env.DB.prepare("UPDATE commerce_orders SET option_id = ?, option_label = ? WHERE id = ?")
+      .bind(option.id, option.label, orderId).run();
+  }
+  if (!counted || !(await isOversold(env.DB, site.id, product, option?.id ?? null))) return;
+  await env.DB.prepare("UPDATE commerce_orders SET status = 'failed', updated_at = datetime('now') WHERE id = ?")
+    .bind(orderId).run();
+  throw new CommerceOrderInputError("Sold out.", 409);
+}
+
+/** A fresh link to a paid order's download, when the product is one. */
+export async function productDownloadLink(env: Env, site: DbSite, order: DbCommerceOrder): Promise<string | null> {
+  if (order.status !== "paid" || !order.delivery_json) return null;
+  const delivery = JSON.parse(order.delivery_json) as ProductDelivery;
+  if (delivery.kind !== "digital" || !delivery.file) return null;
+  const token = await issueDownloadToken(env.DB, { orderId: order.id, siteId: site.id, file: delivery.file });
+  return `/api/shop/download/${token}`;
 }
 
 async function findProduct(
@@ -574,6 +629,15 @@ async function sendProductConfirmation(
   const custom = productSendsPurchaseConfirmation(product?.confirmationEmail) ? product.confirmationEmail : null;
   const amount = new Intl.NumberFormat("en", { style: "currency", currency: order.currency || "EUR" }).format((order.amount_paid || 0) / 100);
   const delivery = order.delivery_json ? JSON.parse(order.delivery_json) as ProductDelivery : null;
+  const downloadPath = delivery?.kind === "digital" ? await productDownloadLink(env, site, order) : null;
+  const siteBaseUrl = downloadPath ? await getPublishedSiteBaseUrl(env, site).catch(() => "") : "";
+  const download = downloadPath && siteBaseUrl
+    ? {
+        url: `${siteBaseUrl.replace(/\/+$/, "")}${downloadPath}`,
+        label: `Download ${delivery!.file!.name}`,
+        note: `This link works ${DOWNLOAD_LINK_USES} times over the next ${DOWNLOAD_LINK_DAYS} days. Reply to this email if you need a new one.`,
+      }
+    : undefined;
   const result = await sendProductPurchaseConfirmationEmail(env, {
     operationId: `order:${order.id}:purchase-confirmation`,
     ownerId: site.user_id,
@@ -583,7 +647,8 @@ async function sendProductConfirmation(
     buyerEmail: order.buyer_email,
     productTitle: order.product_title,
     subject: custom ? applyPurchaseEmailTokens(custom.subject, tokens) : `Order confirmed: ${order.product_title}`,
-    messageText: `Hi ${order.buyer_name},\n\nPayment received for ${order.product_title}.\nAmount paid: ${amount}\nOrder reference: ${order.id}` + (delivery?.instructions ? `\n\nDelivery: ${delivery.instructions}` : "") + (custom ? `\n\n${applyPurchaseEmailTokens(custom.message, tokens)}` : ""),
+    messageText: `Hi ${order.buyer_name},\n\nPayment received for ${order.product_title}.\nAmount paid: ${amount}\nOrder reference: ${order.id}` + (delivery?.instructions ? `\n\n${delivery.kind === "digital" ? "" : "Delivery: "}${delivery.instructions}` : "") + (custom ? `\n\n${applyPurchaseEmailTokens(custom.message, tokens)}` : ""),
+    download,
   });
   if (result.status === "sent") {
     await env.DB.prepare("UPDATE commerce_orders SET confirmation_sent_at = datetime('now') WHERE id = ? AND site_id = ?")

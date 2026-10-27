@@ -1837,6 +1837,10 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
           excerpt: meta?.excerpt,
           delivery: meta?.delivery,
           confirmationEmail: meta?.confirmationEmail,
+          images: meta?.images,
+          stock: meta?.stock,
+          stockSetAt: meta?.stockSetAt,
+          options: meta?.options,
         });
       }
       else pages.push(item);

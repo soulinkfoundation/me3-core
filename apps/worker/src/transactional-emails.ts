@@ -45,6 +45,8 @@ export type ProductPurchaseEmailDetails = {
   productTitle: string;
   subject: string;
   messageText: string;
+  /** A paid download's link, shown as a button. */
+  download?: { url: string; label: string; note: string };
   test?: boolean;
 };
 
@@ -354,7 +356,7 @@ export async function sendProductPurchaseConfirmationEmail(
   details: ProductPurchaseEmailDetails,
 ): Promise<TransactionalEmailResult> {
   const subject = `${details.test ? "[Test] " : ""}${details.subject}`;
-  const textBody = `${details.messageText}
+  const textBody = `${details.messageText}${details.download ? `\n\n${details.download.label}: ${details.download.url}\n${details.download.note}` : ""}
 
 ---
 
@@ -611,6 +613,7 @@ function productEmailHtml(details: ProductPurchaseEmailDetails) {
       <h2 style="margin:0 0 16px;font-size:18px;color:#111;">${escapeHtml(details.productTitle)}</h2>
       <p style="margin:0;color:#333;font-size:14px;line-height:1.6;">${renderPlainText(details.messageText)}</p>
     </div>
+    ${details.download ? `<p style="margin:0 0 8px;"><a href="${escapeHtml(details.download.url)}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:8px;">${escapeHtml(details.download.label)}</a></p><p style="margin:0 0 24px;color:#666;font-size:13px;">${escapeHtml(details.download.note)}</p>` : ""}
     <p style="margin:0;color:#666;font-size:14px;">Reply to this email to contact <strong>${escapeHtml(details.hostName)}</strong>.</p>
   `);
 }
