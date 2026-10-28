@@ -179,13 +179,16 @@ function toggleComposerNetwork(network: SocialNetwork) {
 const composerImages = computed(() => composerMedia.value.filter((item) => item.kind === "image"));
 const composerVideo = computed(() => composerMedia.value.find((item) => item.kind === "video") || null);
 
-/** Avatar and name for each network in the New post dialog; falls back to the owner's picture from another network. */
+/**
+ * Avatar and name for each network in the New post dialog. Only the network's
+ * own profile picture is shown; another account's or the ME3 profile picture
+ * would make the row look like the wrong account is connected.
+ */
 function composerAccount(network: SocialNetwork) {
   const account = activeAccount(network as SocialPlatform, accounts.value);
-  const fallback = accounts.value.find((item) => item.status === "active" && item.avatarUrl);
   return {
-    avatarUrl: account?.avatarUrl || fallback?.avatarUrl || null,
-    name: account?.displayName || account?.handle || fallback?.displayName || fallback?.handle || null,
+    avatarUrl: account?.avatarSource === "provider" ? account.avatarUrl || null : null,
+    name: account?.displayName || account?.handle || null,
     handle: account?.handle || null,
   };
 }
@@ -630,8 +633,9 @@ onMounted(async () => {
   font: 14px/1.5 var(--font-sans);
   resize: vertical;
 }
-.social-composer__networks { display: flex; flex-wrap: wrap; gap: 10px; }
-.social-composer__networks button { display: inline-grid; padding: 3px; border: 0; border-radius: 50%; background: none; cursor: pointer; }
+.social-composer__networks { display: flex; flex-wrap: wrap; gap: 4px; }
+/* 32px avatar + 6px padding keeps a 44px tap target. */
+.social-composer__networks button { display: inline-grid; padding: 6px; border: 0; border-radius: 50%; background: none; cursor: pointer; }
 .social-composer__networks button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 1px; }
 .social-composer__attachments { display: flex; flex-wrap: wrap; gap: 2px; }
 .social-composer__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
