@@ -128,6 +128,11 @@ import {
   startManagedAiCardSetup,
   updateManagedAiBillingSettings,
 } from "./managed-ai-billing";
+import {
+  ManagedSubscriptionError,
+  forwardManagedSubscriptionRequest,
+  readManagedSubscriptionPurchase,
+} from "./managed-subscription";
 import { registerMobileRoutes } from "./routes/mobile";
 import { registerPushNotificationRoutes } from "./routes/push-notifications";
 import {
@@ -1375,6 +1380,46 @@ app.put("/api/ai-settings", async (c) => {
     throw error;
   }
 });
+
+app.get("/api/managed-subscription/entitlement", async (c) => {
+  const ownerId = await requireOwner(c);
+  if (!ownerId) return unauthorized(c);
+  return respondWithManagedSubscription(c, () =>
+    forwardManagedSubscriptionRequest(c.env, { kind: "entitlement" }),
+  );
+});
+
+app.post("/api/managed-subscription/google-play/reconcile", async (c) => {
+  const ownerId = await requireOwner(c);
+  if (!ownerId) return unauthorized(c);
+  const body = await c.req.json<unknown>().catch((): unknown => ({}));
+  return respondWithManagedSubscription(c, () =>
+    forwardManagedSubscriptionRequest(c.env, readManagedSubscriptionPurchase("google_play", body)),
+  );
+});
+
+app.post("/api/managed-subscription/storekit/reconcile", async (c) => {
+  const ownerId = await requireOwner(c);
+  if (!ownerId) return unauthorized(c);
+  const body = await c.req.json<unknown>().catch((): unknown => ({}));
+  return respondWithManagedSubscription(c, () =>
+    forwardManagedSubscriptionRequest(c.env, readManagedSubscriptionPurchase("storekit", body)),
+  );
+});
+
+async function respondWithManagedSubscription(
+  c: AppContext,
+  request: () => Promise<Record<string, unknown>>,
+) {
+  try {
+    return c.json(await request());
+  } catch (error) {
+    if (error instanceof ManagedSubscriptionError) {
+      return c.json({ error: error.message }, error.status);
+    }
+    throw error;
+  }
+}
 
 app.get("/api/managed-ai-billing-settings", async (c) => {
   const ownerId = await requireOwner(c);
