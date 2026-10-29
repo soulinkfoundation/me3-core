@@ -26,10 +26,10 @@ describe("WizardBasics profile visibility", () => {
     expect(visibility.get("legend").text()).toBe("Profile visibility");
     expect(visibility.get("label").text()).toBe("Make my profile public");
     expect(visibility.findAll('input[type="checkbox"]')).toHaveLength(1);
-    expect((checkbox.element as HTMLInputElement).checked).toBe(false);
+    expect((checkbox.element as HTMLInputElement).checked).toBe(true);
 
-    await checkbox.setValue(true);
-    expect(useWizardStore().profile.visibility).toBe("public");
+    await checkbox.setValue(false);
+    expect(useWizardStore().profile.visibility).toBe("private");
   });
 
   it("does not show the profile setting for organization sites", () => {

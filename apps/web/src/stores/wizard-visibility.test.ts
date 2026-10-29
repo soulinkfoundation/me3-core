@@ -8,19 +8,19 @@ describe("profile visibility in the site wizard", () => {
     localStorage.clear();
   });
 
-  it("defaults a new profile to private and serializes the owner decision", () => {
+  it("defaults a new profile to public and serializes the owner decision", () => {
     const wizard = useWizardStore();
     wizard.updateProfile({ name: "Connie", handle: "connie" });
 
-    expect(wizard.profile.visibility).toBe("private");
+    expect(wizard.profile.visibility).toBe("public");
     expect(wizard.generateMe3Json()).toMatchObject({
       name: "Connie",
       handle: "connie",
-      visibility: "private",
+      visibility: "public",
     });
 
-    wizard.updateProfile({ visibility: "public" });
-    expect(wizard.generateMe3Json().visibility).toBe("public");
+    wizard.updateProfile({ visibility: "private" });
+    expect(wizard.generateMe3Json().visibility).toBe("private");
   });
 
   it("does not apply profile visibility to organization sites", () => {

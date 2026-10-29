@@ -1475,7 +1475,8 @@ function normalizeLocationData(input: unknown): WizardLocationData | null {
 const defaultProfile: WizardProfile = {
   name: "",
   handle: "",
-  visibility: "private",
+  // A new profile starts public, as on iOS and Android.
+  visibility: "public",
   location: "",
   locationData: null,
   bio: "",
@@ -5071,13 +5072,8 @@ export const useWizardStore = defineStore("wizard", () => {
     profile.value = {
       name: siteProfile.name || "",
       handle: siteProfile.handle || resolvedSiteUsername,
-      visibility:
-        loadedSiteRole === "profile" && siteProfile.visibility === "private"
-          ? "private"
-          : loadedSiteRole === "profile" &&
-              (siteProfile.visibility === "public" || Boolean(sitePublishedAt))
-            ? "public"
-            : "private",
+      // Only an explicit private choice stays private; a new profile defaults to public.
+      visibility: siteProfile.visibility === "private" ? "private" : "public",
       location: (siteProfile as any).location || "",
       locationData: normalizeLocationData((siteProfile as any).locationData),
       bio: siteProfile.bio || "",
