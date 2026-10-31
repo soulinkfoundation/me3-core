@@ -835,6 +835,29 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_commerce_downloads_order ON commerce_downloads(order_id)").run();
     },
   },
+  // Addresses the owner may send as, proven by a code (me3-lmax).
+  {
+    id: "0097_email_send_identities",
+    checksum: "2026-10-31-email-send-identities-v1",
+    async apply(db) {
+      await db.prepare(`CREATE TABLE IF NOT EXISTS email_send_identities (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        address TEXT NOT NULL,
+        display_name TEXT NOT NULL DEFAULT '',
+        provider_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        code_hash TEXT,
+        code_expires_at TEXT,
+        code_attempts INTEGER NOT NULL DEFAULT 0,
+        code_sent_at TEXT,
+        verified_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (user_id, address)
+      )`).run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

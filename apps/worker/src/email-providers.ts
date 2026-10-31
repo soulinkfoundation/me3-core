@@ -803,18 +803,45 @@ export async function getEmailDeliveryIdentity(
   ownerId: string,
   input: Pick<EmailProviderSendRequest, "providerId" | "fromAddress" | "fromName" | "replyToAddress"> = {},
 ): Promise<EmailDeliveryIdentity> {
-  return deliveryIdentity(env, ownerId, input, await resolveReadyProviderConfig(env, ownerId, input.providerId || null));
+  const sendAs = await findVerifiedSendAs(env, ownerId, input);
+  const resolved = await resolveReadyProviderConfig(env, ownerId, input.providerId || sendAs?.providerId || null);
+  return deliveryIdentity(env, ownerId, input, resolved, sendAs);
+}
+
+type VerifiedSendAs = { providerId: EmailProviderId; displayName: string };
+
+// A verified send-as address picks its own provider, so mail from a forwarded
+// address goes out through the service that can sign for its domain.
+async function findVerifiedSendAs(
+  env: Env,
+  ownerId: string,
+  input: Pick<EmailProviderSendRequest, "providerId" | "fromAddress">,
+): Promise<VerifiedSendAs | null> {
+  const address = input.fromAddress?.trim().toLowerCase();
+  if (input.providerId || !address) return null;
+  const row = await env.DB.prepare(
+    "SELECT provider_id, display_name FROM email_send_identities WHERE user_id = ? AND address = ? AND status = 'verified'",
+  )
+    .bind(ownerId, address)
+    .first<{ provider_id: string; display_name: string }>()
+    .catch(() => null);
+  const providerId = normalizeEmailProviderId(row?.provider_id);
+  if (!providerId || providerId === MANAGED_EMAIL_PROVIDER_ID) return null;
+  return { providerId, displayName: row?.display_name || "" };
 }
 
 async function deliveryIdentity(
   env: Env, ownerId: string,
   input: Pick<EmailProviderSendRequest, "fromAddress" | "fromName" | "replyToAddress">,
   resolved: Omit<ResolvedEmailProvider, "secret">,
+  sendAs: VerifiedSendAs | null = null,
 ): Promise<EmailDeliveryIdentity> {
   const managed = resolved.providerId === MANAGED_EMAIL_PROVIDER_ID;
   const fromAddress = (managed ? await getManagedEmailFromAddress(env, ownerId) : input.fromAddress || resolved.config.fromAddress).trim().toLowerCase();
-  const fromName = (input.fromName || (managed ? await getManagedEmailFromName(env, ownerId) : resolved.config.fromName) || "ME3").trim();
-  const replyToAddress = (managed ? fromAddress : input.replyToAddress || resolved.config.replyToAddress || "").trim().toLowerCase();
+  const fromName = (input.fromName || sendAs?.displayName || (managed ? await getManagedEmailFromName(env, ownerId) : resolved.config.fromName) || "ME3").trim();
+  // The provider's reply-to belongs to its own sender, not to a send-as address.
+  const configuredReplyTo = sendAs ? "" : resolved.config.replyToAddress;
+  const replyToAddress = (managed ? fromAddress : input.replyToAddress || configuredReplyTo || "").trim().toLowerCase();
   if (!isValidEmail(fromAddress) || fromAddress.endsWith("@me3.local")) throw new EmailProviderInputError("Configured sender email address is invalid", 503);
   if (replyToAddress && !isValidEmail(replyToAddress)) throw new EmailProviderInputError("Configured reply-to email address is invalid", 503);
   const routeRevision = await sha256Hex(new TextEncoder().encode(JSON.stringify({
@@ -923,8 +950,9 @@ export async function sendEmailWithProvider(
   ownerId: string,
   input: EmailProviderSendRequest,
 ): Promise<EmailProviderSendResponse> {
-  const configured = await resolveReadyProviderConfig(env, ownerId, input.providerId || null);
-  const identity = await deliveryIdentity(env, ownerId, input, configured);
+  const sendAs = await findVerifiedSendAs(env, ownerId, input);
+  const configured = await resolveReadyProviderConfig(env, ownerId, input.providerId || sendAs?.providerId || null);
+  const identity = await deliveryIdentity(env, ownerId, input, configured, sendAs);
   if (input.approvedDeliveryIdentity && !sameDeliveryIdentity(identity, input.approvedDeliveryIdentity)) {
     throw new EmailProviderInputError("Email sender or delivery route changed after review. Read and approve it again.", 409);
   }
@@ -2081,7 +2109,7 @@ function normalizeSecretInput(update: EmailProviderUpdate): string | null | unde
   return secret || undefined;
 }
 
-function normalizeEmailProviderId(value: unknown): EmailProviderId | null {
+export function normalizeEmailProviderId(value: unknown): EmailProviderId | null {
   if (typeof value !== "string") return null;
   return PROVIDER_ALIASES[value.trim().toLowerCase()] || null;
 }

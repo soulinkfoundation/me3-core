@@ -26,6 +26,22 @@ type ProviderRecord = {
 };
 type ProviderSettings = { activeProviderId: string; providers: ProviderRecord[] };
 
+const props = withDefaults(defineProps<{
+  /** False connects the provider without making it the main sender (send-as addresses). */
+  activate?: boolean;
+  /** Fixes the provider and hides the choice. */
+  provider?: ProviderId;
+  presetFrom?: string;
+  title?: string;
+  description?: string;
+}>(), {
+  activate: true,
+  provider: undefined,
+  presetFrom: "",
+  title: "Connect a sender",
+  description: "Campaigns go out through your own email provider. Your other ME3 email uses it too.",
+});
+
 const emit = defineEmits<{ connected: [] }>();
 
 const PROVIDERS: Array<{ id: ProviderId; label: string; secret: string }> = [
@@ -37,8 +53,8 @@ const PROVIDERS: Array<{ id: ProviderId; label: string; secret: string }> = [
 
 const titleId = `campaign-sender-title-${useId()}`;
 const loaded = ref<ProviderSettings | null>(null);
-const providerId = ref<ProviderId>("postmark");
-const fromAddress = ref("");
+const providerId = ref<ProviderId>(props.provider || "postmark");
+const fromAddress = ref(props.presetFrom);
 const secret = ref("");
 const accountId = ref("");
 const sendingDomain = ref("");
@@ -82,7 +98,7 @@ async function load() {
   try {
     loaded.value = await api.get<ProviderSettings>("/email-provider-settings");
     const active = PROVIDERS.find((item) => item.id === loaded.value?.activeProviderId);
-    if (active && loaded.value.providers.some((item) => item.id === active.id && item.config.fromAddress)) {
+    if (!props.provider && active && loaded.value.providers.some((item) => item.id === active.id && item.config.fromAddress)) {
       providerId.value = active.id;
     }
     fill(providerId.value);
@@ -99,7 +115,7 @@ async function connect() {
   const from = fromAddress.value.trim().toLowerCase();
   try {
     await api.put("/email-provider-settings", {
-      activeProviderId: id,
+      ...(props.activate ? { activeProviderId: id } : {}),
       providers: [{
         id,
         transport: id === "smtp" ? "smtp" : id === "cloudflare-email" && !accountId.value.trim() ? "binding" : "rest",
@@ -128,10 +144,10 @@ onMounted(() => void load());
 
 <template>
   <section class="sender-setup" :aria-labelledby="titleId">
-    <h2 :id="titleId">Connect a sender</h2>
-    <p>Campaigns go out through your own email provider. Your other ME3 email uses it too.</p>
+    <h2 :id="titleId">{{ title }}</h2>
+    <p>{{ description }}</p>
     <form class="sender-setup__fields" @submit.prevent="connect">
-      <label class="sender-setup__field">
+      <label v-if="!provider" class="sender-setup__field">
         <span>Provider</span>
         <select data-test="sender-provider" :value="providerId" @change="chooseProvider">
           <option v-for="item in PROVIDERS" :key="item.id" :value="item.id">{{ item.label }}</option>

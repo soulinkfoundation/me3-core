@@ -140,6 +140,7 @@ import {
   registerMailboxRoutes,
   type ForwardableEmailMessageLike,
 } from "./routes/mailbox";
+import { registerEmailSendIdentityRoutes } from "./routes/email-send-identities";
 import { registerMissionControlRoutes } from "./routes/mission-control";
 import { registerSchedulingRoutes } from "./routes/scheduling";
 import { registerSocialContentRoutes } from "./routes/social-content";
@@ -1626,6 +1627,8 @@ registerBusinessSiteRoutes(app, { requireOwner, unauthorized });
 registerCampaignRoutes(app, { requireOwner, unauthorized });
 
 registerMailboxRoutes(app, { requireOwner, unauthorized });
+
+registerEmailSendIdentityRoutes(app, { requireOwner, unauthorized });
 
 registerChannelRoutes(app, { requireOwner, unauthorized });
 

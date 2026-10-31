@@ -7,6 +7,7 @@ import { PARKED_FEATURES } from "../utils/appFeatures";
 import { getEmailTestOperation, finishEmailTestOperation } from "../utils/emailTestOperation";
 import Button from "../components/Button.vue";
 import CodingAgentSettings from "../components/CodingAgentSettings.vue";
+import EmailSendAs from "../components/email/EmailSendAs.vue";
 import PageLoading from "../components/PageLoading.vue";
 import AppPageBar from "../components/AppPageBar.vue";
 import PluginList from "../components/PluginList.vue";
@@ -3006,6 +3007,8 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
                 </details>
+
+                <EmailSendAs />
 
                 <p v-if="mailboxError" class="error">{{ mailboxError }}</p>
                 <p v-if="emailProviderError" class="error">

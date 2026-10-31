@@ -1,4 +1,5 @@
 import { parseEmailAddressHeader } from "../../../../shared/email-headers";
+import { listVerifiedSendAddresses } from "../email-send-identities";
 import { ownerInstructionAddresses } from "../mailbox-instructions";
 import { dkimDomainAligned } from "../mailbox-sender-auth";
 import { parseJsonRecord } from "../workspace-input";
@@ -238,8 +239,26 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
       includeRecentActivity: c.req.query("include_activity") !== "0",
       configuredIdentity,
     });
+    // Verified send-as addresses are extra senders. They stay out of inbound so the
+    // mailbox's own address remains the one clients show.
+    const sendAs = overview.mailbox
+      ? (await listVerifiedSendAddresses(c.env, ownerId))
+          .filter((identity) => !overview.sources.some((source) => source.address === identity.address))
+          .map((identity) => ({
+            id: `send-as:${identity.id}`,
+            type: "external_forward" as const,
+            address: identity.address,
+            status: "active" as const,
+            inboundEnabled: false,
+            outboundEnabled: true,
+          }))
+      : [];
     // Mail from these addresses is a request ME3 acts on; clients name them when explaining that.
-    return c.json({ ...overview, ownerAddresses: await ownerInstructionAddresses(c.env, ownerId) });
+    return c.json({
+      ...overview,
+      sources: [...overview.sources, ...sendAs],
+      ownerAddresses: await ownerInstructionAddresses(c.env, ownerId),
+    });
   });
 
   app.get("/api/mailbox/events", async (c) => {
