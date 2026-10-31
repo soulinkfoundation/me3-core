@@ -379,6 +379,7 @@ function message(overrides: Partial<AgentMailboxMessage>): AgentMailboxMessage {
     fromAddress: "owner@example.com",
     fromName: null,
     toAddress: "client@example.com",
+    recipientAddresses: [],
     subject: "Project update",
     body: "Body",
     htmlBody: null,

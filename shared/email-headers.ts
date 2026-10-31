@@ -22,6 +22,15 @@ export function decodeMimeHeaderValue(value: string): string {
     );
 }
 
+/** Every address in an address-list header such as To or Cc, lowercased, in order. */
+export function parseEmailAddressList(value: unknown): string[] {
+  const decoded = decodeMimeHeaderValue(typeof value === "string" ? value : "")
+    // Display names may contain commas or @ signs; only addresses count.
+    .replace(/"(?:[^"\\]|\\.)*"/g, "");
+  const addresses = decoded.match(/[^\s<>,;:"()[\]@]+@[^\s<>,;:"()[\]@]+\.[^\s<>,;:"()[\]@]+/g) || [];
+  return addresses.map((address) => address.toLowerCase());
+}
+
 export function parseEmailAddressHeader(
   value: unknown,
 ): { name: string | null; address: string } | null {

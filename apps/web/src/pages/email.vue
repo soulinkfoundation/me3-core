@@ -8,6 +8,7 @@ import Button from "../components/Button.vue";
 import PageLoading from "../components/PageLoading.vue";
 import UiIcon from "../components/UiIcon.vue";
 import EmailBrief from "../components/email/EmailBrief.vue";
+import EmailOriginalDialog from "../components/email/EmailOriginalDialog.vue";
 import EmailRulesDialog from "../components/email/EmailRulesDialog.vue";
 import EmailSenderAvatar from "../components/email/EmailSenderAvatar.vue";
 import type { MailSenderIdentity, MailTriageTag, MailboxBriefItem } from "../components/email/brief";
@@ -74,6 +75,8 @@ type InboxMessage = {
   fromAddress: string | null;
   fromName: string | null;
   toAddress: string | null;
+  /** Core 0.1.254+: every address an inbound message was sent to, most specific first. */
+  recipientAddresses?: string[];
   subject: string;
   body: string;
   htmlBody?: string | null;
@@ -306,6 +309,7 @@ const composeForm = ref({
 const briefRef = ref<InstanceType<typeof EmailBrief> | null>(null);
 const briefCount = ref<number | null>(null);
 const rulesOpen = ref(false);
+const originalMessage = ref<InboxMessage | null>(null);
 const selectMode = ref(false);
 const mobileMenuOpen = ref(false);
 const threadMoreOpen = ref(false);
@@ -417,6 +421,53 @@ const outboundSenderOptions = computed(() => {
 
   return options;
 });
+
+const ownMailboxAddresses = computed(
+  () =>
+    new Set(
+      [mailboxAddress.value, mailboxMeta.value?.aliasAddress, configuredEmailAddress.value, visibleMailboxAddress.value]
+        .map((address) => address?.trim().toLowerCase())
+        .filter((address): address is string => Boolean(address)),
+    ),
+);
+
+/** Verified send-as addresses: senders other than the mailbox's own address. */
+const sendAsAddresses = computed(
+  () =>
+    new Set(
+      outboundSenderOptions.value
+        .map((option) => option.address)
+        .filter((address) => !ownMailboxAddresses.value.has(address)),
+    ),
+);
+
+/**
+ * Where an inbound message was sent when that was not the ME3 address itself, such as a
+ * work address forwarded into ME3. A send-as address wins, from any recipient header.
+ */
+function deliveredToAddress(message: InboxMessage): string | null {
+  if (message.direction !== "inbound") return null;
+  const sendAs = (message.recipientAddresses || []).find((address) => sendAsAddresses.value.has(address));
+  if (sendAs) return sendAs;
+  const to = message.toAddress?.trim().toLowerCase() || "";
+  return to && !ownMailboxAddresses.value.has(to) && !isInternalMailboxAddress(to) && !to.endsWith("@me3.app")
+    ? to
+    : null;
+}
+
+function deliveredToSendAs(message: InboxMessage): string | null {
+  const address = deliveredToAddress(message);
+  return address && sendAsAddresses.value.has(address) ? address : null;
+}
+
+/** Replies go out from the address the message was sent to, when ME3 can send as it. */
+function replyFromAddressFor(message: InboxMessage | null | undefined): string | undefined {
+  if (!message) return undefined;
+  const candidates = [deliveredToAddress(message), message.toAddress?.trim().toLowerCase()];
+  return candidates
+    .map((address) => outboundSenderOptions.value.find((option) => option.address === address)?.address)
+    .find(Boolean);
+}
 const telegramChatRef = ref<HTMLElement | null>(null);
 
 const contactRecipientOptions = computed(() =>
@@ -2561,7 +2612,9 @@ function messageRecipientLine(message: InboxMessage): string {
     return to ? `to ${to}` : "";
   }
   const address = message.sender?.address || getDisplayText(message.fromAddress);
-  return address && address !== message.sender?.name ? `to you · ${address}` : "to you";
+  const delivered = deliveredToAddress(message);
+  const to = delivered ? `to ${delivered}` : "to you";
+  return address && address !== message.sender?.name ? `${to} · ${address}` : to;
 }
 
 function exitSelectMode() {
@@ -2706,10 +2759,7 @@ async function sendInlineReply(sendNow: boolean) {
   replySending.value = true;
   replyError.value = "";
   try {
-    const fromAddress =
-      outboundSenderOptions.value.find((option) => option.address === target.toAddress)?.address ||
-      outboundSenderOptions.value[0]?.address ||
-      undefined;
+    const fromAddress = replyFromAddressFor(target) || outboundSenderOptions.value[0]?.address || undefined;
     const response = await api.post<{ draft: InboxMessage | null }>("/mailbox/drafts", {
       fromAddress,
       to: replyRecipient.value,
@@ -2861,9 +2911,7 @@ function openComposeModal(
   composeToHasTyped.value = false;
   composeToActiveIndex.value = 0;
   const defaultFromAddress =
-    outboundSenderOptions.value.find(
-      (option) => option.address === message?.toAddress,
-    )?.address ||
+    replyFromAddressFor(message) ||
     outboundSenderOptions.value.find(
       (option) => option.address === message?.fromAddress,
     )?.address ||
@@ -2928,10 +2976,7 @@ function openComposeModal(
       composeReplyToMessageId.value = message.id;
       const replyTo =
         message.direction === "inbound" ? message.fromAddress : message.toAddress;
-      const replyFromAddress =
-        outboundSenderOptions.value.find(
-          (option) => option.address === message.toAddress,
-        )?.address || defaultFromAddress;
+      const replyFromAddress = replyFromAddressFor(message) || defaultFromAddress;
       composeForm.value = {
         fromAddress: replyFromAddress,
         to: replyTo || "",
@@ -3976,6 +4021,7 @@ onBeforeUnmount(() => {
                           <span class="mail-row__line">
                             <span class="mail-row__subject">{{ getMessageSubject(message) }}</span>
                             <span v-if="getRowTag(message)" class="mail-tag" :class="`mail-tag--${getRowTag(message)?.tone}`">{{ getRowTag(message)?.label }}</span>
+                            <span v-if="deliveredToSendAs(message)" class="mail-tag mail-tag--muted mail-row__to" :title="`Sent to ${deliveredToSendAs(message)}`">{{ deliveredToSendAs(message) }}</span>
                           </span>
                           <span class="mail-row__preview">{{ getMessagePreview(message) }}</span>
                         </span>
@@ -4240,6 +4286,14 @@ onBeforeUnmount(() => {
                               Always archive {{ latestInboundMessage.sender?.name || "this sender" }}
                             </button>
                           </template>
+                          <button
+                            v-if="latestInboundMessage"
+                            type="button"
+                            role="menuitem"
+                            @click="threadMoreOpen = false; originalMessage = latestInboundMessage"
+                          >
+                            Show original
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -4609,6 +4663,12 @@ onBeforeUnmount(() => {
     </AppDialog>
 
     <EmailRulesDialog :open="rulesOpen" @close="rulesOpen = false" />
+    <EmailOriginalDialog
+      :open="originalMessage !== null"
+      :message-id="originalMessage?.id || null"
+      :subject="originalMessage ? getMessageSubject(originalMessage) : undefined"
+      @close="originalMessage = null"
+    />
   </div>
 </template>
 
@@ -6323,6 +6383,16 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   background: var(--ui-accent-soft, rgba(34, 152, 116, 0.14));
   color: var(--ui-accent-strong, var(--ui-accent, #229874));
+}
+
+/* A long send-as address shrinks before the subject does. */
+.mail-row__to {
+  display: inline-block;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mail-tag--danger {

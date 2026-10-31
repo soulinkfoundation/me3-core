@@ -1,4 +1,4 @@
-import { decodeMimeHeaderValue, parseEmailAddressHeader } from "../../../shared/email-headers";
+import { decodeMimeHeaderValue, parseEmailAddressHeader, parseEmailAddressList } from "../../../shared/email-headers";
 import { type DbMailboxAliasRow, type DbMailboxMessageRow, type MailboxUnsubscribeAction, type AgentMailboxMessage } from "./mailbox-types";
 import { parseJsonRecord, parseJsonArray, isPlainObject } from "./domain-store";
 
@@ -78,6 +78,7 @@ export function serializeAgentMailboxMessage(row: DbMailboxMessageRow) {
     fromAddress: fromHeader?.address || row.from_address,
     fromName: fromHeader?.name || null,
     toAddress: row.to_address,
+    recipientAddresses: row.direction === "inbound" ? getRecipientAddresses(headers, metadata) : [],
     subject: decodeMimeHeaderValue(row.subject || "(no subject)"),
     body,
     htmlBody: row.html_body || null,
@@ -102,6 +103,16 @@ export function serializeAgentMailboxMessage(row: DbMailboxMessageRow) {
     sentAt: row.sent_at,
     createdAt: row.created_at,
   };
+}
+
+// Where an inbound message was sent, most specific first: the headers a forward
+// leaves behind (X-Original-To, Delivered-To, X-Forwarded-To), then To and Cc, then
+// the envelope recipient ME3 received it on. Clients match these to the owner's addresses.
+export function getRecipientAddresses(headers: Record<string, unknown>, metadata: Record<string, unknown>): string[] {
+  const addresses = ["x-original-to", "delivered-to", "x-forwarded-to", "to", "cc"]
+    .flatMap((name) => parseEmailAddressList(getHeaderValue(headers, name)));
+  if (typeof metadata.envelopeTo === "string") addresses.push(...parseEmailAddressList(metadata.envelopeTo));
+  return [...new Set(addresses)].slice(0, 20);
 }
 
 export function getSerializedAgentMailboxMessageBody(row: DbMailboxMessageRow): string {

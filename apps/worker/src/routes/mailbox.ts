@@ -1,6 +1,7 @@
 import { parseEmailAddressHeader } from "../../../../shared/email-headers";
 import { listVerifiedSendAddresses } from "../email-send-identities";
 import { ownerInstructionAddresses } from "../mailbox-instructions";
+import { getMailboxOriginal } from "../mailbox-original";
 import { dkimDomainAligned } from "../mailbox-sender-auth";
 import { parseJsonRecord } from "../workspace-input";
 import {
@@ -515,6 +516,15 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
     const [message] = await decorateMailboxMessages(c.env, ownerId, [result.message], apiOrigin(c));
     return c.json({ message });
+  });
+
+  app.get("/api/mailbox/messages/:messageId/original", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+
+    const original = await getMailboxOriginal(c.env, ownerId, c.req.param("messageId"));
+    if (!original) return c.json({ error: "Message not found" }, 404);
+    return c.json({ original });
   });
 
   app.get("/api/mailbox/messages/:messageId/attachments/:attachmentIndex", async (c) => {
