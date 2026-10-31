@@ -263,6 +263,8 @@ export type SiteRenderCapabilities = {
   bookingsEnabled: boolean;
   newsletterSignup: boolean;
   productCheckoutEnabled: boolean;
+  /** Business plan: offers with a `pageSlug` and no site page of that slug get a generated page of their own. */
+  offerPagesEnabled?: boolean;
 };
 
 const DEFAULT_CAPABILITIES: SiteRenderCapabilities = {
@@ -347,6 +349,8 @@ export async function generateSiteHtml(
   context: { baseUrl?: string; entityType?: "Person" | "Organization"; images?: SiteImageMetadata; placeholders?: boolean } = {},
 ): Promise<Record<string, string>> {
   if (profile.visibility === "private") return {};
+  const offerPages = resolveOfferPages(profile, { ...DEFAULT_CAPABILITIES, ...capabilities });
+  profile = offerPages.profile;
   const pricingCountries = regionalPricingCountries(profile);
   if (pricingCountries.length) {
     const output = await generateSiteHtml(localizeRegionalPrices(profile, null), files, capabilities, context);
@@ -388,6 +392,10 @@ export async function generateSiteHtml(
         output[`${sectionPaths.blog}/${normalizeSitePath(post.slug)}.html`] = generateContentPageHtml(profile, post.title || titleFromSlug(post.slug), markdown, "blog", "../", access);
       }
     }
+  }
+
+  for (const page of offerPages.pages) {
+    output[`${page.slug}.html`] = generateOfferPageHtml(profile, page.entry, access);
   }
 
   const products = (profile.products || []).filter((product) => product.slug);
@@ -603,10 +611,118 @@ function generateOffers(profile: Me3SiteProfile, inlineBooking: boolean): string
     const places = kind !== "one_to_one" && typeof offer.capacity === "number" ? `${offer.capacity} places` : "";
     const pills = [offerWhen(entry, book.duration), formatPricing(offer.pricing), places].filter(Boolean);
     const image = offer.image ? `<img class="site-offer__image" src="${escapeHtml(filePathForHtml(offer.image))}" alt="" loading="lazy" decoding="async">` : "";
-    return `<article class="site-offer${image ? " site-offer--image" : ""}">${image}<div class="site-offer__body">${place ? `<p class="site-offer__place">${escapeHtml(place)}</p>` : ""}<h3>${escapeHtml(title)}</h3><div class="site-offer__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>${offer.description ? `<p>${escapeHtml(plainTextFromMaybeHtml(offer.description))}</p>` : ""}<button type="button" data-offer-book-type="${kind}" data-offer-book="${index}" aria-label="${escapeHtml(`${label}: ${title}`)}">${escapeHtml(label)}</button></div></article>`;
+    return `<article class="site-offer${image ? " site-offer--image" : ""}">${image}<div class="site-offer__body">${place ? `<p class="site-offer__place">${escapeHtml(place)}</p>` : ""}<h3>${escapeHtml(title)}</h3><div class="site-offer__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>${offer.description ? `<p>${escapeHtml(plainTextFromMaybeHtml(offer.description))}</p>` : ""}<div class="site-offer__actions"><button type="button" data-offer-book-type="${kind}" data-offer-book="${index}" aria-label="${escapeHtml(`${label}: ${title}`)}">${escapeHtml(label)}</button>${offer.pageSlug ? `<a class="site-offer__more" href="./${escapeHtml(normalizeSitePath(offer.pageSlug))}" aria-label="${escapeHtml(`More about ${title}`)}">More →</a>` : ""}</div></div></article>`;
   }).join("");
   const booking = inlineBooking ? `<div class="site-offer-booking" hidden>${generateBooking(profile)}</div>` : "";
   return `<section class="site-offers"><div class="site-section-heading"><h2>Work with me</h2></div><div class="site-offers__grid">${cards}</div>${booking}<script>(function(){var section=document.currentScript.parentElement;section.querySelectorAll('[data-offer-book]').forEach(function(button){button.addEventListener('click',function(){var booking=section.querySelector('.site-offer-booking');if(booking)booking.hidden=false;var target=booking||document.getElementById('booking');if(!target)return;var type=button.getAttribute('data-offer-book-type')||'one_to_one';var tab=target.querySelector('[data-booking-type-tab="'+type+'"]');if(tab)tab.click();var panel=target.querySelector('[data-booking-type-panel="'+type+'"]')||target;var index=Number(button.getAttribute('data-offer-book'));var card=panel.querySelectorAll('.booking-card')[index];if(card)card.click();var select=panel.querySelector('[data-booking-offer-select]');if(select&&select.options[index]){select.selectedIndex=index;select.dispatchEvent(new Event('change',{bubbles:true}));}target.scrollIntoView({behavior:'smooth',block:'start'});});});})();</script></section>`;
+}
+
+/** Paths an offer page can't take: the owner app, the API and the site's own files and sections. */
+export const RESERVED_SITE_PAGE_SLUGS: ReadonlySet<string> = new Set([
+  "account", "accounts", "agent", "api", "assets", "assistant", "auth", "blog", "bookings", "calendar", "clients",
+  "contacts", "create", "dashboard", "email", "files", "home", "index", "journal", "llms", "login", "me", "messages",
+  "mission-control", "mobile", "preview", "robots", "settings", "shop", "site", "sitemap", "sites", "social",
+  "socials", "tasks", "testimonials", "wheel-of-life",
+]);
+
+type OfferPage = { slug: string; entry: OfferEntry };
+
+/**
+ * Decides which offers get a generated page. An offer whose `pageSlug` names a visible site page links to that
+ * page as before; otherwise, on the Business plan, it gets its own page at that slug. Any other `pageSlug` is
+ * dropped so no card links to a page that doesn't exist.
+ */
+function resolveOfferPages(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities): { profile: Me3SiteProfile; pages: OfferPage[] } {
+  const book = profile.intents?.book;
+  if (!book) return { profile, pages: [] };
+  const contentSlugs = new Set((profile.pages || [])
+    .filter((page) => page.visible !== false && page.file && page.slug)
+    .map((page) => normalizeSitePath(page.slug || "")));
+  const sectionPaths = Object.values(resolveSiteSectionPaths(profile));
+  const generate = Boolean(capabilities.offerPagesEnabled && capabilities.bookingsEnabled && book.enabled);
+  const taken = new Set<string>();
+  const pages: OfferPage[] = [];
+  const resolve = <T extends BookingOffer>(offer: T, kind: OfferKind, index: number): T => {
+    if (!offer.pageSlug) return offer;
+    const slug = normalizeSitePath(offer.pageSlug);
+    if (contentSlugs.has(slug)) return offer;
+    const valid = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) && !RESERVED_SITE_PAGE_SLUGS.has(slug) && !sectionPaths.includes(slug) && !taken.has(slug);
+    if (!generate || !valid) {
+      const { pageSlug: _dropped, ...rest } = offer;
+      return rest as T;
+    }
+    taken.add(slug);
+    const resolved = { ...offer, pageSlug: slug };
+    pages.push({ slug, entry: { offer: resolved, kind, index } });
+    return resolved;
+  };
+  const resolveList = <T extends BookingOffer>(list: T[] | undefined, kind: OfferKind) =>
+    Array.isArray(list) ? list.map((offer, index) => resolve(offer, kind, index)) : list;
+  const explicitTypes = Array.isArray(book.bookingTypes) && book.bookingTypes.length > 0;
+  // The booking types are the source the widget reads. The top-level copies only keep a link the types kept.
+  const bookingTypes = explicitTypes
+    ? book.bookingTypes!.map((type) => {
+        if (!type || typeof type !== "object") return type;
+        if (type.type === "class") return { ...type, classes: resolveList(type.classes, "class") };
+        if (type.type === "retreat") return { ...type, retreats: resolveList(type.retreats, "retreat") };
+        return { ...type, offers: resolveList(type.offers, "one_to_one") };
+      })
+    : book.bookingTypes;
+  const linked = new Map(pages.map((page) => [page.entry.offer.id, page.slug]));
+  const mirror = <T extends BookingOffer>(list: T[] | undefined) => Array.isArray(list)
+    ? list.map((offer) => {
+        if (!offer.pageSlug) return offer;
+        const slug = normalizeSitePath(offer.pageSlug);
+        if (contentSlugs.has(slug) || linked.get(offer.id) === slug) return { ...offer, pageSlug: slug };
+        const { pageSlug: _dropped, ...rest } = offer;
+        return rest as T;
+      })
+    : list;
+  const resolvedBook = explicitTypes
+    ? { ...book, bookingTypes, offers: mirror(book.offers), classes: mirror(book.classes), retreats: mirror(book.retreats) }
+    : { ...book, offers: resolveList(book.offers, "one_to_one"), classes: resolveList(book.classes, "class"), retreats: resolveList(book.retreats, "retreat") };
+  return { profile: { ...profile, intents: { ...profile.intents, book: resolvedBook } }, pages };
+}
+
+const OFFER_KIND_LABELS: Record<OfferKind, string> = { one_to_one: "Appointment", class: "Class", retreat: "Event" };
+
+/** A page for one offer: what it is, when, where and the price, then the booking form for just that offer. */
+function generateOfferPageHtml(profile: Me3SiteProfile, entry: OfferEntry, capabilities: SiteRenderCapabilities): string {
+  const { offer, kind } = entry;
+  const book = profile.intents?.book;
+  const title = offer.title || "Session";
+  const label = offer.buttonLabel || defaultOfferButtonLabel(kind);
+  const place = offerPlace(offer);
+  const places = kind !== "one_to_one" && typeof offer.capacity === "number" ? `${offer.capacity} places` : "";
+  const pills = [offerWhen(entry, book?.duration), formatPricing(offer.pricing), places].filter(Boolean);
+  const type = normalizeBookingTypes(book).find((item) => (item.type || "one_to_one") === kind);
+  const singleType = type && (kind === "class" ? { ...type, classes: [offer] } : kind === "retreat" ? { ...type, retreats: [offer] } : { ...type, offers: [offer] });
+  const booking = singleType && book
+    ? generateBooking({ ...profile, intents: { ...profile.intents, book: { ...book, title: label, description: "", bookingTypes: [singleType] as NonNullable<typeof book.bookingTypes> } } })
+    : "";
+  const modern = Boolean(profile.extensions?.["me3.app/site"]);
+  const description = plainTextFromMaybeHtml(offer.description || "");
+  return pageShell(profile, {
+    title: `${title} | ${profile.name || "ME3"}`,
+    description: description.slice(0, 160) || `${title} with ${profile.name || "me"}`,
+    activeSlug: entry.offer.pageSlug || "",
+    basePath: "./",
+    body: `${modern ? "" : `<header class="page-header"><a class="back-link" href="./">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, "./"))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, "", "./", "header")}</header>`}
+      <main class="content offer-page">${offer.image ? `<img class="offer-page__image" src="${escapeHtml(filePathForHtml(offer.image, "./"))}" alt="" decoding="async">` : ""}<p class="offer-page__kind">${escapeHtml([OFFER_KIND_LABELS[kind], place].filter(Boolean).join(" · "))}</p><h1>${escapeHtml(title)}</h1>${pills.length ? `<div class="offer-page__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>` : ""}${offer.description ? `<div class="offer-page__description">${renderRichText(offer.description)}</div>` : ""}${booking ? `<p><a class="offer-page__cta" href="#booking">${escapeHtml(label)}</a></p>${booking}` : ""}</main>`,
+    footer: generateFooter(profile, capabilities.footerCustomization),
+    vibe: getVibe(profile),
+  });
+}
+
+function offerPageCss(): string {
+  return `.offer-page__image{display:block;width:100%;max-width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--radius,12px);margin:0 0 20px}
+.offer-page__kind{margin:0 0 6px;opacity:.72;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.offer-page h1{margin-top:0}
+.offer-page__pills{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px}
+.offer-page__pills span{padding:3px 10px;border-radius:999px;background:var(--raised,rgba(127,127,127,.14));font-size:.82rem;font-weight:700}
+.offer-page a.offer-page__cta{display:inline-flex;align-items:center;min-height:44px;padding:0 18px;border-radius:var(--button-radius,999px);background:var(--accent,#222);color:var(--accent-text,#fff);font-weight:700;text-decoration:none}
+.offer-page a.offer-page__cta:focus-visible{outline:3px solid var(--accent,#222);outline-offset:2px}
+.offer-page .booking{margin-top:32px}`;
 }
 
 function generateLatestWriting(profile: Me3SiteProfile): string {
@@ -754,7 +870,7 @@ function pageShell(
   <meta name="description" content="${escapeHtml(options.description)}">
   ${headLinks}
   ${modern ? siteThemeHeadScript(profile) : ""}
-  <style>${siteCss(modern ? "__modern" : options.vibe, profile.links?._accent)}${!modern && options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(modern ? "__modern" : options.vibe)}${contentImageCss()}${contentAudioCss()}${profilePolishCss(modern)}${navigationGroupCss()}${bookingControlsCss()}${productCheckoutCss}${productShopCss}.main.no-banner .profile-header{margin-top:0}${modern ? modernSiteCss(themeId, siteSettings?.colorMode || "auto", siteSettings?.accent) : ""}${bookingConfirmationCss}</style>
+  <style>${siteCss(modern ? "__modern" : options.vibe, profile.links?._accent)}${!modern && options.vibe === "paper" ? paperSiteCss() : ""}${siteCssOverrides(modern ? "__modern" : options.vibe)}${contentImageCss()}${contentAudioCss()}${profilePolishCss(modern)}${navigationGroupCss()}${bookingControlsCss()}${offerPageCss()}${productCheckoutCss}${productShopCss}.main.no-banner .profile-header{margin-top:0}${modern ? modernSiteCss(themeId, siteSettings?.colorMode || "auto", siteSettings?.accent) : ""}${bookingConfirmationCss}</style>
 </head>
 <body data-vibe="${escapeHtml(modern ? themeId : options.vibe)}" data-navigation-style="${navigationStyle}" data-layout="${modern ? modernSiteLayout(profile) : normalizeSiteLayout(profile.links?.[SITE_LAYOUT_LINK_KEY])}" data-page="${options.activeSlug ? "inner" : "home"}">
   <div class="container">
@@ -1404,8 +1520,8 @@ function generateBookingTypeBody(
   const cards = offers.map((offer, index) => {
     const duration = offer.duration || book?.duration || 30;
     const price = formatPricing(offer.pricing);
-    const page = profile.pages?.find((entry) => entry.slug === offer.pageSlug && entry.visible !== false && entry.file);
-    return `<div class="booking-offer-card"><button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || `${duration}-min Session`)}</strong>${renderBookingOfferDescription(offer.description)}<span>${duration} min${price ? ` · ${escapeHtml(price)}` : ""}</span><span class="booking-card-selection" aria-hidden="true">✓ Selected</span></button>${page ? `<a class="booking-offer-link" href="./${escapeHtml(normalizeSitePath(page.slug || ""))}">Learn more about this offer</a>` : ""}</div>`;
+    const pageSlug = offer.pageSlug ? normalizeSitePath(offer.pageSlug) : "";
+    return `<div class="booking-offer-card"><button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || `${duration}-min Session`)}</strong>${renderBookingOfferDescription(offer.description)}<span>${duration} min${price ? ` · ${escapeHtml(price)}` : ""}</span><span class="booking-card-selection" aria-hidden="true">✓ Selected</span></button>${pageSlug ? `<a class="booking-offer-link" href="./${escapeHtml(pageSlug)}">Learn more about this offer</a>` : ""}</div>`;
   }).join("");
 
   return generatePaidBookingWidget({
@@ -1417,7 +1533,6 @@ function generateBookingTypeBody(
     fallbackDuration: book?.duration || 30,
     cards,
     displayMode: book?.offerDisplayMode === "dropdown" ? "dropdown" : "cards",
-    pageSlugs: new Set((profile.pages || []).filter((page): page is typeof page & { slug: string } => page.visible !== false && Boolean(page.file && page.slug)).map((page) => page.slug)),
   });
 }
 
@@ -1476,7 +1591,7 @@ function generateEventBookingWidget(input: {
       : `<input name="localDate" type="hidden" value="${escapeHtml(first?.startDate || "")}">`;
   const amountInput = `<input name="amount" type="hidden" min="${escapeHtml(String(first?.pricing.minimumAmount || 5))}" step="1" value="${escapeHtml(String(first?.pricing.suggestedAmount || 0))}">`;
 
-  return `<h3 class="booking-subtitle">Choose ${input.bookingType === "class" ? "a class" : "a retreat"}</h3>
+  return `${input.offers.length > 1 ? `<h3 class="booking-subtitle">Choose ${input.bookingType === "class" ? "a class" : "an event"}</h3>` : ""}
     <div class="booking-widget event-booking-widget" data-event-booking-widget>
       <script type="application/json" data-event-booking-config>${jsonForScript(config)}</script>
       <div class="booking-session-preview">${input.cards}</div>
@@ -1491,7 +1606,7 @@ function generateEventBookingWidget(input: {
         <input name="guestEmail" type="email" autocomplete="email" inputmode="email" required pattern="[^\\s@]+@[^\\s@]+\\.[^\\s@]+" title="Enter a valid email address." placeholder="Your email" aria-label="Your email">
         <textarea name="notes" rows="3" placeholder="Notes (optional)" aria-label="Notes"></textarea>
         <p class="booking-payment-later" data-event-payment-later hidden>Payment is not taken now. You’ll receive payment details by email after booking.</p>
-        <button type="submit" class="booking-submit">Book ${input.bookingType === "class" ? "class" : "retreat"}</button>
+        <button type="submit" class="booking-submit">${input.bookingType === "class" ? "Book class" : "Reserve a place"}</button>
       </form>
     </div>
     <script>${eventBookingWidgetScript()}</script>`;
@@ -1559,14 +1674,13 @@ function generatePaidBookingWidget(input: {
   fallbackDuration: number;
   cards: string;
   displayMode: "cards" | "dropdown";
-  pageSlugs: Set<string>;
 }): string {
   const normalizedOffers = input.offers.map((offer, index) => ({
     id: offer.id || slugify(offer.title || `booking-${index + 1}`) || `booking-${index + 1}`,
     title: offer.title || `${offer.duration || input.fallbackDuration}-min Session`,
     duration: offer.duration || input.fallbackDuration,
     windows: offer.availability?.windows || input.availability.windows || {},
-    pageHref: offer.pageSlug && input.pageSlugs.has(offer.pageSlug) ? `./${normalizeSitePath(offer.pageSlug)}` : "",
+    pageHref: offer.pageSlug ? `./${normalizeSitePath(offer.pageSlug)}` : "",
     pricing: {
       enabled: offer.pricing?.enabled === true,
       suggestedAmount: offer.pricing?.suggestedAmount || 0,

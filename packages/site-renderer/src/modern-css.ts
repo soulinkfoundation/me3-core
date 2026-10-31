@@ -129,7 +129,11 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-offer__pills{display:flex;flex-wrap:wrap;gap:6px}
 .site-offer__pills span{padding:3px 9px;border-radius:999px;background:var(--raised);font-size:.78rem;font-weight:700}
 .site-offer p{margin:12px 0 16px;color:var(--muted);font-size:.92rem;line-height:1.55}
-.site-offer button{min-height:40px;margin-top:auto;padding:0 15px;border:1px solid var(--border);border-radius:var(--button-radius);background:var(--surface);color:var(--text);font:inherit;font-size:.86rem;font-weight:700;cursor:pointer}
+.site-offer__actions{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-top:auto}
+.site-offer__more{color:var(--text);font-size:.86rem;font-weight:700;text-decoration:none}
+.site-offer__more:hover{text-decoration:underline}
+.site-offer__more:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.site-offer button{min-height:40px;padding:0 15px;border:1px solid var(--border);border-radius:var(--button-radius);background:var(--surface);color:var(--text);font:inherit;font-size:.86rem;font-weight:700;cursor:pointer}
 .site-offer button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .site-offer-booking{margin-top:24px}
 .site-offer-booking[hidden]{display:none}
@@ -173,7 +177,7 @@ body[data-layout=cover] .site-writing-row time{order:2}
 body[data-layout=minimal] .site-offers__grid{display:block}
 body[data-layout=minimal] .site-offer{display:grid;grid-template-columns:1fr auto;box-shadow:none;border:0;border-top:1px solid var(--border);border-radius:0;padding:18px 0}
 body[data-layout=minimal] .site-offer__pills,body[data-layout=minimal] .site-offer p{grid-column:1}
-body[data-layout=minimal] .site-offer button{grid-column:2;grid-row:1/4;align-self:center}
+body[data-layout=minimal] .site-offer__actions{grid-column:2;grid-row:1/4;align-self:center}
 .content{box-sizing:border-box;width:min(760px,calc(100% - 48px));margin:64px auto 100px;padding:0;font-size:1.08rem;line-height:1.65;flex:1}
 .content h1{font-size:clamp(2.5rem,6vw,4.25rem)}
 .content h2{margin-top:1.7em}

@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { RESERVED_SITE_PAGE_SLUGS } from "@me3-core/site-renderer";
+import AppSwitch from "../AppSwitch.vue";
 import UiIcon from "../UiIcon.vue";
 import { compressImage, resizeImage } from "@/utils/imageCompression";
 import { useAppToast } from "../../composables/useAppToast";
-import type { WizardOfferDetails, WizardOfferLocation } from "../../stores/wizard";
+import { normalizeOfferPageSlug, type WizardOfferDetails, type WizardOfferLocation } from "../../stores/wizard";
 
 // Matches product photos so a few offer photos still fit in the saved draft.
 const MAX_PHOTO_BYTES = 700 * 1024;
@@ -14,6 +16,14 @@ const props = defineProps<{
   defaultButtonLabel: string;
   /** Mode to show selected when the offer has no location yet, e.g. online for a call with a video link. */
   impliedMode?: WizardOfferLocation["mode"];
+  /** Offer title, used for the page path when the owner switches the page on. */
+  title: string;
+  /** Business plan: the offer can have its own page. */
+  pageAccess: boolean;
+  /** Paths other offers already use. */
+  takenPageSlugs: string[];
+  /** Site pages (Pages step) an offer can point at instead of a generated page. */
+  sitePageSlugs: string[];
 }>();
 const emit = defineEmits<{ update: [updates: Partial<WizardOfferDetails>] }>();
 const { toastFromUnknown } = useAppToast();
@@ -37,6 +47,38 @@ const buttonLabel = computed({
   get: () => props.details.buttonLabel || "",
   set: (value: string) => emit("update", { buttonLabel: value.trim() ? value : undefined }),
 });
+
+const slugDraft = ref(props.details.pageSlug || "");
+watch(() => props.details.pageSlug, (value) => { slugDraft.value = value || ""; });
+
+const pageProblem = computed(() => {
+  const slug = props.details.pageSlug;
+  if (!slug) return "";
+  if (RESERVED_SITE_PAGE_SLUGS.has(slug)) return `/${slug} is used by ME3. Choose another path.`;
+  if (props.takenPageSlugs.includes(slug)) return `Another offer already uses /${slug}.`;
+  return "";
+});
+
+function setOwnPage(on: boolean) {
+  if (!on) {
+    emit("update", { pageSlug: undefined });
+    return;
+  }
+  const base = normalizeOfferPageSlug(props.title) || "offer";
+  let slug = base;
+  for (let n = 2; RESERVED_SITE_PAGE_SLUGS.has(slug) || props.takenPageSlugs.includes(slug); n += 1) slug = `${base}-${n}`;
+  emit("update", { pageSlug: slug });
+}
+
+function commitSlug() {
+  const slug = normalizeOfferPageSlug(slugDraft.value);
+  if (!slug) {
+    slugDraft.value = props.details.pageSlug || "";
+    return;
+  }
+  slugDraft.value = slug;
+  if (slug !== props.details.pageSlug) emit("update", { pageSlug: slug });
+}
 
 function selectMode(value: WizardOfferLocation["mode"]) {
   const current = props.details.location;
@@ -132,6 +174,50 @@ async function onPhotoSelected(event: Event) {
         maxlength="40"
         :placeholder="defaultButtonLabel"
       />
+    </div>
+
+    <div class="form-group offer-own-page">
+      <div class="offer-own-page-head">
+        <span :id="`${idPrefix}-page-label`" class="offer-details-label">
+          Own page
+          <span v-if="!pageAccess" class="offer-plan-badge">Business</span>
+        </span>
+        <AppSwitch
+          v-if="pageAccess"
+          :model-value="Boolean(details.pageSlug)"
+          label="Give this offer its own page"
+          @update:model-value="setOwnPage"
+        />
+      </div>
+      <template v-if="pageAccess && details.pageSlug">
+        <div class="offer-page-path">
+          <span aria-hidden="true">/</span>
+          <label class="visually-hidden" :for="`${idPrefix}-page`">Page path</label>
+          <input
+            :id="`${idPrefix}-page`"
+            v-model="slugDraft"
+            type="text"
+            maxlength="60"
+            autocapitalize="off"
+            spellcheck="false"
+            :aria-invalid="Boolean(pageProblem)"
+            :aria-describedby="`${idPrefix}-page-hint`"
+            @blur="commitSlug"
+            @keydown.enter.prevent="commitSlug"
+          />
+        </div>
+        <p :id="`${idPrefix}-page-hint`" class="form-hint" :class="{ 'form-error': pageProblem }">
+          {{
+            pageProblem ||
+            (sitePageSlugs.includes(details.pageSlug)
+              ? `Links to your page /${details.pageSlug} from the Pages step.`
+              : "ME3 builds the page from these details when you publish. Share the link anywhere.")
+          }}
+        </p>
+      </template>
+      <p v-else-if="!pageAccess" class="form-hint">
+        On the Business plan, each offer can have a page of its own to share in your bio, an ad or an email.
+      </p>
     </div>
   </div>
 </template>
@@ -241,6 +327,49 @@ async function onPhotoSelected(event: Event) {
 button:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+.offer-own-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.offer-own-page-head .offer-details-label {
+  margin: 0;
+}
+
+.offer-plan-badge {
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+.offer-page-path {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.offer-page-path span {
+  color: var(--ui-text-muted);
+  font-size: 14px;
+}
+
+.offer-page-path input {
+  flex: 1;
+  min-width: 0;
+}
+
+.form-error {
+  color: var(--ui-danger);
 }
 
 .optional-label {

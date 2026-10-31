@@ -230,6 +230,8 @@ export interface WizardOfferDetails {
   location?: WizardOfferLocation;
   /** Overrides the default "Book" wording on the offer's button. */
   buttonLabel?: string;
+  /** The offer's own page at /<pageSlug> (Business plan), or a site page with that slug. */
+  pageSlug?: string;
 }
 
 export interface WizardBookingOffer extends WizardOfferDetails {
@@ -241,7 +243,6 @@ export interface WizardBookingOffer extends WizardOfferDetails {
   meetingProvider?: "none" | "soulink" | "external";
   meetingUrl?: string;
   availability?: WizardBookingConfig["availability"];
-  pageSlug?: string;
 }
 
 export interface WizardClassOffer extends WizardOfferDetails {
@@ -624,6 +625,7 @@ type PublishedBookingClass = {
   image?: string;
   location?: WizardOfferLocation;
   buttonLabel?: string;
+  pageSlug?: string;
 };
 
 type PublishedBookingRetreat = {
@@ -641,6 +643,7 @@ type PublishedBookingRetreat = {
   image?: string;
   location?: WizardOfferLocation;
   buttonLabel?: string;
+  pageSlug?: string;
 };
 
 type PublishedBookingType = {
@@ -799,6 +802,8 @@ function normalizeOfferDetails(input: Partial<WizardOfferDetails>): WizardOfferD
   if (typeof input.buttonLabel === "string" && input.buttonLabel.trim()) {
     details.buttonLabel = input.buttonLabel.trim().slice(0, 40);
   }
+  const pageSlug = typeof input.pageSlug === "string" ? normalizeOfferPageSlug(input.pageSlug) : "";
+  if (pageSlug) details.pageSlug = pageSlug;
   return details;
 }
 
@@ -809,11 +814,12 @@ function publishedOfferDetails(offer: WizardOfferDetails) {
     ...(image ? { image } : {}),
     ...(offer.location ? { location: { mode: offer.location.mode, place: place || "" } } : {}),
     ...(offer.buttonLabel ? { buttonLabel: offer.buttonLabel } : {}),
+    ...(offer.pageSlug ? { pageSlug: offer.pageSlug } : {}),
   };
 }
 
 function loadedOfferDetails(
-  offer: { image?: string; location?: Partial<WizardOfferLocation>; buttonLabel?: string },
+  offer: { image?: string; location?: Partial<WizardOfferLocation>; buttonLabel?: string; pageSlug?: string },
   resolveAsset: (path: string) => string | null,
 ): WizardOfferDetails {
   const src = offer.image ? resolveAsset(offer.image) : "";
@@ -822,7 +828,13 @@ function loadedOfferDetails(
     ...(src && id ? { image: { id, src } } : {}),
     location: offer.location as WizardOfferLocation | undefined,
     buttonLabel: offer.buttonLabel,
+    pageSlug: offer.pageSlug,
   });
+}
+
+/** A page path an owner can type: lowercase words joined by hyphens. */
+export function normalizeOfferPageSlug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
 }
 
 function createDefaultBookingOffer(
@@ -848,7 +860,6 @@ function createDefaultBookingOffer(
     meetingProvider: overrides.meetingProvider || "none",
     meetingUrl: overrides.meetingUrl || "",
     ...(overrides.availability ? { availability: normalizeOfferAvailability(overrides.availability) } : {}),
-    ...(typeof overrides.pageSlug === "string" && overrides.pageSlug.trim() ? { pageSlug: overrides.pageSlug.trim() } : {}),
     ...normalizeOfferDetails(overrides),
   };
 }
@@ -1126,6 +1137,7 @@ function normalizeWizardClassOffers(input: unknown): WizardClassOffer[] {
       image: classOffer.image,
       location: classOffer.location,
       buttonLabel: classOffer.buttonLabel,
+      pageSlug: classOffer.pageSlug,
     });
 
     const baseId = normalized.id || "weekly-class";
@@ -1182,6 +1194,7 @@ function normalizeWizardRetreatOffers(input: unknown): WizardRetreatOffer[] {
       image: retreat.image,
       location: retreat.location,
       buttonLabel: retreat.buttonLabel,
+      pageSlug: retreat.pageSlug,
     });
 
     const baseId = normalized.id || "retreat";
@@ -2652,9 +2665,11 @@ export const useWizardStore = defineStore("wizard", () => {
     updatedPages[index] = nextPage;
     pages.value = updatedPages;
     if (nextSlug !== current.slug) {
-      profile.value.booking.offers = profile.value.booking.offers.map((offer) =>
-        offer.pageSlug === current.slug ? { ...offer, pageSlug: nextSlug } : offer,
-      );
+      const follow = <T extends WizardOfferDetails>(offer: T): T =>
+        offer.pageSlug === current.slug ? { ...offer, pageSlug: nextSlug } : offer;
+      profile.value.booking.offers = profile.value.booking.offers.map(follow);
+      profile.value.booking.classOffers = profile.value.booking.classOffers.map(follow);
+      profile.value.booking.retreatOffers = profile.value.booking.retreatOffers.map(follow);
     }
     markAsEdited();
     saveToStorage();
@@ -2793,10 +2808,8 @@ export const useWizardStore = defineStore("wizard", () => {
         }
       }
     }
+    // An offer that pointed at this page keeps its slug and gets a generated page instead (Business plan).
     pages.value = pages.value.filter((_, i) => i !== index);
-    profile.value.booking.offers = profile.value.booking.offers.map((offer) =>
-      offer.pageSlug === page.slug ? { ...offer, pageSlug: undefined } : offer,
-    );
     markAsEdited();
     saveToStorage();
   }
@@ -3709,6 +3722,7 @@ export const useWizardStore = defineStore("wizard", () => {
             image: offer.image,
             location: offer.location,
             buttonLabel: offer.buttonLabel,
+            pageSlug: offer.pageSlug,
             duration: offer.duration,
             meetingProvider: offer.meetingProvider,
             pricing: offer.pricing
@@ -3738,6 +3752,7 @@ export const useWizardStore = defineStore("wizard", () => {
             image: offer.image,
             location: offer.location,
             buttonLabel: offer.buttonLabel,
+            pageSlug: offer.pageSlug,
             duration: offer.duration,
             timezone: offer.timezone,
             recurrence: { ...offer.recurrence },
@@ -3769,6 +3784,7 @@ export const useWizardStore = defineStore("wizard", () => {
             image: offer.image,
             location: offer.location,
             buttonLabel: offer.buttonLabel,
+            pageSlug: offer.pageSlug,
             durationDays: deriveRetreatDurationDays(offer),
             startDate: offer.startDate,
             startTime: offer.startTime,
@@ -3843,9 +3859,6 @@ export const useWizardStore = defineStore("wizard", () => {
               bookingOffer.availability = {
                 windows: Object.fromEntries(days.filter((day) => sourceOffer.availability?.[day]?.length).map((day) => [day, sourceOffer.availability![day]])),
               };
-            }
-            if (sourceOffer?.pageSlug && pagesEnabled.value && pages.value.some((page) => page.slug === sourceOffer.pageSlug && page.visible !== false)) {
-              bookingOffer.pageSlug = sourceOffer.pageSlug;
             }
             return bookingOffer;
           });
@@ -5001,7 +5014,6 @@ export const useWizardStore = defineStore("wizard", () => {
                   meetingProvider: offer.meetingProvider,
                   meetingUrl: offer.meetingUrl,
                   availability: offer.availability?.windows,
-                  pageSlug: offer.pageSlug,
                   ...loadedOfferDetails(offer, resolveLoadedSiteAssetUrl),
                   pricing: offer.pricing
                     ? {
@@ -5022,7 +5034,6 @@ export const useWizardStore = defineStore("wizard", () => {
                   meetingProvider: offer.meetingProvider,
                   meetingUrl: offer.meetingUrl,
                   availability: offer.availability?.windows,
-                  pageSlug: offer.pageSlug,
                   ...loadedOfferDetails(offer, resolveLoadedSiteAssetUrl),
                   pricing: offer.pricing
                     ? {

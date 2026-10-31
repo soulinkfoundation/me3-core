@@ -6,6 +6,8 @@ import {
 } from "@me3-core/site-renderer";
 import { useWizardStore, type WizardContentAsset } from "../stores/wizard";
 import { sitePreviewFileForView } from "../utils/site-preview";
+import { isPluginAccessEnabled } from "../utils/pluginAccess";
+import { LANDING_PAGES_PLUGIN_ID } from "@me3-core/plugin-landing-pages";
 
 const props = withDefaults(
   defineProps<{
@@ -149,8 +151,13 @@ watch(
   { immediate: true },
 );
 
+// Business plan offer pages; the preview re-renders with them once plugin access loads.
+const offerPagesEnabled = ref(false);
+isPluginAccessEnabled(LANDING_PAGES_PLUGIN_ID).then((enabled) => { offerPagesEnabled.value = enabled; }).catch(() => {});
+
 watchEffect(async () => {
   const version = ++renderVersion;
+  const offerPages = offerPagesEnabled.value;
   // The renderer outputs nothing for a private profile, but the owner still previews their own site.
   const profile = { ...(wizard.generateMe3Json() as unknown as Me3SiteProfile), visibility: "public" as const };
   const logoUrl = wizard.profile.logo;
@@ -203,7 +210,7 @@ watchEffect(async () => {
       content: await contentWithPreviewAssets(file.content, file.images),
     })),
   );
-  const output = await generateSiteHtml(profile, sourceFiles, { productCheckoutEnabled: false });
+  const output = await generateSiteHtml(profile, sourceFiles, { productCheckoutEnabled: false, offerPagesEnabled: offerPages });
   if (version !== renderVersion) return;
 
   generatedFiles.value = Object.fromEntries(

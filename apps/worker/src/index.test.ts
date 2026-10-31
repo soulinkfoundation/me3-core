@@ -10026,14 +10026,15 @@ describe("ME3 Worker auth", () => {
           status: "installed",
           implementationStatus: "bundled",
         }),
+        // Offer pages are a Business plan feature, so self-hosted owners get them too (plan-features.ts).
         expect.objectContaining({
           id: "me3.landing-pages",
           showInPluginList: false,
-          status: "available",
+          status: "installed",
           implementationStatus: "bundled",
           releaseStage: "available",
           activationAllowed: true,
-          enabled: false,
+          enabled: true,
         }),
         // Self-hosted owners get Campaigns with no plugin to activate (plan-features.ts).
         expect.objectContaining({

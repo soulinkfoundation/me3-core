@@ -2,6 +2,7 @@ import { generateSiteHtml } from "@me3-core/site-renderer";
 import { applyAgentCheckoutSetting, resolveAgentCheckoutPublication } from "./agent-commerce";
 import { syncPublishedProfileToSoulinkDirectory } from "./network-directory";
 import { buildPublicMe3Profile } from "./public-me-profile";
+import { offerPagesPlanAccess } from "./plan-features";
 import { getSiteImageMetadata } from "./site-images";
 import {
   getGeneratedSiteContentType,
@@ -47,7 +48,7 @@ export async function publishSiteFromSource(env: Env, site: DbSite, manifest: Pu
       : await generateSiteHtml(
           profile,
           Array.from(sourceFiles.entries()).map(([name, content]) => ({ name, content })),
-          undefined,
+          { offerPagesEnabled: (await offerPagesPlanAccess(env)) === "included" },
           { baseUrl: publishedBaseUrl, images: await getSiteImageMetadata(env, site, [...sourceFiles.values()]) },
         );
     networkProfile = buildPublicMe3Profile(profile, publishedBaseUrl, {

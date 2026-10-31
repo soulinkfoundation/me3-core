@@ -37,6 +37,25 @@ describe("wizard store", () => {
     expect(reloaded.profile.booking.retreatOffers[0].pricing?.regionalPrices).toEqual(regionalPrices);
   });
 
+  it("keeps each offer's own page path through publishing, site loading and draft reload", () => {
+    const store = useWizardStore();
+    store.setBooking({ enabled: true, oneToOneEnabled: true, classEnabled: true, retreatEnabled: true });
+    store.updateBookingOffer(store.profile.booking.offers[0].id, { pageSlug: "massage" });
+    store.updateClassOffer(store.profile.booking.classOffers[0].id, { pageSlug: "thursday-flow" });
+    store.updateRetreatOffer(store.profile.booking.retreatOffers[0].id, { pageSlug: "yoga-for-runners" });
+    const source = store.generateMe3Json();
+    const book = source.intents?.book as any;
+    expect(book.offers[0].pageSlug).toBe("massage");
+    expect(book.classes[0].pageSlug).toBe("thursday-flow");
+    expect(book.retreats[0].pageSlug).toBe("yoga-for-runners");
+    expect(book.bookingTypes.find((type: any) => type.type === "retreat").retreats[0].pageSlug).toBe("yoga-for-runners");
+    store.loadFromSiteContent({ ...source, name: "Example" } as Parameters<typeof store.loadFromSiteContent>[0], [], [], [], "example");
+    expect(store.profile.booking.classOffers[0].pageSlug).toBe("thursday-flow");
+    store.saveToStorage();
+    setActivePinia(createPinia());
+    expect(useWizardStore().profile.booking.retreatOffers[0].pageSlug).toBe("yoga-for-runners");
+  });
+
   it("keeps uploaded testimonial avatars after publishing and reloading the draft", () => {
     const store = useWizardStore();
     store.activateDraftContext({ siteId: "site-profile", username: "owner", role: "profile" });
@@ -1646,7 +1665,7 @@ describe("wizard store", () => {
   });
 
   describe("booking", () => {
-    it("publishes offer hours and a detail page, and follows page slug changes", () => {
+    it("publishes offer hours and a page path, and follows page slug changes", () => {
       const store = useWizardStore();
       store.profile.name = "Alex";
       const page = store.addPage("Alignment");
@@ -1661,8 +1680,9 @@ describe("wizard store", () => {
       expect(book.offerDisplayMode).toBe("dropdown");
       expect(book.offers[0].availability.windows.monday).toEqual(["19:00-21:00"]);
       expect(book.offers[0].pageSlug).toBe("alignment-details");
+      // Without the site page the offer keeps its path and gets a generated page instead (Business plan).
       store.removePage(0);
-      expect(store.profile.booking.offers[0].pageSlug).toBeUndefined();
+      expect(store.profile.booking.offers[0].pageSlug).toBe("alignment-details");
     });
     it("does not export legacy booking placement targets", () => {
       const store = useWizardStore();

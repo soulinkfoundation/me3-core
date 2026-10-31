@@ -1,3 +1,4 @@
+import { RESERVED_SITE_PAGE_SLUGS } from "@me3-core/site-renderer";
 import { getSiteImageMetadata } from "./site-images";
 import {
   AGENT_LANDING_PAGE_SITE_TEMPLATE_ID,
@@ -84,6 +85,9 @@ export async function createSitePage(
     throw new SitePageInputError(
       "Page path must use 1-60 lowercase letters, numbers, or hyphens.",
     );
+  }
+  if (RESERVED_SITE_PAGE_SLUGS.has(slug)) {
+    throw new SitePageInputError(`/${slug} is used by ME3. Choose another page path.`);
   }
   const document = buildLandingPageDocument(input);
   const id = crypto.randomUUID();

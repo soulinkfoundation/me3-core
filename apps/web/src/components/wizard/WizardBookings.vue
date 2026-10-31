@@ -26,6 +26,8 @@ import BookingAvailabilityEditor, {
 import TimezonePicker from "../booking/TimezonePicker.vue";
 import SiteBookingReminders from "../booking/SiteBookingReminders.vue";
 import UiIcon from "../UiIcon.vue";
+import { isPluginAccessEnabled } from "../../utils/pluginAccess";
+import { LANDING_PAGES_PLUGIN_ID } from "@me3-core/plugin-landing-pages";
 import { useAppToast } from "../../composables/useAppToast";
 import { api } from "../../api";
 import { resolvePublicSiteUrl } from "../../utils/publicSiteUrl";
@@ -260,12 +262,15 @@ function saveAvailability() {
   availabilityDialog.value?.close();
 }
 
-const detailPages = computed(() => wizard.pagesEnabled
-  ? wizard.pages.filter((page) => page.visible !== false && page.slug)
+// Offer pages are a Business plan feature; the plan switches the landing pages plugin on.
+const offerPageAccess = ref(false);
+const sitePageSlugs = computed(() => wizard.pagesEnabled
+  ? wizard.pages.filter((page) => page.visible !== false && page.slug).map((page) => page.slug)
   : []);
-const pageSearch = ref("");
-function pageOption(page: { title: string; slug: string }) {
-  return `${page.title || page.slug} · /${page.slug}`;
+function takenPageSlugs(offerId: string) {
+  return [...wizard.profile.booking.offers, ...wizard.profile.booking.classOffers, ...wizard.profile.booking.retreatOffers]
+    .filter((offer) => offer.id !== offerId && offer.pageSlug)
+    .map((offer) => offer.pageSlug as string);
 }
 
 const activeOffer = computed(() => {
@@ -282,19 +287,6 @@ function updateActiveOffer(updates: Partial<WizardBookingOffer>) {
   wizard.updateBookingOffer(activeOffer.value.id, updates);
 }
 
-watch(
-  () => [activeOfferId.value, activeOffer.value?.pageSlug, detailPages.value] as const,
-  () => {
-    const selected = detailPages.value.find((page) => page.slug === activeOffer.value?.pageSlug);
-    pageSearch.value = selected ? pageOption(selected) : "";
-  },
-  { immediate: true },
-);
-function selectDetailPage() {
-  const selected = detailPages.value.find((page) => pageOption(page) === pageSearch.value);
-  updateActiveOffer({ pageSlug: selected?.slug });
-  if (!selected) pageSearch.value = "";
-}
 
 const activeOfferTitle = computed({
   get: () => activeOffer.value?.title || "",
@@ -987,6 +979,7 @@ function updateOfferDetails(kind: OfferKind, id: string, updates: Partial<Wizard
 
 onMounted(() => {
   wizard.setBooking({ enabled: true });
+  void isPluginAccessEnabled(LANDING_PAGES_PLUGIN_ID).then((enabled) => { offerPageAccess.value = enabled; }).catch(() => {});
 });
 </script>
 
@@ -1139,6 +1132,10 @@ onMounted(() => {
                 :id-prefix="`booking-offer-details-${activeOffer.id}`"
                 :details="activeOffer"
                 :default-button-label="offerKindInfo('one_to_one').defaultButton"
+                :title="activeOffer.title"
+                :page-access="offerPageAccess"
+                :taken-page-slugs="takenPageSlugs(activeOffer.id)"
+                :site-page-slugs="sitePageSlugs"
                 :implied-mode="activeOffer.meetingProvider === 'soulink' || activeOffer.meetingProvider === 'external' ? 'online' : undefined"
                 @update="updateOfferDetails('one_to_one', activeOffer.id, $event)"
               >
@@ -1212,25 +1209,6 @@ onMounted(() => {
                     <span>{{ availabilitySummary(activeOffer.availability) }}</span>
                   </div>
                   <button type="button" class="setting-action" @click="openAvailability(activeOffer.id)">Set availability</button>
-                </div>
-                <div class="form-group offer-page-field">
-                  <label :for="`booking-offer-page-${activeOffer.id}`">More about this offer</label>
-                  <div class="offer-page-input">
-                    <input
-                      :id="`booking-offer-page-${activeOffer.id}`"
-                      v-model="pageSearch"
-                      type="search"
-                      list="booking-offer-pages"
-                      placeholder="Search site pages (optional)"
-                      autocomplete="off"
-                      @change="selectDetailPage"
-                    />
-                    <button v-if="activeOffer.pageSlug" type="button" class="offer-page-clear" aria-label="Remove offer page" @click="updateActiveOffer({ pageSlug: undefined })"><UiIcon name="X" :size="20" /></button>
-                  </div>
-                  <datalist id="booking-offer-pages">
-                    <option v-for="page in detailPages" :key="page.slug" :value="pageOption(page)" />
-                  </datalist>
-                  <p class="form-hint">Visitors can open this page from the offer choice.</p>
                 </div>
               </div>
             </div>
@@ -1334,6 +1312,10 @@ onMounted(() => {
                 :id-prefix="`class-offer-details-${activeClassOffer.id}`"
                 :details="activeClassOffer"
                 :default-button-label="offerKindInfo('class').defaultButton"
+                :title="activeClassOffer.title"
+                :page-access="offerPageAccess"
+                :taken-page-slugs="takenPageSlugs(activeClassOffer.id)"
+                :site-page-slugs="sitePageSlugs"
                 @update="updateOfferDetails('class', activeClassOffer.id, $event)"
                />
 
@@ -1551,6 +1533,10 @@ onMounted(() => {
                 :id-prefix="`retreat-offer-details-${activeRetreatOffer.id}`"
                 :details="activeRetreatOffer"
                 :default-button-label="offerKindInfo('retreat').defaultButton"
+                :title="activeRetreatOffer.title"
+                :page-access="offerPageAccess"
+                :taken-page-slugs="takenPageSlugs(activeRetreatOffer.id)"
+                :site-page-slugs="sitePageSlugs"
                 @update="updateOfferDetails('retreat', activeRetreatOffer.id, $event)"
                />
 
@@ -2349,20 +2335,6 @@ onMounted(() => {
 .availability-choice button.active { background: #232428; color: #fff; }
 .display-options,
 .availability-choice { display: flex; gap: 8px; flex-wrap: wrap; }
-.offer-page-field { margin: 0; }
-.offer-page-input { position: relative; }
-.offer-page-input input { padding-right: 36px; }
-.offer-page-clear {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  border: 0;
-  background: transparent;
-  color: var(--color-text-muted);
-  font-size: 20px;
-  cursor: pointer;
-}
 .availability-dialog {
   width: min(640px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);

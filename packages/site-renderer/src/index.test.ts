@@ -140,6 +140,46 @@ describe("site generator", () => {
     expect(home).toContain(">Book a session</a>");
   });
 
+  it("gives offers their own page on the Business plan and links to it", async () => {
+    const profile = {
+      name: "Maya", handle: "maya",
+      pages: [{ slug: "about", title: "About", file: "about.md" }],
+      extensions: { "me3.app/site": { sections: [{ id: "offers", visible: true }] } },
+      intents: { book: {
+        enabled: true,
+        offers: [{ id: "massage", title: "Sports massage", pageSlug: "about" }],
+        bookingTypes: [
+          { id: "one_to_one", type: "one_to_one", offers: [{ id: "massage", title: "Sports massage", duration: 60, pageSlug: "about" }] },
+          { id: "retreat", type: "retreat", retreats: [
+            { id: "workshop", title: "Yoga for Runners", description: "Bring a mat.", startDate: "2026-11-21", startTime: "10:00", endDate: "2026-11-21", endTime: "12:00", capacity: 12, image: "./files/content/yoga.jpg", location: { mode: "in_person", place: "St Werburghs, Bristol" }, buttonLabel: "Reserve a mat", pageSlug: "yoga-for-runners" },
+            { id: "dup", title: "Same slug", startDate: "2027-03-13", pageSlug: "yoga-for-runners" },
+            { id: "reserved", title: "Reserved slug", startDate: "2027-03-14", pageSlug: "shop" },
+          ] },
+        ],
+      } },
+    } as any;
+    const files = await generateSiteHtml(profile, [{ name: "about.md", content: "About me" }], { offerPagesEnabled: true });
+    const page = files["yoga-for-runners.html"];
+    expect(page).toContain('<p class="offer-page__kind">Event · St Werburghs, Bristol</p>');
+    expect(page).toContain("<h1>Yoga for Runners</h1>");
+    expect(page).toContain("<span>21 Nov, 10:00–12:00</span>");
+    expect(page).toContain('class="offer-page__image" src="./files/content/yoga.jpg"');
+    expect(page).toContain('href="#booking">Reserve a mat</a>');
+    expect(page).toContain('id="booking"');
+    expect(page).not.toContain("Same slug");
+    expect(files["shop.html"]).toBeUndefined();
+    expect(Object.keys(files).filter((name) => name.startsWith("yoga"))).toEqual(["yoga-for-runners.html"]);
+    const home = files["index.html"];
+    expect(home).toContain('href="./yoga-for-runners" aria-label="More about Yoga for Runners">More →</a>');
+    expect(home).toContain('href="./about" aria-label="More about Sports massage"');
+    expect(home.match(/More →/g)).toHaveLength(2);
+
+    const locked = await generateSiteHtml(profile, [{ name: "about.md", content: "About me" }]);
+    expect(locked["yoga-for-runners.html"]).toBeUndefined();
+    expect(locked["index.html"]).not.toContain("./yoga-for-runners");
+    expect(locked["index.html"]).toContain('href="./about" aria-label="More about Sports massage"');
+  });
+
   it("orders visible home sections while keeping booking blocks on content pages", async () => {
     const files = await generateSiteHtml({
       name: "Alex",

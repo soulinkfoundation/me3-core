@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { MANAGED_AI_BILLING_POLICY_SECRET } from "./managed-ai-billing";
-import { socialPlanAccess, syncCampaignPlanAccess, syncSocialPlanAccess } from "./plan-features";
+import { offerPagesPlanAccess, socialPlanAccess, syncCampaignPlanAccess, syncOfferPagesPlanAccess, syncSocialPlanAccess } from "./plan-features";
 import type { Env } from "./types";
 
 function fixture(options: {
@@ -125,5 +125,20 @@ describe("Campaigns plan access", () => {
     const owned = fixture({ managed: true, tier: "pro", plugin: { enabled: 1, id: "me3.email-campaigns" } });
     expect(await syncCampaignPlanAccess(owned.env)).toBe("locked");
     expect(owned.plugin()).toMatchObject({ enabled: 1 });
+  });
+});
+
+describe("Offer pages plan access", () => {
+  it("switches offer pages on for Business and self-hosted owners", async () => {
+    const business = fixture({ managed: true, tier: "business" });
+    expect(await syncOfferPagesPlanAccess(business.env)).toBe("included");
+    expect(business.plugin()).toMatchObject({ enabled: 1, status: "installed", setup_state_json: '{"source":"plan"}' });
+    expect(await offerPagesPlanAccess(fixture({ managed: false }).env)).toBe("included");
+  });
+
+  it("switches them off after a downgrade to Starter", async () => {
+    const { env, plugin } = fixture({ managed: true, tier: "pro", plugin: { enabled: 1, source: "plan", id: "me3.landing-pages" } });
+    expect(await syncOfferPagesPlanAccess(env)).toBe("locked");
+    expect(plugin()).toMatchObject({ enabled: 0, status: "disabled" });
   });
 });

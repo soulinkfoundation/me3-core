@@ -123,6 +123,67 @@ type SiteBranding = {
   persisted: boolean;
 };
 const siteProfile = ref<SiteProfile | null>(null);
+
+type SitePageRow = { key: string; title: string; slug: string; detail: string; editTo?: string; live: boolean };
+type ProfileOffer = { id?: string; title?: string; pageSlug?: string };
+
+/** Every page on the site in one place, so owners can find, share and edit them. */
+const offerPageRows = computed<SitePageRow[]>(() => {
+  const book = (siteProfile.value as { intents?: { book?: { enabled?: boolean; bookingTypes?: Array<{ type?: string; offers?: ProfileOffer[]; classes?: ProfileOffer[]; retreats?: ProfileOffer[] }> } } } | null)?.intents?.book;
+  if (!landingPagesFeatureEnabled.value || !book?.enabled) return [];
+  const contentSlugs = new Set(contentPageRows.value.map((row) => row.slug));
+  const kinds: Record<string, string> = { one_to_one: "Appointment", class: "Class", retreat: "Event" };
+  return (book.bookingTypes || []).flatMap((type) =>
+    [...(type.offers || []), ...(type.classes || []), ...(type.retreats || [])]
+      .filter((offer) => offer.pageSlug && !contentSlugs.has(offer.pageSlug))
+      .map((offer) => ({
+        key: `offer-${type.type}-${offer.id}`,
+        title: offer.title || "Offer",
+        slug: offer.pageSlug as string,
+        detail: `${kinds[type.type || "one_to_one"] || "Booking"} · built from your offer`,
+        live: Boolean(site.value?.published_at),
+      })),
+  );
+});
+
+const contentPageRows = computed<SitePageRow[]>(() =>
+  ((siteProfile.value as { pages?: Array<{ slug?: string; title?: string; visible?: boolean; file?: string }> } | null)?.pages || [])
+    .filter((page) => page.slug && page.file && page.visible !== false)
+    .map((page) => ({
+      key: `page-${page.slug}`,
+      title: page.title || page.slug || "Page",
+      slug: page.slug as string,
+      detail: "Site page",
+      live: Boolean(site.value?.published_at),
+    })),
+);
+
+const editorPageRows = computed<SitePageRow[]>(() =>
+  landingPagesFeatureEnabled.value && isProfileSite.value
+    ? sites.sitePages.map((page) => ({
+        key: `editor-${page.id}`,
+        title: page.title || page.slug,
+        slug: page.slug,
+        detail: page.publishedAt ? "Custom page" : "Custom page · draft",
+        editTo: `/sites/${username.value}/pages/${page.id}`,
+        live: Boolean(page.publishedAt),
+      }))
+    : [],
+);
+
+function sitePageUrl(slug: string): string {
+  return `${siteUrl.value.replace(/\/$/, "")}/${slug}`;
+}
+
+async function copySitePageLink(row: SitePageRow) {
+  const url = new URL(sitePageUrl(row.slug), window.location.origin).toString();
+  try {
+    await navigator.clipboard.writeText(url);
+    toastSuccess("Link copied");
+  } catch {
+    toastError("Couldn’t copy the link");
+  }
+}
 const siteBranding = ref<SiteBranding | null>(null);
 const siteLogoFileInput = ref<HTMLInputElement | null>(null);
 const siteLogoLoading = ref(false);
@@ -561,6 +622,42 @@ async function deleteSite() {
             </div>
           </button>
         </div>
+      </section>
+
+      <section
+        v-if="isPersistentSite && (offerPageRows.length || contentPageRows.length || editorPageRows.length)"
+        class="site-pages-section"
+        aria-labelledby="site-pages-title"
+      >
+        <div class="section-heading">
+          <h2 id="site-pages-title">Pages</h2>
+        </div>
+        <template v-for="group in [
+          { id: 'offers', label: 'Offer pages', hint: 'Share one link per offer. Turn a page on or off in Bookings.', rows: offerPageRows },
+          { id: 'site', label: 'Site pages', hint: '', rows: [...contentPageRows, ...editorPageRows] },
+        ]" :key="group.id">
+          <div v-if="group.rows.length" class="site-pages-group">
+            <h3>{{ group.label }}</h3>
+            <p v-if="group.hint" class="site-pages-hint">{{ group.hint }}</p>
+            <ul class="site-pages-list">
+              <li v-for="row in group.rows" :key="row.key" class="site-pages-row">
+                <div class="site-pages-row-text">
+                  <strong>{{ row.title }}</strong>
+                  <span>/{{ row.slug }} · {{ row.detail }}</span>
+                </div>
+                <div class="site-pages-row-actions">
+                  <Button v-if="row.editTo" size="compact" :to="row.editTo">Edit</Button>
+                  <template v-if="row.live">
+                    <Button size="compact" :href="sitePageUrl(row.slug)" target="_blank" rel="noopener">View</Button>
+                    <Button size="compact" icon-only :aria-label="`Copy link to ${row.title}`" @click="copySitePageLink(row)">
+                      <UiIcon name="Link" :size="16" aria-hidden="true" />
+                    </Button>
+                  </template>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </template>
       </section>
 
       <section
@@ -1167,6 +1264,71 @@ async function deleteSite() {
 .site-logo-section {
   display: grid;
   gap: 16px;
+}
+
+.site-pages-section {
+  display: grid;
+  gap: 20px;
+  margin-top: 24px;
+  margin-bottom: 24px;
+  padding: 20px;
+  border-radius: var(--ui-radius-lg, 12px);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.site-pages-section .section-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.site-pages-group h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.site-pages-hint {
+  margin: 4px 0 0;
+  color: var(--ui-text-muted);
+  font-size: 13px;
+}
+
+.site-pages-list {
+  display: grid;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-pages-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 0;
+}
+
+.site-pages-row + .site-pages-row {
+  border-top: 1px solid var(--ui-border);
+}
+
+.site-pages-row-text {
+  display: grid;
+  min-width: 0;
+}
+
+.site-pages-row-text span {
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-pages-row-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .site-logo-section .section-heading,

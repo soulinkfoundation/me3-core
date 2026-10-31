@@ -1,4 +1,5 @@
 import { EMAIL_CAMPAIGNS_PLUGIN_ID } from "@me3-core/plugin-email-campaigns";
+import { LANDING_PAGES_PLUGIN_ID } from "@me3-core/plugin-landing-pages";
 import { SOCIAL_PUBLISHING_PLUGIN_ID } from "./social-publishing";
 import { readCachedManagedPlanTier } from "./managed-ai-billing";
 import type { Env } from "./types";
@@ -49,6 +50,13 @@ const CAMPAIGNS: PlanFeature = {
        WHERE status = 'scheduled'`,
     ),
   ],
+};
+
+/** Offer pages and the page editor (me3-lnea.4). Pages stay saved after a downgrade; offer pages stop generating. */
+const OFFER_PAGES: PlanFeature = {
+  pluginId: LANDING_PAGES_PLUGIN_ID,
+  permissions: ["sites.landing_pages.manage", "agent.landing_pages.generate"],
+  downgrade: () => [],
 };
 
 const PLAN_INSTALL_SOURCE = "plan";
@@ -143,7 +151,16 @@ export function syncCampaignPlanAccess(env: Env): Promise<PlanFeatureAccess> {
   return syncPlanAccess(env, CAMPAIGNS);
 }
 
+export function offerPagesPlanAccess(env: Env): Promise<PlanFeatureAccess> {
+  return planAccess(env, OFFER_PAGES);
+}
+
+export function syncOfferPagesPlanAccess(env: Env): Promise<PlanFeatureAccess> {
+  return syncPlanAccess(env, OFFER_PAGES);
+}
+
 export async function syncPlanFeatures(env: Env): Promise<void> {
   await syncSocialPlanAccess(env).catch((error) => console.error("Social plan sync failed", error));
   await syncCampaignPlanAccess(env).catch((error) => console.error("Campaigns plan sync failed", error));
+  await syncOfferPagesPlanAccess(env).catch((error) => console.error("Offer pages plan sync failed", error));
 }
