@@ -292,15 +292,6 @@ export type LandingPageImageAttribution = {
 
 export type LandingPageDocument = LandingPageDocumentV3;
 
-export interface LandingPageTemplateDefinition {
-  id: LandingPageTemplateId;
-  name: string;
-  shortName: string;
-  description: string;
-  audience: string;
-  defaultCta: string;
-}
-
 export interface LandingPageRecipeDefinition {
   id: LandingPageRecipeId;
   template: LandingPageTemplateId;
@@ -316,15 +307,6 @@ export interface LandingPageRecipeDefinition {
   defaultAction: LandingPageActionKind;
   qualityChecks: string[];
   sourceNotes: string[];
-}
-
-export interface LandingPageCreationPurpose {
-  id: LandingPageRecipeId;
-  template: LandingPageTemplateId;
-  label: string;
-  description: string;
-  examplePrompt: string;
-  defaultSlugSuffix: string;
 }
 
 export interface LandingPageProfileInput {
@@ -345,36 +327,6 @@ export interface LandingPageBuildInput {
   feedback?: string | null;
   profile: LandingPageProfileInput;
 }
-
-export const LANDING_PAGE_TEMPLATES: LandingPageTemplateDefinition[] = [
-  {
-    id: "event",
-    name: "Event / Workshop / Retreat",
-    shortName: "Event",
-    description:
-      "For time-bound events with a clear date, location, logistics, and booking CTA.",
-    audience: "Retreats, workshops, group events",
-    defaultCta: "Reserve Your Spot",
-  },
-  {
-    id: "service",
-    name: "Service / Offer",
-    shortName: "Service",
-    description:
-      "For focused offer pages that explain a problem, solution, process, and pricing.",
-    audience: "Coaching, packages, consulting offers",
-    defaultCta: "Book a Call",
-  },
-  {
-    id: "waitlist",
-    name: "Waitlist / Coming Soon",
-    shortName: "Waitlist",
-    description:
-      "For launch pages that build anticipation and collect email signups before release.",
-    audience: "Courses, launches, products, podcasts",
-    defaultCta: "Join the Waitlist",
-  },
-];
 
 export const LANDING_PAGE_RECIPES: LandingPageRecipeDefinition[] = [
   {
@@ -451,36 +403,6 @@ export const LANDING_PAGE_RECIPES: LandingPageRecipeDefinition[] = [
   },
 ];
 
-export const LANDING_PAGE_CREATION_PURPOSES: LandingPageCreationPurpose[] = [
-  {
-    id: "service-offer",
-    template: "service",
-    label: "Service or offer",
-    description: "Explain a focused offer and lead people to a booking or purchase.",
-    examplePrompt:
-      "A four-week positioning sprint for independent consultants who need a clearer offer, stronger sales page, and a practical launch plan.",
-    defaultSlugSuffix: "offer",
-  },
-  {
-    id: "event-invite",
-    template: "event",
-    label: "Event or workshop",
-    description: "Invite people to a dated experience with details, agenda, and RSVP.",
-    examplePrompt:
-      "A Saturday breathwork workshop in Dublin for founders who want to reset before a product launch. Include timing, venue, who it is for, and why the room will be small.",
-    defaultSlugSuffix: "event",
-  },
-  {
-    id: "launch-waitlist",
-    template: "waitlist",
-    label: "Waitlist or launch",
-    description: "Collect early interest for a product, course, community, or newsletter.",
-    examplePrompt:
-      "A waitlist for a private AI workflow studio for coaches. It helps them turn client notes into follow-up emails, resources, and booking prompts.",
-    defaultSlugSuffix: "waitlist",
-  },
-];
-
 const LANDING_PAGE_TEMPLATE_ID_SET = new Set<string>(LANDING_PAGE_TEMPLATE_IDS);
 const LANDING_PAGE_RECIPE_ID_SET = new Set<string>(LANDING_PAGE_RECIPE_IDS);
 
@@ -508,15 +430,6 @@ export function normalizeLandingRecipe(
   value: unknown,
 ): LandingPageRecipeId | null {
   return isLandingPageRecipeId(value) ? value : null;
-}
-
-export function getLandingPageTemplate(
-  templateId: LandingPageTemplateId,
-): LandingPageTemplateDefinition {
-  return (
-    LANDING_PAGE_TEMPLATES.find((template) => template.id === templateId) ||
-    LANDING_PAGE_TEMPLATES[1]
-  );
 }
 
 export function getLandingPageRecipe(
