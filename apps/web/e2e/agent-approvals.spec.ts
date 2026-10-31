@@ -6,6 +6,8 @@ const approval = { id: "core-1", pluginId: "me3.core", actionId: "core_mailbox_s
 // UI tests: every application API and provider is simulated with synthetic owner content.
 async function fixture(page: Page, options: { pluginUnavailable?: boolean } = {}) {
   const thread = { id: "main", title: "Main conversation", status: "active", isPrimary: true };
+  // A returning owner: the web first run (Build your website) has already happened.
+  await page.addInitScript(() => localStorage.setItem("me3.firstRun.handled.ui-owner", "1"));
   await page.route("**/api/**", async route => {
     const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
     if (options.pluginUnavailable && ["/calendar/feed", "/mission-control/agent-runs", "/mission-control/plugin-activity"].includes(path)) {

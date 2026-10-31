@@ -7,6 +7,8 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 });
     const user = { id: 'theme-owner', name: 'Demo Owner', username: 'owner', email: 'demo@example.test', timezone: 'Europe/Dublin' };
     const thread = { id: 'main', title: 'Main conversation', status: 'active', isPrimary: true };
+    // A returning owner: the web first run (Build your website) has already happened.
+    await page.addInitScript(() => localStorage.setItem('me3.firstRun.handled.theme-owner', '1'));
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname.replace(/^\/api/, '');
       const responses: Record<string, unknown> = {

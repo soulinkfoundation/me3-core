@@ -12,10 +12,15 @@ export type AssistantSuggestionContext = {
   missionMissing?: boolean;
   /** Self-hosted install without a configured model. */
   needsConfigure?: boolean;
+  /** Only true once the profile site has loaded without a bio: the first site isn't built yet. */
+  siteMissing?: boolean;
 };
 
 const MAX_SUGGESTIONS = 4;
 const PREP_WINDOW_MS = 60 * 60 * 1000;
+
+/** Opens the Build your website card instead of sending a prompt (iOS/Android "Build my site"). */
+export const BUILD_SITE_PROMPT = "Build my website.";
 
 export const CONFIGURE_PROMPT =
   "Help me configure my ME3 installation. First check what is already set up across my public site/profile, email mailbox, Soulink, assistant/AI, plugins, and updates. Then suggest the missing or most useful next step. If I'm not sure, walk me through the basics.";
@@ -33,8 +38,9 @@ function timeOfDaySuggestion(hour: number): AssistantSuggestion {
   return { label: "Plan tomorrow", icon: "CalendarDays", prompt: "What's coming up tomorrow, and what should I get ready tonight?" };
 }
 
-export function assistantSuggestions({ now, upcomingEvent, missionMissing, needsConfigure }: AssistantSuggestionContext): AssistantSuggestion[] {
+export function assistantSuggestions({ now, upcomingEvent, missionMissing, needsConfigure, siteMissing }: AssistantSuggestionContext): AssistantSuggestion[] {
   const suggestions: AssistantSuggestion[] = [];
+  if (siteMissing) suggestions.push({ label: "Build my site", icon: "Globe", prompt: BUILD_SITE_PROMPT });
   if (needsConfigure) suggestions.push({ label: "Configure", icon: "Settings", prompt: CONFIGURE_PROMPT });
   if (upcomingEvent) {
     const until = upcomingEvent.startsAt.getTime() - now.getTime();

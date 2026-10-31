@@ -12,6 +12,8 @@ if (remoteApiUrl && remoteApiUrl.protocol !== 'https:') {
 }
 const devHost = remoteApiUrl ? 'localhost' : process.env.VITE_HOST || 'localhost'
 const devPort = Number(process.env.VITE_PORT || 4000)
+// pnpm dev:fresh -- --offset=N runs a second local install whose Worker is on another port.
+const localApiOrigin = `http://127.0.0.1:${Number(process.env.ME3_DEV_LOCAL_API_PORT || 8787)}`
 
 export default defineConfig({
   plugins: [
@@ -41,7 +43,7 @@ export default defineConfig({
       ? undefined
       : {
           '/api': {
-            target: remoteApiUrl?.origin || 'http://127.0.0.1:8787',
+            target: remoteApiUrl?.origin || localApiOrigin,
             changeOrigin: true,
             bypass: remoteApiUrl
               ? (req, res) => {
@@ -56,20 +58,20 @@ export default defineConfig({
               : undefined,
           },
           '/preview': {
-            target: remoteApiUrl?.origin || 'http://127.0.0.1:8787',
+            target: remoteApiUrl?.origin || localApiOrigin,
             changeOrigin: true,
           },
           // The published me.json names the web origin, so serve it from there too.
           '^/(\\.well-known/)?me\\.json$': {
-            target: remoteApiUrl?.origin || 'http://127.0.0.1:8787',
+            target: remoteApiUrl?.origin || localApiOrigin,
             changeOrigin: true,
           },
         },
   },
   preview: {
     proxy: {
-      '/api': 'http://127.0.0.1:8787',
-      '/preview': 'http://127.0.0.1:8787',
+      '/api': localApiOrigin,
+      '/preview': localApiOrigin,
     },
   },
 })

@@ -20,6 +20,8 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     ];
     const areas = ['health', 'spirituality', 'work', 'finances', 'home', 'joy'].map((id, i) => ({ id, label: ['Health', 'Spirituality', 'Work', 'Finances', 'Home', 'Joy'][i], color: ['#ff3b30', '#34c759', '#ff9500', '#ffcc00', '#007aff', '#af52de'][i], emoji: ['❤️', '🌿', '💼', '💰', '🏡', '🤗'][i], value: [6, 7, 8, 5, 7, 4][i] }));
     let unavailable = false;
+    // A returning owner: the web first run (Build your website) has already happened.
+    await page.addInitScript(() => localStorage.setItem('me3.firstRun.handled.home-redesign', '1'));
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname.replace(/^\/api/, '');
       const responses: Record<string, unknown> = {

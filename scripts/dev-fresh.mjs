@@ -4,6 +4,7 @@
 //   pnpm dev:fresh                 wipe, migrate, start, seed (sandbox ME3 Cloud)
 //   pnpm dev:fresh -- --cloud=none skip ME3 Cloud; password setup only
 //   pnpm dev:fresh -- --no-standin start only the fresh owner
+//   pnpm dev:fresh -- --offset=100 a second install beside another (ports +100, own state)
 //
 // State lives in apps/worker/.wrangler/fresh, separate from `pnpm dev` state.
 import { spawn } from "node:child_process";
@@ -14,7 +15,6 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workerDir = resolve(root, "apps/worker");
-const stateRoot = resolve(workerDir, ".wrangler/fresh");
 const config = "wrangler.core.example.toml";
 
 const CLOUD_ORIGINS = {
@@ -30,21 +30,29 @@ if (!(cloudArg in CLOUD_ORIGINS)) {
   process.exit(1);
 }
 const cloudOrigin = CLOUD_ORIGINS[cloudArg];
+// Parallel sessions each get their own install: every port moves by the offset and state is separate.
+const offset = Number(args.find((arg) => arg.startsWith("--offset="))?.split("=")[1] || 0);
+if (!Number.isInteger(offset) || offset < 0 || offset > 1000) {
+  console.error("--offset must be a whole number from 0 to 1000.");
+  process.exit(1);
+}
+const stateRoot = resolve(workerDir, offset ? `.wrangler/fresh-${offset}` : ".wrangler/fresh");
+const webPort = 4000 + offset;
 
 const owner = {
   label: "owner",
-  workerPort: 8787,
-  inspectorPort: 9329,
-  webOrigin: "http://localhost:4000",
-  apiOrigin: "http://localhost:8787",
+  workerPort: 8787 + offset,
+  inspectorPort: 9329 + offset,
+  webOrigin: `http://localhost:${webPort}`,
+  apiOrigin: `http://localhost:${8787 + offset}`,
   state: resolve(stateRoot, "owner"),
 };
 const standin = {
   label: "kieran",
-  workerPort: 8788,
-  inspectorPort: 9330,
-  webOrigin: "http://localhost:8788",
-  apiOrigin: "http://localhost:8788",
+  workerPort: 8788 + offset,
+  inspectorPort: 9330 + offset,
+  webOrigin: `http://localhost:${8788 + offset}`,
+  apiOrigin: `http://localhost:${8788 + offset}`,
   state: resolve(stateRoot, "standin"),
 };
 
@@ -62,7 +70,7 @@ let shuttingDown = false;
 
 async function main() {
   const busy = [];
-  for (const port of [4000, owner.workerPort, ...(withStandin ? [standin.workerPort] : [])]) {
+  for (const port of [webPort, owner.workerPort, ...(withStandin ? [standin.workerPort] : [])]) {
     if (await portInUse(port)) busy.push(port);
   }
   if (busy.length) {
@@ -93,7 +101,7 @@ async function main() {
     ...(withStandin ? { ME3_LOCAL_DIRECTORY_ORIGINS: `http://127.0.0.1:${standin.workerPort}` } : {}),
   });
   if (withStandin) startWorker(standin, { ME3_CLOUD_ORIGIN: CLOUD_ORIGINS.none, ME3_SITE_USERNAME: STANDIN.username });
-  children.push(start("pnpm", ["exec", "vite", "--port", "4000", "--strictPort"], resolve(root, "apps/web"), "web"));
+  children.push(start("pnpm", ["exec", "vite", "--port", String(webPort), "--strictPort"], resolve(root, "apps/web"), "web", { VITE_PORT: String(webPort), ME3_DEV_LOCAL_API_PORT: String(owner.workerPort) }));
 
   await waitForOk(`http://127.0.0.1:${owner.workerPort}/health`);
   await waitForOk(`${owner.webOrigin}/`);

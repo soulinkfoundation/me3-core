@@ -11,7 +11,12 @@ import { useRoute, useRouter } from "vue-router";
 import { definePage } from "unplugin-vue-router/runtime";
 import { api, type ApiStreamEvent } from "../../api";
 import { ownMissionStatement } from "../../utils/missionStatement";
-import { assistantSuggestions, type AssistantSuggestion, type UpcomingEvent } from "../../utils/assistantSuggestions";
+import { BUILD_SITE_PROMPT, assistantSuggestions, type AssistantSuggestion, type UpcomingEvent } from "../../utils/assistantSuggestions";
+import { useAuthStore } from "../../stores/auth";
+import { PEOPLE_SEARCH_TOOL, bookCallMessage, findPersonMessage, loadProfileSite, markFirstRunHandled, shouldStartFirstRun, peopleRows, showMeMessage, type PersonRow } from "../../utils/firstSite";
+import SiteBuildAskCard from "../../components/first-site/SiteBuildAskCard.vue";
+import ChatFirstSite from "../../components/first-site/ChatFirstSite.vue";
+import ChatPeopleResults from "../../components/first-site/ChatPeopleResults.vue";
 import Button from "../../components/Button.vue";
 import HomePanels from "../../components/home/HomePanels.vue";
 import AgentTargetChoices from "../../components/AgentTargetChoices.vue";
@@ -272,6 +277,11 @@ function routeAssistantPrompt() {
   return typeof prompt === "string" && prompt.trim() ? prompt.trimStart() : "";
 }
 
+function routeQueryValue(key: string) {
+  const value = route.query[key];
+  return (Array.isArray(value) ? value[0] : value) || "";
+}
+
 function routeAssistantPromptShouldSend() {
   const value = route.query.send;
   return (Array.isArray(value) ? value[0] : value) === "1";
@@ -426,6 +436,46 @@ const showConfigureStarterPrompt = computed(() => {
 
 // The starters follow the moment (see assistantSuggestions): next meeting, a first Mission, time of day.
 const missionMissing = ref(false);
+// The first site (me3-5u97.2 on web): the Build your website card, and people found after publishing.
+const siteMissing = ref(false);
+const siteAskOpen = ref(routeQueryValue("build") === "site");
+const findSomeonePending = ref(false);
+const peopleByMessage = ref<Record<string, PersonRow[]>>({});
+const lastUserMessageAt = computed(() => [...chatMessages.value].reverse().find(message => message.role === "user")?.createdAt ?? null);
+async function loadSiteStarter() {
+  let site: Awaited<ReturnType<typeof loadProfileSite>>;
+  try { site = await loadProfileSite(api.get); } catch { siteMissing.value = false; return; }
+  siteMissing.value = !site?.bio;
+  // First landing: open Get set up on Home and go straight to Chat with the Build your website card.
+  // Only a new owner: no bio yet and nothing ever said in Chat.
+  if (chatMessages.value.some(message => message.createdAt) || assistantHistoryHasMore.value) return;
+  const ownerKey = useAuthStore().user?.id || "";
+  const storage = typeof window === "undefined" ? null : window.localStorage;
+  if (!shouldStartFirstRun(storage, ownerKey, site?.bio)) return;
+  markFirstRunHandled(storage, ownerKey);
+  void api.patch("/mission-control/dashboard", { settings: { setupChecklistDismissed: false } }).then(() => homePanels.value?.refreshSetup()).catch(() => undefined);
+  if (!routeQueryValue("prompt")) await openSiteAsk();
+}
+async function closeSiteAsk() {
+  siteAskOpen.value = false;
+  if (routeQueryValue("build")) { const query = { ...route.query }; delete query.build; await router.replace({ query }); }
+}
+async function submitSiteAsk(message: string) {
+  await closeSiteAsk();
+  await submitAssistantText(message);
+}
+async function openSiteAsk() {
+  await showWorkspace(false);
+  siteAskOpen.value = true;
+}
+function askWhoToFind() {
+  findSomeonePending.value = true;
+  agentChat.appendMessage({ id: newAssistantMessageId("assistant"), role: "assistant", text: "Who would you like to find?", createdAt: new Date().toISOString() });
+  void nextTick(() => assistantComposerRef.value?.focus());
+}
+function bookPerson(person: PersonRow) {
+  if (person.freeCall) void submitAssistantText(bookCallMessage(person.freeCall.title, person.name));
+}
 const upcomingEvent = ref<UpcomingEvent | null>(null);
 const suggestionsNow = ref(new Date());
 async function loadMissionStarter() {
@@ -459,6 +509,7 @@ const visibleStarterPrompts = computed<StarterPrompt[]>(() => {
     upcomingEvent: upcomingEvent.value,
     missionMissing: missionMissing.value,
     needsConfigure: showConfigureStarterPrompt.value,
+    siteMissing: siteMissing.value,
   });
 });
 const assistantMessageLabel = computed(
@@ -628,9 +679,10 @@ useComposerClearance(assistantComposerFooterRef);
 onMounted(() => {
   void loadMissionStarter();
   void loadUpcomingEvent();
-  void initializeAssistantPage();
+  void initializeAssistantPage().finally(() => loadSiteStarter());
   window.addEventListener("scroll", onAssistantScroll, { capture: true, passive: true });
 });
+watch(() => route.query.build, value => { if (value === "site") void openSiteAsk(); });
 // A fresh chat can open hours after the page did; refresh the moment its starters follow.
 watch(() => assistantConsoleMessages.value.length === 0, (empty) => { if (empty) void loadUpcomingEvent(); });
 
@@ -982,6 +1034,7 @@ async function useStarterPrompt(prompt: string) {
 }
 
 async function startStarterPrompt(starter: StarterPrompt) {
+  if (starter.prompt === BUILD_SITE_PROMPT) { await openSiteAsk(); return; }
   if (starter.mode === "site-builder" && !siteBuilderMode.value) {
     await router.push({ path: "/assistant", query: { mode: "site-builder" } });
     assistantDraft.value = starter.prompt;
@@ -1653,6 +1706,11 @@ async function submitAssistantText(
           assistantTurnStatusText.value = data.state === "started"
             ? assistantToolStatusText(data.capabilityId)
             : "Finishing the response…";
+          const toolResult = data.result as { status?: unknown; data?: unknown } | undefined;
+          if (data.toolName === PEOPLE_SEARCH_TOOL && data.state === "complete" && toolResult?.status === "ok") {
+            const people = peopleRows(toolResult.data);
+            if (people.length) { ensureAssistantMessage(); peopleByMessage.value = { ...peopleByMessage.value, [assistantMessageId]: people }; }
+          }
           return;
         }
 
@@ -1790,9 +1848,11 @@ async function sendAssistantMessage() {
   if (!canSendAssistantMessage.value) return;
 
   const attachments = serializeAssistantAttachmentsForTurn();
-  const text =
+  let text =
     assistantDraft.value.trim() ||
     (attachments.length > 0 ? "Review the attached files." : "");
+  // "Find someone" asked who; the answer is the name.
+  if (findSomeonePending.value && text) { findSomeonePending.value = false; text = findPersonMessage(text); }
   assistantDraft.value = "";
   clearAssistantAttachments();
   assistantAttachmentNotice.value = "";
@@ -2455,7 +2515,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
     >
     <main class="assistant-main" aria-label="Assistant console">
       <section class="assistant-console" aria-label="Assistant conversation">
-        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" :active="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" />
+        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" :active="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" @build-site="openSiteAsk" />
         <div
           v-show="!homeMode || siteBuilderMode"
           ref="assistantScrollerRef"
@@ -2479,7 +2539,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
           />
 
           <div
-            v-else-if="assistantConsoleMessages.length === 0 && voiceDictationState !== 'listening'"
+            v-else-if="assistantConsoleMessages.length === 0 && voiceDictationState !== 'listening' && !siteAskOpen"
             class="assistant-empty-state"
           >
             <AgentDog :size="128" />
@@ -3018,7 +3078,21 @@ function messageFromUnknown(err: unknown, fallback: string) {
                 <UiIcon name="RefreshCw" :size="14" />
               </button>
             </div>
+            <ChatPeopleResults v-if="message.id && peopleByMessage[message.id]" :people="peopleByMessage[message.id]" :busy="assistantSending" @book="bookPerson" />
           </article>
+
+          <SiteBuildAskCard v-if="siteAskOpen && !siteBuilderMode" class="assistant-message assistant-message--assistant" :busy="assistantSending" @submit="submitSiteAsk" @close="closeSiteAsk" />
+          <ChatFirstSite
+            v-if="!siteBuilderMode"
+            class="assistant-message assistant-message--assistant"
+            :thread-id="assistantThreadId"
+            :refresh-key="assistantPaymentsRefresh"
+            :last-user-message-at="lastUserMessageAt"
+            :busy="assistantSending"
+            @decided="refreshAssistantAfterApproval(); void loadSiteStarter()"
+            @show-me="submitAssistantText(showMeMessage($event))"
+            @find-someone="askWhoToFind"
+          />
 
           <ChatPayments
             v-if="!siteBuilderMode"
