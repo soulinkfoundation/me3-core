@@ -144,11 +144,38 @@ export function splitOwnerNote(text: string | null | undefined, subject: string 
 
 /** Stylesheets that leak into a text body (a bad text/plain part, an unclosed <style>): "@media … { … }" and "selector { prop: value }". */
 const CSS_AT_RULE = /@[a-z-]+[^{};]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/gi;
-const CSS_RULE = /(?:^|\s)[^\s{};]+(?:\s*[,>+~]\s*[^\s{};]+|\s+[^\s{};]+)*\s*\{[^{}]*:[^{}]*\}/g;
+const CSS_BLOCK = /\{[^{}]*\}/g;
 
 export function stripLeakedStyles(text: string): string {
   if (!text.includes("{")) return text;
-  return text.replace(CSS_AT_RULE, " ").replace(CSS_RULE, " ");
+  return stripCssRules(text.replace(CSS_AT_RULE, " "));
+}
+
+/**
+ * Removes each "{ … : … }" block with the selector text before it, back to the previous brace or
+ * semicolon, starting at whitespace or the start of the text. Scanned by hand: a backtracking
+ * selector pattern took seconds on an ordinary email with one stray brace.
+ */
+function stripCssRules(text: string): string {
+  let result = "";
+  let kept = 0;
+  for (const block of text.matchAll(CSS_BLOCK)) {
+    if (!block[0].includes(":")) continue;
+    const open = block.index;
+    let runStart = open;
+    while (runStart > kept && !"{};".includes(text[runStart - 1])) runStart -= 1;
+    let start = -1;
+    if (runStart === 0 && open > 0 && !/\s/.test(text[0])) start = 0;
+    else {
+      for (let index = runStart; index < open - 1; index += 1) {
+        if (/\s/.test(text[index]) && !/\s/.test(text[index + 1])) { start = index; break; }
+      }
+    }
+    if (start < 0) continue;
+    result += `${text.slice(kept, start)} `;
+    kept = open + block[0].length;
+  }
+  return kept === 0 ? text : result + text.slice(kept);
 }
 
 /** One readable line for list rows: no forward headers, quotes, signatures, device footers or leaked styles. */
