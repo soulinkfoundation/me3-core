@@ -7,7 +7,6 @@ import {
   getLandingPageValidationErrors,
   normalizeLandingPageDocument,
   renderLandingPageHtml,
-  upgradeLandingPageDocument,
   type LandingPageBuildInput,
   type LandingPageDocumentV3,
 } from "@me3-core/plugin-landing-pages";
@@ -16,13 +15,9 @@ import { isCommerceReady } from "./commerce-settings";
 import {
   deleteSiteFile,
   getPublishedSiteBaseUrl,
-  getR2SiteFile,
-  getSiteFile,
   getSiteFileText,
   parseSiteProfile,
-  putSiteMediaFile,
   putSiteFile,
-  siteFileContentToArrayBuffer,
 } from "./sites";
 
 const PAGE_SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,58}[a-z0-9])?$/;
@@ -52,8 +47,7 @@ export function normalizePageSlug(value: unknown): string {
 
 export function parsePageDocument(raw: string): LandingPageDocumentV3 | null {
   try {
-    const page = normalizeLandingPageDocument(JSON.parse(raw));
-    return page ? upgradeLandingPageDocument(page) : null;
+    return normalizeLandingPageDocument(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -91,7 +85,7 @@ export async function createSitePage(
       "Page path must use 1-60 lowercase letters, numbers, or hyphens.",
     );
   }
-  const document = upgradeLandingPageDocument(buildLandingPageDocument(input));
+  const document = buildLandingPageDocument(input);
   const id = crypto.randomUUID();
   try {
     await env.DB.prepare(
@@ -119,73 +113,14 @@ export async function createSitePage(
   return page;
 }
 
-export async function migrateLegacyLandingPages(
-  env: Env,
-  ownerId: string,
-  targetSite: DbSite,
-): Promise<DbSitePage[]> {
-  const legacy = await env.DB.prepare(
-    `SELECT id, user_id, username, site_type, site_role, template_id, profile_site_id, custom_domain,
-            custom_domain_status, custom_domain_cf_id, created_at, updated_at, published_at
-     FROM sites WHERE user_id = ? AND site_type = 'landing_page' ORDER BY created_at`,
-  )
-    .bind(ownerId)
-    .all<DbSite>();
-  const existingSlugs = new Set((await listSitePages(env, targetSite.id)).map((page) => page.slug));
-  const migrated: DbSitePage[] = [];
-  for (const legacySite of legacy.results || []) {
-    const slug = normalizePageSlug(legacySite.username);
-    if (!slug || existingSlugs.has(slug)) continue;
-    const raw = await getSiteFileText(env, legacySite.id, "landing/page.json");
-    const normalized = raw ? parsePageDocument(raw) : null;
-    if (!normalized) continue;
-    const document = structuredClone(normalized);
-    document.hero.image = await copyLegacyAsset(
-      env,
-      legacySite,
-      targetSite,
-      document.hero.image,
-    );
-    document.assets.heroImage = document.hero.image || null;
-    document.assets.sectionImage = await copyLegacyAsset(
-      env,
-      legacySite,
-      targetSite,
-      document.assets.sectionImage,
-    );
-    const id = crypto.randomUUID();
-    await env.DB.prepare(
-      `INSERT INTO site_pages
-       (id, site_id, slug, kind, title, template_id, draft_json)
-       VALUES (?, ?, ?, 'landing_page', ?, ?, ?)`,
-    )
-      .bind(
-        id,
-        targetSite.id,
-        slug,
-        getLandingPageTitle(document),
-        getLandingPageTemplateId(document),
-        JSON.stringify(document),
-      )
-      .run();
-    const page = await getSitePage(env, targetSite.id, id);
-    if (page) {
-      migrated.push(page);
-      existingSlugs.add(slug);
-    }
-  }
-  return migrated;
-}
-
 export async function saveSitePageDraft(
   env: Env,
   site: DbSite,
   pageId: string,
   value: unknown,
 ): Promise<DbSitePage> {
-  const normalized = normalizeLandingPageDocument(value);
-  if (!normalized) throw new SitePageInputError("Valid page document is required.");
-  const document = upgradeLandingPageDocument(normalized);
+  const document = normalizeLandingPageDocument(value);
+  if (!document) throw new SitePageInputError("Valid page document is required.");
   const result = await env.DB.prepare(
     `UPDATE site_pages
      SET title = ?, template_id = ?, draft_json = ?, updated_at = datetime('now')
@@ -540,29 +475,4 @@ export async function getPageResourceSite(
       .bind(site.profile_site_id, site.user_id)
       .first<DbSite>()) || site
   );
-}
-
-async function copyLegacyAsset(
-  env: Env,
-  sourceSite: DbSite,
-  targetSite: DbSite,
-  value: string | null | undefined,
-): Promise<string | null> {
-  if (!value || !/(?:^|\/)files\//.test(value)) return value || null;
-  const filename = value.split("/").pop();
-  if (!filename) return value;
-  const sourcePath = `public/files/${filename}`;
-  const source =
-    (await getR2SiteFile(env, sourceSite, sourcePath)) ||
-    (await getSiteFile(env, sourceSite.id, sourcePath));
-  if (!source) return value;
-  const targetName = `${sourceSite.username}-${filename}`;
-  await putSiteMediaFile(
-    env,
-    targetSite,
-    `public/files/${targetName}`,
-    siteFileContentToArrayBuffer(source.content),
-    source.content_type,
-  );
-  return `/files/${targetName}`;
 }

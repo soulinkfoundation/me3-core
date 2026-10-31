@@ -43,8 +43,7 @@ const { toastError, toastSuccess } = useAppToast();
 const isNestedSitesTool = computed(
   () =>
     route.path.startsWith("/sites/") &&
-    (route.path.endsWith("/build") ||
-      route.path.includes("/landing-pages/") ||
+    (route.path.includes("/landing-pages/") ||
       route.path.endsWith("/business-site") ||
       route.path.includes("/pages/")),
 );
@@ -62,8 +61,6 @@ void isPluginAccessEnabled("me3.email-campaigns")
 const site = computed(() =>
   sites.sites.find((s) => s.username === username.value),
 );
-const siteType = computed(() => site.value?.site_type || "profile");
-const isLandingPage = computed(() => siteType.value === "landing_page");
 const isProfileSite = computed(() => site.value?.site_role === "profile");
 const isPersistentSite = computed(
   () =>
@@ -74,9 +71,6 @@ const isAgentBuiltSite = computed(
   () => site.value?.template_id === AGENT_LANDING_PAGE_SITE_TEMPLATE_ID,
 );
 const landingPagesFeatureEnabled = ref(false);
-const showLandingPageControls = computed(
-  () => isLandingPage.value && landingPagesFeatureEnabled.value,
-);
 
 const siteUrl = ref("/me");
 const permanentSiteUrl = computed(() =>
@@ -111,8 +105,6 @@ async function handleDomainStatusChanged() {
 // UI State
 const showDeleteConfirm = ref(false);
 const isDeleting = ref(false);
-const publishBusy = ref(false);
-const publishError = ref("");
 type SiteProfile = NonNullable<SiteContent["profile"]>;
 type SiteBranding = {
   siteId: string;
@@ -456,10 +448,6 @@ function openWizardStep(step: string) {
   });
 }
 
-function openBuilder() {
-  router.push(`/sites/${username.value}/build`);
-}
-
 function writePost() {
   router.push({
     path: "/create",
@@ -479,40 +467,6 @@ async function deleteSite() {
     }
   } finally {
     isDeleting.value = false;
-  }
-}
-
-async function publishLandingPage() {
-  if (publishBusy.value) return;
-  publishBusy.value = true;
-  publishError.value = "";
-  try {
-    const ok = await sites.publishLandingPage(username.value);
-    if (!ok) {
-      publishError.value = sites.error || "Failed to publish landing page";
-      return;
-    }
-    await sites.fetchSites();
-    await syncSiteUrl();
-  } finally {
-    publishBusy.value = false;
-  }
-}
-
-async function unpublishLandingPage() {
-  if (publishBusy.value) return;
-  publishBusy.value = true;
-  publishError.value = "";
-  try {
-    const ok = await sites.unpublishLandingPage(username.value);
-    if (!ok) {
-      publishError.value = sites.error || "Failed to unpublish landing page";
-      return;
-    }
-    await sites.fetchSites();
-    await syncSiteUrl();
-  } finally {
-    publishBusy.value = false;
   }
 }
 
@@ -606,53 +560,7 @@ async function unpublishLandingPage() {
               <p>Jump to the blog editor</p>
             </div>
           </button>
-
-          <button
-            v-if="showLandingPageControls"
-            class="action-card primary"
-            @click="openBuilder"
-          >
-            <span class="action-icon">
-              <UiIcon name="LayoutGrid" :size="24" />
-            </span>
-            <div class="action-content">
-              <strong>Open Builder</strong>
-              <p>Refine template, copy, images, and preview</p>
-            </div>
-          </button>
-
-          <button
-            v-if="showLandingPageControls && !site?.published_at"
-            class="action-card"
-            @click="publishLandingPage"
-          >
-            <span class="action-icon">
-              <UiIcon name="Check" :size="24" />
-            </span>
-            <div class="action-content">
-              <strong>{{ publishBusy ? "Publishing..." : "Publish" }}</strong>
-              <p>Make this landing page live on its subdomain</p>
-            </div>
-          </button>
-
-          <button
-            v-if="showLandingPageControls && site?.published_at"
-            class="action-card"
-            @click="unpublishLandingPage"
-          >
-            <span class="action-icon">
-              <UiIcon name="X" :size="24" />
-            </span>
-            <div class="action-content">
-              <strong>{{
-                publishBusy ? "Unpublishing..." : "Unpublish"
-              }}</strong>
-              <p>Take the page offline while keeping the draft intact</p>
-            </div>
-          </button>
-
         </div>
-        <p v-if="publishError" class="error">{{ publishError }}</p>
       </section>
 
       <section

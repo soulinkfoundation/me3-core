@@ -722,25 +722,6 @@ describe("sites store", () => {
       publishedAt: null,
     };
 
-    it("creates a page inside the existing site", async () => {
-      vi.mocked(api.post).mockResolvedValue({ page });
-      const store = useSitesStore();
-
-      const result = await store.createSitePage("owner", {
-        slug: "offer",
-        brief: "A focused offer",
-        templateId: "service",
-      });
-
-      expect(result).toEqual(page);
-      expect(store.sitePages).toEqual([page]);
-      expect(api.post).toHaveBeenCalledWith("/sites/owner/pages", {
-        slug: "offer",
-        brief: "A focused offer",
-        templateId: "service",
-      });
-    });
-
     it("updates page state after publishing", async () => {
       const published = {
         ...page,

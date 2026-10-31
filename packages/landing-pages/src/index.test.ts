@@ -4,7 +4,6 @@ import {
   createBusinessSiteDocument,
   getLandingPageDesignPackId,
   getLandingPageRecipe,
-  getLandingPageSectionImage,
   getLandingPageTemplateId,
   getSelectableLandingPageDesignPacks,
   normalizeLandingPageDocument,
@@ -13,7 +12,6 @@ import {
   normalizeLandingTemplate,
   renderLandingPageHtml,
   setLandingPageDesignPack,
-  upgradeLandingPageDocument,
 } from "./index";
 
 describe("landing pages package", () => {
@@ -69,7 +67,7 @@ describe("landing pages package", () => {
     expect(page.version).toBe(3);
     expect(getLandingPageTemplateId(page)).toBe("event");
     expect(getLandingPageRecipe("event-invite").sectionOrder).toContain("details");
-    expect(getLandingPageSectionImage(page)).toBe("/files/table.jpg");
+    expect(page.assets.sectionImage).toBe("/files/table.jpg");
     expect(normalizeLandingPageDocument(page)).toEqual(page);
     expect(getLandingPageDesignPackId(page)).toBe("starter-event-01");
   });
@@ -256,6 +254,19 @@ describe("landing pages package", () => {
     delete prePack.design.packId;
     delete prePack.design.packVersion;
     expect(normalizeLandingPageDocument(prePack)).toEqual(prePack);
+    expect(getLandingPageDesignPackId(prePack)).toBe("starter-waitlist-01");
+    expect(renderLandingPageHtml(prePack, "owner")).toContain(
+      'data-design-pack="starter-waitlist-01"',
+    );
+
+    const legacyPack = structuredClone(page) as unknown as {
+      design: { packId?: string; packVersion?: number };
+    };
+    legacyPack.design.packId = "legacy-standard";
+    legacyPack.design.packVersion = 1;
+    const normalizedLegacyPack = normalizeLandingPageDocument(legacyPack);
+    expect(normalizedLegacyPack?.design.packId).toBeUndefined();
+    expect(normalizedLegacyPack?.design.packVersion).toBeUndefined();
 
     const missingVersion = structuredClone(page);
     delete missingVersion.design.packVersion;
@@ -297,13 +308,13 @@ describe("landing pages package", () => {
       profile: { name: "Owner", bio: null, avatar: null, profileUrl: null },
     });
     if (page.version !== 3) throw new Error("Expected v3 service page");
-    const switched = setLandingPageDesignPack(page, "legacy-standard");
+    const switched = setLandingPageDesignPack(page, "clinical-editorial-01");
 
     expect(switched.hero).toEqual(page.hero);
     expect(switched.content).toEqual(page.content);
-    expect(getLandingPageDesignPackId(switched)).toBe("legacy-standard");
-    expect(renderLandingPageHtml(switched, "owner")).not.toContain(
-      "data-design-pack=",
+    expect(getLandingPageDesignPackId(switched)).toBe("clinical-editorial-01");
+    expect(renderLandingPageHtml(switched, "owner")).toContain(
+      'data-design-pack="clinical-editorial-01"',
     );
     expect(() =>
       setLandingPageDesignPack(page, "starter-event-01"),
@@ -364,32 +375,37 @@ describe("landing pages package", () => {
     expect(productHtml).not.toContain('name="marketingOptIn"');
   });
 
-  it("upgrades valid v1 documents to editable v3 documents", () => {
-    const legacy = normalizeLandingPageDocument({
-      version: 1,
-      template: "waitlist",
-      title: "Legacy launch",
-      brief: "A legacy page",
-      meta: { description: "Join the launch" },
-      hero: {
-        headline: "Legacy launch",
-        subheadline: "Join the launch",
-        cta: { label: "Join", href: "#signup" },
-      },
-      sections: [
-        { type: "signup", heading: "Join", body: "Hear first", buttonLabel: "Join" },
-      ],
-      footer: {},
-      style: { vibe: "minimal", accentColor: "#0f766e" },
-    });
-    if (!legacy) throw new Error("Expected valid legacy page");
-    const upgraded = upgradeLandingPageDocument(legacy);
-    expect(upgraded.version).toBe(3);
-    expect(upgraded.actions[0].kind).toBe("subscribe");
-    expect(upgraded.content.sections[0]).toMatchObject({ type: "action" });
-    expect(getLandingPageDesignPackId(upgraded)).toBe("legacy-standard");
-    expect(renderLandingPageHtml(upgraded, "owner")).not.toContain(
-      "data-design-pack=",
-    );
+  it("rejects pre-v3 documents instead of upgrading them", () => {
+    expect(
+      normalizeLandingPageDocument({
+        version: 1,
+        template: "waitlist",
+        title: "Legacy launch",
+        brief: "A legacy page",
+        meta: { description: "Join the launch" },
+        hero: {
+          headline: "Legacy launch",
+          subheadline: "Join the launch",
+          cta: { label: "Join", href: "#signup" },
+        },
+        sections: [],
+        footer: {},
+        style: { vibe: "minimal", accentColor: "#0f766e" },
+      }),
+    ).toBeNull();
+    expect(
+      normalizeLandingPageDocument({
+        version: 2,
+        intent: { type: "event", audience: "", goal: "", offerName: "Dinner" },
+        recipe: { id: "event-invite", template: "event", name: "Event invite" },
+        brief: "A dinner",
+        seo: { title: "Dinner", description: "A dinner" },
+        hero: { headline: "Dinner", subheadline: "A dinner", cta: { label: "RSVP", href: "#rsvp" } },
+        content: { sections: [] },
+        design: { theme: "editorial-event", accentColor: "#f2664a", backgroundColor: "#fff", textColor: "#111" },
+        assets: {},
+        publish: { status: "draft" },
+      }),
+    ).toBeNull();
   });
 });

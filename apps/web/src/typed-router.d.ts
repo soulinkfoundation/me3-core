@@ -41,7 +41,6 @@ declare module 'vue-router/auto-routes' {
     '/settings/payments': RouteRecordInfo<'/settings/payments', '/settings/payments', Record<never, never>, Record<never, never>>,
     '/sites/': RouteRecordInfo<'/sites/', '/sites', Record<never, never>, Record<never, never>>,
     '/sites/[username]': RouteRecordInfo<'/sites/[username]', '/sites/:username', { username: ParamValue<true> }, { username: ParamValue<false> }>,
-    '/sites/[username]/build': RouteRecordInfo<'/sites/[username]/build', '/sites/:username/build', { username: ParamValue<true> }, { username: ParamValue<false> }>,
     '/sites/[username]/business-site': RouteRecordInfo<'/sites/[username]/business-site', '/sites/:username/business-site', { username: ParamValue<true> }, { username: ParamValue<false> }>,
     '/sites/[username]/landing-pages/new': RouteRecordInfo<'/sites/[username]/landing-pages/new', '/sites/:username/landing-pages/new', { username: ParamValue<true> }, { username: ParamValue<false> }>,
     '/sites/[username]/pages/[pageId]': RouteRecordInfo<'/sites/[username]/pages/[pageId]', '/sites/:username/pages/:pageId', { username: ParamValue<true>, pageId: ParamValue<true> }, { username: ParamValue<false>, pageId: ParamValue<false> }>,

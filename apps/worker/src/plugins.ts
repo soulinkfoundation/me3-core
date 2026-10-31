@@ -1237,27 +1237,9 @@ const LANDING_PAGES_PLUGIN: CorePluginManifestSummary = {
   ],
   routes: [
     {
-      id: "sites.landing-page.read.api",
-      path: "/api/sites/:username/landing-page",
-      methods: ["GET"],
-      auth: "owner",
-    },
-    {
-      id: "sites.landing-page.save.api",
-      path: "/api/sites/:username/landing-page",
-      methods: ["PUT"],
-      auth: "owner",
-    },
-    {
       id: "sites.pages.api",
       path: "/api/sites/:username/pages/*",
       methods: ["GET", "POST", "PUT", "DELETE"],
-      auth: "owner",
-    },
-    {
-      id: "agent.landing-page.generate.api",
-      path: "/api/agent/landing-pages/generate",
-      methods: ["POST"],
       auth: "owner",
     },
   ],

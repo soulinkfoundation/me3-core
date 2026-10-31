@@ -1,6 +1,5 @@
 export const LANDING_PAGE_DESIGN_PACK_IDS = [
   "retreat-01",
-  "legacy-standard",
   "starter-event-01",
   "starter-service-01",
   "starter-waitlist-01",
@@ -19,23 +18,12 @@ export type LandingPageDesignPackDefinition = {
   description: string;
   bestFor: string;
   purposes: readonly LandingPageDesignPackPurpose[];
-  status: "starter" | "legacy";
+  status: "starter";
   selectable: boolean;
   previewPath: string | null;
 };
 
 export const LANDING_PAGE_DESIGN_PACKS: readonly LandingPageDesignPackDefinition[] = [
-  {
-    id: "legacy-standard",
-    version: 1,
-    name: "Classic",
-    description: "The original ME3 landing-page renderer retained for existing pages.",
-    bestFor: "Existing landing pages that should keep their current appearance.",
-    purposes: ["event", "service", "waitlist"],
-    status: "legacy",
-    selectable: false,
-    previewPath: null,
-  },
   {
     id: "starter-event-01",
     version: 1,

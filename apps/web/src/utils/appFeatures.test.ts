@@ -20,7 +20,7 @@ describe("app feature utilities", () => {
     expect(appFeatureForPath("/mission-control/wheel-of-life")).toBe(
       "mission-control",
     );
-    expect(appFeatureForPath("/sites/kieran/build")).toBe("sites");
+    expect(appFeatureForPath("/sites/kieran/business-site")).toBe("sites");
     expect(appFeatureForPath("/create")).toBe("sites");
     expect(appFeatureForPath("/people")).toBe("people");
     expect(appFeatureForPath("/contacts")).toBe("people");

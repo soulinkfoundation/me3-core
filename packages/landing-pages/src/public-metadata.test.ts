@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildLandingPageDocument, createBusinessSiteDocument, renderLandingPageHtml, upgradeLandingPageDocument, normalizeLandingPageDocument, getLandingPageValidationErrors } from './index';
+import { buildLandingPageDocument, createBusinessSiteDocument, renderLandingPageHtml, normalizeLandingPageDocument, getLandingPageValidationErrors } from './index';
 
 function eventPage() {
-  const page = upgradeLandingPageDocument(buildLandingPageDocument({ template: 'event', username: 'business', brief: 'A workshop with guided conversation.', profile: { name: 'Business', bio: null, avatar: null, profileUrl: null } }));
+  const page = buildLandingPageDocument({ template: 'event', username: 'business', brief: 'A workshop with guided conversation.', profile: { name: 'Business', bio: null, avatar: null, profileUrl: null } });
   page.event = { startDate: '2026-10-03T14:00:00+01:00', endDate: '2026-10-03T19:00:00+01:00', location: { type: 'place', name: 'The Barn', address: 'Killaloe, Co. Clare, Ireland' } };
   return page;
 }

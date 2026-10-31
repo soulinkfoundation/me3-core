@@ -138,7 +138,7 @@ Generated from the typed ME3 knowledge package. This file is public-safe and sho
   Approval mode: owner_approval
   Side effect: internal_write
   Data boundary: Landing-page drafts are owner-scoped until published.
-  App/API routes: /api/agent/landing-pages/generate
+  App/API routes: /api/sites/:username/pages
   Agent tool ids: landing_pages.generate_draft
   Requires: landing_pages.plugin_enabled
   Boundaries: Call this coming soon unless runtime/plugin state proves it is enabled. Generated drafts are not published pages.

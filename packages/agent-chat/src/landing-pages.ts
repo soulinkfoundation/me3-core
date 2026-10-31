@@ -14,7 +14,6 @@ import {
   normalizeLandingPageDocument,
   normalizeLandingPageFontPreset,
   setLandingPageDesignPack,
-  upgradeLandingPageDocument,
   type LandingPageDesignPackId,
   type LandingPageDocumentV3,
   type LandingPageFontPreset,
@@ -187,22 +186,20 @@ export async function createAgentLandingPageDraft(
     pageId: id,
     query: input.imageQuery || input.siteName || input.headline || input.brief,
   });
-  const document = upgradeLandingPageDocument(
-    buildLandingPageDocument({
-      username: site.username,
-      brief: input.brief,
-      template: input.purpose,
-      designPackId,
-      heroImage: image?.path || null,
-      heroImageAttribution: image?.attribution || null,
-      profile: {
-        name: owner?.name || site.username,
-        bio: owner?.bio || null,
-        avatar: owner?.avatar_url || null,
-        profileUrl: target.created ? "/me" : `/sites/${encodeURIComponent(site.username)}`,
-      },
-    }),
-  );
+  const document = buildLandingPageDocument({
+    username: site.username,
+    brief: input.brief,
+    template: input.purpose,
+    designPackId,
+    heroImage: image?.path || null,
+    heroImageAttribution: image?.attribution || null,
+    profile: {
+      name: owner?.name || site.username,
+      bio: owner?.bio || null,
+      avatar: owner?.avatar_url || null,
+      profileUrl: target.created ? "/me" : `/sites/${encodeURIComponent(site.username)}`,
+    },
+  });
   applyAgentLandingPageCopy(document, input);
   applyAgentLandingPageStyle(document, input);
   if (target.created && input.purpose !== "waitlist") {
@@ -512,7 +509,7 @@ function resolveAgentDesignPack(
   const designPackId = value
     ? normalizeLandingPageDesignPackId(value)
     : getDefaultLandingPageDesignPackId(purpose);
-  if (!designPackId || designPackId === "legacy-standard") {
+  if (!designPackId) {
     throw new Error("Choose one of the available starter design-pack IDs.");
   }
   if (!landingPageDesignPackSupportsPurpose(designPackId, purpose)) {
@@ -758,8 +755,7 @@ async function loadAgentLandingPage(
 
 function parseAgentLandingPageDocument(raw: string): LandingPageDocumentV3 | null {
   try {
-    const normalized = normalizeLandingPageDocument(JSON.parse(raw));
-    return normalized ? upgradeLandingPageDocument(normalized) : null;
+    return normalizeLandingPageDocument(JSON.parse(raw));
   } catch {
     return null;
   }

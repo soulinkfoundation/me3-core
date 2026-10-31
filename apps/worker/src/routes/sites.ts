@@ -2,8 +2,6 @@ import { getSiteImageMetadata, saveUploadedImageMetadata } from "../site-images"
 import { BookingReminderInputError, getSiteBookingReminders, updateSiteBookingReminders } from "../booking-reminders";
 import {
   LANDING_PAGES_PLUGIN_ID,
-  buildLandingPageDocument,
-  normalizeLandingPageDocument,
   normalizeLandingPageDesignPackId,
   normalizeLandingTemplate,
   renderLandingPageHtml,
@@ -32,7 +30,6 @@ import {
   getSitePage,
   listSitePageRevisions,
   listSitePages,
-  migrateLegacyLandingPages,
   parsePageDocument,
   publishSitePage,
   restoreSitePageRevision,
@@ -93,7 +90,6 @@ import {
   isValidPublicSiteDomain,
   listSiteProfileMetadata,
   listSiteFiles,
-  loadLandingPage,
   loadPublishManifest,
   loadSiteSourceFiles,
   normalizeDomain,
@@ -114,7 +110,6 @@ import {
   putSiteFile,
   putSiteMediaFile,
   renderNotFoundPage,
-  saveLandingPage,
   savePublishManifest,
   serveDefaultPublicSitePath,
   serveMeJsonResponse,
@@ -171,15 +166,6 @@ import {
   getDoubleOptInConfirmationStatus,
   requestDoubleOptInSubscription,
 } from "../subscriber-confirmations";
-
-type LandingPageGenerateBody = {
-  username?: string;
-  brief?: string;
-  templateId?: string;
-  heroImage?: string | null;
-  sectionImage?: string | null;
-  feedback?: string | null;
-};
 
 /**
  * People the owner adds or imports can only be emailed once the owner confirms they asked for it.
@@ -1863,8 +1849,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (!site) return c.json({ error: "Site not found" }, 404);
 
     const html =
-      (await getSiteFileText(c.env, site.id, "landing/index.html")) ||
-      (await getSiteFileText(c.env, site.id, "public/index.html"));
+      await getSiteFileText(c.env, site.id, "public/index.html");
     if (!html) return c.body(null, 204);
 
     c.header("X-Robots-Tag", "noindex, nofollow");
@@ -1952,15 +1937,6 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     } catch (error) {
       return sitePageErrorResponse(c, error);
     }
-  });
-
-  app.post("/api/sites/:username/pages/migrate-legacy", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
-    if (!site) return c.json({ error: "Site not found" }, 404);
-    const pages = await migrateLegacyLandingPages(c.env, ownerId, site);
-    return c.json({ migrated: pages.length, pages: pages.map(serializeSitePage) });
   });
 
   app.get("/api/sites/:username/pages/:pageId", async (c) => {
@@ -2096,94 +2072,6 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     }
   });
 
-  app.get("/api/sites/:username/landing-page", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    if (!(await isCorePluginEnabled(c.env, LANDING_PAGES_PLUGIN_ID))) {
-      return c.json({ error: "ME3 Landing Pages is coming soon" }, 403);
-    }
-
-    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
-    if (!site) return c.json({ error: "Site not found" }, 404);
-
-    const page = await loadLandingPage(c.env, site.id);
-    const owner = await getOwnerProfile(c.env, ownerId);
-    return c.json({
-      site: {
-        id: site.id,
-        username: site.username,
-        templateId: normalizeLandingTemplate(site.template_id),
-        publishedAt: site.published_at,
-      },
-      profile: {
-        name: owner?.name || site.username,
-        bio: owner?.bio || null,
-        avatar: owner?.avatar_url || null,
-      },
-      page,
-    });
-  });
-
-  app.put("/api/sites/:username/landing-page", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    if (!(await isCorePluginEnabled(c.env, LANDING_PAGES_PLUGIN_ID))) {
-      return c.json({ error: "ME3 Landing Pages is coming soon" }, 403);
-    }
-
-    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
-    if (!site) return c.json({ error: "Site not found" }, 404);
-
-    const body = await c.req.json<{ page?: unknown }>().catch((): { page?: unknown } => ({}));
-    const page = normalizeLandingPageDocument(body.page);
-    if (!page) return c.json({ error: "Valid landing page is required" }, 400);
-
-    await saveLandingPage(c.env, site, page);
-    return c.json({ ok: true, page });
-  });
-
-  app.post("/api/agent/landing-pages/generate", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    if (!(await isCorePluginEnabled(c.env, LANDING_PAGES_PLUGIN_ID))) {
-      return c.json({ error: "ME3 Landing Pages is coming soon" }, 403);
-    }
-
-    const body: LandingPageGenerateBody = await c.req
-      .json<LandingPageGenerateBody>()
-      .catch((): LandingPageGenerateBody => ({}));
-    const username = normalizeUsername(body.username);
-    const site = await getSiteForOwner(c.env, ownerId, username);
-    if (!site) return c.json({ error: "Site not found" }, 404);
-
-    const brief = body.brief?.trim();
-    if (!brief) return c.json({ error: "Brief is required" }, 400);
-
-    const owner = await getOwnerProfile(c.env, ownerId);
-    const page = buildLandingPageDocument({
-      username: site.username,
-      brief,
-      template: normalizeLandingTemplate(body.templateId) || "service",
-      heroImage: body.heroImage || null,
-      sectionImage: body.sectionImage || null,
-      feedback: body.feedback || null,
-      profile: {
-        name: owner?.name || site.username,
-        bio: owner?.bio || null,
-        avatar: owner?.avatar_url || null,
-        profileUrl: `${getCoreWebOrigin(c.env, c.req.url)}/sites/${site.username}`,
-      },
-    });
-
-    await saveLandingPage(c.env, site, page);
-    return c.json({
-      ok: true,
-      jobId: crypto.randomUUID(),
-      jobType: "landing_page_builder",
-      page,
-    });
-  });
-
   app.post("/api/sites/:username/publish", async (c) => {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
@@ -2227,8 +2115,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       return c.json({ ok: true, publishedAt: null });
     }
     const html =
-      (await getSiteFileText(c.env, site.id, "landing/index.html")) ||
-      (await getSiteFileText(c.env, site.id, "public/index.html"));
+      await getSiteFileText(c.env, site.id, "public/index.html");
     if (!html) return c.json({ error: "Generate or upload the site before publishing." }, 400);
 
     await c.env.DB.prepare(

@@ -678,7 +678,7 @@ export const ME3_CAPABILITIES: readonly Me3Capability[] = [
     approvalMode: "owner_approval",
     sideEffect: "internal_write",
     dataBoundary: "Landing-page drafts are owner-scoped until published.",
-    appRoutes: ["/api/agent/landing-pages/generate"],
+    appRoutes: ["/api/sites/:username/pages"],
     agentToolIds: ["landing_pages.generate_draft"],
     boundaries: [
       "Call this coming soon unless runtime/plugin state proves it is enabled.",

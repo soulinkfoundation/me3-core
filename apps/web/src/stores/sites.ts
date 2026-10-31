@@ -8,10 +8,8 @@ import { API_BASE, ApiError, api } from "../api";
 import type { ProductDownloadFile } from "../../../../shared/product-delivery";
 import type { SiteUploadFile } from "../utils/siteUpload";
 import type {
-  LandingPageDocument,
   LandingPageDocumentV3,
   LandingPageTemplateId,
-  LandingPageDesignPackId,
   SiteType,
 } from "@me3-core/plugin-landing-pages";
 
@@ -216,31 +214,6 @@ export interface SiteContent {
       message?: string;
     };
   }>;
-}
-
-export interface LandingPageProfileSummary {
-  name: string | null;
-  bio: string | null;
-  location: string | null;
-  avatar: string | null;
-  profileUrl: string | null;
-  tagline: string | null;
-  socialLinks: Array<{ label: string; href: string }>;
-}
-
-export interface LandingPageSiteRecord {
-  id: string;
-  username: string;
-  siteType: SiteType;
-  templateId: LandingPageTemplateId | null;
-  publishedAt: string | null;
-}
-
-export interface LandingPageDraftResponse {
-  ok: boolean;
-  site: LandingPageSiteRecord;
-  profile: LandingPageProfileSummary;
-  page: LandingPageDocument | null;
 }
 
 export interface SitePage {
@@ -929,88 +902,6 @@ export const useSitesStore = defineStore("sites", () => {
     }
   }
 
-  async function getLandingPageDraft(
-    username: string,
-  ): Promise<LandingPageDraftResponse | null> {
-    try {
-      return await api.get<LandingPageDraftResponse>(
-        `/sites/${username}/landing-page`,
-      );
-    } catch (e: any) {
-      error.value = e.message || "Failed to load landing page";
-      return null;
-    }
-  }
-
-  async function generateLandingPage(
-    username: string,
-    payload: {
-      brief: string;
-      templateId?: LandingPageTemplateId;
-      heroImage?: string | null;
-      sectionImage?: string | null;
-      feedback?: string | null;
-    },
-  ): Promise<LandingPageDocument | null> {
-    loading.value = true;
-    error.value = null;
-
-    try {
-      const response = await api.post<{
-        ok: boolean;
-        jobId: string;
-        jobType: "landing_page_builder";
-        page: LandingPageDocument;
-      }>("/agent/landing-pages/generate", {
-        username,
-        ...payload,
-      });
-      return response.page;
-    } catch (e: any) {
-      error.value = e.message || "Failed to generate landing page";
-      return null;
-    } finally {
-      loading.value = false;
-    }
-  }
-
-  async function saveLandingPage(
-    username: string,
-    page: LandingPageDocument,
-  ): Promise<LandingPageDocument | null> {
-    loading.value = true;
-    error.value = null;
-
-    try {
-      const response = await api.put<{ ok: boolean; page: LandingPageDocument }>(
-        `/sites/${username}/landing-page`,
-        { page },
-      );
-      return response.page;
-    } catch (e: any) {
-      error.value = e.message || "Failed to save landing page";
-      return null;
-    } finally {
-      loading.value = false;
-    }
-  }
-
-  async function fetchPreviewHtml(username: string): Promise<string | null> {
-    try {
-      const response = await fetch(`${API_BASE}/sites/${username}/preview-html`, {
-        credentials: "include",
-      });
-      if (response.status === 204) return "";
-      if (!response.ok) {
-        throw new ApiError("Failed to load preview", response.status);
-      }
-      return response.text();
-    } catch (e: any) {
-      error.value = e.message || "Failed to load preview";
-      return null;
-    }
-  }
-
   async function publishLandingPage(username: string): Promise<boolean> {
     loading.value = true;
     error.value = null;
@@ -1057,50 +948,6 @@ export const useSitesStore = defineStore("sites", () => {
     } catch (e: any) {
       error.value = e.message || "Failed to load pages";
       return [];
-    }
-  }
-
-  async function createSitePage(
-    username: string,
-    payload: {
-      slug: string;
-      brief: string;
-      templateId: LandingPageTemplateId;
-      designPackId?: LandingPageDesignPackId;
-    },
-  ): Promise<SitePage | null> {
-    loading.value = true;
-    error.value = null;
-    try {
-      const response = await api.post<{ page: SitePage }>(
-        `/sites/${username}/pages`,
-        payload,
-      );
-      sitePages.value = [response.page, ...sitePages.value];
-      return response.page;
-    } catch (e: any) {
-      error.value = e.message || "Failed to create page";
-      return null;
-    } finally {
-      loading.value = false;
-    }
-  }
-
-  async function migrateLegacySitePages(username: string): Promise<number> {
-    loading.value = true;
-    error.value = null;
-    try {
-      const response = await api.post<{ migrated: number; pages: SitePage[] }>(
-        `/sites/${username}/pages/migrate-legacy`,
-        {},
-      );
-      for (const page of response.pages) replaceSitePage(page);
-      return response.migrated;
-    } catch (e: any) {
-      error.value = e.message || "Failed to import legacy pages";
-      return 0;
-    } finally {
-      loading.value = false;
     }
   }
 
@@ -1523,15 +1370,9 @@ export const useSitesStore = defineStore("sites", () => {
     getOnboardingStatus,
     // Site content
     getSiteContent,
-    getLandingPageDraft,
-    generateLandingPage,
-    saveLandingPage,
-    fetchPreviewHtml,
     publishLandingPage,
     unpublishLandingPage,
     fetchSitePages,
-    createSitePage,
-    migrateLegacySitePages,
     getSitePage,
     saveSitePage,
     fetchSitePagePreview,

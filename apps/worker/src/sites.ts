@@ -2,13 +2,7 @@ import { shouldShowSiteBadge } from "./site-badge";
 import { extractEmbeddedPageImages, hasEmbeddedPageImages } from "./site-embedded-images";
 import { publicSiteFileResponse } from "./public-site-response";
 import { requestCountry } from "../../../shared/regional-pricing";
-import {
-  getLandingPageTemplateId,
-  normalizeBusinessSiteDocument,
-  normalizeLandingPageDocument,
-  renderLandingPageHtml,
-  type LandingPageDocument,
-} from "@me3-core/plugin-landing-pages";
+import { normalizeBusinessSiteDocument } from "@me3-core/plugin-landing-pages";
 import { getOrCreateInstallSessionSecret } from "./install-secrets";
 import type { AppContext } from "./http/types";
 import type { Me3SiteProfile } from "@me3-core/site-renderer";
@@ -825,8 +819,7 @@ export async function serveSiteFileResponse(
     r2File ||
     (await getSiteFile(env, site.id, publicPath)) ||
     (indexPath ? await getSiteFile(env, site.id, indexPath) : null) ||
-    (htmlPath ? await getSiteFile(env, site.id, htmlPath) : null) ||
-    (requestedPath === "index.html" ? await getSiteFile(env, site.id, "landing/index.html") : null);
+    (htmlPath ? await getSiteFile(env, site.id, htmlPath) : null);
   if (!file) {
     return new Response(renderNotFoundPage("Page not found"), {
       status: 404,
@@ -1628,24 +1621,6 @@ export function renderNotFoundPage(message: string): string {
 export function injectBaseHref(html: string, baseHref: string): string {
   if (/<base\s/i.test(html)) return html;
   return html.replace(/<head(\s[^>]*)?>/i, `<head$1><base href="${escapeHtml(baseHref)}">`);
-}
-
-export async function loadLandingPage(env: Env, siteId: string): Promise<LandingPageDocument | null> {
-  const text = await getSiteFileText(env, siteId, "landing/page.json");
-  if (!text) return null;
-  try {
-    return normalizeLandingPageDocument(JSON.parse(text));
-  } catch {
-    return null;
-  }
-}
-
-export async function saveLandingPage(env: Env, site: DbSite, page: LandingPageDocument): Promise<void> {
-  await putSiteFile(env, site.id, "landing/page.json", JSON.stringify(page, null, 2), "application/json");
-  await putSiteFile(env, site.id, "landing/index.html", renderLandingPageHtml(page, site.username), "text/html");
-  await env.DB.prepare("UPDATE sites SET template_id = ?, updated_at = datetime('now') WHERE id = ?")
-    .bind(getLandingPageTemplateId(page), site.id)
-    .run();
 }
 
 export async function parseSubscriberBody(c: AppContext): Promise<{
