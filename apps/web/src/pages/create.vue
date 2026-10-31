@@ -160,7 +160,6 @@ function hasMeaningfulRestoredDraft(): boolean {
 }
 
 const showPreview = computed(() => !showIntroScreen.value && wizard.currentStepId !== "goals");
-const inlinePreview = computed(() => ["basics", "avatar", "banner", "publish"].includes(wizard.currentStepId || ""));
 
 // Check if WizardPages/Blog/Offerings/Bookings is in editing mode
 const isEditingPage = computed(() => {
@@ -468,7 +467,7 @@ watch(
     </main>
 
 
-    <main v-if="!showIntroScreen" class="wizard-main" :class="{ 'wizard-main--inline-preview': inlinePreview }">
+    <main v-if="!showIntroScreen" class="wizard-main">
       <div class="step-content">
         <component :is="currentComponent" :key="`${wizard.draftContextId}:${wizard.currentStepId}`" ref="currentComponentRef" />
         <nav v-if="!isEditingPage" class="step-nav" aria-label="Step navigation">
@@ -562,8 +561,8 @@ button:disabled { opacity: .45; cursor: not-allowed; } button:focus-visible, a:f
 .wizard-live__view { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; min-height: 44px; padding: 0 16px; border-radius: 22px; background: var(--ui-surface); color: var(--ui-text); text-decoration: none; font-weight: 600; font-size: 14px; }
 @media(max-width:900px) {
   .wizard-main { grid-template-columns: minmax(0, 620px); margin: 18px auto; gap: 20px; padding: 0 16px; }
-  .preview-panel { display: none; position: static; }.wizard-main--inline-preview .preview-panel { display: block; grid-row: 1; }
-  .wizard-main--inline-preview .preview-panel :deep(.generated-site-preview) { height: 170px; min-height: 170px; border-radius: 20px; }
+  /* Small screens open the preview from the top bar instead of squeezing it above the form. */
+  .preview-panel { display: none; }
   .wizard-topbar { grid-template-columns: minmax(0, 1fr) 44px; }.wizard-topbar .wizard-step-button { grid-column: 1; justify-content: flex-start; }.progress-bar { padding-inline: 12px; }.progress-track { right: 24px; left: 24px; }
   .progress-step-dot { width: 14px; height: 14px; }.progress-step.is-current .progress-step-dot { width: 18px; height: 18px; }.progress-step-tooltip { display: none; }
   .step-nav { padding-top: 28px; }.nav-btn { padding: 0 20px; }

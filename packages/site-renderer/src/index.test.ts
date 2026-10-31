@@ -127,11 +127,12 @@ describe("site generator", () => {
     } as any, []);
     const home = files["index.html"];
     expect(home).toContain('class="site-offer__image" src="./files/content/massage.jpg"');
-    expect(home).toContain('<p class="site-offer__place">Clifton, Bristol</p>');
+    expect(home).toContain("<span>Clifton, Bristol</span>");
     expect(home).toContain("<span>60 min</span>");
     expect(home).toContain("<span>Thursdays 19:00</span>");
     expect(home).toContain("<span>12 places</span>");
-    expect(home).toContain('<p class="site-offer__place">Online</p>');
+    expect(home).toContain("<span>Online</span>");
+    expect(home).not.toContain("site-offer__place");
     expect(home).toContain("<span>21 Nov, 10:00–12:00</span>");
     expect(home).toContain("<span>13–15 Mar</span>");
     expect(home).toContain('data-offer-book-type="retreat" data-offer-book="0" aria-label="Reserve your mat: Yoga for Runners">Reserve your mat</button>');
@@ -160,7 +161,7 @@ describe("site generator", () => {
     } as any;
     const files = await generateSiteHtml(profile, [{ name: "about.md", content: "About me" }], { offerPagesEnabled: true });
     const page = files["yoga-for-runners.html"];
-    expect(page).toContain('<p class="offer-page__kind">Event · St Werburghs, Bristol</p>');
+    expect(page).toContain("<span>St Werburghs, Bristol</span>");
     expect(page).toContain("<h1>Yoga for Runners</h1>");
     expect(page).toContain("<span>21 Nov, 10:00–12:00</span>");
     expect(page).toContain('class="offer-page__image" src="./files/content/yoga.jpg"');

@@ -26,6 +26,7 @@ import BookingAvailabilityEditor, {
 import TimezonePicker from "../booking/TimezonePicker.vue";
 import SiteBookingReminders from "../booking/SiteBookingReminders.vue";
 import UiIcon from "../UiIcon.vue";
+import AppDialog from "../AppDialog.vue";
 import { isPluginAccessEnabled } from "../../utils/pluginAccess";
 import { LANDING_PAGES_PLUGIN_ID } from "@me3-core/plugin-landing-pages";
 import { useAppToast } from "../../composables/useAppToast";
@@ -931,15 +932,21 @@ const offerEntries = computed(() => {
   return entries;
 });
 
-function isSelectedOffer(entry: { kind: OfferKind; id: string }) {
-  return activeBookingType.value === entry.kind && selectedBookingOfferId.value === entry.id;
-}
+// Offers open in a sheet so the list stays a list, not a set of tabs.
+const offerSheetOpen = ref(false);
+const offerSheetTitle = computed(() => {
+  const offer = activeBookingType.value === "class" ? activeClassOffer.value
+    : activeBookingType.value === "retreat" ? activeRetreatOffer.value
+    : activeOffer.value;
+  return offer?.title.trim() || `New ${offerKindInfo(activeBookingType.value as OfferKind).label.toLowerCase()}`;
+});
 
 function selectOffer(kind: OfferKind, id: string) {
   activeBookingType.value = kind;
   if (kind === "class") activeClassOfferId.value = id;
   else if (kind === "retreat") activeRetreatOfferId.value = id;
   else activeOfferId.value = id;
+  offerSheetOpen.value = true;
 }
 
 function addOfferOfKind(kind: OfferKind) {
@@ -958,6 +965,7 @@ function addOfferOfKind(kind: OfferKind) {
   else if (kind === "retreat") addRetreatOffer();
   else addOffer();
   activeBookingType.value = kind;
+  offerSheetOpen.value = true;
 }
 
 function removeOfferEntry(kind: OfferKind, id: string) {
@@ -991,16 +999,14 @@ onMounted(() => {
       events.
     </p>
 
-    <SiteBookingReminders v-if="wizard.selectedSiteId" :site-id="wizard.selectedSiteId" />
-
     <div class="config-fields">
       <div class="section-heading">
         <label class="section-label" id="booking-offers-label">Your offers</label>
       </div>
 
       <ul v-if="offerEntries.length" class="offer-list" aria-labelledby="booking-offers-label">
-        <li v-for="entry in offerEntries" :key="`${entry.kind}:${entry.id}`" class="offer-list-item" :class="{ active: isSelectedOffer(entry) }">
-          <button type="button" class="offer-list-select" :aria-pressed="isSelectedOffer(entry)" @click="selectOffer(entry.kind, entry.id)">
+        <li v-for="entry in offerEntries" :key="`${entry.kind}:${entry.id}`" class="offer-list-item">
+          <button type="button" class="offer-list-select" :aria-label="`Edit ${entry.title}`" @click="selectOffer(entry.kind, entry.id)">
             <span class="offer-list-thumb" :style="entry.image ? { backgroundImage: `url(${entry.image})` } : undefined" aria-hidden="true" />
             <span class="offer-list-text">
               <span class="offer-list-title">{{ entry.title }}</span>
@@ -1032,29 +1038,14 @@ onMounted(() => {
       </div>
 
       <template v-if="hasBookingTypes">
-        <details class="booking-heading-fields booking-section-details">
-          <summary><UiIcon name="Pencil" :size="18" />Section title and intro</summary>
-          <div class="form-group">
-            <label for="booking-heading-title">Booking section title</label>
-            <input
-              id="booking-heading-title"
-              v-model="bookingHeadingTitle"
-              type="text"
-              placeholder="e.g. Book a session"
-              maxlength="100"
-            />
-          </div>
-          <div class="form-group">
-            <label for="booking-heading-description">Short intro</label>
-            <InlineRichTextEditor
-              v-model="bookingHeadingDescription"
-              input-id="booking-heading-description"
-              :max-characters="300"
-              placeholder="Help people understand what these sessions are for"
-            />
-          </div>
-        </details>
 
+        <AppDialog :open="offerSheetOpen" labelled-by="offer-sheet-title" close-on-backdrop @close="offerSheetOpen = false">
+          <div class="offer-sheet">
+            <header class="offer-sheet-header">
+              <h3 id="offer-sheet-title">{{ offerSheetTitle }}</h3>
+              <button type="button" class="offer-sheet-done" @click="offerSheetOpen = false">Done</button>
+            </header>
+            <div class="offer-sheet-body">
         <div
           v-if="activeBookingType === 'one_to_one'"
           class="booking-type-panel"
@@ -1213,26 +1204,6 @@ onMounted(() => {
               </div>
             </div>
           </div>
-          <details class="booking-shared-settings booking-section-details">
-            <summary><UiIcon name="Settings" :size="18" />Default hours and display</summary>
-            <div class="offer-setting-row">
-              <div>
-                <strong>Default availability</strong>
-                <span>{{ availabilitySummary(bookingAvailability) }} · {{ formatTimezoneLabel(bookingTimezone) }}</span>
-              </div>
-              <button type="button" class="setting-action" @click="openAvailability('default')">Edit default hours</button>
-            </div>
-            <div class="offer-setting-row offer-display-row">
-              <div>
-                <strong>How offers appear</strong>
-                <span>Choose how visitors select a 1:1 offer.</span>
-              </div>
-              <div class="display-options" role="group" aria-label="How offers appear">
-                <button type="button" :aria-pressed="offerDisplayMode === 'cards'" :class="{ active: offerDisplayMode === 'cards' }" @click="offerDisplayMode = 'cards'">Cards</button>
-                <button type="button" :aria-pressed="offerDisplayMode === 'dropdown'" :class="{ active: offerDisplayMode === 'dropdown' }" @click="offerDisplayMode = 'dropdown'">Dropdown</button>
-              </div>
-            </div>
-          </details>
         </div>
 
         <div
@@ -1682,6 +1653,54 @@ onMounted(() => {
             Copy booking link
           </button>
         </section>
+            </div>
+          </div>
+        </AppDialog>
+
+        <section class="booking-heading-fields" aria-labelledby="booking-heading-label">
+          <h3 id="booking-heading-label" class="booking-group-title">Booking form on your site</h3>
+          <p class="booking-group-hint">The heading and intro above the booking form on your homepage.</p>
+          <div class="form-group">
+            <label for="booking-heading-title">Heading</label>
+            <input
+              id="booking-heading-title"
+              v-model="bookingHeadingTitle"
+              type="text"
+              placeholder="e.g. Book a session"
+              maxlength="100"
+            />
+          </div>
+          <div class="form-group">
+            <label for="booking-heading-description">Intro <span class="optional-label">(optional)</span></label>
+            <InlineRichTextEditor
+              v-model="bookingHeadingDescription"
+              input-id="booking-heading-description"
+              :max-characters="300"
+              placeholder="Help people understand what these sessions are for"
+            />
+          </div>
+        </section>
+
+        <details v-if="profile.booking.oneToOneEnabled" class="booking-shared-settings booking-section-details">
+          <summary><UiIcon name="Settings" :size="18" />Default hours and display</summary>
+          <div class="offer-setting-row">
+            <div>
+              <strong>Default availability</strong>
+              <span>{{ availabilitySummary(bookingAvailability) }} · {{ formatTimezoneLabel(bookingTimezone) }}</span>
+            </div>
+            <button type="button" class="setting-action" @click="openAvailability('default')">Edit default hours</button>
+          </div>
+          <div class="offer-setting-row offer-display-row">
+            <div>
+              <strong>How offers appear</strong>
+              <span>Choose how visitors select a 1:1 offer.</span>
+            </div>
+            <div class="display-options" role="group" aria-label="How offers appear">
+              <button type="button" :aria-pressed="offerDisplayMode === 'cards'" :class="{ active: offerDisplayMode === 'cards' }" @click="offerDisplayMode = 'cards'">Cards</button>
+              <button type="button" :aria-pressed="offerDisplayMode === 'dropdown'" :class="{ active: offerDisplayMode === 'dropdown' }" @click="offerDisplayMode = 'dropdown'">Dropdown</button>
+            </div>
+          </div>
+        </details>
 
         <details class="confirmation-email-section">
           <summary><UiIcon name="Mail" :size="18" />Confirmation emails</summary>
@@ -1802,6 +1821,9 @@ onMounted(() => {
           </p>
         </details>
 
+        <div v-if="wizard.selectedSiteId" class="booking-reminders-card">
+          <SiteBookingReminders :site-id="wizard.selectedSiteId" />
+        </div>
       </template>
     </div>
 
@@ -1960,8 +1982,8 @@ onMounted(() => {
   border-radius: 12px;
 }
 
-.offer-list-item.active {
-  background: var(--ui-accent-soft, rgba(34, 152, 116, 0.1));
+.offer-list-item:hover {
+  background: var(--ui-surface-muted);
 }
 
 .offer-list-select {
@@ -2181,7 +2203,91 @@ onMounted(() => {
 }
 
 .booking-heading-fields {
-  padding: 0 20px;
+  display: grid;
+  gap: 4px;
+  margin-top: 28px;
+  padding: 0 4px;
+}
+
+.booking-group-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.booking-group-hint {
+  margin: 0 0 8px;
+  color: var(--ui-text-muted);
+  font-size: 13px;
+}
+
+.offer-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 100%);
+  max-height: calc(100dvh - 48px);
+  border-radius: 20px;
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+  overflow: hidden;
+}
+
+.offer-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 14px 24px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.offer-sheet-header h3 {
+  overflow: hidden;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.offer-sheet-done {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ui-primary);
+  color: var(--ui-primary-contrast);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.offer-sheet-done:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.offer-sheet-body {
+  overflow: auto;
+  padding: 4px 4px 24px;
+  overscroll-behavior: contain;
+}
+
+.offer-sheet-body .booking-share-actions {
+  margin: 16px 20px 0;
+}
+
+@media (max-width: 640px) {
+  .offer-sheet {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 20px 20px 0 0;
+  }
+
+  .offer-sheet-body {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 .empty-bookings-title {
@@ -2303,6 +2409,12 @@ onMounted(() => {
   margin: 20px 0;
 }
 .booking-shared-settings { padding: 0 20px 20px; }
+/* Settings groups below the offers share one card style. */
+.booking-section-details.booking-shared-settings { margin: 16px 0 12px; border-radius: 20px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
+.booking-section-details.booking-shared-settings:not([open]) { padding-bottom: 0; }
+.booking-section-details.booking-shared-settings summary { color: var(--ui-text); font-size: 15px; font-weight: 600; border-radius: 20px; }
+.booking-reminders-card { margin-top: 12px; padding: 4px 16px 16px; border-radius: 20px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
+.booking-reminders-card :deep(.booking-reminders) { margin-top: 0; }
 .offer-setting-row {
   display: flex;
   align-items: center;
@@ -2372,7 +2484,6 @@ onMounted(() => {
   margin-top: 18px;
 }
 
-.booking-heading-fields,
 .pricing-editor {
   margin-top: 16px;
 }

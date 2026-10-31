@@ -609,9 +609,9 @@ function generateOffers(profile: Me3SiteProfile, inlineBooking: boolean): string
     const label = offer.buttonLabel || defaultOfferButtonLabel(kind);
     const place = offerPlace(offer);
     const places = kind !== "one_to_one" && typeof offer.capacity === "number" ? `${offer.capacity} places` : "";
-    const pills = [offerWhen(entry, book.duration), formatPricing(offer.pricing), places].filter(Boolean);
+    const pills = [offerWhen(entry, book.duration), place, formatPricing(offer.pricing), places].filter(Boolean);
     const image = offer.image ? `<img class="site-offer__image" src="${escapeHtml(filePathForHtml(offer.image))}" alt="" loading="lazy" decoding="async">` : "";
-    return `<article class="site-offer${image ? " site-offer--image" : ""}">${image}<div class="site-offer__body">${place ? `<p class="site-offer__place">${escapeHtml(place)}</p>` : ""}<h3>${escapeHtml(title)}</h3><div class="site-offer__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>${offer.description ? `<p>${escapeHtml(plainTextFromMaybeHtml(offer.description))}</p>` : ""}<div class="site-offer__actions"><button type="button" data-offer-book-type="${kind}" data-offer-book="${index}" aria-label="${escapeHtml(`${label}: ${title}`)}">${escapeHtml(label)}</button>${offer.pageSlug ? `<a class="site-offer__more" href="./${escapeHtml(normalizeSitePath(offer.pageSlug))}" aria-label="${escapeHtml(`More about ${title}`)}">More →</a>` : ""}</div></div></article>`;
+    return `<article class="site-offer${image ? " site-offer--image" : ""}">${image}<div class="site-offer__body"><h3>${escapeHtml(title)}</h3><div class="site-offer__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>${offer.description ? `<p>${escapeHtml(plainTextFromMaybeHtml(offer.description))}</p>` : ""}<div class="site-offer__actions"><button type="button" data-offer-book-type="${kind}" data-offer-book="${index}" aria-label="${escapeHtml(`${label}: ${title}`)}">${escapeHtml(label)}</button>${offer.pageSlug ? `<a class="site-offer__more" href="./${escapeHtml(normalizeSitePath(offer.pageSlug))}" aria-label="${escapeHtml(`More about ${title}`)}">More →</a>` : ""}</div></div></article>`;
   }).join("");
   const booking = inlineBooking ? `<div class="site-offer-booking" hidden>${generateBooking(profile)}</div>` : "";
   return `<section class="site-offers"><div class="site-section-heading"><h2>Work with me</h2></div><div class="site-offers__grid">${cards}</div>${booking}<script>(function(){var section=document.currentScript.parentElement;section.querySelectorAll('[data-offer-book]').forEach(function(button){button.addEventListener('click',function(){var booking=section.querySelector('.site-offer-booking');if(booking)booking.hidden=false;var target=booking||document.getElementById('booking');if(!target)return;var type=button.getAttribute('data-offer-book-type')||'one_to_one';var tab=target.querySelector('[data-booking-type-tab="'+type+'"]');if(tab)tab.click();var panel=target.querySelector('[data-booking-type-panel="'+type+'"]')||target;var index=Number(button.getAttribute('data-offer-book'));var card=panel.querySelectorAll('.booking-card')[index];if(card)card.click();var select=panel.querySelector('[data-booking-offer-select]');if(select&&select.options[index]){select.selectedIndex=index;select.dispatchEvent(new Event('change',{bubbles:true}));}target.scrollIntoView({behavior:'smooth',block:'start'});});});})();</script></section>`;
@@ -684,8 +684,6 @@ function resolveOfferPages(profile: Me3SiteProfile, capabilities: SiteRenderCapa
   return { profile: { ...profile, intents: { ...profile.intents, book: resolvedBook } }, pages };
 }
 
-const OFFER_KIND_LABELS: Record<OfferKind, string> = { one_to_one: "Appointment", class: "Class", retreat: "Event" };
-
 /** A page for one offer: what it is, when, where and the price, then the booking form for just that offer. */
 function generateOfferPageHtml(profile: Me3SiteProfile, entry: OfferEntry, capabilities: SiteRenderCapabilities): string {
   const { offer, kind } = entry;
@@ -694,7 +692,7 @@ function generateOfferPageHtml(profile: Me3SiteProfile, entry: OfferEntry, capab
   const label = offer.buttonLabel || defaultOfferButtonLabel(kind);
   const place = offerPlace(offer);
   const places = kind !== "one_to_one" && typeof offer.capacity === "number" ? `${offer.capacity} places` : "";
-  const pills = [offerWhen(entry, book?.duration), formatPricing(offer.pricing), places].filter(Boolean);
+  const pills = [offerWhen(entry, book?.duration), place, formatPricing(offer.pricing), places].filter(Boolean);
   const type = normalizeBookingTypes(book).find((item) => (item.type || "one_to_one") === kind);
   const singleType = type && (kind === "class" ? { ...type, classes: [offer] } : kind === "retreat" ? { ...type, retreats: [offer] } : { ...type, offers: [offer] });
   const booking = singleType && book
@@ -708,7 +706,7 @@ function generateOfferPageHtml(profile: Me3SiteProfile, entry: OfferEntry, capab
     activeSlug: entry.offer.pageSlug || "",
     basePath: "./",
     body: `${modern ? "" : `<header class="page-header"><a class="back-link" href="./">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, "./"))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, "", "./", "header")}</header>`}
-      <main class="content offer-page">${offer.image ? `<img class="offer-page__image" src="${escapeHtml(filePathForHtml(offer.image, "./"))}" alt="" decoding="async">` : ""}<p class="offer-page__kind">${escapeHtml([OFFER_KIND_LABELS[kind], place].filter(Boolean).join(" · "))}</p><h1>${escapeHtml(title)}</h1>${pills.length ? `<div class="offer-page__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>` : ""}${offer.description ? `<div class="offer-page__description">${renderRichText(offer.description)}</div>` : ""}${booking ? `<p><a class="offer-page__cta" href="#booking">${escapeHtml(label)}</a></p>${booking}` : ""}</main>`,
+      <main class="content offer-page">${offer.image ? `<img class="offer-page__image" src="${escapeHtml(filePathForHtml(offer.image, "./"))}" alt="" decoding="async">` : ""}<h1>${escapeHtml(title)}</h1>${pills.length ? `<div class="offer-page__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>` : ""}${offer.description ? `<div class="offer-page__description">${renderRichText(offer.description)}</div>` : ""}${booking ? `<p><a class="offer-page__cta" href="#booking">${escapeHtml(label)}</a></p>${booking}` : ""}</main>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
     vibe: getVibe(profile),
   });
@@ -716,10 +714,9 @@ function generateOfferPageHtml(profile: Me3SiteProfile, entry: OfferEntry, capab
 
 function offerPageCss(): string {
   return `.offer-page__image{display:block;width:100%;max-width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--radius,12px);margin:0 0 20px}
-.offer-page__kind{margin:0 0 6px;opacity:.72;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
 .offer-page h1{margin-top:0}
 .offer-page__pills{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px}
-.offer-page__pills span{padding:3px 10px;border-radius:999px;background:var(--raised,rgba(127,127,127,.14));font-size:.82rem;font-weight:700}
+.offer-page__pills span{padding:4px 11px;border-radius:999px;background:var(--raised,rgba(127,127,127,.14));font-family:var(--font,inherit);font-size:.85rem;font-weight:500}
 .offer-page a.offer-page__cta{display:inline-flex;align-items:center;min-height:44px;padding:0 18px;border-radius:var(--button-radius,999px);background:var(--accent,#222);color:var(--accent-text,#fff);font-weight:700;text-decoration:none}
 .offer-page a.offer-page__cta:focus-visible{outline:3px solid var(--accent,#222);outline-offset:2px}
 .offer-page .booking{margin-top:32px}`;
