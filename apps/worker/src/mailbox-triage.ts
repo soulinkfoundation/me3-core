@@ -13,6 +13,7 @@ import {
   resolveSenderAvatar,
   senderDomain,
 } from "./mailbox-sender-identity";
+import { notifyLoginCodeReceived, type LoginCodePush } from "./push-notifications";
 import type { Env } from "./types";
 
 /**
@@ -220,6 +221,8 @@ export type MailTriageOptions = {
   waitUntil?: (work: Promise<unknown>) => void;
   /** Replaces starting the agent turn for an owner's email. */
   dispatchInstruction?: OwnerInstructionDispatcher;
+  /** Replaces the phone push for a fresh sign-in code. */
+  notifyLoginCode?: (env: Env, push: LoginCodePush) => Promise<unknown>;
   now?: Date;
 };
 
@@ -282,6 +285,8 @@ export const SPAM_RETENTION_MS = 30 * 24 * 60 * 60_000;
 export const SPAM_SCORE_THRESHOLD = 4;
 /** A sign-in code stays in Inbox this long, so it is there while the owner is signing in. */
 export const LOGIN_CODE_KEEP_MS = 60 * 60_000;
+/** A sign-in code is pushed and shown on Home this long after it arrives; most expire within ten minutes. */
+export const LOGIN_CODE_FRESH_MS = 15 * 60_000;
 /** Triage model calls per owner per rolling day when the mailbox sets no daily_inbound_limit. */
 export const MODEL_CALLS_DAILY_LIMIT = 200;
 /** Triage model calls per sender address per rolling day. */
@@ -356,6 +361,7 @@ export async function runMailTriage(env: Env, messageId: string, options: MailTr
       outcome.draftId, JSON.stringify(outcome.context), now.toISOString(), now.toISOString(), messageId,
     ).run();
     if (row.from_address) await resolveSenderAvatar(env, senderDomain(row.from_address), now);
+    if (outcome.handledKind === "login_code") await pushLoginCode(env, row, String(outcome.context.sender || ""), now, options);
   } catch (error) {
     await env.DB.prepare(
       "UPDATE mailbox_triage SET status = 'failed', error_message = ?, updated_at = ? WHERE message_id = ?",
@@ -629,6 +635,30 @@ export function isLoginCodeEmail(subject: string, body: string, address: string)
   if (LOGIN_CODE_SUBJECT.test(subject)) return true;
   const head = body.slice(0, 1500);
   return isAutomatedLocalPart(address) && LOGIN_CODE_BODY.test(head) && /\b\d{4,8}\b/.test(head);
+}
+
+// Each pattern is linear: no nested or overlapping quantifiers (see stripLeakedStyles).
+const CODE_LINE = /^(?:[A-Z]-)?(\d{3}[- ]\d{3}|\d{4,8}|[A-Z0-9]{6,8})$/;
+const CODE_AFTER_WORD = /\b(?:code|pin|passcode|otp)(?: is)?:? +(?:[A-Z]-)?(\d{3}[- ]\d{3}|\d{4,8})\b/i;
+const CODE_BEFORE_WORD = /\b(\d{4,8}) is your\b/i;
+
+/** The code in a sign-in email: "Your code is 482 913", "482913 is your code", or a line holding only the code. */
+export function extractLoginCode(subject: string | null | undefined, body: string | null | undefined): string | null {
+  const head = (body || "").replace(/\r\n/g, "\n").slice(0, 1500);
+  const line = head.split("\n").map(text => text.trim()).find(text => CODE_LINE.test(text) && /\d/.test(text));
+  const raw = CODE_BEFORE_WORD.exec(subject || "")?.[1] || CODE_AFTER_WORD.exec(subject || "")?.[1]
+    || (line ? CODE_LINE.exec(line)?.[1] : null) || CODE_BEFORE_WORD.exec(head)?.[1] || CODE_AFTER_WORD.exec(head)?.[1];
+  return raw ? raw.replace(/[- ]/g, "") : null;
+}
+
+/** Pushes a sign-in code to the owner's phone while it is still usable. Never fails triage. */
+async function pushLoginCode(env: Env, row: TriageMessageRow, senderName: string, now: Date, options: MailTriageOptions): Promise<void> {
+  const arrived = Date.parse(row.received_at || row.created_at);
+  if (Number.isFinite(arrived) && now.getTime() - arrived > LOGIN_CODE_FRESH_MS) return;
+  const code = extractLoginCode(row.subject, row.text_body);
+  if (!code) return;
+  await (options.notifyLoginCode || notifyLoginCodeReceived)(env, { messageId: row.message_id, code, senderName: senderName || "Sign-in" })
+    .catch((error: unknown) => console.warn("Login code push failed", { messageId: row.message_id, error: error instanceof Error ? error.message : String(error) }));
 }
 
 /** Cron: archives sign-in codes that have sat in Inbox past their use, each logged with undo. */

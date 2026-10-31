@@ -16,6 +16,8 @@ import {
   type MailHandledUndo,
   type MailTriageAction,
   type MailTriageUrgency,
+  extractLoginCode,
+  LOGIN_CODE_FRESH_MS,
 } from "./mailbox-triage";
 import type { Env } from "./types";
 
@@ -68,8 +70,19 @@ export type MailboxHandledGroup = {
   items: MailboxHandledItem[];
 };
 
+/** A sign-in code that arrived in the last few minutes, ready to copy. */
+export type MailboxLoginCode = {
+  messageId: string;
+  threadId: string | null;
+  sender: MailSenderIdentity;
+  subject: string;
+  code: string;
+  receivedAt: string;
+};
+
 export type MailboxBrief = {
   needsYou: MailboxBriefItem[];
+  loginCodes: MailboxLoginCode[];
   handled: { total: number; groups: MailboxHandledGroup[] };
   fyi: { inboxLeft: number; unread: number };
   checkedAt: string | null;
@@ -77,6 +90,17 @@ export type MailboxBrief = {
 };
 
 type ServiceError = { error: string; status: number };
+
+type LoginCodeRow = {
+  message_id: string;
+  subject: string | null;
+  from_address: string | null;
+  raw_headers_json: string | null;
+  text_body: string;
+  received_at: string | null;
+  created_at: string;
+  thread_id: string | null;
+};
 
 type NeedsYouRow = {
   message_id: string;
@@ -185,7 +209,30 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
   ).bind(ownerId, dayStartsAt).all<HandledRow>();
   const handled = handledRows.results || [];
 
-  const context = await createSenderDecorationContext(env, ownerId, [...needsYou, ...handled].map(row => row.from_address || ""), apiOrigin);
+  const codeRows = await env.DB.prepare(
+    `SELECT t.message_id, m.subject, m.from_address, m.raw_headers_json, SUBSTR(COALESCE(m.text_body, ''), 1, 1500) AS text_body,
+            m.received_at, m.created_at, ${threadKey} AS thread_id
+     FROM mailbox_triage t
+     JOIN mailbox_messages m ON m.id = t.message_id
+     WHERE t.user_id = ? AND t.handled_kind = 'login_code' AND t.status = 'done' AND m.folder = 'inbox' AND t.triaged_at >= ?
+     ORDER BY t.triaged_at DESC
+     LIMIT 3`,
+  ).bind(ownerId, new Date(now.getTime() - LOGIN_CODE_FRESH_MS).toISOString()).all<LoginCodeRow>()
+    .catch(() => ({ results: [] as LoginCodeRow[] }));
+  const codes = (codeRows.results || []).flatMap(row => {
+    const code = extractLoginCode(row.subject, row.text_body);
+    return code ? [{ row, code }] : [];
+  });
+
+  const context = await createSenderDecorationContext(env, ownerId, [...needsYou, ...handled, ...codes.map(({ row }) => row)].map(row => row.from_address || ""), apiOrigin);
+  const loginCodes: MailboxLoginCode[] = await Promise.all(codes.map(async ({ row, code }) => ({
+    messageId: row.message_id,
+    threadId: row.thread_id,
+    sender: await describeSender(env, context, { address: row.from_address, headerName: headerName(row.raw_headers_json), textBody: row.text_body, subject: row.subject }),
+    subject: row.subject || "(no subject)",
+    code,
+    receivedAt: row.received_at || row.created_at,
+  })));
   const items: MailboxBriefItem[] = await Promise.all(needsYou.map(async row => {
     const draft = row.draft_id ? drafts.get(row.draft_id) : null;
     const primary = parseAction(row.primary_action_json);
@@ -253,6 +300,7 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
 
   return {
     needsYou: items,
+    loginCodes,
     handled: { total: handled.length, groups: [...groups.values()] },
     fyi: {
       inboxLeft: Math.max(0, Number(inbox?.total || 0) - allNeedsYou.length - handledInInbox),

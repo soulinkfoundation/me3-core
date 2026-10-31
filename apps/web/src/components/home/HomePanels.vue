@@ -29,7 +29,7 @@ const plan = useTodayPlan();
 const { tasks, goals } = plan;
 type HomeMail = { id: string; subject: string; fromName?: string; fromAddress?: string; preview?: string; agentSummary?: string; status?: string; unread?: boolean; receivedAt?: string; createdAt?: string; sender?: { name?: string; avatarUrl?: string | null } };
 const mail = ref<HomeMail[]>([]);
-type HomeBrief = { needsYou: Array<{ messageId: string; sender: { name: string; avatarUrl?: string | null }; subject: string; summary: string; receivedAt: string; unread: boolean }>; handled: { total: number }; fyi: { inboxLeft: number; unread: number } };
+type HomeBrief = { needsYou: Array<{ messageId: string; sender: { name: string; avatarUrl?: string | null }; subject: string; summary: string; receivedAt: string; unread: boolean }>; loginCodes?: Array<{ messageId: string; sender: { name: string }; code: string; receivedAt: string }>; handled: { total: number }; fyi: { inboxLeft: number; unread: number } };
 const brief = ref<HomeBrief | null>(null);
 const soulink = ref<{ id: string; direction: string; status?: string; createdAt?: string; textBody?: string; outcome?: string }[]>([]);
 // Inbox shows what waits on the owner, nothing else: a sender, when, and the one line that says what.
@@ -51,6 +51,11 @@ const inboxStatus = computed(() => {
 async function copyAgentAddress() {
   try { await navigator.clipboard.writeText(agentAddress.value); toastSuccess("Agent email copied"); }
   catch { toastFromUnknown(null, "Couldn't copy the address"); }
+}
+// A sign-in code that just arrived (Core 0.1.254+), so it is one click from Home instead of three.
+async function copyLoginCode(login: { code: string; sender: { name: string } }) {
+  try { await navigator.clipboard.writeText(login.code); toastSuccess(`${login.sender.name} code copied`); }
+  catch (error) { toastFromUnknown(error, "Couldn't copy the code"); }
 }
 const approvals = ref<{ id: string; pluginId?: string; title: string; summary?: string | null; payload?: Record<string, unknown> }[]>([]);
 const reviewApproval = ref<(typeof approvals.value)[number] | null>(null);
@@ -456,6 +461,10 @@ onBeforeUnmount(() => {
               </RouterLink>
             </template>
             <template v-else-if="card === 'inbox'">
+              <button v-for="login in brief?.loginCodes || []" :key="login.messageId" type="button" class="home-copy home-login-code" @click="copyLoginCode(login)">
+                <span class="home-login-code__from">{{ login.sender.name }} code · {{ homeMailTime(login.receivedAt) }}</span>
+                <strong class="home-login-code__code">{{ login.code }}</strong><UiIcon name="Copy" :size="16" /><span class="sr-only">Copy {{ login.sender.name }} code</span>
+              </button>
               <RouterLink v-for="row in inboxRows" :key="row.key" :to="row.to" class="home-inbox-row">
                 <span v-if="row.soulink" class="home-inbox-row__icon" aria-hidden="true"><UiIcon name="Sparkles" :size="18" /></span>
                 <EmailSenderAvatar v-else :name="row.name" :avatar-url="row.avatarUrl" :size="36" />
@@ -576,6 +585,9 @@ p { margin: 4px 0; }
 .home-inbox-row__waiting { color: var(--ui-accent-strong); font-weight: 600; }
 .home-copy { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 0 12px; border-radius: 12px; background: var(--ui-surface-muted); color: var(--ui-text-muted); font-size: 14px; }
 .home-copy > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-login-code { display: flex; width: 100%; min-height: 44px; margin-bottom: 4px; }
+.home-login-code__from { flex: 1; min-width: 0; text-align: left; }
+.home-login-code__code { color: var(--ui-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 17px; letter-spacing: 0.08em; }
 .home-person { display: flex; gap: 12px; align-items: center; width: 100%; min-height: 52px; padding: 0; border: 0; background: transparent; color: var(--ui-text); font: inherit; font-size: 16px; text-align: left; cursor: pointer; }
 .home-person__since { margin-left: auto; font-size: 13.5px; font-variant-numeric: tabular-nums; }
 .home-line { display: flex; gap: 8px; align-items: center; min-height: 40px; color: var(--ui-text); text-decoration: none; }

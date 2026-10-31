@@ -226,6 +226,25 @@ export async function notifySocialPostFailed(env: Env, failure: SocialFailurePus
   }
 }
 
+export type LoginCodePush = { messageId: string; code: string; senderName: string };
+
+/** A sign-in code that just reached the owner's ME3 inbox, so the phone shows it without opening Email. */
+export async function notifyLoginCodeReceived(env: Env, push: LoginCodePush) {
+  try {
+    return await relayRequest(env, "/api/push/login-codes", {
+      method: "POST",
+      body: JSON.stringify(push),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    console.warn("Login code push was skipped", {
+      messageId: push.messageId,
+      error: error instanceof Error ? error.message : "Unknown push relay error",
+    });
+    return { ok: false, skipped: true };
+  }
+}
+
 export type WebsitePaymentPush = {
   sourceKind: "order" | "booking";
   sourceId: string;

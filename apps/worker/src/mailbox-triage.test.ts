@@ -10,6 +10,7 @@ import {
   MAIL_TRIAGE_SCHEMA,
   archiveStaleLoginCodes,
   enqueueMailTriage,
+  extractLoginCode,
   purgeStaleSpam,
   retryPendingMailTriage,
   runMailTriage,
@@ -161,6 +162,35 @@ describe("mail triage pipeline", () => {
     expect(folder("code")).toBe("inbox");
     expect(await archiveStaleLoginCodes(f.env, { now: new Date(sent.getTime() + 3 * 60 * 60_000) })).toEqual({ archived: 0 });
     expect(folder("code")).toBe("inbox");
+  });
+
+  it("pushes a fresh sign-in code once and shows it on the Brief while it is usable", async () => {
+    const f = fixture();
+    const sent = new Date("2026-10-20T09:00:00.000Z");
+    insertMail(f.raw, { id: "code", from: "no-reply@github.test", subject: "Your verification code", body: "Your code is 482 913.", receivedAt: sent.toISOString(), headers: { "auto-submitted": "auto-generated" } });
+    insertMail(f.raw, { id: "late", from: "no-reply@bank.test", subject: "Your login code", body: "Use 771204 to sign in.", receivedAt: sent.toISOString() });
+    insertMail(f.raw, { id: "link", from: "no-reply@app.test", subject: "Your magic link", body: "Click the link to sign in.", receivedAt: sent.toISOString() });
+    const notifyLoginCode = vi.fn(async () => ({ ok: true }));
+    await runMailTriage(f.env, "code", { now: new Date(sent.getTime() + 60_000), notifyLoginCode });
+    await runMailTriage(f.env, "link", { now: new Date(sent.getTime() + 60_000), notifyLoginCode });
+    // The cron retried this one after the code had expired: no push for a dead code.
+    await runMailTriage(f.env, "late", { now: new Date(sent.getTime() + 40 * 60_000), notifyLoginCode });
+    await runMailTriage(f.env, "code", { now: new Date(sent.getTime() + 2 * 60_000), notifyLoginCode });
+
+    expect(notifyLoginCode).toHaveBeenCalledTimes(1);
+    expect(notifyLoginCode).toHaveBeenCalledWith(f.env, { messageId: "code", code: "482913", senderName: expect.any(String) });
+    const fresh = await getMailboxBrief(f.env, "owner", { now: new Date(sent.getTime() + 5 * 60_000) });
+    expect(fresh.loginCodes).toEqual([expect.objectContaining({ messageId: "code", code: "482913", subject: "Your verification code" })]);
+    expect((await getMailboxBrief(f.env, "owner", { now: new Date(sent.getTime() + 20 * 60_000) })).loginCodes).toEqual([]);
+  });
+
+  it("finds the code in the common sign-in email shapes and nothing else", () => {
+    expect(extractLoginCode("482913 is your Instagram code", "")).toBe("482913");
+    expect(extractLoginCode("Slack confirmation code: 123-456", "")).toBe("123456");
+    expect(extractLoginCode("Sign in to GitHub", "Here is your code:\n\n  904 551\n\nIt expires soon.")).toBe("904551");
+    expect(extractLoginCode("Your Google code", "G-118274 is your Google verification code.")).toBe("118274");
+    expect(extractLoginCode("Verify your account", "Enter this code:\nX7K2PQ")).toBe("X7K2PQ");
+    expect(extractLoginCode("Your magic link", "Click the link to sign in. Ref ACCOUNT")).toBe(null);
   });
 
   it("keeps a message in the Brief when the model fails and retries it from the cron", async () => {
