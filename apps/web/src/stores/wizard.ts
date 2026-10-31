@@ -325,6 +325,8 @@ export interface WizardPage {
   /** Legacy field name retained for draft compatibility; contains all editor-owned content assets. */
   images: WizardContentAsset[];
   visible?: boolean;
+  /** Unpublished pages keep their content but are left off the published site. */
+  draft?: boolean;
 }
 
 export type WizardContentAsset = SiteContentAsset;
@@ -3438,6 +3440,7 @@ export const useWizardStore = defineStore("wizard", () => {
         title: p.title,
         file: `${p.slug}.md`,
         visible: p.visible !== false,
+        ...(p.draft ? { draft: true } : {}),
         ...(normalizeNavigationGroup(p.navigationGroup)
           ? { navigationGroup: normalizeNavigationGroup(p.navigationGroup) }
           : {}),
@@ -4767,6 +4770,7 @@ export const useWizardStore = defineStore("wizard", () => {
         title: string;
         file: string;
         visible: boolean;
+        draft?: boolean;
         navigationGroup?: string;
       }>;
       footer?: any;
@@ -5207,13 +5211,14 @@ export const useWizardStore = defineStore("wizard", () => {
     // Map pages
     const pageMetadata = new Map<
       string,
-      { visible: boolean; navigationGroup?: string }
+      { visible: boolean; draft: boolean; navigationGroup?: string }
     >();
     if (Array.isArray(siteProfile.pages)) {
       for (const page of siteProfile.pages) {
         if (page?.slug) {
           pageMetadata.set(page.slug, {
             visible: page.visible !== false,
+            draft: page.draft === true,
             navigationGroup: normalizeNavigationGroup(page.navigationGroup),
           });
         }
@@ -5247,6 +5252,7 @@ export const useWizardStore = defineStore("wizard", () => {
       content: resolveLoadedContentAssetUrls(p.content),
       images: [],
       visible: pageMetadata.get(p.slug)?.visible ?? true,
+      draft: pageMetadata.get(p.slug)?.draft || undefined,
       navigationGroup: pageMetadata.get(p.slug)?.navigationGroup,
     }));
 

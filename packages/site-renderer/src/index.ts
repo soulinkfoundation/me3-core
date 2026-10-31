@@ -54,6 +54,7 @@ type Me3Page = {
   file?: string;
   visible?: boolean;
   navigationGroup?: string;
+  draft?: boolean;
 };
 
 type Me3Post = Me3Page & {
@@ -373,7 +374,7 @@ export async function generateSiteHtml(
   output["index.html"] = generateIndexHtml(profile, access, context.placeholders === true);
 
   for (const page of profile.pages || []) {
-    if (page.visible === false || !page.slug || !page.file) continue;
+    if (page.visible === false || page.draft || !page.slug || !page.file) continue;
     const markdown = fileMap.get(normalizeSitePath(page.file));
     if (markdown !== undefined) {
       output[`${normalizeSitePath(page.slug)}.html`] = generateContentPageHtml(profile, page.title || titleFromSlug(page.slug), markdown, page.slug, "./", access);
@@ -918,7 +919,7 @@ function siteThemeToggleScript(profile: Me3SiteProfile): string {
 function generateModernFooter(profile: Me3SiteProfile, basePath: string, legacyFooter: string, navigationEnabled = true): string {
   if (!legacyFooter) return "";
   if (!navigationEnabled) return `<footer class="site-footer"><p>Powered by <a href="https://me3.app">ME3</a></p></footer>`;
-  const pages = (profile.pages || []).filter((page) => page.visible !== false && page.slug)
+  const pages = (profile.pages || []).filter((page) => page.visible !== false && !page.draft && page.slug)
     .map((page) => `<a href="${basePath}${escapeHtml(normalizeSitePath(page.slug || ""))}">${escapeHtml(page.title || titleFromSlug(page.slug || ""))}</a>`);
   const blog = (profile.posts || []).some((post) => !post.draft)
     ? `<a href="${basePath}${escapeHtml(resolveSiteSectionPaths(profile).blog)}/">${escapeHtml(profile.blogTitle || "Blog")}</a>` : "";
@@ -935,7 +936,7 @@ function getSiteNavigationStyle(profile: Me3SiteProfile): SiteNavigationStyle {
   const groups = new Set<string>();
   let count = 1; // Home is a top-level item too.
   for (const page of profile.pages || []) {
-    if (page.visible === false || !page.slug) continue;
+    if (page.visible === false || page.draft || !page.slug) continue;
     const group = page.navigationGroup?.trim().toLocaleLowerCase();
     if (group && groups.has(group)) continue;
     if (group) groups.add(group);
@@ -950,7 +951,7 @@ function hasSiteNavigation(profile: Me3SiteProfile): boolean {
   return (
     Boolean(profile.extensions?.["me3.app/site"]) ||
     (profile.pages || []).some(
-      (page) => page.visible !== false && Boolean(page.slug),
+      (page) => page.visible !== false && !page.draft && Boolean(page.slug),
     ) ||
     (profile.posts || []).some((post) => !post.draft) ||
     (profile.products || []).length > 0
@@ -968,7 +969,7 @@ function generateNav(
   placement: NavigationPlacement,
 ): string {
   const sectionPaths = resolveSiteSectionPaths(profile);
-  const pages = (profile.pages || []).filter((page) => page.visible !== false && page.slug);
+  const pages = (profile.pages || []).filter((page) => page.visible !== false && !page.draft && page.slug);
   const hasPosts = (profile.posts || []).some((post) => !post.draft);
   const hasProducts = (profile.products || []).length > 0;
   if (pages.length === 0 && !hasPosts && !hasProducts && !profile.extensions?.["me3.app/site"]) return "";

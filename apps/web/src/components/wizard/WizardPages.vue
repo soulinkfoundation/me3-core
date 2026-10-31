@@ -196,6 +196,12 @@ function cancelRouteEdit() {
   closeRouteEditor();
 }
 
+function togglePagePublished(index: number) {
+  const page = wizard.pages[index];
+  if (!page) return;
+  wizard.updatePage(index, { draft: page.draft ? undefined : true });
+}
+
 function deletePage(index: number) {
   if (!confirm("Delete this page?")) return;
 
@@ -296,7 +302,7 @@ defineExpose({
       <!-- Page list -->
       <draggable v-if="mainPages.length > 0" :model-value="mainPages" :item-key="pageRowKey" handle=".page-details,.page-icon" :animation="160" :delay="250" :delay-on-touch-only="true" class="page-list" @update:model-value="reorderPages">
         <template #item="{ element: { page, index }, index: displayIndex }">
-        <div class="page-item">
+        <div class="page-item" :class="{ 'is-draft': page.draft }">
           <div class="page-header">
             <span class="page-icon" aria-hidden="true">
               <UiIcon name="FileText" :size="18" aria-hidden="true" />
@@ -307,6 +313,7 @@ defineExpose({
                 {{ page.navigationGroup }} menu
               </span>
               <span class="page-slug">/{{ page.slug }}</span>
+              <span v-if="page.draft" class="page-status">Unpublished</span>
             </div>
 
             <div class="page-actions">
@@ -335,6 +342,15 @@ defineExpose({
                 @click="selectPage(index)"
               >
                 <UiIcon name="Pencil" :size="18" aria-hidden="true" />
+              </button>
+              <button
+                class="action-btn"
+                type="button"
+                :title="page.draft ? 'Publish page' : 'Unpublish page'"
+                :aria-label="page.draft ? `Publish ${page.title}` : `Unpublish ${page.title}`"
+                @click="togglePagePublished(index)"
+              >
+                <UiIcon :name="page.draft ? 'EyeOff' : 'Eye'" :size="18" aria-hidden="true" />
               </button>
               <button
                 class="action-btn remove-btn"
@@ -394,7 +410,7 @@ defineExpose({
         </div>
         <draggable v-if="adminPages.length > 0" :model-value="adminPages" :item-key="pageRowKey" handle=".page-details,.page-icon" :animation="160" :delay="250" :delay-on-touch-only="true" class="page-list" @update:model-value="reorderPages">
           <template #item="{ element: { page, index }, index: displayIndex }">
-          <div class="page-item">
+          <div class="page-item" :class="{ 'is-draft': page.draft }">
             <div class="page-header">
               <span class="page-icon" aria-hidden="true">
                 <UiIcon name="FileText" :size="18" aria-hidden="true" />
@@ -402,6 +418,7 @@ defineExpose({
               <div class="page-details">
                 <span class="page-title">{{ page.title }}</span>
                 <span class="page-slug">/{{ page.slug }}</span>
+                <span v-if="page.draft" class="page-status">Unpublished</span>
               </div>
 
               <div class="page-actions">
@@ -430,6 +447,15 @@ defineExpose({
                   @click="selectPage(index)"
                 >
                   <UiIcon name="Pencil" :size="18" aria-hidden="true" />
+                </button>
+                <button
+                  class="action-btn"
+                  type="button"
+                  :title="page.draft ? 'Publish page' : 'Unpublish page'"
+                  :aria-label="page.draft ? `Publish ${page.title}` : `Unpublish ${page.title}`"
+                  @click="togglePagePublished(index)"
+                >
+                  <UiIcon :name="page.draft ? 'EyeOff' : 'Eye'" :size="18" aria-hidden="true" />
                 </button>
                 <button
                   class="action-btn remove-btn"
@@ -651,6 +677,17 @@ defineExpose({
 .page-slug {
   font-size: 12px;
   color: var(--color-text-muted);
+}
+
+.page-status {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.page-item.is-draft .page-title,
+.page-item.is-draft .page-icon {
+  opacity: 0.55;
 }
 
 .page-group {

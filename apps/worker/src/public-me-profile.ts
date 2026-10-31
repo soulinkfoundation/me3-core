@@ -374,10 +374,10 @@ export function buildPublicMe3Profile(
     ...(text(source.location, 160) ? { location: text(source.location, 160) } : {}),
     ...(publicLocation(source) ? { locationData: publicLocation(source) } : {}),
     ...(publicLinks(source) ? { links: publicLinks(source) } : {}),
-    ...(source.pages?.some((page) => page.visible !== false && page.slug && page.title)
+    ...(source.pages?.some((page) => page.visible !== false && !page.draft && page.slug && page.title)
       ? {
           pages: source.pages
-            .filter((page) => page.visible !== false && page.slug && page.title)
+            .filter((page) => page.visible !== false && !page.draft && page.slug && page.title)
             .map((page) => ({
               id: id(page.slug) || "page",
               title: text(page.title, 160) || page.slug || "Page",

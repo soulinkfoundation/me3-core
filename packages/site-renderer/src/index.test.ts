@@ -433,6 +433,22 @@ describe("site generator", () => {
     expect(five["index.html"]).not.toContain('<nav class="nav nav-inline"');
   });
 
+  it("keeps unpublished pages off the site and its navigation", async () => {
+    const files = await generateSiteHtml(
+      {
+        name: "Draft Pages",
+        pages: [
+          { slug: "about", title: "About", file: "about.md" },
+          { slug: "retreat", title: "Retreat", file: "retreat.md", draft: true },
+        ],
+      },
+      [{ name: "about.md", content: "About" }, { name: "retreat.md", content: "Soon" }],
+    );
+    expect(files["about.html"]).toBeDefined();
+    expect(files["retreat.html"]).toBeUndefined();
+    expect(files["index.html"]).not.toContain("retreat.html");
+  });
+
   it("publishes semantic native audio controls with responsive styling", async () => {
     const files = await generateSiteHtml(
       {

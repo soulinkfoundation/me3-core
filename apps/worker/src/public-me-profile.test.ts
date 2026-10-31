@@ -44,6 +44,7 @@ describe("public me.json profile", () => {
       pages: [
         { slug: "about", title: "About", file: "about.md", visible: true },
         { slug: "hidden", title: "Hidden", file: "hidden.md", visible: false },
+        { slug: "unpublished", title: "Unpublished", file: "unpublished.md", draft: true },
       ],
       posts: [
         { slug: "public", title: "Public", file: "blog/public.md" },
