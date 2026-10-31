@@ -3775,18 +3775,23 @@ function messageFromUnknown(err: unknown, fallback: string) {
 }
 
 .assistant-message--user .assistant-message__bubble {
-  border-color: color-mix(in oklab, var(--ui-accent) 36%, var(--ui-border));
-  background: var(--ui-accent-soft);
-  color: #12231d;
+  border: 0;
+  border-radius: 18px 18px 6px 18px;
+  padding: 11px 16px;
+  background: color-mix(in oklab, var(--ui-accent) 16%, var(--ui-surface));
+  color: var(--ui-text);
 }
 
 .assistant-message--user .assistant-message__content,
 .assistant-message--user
   .assistant-message__content
-  :deep(:where(p, strong, em, code, a)),
+  :deep(:where(p, strong, em, code, a)) {
+  color: var(--ui-text);
+}
+
 .assistant-message--user .assistant-message__meta,
 .assistant-message--user .assistant-message__detail {
-  color: #12231d;
+  color: var(--ui-text-muted);
 }
 
 .assistant-message__bubble--pending {
