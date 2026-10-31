@@ -112,6 +112,12 @@ type BookingOffer = {
   meetingUrl?: string;
   availability?: { windows?: Record<string, string[]> };
   pageSlug?: string;
+  /** Site file path of the offer's photo. */
+  image?: string;
+  /** Where it happens; `place` is public text such as a venue and town. */
+  location?: { mode?: "in_person" | "online" | "phone"; place?: string };
+  /** Button wording that replaces the default "Book …". */
+  buttonLabel?: string;
 };
 
 type BookingClass = BookingOffer & {
@@ -473,14 +479,17 @@ function primarySiteAction(profile: Me3SiteProfile): { label: string; href: stri
     return { label: "Subscribe", href: "#newsletter" };
   }
   if (choice?.kind === "offer" && profile.intents?.book?.enabled && bookingOnHome) {
-    const offer = normalizeBookingTypes(profile.intents.book).flatMap((type) => type.offers || type.classes || type.retreats || []).find((item) => item.id === choice.id);
-    return { label: offer ? `Book ${offer.title || "a call"}` : "Book a call", href: "#booking" };
+    const entry = bookingOfferEntries(profile.intents.book).find((item) => item.offer.id === choice.id);
+    return { label: entry ? entry.offer.buttonLabel || `Book ${entry.offer.title || "a session"}` : "Book a session", href: "#booking" };
   }
   const button = choice?.kind === "button"
     ? profile.buttons?.[Number(choice.id)]
     : profile.buttons?.find((item) => item.text && item.url);
   if (button?.text && button.url) return { label: button.text, href: formatHref(button.url) };
-  if (profile.intents?.book?.enabled && bookingOnHome) return { label: "Book a call", href: "#booking" };
+  if (profile.intents?.book?.enabled && bookingOnHome) {
+    const first = bookingOfferEntries(profile.intents.book)[0];
+    return { label: first ? first.offer.buttonLabel || defaultOfferButtonLabel(first.kind) : "Book a session", href: "#booking" };
+  }
   if (profile.intents?.subscribe?.enabled && newsletterOnHome) return { label: "Subscribe", href: "#newsletter" };
   return null;
 }
@@ -527,14 +536,77 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
   });
 }
 
+type OfferKind = "one_to_one" | "class" | "retreat";
+type OfferEntry = { offer: BookingOffer & Partial<BookingClass> & Partial<BookingRetreat>; kind: OfferKind; index: number };
+
+function bookingOfferEntries(book: NonNullable<Me3SiteProfile["intents"]>["book"]): OfferEntry[] {
+  return normalizeBookingTypes(book).flatMap((type) => {
+    const kind: OfferKind = type.type === "class" || type.type === "retreat" ? type.type : "one_to_one";
+    const list = kind === "class" ? type.classes || [] : kind === "retreat" ? type.retreats || [] : type.offers || [];
+    return list.map((offer, index) => ({ offer, kind, index }));
+  });
+}
+
+function defaultOfferButtonLabel(kind: OfferKind): string {
+  if (kind === "class") return "Book a place";
+  if (kind === "retreat") return "Reserve a place";
+  return "Book a session";
+}
+
+const WEEKDAY_LABELS: Record<string, string> = { monday: "Monday", tuesday: "Tuesday", wednesday: "Wednesday", thursday: "Thursday", friday: "Friday", saturday: "Saturday", sunday: "Sunday" };
+
+function formatOfferDate(date: string, withYear = false): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", ...(withYear ? { year: "numeric" } : {}), timeZone: "UTC" }).format(parsed);
+}
+
+/** When an offer happens, in the words a visitor scans for: "60 min", "Thursdays 19:00", "13–15 Mar". */
+function offerWhen(entry: OfferEntry, fallbackDuration?: number): string {
+  const { offer, kind } = entry;
+  if (kind === "class") {
+    const day = WEEKDAY_LABELS[offer.recurrence?.weekday || ""] || "";
+    const time = offer.recurrence?.startTime || "";
+    if (!day) return `${offer.duration || 60} min`;
+    return `${offer.recurrence?.frequency === "biweekly" ? `Every other ${day}` : `${day}s`}${time ? ` ${time}` : ""}`;
+  }
+  if (kind === "retreat") {
+    const start = offer.startDate || "";
+    const end = offer.endDate || start;
+    if (!formatOfferDate(start)) return `${offer.durationDays || 1} ${offer.durationDays === 1 || !offer.durationDays ? "day" : "days"}`;
+    if (start === end) return `${formatOfferDate(start)}${offer.startTime ? `, ${offer.startTime}${offer.endTime ? `–${offer.endTime}` : ""}` : ""}`;
+    const [startYear, startMonth] = start.split("-");
+    const [endYear, endMonth] = end.split("-");
+    if (startYear === endYear && startMonth === endMonth) return `${Number(start.slice(8))}–${formatOfferDate(end)}`;
+    return `${formatOfferDate(start)} – ${formatOfferDate(end)}`;
+  }
+  return `${offer.duration || fallbackDuration || 30} min`;
+}
+
+function offerPlace(offer: BookingOffer): string {
+  if (offer.location?.mode === "in_person") return (offer.location.place || "").trim();
+  if (offer.location?.mode === "phone") return "By phone";
+  if (offer.location?.mode === "online" || offer.meetingProvider === "soulink" || offer.meetingProvider === "external") return "Online";
+  return "";
+}
+
 function generateOffers(profile: Me3SiteProfile, inlineBooking: boolean): string {
   const book = profile.intents?.book;
   if (!book?.enabled) return "";
-  const offers = normalizeBookingTypes(book).flatMap((type) => type.offers || type.classes || type.retreats || []);
-  if (!offers.length) return "";
-  const cards = offers.map((offer, index) => `<article class="site-offer"><h3>${escapeHtml(offer.title || "Session")}</h3><div class="site-offer__pills"><span>${escapeHtml(String(offer.duration || book.duration || 30))} min</span><span>${escapeHtml(formatPricing(offer.pricing))}</span></div>${offer.description ? `<p>${escapeHtml(plainTextFromMaybeHtml(offer.description))}</p>` : ""}<button type="button" data-offer-book="${index}">Book ${escapeHtml(offer.title || "session")}</button></article>`).join("");
+  const entries = bookingOfferEntries(book);
+  if (!entries.length) return "";
+  const cards = entries.map((entry) => {
+    const { offer, kind, index } = entry;
+    const title = offer.title || "Session";
+    const label = offer.buttonLabel || defaultOfferButtonLabel(kind);
+    const place = offerPlace(offer);
+    const places = kind !== "one_to_one" && typeof offer.capacity === "number" ? `${offer.capacity} places` : "";
+    const pills = [offerWhen(entry, book.duration), formatPricing(offer.pricing), places].filter(Boolean);
+    const image = offer.image ? `<img class="site-offer__image" src="${escapeHtml(filePathForHtml(offer.image))}" alt="" loading="lazy" decoding="async">` : "";
+    return `<article class="site-offer${image ? " site-offer--image" : ""}">${image}<div class="site-offer__body">${place ? `<p class="site-offer__place">${escapeHtml(place)}</p>` : ""}<h3>${escapeHtml(title)}</h3><div class="site-offer__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>${offer.description ? `<p>${escapeHtml(plainTextFromMaybeHtml(offer.description))}</p>` : ""}<button type="button" data-offer-book-type="${kind}" data-offer-book="${index}" aria-label="${escapeHtml(`${label}: ${title}`)}">${escapeHtml(label)}</button></div></article>`;
+  }).join("");
   const booking = inlineBooking ? `<div class="site-offer-booking" hidden>${generateBooking(profile)}</div>` : "";
-  return `<section class="site-offers"><div class="site-section-heading"><h2>Work with me</h2></div><div class="site-offers__grid">${cards}</div>${booking}<script>(function(){var section=document.currentScript.parentElement;section.querySelectorAll('[data-offer-book]').forEach(function(button){button.addEventListener('click',function(){var booking=section.querySelector('.site-offer-booking');if(booking)booking.hidden=false;var target=booking||document.getElementById('booking');if(!target)return;var index=Number(button.getAttribute('data-offer-book'));var card=target.querySelectorAll('.booking-card')[index];if(card)card.click();var select=target.querySelector('[data-booking-offer-select]');if(select&&select.options[index]){select.selectedIndex=index;select.dispatchEvent(new Event('change',{bubbles:true}));}target.scrollIntoView({behavior:'smooth',block:'start'});});});})();</script></section>`;
+  return `<section class="site-offers"><div class="site-section-heading"><h2>Work with me</h2></div><div class="site-offers__grid">${cards}</div>${booking}<script>(function(){var section=document.currentScript.parentElement;section.querySelectorAll('[data-offer-book]').forEach(function(button){button.addEventListener('click',function(){var booking=section.querySelector('.site-offer-booking');if(booking)booking.hidden=false;var target=booking||document.getElementById('booking');if(!target)return;var type=button.getAttribute('data-offer-book-type')||'one_to_one';var tab=target.querySelector('[data-booking-type-tab="'+type+'"]');if(tab)tab.click();var panel=target.querySelector('[data-booking-type-panel="'+type+'"]')||target;var index=Number(button.getAttribute('data-offer-book'));var card=panel.querySelectorAll('.booking-card')[index];if(card)card.click();var select=panel.querySelector('[data-booking-offer-select]');if(select&&select.options[index]){select.selectedIndex=index;select.dispatchEvent(new Event('change',{bubbles:true}));}target.scrollIntoView({behavior:'smooth',block:'start'});});});})();</script></section>`;
 }
 
 function generateLatestWriting(profile: Me3SiteProfile): string {
@@ -1289,9 +1361,9 @@ function generateBookingTypeBody(
     const classes = Array.isArray(type.classes) ? type.classes : [];
     const cards = classes.map((offer, index) => {
       const recurrence = offer.recurrence;
-      const capacity = typeof offer.capacity === "number" ? `${offer.capacity} seats` : "Unlimited seats";
+      const capacity = typeof offer.capacity === "number" ? `${offer.capacity} places` : "No place limit";
       const price = formatPricing(offer.pricing);
-      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Class")}</strong>${renderBookingOfferDescription(offer.description)}<span>${escapeHtml(recurrence?.frequency === "biweekly" ? "Every 2 weeks" : "Weekly")} · ${escapeHtml(recurrence?.weekday || "")} · ${escapeHtml(recurrence?.startTime || "--:--")} · ${offer.duration || 60} min${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small><span class="booking-card-selection" aria-hidden="true">✓ Selected</span></button>`;
+      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Class")}</strong>${renderBookingOfferDescription(offer.description)}<span>${escapeHtml(offerWhen({ offer, kind: "class", index }))} · ${offer.duration || 60} min${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small><span class="booking-card-selection" aria-hidden="true">✓ Selected</span></button>`;
     }).join("");
     return generateEventBookingWidget({
       username: profile.handle || "owner",
@@ -1305,10 +1377,9 @@ function generateBookingTypeBody(
   if (type.type === "retreat") {
     const retreats = Array.isArray(type.retreats) ? type.retreats : [];
     const cards = retreats.map((offer, index) => {
-      const dates = offer.startDate && offer.endDate ? ` · ${offer.startDate} → ${offer.endDate}` : "";
-      const capacity = typeof offer.capacity === "number" ? `${offer.capacity} spaces` : "Unlimited spaces";
+      const capacity = typeof offer.capacity === "number" ? `${offer.capacity} places` : "No place limit";
       const price = formatPricing(offer.pricing);
-      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Retreat")}</strong>${renderBookingOfferDescription(offer.description)}<span>${offer.durationDays || 1} days${escapeHtml(dates)}${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small><span class="booking-card-selection" aria-hidden="true">✓ Selected</span></button>`;
+      return `<button type="button" class="booking-card${index === 0 ? " active" : ""}" aria-pressed="${index === 0}"><strong>${escapeHtml(offer.title || "Retreat")}</strong>${renderBookingOfferDescription(offer.description)}<span>${escapeHtml(offerWhen({ offer, kind: "retreat", index }))}${price ? ` · ${escapeHtml(price)}` : ""}</span><small>${escapeHtml(capacity)}</small><span class="booking-card-selection" aria-hidden="true">✓ Selected</span></button>`;
     }).join("");
     return generateEventBookingWidget({
       username: profile.handle || "owner",
@@ -1788,7 +1859,7 @@ function paidBookingWidgetScript(): string {
 
 function bookingTypeLabel(type?: string): string {
   if (type === "class") return "Classes";
-  if (type === "retreat") return "Retreats";
+  if (type === "retreat") return "Workshops and events";
   return "1:1";
 }
 

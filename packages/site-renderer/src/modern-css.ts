@@ -121,7 +121,12 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-offers__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .site-offer{display:flex;flex-direction:column;align-items:flex-start;padding:24px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--ui-shadow-sm)}
 .site-offer h3{margin:0 0 8px;font-family:var(--display-font);font-size:1.45rem}
-.site-offer__pills{display:flex;gap:6px}
+.site-offer--image{padding:0;overflow:hidden}
+.site-offer__image{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
+.site-offer__body{display:flex;flex:1;flex-direction:column;align-items:flex-start;width:100%;box-sizing:border-box}
+.site-offer--image .site-offer__body{padding:20px 24px 24px}
+.site-offer__place{margin:0 0 6px!important;color:var(--muted);font-size:.78rem!important;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.site-offer__pills{display:flex;flex-wrap:wrap;gap:6px}
 .site-offer__pills span{padding:3px 9px;border-radius:999px;background:var(--raised);font-size:.78rem;font-weight:700}
 .site-offer p{margin:12px 0 16px;color:var(--muted);font-size:.92rem;line-height:1.55}
 .site-offer button{min-height:40px;margin-top:auto;padding:0 15px;border:1px solid var(--border);border-radius:var(--button-radius);background:var(--surface);color:var(--text);font:inherit;font-size:.86rem;font-weight:700;cursor:pointer}

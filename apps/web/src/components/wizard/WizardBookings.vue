@@ -9,12 +9,14 @@ import {
   type WizardBookingPricing,
   type WizardBookingType,
   type WizardClassOffer,
+  type WizardOfferDetails,
   type WizardPaymentMethod,
   type WizardRetreatOffer,
 } from "../../stores/wizard";
 import { useSitesStore } from "../../stores/sites";
 import { useAuthStore } from "../../stores/auth";
 import InlineRichTextEditor from "./BookingOfferDescriptionEditor.vue";
+import OfferDetailsFields from "./OfferDetailsFields.vue";
 import RegionalPriceFields from "./RegionalPriceFields.vue";
 import type { RegionalPrice } from "../../../../../shared/regional-pricing";
 import PaymentCollectionFields from "./PaymentCollectionFields.vue";
@@ -43,7 +45,6 @@ const activeBookingType = ref<WizardBookingType | null>(null);
 const activeOfferId = ref<string | null>(null);
 const activeClassOfferId = ref<string | null>(null);
 const activeRetreatOfferId = ref<string | null>(null);
-const showAddTypeMenu = ref(false);
 const isSendingBookingConfirmationTest = ref(false);
 const soulinkConnected = ref(false);
 
@@ -692,28 +693,6 @@ const activeRetreatCapacity = computed({
   },
 });
 
-const bookingTypeOptions = computed(() => [
-  {
-    type: "one_to_one" as const,
-    label: "1:1",
-    enabled: profile.value.booking.oneToOneEnabled,
-  },
-  {
-    type: "class" as const,
-    label: "Class",
-    enabled: profile.value.booking.classEnabled,
-  },
-  {
-    type: "retreat" as const,
-    label: "Retreat",
-    enabled: profile.value.booking.retreatEnabled,
-  },
-]);
-
-const availableBookingTypeOptions = computed(() =>
-  bookingTypeOptions.value.filter((option) => !option.enabled),
-);
-
 const weekdayOptions = [
   { value: "monday", label: "Monday" },
   { value: "tuesday", label: "Tuesday" },
@@ -789,7 +768,7 @@ const bookingConfirmationTestDetails = computed(() => {
   }
   if (activeBookingType.value === "retreat" && activeRetreatOffer.value) {
     return {
-      title: activeRetreatOffer.value.title || "Retreat booking",
+      title: activeRetreatOffer.value.title || "Event booking",
       durationMinutes: activeRetreatDurationDays.value * 24 * 60,
       timezone: activeRetreatOffer.value.timezone || bookingTimezone.value,
       pricing: activeRetreatOffer.value.pricing,
@@ -878,21 +857,6 @@ async function sendBookingConfirmationTest() {
   }
 }
 
-function selectBookingType(type: WizardBookingType) {
-  activeBookingType.value = type;
-  showAddTypeMenu.value = false;
-}
-
-function enableBookingType(type: WizardBookingType) {
-  wizard.enableBookingType(type);
-  activeBookingType.value = type;
-  showAddTypeMenu.value = false;
-}
-
-function disableBookingType(type: WizardBookingType) {
-  wizard.disableBookingType(type);
-}
-
 function addOffer() {
   const newOfferId = wizard.addBookingOffer();
   activeOfferId.value = newOfferId;
@@ -920,17 +884,105 @@ function removeRetreatOffer(offerId: string) {
   wizard.removeRetreatOffer(offerId);
 }
 
-const TAB_LABEL_MAX = 12;
+type OfferKind = WizardBookingType;
 
-function compactTabLabel(
-  input: { title?: string | null },
-  fallback: string,
-): string {
-  const value = input.title?.trim();
-  if (!value) return fallback;
-  return value.length > TAB_LABEL_MAX
-    ? `${value.slice(0, TAB_LABEL_MAX - 1)}…`
-    : value;
+const OFFER_KINDS: Array<{ kind: OfferKind; label: string; hint: string; defaultButton: string }> = [
+  { kind: "one_to_one", label: "Appointment", hint: "One person at a time, from your hours. Massage, coaching, calls.", defaultButton: "Book a session" },
+  { kind: "class", label: "Class", hint: "Repeats every week or fortnight. People book a place.", defaultButton: "Book a place" },
+  { kind: "retreat", label: "Workshop or event", hint: "One date or a few days, like a workshop or a retreat.", defaultButton: "Reserve a place" },
+];
+
+function offerKindInfo(kind: OfferKind) {
+  return OFFER_KINDS.find((item) => item.kind === kind) || OFFER_KINDS[0];
+}
+
+const showAddOfferMenu = ref(false);
+
+function priceSummary(pricing?: WizardBookingPricing): string {
+  if (!pricing?.enabled || pricing.suggestedAmount <= 0) return "Free";
+  return new Intl.NumberFormat(undefined, { style: "currency", currency: pricing.currency || "USD", maximumFractionDigits: 0 }).format(pricing.suggestedAmount);
+}
+
+function eventDateSummary(offer: WizardRetreatOffer): string {
+  const format = (value: string) => {
+    const date = new Date(`${value}T00:00:00Z`);
+    return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", timeZone: "UTC" }).format(date);
+  };
+  const start = format(offer.startDate);
+  if (!start) return "No date yet";
+  return offer.endDate && offer.endDate !== offer.startDate ? `${start} – ${format(offer.endDate)}` : start;
+}
+
+const offerEntries = computed(() => {
+  const entries: Array<{ kind: OfferKind; id: string; title: string; summary: string; image?: string }> = [];
+  if (profile.value.booking.oneToOneEnabled) {
+    bookingOffers.value.forEach((offer, index) => entries.push({
+      kind: "one_to_one", id: offer.id, image: offer.image?.src,
+      title: offer.title.trim() || `Appointment ${index + 1}`,
+      summary: `${offer.duration} min · ${priceSummary(offer.pricing)}`,
+    }));
+  }
+  if (profile.value.booking.classEnabled) {
+    classOffers.value.forEach((offer, index) => entries.push({
+      kind: "class", id: offer.id, image: offer.image?.src,
+      title: offer.title.trim() || `Class ${index + 1}`,
+      summary: `${weekdayOptions.find((day) => day.value === offer.recurrence.weekday)?.label || ""}s ${offer.recurrence.startTime} · ${priceSummary(offer.pricing)}`,
+    }));
+  }
+  if (profile.value.booking.retreatEnabled) {
+    retreatOffers.value.forEach((offer, index) => entries.push({
+      kind: "retreat", id: offer.id, image: offer.image?.src,
+      title: offer.title.trim() || `Event ${index + 1}`,
+      summary: `${eventDateSummary(offer)} · ${priceSummary(offer.pricing)}`,
+    }));
+  }
+  return entries;
+});
+
+function isSelectedOffer(entry: { kind: OfferKind; id: string }) {
+  return activeBookingType.value === entry.kind && selectedBookingOfferId.value === entry.id;
+}
+
+function selectOffer(kind: OfferKind, id: string) {
+  activeBookingType.value = kind;
+  if (kind === "class") activeClassOfferId.value = id;
+  else if (kind === "retreat") activeRetreatOfferId.value = id;
+  else activeOfferId.value = id;
+}
+
+function addOfferOfKind(kind: OfferKind) {
+  showAddOfferMenu.value = false;
+  const enabled = kind === "class" ? profile.value.booking.classEnabled
+    : kind === "retreat" ? profile.value.booking.retreatEnabled
+    : profile.value.booking.oneToOneEnabled;
+  if (!enabled) {
+    // A kind always keeps one offer, so turning it back on reuses that one.
+    wizard.enableBookingType(kind);
+    const first = kind === "class" ? classOffers.value[0] : kind === "retreat" ? retreatOffers.value[0] : bookingOffers.value[0];
+    if (first) selectOffer(kind, first.id);
+    return;
+  }
+  if (kind === "class") addClassOffer();
+  else if (kind === "retreat") addRetreatOffer();
+  else addOffer();
+  activeBookingType.value = kind;
+}
+
+function removeOfferEntry(kind: OfferKind, id: string) {
+  const count = kind === "class" ? classOffers.value.length : kind === "retreat" ? retreatOffers.value.length : bookingOffers.value.length;
+  if (count <= 1) {
+    wizard.disableBookingType(kind);
+    return;
+  }
+  if (kind === "class") removeClassOffer(id);
+  else if (kind === "retreat") removeRetreatOffer(id);
+  else removeOffer(id);
+}
+
+function updateOfferDetails(kind: OfferKind, id: string, updates: Partial<WizardOfferDetails>) {
+  if (kind === "class") wizard.updateClassOffer(id, updates);
+  else if (kind === "retreat") wizard.updateRetreatOffer(id, updates);
+  else wizard.updateBookingOffer(id, updates);
 }
 
 onMounted(() => {
@@ -942,49 +994,51 @@ onMounted(() => {
   <div class="step-bookings">
     <h2>Let people book you</h2>
     <p class="section-desc">
-      Add the kinds of bookings you want to offer, then configure each one with
-      the simplest setup that fits.
+      Add what people can book with you: appointments, classes, workshops or
+      events.
     </p>
 
     <SiteBookingReminders v-if="wizard.selectedSiteId" :site-id="wizard.selectedSiteId" />
 
     <div class="config-fields">
       <div class="section-heading">
-        <label class="section-label">Booking types</label>
-        <div class="type-actions">
-          <div class="add-type-menu-wrap">
-            <button
-              type="button"
-              class="offer-tab-add"
-              @click="showAddTypeMenu = !showAddTypeMenu"
-            >
-              <UiIcon name="Plus" :size="18" aria-hidden="true" />
-              <span>Add</span>
-            </button>
+        <label class="section-label" id="booking-offers-label">Your offers</label>
+      </div>
 
-            <div v-if="showAddTypeMenu" class="type-dropdown">
-              <button
-                v-for="option in availableBookingTypeOptions"
-                :key="option.type"
-                type="button"
-                class="type-dropdown-item"
-                @click="enableBookingType(option.type)"
-              >
-                {{ option.label }}
-              </button>
-            </div>
-          </div>
+      <ul v-if="offerEntries.length" class="offer-list" aria-labelledby="booking-offers-label">
+        <li v-for="entry in offerEntries" :key="`${entry.kind}:${entry.id}`" class="offer-list-item" :class="{ active: isSelectedOffer(entry) }">
+          <button type="button" class="offer-list-select" :aria-pressed="isSelectedOffer(entry)" @click="selectOffer(entry.kind, entry.id)">
+            <span class="offer-list-thumb" :style="entry.image ? { backgroundImage: `url(${entry.image})` } : undefined" aria-hidden="true" />
+            <span class="offer-list-text">
+              <span class="offer-list-title">{{ entry.title }}</span>
+              <span class="offer-list-summary">{{ offerKindInfo(entry.kind).label }} · {{ entry.summary }}</span>
+            </span>
+          </button>
+          <button type="button" class="offer-list-remove" :aria-label="`Remove ${entry.title}`" @click="removeOfferEntry(entry.kind, entry.id)">
+            <UiIcon name="X" :size="16" aria-hidden="true" />
+          </button>
+        </li>
+      </ul>
+      <div v-else class="empty-bookings-state">
+        <p class="empty-bookings-title">No offers yet</p>
+        <p class="empty-bookings-copy">Add what people can book: appointments, classes, workshops or events.</p>
+      </div>
+
+      <div class="add-type-menu-wrap">
+        <button type="button" class="offer-tab-add" :aria-expanded="showAddOfferMenu" @click="showAddOfferMenu = !showAddOfferMenu">
+          <UiIcon name="Plus" :size="18" aria-hidden="true" />
+          <span>Add an offer</span>
+        </button>
+        <div v-if="showAddOfferMenu" class="type-dropdown offer-kind-menu">
+          <p class="offer-kind-menu-title">What are you offering?</p>
+          <button v-for="option in OFFER_KINDS" :key="option.kind" type="button" class="type-dropdown-item offer-kind-option" @click="addOfferOfKind(option.kind)">
+            <strong>{{ option.label }}</strong>
+            <span>{{ option.hint }}</span>
+          </button>
         </div>
       </div>
 
-      <div v-if="!hasBookingTypes" class="empty-bookings-state">
-        <p class="empty-bookings-title">No booking types yet</p>
-        <p class="empty-bookings-copy">
-          Use the + Add button to add a new booking type.
-        </p>
-      </div>
-
-      <template v-else>
+      <template v-if="hasBookingTypes">
         <details class="booking-heading-fields booking-section-details">
           <summary><UiIcon name="Pencil" :size="18" />Section title and intro</summary>
           <div class="form-group">
@@ -1009,80 +1063,10 @@ onMounted(() => {
         </details>
 
         <div
-          class="booking-type-tabs"
-          role="tablist"
-          aria-label="Booking types"
-        >
-          <div
-            v-for="item in enabledBookingTypes"
-            :key="item.type"
-            class="offer-tab-item"
-            :class="{ active: item.type === activeBookingType }"
-          >
-            <button
-              type="button"
-              class="offer-tab"
-              :aria-selected="item.type === activeBookingType"
-              @click="selectBookingType(item.type)"
-            >
-              {{ item.label }}
-            </button>
-            <button
-              type="button"
-              class="offer-tab-remove"
-              :aria-label="`Remove ${item.label}`"
-              @click.stop.prevent="disableBookingType(item.type)"
-            >
-              <UiIcon name="X" :size="14" aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-
-        <div
           v-if="activeBookingType === 'one_to_one'"
           class="booking-type-panel"
         >
           <div class="offer-editor-card">
-            <div class="section-heading">
-              <label class="section-label">1:1 offers</label>
-            </div>
-            <div class="offer-tabs-bar">
-              <div class="offer-tablist" role="tablist" aria-label="1:1 offers">
-                <div
-                  v-for="(offer, index) in bookingOffers"
-                  :key="offer.id"
-                  class="offer-tab-item"
-                  :class="{ active: offer.id === activeOfferId }"
-                >
-                  <button
-                    type="button"
-                    class="offer-tab"
-                    :aria-selected="offer.id === activeOfferId"
-                    @click="activeOfferId = offer.id"
-                  >
-                    {{ compactTabLabel(offer, `Offer ${index + 1}`) }}
-                  </button>
-                  <button
-                    v-if="bookingOffers.length > 1"
-                    type="button"
-                    class="offer-tab-remove"
-                    aria-label="Remove this offer"
-                    @click.stop.prevent="removeOffer(offer.id)"
-                  >
-                    <UiIcon name="X" :size="14" aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-              <button
-                type="button"
-                class="offer-tab-add"
-                @click.prevent.stop="addOffer"
-              >
-                <UiIcon name="Plus" :size="18" aria-hidden="true" />
-                <span>Add offer</span>
-              </button>
-            </div>
-
             <div v-if="activeOffer" class="offer-tab-panel-body">
               <div class="form-row offer-primary-row">
                 <div class="form-group offer-title-field">
@@ -1151,20 +1135,31 @@ onMounted(() => {
                 />
               </div>
 
-              <div class="form-group">
-                <label :for="`booking-offer-meeting-${activeOffer.id}`">Meeting place</label>
-                <select :id="`booking-offer-meeting-${activeOffer.id}`" v-model="activeOfferMeetingProvider">
-                  <option value="none">No online link</option>
-                  <option v-if="soulinkConnected" value="soulink">My Soulink call room</option>
-                  <option value="external">Other video link (Zoom, etc.)</option>
-                </select>
-                <p v-if="!soulinkConnected && activeOfferMeetingProvider === 'soulink'" class="form-hint">Reconnect Soulink before taking new bookings for this offer.</p>
-                <p v-else-if="!soulinkConnected" class="form-hint"><RouterLink to="/settings?section=connections">Connect Soulink</RouterLink> to use your call room.</p>
-              </div>
-              <div v-if="activeOfferMeetingProvider === 'external'" class="form-group">
-                <label :for="`booking-offer-meeting-url-${activeOffer.id}`">Video link</label>
-                <input :id="`booking-offer-meeting-url-${activeOffer.id}`" v-model.trim="activeOfferMeetingUrl" type="url" pattern="https://.*" placeholder="https://zoom.us/j/..." required />
-              </div>
+              <OfferDetailsFields
+                :id-prefix="`booking-offer-details-${activeOffer.id}`"
+                :details="activeOffer"
+                :default-button-label="offerKindInfo('one_to_one').defaultButton"
+                :implied-mode="activeOffer.meetingProvider === 'soulink' || activeOffer.meetingProvider === 'external' ? 'online' : undefined"
+                @update="updateOfferDetails('one_to_one', activeOffer.id, $event)"
+              >
+                <template #online>
+                <div class="form-group">
+                  <label :for="`booking-offer-meeting-${activeOffer.id}`">Video link</label>
+                  <select :id="`booking-offer-meeting-${activeOffer.id}`" v-model="activeOfferMeetingProvider">
+                    <option value="none">No online link</option>
+                    <option v-if="soulinkConnected" value="soulink">My Soulink call room</option>
+                    <option value="external">Other video link (Zoom, etc.)</option>
+                  </select>
+                  <p v-if="!soulinkConnected && activeOfferMeetingProvider === 'soulink'" class="form-hint">Reconnect Soulink before taking new bookings for this offer.</p>
+                  <p v-else-if="!soulinkConnected" class="form-hint"><RouterLink to="/settings?section=connections">Connect Soulink</RouterLink> to use your call room.</p>
+                </div>
+                <div v-if="activeOfferMeetingProvider === 'external'" class="form-group">
+                  <label :for="`booking-offer-meeting-url-${activeOffer.id}`">Link</label>
+                  <input :id="`booking-offer-meeting-url-${activeOffer.id}`" v-model.trim="activeOfferMeetingUrl" type="url" pattern="https://.*" placeholder="https://zoom.us/j/..." required />
+                </div>
+                </template>
+              </OfferDetailsFields>
+
 
               <div
                 v-if="activeOfferPriceMode === 'paid'"
@@ -1267,46 +1262,6 @@ onMounted(() => {
           class="booking-type-panel"
         >
           <div class="offer-editor-card">
-            <div class="section-heading">
-              <label class="section-label">Classes</label>
-            </div>
-            <div class="offer-tabs-bar">
-              <div class="offer-tablist" role="tablist" aria-label="Classes">
-                <div
-                  v-for="(offer, index) in classOffers"
-                  :key="offer.id"
-                  class="offer-tab-item"
-                  :class="{ active: offer.id === activeClassOfferId }"
-                >
-                  <button
-                    type="button"
-                    class="offer-tab"
-                    :aria-selected="offer.id === activeClassOfferId"
-                    @click="activeClassOfferId = offer.id"
-                  >
-                    {{ compactTabLabel(offer, `Class ${index + 1}`) }}
-                  </button>
-                  <button
-                    v-if="classOffers.length > 1"
-                    type="button"
-                    class="offer-tab-remove"
-                    aria-label="Remove this class"
-                    @click.stop.prevent="removeClassOffer(offer.id)"
-                  >
-                    <UiIcon name="X" :size="14" aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-              <button
-                type="button"
-                class="offer-tab-add"
-                @click.prevent.stop="addClassOffer"
-              >
-                <UiIcon name="Plus" :size="18" aria-hidden="true" />
-                <span>Add class</span>
-              </button>
-            </div>
-
             <div v-if="activeClassOffer" class="offer-tab-panel-body">
               <div class="form-row offer-primary-row">
                 <div class="form-group offer-title-field">
@@ -1318,7 +1273,7 @@ onMounted(() => {
                     v-model="activeClassOfferTitle"
                     type="text"
                     maxlength="100"
-                    placeholder="e.g. Tuesday Evening Yoga"
+                    placeholder="e.g. Thursday flow"
                   />
                 </div>
 
@@ -1374,6 +1329,13 @@ onMounted(() => {
                   placeholder="Briefly describe what this class includes"
                 />
               </div>
+
+              <OfferDetailsFields
+                :id-prefix="`class-offer-details-${activeClassOffer.id}`"
+                :details="activeClassOffer"
+                :default-button-label="offerKindInfo('class').defaultButton"
+                @update="updateOfferDetails('class', activeClassOffer.id, $event)"
+               />
 
               <div class="form-row">
                 <div class="form-group">
@@ -1513,46 +1475,6 @@ onMounted(() => {
           class="booking-type-panel"
         >
           <div class="offer-editor-card">
-            <div class="section-heading">
-              <label class="section-label">Retreats</label>
-            </div>
-            <div class="offer-tabs-bar">
-              <div class="offer-tablist" role="tablist" aria-label="Retreats">
-                <div
-                  v-for="(offer, index) in retreatOffers"
-                  :key="offer.id"
-                  class="offer-tab-item"
-                  :class="{ active: offer.id === activeRetreatOfferId }"
-                >
-                  <button
-                    type="button"
-                    class="offer-tab"
-                    :aria-selected="offer.id === activeRetreatOfferId"
-                    @click="activeRetreatOfferId = offer.id"
-                  >
-                    {{ compactTabLabel(offer, `Retreat ${index + 1}`) }}
-                  </button>
-                  <button
-                    v-if="retreatOffers.length > 1"
-                    type="button"
-                    class="offer-tab-remove"
-                    aria-label="Remove this retreat"
-                    @click.stop.prevent="removeRetreatOffer(offer.id)"
-                  >
-                    <UiIcon name="X" :size="14" aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-              <button
-                type="button"
-                class="offer-tab-add"
-                @click.prevent.stop="addRetreatOffer"
-              >
-                <UiIcon name="Plus" :size="18" aria-hidden="true" />
-                <span>Add retreat</span>
-              </button>
-            </div>
-
             <div v-if="activeRetreatOffer" class="offer-tab-panel-body">
               <div class="form-row offer-primary-row">
                 <div class="form-group offer-title-field">
@@ -1572,7 +1494,7 @@ onMounted(() => {
                   <label
                     :for="`retreat-duration-days-${activeRetreatOffer.id}`"
                   >
-                    Duration (days, derived)
+                    Length in days
                   </label>
                   <input
                     :id="`retreat-duration-days-${activeRetreatOffer.id}`"
@@ -1625,9 +1547,16 @@ onMounted(() => {
                 />
               </div>
 
+              <OfferDetailsFields
+                :id-prefix="`retreat-offer-details-${activeRetreatOffer.id}`"
+                :details="activeRetreatOffer"
+                :default-button-label="offerKindInfo('retreat').defaultButton"
+                @update="updateOfferDetails('retreat', activeRetreatOffer.id, $event)"
+               />
+
               <p class="field-hint">
-                Start and end use calendar dates and times in the retreat’s
-                timezone (for booking and reminders).
+                Start and end use dates and times in the event’s timezone, for
+                booking and reminders.
               </p>
 
               <div class="form-row retreat-schedule-row">
@@ -2028,6 +1957,111 @@ onMounted(() => {
 .type-dropdown-item.disabled {
   color: var(--color-text-muted);
   cursor: not-allowed;
+}
+
+.offer-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0 12px 8px;
+  list-style: none;
+}
+
+.offer-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-radius: 12px;
+}
+
+.offer-list-item.active {
+  background: var(--ui-accent-soft, rgba(34, 152, 116, 0.1));
+}
+
+.offer-list-select {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 56px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.offer-list-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--ui-surface-muted) center / cover no-repeat;
+}
+
+.offer-list-text {
+  display: grid;
+  min-width: 0;
+}
+
+.offer-list-title {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.offer-list-summary {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.offer-list-remove {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.offer-list-select:focus-visible,
+.offer-list-remove:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.add-type-menu-wrap {
+  margin: 0 20px 16px;
+}
+
+.offer-kind-menu {
+  right: auto;
+  left: 0;
+  width: min(340px, calc(100vw - 48px));
+}
+
+.offer-kind-menu-title {
+  margin: 6px 12px 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.offer-kind-option {
+  display: grid;
+  gap: 2px;
+}
+
+.offer-kind-option span {
+  color: var(--color-text-muted);
+  font-size: 12px;
 }
 
 .empty-bookings-state,

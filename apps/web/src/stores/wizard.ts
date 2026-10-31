@@ -218,7 +218,21 @@ function isWizardBookingDuration(
   );
 }
 
-export interface WizardBookingOffer {
+/** Where an offer takes place. `place` is shown publicly, so owners keep it to a venue and town. */
+export interface WizardOfferLocation {
+  mode: "in_person" | "online" | "phone";
+  place: string;
+}
+
+/** Presentation details every bookable offer can have, whatever its kind. */
+export interface WizardOfferDetails {
+  image?: WizardProductPhoto;
+  location?: WizardOfferLocation;
+  /** Overrides the default "Book" wording on the offer's button. */
+  buttonLabel?: string;
+}
+
+export interface WizardBookingOffer extends WizardOfferDetails {
   id: string;
   title: string;
   description: string;
@@ -230,7 +244,7 @@ export interface WizardBookingOffer {
   pageSlug?: string;
 }
 
-export interface WizardClassOffer {
+export interface WizardClassOffer extends WizardOfferDetails {
   id: string;
   title: string;
   description: string;
@@ -247,7 +261,7 @@ export interface WizardClassOffer {
 }
 
 /** Fixed-date multi-day offering (wall times in `timezone`). */
-export interface WizardRetreatOffer {
+export interface WizardRetreatOffer extends WizardOfferDetails {
   id: string;
   title: string;
   description: string;
@@ -588,6 +602,9 @@ type PublishedBookingOffer = {
   meetingUrl?: string;
   availability?: { windows?: Record<string, string[]> };
   pageSlug?: string;
+  image?: string;
+  location?: WizardOfferLocation;
+  buttonLabel?: string;
 };
 
 type PublishedBookingClass = {
@@ -604,6 +621,9 @@ type PublishedBookingClass = {
   };
   pricing?: WizardBookingPricing;
   capacity?: number | null;
+  image?: string;
+  location?: WizardOfferLocation;
+  buttonLabel?: string;
 };
 
 type PublishedBookingRetreat = {
@@ -618,6 +638,9 @@ type PublishedBookingRetreat = {
   timezone?: string;
   pricing?: WizardBookingPricing;
   capacity?: number | null;
+  image?: string;
+  location?: WizardOfferLocation;
+  buttonLabel?: string;
 };
 
 type PublishedBookingType = {
@@ -763,6 +786,45 @@ function defaultWizardBookingConfirmationEmail(): WizardBookingConfirmationEmail
   };
 }
 
+function normalizeOfferDetails(input: Partial<WizardOfferDetails>): WizardOfferDetails {
+  const details: WizardOfferDetails = {};
+  const image = input.image;
+  if (image && typeof image.id === "string" && typeof image.src === "string" && image.src) {
+    details.image = { id: image.id, src: image.src };
+  }
+  const location = input.location;
+  if (location && (location.mode === "in_person" || location.mode === "online" || location.mode === "phone")) {
+    details.location = { mode: location.mode, place: typeof location.place === "string" ? location.place.slice(0, 120) : "" };
+  }
+  if (typeof input.buttonLabel === "string" && input.buttonLabel.trim()) {
+    details.buttonLabel = input.buttonLabel.trim().slice(0, 40);
+  }
+  return details;
+}
+
+function publishedOfferDetails(offer: WizardOfferDetails) {
+  const image = offer.image ? productPhotoPath(offer.image) : null;
+  const place = offer.location?.place.trim();
+  return {
+    ...(image ? { image } : {}),
+    ...(offer.location ? { location: { mode: offer.location.mode, place: place || "" } } : {}),
+    ...(offer.buttonLabel ? { buttonLabel: offer.buttonLabel } : {}),
+  };
+}
+
+function loadedOfferDetails(
+  offer: { image?: string; location?: Partial<WizardOfferLocation>; buttonLabel?: string },
+  resolveAsset: (path: string) => string | null,
+): WizardOfferDetails {
+  const src = offer.image ? resolveAsset(offer.image) : "";
+  const id = offer.image?.split("/").pop()?.replace(/\.[a-z0-9]+$/i, "") || "";
+  return normalizeOfferDetails({
+    ...(src && id ? { image: { id, src } } : {}),
+    location: offer.location as WizardOfferLocation | undefined,
+    buttonLabel: offer.buttonLabel,
+  });
+}
+
 function createDefaultBookingOffer(
   overrides: Partial<WizardBookingOffer> = {},
 ): WizardBookingOffer {
@@ -787,6 +849,7 @@ function createDefaultBookingOffer(
     meetingUrl: overrides.meetingUrl || "",
     ...(overrides.availability ? { availability: normalizeOfferAvailability(overrides.availability) } : {}),
     ...(typeof overrides.pageSlug === "string" && overrides.pageSlug.trim() ? { pageSlug: overrides.pageSlug.trim() } : {}),
+    ...normalizeOfferDetails(overrides),
   };
 }
 
@@ -866,6 +929,7 @@ function createDefaultClassOffer(
       }
       return 12;
     })(),
+    ...normalizeOfferDetails(overrides),
   };
 }
 
@@ -935,6 +999,7 @@ function createDefaultRetreatOffer(
       }
       return 12;
     })(),
+    ...normalizeOfferDetails(overrides),
   };
 }
 
@@ -997,6 +1062,9 @@ function normalizeWizardBookingOffers(input: unknown): WizardBookingOffer[] {
       meetingUrl: typeof offer.meetingUrl === "string" ? offer.meetingUrl : "",
       availability: offer.availability,
       pageSlug: offer.pageSlug,
+      image: offer.image,
+      location: offer.location,
+      buttonLabel: offer.buttonLabel,
       pricing:
         offer.pricing && typeof offer.pricing === "object"
           ? normalizeWizardBookingPricing(offer.pricing)
@@ -1055,6 +1123,9 @@ function normalizeWizardClassOffers(input: unknown): WizardClassOffer[] {
             ? Math.round(classOffer.capacity)
             : null
           : undefined,
+      image: classOffer.image,
+      location: classOffer.location,
+      buttonLabel: classOffer.buttonLabel,
     });
 
     const baseId = normalized.id || "weekly-class";
@@ -1108,6 +1179,9 @@ function normalizeWizardRetreatOffers(input: unknown): WizardRetreatOffer[] {
             ? Math.round(retreat.capacity)
             : null
           : undefined,
+      image: retreat.image,
+      location: retreat.location,
+      buttonLabel: retreat.buttonLabel,
     });
 
     const baseId = normalized.id || "retreat";
@@ -3632,6 +3706,9 @@ export const useWizardStore = defineStore("wizard", () => {
               `book-session-${index + 1}`,
             title: normalizedTitle,
             description: offer.description.trim(),
+            image: offer.image,
+            location: offer.location,
+            buttonLabel: offer.buttonLabel,
             duration: offer.duration,
             meetingProvider: offer.meetingProvider,
             pricing: offer.pricing
@@ -3658,6 +3735,9 @@ export const useWizardStore = defineStore("wizard", () => {
               `booking-class-${index + 1}`,
             title: normalizedTitle,
             description: offer.description.trim(),
+            image: offer.image,
+            location: offer.location,
+            buttonLabel: offer.buttonLabel,
             duration: offer.duration,
             timezone: offer.timezone,
             recurrence: { ...offer.recurrence },
@@ -3678,7 +3758,7 @@ export const useWizardStore = defineStore("wizard", () => {
           };
         });
         const bookingRetreats = profile.value.booking.retreatOffers.map((offer, index) => {
-          const normalizedTitle = offer.title.trim() || `Retreat ${index + 1}`;
+          const normalizedTitle = offer.title.trim() || `Event ${index + 1}`;
           return {
             id:
               offer.id.trim() ||
@@ -3686,6 +3766,9 @@ export const useWizardStore = defineStore("wizard", () => {
               `booking-retreat-${index + 1}`,
             title: normalizedTitle,
             description: offer.description.trim(),
+            image: offer.image,
+            location: offer.location,
+            buttonLabel: offer.buttonLabel,
             durationDays: deriveRetreatDurationDays(offer),
             startDate: offer.startDate,
             startTime: offer.startTime,
@@ -3747,6 +3830,7 @@ export const useWizardStore = defineStore("wizard", () => {
               title: offer.title,
               duration: offer.duration,
               meetingProvider: offer.meetingProvider,
+              ...publishedOfferDetails(offer),
             };
             if (offer.description) {
               bookingOffer.description = offer.description;
@@ -3820,6 +3904,7 @@ export const useWizardStore = defineStore("wizard", () => {
               timezone: offer.timezone,
               recurrence: { ...offer.recurrence },
               capacity: offer.capacity,
+              ...publishedOfferDetails(offer),
             };
             if (offer.description) {
               bookingClass.description = offer.description;
@@ -3850,6 +3935,7 @@ export const useWizardStore = defineStore("wizard", () => {
               endTime: offer.endTime,
               timezone: offer.timezone,
               capacity: offer.capacity,
+              ...publishedOfferDetails(offer),
             };
             if (offer.description) {
               r.description = offer.description;
@@ -3863,7 +3949,7 @@ export const useWizardStore = defineStore("wizard", () => {
           book.bookingTypes!.push({
             id: "retreat",
             type: "retreat",
-            label: "Retreats",
+            label: "Workshops and events",
             retreats: book.retreats,
           });
         }
@@ -4916,6 +5002,7 @@ export const useWizardStore = defineStore("wizard", () => {
                   meetingUrl: offer.meetingUrl,
                   availability: offer.availability?.windows,
                   pageSlug: offer.pageSlug,
+                  ...loadedOfferDetails(offer, resolveLoadedSiteAssetUrl),
                   pricing: offer.pricing
                     ? {
                         ...defaultWizardBookingPricing(),
@@ -4936,6 +5023,7 @@ export const useWizardStore = defineStore("wizard", () => {
                   meetingUrl: offer.meetingUrl,
                   availability: offer.availability?.windows,
                   pageSlug: offer.pageSlug,
+                  ...loadedOfferDetails(offer, resolveLoadedSiteAssetUrl),
                   pricing: offer.pricing
                     ? {
                         ...defaultWizardBookingPricing(),
@@ -4955,6 +5043,7 @@ export const useWizardStore = defineStore("wizard", () => {
                   }),
                 ],
           classOffers: rawClassOffers.map((offer) => ({
+            ...loadedOfferDetails(offer, resolveLoadedSiteAssetUrl),
             id: offer.id,
             title: offer.title,
             description: offer.description || "",
@@ -4986,6 +5075,7 @@ export const useWizardStore = defineStore("wizard", () => {
               typeof offer.capacity === "number" ? offer.capacity : null,
           })),
           retreatOffers: rawRetreatOffers.map((offer) => ({
+            ...loadedOfferDetails(offer, resolveLoadedSiteAssetUrl),
             id: offer.id,
             title: offer.title,
             description: offer.description || "",

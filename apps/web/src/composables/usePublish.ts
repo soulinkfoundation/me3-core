@@ -336,6 +336,15 @@ export function usePublish() {
           productPhotoAssets.push({ id: photo.id, kind: "image", relativePath, mimeType: blob.type, blob });
         }
       }
+      // Booking offer photos follow the same path as product photos.
+      const { offers, classOffers, retreatOffers } = wizard.profile.booking;
+      for (const offer of wizard.profile.booking.enabled ? [...offers, ...classOffers, ...retreatOffers] : []) {
+        const photo = offer.image;
+        const relativePath = photo ? productPhotoPath(photo) : null;
+        if (!photo || !relativePath || !photo.src.startsWith("data:")) continue;
+        const blob = await (await fetch(photo.src)).blob();
+        productPhotoAssets.push({ id: photo.id, kind: "image", relativePath, mimeType: blob.type, blob });
+      }
 
       const localContentAssets = new Map(
         [

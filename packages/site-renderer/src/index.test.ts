@@ -109,6 +109,37 @@ describe("site generator", () => {
     expect(html).toContain("offer().windows[weekday]");
   });
 
+  it("shows when, where, photo and button wording on offer cards across booking kinds", async () => {
+    const files = await generateSiteHtml({
+      name: "Maya", handle: "maya",
+      extensions: { "me3.app/site": { sections: [{ id: "offers", visible: true }] } },
+      intents: { book: {
+        enabled: true,
+        bookingTypes: [
+          { id: "one_to_one", type: "one_to_one", offers: [{ id: "massage", title: "Sports massage", duration: 60, image: "./files/content/massage.jpg", location: { mode: "in_person", place: "Clifton, Bristol" } }] },
+          { id: "class", type: "class", classes: [{ id: "flow", title: "Thursday flow", duration: 60, recurrence: { frequency: "weekly", weekday: "thursday", startTime: "19:00" }, capacity: 12, location: { mode: "online", place: "" } }] },
+          { id: "retreat", type: "retreat", retreats: [
+            { id: "workshop", title: "Yoga for Runners", startDate: "2026-11-21", startTime: "10:00", endDate: "2026-11-21", endTime: "12:00", buttonLabel: "Reserve your mat" },
+            { id: "dartmoor", title: "Dartmoor retreat", startDate: "2027-03-13", startTime: "16:00", endDate: "2027-03-15", endTime: "14:00", durationDays: 2 },
+          ] },
+        ],
+      } },
+    } as any, []);
+    const home = files["index.html"];
+    expect(home).toContain('class="site-offer__image" src="./files/content/massage.jpg"');
+    expect(home).toContain('<p class="site-offer__place">Clifton, Bristol</p>');
+    expect(home).toContain("<span>60 min</span>");
+    expect(home).toContain("<span>Thursdays 19:00</span>");
+    expect(home).toContain("<span>12 places</span>");
+    expect(home).toContain('<p class="site-offer__place">Online</p>');
+    expect(home).toContain("<span>21 Nov, 10:00–12:00</span>");
+    expect(home).toContain("<span>13–15 Mar</span>");
+    expect(home).toContain('data-offer-book-type="retreat" data-offer-book="0" aria-label="Reserve your mat: Yoga for Runners">Reserve your mat</button>');
+    expect(home).toContain('data-offer-book-type="retreat" data-offer-book="1"');
+    expect(home).not.toContain("30 min</span><span>Free</span><span>");
+    expect(home).toContain(">Book a session</a>");
+  });
+
   it("orders visible home sections while keeping booking blocks on content pages", async () => {
     const files = await generateSiteHtml({
       name: "Alex",
