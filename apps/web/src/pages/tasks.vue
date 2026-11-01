@@ -64,7 +64,7 @@ const router = useRouter();
 // Goals live in Mission now; old ?goals=1 links land there.
 if (route.query.goals === "1") void router.replace({ path: "/mission", query: { focus: "goals" } });
 
-const { toastSuccess } = useAppToast();
+const { toastError, toastSuccess } = useAppToast();
 
 const projects = ref<TaskProject[]>([]);
 const tasks = ref<WorkspaceTask[]>([]);
@@ -79,6 +79,10 @@ const selectedTask = ref<WorkspaceTask | null>(null);
 const taskDialogOpen = ref(false);
 const taskTitleInput = ref<HTMLInputElement | null>(null);
 const archiveConfirmOpen = ref(false);
+const deleteConfirmOpen = ref(false);
+const archivedTasks = ref<WorkspaceTask[]>([]);
+const archivedLoaded = ref(false);
+const archivedLoading = ref(false);
 const taskDraft = ref<TaskDraft>(emptyTaskDraft());
 
 const projectPicker = ref<HTMLDetailsElement | null>(null);
@@ -101,11 +105,19 @@ const scopedTasks = computed(() =>
     ? tasks.value.filter((task) => task.projectId === selectedProjectId.value)
     : tasks.value,
 );
-const visibleTasks = computed(() =>
-  sortTasks(
+const showingArchived = computed(() => mode.value === "archived");
+const selectedTaskArchived = computed(() => Boolean(selectedTask.value?.archivedAt));
+// The API returns archived tasks newest first; keep that order.
+const visibleTasks = computed(() => {
+  if (showingArchived.value) {
+    return selectedProjectId.value
+      ? archivedTasks.value.filter((task) => task.projectId === selectedProjectId.value)
+      : archivedTasks.value;
+  }
+  return sortTasks(
     scopedTasks.value.filter((task) => task.status === taskModeStatus(mode.value)),
-  ),
-);
+  );
+});
 const modeCounts = computed(() =>
   Object.fromEntries(
     TASK_MODES.map((item) => [
@@ -131,11 +143,13 @@ const taskSaveDisabled = computed(
     !taskDraft.value.projectId,
 );
 const emptyTitle = computed(() => {
+  if (mode.value === "archived") return "No archived tasks";
   if (mode.value === "now") return "Nothing to do?";
   if (mode.value === "backlog") return "No tasks in backlog";
   return "No completed tasks";
 });
 const emptyMessage = computed(() => {
+  if (mode.value === "archived") return "Tasks you archive will appear here.";
   if (mode.value === "now") return "Go outside or choose something from the backlog.";
   if (mode.value === "backlog") return "Add a task or ask ME3 for ideas based on your goals.";
   return "Tasks you finish will appear here.";
@@ -184,6 +198,20 @@ async function fetchAllTasks(options: {
   return [...byId.values()];
 }
 
+async function loadArchivedTasks() {
+  if (archivedLoading.value) return;
+  archivedLoading.value = true;
+  error.value = "";
+  try {
+    archivedTasks.value = await fetchAllTasks({ archived: true });
+    archivedLoaded.value = true;
+  } catch (caught) {
+    error.value = apiMessage(caught, "Archived tasks could not load");
+  } finally {
+    archivedLoading.value = false;
+  }
+}
+
 async function selectProject(projectId: string) {
   selectedProjectId.value = projectId;
   if (projectPicker.value) projectPicker.value.open = false;
@@ -211,6 +239,7 @@ function openNewTask() {
 async function openTask(task: WorkspaceTask, updateRoute = true) {
   selectedTask.value = task;
   archiveConfirmOpen.value = false;
+  deleteConfirmOpen.value = false;
   taskError.value = "";
   taskDraft.value = {
     title: task.title,
@@ -230,7 +259,7 @@ async function openTask(task: WorkspaceTask, updateRoute = true) {
 async function openTaskFromRoute() {
   const taskId = queryValue(route.query.task);
   if (!taskId || selectedTask.value?.id === taskId) return;
-  const local = tasks.value.find((task) => task.id === taskId);
+  const local = [...tasks.value, ...archivedTasks.value].find((task) => task.id === taskId);
   if (local) {
     await openTask(local, false);
     return;
@@ -251,6 +280,7 @@ async function closeTaskDialog() {
   taskDialogOpen.value = false;
   selectedTask.value = null;
   archiveConfirmOpen.value = false;
+  deleteConfirmOpen.value = false;
   const { task: _task, ...query } = route.query;
   await router.replace({ query });
 }
@@ -333,6 +363,8 @@ async function archiveSelectedTask() {
   try {
     await api.delete(`/mission-control/tasks/${encodeURIComponent(task.id)}`);
     tasks.value = tasks.value.filter((item) => item.id !== task.id);
+    // Refetch on next visit so the archive shows the server archive time.
+    archivedLoaded.value = false;
     toastSuccess("Task archived");
     taskSaving.value = false;
     await closeTaskDialog();
@@ -341,6 +373,51 @@ async function archiveSelectedTask() {
   } finally {
     taskSaving.value = false;
   }
+}
+
+async function restoreTask(task: WorkspaceTask) {
+  if (taskActionId.value || taskSaving.value) return;
+  taskActionId.value = task.id;
+  try {
+    const response = await api.post<{ task: WorkspaceTask }>(
+      `/mission-control/tasks/${encodeURIComponent(task.id)}/restore`,
+    );
+    archivedTasks.value = archivedTasks.value.filter((item) => item.id !== task.id);
+    mergeTask(response.task);
+    // A task from a deleted project is restored into Personal.
+    if (!projects.value.some((project) => project.id === response.task.projectId)) {
+      await loadProjects();
+    }
+    toastSuccess("Task restored");
+    if (selectedTask.value?.id === task.id) await closeTaskDialog();
+  } catch (caught) {
+    toastError(apiMessage(caught, "Task could not be restored"));
+  } finally {
+    taskActionId.value = "";
+  }
+}
+
+async function deleteSelectedTask() {
+  const task = selectedTask.value;
+  if (!task?.archivedAt || taskSaving.value) return;
+  taskSaving.value = true;
+  taskError.value = "";
+  try {
+    await api.delete(`/mission-control/tasks/${encodeURIComponent(task.id)}/permanent`);
+    archivedTasks.value = archivedTasks.value.filter((item) => item.id !== task.id);
+    toastSuccess("Task deleted");
+    taskSaving.value = false;
+    await closeTaskDialog();
+  } catch (caught) {
+    taskError.value = apiMessage(caught, "Task could not be deleted");
+  } finally {
+    taskSaving.value = false;
+  }
+}
+
+async function loadProjects() {
+  const response = await api.get<{ projects: TaskProject[] }>("/mission-control/projects");
+  projects.value = response.projects || [];
 }
 
 function mergeTask(task: WorkspaceTask) {
@@ -477,10 +554,16 @@ function emptyTaskDraft(): TaskDraft {
     title: "",
     description: "",
     projectId: selectedProjectId.value || defaultProjectId(),
-    status: taskModeStatus(mode.value),
+    status: mode.value === "archived" ? "backlog" : taskModeStatus(mode.value),
     important: false,
     scheduledFor: "",
   };
+}
+
+function taskProjectName(task: WorkspaceTask): string {
+  const name = projectNames.value.get(task.projectId || "");
+  if (name) return name;
+  return task.archivedAt ? "Deleted project" : "Personal";
 }
 
 function defaultProjectId(): string {
@@ -530,6 +613,14 @@ watch(
   (value) => {
     mode.value = taskMode(value);
   },
+);
+
+watch(
+  mode,
+  (value) => {
+    if (value === "archived" && !archivedLoaded.value) void loadArchivedTasks();
+  },
+  { immediate: true },
 );
 
 watch(
@@ -632,6 +723,14 @@ onBeforeUnmount(() => {
           <span>{{ item.label }}</span>
           <strong>{{ modeCounts[item.id] }}</strong>
         </button>
+        <button
+          type="button"
+          :class="{ 'is-selected': showingArchived }"
+          :aria-pressed="showingArchived"
+          @click="selectMode('archived')"
+        >
+          <span>Archived</span>
+        </button>
       </div>
 
       <p v-if="selectedProject?.description" class="project-purpose">
@@ -640,7 +739,11 @@ onBeforeUnmount(() => {
 
       <p v-if="error" class="tasks-error" role="alert">{{ error }}</p>
 
-      <PageLoading v-if="loading" compact label="Loading tasks..." />
+      <PageLoading
+        v-if="loading || (showingArchived && archivedLoading)"
+        compact
+        label="Loading tasks..."
+      />
 
       <div v-else-if="visibleTasks.length === 0" class="tasks-empty">
         <strong>{{ emptyTitle }}</strong>
@@ -654,11 +757,14 @@ onBeforeUnmount(() => {
           class="task-row"
           :class="{
             'is-busy': taskActionId === task.id,
-            'has-now-action': task.status === 'backlog',
+            'has-row-action': showingArchived || task.status === 'backlog',
           }"
         >
+          <span v-if="showingArchived" class="task-row__completed task-row__archived" aria-hidden="true">
+            <UiIcon name="Archive" :size="18" />
+          </span>
           <button
-            v-if="task.status !== 'done'"
+            v-else-if="task.status !== 'done'"
             type="button"
             class="task-row__complete"
             :disabled="Boolean(taskActionId)"
@@ -686,18 +792,33 @@ onBeforeUnmount(() => {
             </span>
             <span class="task-row__meta">
               <template v-if="!selectedProjectId">
-                {{ projectNames.get(task.projectId || '') || "Personal" }}
+                {{ taskProjectName(task) }}
               </template>
-              <template v-if="displayTaskDate(task.scheduledFor || task.dueAt)">
+              <template v-if="showingArchived && displayTaskDate(task.archivedAt)">
+                <span v-if="!selectedProjectId" aria-hidden="true">·</span>
+                Archived {{ displayTaskDate(task.archivedAt) }}
+              </template>
+              <template v-else-if="displayTaskDate(task.scheduledFor || task.dueAt)">
                 <span v-if="!selectedProjectId" aria-hidden="true">·</span>
                 {{ displayTaskDate(task.scheduledFor || task.dueAt) }}
               </template>
             </span>
           </button>
           <button
-            v-if="task.status === 'backlog'"
+            v-if="showingArchived"
             type="button"
-            class="task-row__now"
+            class="task-row__action"
+            :disabled="Boolean(taskActionId)"
+            :aria-label="`Restore ${task.title}`"
+            title="Restore"
+            @click="restoreTask(task)"
+          >
+            <UiIcon name="ArchiveRestore" :size="20" aria-hidden="true" />
+          </button>
+          <button
+            v-else-if="task.status === 'backlog'"
+            type="button"
+            class="task-row__action"
             :disabled="Boolean(taskActionId)"
             :aria-label="`Move ${task.title} to Now`"
             title="Move to Now"
@@ -726,8 +847,22 @@ onBeforeUnmount(() => {
           >
             Cancel
           </Button>
-          <h2 id="task-dialog-title">{{ selectedTask ? "Task" : "New task" }}</h2>
+          <h2 id="task-dialog-title">
+            {{ selectedTaskArchived ? "Archived task" : selectedTask ? "Task" : "New task" }}
+          </h2>
           <Button
+            v-if="selectedTask && selectedTaskArchived"
+            color="primary"
+            shape="soft"
+            size="compact"
+            type="button"
+            :disabled="taskSaving || Boolean(taskActionId)"
+            @click="restoreTask(selectedTask)"
+          >
+            Restore
+          </Button>
+          <Button
+            v-else
             color="primary"
             shape="soft"
             size="compact"
@@ -738,7 +873,55 @@ onBeforeUnmount(() => {
           </Button>
         </header>
 
-        <div class="tasks-dialog__content">
+        <div v-if="selectedTask && selectedTaskArchived" class="tasks-dialog__content">
+          <div class="archived-task">
+            <strong>{{ selectedTask.title }}</strong>
+            <p v-if="taskDescriptionText(selectedTask)">{{ taskDescriptionText(selectedTask) }}</p>
+            <span>
+              {{ taskProjectName(selectedTask) }}
+              <template v-if="displayTaskDate(selectedTask.archivedAt)">
+                · Archived {{ displayTaskDate(selectedTask.archivedAt) }}
+              </template>
+            </span>
+          </div>
+
+          <p v-if="taskError" class="dialog-error" role="alert">{{ taskError }}</p>
+
+          <div class="danger-zone">
+            <button
+              v-if="!deleteConfirmOpen"
+              type="button"
+              class="danger-zone__trigger"
+              @click="deleteConfirmOpen = true"
+            >
+              Delete permanently
+            </button>
+            <div v-else class="danger-zone__confirm">
+              <span>Delete this task forever?</span>
+              <Button
+                color="danger"
+                shape="soft"
+                size="compact"
+                type="button"
+                :disabled="taskSaving"
+                @click="deleteSelectedTask"
+              >
+                Delete
+              </Button>
+              <Button
+                color="ghost"
+                shape="soft"
+                size="compact"
+                type="button"
+                @click="deleteConfirmOpen = false"
+              >
+                Keep
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="tasks-dialog__content">
           <label class="field">
             <span>Task</span>
             <input
@@ -1073,7 +1256,7 @@ onBeforeUnmount(() => {
 
 .task-modes {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   padding: 3px;
   border-radius: 999px;
   background: var(--ui-surface-muted);
@@ -1097,6 +1280,13 @@ onBeforeUnmount(() => {
 
 .task-modes button strong {
   font-weight: 750;
+}
+
+@media (max-width: 420px) {
+  .task-modes button {
+    padding: 0 6px;
+    font-size: 13px;
+  }
 }
 
 .task-modes button:hover,
@@ -1170,7 +1360,7 @@ onBeforeUnmount(() => {
   transition: opacity 120ms ease;
 }
 
-.task-row.has-now-action {
+.task-row.has-row-action {
   grid-template-columns: 32px minmax(0, 1fr) 40px;
 }
 
@@ -1260,7 +1450,11 @@ onBeforeUnmount(() => {
   font-weight: 680;
 }
 
-.task-row__now {
+.task-row__archived {
+  color: var(--ui-text-muted);
+}
+
+.task-row__action {
   display: inline-grid;
   width: 40px;
   height: 40px;
@@ -1272,18 +1466,18 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.task-row__now:hover,
-.task-row__now:focus-visible {
+.task-row__action:hover,
+.task-row__action:focus-visible {
   color: var(--ui-accent);
   outline: none;
 }
 
-.task-row__now:focus-visible {
+.task-row__action:focus-visible {
   border-radius: var(--ui-radius-sm);
   box-shadow: inset 0 0 0 2px var(--ui-focus);
 }
 
-.task-row__now:disabled {
+.task-row__action:disabled {
   cursor: default;
 }
 
@@ -1474,6 +1668,32 @@ onBeforeUnmount(() => {
 .dialog-error {
   margin: 0;
   color: var(--ui-danger);
+  font-size: 13px;
+}
+
+.archived-task {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.archived-task strong {
+  color: var(--ui-text);
+  font-size: 17px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.archived-task p {
+  margin: 0;
+  color: var(--ui-text);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.archived-task span {
+  color: var(--ui-text-muted);
   font-size: 13px;
 }
 

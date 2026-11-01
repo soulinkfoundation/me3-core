@@ -46,6 +46,7 @@ describe("task workspace utilities", () => {
     ]);
     expect(taskMode("backlog")).toBe("backlog");
     expect(taskMode(["done"])).toBe("done");
+    expect(taskMode("archived")).toBe("archived");
     expect(taskMode("unknown")).toBe("now");
     expect(taskModeStatus("now")).toBe("in_progress");
     expect(taskModeStatus("done")).toBe("done");
@@ -105,5 +106,6 @@ describe("task workspace utilities", () => {
   it("formats valid task dates and ignores invalid values", () => {
     expect(displayTaskDate("not-a-date")).toBe("");
     expect(displayTaskDate("2026-08-26")).toMatch(/26/);
+    expect(displayTaskDate("2026-08-26 12:30:00")).toMatch(/26/);
   });
 });

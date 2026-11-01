@@ -934,6 +934,51 @@ export async function archiveMissionTask(env: Env, userId: string, taskId: strin
   return { ok: true };
 }
 
+export async function restoreMissionTask(env: Env, userId: string, taskId: string) {
+  const existing = await getMissionTask(env, userId, taskId);
+  if (!existing) throw new MissionControlInputError("Task not found", 404);
+  if (!existing.archived_at) return { task: serializeTask(existing) };
+
+  // A task from a deleted project comes back in Personal.
+  const project = existing.project_id
+    ? await getMissionProject(env, userId, existing.project_id)
+    : null;
+  const projectId = project && project.status !== "archived"
+    ? project.id
+    : (await ensurePersonalProject(env, userId)).id;
+  const requestedStatus = existing.status === "cancelled" ? "backlog" : existing.status;
+  const column = await resolveMissionTaskColumn(env, userId, projectId, {
+    status: requestedStatus,
+    fallbackColumnId: projectId === existing.project_id ? existing.column_id : null,
+  });
+
+  await env.DB.prepare(
+    `UPDATE mission_tasks
+     SET project_id = ?, column_id = ?, status = ?, archived_at = NULL, updated_at = datetime('now')
+     WHERE id = ? AND user_id = ?`,
+  )
+    .bind(projectId, column.id, column.status, taskId, userId)
+    .run();
+
+  return {
+    task: serializeTask((await getMissionTask(env, userId, taskId)) as MissionTaskRow),
+  };
+}
+
+export async function deleteArchivedMissionTask(env: Env, userId: string, taskId: string) {
+  const existing = await getMissionTask(env, userId, taskId);
+  if (!existing) throw new MissionControlInputError("Task not found", 404);
+  if (!existing.archived_at) {
+    throw new MissionControlInputError("Archive the task before deleting it", 409);
+  }
+  await env.DB.prepare(
+    `DELETE FROM mission_tasks WHERE id = ? AND user_id = ? AND archived_at IS NOT NULL`,
+  )
+    .bind(taskId, userId)
+    .run();
+  return { ok: true };
+}
+
 export async function listMissionApprovals(
   env: Env,
   userId: string,

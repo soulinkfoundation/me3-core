@@ -1,7 +1,7 @@
 import { renderAssistantMarkdown } from "../../utils/assistantMarkdown";
 import { resolveUiIconName, type UiIconName } from "../../utils/icons";
 
-export type TaskModeId = "now" | "backlog" | "done";
+export type TaskModeId = "now" | "backlog" | "done" | "archived";
 export type TaskStatus = "backlog" | "in_progress" | "done" | "cancelled";
 
 export type TaskProject = {
@@ -30,7 +30,7 @@ export type WorkspaceTask = {
 };
 
 export const TASK_MODES: ReadonlyArray<{
-  id: TaskModeId;
+  id: Exclude<TaskModeId, "archived">;
   label: string;
   status: Extract<TaskStatus, "backlog" | "in_progress" | "done">;
 }> = [
@@ -43,7 +43,7 @@ export const TASK_PAGE_SIZE = 50;
 
 export function taskMode(value: unknown): TaskModeId {
   const raw = Array.isArray(value) ? value[0] : value;
-  return raw === "backlog" || raw === "done" ? raw : "now";
+  return raw === "backlog" || raw === "done" || raw === "archived" ? raw : "now";
 }
 
 export function taskModeStatus(mode: TaskModeId) {
@@ -123,9 +123,10 @@ export function projectEmoji(icon: string | null | undefined): string {
 
 export function displayTaskDate(value: string | null | undefined): string {
   if (!value) return "";
+  // Date keys show as that day; SQLite timestamps ("2026-11-01 16:35:02") are UTC.
   const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value)
     ? new Date(`${value}T12:00:00`)
-    : new Date(value);
+    : new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? `${value.replace(" ", "T")}Z` : value);
   if (Number.isNaN(parsed.getTime())) return "";
   return new Intl.DateTimeFormat(undefined, {
     day: "numeric",

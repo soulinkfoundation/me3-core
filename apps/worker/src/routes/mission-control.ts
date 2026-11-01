@@ -7,6 +7,7 @@ import {
   archiveMissionProject,
   approveMissionMemory,
   archiveMissionTask,
+  deleteArchivedMissionTask,
   clearMissionActivity,
   createMissionContextSource,
   createMissionMemory,
@@ -31,6 +32,7 @@ import {
   listMissionTaskPage,
   listMissionDaemonAudit,
   resolveMissionApproval,
+  restoreMissionTask,
   startMissionDaemonPairing,
   submitMissionWeeklyReview,
   submitMissionWeeklyReviewTask,
@@ -340,6 +342,32 @@ export function registerMissionControlRoutes(app: AppHono, deps: OwnerRouteDeps)
           await c.req.json().catch(() => ({})),
         ),
       );
+    } catch (error) {
+      return missionControlErrorResponse(c, error);
+    }
+  });
+
+  app.post("/api/mission-control/tasks/:id/restore", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireMissionControlPlugin(c);
+    if (blocked) return blocked;
+
+    try {
+      return c.json(await restoreMissionTask(c.env, ownerId, c.req.param("id")));
+    } catch (error) {
+      return missionControlErrorResponse(c, error);
+    }
+  });
+
+  app.delete("/api/mission-control/tasks/:id/permanent", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireMissionControlPlugin(c);
+    if (blocked) return blocked;
+
+    try {
+      return c.json(await deleteArchivedMissionTask(c.env, ownerId, c.req.param("id")));
     } catch (error) {
       return missionControlErrorResponse(c, error);
     }
