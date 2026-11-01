@@ -59,6 +59,7 @@ export type CoreBookingOffer = {
   meetingProvider?: "none" | "soulink" | "external";
   meetingUrl?: string;
   availability?: { windows?: Record<string, string[]> };
+  confirmationMessage?: string;
 };
 export type CoreBookingAvailability = {
   timezone?: string;
@@ -235,6 +236,15 @@ export function resolveOneToOneBookingOffer(
     ? offers.find((offer) => offer.id === offerId)
     : offers[0];
   return selected || null;
+}
+
+/** The guest's extra confirmation words: the booked offer's own message, else the shared one. */
+export function bookingConfirmationMessage(
+  bookIntent: CoreBookIntent | undefined,
+  offerMessage: unknown,
+): string | undefined {
+  const own = typeof offerMessage === "string" ? offerMessage.trim() : "";
+  return own || bookIntent?.confirmationEmail?.message;
 }
 
 export function listOneToOneBookingOffers(

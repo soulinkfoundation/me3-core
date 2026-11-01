@@ -27,6 +27,8 @@ import TimezonePicker from "../booking/TimezonePicker.vue";
 import SiteBookingReminders from "../booking/SiteBookingReminders.vue";
 import UiIcon from "../UiIcon.vue";
 import AppDialog from "../AppDialog.vue";
+import Button from "../Button.vue";
+import ConfirmationDialog from "../ConfirmationDialog.vue";
 import { isPluginAccessEnabled } from "../../utils/pluginAccess";
 import { LANDING_PAGES_PLUGIN_ID } from "@me3-core/plugin-landing-pages";
 import { useAppToast } from "../../composables/useAppToast";
@@ -786,6 +788,14 @@ const bookingConfirmationMessage = computed({
     }),
 });
 
+/** The test email uses the selected offer's own message when it has one, as real bookings do. */
+const bookingConfirmationTestMessage = computed(() => {
+  const offer = activeBookingType.value === "class" ? activeClassOffer.value
+    : activeBookingType.value === "retreat" ? activeRetreatOffer.value
+    : activeOffer.value;
+  return offer?.confirmationMessage?.trim() || bookingConfirmationMessage.value;
+});
+
 const bookingConfirmationSendHostCopy = computed({
   get: () => profile.value.booking.confirmationEmail.sendHostCopy !== false,
   set: (sendHostCopy: boolean) =>
@@ -836,7 +846,7 @@ async function sendBookingConfirmationTest() {
       durationMinutes: details.durationMinutes,
       timezone: details.timezone,
       siteName: profile.value.name || siteUsername,
-      message: bookingConfirmationMessage.value,
+      message: bookingConfirmationTestMessage.value,
       paymentMethod: details.pricing?.paymentMethod,
       amountDue: details.pricing?.suggestedAmount,
       currency: details.pricing?.currency,
@@ -979,6 +989,18 @@ function removeOfferEntry(kind: OfferKind, id: string) {
   else removeOffer(id);
 }
 
+const deleteOfferOpen = ref(false);
+
+function deleteSheetOffer() {
+  const kind = activeBookingType.value as OfferKind | null;
+  const id = selectedBookingOfferId.value;
+  deleteOfferOpen.value = false;
+  if (!kind || !id) return;
+  offerSheetOpen.value = false;
+  removeOfferEntry(kind, id);
+  toastSuccess("Offer deleted. Publish to take it off your site.");
+}
+
 function updateOfferDetails(kind: OfferKind, id: string, updates: Partial<WizardOfferDetails>) {
   if (kind === "class") wizard.updateClassOffer(id, updates);
   else if (kind === "retreat") wizard.updateRetreatOffer(id, updates);
@@ -1012,9 +1034,6 @@ onMounted(() => {
               <span class="offer-list-title">{{ entry.title }}</span>
               <span class="offer-list-summary">{{ offerKindInfo(entry.kind).label }} · {{ entry.summary }}</span>
             </span>
-          </button>
-          <button type="button" class="offer-list-remove" :aria-label="`Remove ${entry.title}`" @click="removeOfferEntry(entry.kind, entry.id)">
-            <UiIcon name="X" :size="16" aria-hidden="true" />
           </button>
         </li>
       </ul>
@@ -1653,9 +1672,26 @@ onMounted(() => {
             Copy booking link
           </button>
         </section>
+
+        <footer v-if="selectedBookingOfferId" class="offer-sheet-footer">
+          <Button color="ghost" size="compact" type="button" class="offer-sheet-delete" @click="deleteOfferOpen = true">
+            <UiIcon name="Trash2" :size="16" aria-hidden="true" />
+            Delete offer
+          </Button>
+        </footer>
             </div>
           </div>
         </AppDialog>
+
+        <ConfirmationDialog
+          :open="deleteOfferOpen"
+          :title="`Delete ${offerSheetTitle}?`"
+          message="It comes off your site when you next publish. Bookings people have already made are kept."
+          confirm-label="Delete offer"
+          danger
+          @cancel="deleteOfferOpen = false"
+          @confirm="deleteSheetOffer"
+        />
 
         <section class="booking-heading-fields" aria-labelledby="booking-heading-label">
           <h3 id="booking-heading-label" class="booking-group-title">Booking form on your site</h3>
@@ -1727,7 +1763,7 @@ onMounted(() => {
 
           <div class="form-group">
             <label for="booking-confirmation-message">
-              Additional message (optional)
+              Default message (optional)
             </label>
             <textarea
               id="booking-confirmation-message"
@@ -1737,6 +1773,7 @@ onMounted(() => {
               maxlength="8000"
               placeholder="Add directions, preparation notes, links, or other next steps."
             ></textarea>
+            <p class="field-hint">Sent with every offer that doesn’t have its own message. Open an offer to give it one.</p>
           </div>
 
           <div class="confirmation-email-test-controls">
@@ -2028,20 +2065,7 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.offer-list-remove {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-.offer-list-select:focus-visible,
-.offer-list-remove:focus-visible {
+.offer-list-select:focus-visible {
   outline: 2px solid var(--ui-focus);
   outline-offset: 2px;
 }
@@ -2276,6 +2300,17 @@ onMounted(() => {
 
 .offer-sheet-body .booking-share-actions {
   margin: 16px 20px 0;
+}
+
+.offer-sheet-footer {
+  display: flex;
+  margin: 20px 20px 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--ui-border);
+}
+
+.offer-sheet-footer .offer-sheet-delete {
+  color: var(--ui-danger, #b91c1c);
 }
 
 @media (max-width: 640px) {

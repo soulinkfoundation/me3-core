@@ -2,6 +2,7 @@ import type Stripe from "stripe";
 import { scheduleBookingRemindersForBooking } from "./booking-reminders";
 import {
   appendQueryParams,
+  bookingConfirmationMessage,
   loadSiteProfileForCommerce,
   normalizeLongText,
   resolveBookingSlot,
@@ -36,6 +37,7 @@ type EventBookingOfferBase = {
   timezone?: string;
   pricing?: CoreBookingPricing;
   capacity?: number | null;
+  confirmationMessage?: string;
 };
 
 type ClassBookingOffer = EventBookingOfferBase & {
@@ -119,8 +121,8 @@ function rawEventOffers(
 /** Resolvable classes and retreats with the published offer each came from. */
 export function listEventBookingSources(
   book: CoreBookIntent,
-): Array<{ source: { id?: string; title?: string }; offer: ResolvedEventBookingOffer }> {
-  const entries: Array<{ source: { id?: string; title?: string }; offer: ResolvedEventBookingOffer }> = [];
+): Array<{ source: EventBookingOfferBase; offer: ResolvedEventBookingOffer }> {
+  const entries: Array<{ source: EventBookingOfferBase; offer: ResolvedEventBookingOffer }> = [];
   for (const bookingType of ["class", "retreat"] as const) {
     rawEventOffers(book, bookingType).forEach((raw, index) => {
       const offer = resolveEventBookingOffer(
@@ -821,6 +823,9 @@ async function notifyConfirmedEventBooking(
   const profile = await loadSiteProfileForCommerce(env, input.site);
   const hostName = profile?.name || owner.name || input.site.username;
   const confirmationEmail = input.bookIntent.confirmationEmail;
+  const source = listEventBookingSources(input.bookIntent).find(
+    (entry) => entry.offer.bookingType === input.offer.bookingType && entry.offer.id === input.offer.id,
+  )?.source;
   const result = await sendBookingConfirmationEmails(
     env,
     bookingDetailsFromBooking({
@@ -831,7 +836,10 @@ async function notifyConfirmedEventBooking(
       siteName: hostName,
       bookingTitle: input.offer.title,
       timezone: input.offer.timezone,
-      guestMessageText: normalizeLongText(confirmationEmail?.message, 8000),
+      guestMessageText: normalizeLongText(
+        bookingConfirmationMessage(input.bookIntent, source?.confirmationMessage),
+        8000,
+      ),
       paymentInstructions: normalizeLongText(
         input.offer.pricing?.paymentMethod === "manual"
           ? input.offer.pricing.paymentInstructions

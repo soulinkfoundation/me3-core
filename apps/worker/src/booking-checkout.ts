@@ -3,6 +3,7 @@ import { resolveTimeZone } from "./calendar";
 import { scheduleBookingRemindersForBooking } from "./booking-reminders";
 import {
   appendQueryParams,
+  bookingConfirmationMessage,
   claimOneToOneBookingHold,
   confirmBookingHold,
   createConfirmedOneToOneBooking,
@@ -10,6 +11,7 @@ import {
   findActiveBookingHoldOverlap,
   findConfirmedBookingOverlap,
   getStripe,
+  listOneToOneBookingSources,
   loadSiteProfileForCommerce,
   normalizeLongText,
   releaseBookingHold,
@@ -433,6 +435,9 @@ export async function sendConfirmationEmailsForBooking(
   const owner = await getOwnerContact(env, input.site.user_id);
   const bookIntent = input.profile?.intents?.book as CoreBookIntent | undefined;
   const confirmationEmail = bookIntent?.confirmationEmail;
+  const source = bookIntent
+    ? listOneToOneBookingSources(bookIntent).find((entry) => entry.offer.id === input.booking.offer_id)?.source
+    : undefined;
   const hostName = input.profile?.name || owner.name || input.site.username;
   const result = await sendBookingConfirmationEmails(
     env,
@@ -444,7 +449,10 @@ export async function sendConfirmationEmailsForBooking(
       siteName: hostName,
       bookingTitle: input.bookingTitle,
       timezone: input.timezone,
-      guestMessageText: normalizeLongText(confirmationEmail?.message, 8000),
+      guestMessageText: normalizeLongText(
+        bookingConfirmationMessage(bookIntent, source?.confirmationMessage),
+        8000,
+      ),
       paymentInstructions: normalizeLongText(input.paymentInstructions, 8000),
       sendHostCopy: confirmationEmail?.sendHostCopy !== false,
     }),

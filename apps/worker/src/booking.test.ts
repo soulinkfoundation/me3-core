@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bookingConfirmationMessage,
   createConfirmedOneToOneBooking,
   normalizeBookingAmount,
   normalizeSiteCheckoutReturnUrl,
@@ -62,6 +63,14 @@ it("resolves each offer's own hours and keeps shared hours as the fallback", () 
   const [alignment, calm] = listOneToOneBookingOffers(book);
   expect(alignment.availability).toEqual({ timezone: "America/New_York", windows: { monday: ["19:00-21:00"] } });
   expect(calm.availability).toEqual(book.availability);
+});
+
+it("uses the booked offer's own confirmation message before the shared one", () => {
+  const book = { confirmationEmail: { message: "See you soon." } } as CoreBookIntent;
+  expect(bookingConfirmationMessage(book, "  Bring a mat.  ")).toBe("Bring a mat.");
+  expect(bookingConfirmationMessage(book, "   ")).toBe("See you soon.");
+  expect(bookingConfirmationMessage(book, undefined)).toBe("See you soon.");
+  expect(bookingConfirmationMessage(undefined, undefined)).toBeUndefined();
 });
 
 describe("public checkout returns", () => {

@@ -48,6 +48,11 @@ const buttonLabel = computed({
   set: (value: string) => emit("update", { buttonLabel: value.trim() ? value : undefined }),
 });
 
+const confirmationMessage = computed({
+  get: () => props.details.confirmationMessage || "",
+  set: (value: string) => emit("update", { confirmationMessage: value.trim() ? value : undefined }),
+});
+
 const slugDraft = ref(props.details.pageSlug || "");
 watch(() => props.details.pageSlug, (value) => { slugDraft.value = value || ""; });
 
@@ -176,6 +181,21 @@ async function onPhotoSelected(event: Event) {
       />
     </div>
 
+    <div class="form-group">
+      <label :for="`${idPrefix}-confirmation`">Confirmation email message <span class="optional-label">(optional)</span></label>
+      <textarea
+        :id="`${idPrefix}-confirmation`"
+        v-model="confirmationMessage"
+        rows="4"
+        maxlength="8000"
+        placeholder="What to bring, where to park, how to join."
+        :aria-describedby="`${idPrefix}-confirmation-hint`"
+      ></textarea>
+      <p :id="`${idPrefix}-confirmation-hint`" class="form-hint">
+        Added to the email people get when they book this. Leave blank to use your default message.
+      </p>
+    </div>
+
     <div class="form-group offer-own-page">
       <div class="offer-own-page-head">
         <span :id="`${idPrefix}-page-label`" class="offer-details-label">
@@ -240,7 +260,8 @@ async function onPhotoSelected(event: Event) {
   font-weight: 500;
 }
 
-.form-group input[type="text"] {
+.form-group input[type="text"],
+.form-group textarea {
   width: 100%;
   padding: 10px 14px;
   border: 1px solid var(--color-border);
@@ -249,6 +270,11 @@ async function onPhotoSelected(event: Event) {
   color: var(--color-text);
   font-family: inherit;
   font-size: 14px;
+}
+
+.form-group textarea {
+  resize: vertical;
+  line-height: 1.5;
 }
 
 .form-hint {
@@ -369,7 +395,7 @@ button:disabled {
 }
 
 .form-error {
-  color: var(--ui-danger);
+  color: var(--ui-danger, #b91c1c);
 }
 
 .optional-label {

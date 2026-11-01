@@ -56,6 +56,23 @@ describe("wizard store", () => {
     expect(useWizardStore().profile.booking.retreatOffers[0].pageSlug).toBe("yoga-for-runners");
   });
 
+  it("keeps each offer's own confirmation message through publishing, site loading and draft reload", () => {
+    const store = useWizardStore();
+    store.setBooking({ enabled: true, oneToOneEnabled: true, classEnabled: true, retreatEnabled: true });
+    store.updateBookingOffer(store.profile.booking.offers[0].id, { confirmationMessage: "  Wear loose clothes.  " });
+    store.updateClassOffer(store.profile.booking.classOffers[0].id, { confirmationMessage: "Bring a mat." });
+    const source = store.generateMe3Json();
+    const book = source.intents?.book as any;
+    expect(book.offers[0].confirmationMessage).toBe("Wear loose clothes.");
+    expect(book.classes[0].confirmationMessage).toBe("Bring a mat.");
+    expect(book.retreats[0].confirmationMessage).toBeUndefined();
+    store.loadFromSiteContent({ ...source, name: "Example" } as Parameters<typeof store.loadFromSiteContent>[0], [], [], [], "example");
+    expect(store.profile.booking.classOffers[0].confirmationMessage).toBe("Bring a mat.");
+    store.saveToStorage();
+    setActivePinia(createPinia());
+    expect(useWizardStore().profile.booking.offers[0].confirmationMessage).toBe("Wear loose clothes.");
+  });
+
   it("keeps uploaded testimonial avatars after publishing and reloading the draft", () => {
     const store = useWizardStore();
     store.activateDraftContext({ siteId: "site-profile", username: "owner", role: "profile" });

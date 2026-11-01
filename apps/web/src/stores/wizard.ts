@@ -232,6 +232,8 @@ export interface WizardOfferDetails {
   buttonLabel?: string;
   /** The offer's own page at /<pageSlug> (Business plan), or a site page with that slug. */
   pageSlug?: string;
+  /** Extra words in this offer's booking confirmation email; falls back to the shared message. */
+  confirmationMessage?: string;
 }
 
 export interface WizardBookingOffer extends WizardOfferDetails {
@@ -605,6 +607,7 @@ type PublishedBookingOffer = {
   meetingUrl?: string;
   availability?: { windows?: Record<string, string[]> };
   pageSlug?: string;
+  confirmationMessage?: string;
   image?: string;
   location?: WizardOfferLocation;
   buttonLabel?: string;
@@ -628,6 +631,7 @@ type PublishedBookingClass = {
   location?: WizardOfferLocation;
   buttonLabel?: string;
   pageSlug?: string;
+  confirmationMessage?: string;
 };
 
 type PublishedBookingRetreat = {
@@ -646,6 +650,7 @@ type PublishedBookingRetreat = {
   location?: WizardOfferLocation;
   buttonLabel?: string;
   pageSlug?: string;
+  confirmationMessage?: string;
 };
 
 type PublishedBookingType = {
@@ -806,6 +811,9 @@ function normalizeOfferDetails(input: Partial<WizardOfferDetails>): WizardOfferD
   }
   const pageSlug = typeof input.pageSlug === "string" ? normalizeOfferPageSlug(input.pageSlug) : "";
   if (pageSlug) details.pageSlug = pageSlug;
+  if (typeof input.confirmationMessage === "string" && input.confirmationMessage) {
+    details.confirmationMessage = input.confirmationMessage.slice(0, 8000);
+  }
   return details;
 }
 
@@ -817,11 +825,18 @@ function publishedOfferDetails(offer: WizardOfferDetails) {
     ...(offer.location ? { location: { mode: offer.location.mode, place: place || "" } } : {}),
     ...(offer.buttonLabel ? { buttonLabel: offer.buttonLabel } : {}),
     ...(offer.pageSlug ? { pageSlug: offer.pageSlug } : {}),
+    ...(offer.confirmationMessage?.trim() ? { confirmationMessage: offer.confirmationMessage.trim() } : {}),
   };
 }
 
 function loadedOfferDetails(
-  offer: { image?: string; location?: Partial<WizardOfferLocation>; buttonLabel?: string; pageSlug?: string },
+  offer: {
+    image?: string;
+    location?: Partial<WizardOfferLocation>;
+    buttonLabel?: string;
+    pageSlug?: string;
+    confirmationMessage?: string;
+  },
   resolveAsset: (path: string) => string | null,
 ): WizardOfferDetails {
   const src = offer.image ? resolveAsset(offer.image) : "";
@@ -831,6 +846,7 @@ function loadedOfferDetails(
     location: offer.location as WizardOfferLocation | undefined,
     buttonLabel: offer.buttonLabel,
     pageSlug: offer.pageSlug,
+    confirmationMessage: offer.confirmationMessage,
   });
 }
 
@@ -1075,6 +1091,7 @@ function normalizeWizardBookingOffers(input: unknown): WizardBookingOffer[] {
       meetingUrl: typeof offer.meetingUrl === "string" ? offer.meetingUrl : "",
       availability: offer.availability,
       pageSlug: offer.pageSlug,
+      confirmationMessage: offer.confirmationMessage,
       image: offer.image,
       location: offer.location,
       buttonLabel: offer.buttonLabel,
@@ -1140,6 +1157,7 @@ function normalizeWizardClassOffers(input: unknown): WizardClassOffer[] {
       location: classOffer.location,
       buttonLabel: classOffer.buttonLabel,
       pageSlug: classOffer.pageSlug,
+      confirmationMessage: classOffer.confirmationMessage,
     });
 
     const baseId = normalized.id || "weekly-class";
@@ -1197,6 +1215,7 @@ function normalizeWizardRetreatOffers(input: unknown): WizardRetreatOffer[] {
       location: retreat.location,
       buttonLabel: retreat.buttonLabel,
       pageSlug: retreat.pageSlug,
+      confirmationMessage: retreat.confirmationMessage,
     });
 
     const baseId = normalized.id || "retreat";
@@ -3726,6 +3745,7 @@ export const useWizardStore = defineStore("wizard", () => {
             location: offer.location,
             buttonLabel: offer.buttonLabel,
             pageSlug: offer.pageSlug,
+            confirmationMessage: offer.confirmationMessage,
             duration: offer.duration,
             meetingProvider: offer.meetingProvider,
             pricing: offer.pricing
@@ -3756,6 +3776,7 @@ export const useWizardStore = defineStore("wizard", () => {
             location: offer.location,
             buttonLabel: offer.buttonLabel,
             pageSlug: offer.pageSlug,
+            confirmationMessage: offer.confirmationMessage,
             duration: offer.duration,
             timezone: offer.timezone,
             recurrence: { ...offer.recurrence },
@@ -3788,6 +3809,7 @@ export const useWizardStore = defineStore("wizard", () => {
             location: offer.location,
             buttonLabel: offer.buttonLabel,
             pageSlug: offer.pageSlug,
+            confirmationMessage: offer.confirmationMessage,
             durationDays: deriveRetreatDurationDays(offer),
             startDate: offer.startDate,
             startTime: offer.startTime,
