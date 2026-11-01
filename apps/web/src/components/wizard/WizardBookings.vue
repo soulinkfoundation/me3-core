@@ -2242,6 +2242,7 @@ onMounted(() => {
   display: grid;
   gap: 12px;
   margin-top: 24px;
+  padding: 0 16px 16px;
 }
 
 .settings-accordion {
