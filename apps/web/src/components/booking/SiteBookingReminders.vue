@@ -3,7 +3,8 @@ import { ref, watch } from "vue";
 import { api } from "../../api";
 import { useAppToast } from "../../composables/useAppToast";
 
-const props = defineProps<{ siteId: string }>();
+const props = withDefaults(defineProps<{ siteId: string; label?: string }>(), { label: "Booking reminders" });
+const emit = defineEmits<{ state: [enabled: boolean | null] }>();
 const { toastFromUnknown } = useAppToast();
 const enabled = ref<boolean | null>(null);
 const loading = ref(false);
@@ -41,13 +42,14 @@ async function toggle(event: Event) {
 }
 
 watch(() => props.siteId, load, { immediate: true });
+watch(enabled, (value) => emit("state", value));
 </script>
 
 <template>
   <div class="booking-reminders">
     <label class="booking-reminders__label">
       <input type="checkbox" :checked="enabled === true" :disabled="enabled === null || saving" @change="toggle" />
-      <span>Booking reminders</span>
+      <span>{{ label }}</span>
     </label>
     <p>Send reminders to you and your guest 24 hours and 2 hours before confirmed bookings. This setting takes effect immediately for this site.</p>
     <button v-if="enabled === null && !loading" type="button" @click="load">Retry loading reminders</button>

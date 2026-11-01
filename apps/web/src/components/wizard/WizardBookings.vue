@@ -990,6 +990,7 @@ function removeOfferEntry(kind: OfferKind, id: string) {
 }
 
 const deleteOfferOpen = ref(false);
+const remindersOn = ref<boolean | null>(null);
 
 function deleteSheetOffer() {
   const kind = activeBookingType.value as OfferKind | null;
@@ -1693,9 +1694,16 @@ onMounted(() => {
           @confirm="deleteSheetOffer"
         />
 
-        <section class="booking-heading-fields" aria-labelledby="booking-heading-label">
-          <h3 id="booking-heading-label" class="booking-group-title">Booking form on your site</h3>
-          <p class="booking-group-hint">The heading and intro above the booking form on your homepage.</p>
+        <div class="booking-settings">
+        <details class="settings-accordion">
+          <summary>
+            <UiIcon name="FileText" :size="18" aria-hidden="true" />
+            <span class="settings-accordion-title">Booking form on your site</span>
+            <span class="settings-accordion-meta">{{ bookingHeadingTitle }}</span>
+            <UiIcon name="ChevronDown" :size="18" class="settings-accordion-chevron" aria-hidden="true" />
+          </summary>
+          <div class="settings-accordion-body">
+          <p class="settings-accordion-hint">The heading and intro above the booking form on your homepage.</p>
           <div class="form-group">
             <label for="booking-heading-title">Heading</label>
             <input
@@ -1715,10 +1723,16 @@ onMounted(() => {
               placeholder="Help people understand what these sessions are for"
             />
           </div>
-        </section>
+          </div>
+        </details>
 
-        <details v-if="profile.booking.oneToOneEnabled" class="booking-shared-settings booking-section-details">
-          <summary><UiIcon name="Settings" :size="18" />Default hours and display</summary>
+        <details v-if="profile.booking.oneToOneEnabled" class="settings-accordion">
+          <summary>
+            <UiIcon name="Settings" :size="18" aria-hidden="true" />
+            <span class="settings-accordion-title">Default hours and display</span>
+            <UiIcon name="ChevronDown" :size="18" class="settings-accordion-chevron" aria-hidden="true" />
+          </summary>
+          <div class="settings-accordion-body">
           <div class="offer-setting-row">
             <div>
               <strong>Default availability</strong>
@@ -1736,15 +1750,18 @@ onMounted(() => {
               <button type="button" :aria-pressed="offerDisplayMode === 'dropdown'" :class="{ active: offerDisplayMode === 'dropdown' }" @click="offerDisplayMode = 'dropdown'">Dropdown</button>
             </div>
           </div>
+          </div>
         </details>
 
-        <details class="confirmation-email-section">
-          <summary><UiIcon name="Mail" :size="18" />Confirmation emails</summary>
+        <details class="settings-accordion">
+          <summary>
+            <UiIcon name="Mail" :size="18" aria-hidden="true" />
+            <span class="settings-accordion-title">Confirmation emails</span>
+            <UiIcon name="ChevronDown" :size="18" class="settings-accordion-chevron" aria-hidden="true" />
+          </summary>
+          <div class="settings-accordion-body">
           <div class="confirmation-email-header">
             <div>
-              <h3 class="confirmation-email-title">
-                Booking confirmation emails
-              </h3>
               <p class="confirmation-email-lead">
                 ME3 always emails the customer their booking details, even when
                 the optional message below is blank. Emails use your account
@@ -1856,10 +1873,20 @@ onMounted(() => {
             >, <code>{{ hostName }}</code
             >, <code>{{ hostEmail }}</code>
           </p>
+          </div>
         </details>
 
-        <div v-if="wizard.selectedSiteId" class="booking-reminders-card">
-          <SiteBookingReminders :site-id="wizard.selectedSiteId" />
+        <details v-if="wizard.selectedSiteId" class="settings-accordion">
+          <summary>
+            <UiIcon name="Bell" :size="18" aria-hidden="true" />
+            <span class="settings-accordion-title">Booking reminders</span>
+            <span v-if="remindersOn !== null" class="settings-accordion-meta">{{ remindersOn ? "On" : "Off" }}</span>
+            <UiIcon name="ChevronDown" :size="18" class="settings-accordion-chevron" aria-hidden="true" />
+          </summary>
+          <div class="settings-accordion-body">
+            <SiteBookingReminders :site-id="wizard.selectedSiteId" label="Send booking reminders" @state="remindersOn = $event" />
+          </div>
+        </details>
         </div>
       </template>
     </div>
@@ -2102,27 +2129,11 @@ onMounted(() => {
   border-top: 1px solid var(--color-border);
 }
 
-.confirmation-email-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 18px;
-  padding: 16px 20px 20px;
-  border-top: 1px solid var(--ui-border, var(--color-border));
-  background: var(--ui-surface-muted, rgba(0, 0, 0, 0.03));
-}
-
 .confirmation-email-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-}
-
-.confirmation-email-title {
-  margin: 0 0 4px;
-  font-size: 16px;
-  color: var(--ui-text, var(--color-text));
 }
 
 .confirmation-email-lead,
@@ -2226,23 +2237,103 @@ onMounted(() => {
   padding: 0 20px;
 }
 
-.booking-heading-fields {
+/* Settings below the offers: one accordion style, closed rows show a short summary. */
+.booking-settings {
   display: grid;
-  gap: 4px;
-  margin-top: 28px;
-  padding: 0 4px;
+  gap: 12px;
+  margin-top: 24px;
 }
 
-.booking-group-title {
-  margin: 0;
+.settings-accordion {
+  border-radius: 20px;
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.settings-accordion summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 0 20px;
+  border-radius: 20px;
+  color: var(--ui-text);
   font-size: 15px;
   font-weight: 600;
+  list-style: none;
+  cursor: pointer;
 }
 
-.booking-group-hint {
-  margin: 0 0 8px;
+.settings-accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-accordion summary:hover {
+  background: var(--ui-surface-muted);
+}
+
+.settings-accordion[open] summary {
+  border-radius: 20px 20px 0 0;
+}
+
+.settings-accordion summary:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.settings-accordion-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-accordion-meta {
+  overflow: hidden;
+  max-width: 40%;
   color: var(--ui-text-muted);
   font-size: 13px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-accordion[open] .settings-accordion-meta {
+  display: none;
+}
+
+.settings-accordion-chevron {
+  flex-shrink: 0;
+  color: var(--ui-text-muted);
+  transition: transform 0.2s ease;
+}
+
+.settings-accordion[open] .settings-accordion-chevron {
+  transform: rotate(180deg);
+}
+
+.settings-accordion-body {
+  display: grid;
+  gap: 16px;
+  padding: 4px 20px 20px;
+}
+
+.settings-accordion-body > .form-group {
+  margin: 0;
+}
+
+.settings-accordion-body :deep(.booking-reminders) {
+  margin-top: 0;
+}
+
+.settings-accordion-hint {
+  margin: 0;
+  color: var(--ui-text-muted);
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-accordion-chevron {
+    transition: none;
+  }
 }
 
 .offer-sheet {
@@ -2437,19 +2528,11 @@ onMounted(() => {
   box-shadow: var(--ui-shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08));
 }
 
-.offer-extra-settings,
-.booking-shared-settings {
+.offer-extra-settings {
   display: grid;
   gap: 16px;
   margin: 20px 0;
 }
-.booking-shared-settings { padding: 0 20px 20px; }
-/* Settings groups below the offers share one card style. */
-.booking-section-details.booking-shared-settings { margin: 16px 0 12px; border-radius: 20px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
-.booking-section-details.booking-shared-settings:not([open]) { padding-bottom: 0; }
-.booking-section-details.booking-shared-settings summary { color: var(--ui-text); font-size: 15px; font-weight: 600; border-radius: 20px; }
-.booking-reminders-card { margin-top: 12px; padding: 4px 16px 16px; border-radius: 20px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
-.booking-reminders-card :deep(.booking-reminders) { margin-top: 0; }
 .offer-setting-row {
   display: flex;
   align-items: center;
@@ -2654,15 +2737,6 @@ onMounted(() => {
   }
 }
 
-/* Closed disclosure cards hug their summary; the whole summary row is the click target. */
-.booking-section-details { display: block; padding: 0 16px; border: 0; border-radius: 18px; background: var(--ui-surface-muted); }
-.booking-section-details[open] { display: grid; gap: 16px; padding-bottom: 16px; }
-.booking-section-details summary { display: flex; align-items: center; gap: 10px; min-height: 52px; margin: 0 -16px; padding: 0 16px; border-radius: 18px; color: var(--ui-text-muted); font-size: 14px; list-style: none; cursor: pointer; }
-.booking-section-details summary::-webkit-details-marker { display: none; }
-.confirmation-email-section { display: block; padding: 0 16px; border: 0; border-radius: 20px; box-shadow: var(--ui-shadow-sm); background: var(--ui-surface); }
-.confirmation-email-section[open] { display: grid; gap: 16px; padding-bottom: 16px; }
-.confirmation-email-section summary { display: flex; align-items: center; gap: 10px; min-height: 52px; margin: 0 -16px; padding: 0 16px; border-radius: 20px; font-size: 15px; font-weight: 600; list-style: none; cursor: pointer; }
-.confirmation-email-section summary::-webkit-details-marker { display: none; }
 .offer-setting-row { border: 0; border-radius: 18px; background: var(--ui-surface-muted); }
 .booking-type-tabs, .offer-tabs { border: 0; }
 /* Selected offer: dark pill with light text so the name stays readable. */
