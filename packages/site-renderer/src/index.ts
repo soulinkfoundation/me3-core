@@ -373,10 +373,13 @@ export async function generateSiteHtml(
 
   output["index.html"] = generateIndexHtml(profile, access, context.placeholders === true);
 
+  // Admin pages (visible: false) still publish, unlisted: they stay out of navigation and discovery files.
+  const unlistedFiles = new Set<string>();
   for (const page of profile.pages || []) {
-    if (page.visible === false || page.draft || !page.slug || !page.file) continue;
+    if (page.draft || !page.slug || !page.file) continue;
     const markdown = fileMap.get(normalizeSitePath(page.file));
     if (markdown !== undefined) {
+      if (page.visible === false) unlistedFiles.add(`${normalizeSitePath(page.slug)}.html`);
       output[`${normalizeSitePath(page.slug)}.html`] = generateContentPageHtml(profile, page.title || titleFromSlug(page.slug), markdown, page.slug, "./", access);
     }
   }
@@ -416,7 +419,7 @@ export async function generateSiteHtml(
     const canonicalUrl = publicSiteUrl(context.baseUrl, path);
     const basePath = "../".repeat(file.split("/").length - 1) || "./";
     const title = html.match(/<title>(.*?)<\/title>/)?.[1] || name;
-    pages.push({ path, title: path || name });
+    if (!unlistedFiles.has(file)) pages.push({ path, title: path || name });
     const identity = {
       "@type": context.entityType || "Person", name,
       ...(context.baseUrl ? { "@id": publicSiteUrl(context.baseUrl, "#identity"), url: publicSiteUrl(context.baseUrl) } : {}),

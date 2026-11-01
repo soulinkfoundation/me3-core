@@ -18,6 +18,7 @@ describe('public profile metadata', () => {
     expect(output['sitemap.xml']).not.toMatch(/hidden|missing|draft/);
     expect(output['llms.txt']).not.toMatch(/Secret|hidden|missing|draft/);
     expect(output['robots.txt']).toContain('Sitemap: https://example.com/site/alex/sitemap.xml');
+    expect(output['hidden.html']).toContain('Secret');
   });
   it('never publishes a private profile or embeds author text as executable markup', async () => {
     expect(await generateSiteHtml({ visibility: 'private', bio: 'private' }, [])).toEqual({});

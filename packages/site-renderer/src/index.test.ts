@@ -449,6 +449,15 @@ describe("site generator", () => {
     expect(files["index.html"]).not.toContain("retreat.html");
   });
 
+  it("publishes admin pages without adding them to navigation", async () => {
+    const files = await generateSiteHtml(
+      { name: "Admin Pages", pages: [{ slug: "privacy", title: "Privacy", file: "privacy.md", visible: false }] },
+      [{ name: "privacy.md", content: "Privacy policy" }],
+    );
+    expect(files["privacy.html"]).toContain("Privacy policy");
+    expect(files["index.html"]).not.toContain("privacy.html");
+  });
+
   it("publishes semantic native audio controls with responsive styling", async () => {
     const files = await generateSiteHtml(
       {
