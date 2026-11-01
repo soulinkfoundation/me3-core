@@ -471,11 +471,23 @@ export async function createMissionProject(env: Env, userId: string, input: unkn
     normalizeNullableText(body.slug) || name,
   );
   const duplicate = await env.DB.prepare(
-    `SELECT id FROM mission_projects WHERE user_id = ? AND slug = ? LIMIT 1`,
+    `SELECT id, status FROM mission_projects WHERE user_id = ? AND slug = ? LIMIT 1`,
   )
     .bind(userId, slug)
-    .first<{ id: string }>();
-  if (duplicate) throw new MissionControlInputError("A project with that name already exists", 409);
+    .first<{ id: string; status: MissionProjectRow["status"] }>();
+  if (duplicate && duplicate.status !== "archived") {
+    throw new MissionControlInputError("A project with that name already exists", 409);
+  }
+  if (duplicate) {
+    // Deleted projects are archived, so free their slug for the new project.
+    await env.DB.prepare(
+      `UPDATE mission_projects
+       SET slug = ?, updated_at = datetime('now')
+       WHERE id = ? AND user_id = ? AND status = 'archived'`,
+    )
+      .bind(`${slug}-archived-${duplicate.id}`, duplicate.id, userId)
+      .run();
+  }
 
   const id = crypto.randomUUID();
 
