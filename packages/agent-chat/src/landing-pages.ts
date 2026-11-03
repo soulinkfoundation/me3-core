@@ -13,6 +13,7 @@ import {
   normalizeLandingPageDesignPackId,
   normalizeLandingPageDocument,
   normalizeLandingPageFontPreset,
+  RESERVED_SITE_PAGE_SLUGS,
   setLandingPageDesignPack,
   type LandingPageDesignPackId,
   type LandingPageDocumentV3,
@@ -76,7 +77,6 @@ export type AgentLandingPageSummary = {
   purpose: LandingPageTemplateId;
   designPackId: LandingPageDesignPackId;
   designName: string;
-  siteCreated: boolean;
   isSiteHomepage: boolean;
   imageProvider: "pexels" | null;
   published: boolean;
@@ -88,8 +88,6 @@ export type AgentLandingPageSummary = {
 
 export type AgentLandingPageDraftInput = {
   site?: string;
-  siteName?: string;
-  siteHandle?: string;
   slug?: string;
   purpose: LandingPageTemplateId;
   designPackId?: string;
@@ -164,16 +162,7 @@ export async function createAgentLandingPageDraft(
 ): Promise<AgentLandingPageSummary> {
   const designPackId = resolveAgentDesignPack(input.designPackId, input.purpose);
   await ensureLandingPagesPluginEnabled(env);
-  const target = input.site
-    ? {
-        site: await resolveAgentLandingPageSite(env, userId, input.site),
-        created: false,
-      }
-    : {
-        site: await createAgentLandingPageSite(env, userId, input),
-        created: true,
-      };
-  const site = target.site;
+  const site = await resolveAgentLandingPageCreationSite(env, userId, input.site);
   const owner = await env.DB.prepare(
     `SELECT name, bio, avatar_url FROM owner_profile WHERE id = ? LIMIT 1`,
   )
@@ -184,7 +173,7 @@ export async function createAgentLandingPageDraft(
     siteId: site.id,
     siteUsername: site.username,
     pageId: id,
-    query: input.imageQuery || input.siteName || input.headline || input.brief,
+    query: input.imageQuery || input.headline || input.brief,
   });
   const document = buildLandingPageDocument({
     username: site.username,
@@ -197,12 +186,13 @@ export async function createAgentLandingPageDraft(
       name: owner?.name || site.username,
       bio: owner?.bio || null,
       avatar: owner?.avatar_url || null,
-      profileUrl: target.created ? "/me" : `/sites/${encodeURIComponent(site.username)}`,
+      profileUrl: "/me",
     },
   });
   applyAgentLandingPageCopy(document, input);
   applyAgentLandingPageStyle(document, input);
-  if (target.created && input.purpose !== "waitlist") {
+  // A new page has no booking or product chosen yet, so it would not publish. It points home until the owner picks one.
+  if (input.purpose !== "waitlist") {
     const action = document.actions.find(
       (candidate) => candidate.id === document.hero.primaryActionId,
     );
@@ -212,13 +202,11 @@ export async function createAgentLandingPageDraft(
       delete action.resourceId;
     }
   }
-  const slug = target.created
-    ? "home"
-    : await uniqueAgentLandingPageSlug(
-        env,
-        site.id,
-        input.slug || input.headline || document.seo.title,
-      );
+  const slug = await uniqueAgentLandingPageSlug(
+    env,
+    site.id,
+    input.slug || input.headline || document.seo.title,
+  );
   try {
     await env.DB.prepare(
       `INSERT INTO site_pages
@@ -235,7 +223,7 @@ export async function createAgentLandingPageDraft(
       )
       .run();
   } catch (error) {
-    await rollbackAgentLandingPageCreation(env, userId, site, image, target.created);
+    await rollbackAgentLandingPageImage(env, site, image);
     if (/unique|constraint/i.test(String(error))) {
       throw new Error(`The page path "${slug}" is already in use.`);
     }
@@ -243,11 +231,10 @@ export async function createAgentLandingPageDraft(
   }
   const row = await loadAgentLandingPage(env, site.id, id);
   if (!row) {
-    await rollbackAgentLandingPageCreation(env, userId, site, image, target.created);
+    await rollbackAgentLandingPageImage(env, site, image);
     throw new Error("The landing-page draft could not be loaded after creation.");
   }
   return serializeAgentLandingPage(row, site, document, {
-    siteCreated: target.created,
     imageProvider: image?.provider || null,
   });
 }
@@ -572,113 +559,38 @@ async function ensureLandingPagesPluginEnabled(
     .run();
 }
 
-async function createAgentLandingPageSite(
+async function rollbackAgentLandingPageImage(
   env: AgentLandingPageEnv,
-  userId: string,
-  input: AgentLandingPageDraftInput,
-): Promise<DbAgentLandingSite> {
-  const result = await env.DB.prepare(
-    `SELECT id, username, site_role, template_id, custom_domain, updated_at
-     FROM sites
-     WHERE user_id = ? AND COALESCE(site_type, 'profile') = 'profile'
-     ORDER BY created_at ASC, username ASC
-     LIMIT 20`,
-  )
-    .bind(userId)
-    .all<DbAgentLandingSite>();
-  const sites = result.results || [];
-  const profileSite = sites.find((site) => site.site_role === "profile");
-  if (!profileSite) {
-    throw new Error("Create your ME3 profile site before building an additional site.");
-  }
-  if (sites.filter((site) => site.site_role === "organization").length >= 3) {
-    throw new Error("You have used all three additional site slots.");
-  }
-
-  const requestedHandle =
-    normalizeOptionalText(input.siteHandle) ||
-    normalizeOptionalText(input.siteName) ||
-    normalizeOptionalText(input.headline) ||
-    input.brief;
-  const username = uniqueAgentSiteUsername(
-    requestedHandle,
-    new Set(sites.map((site) => site.username.toLowerCase())),
-  );
-  const id = crypto.randomUUID();
-  try {
-    await env.DB.prepare(
-      `INSERT INTO sites
-         (id, user_id, username, site_type, site_role, template_id, profile_site_id)
-       VALUES (?, ?, ?, 'profile', 'organization', ?, ?)`,
-    )
-      .bind(
-        id,
-        userId,
-        username,
-        AGENT_LANDING_PAGE_SITE_TEMPLATE_ID,
-        profileSite.id,
-      )
-      .run();
-  } catch (error) {
-    const message = String(error);
-    if (/ME3_SITE_ORGANIZATION_LIMIT/i.test(message)) {
-      throw new Error("You have used all three additional site slots.");
-    }
-    if (/unique|constraint/i.test(message)) {
-      throw new Error(`The working site handle @${username} is already in use.`);
-    }
-    throw error;
-  }
-
-  return {
-    id,
-    username,
-    site_role: "organization",
-    template_id: AGENT_LANDING_PAGE_SITE_TEMPLATE_ID,
-    custom_domain: null,
-    updated_at: new Date().toISOString(),
-  };
-}
-
-function uniqueAgentSiteUsername(value: string, existing: Set<string>): string {
-  let base = slugifyAgentLandingPage(value)
-    .replace(/-+/g, "-")
-    .slice(0, 30)
-    .replace(/-+$/g, "");
-  if (base.length < 3) base = `site-${base || "new"}`.slice(0, 30);
-  if (!existing.has(base)) return base;
-  for (let suffix = 2; suffix < 100; suffix += 1) {
-    const suffixText = `-${suffix}`;
-    const candidate = `${base.slice(0, 30 - suffixText.length)}${suffixText}`;
-    if (!existing.has(candidate)) return candidate;
-  }
-  throw new Error("I could not find an unused working handle for the new site.");
-}
-
-async function rollbackAgentLandingPageCreation(
-  env: AgentLandingPageEnv,
-  userId: string,
   site: DbAgentLandingSite,
   image: AgentLandingPageStoredImage | null,
-  deleteSite: boolean,
 ): Promise<void> {
   await deleteAgentLandingPageHero(env, {
     siteId: site.id,
     siteUsername: site.username,
     image,
   }).catch(() => undefined);
-  if (!deleteSite) return;
-  await env.DB.prepare("DELETE FROM sites WHERE id = ? AND user_id = ?")
-    .bind(site.id, userId)
-    .run()
-    .catch(() => undefined);
 }
 
-async function resolveAgentLandingPageSite(
+/** Each owner has one site, so new pages always go there. Older organization sites keep their pages but gain no new ones. */
+async function resolveAgentLandingPageCreationSite(
   env: AgentLandingPageEnv,
   userId: string,
   siteReference?: string,
 ): Promise<DbAgentLandingSite> {
+  const sites = await listAgentLandingSites(env, userId);
+  const profileSite = sites.find((site) => site.site_role === "profile");
+  if (!profileSite) throw new Error("Create your ME3 website before adding a page.");
+  const reference = normalizeAgentSiteReference(siteReference);
+  if (reference && !matchesAgentSiteReference(profileSite, reference)) {
+    throw new Error(`New pages go on your website, @${profileSite.username}. Leave the site out to add it there.`);
+  }
+  return profileSite;
+}
+
+async function listAgentLandingSites(
+  env: AgentLandingPageEnv,
+  userId: string,
+): Promise<DbAgentLandingSite[]> {
   const result = await env.DB.prepare(
     `SELECT id, username, site_role, template_id, custom_domain, updated_at
      FROM sites
@@ -688,22 +600,31 @@ async function resolveAgentLandingPageSite(
   )
     .bind(userId)
     .all<DbAgentLandingSite>();
-  const sites = result.results || [];
-  if (!sites.length) throw new Error("Create your ME3 profile site before adding a landing page.");
-  const reference = normalizeOptionalText(siteReference)?.replace(/^@/, "").toLowerCase();
+  return result.results || [];
+}
+
+function normalizeAgentSiteReference(value: string | undefined): string | undefined {
+  return normalizeOptionalText(value)?.replace(/^@/, "").toLowerCase();
+}
+
+function matchesAgentSiteReference(site: DbAgentLandingSite, reference: string): boolean {
+  return site.username.toLowerCase() === reference || site.custom_domain?.toLowerCase() === reference;
+}
+
+async function resolveAgentLandingPageSite(
+  env: AgentLandingPageEnv,
+  userId: string,
+  siteReference?: string,
+): Promise<DbAgentLandingSite> {
+  const sites = await listAgentLandingSites(env, userId);
+  if (!sites.length) throw new Error("Create your ME3 website before adding a page.");
+  const reference = normalizeAgentSiteReference(siteReference);
   if (reference) {
-    const matches = sites.filter(
-      (site) =>
-        site.username.toLowerCase() === reference ||
-        site.custom_domain?.toLowerCase() === reference,
-    );
+    const matches = sites.filter((site) => matchesAgentSiteReference(site, reference));
     if (matches.length === 1) return matches[0];
-    throw new Error(`I could not find a profile site matching "${siteReference}".`);
+    throw new Error(`I could not find a site matching "${siteReference}".`);
   }
-  if (sites.length === 1) return sites[0];
-  throw new Error(
-    `I found multiple profile sites: ${sites.map((site) => `@${site.username}`).join(", ")}. Which should I use?`,
-  );
+  return sites.find((site) => site.site_role === "profile") || sites[0];
 }
 
 async function uniqueAgentLandingPageSlug(
@@ -712,12 +633,26 @@ async function uniqueAgentLandingPageSlug(
   value: string,
 ): Promise<string> {
   const base = slugifyAgentLandingPage(value) || "landing-page";
-  const result = await env.DB.prepare(
-    `SELECT slug FROM site_pages WHERE site_id = ? LIMIT 200`,
-  )
-    .bind(siteId)
-    .all<{ slug: string }>();
-  const existing = new Set((result.results || []).map((row) => row.slug));
+  const [pages, files] = await Promise.all([
+    env.DB.prepare(`SELECT slug FROM site_pages WHERE site_id = ? LIMIT 200`)
+      .bind(siteId)
+      .all<{ slug: string }>(),
+    env.DB.prepare(
+      `SELECT path FROM site_files
+       WHERE site_id = ? AND (path LIKE 'public/%.html') AND path NOT LIKE 'public/files/%'`,
+    )
+      .bind(siteId)
+      .all<{ path: string }>(),
+  ]);
+  // Generated site, offer and section pages also claim paths, and a custom page published over one would hide it.
+  const existing = new Set([
+    ...RESERVED_SITE_PAGE_SLUGS,
+    ...(pages.results || []).map((row) => row.slug),
+    ...(files.results || []).flatMap((row) => {
+      const match = /^public\/([^/]+?)(?:\.html|\/index\.html)$/.exec(row.path);
+      return match ? [match[1]] : [];
+    }),
+  ]);
   if (!existing.has(base)) return base;
   for (let suffix = 2; suffix < 100; suffix += 1) {
     const suffixText = `-${suffix}`;
@@ -766,7 +701,6 @@ function serializeAgentLandingPage(
   site: DbAgentLandingSite,
   document: LandingPageDocumentV3,
   options: {
-    siteCreated?: boolean;
     imageProvider?: "pexels" | null;
   } = {},
 ): AgentLandingPageSummary {
@@ -784,7 +718,6 @@ function serializeAgentLandingPage(
     purpose: getLandingPageTemplateId(document),
     designPackId,
     designName: getLandingPageDesignPack(designPackId).name,
-    siteCreated: options.siteCreated === true,
     isSiteHomepage,
     imageProvider:
       options.imageProvider === "pexels" ||
@@ -795,10 +728,17 @@ function serializeAgentLandingPage(
     updatedAt: row.updated_at,
     editorPath: `/sites/${encodeURIComponent(site.username)}/pages/${encodeURIComponent(row.id)}`,
     previewPath: `/api/sites/${encodeURIComponent(site.username)}/pages/${encodeURIComponent(row.id)}/preview-html`,
-    publicPath: isSiteHomepage
-      ? `/site/${encodeURIComponent(site.username)}/`
-      : `/me/${encodeURIComponent(row.slug)}`,
+    publicPath: agentLandingPagePublicPath(site, row.slug, isSiteHomepage),
   };
+}
+
+function agentLandingPagePublicPath(
+  site: DbAgentLandingSite,
+  slug: string,
+  isSiteHomepage: boolean,
+): string {
+  const base = site.site_role === "organization" ? `/site/${encodeURIComponent(site.username)}/` : "/";
+  return isSiteHomepage ? base : `${base}${encodeURIComponent(slug)}/`;
 }
 
 function normalizeOptionalText(value: unknown): string | null {

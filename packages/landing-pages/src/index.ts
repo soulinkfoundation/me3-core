@@ -41,6 +41,7 @@ export {
 
 export const LANDING_PAGES_PLUGIN_ID = "me3.landing-pages";
 export const LANDING_PAGES_PLUGIN_VERSION = "0.2.0";
+export { RESERVED_SITE_PAGE_SLUGS } from "@me3-core/site-renderer";
 export const AGENT_LANDING_PAGE_SITE_TEMPLATE_ID = "agent-landing-page";
 
 export const LANDING_PAGE_TEMPLATE_IDS = ["event", "service", "waitlist"] as const;

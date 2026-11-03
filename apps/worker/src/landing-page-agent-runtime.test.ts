@@ -133,7 +133,7 @@ describe("landing-page Agent runtime", () => {
     expect(database.pages).toHaveLength(0);
   });
 
-  it("creates a new organization-site homepage and stores a relevant Pexels image", async () => {
+  it("puts a new page on the owner's site and stores a relevant Pexels image", async () => {
     const database = createLandingPageAgentDb({ pluginEnabled: false });
     const fetcher = async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -169,7 +169,6 @@ describe("landing-page Agent runtime", () => {
       },
       "owner",
       {
-        siteName: "Bright Ideas",
         purpose: "service",
         brief: "A product studio helping small teams turn bright ideas into useful software.",
         headline: "Make bright ideas real",
@@ -178,21 +177,15 @@ describe("landing-page Agent runtime", () => {
     );
 
     expect(created).toMatchObject({
-      siteUsername: "bright-ideas",
-      slug: "home",
-      siteCreated: true,
-      isSiteHomepage: true,
+      siteUsername: "owner-site",
+      slug: "make-bright-ideas-real",
+      isSiteHomepage: false,
       imageProvider: "pexels",
-      publicPath: "/site/bright-ideas/",
+      publicPath: "/make-bright-ideas-real/",
       published: false,
     });
-    expect(database.sites).toContainEqual(
-      expect.objectContaining({
-        username: "bright-ideas",
-        site_role: "organization",
-        template_id: "agent-landing-page",
-      }),
-    );
+    expect(created).not.toHaveProperty("siteCreated");
+    expect(database.sites).toHaveLength(1);
     expect(database.files).toHaveLength(1);
     const document = normalizeLandingPageDocument(
       JSON.parse(database.pages[0]!.draft_json),
@@ -216,7 +209,7 @@ describe("landing-page Agent runtime", () => {
       },
       "owner",
       {
-        site: "bright-ideas",
+        site: "owner-site",
         pageId: created.id,
         imageQuery: "Mallorca yoga retreat by the sea",
         actionType: "subscribe",
@@ -240,6 +233,98 @@ describe("landing-page Agent runtime", () => {
     });
     expect(database.pluginEnabled()).toBe(true);
   });
+
+  it("never creates another site, even with one already on the installation", async () => {
+    const database = createLandingPageAgentDb();
+    database.sites.push({
+      id: "site-2",
+      username: "old-studio",
+      site_role: "organization",
+      template_id: "agent-landing-page",
+      custom_domain: "studio.example",
+      updated_at: "2026-07-21T12:00:00.000Z",
+    });
+
+    const page = await createAgentLandingPageDraft({ DB: database.db }, "owner", {
+      purpose: "waitlist",
+      brief: "A waitlist for my new course.",
+    });
+    expect(page.siteUsername).toBe("owner-site");
+    expect(database.sites).toHaveLength(2);
+
+    await expect(
+      createAgentLandingPageDraft({ DB: database.db }, "owner", {
+        site: "@old-studio",
+        purpose: "waitlist",
+        brief: "A second waitlist.",
+      }),
+    ).rejects.toThrow(/New pages go on your website, @owner-site/);
+    expect(database.pages).toHaveLength(1);
+  });
+
+  it("asks for an ME3 website before making a page", async () => {
+    const database = createLandingPageAgentDb();
+    database.sites.length = 0;
+    await expect(
+      createAgentLandingPageDraft({ DB: database.db }, "owner", {
+        purpose: "waitlist",
+        brief: "A waitlist.",
+      }),
+    ).rejects.toThrow(/Create your ME3 website/);
+  });
+
+  it("keeps a page that was already on an older site editable and correctly addressed", async () => {
+    const database = createLandingPageAgentDb();
+    database.sites.push({
+      id: "site-2",
+      username: "old-studio",
+      site_role: "organization",
+      template_id: "agent-landing-page",
+      custom_domain: null,
+      updated_at: "2026-07-21T12:00:00.000Z",
+    });
+    const owned = await createAgentLandingPageDraft({ DB: database.db }, "owner", {
+      purpose: "waitlist",
+      brief: "Seed page.",
+      slug: "home-page",
+    });
+    database.pages[0]!.site_id = "site-2";
+    database.pages[0]!.slug = "home";
+
+    const updated = await updateAgentLandingPageDraft({ DB: database.db }, "owner", {
+      site: "old-studio",
+      pageId: owned.id,
+      headline: "Still editable",
+    });
+    expect(updated).toMatchObject({ isSiteHomepage: true, publicPath: "/site/old-studio/" });
+  });
+
+  it("gives a new page a path nothing else on the site is using", async () => {
+    const database = createLandingPageAgentDb();
+    database.generatedFiles.push("public/coaching.html", "public/shop/index.html", "public/index.html");
+    const env = { DB: database.db };
+    const input = { purpose: "waitlist" as const, brief: "A waitlist." };
+
+    expect((await createAgentLandingPageDraft(env, "owner", { ...input, slug: "coaching" })).slug).toBe("coaching-2");
+    expect((await createAgentLandingPageDraft(env, "owner", { ...input, slug: "shop" })).slug).toBe("shop-2");
+    expect((await createAgentLandingPageDraft(env, "owner", { ...input, slug: "login" })).slug).toBe("login-2");
+    expect((await createAgentLandingPageDraft(env, "owner", { ...input, slug: "workshop" })).slug).toBe("workshop");
+  });
+
+  it("drafts a service page that can publish before a booking is chosen", async () => {
+    const database = createLandingPageAgentDb();
+    await createAgentLandingPageDraft({ DB: database.db }, "owner", {
+      site: "owner-site",
+      purpose: "service",
+      brief: "A focused sprint.",
+    });
+    const document = normalizeLandingPageDocument(
+      JSON.parse(database.pages[0]!.draft_json),
+    ) as LandingPageDocumentV3;
+    expect(document.actions[0]).toMatchObject({ kind: "link", href: "/me" });
+    expect(document.content.sections.find((section) => section.type === "profile"))
+      .toMatchObject({ profileLink: "/me" });
+  });
 });
 
 function createLandingPageAgentDb(options: { pluginEnabled?: boolean } = {}) {
@@ -255,6 +340,7 @@ function createLandingPageAgentDb(options: { pluginEnabled?: boolean } = {}) {
     },
   ];
   const files: Array<{ siteId: string; path: string; bytes: ArrayBuffer }> = [];
+  const generatedFiles: string[] = [];
   let pluginEnabled = options.pluginEnabled !== false;
   const db = {
     prepare(sql: string) {
@@ -289,6 +375,9 @@ function createLandingPageAgentDb(options: { pluginEnabled?: boolean } = {}) {
                   results: sites as T[],
                 };
               }
+              if (sql.includes("FROM site_files")) {
+                return { results: generatedFiles.map((path) => ({ path })) as T[] };
+              }
               if (sql.includes("SELECT slug FROM site_pages")) {
                 return {
                   results: pages.map((page) => ({ slug: page.slug })) as T[],
@@ -302,23 +391,6 @@ function createLandingPageAgentDb(options: { pluginEnabled?: boolean } = {}) {
             async run() {
               if (sql.includes("INSERT INTO plugin_installations")) {
                 pluginEnabled = true;
-                return { meta: { changes: 1 } };
-              }
-              if (sql.includes("INSERT INTO sites")) {
-                const [id, _userId, username, templateId] = values as [
-                  string,
-                  string,
-                  string,
-                  string,
-                ];
-                sites.push({
-                  id,
-                  username,
-                  site_role: "organization",
-                  template_id: templateId,
-                  custom_domain: null,
-                  updated_at: "2026-07-20T12:00:00.000Z",
-                });
                 return { meta: { changes: 1 } };
               }
               if (sql.includes("INSERT INTO site_files")) {
@@ -370,6 +442,7 @@ function createLandingPageAgentDb(options: { pluginEnabled?: boolean } = {}) {
     pages,
     sites,
     files,
+    generatedFiles,
     pluginEnabled: () => pluginEnabled,
   };
 }

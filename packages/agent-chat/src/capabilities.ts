@@ -1224,17 +1224,7 @@ export const CORE_CHAT_CAPABILITIES = [
         site: {
           type: "string",
           description:
-            "Optional existing site username or custom domain. Omit to create a new unpublished additional site.",
-        },
-        siteName: {
-          type: "string",
-          description:
-            "Short owner-grounded name for a new site. Use when site is omitted.",
-        },
-        siteHandle: {
-          type: "string",
-          description:
-            "Optional working URL handle for a new site. ME3 makes it unique and it can be renamed later.",
+            "Optional. New pages always go on the owner's website, so this can be left out.",
         },
         slug: {
           type: "string",
