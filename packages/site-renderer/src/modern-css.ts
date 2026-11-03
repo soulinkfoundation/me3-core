@@ -38,9 +38,8 @@ body[data-layout=cover] .site-home-sections{width:min(1080px,calc(100% - 48px));
 .starter-theme-control{position:absolute;top:12px;right:16px;z-index:40}
 .starter-theme-control .site-theme-toggle{background:var(--raised)}
 .site-topbar__inner{box-sizing:border-box;display:flex;align-items:center;gap:20px;width:min(1200px,100%);min-height:70px;margin:auto;padding:8px 24px}
-.site-topbar__identity{display:flex;align-items:center;gap:10px;min-width:0;color:var(--text);font-family:var(--display-font);font-weight:700;font-size:1.05rem;text-decoration:none;white-space:nowrap}
-.site-topbar__identity img{width:36px;height:36px;border-radius:50%;object-fit:cover}
-.site-topbar__identity img.site-topbar__logo{border-radius:0;object-fit:contain}
+.site-topbar__identity{display:flex;align-items:center;min-width:0;color:var(--text);font-family:var(--display-font);font-weight:700;font-size:1.05rem;text-decoration:none;white-space:nowrap}
+.site-topbar__logo{display:block;width:auto;max-width:180px;height:36px;object-fit:contain}
 .site-topbar__identity span{overflow:hidden;text-overflow:ellipsis}
 .site-topbar .site-navigation{flex:1;justify-content:flex-end}
 .site-topbar .nav-inline{gap:2px}
@@ -202,7 +201,7 @@ body[data-layout=minimal] .site-offer__actions{grid-column:2;grid-row:1/4;align-
 @media(max-width:760px){
   .site-topbar__inner{min-height:60px;padding:8px 16px}
   .site-topbar__identity{font-size:.92rem}
-  .site-topbar__identity img{width:32px;height:32px}
+  .site-topbar__logo{max-width:140px;height:32px}
   .site-topbar .nav-inline{display:none}
   .site-topbar .site-menu-trigger{display:inline-flex}
   .site-topbar__action{display:none}

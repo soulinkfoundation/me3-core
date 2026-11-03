@@ -62,7 +62,7 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
             <Button color="neutral" shape="soft" size="compact" @click="logoInput?.click()">{{ wizard.profile.logo ? "Change logo" : "Upload logo" }}</Button>
             <Button v-if="wizard.profile.logo" color="ghost" size="compact" @click="removeLogo">Remove</Button>
           </div>
-          <p id="look-logo-hint" class="look-logo__hint">Shown at the top of your site and in the browser tab. Without one, your photo is used. PNG, JPEG or WebP, up to 1.9 MB.</p>
+          <p id="look-logo-hint" class="look-logo__hint">Shown in place of your name at the top of your site, and in the browser tab. PNG, JPEG or WebP, up to 1.9 MB.</p>
         </div>
         <input ref="logoInput" class="look-logo__input" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Choose site logo" aria-describedby="look-logo-hint" @change="chooseLogo" />
       </div>

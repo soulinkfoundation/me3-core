@@ -55,13 +55,13 @@ describe("site generator", () => {
     expect(about).toContain("Work with me");
   });
 
-  it("uses the logo in the top bar and falls back to the avatar", async () => {
+  it("shows the logo alone in the top bar, or the name when there is no logo", async () => {
     const base = { name: "Alex", avatar: "./files/avatar.jpg", extensions: { "me3.app/site": { layout: "card" as const } } };
     const withLogo = await generateSiteHtml({ ...base, logo: "./files/logo.png" }, []);
     const avatarOnly = await generateSiteHtml(base, []);
-    expect(withLogo["index.html"]).toContain('class="site-topbar__logo" src="./files/logo.png"');
-    expect(avatarOnly["index.html"]).toContain('class="site-topbar__avatar" src="./files/avatar.jpg"');
-    expect(withLogo["index.html"]).toContain('<span>Alex</span>');
+    const identity = (html: string) => html.match(/<a class="site-topbar__identity"[^>]*>(.*?)<\/a>/)?.[1];
+    expect(identity(withLogo["index.html"])).toBe('<img class="site-topbar__logo" src="./files/logo.png" alt="Alex">');
+    expect(identity(avatarOnly["index.html"])).toBe("<span>Alex</span>");
   });
 
   it("shows the owner's initials where the photo goes until they add one", async () => {

@@ -894,9 +894,9 @@ function siteInitials(name: string): string {
 
 function generateSiteTopbar(profile: Me3SiteProfile, activeSlug: string, basePath: string): string {
   const name = profile.name || profile.handle || "ME3 site";
-  const image = profile.logo || profile.avatar;
-  const identityImage = image ? `<img class="${profile.logo ? "site-topbar__logo" : "site-topbar__avatar"}" src="${escapeHtml(filePathForHtml(image, basePath))}" alt="">` : "";
-  return `<header class="site-topbar"><div class="site-topbar__inner"><a class="site-topbar__identity" href="${basePath}">${identityImage}<span>${escapeHtml(name)}</span></a>${generateNav(profile, activeSlug, basePath, "header")}${profile.extensions?.["me3.app/site"]?.visitorThemeToggle !== false ? themeToggleMarkup(false) : ""}${siteActionLink(profile, "site-topbar__action", basePath)}</div></header>`;
+  // One identity mark: the photo already sits in the page, and a logo often carries the name.
+  const identity = profile.logo ? `<img class="site-topbar__logo" src="${escapeHtml(filePathForHtml(profile.logo, basePath))}" alt="${escapeHtml(name)}">` : `<span>${escapeHtml(name)}</span>`;
+  return `<header class="site-topbar"><div class="site-topbar__inner"><a class="site-topbar__identity" href="${basePath}">${identity}</a>${generateNav(profile, activeSlug, basePath, "header")}${profile.extensions?.["me3.app/site"]?.visitorThemeToggle !== false ? themeToggleMarkup(false) : ""}${siteActionLink(profile, "site-topbar__action", basePath)}</div></header>`;
 }
 
 function themeToggleMarkup(menu: boolean): string {
