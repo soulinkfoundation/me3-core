@@ -4,7 +4,6 @@ import { useWizardStore } from "../../stores/wizard";
 import UiIcon from "../UiIcon.vue";
 
 const wizard = useWizardStore();
-const isOrganization = computed(() => wizard.siteRole === "organization");
 
 // Feature toggles
 const linksEnabled = computed({
@@ -92,11 +91,7 @@ const productsEnabled = computed({
   <div class="step-additional-features">
     <h2>What does your site need?</h2>
     <p class="section-desc">
-      {{
-        isOrganization
-          ? "Choose the website features this site needs."
-          : "Add features to your website, such as bookings, a blog, or a shop."
-      }}
+      Add features to your website, such as bookings, a blog, or a shop.
     </p>
 
     <div class="feature-cards">
@@ -109,11 +104,7 @@ const productsEnabled = computed({
           <div class="feature-text">
             <span class="feature-name">Links</span>
             <span class="feature-desc">
-              {{
-                isOrganization
-                  ? "Add social channels and other places people can find this site online."
-                  : "Add social profiles and other places people can find you online."
-              }}
+              Add social profiles and other places people can find you online.
             </span>
           </div>
         </div>
@@ -198,11 +189,7 @@ const productsEnabled = computed({
           <div class="feature-text">
             <span class="feature-name"> Bookings </span>
             <span class="feature-desc">
-              {{
-                isOrganization
-                  ? "Let visitors book with this organization and keep its availability in sync."
-                  : "Let people book time with you and keep availability in sync with your calendar."
-              }}
+              Let people book time with you and keep availability in sync with your calendar.
             </span>
           </div>
         </div>

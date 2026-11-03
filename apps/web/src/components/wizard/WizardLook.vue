@@ -16,8 +16,6 @@ const layouts: { id: SiteLayout; label: string }[] = [
 ];
 const layout = computed(() => wizard.profile.layout === "classic" ? "card" : wizard.profile.layout === "portrait" ? "split" : wizard.profile.layout);
 const { toastError } = useAppToast();
-// Organizations set their logo in the Logo step, which uses the avatar slot.
-const showLogo = computed(() => wizard.siteRole !== "organization");
 const logoInput = ref<HTMLInputElement | null>(null);
 const maxLogoBytes = 1_900_000;
 
@@ -51,7 +49,7 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
   <div class="step-look">
     <h2>Make it yours</h2>
     <p class="section-desc">Pick a look. Everything updates live.</p>
-    <fieldset v-if="showLogo"><legend>Logo</legend>
+    <fieldset><legend>Logo</legend>
       <div class="look-logo">
         <span class="look-logo__preview" aria-hidden="true">
           <img v-if="wizard.profile.logo" :src="wizard.profile.logo" alt="" />

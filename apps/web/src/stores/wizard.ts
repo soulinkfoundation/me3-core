@@ -34,7 +34,6 @@ export type Me3Button = {
   icon?: string;
 };
 
-export type WizardSiteRole = "profile" | "organization";
 
 type Me3IntentSubscribe = NonNullable<
   NonNullable<Me3SiteProfile["intents"]>["subscribe"]
@@ -470,7 +469,6 @@ export type WizardStepId =
   | "basics"
   | "avatar"
   | "banner"
-  | "goals"
   | "links"
   | "call-to-action"
   | "pages"
@@ -491,7 +489,6 @@ const WIZARD_STEP_IDS: readonly WizardStepId[] = [
   "basics",
   "avatar",
   "banner",
-  "goals",
   "links",
   "call-to-action",
   "pages",
@@ -851,6 +848,11 @@ function loadedOfferDetails(
 }
 
 /** A page path an owner can type: lowercase words joined by hyphens. */
+/** A draft saved before ME3 moved to one site per owner must never load into the owner's site. */
+function isOrganizationDraft(state: { siteRole?: unknown }): boolean {
+  return state.siteRole === "organization";
+}
+
 export function normalizeOfferPageSlug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
 }
@@ -1700,11 +1702,10 @@ export const useWizardStore = defineStore("wizard", () => {
 
   // Username for publishing
   const username = ref("");
-  const siteRole = ref<WizardSiteRole>("profile");
   const draftContextId = computed(() =>
     selectedSiteId.value
       ? `site:${selectedSiteId.value}`
-      : `new:${siteRole.value}`,
+      : "new:profile",
   );
   const isUsernameAvailable = ref<boolean | null>(null);
   const isCheckingUsername = ref(false);
@@ -1730,15 +1731,8 @@ export const useWizardStore = defineStore("wizard", () => {
   const steps = computed<WizardStepDefinition[]>(() => {
     const visibleSteps: WizardStepDefinition[] = [
       { id: "basics", name: "Basics" },
-      {
-        id: "avatar",
-        name: siteRole.value === "organization" ? "Logo" : "Photo",
-      },
+      { id: "avatar", name: "Photo" },
       { id: "banner", name: "Banner" },
-      // Who you help became the private Mission, drafted in Mission rather than published with the site.
-      ...(siteRole.value === "organization"
-        ? [{ id: "goals" as const, name: "Site goals" }]
-        : []),
       { id: "additional-features", name: "Features" },
     ];
 
@@ -3370,9 +3364,7 @@ export const useWizardStore = defineStore("wizard", () => {
       name: profile.value.name.trim(),
     };
 
-    if (siteRole.value === "profile") {
-      me3.visibility = profile.value.visibility;
-    }
+    me3.visibility = profile.value.visibility;
 
     if (profile.value.handle) {
       me3.handle = profile.value.handle.trim();
@@ -4220,7 +4212,6 @@ export const useWizardStore = defineStore("wizard", () => {
           return { ...rest, ...(avatar !== undefined ? { avatar } : {}) };
         }),
         username: username.value,
-        siteRole: siteRole.value,
         selectedSiteId: selectedSiteId.value,
         vibe: vibe.value,
         accentOverride: accentOverride.value,
@@ -4255,6 +4246,7 @@ export const useWizardStore = defineStore("wizard", () => {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         const state = JSON.parse(saved);
+        if (isOrganizationDraft(state)) return false;
         const storedOwnerUserId =
           typeof state.ownerUserId === "string" ? state.ownerUserId : null;
         if (
@@ -4355,8 +4347,6 @@ export const useWizardStore = defineStore("wizard", () => {
           };
         });
         username.value = storedUsername || "";
-        siteRole.value =
-          state.siteRole === "organization" ? "organization" : "profile";
         vibe.value = normalizeVibeId(state.vibe);
         accentOverride.value = state.accentOverride || null;
         homeSections.value = Array.isArray(state.homeSections) ? state.homeSections : DEFAULT_HOME_SECTIONS.map((section) => ({ ...section }));
@@ -4537,7 +4527,6 @@ export const useWizardStore = defineStore("wizard", () => {
     products.value = [];
     testimonials.value = [];
     username.value = "";
-    siteRole.value = "profile";
     vibe.value = defaultVibe;
     accentOverride.value = null;
     homeSections.value = DEFAULT_HOME_SECTIONS.map((section) => ({ ...section }));
@@ -4569,34 +4558,24 @@ export const useWizardStore = defineStore("wizard", () => {
     resetState(true);
   }
 
-  function scopedStorageKey(siteId: string | null, role: WizardSiteRole): string {
+  function scopedStorageKey(siteId: string | null): string {
     const owner = encodeURIComponent(sessionUserId.value || "anonymous");
     const context = siteId
       ? `site:${encodeURIComponent(siteId)}`
-      : `new:${role}`;
+      : "new:profile";
     return `${SCOPED_STORAGE_PREFIX}:${owner}:${context}`;
   }
 
-  function legacyDraftMatchesContext(input: {
-    siteId: string | null;
-    username: string;
-    role: WizardSiteRole;
-  }): boolean {
+  function legacyDraftMatchesContext(): boolean {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return false;
     try {
       const state = JSON.parse(saved);
       const owner = typeof state.ownerUserId === "string" ? state.ownerUserId : null;
       if (sessionUserId.value && owner && owner !== sessionUserId.value) return false;
-      const role: WizardSiteRole =
-        state.siteRole === "organization" ? "organization" : "profile";
-      if (role !== input.role) return false;
-      if (!input.siteId) return true;
       // Core permits exactly one profile site, so a legacy profile draft can
       // safely follow that stable record even when it contains a pending rename.
-      if (input.role === "profile") return true;
-      const storedUsername = normalizeAssetSiteUsername(state.username);
-      return storedUsername === normalizeAssetSiteUsername(input.username);
+      return !isOrganizationDraft(state);
     } catch {
       return false;
     }
@@ -4605,14 +4584,13 @@ export const useWizardStore = defineStore("wizard", () => {
   function activateDraftContext(input: {
     siteId?: string | null;
     username?: string | null;
-    role: WizardSiteRole;
-  }): { restored: boolean; migratedLegacy: boolean } {
+  } = {}): { restored: boolean; migratedLegacy: boolean } {
     const siteId =
       typeof input.siteId === "string" && input.siteId.trim()
         ? input.siteId.trim()
         : null;
     const siteUsername = normalizeAssetSiteUsername(input.username) || "";
-    const targetStorageKey = scopedStorageKey(siteId, input.role);
+    const targetStorageKey = scopedStorageKey(siteId);
 
     if (activeStorageKey.value === targetStorageKey) {
       return {
@@ -4623,11 +4601,7 @@ export const useWizardStore = defineStore("wizard", () => {
 
     if (activeStorageKey.value !== STORAGE_KEY) saveToStorage();
 
-    const shouldMigrateLegacy = legacyDraftMatchesContext({
-      siteId,
-      username: siteUsername,
-      role: input.role,
-    });
+    const shouldMigrateLegacy = legacyDraftMatchesContext();
     const legacyDraft = shouldMigrateLegacy
       ? localStorage.getItem(STORAGE_KEY)
       : null;
@@ -4636,7 +4610,6 @@ export const useWizardStore = defineStore("wizard", () => {
     selectedSiteId.value = siteId;
     selectedSiteUsername.value = siteUsername;
     resetState(false);
-    siteRole.value = input.role;
     username.value = siteUsername;
     profile.value.handle = siteUsername;
 
@@ -4651,12 +4624,10 @@ export const useWizardStore = defineStore("wizard", () => {
     selectedSiteUsername.value = siteUsername;
     if (!restored) {
       persistedOwnerUserId.value = sessionUserId.value;
-      siteRole.value = input.role;
       username.value = siteUsername;
       profile.value.handle = siteUsername;
     }
     if (migratedLegacy && restored) {
-      siteRole.value = input.role;
       saveToStorage();
       localStorage.removeItem(STORAGE_KEY);
     }
@@ -4672,7 +4643,7 @@ export const useWizardStore = defineStore("wizard", () => {
       return;
     }
     const previousStorageKey = activeStorageKey.value;
-    const nextStorageKey = scopedStorageKey(normalizedSiteId, siteRole.value);
+    const nextStorageKey = scopedStorageKey(normalizedSiteId);
     selectedSiteId.value = normalizedSiteId;
     selectedSiteUsername.value = username.value;
     activeStorageKey.value = nextStorageKey;
@@ -4728,11 +4699,6 @@ export const useWizardStore = defineStore("wizard", () => {
     visitorThemeToggle.value = show;
     legacySitePresentation.value = false;
     markAsEdited();
-    saveToStorage();
-  }
-
-  function setSiteRole(role: WizardSiteRole) {
-    siteRole.value = role;
     saveToStorage();
   }
 
@@ -4885,7 +4851,6 @@ export const useWizardStore = defineStore("wizard", () => {
     }>,
     siteUsername: string | null | undefined,
     sitePublishedAt?: string | null,
-    loadedSiteRole: WizardSiteRole = "profile",
   ) {
     const resolvedSiteUsername =
       normalizeAssetSiteUsername(siteUsername) ||
@@ -4895,7 +4860,6 @@ export const useWizardStore = defineStore("wizard", () => {
 
     // Reset the selected site's in-memory content without deleting its draft key.
     resetState(false);
-    siteRole.value = loadedSiteRole;
 
     // Set username
     username.value = resolvedSiteUsername;
@@ -5407,7 +5371,6 @@ export const useWizardStore = defineStore("wizard", () => {
     products,
     testimonials,
     username,
-    siteRole,
     selectedSiteId,
     selectedSiteUsername,
     draftContextId,
@@ -5530,7 +5493,6 @@ export const useWizardStore = defineStore("wizard", () => {
     setPrimaryAction,
     setColorMode,
     setVisitorThemeToggle,
-    setSiteRole,
     markAsPublished,
     restorePublishedBaseline,
   };

@@ -7,7 +7,6 @@ import UiIcon from "../UiIcon.vue";
 import Button from "../Button.vue";
 
 const wizard = useWizardStore();
-const isOrganization = computed(() => wizard.siteRole === "organization");
 
 const cropperRef = ref<InstanceType<typeof Cropper> | null>(null);
 /** When re-crop starts from a data/remote URL (no stored original), we persist this on save. */
@@ -158,7 +157,7 @@ function removeAvatar() {
 
 <template>
   <div class="step-avatar">
-    <h2>{{ isOrganization ? "Add a site logo" : "Add your avatar" }}</h2>
+    <h2>Add your avatar</h2>
 
     <div class="avatar-upload">
       <!-- Current avatar or placeholder -->
@@ -169,7 +168,7 @@ function removeAvatar() {
         <img
           v-if="wizard.profile.avatar"
           :src="wizard.profile.avatar"
-          :alt="isOrganization ? 'Site logo' : 'Your avatar'"
+          alt="Your avatar"
           class="avatar-preview-img"
           draggable="false"
         />
@@ -181,7 +180,7 @@ function removeAvatar() {
           v-if="canRecropAvatar"
           class="crop-overlay"
           type="button"
-          :aria-label="isOrganization ? 'Crop site logo' : 'Crop avatar'"
+          aria-label="Crop avatar"
           @click="startRecropAvatar"
         >
           <UiIcon name="Crop" :size="32" />
@@ -207,7 +206,7 @@ function removeAvatar() {
     <!-- Cropper Modal -->
     <div v-if="showCropper" class="cropper-modal">
       <div class="cropper-container">
-        <h3>{{ isOrganization ? "Crop the site logo" : "Crop your avatar" }}</h3>
+        <h3>Crop your avatar</h3>
         <p class="cropper-instructions">
           {{
             isTouchLike

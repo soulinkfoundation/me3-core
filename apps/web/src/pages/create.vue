@@ -4,7 +4,6 @@ import { computed, onMounted, ref, watch, type Component } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   useWizardStore,
-  type WizardSiteRole,
   type WizardStepId,
 } from "../stores/wizard";
 import { useSitesStore } from "../stores/sites";
@@ -22,7 +21,6 @@ import { useAppToast } from "../composables/useAppToast";
 import WizardBasics from "../components/wizard/WizardBasics.vue";
 import WizardAvatar from "../components/wizard/WizardAvatar.vue";
 import WizardBanner from "../components/wizard/WizardBanner.vue";
-import WizardGoals from "../components/wizard/WizardGoals.vue";
 import WizardLinks from "../components/wizard/WizardLinks.vue";
 import WizardCallToAction from "../components/wizard/WizardCallToAction.vue";
 import WizardPages from "../components/wizard/WizardPages.vue";
@@ -59,36 +57,20 @@ const publishValidationError = ref("");
 watch([publishError, publishValidationError], ([error, validation]) => {
   if ((error || validation) && !publishNeedsStorage.value) toastError(error || validation);
 });
-const siteIsPublic = computed(() => wizard.siteRole === "organization" || wizard.profile.visibility === "public");
+const siteIsPublic = computed(() => wizard.profile.visibility === "public");
 // The live bar stays while the owner moves between steps and clears once they change something again.
 watch(() => wizard.needsPublish, (needsPublish) => { if (needsPublish) published.value = false; });
 const showIntroScreen = ref(false);
 const isOpeningWizard = ref(true);
 
-const requestedSiteRole = computed<WizardSiteRole>(() =>
-  route.query.siteRole === "organization" ? "organization" : "profile",
-);
 const startingNewSite = computed(() => route.query.new === "1");
 const requestedSiteId = computed(() =>
   typeof route.query.siteId === "string" ? route.query.siteId.trim() : "",
 );
-const isAdditionalSite = computed(() =>
-  startingNewSite.value
-    ? requestedSiteRole.value === "organization"
-    : wizard.siteRole === "organization",
-);
-const introTitle = computed(() =>
-  isAdditionalSite.value ? "Create a new site" : "Create your website",
-);
-const openingLabel = computed(() =>
-  isAdditionalSite.value ? "Opening your site..." : "Opening your website...",
-);
-
 const stepComponentById = {
   basics: WizardBasics,
   avatar: WizardAvatar,
   banner: WizardBanner,
-  goals: WizardGoals,
   links: WizardLinks,
   "call-to-action": WizardCallToAction,
   pages: WizardPages,
@@ -159,7 +141,7 @@ function hasMeaningfulRestoredDraft(): boolean {
   );
 }
 
-const showPreview = computed(() => !showIntroScreen.value && wizard.currentStepId !== "goals");
+const showPreview = computed(() => !showIntroScreen.value);
 
 // Check if WizardPages/Blog/Offerings/Bookings is in editing mode
 const isEditingPage = computed(() => {
@@ -235,7 +217,7 @@ function applyRouteStep() {
     void router.replace("/wheel-of-life");
     return;
   }
-  if (step === "goals" && wizard.siteRole === "profile" && !isOpeningWizard.value) {
+  if (step === "goals" && !isOpeningWizard.value) {
     void router.replace("/mission?focus=goals");
     return;
   }
@@ -289,7 +271,7 @@ async function handlePublish() {
   }
   const success = await publish({ openSite: false });
   if (!success) return;
-  publishedSiteUrl.value = await resolvePublicSiteUrl(wizard.username, sites.sites.find(site => site.username === wizard.username) || { site_role: wizard.siteRole });
+  publishedSiteUrl.value = await resolvePublicSiteUrl(wizard.username, sites.sites.find(site => site.username === wizard.username));
   published.value = true;
   window.scrollTo({ top: 0, behavior: "instant" });
 }
@@ -326,16 +308,18 @@ async function openWizardTarget() {
         ? sites.sites.find((site) => site.username === requestedUsername)
         : sites.sites.find((site) => site.site_role === "profile");
 
+    if (!startingNewSite.value && targetSite?.site_role === "organization") {
+      // Older sites stay live but no longer open in the wizard.
+      void router.replace(`/sites/${encodeURIComponent(targetSite.username)}`);
+      return;
+    }
     if (startingNewSite.value) {
-      wizard.activateDraftContext({ role: requestedSiteRole.value });
+      wizard.activateDraftContext();
     } else if (targetSite?.username) {
       openedExistingSite = true;
-      const targetRole: WizardSiteRole =
-        targetSite.site_role === "organization" ? "organization" : "profile";
       const draft = wizard.activateDraftContext({
         siteId: targetSite.id,
         username: targetSite.username,
-        role: targetRole,
       });
       const preserveLocalDraft =
         draft.restored &&
@@ -355,19 +339,16 @@ async function openWizardTarget() {
             content.products || [],
             targetSite.username,
             targetSite.published_at || null,
-            targetRole,
           );
         }
       }
-    } else if (requestedSiteId.value || requestedUsername) {
-      wizard.activateDraftContext({ role: requestedSiteRole.value });
     } else {
-      wizard.activateDraftContext({ role: "profile" });
+      wizard.activateDraftContext();
     }
   } finally {
     if (requestId !== wizardOpenRequest) return;
     showIntroScreen.value = !openedExistingSite;
-    if (route.query.step === "goals" && wizard.siteRole === "profile") {
+    if (route.query.step === "goals") {
       void router.replace("/mission?focus=goals");
       return;
     }
@@ -390,7 +371,6 @@ watch(
     () => route.query.siteId,
     () => route.query.site,
     () => route.query.new,
-    () => route.query.siteRole,
   ],
   () => {
     if (wizardMounted) void openWizardTarget();
@@ -399,7 +379,7 @@ watch(
 </script>
 
 <template>
-  <PageLoading v-if="isOpeningWizard" :label="openingLabel" />
+  <PageLoading v-if="isOpeningWizard" label="Opening your website..." />
   <div v-else class="wizard-page">
     <template v-if="!showIntroScreen">
       <!-- Step selector and preview sit in the app top bar, beside Home, instead of a second header row. -->
@@ -442,13 +422,8 @@ watch(
           alt="ME3 protocol profile preview"
         />
         <div class="intro-copy">
-          <h1 id="intro-title">{{ introTitle }}</h1>
-          <p v-if="isAdditionalSite">
-            Build a focused site for a business, project, brand, community, or
-            organisation. You can shape the content now and publish when it is
-            ready.
-          </p>
-          <p v-else>
+          <h1 id="intro-title">Create your website</h1>
+          <p>
             Your website represents you online and gives your ME3 agent
             useful public context.
             <a href="https://me3.app/protocol" target="_blank" rel="noreferrer">

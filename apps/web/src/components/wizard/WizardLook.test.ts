@@ -56,12 +56,4 @@ describe("WizardLook logo", () => {
     expect(wizard.profile.logo).toBeNull();
     expect(toastHarness.error).toHaveBeenCalledWith("That logo is too large. Choose an image under 1.9 MB.");
   });
-
-  it("leaves organization logos to the Logo step", () => {
-    const wizard = useWizardStore();
-    wizard.siteRole = "organization";
-    const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true } } });
-
-    expect(wrapper.find('input[aria-label="Choose site logo"]').exists()).toBe(false);
-  });
 });

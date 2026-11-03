@@ -421,7 +421,7 @@ export const useSitesStore = defineStore("sites", () => {
     username: string,
     options: {
       siteType?: SiteType;
-      siteRole?: "profile" | "organization";
+      siteRole?: "profile";
       templateId?: LandingPageTemplateId | null;
       renameFromSiteId?: string;
       renameFromUsername?: string;

@@ -194,15 +194,15 @@ export function usePublish() {
       if (wizard.selectedSiteId && !selectedSite) {
         throw new Error("The selected site is no longer available. Reopen it and try again.");
       }
-      if (selectedSite?.site_role && selectedSite.site_role !== wizard.siteRole) {
-        throw new Error("The selected site's role changed. Reopen the site and try again.");
+      if (selectedSite?.site_role === "organization") {
+        throw new Error("Older sites can't be edited here.");
       }
 
       if (selectedSite && selectedSite.username !== username) {
         publishProgress.value = "Renaming site...";
         const renamed = await sites.claimUsername(username, {
           siteType: "profile",
-          siteRole: wizard.siteRole,
+          siteRole: "profile",
           renameFromSiteId: selectedSite.id,
         });
         if (!renamed) {
@@ -216,9 +216,8 @@ export function usePublish() {
         );
         const claimed = await sites.claimUsername(username, {
           siteType: "profile",
-          siteRole: wizard.siteRole,
-          ...(wizard.siteRole === "profile" &&
-          existingProfileSite &&
+          siteRole: "profile",
+          ...(existingProfileSite &&
           existingProfileSite.username !== username
             ? { renameFromUsername: existingProfileSite.username }
             : {}),
@@ -514,8 +513,7 @@ export function usePublish() {
       wizard.adoptPublishedTestimonialAvatars();
       wizard.markAsPublished();
 
-      const isPublicProfile =
-        wizard.siteRole !== "profile" || wizard.profile.visibility === "public";
+      const isPublicProfile = wizard.profile.visibility === "public";
 
       // Trigger celebration animation if enabled
       if (celebrate) {
@@ -524,9 +522,7 @@ export function usePublish() {
 
       // Open the published site in a new tab if enabled
       if (openSite && isPublicProfile) {
-        const siteUrl = await resolvePublicSiteUrl(username, {
-          site_role: wizard.siteRole,
-        });
+        const siteUrl = await resolvePublicSiteUrl(username);
         setTimeout(() => {
           window.open(siteUrl, "_blank");
         }, 900);

@@ -22,12 +22,4 @@ describe("profile visibility in the site wizard", () => {
     wizard.updateProfile({ visibility: "private" });
     expect(wizard.generateMe3Json().visibility).toBe("private");
   });
-
-  it("does not apply profile visibility to organization sites", () => {
-    const wizard = useWizardStore();
-    wizard.setSiteRole("organization");
-    wizard.updateProfile({ name: "Connie Studio", visibility: "private" });
-
-    expect(wizard.generateMe3Json()).not.toHaveProperty("visibility");
-  });
 });

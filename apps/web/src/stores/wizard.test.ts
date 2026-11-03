@@ -75,7 +75,7 @@ describe("wizard store", () => {
 
   it("keeps uploaded testimonial avatars after publishing and reloading the draft", () => {
     const store = useWizardStore();
-    store.activateDraftContext({ siteId: "site-profile", username: "owner", role: "profile" });
+    store.activateDraftContext({ siteId: "site-profile", username: "owner" });
     store.updateProfile({ name: "Owner" });
     store.testimonialsEnabled = true;
     const photo = new Blob(["png"], { type: "image/png" });
@@ -91,7 +91,7 @@ describe("wizard store", () => {
     // A later session restores the local draft, then publishes again.
     setActivePinia(createPinia());
     const reloaded = useWizardStore();
-    reloaded.activateDraftContext({ siteId: "site-profile", username: "owner", role: "profile" });
+    reloaded.activateDraftContext({ siteId: "site-profile", username: "owner" });
     expect(reloaded.testimonials[1].avatar).toBe("/preview/owner/files/testimonial-1.png");
     expect(reloaded.generateMe3Json().testimonials?.map((t) => t.avatar)).toEqual(["./files/testimonial-1.png", "https://example.com/jo.jpg"]);
   });
@@ -434,7 +434,7 @@ describe("wizard store", () => {
   });
 
   describe("site-scoped drafts", () => {
-    it("keeps profile and two organization drafts isolated by stable site id", () => {
+    it("keeps drafts isolated by stable site id", () => {
       const store = useWizardStore();
       store.reconcileSession("owner-1");
 
@@ -442,7 +442,6 @@ describe("wizard store", () => {
         store.activateDraftContext({
           siteId: "site-profile",
           username: "owner",
-          role: "profile",
         }).restored,
       ).toBe(false);
       store.updateProfile({ name: "Owner", bio: "Profile draft" });
@@ -460,7 +459,6 @@ describe("wizard store", () => {
       store.activateDraftContext({
         siteId: "site-studio",
         username: "studio",
-        role: "organization",
       });
       expect(store.profile.name).toBe("");
       expect(store.pages).toEqual([]);
@@ -478,7 +476,6 @@ describe("wizard store", () => {
       store.activateDraftContext({
         siteId: "site-community",
         username: "community",
-        role: "organization",
       });
       expect(store.profile.name).toBe("");
       expect(store.username).toBe("community");
@@ -488,7 +485,6 @@ describe("wizard store", () => {
       store.activateDraftContext({
         siteId: "site-studio",
         username: "studio",
-        role: "organization",
       });
       expect(store.profile.name).toBe("Studio");
       expect(store.profile.bio).toBe("Studio draft");
@@ -500,7 +496,6 @@ describe("wizard store", () => {
       store.activateDraftContext({
         siteId: "site-profile",
         username: "owner",
-        role: "profile",
       });
       expect(store.profile.name).toBe("Owner");
       expect(store.profile.bio).toBe("Profile draft");
@@ -523,7 +518,6 @@ describe("wizard store", () => {
       const result = store.activateDraftContext({
         siteId: "site-profile",
         username: "owner",
-        role: "profile",
       });
 
       expect(result).toEqual({ restored: true, migratedLegacy: true });
@@ -533,20 +527,32 @@ describe("wizard store", () => {
       expect(localStorage.getItem("me3_wizard_state")).toBeNull();
     });
 
-    it("uses role-appropriate core steps without duplicating the wizard", () => {
+    it("uses the one set of core steps", () => {
       const store = useWizardStore();
-      store.activateDraftContext({ role: "organization" });
+      store.activateDraftContext();
 
-      expect(store.stepIds).toContain("goals");
-      expect(store.stepIds).not.toContain("wheel-of-life");
-      expect(store.stepNames).toContain("Logo");
-      expect(store.stepNames).not.toContain("Who you help");
-
-      store.activateDraftContext({ role: "profile" });
       expect(store.stepIds).not.toContain("goals");
       expect(store.stepIds).not.toContain("wheel-of-life");
       expect(store.stepNames).toContain("Photo");
+      expect(store.stepNames).not.toContain("Logo");
       expect(store.stepNames).not.toContain("Who you help");
+    });
+
+    it("never loads a saved organization draft into the owner's site", () => {
+      localStorage.setItem("me3_wizard_state", JSON.stringify({
+        ownerUserId: "owner-1",
+        siteRole: "organization",
+        username: "studio",
+        profile: { name: "Old Studio", handle: "studio" },
+      }));
+      const store = useWizardStore();
+      store.reconcileSession("owner-1");
+
+      const result = store.activateDraftContext({ siteId: "site-profile", username: "owner" });
+
+      expect(result).toEqual({ restored: false, migratedLegacy: false });
+      expect(store.profile.name).toBe("");
+      expect(store.username).toBe("owner");
     });
   });
 
@@ -1284,25 +1290,6 @@ describe("wizard store", () => {
 
       expect(store.vibe).toBe("paper");
       expect(store.generateMe3Json().links?._vibe).toBe("paper");
-    });
-
-    it("keeps the selected additional-site role when loading site content", () => {
-      const store = useWizardStore();
-
-      store.loadFromSiteContent(
-        { name: "Studio", handle: "studio" },
-        [],
-        [],
-        [],
-        "studio",
-        null,
-        "organization",
-      );
-
-      expect(store.siteRole).toBe("organization");
-      expect(
-        JSON.parse(localStorage.getItem("me3_wizard_state") || "{}").siteRole,
-      ).toBe("organization");
     });
 
     it("falls back to the profile handle when resolving loaded site assets without a username", () => {

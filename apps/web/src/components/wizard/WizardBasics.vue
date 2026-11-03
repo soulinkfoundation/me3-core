@@ -7,7 +7,6 @@ import { useSitesStore } from "../../stores/sites";
 import { resolvePublicSiteUrl } from "../../utils/publicSiteUrl";
 
 const wizard = useWizardStore();
-const isOrganization = computed(() => wizard.siteRole === "organization");
 
 const name = ref(wizard.profile.name);
 const handle = ref(wizard.profile.handle || wizard.username);
@@ -20,7 +19,7 @@ watch([handle, () => sites.sites], async ([username], _, onCleanup) => {
   onCleanup(() => { current = false; });
   if (!username) { address.value = ""; return; }
   const site = sites.sites.find(site => site.id === wizard.selectedSiteId || site.username === username);
-  const url = await resolvePublicSiteUrl(username, site || { site_role: wizard.siteRole });
+  const url = await resolvePublicSiteUrl(username, site);
   if (current) address.value = url;
 }, { immediate: true });
 const locationResults = ref<LocationSearchResult[]>([]);
@@ -241,7 +240,7 @@ const bioTextLength = computed(() =>
 <template>
   <div class="step-basics">
     <h2>
-      {{ isOrganization ? "Tell us about this site" : "Let's start with the basics" }}
+      Let's start with the basics
     </h2>
 
     <div class="form-group">
@@ -250,7 +249,7 @@ const bioTextLength = computed(() =>
         id="name"
         v-model="name"
         type="text"
-        :placeholder="isOrganization ? 'e.g. North Star Studio' : 'e.g. Alex Smith'"
+        placeholder="e.g. Alex Smith"
         maxlength="100"
         autofocus
       />
@@ -258,22 +257,19 @@ const bioTextLength = computed(() =>
 
     <div class="form-group">
       <label for="handle">
-        {{ isOrganization ? "Site address" : "Username (@handle)" }} *
+        Username (@handle) *
       </label>
-      <div class="handle-input" :class="{ 'without-prefix': isOrganization }">
-        <span v-if="!isOrganization" class="handle-prefix">@</span>
+      <div class="handle-input">
+        <span class="handle-prefix">@</span>
         <input
           id="handle"
           v-model="handle"
           type="text"
-          :placeholder="isOrganization ? 'e.g. north-star-studio' : 'e.g. alex'"
+          placeholder="e.g. alex"
           maxlength="30"
         />
       </div>
       <p v-if="address" class="handle-help">{{ address.replace(/^https?:\/\//, '').replace(/\/$/, '') }}</p>
-      <p v-if="isOrganization" class="handle-help">
-        Used in this site's web address. You can connect a custom domain later.
-      </p>
       <div class="handle-status">
         <span v-if="wizard.isCheckingUsername" class="checking">
           Checking availability...
@@ -282,16 +278,16 @@ const bioTextLength = computed(() =>
           v-else-if="handle.length >= 3 && wizard.isUsernameAvailable === true && !ownsHandle"
           class="available"
         >
-          {{ isOrganization ? "This site address" : handle }} is available.
+          {{ handle }} is available.
         </span>
         <span
           v-else-if="handle.length >= 3 && wizard.isUsernameAvailable === false"
           class="taken"
         >
-          This {{ isOrganization ? "site address" : "username" }} is taken
+          This username is taken
         </span>
         <span v-else-if="handle.length > 0 && handle.length < 3" class="hint">
-          {{ isOrganization ? "Site address" : "Username" }} must be at least 3
+          Username must be at least 3
           characters
         </span>
       </div>
@@ -299,23 +295,19 @@ const bioTextLength = computed(() =>
 
     <div class="form-group">
       <label for="bio">
-        {{ isOrganization ? "Short description" : "Short bio" }}
+        Short bio
         <span class="optional">(optional)</span>
       </label>
       <InlineRichTextEditor
         v-model="bio"
         input-id="bio"
         :max-characters="bioLength"
-        :placeholder="
-          isOrganization
-            ? 'A brief description of this business, project, or community...'
-            : 'A brief description of who you are...'
-        "
+        placeholder="A brief description of who you are..."
       />
       <div class="char-count">{{ bioTextLength }}/{{ bioLength }}</div>
     </div>
 
-    <fieldset v-if="wizard.siteRole === 'profile'" class="form-group visibility-group">
+    <fieldset class="form-group visibility-group">
       <legend>Profile visibility</legend>
       <label class="visibility-checkbox">
         <input
@@ -500,10 +492,6 @@ const bioTextLength = computed(() =>
 
 .handle-input input:focus {
   border: none;
-}
-
-.handle-input.without-prefix input {
-  padding-left: 16px;
 }
 
 .handle-help {

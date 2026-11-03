@@ -82,7 +82,7 @@ async function copyBookingLink() {
     await sites.ensureSites();
     const site = sites.sites.find(item => item.id === wizard.selectedSiteId)
       || sites.sites.find(item => item.username === wizard.username);
-    const url = new URL(await resolvePublicSiteUrl(wizard.username, site || { site_role: wizard.siteRole }));
+    const url = new URL(await resolvePublicSiteUrl(wizard.username, site));
     url.searchParams.set("offer", offerId);
     url.searchParams.set("bookingType", activeBookingType.value);
     url.hash = "booking";

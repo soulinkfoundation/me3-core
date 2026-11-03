@@ -53,7 +53,6 @@ describe("Site Wizard route initialization", () => {
     wizard.activateDraftContext({
       siteId: site.id,
       username: site.username,
-      role: "profile",
     });
     wizard.updateProfile({ name: "Kieran Butler", handle: "kieran" });
     expect(wizard.lastPublishedAt).toBeNull();
@@ -192,7 +191,7 @@ describe("Site Wizard route initialization", () => {
     });
   });
 
-  it("keeps onboarding for an explicitly new organization site", async () => {
+  it("ignores an old link asking for an organization site", async () => {
     const sites = useSitesStore();
     sites.sites = [];
     sites.ensureSites = vi.fn(async () => undefined) as never;
@@ -208,7 +207,23 @@ describe("Site Wizard route initialization", () => {
     });
     await flushPromises();
 
-    expect(wrapper.get(".wizard-intro").text()).toContain("Create a new site");
+    expect(wrapper.get(".wizard-intro").text()).toContain("Create your website");
+  });
+
+  it("sends an older site to its own screen instead of the wizard", async () => {
+    const sites = useSitesStore();
+    sites.sites = [siteRecord("studio", "organization", null)];
+    sites.ensureSites = vi.fn(async () => undefined) as never;
+    sites.getSiteContent = vi.fn() as never;
+
+    await router.push({ path: "/create", query: { site: "studio" } });
+    await router.isReady();
+
+    shallowMount(CreatePage, { global: { plugins: [router] } });
+    await flushPromises();
+
+    expect(router.currentRoute.value.path).toBe("/sites/studio");
+    expect(sites.getSiteContent).not.toHaveBeenCalled();
   });
 
   it("exits an empty wizard to the sites dashboard", async () => {
