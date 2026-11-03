@@ -86,7 +86,8 @@ export async function createSitePage(
       "Page path must use 1-60 lowercase letters, numbers, or hyphens.",
     );
   }
-  if (RESERVED_SITE_PAGE_SLUGS.has(slug)) {
+  // "home" is the site root page, published at /, so it is never a clashing path.
+  if (slug !== "home" && RESERVED_SITE_PAGE_SLUGS.has(slug)) {
     throw new SitePageInputError(`/${slug} is used by ME3. Choose another page path.`);
   }
   const document = buildLandingPageDocument(input);
