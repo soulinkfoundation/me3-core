@@ -17,6 +17,8 @@ import { PEOPLE_SEARCH_TOOL, bookCallMessage, findPersonMessage, loadProfileSite
 import SiteBuildAskCard from "../../components/first-site/SiteBuildAskCard.vue";
 import ChatFirstSite from "../../components/first-site/ChatFirstSite.vue";
 import ChatPeopleResults from "../../components/first-site/ChatPeopleResults.vue";
+import SoupBowl from "../../components/soup/SoupBowl.vue";
+import { SOUP_SERVE_TOOL, soupServingIdFromTool, type SoupServing, type SoupServingAction } from "../../utils/soup";
 import Button from "../../components/Button.vue";
 import HomePanels from "../../components/home/HomePanels.vue";
 import AgentTargetChoices from "../../components/AgentTargetChoices.vue";
@@ -441,6 +443,23 @@ const siteMissing = ref(false);
 const siteAskOpen = ref(routeQueryValue("build") === "site");
 const findSomeonePending = ref(false);
 const peopleByMessage = ref<Record<string, PersonRow[]>>({});
+// A bowl served in chat (core_soup_serve) is drawn under the reply from the stored serving, and waits on Home too.
+const soupByMessage = ref<Record<string, SoupServing>>({});
+async function loadSoupServing(messageId: string, servingId: string) {
+  try {
+    const { serving } = await api.get<{ serving: SoupServing }>(`/soup/servings/${encodeURIComponent(servingId)}`);
+    soupByMessage.value = { ...soupByMessage.value, [messageId]: serving };
+  } catch { /* The reply still stands without the card. */ }
+}
+async function soupAct(messageId: string, action: SoupServingAction, itemId: string) {
+  const serving = soupByMessage.value[messageId];
+  if (!serving) return;
+  try {
+    const result = await api.post<{ serving: SoupServing }>(`/soup/servings/${encodeURIComponent(serving.id)}/act`, { action, itemId });
+    soupByMessage.value = { ...soupByMessage.value, [messageId]: result.serving };
+  } catch (error) { toastFromUnknown(error, "Couldn't update your soup"); }
+}
+function homeAsk(text: string) { void submitAssistantText(text); }
 const lastUserMessageAt = computed(() => [...chatMessages.value].reverse().find(message => message.role === "user")?.createdAt ?? null);
 async function loadSiteStarter() {
   let site: Awaited<ReturnType<typeof loadProfileSite>>;
@@ -1711,6 +1730,10 @@ async function submitAssistantText(
             const people = peopleRows(toolResult.data);
             if (people.length) { ensureAssistantMessage(); peopleByMessage.value = { ...peopleByMessage.value, [assistantMessageId]: people }; }
           }
+          if (data.toolName === SOUP_SERVE_TOOL && data.state === "complete" && toolResult?.status === "ok") {
+            const servingId = soupServingIdFromTool(toolResult.data);
+            if (servingId) { ensureAssistantMessage(); void loadSoupServing(assistantMessageId, servingId); }
+          }
           return;
         }
 
@@ -2517,7 +2540,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
     >
     <main class="assistant-main" aria-label="Assistant console">
       <section class="assistant-console" aria-label="Assistant conversation">
-        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" :active="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @approval-resolved="refreshAssistantAfterApproval" @build-site="openSiteAsk" />
+        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" :active="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @ask="homeAsk" @approval-resolved="refreshAssistantAfterApproval" @build-site="openSiteAsk" />
         <div
           v-show="!homeMode || siteBuilderMode"
           ref="assistantScrollerRef"
@@ -3081,6 +3104,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
               </button>
             </div>
             <ChatPeopleResults v-if="message.id && peopleByMessage[message.id]" :people="peopleByMessage[message.id]" :busy="assistantSending" @book="bookPerson" />
+            <section v-if="message.id && soupByMessage[message.id]" class="assistant-soup-bowl" aria-label="Bowl from The Human Soup"><SoupBowl :serving="soupByMessage[message.id]" @act="(action, itemId) => soupAct(message.id!, action, itemId)" /></section>
           </article>
 
           <SiteBuildAskCard v-if="siteAskOpen && !siteBuilderMode" class="assistant-message assistant-message--assistant" :busy="assistantSending" @submit="submitSiteAsk" @close="closeSiteAsk" />
@@ -3813,6 +3837,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
 .assistant-listening__elapsed { color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
 .assistant-listening .button { min-width: 100px; }
 
+.assistant-soup-bowl { box-sizing: border-box; width: min(560px, 100%); padding: 16px; border-radius: 20px; background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
 .assistant-message {
   display: flex;
   flex-direction: column;

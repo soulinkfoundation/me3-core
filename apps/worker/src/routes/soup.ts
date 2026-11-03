@@ -1,6 +1,6 @@
 import { JournalInputError } from "../journal";
 import { isCorePluginEnabled } from "../plugins";
-import { actOnSoupServing, listOpenSoupServings, serveSoupNow } from "../soup-servings";
+import { actOnSoupServing, getSoupServing, listOpenSoupServings, serveSoupNow } from "../soup-servings";
 import { SOUP_PLUGIN_ID, getSoupTaste, updateSoupTaste } from "../soup-taste";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 
@@ -26,6 +26,11 @@ export function registerSoupRoutes(app: AppHono, deps: OwnerRouteDeps) {
   }));
   app.get("/api/soup/taste", c => run(c, async () => getSoupTaste(c.env, await owner(c))));
   app.patch("/api/soup/taste", c => run(c, async () => updateSoupTaste(c.env, await owner(c), await body(c))));
+  app.get("/api/soup/servings/:id", c => run(c, async () => {
+    const serving = await getSoupServing(c.env, await owner(c), c.req.param("id"));
+    if (!serving) throw new JournalInputError("Serving not found", 404);
+    return { serving };
+  }));
   app.post("/api/soup/servings/:id/act", c => run(c, async () => ({ serving: await actOnSoupServing(c.env, await owner(c), c.req.param("id"), await body(c)) })));
   // Serve one of the chosen servings now (the ⋯ menu's "Serve now", and local testing without waiting for the morning).
   app.post("/api/soup/serve", c => run(c, async () => {

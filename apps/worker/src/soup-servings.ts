@@ -56,7 +56,7 @@ export type SoupServing = {
 
 type ServingRow = {
   id: string; user_id: string; date_key: string; serving_id: string; kind: SoupServingKind; title: string; status: SoupServingStatus;
-  items_json: string; due_at: string; expires_at: string; claimed_at: number; opened_at: string | null; finished_at: string | null;
+  items_json: string; due_at: string; expires_at: string; claimed_at: number; opened_at: string | null; finished_at: string | null; created_at?: string;
 };
 
 export const HEADLINES_COUNT = 3;
@@ -70,6 +70,7 @@ const LEAD_MINUTES = 10;
 const CATCH_UP_MINUTES = 180;
 const PICK_OPEN_HOURS = 6;
 const ASK_OPEN_HOURS = 12;
+const FRESH_WINDOW_MS = 36 * 3_600_000;
 const LISTENABLE_FORMATS = new Set(["talk", "lecture", "interview", "conversation", "commentary", "meditation", "music", "story", "explainer"]);
 
 export function soupClientFor(env: Env): SoupClient {
@@ -97,7 +98,9 @@ export function toServingItem(row: SoupBowlItem, wanted?: SoupMedium): SoupServi
 
 function serialize(row: ServingRow): SoupServing {
   const items = parseJsonArray(row.items_json).filter((entry): entry is SoupServingItem => !!entry && typeof entry === "object" && typeof (entry as SoupServingItem).id === "string");
-  return { id: row.id, servingId: row.serving_id, kind: row.kind, title: row.title, status: row.status, dueAt: row.due_at, expiresAt: row.expires_at, openedAt: row.opened_at, finishedAt: row.finished_at, items };
+  // Headlines made of nothing recent mean the pantry had no fresh news, so the card says so.
+  const stale = row.kind === "headlines" && items.length > 0 && items.every(item => !item.publishedAt || Date.parse(item.publishedAt) < Date.parse(row.created_at ?? row.due_at) - FRESH_WINDOW_MS);
+  return { id: row.id, servingId: row.serving_id, kind: row.kind, title: row.title, status: row.status, dueAt: row.due_at, expiresAt: row.expires_at, openedAt: row.opened_at, finishedAt: row.finished_at, items, ...(stale ? { fallback: true } : {}) };
 }
 
 // ── Picks: one small model call ─────────────────────────────
@@ -161,7 +164,9 @@ export async function writeSoupPicks(
     onDelta: async () => {},
   });
   const call = response.toolCalls.find(item => item.name === picksTool.name);
-  return readSoupPicks(call?.arguments.picks, input.candidates.map(item => item.id), input.count);
+  const picks = readSoupPicks(call?.arguments.picks, input.candidates.map(item => item.id), input.count);
+  if (!picks.length) console.warn("Soup picks: the model returned nothing usable", JSON.stringify(call?.arguments ?? response.text ?? null).slice(0, 400));
+  return picks;
 }
 
 export function readSoupPicks(value: unknown, candidateIds: string[], count: number): Array<{ itemId: string; forYou: string }> {
@@ -194,10 +199,18 @@ async function pickWithModel(env: Env, ownerId: string, input: { candidates: Sou
     const models = await createAgentModels(env, { userId: ownerId, threadId: "", turnId: requestId, requestId });
     const fastName = env.ME3_AGENT_FAST_MODEL?.trim() || "anthropic/claude-haiku-5.5";
     const modelId = (id: string) => id.replace(/^@cf\//, "");
-    const model = models.managed && !models.managed.models.some(item => modelId(item.id) === modelId(fastName))
+    const fast = models.managed && !models.managed.models.some(item => modelId(item.id) === modelId(fastName))
       ? models.model
       : models.modelFor(fastName, { purpose: "soup_serving" });
-    return await writeSoupPicks(model, { ...input, ownerSnapshot: snapshot.prompt }, AbortSignal.timeout(25_000));
+    try {
+      return await writeSoupPicks(fast, { ...input, ownerSnapshot: snapshot.prompt }, AbortSignal.timeout(25_000));
+    } catch (error) {
+      // An install without the fast model's provider (local dev, some self-hosted) still gets its
+      // for-you lines from the model it chats with.
+      if (fast.id === models.model.id) throw error;
+      console.warn("Soup picks retrying with the chat model", error instanceof Error ? error.message : error);
+      return await writeSoupPicks(models.model, { ...input, ownerSnapshot: snapshot.prompt }, AbortSignal.timeout(40_000));
+    }
   } catch (error) {
     console.warn("Soup picks fell back to Soup's own order", error instanceof Error ? error.message : error);
     return null;
@@ -318,7 +331,7 @@ export async function composeSoupServing(env: Env, ownerId: string, spec: Servin
     const client = soupClientFor(env);
     const exclude = await servedItemIds(env, ownerId, now);
     const wanted = spec.ask?.medium || spec.medium;
-    const since = new Date(now.getTime() - 36 * 3_600_000).toISOString();
+    const since = new Date(now.getTime() - FRESH_WINDOW_MS).toISOString();
     let gathered = await gatherCandidates(client, servingQueries(spec.kind, taste, { exclude, since: spec.kind === "headlines" ? since : undefined, ask: spec.ask, medium: spec.medium, maxMinutes: spec.maxMinutes }), taste, wanted);
     let fallback = gathered.fallback;
     // Headlines want fresh news; when the pantry has little that is new, older items stand in and the card says so.
@@ -327,6 +340,15 @@ export async function composeSoupServing(env: Env, ownerId: string, spec: Servin
       const ids = new Set(gathered.items.map(item => item.id));
       gathered = { items: [...gathered.items, ...older.items.filter(item => !ids.has(item.id))].slice(0, CANDIDATE_LIMIT), fallback: gathered.fallback || older.fallback };
       fallback = true;
+    }
+    // A bowl asked for with tight filters (a 20-minute listen) widens before it comes back empty: first the length, then the medium.
+    if (spec.ask && gathered.items.length < 3) {
+      for (const ask of [{ ...spec.ask, maxMinutes: undefined }, { ...spec.ask, maxMinutes: undefined, medium: undefined }]) {
+        if (gathered.items.length >= 3) break;
+        const wider = await gatherCandidates(client, servingQueries(spec.kind, taste, { exclude, ask }), taste, wanted).catch(() => ({ items: [], fallback: false }));
+        const ids = new Set(gathered.items.map(item => item.id));
+        gathered = { items: [...gathered.items, ...wider.items.filter(item => !ids.has(item.id))].slice(0, CANDIDATE_LIMIT), fallback: gathered.fallback || wider.fallback };
+      }
     }
     if (!gathered.items.length) return finish("failed", [], fallback);
     const count = spec.kind === "headlines" ? HEADLINES_COUNT : 1 + PICK_ALTERNATES;

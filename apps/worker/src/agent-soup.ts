@@ -9,11 +9,13 @@ import type { Env } from "./types";
 
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
-/** 'agent payments @ proj_123' → a work topic that follows that project. */
-export function parseWorkTopicLine(line: string, projectIds: Set<string>): SoupWorkTopic | null {
+/** 'agent payments @ proj_123' (or '@ ME3 payments', the project's name) → a work topic that follows that project. */
+export function parseWorkTopicLine(line: string, projects: Set<string> | Map<string, string>): SoupWorkTopic | null {
   const [topic, project] = line.split("@").map(part => part.trim());
   if (!topic) return null;
-  const projectId = project && projectIds.has(project) ? project : null;
+  const byId = projects instanceof Map ? projects : new Map([...projects].map(id => [id, id]));
+  const wanted = (project || "").replace(/\s+project$/i, "").trim().toLowerCase();
+  const projectId = wanted ? [...byId].find(([id, name]) => id.toLowerCase() === wanted || name.toLowerCase() === wanted)?.[0] ?? null : null;
   return { topic, projectId, source: projectId ? "project" : "owner" };
 }
 
@@ -33,7 +35,7 @@ export function parseServingLine(line: string, index: number): SoupServingSpec {
   return spec;
 }
 
-export function tastePatchFromAgent(args: Record<string, unknown>, projectIds: Set<string>): SoupTastePatch {
+export function tastePatchFromAgent(args: Record<string, unknown>, projectIds: Set<string> | Map<string, string>): SoupTastePatch {
   const patch: SoupTastePatch = {};
   const lines = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
   if (args.workTopics !== undefined) patch.workTopics = lines(args.workTopics).map(line => parseWorkTopicLine(line, projectIds)).filter(Boolean);
@@ -87,7 +89,7 @@ export function createAgentSoupServices(env: Env, ownerId: string): AgentSoupSer
     },
     async updateTaste(patch) {
       const current = await getSoupTaste(env, ownerId);
-      const state = await updateSoupTaste(env, ownerId, tastePatchFromAgent(patch, new Set(current.projects.map(project => project.id))));
+      const state = await updateSoupTaste(env, ownerId, tastePatchFromAgent(patch, new Map(current.projects.map(project => [project.id, project.name]))));
       return { ...describe(state, await briefingTime()), saved: true };
     },
     async listSoups(signal) {

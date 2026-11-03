@@ -5,6 +5,8 @@ import { useAuthStore } from "../../stores/auth";
 import draggable from "vuedraggable";
 import HomeWheelChart, { type HomeWheelArea } from "./HomeWheelChart.vue";
 import GratitudeCard from "./GratitudeCard.vue";
+import SoupCard from "./SoupCard.vue";
+import { soupWhenLabel, type SoupServing, type SoupServingAction, type SoupToday } from "../../utils/soup";
 import AppDialog from "../AppDialog.vue";
 import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
 import GetSetUpStrip from "./GetSetUpStrip.vue";
@@ -19,7 +21,7 @@ import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people"
 import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDoneToday, homeInboxSoulink, homeMailTime, homeTasksCard, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
 import { useAppLoadingWhile } from "../../composables/useAppLoading";
-const emit = defineEmits<{ suggest: [text: string]; approvalResolved: []; buildSite: [] }>();
+const emit = defineEmits<{ suggest: [text: string]; ask: [text: string]; approvalResolved: []; buildSite: [] }>();
 const setupStrip = ref<InstanceType<typeof GetSetUpStrip> | null>(null);
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
 const auth = useAuthStore();
@@ -108,13 +110,40 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
   tasks: { title: "Tasks", href: "/tasks", emoji: "✅" },
   mission: { title: "Mission", href: "/mission", emoji: "🚀" },
   accounts: { title: "Accounts", href: "/accounts", emoji: "💰" },
+  soup: { title: "Soup", href: "/?view=home", emoji: "🍲" },
 };
 // People appears once someone is Close (People v1).
 const peopleCard = computed(() => rankHomePeople(contactsStore.contacts, contact => contact.reminderAt));
 const openPersonId = ref<string | null>(null);
 const openPerson = computed(() => contactsStore.contacts.find(contact => contact.id === openPersonId.value) || null);
-const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value) && (id !== "people" || peopleCard.value.state !== "hidden")));
-const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id)));
+// The Human Soup (me3-ydf4): the cauldron intro until taste is set up, then only while a serving is open.
+const soup = ref<SoupToday | null>(null);
+const soupServing = computed<SoupServing | null>(() => soup.value?.servings[0] ?? null);
+const soupShow = computed(() => Boolean(soup.value) && (!soup.value!.setUp || Boolean(soupServing.value)));
+const soupBusy = ref(false);
+async function loadSoup() {
+  await resource("soup", async () => { const today = await api.get<SoupToday>("/soup/today"); if (!disposed) soup.value = today ?? null; });
+}
+async function soupAct(serving: SoupServing, action: SoupServingAction, itemId: string) {
+  if (soupBusy.value) return;
+  soupBusy.value = true;
+  try {
+    const result = await api.post<{ serving: SoupServing }>(`/soup/servings/${encodeURIComponent(serving.id)}/act`, { action, itemId });
+    if (soup.value) soup.value = { ...soup.value, servings: soup.value.servings.map(item => item.id === result.serving.id ? result.serving : item).filter(item => item.status === "open") };
+    if (action === "later") toastSuccess("Kept on Home until tomorrow");
+  } catch (error) { toastFromUnknown(error, "Couldn't update your soup"); }
+  finally { soupBusy.value = false; }
+}
+async function soupServeNow() {
+  menu.value = null;
+  if (soupBusy.value) return;
+  soupBusy.value = true;
+  try { await api.post("/soup/serve", { servingId: soup.value?.servingSpecs[0]?.id ?? "morning" }); await loadSoup(); toastSuccess("Served"); }
+  catch (error) { toastFromUnknown(error, "Couldn't serve just now"); }
+  finally { soupBusy.value = false; }
+}
+const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value) && (id !== "people" || peopleCard.value.state !== "hidden") && (id !== "soup" || Boolean(soup.value))));
+const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id) && (id !== "soup" || soupShow.value)));
 // Cards already on Home sort first when the sheet opens, then the order holds still,
 // so adding one never slides a different tile under the next tap.
 const addOrder = ref<HomeCard[]>([]);
@@ -337,6 +366,7 @@ async function refresh() {
       } catch (error) { if (!(error instanceof ApiError && error.status === 404)) throw error; }
     }),
     resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed) gratitudeOn.value = Boolean(state.settings?.inToday); }),
+    loadSoup(),
     resource("people", async () => { await contactsStore.fetchContacts(); if (contactsStore.error) throw new Error(contactsStore.error); }),
     resource("tasks", plan.loadTasks),
     resource("mission", async () => {
@@ -401,6 +431,7 @@ watch(() => props.active, active => {
   void loadLayout();
   void setupStrip.value?.load();
   if (day.value !== today) day.value = today; else void loadToday();
+  void loadSoup();
 });
 onMounted(() => {
   motionPreference?.addEventListener("change", updateMotionPreference);
@@ -425,8 +456,9 @@ onBeforeUnmount(() => {
       <template #item="{ element: card }: { element: HomeCard }">
         <article :ref="el => setCardElement(card, el)" class="home-card" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header class="home-card__header">
-            <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
+            <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ card === 'soup' && soupServing ? soupServing.title : cards[card].title }}</span></RouterLink>
             <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
+            <span v-else-if="card === 'soup' && soupServing" class="home-card__detail">{{ soupWhenLabel(soupServing) }}</span>
             <span v-else-if="card === 'tasks' && tasksCard.tasks.length" class="home-card__detail">{{ tasksCard.view === 'now' ? 'Now' : 'Backlog' }}</span>
             <span v-else-if="card === 'inbox' && inboxStatus.badge" class="home-card__badge">{{ inboxStatus.badge }}</span>
             <span v-else-if="card === 'inbox' && inboxStatus.note" class="home-card__detail">{{ inboxStatus.note }}</span>
@@ -439,6 +471,11 @@ onBeforeUnmount(() => {
             <button type="button" role="menuitemcheckbox" :aria-checked="showGratitude" @click="toggleGratitude"><span class="home-emoji home-emoji--menu" aria-hidden="true">🌅</span>Gratitude<span class="home-switch" :class="{ 'is-on': showGratitude }" aria-hidden="true" /></button>
           </div>
           <div v-else-if="menu === card" class="home-card__menu" role="menu" :aria-label="`${cards[card].title} options`" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
+            <template v-if="card === 'soup' && soup?.setUp">
+              <button type="button" role="menuitem" @click="menu = null; emit('ask', 'What\'s in my soup?')"><UiIcon name="Search" :size="16" />Your soup</button>
+              <button v-if="soup.servingSpecs.length" type="button" role="menuitem" :disabled="soupBusy" @click="soupServeNow"><UiIcon name="RefreshCw" :size="16" />Serve now</button>
+              <button v-if="soupServing" type="button" role="menuitem" @click="menu = null; soupAct(soupServing, 'dismiss', '')"><UiIcon name="Check" :size="16" />Done with this</button>
+            </template>
             <button type="button" role="menuitem" class="home-danger" @click="remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
           </div>
           <div class="home-card__body">
@@ -524,6 +561,7 @@ onBeforeUnmount(() => {
               </div>
             </template>
             <template v-else-if="card === 'accounts'"><div v-if="accountSummary" class="home-stats"><div><span class="home-muted">Income this month</span><strong>{{ accountSummary.income }}</strong></div><div><span class="home-muted">Expenses this month</span><strong>{{ accountSummary.expense }}</strong></div></div><RouterLink v-else to="/accounts" class="home-quiet">Open Accounts<UiIcon name="ArrowRight" :size="16" /></RouterLink></template>
+            <SoupCard v-else-if="card === 'soup'" :serving="soupServing" :set-up="Boolean(soup?.setUp)" :busy="soupBusy" @setup="emit('ask', 'Set up my soup')" @act="soupAct" />
             <template v-else-if="card === 'people'"><template v-if="peopleCard.state === 'people'"><button v-for="person in peopleCard.people" :key="person.id" type="button" class="home-person" @click="openPersonId = person.id"><PersonAvatar :contact="person" :size="40" /><strong>{{ firstName(person.name) }}</strong><span class="home-muted home-person__since">{{ formatSinceShort(person.lastInTouchAt) || 'Not yet' }}</span></button></template><p v-else class="home-muted">All caught up.</p></template>
           </div>
         </article>

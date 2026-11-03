@@ -1477,6 +1477,7 @@ const SOUP_PLUGIN: CorePluginManifestSummary = {
   routes: [
     { id: "soup.today.api", path: "/api/soup/today", methods: ["GET"], auth: "owner" },
     { id: "soup.taste.api", path: "/api/soup/taste", methods: ["GET", "PATCH"], auth: "owner" },
+    { id: "soup.serving.api", path: "/api/soup/servings/:id", methods: ["GET"], auth: "owner" },
     { id: "soup.serving.act.api", path: "/api/soup/servings/:id/act", methods: ["POST"], auth: "owner" },
     { id: "soup.serve.api", path: "/api/soup/serve", methods: ["POST"], auth: "owner" },
   ],
