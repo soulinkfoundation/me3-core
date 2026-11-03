@@ -177,7 +177,7 @@ describe("site role API lifecycle", () => {
         } as unknown as Awaited<ReturnType<MemoryR2Bucket["list"]>>;
       });
       await expect(renamePersistentSite(env, {
-        ownerId: "owner", siteId: created.body.site.id, expectedRole: "profile", toUsername: "new-owner",
+        ownerId: "owner", siteId: created.body.site.id, toUsername: "new-owner",
       })).rejects.toThrow("R2 object listing did not advance");
       expect(list).toHaveBeenCalledTimes(sequence.length + 1);
       expect(db.raw.prepare("SELECT username FROM sites WHERE id = ?").get(created.body.site.id))
@@ -187,38 +187,39 @@ describe("site role API lifecycle", () => {
     });
   }
 
-  it("requires a profile, associates organizations, and reports role-aware quota", async () => {
-    const rejected = await postSite(app, env, {
+  it("refuses a second site and reports a one-site quota", async () => {
+    const beforeProfile = await postSite(app, env, {
       username: "independent-studio",
       siteRole: "organization",
     });
-    expect(rejected.response.status).toBe(409);
-    expect(rejected.body).toMatchObject({ code: "profile_required" });
+    expect(beforeProfile.response.status).toBe(409);
+    expect(beforeProfile.body).toMatchObject({ code: "one_site_per_owner" });
 
-    const profile = await postSite(app, env, { username: "owner" });
-    const organization = await postSite(app, env, {
+    await postSite(app, env, { username: "owner" });
+    const afterProfile = await postSite(app, env, {
       username: "independent-studio",
       siteRole: "organization",
     });
-    expect(organization.response.status).toBe(201);
-    expect(organization.body.site).toMatchObject({
-      username: "independent-studio",
-      site_role: "organization",
-      profile_site_id: profile.body.site.id,
-    });
+    expect(afterProfile.response.status).toBe(409);
+    expect(afterProfile.body).toMatchObject({ code: "one_site_per_owner" });
+    expect(db.raw.prepare("SELECT COUNT(*) AS count FROM sites").get()).toEqual({ count: 1 });
+
+    const unknownRole = await postSite(app, env, { username: "other", siteRole: "team" });
+    expect(unknownRole.response.status).toBe(400);
 
     const quotaResponse = await app.fetch(new Request("http://localhost/api/sites/quota"), env);
     const quota = (await quotaResponse.json()) as Record<string, any>;
     expect(quotaResponse.status).toBe(200);
     expect(quota).toMatchObject({
-      current: 2,
-      limit: 4,
+      current: 1,
+      limit: 1,
       profile: { current: 1, limit: 1, remaining: 0, can_create: false },
-      additional_sites: { current: 1, limit: 3, remaining: 2, can_create: true },
-      remaining_additional_sites: 2,
+      can_create: false,
       can_create_profile: false,
-      can_create_additional_site: true,
     });
+    expect(quota).not.toHaveProperty("additional_sites");
+    expect(quota).not.toHaveProperty("can_create_additional_site");
+    expect(quota.capabilities).not.toHaveProperty("maxAdditionalSites");
   });
 
   it("renames and unpublishes the profile but rejects standalone deletion", async () => {
@@ -242,7 +243,7 @@ describe("site role API lifecycle", () => {
       )
       .run(profileId);
     await siteAssets.put("sites/owner/public/hero.png", "profile-image");
-    await postSite(app, env, { username: "studio", siteRole: "organization" });
+    insertOlderOrganizationSite(db, "studio-id", "studio");
 
     const renamed = await postSite(app, env, {
       username: "new-owner",
@@ -342,102 +343,67 @@ describe("site role API lifecycle", () => {
     expect(editableBody.pages[0].source).toBe(markdown);
   });
 
-  it("renames only the organization selected by stable site id", async () => {
-    const profile = await postSite(app, env, { username: "owner" });
-    const studio = await postSite(app, env, {
-      username: "studio",
-      siteRole: "organization",
-    });
-    const community = await postSite(app, env, {
-      username: "community",
-      siteRole: "organization",
-    });
+  it("leaves an older organization site out of renames", async () => {
+    await postSite(app, env, { username: "owner" });
+    insertOlderOrganizationSite(db, "studio-id", "studio");
 
     const renamed = await postSite(app, env, {
       username: "new-studio",
-      siteRole: "organization",
-      renameFromSiteId: studio.body.site.id,
+      renameFromSiteId: "studio-id",
     });
 
-    expect(renamed.response.status).toBe(200);
-    expect(renamed.body).toMatchObject({
-      renamed: true,
-      site: {
-        id: studio.body.site.id,
-        username: "new-studio",
-        site_role: "organization",
-      },
-    });
+    expect(renamed.response.status).toBe(404);
     expect(
-      db.raw.prepare("SELECT username FROM sites WHERE id = ?").get(profile.body.site.id),
-    ).toEqual({ username: "owner" });
-    expect(
-      db.raw.prepare("SELECT username FROM sites WHERE id = ?").get(community.body.site.id),
-    ).toEqual({ username: "community" });
-
-    const wrongRole = await postSite(app, env, {
-      username: "should-not-rename",
-      siteRole: "profile",
-      renameFromSiteId: studio.body.site.id,
-    });
-    expect(wrongRole.response.status).toBe(404);
-    expect(
-      db.raw.prepare("SELECT username FROM sites WHERE id = ?").get(studio.body.site.id),
-    ).toEqual({ username: "new-studio" });
+      db.raw.prepare("SELECT username FROM sites WHERE id = 'studio-id'").get(),
+    ).toEqual({ username: "studio" });
   });
 
-  it("enforces three additional sites and releases quota after deletion", async () => {
+  it("does not count an older organization site against the owner's one site", async () => {
+    await postSite(app, env, { username: "owner" });
+    insertOlderOrganizationSite(db, "studio-id", "studio");
+
+    const response = await app.fetch(new Request("http://localhost/api/sites/quota"), env);
+    expect(await response.json()).toMatchObject({ current: 1, limit: 1 });
+  });
+
+  it("lets an owner delete an older organization site and its files", async () => {
     const siteAssets = new MemoryR2Bucket();
     env.SITE_ASSETS = siteAssets as unknown as R2Bucket;
     await postSite(app, env, { username: "owner" });
-    const attempts = await Promise.all(
-      ["one", "two", "three", "four"].map((username) =>
-        postSite(app, env, { username, siteRole: "organization" }),
-      ),
-    );
-    expect(attempts.map(({ response }) => response.status).sort()).toEqual([
-      201,
-      201,
-      201,
-      409,
-    ]);
-    const rejected = attempts.find(({ response }) => response.status === 409)!;
-    expect(rejected.response.status).toBe(409);
-    expect(rejected.body).toMatchObject({ code: "organization_limit" });
-
-    const siteToDelete = db.raw
-      .prepare(
-        "SELECT id, username FROM sites WHERE site_role = 'organization' ORDER BY username LIMIT 1",
-      )
-      .get() as { id: string; username: string };
+    insertOlderOrganizationSite(db, "studio-id", "studio");
     db.raw
       .prepare(
         `INSERT INTO site_files (site_id, path, content, content_type, size)
-         VALUES (?, 'public/index.html', 'site', 'text/html', 4)`,
+         VALUES ('studio-id', 'public/index.html', 'site', 'text/html', 4)`,
       )
-      .run(siteToDelete.id);
-    await siteAssets.put(`sites/${siteToDelete.username}/public/index.html`, "site");
+      .run();
+    await siteAssets.put("sites/studio/public/index.html", "site");
+
     const deleted = await app.fetch(
-      new Request(`http://localhost/api/sites/${siteToDelete.username}`, {
-        method: "DELETE",
-      }),
+      new Request("http://localhost/api/sites/studio", { method: "DELETE" }),
       env,
     );
+
     expect(deleted.status).toBe(200);
     expect(
-      db.raw.prepare("SELECT COUNT(*) AS count FROM site_files WHERE site_id = ?").get(siteToDelete.id),
+      db.raw.prepare("SELECT COUNT(*) AS count FROM site_files WHERE site_id = 'studio-id'").get(),
     ).toEqual({ count: 0 });
-    expect(
-      siteAssets.has(`sites/${siteToDelete.username}/public/index.html`),
-    ).toBe(false);
-
-    const replacement = await postSite(app, env, {
-      username: "replacement",
-      siteRole: "organization",
-    });
-    expect(replacement.response.status).toBe(201);
+    expect(siteAssets.has("sites/studio/public/index.html")).toBe(false);
   });
 });
+
+function insertOlderOrganizationSite(db: SqliteD1, id: string, username: string): void {
+  const profile = db.raw.prepare("SELECT id, user_id FROM sites WHERE site_role = 'profile'").get() as {
+    id: string;
+    user_id: string;
+  };
+  db.raw
+    .prepare(
+      `INSERT INTO sites (id, user_id, username, site_type, site_role, profile_site_id)
+       VALUES (?, ?, ?, 'profile', 'organization', ?)`,
+    )
+    .run(id, profile.user_id, username, profile.id);
+}
 
 function insertSite(
   db: SqliteD1,

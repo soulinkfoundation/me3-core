@@ -1,8 +1,6 @@
-import type { DbSite, Env, SiteRole } from "./types";
+import type { DbSite, Env } from "./types";
 
 export const PROFILE_SITE_LIMIT = 1;
-export const ADDITIONAL_SITE_LIMIT = 3;
-export const PERSISTENT_SITE_LIMIT = PROFILE_SITE_LIMIT + ADDITIONAL_SITE_LIMIT;
 
 const SITE_COLUMNS = `id, user_id, username, site_type, site_role, template_id,
   profile_site_id,
@@ -14,15 +12,11 @@ export type SiteQuota = {
   limit: number;
   tier: "core";
   profile: SiteRoleQuota;
-  additional_sites: SiteRoleQuota;
-  remaining_additional_sites: number;
   can_create: boolean;
   can_create_profile: boolean;
-  can_create_additional_site: boolean;
   capabilities: {
     maxSites: number;
     maxProfileSites: number;
-    maxAdditionalSites: number;
     mailboxAlias: true;
     approvalFirstOutbound: true;
     soulinkAgentAccess: true;
@@ -39,14 +33,12 @@ type SiteRoleQuota = {
 
 type SiteCountRow = {
   profile_count: number | string | null;
-  organization_count: number | string | null;
 };
 
 export type SiteLifecycleErrorCode =
   | "profile_limit"
   | "profile_required"
   | "profile_invalid"
-  | "organization_limit"
   | "username_conflict"
   | "site_not_found"
   | "profile_delete_forbidden"
@@ -63,15 +55,10 @@ export class SiteLifecycleError extends Error {
   }
 }
 
-export function parseSiteRole(value: unknown): SiteRole | null {
-  return value === "profile" || value === "organization" ? value : null;
-}
-
 export async function getSiteQuota(env: Env, ownerId: string): Promise<SiteQuota> {
   const counts = await env.DB.prepare(
     `SELECT
-       SUM(CASE WHEN site_role = 'profile' THEN 1 ELSE 0 END) AS profile_count,
-       SUM(CASE WHEN site_role = 'organization' THEN 1 ELSE 0 END) AS organization_count
+       SUM(CASE WHEN site_role = 'profile' THEN 1 ELSE 0 END) AS profile_count
      FROM sites
      WHERE user_id = ?`,
   )
@@ -79,24 +66,18 @@ export async function getSiteQuota(env: Env, ownerId: string): Promise<SiteQuota
     .first<SiteCountRow>();
 
   const profileCount = Number(counts?.profile_count || 0);
-  const organizationCount = Number(counts?.organization_count || 0);
   const profile = buildRoleQuota(profileCount, PROFILE_SITE_LIMIT);
-  const additionalSites = buildRoleQuota(organizationCount, ADDITIONAL_SITE_LIMIT);
 
   return {
-    current: profileCount + organizationCount,
-    limit: PERSISTENT_SITE_LIMIT,
+    current: profileCount,
+    limit: PROFILE_SITE_LIMIT,
     tier: "core",
     profile,
-    additional_sites: additionalSites,
-    remaining_additional_sites: additionalSites.remaining,
-    can_create: profile.can_create || additionalSites.can_create,
+    can_create: profile.can_create,
     can_create_profile: profile.can_create,
-    can_create_additional_site: additionalSites.can_create,
     capabilities: {
-      maxSites: PERSISTENT_SITE_LIMIT,
+      maxSites: PROFILE_SITE_LIMIT,
       maxProfileSites: PROFILE_SITE_LIMIT,
-      maxAdditionalSites: ADDITIONAL_SITE_LIMIT,
       mailboxAlias: true,
       approvalFirstOutbound: true,
       soulinkAgentAccess: true,
@@ -111,29 +92,16 @@ export async function createPersistentSite(
     id: string;
     ownerId: string;
     username: string;
-    role: SiteRole;
     templateId: string | null;
-    profileSiteId?: string | null;
   },
 ): Promise<DbSite> {
-  const profileSiteId =
-    input.role === "organization"
-      ? await resolveProfileSiteId(env, input.ownerId, input.profileSiteId)
-      : null;
   try {
     await env.DB.prepare(
       `INSERT INTO sites
-         (id, user_id, username, site_type, site_role, template_id, profile_site_id)
-       VALUES (?, ?, ?, 'profile', ?, ?, ?)`,
+         (id, user_id, username, site_type, site_role, template_id)
+       VALUES (?, ?, ?, 'profile', 'profile', ?)`,
     )
-      .bind(
-        input.id,
-        input.ownerId,
-        input.username,
-        input.role,
-        input.templateId,
-        profileSiteId,
-      )
+      .bind(input.id, input.ownerId, input.username, input.templateId)
       .run();
   } catch (error) {
     throw mapSiteWriteError(error);
@@ -200,7 +168,6 @@ export async function renameProfileSite(
   return renamePersistentSite(env, {
     ownerId: input.ownerId,
     siteId: site.id,
-    expectedRole: "profile",
     toUsername: input.toUsername,
   });
 }
@@ -210,12 +177,11 @@ export async function renamePersistentSite(
   input: {
     ownerId: string;
     siteId: string;
-    expectedRole: SiteRole;
     toUsername: string;
   },
 ): Promise<DbSite> {
   const site = await getSiteById(env, input.siteId, input.ownerId);
-  if (!site || site.site_role !== input.expectedRole) {
+  if (!site || site.site_role !== "profile") {
     throw new SiteLifecycleError("site_not_found", "Site not found");
   }
   if (site.username === input.toUsername) return site;
@@ -235,9 +201,9 @@ export async function renamePersistentSite(
     await env.DB.prepare(
       `UPDATE sites
        SET username = ?, updated_at = datetime('now')
-       WHERE id = ? AND user_id = ? AND site_role = ?`,
+       WHERE id = ? AND user_id = ? AND site_role = 'profile'`,
     )
-      .bind(input.toUsername, site.id, input.ownerId, input.expectedRole)
+      .bind(input.toUsername, site.id, input.ownerId)
       .run();
   } catch (error) {
     await deleteSiteAssetKeys(env, copiedAssetKeys).catch((cleanupError) => {
@@ -345,7 +311,7 @@ async function resolveProfileSiteId(
       requestedId ? "profile_invalid" : "profile_required",
       requestedId
         ? "Choose a ME3 Profile owned by this account."
-        : "Create your ME3 Profile before creating a Business Site.",
+        : "Create your ME3 Profile first.",
     );
   }
   return profile.id;
@@ -446,12 +412,6 @@ function mapSiteWriteError(error: unknown): Error {
     return new SiteLifecycleError(
       "profile_invalid",
       "Choose a ME3 Profile owned by this account.",
-    );
-  }
-  if (message.includes("ME3_SITE_ORGANIZATION_LIMIT")) {
-    return new SiteLifecycleError(
-      "organization_limit",
-      "This installation already has three additional sites.",
     );
   }
   if (/UNIQUE constraint failed:\s*sites\.username/i.test(message)) {

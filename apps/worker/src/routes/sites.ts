@@ -133,7 +133,6 @@ import {
   createPersistentSite,
   deleteAdditionalSite,
   getSiteQuota,
-  parseSiteRole,
   renamePersistentSite,
   renameProfileSite,
   assignBusinessSiteProfile,
@@ -1076,7 +1075,6 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
         siteType?: unknown;
         siteRole?: unknown;
         templateId?: unknown;
-        profileSiteId?: unknown;
         renameFromSiteId?: unknown;
         renameFromUsername?: unknown;
       }>()
@@ -1086,7 +1084,6 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
           siteType?: unknown;
           siteRole?: unknown;
           templateId?: unknown;
-          profileSiteId?: unknown;
           renameFromSiteId?: unknown;
           renameFromUsername?: unknown;
         } => ({}),
@@ -1107,11 +1104,18 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       );
     }
 
-    const requestedRole = parseSiteRole(body.siteRole);
-    if (body.siteRole !== undefined && !requestedRole) {
-      return c.json({ error: "Site role must be profile or organization" }, 400);
+    if (body.siteRole === "organization") {
+      return c.json(
+        {
+          error: "Each owner has one site. Add a page to your website instead.",
+          code: "one_site_per_owner",
+        },
+        409,
+      );
     }
-    const siteRole = requestedRole || "profile";
+    if (body.siteRole !== undefined && body.siteRole !== "profile") {
+      return c.json({ error: "Site role must be profile" }, 400);
+    }
     const renameFromSiteId =
       typeof body.renameFromSiteId === "string"
         ? body.renameFromSiteId.trim()
@@ -1123,20 +1127,9 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (body.renameFromUsername !== undefined && !renameFromUsername) {
       return c.json({ error: "The profile being renamed is invalid" }, 400);
     }
-    if (renameFromUsername && siteRole !== "profile") {
-      return c.json({ error: "Only the ME3 Profile can be renamed" }, 400);
-    }
     if (renameFromSiteId && renameFromUsername) {
       return c.json({ error: "Choose one site rename target" }, 400);
     }
-    const profileSiteId =
-      typeof body.profileSiteId === "string" && body.profileSiteId.trim()
-        ? body.profileSiteId.trim()
-        : null;
-    if (body.profileSiteId !== undefined && !profileSiteId) {
-      return c.json({ error: "The selected ME3 Profile is invalid" }, 400);
-    }
-
     const cloudUsernameError = await getMe3CloudUsernamePublishBlockReason(c.env, username);
     if (cloudUsernameError) return c.json({ error: cloudUsernameError }, 409);
 
@@ -1145,7 +1138,6 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
         const site = await renamePersistentSite(c.env, {
           ownerId,
           siteId: renameFromSiteId,
-          expectedRole: siteRole,
           toUsername: username,
         });
         return c.json({ site, renamed: true });
@@ -1163,12 +1155,10 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
         id: crypto.randomUUID(),
         ownerId,
         username,
-        role: siteRole,
         templateId:
           typeof body.templateId === "string" && body.templateId.trim()
             ? body.templateId.trim()
             : null,
-        profileSiteId,
       });
       return c.json({ site }, 201);
     } catch (error) {
@@ -2166,7 +2156,6 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       return c.json({
         ok: true,
         deletedSiteId: site.id,
-        releasedAdditionalSiteSlot: site.site_role === "organization",
       });
     } catch (error) {
       if (error instanceof SiteLifecycleError) {

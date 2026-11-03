@@ -135,7 +135,7 @@ async function ensureOwnerProfileSite(env: Env, owner: { id: string; name: strin
   if (existing) return existing;
   const candidate = normalizeUsername(owner.username) || slug(owner.name || "");
   const username = USERNAME_REGEX.test(candidate) ? candidate : `me-${crypto.randomUUID().slice(0, 6)}`;
-  return createPersistentSite(env, { id: crypto.randomUUID(), ownerId: owner.id, username, role: "profile", templateId: null });
+  return createPersistentSite(env, { id: crypto.randomUUID(), ownerId: owner.id, username, templateId: null });
 }
 
 async function readSourceProfile(env: Env, site: DbSite): Promise<{ profile: Me3SiteProfile; fromSource: boolean }> {
