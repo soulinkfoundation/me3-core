@@ -61,7 +61,7 @@ export const LANDING_PAGE_DESIGN_PACKS: readonly LandingPageDesignPackDefinition
     id: "clinical-editorial-01",
     version: 1,
     name: "Natural Editorial",
-    description: "A calm, image-led editorial system for expert services and information-rich Business Sites.",
+    description: "A calm, image-led editorial system for expert services and information-rich pages.",
     bestFor: "Practices, retreats, specialists, trusted advisors, and thoughtful service businesses.",
     purposes: ["event", "service", "waitlist"],
     status: "starter",

@@ -65,8 +65,8 @@ buyer path, and listing is limited to Soulink members.
 Served by every installation with commerce enabled, under
 `/api/agent-commerce/v1`, unauthenticated like the public checkout today, with
 rate limits per IP and per buyer installation. Each site has its own base,
-`/api/agent-commerce/v1/sites/{username}`, so organization sites on the same
-installation are addressed separately; the endpoints below are relative to it
+`/api/agent-commerce/v1/sites/{username}`, so an older organization site on the
+same installation is addressed separately; the endpoints below are relative to it
 and described by its OpenAPI document at `.../openapi.json`.
 
 | Endpoint | Purpose |
