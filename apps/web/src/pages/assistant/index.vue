@@ -1876,6 +1876,8 @@ function assistantToolStatusText(capabilityId: unknown): string {
   if (capabilityId.startsWith("core.scheduling.")) return "Checking availability…";
   if (capabilityId === "core.people.search") return "Finding people…";
   if (capabilityId.startsWith("core.journal.")) return "Reading your Journal…";
+  if (capabilityId === "core.soup.serve") return "Ladling your soup…";
+  if (capabilityId.startsWith("core.soup.")) return "Checking your soup…";
   if (capabilityId.startsWith("core.mission.")) return "Checking your tasks…";
   if (capabilityId.startsWith("core.social.")) return "Preparing social content…";
   if (capabilityId.startsWith("core.sites.")) return "Checking your site…";

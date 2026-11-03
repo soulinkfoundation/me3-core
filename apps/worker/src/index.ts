@@ -6,6 +6,7 @@ import app from "./app";
 import { dispatchDueCalendarSourceRefreshes } from "./calendar-sources";
 import { dispatchDueCalendarPushNotifications } from "./calendar-push-notifications";
 import { dispatchDueMorningCalendarPushes } from "./morning-calendar-push";
+import { dispatchDueSoupServings } from "./soup-servings";
 import { dispatchDueGratitudeReminders } from "./gratitude";
 import { archiveStaleLoginCodes, purgeStaleSpam, retryPendingMailTriage } from "./mailbox-triage";
 import { retryAgentTurnNotifications } from "./agent-notifications";
@@ -138,6 +139,7 @@ const QUARTER_HOUR_SCHEDULED_STEPS: readonly ScheduledStep[] = [
   ["mail triage retry", retryPendingMailTriage],
   ["login code cleanup", archiveStaleLoginCodes],
   ["spam purge", purgeStaleSpam],
+  ["soup servings", dispatchDueSoupServings],
   ["morning calendar push", dispatchDueMorningCalendarPushes],
   ["gratitude reminders", dispatchDueGratitudeReminders],
   ["calendar push dispatch", dispatchDueCalendarPushNotifications],

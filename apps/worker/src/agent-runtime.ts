@@ -4,6 +4,7 @@ import { createDomainTools, type AgentDomainServices } from "../../../packages/a
 import { TOOL_LOADER_NAME } from "../../../packages/agent/src/tool-groups";
 import { saveOwnerQuote } from "./quotes";
 import { createAgentHomeCardServices } from "./home-cards";
+import { createAgentSoupServices, soupSetupHint } from "./agent-soup";
 import { createAgentPaymentServices } from "./agent-payments";
 import { createAgentNetworkPaymentServices } from "./agent-network-commerce";
 import { computerAvailability, createComputerChatServices, type ComputerJobHost } from "./agent-computer";
@@ -88,7 +89,9 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
         prepareAgentImageInputs(env,imageScope,input.attachments||[],signal),
         loadAgentAttachmentManifest(env,imageScope,input.attachments||[]),
       ]);
-      ownerSnapshot=snapshot.prompt;
+      // Soup is offered once in chat, after ME3 knows the owner's projects (me3-ydf4).
+      const soupHint=enabledPluginIds.has("me3.soup")?await soupSetupHint(env,input.userId):null;
+      ownerSnapshot=[snapshot.prompt,soupHint].filter(Boolean).join("\n\n");
       const content=[input.messageText,input.attachmentTextContext].filter(Boolean).join("\n\n");
       messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt})},...recent,{role:"user",content,...(images.length?{images}:{})}];
       await env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").bind(`${input.turnId}:user`,input.userId,input.threadId,input.messageText,JSON.stringify({requestId:input.requestId,runtime:"agent",...(attachments.length?{attachments}:{})})).run();
@@ -147,7 +150,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
   } finally {await releaseManagedRuntimeWriteLease(env,lease);}
 }
 
-type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"create_intent"|"suggested_replies"|"memory_extraction"|"goal_suggestions";onAdmission?(id:string):void};
+type ModelPurpose = {purpose:"target_intent"|"owner_create_intent"|"create_intent"|"suggested_replies"|"memory_extraction"|"goal_suggestions"|"soup_serving";onAdmission?(id:string):void};
 export type AgentModelScope = Pick<NewAgentDispatchInput,"userId"|"threadId"|"turnId"|"requestId"|"selectedModel">;
 
 /**
@@ -306,6 +309,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     // Parked after the first release (me3-5u97.6): tools hide until ME3_PARKED_FEATURES is "on".
     cards:parkedFeaturesOn(env)?createAgentHomeCardServices(env,ownerId):undefined,
     coding:await createCodingAgentServices(env),
+    soup:createAgentSoupServices(env,ownerId),
   };
 }
 export function isToolAvailable(name:string,services:AgentDomainServices):boolean {
@@ -319,6 +323,7 @@ export function isToolAvailable(name:string,services:AgentDomainServices):boolea
   if(name==="core_scheduling_request_profile")return Boolean(services.scheduling?.requestNetwork);
   if(name==="core_scheduling_book_free_call")return Boolean(services.scheduling?.planFreeCall&&services.scheduling?.bookFreeCall);
   if(name.startsWith("core_cards_"))return Boolean(services.cards);
+  if(name.startsWith("core_soup_"))return Boolean(services.soup);
   if(name.startsWith("core_coding_"))return Boolean(services.coding);
   if(name==="core_scheduling_approve")return Boolean(services.scheduling?.approve);
   if(name==="core_scheduling_decline")return Boolean(services.scheduling?.decline);
@@ -328,7 +333,7 @@ export function isToolAvailable(name:string,services:AgentDomainServices):boolea
 // turns, and the first-run site build (the web app's "Build me a landing page
 // site for" starter) starts with the sites group, so neither pays a loader step.
 const THREAD_TOOL_GROUP_TURNS=8;
-const TOOL_GROUP_HINTS:Array<[RegExp,string]>=[[/\b(?:landing page|web ?site|web ?page|home ?page|my site)\b/i,"sites"]];
+const TOOL_GROUP_HINTS:Array<[RegExp,string]>=[[/\b(?:landing page|web ?site|web ?page|home ?page|my site)\b/i,"sites"],[/\b(?:soup|headlines|anything good|something (?:good |short |long )?to (?:read|watch|listen)|podcast)\b/i,"soup"]];
 async function loadThreadToolGroups(env:Env,scope:{ownerId:string;threadId:string;turnId:string}):Promise<string[]> {
   const rows=await env.DB.prepare("SELECT trace_json FROM me3_agent_turns WHERE owner_id=? AND thread_id=? AND turn_id<>? AND trace_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?").bind(scope.ownerId,scope.threadId,scope.turnId,THREAD_TOOL_GROUP_TURNS).all<{trace_json:string}>();
   const groups=new Set<string>();

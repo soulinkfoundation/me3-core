@@ -85,8 +85,17 @@ export interface AgentCodingServices {
   resolveRepository(repository: string): Promise<string>;
   send(input: { repository: string; title: string; brief: string }): Promise<unknown>;
 }
+/** The Human Soup (me3-ydf4): bowls, taste and servings. Everything personal stays in the install. */
+export type AgentSoupServices = {
+  serve(input: { topics: string[]; medium?: "watch" | "listen" | "read"; maxMinutes?: number; soups?: string[]; title?: string; occasion?: string }, signal: AbortSignal): Promise<unknown>;
+  readTaste(): Promise<unknown>;
+  updateTaste(patch: Record<string, unknown>): Promise<unknown>;
+  listSoups(signal: AbortSignal): Promise<unknown>;
+};
+
 export interface AgentDomainServices {
   cards?: AgentHomeCardServices;
+  soup?: AgentSoupServices;
   coding?: AgentCodingServices;
   quotes?: { save(input: Record<string, unknown>, options?: { signal?: AbortSignal; authorization?: import("../owner-create-intent").OwnerCreateAuthorization }): Promise<unknown> };
   mailbox?: AgentMailboxServices;

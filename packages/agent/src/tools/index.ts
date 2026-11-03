@@ -14,6 +14,7 @@ import { reminderTools } from "./reminders";
 import { schedulingTools } from "./scheduling";
 import { siteTools } from "./sites";
 import { socialTools } from "./social";
+import { soupTools } from "./soup";
 import { taskTools } from "./tasks";
 import { webTools } from "./web";
 import { targetPresentationTool } from "./presentations";
@@ -47,7 +48,7 @@ const oneStepConfirmations: Record<string, (data: unknown, timezone: string) => 
 const ALWAYS_VISIBLE_TOOLS = new Set(["core_sites_starter_draft"]);
 
 export function createDomainTools(): AgentTool[] {
-  const tools = [...calendarTools(), ...cardTools(), ...codingTools(), ...conversationTools(), ...docsTools(), ...journalTools(), ...quoteTools(), ...mailboxTools(), ...memoryTools(), ...paymentTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...taskTools(), ...webTools(), ...imageTools()];
+  const tools = [...calendarTools(), ...cardTools(), ...codingTools(), ...conversationTools(), ...docsTools(), ...journalTools(), ...quoteTools(), ...mailboxTools(), ...memoryTools(), ...paymentTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...soupTools(), ...taskTools(), ...webTools(), ...imageTools()];
   for (const [index, tool] of tools.entries()) {
     const confirm = oneStepConfirmations[tool.name];
     if (confirm) tools[index] = withOneStepConfirmation(tool, confirm);

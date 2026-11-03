@@ -51,6 +51,8 @@ export interface Env {
   /** "off" stops the agent saving memories automatically after each turn. */
   ME3_AGENT_MEMORY?: string;
   ME3_AGENT_FAST_MODEL?: string;
+  /** The Human Soup API origin; defaults to https://api.thehumansoup.ai. */
+  ME3_SOUP_API_ORIGIN?: string;
   /** Model for independent intent checks; defaults to the planner model. */
   ME3_AGENT_VERIFIER_MODEL?: string;
   /** Model for the new-record intent check; defaults to Haiku 5.5 on managed installs, else the intent verifier model. */

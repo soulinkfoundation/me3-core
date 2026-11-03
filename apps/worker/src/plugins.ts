@@ -1452,7 +1452,72 @@ const JOURNAL_PLUGIN: CorePluginManifestSummary = {
   ],
 };
 
+// The Human Soup (me3-ydf4): wholesome content from curated soups, seasoned to the owner's taste
+// in ME3. Optional and on by default. Taste and the for-you lines never leave the installation;
+// Soup only receives topic words.
+export const SOUP_PLUGIN_ID = "me3.soup";
+const SOUP_PLUGIN: CorePluginManifestSummary = {
+  schemaVersion: CORE_PLUGIN_CATALOG_VERSION,
+  id: SOUP_PLUGIN_ID,
+  name: "The Human Soup",
+  version: "0.1.0",
+  description:
+    "Wholesome content from around the web, seasoned to your taste by ME3: headlines at your chosen times, one good thing when you ask.",
+  trustTier: "first_party",
+  distribution: "workspace_package",
+  installMode: "enabled_by_owner_config",
+  defaultEnabled: true,
+  showInPluginList: true,
+  implementationStatus: "bundled",
+  capabilityIds: ["soup.servings", "soup.taste"],
+  permissions: [
+    { id: "soup.taste.manage", label: "Keep the owner's Soup taste and servings" },
+    { id: "soup.serve", label: "Fetch bowls from The Human Soup using topic words only" },
+  ],
+  routes: [
+    { id: "soup.today.api", path: "/api/soup/today", methods: ["GET"], auth: "owner" },
+    { id: "soup.taste.api", path: "/api/soup/taste", methods: ["GET", "PATCH"], auth: "owner" },
+    { id: "soup.serving.act.api", path: "/api/soup/servings/:id/act", methods: ["POST"], auth: "owner" },
+    { id: "soup.serve.api", path: "/api/soup/serve", methods: ["POST"], auth: "owner" },
+  ],
+  uiSlots: [{ id: "soup.home-card", slot: "home.card", label: "Soup" }],
+  agentTools: [
+    agentTool({
+      id: "soup.serve",
+      label: "Serve a bowl from The Human Soup",
+      sideEffect: "read_external",
+      approvalMode: "none",
+      auditEventKind: "soup_served",
+      examples: { positive: ["Walking for 20 minutes, anything good to listen to?"], negative: ["What is on my calendar?"] },
+    }),
+    agentTool({
+      id: "soup.taste.read",
+      label: "Read the owner's Soup taste",
+      sideEffect: "read_private",
+      approvalMode: "none",
+      auditEventKind: "soup_taste_read",
+      examples: { positive: ["What's in my soup?"], negative: ["Serve me something."] },
+    }),
+    agentTool({
+      id: "soup.taste.update",
+      label: "Change the owner's Soup taste",
+      sideEffect: "write_internal_active",
+      approvalMode: "none",
+      auditEventKind: "soup_taste_updated",
+      examples: { positive: ["Set up my soup.", "Less crypto in my soup."], negative: ["What's in my soup?"] },
+    }),
+  ],
+  secrets: [],
+  migrations: [{ id: "0098_soup", path: "apps/worker/migrations/0098_soup.sql", destructive: false, description: "Soup taste and servings." }],
+  queuesAndCrons: [{ id: "soup.servings", kind: "cron", schedule: "*/15 * * * *", consumerEntrypoint: "dispatchDueSoupServings" }],
+  notes: [
+    "Personalisation happens in ME3. The Human Soup receives topic words and filters only, never who the owner is or why an item was picked.",
+    "Servings are the owner's own times, or none: the Home card appears only while a serving is open.",
+  ],
+};
+
 export const CORE_PLUGIN_CATALOG: readonly CorePluginManifestSummary[] = [
+  SOUP_PLUGIN,
   AGENT_CHAT_PLUGIN,
   MISSION_CONTROL_PLUGIN,
   JOURNAL_PLUGIN,

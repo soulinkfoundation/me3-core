@@ -858,6 +858,40 @@ const runtimeMigrations: RuntimeMigration[] = [
       )`).run();
     },
   },
+  // The Human Soup: taste lanes and composed servings (me3-ydf4).
+  {
+    id: "0098_soup",
+    checksum: "2026-11-03-soup-v1",
+    async apply(db) {
+      await db.prepare(`CREATE TABLE IF NOT EXISTS soup_taste (
+        user_id TEXT PRIMARY KEY REFERENCES owner_profile(id) ON DELETE CASCADE,
+        taste_json TEXT NOT NULL DEFAULT '{}',
+        set_up_at TEXT,
+        suggested_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`).run();
+      await db.prepare(`CREATE TABLE IF NOT EXISTS soup_servings (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
+        date_key TEXT NOT NULL,
+        serving_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('headlines', 'pick')),
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'open', 'done', 'expired', 'failed')),
+        items_json TEXT NOT NULL DEFAULT '[]',
+        due_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        claimed_at INTEGER NOT NULL DEFAULT 0,
+        opened_at TEXT,
+        finished_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (user_id, date_key, serving_id)
+      )`).run();
+      await db.prepare("CREATE INDEX IF NOT EXISTS idx_soup_servings_open ON soup_servings(user_id, status, expires_at)").run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

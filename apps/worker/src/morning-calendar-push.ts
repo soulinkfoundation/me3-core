@@ -5,6 +5,8 @@ import { composeMorningMessage } from "./morning-message";
 import { notifyDailyBriefingReady, type DailyBriefingPushSummary } from "./push-notifications";
 import type { Env } from "./types";
 import { getBriefingQuote } from "./quotes";
+import { listOpenSoupServings, soupBriefingLine } from "./soup-servings";
+import { MORNING_MESSAGE_BODY_LIMIT } from "./morning-message";
 
 export const MORNING_CALENDAR_PUSH_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS morning_calendar_push_dispatches (
@@ -60,11 +62,13 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
       const items = await loadCalendarPushItems(env, owner.id, midnight(dateKey), midnight(addDaysToDateString(dateKey, 1)));
       const birthdays = items.events.filter(event => event.kind === "birthday");
       const quote = await getBriefingQuote(env, owner.id, now);
+      // One 🍲 line rides on the briefing when a headlines serving is already open (me3-ydf4.5).
+      const soupLine = soupBriefingLine((await listOpenSoupServings(env, owner.id, now).catch(() => [])).find(serving => serving.kind === "headlines") ?? null);
       const birthdayNames = birthdays.map(event => event.title.replace(/['’]s birthday$/i, "").trim());
       const startsAt = (event: { all_day: number; starts_at: string }) => (event.all_day === 1 ? null : event.starts_at);
       summary = {
         ...(quote ? { quote: { text: quote.text, author: quote.author } } : {}),
-        alert: composeMorningMessage({
+        alert: withSoupLine(composeMorningMessage({
           ownerName: owner.name,
           timezone,
           birthdayNames,
@@ -74,7 +78,7 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
             ...items.bookings.map(booking => ({ title: `Booking with ${booking.guest_name}`, startsAt: booking.starts_at })),
           ],
           reminders: items.reminders.map(reminder => ({ title: reminder.title, startsAt: reminder.remind_at, timezone: reminder.timezone })),
-        }),
+        }), soupLine),
         birthdayNames,
         counts: {
           birthdays: birthdays.length,
@@ -106,6 +110,15 @@ export async function dispatchDueMorningCalendarPushes(env: Env, now = new Date(
     });
   }
   return { checkedAt: now.toISOString(), sent, failed };
+}
+
+/** Appends the soup line when it fits the push body budget; the briefing itself is never cut for it. */
+export function withSoupLine(alert: { title: string; body: string }, line: string | null) {
+  if (!line) return alert;
+  const room = MORNING_MESSAGE_BODY_LIMIT - alert.body.length - 1;
+  if (room < 12) return alert;
+  const text = line.length <= room ? line : `${line.slice(0, room - 1).trimEnd()}…`;
+  return { ...alert, body: `${alert.body} ${text}` };
 }
 
 /** Noon, or three hours after a late briefing time, whichever is later. */

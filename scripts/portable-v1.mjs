@@ -181,6 +181,8 @@ const COPIED_TABLES = [
   "daily_quotes",
   "gratitude_settings",
   "home_layout",
+  "soup_taste",
+  "soup_servings",
   "home_cards",
   "home_card_versions",
   "home_card_entries",
