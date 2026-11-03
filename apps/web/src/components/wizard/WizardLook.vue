@@ -4,7 +4,9 @@ import type { SiteLayout } from "@me3-core/site-renderer";
 import { useWizardStore } from "../../stores/wizard";
 import { vibes, selectableVibeIds } from "../../styles/vibes";
 import AppDialog from "../AppDialog.vue";
+import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
+import { useAppToast } from "../../composables/useAppToast";
 
 const wizard = useWizardStore();
 const showFooter = ref(false);
@@ -13,6 +15,35 @@ const layouts: { id: SiteLayout; label: string }[] = [
   { id: "cover", label: "Cover" }, { id: "minimal", label: "Minimal" },
 ];
 const layout = computed(() => wizard.profile.layout === "classic" ? "card" : wizard.profile.layout === "portrait" ? "split" : wizard.profile.layout);
+const { toastError } = useAppToast();
+// Organizations set their logo in the Logo step, which uses the avatar slot.
+const showLogo = computed(() => wizard.siteRole !== "organization");
+const logoInput = ref<HTMLInputElement | null>(null);
+const maxLogoBytes = 1_900_000;
+
+function chooseLogo(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+    toastError("Choose a PNG, JPEG or WebP image.");
+    return;
+  }
+  if (file.size > maxLogoBytes) {
+    toastError("That logo is too large. Choose an image under 1.9 MB.");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => wizard.updateProfile({ logo: String(reader.result), logoBlob: file });
+  reader.onerror = () => toastError("Couldn't read that image. Please try another.");
+  reader.readAsDataURL(file);
+}
+
+function removeLogo() {
+  wizard.updateProfile({ logo: null, logoBlob: null });
+}
+
 const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f"];
 </script>
 
@@ -20,6 +51,22 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
   <div class="step-look">
     <h2>Make it yours</h2>
     <p class="section-desc">Pick a look. Everything updates live.</p>
+    <fieldset v-if="showLogo"><legend>Logo</legend>
+      <div class="look-logo">
+        <span class="look-logo__preview" aria-hidden="true">
+          <img v-if="wizard.profile.logo" :src="wizard.profile.logo" alt="" />
+          <UiIcon v-else name="Image" :size="22" />
+        </span>
+        <div class="look-logo__body">
+          <div class="look-logo__actions">
+            <Button color="neutral" shape="soft" size="compact" @click="logoInput?.click()">{{ wizard.profile.logo ? "Change logo" : "Upload logo" }}</Button>
+            <Button v-if="wizard.profile.logo" color="ghost" size="compact" @click="removeLogo">Remove</Button>
+          </div>
+          <p id="look-logo-hint" class="look-logo__hint">Shown at the top of your site and in the browser tab. Without one, your photo is used. PNG, JPEG or WebP, up to 1.9 MB.</p>
+        </div>
+        <input ref="logoInput" class="look-logo__input" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Choose site logo" aria-describedby="look-logo-hint" @change="chooseLogo" />
+      </div>
+    </fieldset>
     <fieldset><legend>Layout</legend>
       <div class="look-layouts">
         <label v-for="choice in layouts" :key="choice.id" class="look-layout" :class="{ selected: layout === choice.id }">
@@ -69,6 +116,13 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
 <style scoped>
 fieldset { min-width: 0; margin: 24px 0; padding: 0; border: 0; }
 legend { padding: 0; margin-bottom: 12px; font-size: 13px; color: var(--ui-text-muted); }
+.look-logo { display: flex; align-items: center; gap: 16px; }
+.look-logo__preview { display: grid; place-items: center; flex: 0 0 64px; width: 64px; height: 64px; overflow: hidden; border-radius: 16px; background: var(--ui-surface-muted); color: var(--ui-text-muted); }
+.look-logo__preview img { width: 100%; height: 100%; object-fit: contain; }
+.look-logo__body { display: grid; gap: 6px; min-width: 0; }
+.look-logo__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.look-logo__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.45; }
+.look-logo__input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .look-layouts, .look-themes { display: flex; gap: 14px; overflow-x: auto; padding: 4px; margin: -4px; }
 .look-layout { position: relative; display: grid; justify-items: center; gap: 8px; flex: 0 0 96px; font-size: 13px; color: var(--ui-text-muted); cursor: pointer; }
 .look-layout input, .look-appearance input { position: absolute; inset: 0; z-index: 1; margin: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
