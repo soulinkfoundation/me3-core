@@ -135,7 +135,6 @@ import {
   getSiteQuota,
   renamePersistentSite,
   renameProfileSite,
-  assignBusinessSiteProfile,
 } from "../site-lifecycle";
 import {
   EMAIL_LOGO_PATH,
@@ -1167,34 +1166,6 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       }
       console.error("Create site error:", error);
       return c.json({ error: "Failed to create site" }, 500);
-    }
-  });
-
-  app.put("/api/sites/:username/profile-owner", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    const body = await c.req
-      .json<{ profileSiteId?: unknown }>()
-      .catch((): { profileSiteId?: unknown } => ({}));
-    const profileSiteId =
-      typeof body.profileSiteId === "string" ? body.profileSiteId.trim() : "";
-    if (!profileSiteId) {
-      return c.json({ error: "Choose a ME3 Profile" }, 400);
-    }
-    try {
-      return c.json({
-        site: await assignBusinessSiteProfile(c.env, {
-          ownerId,
-          username: c.req.param("username"),
-          profileSiteId,
-        }),
-      });
-    } catch (error) {
-      if (error instanceof SiteLifecycleError) {
-        return siteLifecycleErrorResponse(c, error);
-      }
-      console.error("Business Site profile assignment error:", error);
-      return c.json({ error: "Could not assign the ME3 Profile" }, 500);
     }
   });
 

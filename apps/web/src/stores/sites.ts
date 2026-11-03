@@ -19,7 +19,6 @@ export interface Site {
   user_id: string;
   site_type?: SiteType;
   site_role: "profile" | "organization" | null;
-  profile_site_id?: string | null;
   template_id?: string | null;
   builder_thread_id?: string | null;
   custom_domain: string | null;
@@ -900,24 +899,6 @@ export const useSitesStore = defineStore("sites", () => {
     }
   }
 
-  async function unpublishLandingPage(username: string): Promise<boolean> {
-    loading.value = true;
-    error.value = null;
-    try {
-      await api.post<{ ok: boolean }>(`/sites/${username}/unpublish`, {});
-      const site = sites.value.find((entry) => entry.username === username);
-      if (site) {
-        site.published_at = null;
-      }
-      return true;
-    } catch (e: any) {
-      error.value = e.message || "Failed to unpublish landing page";
-      return false;
-    } finally {
-      loading.value = false;
-    }
-  }
-
   async function fetchSitePages(username: string): Promise<SitePage[]> {
     try {
       const response = await api.get<{ pages: SitePage[] }>(
@@ -1342,7 +1323,6 @@ export const useSitesStore = defineStore("sites", () => {
     // Site content
     getSiteContent,
     publishLandingPage,
-    unpublishLandingPage,
     fetchSitePages,
     getSitePage,
     saveSitePage,

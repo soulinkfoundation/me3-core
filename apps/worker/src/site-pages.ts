@@ -154,6 +154,10 @@ export async function publishSitePage(
 ): Promise<{ page: DbSitePage; revision: DbSitePageRevision }> {
   const page = await getSitePage(env, site.id, pageId);
   if (!page) throw new SitePageInputError("Page not found.", 404);
+  // A Business Site's pages share one navigation this path can't render, so its last published version stays.
+  if (await getSiteFileText(env, site.id, "public/business-site.json")) {
+    throw new SitePageInputError("This older Business Site can no longer be edited.", 409);
+  }
   const document = parsePageDocument(page.draft_json);
   if (!document) throw new SitePageInputError("The page draft is invalid.");
   const errors = [

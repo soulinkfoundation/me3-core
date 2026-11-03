@@ -149,7 +149,6 @@ import { registerSocialAccountRoutes } from "./routes/social-accounts";
 import { registerSocialCarouselRoutes } from "./routes/social-carousels";
 import { registerSocialMediaDeliveryRoutes } from "./routes/social-media-delivery";
 import { registerPublicSiteRoutes, registerSiteRoutes } from "./routes/sites";
-import { registerBusinessSiteRoutes } from "./routes/business-sites";
 import { registerUsernameRoutes } from "./routes/usernames";
 import {
   getMe3KnowledgeSnapshot,
@@ -1624,7 +1623,6 @@ app.post("/api/account/delete", async (c) => {
 
 registerSiteRoutes(app, { requireOwner, unauthorized });
 
-registerBusinessSiteRoutes(app, { requireOwner, unauthorized });
 
 registerCampaignRoutes(app, { requireOwner, unauthorized });
 

@@ -44,7 +44,6 @@ const isNestedSitesTool = computed(
   () =>
     route.path.startsWith("/sites/") &&
     (route.path.includes("/landing-pages/") ||
-      route.path.endsWith("/business-site") ||
       route.path.includes("/pages/")),
 );
 
@@ -477,10 +476,6 @@ function wizardSiteQuery() {
 }
 
 function editSite() {
-  if (site.value?.site_role === "organization") {
-    router.push(`/sites/${username.value}/business-site`);
-    return;
-  }
   if (isAgentBuiltSite.value) {
     router.push({
       path: "/assistant",
@@ -589,20 +584,18 @@ async function deleteSite() {
       <section class="actions-section">
         <div class="actions-grid">
           <button
-            v-if="isPersistentSite"
+            v-if="isProfileSite || isAgentBuiltSite"
             class="action-card primary"
             @click="editSite"
           >
             <span class="action-icon">
-              <UiIcon :name="site?.site_role === 'organization' ? 'LayoutGrid' : isAgentBuiltSite ? 'Sparkles' : 'Pencil'" :size="24" />
+              <UiIcon :name="isAgentBuiltSite ? 'Sparkles' : 'Pencil'" :size="24" />
             </span>
             <div class="action-content">
-              <strong>{{ site?.site_role === "organization" ? "Manage Business Site" : isAgentBuiltSite ? "Continue building" : "Edit Site" }}</strong>
+              <strong>{{ isAgentBuiltSite ? "Continue building" : "Edit Site" }}</strong>
               <p>
                 {{
-                  site?.site_role === "organization"
-                    ? "Pages, navigation, SEO, profile ownership, and publishing"
-                    : isAgentBuiltSite
+                  isAgentBuiltSite
                     ? "Edit with ME3 in site builder"
                     : "Update your site using the wizard"
                 }}
@@ -611,7 +604,7 @@ async function deleteSite() {
           </button>
 
           <button
-            v-if="isPersistentSite && !isAgentBuiltSite"
+            v-if="isProfileSite"
             class="action-card"
             @click="writePost"
           >

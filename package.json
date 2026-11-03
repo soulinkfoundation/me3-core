@@ -39,7 +39,6 @@
     "managed-resource:audit": "node scripts/audit-managed-cloudflare-resources.mjs",
     "managed-resource-audit:test": "node --test scripts/audit-managed-cloudflare-resources.test.mjs scripts/managed-cloudflare-resource-audit-workflow.test.mjs",
     "verify:local-boot": "node scripts/verify-local-boot.mjs",
-    "demo:truhealth": "node --import tsx scripts/seed-truhealth-demo.ts",
     "build": "pnpm generate:llms && pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "db:migrations:apply": "node scripts/prepare-d1-migrations.mjs && wrangler d1 migrations apply DB --remote --config wrangler.toml",

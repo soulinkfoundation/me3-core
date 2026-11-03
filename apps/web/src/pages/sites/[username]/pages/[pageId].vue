@@ -12,7 +12,7 @@ import {
 import { useSitesStore, type SitePageRevision } from "../../../../stores/sites";
 import { resolvePublicSiteUrl } from "../../../../utils/publicSiteUrl";
 import UiIcon from "../../../../components/UiIcon.vue";
-import { API_BASE, api } from "../../../../api";
+import { api } from "../../../../api";
 import { useAppToast } from "../../../../composables/useAppToast";
 
 definePage({
@@ -34,12 +34,7 @@ const page = computed(() => sites.sitePages.find((candidate) => candidate.id ===
 const currentSite = computed(() =>
   sites.sites.find((candidate) => candidate.username === username.value),
 );
-const isBusinessSite = computed(() => currentSite.value?.site_role === "organization");
-const builderBackUrl = computed(() =>
-  isBusinessSite.value
-    ? `/sites/${username.value}/business-site`
-    : `/sites/${username.value}`,
-);
+const builderBackUrl = computed(() => `/sites/${username.value}`);
 const draft = ref<LandingPageDocumentV3 | null>(null);
 const previewHtml = ref("");
 const activeSectionId = ref("");
@@ -52,7 +47,6 @@ const bookingOffers = ref<Array<{ id: string; title: string; paid: boolean }>>([
 const products = ref<Array<{ slug: string; title: string }>>([]);
 const paymentsReady = ref(false);
 const randomImageBusy = ref(false);
-const businessHomepageSlug = ref("");
 
 const activeSection = computed(() =>
   draft.value?.content.sections.find((section) => section.id === activeSectionId.value),
@@ -78,34 +72,14 @@ async function load() {
   draft.value.hero.imageLayout ||= "split";
   draft.value.hero.showActions ??= true;
   activeSectionId.value = draft.value.content.sections[0]?.id || "";
-  let base = await resolvePublicSiteUrl(username.value, currentSite.value);
-  if (isBusinessSite.value) {
-    try {
-      const business = await api.get<{
-        document: { homepageSlug: string };
-        publicUrl: string;
-      }>(
-        `/sites/${encodeURIComponent(username.value)}/business-site`,
-      );
-      businessHomepageSlug.value = business.document.homepageSlug;
-      base = business.publicUrl;
-    } catch {
-      businessHomepageSlug.value = "home";
-    }
-  }
-  liveUrl.value =
-    isBusinessSite.value && record.slug === businessHomepageSlug.value
-      ? `${base.replace(/\/+$/, "")}/`
-      : `${base.replace(/\/+$/, "")}/${record.slug}${isBusinessSite.value ? "/" : ""}`;
+  const base = await resolvePublicSiteUrl(username.value, currentSite.value);
+  liveUrl.value = `${base.replace(/\/+$/, "")}/${record.slug}`;
   await Promise.all([loadResources(), refreshPreview(), loadRevisions()]);
   loading.value = false;
 }
 
 async function loadResources() {
-  const profileUsername = isBusinessSite.value
-    ? sites.sites.find((site) => site.id === currentSite.value?.profile_site_id)?.username
-    : username.value;
-  const content = await sites.getSiteContent(profileUsername || username.value);
+  const content = await sites.getSiteContent(username.value);
   if (!content?.profile) return;
   const book = content.profile.intents?.book as
     | {
@@ -139,18 +113,6 @@ async function loadResources() {
 }
 
 async function refreshPreview() {
-  if (isBusinessSite.value) {
-    try {
-      const response = await fetch(
-        `${API_BASE}/sites/${encodeURIComponent(username.value)}/business-site/pages/${encodeURIComponent(pageId.value)}/preview-html`,
-        { credentials: "include" },
-      );
-      if (response.ok) previewHtml.value = await response.text();
-    } catch {
-      // The current preview remains visible when a refresh fails.
-    }
-    return;
-  }
   const html = await sites.fetchSitePagePreview(username.value, pageId.value);
   if (html !== null) previewHtml.value = html;
 }
@@ -183,35 +145,25 @@ async function publish() {
     return;
   }
   busy.value = true;
-  const published = isBusinessSite.value
-    ? await api
-        .post(`/sites/${encodeURIComponent(username.value)}/business-site/publish`, {})
-        .then(() => sites.getSitePage(username.value, pageId.value))
-        .catch((caught: unknown) => {
-          error.value = caught instanceof Error ? caught.message : "Could not publish the site.";
-          return null;
-        })
-    : await sites.publishSitePage(username.value, pageId.value);
+  const published = await sites.publishSitePage(username.value, pageId.value);
   busy.value = false;
   if (!published) {
     error.value = sites.error || "Could not publish the page.";
     return;
   }
-  toastSuccess(isBusinessSite.value ? "Business Site published." : "Page published.");
+  toastSuccess("Page published.");
   await loadRevisions();
 }
 
 async function unpublish() {
   busy.value = true;
-  const result = isBusinessSite.value
-    ? await sites.unpublishLandingPage(username.value)
-    : await sites.unpublishSitePage(username.value, pageId.value);
+  const result = await sites.unpublishSitePage(username.value, pageId.value);
   busy.value = false;
   if (!result) {
     error.value = sites.error || "Could not unpublish the page.";
     return;
   }
-  toastSuccess(isBusinessSite.value ? "Business Site unpublished. The draft is still here." : "Page unpublished. The draft is still here.");
+  toastSuccess("Page unpublished. The draft is still here.");
 }
 
 async function restore(revisionId: string) {
@@ -412,9 +364,9 @@ onMounted(load);
           {{ busy ? "Working…" : "Save" }}
         </button>
         <button class="button primary" type="button" :disabled="busy" @click="publish">
-          {{ isBusinessSite ? "Publish site" : page?.publishedAt ? "Publish changes" : "Publish" }}
+          {{ page?.publishedAt ? "Publish changes" : "Publish" }}
         </button>
-        <button v-if="!isBusinessSite && page?.publishedAt" class="button secondary" type="button" :disabled="busy" @click="unpublish">
+        <button v-if="page?.publishedAt" class="button secondary" type="button" :disabled="busy" @click="unpublish">
           Unpublish
         </button>
       </div>
