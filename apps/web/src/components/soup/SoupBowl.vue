@@ -40,7 +40,7 @@ const rated = computed(() => main.value ? ["liked", "disliked"].includes(main.va
         </template>
       </template>
       <template v-else>
-        <Button color="primary" shape="pill" size="compact" :href="main.url" target="_blank" rel="noopener noreferrer" @click="emit('act', 'open', main.id)"><template #icon><UiIcon :name="soupActionIcon(main.medium)" :size="16" /></template>{{ soupActionLabel(main.medium) }}</Button>
+        <Button color="neutral" shape="pill" size="compact" :href="main.url" target="_blank" rel="noopener noreferrer" @click="emit('act', 'open', main.id)"><template #icon><UiIcon :name="soupActionIcon(main.medium)" :size="16" /></template>{{ soupActionLabel(main.medium) }}</Button>
         <Button v-if="main.state === 'opened'" color="secondary" shape="pill" size="compact" :disabled="busy" @click="emit('act', 'finish', main.id)">Done</Button>
         <Button v-else color="secondary" shape="pill" size="compact" :disabled="busy || main.state === 'later'" @click="emit('act', 'later', main.id)">{{ main.state === 'later' ? 'Kept for tomorrow' : 'Later' }}</Button>
       </template>

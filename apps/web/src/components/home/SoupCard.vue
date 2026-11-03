@@ -15,7 +15,7 @@ const emit = defineEmits<{ setup: []; act: [serving: SoupServing, action: SoupSe
     <img src="/soup-cauldron.webp" alt="Little robots diving into a cauldron of soup" width="160" height="160" />
     <h3>The Human Soup</h3>
     <p>Wholesome content from around the web, seasoned to your taste by ME3.</p>
-    <Button color="primary" shape="pill" :disabled="busy" @click="emit('setup')">Set it up with ME3</Button>
+    <Button color="neutral" shape="pill" :disabled="busy" @click="emit('setup')">Set it up with ME3</Button>
     <span class="soup-intro__note">Takes a minute. Your taste stays on your ME3.</span>
   </section>
   <template v-else-if="serving">
