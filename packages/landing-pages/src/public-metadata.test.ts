@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLandingPageDocument, createBusinessSiteDocument, renderLandingPageHtml, normalizeLandingPageDocument, getLandingPageValidationErrors } from './index';
+import { buildLandingPageDocument, renderLandingPageHtml, normalizeLandingPageDocument, getLandingPageValidationErrors } from './index';
 
 function eventPage() {
   const page = buildLandingPageDocument({ template: 'event', username: 'business', brief: 'A workshop with guided conversation.', profile: { name: 'Business', bio: null, avatar: null, profileUrl: null } });
@@ -10,9 +10,9 @@ function eventPage() {
 describe('business discovery and event metadata', () => {
   it('publishes actual event details in both HTML and JSON-LD with the correct site identity', () => {
     const page = eventPage();
-    const html = renderLandingPageHtml(page, 'business', { businessSite: createBusinessSiteDocument('Business'), siteBaseUrl: 'https://example.com/site/business', canonicalUrl: 'https://example.com/site/business/workshop/' });
+    const html = renderLandingPageHtml(page, 'business', { siteBaseUrl: 'https://example.com/site/business', canonicalUrl: 'https://example.com/site/business/workshop/' });
     const schemas = [...html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/g)].map(match => JSON.parse(match[1]));
-    expect(schemas.find(schema => schema['@type'] === 'Event')).toMatchObject({ startDate: page.event!.startDate, location: { name: 'The Barn' }, organizer: { url: 'https://example.com/site/business/' } });
+    expect(schemas.find(schema => schema['@type'] === 'Event')).toMatchObject({ startDate: page.event!.startDate, location: { name: 'The Barn' } });
     expect(html).toContain('href="https://example.com/site/business/me.json"');
     expect(html).toContain('The Barn · Killaloe');
     expect(html).toContain('3 October 2026');

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLandingPageDocument,
-  createBusinessSiteDocument,
   getLandingPageDesignPackId,
   getLandingPageRecipe,
   getLandingPageTemplateId,
@@ -171,52 +170,28 @@ describe("landing pages package", () => {
     );
   });
 
-  it("renders a reusable Business Site shell with canonical metadata", () => {
-    const site = createBusinessSiteDocument("Harbour Practice", {
-      description: "Evidence-informed care for everyday health.",
-      designPackId: "clinical-editorial-01",
-    });
-    site.navigation.items = [
-      { id: "home", label: "Home", pageSlug: "home", visible: true },
-      { id: "about", label: "About", pageSlug: "about", visible: true },
-    ];
-    site.footer.note = "Independent, expert-led care.";
-    site.footer.links = [
-      { id: "privacy", label: "Privacy", href: "/privacy/" },
-    ];
-    site.organization.logo = "files/harbour-logo.png";
-    expect(normalizeBusinessSiteDocument(site)).toEqual(site);
+  it("reads published Business Site settings and rejects unsafe redirects", () => {
+    const settings = {
+      version: 1,
+      name: "Harbour Practice",
+      homepageSlug: "home",
+      navigation: { items: [{ id: "home", label: "Home", pageSlug: "home", visible: true }] },
+      footer: { note: "", links: [] },
+      seo: { titleSuffix: "", description: "", indexing: "noindex" },
+      organization: {},
+      redirects: [{ id: "old", from: "/old/", to: "/start/" }],
+      connectedResources: { collectionIds: [], productIds: [], bookingOfferIds: [] },
+      design: { packId: "clinical-editorial-01", packVersion: 1 },
+      updatedAt: "2026-08-31T10:00:00Z",
+    };
 
-    const page = buildLandingPageDocument({
-      username: "harbour-practice",
-      brief: "A calm, expert-led health practice.",
-      template: "service",
-      designPackId: "clinical-editorial-01",
-      profile: { name: "Owner", bio: null, avatar: null, profileUrl: null },
-    });
-    if (page.version !== 3) throw new Error("Expected v3 service page");
-    page.hero.image = "files/harbour-hero.jpg";
-    page.hero.imageLayout = "background";
-    page.hero.showActions = false;
-    const html = renderLandingPageHtml(page, "harbour-practice", {
-      businessSite: site,
-      canonicalUrl: "https://harbour.example/about/",
-      siteBasePath: "/site/harbour-practice",
-    });
-    expect(html).toContain('data-design-pack="clinical-editorial-01"');
-    expect(html).toContain('href="https://harbour.example/about/"');
-    expect(html).toContain('href="/site/harbour-practice/about/"');
-    expect(html).toContain('href="/site/harbour-practice/privacy/"');
-    expect(html).toContain('src="/site/harbour-practice/files/harbour-logo.png"');
-    expect(html).toContain('src="/site/harbour-practice/files/harbour-hero.jpg"');
-    expect(html).toContain('data-hero-layout="background"');
-    expect(html).toContain('class="pack-hero pack-hero-background"');
-    expect(html).toContain('class="pack-menu-toggle"');
-    expect(html).toContain('aria-controls="pack-site-navigation"');
-    expect(html).not.toContain('class="pack-hero-actions"');
-    expect(html).toContain("Harbour Practice");
-    expect(html).toContain('type="application/ld+json"');
-    expect(html).toContain("Independent, expert-led care.");
+    expect(normalizeBusinessSiteDocument(settings)).toEqual(settings);
+    expect(
+      normalizeBusinessSiteDocument({
+        ...settings,
+        redirects: [{ id: "bad", from: "/old/", to: "https://evil.example/" }],
+      }),
+    ).toBeNull();
   });
 
   it("renders allowed rich section copy and removes unsafe editor markup", () => {

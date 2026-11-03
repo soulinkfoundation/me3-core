@@ -1,12 +1,15 @@
 import {
-  getLandingPageDesignPack,
   isLandingPageDesignPackId,
   type LandingPageDesignPackId,
 } from "./design-packs";
 
-export const BUSINESS_SITE_DOCUMENT_VERSION = 1 as const;
+/**
+ * Reads the settings file of a Business Site that is already published, so its redirects and noindex setting keep
+ * working. Business Sites can no longer be created or edited.
+ */
+const BUSINESS_SITE_DOCUMENT_VERSION = 1 as const;
 
-export type BusinessSiteNavigationItem = {
+type BusinessSiteNavigationItem = {
   id: string;
   label: string;
   pageSlug?: string;
@@ -14,7 +17,7 @@ export type BusinessSiteNavigationItem = {
   visible: boolean;
 };
 
-export type BusinessSiteLink = {
+type BusinessSiteLink = {
   id: string;
   label: string;
   href: string;
@@ -66,45 +69,6 @@ export type BusinessSiteDocumentV1 = {
   updatedAt: string;
 };
 
-export function createBusinessSiteDocument(
-  name: string,
-  options: {
-    homepageSlug?: string;
-    description?: string;
-    designPackId?: LandingPageDesignPackId;
-  } = {},
-): BusinessSiteDocumentV1 {
-  const packId = options.designPackId || "clinical-editorial-01";
-  return {
-    version: BUSINESS_SITE_DOCUMENT_VERSION,
-    name: name.trim() || "Business Site",
-    homepageSlug: normalizeBusinessSiteSlug(options.homepageSlug) || "home",
-    navigation: { items: [] },
-    footer: { note: "", links: [] },
-    seo: {
-      titleSuffix: name.trim() || "Business Site",
-      description: options.description?.trim() || "",
-      socialImage: null,
-      indexing: "index",
-    },
-    organization: {
-      description: options.description?.trim() || "",
-      logo: null,
-    },
-    redirects: [],
-    connectedResources: {
-      collectionIds: [],
-      productIds: [],
-      bookingOfferIds: [],
-    },
-    design: {
-      packId,
-      packVersion: getLandingPageDesignPack(packId).version,
-    },
-    updatedAt: new Date().toISOString(),
-  };
-}
-
 export function normalizeBusinessSiteDocument(
   value: unknown,
 ): BusinessSiteDocumentV1 | null {
@@ -149,20 +113,13 @@ export function normalizeBusinessSiteDocument(
   return document as BusinessSiteDocumentV1;
 }
 
-export function businessSitePageHref(
-  document: BusinessSiteDocumentV1,
-  slug: string,
-): string {
-  return slug === document.homepageSlug ? "/" : `/${slug}/`;
-}
-
-export function normalizeBusinessSiteSlug(value: unknown): string | null {
+function normalizeBusinessSiteSlug(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const slug = value.trim().toLowerCase();
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) ? slug : null;
 }
 
-export function normalizeBusinessSitePath(value: unknown): string | null {
+function normalizeBusinessSitePath(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const path = `/${value.trim().replace(/^\/+|\/+$/g, "")}`;
   return /^\/(?:[a-z0-9]+(?:-[a-z0-9]+)*\/?)*$/.test(path)

@@ -142,7 +142,7 @@ export interface DbSite {
   username: string;
   site_type: "profile" | "landing_page";
   site_role: SiteRole | null;
-  /** The ME3 Profile represented by an organization/Business Site. */
+  /** The ME3 Profile an older organization site belongs to. */
   profile_site_id?: string | null;
   template_id: string | null;
   /** One canonical public hostname for this site. Domain aliases are intentionally deferred. */
