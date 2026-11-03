@@ -10,7 +10,8 @@ import {
   type Router,
 } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useSitesStore, type Site, type SiteQuota } from "../../stores/sites";
+import { useSitesStore, type Site } from "../../stores/sites";
+import { api } from "../../api";
 import SitesPage from "./index.vue";
 
 vi.mock("../../api", () => ({
@@ -32,6 +33,7 @@ describe("Sites dashboard", () => {
   beforeEach(async () => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    vi.mocked(api.get).mockResolvedValue(null);
     router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -46,35 +48,23 @@ describe("Sites dashboard", () => {
     await router.isReady();
   });
 
-  it("leads with profile creation while keeping an existing additional site accessible", async () => {
-    const additional = siteRecord("studio", "organization");
-    const wrapper = await mountDashboard([additional], quotaResponse({
-      canCreateProfile: true,
-      canCreateAdditionalSite: false,
-      remainingAdditionalSites: 1,
-    }));
+  it("leads with website creation while keeping an older site accessible", async () => {
+    const wrapper = await mountDashboard([siteRecord("studio", "organization")]);
 
     expect(wrapper.text()).toContain("Create your website");
+    expect(wrapper.text()).toContain("Older sites");
     expect(wrapper.text()).toContain("@studio");
-    expect(wrapper.text()).not.toMatch(/organization sites/i);
-    expect(wrapper.find('[aria-label="Add site"]').exists()).toBe(true);
     expect(
       wrapper.findAll("a").some((link) => link.attributes("href") === "/sites/studio"),
     ).toBe(true);
+  });
 
-    await wrapper.get('[aria-label="Add site"]').trigger("click");
+  it("offers no way to add another site", async () => {
+    const wrapper = await mountDashboard([siteRecord("owner", "profile")]);
 
-    const chooser = wrapper.get('[role="dialog"]');
-    expect(chooser.get("a.add-site-option").text()).toContain("Website");
-    expect(chooser.get("a.add-site-option").attributes("href")).toContain(
-      "/create?new=1",
-    );
-    expect(chooser.get("button.add-site-option").text()).toContain(
-      "Create a website first.",
-    );
-    expect(
-      chooser.get("button.add-site-option").attributes("disabled"),
-    ).toBeDefined();
+    expect(wrapper.find('[aria-label="Add site"]').exists()).toBe(false);
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toMatch(/business site|older sites/i);
   });
 
   it("renders every persistent site as one minimal clickable card", async () => {
@@ -82,19 +72,11 @@ describe("Sites dashboard", () => {
     const additional = siteRecord("studio", "organization");
     additional.avatar = "./files/avatar.jpg";
     const secondAdditional = siteRecord("community", "organization");
-    const wrapper = await mountDashboard(
-      [profile, additional, secondAdditional],
-      quotaResponse({
-        canCreateProfile: false,
-        canCreateAdditionalSite: true,
-        remainingAdditionalSites: 1,
-      }),
-    );
+    const wrapper = await mountDashboard([profile, additional, secondAdditional]);
 
     expect(wrapper.text()).toContain("@owner");
     expect(wrapper.text()).toContain("@studio");
     expect(wrapper.text()).toContain("@community");
-    expect(wrapper.get('[aria-label="Add site"]').element.tagName).toBe("BUTTON");
 
     const cards = wrapper.findAll("a.site-card");
     expect(cards).toHaveLength(3);
@@ -118,94 +100,13 @@ describe("Sites dashboard", () => {
     const generated = siteRecord("studio", "organization");
     generated.template_id = "agent-landing-page";
     generated.builder_thread_id = "thread-123";
-    const wrapper = await mountDashboard(
-      [profile, generated],
-      quotaResponse({
-        canCreateProfile: false,
-        canCreateAdditionalSite: false,
-        remainingAdditionalSites: 0,
-      }),
-    );
+    const wrapper = await mountDashboard([profile, generated]);
 
     const card = wrapper.get('[aria-label="Continue building @studio with ME3"]');
     expect(card.attributes("href")).toBe(
       "/assistant?mode=site-builder&thread=thread-123",
     );
     expect(wrapper.text()).not.toContain("Landing pages");
-  });
-
-  it("offers Profile and Business Site choices from the Add site chooser", async () => {
-    const wrapper = await mountDashboard(
-      [siteRecord("owner", "profile")],
-      quotaResponse({
-        canCreateProfile: false,
-        canCreateAdditionalSite: true,
-        remainingAdditionalSites: 1,
-      }),
-    );
-
-    await wrapper.get('[aria-label="Add site"]').trigger("click");
-
-    const chooser = wrapper.get('[role="dialog"]');
-    expect(chooser.text()).toContain("Website");
-    expect(chooser.text()).toContain("Business Site");
-    expect(chooser.text()).not.toContain("Create manually");
-
-    const links = chooser.findAll("a");
-    const businessSiteLink = links.find((link) =>
-      link.text().includes("Business Site"),
-    );
-    expect(businessSiteLink?.attributes("href")).toContain(
-      "/assistant?mode=site-builder",
-    );
-    expect(businessSiteLink?.attributes("href")).toContain(
-      "prompt=Build+me+a+landing+page+site+for+",
-    );
-    expect(businessSiteLink?.attributes("href")).not.toContain("send=");
-
-    const profileOption = chooser.get("button.add-site-option");
-    expect(profileOption.text()).toContain("Website");
-    expect(profileOption.text()).toContain(
-      "Your current plan’s website limit has been reached.",
-    );
-    expect(profileOption.attributes("disabled")).toBeDefined();
-  });
-
-  it("keeps Add site visible and explains when the Business Site quota is full", async () => {
-    const wrapper = await mountDashboard(
-      [siteRecord("owner", "profile")],
-      quotaResponse({
-        canCreateProfile: false,
-        canCreateAdditionalSite: false,
-        remainingAdditionalSites: 0,
-      }),
-    );
-
-    expect(wrapper.find('[aria-label="Add site"]').exists()).toBe(true);
-
-    await wrapper.get('[aria-label="Add site"]').trigger("click");
-
-    expect(wrapper.get('[role="dialog"]').text()).toContain(
-      "Your current plan’s Business Site limit has been reached.",
-    );
-  });
-
-  it("keeps both choices visible while site availability is unavailable", async () => {
-    const sites = useSitesStore();
-    sites.sites = [siteRecord("owner", "profile")];
-    sites.ensureSites = vi.fn(async () => undefined) as never;
-    sites.fetchSitePages = vi.fn(async () => []) as never;
-    sites.getSiteQuota = vi.fn(async () => null) as never;
-
-    const wrapper = mount(SitesPage, mountOptions(router));
-    await flushPromises();
-    await wrapper.get('[aria-label="Add site"]').trigger("click");
-
-    const chooser = wrapper.get('[role="dialog"]');
-    expect(chooser.findAll("button.add-site-option")).toHaveLength(2);
-    expect(chooser.text()).toContain(
-      "Site availability could not be loaded. Refresh and try again.",
-    );
   });
 
   it("renders cached site cards immediately without loading copy", async () => {
@@ -216,9 +117,6 @@ describe("Sites dashboard", () => {
     sites.loaded = true;
     sites.ensureSites = vi.fn(async () => undefined) as never;
     sites.fetchSitePages = vi.fn(async () => []) as never;
-    sites.getSiteQuota = vi.fn(
-      () => new Promise<SiteQuota | null>(() => undefined),
-    ) as never;
 
     const wrapper = mount(SitesPage, mountOptions(router));
     await flushPromises();
@@ -230,13 +128,11 @@ describe("Sites dashboard", () => {
 
   async function mountDashboard(
     records: Site[],
-    siteQuota: SiteQuota,
   ) {
     const sites = useSitesStore();
     sites.sites = records;
     sites.ensureSites = vi.fn(async () => undefined) as never;
     sites.fetchSitePages = vi.fn(async () => []) as never;
-    sites.getSiteQuota = vi.fn(async () => siteQuota) as never;
     const wrapper = mount(SitesPage, mountOptions(router));
     await flushPromises();
     return wrapper;
@@ -281,34 +177,3 @@ function siteRecord(
   };
 }
 
-function quotaResponse(options: {
-  canCreateProfile: boolean;
-  canCreateAdditionalSite: boolean;
-  remainingAdditionalSites: number;
-}): SiteQuota {
-  const additionalLimit = 1;
-  const additionalCurrent = additionalLimit - options.remainingAdditionalSites;
-  return {
-    current: additionalCurrent + (options.canCreateProfile ? 0 : 1),
-    limit: additionalLimit + 1,
-    tier: "core",
-    profile: {
-      current: options.canCreateProfile ? 0 : 1,
-      limit: 1,
-      remaining: options.canCreateProfile ? 1 : 0,
-      can_create: options.canCreateProfile,
-    },
-    additional_sites: {
-      current: additionalCurrent,
-      limit: additionalLimit,
-      remaining: options.remainingAdditionalSites,
-      can_create: options.canCreateAdditionalSite,
-    },
-    remaining_additional_sites: options.remainingAdditionalSites,
-    can_create_profile: options.canCreateProfile,
-    can_create_additional_site: options.canCreateAdditionalSite,
-    capabilities: {},
-    can_create:
-      options.canCreateProfile || options.canCreateAdditionalSite,
-  };
-}

@@ -11,7 +11,7 @@ export type AssistantSitePreview = {
 };
 
 export const ASSISTANT_SITE_BUILDER_STARTER_PROMPT =
-  "Build me a landing page site for ";
+  "Build me a page for ";
 
 export function assistantSitePageHasUnpublishedChanges(page: {
   publishedAt: string | null;
@@ -29,6 +29,7 @@ type AssistantSiteBuilderThreadMessage = {
 };
 
 const LEGACY_SITE_BUILDER_PROMPT = "help me build a new me3 site";
+const LEGACY_LANDING_PAGE_SITE_STARTER_PROMPT = "build me a landing page site for";
 const LEGACY_POLISHED_SITE_BUILDER_STARTER_PROMPT =
   "build me a polished landing page site for";
 const SITE_BUILDER_STARTER_PROMPT =
@@ -43,6 +44,7 @@ export function isAssistantSiteBuilderThread(
       if (
         text === "@site" ||
         text.startsWith(SITE_BUILDER_STARTER_PROMPT) ||
+        text.startsWith(LEGACY_LANDING_PAGE_SITE_STARTER_PROMPT) ||
         text.startsWith(LEGACY_POLISHED_SITE_BUILDER_STARTER_PROMPT) ||
         text.startsWith(LEGACY_SITE_BUILDER_PROMPT)
       ) {

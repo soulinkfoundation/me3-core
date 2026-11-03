@@ -402,7 +402,7 @@ onMounted(load);
       </router-link>
       <div class="builder-title">
         <strong>{{ page?.title || "Page builder" }}</strong>
-        <span v-if="page">{{ isBusinessSite ? `/${page.slug}` : `/me/${page.slug}` }}</span>
+        <span v-if="page">/{{ page.slug }}</span>
       </div>
       <div class="top-actions">
         <a v-if="page?.publishedAt" :href="liveUrl" target="_blank" rel="noreferrer" class="button ghost">
@@ -411,10 +411,10 @@ onMounted(load);
         <button class="button secondary" type="button" :disabled="busy" @click="save()">
           {{ busy ? "Working…" : "Save" }}
         </button>
-        <button v-if="isBusinessSite || !page?.publishedAt" class="button primary" type="button" :disabled="busy" @click="publish">
-          {{ isBusinessSite ? "Publish site" : "Publish" }}
+        <button class="button primary" type="button" :disabled="busy" @click="publish">
+          {{ isBusinessSite ? "Publish site" : page?.publishedAt ? "Publish changes" : "Publish" }}
         </button>
-        <button v-else class="button secondary" type="button" :disabled="busy" @click="unpublish">
+        <button v-if="!isBusinessSite && page?.publishedAt" class="button secondary" type="button" :disabled="busy" @click="unpublish">
           Unpublish
         </button>
       </div>

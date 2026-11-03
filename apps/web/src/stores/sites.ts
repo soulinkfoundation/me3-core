@@ -236,26 +236,6 @@ export interface SitePageRevision {
   document: LandingPageDocumentV3;
 }
 
-export interface SiteQuota {
-  current: number;
-  limit: number;
-  tier: string;
-  profile: SiteRoleQuota;
-  additional_sites: SiteRoleQuota;
-  remaining_additional_sites: number;
-  can_create_profile: boolean;
-  can_create_additional_site: boolean;
-  capabilities: Record<string, unknown>;
-  can_create: boolean;
-}
-
-interface SiteRoleQuota {
-  current: number;
-  limit: number;
-  remaining: number;
-  can_create: boolean;
-}
-
 export interface SubscriberCount {
   count: number;
 }
@@ -1100,15 +1080,6 @@ export const useSitesStore = defineStore("sites", () => {
     else sitePages.value.unshift(page);
   }
 
-  async function getSiteQuota(): Promise<SiteQuota | null> {
-    try {
-      return await api.get<SiteQuota>("/sites/quota");
-    } catch (e: any) {
-      console.error("Get site quota error:", e);
-      return null;
-    }
-  }
-
   async function sendProductConfirmationTest(
     username: string,
     payload: ProductConfirmationTestRequest,
@@ -1381,8 +1352,6 @@ export const useSitesStore = defineStore("sites", () => {
     getSitePageRevisions,
     restoreSitePageRevision,
     deleteSitePage,
-    // Site quota
-    getSiteQuota,
     sendProductConfirmationTest,
     sendBookingConfirmationTest,
     // Subscriber management

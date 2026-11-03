@@ -304,13 +304,13 @@ describe("sites store", () => {
       });
     });
 
-    it("should pass the additional-site role when provided", async () => {
+    it("should pass the site role when provided", async () => {
       const mockSite = {
         id: "4",
         username: "studio",
         user_id: "user1",
         site_type: "profile" as const,
-        site_role: "organization" as const,
+        site_role: "profile" as const,
         custom_domain: null,
         custom_domain_status: null,
         created_at: "2026-08-24T08:00:00Z",
@@ -322,14 +322,14 @@ describe("sites store", () => {
       const store = useSitesStore();
       const result = await store.claimUsername("studio", {
         siteType: "profile",
-        siteRole: "organization",
+        siteRole: "profile",
       });
 
       expect(result).toEqual(mockSite);
       expect(api.post).toHaveBeenCalledWith("/sites", {
         username: "studio",
         siteType: "profile",
-        siteRole: "organization",
+        siteRole: "profile",
       });
     });
   });

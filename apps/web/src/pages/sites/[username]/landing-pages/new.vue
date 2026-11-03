@@ -21,7 +21,8 @@ onMounted(() => {
   void router.replace({
     path: "/assistant",
     query: {
-      prompt: `Help me create a landing page for @${profileUsername.value}. Ask what the page is for, show me the available starter designs, and then build a draft with me.`,
+      mode: "site-builder",
+      prompt: `Help me create a page for @${profileUsername.value}. Ask what the page is for, show me the available starter designs, and then build a draft with me.`,
     },
   });
 });

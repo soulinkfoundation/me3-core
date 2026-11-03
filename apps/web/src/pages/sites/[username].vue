@@ -158,8 +158,10 @@ const contentPageRows = computed<SitePageRow[]>(() =>
     })),
 );
 
+const canCreateCustomPage = computed(() => landingPagesFeatureEnabled.value && isProfileSite.value);
+
 const editorPageRows = computed<SitePageRow[]>(() =>
-  landingPagesFeatureEnabled.value && isProfileSite.value
+  canCreateCustomPage.value
     ? sites.sitePages.map((page) => ({
         key: `editor-${page.id}`,
         title: page.title || page.slug,
@@ -625,12 +627,15 @@ async function deleteSite() {
       </section>
 
       <section
-        v-if="isPersistentSite && (offerPageRows.length || contentPageRows.length || editorPageRows.length)"
+        v-if="isPersistentSite && (canCreateCustomPage || offerPageRows.length || contentPageRows.length || editorPageRows.length)"
         class="site-pages-section"
         aria-labelledby="site-pages-title"
       >
         <div class="section-heading">
           <h2 id="site-pages-title">Pages</h2>
+          <Button v-if="canCreateCustomPage" size="compact" :to="`/sites/${username}/landing-pages/new`">
+            Create a page with ME3
+          </Button>
         </div>
         <template v-for="group in [
           { id: 'offers', label: 'Offer pages', hint: 'Share one link per offer. Turn a page on or off in Bookings.', rows: offerPageRows },
@@ -1275,6 +1280,13 @@ async function deleteSite() {
   border-radius: var(--ui-radius-lg, 12px);
   background: var(--ui-surface);
   box-shadow: var(--ui-shadow-sm);
+}
+
+.site-pages-section .section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .site-pages-section .section-heading h2 {
