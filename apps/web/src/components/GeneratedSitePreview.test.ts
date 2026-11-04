@@ -67,7 +67,7 @@ describe("GeneratedSitePreview", () => {
 
     const html = wrapper.get("iframe").attributes("srcdoc");
     expect(html).toContain('<base href="/preview/preview-person/blog/">');
-    expect(html).toContain('src="../files/avatar.jpg"');
+    expect(html).toContain('href="../files/avatar.jpg"');
   });
 
   it("uses the site logo for preview icons before the avatar fallback", async () => {

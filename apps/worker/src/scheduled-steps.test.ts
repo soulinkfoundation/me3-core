@@ -31,7 +31,8 @@ vi.mock("./gratitude", () => ({ dispatchDueGratitudeReminders: vi.fn() }));
 vi.mock("./calendar-push-notifications", () => ({ dispatchDueCalendarPushNotifications: vi.fn() }));
 vi.mock("./agent-notifications", () => ({ retryAgentTurnNotifications: vi.fn() }));
 vi.mock("./booking-reminders", () => ({ dispatchDueBookingReminders: vi.fn() }));
-vi.mock("./social-publishing", () => ({
+vi.mock("./social-publishing", async (original) => ({
+  ...(await original<typeof import("./social-publishing")>()),
   dispatchDueSocialPublications: vi.fn(),
   recoverStrandedQueuedSocialPublications: vi.fn(),
 }));
