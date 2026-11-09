@@ -42,17 +42,27 @@ describe("soup queries", () => {
 
   it("sends topic words, filters and served ids only", () => {
     const queries = servingQueries("headlines", taste, { exclude: ["yt:old"], since: "2026-11-02T00:00:00Z" });
+    // One ranked search per topic: Soup's topics filter wants the exact phrase on the card and misses fresh news.
     expect(queries).toEqual([
-      { exclude: ["yt:old"], topics: ["agent payments", "cloudflare workers"], style: "headlines", limit: 10, since: "2026-11-02T00:00:00Z" },
-      { exclude: ["yt:old"], topics: ["poetry", "surfing"], style: "headlines", limit: 6, since: "2026-11-02T00:00:00Z" },
-      { exclude: ["yt:old"], soups: ["soul-soup"], topics: ["poetry", "surfing", "agent payments", "cloudflare workers"], limit: 6 },
+      { exclude: ["yt:old"], q: "agent payments", style: "headlines", limit: 5, since: "2026-11-02T00:00:00Z" },
+      { exclude: ["yt:old"], q: "cloudflare workers", style: "headlines", limit: 5, since: "2026-11-02T00:00:00Z" },
+      { exclude: ["yt:old"], q: "poetry", style: "headlines", limit: 5, since: "2026-11-02T00:00:00Z" },
+      { exclude: ["yt:old"], q: "surfing", style: "headlines", limit: 5, since: "2026-11-02T00:00:00Z" },
+      { exclude: ["yt:old"], soups: ["soul-soup"], q: "poetry surfing agent payments cloudflare workers", limit: 6 },
     ]);
-    for (const query of queries) expect(Object.keys(query).every(key => ["exclude", "topics", "style", "limit", "since", "soups", "mode", "medium", "maxMinutes"].includes(key))).toBe(true);
+    for (const query of queries) expect(Object.keys(query).every(key => ["exclude", "q", "style", "limit", "since", "soups", "medium", "maxMinutes"].includes(key))).toBe(true);
+  });
+
+  it("keeps a long work lane from crowding out stated interests", () => {
+    const busy = { ...taste, soups: [], workTopics: Array.from({ length: 12 }, (_, n) => ({ topic: `work ${n}`, projectId: null, source: "owner" as const })) };
+    const queries = servingQueries("pick", busy, { exclude: [] });
+    expect(queries.map(query => query.q)).toEqual(["poetry", "surfing", "work 0", "work 1", "work 2", "work 3", "work 4"]);
   });
 
   it("uses the agent's topic words for a bowl asked in chat", () => {
     expect(servingQueries("pick", taste, { exclude: [], ask: { topics: ["innovation", "product"], medium: "listen", maxMinutes: 20 } })).toEqual([
-      { exclude: [], topics: ["innovation", "product"], limit: 10, medium: "listen", maxMinutes: 20 },
+      { exclude: [], q: "innovation", limit: 6, medium: "listen", maxMinutes: 20 },
+      { exclude: [], q: "product", limit: 6, medium: "listen", maxMinutes: 20 },
     ]);
   });
 });

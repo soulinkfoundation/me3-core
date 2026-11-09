@@ -7,7 +7,7 @@
 // `soupSearchQuery`, which whitelists the fields.
 
 /** The Soup contract this client was written against (packages/core in the Soup repo). */
-export const SOUP_CONTRACT_VERSION = "2026-11-04";
+export const SOUP_CONTRACT_VERSION = "2026-11-04.2";
 export const DEFAULT_SOUP_API_ORIGIN = "https://api.thehumansoup.ai";
 /** Soup credits the agent that served a bowl; it is a plain identifier, never the owner. */
 export const SOUP_AGENT_ID = "me3";
@@ -92,7 +92,8 @@ export class SoupUnavailableError extends Error {
 const MAX_TOPICS = 12;
 const MAX_TOPIC_CHARS = 40;
 const MAX_QUERY_CHARS = 200;
-const MAX_EXCLUDE = 400;
+// Sent in the URL, so bounded well under the 16 KB a request line may carry.
+const MAX_EXCLUDE = 300;
 const MAX_LIMIT = 20;
 const SEARCH_KEYS = new Set(["q", "topics", "soups", "limit", "style", "mode", "formats", "maxMinutes", "medium", "exclude", "since"]);
 
@@ -111,7 +112,9 @@ export function cleanSoupTopic(value: unknown): string | null {
 export function soupSearchQuery(request: SoupSearchRequest): URLSearchParams {
   const params = new URLSearchParams();
   for (const key of Object.keys(request)) if (!SEARCH_KEYS.has(key)) throw new Error(`Soup requests never carry ${key}.`);
-  const q = typeof request.q === "string" ? request.q.replace(/\s+/g, " ").trim().slice(0, MAX_QUERY_CHARS) : "";
+  // The search words are topic words too, so they pass the same clean-up, phrase by phrase.
+  const q = typeof request.q === "string" && !request.q.includes("@") && !/https?:\/\//i.test(request.q)
+    ? request.q.toLowerCase().replace(/[^\p{L}\p{N}\s&+.-]/gu, " ").replace(/\s+/g, " ").trim().slice(0, MAX_QUERY_CHARS) : "";
   if (q) params.set("q", q);
   const topics = [...new Set((request.topics || []).map(cleanSoupTopic).filter((topic): topic is string => !!topic))].slice(0, MAX_TOPICS);
   if (topics.length) params.set("topics", topics.join(","));
@@ -182,7 +185,9 @@ export function createSoupClient(options: { origin?: string | null; fetch?: Fetc
         // Search landed after the first public soups; an older or partial deployment serves bowls only.
         if (!(error instanceof SoupUnavailableError) || (error.status !== null && error.status < 400)) throw error;
         const handles = request.soups?.length ? request.soups : (await client.listSoups(signal)).map(soup => soup.handle).slice(0, 6);
-        const { q: _q, soups: _soups, ...filters } = request;
+        const { q, soups: _soups, ...rest } = request;
+        // Bowls have no search words, so the words become the topic filter.
+        const filters = { ...rest, ...(!rest.topics?.length && q ? { topics: [q] } : {}) };
         const perSoup = Math.max(2, Math.ceil((request.limit || 8) / Math.max(1, handles.length)));
         const bowls = await Promise.allSettled(handles.map(handle => client.bowl(handle, { ...filters, limit: perSoup }, signal)));
         const items = bowls.flatMap(result => result.status === "fulfilled" ? result.value : []);

@@ -219,15 +219,10 @@ async function pickWithModel(env: Env, ownerId: string, input: { candidates: Sou
 
 // ── Candidates ──────────────────────────────────────────────
 
-function chunk<T>(list: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < list.length; index += size) chunks.push(list.slice(index, index + size));
-  return chunks;
-}
-
+/** Newest first, so when the list is cut to fit a request the latest servings are the ones kept. */
 async function servedItemIds(env: Env, ownerId: string, now: Date): Promise<string[]> {
   const since = new Date(now.getTime() - EXCLUDE_WINDOW_DAYS * 86_400_000).toISOString();
-  const rows = await env.DB.prepare("SELECT items_json FROM soup_servings WHERE user_id = ? AND created_at >= ? AND status IN ('open', 'done', 'expired')").bind(ownerId, since).all<{ items_json: string }>();
+  const rows = await env.DB.prepare("SELECT items_json FROM soup_servings WHERE user_id = ? AND created_at >= ? AND status IN ('open', 'done', 'expired') ORDER BY created_at DESC").bind(ownerId, since).all<{ items_json: string }>();
   const ids = new Set<string>();
   for (const row of rows.results || []) for (const entry of parseJsonArray(row.items_json)) if (entry && typeof entry === "object" && typeof (entry as { id?: unknown }).id === "string") ids.add((entry as { id: string }).id);
   return [...ids];
@@ -241,26 +236,36 @@ function matchesLessOf(item: SoupServingItem, row: SoupBowlItem, lessOf: string[
 
 export type SoupAsk = { topics: string[]; medium?: SoupMedium; maxMinutes?: number; soups?: string[] };
 
-/** The queries a serving sends to Soup: topic words from the two lanes, filters, and item IDs already served. Nothing else. */
+/** Each lane gets this many topics a serving, so one long lane cannot crowd out the other. */
+const WORK_TOPICS_PER_SERVING = 5;
+const INTEREST_TOPICS_PER_SERVING = 4;
+
+/**
+ * The queries a serving sends to Soup: topic words from the two lanes, filters, and item IDs
+ * already served. Nothing else. Each topic is its own ranked search (`q`): Soup's `topics`
+ * filter only passes items whose card carries that exact phrase, which leaves fresh news out.
+ */
 export function servingQueries(kind: SoupServingKind, taste: SoupTaste, options: { exclude: string[]; since?: string; ask?: SoupAsk; medium?: SoupMedium; maxMinutes?: number }): SoupSearchRequest[] {
   const base: SoupSearchRequest = { exclude: options.exclude, ...(options.medium ? { medium: options.medium } : {}), ...(options.maxMinutes ? { maxMinutes: options.maxMinutes } : {}) };
+  const work = taste.workTopics.map(topic => topic.topic);
+  const tasteTopics = [...taste.interests.slice(0, INTEREST_TOPICS_PER_SERVING), ...work.slice(0, WORK_TOPICS_PER_SERVING)];
   if (options.ask) {
-    const queries: SoupSearchRequest[] = [];
-    if (options.ask.topics.length) queries.push({ ...base, topics: options.ask.topics, limit: 10, ...(options.ask.medium ? { medium: options.ask.medium } : {}), ...(options.ask.maxMinutes ? { maxMinutes: options.ask.maxMinutes } : {}) });
-    if (options.ask.soups?.length) queries.push({ ...base, soups: options.ask.soups, topics: options.ask.topics.length ? options.ask.topics : [...taste.interests, ...taste.workTopics.map(topic => topic.topic)].slice(0, 8), limit: 6, ...(options.ask.medium ? { medium: options.ask.medium } : {}) });
-    if (!queries.length) queries.push({ ...base, topics: [...taste.interests, ...taste.workTopics.map(topic => topic.topic)].slice(0, 10), limit: 10, ...(options.ask.medium ? { medium: options.ask.medium } : {}), ...(options.ask.maxMinutes ? { maxMinutes: options.ask.maxMinutes } : {}) });
+    const filters = { ...(options.ask.medium ? { medium: options.ask.medium } : {}), ...(options.ask.maxMinutes ? { maxMinutes: options.ask.maxMinutes } : {}) };
+    const topics = options.ask.topics.length ? options.ask.topics : tasteTopics;
+    const queries: SoupSearchRequest[] = topics.map(q => ({ ...base, q, limit: 6, ...filters }));
+    if (options.ask.soups?.length) queries.push({ ...base, soups: options.ask.soups, q: topics.join(" "), limit: 6, ...(options.ask.medium ? { medium: options.ask.medium } : {}) });
     return queries;
   }
-  const work = taste.workTopics.map(topic => topic.topic);
   const queries: SoupSearchRequest[] = [];
+  const since = options.since ? { since: options.since } : {};
   if (kind === "headlines") {
-    for (const topics of chunk(work, 4)) queries.push({ ...base, topics, style: "headlines", limit: 10, ...(options.since ? { since: options.since } : {}) });
-    if (taste.interests.length) queries.push({ ...base, topics: taste.interests.slice(0, 6), style: "headlines", limit: 6, ...(options.since ? { since: options.since } : {}) });
+    for (const q of work.slice(0, WORK_TOPICS_PER_SERVING)) queries.push({ ...base, q, style: "headlines", limit: 5, ...since });
+    for (const q of taste.interests.slice(0, INTEREST_TOPICS_PER_SERVING)) queries.push({ ...base, q, style: "headlines", limit: 5, ...since });
   } else {
-    if (taste.interests.length) queries.push({ ...base, topics: taste.interests.slice(0, 8), limit: 8, mode: "fresh" });
-    for (const topics of chunk(work, 5).slice(0, 2)) queries.push({ ...base, topics, limit: 6, mode: "fresh" });
+    for (const q of taste.interests.slice(0, INTEREST_TOPICS_PER_SERVING)) queries.push({ ...base, q, limit: 5 });
+    for (const q of work.slice(0, WORK_TOPICS_PER_SERVING)) queries.push({ ...base, q, limit: 5 });
   }
-  if (taste.soups.length) queries.push({ ...base, soups: taste.soups, topics: [...taste.interests, ...work].slice(0, 8), limit: 6 });
+  if (taste.soups.length && tasteTopics.length) queries.push({ ...base, soups: taste.soups, q: tasteTopics.join(" "), limit: 6 });
   return queries;
 }
 
@@ -269,20 +274,25 @@ async function gatherCandidates(client: SoupClient, queries: SoupSearchRequest[]
   const seen = new Set<string>();
   const items: SoupServingItem[] = [];
   let fallback = false;
-  let failures = 0;
+  const lists: SoupBowlItem[][] = [];
   for (const result of results) {
-    if (result.status === "rejected") { failures++; continue; }
+    if (result.status === "rejected") continue;
     if (result.value.fallback) fallback = true;
-    for (const row of result.value.items) {
-      if (seen.has(row.item.id)) continue;
+    lists.push(result.value.items);
+  }
+  // Take the best of every query in turn, so each topic is in the running before any gets a second item.
+  const longest = Math.max(0, ...lists.map(list => list.length));
+  for (let rank = 0; rank < longest && items.length < CANDIDATE_LIMIT; rank++) {
+    for (const list of lists) {
+      const row = list[rank];
+      if (!row || seen.has(row.item.id) || items.length >= CANDIDATE_LIMIT) continue;
       const item = toServingItem(row, wanted);
       if (matchesLessOf(item, row, taste.lessOf)) continue;
       seen.add(row.item.id);
       items.push(item);
-      if (items.length === CANDIDATE_LIMIT) break;
     }
   }
-  if (!items.length && failures === results.length && results.length) throw (results[0] as PromiseRejectedResult).reason;
+  if (!items.length && !lists.length && results.length) throw (results[0] as PromiseRejectedResult).reason;
   return { items, fallback };
 }
 
