@@ -343,5 +343,32 @@ describe("Social review", () => {
     });
     expect(wrapper.find(".cropper-stub").exists()).toBe(false);
   });
+
+  it("attaches dropped and pasted files to the platform", async () => {
+    const current = post([version({ id: "x-1" })]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x")] },
+      "/social/posts/post-1": { post: current },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPatch.mockImplementation((_path: string, body: object) => Promise.resolve({ version: { ...current.versions[0], ...body } }));
+    uploadDriveFiles.mockResolvedValueOnce([{ id: "f1", filename: "shot.png", mimeType: "image/png", size: 10 }]);
+    uploadDriveFiles.mockResolvedValueOnce([{ id: "v1", filename: "clip.mp4", mimeType: "video/mp4", size: 99 }]);
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    const shot = new File(["x"], "shot.png", { type: "image/png" });
+    await wrapper.get("textarea").trigger("paste", { clipboardData: { files: [shot] } });
+    await flushPromises();
+    expect(uploadDriveFiles).toHaveBeenLastCalledWith([shot], { folderId: null, onConflict: "rename" });
+    expect(apiPatch).toHaveBeenLastCalledWith("/social/versions/x-1", { assetManifest: [expect.objectContaining({ fileId: "f1", kind: "image" })] });
+
+    const clip = new File(["x"], "clip.mp4", { type: "video/mp4" });
+    await wrapper.get(".post-editor__main").trigger("drop", { dataTransfer: { types: ["Files"], files: [clip] } });
+    await flushPromises();
+    expect(apiPatch).toHaveBeenLastCalledWith("/social/versions/x-1", { assetManifest: [expect.objectContaining({ fileId: "v1", kind: "video" })] });
+  });
 });
 

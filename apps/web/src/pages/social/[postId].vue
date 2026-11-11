@@ -378,6 +378,10 @@ async function addImages(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files || []).filter((file) => file.type.startsWith("image/"));
   input.value = "";
+  await uploadImages(files);
+}
+
+async function uploadImages(files: File[]) {
   if (!files.length || !active.value || busy.value) return;
   busy.value = "upload";
   try {
@@ -448,6 +452,10 @@ async function addVideo(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = Array.from(input.files || []).find((item) => item.type.startsWith("video/"));
   input.value = "";
+  if (file) await uploadVideo(file);
+}
+
+async function uploadVideo(file: File) {
   const version = active.value;
   if (!file || !version || busy.value) return;
   busy.value = "upload";
@@ -460,6 +468,49 @@ async function addVideo(event: Event) {
   } finally {
     busy.value = null;
   }
+}
+
+/** Dropped or pasted files: a video where the platform takes one, otherwise images. */
+async function attachFiles(files: File[]) {
+  if (!active.value || activeLocked.value || busy.value || !files.length) return;
+  const video = files.find((file) => file.type.startsWith("video/"));
+  const images = files.filter((file) => file.type.startsWith("image/"));
+  if (video && activeVideoRule.value) return uploadVideo(video);
+  if (images.length && activeTakesImages.value) {
+    if (activeVideo.value) removeVideo();
+    return uploadImages(images);
+  }
+  const label = networkLabel(active.value.platform);
+  toastError(video ? `${label} doesn't take video here.` : images.length ? `${label} doesn't take images.` : "Drop photos or a video.");
+}
+
+const dropping = ref(false);
+let dragDepth = 0;
+function hasFiles(event: DragEvent) {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+}
+function onDragEnter(event: DragEvent) {
+  if (!hasFiles(event) || activeLocked.value) return;
+  dragDepth += 1;
+  dropping.value = true;
+}
+function onDragLeave() {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) dropping.value = false;
+}
+function onDrop(event: DragEvent) {
+  dragDepth = 0;
+  dropping.value = false;
+  if (!hasFiles(event)) return;
+  event.preventDefault();
+  void attachFiles(Array.from(event.dataTransfer?.files || []));
+}
+function onPaste(event: ClipboardEvent) {
+  const files = Array.from(event.clipboardData?.files || []).filter((file) => /^(image|video)\//.test(file.type));
+  if (!files.length) return;
+  // A screenshot on the clipboard attaches; plain text pastes as usual.
+  event.preventDefault();
+  void attachFiles(files);
 }
 
 function removeVideo() {
@@ -723,7 +774,15 @@ onMounted(async () => {
         </div>
 
         <section v-if="active" class="post-editor" role="tabpanel">
-          <div class="post-editor__main">
+          <div
+            class="post-editor__main"
+            :class="{ 'is-dropping': dropping }"
+            @dragenter="onDragEnter"
+            @dragleave="onDragLeave"
+            @dragover.prevent
+            @drop="onDrop"
+          >
+            <p v-if="dropping" class="post-drop" aria-hidden="true">Drop to add to {{ networkLabel(active.platform) }}</p>
             <label class="visually-hidden" :for="`post-text-${active.id}`">{{ networkLabel(active.platform) }} text</label>
             <div class="post-field-wrap">
             <div ref="mirror" class="post-field post-field__mirror" aria-hidden="true"><template v-if="activeFold !== null">{{ activeText.slice(0, activeFold) }}<span class="post-fold" /><span class="post-fold__rest">{{ activeText.slice(activeFold) }}</span></template><template v-else>{{ activeText }}</template>{{ "\n" }}</div>
@@ -738,6 +797,7 @@ onMounted(async () => {
               @input="onTextInput(active, ($event.target as HTMLTextAreaElement).value)"
               @blur="flushText(active.id)"
               @scroll="syncMirror"
+              @paste="onPaste"
             />
             </div>
             <div class="post-field-foot">
@@ -807,6 +867,7 @@ onMounted(async () => {
                 <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="filesPickerOpen = true">
                   <UiIcon name="Folder" :size="15" /> From Files
                 </button>
+                <span class="post-images__hint">or drop files here, or paste a screenshot</span>
               </div>
               <ul v-if="activeChecks.some((check) => check.field === 'images')" class="post-checks">
                 <li v-for="check in activeChecks.filter((item) => item.field === 'images')" :key="check.message">
@@ -976,7 +1037,21 @@ onMounted(async () => {
 .post-tabs__count { color: var(--ui-text-faint, var(--ui-text-muted)); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 .post-editor { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; margin-top: 14px; }
-.post-editor__main { display: grid; align-content: start; gap: 10px; min-width: 0; }
+.post-editor__main { position: relative; display: grid; align-content: start; gap: 10px; min-width: 0; }
+.post-editor__main.is-dropping { outline: 2px dashed var(--ui-accent, var(--ui-primary)); outline-offset: 6px; border-radius: var(--ui-radius-md); }
+.post-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border-radius: var(--ui-radius-md);
+  background: color-mix(in oklab, var(--ui-surface), transparent 12%);
+  color: var(--ui-text);
+  font-weight: 600;
+  pointer-events: none;
+}
 .post-field, .post-bar__when input {
   box-sizing: border-box;
   border: 1px solid var(--ui-border-strong);
@@ -1018,7 +1093,8 @@ onMounted(async () => {
 .post-checks__icon { display: inline-grid; flex: none; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: var(--ui-danger); color: #fff; font-size: 10px; font-weight: 700; }
 
 .post-images { display: grid; gap: 8px; }
-.post-images__adds { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.post-images__adds { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.post-images__hint { color: var(--ui-text-muted); font-size: 12px; }
 .post-images__add {
   display: inline-flex;
   align-items: center;
