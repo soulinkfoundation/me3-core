@@ -17,7 +17,7 @@ import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue
 import SocialMarks from "../../components/social/SocialMarks.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { useSocialData } from "../../composables/useSocialData";
-import type { DriveFile, PostVersion, SocialMediaAsset, SocialPlatform, SocialPostDetail } from "../../stores/social";
+import type { DriveFile, PostVersion, SocialMediaAsset, SocialPlatform, SocialPostDetail, SocialPostOptions } from "../../stores/social";
 import { uploadDriveFiles } from "../../utils/drive-upload";
 import { convertVideo, planVideo, prepareImage } from "../../utils/media-prep";
 import {
@@ -36,6 +36,8 @@ import {
   versionChecks,
   documentRule,
   isImageAsset,
+  mentionsIn,
+  renderPostText,
   moveLinkOut,
   takesFirstComment,
   isThread,
@@ -202,7 +204,7 @@ const mirror = ref<HTMLDivElement | null>(null);
 function syncMirror(event: Event) {
   if (mirror.value) mirror.value.scrollTop = (event.target as HTMLTextAreaElement).scrollTop;
 }
-const activeThread = computed(() => (active.value && isThread(active.value) ? threadParts(activeText.value) : null));
+const activeThread = computed(() => (active.value && isThread(active.value) ? threadParts(activePosted.value) : null));
 const shortenUndo = ref<{ id: string; text: string } | null>(null);
 const commentOpen = ref(false);
 const activeFirstComment = computed(() => active.value?.publishingSettings?.post?.firstComment || "");
@@ -211,11 +213,7 @@ const activeLinkMove = computed(() => (activeLocked.value ? null : moveLinkOut(a
 
 /** Saved on the version; posted right after the post itself. */
 function setFirstComment(value: string) {
-  const version = active.value;
-  if (!version || activeLocked.value) return;
-  const settings = postOptions(version, { firstComment: value.trim() });
-  replaceVersion({ ...version, publishingSettings: { ...version.publishingSettings, post: settings.post } });
-  void saveVersion(version, { publishingSettings: settings });
+  setPostOption({ firstComment: value.trim() });
 }
 
 /** Links can cut reach in the post itself, so the link moves to the first comment. */
@@ -227,11 +225,39 @@ function moveLinkToComment() {
   void setTextNow(version, moved.text, { publishingSettings: postOptions(version, { firstComment: comment }) });
 }
 
-function postOptions(version: PostVersion, patch: { thread?: boolean; firstComment?: string }) {
-  const post = { ...version.publishingSettings?.post, ...patch };
+function postOptions(version: PostVersion, patch: SocialPostOptions) {
+  const post: SocialPostOptions = { ...version.publishingSettings?.post, ...patch };
   if (!post.thread) delete post.thread;
   if (!post.firstComment?.trim()) delete post.firstComment;
+  if (!post.hashtags?.trim()) delete post.hashtags;
+  if (post.mentions) {
+    post.mentions = Object.fromEntries(Object.entries(post.mentions).filter(([token, handle]) => handle.trim() && handle.trim() !== token));
+    if (!Object.keys(post.mentions).length) delete post.mentions;
+  }
   return Object.keys(post).length ? { post } : {};
+}
+
+const tagsOpen = ref(false);
+const activeMentions = computed(() => mentionsIn(activeText.value));
+const activeOptions = computed(() => active.value?.publishingSettings?.post || {});
+/** What this platform will post: the text with its handles and hashtags. */
+const activePosted = computed(() => renderPostText(activeText.value, activeOptions.value));
+const tagsSummary = computed(() => {
+  const swaps = Object.keys(activeOptions.value.mentions || {}).length;
+  const parts = [swaps ? `${swaps} handle${swaps === 1 ? "" : "s"} swapped` : "", activeOptions.value.hashtags || ""].filter(Boolean);
+  return parts.join(" · ");
+});
+
+function setPostOption(patch: SocialPostOptions) {
+  const version = active.value;
+  if (!version || activeLocked.value) return;
+  const settings = postOptions(version, patch);
+  replaceVersion({ ...version, publishingSettings: { ...version.publishingSettings, post: settings.post } });
+  void saveVersion(version, { publishingSettings: settings });
+}
+
+function setMention(token: string, handle: string) {
+  setPostOption({ mentions: { ...activeOptions.value.mentions, [token]: handle.trim() } });
 }
 
 /** Replaces the text now, cancelling any typing save still waiting. */
@@ -279,7 +305,7 @@ function undoShorten() {
   shortenUndo.value = null;
 }
 
-const activeLength = computed(() => (active.value ? Array.from(texts.value[active.value.id] ?? "").length : 0));
+const activeLength = computed(() => (active.value ? Array.from(activePosted.value).length : 0));
 const activeAccountLabel = computed(() => {
   if (!active.value) return "";
   const account = activeAccount(active.value.platform, accounts.value);
@@ -304,9 +330,9 @@ function withText(version: PostVersion): PostVersion {
 function tabCount(version: PostVersion): string {
   const images = version.assetManifest.filter(isImageAsset).length;
   if (images > 1) return `${images} images`;
-  if (isThread(version)) return `${threadParts(texts.value[version.id] ?? version.bodyText).length} posts`;
+  if (isThread(version)) return `${threadParts(renderPostText(texts.value[version.id] ?? version.bodyText, version.publishingSettings?.post)).length} posts`;
   const limit = versionTextLimit(version, capabilities.value);
-  const length = Array.from(texts.value[version.id] ?? version.bodyText).length;
+  const length = Array.from(renderPostText(texts.value[version.id] ?? version.bodyText, version.publishingSettings?.post)).length;
   return limit && limit < 10_000 ? `${length}/${limit}` : "";
 }
 
@@ -1114,6 +1140,38 @@ onMounted(async () => {
               </li>
             </ul>
 
+            <div v-if="takesFirstComment(active.platform) && !(activeLocked && !tagsSummary)" class="post-tags">
+              <button type="button" class="post-comment__link" :aria-expanded="tagsOpen" @click="tagsOpen = !tagsOpen">
+                {{ tagsOpen ? "Hide" : "Mentions and hashtags" }} on {{ networkLabel(active.platform) }}<template v-if="!tagsOpen && tagsSummary"> · {{ tagsSummary }}</template>
+              </button>
+              <div v-if="tagsOpen" class="post-tags__panel">
+                <p class="post-tags__hint">Handles differ by platform. Write @names once; set what each becomes here.</p>
+                <label v-for="token in activeMentions" :key="token" class="post-tags__row">
+                  <span>{{ token }}</span>
+                  <input
+                    class="post-field"
+                    :value="activeOptions.mentions?.[token] || ''"
+                    :placeholder="token"
+                    :readonly="activeLocked"
+                    :aria-label="`${token} on ${networkLabel(active.platform)}`"
+                    @change="setMention(token, ($event.target as HTMLInputElement).value)"
+                  >
+                </label>
+                <p v-if="!activeMentions.length" class="post-tags__hint">No @mentions in this text.</p>
+                <label class="post-tags__row">
+                  <span>Hashtags</span>
+                  <input
+                    class="post-field"
+                    :value="activeOptions.hashtags || ''"
+                    placeholder="#launch #buildinpublic"
+                    :readonly="activeLocked"
+                    :aria-label="`Hashtags on ${networkLabel(active.platform)}`"
+                    @change="setPostOption({ hashtags: ($event.target as HTMLInputElement).value })"
+                  >
+                </label>
+              </div>
+            </div>
+
             <div v-if="takesFirstComment(active.platform) && !(activeLocked && !activeFirstComment)" class="post-comment">
               <template v-if="commentOpen || activeFirstComment">
                 <label class="post-video__label" :for="`post-comment-${active.id}`">{{ firstCommentLabel }}</label>
@@ -1212,7 +1270,7 @@ onMounted(async () => {
           <aside class="post-preview">
             <SocialPostPreview
               :platform="active.platform"
-              :text="activeText"
+              :text="activePosted"
               :media="active.assetManifest"
               :name="activeAccountRow?.displayName || activeAccountLabel || networkLabel(active.platform)"
               :handle="activeAccountRow?.handle"
@@ -1428,6 +1486,13 @@ onMounted(async () => {
   cursor: pointer;
 }
 .post-comment { display: grid; gap: 6px; }
+.post-tags { display: grid; gap: 8px; }
+.post-tags > .post-comment__link { justify-self: start; text-align: left; }
+.post-tags__panel { display: grid; gap: 8px; padding: 10px 12px; border-radius: var(--ui-radius-md); background: var(--ui-surface-muted); }
+.post-tags__hint { margin: 0; color: var(--ui-text-muted); font-size: 12.5px; }
+.post-tags__row { display: grid; grid-template-columns: minmax(80px, 140px) minmax(0, 1fr); align-items: center; gap: 8px; font-size: 13px; }
+.post-tags__row span { overflow: hidden; color: var(--ui-text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.post-tags__row input { padding: 6px 10px; font-size: 13.5px; }
 .post-comment__field { font-size: 13.5px; }
 .post-comment__adds { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .post-comment__link { justify-self: start; padding: 0; border: 0; background: none; color: var(--ui-text-muted); font: 500 12.5px var(--font-sans); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }

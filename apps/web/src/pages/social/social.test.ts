@@ -522,5 +522,26 @@ describe("Social review", () => {
     });
     expect((wrapper.get("#post-comment-li-1").element as HTMLTextAreaElement).value).toBe("https://me3.app/launch");
   });
+
+  it("saves a platform's own handle for a mention and previews it", async () => {
+    const current = post([version({ id: "x-1", bodyText: "Built with @ME3 today." })]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x")] },
+      "/social/posts/post-1": { post: current },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPatch.mockImplementation((_path: string, body: object) => Promise.resolve({ version: { ...current.versions[0], ...body } }));
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    await wrapper.findAll("button").find((item) => item.text().startsWith("Mentions and hashtags"))!.trigger("click");
+    await wrapper.get('[aria-label="@ME3 on X"]').setValue("@me3_app");
+    await wrapper.get('[aria-label="@ME3 on X"]').trigger("change");
+    await flushPromises();
+    expect(apiPatch).toHaveBeenLastCalledWith("/social/versions/x-1", { publishingSettings: { post: { mentions: { "@ME3": "@me3_app" } } } });
+    expect(wrapper.get(".preview__text").text()).toBe("Built with @me3_app today.");
+  });
 });
 

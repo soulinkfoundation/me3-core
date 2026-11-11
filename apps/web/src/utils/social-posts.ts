@@ -1,5 +1,6 @@
 import type {
   PostVersion,
+  SocialPostOptions,
   SocialAccountRow,
   SocialPlatform,
   SocialPlatformCapabilities,
@@ -373,7 +374,9 @@ export function versionChecks(
 ): VersionCheck[] {
   const label = networkLabel(version.platform);
   const checks: VersionCheck[] = [];
-  const length = Array.from(version.bodyText).length;
+  // Counted as the platform will post it: its handles and hashtags applied.
+  const posted = postedTextFor(version);
+  const length = Array.from(posted).length;
   const limit = textLimit(version.platform, capabilities);
   const images = version.assetManifest.filter(isImageAsset);
   const videos = version.assetManifest.filter((asset) => asset.kind === "video");
@@ -381,7 +384,7 @@ export function versionChecks(
     checks.push({ message: `Add some text for ${label}.`, blocking: true, field: "text" });
   }
   if (limit !== null && isThread(version)) {
-    const parts = threadParts(version.bodyText);
+    const parts = threadParts(posted);
     parts.forEach((part, index) => {
       const partLength = Array.from(part).length;
       if (partLength > limit) {
@@ -648,4 +651,31 @@ export function moveLinkOut(text: string): { text: string; link: string } | null
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   return { text: rest, link: match[0] };
+}
+
+const MENTION_TOKEN = /@[\p{L}\p{N}_.]{1,60}/gu;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** The @mentions written in the text, once each, in order. Trailing dots belong to the sentence. */
+export function mentionsIn(text: string): string[] {
+  const found = (text.match(MENTION_TOKEN) || []).map((token) => token.replace(/\.+$/, ""));
+  return [...new Set(found)].filter((token) => token.length > 1).slice(0, 30);
+}
+
+/** Matches the Worker's renderPostText: this platform's handles, then its hashtags. */
+export function renderPostText(body: string, options: SocialPostOptions | undefined): string {
+  let text = body;
+  for (const [token, handle] of Object.entries(options?.mentions || {})) {
+    text = text.replace(new RegExp(`(^|[^\\p{L}\\p{N}_@])${escapeRegExp(token)}(?![\\p{L}\\p{N}_])`, "gu"), `$1${handle}`);
+  }
+  const hashtags = options?.hashtags?.trim();
+  if (hashtags && !text.trimEnd().endsWith(hashtags)) text = `${text.trimEnd()}\n\n${hashtags}`;
+  return text;
+}
+
+export function postedTextFor(version: PostVersion): string {
+  return renderPostText(version.bodyText, version.publishingSettings?.post);
 }

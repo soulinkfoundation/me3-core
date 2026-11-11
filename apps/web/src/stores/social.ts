@@ -98,6 +98,16 @@ export type SocialPublishingDefaults = {
   youtube?: YouTubePublishingSettings;
 };
 
+/** Per-platform choices saved on a version and applied when it posts. */
+export type SocialPostOptions = {
+  thread?: boolean;
+  firstComment?: string;
+  /** "@ME3" → "@me3_app": this platform's handle for a mention in the text. */
+  mentions?: Record<string, string>;
+  /** Added at the end of the post on this platform. */
+  hashtags?: string;
+};
+
 export type DriveFolder = {
   id: string;
   parentId: string | null;
@@ -189,7 +199,7 @@ export type PostVersion = {
     tiktok?: TikTokPublishingSettings;
     youtube?: YouTubePublishingSettings;
     /** X thread and first comment, per platform. */
-    post?: { thread?: boolean; firstComment?: string };
+    post?: SocialPostOptions;
   };
   sourceExcerpt: string | null;
   approvalStatus: "draft" | "approved" | "rejected";

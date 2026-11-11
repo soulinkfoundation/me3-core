@@ -24,7 +24,14 @@ import {
   type PostingPlan,
 } from "./posting-plans";
 
-import { normalizePostOptions, xPostTexts } from "./post-options";
+import { normalizePostOptions, renderPostText, xPostTexts, type SocialPostOptions } from "./post-options";
+
+/** The text a platform posts (its mentions and hashtags applied) and the options left for the adapter. */
+function postedText(body: string, saved: unknown, platform: SocialPlatform): { bodyText: string; providerOptions: SocialPostOptions } {
+  const options = normalizePostOptions(saved, platform);
+  const { mentions: _mentions, hashtags: _hashtags, ...rest } = options;
+  return { bodyText: renderPostText(body, options), providerOptions: rest };
+}
 
 function xPublicationPostCount(body: string, settingsJson: string | null | undefined): number {
   const options = normalizePostOptions(parseJsonObject(settingsJson).post, "x");
@@ -33,6 +40,7 @@ function xPublicationPostCount(body: string, settingsJson: string | null | undef
 
 export {
   normalizePostOptions,
+  renderPostText,
   threadParts,
   xPostTexts,
   type SocialPostOptions,
@@ -2419,9 +2427,8 @@ async function assertPostVersionCanCreatePublication(
   const assets = normalizeMediaManifest(parseJsonArray(version.asset_manifest_json));
   const validation = adapterFor(version.platform).validateDraft({
     title: version.post_title,
-    bodyText: version.body_text,
+    ...postedText(version.body_text, parseJsonObject(version.publishing_settings_json).post, version.platform),
     assets,
-    providerOptions: parseJsonObject(version.publishing_settings_json).post,
   });
   if (!validation.ok) {
     throw new SocialPublishingInputError(validation.error);
@@ -3886,9 +3893,8 @@ export async function publishQueuedPublication(
   const adapter = adapterFor(row.platform);
   const validation = adapter.validateDraft({
     title: row.title,
-    bodyText: row.body,
+    ...postedText(row.body, parseJsonObject(row.pub_request_context_json).post, row.platform),
     assets: manifestAssets,
-    providerOptions: parseJsonObject(row.pub_request_context_json).post,
   });
   if (!validation.ok) {
     const failureClass = validation.error.includes("currently supports")
@@ -4014,7 +4020,7 @@ export async function publishQueuedPublication(
       accessToken,
       accountId: row.platform_account_id,
       title: row.title,
-      bodyText: row.body,
+      bodyText: postedText(row.body, requestContext.post, row.platform).bodyText,
       assets,
       fetcher,
       providerOptions:
@@ -4022,7 +4028,7 @@ export async function publishQueuedPublication(
           ? requestContext.tiktok
           : row.platform === "youtube"
             ? requestContext.youtube
-            : requestContext.post,
+            : postedText(row.body, requestContext.post, row.platform).providerOptions,
       resumeProviderResponse,
       markProviderCostStarted: managedXReservation.managed
         ? async () => {

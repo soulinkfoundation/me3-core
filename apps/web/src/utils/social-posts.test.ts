@@ -3,6 +3,8 @@ import { account, capabilities, post, version } from "./social-posts.fixtures";
 import {
   attentionItems,
   foldIndex,
+  mentionsIn,
+  renderPostText,
   moveLinkOut,
   splitIntoThread,
   threadParts,
@@ -118,6 +120,14 @@ describe("social posts", () => {
     expect(moveLinkOut("No link here.")).toBeNull();
     expect(resultFor(version({ publicationStatus: "published", publishedAt: "2026-11-11T12:00:00.000Z", errorMessage: "Posted, but the first comment didn't go up. Add it on X." })).message)
       .toMatch(/^Posted .+\. Posted, but the first comment didn't go up\. Add it on X\.$/);
+  });
+
+  it("finds mentions and renders each platform's handles and hashtags like the Worker", () => {
+    expect(mentionsIn("Thanks @Kieran and @ME3. Email me@ME3.app, @Kieran again.")).toEqual(["@Kieran", "@ME3", "@ME3.app"]);
+    const options = { mentions: { "@ME3": "@me3_app" }, hashtags: "#AI" };
+    expect(renderPostText("Built at @ME3. Not @ME3x.", options)).toBe("Built at @me3_app. Not @ME3x.\n\n#AI");
+    const counted = version({ bodyText: "a".repeat(276), publishingSettings: { post: { hashtags: "#AI" } } });
+    expect(versionChecks(counted, capabilities)[0]?.message).toBe("281 characters, X's limit is 280.");
   });
 });
 
