@@ -6,6 +6,7 @@ import { account, capabilities, post, version } from "../../utils/social-posts.f
 const apiGet = vi.fn();
 const apiPost = vi.fn();
 const apiPatch = vi.fn();
+const apiDelete = vi.fn();
 const routeState = { query: {} as Record<string, string>, params: {} as Record<string, string>, fullPath: "/social" };
 const routerReplace = vi.fn();
 const routerPush = vi.fn();
@@ -24,7 +25,7 @@ vi.mock("../../api", () => ({
     get: (...args: unknown[]) => apiGet(...args),
     post: (...args: unknown[]) => apiPost(...args),
     patch: (...args: unknown[]) => apiPatch(...args),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => apiDelete(...args),
   },
 }));
 
@@ -211,5 +212,71 @@ describe("Social review", () => {
     expect(wrapper.find(".post-tabs__add").exists()).toBe(false);
     expect(wrapper.find('input[type="file"][accept="video/*"]').exists()).toBe(true);
     expect(wrapper.text()).toContain("YouTube Shorts needs a video.");
+  });
+
+  it("posts to the ready platforms and names the ones it skips", async () => {
+    const both = post([
+      version({ id: "x-1" }),
+      version({ id: "yt-1", platform: "youtube", format: "short_video", title: "Open day" }),
+    ]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x"), account("youtube")] },
+      "/social/posts/post-1": { post: both },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPatch.mockImplementation((path: string) => Promise.resolve({ version: both.versions.find((item) => path.endsWith(item.id)) }));
+    apiPost.mockResolvedValue({ publication: {} });
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Skipping YouTube (YouTube Shorts needs a video).");
+    const postNow = wrapper.findAll("button").find((button) => button.text() === "Post now")!;
+    expect(postNow.attributes("disabled")).toBeUndefined();
+    const schedule = wrapper.findAll("button").find((button) => /^Schedule 1 post/.test(button.text()))!;
+    expect(schedule.attributes("disabled")).toBeUndefined();
+
+    await postNow.trigger("click");
+    await flushPromises();
+    const published = apiPost.mock.calls.map(([path]) => path).filter((path) => String(path).endsWith("/publish"));
+    expect(published).toEqual(["/social/versions/x-1/publish"]);
+  });
+
+  it("removes a platform from the post after confirming", async () => {
+    const both = post([
+      version({ id: "x-1" }),
+      version({ id: "yt-1", platform: "youtube", format: "short_video", title: "Open day" }),
+    ]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x"), account("youtube")] },
+      "/social/posts/post-1": { post: both },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiDelete.mockResolvedValue({ post: post([version({ id: "x-1" })]) });
+    const wrapper = mount(SocialPost, {
+      global: {
+        stubs: {
+          ...stubs,
+          ConfirmationDialog: { props: ["open", "title"], emits: ["confirm"], template: "<div v-if=\"open\" class=\"confirm\">{{ title }}<button class=\"confirm-yes\" @click=\"$emit('confirm')\">OK</button></div>" },
+        },
+      },
+    });
+    await flushPromises();
+
+    const tabs = wrapper.findAll('[role="tab"]');
+    await tabs[1]!.trigger("click");
+    await wrapper.get(".post-remove").trigger("click");
+    expect(wrapper.get(".confirm").text()).toContain("Remove YouTube from this post?");
+    await wrapper.get(".confirm-yes").trigger("click");
+    await flushPromises();
+
+    expect(apiDelete).toHaveBeenCalledWith("/social/versions/yt-1");
+    expect(wrapper.findAll('[role="tab"]')).toHaveLength(1);
+    expect(wrapper.text()).not.toContain("YouTube Shorts needs a video.");
+    // Only one platform left: nothing to remove.
+    expect(wrapper.find(".post-remove").exists()).toBe(false);
   });
 });

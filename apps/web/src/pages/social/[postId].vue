@@ -57,10 +57,11 @@ const missing = ref(false);
 const activeId = ref<string>("");
 const texts = ref<Record<string, string>>({});
 const savingIds = ref(new Set<string>());
-const busy = ref<"schedule" | "post" | "move" | "cancel" | "delete" | "upload" | "add" | null>(null);
+const busy = ref<"schedule" | "post" | "move" | "cancel" | "delete" | "upload" | "add" | "remove" | null>(null);
 const accountsOpen = ref(false);
 const confirmDelete = ref(false);
 const confirmCancel = ref(false);
+const confirmRemove = ref<PostVersion | null>(null);
 const editor = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const videoInput = ref<HTMLInputElement | null>(null);
@@ -80,11 +81,25 @@ const pending = computed(() =>
   versions.value.filter((version) => !IN_FLIGHT.has(version.publicationStatus || "") && version.publicationStatus !== "published"),
 );
 const scheduledVersions = computed(() => versions.value.filter((version) => version.publicationStatus === "scheduled"));
-const schedulable = computed(() =>
-  pending.value.filter((version) => capabilities.value.find((item) => item.platform === version.platform)?.schedule !== false),
-);
+function firstBlocker(version: PostVersion): string | null {
+  return versionChecks(withText(version), capabilities.value, accounts.value).find((check) => check.blocking)?.message || null;
+}
+/** Platforms with a problem are skipped; the rest still post or schedule. */
 const blockers = computed(() =>
-  pending.value.filter((version) => versionChecks(withText(version), capabilities.value, accounts.value).some((check) => check.blocking)),
+  pending.value.flatMap((version) => {
+    const reason = firstBlocker(version);
+    return reason ? [{ version, reason }] : [];
+  }),
+);
+const ready = computed(() => pending.value.filter((version) => !blockers.value.some((item) => item.version.id === version.id)));
+const schedulable = computed(() =>
+  ready.value.filter((version) => capabilities.value.find((item) => item.platform === version.platform)?.schedule !== false),
+);
+const skippedLabel = computed(() =>
+  blockers.value.map(({ version, reason }) => `${networkLabel(version.platform)} (${reason.replace(/\.$/, "")})`).join(", "),
+);
+const removable = computed(() =>
+  Boolean(active.value && versions.value.length > 1 && !active.value.publicationStatus),
 );
 const scheduledIso = computed(() => {
   const resolved = resolveLocalDateTimeToUtc(when.value.date, when.value.time, timezone);
@@ -97,7 +112,7 @@ const scheduleLabel = computed(() => {
   return `Schedule ${count} post${count === 1 ? "" : "s"}${at}`;
 });
 const postNowLabel = computed(() => {
-  const count = pending.value.length;
+  const count = ready.value.length;
   return count > 1 ? `Post to ${count} platforms now` : "Post now";
 });
 const results = computed(() =>
@@ -352,6 +367,26 @@ async function addPlatform(network: SocialNetwork) {
   }
 }
 
+async function removePlatform() {
+  const version = confirmRemove.value;
+  if (!version || busy.value) return;
+  busy.value = "remove";
+  try {
+    await flushText(version.id);
+    await saveChains.get(version.id)?.catch(() => undefined);
+    // Only draft platforms can be removed; one approved by an earlier attempt goes back to draft first.
+    if (version.approvalStatus !== "draft") await social.updatePostVersion(version.id, { approvalStatus: "draft" });
+    const next = await social.deletePostVersion(version.id);
+    confirmRemove.value = null;
+    delete texts.value[version.id];
+    setDetail(next);
+  } catch (caught) {
+    toastFromUnknown(caught, `Couldn't remove ${networkLabel(version.platform)}.`);
+  } finally {
+    busy.value = null;
+  }
+}
+
 function setTitle(version: PostVersion, title: string) {
   replaceVersion({ ...version, title });
   void saveVersion(version, { title });
@@ -401,7 +436,7 @@ async function approve(version: PostVersion): Promise<PostVersion> {
 }
 
 async function schedule() {
-  if (busy.value || !scheduledIso.value || scheduleInPast.value || blockers.value.length || !schedulable.value.length) return;
+  if (busy.value || !scheduledIso.value || scheduleInPast.value || !schedulable.value.length) return;
   busy.value = "schedule";
   try {
     await flushAll();
@@ -424,8 +459,8 @@ async function schedule() {
 
 async function postNow(only?: PostVersion) {
   if (busy.value) return;
-  const targets = only ? [only] : pending.value;
-  if (!targets.length || (!only && blockers.value.length)) return;
+  const targets = only ? [only] : ready.value;
+  if (!targets.length) return;
   busy.value = "post";
   try {
     await flushAll();
@@ -660,9 +695,14 @@ onMounted(async () => {
                 <template v-if="activeLimit && activeLimit < 10000"> · {{ activeLength }}/{{ activeLimit }}</template>
                 <template v-if="savingIds.has(active.id)"> · Saving…</template>
               </span>
-              <span v-if="!activeLocked && pending.length > 1" class="post-field-foot__links">
-                <button type="button" @click="useTextEverywhere">Use the same text everywhere</button>
-                <button v-if="activeImages.length" type="button" @click="useImagesEverywhere">Same images everywhere</button>
+              <span v-if="!activeLocked && (pending.length > 1 || removable)" class="post-field-foot__links">
+                <template v-if="pending.length > 1">
+                  <button type="button" @click="useTextEverywhere">Use the same text everywhere</button>
+                  <button v-if="activeImages.length" type="button" @click="useImagesEverywhere">Same images everywhere</button>
+                </template>
+                <button v-if="removable" type="button" class="post-remove" :disabled="busy !== null" @click="confirmRemove = active">
+                  Remove {{ networkLabel(active.platform) }}
+                </button>
               </span>
             </div>
 
@@ -765,7 +805,8 @@ onMounted(async () => {
             <label class="visually-hidden" for="post-time">Time</label>
             <input id="post-time" v-model="when.time" type="time">
             <span v-if="scheduleInPast" class="post-bar__hint">Pick a time in the future.</span>
-            <span v-else-if="blockers.length" class="post-bar__hint">Fix the marked problems first.</span>
+            <span v-else-if="blockers.length && !ready.length" class="post-bar__hint">Fix the marked problems first.</span>
+            <span v-else-if="blockers.length" class="post-bar__hint post-bar__hint--skip">Skipping {{ skippedLabel }}.</span>
           </div>
           <div class="post-bar__actions">
             <template v-if="scheduledVersions.length && !pending.length">
@@ -775,7 +816,7 @@ onMounted(async () => {
               </Button>
             </template>
             <template v-else>
-              <Button color="outline" shape="pill" size="compact" :disabled="busy !== null || blockers.length > 0" @click="postNow()">
+              <Button color="outline" shape="pill" size="compact" :disabled="busy !== null || !ready.length" @click="postNow()">
                 {{ busy === "post" ? "Posting…" : postNowLabel }}
               </Button>
               <Button
@@ -783,7 +824,7 @@ onMounted(async () => {
                 color="primary"
                 shape="pill"
                 size="compact"
-                :disabled="busy !== null || blockers.length > 0 || !scheduledIso || scheduleInPast"
+                :disabled="busy !== null || !scheduledIso || scheduleInPast"
                 @click="schedule"
               >{{ busy === "schedule" ? "Scheduling…" : scheduleLabel }}</Button>
             </template>
@@ -823,6 +864,16 @@ onMounted(async () => {
       :busy="busy === 'cancel'"
       @cancel="confirmCancel = false"
       @confirm="cancelSchedule"
+    />
+    <ConfirmationDialog
+      :open="confirmRemove !== null"
+      :title="`Remove ${confirmRemove ? networkLabel(confirmRemove.platform) : ''} from this post?`"
+      message="Its text and media for that platform are removed. The other platforms stay."
+      confirm-label="Remove"
+      :busy="busy === 'remove'"
+      danger
+      @cancel="confirmRemove = null"
+      @confirm="removePlatform"
     />
     <FilesMediaPicker
       :open="filesPickerOpen"
@@ -939,6 +990,8 @@ onMounted(async () => {
 .post-bar__when { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .post-bar__when input { padding: 6px 10px; font-size: 13px; }
 .post-bar__hint { color: var(--ui-danger); font-size: 12.5px; }
+.post-bar__hint--skip { color: var(--ui-text-muted); }
+.post-field-foot__links .post-remove { color: var(--ui-danger); }
 .post-bar__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .post-note { margin: 8px 0 0; color: var(--ui-text-muted); font-size: 12.5px; }
 .post-state { display: grid; justify-items: start; gap: 8px; margin-top: 40px; }
