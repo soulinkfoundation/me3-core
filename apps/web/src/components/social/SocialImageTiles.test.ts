@@ -11,7 +11,7 @@ describe("SocialImageTiles", () => {
     expect(tiles[0]!.attributes("aria-label")).toBe("Image 1 of 3. Drag or use arrow keys to move it.");
 
     await tiles[0]!.trigger("keydown", { key: "ArrowRight" });
-    expect(wrapper.emitted("reorder")![0]![0].map((asset: { fileId: string }) => asset.fileId)).toEqual(["b", "a", "c"]);
+    expect((wrapper.emitted("reorder")![0]![0] as Array<{ fileId: string }>).map((asset) => asset.fileId)).toEqual(["b", "a", "c"]);
     expect(wrapper.text()).toContain("Image moved to position 2 of 3.");
 
     await wrapper.findAll("[data-tile]")[2]!.trigger("keydown", { key: "Delete" });
