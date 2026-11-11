@@ -264,6 +264,60 @@ function maxImages(platform: SocialPlatform, capabilities: SocialPlatformCapabil
   return Math.max(0, ...rules.filter((rule) => rule.allowedMediaKinds.includes("image")).map((rule) => rule.maxMediaItems));
 }
 
+/** The video a platform takes, from its capabilities; null when it takes none. */
+export function videoRule(
+  platform: SocialPlatform,
+  capabilities: SocialPlatformCapabilities[],
+): SocialPlatformCapabilities["contentRules"][number] | null {
+  const rules = capabilities.find((item) => item.platform === platform)?.contentRules || [];
+  return rules.find((rule) => rule.allowedMediaKinds.includes("video")) || null;
+}
+
+export function takesImages(platform: SocialPlatform, capabilities: SocialPlatformCapabilities[]): boolean {
+  return maxImages(platform, capabilities) > 0;
+}
+
+function mimeAllowed(type: string, allowed: string[]): boolean {
+  return allowed.some((item) => item === type || (item.endsWith("/*") && type.startsWith(item.slice(0, -1))));
+}
+
+function fileKind(type: string): string {
+  if (type === "video/quicktime") return "MOV";
+  return type.replace(/^[a-z]+\//, "").split("+")[0]!.toUpperCase();
+}
+
+function videoChecks(version: PostVersion, capabilities: SocialPlatformCapabilities[], label: string): VersionCheck[] {
+  const videos = version.assetManifest.filter((asset) => asset.kind === "video");
+  if (!videos.length) return [];
+  const rule = videoRule(version.platform, capabilities);
+  if (!rule) return [{ message: `${label} doesn't take video here. Remove it or use images.`, blocking: true, field: "images" }];
+  const checks: VersionCheck[] = [];
+  if (version.assetManifest.length > rule.maxMediaItems) {
+    checks.push({ message: `${label} takes one video and no images.`, blocking: true, field: "images" });
+  }
+  const video = videos[0]!;
+  const type = video.mimeType?.split(";", 1)[0]?.trim().toLowerCase();
+  if (type && rule.allowedMimeTypes.length && !mimeAllowed(type, rule.allowedMimeTypes)) {
+    const wanted = rule.allowedMimeTypes.map(fileKind).join(" or ");
+    checks.push({
+      message:
+        type === "video/quicktime"
+          ? `${label} takes ${wanted} video, and this is a MOV (iPhone) file. Export it as ${wanted} and add it again.`
+          : `${label} takes ${wanted} video, not ${fileKind(type)}.`,
+      blocking: true,
+      field: "images",
+    });
+  }
+  if (rule.maxBytesPerItem && typeof video.byteLength === "number" && video.byteLength > rule.maxBytesPerItem) {
+    checks.push({
+      message: `The video is too big for ${label} (up to ${Math.round(rule.maxBytesPerItem / 1024 / 1024).toLocaleString()} MB).`,
+      blocking: true,
+      field: "images",
+    });
+  }
+  return checks;
+}
+
 /** Problems shown beside the field they affect. Blocking ones stop scheduling for that platform. */
 export function versionChecks(
   version: PostVersion,
@@ -287,7 +341,8 @@ export function versionChecks(
     });
   }
   if (socialNetwork(version.platform) === "instagram" && version.assetManifest.length === 0) {
-    checks.push({ message: "Instagram needs an image.", blocking: true, field: "images" });
+    const message = videoRule(version.platform, capabilities) ? "Instagram needs an image or a video." : "Instagram needs an image.";
+    checks.push({ message, blocking: true, field: "images" });
   }
   if (version.platform === "youtube" && videos.length === 0) {
     checks.push({ message: "YouTube Shorts needs a video.", blocking: true, field: "images" });
@@ -299,6 +354,7 @@ export function versionChecks(
       checks.push({ message: `The title is ${titleLength} characters, YouTube's limit is ${YOUTUBE_TITLE_LIMIT}.`, blocking: true, field: "text" });
     }
   }
+  if (version.platform !== "youtube") checks.push(...videoChecks(version, capabilities, label));
   const allowed = maxImages(version.platform, capabilities);
   if (images.length > allowed && version.platform !== "youtube") {
     checks.push({

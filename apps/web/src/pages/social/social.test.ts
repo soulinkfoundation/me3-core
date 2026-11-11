@@ -279,4 +279,30 @@ describe("Social review", () => {
     // Only one platform left: nothing to remove.
     expect(wrapper.find(".post-remove").exists()).toBe(false);
   });
+
+  it("offers a video on platforms whose capabilities take one", async () => {
+    const withMov = post([
+      version({ id: "x-1", assetManifest: [{ url: "/api/files/f1/content", fileId: "f1", filename: "IMG_0001.MOV", kind: "video", mimeType: "video/quicktime", byteLength: 1000, altText: "", assetIndex: 0 }] }),
+      version({ id: "ig-1", platform: "instagram" }),
+    ]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x"), account("instagram")] },
+      "/social/posts/post-1": { post: withMov },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("IMG_0001.MOV");
+    expect(wrapper.text()).toContain("X takes MP4 video, and this is a MOV (iPhone) file.");
+    const adds = wrapper.findAll(".post-images__add").map((button) => button.text());
+    expect(adds).toEqual(["Replace video", "From Files"]);
+
+    // Instagram's fixture capabilities take images only: no video button.
+    await wrapper.findAll('[role="tab"]')[1]!.trigger("click");
+    expect(wrapper.findAll(".post-images__add").map((button) => button.text())).toEqual(["Add your own images", "From Files"]);
+  });
 });
+

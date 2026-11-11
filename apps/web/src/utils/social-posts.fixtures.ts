@@ -75,6 +75,7 @@ export const capabilities: SocialPlatformCapabilities[] = [
     contentRules: [
       { contentType: "text", label: "", requiresText: true, maxTextCharacters: 280, minMediaItems: 0, maxMediaItems: 0, allowedMediaKinds: [], allowedMimeTypes: [], maxBytesPerItem: null, guidance: null },
       { contentType: "carousel", label: "", requiresText: true, maxTextCharacters: 280, minMediaItems: 2, maxMediaItems: 4, allowedMediaKinds: ["image"], allowedMimeTypes: ["image/jpeg", "image/png"], maxBytesPerItem: null, guidance: null },
+      { contentType: "short_video", label: "", requiresText: true, maxTextCharacters: 280, minMediaItems: 1, maxMediaItems: 1, allowedMediaKinds: ["video"], allowedMimeTypes: ["video/mp4"], maxBytesPerItem: 512 * 1024 * 1024, guidance: "Publishes one MP4 video." },
     ],
   },
   {

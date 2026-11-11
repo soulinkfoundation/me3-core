@@ -27,7 +27,9 @@ import {
   socialNetwork,
   suggestedTime,
   versionChecks,
+  takesImages,
   versionTextLimit,
+  videoRule,
   visibleVersions,
   YOUTUBE_TITLE_LIMIT,
   youtubeTitleFrom,
@@ -130,6 +132,22 @@ const addableNetworks = computed(() =>
       activeAccount(network.id, accounts.value) &&
       !versions.value.some((version) => socialNetwork(version.platform) === network.id),
   ),
+);
+const activeVideoRule = computed(() => (active.value ? videoRule(active.value.platform, capabilities.value) : null));
+const activeTakesImages = computed(() => Boolean(active.value && takesImages(active.value.platform, capabilities.value)));
+const activeVideoLabel = computed(() => {
+  if (activeVideo.value) return "Replace video";
+  if (activeImages.value.length) return "Use a video instead";
+  return activeTakesImages.value ? "Add a video" : "Add your video";
+});
+const pickerKinds = computed(() => {
+  const kinds: Array<"image" | "video"> = [];
+  if (activeTakesImages.value) kinds.push("image");
+  if (activeVideoRule.value) kinds.push("video");
+  return kinds.length ? kinds : (["image"] as Array<"image" | "video">);
+});
+const pickerTitle = computed(() =>
+  pickerKinds.value.length === 2 ? "Choose photos or a video" : pickerKinds.value[0] === "video" ? "Choose a video" : "Choose photos",
 );
 const activeLimit = computed(() => (active.value ? versionTextLimit(active.value, capabilities.value) : null));
 const activeLength = computed(() => (active.value ? Array.from(texts.value[active.value.id] ?? "").length : 0));
@@ -320,8 +338,9 @@ function driveAsset(file: DriveFile, kind: "image" | "video"): SocialMediaAsset 
 async function addFromFiles(files: DriveFile[]) {
   const version = active.value;
   if (!version || !files.length) return;
-  if (version.platform === "youtube") {
-    await setVideo(version, driveAsset(files[0]!, "video"));
+  const video = activeVideoRule.value ? files.find((file) => file.mimeType?.startsWith("video/")) : undefined;
+  if (video || !activeTakesImages.value) {
+    await setVideo(version, driveAsset(video || files[0]!, "video"));
     return;
   }
   const have = new Set(activeImages.value.map((asset) => asset.fileId));
@@ -393,7 +412,7 @@ function setTitle(version: PostVersion, title: string) {
 }
 
 async function setVideo(version: PostVersion, video: SocialMediaAsset) {
-  // A Short is exactly one video.
+  // A video post is exactly one video, with no images.
   replaceVersion({ ...version, assetManifest: [video] });
   await saveVersion(version, { assetManifest: [video] });
 }
@@ -714,7 +733,20 @@ onMounted(async () => {
               </li>
             </ul>
 
-            <div v-if="active.platform !== 'youtube'" class="post-images">
+            <div class="post-images">
+              <template v-if="active.platform === 'youtube'">
+                <label class="post-video__label" :for="`post-title-${active.id}`">Title</label>
+                <input
+                  :id="`post-title-${active.id}`"
+                  class="post-field post-video__title"
+                  :class="{ 'post-field--problem': activeChecks.some((check) => check.message.includes('title')) }"
+                  :value="active.title || ''"
+                  :maxlength="YOUTUBE_TITLE_LIMIT + 20"
+                  :readonly="activeLocked"
+                  placeholder="What's this Short called?"
+                  @change="setTitle(active, ($event.target as HTMLInputElement).value)"
+                >
+              </template>
               <ol v-if="activeImages.length" class="post-images__list" aria-label="Images, in order">
                 <li v-for="(asset, index) in activeImages" :key="`${asset.fileId || asset.url}-${index}`" class="post-image">
                   <span class="post-image__thumb">
@@ -734,45 +766,21 @@ onMounted(async () => {
                   </span>
                 </li>
               </ol>
-              <input ref="fileInput" class="visually-hidden" type="file" accept="image/*" multiple @change="addImages">
-              <div v-if="!activeLocked" class="post-images__adds">
-                <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="fileInput?.click()">
-                  <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeImages.length ? "Add image" : "Add your own images" }}
-                </button>
-                <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="filesPickerOpen = true">
-                  <UiIcon name="Folder" :size="15" /> From Files
-                </button>
-              </div>
-              <ul v-if="activeChecks.some((check) => check.field === 'images')" class="post-checks">
-                <li v-for="check in activeChecks.filter((item) => item.field === 'images')" :key="check.message">
-                  <span class="post-checks__icon" aria-hidden="true">!</span>
-                  <span>{{ check.message }}</span>
-                </li>
-              </ul>
-            </div>
-            <div v-else class="post-video">
-              <label class="post-video__label" :for="`post-title-${active.id}`">Title</label>
-              <input
-                :id="`post-title-${active.id}`"
-                class="post-field post-video__title"
-                :class="{ 'post-field--problem': activeChecks.some((check) => check.message.includes('title')) }"
-                :value="active.title || ''"
-                :maxlength="YOUTUBE_TITLE_LIMIT + 20"
-                :readonly="activeLocked"
-                placeholder="What's this Short called?"
-                @change="setTitle(active, ($event.target as HTMLInputElement).value)"
-              >
               <div v-if="activeVideo" class="post-video__file">
-                <UiIcon name="Youtube" :size="16" />
+                <UiIcon name="Video" :size="16" />
                 <span>{{ activeVideo.filename || "Video" }}</span>
                 <Button v-if="!activeLocked" color="ghost" shape="soft" size="small" icon-only aria-label="Remove video" @click="removeVideo">
                   <UiIcon name="X" :size="15" />
                 </Button>
               </div>
+              <input ref="fileInput" class="visually-hidden" type="file" accept="image/*" multiple @change="addImages">
               <input ref="videoInput" class="visually-hidden" type="file" accept="video/*" @change="addVideo">
-              <div v-if="!activeLocked" class="post-images__adds">
-                <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="videoInput?.click()">
-                  <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeVideo ? "Replace video" : "Add your video" }}
+              <div v-if="!activeLocked && (activeTakesImages || activeVideoRule)" class="post-images__adds">
+                <button v-if="activeTakesImages && !activeVideo" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="fileInput?.click()">
+                  <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeImages.length ? "Add image" : "Add your own images" }}
+                </button>
+                <button v-if="activeVideoRule" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="videoInput?.click()">
+                  <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeVideoLabel }}
                 </button>
                 <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="filesPickerOpen = true">
                   <UiIcon name="Folder" :size="15" /> From Files
@@ -784,7 +792,8 @@ onMounted(async () => {
                   <span>{{ check.message }}</span>
                 </li>
               </ul>
-              <p class="post-note">Uploads as a private draft. You publish it in YouTube.</p>
+              <p v-if="activeVideoRule?.guidance && (activeVideo || !activeTakesImages) && active.platform !== 'youtube'" class="post-note">{{ activeVideoRule.guidance }}</p>
+              <p v-if="active.platform === 'youtube'" class="post-note">Uploads as a private draft. You publish it in YouTube.</p>
             </div>
           </div>
 
@@ -877,8 +886,8 @@ onMounted(async () => {
     />
     <FilesMediaPicker
       :open="filesPickerOpen"
-      :kinds="active?.platform === 'youtube' ? ['video'] : ['image']"
-      :title="active?.platform === 'youtube' ? 'Choose a video' : 'Choose photos'"
+      :kinds="pickerKinds"
+      :title="pickerTitle"
       @close="filesPickerOpen = false"
       @select="addFromFiles"
     />

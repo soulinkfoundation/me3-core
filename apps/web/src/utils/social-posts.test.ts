@@ -37,6 +37,12 @@ describe("social posts", () => {
     const svg = version({ assetManifest: [{ url: "a", kind: "image", mimeType: "image/svg+xml", altText: "Logo" }] });
     expect(versionChecks(svg, capabilities)[0]).toMatchObject({ message: "X can't use image 1 (SVG).", blocking: true });
     expect(versionChecks(version(), capabilities, [account("x", "expired")])).toContainEqual({ message: "Reconnect X to post.", blocking: true, field: "account" });
+    const mov = { url: "/v.mov", kind: "video" as const, mimeType: "video/quicktime", byteLength: 1000, filename: "IMG_1.MOV", altText: "" };
+    expect(versionChecks(version({ assetManifest: [mov] }), capabilities)).toEqual([
+      { message: "X takes MP4 video, and this is a MOV (iPhone) file. Export it as MP4 and add it again.", blocking: true, field: "images" },
+    ]);
+    expect(versionChecks(version({ assetManifest: [{ ...mov, mimeType: "video/mp4" }] }), capabilities)).toEqual([]);
+    expect(versionChecks(version({ platform: "linkedin", assetManifest: [mov] }), capabilities)[0]).toMatchObject({ message: "LinkedIn doesn't take video here. Remove it or use images." });
   });
 
   it("gives each failure class one next step", () => {
