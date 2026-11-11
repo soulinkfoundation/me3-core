@@ -1,8 +1,8 @@
 import type { SocialPlatform } from "./index";
 
-export type SocialContentType = "text" | "image" | "carousel" | "short_video";
+export type SocialContentType = "text" | "image" | "carousel" | "short_video" | "document";
 export type SocialDeliveryMode = "direct_publish" | "provider_draft" | "draft_only";
-export type SocialMediaKind = "image" | "video";
+export type SocialMediaKind = "image" | "video" | "document";
 
 export type SocialPlatformContentRule = {
   contentType: SocialContentType;
@@ -125,6 +125,18 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
         500 * 1024 * 1024,
         "Publishes one MP4 video (75 KB to 500 MB). LinkedIn takes one video or images, not both.",
       ),
+      {
+        contentType: "document",
+        label: "Document (PDF carousel)",
+        requiresText: true,
+        maxTextCharacters: 3_000,
+        minMediaItems: 1,
+        maxMediaItems: 1,
+        allowedMediaKinds: ["document"],
+        allowedMimeTypes: ["application/pdf"],
+        maxBytesPerItem: 100 * 1024 * 1024,
+        guidance: "Publishes one PDF (up to 100 MB, 300 pages) as a swipeable document. Its file name is the title.",
+      },
     ],
     reason: null,
   },
@@ -157,7 +169,15 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
     deliveryLabel: "Publishes directly",
     contentRules: [
       imageRule(2_200, "Publishes as an Instagram feed post."),
-      carouselRule(2_200, 10, "Two to ten ordered images publish as a carousel."),
+      {
+        ...carouselRule(
+          2_200,
+          10,
+          "Two to ten photos and videos, in order, publish as a carousel.",
+          ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime"],
+        ),
+        allowedMediaKinds: ["image", "video"],
+      },
       shortVideoRule(
         2_200,
         ["video/mp4", "video/quicktime"],
@@ -176,7 +196,15 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
     deliveryLabel: "Publishes directly",
     contentRules: [
       imageRule(2_200, "Publishes as an Instagram feed post."),
-      carouselRule(2_200, 10, "Two to ten ordered images publish as a carousel."),
+      {
+        ...carouselRule(
+          2_200,
+          10,
+          "Two to ten photos and videos, in order, publish as a carousel.",
+          ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime"],
+        ),
+        allowedMediaKinds: ["image", "video"],
+      },
       shortVideoRule(
         2_200,
         ["video/mp4", "video/quicktime"],

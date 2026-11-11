@@ -29,6 +29,7 @@ const foldLabel = computed(() => foldFor(props.platform)?.label || "more");
 const shownText = computed(() => (fold.value !== null && !expanded.value ? props.text.slice(0, fold.value) : props.text));
 const initial = computed(() => (props.name.replace(/^@/, "").trim()[0] || "?").toUpperCase());
 const handleLabel = computed(() => (props.handle ? (props.handle.startsWith("@") ? props.handle : `@${props.handle}`) : ""));
+const docAsset = computed(() => props.media.find((asset) => asset.kind === "document") || null);
 const current = computed(() => props.media[Math.min(slide.value, props.media.length - 1)] || null);
 const xGrid = computed(() => props.media.slice(0, 4));
 </script>
@@ -72,7 +73,12 @@ const xGrid = computed(() => props.media.slice(0, 4));
     </template>
 
     <template v-else>
-      <div v-if="current" class="preview__media" :class="{ 'preview__media--square': network === 'instagram' }">
+      <div v-if="docAsset" class="preview__doc">
+        <UiIcon name="FileText" :size="28" />
+        <b>{{ (docAsset.altText || docAsset.filename || "Document").replace(/\.pdf$/i, "") }}</b>
+        <small>PDF · swipe through the pages</small>
+      </div>
+      <div v-else-if="current" class="preview__media" :class="{ 'preview__media--square': network === 'instagram' }">
         <video v-if="current.kind === 'video'" :src="current.url" muted playsinline preload="metadata" />
         <img v-else :src="current.url" :alt="current.altText || ''">
         <template v-if="media.length > 1">
@@ -149,6 +155,9 @@ const xGrid = computed(() => props.media.slice(0, 4));
 .preview__dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--ui-border-strong); }
 .preview__dots i.on { background: var(--ui-primary); }
 
+.preview__doc { display: grid; justify-items: center; gap: 4px; padding: 36px 16px; background: var(--ui-surface-muted); color: var(--ui-text-muted); text-align: center; }
+.preview__doc b { color: var(--ui-text); }
+.preview__doc small { font-size: 12px; }
 .preview__short { position: relative; display: grid; width: 60%; margin: 0 auto 12px; overflow: hidden; border-radius: var(--ui-radius-md); background: #000; aspect-ratio: 9 / 16; }
 .preview__short video { width: 100%; height: 100%; object-fit: cover; }
 .preview__short-title { position: absolute; right: 10px; bottom: 10px; left: 10px; color: #fff; font-size: 12.5px; text-shadow: 0 1px 3px rgba(0, 0, 0, .7); }

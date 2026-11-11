@@ -303,9 +303,9 @@ describe("Social review", () => {
     const adds = wrapper.findAll(".post-images__add").map((button) => button.text());
     expect(adds).toEqual(["Replace video", "From Files"]);
 
-    // Instagram's fixture capabilities take images only: no video button.
+    // Instagram mixes photos and videos in one carousel.
     await wrapper.findAll('[role="tab"]')[1]!.trigger("click");
-    expect(wrapper.findAll(".post-images__add").map((button) => button.text())).toEqual(["Add your own images", "From Files"]);
+    expect(wrapper.findAll(".post-images__add").map((button) => button.text())).toEqual(["Add your own images", "Add a video", "From Files"]);
   });
 
   it("replaces an image with its cropped copy", async () => {
@@ -436,6 +436,30 @@ describe("Social review", () => {
       expect(apiPatch).toHaveBeenCalledWith(`/social/versions/${id}`, { assetManifest: [expect.objectContaining({ fileId: "f1", altText: "A green launch banner." })] });
     }
     expect(wrapper.get('[aria-label="Edit alt text for image 1"]').text()).toBe("ALT ✓");
+  });
+
+  it("adds a video to an Instagram carousel instead of replacing the photos", async () => {
+    const photo = { url: "/api/files/p1/content", fileId: "p1", kind: "image" as const, mimeType: "image/jpeg", altText: "", assetIndex: 0 };
+    const current = post([version({ id: "ig-1", platform: "instagram", assetManifest: [photo] })]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("instagram")] },
+      "/social/posts/post-1": { post: current },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPatch.mockImplementation((_path: string, body: object) => Promise.resolve({ version: { ...current.versions[0], ...body } }));
+    uploadDriveFiles.mockResolvedValueOnce([{ id: "v1", filename: "clip.mov", mimeType: "video/quicktime", size: 99 }]);
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    const clip = new File(["x"], "clip.mov", { type: "video/quicktime" });
+    await wrapper.get(".post-editor__main").trigger("drop", { dataTransfer: { types: ["Files"], files: [clip] } });
+    await flushPromises();
+    expect(apiPatch).toHaveBeenLastCalledWith("/social/versions/ig-1", {
+      assetManifest: [expect.objectContaining({ fileId: "p1", assetIndex: 0 }), expect.objectContaining({ fileId: "v1", kind: "video", assetIndex: 1 })],
+    });
+    expect(wrapper.findAll("[data-tile]").map((tile) => tile.attributes("aria-label")?.split(".")[0])).toEqual(["Image 1 of 2", "Video 2 of 2"]);
   });
 });
 

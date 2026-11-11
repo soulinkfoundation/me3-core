@@ -378,7 +378,8 @@ export type SocialMediaAsset = {
   fileId?: string;
   filename?: string;
   mimeType?: string;
-  kind?: "image" | "video";
+  /** "document" is a PDF, posted as a LinkedIn document carousel. */
+  kind?: "image" | "video" | "document";
   altText?: string;
   contentHash?: string;
   byteLength?: number;
@@ -5688,7 +5689,7 @@ export function normalizeSocialMediaAssets(value: unknown): SocialMediaAsset[] {
       fileId: typeof item.fileId === "string" ? item.fileId.trim() || undefined : undefined,
       filename: typeof item.filename === "string" ? item.filename.trim() || undefined : undefined,
       mimeType: typeof item.mimeType === "string" ? item.mimeType.trim() || undefined : undefined,
-      kind: item.kind === "image" || item.kind === "video" ? item.kind : undefined,
+      kind: item.kind === "image" || item.kind === "video" || item.kind === "document" ? item.kind : undefined,
       altText: typeof item.altText === "string" ? item.altText.trim() || undefined : undefined,
       contentHash:
         typeof item.contentHash === "string" && /^sha256:[a-f0-9]{64}$/i.test(item.contentHash.trim())

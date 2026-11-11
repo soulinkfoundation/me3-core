@@ -241,7 +241,7 @@ export function postRowDetail(
     const problem = versions.flatMap((version) => versionChecks(version, capabilities).filter((check) => check.blocking))[0];
     if (problem) return { text: problem.message, tone: "danger" };
   }
-  const images = Math.max(0, ...versions.map((version) => version.assetManifest.filter((asset) => asset.kind !== "video").length));
+  const images = Math.max(0, ...versions.map((version) => version.assetManifest.filter(isImageAsset).length));
   if (images > 1) return { text: `${images} images`, tone: "muted" };
   if (images === 1) return { text: "1 image", tone: "muted" };
   return { text: postSourceLabel(detail) || `${versions.length} platform${versions.length === 1 ? "" : "s"}`, tone: "muted" };
@@ -270,13 +270,31 @@ function maxImages(platform: SocialPlatform, capabilities: SocialPlatformCapabil
   return Math.max(0, ...rules.filter((rule) => rule.allowedMediaKinds.includes("image")).map((rule) => rule.maxMediaItems));
 }
 
-/** The video a platform takes, from its capabilities; null when it takes none. */
-export function videoRule(
-  platform: SocialPlatform,
-  capabilities: SocialPlatformCapabilities[],
-): SocialPlatformCapabilities["contentRules"][number] | null {
-  const rules = capabilities.find((item) => item.platform === platform)?.contentRules || [];
-  return rules.find((rule) => rule.allowedMediaKinds.includes("video")) || null;
+type ContentRule = SocialPlatformCapabilities["contentRules"][number];
+
+function rulesFor(platform: SocialPlatform, capabilities: SocialPlatformCapabilities[]): ContentRule[] {
+  return capabilities.find((item) => item.platform === platform)?.contentRules || [];
+}
+
+/** A photo, including old assets saved without a kind. */
+export function isImageAsset(asset: { kind?: string }): boolean {
+  return !asset.kind || asset.kind === "image";
+}
+
+/** The video a platform takes on its own (a Reel, a Short, an X video); null when it takes none. */
+export function videoRule(platform: SocialPlatform, capabilities: SocialPlatformCapabilities[]): ContentRule | null {
+  const rules = rulesFor(platform, capabilities).filter((rule) => rule.allowedMediaKinds.includes("video"));
+  return rules.find((rule) => !rule.allowedMediaKinds.includes("image")) || rules[0] || null;
+}
+
+/** A carousel that mixes photos and videos (Instagram), or null. */
+export function mixedMediaRule(platform: SocialPlatform, capabilities: SocialPlatformCapabilities[]): ContentRule | null {
+  return rulesFor(platform, capabilities).find((rule) => rule.allowedMediaKinds.includes("image") && rule.allowedMediaKinds.includes("video")) || null;
+}
+
+/** A PDF document post (LinkedIn), or null. */
+export function documentRule(platform: SocialPlatform, capabilities: SocialPlatformCapabilities[]): ContentRule | null {
+  return rulesFor(platform, capabilities).find((rule) => rule.allowedMediaKinds.includes("document")) || null;
 }
 
 export function takesImages(platform: SocialPlatform, capabilities: SocialPlatformCapabilities[]): boolean {
@@ -298,10 +316,18 @@ function videoChecks(version: PostVersion, capabilities: SocialPlatformCapabilit
   const rule = videoRule(version.platform, capabilities);
   if (!rule) return [{ message: `${label} doesn't take video here. Remove it or use images.`, blocking: true, field: "images" }];
   const checks: VersionCheck[] = [];
-  if (version.assetManifest.length > rule.maxMediaItems) {
+  const mixed = mixedMediaRule(version.platform, capabilities);
+  if (mixed && version.assetManifest.length > 1) {
+    if (version.assetManifest.length > mixed.maxMediaItems) {
+      checks.push({ message: `${label} takes up to ${mixed.maxMediaItems} photos and videos.`, blocking: true, field: "images" });
+    }
+  } else if (version.assetManifest.length > rule.maxMediaItems) {
     checks.push({ message: `${label} takes one video and no images.`, blocking: true, field: "images" });
   }
-  const video = videos[0]!;
+  const video = videos.find((item) => {
+    const type = item.mimeType?.split(";", 1)[0]?.trim().toLowerCase();
+    return type && rule.allowedMimeTypes.length && !mimeAllowed(type, rule.allowedMimeTypes);
+  }) || videos[0]!;
   const type = video.mimeType?.split(";", 1)[0]?.trim().toLowerCase();
   const convertible = mimeAllowed("video/mp4", rule.allowedMimeTypes);
   if (type && rule.allowedMimeTypes.length && !mimeAllowed(type, rule.allowedMimeTypes)) {
@@ -326,6 +352,19 @@ function videoChecks(version: PostVersion, capabilities: SocialPlatformCapabilit
   return checks;
 }
 
+function documentChecks(version: PostVersion, capabilities: SocialPlatformCapabilities[], label: string): VersionCheck[] {
+  const documents = version.assetManifest.filter((asset) => asset.kind === "document");
+  if (!documents.length) return [];
+  const rule = documentRule(version.platform, capabilities);
+  if (!rule) return [{ message: `${label} doesn't take PDFs. Remove it to post here.`, blocking: true, field: "images" }];
+  if (version.assetManifest.length > 1) return [{ message: `${label} posts a PDF on its own, without photos or video.`, blocking: true, field: "images" }];
+  const size = documents[0]!.byteLength;
+  if (rule.maxBytesPerItem && typeof size === "number" && size > rule.maxBytesPerItem) {
+    return [{ message: `The PDF is too big for ${label} (up to ${Math.round(rule.maxBytesPerItem / 1024 / 1024)} MB).`, blocking: true, field: "images" }];
+  }
+  return [];
+}
+
 /** Problems shown beside the field they affect. Blocking ones stop scheduling for that platform. */
 export function versionChecks(
   version: PostVersion,
@@ -336,7 +375,7 @@ export function versionChecks(
   const checks: VersionCheck[] = [];
   const length = Array.from(version.bodyText).length;
   const limit = textLimit(version.platform, capabilities);
-  const images = version.assetManifest.filter((asset) => asset.kind !== "video");
+  const images = version.assetManifest.filter(isImageAsset);
   const videos = version.assetManifest.filter((asset) => asset.kind === "video");
   if (!version.bodyText.trim() && version.platform !== "youtube") {
     checks.push({ message: `Add some text for ${label}.`, blocking: true, field: "text" });
@@ -363,6 +402,7 @@ export function versionChecks(
     }
   }
   if (version.platform !== "youtube") checks.push(...videoChecks(version, capabilities, label));
+  checks.push(...documentChecks(version, capabilities, label));
   const allowed = maxImages(version.platform, capabilities);
   if (images.length > allowed && version.platform !== "youtube") {
     checks.push({

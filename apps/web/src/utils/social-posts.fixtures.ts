@@ -88,6 +88,21 @@ export const capabilities: SocialPlatformCapabilities[] = [
     reason: null,
     contentRules: [
       { contentType: "image", label: "", requiresText: true, maxTextCharacters: 2200, minMediaItems: 1, maxMediaItems: 10, allowedMediaKinds: ["image"], allowedMimeTypes: ["image/jpeg"], maxBytesPerItem: null, guidance: null },
+      { contentType: "carousel", label: "", requiresText: true, maxTextCharacters: 2200, minMediaItems: 2, maxMediaItems: 10, allowedMediaKinds: ["image", "video"], allowedMimeTypes: ["image/jpeg", "video/mp4", "video/quicktime"], maxBytesPerItem: null, guidance: "Two to ten photos and videos, in order, publish as a carousel." },
+      { contentType: "short_video", label: "", requiresText: true, maxTextCharacters: 2200, minMediaItems: 1, maxMediaItems: 1, allowedMediaKinds: ["video"], allowedMimeTypes: ["video/mp4", "video/quicktime"], maxBytesPerItem: 1024 * 1024 * 1024, guidance: "Publishes as an Instagram Reel." },
+    ],
+  },
+  {
+    platform: "linkedin",
+    draft: true,
+    schedule: true,
+    publish: true,
+    deliveryMode: "direct_publish",
+    deliveryLabel: "",
+    reason: null,
+    contentRules: [
+      { contentType: "carousel", label: "", requiresText: true, maxTextCharacters: 3000, minMediaItems: 2, maxMediaItems: 20, allowedMediaKinds: ["image"], allowedMimeTypes: ["image/jpeg", "image/png", "image/gif"], maxBytesPerItem: null, guidance: null },
+      { contentType: "document", label: "", requiresText: true, maxTextCharacters: 3000, minMediaItems: 1, maxMediaItems: 1, allowedMediaKinds: ["document"], allowedMimeTypes: ["application/pdf"], maxBytesPerItem: 100 * 1024 * 1024, guidance: "Publishes one PDF as a swipeable document." },
     ],
   },
 ];

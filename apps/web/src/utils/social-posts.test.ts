@@ -32,7 +32,7 @@ describe("social posts", () => {
   it("flags problems beside the field they affect", () => {
     const long = version({ bodyText: "x".repeat(300) });
     expect(versionChecks(long, capabilities)).toContainEqual({ message: "300 characters, X's limit is 280.", blocking: true, field: "text" });
-    expect(versionChecks(version({ platform: "instagram" }), capabilities)).toContainEqual({ message: "Instagram needs an image.", blocking: true, field: "images" });
+    expect(versionChecks(version({ platform: "instagram" }), capabilities)).toContainEqual({ message: "Instagram needs an image or a video.", blocking: true, field: "images" });
     const undescribed = version({ assetManifest: [{ url: "a", kind: "image", mimeType: "image/png" }] });
     expect(versionChecks(undescribed, capabilities)).toEqual([]);
     const svg = version({ assetManifest: [{ url: "a", kind: "image", mimeType: "image/svg+xml", altText: "Logo" }] });
@@ -81,6 +81,19 @@ describe("social posts", () => {
     expect(foldIndex("instagram", "one\ntwo\nthree")).toBe(7);
     expect(foldIndex("instagram_business", "one\ntwo\n")).toBeNull();
     expect(foldIndex("linkedin", "😀".repeat(220))).toBe(420);
+  });
+
+  it("lets Instagram mix photos and videos, and LinkedIn post a PDF on its own", () => {
+    const photo = { url: "/p.jpg", kind: "image" as const, mimeType: "image/jpeg" };
+    const clip = { url: "/c.mov", kind: "video" as const, mimeType: "video/quicktime", byteLength: 1000 };
+    const pdf = { url: "/d.pdf", kind: "document" as const, mimeType: "application/pdf", byteLength: 1000, filename: "Deck.pdf" };
+    expect(versionChecks(version({ platform: "instagram", assetManifest: [clip, photo] }), capabilities)).toEqual([]);
+    expect(versionChecks(version({ platform: "instagram", assetManifest: Array.from({ length: 11 }, () => clip) }), capabilities)[0]?.message)
+      .toBe("Instagram takes up to 10 photos and videos.");
+    expect(versionChecks(version({ platform: "linkedin", assetManifest: [pdf] }), capabilities)).toEqual([]);
+    expect(versionChecks(version({ platform: "linkedin", assetManifest: [pdf, photo] }), capabilities)[0]?.message)
+      .toBe("LinkedIn posts a PDF on its own, without photos or video.");
+    expect(versionChecks(version({ assetManifest: [pdf] }), capabilities)[0]?.message).toBe("X doesn't take PDFs. Remove it to post here.");
   });
 });
 

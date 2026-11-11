@@ -268,6 +268,40 @@ describe("LinkedIn publishing adapter", () => {
     expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/rest/posts"))).toBe(false);
   });
 
+  it("uploads a PDF through the Documents API and posts it with its title", async () => {
+    const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v2/userinfo")) return Response.json({ sub: "member-1" });
+      if (url.includes("/rest/documents?action=initializeUpload")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ initializeUploadRequest: { owner: "urn:li:person:member-1" } });
+        return Response.json({ value: { uploadUrl: "https://upload.linkedin.example/doc", document: "urn:li:document:d1" } });
+      }
+      if (url === "https://media.example/Launch_deck.pdf") return new Response(pdf);
+      if (url === "https://upload.linkedin.example/doc") {
+        expect(init?.method).toBe("PUT");
+        expect((init?.body as ArrayBuffer).byteLength).toBe(4);
+        return new Response(null, { status: 201 });
+      }
+      if (url.endsWith("/rest/posts")) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ content: { media: { id: "urn:li:document:d1", title: "Launch deck" } } });
+        return new Response("{}", { status: 201, headers: { "x-restli-id": "urn:li:share:doc-post" } });
+      }
+      throw new Error(`Unexpected LinkedIn request: ${url}`);
+    });
+
+    const result = await adapterFor("linkedin").publish({
+      accessToken: "token",
+      accountId: "member-1",
+      bodyText: "Our launch deck.",
+      assets: [{ url: "https://media.example/Launch_deck.pdf", kind: "document", mimeType: "application/pdf", filename: "Launch_deck.pdf", byteLength: 4 }],
+      fetcher: fetcher as typeof fetch,
+    });
+    expect(result).toMatchObject({ ok: true, platformPostId: "urn:li:share:doc-post" });
+    expect(adapterFor("x").validateDraft({ bodyText: "Deck", assets: [{ url: "https://media.example/a.pdf", kind: "document", mimeType: "application/pdf" }] }))
+      .toEqual({ ok: false, error: "X doesn't take PDF documents." });
+  });
+
   it("rejects unsupported LinkedIn media before delivery", () => {
     const mp4 = { url: "https://cdn.example/video.mp4", kind: "video" as const, mimeType: "video/mp4", byteLength: 200_000 };
     expect(adapterFor("linkedin").validateDraft({ bodyText: "A video.", assets: [mp4] })).toEqual({ ok: true });
@@ -1086,22 +1120,65 @@ describe("Instagram publishing adapter", () => {
     })).resolves.toMatchObject({ ok: true, platformPostId: "instagram-reel-1" });
   });
 
-  it("rejects mixed Reel media and oversized carousels before delivery", () => {
+  it("validates mixed carousels, video types, and the ten-item limit before delivery", () => {
     expect(adapterFor("instagram").validateDraft({
       bodyText: "Mixed media.",
       assets: [
-        { url: "https://media.example/reel.mp4", kind: "video" },
+        { url: "https://media.example/reel.mp4", kind: "video", mimeType: "video/mp4" },
         { url: "https://media.example/image.jpg", kind: "image" },
       ],
-    })).toEqual({ ok: false, error: "An Instagram Reel must contain one video and no images." });
-
+    })).toEqual({ ok: true });
     expect(adapterFor("instagram").validateDraft({
-      bodyText: "Too many images.",
+      bodyText: "Unknown video.",
+      assets: [{ url: "https://media.example/clip", kind: "video" }],
+    })).toEqual({ ok: false, error: "Instagram supports MP4 and QuickTime video uploads." });
+    expect(adapterFor("instagram").validateDraft({
+      bodyText: "Too many.",
       assets: Array.from({ length: 11 }, (_, index) => ({
         url: `https://media.example/${index}.jpg`,
         kind: "image" as const,
       })),
-    })).toEqual({ ok: false, error: "Instagram carousels support up to 10 images." });
+    })).toEqual({ ok: false, error: "Instagram carousels support up to 10 photos and videos." });
+    expect(adapterFor("instagram").validateDraft({
+      bodyText: "A deck.",
+      assets: [{ url: "https://media.example/deck.pdf", kind: "document", mimeType: "application/pdf" }],
+    })).toEqual({ ok: false, error: "Instagram doesn't take PDF documents." });
+  });
+
+  it("publishes photos and videos together as one carousel, in order", async () => {
+    const children: Array<Record<string, string>> = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/ig-owner/media")) {
+        const params = Object.fromEntries(new URLSearchParams(String(init?.body)));
+        delete params.access_token;
+        if (params.media_type === "CAROUSEL") {
+          expect(params).toEqual({ media_type: "CAROUSEL", children: "child-1,child-2", caption: "Launch day." });
+          return Response.json({ id: "carousel-1" });
+        }
+        children.push(params);
+        return Response.json({ id: `child-${children.length}` });
+      }
+      if (url.includes("?fields=status_code")) return Response.json({ status_code: "FINISHED" });
+      if (url.endsWith("/ig-owner/media_publish")) return Response.json({ id: "instagram-mixed-1" });
+      if (url.includes("?fields=permalink")) return Response.json({ permalink: "https://instagram.com/p/x" });
+      throw new Error(`Unexpected Instagram request: ${url}`);
+    });
+
+    await expect(adapterFor("instagram").publish({
+      accessToken: "ig-token",
+      accountId: "ig-owner",
+      bodyText: "Launch day.",
+      assets: [
+        { url: "https://media.example/clip.mov", kind: "video", mimeType: "video/quicktime" },
+        { url: "https://media.example/photo.jpg", kind: "image", altText: "The team." },
+      ],
+      fetcher: fetcher as typeof fetch,
+    })).resolves.toMatchObject({ ok: true, platformPostId: "instagram-mixed-1" });
+    expect(children).toEqual([
+      { media_type: "VIDEO", video_url: "https://media.example/clip.mov", is_carousel_item: "true" },
+      { image_url: "https://media.example/photo.jpg", is_carousel_item: "true", alt_text: "The team." },
+    ]);
   });
 });
 

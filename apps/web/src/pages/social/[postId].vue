@@ -34,6 +34,9 @@ import {
   socialNetwork,
   suggestedTime,
   versionChecks,
+  documentRule,
+  isImageAsset,
+  mixedMediaRule,
   takesImages,
   versionTextLimit,
   videoRule,
@@ -74,11 +77,12 @@ const confirmRemove = ref<PostVersion | null>(null);
 const editor = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const videoInput = ref<HTMLInputElement | null>(null);
+const documentInput = ref<HTMLInputElement | null>(null);
 const filesPickerOpen = ref(false);
 const cropIndex = ref<number | null>(null);
 const altIndex = ref<number | null>(null);
-const altAsset = computed(() => (altIndex.value === null ? null : activeImages.value[altIndex.value] || null));
-const cropAsset = computed(() => (cropIndex.value === null ? null : activeImages.value[cropIndex.value] || null));
+const altAsset = computed(() => (altIndex.value === null ? null : activeTiles.value[altIndex.value] || null));
+const cropAsset = computed(() => (cropIndex.value === null ? null : activeTiles.value[cropIndex.value] || null));
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const when = ref(localParts(suggestedTime()));
 const saveChains = new Map<string, Promise<unknown>>();
@@ -148,8 +152,16 @@ const results = computed(() =>
     .filter(({ result }) => result.state !== "draft"),
 );
 const activeChecks = computed(() => (active.value ? versionChecks(withText(active.value), capabilities.value, accounts.value) : []));
-const activeImages = computed(() => (active.value?.assetManifest || []).filter((asset) => asset.kind !== "video"));
+const activeImages = computed(() => (active.value?.assetManifest || []).filter(isImageAsset));
 const activeVideo = computed(() => (active.value?.assetManifest || []).find((asset) => asset.kind === "video") || null);
+const activeDocument = computed(() => (active.value?.assetManifest || []).find((asset) => asset.kind === "document") || null);
+/** Instagram mixes photos and videos in one carousel; elsewhere a video stands alone. */
+const activeMixed = computed(() => Boolean(active.value && mixedMediaRule(active.value.platform, capabilities.value)));
+const activeDocRule = computed(() => (active.value ? documentRule(active.value.platform, capabilities.value) : null));
+/** The ordered tiles: photos, plus videos where they mix. */
+const activeTiles = computed(() =>
+  activeMixed.value ? (active.value?.assetManifest || []).filter((asset) => asset.kind !== "document") : activeImages.value,
+);
 /** Connected platforms this post doesn't go to yet, so the owner can add one. */
 const addableNetworks = computed(() =>
   SOCIAL_NETWORKS.filter(
@@ -161,6 +173,7 @@ const addableNetworks = computed(() =>
 const activeVideoRule = computed(() => (active.value ? videoRule(active.value.platform, capabilities.value) : null));
 const activeTakesImages = computed(() => Boolean(active.value && takesImages(active.value.platform, capabilities.value)));
 const activeVideoLabel = computed(() => {
+  if (activeMixed.value) return "Add a video";
   if (activeVideo.value) return "Replace video";
   if (activeImages.value.length) return "Use a video instead";
   return activeTakesImages.value ? "Add a video" : "Add your video";
@@ -206,7 +219,7 @@ function withText(version: PostVersion): PostVersion {
 }
 
 function tabCount(version: PostVersion): string {
-  const images = version.assetManifest.filter((asset) => asset.kind !== "video").length;
+  const images = version.assetManifest.filter(isImageAsset).length;
   if (images > 1) return `${images} images`;
   const limit = versionTextLimit(version, capabilities.value);
   const length = Array.from(texts.value[version.id] ?? version.bodyText).length;
@@ -345,8 +358,47 @@ function setImages(images: SocialMediaAsset[]) {
   void saveVersion(version, { assetManifest: next });
 }
 
+/** Saves the tiles in order: as the whole post where media mix, otherwise as its photos. */
+function setTiles(tiles: SocialMediaAsset[]) {
+  const version = active.value;
+  if (!version) return;
+  if (!activeMixed.value) return setImages(tiles);
+  const next = tiles.map((asset, index) => ({ ...asset, assetIndex: index }));
+  replaceVersion({ ...version, assetManifest: next });
+  void saveVersion(version, { assetManifest: next });
+}
+
 function removeImage(index: number) {
-  setImages(activeImages.value.filter((_, position) => position !== index));
+  setTiles(activeTiles.value.filter((_, position) => position !== index));
+}
+
+async function addDocument(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = Array.from(input.files || []).find((item) => item.type === "application/pdf" || /\.pdf$/i.test(item.name));
+  input.value = "";
+  const version = active.value;
+  if (!file || !version || busy.value) return;
+  busy.value = "upload";
+  try {
+    const [uploaded] = await uploadDriveFiles<DriveFile>([file], { folderId: null, onConflict: "rename" });
+    if (!uploaded) throw new Error("The PDF didn't upload.");
+    // A document post is that one PDF.
+    const document = { ...driveAsset(uploaded, "document"), mimeType: "application/pdf", assetIndex: 0 };
+    replaceVersion({ ...version, assetManifest: [document] });
+    await saveVersion(version, { assetManifest: [document] });
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't add that PDF.");
+  } finally {
+    busy.value = null;
+  }
+}
+
+function removeDocument() {
+  const version = active.value;
+  if (!version) return;
+  const next = version.assetManifest.filter((asset) => asset.kind !== "document");
+  replaceVersion({ ...version, assetManifest: next });
+  void saveVersion(version, { assetManifest: next });
 }
 
 function sameImage(a: SocialMediaAsset, b: SocialMediaAsset): boolean {
@@ -376,9 +428,9 @@ async function saveCrop(file: File) {
   try {
     const [uploaded] = await uploadDriveFiles<DriveFile>([file], { folderId: null, onConflict: "rename" });
     if (!uploaded) throw new Error("The cropped image didn't save.");
-    const images = [...activeImages.value];
-    images[index] = { ...driveAsset(uploaded, "image"), altText: original.altText || "" };
-    setImages(images);
+    const tiles = [...activeTiles.value];
+    tiles[index] = { ...driveAsset(uploaded, "image"), altText: original.altText || "" };
+    setTiles(tiles);
     cropIndex.value = null;
   } catch (caught) {
     toastFromUnknown(caught, "Couldn't save the crop.");
@@ -387,7 +439,7 @@ async function saveCrop(file: File) {
   }
 }
 
-function driveAsset(file: DriveFile, kind: "image" | "video"): SocialMediaAsset {
+function driveAsset(file: DriveFile, kind: "image" | "video" | "document"): SocialMediaAsset {
   return {
     url: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(file.id)}/content`,
     fileId: file.id,
@@ -405,6 +457,12 @@ function driveAsset(file: DriveFile, kind: "image" | "video"): SocialMediaAsset 
 async function addFromFiles(files: DriveFile[]) {
   const version = active.value;
   if (!version || !files.length) return;
+  if (activeMixed.value) {
+    const have = new Set(activeTiles.value.map((asset) => asset.fileId));
+    const added = files.filter((file) => !have.has(file.id)).map((file) => driveAsset(file, file.mimeType?.startsWith("video/") ? "video" : "image"));
+    setTiles([...activeTiles.value, ...added]);
+    return;
+  }
   const video = activeVideoRule.value ? files.find((file) => file.mimeType?.startsWith("video/")) : undefined;
   if (video || !activeTakesImages.value) {
     await setVideo(version, driveAsset(video || files[0]!, "video"));
@@ -428,7 +486,7 @@ async function uploadImages(files: File[]) {
     // HEIC and oversized photos become JPEGs every platform takes.
     const prepared = await Promise.all(files.map(prepareImage));
     const uploaded = await uploadDriveFiles<DriveFile>(prepared, { folderId: null, onConflict: "rename" });
-    setImages([...activeImages.value, ...uploaded.map((file) => driveAsset(file, "image"))]);
+    setTiles([...activeTiles.value, ...uploaded.map((file) => driveAsset(file, "image"))]);
   } catch (caught) {
     toastFromUnknown(caught, "Couldn't add those images.");
   } finally {
@@ -485,9 +543,13 @@ function setTitle(version: PostVersion, title: string) {
 }
 
 async function setVideo(version: PostVersion, video: SocialMediaAsset) {
-  // A video post is exactly one video, with no images.
-  replaceVersion({ ...version, assetManifest: [video] });
-  await saveVersion(version, { assetManifest: [video] });
+  // A video joins the carousel where media mix; elsewhere a video post is that one video.
+  const mixed = mixedMediaRule(version.platform, capabilities.value) !== null;
+  const next = mixed
+    ? [...version.assetManifest.filter((asset) => asset.kind !== "document"), video].map((asset, index) => ({ ...asset, assetIndex: index }))
+    : [video];
+  replaceVersion({ ...version, assetManifest: next });
+  await saveVersion(version, { assetManifest: next });
 }
 
 async function addVideo(event: Event) {
@@ -554,6 +616,11 @@ async function attachFiles(files: File[]) {
   if (!active.value || activeLocked.value || busy.value || !files.length) return;
   const video = files.find((file) => file.type.startsWith("video/"));
   const images = files.filter((file) => file.type.startsWith("image/"));
+  if (activeMixed.value && (images.length || video)) {
+    if (images.length) await uploadImages(images);
+    if (video) await uploadVideo(video);
+    return;
+  }
   if (video && activeVideoRule.value) return uploadVideo(video);
   if (images.length && activeTakesImages.value) {
     if (activeVideo.value) removeVideo();
@@ -964,15 +1031,22 @@ onMounted(async () => {
                 >
               </template>
               <SocialImageTiles
-                v-if="activeImages.length"
-                :images="activeImages"
+                v-if="activeTiles.length"
+                :images="activeTiles"
                 :locked="activeLocked"
-                @reorder="setImages"
+                @reorder="setTiles"
                 @remove="removeImage"
                 @crop="cropIndex = $event"
                 @alt="altIndex = $event"
               />
-              <div v-if="activeVideo" class="post-video__file">
+              <div v-if="activeDocument" class="post-video__file">
+                <UiIcon name="FileText" :size="16" />
+                <span>{{ activeDocument.filename || "Document" }}</span>
+                <Button v-if="!activeLocked" color="ghost" shape="soft" size="small" icon-only aria-label="Remove PDF" @click="removeDocument">
+                  <UiIcon name="X" :size="15" />
+                </Button>
+              </div>
+              <div v-if="activeVideo && !activeMixed" class="post-video__file">
                 <UiIcon name="Video" :size="16" />
                 <span>{{ activeVideo.filename || "Video" }}</span>
                 <Button v-if="!activeLocked" color="ghost" shape="soft" size="small" icon-only aria-label="Remove video" @click="removeVideo">
@@ -981,12 +1055,16 @@ onMounted(async () => {
               </div>
               <input ref="fileInput" class="visually-hidden" type="file" accept="image/*" multiple @change="addImages">
               <input ref="videoInput" class="visually-hidden" type="file" accept="video/*" @change="addVideo">
+              <input ref="documentInput" class="visually-hidden" type="file" accept="application/pdf,.pdf" @change="addDocument">
               <div v-if="!activeLocked && (activeTakesImages || activeVideoRule)" class="post-images__adds">
-                <button v-if="activeTakesImages && !activeVideo" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="fileInput?.click()">
+                <button v-if="activeTakesImages && (!activeVideo || activeMixed) && !activeDocument" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="fileInput?.click()">
                   <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeImages.length ? "Add image" : "Add your own images" }}
                 </button>
                 <button v-if="activeVideoRule" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="videoInput?.click()">
                   <UiIcon name="Plus" :size="15" /> {{ converting !== null ? `Converting… ${Math.round(converting * 100)}%` : busy === "upload" ? "Adding…" : activeVideoLabel }}
+                </button>
+                <button v-if="activeDocRule" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="documentInput?.click()">
+                  <UiIcon name="FileText" :size="15" /> {{ activeDocument ? "Replace PDF" : "Add a PDF" }}
                 </button>
                 <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="filesPickerOpen = true">
                   <UiIcon name="Folder" :size="15" /> From Files
@@ -1002,7 +1080,9 @@ onMounted(async () => {
                   </button>
                 </li>
               </ul>
-              <p v-if="activeVideoRule?.guidance && (activeVideo || !activeTakesImages) && active.platform !== 'youtube'" class="post-note">{{ activeVideoRule.guidance }}</p>
+              <p v-if="activeDocument && activeDocRule?.guidance" class="post-note">{{ activeDocRule.guidance }}</p>
+              <p v-else-if="activeMixed && activeVideo" class="post-note">{{ mixedMediaRule(active.platform, capabilities)?.guidance }}</p>
+              <p v-else-if="activeVideoRule?.guidance && (activeVideo || !activeTakesImages) && active.platform !== 'youtube'" class="post-note">{{ activeVideoRule.guidance }}</p>
               <p v-if="active.platform === 'youtube'" class="post-note">Uploads as a private draft. You publish it in YouTube.</p>
             </div>
           </div>

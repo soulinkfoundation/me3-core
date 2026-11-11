@@ -1,5 +1,4 @@
 import { normalizeMe3DeploymentMode } from "@me3-core/plugin-agent-chat";
-import { getAiGatewayRuntimeConfig } from "./ai-gateway";
 import type { Env } from "./types";
 
 /**
@@ -54,6 +53,8 @@ export async function draftSocialAltText(
   let runner = run;
   if (!runner) {
     if (!env.AI) throw new AltTextInputError("AI isn't set up on this ME3.", 503);
+    // Loaded here so the Social routes don't pull AI settings into every import.
+    const { getAiGatewayRuntimeConfig } = await import("./ai-gateway");
     const gateway = await getAiGatewayRuntimeConfig(env, ownerId).catch(() => null);
     const gatewayId = normalizeMe3DeploymentMode(env.ME3_DEPLOYMENT_MODE) === "managed"
       ? env.CLOUDFLARE_AI_GATEWAY_ID?.trim() || "default"

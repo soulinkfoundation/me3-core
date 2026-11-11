@@ -98,13 +98,15 @@ async function onKey(event: KeyboardEvent, index: number) {
         class="tile"
         :class="{ 'is-dragging': dragging === index, 'is-locked': locked }"
         :tabindex="locked ? -1 : 0"
-        :aria-label="`Image ${index + 1} of ${order.length}${asset.altText ? `: ${asset.altText}` : ''}${locked ? '' : '. Drag or use arrow keys to move it.'}`"
+        :aria-label="`${asset.kind === 'video' ? 'Video' : 'Image'} ${index + 1} of ${order.length}${asset.altText ? `: ${asset.altText}` : ''}${locked ? '' : '. Drag or use arrow keys to move it.'}`"
         @pointerdown="onPointerDown($event, index)"
         @keydown="onKey($event, index)"
       >
-        <img :src="asset.url" :alt="asset.altText || ''" loading="lazy" draggable="false">
+        <video v-if="asset.kind === 'video'" :src="`${asset.url}#t=0.1`" muted playsinline preload="metadata" draggable="false" />
+        <img v-else :src="asset.url" :alt="asset.altText || ''" loading="lazy" draggable="false">
+        <span v-if="asset.kind === 'video'" class="tile__play" aria-hidden="true"><UiIcon name="Play" :size="12" /></span>
         <small class="tile__number" aria-hidden="true">{{ index + 1 }}</small>
-        <template v-if="!locked">
+        <template v-if="!locked && asset.kind !== 'video'">
           <button type="button" class="tile__tool tile__tool--crop" :aria-label="`Crop image ${index + 1}`" @click="emit('crop', index)">
             <UiIcon name="Crop" :size="13" />
           </button>
@@ -115,6 +117,8 @@ async function onKey(event: KeyboardEvent, index: number) {
             :aria-label="asset.altText?.trim() ? `Edit alt text for image ${index + 1}` : `Add alt text to image ${index + 1}`"
             @click="emit('alt', index)"
           >ALT<template v-if="asset.altText?.trim()"> ✓</template></button>
+        </template>
+        <template v-if="!locked">
           <button type="button" class="tile__tool tile__tool--remove" :aria-label="`Remove image ${index + 1}`" @click="emit('remove', index)">
             <UiIcon name="X" :size="13" />
           </button>
@@ -143,7 +147,8 @@ async function onKey(event: KeyboardEvent, index: number) {
 .tile.is-locked { cursor: default; touch-action: auto; }
 .tile.is-dragging { z-index: 1; box-shadow: var(--ui-shadow-md); cursor: grabbing; transform: scale(1.05); }
 .tile:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
-.tile img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.tile img, .tile video { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.tile__play { position: absolute; top: 50%; left: 50%; display: grid; place-items: center; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; pointer-events: none; }
 .tile__number { position: absolute; bottom: 3px; left: 5px; color: #fff; font-size: 10.5px; font-weight: 700; text-shadow: 0 1px 2px rgba(0, 0, 0, .7); }
 .tile__tool {
   position: absolute;

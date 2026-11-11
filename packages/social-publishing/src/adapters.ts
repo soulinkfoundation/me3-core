@@ -62,6 +62,7 @@ const LINKEDIN_IMAGE_MIME_TYPES = new Set([
 ]);
 const LINKEDIN_VERSION = "202606";
 const LINKEDIN_VIDEO_MIME_TYPES = new Set(["video/mp4"]);
+const LINKEDIN_DOCUMENT_MAX_BYTES = 100 * 1024 * 1024;
 const LINKEDIN_VIDEO_MIN_BYTES = 75 * 1024;
 const LINKEDIN_VIDEO_MAX_BYTES = 500 * 1024 * 1024;
 const LINKEDIN_VIDEO_STATUS_ATTEMPTS = 10;
@@ -175,12 +176,21 @@ function xAuthorizationHeaders(accessToken: string): Record<string, string> {
   return { Authorization: `Bearer ${accessToken}` };
 }
 
+/** PDFs only post to LinkedIn, as a document. */
+function documentError(assets: SocialMediaAsset[], label: string): { ok: false; error: string } | null {
+  return assets.some((asset) => asset.kind === "document")
+    ? { ok: false, error: `${label} doesn't take PDF documents.` }
+    : null;
+}
+
 function validateXDraft(input: {
   bodyText: string;
   assets: SocialMediaAsset[];
 }): { ok: true } | { ok: false; error: string } {
   const body = input.bodyText.trim();
   if (!body) return { ok: false, error: "This X draft is empty." };
+  const documents = documentError(input.assets, "X");
+  if (documents) return documents;
   if (characterLength(body) > X_CHAR_LIMIT) {
     return { ok: false, error: `This X draft is too long (max ${X_CHAR_LIMIT} characters).` };
   }
@@ -302,6 +312,21 @@ const linkedInAdapter: SocialPublishAdapter = {
         error: `This LinkedIn draft is too long (max ${LINKEDIN_MAX_CHARS} characters).`,
       };
     }
+    const documents = input.assets.filter((asset) => asset.kind === "document");
+    if (documents.length > 0) {
+      if (input.assets.length !== 1) {
+        return { ok: false, error: "A LinkedIn document post must contain exactly one PDF and nothing else." };
+      }
+      const document = documents[0]!;
+      if (!document.url?.trim()) return { ok: false, error: "The LinkedIn document needs a delivery URL." };
+      if (normalizeMimeType(document.mimeType) !== "application/pdf") {
+        return { ok: false, error: "LinkedIn document posts support PDF files." };
+      }
+      if ((document.byteLength ?? 0) > LINKEDIN_DOCUMENT_MAX_BYTES) {
+        return { ok: false, error: "The LinkedIn document is larger than 100 MB." };
+      }
+      return { ok: true };
+    }
     const videos = input.assets.filter((asset) => asset.kind === "video");
     if (videos.length > 0) {
       if (input.assets.length !== 1 || videos.length !== 1) {
@@ -394,13 +419,20 @@ const linkedInAdapter: SocialPublishAdapter = {
     const author = sub.startsWith("urn:li:") ? sub : `urn:li:person:${sub}`;
     const uploadedImages: Array<{ id: string; altText?: string }> = [];
     let videoUrn: string | null = null;
+    let documentMedia: { id: string; title: string } | null = null;
     const videoAsset = input.assets.find((asset) => asset.kind === "video");
+    const documentAsset = input.assets.find((asset) => asset.kind === "document");
     if (videoAsset) {
       const upload = await uploadLinkedInVideo(input, author, videoAsset);
       if (!upload.ok) return upload.result;
       videoUrn = upload.video;
     }
-    for (const [index, asset] of (videoAsset ? [] : input.assets).entries()) {
+    if (documentAsset) {
+      const upload = await uploadLinkedInDocument(input, author, documentAsset);
+      if (!upload.ok) return upload.result;
+      documentMedia = { id: upload.document, title: linkedInDocumentTitle(documentAsset) };
+    }
+    for (const [index, asset] of (videoAsset || documentAsset ? [] : input.assets).entries()) {
       let imageResponse: Response;
       try {
         imageResponse = await input.fetcher(asset.url);
@@ -483,7 +515,9 @@ const linkedInAdapter: SocialPublishAdapter = {
       });
     }
 
-    const content = videoUrn
+    const content = documentMedia
+      ? { media: documentMedia }
+      : videoUrn
       ? { media: { id: videoUrn } }
       : uploadedImages.length === 1
       ? { media: uploadedImages[0]! }
@@ -549,6 +583,74 @@ const linkedInAdapter: SocialPublishAdapter = {
     };
   },
 };
+
+/** "Launch deck v2.pdf" → "Launch deck v2": LinkedIn shows the title above the document. */
+function linkedInDocumentTitle(asset: SocialMediaAsset): string {
+  const title = (asset.altText?.trim() || asset.filename?.replace(/\.pdf$/i, "").trim() || "Document").replace(/[_]+/g, " ");
+  return Array.from(title).slice(0, 400).join("");
+}
+
+/** LinkedIn Documents API: initialize, PUT the PDF, then the post references the document URN. */
+async function uploadLinkedInDocument(
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+  author: string,
+  asset: SocialMediaAsset,
+): Promise<{ ok: true; document: string } | { ok: false; result: SocialPublishAdapterResult }> {
+  let initializeResponse: Response;
+  try {
+    initializeResponse = await input.fetcher("https://api.linkedin.com/rest/documents?action=initializeUpload", {
+      method: "POST",
+      headers: linkedInHeaders(input.accessToken),
+      body: JSON.stringify({ initializeUploadRequest: { owner: author } }),
+    });
+  } catch (error) {
+    return { ok: false, result: providerError("linkedin_document_initialize", "LinkedIn did not finish preparing the document. ME3 can safely try again.", describeFetchError(error), "retryable") };
+  }
+  const initialized = await readJson<{ value?: { uploadUrl?: string; document?: string }; message?: string }>(initializeResponse);
+  const uploadUrl = initialized.value?.uploadUrl;
+  const document = initialized.value?.document;
+  if (!initializeResponse.ok || !uploadUrl || !document) {
+    return {
+      ok: false,
+      result: providerError(
+        "linkedin_document_initialize",
+        initialized.message || `LinkedIn could not prepare the document (${initializeResponse.status}).`,
+        initialized,
+        initializeResponse.ok ? "rejected" : failureClassForStatus(initializeResponse.status),
+      ),
+    };
+  }
+  let sourceResponse: Response;
+  try {
+    sourceResponse = await input.fetcher(asset.url);
+  } catch (error) {
+    return { ok: false, result: providerError("linkedin_document_fetch", "Could not load the PDF. ME3 can safely try again.", describeFetchError(error), "retryable") };
+  }
+  if (!sourceResponse.ok) {
+    return { ok: false, result: providerError("linkedin_document_fetch", `Could not load the PDF (${sourceResponse.status}).`, undefined, failureClassForStatus(sourceResponse.status)) };
+  }
+  const bytes = await readBoundedBytes(sourceResponse, LINKEDIN_DOCUMENT_MAX_BYTES).catch(() => null);
+  if (!bytes) {
+    return { ok: false, result: providerError("linkedin_document_fetch", "The PDF is larger than 100 MB or didn't load.", undefined, "rejected") };
+  }
+  let uploadResponse: Response;
+  try {
+    uploadResponse = await input.fetcher(uploadUrl, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${input.accessToken}`, "Content-Type": "application/octet-stream" },
+      body: copyBytesToArrayBuffer(bytes),
+    });
+  } catch (error) {
+    return { ok: false, result: providerError("linkedin_document_upload", "LinkedIn did not finish uploading the document. ME3 can safely try again.", describeFetchError(error), "retryable") };
+  }
+  if (!uploadResponse.ok) {
+    return {
+      ok: false,
+      result: providerError("linkedin_document_upload", "LinkedIn could not upload the document.", await uploadResponse.text().catch(() => ""), failureClassForStatus(uploadResponse.status)),
+    };
+  }
+  return { ok: true, document };
+}
 
 type LinkedInVideoUploadResult =
   | { ok: true; video: string }
@@ -2304,22 +2406,22 @@ function validateInstagramDraft(input: {
   if (input.assets.some((asset) => !asset.url?.trim())) {
     return { ok: false, error: "Every Instagram media item needs a delivery URL." };
   }
-  if (videos.length > 0 && (videos.length !== 1 || images.length > 0)) {
-    return { ok: false, error: "An Instagram Reel must contain one video and no images." };
-  }
-  if (videos.length === 1) {
-    const mimeType = normalizeMimeType(videos[0]?.mimeType);
+  const documents = documentError(input.assets, "Instagram");
+  if (documents) return documents;
+  // One video alone is a Reel; with more items, photos and videos mix in a carousel.
+  for (const video of videos) {
+    const mimeType = normalizeMimeType(video.mimeType);
     if (!mimeType || !INSTAGRAM_VIDEO_MIME_TYPES.has(mimeType)) {
-      return { ok: false, error: "Instagram Reels support MP4 and QuickTime video uploads." };
+      return { ok: false, error: "Instagram supports MP4 and QuickTime video uploads." };
     }
-    if ((videos[0]?.byteLength || 0) > INSTAGRAM_VIDEO_MAX_BYTES) {
-      return { ok: false, error: "The Instagram Reel is larger than 1 GB." };
+    if ((video.byteLength || 0) > INSTAGRAM_VIDEO_MAX_BYTES) {
+      return { ok: false, error: "An Instagram video is larger than 1 GB." };
     }
   }
-  if (images.length > INSTAGRAM_CAROUSEL_MAX_ITEMS) {
+  if (input.assets.length > INSTAGRAM_CAROUSEL_MAX_ITEMS) {
     return {
       ok: false,
-      error: `Instagram carousels support up to ${INSTAGRAM_CAROUSEL_MAX_ITEMS} images.`,
+      error: `Instagram carousels support up to ${INSTAGRAM_CAROUSEL_MAX_ITEMS} photos and videos.`,
     };
   }
   return { ok: true };
@@ -2337,7 +2439,7 @@ async function publishInstagram(
   const created: unknown[] = [];
   let creationId: string;
 
-  if (videos.length === 1) {
+  if (videos.length === 1 && input.assets.length === 1) {
     const reel = await createInstagramMediaContainer(origin, input, {
       media_type: "REELS",
       video_url: videos[0]!.url,
@@ -2349,14 +2451,12 @@ async function publishInstagram(
     created.push(reel.response);
     const ready = await waitForInstagramContainer(origin, input, creationId);
     if (!ready.ok) return ready.result;
-  } else if (images.length > 1) {
+  } else if (input.assets.length > 1) {
     const children: string[] = [];
-    for (const image of images) {
-      const child = await createInstagramMediaContainer(origin, input, {
-        image_url: image.url,
-        is_carousel_item: "true",
-        ...instagramAltText(image),
-      });
+    for (const item of input.assets) {
+      const child = await createInstagramMediaContainer(origin, input, item.kind === "video"
+        ? { media_type: "VIDEO", video_url: item.url, is_carousel_item: "true" }
+        : { image_url: item.url, is_carousel_item: "true", ...instagramAltText(item) });
       if (!child.ok) return child.result;
       children.push(child.id);
       created.push(child.response);
@@ -2581,6 +2681,8 @@ function validateFacebookDraft(input: {
   if (characterLength(body) > FACEBOOK_MAX_CHARS) {
     return { ok: false, error: `This Facebook post is too long (max ${FACEBOOK_MAX_CHARS} characters).` };
   }
+  const documents = documentError(input.assets, "Facebook");
+  if (documents) return documents;
   if (input.assets.some((asset) => asset.kind === "video")) {
     return { ok: false, error: "Facebook posts from ME3 support images, not video." };
   }

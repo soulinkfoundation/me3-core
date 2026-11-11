@@ -11,7 +11,7 @@ export type SocialPlatform =
   | "youtube"
   | "tiktok";
 
-export type SocialContentType = "text" | "image" | "carousel" | "short_video";
+export type SocialContentType = "text" | "image" | "carousel" | "short_video" | "document";
 export type SocialDeliveryMode = "direct_publish" | "provider_draft" | "draft_only";
 
 export type SocialPlatformContentRule = {
@@ -21,7 +21,7 @@ export type SocialPlatformContentRule = {
   maxTextCharacters: number | null;
   minMediaItems: number;
   maxMediaItems: number;
-  allowedMediaKinds: Array<"image" | "video">;
+  allowedMediaKinds: Array<"image" | "video" | "document">;
   allowedMimeTypes: string[];
   maxBytesPerItem: number | null;
   guidance: string | null;
@@ -169,7 +169,7 @@ export type SocialMediaAsset = {
   fileId?: string;
   filename?: string;
   mimeType?: string;
-  kind?: "image" | "video";
+  kind?: "image" | "video" | "document";
   altText?: string;
   contentHash?: string;
   byteLength?: number;
