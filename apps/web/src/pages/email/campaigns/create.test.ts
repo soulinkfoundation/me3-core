@@ -141,7 +141,7 @@ describe("campaign editor", () => {
 
     expect(wrapper.find(".progress-bar").exists()).toBe(false);
     expect(wrapper.text()).not.toContain("Exit");
-    expect(wrapper.get(".campaign-editor-bar__back").attributes("href")).toBe("/email/campaigns");
+    expect(wrapper.find(".campaign-editor-bar__back").exists()).toBe(false);
     const fields = wrapper.findAll(".campaign-editor__main input");
     expect(fields.map((field) => (field.element as HTMLInputElement).value)).toEqual([
       "August update",

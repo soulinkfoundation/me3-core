@@ -25,6 +25,8 @@ definePage({
     requiresAuth: true,
     // Email hides the top bar on wide screens; Campaigns is its own destination and keeps it (with Home).
     hideTopBarOnWide: false,
+    // The top-bar arrow is this page's only back control.
+    back: { to: "/email/campaigns", label: "Campaigns" },
     title: "Campaign | ME3",
     description: "A campaign and how it went.",
     robots: "noindex,follow",
@@ -182,7 +184,6 @@ onMounted(() => void load());
 <template>
   <main class="campaign-page">
     <div class="campaign-column">
-      <RouterLink class="campaign-back" to="/email/campaigns">← Campaigns</RouterLink>
       <PageLoading v-if="loading" label="Loading campaign…" />
       <section v-else-if="!campaign" class="campaign-missing">
         <h1>This campaign couldn't be opened</h1>
@@ -290,9 +291,6 @@ onMounted(() => void load());
 <style scoped>
 .campaign-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
 .campaign-column { box-sizing: border-box; width: min(100%, 560px); margin: 0 auto; padding: 8px 16px 96px; }
-.campaign-back { display: inline-flex; min-height: 32px; align-items: center; color: var(--ui-text-muted); font-size: 14px; text-decoration: none; }
-.campaign-back:hover { color: var(--ui-text); }
-.campaign-back:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; border-radius: 6px; }
 .campaign-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 8px; }
 .campaign-header h1 { margin: 0; font-size: 22px; font-weight: 650; line-height: 1.25; overflow-wrap: anywhere; }
 .campaign-header p { margin: 4px 0 0; color: var(--ui-text-muted); font-size: 14px; }

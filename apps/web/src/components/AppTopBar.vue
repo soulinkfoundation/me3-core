@@ -5,11 +5,16 @@ import AppProfileMenu from "./AppProfileMenu.vue";
 import UiIcon from "./UiIcon.vue";
 const route = useRoute();
 const home = computed(() => route.path === "/assistant" && route.query.mode !== "site-builder");
+// One back control per screen: a page names its parent with `meta.back` instead of drawing its own back link.
+const back = computed(() => {
+  const value = route.meta.back as { to: string; label: string } | undefined;
+  return value?.to ? value : { to: "/assistant", label: "Home" };
+});
 </script>
 
 <template>
   <header class="app-top-bar" aria-label="App navigation">
-    <RouterLink v-if="!home" to="/assistant" class="app-home-link" aria-label="Home"><UiIcon name="ArrowLeft" :size="18" /></RouterLink>
+    <RouterLink v-if="!home" :to="back.to" class="app-home-link" :aria-label="back.label === 'Home' ? 'Home' : `Back to ${back.label}`" :title="back.label === 'Home' ? undefined : `Back to ${back.label}`"><UiIcon name="ArrowLeft" :size="18" /></RouterLink>
     <!-- Pages teleport their main control (day or month switcher, search) here instead of adding a second header row. -->
     <div id="app-page-controls" class="app-top-bar__controls" />
     <AppProfileMenu v-if="home" />

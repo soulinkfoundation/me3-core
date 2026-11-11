@@ -35,6 +35,8 @@ definePage({
     requiresAuth: true,
     // Email hides the top bar on wide screens; Campaigns is its own destination and keeps it (with Home).
     hideTopBarOnWide: false,
+    // The top-bar arrow is this page's only back control.
+    back: { to: "/email/campaigns", label: "Campaigns" },
     title: "Campaign | ME3",
     description: "Write an email campaign.",
     robots: "noindex,follow",
@@ -739,7 +741,6 @@ onBeforeUnmount(() => {
 <template>
   <main class="campaign-editor-page">
     <header class="campaign-editor-bar">
-      <RouterLink class="campaign-editor-bar__back" to="/email/campaigns">← Campaigns</RouterLink>
       <div v-if="!loading && !loadFailed && canDraftCampaign" class="campaign-editor-bar__actions">
         <span class="campaign-editor-bar__saved" aria-live="polite">{{ saveState }}</span>
         <Button
@@ -1033,11 +1034,9 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* Lives in the Campaigns destination: the app top bar, then this page's own back link and actions. */
+/* Lives in the Campaigns destination: the app top bar, then this page's actions. */
 .campaign-editor-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
-.campaign-editor-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; box-sizing: border-box; width: min(100%, 1040px); margin: 0 auto; padding: 4px 16px 8px; }
-.campaign-editor-bar__back { display: inline-flex; min-height: 36px; align-items: center; color: var(--ui-text-muted); font-size: 14px; text-decoration: none; }
-.campaign-editor-bar__back:hover { color: var(--ui-text); }
+.campaign-editor-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; box-sizing: border-box; width: min(100%, 1040px); margin: 0 auto; padding: 4px 16px 8px; }
 .campaign-editor-bar__actions { display: flex; align-items: center; gap: 8px; }
 .campaign-editor-bar__saved { color: var(--ui-text-muted); font-size: 12px; }
 .campaign-editor-bar a:focus-visible, .campaign-side-block__change:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; border-radius: 6px; }
