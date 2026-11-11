@@ -84,6 +84,19 @@ describe("campaign document", () => {
       }),
     ).toThrow(CampaignDocumentValidationError);
   });
+
+  it("names the link the owner needs to fix", () => {
+    expect(() =>
+      parseCampaignDocument({
+        ...documentFixture(),
+        blocks: [{
+          id: "text",
+          type: "text",
+          paragraphs: [{ style: "body", spans: [{ text: "Book a call", link: "YOUR_CALL_LINK" }] }],
+        }],
+      }),
+    ).toThrow(`The link "YOUR_CALL_LINK" isn't a web address. Links need to start with https://`);
+  });
 });
 
 describe("campaign renderer", () => {

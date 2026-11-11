@@ -1,3 +1,4 @@
+import { CampaignDocumentValidationError } from "../../../../shared/campaign-document";
 import {
   CampaignAssetInputError,
   loadPublicCampaignAsset,
@@ -440,6 +441,10 @@ function campaignError(
       { error: error.message, code: error.code },
       error.status,
     );
+  }
+  if (error instanceof CampaignDocumentValidationError) {
+    // The editor shows this as-is, so it must say what to fix.
+    return c.json({ error: error.message, code: "campaign_content_invalid" }, 400);
   }
   console.error("Campaign request failed", error);
   return c.json(

@@ -207,7 +207,9 @@ function parseBlock(rawBlock: unknown, index: number, issues: string[]): Campaig
     const label = normalizeText(rawBlock.label, 160);
     const href = normalizeHttpUrl(rawBlock.href);
     if (!label) issues.push(`Button block ${index + 1} needs a label`);
-    if (!href) issues.push(`Button block ${index + 1} needs an absolute HTTP(S) URL`);
+    if (!href) {
+      issues.push(`The button${label ? ` "${label.slice(0, 60)}"` : ""} needs a link that starts with https://`);
+    }
     return {
       id: id || `block-${index + 1}`,
       type: "button",
@@ -263,7 +265,7 @@ function parseParagraph(
       : [];
     const link = rawSpan.link === undefined ? undefined : normalizeHttpUrl(rawSpan.link) || undefined;
     if (rawSpan.link !== undefined && !link) {
-      issues.push(`Span ${spanIndex + 1} in paragraph ${paragraphIndex + 1} has an invalid link`);
+      issues.push(`The link ${quotedLink(rawSpan.link)} isn't a web address. Links need to start with https://`);
     }
     return [{ text, ...(marks.length ? { marks } : {}), ...(link ? { link } : {}) }];
   });
@@ -307,6 +309,11 @@ export function normalizeMailingAddress(value: unknown): string {
     .join(", ")
     .replace(/\s+/g, " ")
     .slice(0, 300);
+}
+
+function quotedLink(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text ? `"${text.length > 60 ? `${text.slice(0, 57)}...` : text}"` : "(empty)";
 }
 
 function normalizeText(value: unknown, maxLength: number, trim = true): string {
