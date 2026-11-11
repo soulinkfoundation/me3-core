@@ -9,7 +9,12 @@ import { moveItem } from "../../utils/social-posts";
  * reorder. Remove sits in the top-right corner, Crop in the top-left.
  */
 const props = defineProps<{ images: SocialMediaAsset[]; locked?: boolean }>();
-const emit = defineEmits<{ reorder: [images: SocialMediaAsset[]]; remove: [index: number]; crop: [index: number] }>();
+const emit = defineEmits<{
+  reorder: [images: SocialMediaAsset[]];
+  remove: [index: number];
+  crop: [index: number];
+  alt: [index: number];
+}>();
 
 const order = ref<SocialMediaAsset[]>([...props.images]);
 const dragging = ref<number | null>(null);
@@ -103,6 +108,13 @@ async function onKey(event: KeyboardEvent, index: number) {
           <button type="button" class="tile__tool tile__tool--crop" :aria-label="`Crop image ${index + 1}`" @click="emit('crop', index)">
             <UiIcon name="Crop" :size="13" />
           </button>
+          <button
+            type="button"
+            class="tile__alt"
+            :class="{ 'is-set': asset.altText?.trim() }"
+            :aria-label="asset.altText?.trim() ? `Edit alt text for image ${index + 1}` : `Add alt text to image ${index + 1}`"
+            @click="emit('alt', index)"
+          >ALT<template v-if="asset.altText?.trim()"> ✓</template></button>
           <button type="button" class="tile__tool tile__tool--remove" :aria-label="`Remove image ${index + 1}`" @click="emit('remove', index)">
             <UiIcon name="X" :size="13" />
           </button>
@@ -150,6 +162,22 @@ async function onKey(event: KeyboardEvent, index: number) {
   transition: opacity .12s ease;
 }
 .tile__tool--remove { right: 4px; }
+.tile__alt {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 1px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .62);
+  color: #fff;
+  font: 700 10px/1.5 var(--font-sans);
+  letter-spacing: .02em;
+  cursor: pointer;
+}
+.tile__alt:not(.is-set) { opacity: .85; }
+.tile__alt:hover { background: rgba(0, 0, 0, .82); }
+.tile__alt:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
 .tile__tool--crop { left: 4px; }
 .tile__tool:hover { background: rgba(0, 0, 0, .82); }
 .tile__tool:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }

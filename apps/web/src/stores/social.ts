@@ -803,6 +803,13 @@ export const useSocialStore = defineStore("social", () => {
     return data.post;
   }
 
+  /** An AI draft of alt text from a small JPEG data URL; the owner edits it before saving. */
+  async function draftAltText(image: string, context: string): Promise<string> {
+    const data = await api.post<{ altText?: string }>("/social/alt-text", { image, context });
+    if (!data.altText) throw new Error("ME3 couldn't describe this image.");
+    return data.altText;
+  }
+
   async function deletePostVersion(versionId: string): Promise<SocialPostDetail> {
     error.value = null;
     const data = await api.delete<{ post: SocialPostDetail }>(
@@ -1098,6 +1105,7 @@ export const useSocialStore = defineStore("social", () => {
     updateSocialPost,
     addPostVersion,
     deletePostVersion,
+    draftAltText,
     deleteSocialPost,
     listDriveFolders,
     listDriveFiles,

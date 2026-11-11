@@ -2355,6 +2355,7 @@ async function publishInstagram(
       const child = await createInstagramMediaContainer(origin, input, {
         image_url: image.url,
         is_carousel_item: "true",
+        ...instagramAltText(image),
       });
       if (!child.ok) return child.result;
       children.push(child.id);
@@ -2378,6 +2379,7 @@ async function publishInstagram(
     const single = await createInstagramMediaContainer(origin, input, {
       image_url: image.url,
       caption: input.bodyText,
+      ...instagramAltText(image),
     });
     if (!single.ok) return single.result;
     creationId = single.id;
@@ -2450,6 +2452,12 @@ async function instagramPermalink(
   } catch {
     return undefined;
   }
+}
+
+/** Instagram takes alt text on image containers (not Reels), up to 1,000 characters. */
+function instagramAltText(image: SocialMediaAsset): { alt_text?: string } {
+  const altText = image.altText?.trim();
+  return altText ? { alt_text: Array.from(altText).slice(0, 1_000).join("") } : {};
 }
 
 async function createInstagramMediaContainer(

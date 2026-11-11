@@ -48,6 +48,7 @@ import {
 } from "../social-publishing";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { fetchSocialLinkPreview } from "../social-link-preview";
+import { AltTextInputError, draftSocialAltText } from "../social-alt-text";
 
 export function registerSocialContentRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.get("/api/social/link-preview", async (c) => {
@@ -421,6 +422,20 @@ export function registerSocialContentRoutes(app: AppHono, deps: OwnerRouteDeps) 
       if (!post) return c.json({ ok: false, error: "Post Version not found" }, 404);
       return c.json({ ok: true, post });
     } catch (error) {
+      return socialContentErrorResponse(c, error);
+    }
+  });
+
+  app.post("/api/social/alt-text", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const body = await c.req.json<{ image?: unknown; context?: unknown }>().catch(() => ({}));
+
+    try {
+      await requireSocialPublishing(c);
+      return c.json({ ok: true, altText: await draftSocialAltText(c.env, ownerId, body) });
+    } catch (error) {
+      if (error instanceof AltTextInputError) return c.json({ ok: false, error: error.message }, error.status);
       return socialContentErrorResponse(c, error);
     }
   });

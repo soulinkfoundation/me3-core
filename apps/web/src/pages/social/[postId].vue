@@ -9,6 +9,7 @@ import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import AppPageBar from "../../components/AppPageBar.vue";
 import FilesMediaPicker from "../../components/files/FilesMediaPicker.vue";
+import SocialAltTextDialog from "../../components/social/SocialAltTextDialog.vue";
 import SocialImageTiles from "../../components/social/SocialImageTiles.vue";
 import SocialPostPreview from "../../components/social/SocialPostPreview.vue";
 import SocialImageCropper from "../../components/social/SocialImageCropper.vue";
@@ -75,6 +76,8 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const videoInput = ref<HTMLInputElement | null>(null);
 const filesPickerOpen = ref(false);
 const cropIndex = ref<number | null>(null);
+const altIndex = ref<number | null>(null);
+const altAsset = computed(() => (altIndex.value === null ? null : activeImages.value[altIndex.value] || null));
 const cropAsset = computed(() => (cropIndex.value === null ? null : activeImages.value[cropIndex.value] || null));
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const when = ref(localParts(suggestedTime()));
@@ -344,6 +347,24 @@ function setImages(images: SocialMediaAsset[]) {
 
 function removeImage(index: number) {
   setImages(activeImages.value.filter((_, position) => position !== index));
+}
+
+function sameImage(a: SocialMediaAsset, b: SocialMediaAsset): boolean {
+  return a.fileId ? a.fileId === b.fileId : a.url === b.url;
+}
+
+/** Alt text describes the image, so it follows that image onto every platform still in Drafts. */
+function saveAltText(altText: string) {
+  const target = altAsset.value;
+  const current = active.value;
+  altIndex.value = null;
+  if (!target || !current) return;
+  for (const version of [current, ...pending.value.filter((item) => item.id !== current.id)]) {
+    if (!version.assetManifest.some((asset) => sameImage(asset, target))) continue;
+    const next = version.assetManifest.map((asset) => (sameImage(asset, target) ? { ...asset, altText } : asset));
+    replaceVersion({ ...version, assetManifest: next });
+    void saveVersion(version, { assetManifest: next });
+  }
 }
 
 /** The cropped copy is saved to Files and takes the original's place in the post. */
@@ -771,6 +792,7 @@ function resultHref(version: PostVersion, result: VersionResult): string | null 
 // The URL names the platform, never an internal id.
 watch(activeId, (next) => {
   cropIndex.value = null;
+  altIndex.value = null;
   const platform = versions.value.find((version) => version.id === next)?.platform;
   if (platform && route.query.platform !== platform) void router.replace({ query: { ...route.query, platform } });
 });
@@ -948,6 +970,7 @@ onMounted(async () => {
                 @reorder="setImages"
                 @remove="removeImage"
                 @crop="cropIndex = $event"
+                @alt="altIndex = $event"
               />
               <div v-if="activeVideo" class="post-video__file">
                 <UiIcon name="Video" :size="16" />
@@ -1074,6 +1097,13 @@ onMounted(async () => {
       danger
       @cancel="confirmRemove = null"
       @confirm="removePlatform"
+    />
+    <SocialAltTextDialog
+      :open="altAsset !== null"
+      :image="altAsset"
+      :draft="(image: string) => social.draftAltText(image, activeText)"
+      @close="altIndex = null"
+      @save="saveAltText"
     />
     <SocialImageCropper
       :open="cropAsset !== null"

@@ -1024,10 +1024,11 @@ describe("Instagram publishing adapter", () => {
 
   it("waits for a single image container before publishing it", async () => {
     const requests: string[] = [];
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       requests.push(url);
       if (url.endsWith("/ig-owner/media")) {
+        expect(new URLSearchParams(String(init?.body)).get("alt_text")).toBe("A green launch banner.");
         return Response.json({ id: "single-image-container" });
       }
       if (url.includes("/single-image-container?fields=status_code")) {
@@ -1043,7 +1044,7 @@ describe("Instagram publishing adapter", () => {
       accessToken: "ig-token",
       accountId: "ig-owner",
       bodyText: "A single image.",
-      assets: [{ url: "https://media.example/image.jpg", kind: "image" }],
+      assets: [{ url: "https://media.example/image.jpg", kind: "image", altText: " A green launch banner. " }],
       fetcher: fetcher as typeof fetch,
     })).resolves.toMatchObject({ ok: true, platformPostId: "instagram-image-1" });
 

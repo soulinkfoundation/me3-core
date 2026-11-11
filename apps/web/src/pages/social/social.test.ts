@@ -402,5 +402,40 @@ describe("Social review", () => {
     }));
     expect(routerPush).toHaveBeenCalledWith("/social/post-2");
   });
+
+  it("saves alt text to the same image on every draft platform", async () => {
+    const image = { url: "/api/files/f1/content", fileId: "f1", kind: "image" as const, mimeType: "image/png", altText: "", assetIndex: 0 };
+    const current = post([
+      version({ id: "x-1", assetManifest: [image] }),
+      version({ id: "li-1", platform: "linkedin", assetManifest: [image] }),
+    ]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x"), account("linkedin")] },
+      "/social/posts/post-1": { post: current },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPatch.mockImplementation((path: string, body: object) => Promise.resolve({ version: { ...current.versions.find((item) => path.endsWith(item.id)), ...body } }));
+    const wrapper = mount(SocialPost, {
+      global: {
+        stubs: {
+          ...stubs,
+          SocialAltTextDialog: { name: "SocialAltTextDialog", props: ["open"], emits: ["save"], template: "<div v-if=\"open\" class=\"alt-stub\" />" },
+        },
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get('[aria-label="Add alt text to image 1"]').trigger("click");
+    expect(wrapper.find(".alt-stub").exists()).toBe(true);
+    wrapper.findComponent({ name: "SocialAltTextDialog" }).vm.$emit("save", "A green launch banner.");
+    await flushPromises();
+
+    for (const id of ["x-1", "li-1"]) {
+      expect(apiPatch).toHaveBeenCalledWith(`/social/versions/${id}`, { assetManifest: [expect.objectContaining({ fileId: "f1", altText: "A green launch banner." })] });
+    }
+    expect(wrapper.get('[aria-label="Edit alt text for image 1"]').text()).toBe("ALT ✓");
+  });
 });
 
