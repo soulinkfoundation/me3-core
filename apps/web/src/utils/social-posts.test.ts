@@ -42,7 +42,7 @@ describe("social posts", () => {
       { message: "X takes MP4 video, and this is a MOV (iPhone) file. Export it as MP4 and add it again.", blocking: true, field: "images" },
     ]);
     expect(versionChecks(version({ assetManifest: [{ ...mov, mimeType: "video/mp4" }] }), capabilities)).toEqual([]);
-    expect(versionChecks(version({ platform: "linkedin", assetManifest: [mov] }), capabilities)[0]).toMatchObject({ message: "LinkedIn doesn't take video here. Remove it or use images." });
+    expect(versionChecks(version({ platform: "facebook", assetManifest: [mov] }), capabilities)[0]).toMatchObject({ message: "Facebook doesn't take video here. Remove it or use images." });
   });
 
   it("gives each failure class one next step", () => {

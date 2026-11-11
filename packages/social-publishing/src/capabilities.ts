@@ -119,6 +119,12 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
         "Two to twenty ordered images publish as a LinkedIn multi-image post.",
         ["image/jpeg", "image/png", "image/gif"],
       ),
+      shortVideoRule(
+        3_000,
+        ["video/mp4"],
+        500 * 1024 * 1024,
+        "Publishes one MP4 video (75 KB to 500 MB). LinkedIn takes one video or images, not both.",
+      ),
     ],
     reason: null,
   },

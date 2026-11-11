@@ -164,18 +164,121 @@ describe("LinkedIn publishing adapter", () => {
     expect(fetcher).toHaveBeenCalledTimes(8);
   });
 
+  it("uploads one MP4 through the Videos API and waits until it is available", async () => {
+    const size = 100 * 1024;
+    const videoBytes = new Uint8Array(size).fill(7);
+    const calls: string[] = [];
+    let statusChecks = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push(`${init?.method || "GET"} ${url}`);
+      if (url.endsWith("/v2/userinfo")) return Response.json({ sub: "member-1" });
+      if (url.includes("/rest/videos?action=initializeUpload")) {
+        expect(new Headers(init?.headers).get("Linkedin-Version")).toBe("202606");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          initializeUploadRequest: {
+            owner: "urn:li:person:member-1",
+            fileSizeBytes: size,
+            uploadCaptions: false,
+            uploadThumbnail: false,
+          },
+        });
+        return Response.json({
+          value: {
+            video: "urn:li:video:v1",
+            uploadToken: "",
+            uploadInstructions: [
+              { uploadUrl: "https://upload.linkedin.example/part-1", firstByte: 0, lastByte: 65_535 },
+              { uploadUrl: "https://upload.linkedin.example/part-2", firstByte: 65_536, lastByte: size - 1 },
+            ],
+          },
+        });
+      }
+      if (url === "https://media.example/launch.mp4") {
+        const range = new Headers(init?.headers).get("Range")!;
+        const [first, last] = range.replace("bytes=", "").split("-").map(Number);
+        return new Response(videoBytes.slice(first, last! + 1), { status: 206 });
+      }
+      if (url.startsWith("https://upload.linkedin.example/")) {
+        expect(init?.method).toBe("PUT");
+        expect((init?.body as ArrayBuffer).byteLength).toBe(url.endsWith("part-1") ? 65_536 : size - 65_536);
+        return new Response(null, { status: 200, headers: { etag: url.endsWith("part-1") ? "etag-1" : "etag-2" } });
+      }
+      if (url.includes("/rest/videos?action=finalizeUpload")) {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          finalizeUploadRequest: { video: "urn:li:video:v1", uploadToken: "", uploadedPartIds: ["etag-1", "etag-2"] },
+        });
+        return new Response(null, { status: 200 });
+      }
+      if (url === `https://api.linkedin.com/rest/videos/${encodeURIComponent("urn:li:video:v1")}`) {
+        statusChecks += 1;
+        return Response.json({ status: statusChecks === 1 ? "PROCESSING" : "AVAILABLE" });
+      }
+      if (url.endsWith("/rest/posts")) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          commentary: "Launch video.",
+          content: { media: { id: "urn:li:video:v1" } },
+        });
+        return new Response("{}", { status: 201, headers: { "x-restli-id": "urn:li:share:video-post" } });
+      }
+      throw new Error(`Unexpected LinkedIn request: ${url}`);
+    });
+
+    vi.useFakeTimers();
+    const pending = adapterFor("linkedin").publish({
+      accessToken: "token",
+      accountId: "member-1",
+      bodyText: "Launch video.",
+      assets: [{ url: "https://media.example/launch.mp4", kind: "video", mimeType: "video/mp4", byteLength: size }],
+      fetcher: fetcher as typeof fetch,
+    });
+    await vi.runAllTimersAsync();
+    const result = await pending;
+    vi.useRealTimers();
+
+    expect(result).toMatchObject({ ok: true, platformPostId: "urn:li:share:video-post" });
+    expect(statusChecks).toBe(2);
+    expect(calls.at(-1)).toBe("POST https://api.linkedin.com/rest/posts");
+  });
+
+  it("stops before posting when LinkedIn can't process the video", async () => {
+    const size = 80 * 1024;
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v2/userinfo")) return Response.json({ sub: "member-1" });
+      if (url.includes("initializeUpload")) {
+        return Response.json({ value: { video: "urn:li:video:v2", uploadToken: "t", uploadInstructions: [{ uploadUrl: "https://upload.linkedin.example/p", firstByte: 0, lastByte: size - 1 }] } });
+      }
+      if (url === "https://media.example/v.mp4") return new Response(new Uint8Array(size), { status: 200 });
+      if (url === "https://upload.linkedin.example/p") return new Response(null, { status: 200, headers: { etag: "e" } });
+      if (url.includes("finalizeUpload")) return new Response(null, { status: 200 });
+      if (url.includes("/rest/videos/")) return Response.json({ status: "PROCESSING_FAILED" });
+      throw new Error(`Unexpected LinkedIn request: ${url}`);
+    });
+
+    const result = await adapterFor("linkedin").publish({
+      accessToken: "token",
+      accountId: "member-1",
+      bodyText: "Launch video.",
+      assets: [{ url: "https://media.example/v.mp4", kind: "video", mimeType: "video/mp4", byteLength: size }],
+      fetcher: fetcher as typeof fetch,
+    });
+
+    expect(result).toMatchObject({ ok: false, errorCode: "linkedin_video_processing", failureClass: "rejected" });
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/rest/posts"))).toBe(false);
+  });
+
   it("rejects unsupported LinkedIn media before delivery", () => {
+    const mp4 = { url: "https://cdn.example/video.mp4", kind: "video" as const, mimeType: "video/mp4", byteLength: 200_000 };
+    expect(adapterFor("linkedin").validateDraft({ bodyText: "A video.", assets: [mp4] })).toEqual({ ok: true });
     expect(adapterFor("linkedin").validateDraft({
       bodyText: "A video.",
-      assets: [{
-        url: "https://cdn.example/video.mp4",
-        kind: "video",
-        mimeType: "video/mp4",
-      }],
-    })).toEqual({
-      ok: false,
-      error: "LinkedIn publishing currently supports text and image posts.",
-    });
+      assets: [{ ...mp4, mimeType: "video/quicktime" }],
+    })).toEqual({ ok: false, error: "LinkedIn video publishing currently supports MP4 files." });
+    expect(adapterFor("linkedin").validateDraft({
+      bodyText: "A video and an image.",
+      assets: [mp4, { url: "https://cdn.example/a.png", kind: "image", mimeType: "image/png" }],
+    })).toEqual({ ok: false, error: "A LinkedIn video post must contain exactly one video and no images." });
     expect(adapterFor("linkedin").validateDraft({
       bodyText: "Too many images.",
       assets: Array.from({ length: 21 }, (_, index) => ({

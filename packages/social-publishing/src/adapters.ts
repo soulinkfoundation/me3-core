@@ -61,6 +61,11 @@ const LINKEDIN_IMAGE_MIME_TYPES = new Set([
   "image/gif",
 ]);
 const LINKEDIN_VERSION = "202606";
+const LINKEDIN_VIDEO_MIME_TYPES = new Set(["video/mp4"]);
+const LINKEDIN_VIDEO_MIN_BYTES = 75 * 1024;
+const LINKEDIN_VIDEO_MAX_BYTES = 500 * 1024 * 1024;
+const LINKEDIN_VIDEO_STATUS_ATTEMPTS = 10;
+const LINKEDIN_VIDEO_STATUS_POLL_MS = 3_000;
 const INSTAGRAM_MAX_CHARS = 2200;
 const INSTAGRAM_CAROUSEL_MAX_ITEMS = 10;
 const INSTAGRAM_VIDEO_MAX_BYTES = 1024 * 1024 * 1024;
@@ -297,8 +302,27 @@ const linkedInAdapter: SocialPublishAdapter = {
         error: `This LinkedIn draft is too long (max ${LINKEDIN_MAX_CHARS} characters).`,
       };
     }
-    if (input.assets.some((asset) => asset.kind === "video")) {
-      return { ok: false, error: "LinkedIn publishing currently supports text and image posts." };
+    const videos = input.assets.filter((asset) => asset.kind === "video");
+    if (videos.length > 0) {
+      if (input.assets.length !== 1 || videos.length !== 1) {
+        return { ok: false, error: "A LinkedIn video post must contain exactly one video and no images." };
+      }
+      const video = videos[0]!;
+      if (!video.url?.trim()) return { ok: false, error: "The LinkedIn video needs a delivery URL." };
+      const mimeType = normalizeMimeType(video.mimeType);
+      if (!mimeType || !LINKEDIN_VIDEO_MIME_TYPES.has(mimeType)) {
+        return { ok: false, error: "LinkedIn video publishing currently supports MP4 files." };
+      }
+      if (!Number.isSafeInteger(video.byteLength) || (video.byteLength ?? 0) <= 0) {
+        return { ok: false, error: "LinkedIn needs the video file size before it can upload." };
+      }
+      if (video.byteLength! < LINKEDIN_VIDEO_MIN_BYTES) {
+        return { ok: false, error: "The LinkedIn video is smaller than 75 KB." };
+      }
+      if (video.byteLength! > LINKEDIN_VIDEO_MAX_BYTES) {
+        return { ok: false, error: "The LinkedIn video is larger than 500 MB." };
+      }
+      return { ok: true };
     }
     if (input.assets.length > LINKEDIN_IMAGE_COUNT_LIMIT) {
       return {
@@ -369,7 +393,14 @@ const linkedInAdapter: SocialPublishAdapter = {
 
     const author = sub.startsWith("urn:li:") ? sub : `urn:li:person:${sub}`;
     const uploadedImages: Array<{ id: string; altText?: string }> = [];
-    for (const [index, asset] of input.assets.entries()) {
+    let videoUrn: string | null = null;
+    const videoAsset = input.assets.find((asset) => asset.kind === "video");
+    if (videoAsset) {
+      const upload = await uploadLinkedInVideo(input, author, videoAsset);
+      if (!upload.ok) return upload.result;
+      videoUrn = upload.video;
+    }
+    for (const [index, asset] of (videoAsset ? [] : input.assets).entries()) {
       let imageResponse: Response;
       try {
         imageResponse = await input.fetcher(asset.url);
@@ -452,7 +483,9 @@ const linkedInAdapter: SocialPublishAdapter = {
       });
     }
 
-    const content = uploadedImages.length === 1
+    const content = videoUrn
+      ? { media: { id: videoUrn } }
+      : uploadedImages.length === 1
       ? { media: uploadedImages[0]! }
       : uploadedImages.length > 1
         ? { multiImage: { images: uploadedImages } }
@@ -516,6 +549,229 @@ const linkedInAdapter: SocialPublishAdapter = {
     };
   },
 };
+
+type LinkedInVideoUploadResult =
+  | { ok: true; video: string }
+  | { ok: false; result: SocialPublishAdapterResult };
+
+/**
+ * LinkedIn Videos API: initialize, PUT each byte range LinkedIn asks for, finalize with the
+ * returned ETags, then wait until the video is AVAILABLE before the post references it.
+ */
+async function uploadLinkedInVideo(
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+  author: string,
+  asset: SocialMediaAsset,
+): Promise<LinkedInVideoUploadResult> {
+  const byteLength = asset.byteLength!;
+  const fail = (
+    code: string,
+    message: string,
+    details?: unknown,
+    failureClass?: SocialPublishFailureClass,
+  ): LinkedInVideoUploadResult => ({
+    ok: false,
+    result: providerError(code, message, details, failureClass),
+  });
+
+  let initializeResponse: Response;
+  try {
+    initializeResponse = await input.fetcher(
+      "https://api.linkedin.com/rest/videos?action=initializeUpload",
+      {
+        method: "POST",
+        headers: linkedInHeaders(input.accessToken),
+        body: JSON.stringify({
+          initializeUploadRequest: {
+            owner: author,
+            fileSizeBytes: byteLength,
+            uploadCaptions: false,
+            uploadThumbnail: false,
+          },
+        }),
+      },
+    );
+  } catch (error) {
+    return fail(
+      "linkedin_video_initialize",
+      "LinkedIn did not finish preparing the video. ME3 can safely try again.",
+      describeFetchError(error),
+      "retryable",
+    );
+  }
+  const initialized = await readJson<{
+    value?: {
+      video?: string;
+      uploadToken?: string;
+      uploadInstructions?: Array<{ uploadUrl?: string; firstByte?: number; lastByte?: number }>;
+    };
+    message?: string;
+  }>(initializeResponse);
+  const video = initialized.value?.video;
+  const instructions = initialized.value?.uploadInstructions || [];
+  if (!initializeResponse.ok || !video || !instructions.length) {
+    return fail(
+      "linkedin_video_initialize",
+      initialized.message || `LinkedIn could not prepare the video (${initializeResponse.status}).`,
+      initialized,
+      initializeResponse.ok ? "rejected" : failureClassForStatus(initializeResponse.status),
+    );
+  }
+
+  const partIds: string[] = [];
+  for (const [index, instruction] of instructions.entries()) {
+    const first = Number(instruction.firstByte);
+    const last = Number(instruction.lastByte);
+    if (
+      !instruction.uploadUrl ||
+      !Number.isSafeInteger(first) ||
+      !Number.isSafeInteger(last) ||
+      first < 0 ||
+      last < first ||
+      last >= byteLength
+    ) {
+      return fail("linkedin_video_instructions", "LinkedIn returned an upload plan ME3 can't follow.", initialized);
+    }
+    const expectedBytes = last - first + 1;
+    let sourceResponse: Response;
+    try {
+      sourceResponse = await input.fetcher(asset.url, { headers: { Range: `bytes=${first}-${last}` } });
+    } catch (error) {
+      return fail(
+        "linkedin_video_fetch",
+        `Could not load LinkedIn video part ${index + 1}. ME3 can safely try again.`,
+        describeFetchError(error),
+        "retryable",
+      );
+    }
+    if (!sourceResponse.ok || (expectedBytes < byteLength && sourceResponse.status !== 206)) {
+      return fail(
+        "linkedin_video_fetch",
+        `Could not load LinkedIn video part ${index + 1} (${sourceResponse.status}).`,
+        await sourceResponse.text().catch(() => ""),
+        failureClassForStatus(sourceResponse.status),
+      );
+    }
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await readBoundedBytes(sourceResponse, expectedBytes);
+    } catch (error) {
+      return fail(
+        "linkedin_video_fetch",
+        `Could not finish loading LinkedIn video part ${index + 1}.`,
+        describeFetchError(error),
+        "retryable",
+      );
+    }
+    if (!bytes || bytes.byteLength !== expectedBytes) {
+      return fail(
+        "linkedin_video_range",
+        `LinkedIn video part ${index + 1} did not contain the expected bytes.`,
+        { expectedBytes, receivedBytes: bytes?.byteLength ?? null },
+        "retryable",
+      );
+    }
+    let uploadResponse: Response;
+    try {
+      uploadResponse = await input.fetcher(instruction.uploadUrl, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${input.accessToken}`,
+          "Content-Type": "application/octet-stream",
+        },
+        body: copyBytesToArrayBuffer(bytes),
+      });
+    } catch (error) {
+      return fail(
+        "linkedin_video_upload",
+        `LinkedIn did not finish uploading video part ${index + 1}. ME3 can safely try again.`,
+        describeFetchError(error),
+        "retryable",
+      );
+    }
+    const etag = uploadResponse.headers.get("etag");
+    if (!uploadResponse.ok || !etag) {
+      return fail(
+        "linkedin_video_upload",
+        `LinkedIn could not upload video part ${index + 1}.`,
+        await uploadResponse.text().catch(() => ""),
+        uploadResponse.ok ? "retryable" : failureClassForStatus(uploadResponse.status),
+      );
+    }
+    partIds.push(etag);
+  }
+
+  let finalizeResponse: Response;
+  try {
+    finalizeResponse = await input.fetcher(
+      "https://api.linkedin.com/rest/videos?action=finalizeUpload",
+      {
+        method: "POST",
+        headers: linkedInHeaders(input.accessToken),
+        body: JSON.stringify({
+          finalizeUploadRequest: {
+            video,
+            uploadToken: initialized.value?.uploadToken || "",
+            uploadedPartIds: partIds,
+          },
+        }),
+      },
+    );
+  } catch (error) {
+    return fail(
+      "linkedin_video_finalize",
+      "LinkedIn did not finish the video upload. ME3 can safely try again.",
+      describeFetchError(error),
+      "retryable",
+    );
+  }
+  if (!finalizeResponse.ok) {
+    const body = await readJson<{ message?: string }>(finalizeResponse);
+    return fail(
+      "linkedin_video_finalize",
+      body.message || `LinkedIn could not finish the video upload (${finalizeResponse.status}).`,
+      body,
+      failureClassForStatus(finalizeResponse.status),
+    );
+  }
+
+  const statusUrl = `https://api.linkedin.com/rest/videos/${encodeURIComponent(video)}`;
+  let lastStatus: unknown = null;
+  for (let attempt = 0; attempt < LINKEDIN_VIDEO_STATUS_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) await wait(LINKEDIN_VIDEO_STATUS_POLL_MS);
+    let statusResponse: Response;
+    try {
+      statusResponse = await input.fetcher(statusUrl, { headers: linkedInHeaders(input.accessToken) });
+    } catch (error) {
+      return fail(
+        "linkedin_video_status",
+        "LinkedIn did not finish checking the video. ME3 can safely try again.",
+        { ...describeFetchError(error), video },
+        "retryable",
+      );
+    }
+    const status = await readJson<{ status?: string; message?: string }>(statusResponse);
+    lastStatus = status;
+    if (!statusResponse.ok) {
+      return fail(
+        "linkedin_video_status",
+        status.message || `LinkedIn could not check the video (${statusResponse.status}).`,
+        status,
+        failureClassForStatus(statusResponse.status),
+      );
+    }
+    if (status.status === "AVAILABLE") return { ok: true, video };
+    if (status.status === "PROCESSING_FAILED") {
+      return fail("linkedin_video_processing", "LinkedIn couldn't process this video.", status, "rejected");
+    }
+  }
+  return fail(
+    "linkedin_video_processing_timeout",
+    "LinkedIn is still processing the video. ME3 can safely try again later.",
+    { video, lastStatus },
+    "retryable",
+  );
+}
 
 type XVideoUploadResult =
   | { ok: true; mediaId: string; providerResponses: unknown[] }
