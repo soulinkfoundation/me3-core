@@ -205,10 +205,10 @@ function parseBlock(rawBlock: unknown, index: number, issues: string[]): Campaig
 
   if (rawBlock.type === "button") {
     const label = normalizeText(rawBlock.label, 160);
-    const href = normalizeHttpUrl(rawBlock.href);
+    const href = normalizeCampaignLink(rawBlock.href);
     if (!label) issues.push(`Button block ${index + 1} needs a label`);
     if (!href) {
-      issues.push(`The button${label ? ` "${label.slice(0, 60)}"` : ""} needs a link that starts with https://`);
+      issues.push(`The button${label ? ` "${label.slice(0, 60)}"` : ""} needs a link that starts with https:// or mailto:`);
     }
     return {
       id: id || `block-${index + 1}`,
@@ -263,9 +263,9 @@ function parseParagraph(
     const marks = Array.isArray(rawSpan.marks)
       ? [...new Set(rawSpan.marks.filter((mark) => includes(CAMPAIGN_TEXT_MARKS, mark)))]
       : [];
-    const link = rawSpan.link === undefined ? undefined : normalizeHttpUrl(rawSpan.link) || undefined;
+    const link = rawSpan.link === undefined ? undefined : normalizeCampaignLink(rawSpan.link) || undefined;
     if (rawSpan.link !== undefined && !link) {
-      issues.push(`The link ${quotedLink(rawSpan.link)} isn't a web address. Links need to start with https://`);
+      issues.push(`The link ${quotedLink(rawSpan.link)} isn't a web address. Links need to start with https:// or mailto:`);
     }
     return [{ text, ...(marks.length ? { marks } : {}), ...(link ? { link } : {}) }];
   });
@@ -326,6 +326,24 @@ function normalizeId(value: unknown): string {
   return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,127}$/.test(value)
     ? value
     : "";
+}
+
+const MAILTO_ADDRESS = /^[^\s@,;:<>()[\]"]+@[^\s@,;:<>()[\]"]+\.[^\s@,;:<>()[\]"]+$/;
+
+/** Text links and buttons may open a web page or start an email (mailto:). */
+function normalizeCampaignLink(value: unknown): string | null {
+  if (typeof value === "string" && /^mailto:/i.test(value.trim())) {
+    try {
+      const parsed = new URL(value.trim());
+      const address = decodeURIComponent(parsed.pathname);
+      return address.split(",").every((part) => MAILTO_ADDRESS.test(part.trim()))
+        ? parsed.toString()
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return normalizeHttpUrl(value);
 }
 
 function normalizeHttpUrl(value: unknown): string | null {

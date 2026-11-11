@@ -95,7 +95,33 @@ describe("campaign document", () => {
           paragraphs: [{ style: "body", spans: [{ text: "Book a call", link: "YOUR_CALL_LINK" }] }],
         }],
       }),
-    ).toThrow(`The link "YOUR_CALL_LINK" isn't a web address. Links need to start with https://`);
+    ).toThrow(`The link "YOUR_CALL_LINK" isn't a web address. Links need to start with https:// or mailto:`);
+  });
+
+  it("lets text links and buttons start an email", () => {
+    const document = parseCampaignDocument({
+      ...documentFixture(),
+      blocks: [
+        {
+          id: "text",
+          type: "text",
+          paragraphs: [{ style: "body", spans: [{ text: "Email me", link: "mailto:hey@example.com?subject=Yes" }] }],
+        },
+        { id: "button", type: "button", label: "Reply", href: "mailto:hey@example.com" },
+      ],
+    });
+    expect(document.blocks).toMatchObject([
+      { paragraphs: [{ spans: [{ link: "mailto:hey@example.com?subject=Yes" }] }] },
+      { href: "mailto:hey@example.com" },
+    ]);
+    expect(renderCampaign({ document, unsubscribeUrl: "https://example.com/u" }).html)
+      .toContain('href="mailto:hey@example.com?subject=Yes"');
+    for (const link of ["mailto:", "mailto:not-an-address", "mailto:a@b.com<script>"]) {
+      expect(() => parseCampaignDocument({
+        ...documentFixture(),
+        blocks: [{ id: "button", type: "button", label: "Reply", href: link }],
+      })).toThrow(CampaignDocumentValidationError);
+    }
   });
 });
 
