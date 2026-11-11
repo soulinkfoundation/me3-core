@@ -3,6 +3,7 @@ import { account, capabilities, post, version } from "./social-posts.fixtures";
 import {
   attentionItems,
   foldIndex,
+  moveLinkOut,
   splitIntoThread,
   threadParts,
   postRowDetail,
@@ -110,6 +111,13 @@ describe("social posts", () => {
     expect(threadParts("A\n\n---\n\nB\n---\nC")).toEqual(["A", "B", "C"]);
     const thread = version({ bodyText: `${"a".repeat(300)}\n---\nok`, publishingSettings: { post: { thread: true } } });
     expect(versionChecks(thread, capabilities)).toContainEqual({ message: "Post 1 of the thread is 300 characters, X's limit is 280.", blocking: true, field: "text" });
+  });
+
+  it("moves the first link out of the text for a first comment", () => {
+    expect(moveLinkOut("We launched ME3 today: https://me3.app/launch.\n\nTry it.")).toEqual({ text: "We launched ME3 today: .\n\nTry it.", link: "https://me3.app/launch" });
+    expect(moveLinkOut("No link here.")).toBeNull();
+    expect(resultFor(version({ publicationStatus: "published", publishedAt: "2026-11-11T12:00:00.000Z", errorMessage: "Posted, but the first comment didn't go up. Add it on X." })).message)
+      .toMatch(/^Posted .+\. Posted, but the first comment didn't go up\. Add it on X\.$/);
   });
 });
 

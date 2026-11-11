@@ -466,7 +466,8 @@ export function resultFor(version: PostVersion): VersionResult {
       }
       return {
         state: "posted",
-        message: version.publishedAt ? `Posted ${formatWhen(version.publishedAt)}` : "Posted",
+        // A caveat from posting (say the first comment didn't go up) stays beside the post.
+        message: [version.publishedAt ? `Posted ${formatWhen(version.publishedAt)}` : "Posted", version.errorMessage?.trim()].filter(Boolean).join(". "),
         action: version.platformPostUrl ? "view" : null,
         actionLabel: version.platformPostUrl ? "View" : null,
       };
@@ -628,4 +629,23 @@ export function splitIntoThread(text: string, limit = 280): string[] {
   }
   if (current.trim()) posts.push(current.trim());
   return posts;
+}
+
+/** Platforms that can post a first comment (a first reply on X). */
+export function takesFirstComment(platform: SocialPlatform | string): boolean {
+  return ["x", "linkedin", "instagram", "facebook"].includes(socialNetwork(platform) || "");
+}
+
+const URL_PATTERN = /(?:https?:\/\/|www\.)[^\s<>"']+[^\s<>"'.,;:!?)\]]/i;
+
+/** Takes the first link out of the text so it can go in the first comment. */
+export function moveLinkOut(text: string): { text: string; link: string } | null {
+  const match = URL_PATTERN.exec(text);
+  if (!match) return null;
+  const rest = (text.slice(0, match.index) + text.slice(match.index + match[0].length))
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { text: rest, link: match[0] };
 }

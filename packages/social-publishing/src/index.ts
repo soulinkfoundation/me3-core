@@ -4140,7 +4140,7 @@ export async function publishQueuedPublication(
            provider_response_json = ?,
            published_at = ?,
            error_code = NULL,
-           error_message = NULL,
+           error_message = ?,
            updated_at = ?
        WHERE id = ? AND status = 'publishing'`,
     ).bind(
@@ -4148,6 +4148,8 @@ export async function publishQueuedPublication(
       result.platformPostUrl || null,
       result.providerResponse !== undefined ? JSON.stringify(result.providerResponse) : null,
       publishedAt,
+      // A post that went up with a caveat keeps it beside the post.
+      result.warning?.slice(0, 500) || null,
       publishedAt,
       row.publication_id,
     ),

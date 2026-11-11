@@ -500,5 +500,27 @@ describe("Social review", () => {
     await flushPromises();
     expect((apiPatch.mock.calls.at(-1)![1] as { bodyText: string }).bodyText.length).toBeGreaterThan(280);
   });
+
+  it("moves the link into a first comment saved on the platform", async () => {
+    const current = post([version({ id: "li-1", platform: "linkedin", bodyText: "Read about the launch https://me3.app/launch" })]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("linkedin")] },
+      "/social/posts/post-1": { post: current },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPatch.mockImplementation((_path: string, body: object) => Promise.resolve({ version: { ...current.versions[0], ...body } }));
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    await wrapper.findAll("button").find((item) => item.text() === "Move the link to the first comment")!.trigger("click");
+    await flushPromises();
+    expect(apiPatch).toHaveBeenLastCalledWith("/social/versions/li-1", {
+      bodyText: "Read about the launch",
+      publishingSettings: { post: { firstComment: "https://me3.app/launch" } },
+    });
+    expect((wrapper.get("#post-comment-li-1").element as HTMLTextAreaElement).value).toBe("https://me3.app/launch");
+  });
 });
 

@@ -18,6 +18,8 @@ const props = defineProps<{
   title?: string | null;
   /** X thread posts, in order; the media goes on the first. */
   thread?: string[] | null;
+  /** Posted right after: a reply on X, a comment elsewhere. */
+  firstComment?: string | null;
 }>();
 
 const network = computed(() => socialNetwork(props.platform));
@@ -125,6 +127,11 @@ const xGrid = computed(() => props.media.slice(0, 4));
         <b>{{ handle?.replace(/^@/, "") || name }}</b> {{ shownText }}<button v-if="fold !== null && !expanded" type="button" class="preview__more" @click="expanded = true">{{ foldLabel }}</button>
       </p>
     </template>
+    <div v-if="firstComment?.trim() && network !== 'youtube'" class="preview__comment">
+      <img v-if="avatarUrl" class="preview__avatar preview__avatar--tiny" :src="avatarUrl" alt="">
+      <span v-else class="preview__avatar preview__avatar--tiny preview__avatar--blank" aria-hidden="true">{{ initial }}</span>
+      <p><b>{{ network === "instagram" ? handle?.replace(/^@/, "") || name : name }}</b> {{ firstComment }}</p>
+    </div>
   </article>
 </template>
 
@@ -167,6 +174,9 @@ const xGrid = computed(() => props.media.slice(0, 4));
 .preview__reply-who { color: var(--ui-text-muted); font-size: 12px; }
 .preview__reply-who b { color: var(--ui-text); }
 .preview__avatar--small { width: 34px; height: 34px; }
+.preview__comment { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; padding: 8px 12px 12px; border-top: 1px solid var(--ui-border); font-size: 12.5px; }
+.preview__comment p { margin: 0; padding: 6px 9px; border-radius: 10px; background: var(--ui-surface-muted); overflow-wrap: anywhere; white-space: pre-wrap; }
+.preview__avatar--tiny { width: 24px; height: 24px; font-size: 11px; }
 .preview__actions { display: flex; align-items: center; gap: 6px 12px; padding: 9px 12px; color: var(--ui-text-muted); font-size: 12px; }
 .preview--linkedin .preview__actions, .preview--facebook .preview__actions { justify-content: space-around; border-top: 1px solid var(--ui-border); }
 .preview--instagram .preview__actions { position: relative; gap: 14px; color: var(--ui-text); }

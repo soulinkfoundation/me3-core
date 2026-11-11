@@ -302,6 +302,36 @@ describe("LinkedIn publishing adapter", () => {
       .toEqual({ ok: false, error: "X doesn't take PDF documents." });
   });
 
+  it("adds the first comment under the post, and warns when it doesn't go up", async () => {
+    let commentStatus = 201;
+    const comments: unknown[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v2/userinfo")) return Response.json({ sub: "member-1" });
+      if (url.endsWith("/rest/posts")) return new Response("{}", { status: 201, headers: { "x-restli-id": "urn:li:share:9" } });
+      if (url === `https://api.linkedin.com/rest/socialActions/${encodeURIComponent("urn:li:share:9")}/comments`) {
+        comments.push(JSON.parse(String(init?.body)));
+        return new Response("{}", { status: commentStatus });
+      }
+      throw new Error(`Unexpected LinkedIn request: ${url}`);
+    });
+    const publish = () => adapterFor("linkedin").publish({
+      accessToken: "token",
+      accountId: "member-1",
+      bodyText: "Read the full story in the comments.",
+      assets: [],
+      providerOptions: { firstComment: "https://me3.app/launch" },
+      fetcher: fetcher as typeof fetch,
+    });
+
+    await expect(publish()).resolves.toMatchObject({ ok: true, platformPostId: "urn:li:share:9" });
+    expect(comments).toEqual([{ actor: "urn:li:person:member-1", object: "urn:li:share:9", message: { text: "https://me3.app/launch" } }]);
+    expect((await publish()).warning).toBeUndefined();
+
+    commentStatus = 403;
+    await expect(publish()).resolves.toMatchObject({ ok: true, warning: "Posted, but the first comment didn't go up. Add it on LinkedIn." });
+  });
+
   it("rejects unsupported LinkedIn media before delivery", () => {
     const mp4 = { url: "https://cdn.example/video.mp4", kind: "video" as const, mimeType: "video/mp4", byteLength: 200_000 };
     expect(adapterFor("linkedin").validateDraft({ bodyText: "A video.", assets: [mp4] })).toEqual({ ok: true });
@@ -678,6 +708,12 @@ describe("X publishing adapter", () => {
     failAt = 3;
     const partial = await adapterFor("x").publish({ accessToken: "t", accountId: "me", bodyText: text, assets: [], providerOptions: thread, fetcher: fetcher as typeof fetch });
     expect(partial).toMatchObject({ ok: false, errorCode: "x_thread_incomplete", failureClass: "outcome_unknown", errorMessage: "X posted 2 of 3 parts of the thread. Check X, then finish it there." });
+
+    // A first reply goes under the last post of the thread.
+    bodies.length = 0;
+    failAt = 0;
+    await adapterFor("x").publish({ accessToken: "t", accountId: "me", bodyText: text, assets: [], providerOptions: { ...thread, firstComment: "https://me3.app" }, fetcher: fetcher as typeof fetch });
+    expect(bodies.at(-1)).toEqual({ text: "https://me3.app", reply: { in_reply_to_tweet_id: "post-3" } });
 
     // Without the thread option, the separator is just text.
     expect(adapterFor("x").validateDraft({ bodyText: "Short.\n---\nPost.", assets: [] })).toEqual({ ok: true });

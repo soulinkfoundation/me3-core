@@ -11,6 +11,8 @@ export type SocialPublishAdapterResult = {
   errorCode?: string;
   errorMessage?: string;
   failureClass?: SocialPublishFailureClass;
+  /** Posted, with something the owner should know (say the first comment didn't go up). */
+  warning?: string;
 };
 
 export type SocialPublishFailureClass =
@@ -590,12 +592,17 @@ const linkedInAdapter: SocialPublishAdapter = {
         "outcome_unknown",
       );
     }
-    return {
+    return withFirstComment(input, {
       ok: true,
       platformPostId: id,
       platformPostUrl: `https://www.linkedin.com/feed/update/${id}`,
       providerResponse: json,
-    };
+    }, "LinkedIn", (text, postUrn) =>
+      input.fetcher(`https://api.linkedin.com/rest/socialActions/${encodeURIComponent(postUrn)}/comments`, {
+        method: "POST",
+        headers: linkedInHeaders(input.accessToken),
+        body: JSON.stringify({ actor: author, object: postUrn, message: { text } }),
+      }));
   },
 };
 
@@ -1386,14 +1393,41 @@ const xAdapter: SocialPublishAdapter = {
       replies.push(reply.response);
       previous = reply.id;
     }
+    const firstComment = normalizePostOptions(input.providerOptions, "x").firstComment;
+    let warning: string | undefined;
+    if (firstComment) {
+      const reply = await postXReply(input, previous, firstComment);
+      if (reply.ok) replies.push(reply.response);
+      else warning = "Posted, but the reply with your link didn't go up. Add it on X.";
+    }
     return {
       ok: true,
       platformPostId: id,
       platformPostUrl: `https://x.com/i/web/status/${id}`,
       providerResponse: { media: mediaResponses, post: json, ...(replies.length ? { replies } : {}) },
+      ...(warning ? { warning } : {}),
     };
   },
 };
+
+/** Adds the owner's first comment under a live post. The post stands either way; a failed comment becomes a warning. */
+async function withFirstComment(
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+  result: SocialPublishAdapterResult,
+  label: string,
+  comment: (text: string, postId: string) => Promise<Response>,
+): Promise<SocialPublishAdapterResult> {
+  const text = normalizePostOptions(input.providerOptions).firstComment;
+  if (!result.ok || !text || !result.platformPostId) return result;
+  try {
+    const response = await comment(text, result.platformPostId);
+    if (response.ok) return result;
+    const body = await response.text().catch(() => "");
+    return { ...result, warning: `Posted, but the first comment didn't go up. Add it on ${label}.`, providerResponse: { post: result.providerResponse, firstCommentError: { status: response.status, body: body.slice(0, 2_000) } } };
+  } catch (error) {
+    return { ...result, warning: `Posted, but the first comment didn't go up. Add it on ${label}.`, providerResponse: { post: result.providerResponse, firstCommentError: describeFetchError(error) } };
+  }
+}
 
 async function postXReply(
   input: Parameters<SocialPublishAdapter["publish"]>[0],
@@ -2435,7 +2469,16 @@ const youtubeAdapter: SocialPublishAdapter = {
 function createInstagramAdapter(platform: "instagram" | "instagram_business"): SocialPublishAdapter {
   return {
     validateDraft: validateInstagramDraft,
-    publish: (input) => publishInstagram(platform, input),
+    publish: async (input) => withFirstComment(input, await publishInstagram(platform, input), "Instagram", (message, mediaId) => {
+      const origin = platform === "instagram"
+        ? `https://graph.instagram.com/${INSTAGRAM_GRAPH_VERSION}`
+        : `https://graph.facebook.com/${INSTAGRAM_GRAPH_VERSION}`;
+      return input.fetcher(`${origin}/${encodeURIComponent(mediaId)}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ message, access_token: input.accessToken }),
+      });
+    }),
   };
 }
 
@@ -2722,7 +2765,12 @@ async function waitForInstagramContainer(
 
 const facebookAdapter: SocialPublishAdapter = {
   validateDraft: validateFacebookDraft,
-  publish: publishFacebookPage,
+  publish: async (input) => withFirstComment(input, await publishFacebookPage(input), "Facebook", (message, postId) =>
+    input.fetcher(`https://graph.facebook.com/${INSTAGRAM_GRAPH_VERSION}/${encodeURIComponent(postId)}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ message, access_token: input.accessToken }),
+    })),
 };
 
 function validateFacebookDraft(input: {

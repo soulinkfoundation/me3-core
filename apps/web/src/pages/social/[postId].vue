@@ -36,6 +36,8 @@ import {
   versionChecks,
   documentRule,
   isImageAsset,
+  moveLinkOut,
+  takesFirstComment,
   isThread,
   splitIntoThread,
   THREAD_JOIN,
@@ -202,6 +204,28 @@ function syncMirror(event: Event) {
 }
 const activeThread = computed(() => (active.value && isThread(active.value) ? threadParts(activeText.value) : null));
 const shortenUndo = ref<{ id: string; text: string } | null>(null);
+const commentOpen = ref(false);
+const activeFirstComment = computed(() => active.value?.publishingSettings?.post?.firstComment || "");
+const firstCommentLabel = computed(() => (active.value?.platform === "x" ? "First reply" : "First comment"));
+const activeLinkMove = computed(() => (activeLocked.value ? null : moveLinkOut(activeText.value)));
+
+/** Saved on the version; posted right after the post itself. */
+function setFirstComment(value: string) {
+  const version = active.value;
+  if (!version || activeLocked.value) return;
+  const settings = postOptions(version, { firstComment: value.trim() });
+  replaceVersion({ ...version, publishingSettings: { ...version.publishingSettings, post: settings.post } });
+  void saveVersion(version, { publishingSettings: settings });
+}
+
+/** Links can cut reach in the post itself, so the link moves to the first comment. */
+function moveLinkToComment() {
+  const version = active.value;
+  const moved = activeLinkMove.value;
+  if (!version || !moved) return;
+  const comment = [activeFirstComment.value, moved.link].filter(Boolean).join("\n");
+  void setTextNow(version, moved.text, { publishingSettings: postOptions(version, { firstComment: comment }) });
+}
 
 function postOptions(version: PostVersion, patch: { thread?: boolean; firstComment?: string }) {
   const post = { ...version.publishingSettings?.post, ...patch };
@@ -918,6 +942,7 @@ function resultHref(version: PostVersion, result: VersionResult): string | null 
 
 // The URL names the platform, never an internal id.
 watch(activeId, (next) => {
+  commentOpen.value = false;
   cropIndex.value = null;
   altIndex.value = null;
   const platform = versions.value.find((version) => version.id === next)?.platform;
@@ -1089,6 +1114,30 @@ onMounted(async () => {
               </li>
             </ul>
 
+            <div v-if="takesFirstComment(active.platform) && !(activeLocked && !activeFirstComment)" class="post-comment">
+              <template v-if="commentOpen || activeFirstComment">
+                <label class="post-video__label" :for="`post-comment-${active.id}`">{{ firstCommentLabel }}</label>
+                <textarea
+                  :id="`post-comment-${active.id}`"
+                  class="post-field post-comment__field"
+                  rows="2"
+                  :readonly="activeLocked"
+                  :value="activeFirstComment"
+                  :placeholder="active.platform === 'x' ? 'Posted as a reply, right after the post. Good for the link.' : 'Posted as a comment, right after the post. Good for the link.'"
+                  @change="setFirstComment(($event.target as HTMLTextAreaElement).value)"
+                />
+                <button v-if="!activeLocked" type="button" class="post-comment__link" @click="setFirstComment(''); commentOpen = false">Remove</button>
+              </template>
+              <span v-else class="post-comment__adds">
+                <button v-if="activeLinkMove" type="button" class="post-comment__link" @click="moveLinkToComment">
+                  Move the link to the first {{ active.platform === "x" ? "reply" : "comment" }}
+                </button>
+                <button type="button" class="post-comment__link" @click="commentOpen = true">
+                  Add a first {{ active.platform === "x" ? "reply" : "comment" }}
+                </button>
+              </span>
+            </div>
+
             <div class="post-images">
               <template v-if="active.platform === 'youtube'">
                 <label class="post-video__label" :for="`post-title-${active.id}`">Title</label>
@@ -1170,6 +1219,7 @@ onMounted(async () => {
               :avatar-url="activeAccountRow?.avatarUrl"
               :title="active.title"
               :thread="activeThread"
+              :first-comment="activeFirstComment"
             />
           </aside>
         </section>
@@ -1377,6 +1427,11 @@ onMounted(async () => {
   text-underline-offset: 2px;
   cursor: pointer;
 }
+.post-comment { display: grid; gap: 6px; }
+.post-comment__field { font-size: 13.5px; }
+.post-comment__adds { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.post-comment__link { justify-self: start; padding: 0; border: 0; background: none; color: var(--ui-text-muted); font: 500 12.5px var(--font-sans); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.post-comment__link:hover { color: var(--ui-text); }
 .post-thread-note { margin: 0; color: var(--ui-text-muted); font-size: 12.5px; }
 .post-thread-note code { padding: 0 3px; border-radius: 3px; background: var(--ui-surface-muted); font-size: 12px; }
 .post-thread-note button { margin-left: 6px; padding: 0; border: 0; background: none; color: var(--ui-text-muted); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
