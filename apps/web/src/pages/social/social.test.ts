@@ -29,6 +29,9 @@ vi.mock("../../api", () => ({
   },
 }));
 
+const uploadDriveFiles = vi.fn();
+vi.mock("../../utils/drive-upload", () => ({ uploadDriveFiles: (...args: unknown[]) => uploadDriveFiles(...args) }));
+
 vi.mock("../../composables/useAppToast", () => ({
   useAppToast: () => ({ toastError, toastSuccess: vi.fn(), toastFromUnknown: vi.fn(), toast: vi.fn() }),
 }));
@@ -303,6 +306,42 @@ describe("Social review", () => {
     // Instagram's fixture capabilities take images only: no video button.
     await wrapper.findAll('[role="tab"]')[1]!.trigger("click");
     expect(wrapper.findAll(".post-images__add").map((button) => button.text())).toEqual(["Add your own images", "From Files"]);
+  });
+
+  it("replaces an image with its cropped copy", async () => {
+    const original = { url: "/api/files/f1/content", fileId: "f1", filename: "launch.png", kind: "image" as const, mimeType: "image/png", altText: "Launch", assetIndex: 0 };
+    const current = post([version({ id: "x-1", assetManifest: [original] })]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x")] },
+      "/social/posts/post-1": { post: current },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPatch.mockImplementation((_path: string, body: { assetManifest: unknown }) => Promise.resolve({ version: { ...current.versions[0], ...body } }));
+    uploadDriveFiles.mockResolvedValue([{ id: "f2", filename: "launch-cropped.png", mimeType: "image/png", size: 900 }]);
+    const wrapper = mount(SocialPost, {
+      global: {
+        stubs: {
+          ...stubs,
+          SocialImageCropper: { name: "SocialImageCropper", props: ["open", "platform"], emits: ["save"], template: "<div v-if=\"open\" class=\"cropper-stub\" :data-platform=\"platform\" />" },
+        },
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get('[aria-label="Crop image 1"]').trigger("click");
+    const cropper = wrapper.get(".cropper-stub");
+    expect(cropper.attributes("data-platform")).toBe("x");
+    const file = new File(["x"], "launch-cropped.png", { type: "image/png" });
+    wrapper.findComponent({ name: "SocialImageCropper" }).vm.$emit("save", file);
+    await flushPromises();
+
+    expect(uploadDriveFiles).toHaveBeenCalledWith([file], { folderId: null, onConflict: "rename" });
+    expect(apiPatch).toHaveBeenCalledWith("/social/versions/x-1", {
+      assetManifest: [expect.objectContaining({ fileId: "f2", url: "/api/files/f2/content", altText: "Launch", assetIndex: 0 })],
+    });
+    expect(wrapper.find(".cropper-stub").exists()).toBe(false);
   });
 });
 

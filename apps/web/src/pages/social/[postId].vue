@@ -9,6 +9,7 @@ import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import AppPageBar from "../../components/AppPageBar.vue";
 import FilesMediaPicker from "../../components/files/FilesMediaPicker.vue";
+import SocialImageCropper from "../../components/social/SocialImageCropper.vue";
 import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue";
 import SocialMarks from "../../components/social/SocialMarks.vue";
 import { useAppToast } from "../../composables/useAppToast";
@@ -68,6 +69,8 @@ const editor = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const videoInput = ref<HTMLInputElement | null>(null);
 const filesPickerOpen = ref(false);
+const cropIndex = ref<number | null>(null);
+const cropAsset = computed(() => (cropIndex.value === null ? null : activeImages.value[cropIndex.value] || null));
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const when = ref(localParts(suggestedTime()));
 const saveChains = new Map<string, Promise<unknown>>();
@@ -318,6 +321,26 @@ function moveImage(index: number, offset: -1 | 1) {
 
 function removeImage(index: number) {
   setImages(activeImages.value.filter((_, position) => position !== index));
+}
+
+/** The cropped copy is saved to Files and takes the original's place in the post. */
+async function saveCrop(file: File) {
+  const index = cropIndex.value;
+  const original = cropAsset.value;
+  if (index === null || !original || busy.value) return;
+  busy.value = "upload";
+  try {
+    const [uploaded] = await uploadDriveFiles<DriveFile>([file], { folderId: null, onConflict: "rename" });
+    if (!uploaded) throw new Error("The cropped image didn't save.");
+    const images = [...activeImages.value];
+    images[index] = { ...driveAsset(uploaded, "image"), altText: original.altText || "" };
+    setImages(images);
+    cropIndex.value = null;
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't save the crop.");
+  } finally {
+    busy.value = null;
+  }
 }
 
 function driveAsset(file: DriveFile, kind: "image" | "video"): SocialMediaAsset {
@@ -602,6 +625,7 @@ function resultHref(version: PostVersion, result: VersionResult): string | null 
 
 // The URL names the platform, never an internal id.
 watch(activeId, (next) => {
+  cropIndex.value = null;
   const platform = versions.value.find((version) => version.id === next)?.platform;
   if (platform && route.query.platform !== platform) void router.replace({ query: { ...route.query, platform } });
 });
@@ -754,6 +778,9 @@ onMounted(async () => {
                     <small>{{ index + 1 }}</small>
                   </span>
                   <span v-if="!activeLocked" class="post-image__tools">
+                    <Button color="ghost" shape="soft" size="small" icon-only :aria-label="`Crop image ${index + 1}`" @click="cropIndex = index">
+                      <UiIcon name="Crop" :size="15" />
+                    </Button>
                     <Button color="ghost" shape="soft" size="small" icon-only :aria-label="`Move image ${index + 1} earlier`" :disabled="index === 0" @click="moveImage(index, -1)">
                       <UiIcon name="ChevronLeft" :size="15" />
                     </Button>
@@ -883,6 +910,16 @@ onMounted(async () => {
       danger
       @cancel="confirmRemove = null"
       @confirm="removePlatform"
+    />
+    <SocialImageCropper
+      :open="cropAsset !== null"
+      :src="cropAsset?.url || null"
+      :filename="cropAsset?.filename"
+      :mime-type="cropAsset?.mimeType"
+      :platform="active?.platform || ''"
+      :busy="busy === 'upload'"
+      @close="cropIndex = null"
+      @save="saveCrop"
     />
     <FilesMediaPicker
       :open="filesPickerOpen"
