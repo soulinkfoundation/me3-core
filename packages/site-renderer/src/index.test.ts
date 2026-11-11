@@ -199,6 +199,24 @@ describe("site generator", () => {
     expect(files["about.html"]).toContain('id="booking"');
   });
 
+  it("shows post images in latest writing and skips missing dates", async () => {
+    const files = await generateSiteHtml({
+      name: "Alex",
+      posts: [
+        { slug: "with-image", title: "With image", file: "with-image.md", publishedAt: "2026-09-02" },
+        { slug: "no-date", title: "No date", file: "no-date.md" },
+      ],
+      extensions: { "me3.app/site": { sections: [{ id: "writing", visible: true }] } },
+    }, [
+      { name: "with-image.md", content: "![Cover](/files/cover.jpg)\n\nHello" },
+      { name: "no-date.md", content: "Just words" },
+    ]);
+    const home = files["index.html"];
+    expect(home).toContain('<img class="site-writing-row__image" src="./files/cover.jpg"');
+    expect(home).toMatch(/No date<\/strong><\/span><\/a>/);
+    expect(home).not.toContain("<time></time>");
+  });
+
   it.each([
     ["classic", true], ["classic", false],
     ["portrait", true], ["portrait", false],

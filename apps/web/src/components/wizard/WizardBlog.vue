@@ -10,7 +10,6 @@ import { usePublish } from "../../composables/usePublish";
 import TiptapEditor from "../TiptapEditor.vue";
 import UiIcon from "../UiIcon.vue";
 import Button from "../Button.vue";
-import SwipeActionRow from "../SwipeActionRow.vue";
 import SitePostShare from "../social/SitePostShare.vue";
 
 const wizard = useWizardStore();
@@ -346,7 +345,7 @@ async function deletePost(index: number) {
 
   // Adjust selection if needed
   if (selectedPostIndex.value === index) {
-    selectedPostIndex.value = wizard.posts.length > 0 ? 0 : null;
+    selectedPostIndex.value = null;
   } else if (
     selectedPostIndex.value !== null &&
     selectedPostIndex.value > index
@@ -388,30 +387,32 @@ onMounted(() => {
 
 <template>
   <div class="step-blog">
-    <header class="blog-step-header"><h2>Blog</h2><Button v-if="selectedPostIndex === null" color="ghost" size="large" icon-only aria-label="Add a post" :disabled="!canAddMore" @click="addNewPost('article')"><UiIcon name="Plus" :size="24" /></Button></header>
-    <p>Add posts and optionally send them to email subscribers.</p>
-
-    <div class="blog-menu-title">
-      <label class="blog-menu-title-label" for="blog-menu-title-input">
-        Main menu title
-      </label>
-      <input
-        id="blog-menu-title-input"
-        v-model="wizard.blogTitle"
-        type="text"
-        class="blog-menu-title-input"
-        placeholder="Blog"
-        maxlength="40"
-      />
-      <p class="blog-menu-title-hint">URL path: /{{ wizard.blogPath }}</p>
-    </div>
+    <header class="blog-step-header">
+      <h2 v-if="selectedPostIndex === null" class="blog-title-heading">
+        <input
+          id="blog-menu-title-input"
+          v-model="wizard.blogTitle"
+          type="text"
+          class="blog-title-input"
+          placeholder="Blog"
+          maxlength="40"
+          aria-label="Menu title"
+          aria-describedby="blog-menu-title-hint"
+        />
+      </h2>
+      <h2 v-else class="blog-title-heading">{{ wizard.blogTitle || "Blog" }}</h2>
+      <Button v-if="selectedPostIndex === null" color="ghost" size="large" icon-only aria-label="Add a post" :disabled="!canAddMore" @click="addNewPost('article')"><UiIcon name="Plus" :size="24" /></Button>
+    </header>
+    <p v-if="selectedPostIndex === null" id="blog-menu-title-hint" class="blog-step-hint">
+      Menu title · posts live at /{{ wizard.blogPath }}
+    </p>
 
     <!-- Post list -->
     <div
       v-if="wizard.posts.length > 0 && selectedPostIndex === null"
       class="post-list"
     >
-      <SwipeActionRow v-for="post in sortedPosts" :key="post.slug" :label="post.title || 'Untitled post'" @remove="deletePost(wizard.posts.findIndex(p => p.slug === post.slug))">
+      <div v-for="post in sortedPosts" :key="post.slug" class="post-row">
         <div class="post-item">
         <img v-if="postThumbnail(post)" :src="postThumbnail(post)" class="post-thumbnail" alt="" loading="lazy" />
         <div class="post-details">
@@ -437,7 +438,7 @@ onMounted(() => {
           </button>
         </div>
         </div>
-      </SwipeActionRow>
+      </div>
     </div>
 
     <!-- Empty state -->
@@ -582,6 +583,13 @@ onMounted(() => {
           >
             Revert to Draft
           </button>
+          <button
+            class="revert-draft-link delete-post-link"
+            type="button"
+            @click="deletePost(selectedPostIndex!)"
+          >
+            Delete post
+          </button>
         </div>
       </div>
 
@@ -682,36 +690,21 @@ onMounted(() => {
   gap: 12px;
 }
 
-.blog-menu-title {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  background: var(--color-bg);
-}
-
-.blog-menu-title-label {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.blog-menu-title-input {
+.blog-title-heading { flex: 1; min-width: 0; }
+.blog-title-input {
   width: 100%;
-  padding: 9px 10px;
-  border: 1px solid var(--color-border);
+  margin: 0 0 0 -6px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--color-surface, var(--color-bg));
-  color: var(--color-text);
+  background: transparent;
+  color: inherit;
   font: inherit;
+  letter-spacing: inherit;
 }
-
-.blog-menu-title-hint {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 12px;
-}
+.blog-title-input:hover { border-color: var(--color-border); }
+.blog-title-input:focus { outline: none; border-color: var(--color-border); background: var(--color-surface, var(--color-bg)); }
+.blog-step-hint { margin: -4px 0 0; color: var(--color-text-muted); font-size: 13px; }
 
 .post-list {
   display: flex;
@@ -1035,4 +1028,11 @@ onMounted(() => {
 .revert-draft-link:hover {
   color: var(--color-text);
 }
+
+.delete-post-link,
+.delete-post-link:hover {
+  color: var(--color-danger, #b42318);
+}
+
+.post-row { padding: 10px; border-radius: 18px; background: var(--ui-surface-muted); }
 </style>

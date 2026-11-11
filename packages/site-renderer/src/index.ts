@@ -371,7 +371,7 @@ export async function generateSiteHtml(
   const sectionPaths = resolveSiteSectionPaths(profile);
   const access = { ...DEFAULT_CAPABILITIES, ...capabilities };
 
-  output["index.html"] = generateIndexHtml(profile, access, context.placeholders === true);
+  output["index.html"] = generateIndexHtml(profile, access, context.placeholders === true, fileMap);
 
   // Admin pages (visible: false) still publish, unlisted: they stay out of navigation and discovery files.
   const unlistedFiles = new Set<string>();
@@ -438,8 +438,8 @@ export async function generateSiteHtml(
   return output;
 }
 
-function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities, placeholders = false): string {
-  if (profile.extensions?.["me3.app/site"]) return generateModernIndexHtml(profile, capabilities, placeholders);
+function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities, placeholders = false, fileMap: Map<string, string> = new Map()): string {
+  if (profile.extensions?.["me3.app/site"]) return generateModernIndexHtml(profile, capabilities, placeholders, fileMap);
   const vibe = getVibe(profile);
   const title = profile.name || profile.handle || "ME3 site";
   const description = profile.bio
@@ -514,7 +514,7 @@ function siteActionLink(profile: Me3SiteProfile, className: string, basePath = "
   return `<a class="${className}" href="${escapeHtml(href)}"${external}>${escapeHtml(action.label)}</a>`;
 }
 
-function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities, placeholders = false): string {
+function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities, placeholders = false, fileMap: Map<string, string> = new Map()): string {
   const title = profile.name || profile.handle || "ME3 site";
   const description = profile.bio ? contentToPlainText(profile.bio) : `${title} on ME3`;
   const layout = modernSiteLayout(profile);
@@ -535,7 +535,7 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
     switch (section.id) {
       case "offers": return capabilities.bookingsEnabled ? generateOffers(profile, !showBooking) : "";
       case "booking": return capabilities.bookingsEnabled ? generateBooking(profile) : "";
-      case "writing": return generateLatestWriting(profile);
+      case "writing": return generateLatestWriting(profile, fileMap);
       case "testimonials": return generateTestimonials(profile) || (placeholders ? testimonialsPlaceholder() : "");
       case "newsletter": return capabilities.newsletterSignup ? generateNewsletter(profile) : "";
     }
@@ -726,12 +726,24 @@ function offerPageCss(): string {
 .offer-page .booking{margin-top:32px}`;
 }
 
-function generateLatestWriting(profile: Me3SiteProfile): string {
+function postThumbnailHtml(post: Me3Post, markdown: string, basePath: string, className = "blog-item-thumbnail"): string {
+  const image = post.media?.thumbnail || markdownToHtml(markdown).match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1];
+  const imagePath = image ? decodeHtmlEntities(image).trim() : "";
+  if (!imagePath || /^(?:javascript|data|vbscript):/i.test(imagePath)) return "";
+  return `<img class="${className}" src="${escapeHtml(filePathForHtml(contentAssetPathForHtml(imagePath), basePath))}" alt="" loading="lazy" decoding="async">`;
+}
+
+function generateLatestWriting(profile: Me3SiteProfile, fileMap: Map<string, string>): string {
   const posts = (profile.posts || []).filter((post) => !post.draft && post.slug)
     .sort((a, b) => timestampForSort(b.publishedAt) - timestampForSort(a.publishedAt)).slice(0, 3);
   if (!posts.length) return "";
   const path = resolveSiteSectionPaths(profile).blog;
-  const rows = posts.map((post) => `<a class="site-writing-row" href="./${escapeHtml(path)}/${escapeHtml(normalizeSitePath(post.slug || ""))}"><time>${escapeHtml(formatPostDate(post.publishedAt) || "")}</time><strong>${escapeHtml(post.title || titleFromSlug(post.slug || ""))}</strong></a>`).join("");
+  const rows = posts.map((post) => {
+    const markdown = post.file ? fileMap.get(normalizeSitePath(post.file)) || "" : "";
+    const thumbnail = postThumbnailHtml(post, markdown, "./", "site-writing-row__image");
+    const date = formatPostDate(post.publishedAt);
+    return `<a class="site-writing-row" href="./${escapeHtml(path)}/${escapeHtml(normalizeSitePath(post.slug || ""))}">${thumbnail}<span class="site-writing-row__body"><strong>${escapeHtml(post.title || titleFromSlug(post.slug || ""))}</strong>${date ? `<time>${escapeHtml(date)}</time>` : ""}</span></a>`;
+  }).join("");
   return `<section class="site-writing"><div class="site-section-heading"><h2>Latest writing</h2><a href="./${escapeHtml(path)}/">All posts →</a></div><div class="site-writing__rows">${rows}</div></section>`;
 }
 
@@ -814,12 +826,8 @@ function generateCollectionCard(
   const date = formatPostDate(post.publishedAt);
   const excerpt = getCollectionExcerpt(post.excerpt, markdown, 160);
   const type = post.type === "video" ? ` <span class="post-type">Video</span>` : "";
-  const image = post.media?.thumbnail || markdownToHtml(markdown).match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1];
-  const imagePath = image ? decodeHtmlEntities(image).trim() : "";
-  const thumbnail = imagePath && !/^(?:javascript|data|vbscript):/i.test(imagePath)
-    ? `<img class="blog-item-thumbnail" src="${escapeHtml(filePathForHtml(contentAssetPathForHtml(imagePath), "../"))}" alt="" loading="lazy" decoding="async">`
-    : "";
-  return `<a class="blog-item${thumbnail ? " blog-item--with-image" : ""}" href="./${escapeHtml(slug)}">${thumbnail}<div class="blog-item-title">${title}${type}</div>${date ? `<div class="blog-item-date">${escapeHtml(date)}</div>` : ""}${excerpt ? `<div class="blog-item-excerpt">${escapeHtml(excerpt)}</div>` : ""}</a>`;
+  const thumbnail = postThumbnailHtml(post, markdown, "../");
+  return `<a class="blog-item${thumbnail ? " blog-item--with-image" : ""}" href="./${escapeHtml(slug)}">${thumbnail}<div class="blog-item-body"><div class="blog-item-title">${title}${type}</div>${date ? `<div class="blog-item-date">${escapeHtml(date)}</div>` : ""}${excerpt ? `<div class="blog-item-excerpt">${escapeHtml(excerpt)}</div>` : ""}</div></a>`;
 }
 
 function pageShell(
