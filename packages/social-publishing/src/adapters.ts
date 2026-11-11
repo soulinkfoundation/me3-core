@@ -1,6 +1,7 @@
 import type { SocialMediaAsset, SocialPlatform } from "./index";
 import { sniffCarouselRasterMimeType } from "./carousel-renderer";
 import type { CarouselRasterMimeType } from "./carousel-render-model";
+import { normalizePostOptions, THREAD_PART_LIMIT, xPostTexts } from "./post-options";
 
 export type SocialPublishAdapterResult = {
   ok: boolean;
@@ -24,6 +25,8 @@ export type SocialPublishAdapter = {
     title?: string;
     bodyText: string;
     assets: SocialMediaAsset[];
+    /** The version's saved post options (thread, first comment). */
+    providerOptions?: unknown;
   }): { ok: true } | { ok: false; error: string };
   publish(input: {
     accessToken: string;
@@ -186,12 +189,24 @@ function documentError(assets: SocialMediaAsset[], label: string): { ok: false; 
 function validateXDraft(input: {
   bodyText: string;
   assets: SocialMediaAsset[];
+  providerOptions?: unknown;
 }): { ok: true } | { ok: false; error: string } {
   const body = input.bodyText.trim();
   if (!body) return { ok: false, error: "This X draft is empty." };
+  const options = normalizePostOptions(input.providerOptions, "x");
+  if (options.thread) {
+    const parts = xPostTexts(body, options);
+    if (parts.length > THREAD_PART_LIMIT) {
+      return { ok: false, error: `An X thread from ME3 can have up to ${THREAD_PART_LIMIT} posts.` };
+    }
+    const long = parts.findIndex((part) => characterLength(part) > X_CHAR_LIMIT);
+    if (long >= 0) {
+      return { ok: false, error: `Post ${long + 1} of this X thread is too long (max ${X_CHAR_LIMIT} characters).` };
+    }
+  }
   const documents = documentError(input.assets, "X");
   if (documents) return documents;
-  if (characterLength(body) > X_CHAR_LIMIT) {
+  if (!options.thread && characterLength(body) > X_CHAR_LIMIT) {
     return { ok: false, error: `This X draft is too long (max ${X_CHAR_LIMIT} characters).` };
   }
   const videos = input.assets.filter((asset) => asset.kind === "video");
@@ -1312,6 +1327,7 @@ const xAdapter: SocialPublishAdapter = {
       }
     }
 
+    const posts = xPostTexts(input.bodyText, normalizePostOptions(input.providerOptions, "x"));
     let response: Response;
     await markProviderCostStarted();
     await input.markProviderWriteStarted?.();
@@ -1320,7 +1336,7 @@ const xAdapter: SocialPublishAdapter = {
         method: "POST",
         headers: xHeaders(input.accessToken),
         body: JSON.stringify({
-          text: input.bodyText.trim(),
+          text: posts[0]!,
           ...(mediaIds.length > 0 ? { media: { media_ids: mediaIds } } : {}),
         }),
       });
@@ -1353,14 +1369,51 @@ const xAdapter: SocialPublishAdapter = {
         "outcome_unknown",
       );
     }
+    // A thread replies to itself, one post at a time. The first post is live by now, so a
+    // later failure can't be retried blindly: it asks the owner to check X.
+    const replies: unknown[] = [];
+    let previous = id;
+    for (const [index, text] of posts.slice(1).entries()) {
+      const reply = await postXReply(input, previous, text);
+      if (!reply.ok) {
+        return providerError(
+          "x_thread_incomplete",
+          `X posted ${index + 1} of ${posts.length} parts of the thread. Check X, then finish it there.`,
+          { post: json, replies, error: reply.error, firstPostId: id },
+          "outcome_unknown",
+        );
+      }
+      replies.push(reply.response);
+      previous = reply.id;
+    }
     return {
       ok: true,
       platformPostId: id,
       platformPostUrl: `https://x.com/i/web/status/${id}`,
-      providerResponse: { media: mediaResponses, post: json },
+      providerResponse: { media: mediaResponses, post: json, ...(replies.length ? { replies } : {}) },
     };
   },
 };
+
+async function postXReply(
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+  inReplyTo: string,
+  text: string,
+): Promise<{ ok: true; id: string; response: unknown } | { ok: false; error: unknown }> {
+  try {
+    const response = await input.fetcher("https://api.x.com/2/tweets", {
+      method: "POST",
+      headers: xHeaders(input.accessToken),
+      body: JSON.stringify({ text, reply: { in_reply_to_tweet_id: inReplyTo } }),
+    });
+    const json = await readJson<XErrorBody>(response);
+    const id = json.data?.id;
+    if (!response.ok || !id) return { ok: false, error: { status: response.status, body: json } };
+    return { ok: true, id, response: json };
+  } catch (error) {
+    return { ok: false, error: describeFetchError(error) };
+  }
+}
 
 function validateTikTokDraft(input: {
   bodyText: string;

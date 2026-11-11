@@ -188,6 +188,8 @@ export type PostVersion = {
   publishingSettings?: {
     tiktok?: TikTokPublishingSettings;
     youtube?: YouTubePublishingSettings;
+    /** X thread and first comment, per platform. */
+    post?: { thread?: boolean; firstComment?: string };
   };
   sourceExcerpt: string | null;
   approvalStatus: "draft" | "approved" | "rejected";
@@ -803,6 +805,13 @@ export const useSocialStore = defineStore("social", () => {
     return data.post;
   }
 
+  /** An AI rewrite under the limit, in the owner's words; the owner reviews it. */
+  async function shortenText(text: string, limit: number): Promise<string> {
+    const data = await api.post<{ text?: string }>("/social/shorten", { text, limit });
+    if (!data.text) throw new Error("ME3 couldn't shorten this.");
+    return data.text;
+  }
+
   /** An AI draft of alt text from a small JPEG data URL; the owner edits it before saving. */
   async function draftAltText(image: string, context: string): Promise<string> {
     const data = await api.post<{ altText?: string }>("/social/alt-text", { image, context });
@@ -1106,6 +1115,7 @@ export const useSocialStore = defineStore("social", () => {
     addPostVersion,
     deletePostVersion,
     draftAltText,
+    shortenText,
     deleteSocialPost,
     listDriveFolders,
     listDriveFiles,

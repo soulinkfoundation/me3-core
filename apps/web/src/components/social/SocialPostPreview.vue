@@ -16,6 +16,8 @@ const props = defineProps<{
   handle?: string | null;
   avatarUrl?: string | null;
   title?: string | null;
+  /** X thread posts, in order; the media goes on the first. */
+  thread?: string[] | null;
 }>();
 
 const network = computed(() => socialNetwork(props.platform));
@@ -48,7 +50,8 @@ const xGrid = computed(() => props.media.slice(0, 4));
     </header>
 
     <!-- X, LinkedIn and Facebook put the text above the media. -->
-    <p v-if="network !== 'instagram' && network !== 'youtube' && text" class="preview__text">
+    <p v-if="network === 'x' && thread?.length" class="preview__text">{{ thread[0] }}</p>
+    <p v-else-if="network !== 'instagram' && network !== 'youtube' && text" class="preview__text">
       {{ shownText }}<button v-if="fold !== null && !expanded" type="button" class="preview__more" @click="expanded = true">{{ foldLabel }}</button>
     </p>
 
@@ -59,6 +62,16 @@ const xGrid = computed(() => props.media.slice(0, 4));
           <img v-else :src="asset.url" :alt="asset.altText || ''">
         </template>
       </div>
+      <template v-if="thread && thread.length > 1">
+        <div v-for="(part, index) in thread.slice(1)" :key="index" class="preview__reply">
+          <img v-if="avatarUrl" class="preview__avatar preview__avatar--small" :src="avatarUrl" alt="">
+          <span v-else class="preview__avatar preview__avatar--small preview__avatar--blank" aria-hidden="true">{{ initial }}</span>
+          <div>
+            <small class="preview__reply-who"><b>{{ name }}</b> {{ handleLabel }} · {{ index + 2 }}/{{ thread.length }}</small>
+            <p>{{ part }}</p>
+          </div>
+        </div>
+      </template>
       <footer class="preview__actions" aria-hidden="true">
         <UiIcon name="MessageCircle" :size="15" /><UiIcon name="RefreshCw" :size="15" /><UiIcon name="Heart" :size="15" /><UiIcon name="Activity" :size="15" />
       </footer>
@@ -148,6 +161,12 @@ const xGrid = computed(() => props.media.slice(0, 4));
 .preview__x-media--1 img, .preview__x-media--1 video { max-height: 360px; }
 .preview--x .preview__actions { justify-content: space-between; padding-left: 55px; padding-right: 28px; }
 
+.preview__reply { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 9px; padding: 8px 12px 0; }
+.preview__reply::before { position: absolute; top: -6px; left: 28px; width: 2px; height: 14px; background: var(--ui-border-strong); content: ""; }
+.preview__reply p { margin: 2px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.45; }
+.preview__reply-who { color: var(--ui-text-muted); font-size: 12px; }
+.preview__reply-who b { color: var(--ui-text); }
+.preview__avatar--small { width: 34px; height: 34px; }
 .preview__actions { display: flex; align-items: center; gap: 6px 12px; padding: 9px 12px; color: var(--ui-text-muted); font-size: 12px; }
 .preview--linkedin .preview__actions, .preview--facebook .preview__actions { justify-content: space-around; border-top: 1px solid var(--ui-border); }
 .preview--instagram .preview__actions { position: relative; gap: 14px; color: var(--ui-text); }

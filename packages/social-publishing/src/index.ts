@@ -24,6 +24,20 @@ import {
   type PostingPlan,
 } from "./posting-plans";
 
+import { normalizePostOptions, xPostTexts } from "./post-options";
+
+function xPublicationPostCount(body: string, settingsJson: string | null | undefined): number {
+  const options = normalizePostOptions(parseJsonObject(settingsJson).post, "x");
+  return xPostTexts(body, options).length + (options.firstComment ? 1 : 0);
+}
+
+export {
+  normalizePostOptions,
+  threadParts,
+  xPostTexts,
+  type SocialPostOptions,
+} from "./post-options";
+
 export {
   adapterFor,
   normalizeTikTokDeliveryOptions,
@@ -754,6 +768,8 @@ type ManagedXUsageQuote = {
   mediaCount: number;
   altTextCount: number;
   videoCount: number;
+  /** Posts this publication writes to X: one, or each part of a thread plus any first reply. */
+  postCount: number;
 };
 
 type ManagedXUsageReservation = {
@@ -774,6 +790,7 @@ function managedXUsageQuote(
   scheduledFor: string | null,
   body: string,
   assets: SocialMediaAsset[],
+  postCount = 1,
 ): ManagedXUsageQuote {
   return {
     publicationId,
@@ -782,6 +799,7 @@ function managedXUsageQuote(
     mediaCount: assets.length,
     altTextCount: assets.filter((asset) => Boolean(asset.altText?.trim())).length,
     videoCount: assets.filter((asset) => asset.kind === "video").length,
+    postCount,
   };
 }
 
@@ -932,7 +950,7 @@ async function reserveManagedXUsageForVersion(
   version: Pick<
     PostVersionPublicationCandidate,
     "platform" | "target_account_id" | "body_text" | "asset_manifest_json"
-  >,
+  > & { publishing_settings_json?: string | null },
   publicationId: string,
   scheduledFor: string | null,
   fetcher: typeof fetch,
@@ -959,6 +977,7 @@ async function reserveManagedXUsageForVersion(
       scheduledFor,
       version.body_text,
       normalizeMediaManifest(parseJsonArray(version.asset_manifest_json)),
+      xPublicationPostCount(version.body_text, version.publishing_settings_json),
     ),
     fetcher,
   );
@@ -974,7 +993,8 @@ async function reserveManagedXUsageForPublication(
 ): Promise<ManagedXUsageReservation> {
   const row = await env.DB.prepare(
     `SELECT publication.platform, publication.target_account_id_snapshot,
-            publication.body_text_snapshot, publication.asset_manifest_json_snapshot
+            publication.body_text_snapshot, publication.asset_manifest_json_snapshot,
+            publication.request_context_json
      FROM social_publications publication
      JOIN social_variants version ON version.id = publication.variant_id
      JOIN social_packages post ON post.id = version.package_id
@@ -987,6 +1007,7 @@ async function reserveManagedXUsageForPublication(
       target_account_id_snapshot: string | null;
       body_text_snapshot: string;
       asset_manifest_json_snapshot: string;
+      request_context_json: string | null;
     }>();
   if (!row) return { managed: false, warning: null };
   return reserveManagedXUsageForVersion(
@@ -997,6 +1018,7 @@ async function reserveManagedXUsageForPublication(
       target_account_id: row.target_account_id_snapshot,
       body_text: row.body_text_snapshot,
       asset_manifest_json: row.asset_manifest_json_snapshot,
+      publishing_settings_json: JSON.stringify({ post: parseJsonObject(row.request_context_json).post }),
     },
     reservationId,
     scheduledFor,
@@ -2399,6 +2421,7 @@ async function assertPostVersionCanCreatePublication(
     title: version.post_title,
     bodyText: version.body_text,
     assets,
+    providerOptions: parseJsonObject(version.publishing_settings_json).post,
   });
   if (!validation.ok) {
     throw new SocialPublishingInputError(validation.error);
@@ -3865,6 +3888,7 @@ export async function publishQueuedPublication(
     title: row.title,
     bodyText: row.body,
     assets: manifestAssets,
+    providerOptions: parseJsonObject(row.pub_request_context_json).post,
   });
   if (!validation.ok) {
     const failureClass = validation.error.includes("currently supports")
@@ -3998,7 +4022,7 @@ export async function publishQueuedPublication(
           ? requestContext.tiktok
           : row.platform === "youtube"
             ? requestContext.youtube
-            : undefined,
+            : requestContext.post,
       resumeProviderResponse,
       markProviderCostStarted: managedXReservation.managed
         ? async () => {
@@ -5839,6 +5863,10 @@ function publicationRequestContextForVersion(
   input: unknown,
 ): string {
   const requestContext = isRecord(input) ? { ...input } : {};
+  // Thread and first comment come from what the owner saved on the version, not the request.
+  delete requestContext.post;
+  const savedPost = normalizePostOptions(parseJsonObject(version.publishing_settings_json).post, version.platform);
+  if (Object.keys(savedPost).length) requestContext.post = savedPost;
   if (version.platform === "youtube") {
     const accountDefaults = socialPublishingDefaultsFromMetadata(
       parseJsonObject(version.account_metadata_json),

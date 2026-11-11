@@ -252,7 +252,7 @@ export type VersionCheck = {
   blocking: boolean;
   field: "text" | "images" | "account";
   /** A one-click fix ME3 can make. */
-  fix?: "convert_video";
+  fix?: "convert_video" | "thread_or_shorten";
 };
 
 function textLimit(platform: SocialPlatform, capabilities: SocialPlatformCapabilities[]): number | null {
@@ -380,11 +380,21 @@ export function versionChecks(
   if (!version.bodyText.trim() && version.platform !== "youtube") {
     checks.push({ message: `Add some text for ${label}.`, blocking: true, field: "text" });
   }
-  if (limit !== null && length > limit) {
+  if (limit !== null && isThread(version)) {
+    const parts = threadParts(version.bodyText);
+    parts.forEach((part, index) => {
+      const partLength = Array.from(part).length;
+      if (partLength > limit) {
+        checks.push({ message: `Post ${index + 1} of the thread is ${partLength} characters, ${label}'s limit is ${limit}.`, blocking: true, field: "text" });
+      }
+    });
+    if (parts.length > 25) checks.push({ message: "A thread can have up to 25 posts.", blocking: true, field: "text" });
+  } else if (limit !== null && length > limit) {
     checks.push({
       message: `${length} characters, ${label}'s limit is ${limit.toLocaleString()}.`,
       blocking: true,
       field: "text",
+      ...(version.platform === "x" ? { fix: "thread_or_shorten" as const } : {}),
     });
   }
   if (socialNetwork(version.platform) === "instagram" && version.assetManifest.length === 0) {
@@ -566,4 +576,56 @@ export function moveItem<T>(items: T[], from: number, to: number): T[] {
   const [item] = next.splice(from, 1);
   next.splice(to, 0, item!);
   return next;
+}
+
+/** A line holding only three or more dashes separates the posts of an X thread. */
+const THREAD_SEPARATOR = /\n[ \t]*-{3,}[ \t]*(?:\n|$)/;
+export const THREAD_JOIN = "\n\n---\n\n";
+
+export function threadParts(text: string): string[] {
+  return text.split(THREAD_SEPARATOR).map((part) => part.trim()).filter(Boolean);
+}
+
+export function isThread(version: PostVersion): boolean {
+  return version.platform === "x" && version.publishingSettings?.post?.thread === true;
+}
+
+/** Splits text into posts of at most `limit` characters: between paragraphs, then sentences, then words. */
+export function splitIntoThread(text: string, limit = 280): string[] {
+  const size = (value: string) => Array.from(value).length;
+  const pieces: string[] = [];
+  for (const paragraph of text.trim().split(/\n{2,}/)) {
+    for (const sentence of paragraph.split(/(?<=[.!?…])\s+/)) {
+      if (size(sentence) <= limit) {
+        pieces.push(sentence);
+        continue;
+      }
+      let line = "";
+      for (const word of sentence.split(/\s+/)) {
+        const next = line ? `${line} ${word}` : word;
+        if (size(next) > limit && line) {
+          pieces.push(line);
+          line = word;
+        } else line = next;
+      }
+      if (line) pieces.push(line);
+    }
+    pieces.push("\n\n");
+  }
+  const posts: string[] = [];
+  let current = "";
+  for (const piece of pieces) {
+    if (piece === "\n\n") {
+      if (current) current += "\n\n";
+      continue;
+    }
+    const joined = current ? (current.endsWith("\n\n") ? current + piece : `${current} ${piece}`) : piece;
+    if (size(joined.trim()) <= limit) current = joined;
+    else {
+      if (current.trim()) posts.push(current.trim());
+      current = piece;
+    }
+  }
+  if (current.trim()) posts.push(current.trim());
+  return posts;
 }

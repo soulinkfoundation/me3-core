@@ -36,6 +36,10 @@ import {
   versionChecks,
   documentRule,
   isImageAsset,
+  isThread,
+  splitIntoThread,
+  THREAD_JOIN,
+  threadParts,
   mixedMediaRule,
   takesImages,
   versionTextLimit,
@@ -69,7 +73,7 @@ const missing = ref(false);
 const activeId = ref<string>("");
 const texts = ref<Record<string, string>>({});
 const savingIds = ref(new Set<string>());
-const busy = ref<"schedule" | "post" | "move" | "cancel" | "delete" | "upload" | "add" | "remove" | "duplicate" | null>(null);
+const busy = ref<"schedule" | "post" | "move" | "cancel" | "delete" | "upload" | "add" | "remove" | "duplicate" | "shorten" | null>(null);
 const accountsOpen = ref(false);
 const confirmDelete = ref(false);
 const confirmCancel = ref(false);
@@ -196,6 +200,61 @@ const mirror = ref<HTMLDivElement | null>(null);
 function syncMirror(event: Event) {
   if (mirror.value) mirror.value.scrollTop = (event.target as HTMLTextAreaElement).scrollTop;
 }
+const activeThread = computed(() => (active.value && isThread(active.value) ? threadParts(activeText.value) : null));
+const shortenUndo = ref<{ id: string; text: string } | null>(null);
+
+function postOptions(version: PostVersion, patch: { thread?: boolean; firstComment?: string }) {
+  const post = { ...version.publishingSettings?.post, ...patch };
+  if (!post.thread) delete post.thread;
+  if (!post.firstComment?.trim()) delete post.firstComment;
+  return Object.keys(post).length ? { post } : {};
+}
+
+/** Replaces the text now, cancelling any typing save still waiting. */
+function setTextNow(version: PostVersion, text: string, extra: Parameters<typeof social.updatePostVersion>[1] = {}) {
+  const timer = saveTimers.get(version.id);
+  if (timer) window.clearTimeout(timer);
+  saveTimers.delete(version.id);
+  texts.value[version.id] = text;
+  return saveVersion(version, { bodyText: text, ...extra });
+}
+
+function turnIntoThread() {
+  const version = active.value;
+  if (!version) return;
+  const parts = splitIntoThread(activeText.value, activeLimit.value || 280);
+  void setTextNow(version, parts.join(THREAD_JOIN), { publishingSettings: postOptions(version, { thread: true }) });
+}
+
+function makeOnePost() {
+  const version = active.value;
+  if (!version) return;
+  void setTextNow(version, threadParts(activeText.value).join("\n\n"), { publishingSettings: postOptions(version, { thread: false }) });
+}
+
+async function shortenForPlatform() {
+  const version = active.value;
+  if (!version || busy.value) return;
+  busy.value = "shorten";
+  const before = activeText.value;
+  try {
+    const shorter = await social.shortenText(before, activeLimit.value || 280);
+    await setTextNow(version, shorter);
+    shortenUndo.value = { id: version.id, text: before };
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't shorten this.");
+  } finally {
+    busy.value = null;
+  }
+}
+
+function undoShorten() {
+  const version = active.value;
+  if (!version || shortenUndo.value?.id !== version.id) return;
+  void setTextNow(version, shortenUndo.value.text);
+  shortenUndo.value = null;
+}
+
 const activeLength = computed(() => (active.value ? Array.from(texts.value[active.value.id] ?? "").length : 0));
 const activeAccountLabel = computed(() => {
   if (!active.value) return "";
@@ -221,6 +280,7 @@ function withText(version: PostVersion): PostVersion {
 function tabCount(version: PostVersion): string {
   const images = version.assetManifest.filter(isImageAsset).length;
   if (images > 1) return `${images} images`;
+  if (isThread(version)) return `${threadParts(texts.value[version.id] ?? version.bodyText).length} posts`;
   const limit = versionTextLimit(version, capabilities.value);
   const length = Array.from(texts.value[version.id] ?? version.bodyText).length;
   return limit && limit < 10_000 ? `${length}/${limit}` : "";
@@ -993,7 +1053,8 @@ onMounted(async () => {
             <div class="post-field-foot">
               <span>
                 {{ networkLabel(active.platform) }} only<template v-if="activeAccountLabel"> · {{ activeAccountLabel }}</template>
-                <template v-if="activeLimit && activeLimit < 10000"> · {{ activeLength }}/{{ activeLimit }}</template>
+                <template v-if="activeThread"> · {{ activeThread.length }} posts</template>
+                <template v-else-if="activeLimit && activeLimit < 10000"> · {{ activeLength }}/{{ activeLimit }}</template>
                 <template v-if="activeFold !== null && activeFoldRule"> · Shaded text sits behind “{{ activeFoldRule.label.replace(/^…\s?/, "") }}”</template>
                 <template v-if="savingIds.has(active.id)"> · Saving…</template>
               </span>
@@ -1008,11 +1069,23 @@ onMounted(async () => {
               </span>
             </div>
 
+            <p v-if="activeThread && !activeLocked" class="post-thread-note">
+              Thread of {{ activeThread.length }} posts. Put a line with <code>---</code> between posts.
+              <button type="button" @click="makeOnePost">Make it one post</button>
+            </p>
+            <p v-if="shortenUndo && shortenUndo.id === active.id && !activeLocked" class="post-thread-note">
+              ME3 shortened this. Check it reads like you.
+              <button type="button" @click="undoShorten">Undo</button>
+            </p>
             <ul v-if="activeChecks.some((check) => check.field === 'text' || check.field === 'account')" class="post-checks">
               <li v-for="check in activeChecks.filter((item) => item.field !== 'images')" :key="check.message">
                 <span class="post-checks__icon" aria-hidden="true">!</span>
                 <span>{{ check.message }}</span>
                 <button v-if="check.field === 'account'" type="button" @click="accountsOpen = true">Connect</button>
+                <template v-if="check.fix === 'thread_or_shorten' && !activeLocked">
+                  <button type="button" :disabled="busy !== null" @click="turnIntoThread">Turn into a thread</button>
+                  <button type="button" :disabled="busy !== null" @click="shortenForPlatform">{{ busy === "shorten" ? "Shortening…" : `Shorten for ${networkLabel(active.platform)}` }}</button>
+                </template>
               </li>
             </ul>
 
@@ -1096,6 +1169,7 @@ onMounted(async () => {
               :handle="activeAccountRow?.handle"
               :avatar-url="activeAccountRow?.avatarUrl"
               :title="active.title"
+              :thread="activeThread"
             />
           </aside>
         </section>
@@ -1303,6 +1377,9 @@ onMounted(async () => {
   text-underline-offset: 2px;
   cursor: pointer;
 }
+.post-thread-note { margin: 0; color: var(--ui-text-muted); font-size: 12.5px; }
+.post-thread-note code { padding: 0 3px; border-radius: 3px; background: var(--ui-surface-muted); font-size: 12px; }
+.post-thread-note button { margin-left: 6px; padding: 0; border: 0; background: none; color: var(--ui-text-muted); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .post-checks { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
 .post-checks li { display: flex; align-items: center; gap: 8px; }
 .post-checks__icon { display: inline-grid; flex: none; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: var(--ui-danger); color: #fff; font-size: 10px; font-weight: 700; }

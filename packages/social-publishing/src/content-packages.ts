@@ -1,4 +1,5 @@
 import type { SocialMediaAsset, SocialPlatform } from "./index";
+import { normalizePostOptions, POST_OPTION_PLATFORMS, type SocialPostOptions } from "./post-options";
 import {
   normalizeTikTokDeliveryOptions,
   normalizeYouTubePublishingSettings,
@@ -35,6 +36,7 @@ export type SocialPostApprovalStatus = "draft" | "approved" | "rejected";
 export type PostVersionPublishingSettings = {
   tiktok?: TikTokDeliveryOptions;
   youtube?: YouTubePublishingSettings;
+  post?: SocialPostOptions;
 };
 
 export type SocialPost = {
@@ -1246,6 +1248,14 @@ function normalizePublishingSettings(
       );
     }
     return { youtube };
+  }
+  if ((POST_OPTION_PLATFORMS as readonly string[]).includes(platform)) {
+    const unknown = Object.keys(record).filter((key) => key !== "post");
+    if (unknown.length) {
+      throw new SocialPostInputError(`${platform} does not support saved ${unknown[0]} settings`);
+    }
+    const post = normalizePostOptions(record.post, platform);
+    return Object.keys(post).length ? { post } : {};
   }
   if (platform !== "tiktok") {
     throw new SocialPostInputError(

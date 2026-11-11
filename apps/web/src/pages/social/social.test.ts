@@ -461,5 +461,44 @@ describe("Social review", () => {
     });
     expect(wrapper.findAll("[data-tile]").map((tile) => tile.attributes("aria-label")?.split(".")[0])).toEqual(["Image 1 of 2", "Video 2 of 2"]);
   });
+
+  it("turns long X text into a thread, or shortens it with an undo", async () => {
+    const long = `${"We launched ME3 today. ".repeat(8).trim()} ${"It runs your site and email. ".repeat(4).trim()}`;
+    let current = post([version({ id: "x-1", bodyText: long })]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x")] },
+      "/social/posts/post-1": { get post() { return current; } },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPatch.mockImplementation((_path: string, body: Record<string, unknown>) => {
+      current = post([{ ...current.versions[0]!, ...body } as never]);
+      return Promise.resolve({ version: current.versions[0] });
+    });
+    apiPost.mockResolvedValue({ text: "We launched ME3 today. Try it." });
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    const button = (label: string) => wrapper.findAll("button").find((item) => item.text() === label)!;
+    await button("Turn into a thread").trigger("click");
+    await flushPromises();
+    const saved = apiPatch.mock.calls.at(-1)![1] as { bodyText: string; publishingSettings: unknown };
+    expect(saved.publishingSettings).toEqual({ post: { thread: true } });
+    expect(saved.bodyText.split("\n\n---\n\n").length).toBeGreaterThan(1);
+    expect(wrapper.text()).toContain("Thread of");
+
+    await button("Make it one post").trigger("click");
+    await flushPromises();
+    expect(apiPatch.mock.calls.at(-1)![1]).toMatchObject({ publishingSettings: {} });
+
+    await button("Shorten for X").trigger("click");
+    await flushPromises();
+    expect(apiPost).toHaveBeenCalledWith("/social/shorten", { text: expect.any(String), limit: 280 });
+    expect(apiPatch.mock.calls.at(-1)![1]).toEqual({ bodyText: "We launched ME3 today. Try it." });
+    await button("Undo").trigger("click");
+    await flushPromises();
+    expect((apiPatch.mock.calls.at(-1)![1] as { bodyText: string }).bodyText.length).toBeGreaterThan(280);
+  });
 });
 

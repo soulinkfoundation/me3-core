@@ -650,6 +650,39 @@ describe("X publishing adapter", () => {
     });
   });
 
+  it("posts a thread as replies to itself, and flags a thread that stops partway", async () => {
+    const bodies: unknown[] = [];
+    let failAt = 0;
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      bodies.push(body);
+      if (failAt && bodies.length === failAt) return Response.json({ title: "Too Many Requests" }, { status: 429 });
+      return Response.json({ data: { id: `post-${bodies.length}` } }, { status: 201 });
+    });
+    const thread = { thread: true };
+    const text = "First part.\n\n---\n\nSecond part.\n---\nThird part.";
+
+    expect(adapterFor("x").validateDraft({ bodyText: text, assets: [], providerOptions: thread })).toEqual({ ok: true });
+    expect(adapterFor("x").validateDraft({ bodyText: `${"a".repeat(281)}\n---\nok`, assets: [], providerOptions: thread }))
+      .toEqual({ ok: false, error: "Post 1 of this X thread is too long (max 280 characters)." });
+
+    const result = await adapterFor("x").publish({ accessToken: "t", accountId: "me", bodyText: text, assets: [], providerOptions: thread, fetcher: fetcher as typeof fetch });
+    expect(result).toMatchObject({ ok: true, platformPostId: "post-1" });
+    expect(bodies).toEqual([
+      { text: "First part." },
+      { text: "Second part.", reply: { in_reply_to_tweet_id: "post-1" } },
+      { text: "Third part.", reply: { in_reply_to_tweet_id: "post-2" } },
+    ]);
+
+    bodies.length = 0;
+    failAt = 3;
+    const partial = await adapterFor("x").publish({ accessToken: "t", accountId: "me", bodyText: text, assets: [], providerOptions: thread, fetcher: fetcher as typeof fetch });
+    expect(partial).toMatchObject({ ok: false, errorCode: "x_thread_incomplete", failureClass: "outcome_unknown", errorMessage: "X posted 2 of 3 parts of the thread. Check X, then finish it there." });
+
+    // Without the thread option, the separator is just text.
+    expect(adapterFor("x").validateDraft({ bodyText: "Short.\n---\nPost.", assets: [] })).toEqual({ ok: true });
+  });
+
   it("classifies a confirmed media upload rate limit as retryable", async () => {
     const markProviderCostStarted = vi.fn(async () => undefined);
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {

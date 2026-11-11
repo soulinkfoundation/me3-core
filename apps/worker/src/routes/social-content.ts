@@ -49,6 +49,7 @@ import {
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { fetchSocialLinkPreview } from "../social-link-preview";
 import { AltTextInputError, draftSocialAltText } from "../social-alt-text";
+import { ShortenInputError, shortenSocialText } from "../social-shorten";
 
 export function registerSocialContentRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.get("/api/social/link-preview", async (c) => {
@@ -422,6 +423,20 @@ export function registerSocialContentRoutes(app: AppHono, deps: OwnerRouteDeps) 
       if (!post) return c.json({ ok: false, error: "Post Version not found" }, 404);
       return c.json({ ok: true, post });
     } catch (error) {
+      return socialContentErrorResponse(c, error);
+    }
+  });
+
+  app.post("/api/social/shorten", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const body = await c.req.json<{ text?: unknown; limit?: unknown }>().catch(() => ({}));
+
+    try {
+      await requireSocialPublishing(c);
+      return c.json({ ok: true, text: await shortenSocialText(c.env, ownerId, body) });
+    } catch (error) {
+      if (error instanceof ShortenInputError) return c.json({ ok: false, error: error.message }, 400);
       return socialContentErrorResponse(c, error);
     }
   });

@@ -3,6 +3,8 @@ import { account, capabilities, post, version } from "./social-posts.fixtures";
 import {
   attentionItems,
   foldIndex,
+  splitIntoThread,
+  threadParts,
   postRowDetail,
   postTab,
   postTitle,
@@ -31,7 +33,7 @@ describe("social posts", () => {
 
   it("flags problems beside the field they affect", () => {
     const long = version({ bodyText: "x".repeat(300) });
-    expect(versionChecks(long, capabilities)).toContainEqual({ message: "300 characters, X's limit is 280.", blocking: true, field: "text" });
+    expect(versionChecks(long, capabilities)).toContainEqual({ message: "300 characters, X's limit is 280.", blocking: true, field: "text", fix: "thread_or_shorten" });
     expect(versionChecks(version({ platform: "instagram" }), capabilities)).toContainEqual({ message: "Instagram needs an image or a video.", blocking: true, field: "images" });
     const undescribed = version({ assetManifest: [{ url: "a", kind: "image", mimeType: "image/png" }] });
     expect(versionChecks(undescribed, capabilities)).toEqual([]);
@@ -94,6 +96,20 @@ describe("social posts", () => {
     expect(versionChecks(version({ platform: "linkedin", assetManifest: [pdf, photo] }), capabilities)[0]?.message)
       .toBe("LinkedIn posts a PDF on its own, without photos or video.");
     expect(versionChecks(version({ assetManifest: [pdf] }), capabilities)[0]?.message).toBe("X doesn't take PDFs. Remove it to post here.");
+  });
+
+  it("splits long X text into a thread at sentence boundaries", () => {
+    const text = `${"One sentence here. ".repeat(10).trim()}\n\n${"Another thought follows. ".repeat(8).trim()}`;
+    const parts = splitIntoThread(text, 280);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.every((part) => Array.from(part).length <= 280)).toBe(true);
+    expect(parts.every((part) => /[.]$/.test(part))).toBe(true);
+    expect(parts.join(" ").replace(/\s+/g, " ")).toBe(text.replace(/\s+/g, " "));
+    expect(splitIntoThread("w".repeat(600), 280).map((part) => part.length)).toEqual([600]);
+    expect(splitIntoThread("word ".repeat(120).trim(), 280).every((part) => part.length <= 280)).toBe(true);
+    expect(threadParts("A\n\n---\n\nB\n---\nC")).toEqual(["A", "B", "C"]);
+    const thread = version({ bodyText: `${"a".repeat(300)}\n---\nok`, publishingSettings: { post: { thread: true } } });
+    expect(versionChecks(thread, capabilities)).toContainEqual({ message: "Post 1 of the thread is 300 characters, X's limit is 280.", blocking: true, field: "text" });
   });
 });
 
