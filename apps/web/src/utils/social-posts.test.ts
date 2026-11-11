@@ -40,7 +40,7 @@ describe("social posts", () => {
     expect(versionChecks(version(), capabilities, [account("x", "expired")])).toContainEqual({ message: "Reconnect X to post.", blocking: true, field: "account" });
     const mov = { url: "/v.mov", kind: "video" as const, mimeType: "video/quicktime", byteLength: 1000, filename: "IMG_1.MOV", altText: "" };
     expect(versionChecks(version({ assetManifest: [mov] }), capabilities)).toEqual([
-      { message: "X takes MP4 video, and this is a MOV (iPhone) file. Export it as MP4 and add it again.", blocking: true, field: "images" },
+      { message: "X takes MP4 video, and this is a MOV (iPhone) file.", blocking: true, field: "images", fix: "convert_video" },
     ]);
     expect(versionChecks(version({ assetManifest: [{ ...mov, mimeType: "video/mp4" }] }), capabilities)).toEqual([]);
     expect(versionChecks(version({ platform: "facebook", assetManifest: [mov] }), capabilities)[0]).toMatchObject({ message: "Facebook doesn't take video here. Remove it or use images." });

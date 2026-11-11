@@ -18,6 +18,7 @@ import { useAppToast } from "../../composables/useAppToast";
 import { useSocialData } from "../../composables/useSocialData";
 import type { DriveFile, PostVersion, SocialMediaAsset, SocialPlatform, SocialPostDetail } from "../../stores/social";
 import { uploadDriveFiles } from "../../utils/drive-upload";
+import { convertVideo, planVideo, prepareImage } from "../../utils/media-prep";
 import {
   accountName,
   activeAccount,
@@ -385,7 +386,9 @@ async function uploadImages(files: File[]) {
   if (!files.length || !active.value || busy.value) return;
   busy.value = "upload";
   try {
-    const uploaded = await uploadDriveFiles<DriveFile>(files, { folderId: null, onConflict: "rename" });
+    // HEIC and oversized photos become JPEGs every platform takes.
+    const prepared = await Promise.all(files.map(prepareImage));
+    const uploaded = await uploadDriveFiles<DriveFile>(prepared, { folderId: null, onConflict: "rename" });
     setImages([...activeImages.value, ...uploaded.map((file) => driveAsset(file, "image"))]);
   } catch (caught) {
     toastFromUnknown(caught, "Couldn't add those images.");
@@ -455,16 +458,53 @@ async function addVideo(event: Event) {
   if (file) await uploadVideo(file);
 }
 
+const converting = ref<number | null>(null);
+
+/** A MOV where only MP4 works, or a video over the size limit, converts in the browser first. */
+async function videoFor(file: File, version: PostVersion): Promise<File> {
+  const plan = planVideo(file, videoRule(version.platform, capabilities.value));
+  if (!plan.convert) return file;
+  converting.value = 0;
+  try {
+    return await convertVideo(file, { maxBytes: plan.maxBytes, onProgress: (fraction) => (converting.value = fraction) });
+  } finally {
+    converting.value = null;
+  }
+}
+
 async function uploadVideo(file: File) {
   const version = active.value;
   if (!file || !version || busy.value) return;
   busy.value = "upload";
   try {
-    const [uploaded] = await uploadDriveFiles<DriveFile>([file], { folderId: null, onConflict: "rename" });
+    const ready = await videoFor(file, version);
+    const [uploaded] = await uploadDriveFiles<DriveFile>([ready], { folderId: null, onConflict: "rename" });
     if (!uploaded) throw new Error("The video didn't upload.");
     await setVideo(version, driveAsset(uploaded, "video"));
   } catch (caught) {
     toastFromUnknown(caught, "Couldn't add that video.");
+  } finally {
+    busy.value = null;
+  }
+}
+
+/** Converts the video already on this platform (say a MOV shared from Instagram) and swaps it in. */
+async function convertAttachedVideo() {
+  const version = active.value;
+  const video = activeVideo.value;
+  if (!version || !video || busy.value) return;
+  busy.value = "upload";
+  try {
+    const response = await fetch(video.url, { credentials: "include" });
+    if (!response.ok) throw new Error("Couldn't load the video to convert it.");
+    const blob = await response.blob();
+    const file = new File([blob], video.filename || "video.mov", { type: video.mimeType || blob.type });
+    const ready = await videoFor(file, version);
+    const [uploaded] = await uploadDriveFiles<DriveFile>([ready], { folderId: null, onConflict: "rename" });
+    if (!uploaded) throw new Error("The converted video didn't upload.");
+    await setVideo(version, driveAsset(uploaded, "video"));
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't convert that video.");
   } finally {
     busy.value = null;
   }
@@ -862,7 +902,7 @@ onMounted(async () => {
                   <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeImages.length ? "Add image" : "Add your own images" }}
                 </button>
                 <button v-if="activeVideoRule" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="videoInput?.click()">
-                  <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeVideoLabel }}
+                  <UiIcon name="Plus" :size="15" /> {{ converting !== null ? `Converting… ${Math.round(converting * 100)}%` : busy === "upload" ? "Adding…" : activeVideoLabel }}
                 </button>
                 <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="filesPickerOpen = true">
                   <UiIcon name="Folder" :size="15" /> From Files
@@ -873,6 +913,9 @@ onMounted(async () => {
                 <li v-for="check in activeChecks.filter((item) => item.field === 'images')" :key="check.message">
                   <span class="post-checks__icon" aria-hidden="true">!</span>
                   <span>{{ check.message }}</span>
+                  <button v-if="check.fix === 'convert_video' && !activeLocked" type="button" :disabled="busy !== null" @click="convertAttachedVideo">
+                    {{ converting !== null ? `Converting… ${Math.round(converting * 100)}%` : "Convert to MP4" }}
+                  </button>
                 </li>
               </ul>
               <p v-if="activeVideoRule?.guidance && (activeVideo || !activeTakesImages) && active.platform !== 'youtube'" class="post-note">{{ activeVideoRule.guidance }}</p>

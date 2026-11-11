@@ -247,7 +247,13 @@ export function postRowDetail(
   return { text: postSourceLabel(detail) || `${versions.length} platform${versions.length === 1 ? "" : "s"}`, tone: "muted" };
 }
 
-export type VersionCheck = { message: string; blocking: boolean; field: "text" | "images" | "account" };
+export type VersionCheck = {
+  message: string;
+  blocking: boolean;
+  field: "text" | "images" | "account";
+  /** A one-click fix ME3 can make. */
+  fix?: "convert_video";
+};
 
 function textLimit(platform: SocialPlatform, capabilities: SocialPlatformCapabilities[]): number | null {
   const rules = capabilities.find((item) => item.platform === platform)?.contentRules || [];
@@ -297,22 +303,24 @@ function videoChecks(version: PostVersion, capabilities: SocialPlatformCapabilit
   }
   const video = videos[0]!;
   const type = video.mimeType?.split(";", 1)[0]?.trim().toLowerCase();
+  const convertible = mimeAllowed("video/mp4", rule.allowedMimeTypes);
   if (type && rule.allowedMimeTypes.length && !mimeAllowed(type, rule.allowedMimeTypes)) {
     const wanted = rule.allowedMimeTypes.map(fileKind).join(" or ");
     checks.push({
       message:
         type === "video/quicktime"
-          ? `${label} takes ${wanted} video, and this is a MOV (iPhone) file. Export it as ${wanted} and add it again.`
+          ? `${label} takes ${wanted} video, and this is a MOV (iPhone) file.`
           : `${label} takes ${wanted} video, not ${fileKind(type)}.`,
       blocking: true,
       field: "images",
+      ...(convertible ? { fix: "convert_video" as const } : {}),
     });
-  }
-  if (rule.maxBytesPerItem && typeof video.byteLength === "number" && video.byteLength > rule.maxBytesPerItem) {
+  } else if (rule.maxBytesPerItem && typeof video.byteLength === "number" && video.byteLength > rule.maxBytesPerItem) {
     checks.push({
       message: `The video is too big for ${label} (up to ${Math.round(rule.maxBytesPerItem / 1024 / 1024).toLocaleString()} MB).`,
       blocking: true,
       field: "images",
+      ...(convertible ? { fix: "convert_video" as const } : {}),
     });
   }
   return checks;

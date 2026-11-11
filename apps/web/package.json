@@ -16,8 +16,8 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
-    "@me3-core/plugin-journal": "workspace:*",
     "@me3-core/plugin-email-campaigns": "workspace:*",
+    "@me3-core/plugin-journal": "workspace:*",
     "@me3-core/plugin-landing-pages": "workspace:*",
     "@me3-core/plugin-mission-control": "workspace:*",
     "@me3-core/site-renderer": "workspace:*",
@@ -37,6 +37,7 @@
     "embla-carousel": "^8.6.0",
     "jszip": "^3.10.1",
     "lucide": "0.515.0",
+    "mediabunny": "1.62.1",
     "pinia": "^2.1.0",
     "qrcode": "^1.5.4",
     "turndown": "^7.2.2",
