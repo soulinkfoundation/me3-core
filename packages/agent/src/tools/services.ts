@@ -109,6 +109,8 @@ export interface AgentDomainServices {
   landingPageEnv?: AgentLandingPageEnv;
   /** The owner's first site, drafted in one call and published after their approval. See apps/worker/src/site-starter.ts. */
   sites?: AgentSiteStarterServices;
+  /** Start sharing a published site blog post; the owner reviews it in Social. Nothing is posted. */
+  socialShare?: { shareSitePost(input: { slug: string }): Promise<{ postId: string; created: boolean; platforms: string[] }> };
 }
 /** What the draft card shows: where the site will live, how to preview it and which looks it can switch between. */
 export type AgentSiteStarterDraft = {

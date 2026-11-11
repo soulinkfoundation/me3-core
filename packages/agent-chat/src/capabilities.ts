@@ -1753,46 +1753,6 @@ export const CORE_CHAT_CAPABILITIES = [
     },
   }),
   defineCoreChatCapability({
-    id: "core.social.source.read",
-    owner: "plugin",
-    pluginId: "me3.social-publishing",
-    ownerFacingLabel: "Read social post source",
-    summary: "Read one Journal entry or task as the source for a social draft.",
-    category: "content",
-    handler: {
-      surface: "chat",
-      route: "core.social.source.read",
-    },
-    sideEffect: "read_private",
-    approvalMode: "none",
-    requiresSetup: ["social-publishing"],
-    inputSchema: {
-      type: "object",
-      required: ["sourceType", "sourceId"],
-      properties: {
-        sourceType: {
-          type: "string",
-          description: "Source kind for the social Post.",
-          enum: ["journal", "mission_task"],
-        },
-        sourceId: {
-          type: "string",
-          description: "Journal entry ID/date (or today), or stable task ID.",
-        },
-      },
-      additionalProperties: false,
-    },
-    auditEventKind: "social_content_source_read",
-    examples: {
-      positive: ["Read today's journal as the Source for a social Post."],
-      negative: ["Read the blog post about agent context."],
-    },
-    chat: {
-      intentKind: "read_action",
-      sideEffectLevel: "read",
-    },
-  }),
-  defineCoreChatCapability({
     id: "core.social.library.search",
     owner: "plugin",
     pluginId: "me3.social-publishing",
@@ -1857,157 +1817,6 @@ export const CORE_CHAT_CAPABILITIES = [
     chat: {
       intentKind: "read_action",
       sideEffectLevel: "read",
-    },
-  }),
-  defineCoreChatCapability({
-    id: "core.social.posting_plan.create",
-    owner: "plugin",
-    pluginId: "me3.social-publishing",
-    ownerFacingLabel: "Propose social Posting plan",
-    summary: "Propose reviewable posting times for approved Versions without creating Publications.",
-    category: "content",
-    handler: {
-      surface: "chat",
-      route: "core.social.posting_plan.create",
-    },
-    sideEffect: "write_internal_draft",
-    approvalMode: "none",
-    requiresSetup: ["social-publishing"],
-    inputSchema: {
-      type: "object",
-      required: ["accountId", "windowStart", "windowEnd", "count"],
-      properties: {
-        accountId: { type: "string", description: "Stable connected social account ID." },
-        versionIds: {
-          type: "string",
-          description: "Optional comma-separated exact approved Version IDs selected from library search.",
-        },
-        windowStart: {
-          type: "string",
-          description: "Inclusive start of the requested planning window.",
-          format: "date-time",
-        },
-        windowEnd: {
-          type: "string",
-          description: "Exclusive end of the requested planning window.",
-          format: "date-time",
-        },
-        count: { type: "integer", description: "Number of Posts to propose, from 1 to 20." },
-      },
-      additionalProperties: false,
-    },
-    auditEventKind: "social_posting_plan_proposed",
-    examples: {
-      positive: ["Propose times for three approved LinkedIn Posts next week."],
-      negative: ["Schedule those Posts now."],
-    },
-    chat: {
-      intentKind: "write_action",
-      sideEffectLevel: "write",
-    },
-  }),
-  defineCoreChatCapability({
-    id: "core.social.posting_plan.confirm",
-    owner: "plugin",
-    pluginId: "me3.social-publishing",
-    ownerFacingLabel: "Confirm social Posting plan",
-    summary: "Create the reviewed Publications in one Posting plan after explicit owner confirmation.",
-    category: "content",
-    handler: {
-      surface: "chat",
-      route: "core.social.posting_plan.confirm",
-    },
-    sideEffect: "write_internal_active",
-    approvalMode: "approval_required",
-    requiresSetup: ["social-publishing"],
-    inputSchema: {
-      type: "object",
-      required: ["planId", "expectedUpdatedAt", "confirmed"],
-      properties: {
-        planId: { type: "string", description: "Stable Posting plan ID from the proposal." },
-        expectedUpdatedAt: {
-          type: "string",
-          description: "Exact last-reviewed Posting plan update timestamp.",
-          format: "date-time",
-        },
-        confirmed: {
-          type: "boolean",
-          description: "True only after the owner explicitly confirms the reviewed Posting plan.",
-        },
-      },
-      additionalProperties: false,
-    },
-    auditEventKind: "social_posting_plan_confirmed",
-    examples: {
-      positive: ["Yes, confirm that Posting plan exactly as shown."],
-      negative: ["Show me what you would schedule next week."],
-    },
-    chat: {
-      intentKind: "write_action",
-      sideEffectLevel: "write",
-    },
-  }),
-  defineCoreChatCapability({
-    id: "core.social.draft.create",
-    owner: "plugin",
-    pluginId: "me3.social-publishing",
-    ownerFacingLabel: "Save social post drafts",
-    summary: "Save a source-backed social Post with reviewable LinkedIn, X, and Instagram Versions.",
-    category: "content",
-    handler: {
-      surface: "chat",
-      route: "core.social.draft.create",
-    },
-    sideEffect: "write_internal_draft",
-    approvalMode: "none",
-    requiresSetup: ["social-publishing"],
-    inputSchema: {
-      type: "object",
-      required: ["sourceType", "sourceId", "ideaText"],
-      properties: {
-        sourceType: {
-          type: "string",
-          description: "Source kind already read with the social Source tool.",
-          enum: ["journal", "mission_task"],
-        },
-        sourceId: {
-          type: "string",
-          description: "The exact source ID/date used with the social source tool.",
-        },
-        siteId: {
-          type: "string",
-          description: "Optional owner site ID. Omit to use the primary profile site.",
-        },
-        ideaText: {
-          type: "string",
-          description: "A concise source-derived description using the owner's own wording where possible.",
-        },
-        linkedinBody: {
-          type: "string",
-          description: "Optional LinkedIn draft that preserves the source wording and voice, with only necessary formatting edits.",
-        },
-        xBody: {
-          type: "string",
-          description: "Optional concise X draft that stays as close as possible to the owner's source words.",
-        },
-        instagramBody: {
-          type: "string",
-          description: "Optional Instagram caption that preserves the owner's source wording and voice.",
-        },
-      },
-      additionalProperties: false,
-    },
-    auditEventKind: "social_content_draft_saved",
-    examples: {
-      positive: ["Turn today's journal into LinkedIn, X, and Instagram drafts."],
-      negative: [
-        "Brainstorm social post ideas with me.",
-        "Save a publishable post from this blank prompt without using one of my Sources.",
-      ],
-    },
-    chat: {
-      intentKind: "write_action",
-      sideEffectLevel: "write",
     },
   }),
   defineCoreChatCapability({
@@ -2089,6 +1898,41 @@ export const CORE_CHAT_CAPABILITIES = [
     },
   }),
   defineCoreChatCapability({
+    id: "core.social.site_post.share",
+    owner: "plugin",
+    pluginId: "me3.social-publishing",
+    ownerFacingLabel: "Share a site post",
+    summary: "Start sharing one of the owner's published site blog posts. ME3 fills each connected platform with the post's own title, excerpt and link, adding no words. Nothing is scheduled or posted: the owner reviews it in Social. Use core.sites.blog_post.read first to find the post's slug. Asking again returns the same share.",
+    category: "content",
+    handler: {
+      surface: "chat",
+      route: "core.social.site_post.share",
+    },
+    sideEffect: "write_internal_draft",
+    approvalMode: "none",
+    requiresSetup: ["social-publishing"],
+    inputSchema: {
+      type: "object",
+      required: ["slug"],
+      properties: {
+        slug: {
+          type: "string",
+          description: "The published blog post's slug, copied exactly from core.sites.blog_post.read.",
+        },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "social_content_draft_saved",
+    examples: {
+      positive: ["Share my latest blog post.", "Can you reshare the post about morning writing?"],
+      negative: ["Write a post about my week.", "Post this to X right now."],
+    },
+    chat: {
+      intentKind: "write_action",
+      sideEffectLevel: "write",
+    },
+  }),
+  defineCoreChatCapability({
     id: "core.social.nudges.set",
     owner: "plugin",
     pluginId: "me3.social-publishing",
@@ -2114,103 +1958,6 @@ export const CORE_CHAT_CAPABILITIES = [
     examples: {
       positive: ["Stop nudging me about social posts."],
       negative: ["Schedule my post for Thursday."],
-    },
-    chat: {
-      intentKind: "write_action",
-      sideEffectLevel: "write",
-    },
-  }),
-  defineCoreChatCapability({
-    id: "core.social.suggestions.create",
-    owner: "plugin",
-    pluginId: "me3.social-publishing",
-    ownerFacingLabel: "Create grounded social Suggestions",
-    summary: "Create a Quote, Short Post, Thread, and carousel outline Suggestion from one explicitly read owner Source.",
-    category: "content",
-    handler: {
-      surface: "chat",
-      route: "core.social.suggestions.create",
-    },
-    sideEffect: "write_internal_draft",
-    approvalMode: "none",
-    requiresSetup: ["social-publishing"],
-    inputSchema: {
-      type: "object",
-      required: [
-        "sourceType",
-        "sourceId",
-        "quoteText",
-        "quoteSourceExcerpt",
-        "shortPostText",
-        "shortPostSourceExcerpt",
-        "threadText",
-        "threadSourceExcerpt",
-        "carouselOutlineText",
-        "carouselSourceExcerpt",
-      ],
-      properties: {
-        sourceType: {
-          type: "string",
-          description: "Source kind already read with the social Source tool.",
-          enum: ["journal", "mission_task"],
-        },
-        sourceId: {
-          type: "string",
-          description: "The exact source ID/date used with the social Source tool.",
-        },
-        siteId: {
-          type: "string",
-          description: "Optional owner site ID. Omit to use the primary profile site.",
-        },
-        quoteText: {
-          type: "string",
-          description: "A verbatim Source quote, or a disclosed trimming that only removes words.",
-        },
-        quoteSourceExcerpt: {
-          type: "string",
-          description: "Exact visible Source text supporting the Quote Suggestion.",
-        },
-        quoteTrimmed: {
-          type: "boolean",
-          description: "True only when the quote removes Source words and visibly discloses trimming.",
-        },
-        shortPostText: {
-          type: "string",
-          description: "A short Post Suggestion that only condenses or reorganizes Source meaning.",
-        },
-        shortPostSourceExcerpt: {
-          type: "string",
-          description: "Exact visible Source text supporting the Short Post Suggestion.",
-        },
-        threadText: {
-          type: "string",
-          description: "A numbered Thread Suggestion grounded only in the Source.",
-        },
-        threadSourceExcerpt: {
-          type: "string",
-          description: "Exact visible Source text supporting the Thread Suggestion.",
-        },
-        carouselOutlineText: {
-          type: "string",
-          description: "A slide-by-slide carousel outline grounded only in the Source.",
-        },
-        carouselSourceExcerpt: {
-          type: "string",
-          description: "Exact visible Source text supporting the carousel outline Suggestion.",
-        },
-      },
-      additionalProperties: false,
-    },
-    auditEventKind: "social_suggestions_created",
-    examples: {
-      positive: [
-        "Turn today's Journal into a Quote, Short Post, Thread, and carousel outline I can review.",
-        "Repurpose the task we just read into grounded social Suggestions.",
-      ],
-      negative: [
-        "Invent four social Suggestions without reading one of my Sources.",
-        "Make up a personal story and opinions for my social voice.",
-      ],
     },
     chat: {
       intentKind: "write_action",

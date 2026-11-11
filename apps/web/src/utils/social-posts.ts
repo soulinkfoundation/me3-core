@@ -5,7 +5,6 @@ import type {
   SocialPlatform,
   SocialPlatformCapabilities,
   SocialPostDetail,
-  SocialSuggestion,
 } from "../stores/social";
 
 /**
@@ -13,10 +12,9 @@ import type {
  * (Version, Publication, Source) and no ids. Kept free of Vue so pages and tests share them.
  */
 
-export type SocialTab = "ideas" | "drafts" | "scheduled" | "posted";
+export type SocialTab = "drafts" | "scheduled" | "posted";
 
 export const SOCIAL_TABS: ReadonlyArray<{ id: SocialTab; label: string }> = [
-  { id: "ideas", label: "Ideas" },
   { id: "drafts", label: "Drafts" },
   { id: "scheduled", label: "Scheduled" },
   { id: "posted", label: "Posted" },
@@ -510,28 +508,6 @@ function plainError(message: string | null | undefined): string | null {
   if (/version|publication|\b[a-z]+_[a-z_]+\b|\(#?\d+\)/i.test(text)) return null;
   const sentence = text.split(/(?<=\.)\s/, 1)[0] || text;
   return sentence.length > 140 ? null : sentence;
-}
-
-export function ideaTitle(idea: SocialSuggestion): string {
-  const title = idea.sourceTitle?.trim();
-  if (title && !GENERIC_TITLES.has(title.toLowerCase())) return title;
-  const text = idea.bodyText.trim().split(/\n/, 1)[0] || "Idea";
-  return text.length > 70 ? `${text.slice(0, 67).trimEnd()}…` : text;
-}
-
-export function ideaSourceLabel(idea: SocialSuggestion): string {
-  switch (idea.sourceType) {
-    case "journal":
-      return "From your journal";
-    case "site":
-      return "From your site";
-    case "mission_task":
-      return "From a task";
-    case "file":
-      return "From your files";
-    default:
-      return "Saved idea";
-  }
 }
 
 /** The one suggested time: the next weekday at 12:30, at least an hour away. */

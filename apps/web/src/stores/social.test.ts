@@ -5,9 +5,6 @@ import {
   useSocialStore,
   type PostVersion,
   type Publication,
-  type PostingPlan,
-  type SocialPostDetail,
-  type SocialSuggestion,
 } from "./social";
 
 vi.mock("../api", () => ({
@@ -75,23 +72,10 @@ describe("social store Post workflow", () => {
     expect(api.put).toHaveBeenCalledWith("/social/posts/post-1/text-carousel", { templateId: "t1", slides: [], fileIds: ["f1"] });
   });
 
-  it("searches the Post library and writes or deletes owner drafts through canonical APIs", async () => {
-    const item = { postId: "post-1", versionId: "version-1" };
+  it("writes or deletes owner drafts through canonical APIs", async () => {
     const post = { post: { id: "post-1" }, versions: [] };
-    vi.mocked(api.get).mockResolvedValue({ items: [item] });
     vi.mocked(api.patch).mockResolvedValue({ post });
     const store = useSocialStore();
-
-    expect(await store.searchPostLibrary({
-      siteId: "site one",
-      query: "launch notes",
-      approvalStatus: "approved",
-      publishedFrom: "2026-07-01T00:00:00.000Z",
-      limit: 100,
-    })).toEqual([item]);
-    expect(api.get).toHaveBeenCalledWith(
-      "/social/library?siteId=site+one&query=launch+notes&approvalStatus=approved&publishedFrom=2026-07-01T00%3A00%3A00.000Z&limit=100",
-    );
 
     expect(await store.updateSocialPost("post one", {
       title: "Launch update",
@@ -110,116 +94,16 @@ describe("social store Post workflow", () => {
     );
   });
 
-  it("saves Preferred posting times and keeps plan proposal separate from explicit confirmation", async () => {
-    const preference = {
-      accountId: "account-1",
-      timezone: "Europe/Dublin",
-      times: [{ day: "monday", localTime: "09:00" }],
-      minimumGapMinutes: 120,
-      minimumRepostDays: 30,
-    };
-    const plan = {
-      id: "plan-1",
-      updatedAt: "2026-07-18T09:00:00.000Z",
-      status: "suggested",
-    } as PostingPlan;
-    vi.mocked(api.get).mockResolvedValueOnce({ preference }).mockResolvedValueOnce({ plan });
-    vi.mocked(api.put).mockResolvedValue({ preference });
-    vi.mocked(api.post).mockResolvedValue({ plan });
+  it("shares a site blog post and reads the existing share", async () => {
+    const post = { post: { id: "post-1" }, versions: [] };
+    vi.mocked(api.post).mockResolvedValue({ post, created: true });
+    vi.mocked(api.get).mockResolvedValue({ post });
     const store = useSocialStore();
 
-    expect(await store.fetchPreferredPostingTimes("account one")).toBe(preference);
-    expect(api.get).toHaveBeenCalledWith(
-      "/social/accounts/account%20one/preferred-posting-times",
-    );
-    await store.updatePreferredPostingTimes("account-1", {
-      timezone: "Europe/Dublin",
-      times: [{ day: "monday", localTime: "09:00" }],
-      minimumGapMinutes: 120,
-      minimumRepostDays: 30,
-    });
-    expect(api.put).toHaveBeenCalledWith(
-      "/social/accounts/account-1/preferred-posting-times",
-      expect.objectContaining({ minimumGapMinutes: 120 }),
-    );
-
-    const proposal = {
-      accountId: "account-1",
-      windowStart: "2026-07-20T00:00:00.000Z",
-      windowEnd: "2026-07-27T00:00:00.000Z",
-      count: 1,
-    };
-    await store.createPostingPlan(proposal);
-    expect(api.post).toHaveBeenCalledWith("/social/posting-plans", proposal);
-    expect(await store.fetchPostingPlan("plan one")).toBe(plan);
-    expect(api.get).toHaveBeenCalledWith("/social/posting-plans/plan%20one");
-    await store.confirmPostingPlan(plan);
-    expect(api.post).toHaveBeenCalledWith("/social/posting-plans/plan-1/confirm", {
-      confirmed: true,
-      expectedUpdatedAt: plan.updatedAt,
-    });
-  });
-
-  it("loads, edits, discards, and chooses grounded Suggestions", async () => {
-    const suggestion = {
-      id: "suggestion-1",
-      bodyText: "Grounded text",
-      updatedAt: "2026-07-18T08:00:00.000Z",
-    } as SocialSuggestion;
-    const post = {
-      post: {
-        id: "post-1",
-        siteId: "site-1",
-        sourceType: "journal",
-        sourceRef: "journal:journal-1",
-        sourceTitle: "Grounded Source",
-        sourceSnapshot: '{"id":"journal-1"}',
-        sourceText: "Grounded Source text",
-        ideaText: "Grounded text",
-        tags: [],
-        goal: null,
-        status: "ready",
-        createdBy: "user",
-        createdAt: "2026-07-18T08:00:00.000Z",
-        updatedAt: "2026-07-18T08:00:00.000Z",
-      },
-      versions: [],
-    } satisfies SocialPostDetail;
-    vi.mocked(api.get).mockResolvedValue({ suggestions: [suggestion] });
-    vi.mocked(api.patch).mockResolvedValue({ suggestion });
-    vi.mocked(api.delete).mockResolvedValue({ suggestion });
-    vi.mocked(api.post).mockResolvedValue({ suggestion, post });
-    const store = useSocialStore();
-
-    expect(await store.fetchSocialSuggestions("site one")).toEqual([suggestion]);
-    expect(api.get).toHaveBeenCalledWith("/social/suggestions?siteId=site%20one");
-    expect(
-      await store.updateSocialSuggestion("suggestion one", {
-        bodyText: "Grounded text",
-        expectedUpdatedAt: suggestion.updatedAt,
-      }),
-    ).toBe(suggestion);
-    expect(api.patch).toHaveBeenCalledWith("/social/suggestions/suggestion%20one", {
-      bodyText: "Grounded text",
-      expectedUpdatedAt: suggestion.updatedAt,
-    });
-    expect(
-      await store.discardSocialSuggestion("suggestion one", suggestion.updatedAt),
-    ).toBe(suggestion);
-    expect(api.delete).toHaveBeenCalledWith(
-      "/social/suggestions/suggestion%20one?expectedUpdatedAt=2026-07-18T08%3A00%3A00.000Z",
-    );
-    expect(
-      await store.chooseSocialSuggestion(
-        "suggestion one",
-        ["linkedin", "x"],
-        suggestion.updatedAt,
-      ),
-    ).toEqual({ suggestion, post });
-    expect(api.post).toHaveBeenCalledWith("/social/suggestions/suggestion%20one/post", {
-      platforms: ["linkedin", "x"],
-      expectedUpdatedAt: suggestion.updatedAt,
-    });
+    expect(await store.shareSitePost("site-1", "write before")).toBe(post);
+    expect(api.post).toHaveBeenCalledWith("/social/site-posts/share", { siteId: "site-1", slug: "write before" });
+    expect(await store.fetchSitePostShare("site-1", "write before")).toBe(post);
+    expect(api.get).toHaveBeenCalledWith("/social/site-posts/share?siteId=site-1&slug=write%20before");
   });
 
   it("updates one exact Post Version", async () => {

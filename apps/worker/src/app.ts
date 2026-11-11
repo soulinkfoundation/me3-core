@@ -147,6 +147,7 @@ import { registerSchedulingRoutes } from "./routes/scheduling";
 import { registerSocialContentRoutes } from "./routes/social-content";
 import { registerSocialAccountRoutes } from "./routes/social-accounts";
 import { registerSocialTextCarouselRoutes } from "./routes/social-text-carousels";
+import { registerSocialSiteShareRoutes } from "./routes/social-site-share";
 import { registerSocialMediaDeliveryRoutes } from "./routes/social-media-delivery";
 import { registerPublicSiteRoutes, registerSiteRoutes } from "./routes/sites";
 import { registerUsernameRoutes } from "./routes/usernames";
@@ -1201,6 +1202,7 @@ registerPushNotificationRoutes(app, { requireOwner, unauthorized });
 registerSocialContentRoutes(app, { requireOwner, unauthorized });
 registerSocialAccountRoutes(app, { requireOwner, unauthorized });
 registerSocialTextCarouselRoutes(app, { requireOwner, unauthorized });
+registerSocialSiteShareRoutes(app, { requireOwner, unauthorized });
 registerSocialMediaDeliveryRoutes(app);
 app.get("/api/social/status", async (c) => {
   const ownerId = await requireOwner(c);

@@ -12,17 +12,6 @@ import {
   getSocialPlatformCapabilities,
   type SocialPlatformCapabilities,
 } from "./capabilities";
-import {
-  blockPostingPlanItem,
-  claimPostingPlanForConfirmation,
-  finishPostingPlanConfirmation,
-  linkPostingPlanItemPublication,
-  markPostingPlanNeedsAttention,
-  postingPlanPublicationId,
-  reservePostingPlanItem,
-  type ConfirmPostingPlanInput,
-  type PostingPlan,
-} from "./posting-plans";
 
 import { normalizePostOptions, renderPostText, xPostTexts, type SocialPostOptions } from "./post-options";
 
@@ -86,6 +75,17 @@ export {
   type UpdateSocialPostInput,
 } from "./content-packages";
 
+export {
+  SitePostShareError,
+  buildSitePostShareVersions,
+  findSitePostShare,
+  shareSitePost,
+  sitePostShareTargets,
+  sitePostSourceRef,
+  type SitePostShareTarget,
+  type SitePostSnapshot,
+} from "./site-share";
+
 export { RASTER_MIME_TYPES, sniffRasterMimeType, type RasterMimeType } from "./raster-mime";
 
 export {
@@ -105,38 +105,12 @@ export {
 } from "./text-carousels";
 
 export {
-  POSTING_WEEKDAYS,
-  SocialPostingPlanInputError,
-  blockPostingPlanItem,
-  claimPostingPlanForConfirmation,
-  createPostingPlan,
-  finishPostingPlanConfirmation,
-  getPostingPlan,
-  getPreferredPostingTimes,
-  linkPostingPlanItemPublication,
-  markPostingPlanNeedsAttention,
-  postingPlanPublicationId,
-  reservePostingPlanItem,
+  SocialLibraryInputError,
   searchPostLibrary,
-  updatePreferredPostingTimes,
-  type ConfirmPostingPlanInput,
-  type CreatePostingPlanInput,
   type PostLibraryItem,
   type PostLibrarySearchInput,
-  type PostingPlan,
-  type PostingPlanConfirmationClaim,
-  type PostingPlanItem,
-  type PostingPlanItemStatus,
-  type PostingPlanReservation,
-  type PostingPlanStatus,
-  type PostingPlanWarning,
-  type PostingPlanWarningCode,
-  type PostingWeekday,
-  type PreferredPostingTime,
-  type PreferredPostingTimes,
-  type SocialPostingPlanEnv,
-  type UpdatePreferredPostingTimesInput,
-} from "./posting-plans";
+  type SocialLibraryEnv,
+} from "./library";
 
 export {
   canPublishSocialPlatform,
@@ -158,23 +132,6 @@ export {
   type SocialPublicationCalendarState,
   type SocialPublicationCalendarWindow,
 } from "./calendar";
-
-export {
-  SOCIAL_SUGGESTION_KINDS,
-  SocialSuggestionInputError,
-  chooseSocialSuggestion,
-  createSocialSuggestions,
-  discardSocialSuggestion,
-  listSocialSuggestions,
-  updateSocialSuggestion,
-  type ChooseSocialSuggestionInput,
-  type CreateSocialSuggestionsInput,
-  type DiscardSocialSuggestionInput,
-  type SocialSuggestion,
-  type SocialSuggestionKind,
-  type SocialSuggestionStatus,
-  type UpdateSocialSuggestionInput,
-} from "./suggestions";
 
 export const SOCIAL_PUBLISHING_PLUGIN_ID = "me3.social-publishing";
 export const SOCIAL_PUBLISH_QUEUE_NAME = "me3-social-publish";
@@ -2774,103 +2731,6 @@ export async function createPostVersionPublication(
     );
   }
   return getOwnedPublication(env, ownerId, publicationId);
-}
-
-export async function confirmPostingPlan(
-  env: SocialPublishingEnv,
-  ownerId: string,
-  planId: unknown,
-  input: ConfirmPostingPlanInput,
-  options: { requestedByType?: "owner" | "agent" } = {},
-): Promise<PostingPlan | null> {
-  const gate = await getSocialPublishingRuntimeStatus(env);
-  if (!gate.ready) throw new SocialPublishingGateError(gate);
-  const claim = await claimPostingPlanForConfirmation(env, ownerId, planId, input);
-  if (!claim) return null;
-  if (claim.alreadyConfirmed || !claim.token) return claim.plan;
-
-  try {
-    for (const item of claim.plan.items) {
-      if (item.status === "scheduled" && item.publicationId) continue;
-      try {
-        const reservation = await reservePostingPlanItem(
-          env,
-          ownerId,
-          claim.plan.id,
-          item.id,
-          claim.token,
-        );
-        const publication = await createPostVersionPublication(
-          env,
-          ownerId,
-          item.versionId,
-          {
-            scheduledFor: item.scheduledFor,
-            timezone: item.timezone,
-            requestedByType: options.requestedByType === "agent" ? "agent" : "owner",
-            requestContext: {
-              surface: "posting_plan",
-              postingPlanId: claim.plan.id,
-              postingPlanItemId: item.id,
-              repost: item.isRepost,
-            },
-          },
-          fetchWithGlobalContext,
-          {
-            publicationId: reservation.publicationId,
-            reservationId: reservation.id,
-          },
-        );
-        if (!publication) {
-          throw new SocialPublishingInputError("The approved Version is no longer available", 409);
-        }
-        await linkPostingPlanItemPublication(
-          env,
-          ownerId,
-          claim.plan.id,
-          item.id,
-          claim.token,
-          publication.id,
-        );
-      } catch (error) {
-        const recovered = await getOwnedPublication(
-          env,
-          ownerId,
-          postingPlanPublicationId(item.id),
-        );
-        if (
-          recovered &&
-          recovered.status !== "cancelled" &&
-          recovered.status !== "failed" &&
-          recovered.versionId === item.versionId &&
-          recovered.scheduledFor === item.scheduledFor &&
-          recovered.timezone === item.timezone
-        ) {
-          await linkPostingPlanItemPublication(
-            env,
-            ownerId,
-            claim.plan.id,
-            item.id,
-            claim.token,
-            recovered.id,
-          );
-          continue;
-        }
-        await blockPostingPlanItem(
-          env,
-          ownerId,
-          claim.plan.id,
-          item.id,
-          claim.token,
-          error instanceof Error ? error.message : "This Post could not be scheduled.",
-        );
-      }
-    }
-    return finishPostingPlanConfirmation(env, ownerId, claim.plan.id, claim.token);
-  } catch (error) {
-    await markPostingPlanNeedsAttention(env, ownerId, claim.plan.id, claim.token);
-    throw error;
-  }
 }
 
 async function resumeQueuedPublicationHandoff(

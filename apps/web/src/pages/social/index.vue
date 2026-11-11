@@ -14,7 +14,7 @@ import SocialMarks from "../../components/social/SocialMarks.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { useSocialData } from "../../composables/useSocialData";
 import { API_BASE } from "../../api";
-import type { DriveFile, SocialMediaAsset, SocialPlatform, SocialSuggestion } from "../../stores/social";
+import type { DriveFile, SocialMediaAsset, SocialPlatform } from "../../stores/social";
 import { uploadDriveFiles } from "../../utils/drive-upload";
 import {
   SOCIAL_NETWORKS,
@@ -23,8 +23,6 @@ import {
   activeAccount,
   attentionItems,
   formatWhen,
-  ideaSourceLabel,
-  ideaTitle,
   lastPostedAt,
   networkLabel,
   youtubeTitleFrom,
@@ -51,7 +49,6 @@ const router = useRouter();
 const { toastError, toastSuccess, toastFromUnknown } = useAppToast();
 const data = useSocialData();
 const { social, accounts, posts, capabilities, siteId, hostedPlatforms } = data;
-const ideas = ref<SocialSuggestion[]>([]);
 const tab = ref<SocialTab>(tabFromQuery(route.query.tab));
 const accountsOpen = ref(false);
 const composerOpen = ref(false);
@@ -63,7 +60,6 @@ type ComposerMedia = { kind: "image" | "video"; name: string; preview: string; f
 const composerMedia = ref<ComposerMedia[]>([]);
 const composerPickerOpen = ref(false);
 const composerMediaInput = ref<HTMLInputElement | null>(null);
-const ideaBusy = ref<string | null>(null);
 const composerTitleId = `social-new-post-${useId()}`;
 
 function tabFromQuery(value: unknown): SocialTab {
@@ -71,9 +67,8 @@ function tabFromQuery(value: unknown): SocialTab {
   return SOCIAL_TABS.some((item) => item.id === raw) ? (raw as SocialTab) : "scheduled";
 }
 
-const openIdeas = computed(() => ideas.value.filter((idea) => idea.status === "suggested" || idea.status === "choosing"));
 const rowsByTab = computed(() => {
-  const groups: Record<Exclude<SocialTab, "ideas">, typeof posts.value> = { drafts: [], scheduled: [], posted: [] };
+  const groups: Record<SocialTab, typeof posts.value> = { drafts: [], scheduled: [], posted: [] };
   for (const detail of posts.value) {
     if (visibleVersions(detail).length === 0) continue;
     groups[postTab(detail)].push(detail);
@@ -84,7 +79,6 @@ const rowsByTab = computed(() => {
   return groups;
 });
 const counts = computed<Record<SocialTab, number>>(() => ({
-  ideas: openIdeas.value.length,
   drafts: rowsByTab.value.drafts.length,
   scheduled: rowsByTab.value.scheduled.length,
   posted: rowsByTab.value.posted.length,
@@ -94,7 +88,6 @@ const connectedNetworks = computed(() =>
   SOCIAL_NETWORKS.filter((network) => accountState(network.id, accounts.value) !== "not_connected").map((network) => network.id),
 );
 const emptyText = computed(() => {
-  if (tab.value === "ideas") return "No ideas yet";
   if (tab.value === "drafts") return "No drafts";
   if (tab.value === "scheduled") return "Nothing scheduled";
   return "Nothing posted yet";
@@ -119,12 +112,8 @@ function moveTab(event: KeyboardEvent) {
   document.getElementById(`social-tab-${next.id}`)?.focus();
 }
 
-async function loadIdeas() {
-  ideas.value = await social.fetchSocialSuggestions("").catch(() => []);
-}
-
 async function refresh() {
-  await Promise.all([data.loadAccounts(), data.loadPosts(), loadIdeas()]);
+  await Promise.all([data.loadAccounts(), data.loadPosts()]);
 }
 
 /** Plain words for the error codes the hosted sign-in bridge sends back. */
@@ -298,34 +287,6 @@ async function createPost() {
   }
 }
 
-async function makePost(idea: SocialSuggestion) {
-  if (ideaBusy.value) return;
-  ideaBusy.value = idea.id;
-  try {
-    const networks = connectedNetworks.value.filter((network) => network !== "youtube");
-    const platforms = (networks.length ? networks : ["x", "linkedin"] as SocialNetwork[]).map(platformFor);
-    const result = await social.chooseSocialSuggestion(idea.id, platforms, idea.updatedAt);
-    await router.push(`/social/${encodeURIComponent(result.post.post.id)}`);
-  } catch (caught) {
-    toastFromUnknown(caught, "Couldn't turn that idea into a draft.");
-  } finally {
-    ideaBusy.value = null;
-  }
-}
-
-async function discardIdea(idea: SocialSuggestion) {
-  if (ideaBusy.value) return;
-  ideaBusy.value = idea.id;
-  try {
-    await social.discardSocialSuggestion(idea.id, idea.updatedAt);
-    ideas.value = ideas.value.filter((item) => item.id !== idea.id);
-  } catch (caught) {
-    toastFromUnknown(caught, "Couldn't remove that idea.");
-  } finally {
-    ideaBusy.value = null;
-  }
-}
-
 onBeforeUnmount(clearComposerMedia);
 
 onMounted(async () => {
@@ -337,7 +298,6 @@ onMounted(async () => {
   }
   handleOAuthReturn();
   await data.load();
-  if (!data.locked.value && !data.loadFailed.value) await loadIdeas();
 });
 </script>
 
@@ -410,18 +370,7 @@ onMounted(async () => {
         </div>
 
         <section :id="`social-panel-${tab}`" role="tabpanel" :aria-labelledby="`social-tab-${tab}`" class="social-panel">
-          <ul v-if="tab === 'ideas' && openIdeas.length" class="social-list">
-            <li v-for="idea in openIdeas" :key="idea.id" class="social-row">
-              <div class="social-row__text">
-                <span class="social-row__title">{{ ideaTitle(idea) }}</span>
-                <span class="social-row__detail">{{ ideaSourceLabel(idea) }}</span>
-              </div>
-              <Button color="outline" shape="pill" size="small" :disabled="ideaBusy === idea.id" @click="makePost(idea)">Draft it</Button>
-              <Button class="social-row__quiet" color="ghost" shape="soft" size="small" :disabled="ideaBusy === idea.id" @click="discardIdea(idea)">Remove</Button>
-            </li>
-          </ul>
-
-          <ul v-else-if="tab !== 'ideas' && rowsByTab[tab].length" class="social-list">
+          <ul v-if="rowsByTab[tab].length" class="social-list">
             <li v-for="detail in rowsByTab[tab]" :key="detail.post.id">
               <RouterLink class="social-row social-row--link" :to="`/social/${encodeURIComponent(detail.post.id)}`">
                 <SocialMarks :platforms="visibleVersions(detail).map((version) => version.platform)" />
@@ -565,7 +514,7 @@ onMounted(async () => {
 .social-attention__text b { color: var(--ui-danger); font-weight: 600; }
 
 /* Same segmented control as Tasks (Backlog · Now · Done). */
-.social-tabs { display: grid; grid-template-columns: repeat(4, 1fr); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
+.social-tabs { display: grid; grid-template-columns: repeat(3, 1fr); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
 .social-tabs button {
   display: inline-flex;
   align-items: center;
@@ -598,7 +547,6 @@ onMounted(async () => {
 .social-row__detail { overflow: hidden; color: var(--ui-text-muted); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .social-row__detail--danger { color: var(--ui-danger); }
 .social-row__when { flex: none; color: var(--ui-text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.social-row :deep(.social-row__quiet) { min-height: 30px; padding-inline: 6px; color: var(--ui-text-muted); font-weight: 500; }
 
 .social-empty { display: grid; justify-items: center; gap: 10px; margin-top: 56px; color: var(--ui-text-muted); font-size: 14px; text-align: center; }
 .social-empty p { margin: 0; }

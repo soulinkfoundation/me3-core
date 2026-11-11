@@ -11,6 +11,7 @@ import TiptapEditor from "../TiptapEditor.vue";
 import UiIcon from "../UiIcon.vue";
 import Button from "../Button.vue";
 import SwipeActionRow from "../SwipeActionRow.vue";
+import SitePostShare from "../social/SitePostShare.vue";
 
 const wizard = useWizardStore();
 function postThumbnail(post: WizardPost) {
@@ -488,6 +489,11 @@ onMounted(() => {
           ← Back to posts
         </button>
         <div class="editor-actions">
+          <SitePostShare
+            :username="wizard.username || wizard.profile.handle || ''"
+            :slug="selectedPost.slug"
+            :live="!selectedPost.draft && !wizard.needsPublish && !isPublishing"
+          />
           <button
             class="editor-action publish"
             type="button"

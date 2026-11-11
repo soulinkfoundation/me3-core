@@ -35,7 +35,6 @@ const targetContracts: Record<string, AgentTargetMetadata> = {
   core_scheduling_request_profile: { domain: "public profile", idParameter: "profileId", actionLabel: "Request meeting" },
   core_scheduling_approve: { domain: "scheduling request", idParameter: "requestId", actionLabel: "Approve meeting request" },
   core_scheduling_decline: { domain: "scheduling request", idParameter: "requestId", actionLabel: "Decline meeting request" },
-  core_social_posting_plan_confirm: { domain: "posting plan", idParameter: "planId", actionLabel: "Schedule social posts" },
 };
 
 const oneStepConfirmations: Record<string, (data: unknown, timezone: string) => string | null> = {

@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
-import { createAgentSocialPost } from "../../../packages/agent-chat/src/social-content";
+import { createAgentSocialPostFromOwnerText } from "../../../packages/agent-chat/src/social-content";
 
 const createSocialPost = vi.hoisted(() => vi.fn(async (_env, _owner, input) => input));
 vi.mock("@me3-core/plugin-social-publishing", async (importOriginal) => ({
@@ -45,8 +45,8 @@ function fixture() {
   return { db, sqlite };
 }
 
-const source = { sourceType: "journal" as const, requestedRef: "entry", id: "entry", title: "Journal", content: "Entry", snapshot: "{}" };
-const draft = { ideaText: "Entry", linkedinBody: "Entry" };
+const ownerText = "Studio open day on Saturday";
+const draft = { text: ownerText, platforms: ["linkedin" as const] };
 
 describe("personal site selection", () => {
   it("keeps newer business content and other owners out of the owner snapshot", async () => {
@@ -62,7 +62,7 @@ describe("personal site selection", () => {
   it("defaults personal social drafts to the profile even when a business site is older", async () => {
     const { db, sqlite } = fixture();
     try {
-      await createAgentSocialPost(db, "owner", source, draft);
+      await createAgentSocialPostFromOwnerText(db, "owner", ownerText, draft);
       expect(createSocialPost).toHaveBeenCalledWith(expect.anything(), "owner", expect.objectContaining({ siteId: "personal" }));
     } finally { sqlite.close(); }
   });
@@ -71,16 +71,8 @@ describe("personal site selection", () => {
     const { db, sqlite } = fixture();
     try {
       sqlite.exec("DELETE FROM sites WHERE id = 'personal'");
-      await expect(createAgentSocialPost(db, "owner", source, draft)).rejects.toThrow("Create a ME3 profile");
+      await expect(createAgentSocialPostFromOwnerText(db, "owner", ownerText, draft)).rejects.toThrow("Create a ME3 profile");
       expect(createSocialPost).not.toHaveBeenCalled();
-    } finally { sqlite.close(); }
-  });
-
-  it("preserves explicit social draft site selection", async () => {
-    const { db, sqlite } = fixture();
-    try {
-      await createAgentSocialPost(db, "owner", source, { ...draft, siteId: "studio" });
-      expect(createSocialPost).toHaveBeenCalledWith(expect.anything(), "owner", expect.objectContaining({ siteId: "studio" }));
     } finally { sqlite.close(); }
   });
 });

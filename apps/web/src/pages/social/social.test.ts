@@ -78,18 +78,17 @@ describe("Social page", () => {
         ],
       },
       "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
-      "/social/suggestions": { suggestions: [] },
     });
     const wrapper = mount(SocialIndex, { global: { stubs } });
     await flushPromises();
 
     const tabs = wrapper.findAll('[role="tab"]');
-    expect(tabs.map((tab) => tab.text())).toEqual(["Ideas0", "Drafts1", "Scheduled1", "Posted1"]);
+    expect(tabs.map((tab) => tab.text())).toEqual(["Drafts1", "Scheduled1", "Posted1"]);
     expect(wrapper.get('[aria-selected="true"]').text()).toContain("Scheduled");
     expect(wrapper.find('[aria-label="Needs attention"]').exists()).toBe(false);
     expect(wrapper.findAll(".social-row--link").map((row) => row.attributes("data-to"))).toEqual(["/social/scheduled"]);
 
-    await tabs[1]!.trigger("click");
+    await tabs[0]!.trigger("click");
     expect(wrapper.findAll(".social-row--link").map((row) => row.attributes("data-to"))).toEqual(["/social/draft"]);
     expect(wrapper.text()).not.toMatch(/Version|Publication|Source/);
   });
@@ -100,7 +99,6 @@ describe("Social page", () => {
       "/social/accounts": { accounts: [] },
       "/social/posts": { posts: [] },
       "/sites": { sites: [] },
-      "/social/suggestions": { suggestions: [] },
     });
     routeState.query = { social_error: "x_config" };
     mount(SocialIndex, { global: { stubs } });
@@ -116,7 +114,6 @@ describe("Social page", () => {
       "/social/accounts": { accounts: [account("instagram", "expired")] },
       "/social/posts": { posts: [post([version({ platform: "instagram", publicationStatus: "scheduled" })])] },
       "/sites": { sites: [] },
-      "/social/suggestions": { suggestions: [] },
     });
     const wrapper = mount(SocialIndex, { global: { stubs } });
     await flushPromises();

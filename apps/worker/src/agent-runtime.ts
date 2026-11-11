@@ -1,3 +1,4 @@
+import { shareOwnerSitePost } from "./social-site-share";
 import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, coalesceAgentStreamEvents, createCloudflareModel, isModelRequestRejected, createIntentVerifierFromModel, createD1TurnStore, runAgentTurn, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import { createCodingAgentServices } from "./coding-agent";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
@@ -310,6 +311,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     cards:parkedFeaturesOn(env)?createAgentHomeCardServices(env,ownerId):undefined,
     coding:await createCodingAgentServices(env),
     soup:createAgentSoupServices(env,ownerId),
+    socialShare:{shareSitePost:async input=>{const result=await shareOwnerSitePost(env,ownerId,input);return{postId:result.post.post.id,created:result.created,platforms:result.post.versions.map(version=>version.platform)};}},
   };
 }
 export function isToolAvailable(name:string,services:AgentDomainServices):boolean {
@@ -324,6 +326,7 @@ export function isToolAvailable(name:string,services:AgentDomainServices):boolea
   if(name==="core_scheduling_book_free_call")return Boolean(services.scheduling?.planFreeCall&&services.scheduling?.bookFreeCall);
   if(name.startsWith("core_cards_"))return Boolean(services.cards);
   if(name.startsWith("core_soup_"))return Boolean(services.soup);
+  if(name==="core_social_site_post_share")return Boolean(services.socialShare);
   if(name.startsWith("core_coding_"))return Boolean(services.coding);
   if(name==="core_scheduling_approve")return Boolean(services.scheduling?.approve);
   if(name==="core_scheduling_decline")return Boolean(services.scheduling?.decline);

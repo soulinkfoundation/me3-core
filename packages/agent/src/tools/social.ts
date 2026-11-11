@@ -1,29 +1,17 @@
-import { confirmPostingPlan, createPostingPlan, getPostingPlan, searchPostLibrary, type PostingPlan } from "@me3-core/plugin-social-publishing";
-import { createAgentSocialPost, createAgentSocialPostFromOwnerText, createAgentSocialSuggestions, readAgentSocialQueue, readAgentSocialSource, setAgentSocialNudges, type AgentSocialPlatform, type AgentSocialSource, type AgentSocialSourceType, type CreateAgentSocialPostInput, type CreateAgentSocialSuggestionsInput } from "../../../agent-chat/src/social-content";
-import { domainTool, idProperty, objectSchema, ok, optionalString, requiredString } from "./common";
-import { approval, assertUnchanged, rememberTargets, requireTarget } from "./targets";
+import { searchPostLibrary } from "@me3-core/plugin-social-publishing";
+import { createAgentSocialPostFromOwnerText, readAgentSocialQueue, setAgentSocialNudges, type AgentSocialPlatform } from "../../../agent-chat/src/social-content";
+import { domainTool, ok, optionalString, requiredString, services } from "./common";
 import type { AgentToolContext } from "../types";
-import { requireEnabledPlugin } from "../plugin-authorization";
 
-async function sourcePlugin(context: AgentToolContext, sourceType: unknown): Promise<AgentSocialSourceType> {
-  if (sourceType !== "journal" && sourceType !== "mission_task") throw new Error("Social source must be journal or mission_task.");
-  const plugin = sourceType === "journal" ? "me3.journal" : "me3.mission-control";
-  await requireEnabledPlugin(context, plugin);
-  context.signal.throwIfAborted();
-  return sourceType;
-}
-async function reviewedSource(args: Record<string, unknown>, context: AgentToolContext) {
-  const sourceType = await sourcePlugin(context, args.sourceType); const sourceId = requiredString(args.sourceId, "Source ID");
-  const expected = await requireTarget<{ id: string; source: AgentSocialSource }>(context, "social source", `${sourceType}:${sourceId}`);
-  const current = await readAgentSocialSource(context.db, context.ownerId, sourceType, sourceId, context.ownerTimezone);
-  assertUnchanged(expected.source, current, "Social source");
-  await sourcePlugin(context, sourceType);
-  return expected.source;
-}
 /** Everything the owner wrote in this chat: the only words a message-based draft may use. */
 function ownerWords(context: AgentToolContext): string {
   return [...context.messages.filter(message => message.role === "user").map(message => message.content), context.messageText].join("\n");
 }
+
+/**
+ * ME3 never writes the owner's social posts (owner decision 2026-11-11). It can read the queue
+ * and history, save posts in the owner's own words, and start sharing an existing site post.
+ */
 export function socialTools() {
   return [
     domainTool("core.social.queue.read", async (args, context) => {
@@ -40,50 +28,20 @@ export function socialTools() {
       });
       return ok({ post, published: false, scheduled: false, reviewPath: `/social/${post.post.id}` });
     }),
+    domainTool("core.social.site_post.share", async (args, context) => {
+      const share = services(context).socialShare;
+      if (!share) throw new Error("Sharing site posts is unavailable on this installation.");
+      context.signal.throwIfAborted();
+      const result = await share.shareSitePost({ slug: requiredString(args.slug, "Post slug") });
+      return ok({ ...result, published: false, scheduled: false, reviewPath: `/social/${result.postId}` });
+    }),
     domainTool("core.social.nudges.set", async (args, context) => {
       if (typeof args.on !== "boolean") throw new Error("on must be true or false.");
       return ok(await setAgentSocialNudges(context.db, args.on));
     }),
-    domainTool("core.social.source.read", async (args, context) => {
-      const sourceType = await sourcePlugin(context, args.sourceType); const sourceId = requiredString(args.sourceId, "Source ID");
-      const source = await readAgentSocialSource(context.db, context.ownerId, sourceType, sourceId, context.ownerTimezone);
-      await sourcePlugin(context, sourceType);
-      await rememberTargets(context, "social source", [{ id: `${sourceType}:${sourceId}`, source }, { id: `${sourceType}:${source.id}`, source }].filter((record, index, all) => all.findIndex(candidate => candidate.id === record.id) === index));
-      return ok({ source });
-    }),
     domainTool("core.social.library.search", async (args, context) => {
       const items = await searchPostLibrary({ DB: context.db } as never, context.ownerId, args);
       return ok({ items, total: items.length });
-    }),
-    domainTool("core.social.posting_plan.create", async (args, context) => {
-      context.signal.throwIfAborted();
-      const plan = await createPostingPlan({ DB: context.db } as never, context.ownerId, { ...args, versionIds: optionalString(args.versionIds)?.split(",").map(id => id.trim()).filter(Boolean) });
-      await rememberTargets(context, "posting plan", [plan]); return ok({ plan, scheduled: false });
-    }),
-    domainTool("core.social.posting_plan.confirm", async (args, context) => {
-      const id = requiredString(args.planId, "Posting plan ID");
-      const expected = await requireTarget<PostingPlan>(context, "posting plan", id);
-      const current = await getPostingPlan({ DB: context.db } as never, context.ownerId, id);
-      if (!current) throw new Error("Posting plan not found.");
-      assertUnchanged(expected, current, "Posting plan");
-      const pending = approval(context, "Confirm posting plan", `Schedule ${current.items.length} approved social posts`, { target: expected, targetDomain: "posting plan" });
-      if (pending) return pending;
-      context.signal.throwIfAborted();
-      const plan = await confirmPostingPlan({ DB: context.db } as never, context.ownerId, id, { expectedUpdatedAt: expected.updatedAt, expectedPlan: expected, confirmed: true }, { requestedByType: "agent" });
-      if (!plan) throw new Error("Posting plan not found.");
-      return ok({ plan, scheduled: plan.status === "confirmed" });
-    }, { parameters: objectSchema({ planId: idProperty("posting plan") }, ["planId"]), effect: "external", approval: "required", description: "Schedule the exact previously proposed social posting plan after durable owner approval." }),
-    domainTool("core.social.draft.create", async (args, context) => {
-      const source = await reviewedSource(args, context);
-      context.signal.throwIfAborted();
-      const post = await createAgentSocialPost(context.db, context.ownerId, source, args as CreateAgentSocialPostInput);
-      return ok({ post, published: false, sourceTitle: source.title });
-    }),
-    domainTool("core.social.suggestions.create", async (args, context) => {
-      const source = await reviewedSource(args, context);
-      context.signal.throwIfAborted();
-      const suggestions = await createAgentSocialSuggestions(context.db, context.ownerId, source, args as CreateAgentSocialSuggestionsInput);
-      return ok({ suggestions, postCreated: false, sourceTitle: source.title });
     }),
   ];
 }

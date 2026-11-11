@@ -121,14 +121,14 @@ Generated from the typed ME3 knowledge package. This file is public-safe and sho
   Surfaces: core, hosted
   Lifecycle: setup_required
   Runtime state in Core: setup_required
-  Summary: ME3 can turn explicit human-authored Sources into grounded Suggestions, reusable social Posts, account-specific Versions, and approval-first Publications when Social Publishing is installed.
+  Summary: ME3 shares the owner's published site posts and their own words as social Posts with account-specific Versions and approval-first Publications when Social Publishing is installed.
   Approval mode: external_action_approval
   Side effect: external_write
-  Data boundary: Sources, Suggestions, Posts, Versions, Publications, and delivery history are owner-scoped; a successful Publication sends approved content to its connected social account.
-  App/API routes: /social, /api/social/suggestions, /api/social/suggestions/:id, /api/social/suggestions/:id/post, /api/social/posts, /api/social/posts/:id, /api/social/versions/:id, /api/social/versions/:id/publications, /api/social/versions/:id/publish, /api/social/publications/:id, /api/social/publications/:id/resolve, /api/social/accounts
-  Agent tool ids: social.post.suggest, social.version.publish
+  Data boundary: Sources, Posts, Versions, Publications, and delivery history are owner-scoped; a successful Publication sends approved content to its connected social account.
+  App/API routes: /social, /api/social/site-posts/share, /api/social/posts, /api/social/posts/:id, /api/social/versions/:id, /api/social/versions/:id/publications, /api/social/versions/:id/publish, /api/social/publications/:id, /api/social/publications/:id/resolve, /api/social/accounts
+  Agent tool ids: social.site-post.share, social.version.publish
   Requires: social.oauth_accounts, social.publish_queue
-  Boundaries: Every saved Suggestion must come from one explicit human-authored Source and show an exact Source excerpt; Quotes remain verbatim unless removal-only trimming is disclosed. An agent-saved Post requires a stable human-authored Source reference, immutable Source snapshot, and visible Source text; a blank prompt may be discussed but not saved as publishable content. Approval applies to one exact account Version; editing its copy, media, format, or account removes approval and cancels incompatible future Publications without changing queued or historical snapshots. Scheduling and reposting create new Publications with independent delivery state, provider results, recovery, and audit history. Never represent a draft, scheduled Version, queued Publication, or failed Publication as published. LinkedIn is the only end-to-end schedule and publish platform currently enabled; X, Instagram, and Instagram Business remain draft-only.
+  Boundaries: ME3 never generates social copy: a shared site post uses only its own title, excerpt and canonical link, and a chat draft uses only the owner's words. Sharing a site post again returns the same Post instead of a duplicate. Approval applies to one exact account Version; editing its copy, media, format, or account removes approval and cancels incompatible future Publications without changing queued or historical snapshots. Scheduling and reposting create new Publications with independent delivery state, provider results, recovery, and audit history. Never represent a draft, scheduled Version, queued Publication, or failed Publication as published. LinkedIn is the only end-to-end schedule and publish platform currently enabled; X, Instagram, and Instagram Business remain draft-only.
 - Landing page generation (sites.landing_pages)
   Category: sites
   Surfaces: core, hosted

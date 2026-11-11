@@ -550,9 +550,10 @@ five-second batch timeout, two retries after the initial delivery, and
 without calling a provider again or overwriting completed or owner-recovered state. Keep the
 producer and both consumers aligned in root and install-local Wrangler configuration.
 
-The canonical owner API includes `GET|POST /api/social/suggestions`,
-`PATCH|DELETE /api/social/suggestions/:id`, and
-`POST /api/social/suggestions/:id/post` for grounded review and choosing. Posts use
+Share a published site blog post with `POST /api/social/site-posts/share` (`{ siteId, slug }`); it
+creates one site-sourced Post with a Version per connected platform, templated from the post's own
+title, excerpt and canonical link, and returns the same Post when called again. `GET` on the same
+path with `siteId` and `slug` returns that Post or null. Posts use
 `GET|POST /api/social/posts`, `GET /api/social/posts/:id`,
 `PATCH /api/social/versions/:id`, `GET|POST /api/social/versions/:id/publications`, and the immediate
 publish convenience route `POST /api/social/versions/:id/publish`. Cancel a future Publication with
@@ -562,12 +563,9 @@ with `POST /api/social/publications/:id/resolve`. Calendar's approved-Version ch
 `GET /api/social/scheduling/approved-versions`. Account connection and runtime readiness remain
 under `/api/social/accounts` and `/api/social/status`.
 
-Post library and Posting plan APIs use `GET /api/social/library`,
-`GET|PUT /api/social/accounts/:id/preferred-posting-times`,
-`POST /api/social/posting-plans`, `GET /api/social/posting-plans/:id`, and
-`POST /api/social/posting-plans/:id/confirm`. Confirmation requires the exact reviewed plan
-revision and an explicit owner action. Carousel media, deterministic rendering, immutable render
-sets, and assets live under `/api/social/carousels/*` and remain owner-authenticated.
+Text carousel templates use `GET|POST /api/social/carousel-templates` and
+`PATCH /api/social/carousel-templates/:id`; a Post's slide text uses
+`GET|PUT /api/social/posts/:id/text-carousel`. All remain owner-authenticated.
 
 When Social Publishing is ready, `/api/calendar/feed` includes a bounded, read-only projection of
 planned, publishing, published, failed, and attention-required Publications. Calendar presents a

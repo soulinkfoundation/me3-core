@@ -284,36 +284,6 @@ export type SocialPostDetail = {
   versions: PostVersion[];
 };
 
-export type SocialSuggestionKind = "quote" | "short_post" | "thread" | "carousel_outline";
-
-export type SocialSuggestion = {
-  id: string;
-  siteId: string;
-  sourceType: "journal" | "mission_task" | "site" | "file" | "script" | "pasted";
-  sourceRef: string;
-  sourceTitle: string;
-  sourceSnapshot: string;
-  sourceText: string;
-  kind: SocialSuggestionKind;
-  bodyText: string;
-  sourceExcerpt: string;
-  quoteTrimmed: boolean;
-  status: "suggested" | "choosing" | "chosen" | "discarded";
-  selectedPostId: string | null;
-  choosingPlatforms: SocialPlatform[] | null;
-  choosingAt: string | null;
-  createdBy: "user" | "agent";
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type SocialSuggestionUpdate = {
-  expectedUpdatedAt: string;
-  bodyText?: string;
-  sourceExcerpt?: string;
-  quoteTrimmed?: boolean;
-};
-
 export type CreateSocialPostInput = {
   siteId: string;
   sourceTitle?: string;
@@ -384,104 +354,6 @@ export type CreatePublicationInput = {
   requestContext?: unknown;
 };
 
-export type PostLibrarySearch = {
-  siteId?: string;
-  query?: string;
-  source?: string;
-  platform?: SocialPlatform;
-  accountId?: string;
-  approvalStatus?: PostVersion["approvalStatus"];
-  deliveryState?: PublicationStatus;
-  tag?: string;
-  publishedFrom?: string;
-  publishedTo?: string;
-  limit?: number;
-};
-
-export type PostLibraryItem = {
-  postId: string;
-  versionId: string;
-  siteId: string;
-  sourceType: string;
-  sourceRef: string | null;
-  sourceTitle: string;
-  postText: string;
-  tags: string[];
-  platform: SocialPlatform;
-  accountId: string | null;
-  accountLabel: string | null;
-  approvalStatus: PostVersion["approvalStatus"];
-  deliveryState: PublicationStatus | null;
-  lastPublishedAt: string | null;
-  nextScheduledAt: string | null;
-  publishedCount: number;
-  eligibleForPostingPlan: boolean;
-  updatedAt: string;
-};
-
-export type PreferredPostingTime = {
-  day: "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
-  localTime: string;
-};
-
-export type PreferredPostingTimes = {
-  accountId: string;
-  siteId: string;
-  platform: SocialPlatform;
-  accountLabel: string;
-  timezone: string;
-  times: PreferredPostingTime[];
-  minimumGapMinutes: number;
-  minimumRepostDays: number | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type PostingPlanWarning = {
-  code: string;
-  message: string;
-  versionId?: string;
-  scheduledFor?: string;
-};
-
-export type PostingPlanItem = {
-  id: string;
-  position: number;
-  versionId: string;
-  postId: string;
-  sourceTitle: string;
-  postText: string;
-  platform: SocialPlatform;
-  accountId: string;
-  scheduledFor: string;
-  timezone: string;
-  isRepost: boolean;
-  status: "suggested" | "reserved" | "scheduled" | "blocked";
-  publicationId: string | null;
-  errorMessage: string | null;
-};
-
-export type PostingPlan = {
-  id: string;
-  siteId: string;
-  accountId: string;
-  accountLabel: string;
-  platform: SocialPlatform;
-  status: "suggested" | "confirming" | "needs_attention" | "confirmed" | "expired";
-  timezone: string;
-  windowStart: string;
-  windowEnd: string;
-  requestedCount: number;
-  minimumGapMinutes: number;
-  minimumRepostDays: number | null;
-  warnings: PostingPlanWarning[];
-  items: PostingPlanItem[];
-  expiresAt: string;
-  confirmedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
 export const useSocialStore = defineStore("social", () => {
   const error = ref<string | null>(null);
   const loading = ref(false);
@@ -535,6 +407,23 @@ export const useSocialStore = defineStore("social", () => {
   async function createSocialPost(input: CreateSocialPostInput): Promise<SocialPostDetail> {
     error.value = null;
     const data = await api.post<{ post: SocialPostDetail }>("/social/posts", input);
+    if (!data.post) throw new Error("No Social Post returned");
+    return data.post;
+  }
+
+  /** The social Post made for a site blog post, if it has been shared. */
+  async function fetchSitePostShare(siteId: string, slug: string): Promise<SocialPostDetail | null> {
+    error.value = null;
+    const data = await api.get<{ post: SocialPostDetail | null }>(
+      `/social/site-posts/share?siteId=${encodeURIComponent(siteId)}&slug=${encodeURIComponent(slug)}`,
+    );
+    return data.post || null;
+  }
+
+  /** Start sharing a published site blog post; returns the existing Post if it was shared before. */
+  async function shareSitePost(siteId: string, slug: string): Promise<SocialPostDetail> {
+    error.value = null;
+    const data = await api.post<{ post: SocialPostDetail }>("/social/site-posts/share", { siteId, slug });
     if (!data.post) throw new Error("No Social Post returned");
     return data.post;
   }
@@ -597,18 +486,6 @@ export const useSocialStore = defineStore("social", () => {
     );
     if (!data.carousel) throw new Error("No carousel returned");
     return data.carousel;
-  }
-
-  async function searchPostLibrary(input: PostLibrarySearch = {}): Promise<PostLibraryItem[]> {
-    error.value = null;
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(input)) {
-      if (value === undefined || value === null || value === "") continue;
-      query.set(key, String(value));
-    }
-    const suffix = query.size ? `?${query.toString()}` : "";
-    const data = await api.get<{ items: PostLibraryItem[] }>(`/social/library${suffix}`);
-    return data.items || [];
   }
 
   async function fetchLinkPreview(url: string): Promise<SocialLinkPreview | null> {
@@ -686,119 +563,6 @@ export const useSocialStore = defineStore("social", () => {
     const query = folderId ? `?folderId=${encodeURIComponent(folderId)}` : "";
     const data = await api.get<{ files: DriveFile[] }>(`/files/items${query}`);
     return data.files || [];
-  }
-
-  async function fetchPreferredPostingTimes(
-    accountId: string,
-  ): Promise<PreferredPostingTimes | null> {
-    error.value = null;
-    const data = await api.get<{ preference: PreferredPostingTimes | null }>(
-      `/social/accounts/${encodeURIComponent(accountId)}/preferred-posting-times`,
-    );
-    return data.preference || null;
-  }
-
-  async function updatePreferredPostingTimes(
-    accountId: string,
-    input: {
-      timezone: string;
-      times: PreferredPostingTime[];
-      minimumGapMinutes: number;
-      minimumRepostDays: number | null;
-    },
-  ): Promise<PreferredPostingTimes> {
-    error.value = null;
-    const data = await api.put<{ preference: PreferredPostingTimes }>(
-      `/social/accounts/${encodeURIComponent(accountId)}/preferred-posting-times`,
-      input,
-    );
-    if (!data.preference) throw new Error("No Preferred posting times returned");
-    return data.preference;
-  }
-
-  async function createPostingPlan(input: {
-    accountId: string;
-    versionIds?: string[];
-    windowStart: string;
-    windowEnd: string;
-    count: number;
-  }): Promise<PostingPlan> {
-    error.value = null;
-    const data = await api.post<{ plan: PostingPlan }>("/social/posting-plans", input);
-    if (!data.plan) throw new Error("No Posting plan returned");
-    return data.plan;
-  }
-
-  async function fetchPostingPlan(planId: string): Promise<PostingPlan> {
-    error.value = null;
-    const data = await api.get<{ plan: PostingPlan }>(
-      `/social/posting-plans/${encodeURIComponent(planId)}`,
-    );
-    if (!data.plan) throw new Error("No Posting plan returned");
-    return data.plan;
-  }
-
-  async function confirmPostingPlan(plan: PostingPlan): Promise<PostingPlan> {
-    error.value = null;
-    const data = await api.post<{ plan: PostingPlan }>(
-      `/social/posting-plans/${encodeURIComponent(plan.id)}/confirm`,
-      { confirmed: true, expectedUpdatedAt: plan.updatedAt },
-    );
-    if (!data.plan) throw new Error("No Posting plan returned");
-    return data.plan;
-  }
-
-  async function fetchSocialSuggestions(siteId: string): Promise<SocialSuggestion[]> {
-    error.value = null;
-    const query = siteId ? `?siteId=${encodeURIComponent(siteId)}` : "";
-    const data = await api.get<{ suggestions: SocialSuggestion[] }>(
-      `/social/suggestions${query}`,
-    );
-    return data.suggestions || [];
-  }
-
-  async function updateSocialSuggestion(
-    suggestionId: string,
-    input: SocialSuggestionUpdate,
-  ): Promise<SocialSuggestion> {
-    error.value = null;
-    const data = await api.patch<{ suggestion: SocialSuggestion }>(
-      `/social/suggestions/${encodeURIComponent(suggestionId)}`,
-      input,
-    );
-    if (!data.suggestion) throw new Error("No Social Suggestion returned");
-    return data.suggestion;
-  }
-
-  async function discardSocialSuggestion(
-    suggestionId: string,
-    expectedUpdatedAt: string,
-  ): Promise<SocialSuggestion> {
-    error.value = null;
-    const data = await api.delete<{ suggestion: SocialSuggestion }>(
-      `/social/suggestions/${encodeURIComponent(suggestionId)}?expectedUpdatedAt=${encodeURIComponent(expectedUpdatedAt)}`,
-    );
-    if (!data.suggestion) throw new Error("No Social Suggestion returned");
-    return data.suggestion;
-  }
-
-  async function chooseSocialSuggestion(
-    suggestionId: string,
-    platforms: SocialPlatform[],
-    expectedUpdatedAt: string,
-  ): Promise<{ suggestion: SocialSuggestion; post: SocialPostDetail }> {
-    error.value = null;
-    const data = await api.post<{
-      suggestion: SocialSuggestion;
-      post: SocialPostDetail;
-    }>(`/social/suggestions/${encodeURIComponent(suggestionId)}/post`, {
-      platforms,
-      expectedUpdatedAt,
-    });
-    if (!data.suggestion || !data.post) {
-      throw new Error("No chosen Social Suggestion Post returned");
-    }
-    return data;
   }
 
   async function updatePostVersion(
@@ -947,10 +711,10 @@ export const useSocialStore = defineStore("social", () => {
     updateCarouselTemplate,
     fetchTextCarousel,
     saveTextCarousel,
-    searchPostLibrary,
     fetchLinkPreview,
-    fetchSocialSuggestions,
     createSocialPost,
+    fetchSitePostShare,
+    shareSitePost,
     createLocalSocialDemo,
     updateSocialPost,
     addPostVersion,
@@ -960,14 +724,6 @@ export const useSocialStore = defineStore("social", () => {
     deleteSocialPost,
     listDriveFolders,
     listDriveFiles,
-    fetchPreferredPostingTimes,
-    updatePreferredPostingTimes,
-    createPostingPlan,
-    fetchPostingPlan,
-    confirmPostingPlan,
-    updateSocialSuggestion,
-    discardSocialSuggestion,
-    chooseSocialSuggestion,
     updatePostVersion,
     publishPostVersion,
     listPostVersionPublications,

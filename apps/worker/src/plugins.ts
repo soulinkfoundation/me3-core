@@ -212,33 +212,15 @@ const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
       auth: "owner",
     },
     {
-      id: "social.library.api",
-      path: "/api/social/library",
-      methods: ["GET"],
-      auth: "owner",
-    },
-    {
-      id: "social.suggestions.api",
-      path: "/api/social/suggestions",
-      methods: ["GET", "POST"],
-      auth: "owner",
-    },
-    {
-      id: "social.suggestion.api",
-      path: "/api/social/suggestions/:id",
-      methods: ["PATCH", "DELETE"],
-      auth: "owner",
-    },
-    {
-      id: "social.suggestion.post.api",
-      path: "/api/social/suggestions/:id/post",
-      methods: ["POST"],
-      auth: "owner",
-    },
-    {
       id: "social.post.api",
       path: "/api/social/posts/:id",
       methods: ["GET", "PATCH"],
+      auth: "owner",
+    },
+    {
+      id: "social.site-post-share.api",
+      path: "/api/social/site-posts/share",
+      methods: ["GET", "POST"],
       auth: "owner",
     },
     {
@@ -257,30 +239,6 @@ const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
       id: "social.post.text-carousel.api",
       path: "/api/social/posts/:id/text-carousel",
       methods: ["GET", "PUT"],
-      auth: "owner",
-    },
-    {
-      id: "social.account.preferred-posting-times.api",
-      path: "/api/social/accounts/:id/preferred-posting-times",
-      methods: ["GET", "PUT"],
-      auth: "owner",
-    },
-    {
-      id: "social.posting-plans.api",
-      path: "/api/social/posting-plans",
-      methods: ["POST"],
-      auth: "owner",
-    },
-    {
-      id: "social.posting-plan.api",
-      path: "/api/social/posting-plans/:id",
-      methods: ["GET"],
-      auth: "owner",
-    },
-    {
-      id: "social.posting-plan.confirm.api",
-      path: "/api/social/posting-plans/:id/confirm",
-      methods: ["POST"],
       auth: "owner",
     },
     {
@@ -371,8 +329,8 @@ const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
   ],
   agentTools: [
     agentTool({
-      id: "social.post.suggest",
-      label: "Create grounded Suggestions from a Source",
+      id: "social.site-post.share",
+      label: "Start sharing a published site post",
       sideEffect: "write_internal_draft",
       approvalMode: "none",
     }),
@@ -381,18 +339,6 @@ const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
       label: "Search the Social Post library",
       sideEffect: "read_private",
       approvalMode: "none",
-    }),
-    agentTool({
-      id: "social.posting-plan.create",
-      label: "Propose a reviewable Posting plan",
-      sideEffect: "write_internal_draft",
-      approvalMode: "none",
-    }),
-    agentTool({
-      id: "social.posting-plan.confirm",
-      label: "Confirm a reviewed Posting plan",
-      sideEffect: "write_internal_active",
-      approvalMode: "approval_required",
     }),
     agentTool({
       id: "social.version.publish",
