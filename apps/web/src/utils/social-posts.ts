@@ -511,3 +511,11 @@ export function foldIndex(platform: SocialPlatform | string, text: string): numb
   const shown = text.slice(0, index).trimEnd().length;
   return shown < text.trimEnd().length ? shown : null;
 }
+
+/** The list with one item moved from one position to another. */
+export function moveItem<T>(items: T[], from: number, to: number): T[] {
+  const next = [...items];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item!);
+  return next;
+}

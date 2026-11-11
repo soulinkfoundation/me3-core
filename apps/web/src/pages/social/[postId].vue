@@ -9,6 +9,7 @@ import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import AppPageBar from "../../components/AppPageBar.vue";
 import FilesMediaPicker from "../../components/files/FilesMediaPicker.vue";
+import SocialImageTiles from "../../components/social/SocialImageTiles.vue";
 import SocialPostPreview from "../../components/social/SocialPostPreview.vue";
 import SocialImageCropper from "../../components/social/SocialImageCropper.vue";
 import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue";
@@ -320,14 +321,6 @@ function setImages(images: SocialMediaAsset[]) {
   const next = [...images, ...videos].map((asset, index) => ({ ...asset, assetIndex: index }));
   replaceVersion({ ...version, assetManifest: next });
   void saveVersion(version, { assetManifest: next });
-}
-
-function moveImage(index: number, offset: -1 | 1) {
-  const images = [...activeImages.value];
-  const target = index + offset;
-  if (target < 0 || target >= images.length) return;
-  [images[index], images[target]] = [images[target]!, images[index]!];
-  setImages(images);
 }
 
 function removeImage(index: number) {
@@ -787,28 +780,14 @@ onMounted(async () => {
                   @change="setTitle(active, ($event.target as HTMLInputElement).value)"
                 >
               </template>
-              <ol v-if="activeImages.length" class="post-images__list" aria-label="Images, in order">
-                <li v-for="(asset, index) in activeImages" :key="`${asset.fileId || asset.url}-${index}`" class="post-image">
-                  <span class="post-image__thumb">
-                    <img :src="asset.url" :alt="asset.altText || ''" loading="lazy">
-                    <small>{{ index + 1 }}</small>
-                  </span>
-                  <span v-if="!activeLocked" class="post-image__tools">
-                    <Button color="ghost" shape="soft" size="small" icon-only :aria-label="`Crop image ${index + 1}`" @click="cropIndex = index">
-                      <UiIcon name="Crop" :size="15" />
-                    </Button>
-                    <Button color="ghost" shape="soft" size="small" icon-only :aria-label="`Move image ${index + 1} earlier`" :disabled="index === 0" @click="moveImage(index, -1)">
-                      <UiIcon name="ChevronLeft" :size="15" />
-                    </Button>
-                    <Button color="ghost" shape="soft" size="small" icon-only :aria-label="`Move image ${index + 1} later`" :disabled="index === activeImages.length - 1" @click="moveImage(index, 1)">
-                      <UiIcon name="ChevronRight" :size="15" />
-                    </Button>
-                    <Button color="ghost" shape="soft" size="small" icon-only :aria-label="`Remove image ${index + 1}`" @click="removeImage(index)">
-                      <UiIcon name="X" :size="15" />
-                    </Button>
-                  </span>
-                </li>
-              </ol>
+              <SocialImageTiles
+                v-if="activeImages.length"
+                :images="activeImages"
+                :locked="activeLocked"
+                @reorder="setImages"
+                @remove="removeImage"
+                @crop="cropIndex = $event"
+              />
               <div v-if="activeVideo" class="post-video__file">
                 <UiIcon name="Video" :size="16" />
                 <span>{{ activeVideo.filename || "Video" }}</span>
@@ -1039,12 +1018,6 @@ onMounted(async () => {
 .post-checks__icon { display: inline-grid; flex: none; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: var(--ui-danger); color: #fff; font-size: 10px; font-weight: 700; }
 
 .post-images { display: grid; gap: 8px; }
-.post-images__list { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.post-image { display: grid; justify-items: center; gap: 2px; }
-.post-image__thumb { position: relative; flex: none; width: 72px; height: 72px; overflow: hidden; border-radius: var(--ui-radius-sm); background: var(--ui-surface-muted); }
-.post-image__thumb img { width: 100%; height: 100%; object-fit: cover; }
-.post-image__thumb small { position: absolute; top: 2px; left: 4px; color: #fff; font-size: 10px; font-weight: 700; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }
-.post-image__tools { display: inline-flex; flex: none; }
 .post-images__adds { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .post-images__add {
   display: inline-flex;
