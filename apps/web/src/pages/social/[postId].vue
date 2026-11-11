@@ -65,7 +65,7 @@ const missing = ref(false);
 const activeId = ref<string>("");
 const texts = ref<Record<string, string>>({});
 const savingIds = ref(new Set<string>());
-const busy = ref<"schedule" | "post" | "move" | "cancel" | "delete" | "upload" | "add" | "remove" | null>(null);
+const busy = ref<"schedule" | "post" | "move" | "cancel" | "delete" | "upload" | "add" | "remove" | "duplicate" | null>(null);
 const accountsOpen = ref(false);
 const confirmDelete = ref(false);
 const confirmCancel = ref(false);
@@ -116,6 +116,20 @@ const scheduledIso = computed(() => {
   return resolved.ok ? resolved.value : null;
 });
 const scheduleInPast = computed(() => Boolean(scheduledIso.value && Date.parse(scheduledIso.value) < Date.now() + 60_000));
+/** When the chosen time has passed or is minutes away, posting now is the obvious step. */
+const postNowFirst = computed(() =>
+  !schedulable.value.length || !scheduledIso.value || Date.parse(scheduledIso.value) < Date.now() + 15 * 60_000,
+);
+const timezoneLabel = computed(() => {
+  try {
+    const date = scheduledIso.value ? new Date(scheduledIso.value) : new Date();
+    return new Intl.DateTimeFormat(undefined, { timeZone: timezone, timeZoneName: "short" })
+      .formatToParts(date)
+      .find((part) => part.type === "timeZoneName")?.value || timezone;
+  } catch {
+    return timezone;
+  }
+});
 const scheduleLabel = computed(() => {
   const count = schedulable.value.length;
   const at = scheduledIso.value ? ` for ${formatShortWhen(scheduledIso.value)}` : "";
@@ -222,7 +236,11 @@ function replaceVersion(version: PostVersion) {
 }
 
 async function reload() {
+  const posting = new Set(versions.value.filter((version) => version.publicationStatus === "queued" || version.publicationStatus === "publishing").map((version) => version.id));
   setDetail(await social.fetchSocialPost(postId.value));
+  // Say so when a platform finishes while the owner watches; its row links to the live post.
+  const done = versions.value.filter((version) => posting.has(version.id) && version.publicationStatus === "published");
+  if (done.length) toastSuccess(`Posted to ${done.map((version) => networkLabel(version.platform)).join(", ")}.`);
   watchPosting();
 }
 
@@ -671,6 +689,38 @@ async function cancelSchedule() {
   }
 }
 
+/** A fresh draft with the same text and media for every platform. */
+async function duplicatePost() {
+  if (!detail.value || busy.value) return;
+  busy.value = "duplicate";
+  try {
+    await flushAll();
+    const source = detail.value;
+    const copy = await social.createSocialPost({
+      siteId: source.post.siteId,
+      sourceType: "pasted",
+      sourceTitle: source.post.sourceTitle || undefined,
+      sourceSnapshot: source.post.sourceSnapshot || "",
+      sourceText: source.post.sourceText || "",
+      ideaText: source.post.ideaText || "",
+      versions: visibleVersions(source).map((version) => ({
+        platform: version.platform,
+        targetAccountId: version.targetAccountId,
+        format: version.format,
+        title: version.title ?? null,
+        bodyText: texts.value[version.id] ?? version.bodyText,
+        assetManifest: version.assetManifest,
+      })),
+    });
+    toastSuccess("Copy made. It's in Drafts.");
+    await router.push(`/social/${encodeURIComponent(copy.post.id)}`);
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't copy the post.");
+  } finally {
+    busy.value = null;
+  }
+}
+
 async function deletePost() {
   if (!detail.value || busy.value) return;
   busy.value = "delete";
@@ -756,6 +806,9 @@ onMounted(async () => {
             <span class="post-header__title">{{ title }}</span>
           </template>
           <template #actions>
+            <Button class="post-header__quiet" color="ghost" shape="soft" size="small" :disabled="busy !== null" @click="duplicatePost">
+              {{ busy === "duplicate" ? "Copying…" : "Duplicate" }}
+            </Button>
             <Button class="post-header__quiet" color="ghost" shape="soft" size="small" @click="confirmDelete = true">Delete</Button>
           </template>
         </AppPageBar>
@@ -783,6 +836,14 @@ onMounted(async () => {
                 :disabled="busy !== null"
                 @click="runResult(version, result)"
               >{{ result.actionLabel }}</Button>
+              <Button
+                v-if="result.state === 'failed' && result.action !== 'retry' && result.action !== 'reconnect'"
+                color="outline"
+                shape="pill"
+                size="small"
+                :disabled="busy !== null"
+                @click="postNow(version)"
+              >Try again</Button>
             </li>
           </ul>
         </section>
@@ -942,7 +1003,8 @@ onMounted(async () => {
             <input id="post-date" v-model="when.date" type="date">
             <label class="visually-hidden" for="post-time">Time</label>
             <input id="post-time" v-model="when.time" type="time">
-            <span v-if="scheduleInPast" class="post-bar__hint">Pick a time in the future.</span>
+            <span class="post-bar__zone" :title="timezone">{{ timezoneLabel }}</span>
+            <span v-if="scheduleInPast" class="post-bar__hint post-bar__hint--skip">That time has passed. Post now, or pick a later time.</span>
             <span v-else-if="blockers.length && !ready.length" class="post-bar__hint">Fix the marked problems first.</span>
             <span v-else-if="blockers.length" class="post-bar__hint post-bar__hint--skip">Skipping {{ skippedLabel }}.</span>
           </div>
@@ -954,12 +1016,12 @@ onMounted(async () => {
               </Button>
             </template>
             <template v-else>
-              <Button color="outline" shape="pill" size="compact" :disabled="busy !== null || !ready.length" @click="postNow()">
+              <Button :color="postNowFirst ? 'primary' : 'outline'" shape="pill" size="compact" :disabled="busy !== null || !ready.length" @click="postNow()">
                 {{ busy === "post" ? "Posting…" : postNowLabel }}
               </Button>
               <Button
                 v-if="schedulable.length"
-                color="primary"
+                :color="postNowFirst ? 'outline' : 'primary'"
                 shape="pill"
                 size="compact"
                 :disabled="busy !== null || !scheduledIso || scheduleInPast"
@@ -1158,6 +1220,7 @@ onMounted(async () => {
 .post-bar__when { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .post-bar__when input { padding: 6px 10px; font-size: 13px; }
 .post-bar__hint { color: var(--ui-danger); font-size: 12.5px; }
+.post-bar__zone { color: var(--ui-text-muted); font-size: 12.5px; }
 .post-bar__hint--skip { color: var(--ui-text-muted); }
 .post-field-foot__links .post-remove { color: var(--ui-danger); }
 .post-bar__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

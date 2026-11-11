@@ -425,6 +425,7 @@ export type SocialSuggestionUpdate = {
 
 export type CreateSocialPostInput = {
   siteId: string;
+  sourceTitle?: string;
   sourceType: "pasted";
   sourceSnapshot: string;
   sourceText: string;
@@ -435,6 +436,7 @@ export type CreateSocialPostInput = {
     format?: PostVersion["format"];
     title?: string | null;
     bodyText: string;
+    assetManifest?: SocialMediaAsset[];
   }>;
 };
 

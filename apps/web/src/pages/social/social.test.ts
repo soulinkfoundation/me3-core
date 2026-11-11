@@ -370,5 +370,37 @@ describe("Social review", () => {
     await flushPromises();
     expect(apiPatch).toHaveBeenLastCalledWith("/social/versions/x-1", { assetManifest: [expect.objectContaining({ fileId: "v1", kind: "video" })] });
   });
+
+  it("duplicates a post with its text and media, and offers Try again after a failure", async () => {
+    const image = { url: "/api/files/f1/content", fileId: "f1", kind: "image" as const, mimeType: "image/png", altText: "", assetIndex: 0 };
+    const current = post([
+      version({ id: "x-1", assetManifest: [image] }),
+      version({ id: "li-1", platform: "linkedin", publicationStatus: "failed", failureClass: "rejected", errorMessage: "LinkedIn said no." }),
+    ]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x"), account("linkedin")] },
+      "/social/posts/post-1": { post: current },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPost.mockResolvedValue({ post: post([version({ id: "x-2" })], { id: "post-2" }) });
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    expect(wrapper.findAll("button").some((button) => button.text() === "Try again")).toBe(true);
+    await wrapper.findAll("button").find((button) => button.text() === "Duplicate")!.trigger("click");
+    await flushPromises();
+
+    expect(apiPost).toHaveBeenCalledWith("/social/posts", expect.objectContaining({
+      siteId: "site-1",
+      sourceType: "pasted",
+      versions: [
+        expect.objectContaining({ platform: "x", bodyText: "Studio open day on Saturday.", assetManifest: [image] }),
+        expect.objectContaining({ platform: "linkedin" }),
+      ],
+    }));
+    expect(routerPush).toHaveBeenCalledWith("/social/post-2");
+  });
 });
 
