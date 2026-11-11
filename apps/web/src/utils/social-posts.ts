@@ -480,3 +480,34 @@ export function suggestedTime(now = new Date()): Date {
   while (next.getDay() === 0 || next.getDay() === 6) next.setDate(next.getDate() + 1);
   return next;
 }
+
+/** Where each feed cuts a caption behind "see more": characters, then lines, whichever comes first. */
+const FOLDS: Partial<Record<SocialNetwork, { chars: number; lines: number; label: string }>> = {
+  linkedin: { chars: 210, lines: 3, label: "…see more" },
+  instagram: { chars: 125, lines: 2, label: "… more" },
+  facebook: { chars: 480, lines: 5, label: "See more" },
+};
+
+export function foldFor(platform: SocialPlatform | string): { chars: number; lines: number; label: string } | null {
+  const network = socialNetwork(platform);
+  return (network && FOLDS[network]) || null;
+}
+
+/** The index in the text where the feed folds it, or null when it all shows. */
+export function foldIndex(platform: SocialPlatform | string, text: string): number | null {
+  const fold = foldFor(platform);
+  if (!fold) return null;
+  let index = text.length;
+  let lines = 1;
+  for (let position = 0; position < text.length; position += 1) {
+    if (text[position] === "\n" && ++lines > fold.lines) {
+      index = position;
+      break;
+    }
+  }
+  // Count in characters people see (emoji are one), not UTF-16 units.
+  const chars = Array.from(text);
+  if (chars.length > fold.chars) index = Math.min(index, chars.slice(0, fold.chars).join("").length);
+  const shown = text.slice(0, index).trimEnd().length;
+  return shown < text.trimEnd().length ? shown : null;
+}

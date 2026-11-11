@@ -9,6 +9,7 @@ import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import AppPageBar from "../../components/AppPageBar.vue";
 import FilesMediaPicker from "../../components/files/FilesMediaPicker.vue";
+import SocialPostPreview from "../../components/social/SocialPostPreview.vue";
 import SocialImageCropper from "../../components/social/SocialImageCropper.vue";
 import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue";
 import SocialMarks from "../../components/social/SocialMarks.vue";
@@ -20,6 +21,8 @@ import {
   accountName,
   activeAccount,
   formatShortWhen,
+  foldFor,
+  foldIndex,
   formatWhen,
   networkLabel,
   postTitle,
@@ -153,6 +156,14 @@ const pickerTitle = computed(() =>
   pickerKinds.value.length === 2 ? "Choose photos or a video" : pickerKinds.value[0] === "video" ? "Choose a video" : "Choose photos",
 );
 const activeLimit = computed(() => (active.value ? versionTextLimit(active.value, capabilities.value) : null));
+const activeText = computed(() => (active.value ? texts.value[active.value.id] ?? active.value.bodyText : ""));
+const activeFold = computed(() => (active.value ? foldIndex(active.value.platform, activeText.value) : null));
+const activeFoldRule = computed(() => (active.value ? foldFor(active.value.platform) : null));
+const activeAccountRow = computed(() => (active.value ? activeAccount(active.value.platform, accounts.value) : null));
+const mirror = ref<HTMLDivElement | null>(null);
+function syncMirror(event: Event) {
+  if (mirror.value) mirror.value.scrollTop = (event.target as HTMLTextAreaElement).scrollTop;
+}
 const activeLength = computed(() => (active.value ? Array.from(texts.value[active.value.id] ?? "").length : 0));
 const activeAccountLabel = computed(() => {
   if (!active.value) return "";
@@ -721,6 +732,8 @@ onMounted(async () => {
         <section v-if="active" class="post-editor" role="tabpanel">
           <div class="post-editor__main">
             <label class="visually-hidden" :for="`post-text-${active.id}`">{{ networkLabel(active.platform) }} text</label>
+            <div class="post-field-wrap">
+            <div ref="mirror" class="post-field post-field__mirror" aria-hidden="true"><template v-if="activeFold !== null">{{ activeText.slice(0, activeFold) }}<span class="post-fold" /><span class="post-fold__rest">{{ activeText.slice(activeFold) }}</span></template><template v-else>{{ activeText }}</template>{{ "\n" }}</div>
             <textarea
               :id="`post-text-${active.id}`"
               ref="editor"
@@ -731,11 +744,14 @@ onMounted(async () => {
               :value="texts[active.id] ?? active.bodyText"
               @input="onTextInput(active, ($event.target as HTMLTextAreaElement).value)"
               @blur="flushText(active.id)"
+              @scroll="syncMirror"
             />
+            </div>
             <div class="post-field-foot">
               <span>
                 {{ networkLabel(active.platform) }} only<template v-if="activeAccountLabel"> · {{ activeAccountLabel }}</template>
                 <template v-if="activeLimit && activeLimit < 10000"> · {{ activeLength }}/{{ activeLimit }}</template>
+                <template v-if="activeFold !== null && activeFoldRule"> · Shaded text sits behind “{{ activeFoldRule.label.replace(/^…\s?/, "") }}”</template>
                 <template v-if="savingIds.has(active.id)"> · Saving…</template>
               </span>
               <span v-if="!activeLocked && (pending.length > 1 || removable)" class="post-field-foot__links">
@@ -824,13 +840,16 @@ onMounted(async () => {
             </div>
           </div>
 
-          <aside class="post-preview" aria-label="Preview">
-            <div class="post-preview__who">
-              <SocialMarks :platforms="[active.platform]" />
-              <b>{{ activeAccountLabel || networkLabel(active.platform) }}</b>
-            </div>
-            <img v-if="activeImages[0]" class="post-preview__image" :src="activeImages[0].url" :alt="activeImages[0].altText || ''">
-            <p>{{ texts[active.id] ?? active.bodyText }}</p>
+          <aside class="post-preview">
+            <SocialPostPreview
+              :platform="active.platform"
+              :text="activeText"
+              :media="active.assetManifest"
+              :name="activeAccountRow?.displayName || activeAccountLabel || networkLabel(active.platform)"
+              :handle="activeAccountRow?.handle"
+              :avatar-url="activeAccountRow?.avatarUrl"
+              :title="active.title"
+            />
           </aside>
         </section>
 
@@ -988,6 +1007,20 @@ onMounted(async () => {
   font: 14px/1.5 var(--font-sans);
 }
 .post-field { width: 100%; padding: 10px 12px; resize: vertical; }
+.post-field-wrap { position: relative; display: grid; }
+.post-field-wrap textarea { position: relative; background: transparent; }
+.post-field__mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: transparent;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  pointer-events: none;
+}
+.post-fold { position: relative; }
+.post-fold::before { position: absolute; top: -1px; bottom: -3px; left: -1px; width: 2px; border-radius: 1px; background: var(--ui-accent, var(--ui-primary)); content: ""; }
+.post-fold__rest { border-radius: 2px; background: var(--ui-surface-muted); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .post-field--problem { border-color: var(--ui-danger); }
 .post-field-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; color: var(--ui-text-muted); font-size: 12px; }
 .post-field-foot__links { display: inline-flex; gap: 12px; }
@@ -1027,10 +1060,7 @@ onMounted(async () => {
   cursor: pointer;
 }
 
-.post-preview { display: grid; align-content: start; gap: 8px; padding: 12px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); background: var(--ui-surface); font-size: 13px; }
-.post-preview__who { display: flex; align-items: center; gap: 8px; }
-.post-preview__image { width: 100%; aspect-ratio: 1; border-radius: var(--ui-radius-sm); object-fit: cover; }
-.post-preview p { display: -webkit-box; margin: 0; overflow: hidden; white-space: pre-wrap; -webkit-line-clamp: 8; -webkit-box-orient: vertical; }
+.post-preview { position: sticky; top: calc(var(--app-topbar-height, 0px) + 12px); align-self: start; min-width: 0; }
 
 .post-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--ui-border); }
 .post-bar__when { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

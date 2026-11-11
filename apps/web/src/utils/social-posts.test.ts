@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { account, capabilities, post, version } from "./social-posts.fixtures";
 import {
   attentionItems,
+  foldIndex,
   postRowDetail,
   postTab,
   postTitle,
@@ -72,4 +73,14 @@ describe("social posts", () => {
     const suggestion = suggestedTime(friday);
     expect([suggestion.getDay(), suggestion.getHours(), suggestion.getMinutes()]).toEqual([1, 12, 30]);
   });
+
+  it("finds where each feed folds a caption", () => {
+    expect(foldIndex("x", "a".repeat(400))).toBeNull();
+    expect(foldIndex("linkedin", "short")).toBeNull();
+    expect(foldIndex("linkedin", "a".repeat(300))).toBe(210);
+    expect(foldIndex("instagram", "one\ntwo\nthree")).toBe(7);
+    expect(foldIndex("instagram_business", "one\ntwo\n")).toBeNull();
+    expect(foldIndex("linkedin", "😀".repeat(220))).toBe(420);
+  });
 });
+
