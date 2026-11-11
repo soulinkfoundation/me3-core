@@ -1239,13 +1239,13 @@ describe("Instagram publishing adapter", () => {
       accountId: "ig-owner",
       bodyText: "Launch day.",
       assets: [
-        { url: "https://media.example/clip.mov", kind: "video", mimeType: "video/quicktime" },
+        { url: "https://media.example/clip.mov", kind: "video", mimeType: "video/quicktime", coverTimeMs: 1500 },
         { url: "https://media.example/photo.jpg", kind: "image", altText: "The team." },
       ],
       fetcher: fetcher as typeof fetch,
     })).resolves.toMatchObject({ ok: true, platformPostId: "instagram-mixed-1" });
     expect(children).toEqual([
-      { media_type: "VIDEO", video_url: "https://media.example/clip.mov", is_carousel_item: "true" },
+      { media_type: "VIDEO", video_url: "https://media.example/clip.mov", is_carousel_item: "true", thumb_offset: "1500" },
       { image_url: "https://media.example/photo.jpg", is_carousel_item: "true", alt_text: "The team." },
     ]);
   });

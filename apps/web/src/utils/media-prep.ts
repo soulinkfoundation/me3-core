@@ -116,3 +116,37 @@ export async function convertVideo(
   if (options.maxBytes && buffer.byteLength > options.maxBytes) throw new Error("The video is still too big after converting.");
   return new File([buffer], renamed(file.name, "mp4"), { type: "video/mp4" });
 }
+
+/** A copy of the video between two times (seconds), as MP4. */
+export async function trimVideo(
+  file: File,
+  range: { start: number; end: number },
+  onProgress?: (fraction: number) => void,
+): Promise<File> {
+  if (!(range.end > range.start)) throw new Error("The end must come after the start.");
+  const { Input, Output, Conversion, ALL_FORMATS, BlobSource, BufferTarget, Mp4OutputFormat } = await import("mediabunny");
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  const output = new Output({ format: new Mp4OutputFormat({ fastStart: "in-memory" }), target: new BufferTarget() });
+  const conversion = await Conversion.init({
+    input,
+    output,
+    trim: { start: range.start, end: range.end },
+    video: { codec: "avc" },
+    audio: { codec: "aac" },
+    showWarnings: false,
+  });
+  if (!conversion.isValid) throw new Error("This browser can't trim that video. Try Chrome or Safari.");
+  if (onProgress) conversion.onProgress = (progress) => onProgress(progress);
+  await conversion.execute();
+  const buffer = (output.target as InstanceType<typeof BufferTarget>).buffer;
+  if (!buffer) throw new Error("The video didn't finish trimming.");
+  return new File([buffer], renamed(file.name, "mp4").replace(/\.mp4$/, "-trimmed.mp4"), { type: "video/mp4" });
+}
+
+/** "75.5" → "1:15.5" */
+export function formatSeconds(value: number): string {
+  const safe = Math.max(0, value);
+  const minutes = Math.floor(safe / 60);
+  const seconds = (safe - minutes * 60).toFixed(1).padStart(4, "0");
+  return `${minutes}:${seconds}`;
+}

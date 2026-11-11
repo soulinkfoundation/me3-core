@@ -14,6 +14,7 @@ const emit = defineEmits<{
   remove: [index: number];
   crop: [index: number];
   alt: [index: number];
+  edit: [index: number];
 }>();
 
 const order = ref<SocialMediaAsset[]>([...props.images]);
@@ -118,6 +119,15 @@ async function onKey(event: KeyboardEvent, index: number) {
             @click="emit('alt', index)"
           >ALT<template v-if="asset.altText?.trim()"> ✓</template></button>
         </template>
+        <button
+          v-if="!locked && asset.kind === 'video'"
+          type="button"
+          class="tile__tool tile__tool--crop"
+          :aria-label="`Edit video ${index + 1}`"
+          @click="emit('edit', index)"
+        >
+          <UiIcon name="Pencil" :size="13" />
+        </button>
         <template v-if="!locked">
           <button type="button" class="tile__tool tile__tool--remove" :aria-label="`Remove image ${index + 1}`" @click="emit('remove', index)">
             <UiIcon name="X" :size="13" />

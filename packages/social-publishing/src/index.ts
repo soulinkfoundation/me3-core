@@ -407,6 +407,8 @@ export type SocialMediaAsset = {
   byteLength?: number;
   path?: string;
   assetIndex?: number;
+  /** Videos: the cover frame, in milliseconds from the start (used by Instagram). */
+  coverTimeMs?: number;
 };
 
 type ContentMediaAsset = SocialMediaAsset;
@@ -5735,6 +5737,10 @@ export function normalizeSocialMediaAssets(value: unknown): SocialMediaAsset[] {
       assetIndex:
         typeof item.assetIndex === "number" && Number.isFinite(item.assetIndex) && item.assetIndex >= 0
           ? Math.round(item.assetIndex)
+          : undefined,
+      coverTimeMs:
+        item.kind === "video" && typeof item.coverTimeMs === "number" && Number.isFinite(item.coverTimeMs) && item.coverTimeMs >= 0
+          ? Math.round(item.coverTimeMs)
           : undefined,
     });
   }

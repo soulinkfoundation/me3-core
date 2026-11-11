@@ -9,6 +9,7 @@ import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
 import AppPageBar from "../../components/AppPageBar.vue";
 import FilesMediaPicker from "../../components/files/FilesMediaPicker.vue";
+import SocialVideoEditor from "../../components/social/SocialVideoEditor.vue";
 import SocialAltTextDialog from "../../components/social/SocialAltTextDialog.vue";
 import SocialImageTiles from "../../components/social/SocialImageTiles.vue";
 import SocialPostPreview from "../../components/social/SocialPostPreview.vue";
@@ -19,7 +20,7 @@ import { useAppToast } from "../../composables/useAppToast";
 import { useSocialData } from "../../composables/useSocialData";
 import type { DriveFile, PostVersion, SocialMediaAsset, SocialPlatform, SocialPostDetail, SocialPostOptions } from "../../stores/social";
 import { uploadDriveFiles } from "../../utils/drive-upload";
-import { convertVideo, planVideo, prepareImage } from "../../utils/media-prep";
+import { convertVideo, planVideo, prepareImage, trimVideo } from "../../utils/media-prep";
 import {
   accountName,
   activeAccount,
@@ -39,6 +40,7 @@ import {
   mentionsIn,
   renderPostText,
   moveLinkOut,
+  takesCoverFrame,
   takesFirstComment,
   isThread,
   splitIntoThread,
@@ -89,6 +91,8 @@ const documentInput = ref<HTMLInputElement | null>(null);
 const filesPickerOpen = ref(false);
 const cropIndex = ref<number | null>(null);
 const altIndex = ref<number | null>(null);
+const editingVideo = ref<SocialMediaAsset | null>(null);
+const trimProgress = ref<number | null>(null);
 const altAsset = computed(() => (altIndex.value === null ? null : activeTiles.value[altIndex.value] || null));
 const cropAsset = computed(() => (cropIndex.value === null ? null : activeTiles.value[cropIndex.value] || null));
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -526,6 +530,39 @@ function saveAltText(altText: string) {
     const next = version.assetManifest.map((asset) => (sameImage(asset, target) ? { ...asset, altText } : asset));
     replaceVersion({ ...version, assetManifest: next });
     void saveVersion(version, { assetManifest: next });
+  }
+}
+
+function editVideoAt(video: SocialMediaAsset | null) {
+  editingVideo.value = video;
+}
+
+/** A trim saves a new MP4 to Files and takes the old video's place; a cover is just saved on the video. */
+async function saveVideoEdit(change: { file: File | null; range: { start: number; end: number } | null; coverTimeMs: number | null }) {
+  const version = active.value;
+  const original = editingVideo.value;
+  if (!version || !original || busy.value) return;
+  busy.value = "upload";
+  try {
+    let next: SocialMediaAsset = { ...original };
+    if (change.file && change.range) {
+      trimProgress.value = 0;
+      const trimmed = await trimVideo(change.file, change.range, (fraction) => (trimProgress.value = fraction));
+      const [uploaded] = await uploadDriveFiles<DriveFile>([trimmed], { folderId: null, onConflict: "rename" });
+      if (!uploaded) throw new Error("The trimmed video didn't upload.");
+      next = { ...driveAsset(uploaded, "video"), assetIndex: original.assetIndex };
+    }
+    if (change.coverTimeMs === null) delete next.coverTimeMs;
+    else next.coverTimeMs = change.coverTimeMs;
+    const manifest = version.assetManifest.map((asset) => (asset === original || sameImage(asset, original) && asset.kind === "video" ? next : asset));
+    replaceVersion({ ...version, assetManifest: manifest });
+    await saveVersion(version, { assetManifest: manifest });
+    editingVideo.value = null;
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't save that video.");
+  } finally {
+    trimProgress.value = null;
+    busy.value = null;
   }
 }
 
@@ -969,6 +1006,7 @@ function resultHref(version: PostVersion, result: VersionResult): string | null 
 // The URL names the platform, never an internal id.
 watch(activeId, (next) => {
   commentOpen.value = false;
+  editingVideo.value = null;
   cropIndex.value = null;
   altIndex.value = null;
   const platform = versions.value.find((version) => version.id === next)?.platform;
@@ -1218,6 +1256,7 @@ onMounted(async () => {
                 @remove="removeImage"
                 @crop="cropIndex = $event"
                 @alt="altIndex = $event"
+                @edit="editVideoAt(activeTiles[$event] || null)"
               />
               <div v-if="activeDocument" class="post-video__file">
                 <UiIcon name="FileText" :size="16" />
@@ -1229,6 +1268,9 @@ onMounted(async () => {
               <div v-if="activeVideo && !activeMixed" class="post-video__file">
                 <UiIcon name="Video" :size="16" />
                 <span>{{ activeVideo.filename || "Video" }}</span>
+                <Button v-if="!activeLocked" color="ghost" shape="soft" size="small" icon-only aria-label="Edit video" @click="editVideoAt(activeVideo)">
+                  <UiIcon name="Pencil" :size="15" />
+                </Button>
                 <Button v-if="!activeLocked" color="ghost" shape="soft" size="small" icon-only aria-label="Remove video" @click="removeVideo">
                   <UiIcon name="X" :size="15" />
                 </Button>
@@ -1359,6 +1401,15 @@ onMounted(async () => {
       danger
       @cancel="confirmRemove = null"
       @confirm="removePlatform"
+    />
+    <SocialVideoEditor
+      :open="editingVideo !== null"
+      :video="editingVideo"
+      :cover-frame="active ? takesCoverFrame(active.platform) : false"
+      :busy="busy === 'upload'"
+      :progress="trimProgress"
+      @close="editingVideo = null"
+      @save="saveVideoEdit"
     />
     <SocialAltTextDialog
       :open="altAsset !== null"

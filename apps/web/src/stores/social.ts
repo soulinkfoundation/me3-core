@@ -184,6 +184,8 @@ export type SocialMediaAsset = {
   contentHash?: string;
   byteLength?: number;
   assetIndex?: number;
+  /** Videos: the cover frame, in milliseconds (Instagram uses it). */
+  coverTimeMs?: number;
 };
 
 export type PostVersion = {

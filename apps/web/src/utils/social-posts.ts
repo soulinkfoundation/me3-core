@@ -634,6 +634,11 @@ export function splitIntoThread(text: string, limit = 280): string[] {
   return posts;
 }
 
+/** Platforms that post the cover frame the owner picks (Instagram's thumb_offset). */
+export function takesCoverFrame(platform: SocialPlatform | string): boolean {
+  return socialNetwork(platform) === "instagram";
+}
+
 /** Platforms that can post a first comment (a first reply on X). */
 export function takesFirstComment(platform: SocialPlatform | string): boolean {
   return ["x", "linkedin", "instagram", "facebook"].includes(socialNetwork(platform) || "");

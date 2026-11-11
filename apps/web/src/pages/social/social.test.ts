@@ -543,5 +543,29 @@ describe("Social review", () => {
     expect(apiPatch).toHaveBeenLastCalledWith("/social/versions/x-1", { publishingSettings: { post: { mentions: { "@ME3": "@me3_app" } } } });
     expect(wrapper.get(".preview__text").text()).toBe("Built with @me3_app today.");
   });
+
+  it("saves a chosen cover frame on an Instagram video", async () => {
+    const clip = { url: "/api/files/v1/content", fileId: "v1", kind: "video" as const, mimeType: "video/mp4", filename: "launch.mp4", altText: "", assetIndex: 0 };
+    const current = post([version({ id: "ig-1", platform: "instagram", assetManifest: [clip] })]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("instagram")] },
+      "/social/posts/post-1": { post: current },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPatch.mockImplementation((_path: string, body: object) => Promise.resolve({ version: { ...current.versions[0], ...body } }));
+    const wrapper = mount(SocialPost, {
+      global: { stubs: { ...stubs, SocialVideoEditor: { name: "SocialVideoEditor", props: ["open", "coverFrame"], emits: ["save"], template: "<div v-if=\"open\" class=\"video-stub\" :data-cover=\"coverFrame\" />" } } },
+    });
+    await flushPromises();
+
+    await wrapper.get('[aria-label="Edit video 1"]').trigger("click");
+    expect(wrapper.get(".video-stub").attributes("data-cover")).toBe("true");
+    wrapper.findComponent({ name: "SocialVideoEditor" }).vm.$emit("save", { file: null, range: null, coverTimeMs: 2500 });
+    await flushPromises();
+    expect(apiPatch).toHaveBeenLastCalledWith("/social/versions/ig-1", { assetManifest: [expect.objectContaining({ fileId: "v1", coverTimeMs: 2500 })] });
+    expect(wrapper.find(".video-stub").exists()).toBe(false);
+  });
 });
 

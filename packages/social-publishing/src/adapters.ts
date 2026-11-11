@@ -2541,6 +2541,7 @@ async function publishInstagram(
       video_url: videos[0]!.url,
       caption: input.bodyText,
       share_to_feed: "true",
+      ...instagramCover(videos[0]!),
     });
     if (!reel.ok) return reel.result;
     creationId = reel.id;
@@ -2551,7 +2552,7 @@ async function publishInstagram(
     const children: string[] = [];
     for (const item of input.assets) {
       const child = await createInstagramMediaContainer(origin, input, item.kind === "video"
-        ? { media_type: "VIDEO", video_url: item.url, is_carousel_item: "true" }
+        ? { media_type: "VIDEO", video_url: item.url, is_carousel_item: "true", ...instagramCover(item) }
         : { image_url: item.url, is_carousel_item: "true", ...instagramAltText(item) });
       if (!child.ok) return child.result;
       children.push(child.id);
@@ -2648,6 +2649,11 @@ async function instagramPermalink(
   } catch {
     return undefined;
   }
+}
+
+/** The owner's chosen cover frame, as Instagram's thumb_offset in milliseconds. */
+function instagramCover(video: SocialMediaAsset): { thumb_offset?: string } {
+  return typeof video.coverTimeMs === "number" && video.coverTimeMs >= 0 ? { thumb_offset: String(Math.round(video.coverTimeMs)) } : {};
 }
 
 /** Instagram takes alt text on image containers (not Reels), up to 1,000 characters. */
