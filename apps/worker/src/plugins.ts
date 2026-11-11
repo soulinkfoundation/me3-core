@@ -242,39 +242,21 @@ const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
       auth: "owner",
     },
     {
-      id: "social.carousel.media.api",
-      path: "/api/social/carousels/media",
+      id: "social.carousel-templates.api",
+      path: "/api/social/carousel-templates",
       methods: ["GET", "POST"],
       auth: "owner",
     },
     {
-      id: "social.carousel.media-item.api",
-      path: "/api/social/carousels/media/:mediaId",
-      methods: ["GET"],
+      id: "social.carousel-template.api",
+      path: "/api/social/carousel-templates/:id",
+      methods: ["PATCH"],
       auth: "owner",
     },
     {
-      id: "social.carousel.content-addressed-media.api",
-      path: "/api/social/media/sha256/:fileName",
-      methods: ["GET"],
-      auth: "owner",
-    },
-    {
-      id: "social.carousel.render.api",
-      path: "/api/social/carousels/render",
-      methods: ["POST"],
-      auth: "owner",
-    },
-    {
-      id: "social.carousel.render-set.api",
-      path: "/api/social/carousels/render-sets/:renderSetId",
-      methods: ["GET"],
-      auth: "owner",
-    },
-    {
-      id: "social.carousel.asset.api",
-      path: "/api/social/carousels/assets/:assetId",
-      methods: ["GET"],
+      id: "social.post.text-carousel.api",
+      path: "/api/social/posts/:id/text-carousel",
+      methods: ["GET", "PUT"],
       auth: "owner",
     },
     {
@@ -466,6 +448,13 @@ const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
       destructive: false,
       description:
         "Stores owner-scoped raster media, immutable deterministic Carousel render sets, and exact Version attachments.",
+    },
+    {
+      id: "social.text-carousels",
+      path: "./apps/worker/migrations/0099_social_text_carousels.sql",
+      destructive: false,
+      description:
+        "Stores owner-saved text carousel templates and the slide text kept with each Post.",
     },
   ],
   queuesAndCrons: [...SOCIAL_PUBLISHING_RUNTIME.queuesAndCrons],

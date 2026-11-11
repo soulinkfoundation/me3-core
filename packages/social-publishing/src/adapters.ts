@@ -1,6 +1,5 @@
 import type { SocialMediaAsset, SocialPlatform } from "./index";
-import { sniffCarouselRasterMimeType } from "./carousel-renderer";
-import type { CarouselRasterMimeType } from "./carousel-render-model";
+import { sniffRasterMimeType, type RasterMimeType } from "./raster-mime";
 import { normalizePostOptions, THREAD_PART_LIMIT, xPostTexts } from "./post-options";
 
 export type SocialPublishAdapterResult = {
@@ -52,7 +51,7 @@ const X_VIDEO_MAX_BYTES = 512 * 1024 * 1024;
 const X_VIDEO_CHUNK_BYTES = 4 * 1024 * 1024;
 const X_VIDEO_PROCESSING_ATTEMPTS = 10;
 const X_VIDEO_MIME_TYPES = new Set(["video/mp4"]);
-const X_IMAGE_MIME_TYPES = new Set<CarouselRasterMimeType>([
+const X_IMAGE_MIME_TYPES = new Set<RasterMimeType>([
   "image/png",
   "image/jpeg",
   "image/webp",
@@ -243,7 +242,7 @@ function validateXDraft(input: {
       return { ok: false, error: `X image ${index + 1} needs a URL.` };
     }
     const mimeType = normalizeMimeType(asset.mimeType);
-    if (mimeType && !X_IMAGE_MIME_TYPES.has(mimeType as CarouselRasterMimeType)) {
+    if (mimeType && !X_IMAGE_MIME_TYPES.has(mimeType as RasterMimeType)) {
       return {
         ok: false,
         error: "X publishing currently supports PNG, JPEG, and WebP raster images only.",
@@ -1239,14 +1238,14 @@ const xAdapter: SocialPublishAdapter = {
         );
       }
 
-      const sniffedMimeType = sniffCarouselRasterMimeType(bytes);
+      const sniffedMimeType = sniffRasterMimeType(bytes);
       const declaredMimeType = normalizeMimeType(asset.mimeType);
       const responseMimeType = normalizeMimeType(imageResponse.headers.get("content-type"));
       if (
         !sniffedMimeType ||
         (declaredMimeType && declaredMimeType !== sniffedMimeType) ||
         (responseMimeType &&
-          X_IMAGE_MIME_TYPES.has(responseMimeType as CarouselRasterMimeType) &&
+          X_IMAGE_MIME_TYPES.has(responseMimeType as RasterMimeType) &&
           responseMimeType !== sniffedMimeType)
       ) {
         return providerError(

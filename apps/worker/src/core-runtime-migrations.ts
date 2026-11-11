@@ -892,6 +892,31 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_soup_servings_open ON soup_servings(user_id, status, expires_at)").run();
     },
   },
+  // Text carousel templates and the slide text kept with a Post (me3-wp9i).
+  {
+    id: "0099_social_text_carousels",
+    checksum: "2026-11-11-social-text-carousels-v1",
+    async apply(db) {
+      await db.prepare(`CREATE TABLE IF NOT EXISTS social_carousel_templates (
+        id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        settings_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`).run();
+      await db.prepare("CREATE INDEX IF NOT EXISTS idx_social_carousel_templates_site ON social_carousel_templates(site_id, created_at)").run();
+      await db.prepare(`CREATE TABLE IF NOT EXISTS social_text_carousels (
+        post_id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL,
+        template_id TEXT,
+        slides_json TEXT NOT NULL DEFAULT '[]',
+        file_ids_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`).run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

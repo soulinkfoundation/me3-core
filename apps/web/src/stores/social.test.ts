@@ -2,11 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { api } from "../api";
 import {
-  SocialCarouselApiError,
-  socialCarouselAssetUrl,
-  socialCarouselMediaUrl,
   useSocialStore,
-  type CarouselRenderModel,
   type PostVersion,
   type Publication,
   type PostingPlan,
@@ -61,131 +57,22 @@ describe("social store Post workflow", () => {
     expect(api.post).toHaveBeenCalledWith("/social/posts", input);
   });
 
-  it("encodes owner-scoped Carousel reads and raw media uploads", async () => {
-    const media = {
-      id: "media one",
-      siteId: "site one",
-      contentHash: `sha256:${"a".repeat(64)}`,
-      storageKey: `social-media/sha256/${"a".repeat(64)}.png`,
-      immutableUrl: `/api/social/media/sha256/${"a".repeat(64)}.png?siteId=site%20one`,
-      mimeType: "image/png",
-      pixelWidth: 1080,
-      pixelHeight: 1350,
-      byteLength: 4,
-      createdAt: "2026-07-18T10:00:00.000Z",
-    } as const;
-    const renderSet = { id: "render one" };
-    vi.mocked(api.get)
-      .mockResolvedValueOnce({ media: [media] })
-      .mockResolvedValueOnce({ renderSet });
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ media }), {
-        status: 201,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+  it("loads and saves text carousel templates and a Post's slides", async () => {
+    const template = { id: "t1", siteId: "site-1", name: "My site", settings: {} };
+    const carousel = { postId: "post-1", templateId: "t1", slides: [], fileIds: [], updatedAt: "now" };
+    vi.mocked(api.get).mockResolvedValueOnce({ templates: [template] }).mockResolvedValueOnce({ carousel });
+    vi.mocked(api.patch).mockResolvedValue({ template });
+    vi.mocked(api.put).mockResolvedValue({ carousel });
     const store = useSocialStore();
 
-    expect(await store.listCarouselMedia("site one")).toEqual([media]);
-    expect(api.get).toHaveBeenNthCalledWith(
-      1,
-      "/social/carousels/media?siteId=site%20one&limit=100",
-    );
-    expect(await store.fetchCarouselRenderSet("site one", "render one")).toBe(renderSet);
-    expect(api.get).toHaveBeenNthCalledWith(
-      2,
-      "/social/carousels/render-sets/render%20one?siteId=site%20one",
-    );
-
-    const file = new File([new Uint8Array([1, 2, 3, 4])], "owner.png", {
-      type: "image/png",
-    });
-    expect(await store.uploadCarouselMedia("site one", file)).toEqual(media);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/social/carousels/media?siteId=site%20one",
-      expect.objectContaining({
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "image/png" },
-        body: file,
-      }),
-    );
-    expect(socialCarouselAssetUrl("site one", "asset one"))
-      .toBe("/api/social/carousels/assets/asset%20one?siteId=site%20one");
-    expect(socialCarouselMediaUrl("site one", "media one"))
-      .toBe("/api/social/carousels/media/media%20one?siteId=site%20one");
-  });
-
-  it("posts the exact Carousel CAS payload and preserves structured render issues", async () => {
-    const model = {
-      modelVersion: "me3.carousel-model.v1",
-      revision: 3,
-      template: { id: "owner-bold", version: 1 },
-      canvas: { width: 1080, height: 1350 },
-      source: {
-        sourceType: "journal",
-        sourceRef: "journal:one",
-        sourceTitle: "Source",
-        snapshotHash: `sha256:${"0".repeat(64)}`,
-        sourceText: "Exact Source text.",
-      },
-      ownerStyle: {},
-      media: [],
-      slides: [],
-    } as unknown as CarouselRenderModel;
-    const input = {
-      siteId: "site one",
-      postId: "post one",
-      versionId: "version one",
-      expectedVersionUpdatedAt: "2026-07-18T10:00:00.000Z",
-      model,
-    };
-    const result = {
-      renderSet: { id: "render-1" },
-      version: { id: "version one" },
-      approvalPreserved: false,
-    };
-    const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(JSON.stringify(result), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    ).mockResolvedValueOnce(
-      new Response(JSON.stringify({
-        error: "Carousel cannot be rendered until its checks pass",
-        issues: [{
-          code: "text_overflow",
-          path: "slides[1].body",
-          message: "Slide text exceeds the Template limit",
-          slideId: "content-1",
-        }],
-      }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    const store = useSocialStore();
-
-    expect(await store.renderAndAttachCarousel(input)).toEqual(result);
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      "/api/social/carousels/render",
-      expect.objectContaining({
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      }),
-    );
-
-    const failure = await store.renderAndAttachCarousel(input).catch((error) => error);
-    expect(failure).toBeInstanceOf(SocialCarouselApiError);
-    expect(failure).toMatchObject({
-      status: 400,
-      issues: [expect.objectContaining({ code: "text_overflow", slideId: "content-1" })],
-    });
+    expect(await store.fetchCarouselTemplates("site 1")).toEqual([template]);
+    expect(api.get).toHaveBeenCalledWith("/social/carousel-templates?siteId=site%201");
+    expect(await store.fetchTextCarousel("post-1")).toEqual(carousel);
+    expect(api.get).toHaveBeenCalledWith("/social/posts/post-1/text-carousel");
+    await store.updateCarouselTemplate("t1", { name: "Renamed" });
+    expect(api.patch).toHaveBeenCalledWith("/social/carousel-templates/t1", { name: "Renamed" });
+    await store.saveTextCarousel("post-1", { templateId: "t1", slides: [], fileIds: ["f1"] });
+    expect(api.put).toHaveBeenCalledWith("/social/posts/post-1/text-carousel", { templateId: "t1", slides: [], fileIds: ["f1"] });
   });
 
   it("searches the Post library and writes or deletes owner drafts through canonical APIs", async () => {

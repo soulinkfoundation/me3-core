@@ -16,9 +16,11 @@ import SocialPostPreview from "../../components/social/SocialPostPreview.vue";
 import SocialImageCropper from "../../components/social/SocialImageCropper.vue";
 import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue";
 import SocialMarks from "../../components/social/SocialMarks.vue";
+import SocialTextCarouselEditor from "../../components/social/SocialTextCarouselEditor.vue";
+import { useSitesStore } from "../../stores/sites";
 import { useAppToast } from "../../composables/useAppToast";
 import { useSocialData } from "../../composables/useSocialData";
-import type { DriveFile, PostVersion, SocialMediaAsset, SocialPlatform, SocialPostDetail, SocialPostOptions } from "../../stores/social";
+import type { DriveFile, PostVersion, SocialMediaAsset, SocialPlatform, SocialPostDetail, SocialPostOptions, TextCarousel } from "../../stores/social";
 import { uploadDriveFiles } from "../../utils/drive-upload";
 import { convertVideo, planVideo, prepareImage, trimVideo } from "../../utils/media-prep";
 import {
@@ -89,6 +91,9 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const videoInput = ref<HTMLInputElement | null>(null);
 const documentInput = ref<HTMLInputElement | null>(null);
 const filesPickerOpen = ref(false);
+const slidesOpen = ref(false);
+const textCarousel = ref<TextCarousel | null>(null);
+const sitesStore = useSitesStore();
 const cropIndex = ref<number | null>(null);
 const altIndex = ref<number | null>(null);
 const editingVideo = ref<SocialMediaAsset | null>(null);
@@ -204,6 +209,12 @@ const activeText = computed(() => (active.value ? texts.value[active.value.id] ?
 const activeFold = computed(() => (active.value ? foldIndex(active.value.platform, activeText.value) : null));
 const activeFoldRule = computed(() => (active.value ? foldFor(active.value.platform) : null));
 const activeAccountRow = computed(() => (active.value ? activeAccount(active.value.platform, accounts.value) : null));
+/** Text slides are 4:5 images made for Instagram carousels. */
+const activeTakesSlides = computed(() =>
+  Boolean(active.value && socialNetwork(active.value.platform) === "instagram" && activeTakesImages.value && !activeDocument.value && (!activeVideo.value || activeMixed.value)),
+);
+const siteUsername = computed(() => sitesStore.sites.find((site) => site.id === siteId.value)?.username || "");
+const slidesHandle = computed(() => activeAccountRow.value?.handle || activeAccountRow.value?.displayName || siteUsername.value);
 const mirror = ref<HTMLDivElement | null>(null);
 function syncMirror(event: Event) {
   if (mirror.value) mirror.value.scrollTop = (event.target as HTMLTextAreaElement).scrollTop;
@@ -598,6 +609,23 @@ function driveAsset(file: DriveFile, kind: "image" | "video" | "document"): Soci
     byteLength: file.size,
     ...(kind === "video" ? { assetIndex: 0 } : {}),
   };
+}
+
+/** The slide JPEGs replace the ones last added from the editor, in place; otherwise they go at the end. */
+function addSlideImages(files: DriveFile[], replaced: string[]) {
+  const tiles = activeTiles.value;
+  const old = new Set(replaced);
+  const at = tiles.findIndex((asset) => asset.fileId && old.has(asset.fileId));
+  const kept = tiles.filter((asset) => !(asset.fileId && old.has(asset.fileId)));
+  const added = files.map((file) => driveAsset(file, "image"));
+  const next = at === -1 ? [...kept, ...added] : [...kept.slice(0, at), ...added, ...kept.slice(at)];
+  setTiles(next);
+  textCarousel.value = textCarousel.value ? { ...textCarousel.value, fileIds: files.map((file) => file.id) } : null;
+  slidesOpen.value = false;
+  void social.fetchTextCarousel(postId.value).then((carousel) => {
+    textCarousel.value = carousel;
+  }).catch(() => undefined);
+  toastSuccess(`Added ${files.length} slide${files.length === 1 ? "" : "s"} to the post.`);
 }
 
 /** Photos or a video the owner picked from Files; nothing re-uploads. */
@@ -1022,7 +1050,9 @@ onMounted(async () => {
     await reload();
   } catch {
     missing.value = true;
+    return;
   }
+  textCarousel.value = await social.fetchTextCarousel(postId.value).catch(() => null);
 });
 </script>
 
@@ -1282,6 +1312,9 @@ onMounted(async () => {
                 <button v-if="activeTakesImages && (!activeVideo || activeMixed) && !activeDocument" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="fileInput?.click()">
                   <UiIcon name="Plus" :size="15" /> {{ busy === "upload" ? "Adding…" : activeImages.length ? "Add image" : "Add your own images" }}
                 </button>
+                <button v-if="activeTakesSlides" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="slidesOpen = true">
+                  <UiIcon name="Images" :size="15" /> {{ textCarousel?.slides.length ? "Edit slides" : "Make text slides" }}
+                </button>
                 <button v-if="activeVideoRule" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="videoInput?.click()">
                   <UiIcon name="Plus" :size="15" /> {{ converting !== null ? `Converting… ${Math.round(converting * 100)}%` : busy === "upload" ? "Adding…" : activeVideoLabel }}
                 </button>
@@ -1427,6 +1460,17 @@ onMounted(async () => {
       :busy="busy === 'upload'"
       @close="cropIndex = null"
       @save="saveCrop"
+    />
+    <SocialTextCarouselEditor
+      v-if="active && siteId"
+      :open="slidesOpen"
+      :site-id="siteId"
+      :site-username="siteUsername"
+      :post-id="postId"
+      :handle="slidesHandle"
+      :caption="activeText"
+      @close="slidesOpen = false"
+      @added="addSlideImages"
     />
     <FilesMediaPicker
       :open="filesPickerOpen"

@@ -303,9 +303,9 @@ describe("Social review", () => {
     const adds = wrapper.findAll(".post-images__add").map((button) => button.text());
     expect(adds).toEqual(["Replace video", "From Files"]);
 
-    // Instagram mixes photos and videos in one carousel.
+    // Instagram mixes photos and videos in one carousel, and can make text slides.
     await wrapper.findAll('[role="tab"]')[1]!.trigger("click");
-    expect(wrapper.findAll(".post-images__add").map((button) => button.text())).toEqual(["Add your own images", "Add a video", "From Files"]);
+    expect(wrapper.findAll(".post-images__add").map((button) => button.text())).toEqual(["Add your own images", "Make text slides", "Add a video", "From Files"]);
   });
 
   it("replaces an image with its cropped copy", async () => {
