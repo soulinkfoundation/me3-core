@@ -90,7 +90,7 @@ describe("campaign page", () => {
     const wrapper = mount(CampaignPage, { global: { stubs: { CampaignEmailPreview: true, ConfirmationDialog: true } } });
     await flushPromises();
 
-    await wrapper.findAll("button").find((button) => button.text() === "Send to new subscribers")!.trigger("click");
+    await wrapper.findAll("button").find((button) => button.text() === "Send to anyone it missed")!.trigger("click");
     await flushPromises();
 
     expect(apiPost).toHaveBeenCalledWith("/email/campaigns/campaign-1/duplicate", { onlyNewSubscribers: true });

@@ -79,12 +79,13 @@ describe("campaign results", () => {
     expect(results.replyMessages.map((reply) => reply.messageId)).toEqual(["reply-2", "reply-1"]);
   });
 
-  it("sends again only to subscribers the campaign didn't reach", async () => {
+  it("sends again only to subscribers the campaign didn't reach, including anyone it refused", async () => {
     const { env } = sentCampaignFixture();
 
     const audience = await listSiteAudience(env, "site-1", { kind: "all", notSentBy: "campaign-1" });
 
-    expect(audience.map((subscriber) => subscriber.email)).toEqual(["new@example.test"]);
+    expect(audience.map((subscriber) => subscriber.email).sort())
+      .toEqual(["eve@example.test", "new@example.test"]);
   });
 
   it("gives the morning briefing one line per recent campaign", async () => {

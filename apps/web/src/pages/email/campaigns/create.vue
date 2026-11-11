@@ -145,7 +145,7 @@ let reviewRequest = 0;
 const selectedSiteId = ref("");
 const audienceKind = ref<"all" | "customers">("all");
 const audienceItem = ref("");
-// Set when this draft came from "Send to new subscribers": only people that campaign didn't reach.
+// Set when this draft came from "Send to anyone it missed": only people that campaign didn't reach.
 const notSentBy = ref<string | null>(null);
 const notSentByOriginal = ref<string | null>(null);
 const notSentBySubject = ref("");

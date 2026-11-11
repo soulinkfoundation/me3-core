@@ -234,7 +234,7 @@ onMounted(() => void load());
             size="compact"
             :disabled="Boolean(copying)"
             @click="copyCampaign('again')"
-          >{{ copying === "again" ? "Copying…" : "Send to new subscribers" }}</Button>
+          >{{ copying === "again" ? "Copying…" : "Send to anyone it missed" }}</Button>
           <Button
             color="secondary"
             shape="pill"
