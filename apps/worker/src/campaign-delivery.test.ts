@@ -794,6 +794,21 @@ describe("campaign delivery lifecycle", () => {
       });
     });
 
+    it("finishes the campaign when an accepted message never reports back", async () => {
+      const job = await sendToReader();
+      // The managed path waits for a report; Postmark's own path is finished on acceptance.
+      database.exec("UPDATE email_campaigns SET sender_ref = 'managed', status = 'sending'");
+      database.exec("UPDATE email_campaign_recipient_jobs SET status = 'accepted', accepted_at = datetime('now', '-10 minutes')");
+      await dispatchDueCampaignJobs(env, fetcher);
+      await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "sending" });
+
+      database.exec("UPDATE email_campaign_recipient_jobs SET accepted_at = datetime('now', '-2 hours')");
+      await dispatchDueCampaignJobs(env, fetcher);
+      await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "sent" });
+      expect(database.prepare("SELECT status FROM email_campaign_recipient_jobs WHERE id = ?").get(job.id))
+        .toEqual({ status: "accepted" });
+    });
+
     it("waits and retries when the provider is busy, and stops on a refused address", async () => {
       providerResponse = () => Response.json({ ErrorCode: 429, Message: "Rate limit" }, { status: 429 });
       const busy = await sendToReader();

@@ -499,6 +499,7 @@ export async function dispatchDueCampaignJobs(
   fetcher: typeof fetch = fetch,
   limit = MAX_DISPATCH_BATCH,
 ) {
+  await finishCampaignsWaitingOnReports(env);
   const pending = await env.DB.prepare(
     `SELECT 1 AS pending FROM email_campaign_recipient_jobs
      WHERE status IN ('queued', 'retry_wait', 'paused', 'submitting',
@@ -1181,6 +1182,21 @@ async function updateSubscriberDeliveryStatus(
     .run();
 }
 
+// The provider accepted these, so they are out of ME3's hands. When a delivery report never
+// comes back, the campaign still finishes so the owner can see results and send to anyone missed.
+const STALE_ACCEPTED_SQL = `status = 'accepted'
+  AND datetime(COALESCE(accepted_at, updated_at)) < datetime('now', '-1 hour')`;
+
+async function finishCampaignsWaitingOnReports(env: Env) {
+  const waiting = await env.DB.prepare(
+    `SELECT DISTINCT campaign_id FROM email_campaign_recipient_jobs
+     WHERE kind = 'campaign' AND ${STALE_ACCEPTED_SQL}
+       AND campaign_id IN (SELECT id FROM email_campaigns WHERE status = 'sending')
+     LIMIT 20`,
+  ).all<{ campaign_id: string }>();
+  for (const row of waiting.results || []) await refreshCampaignStatus(env, row.campaign_id);
+}
+
 async function refreshCampaignStatus(env: Env, campaignId: string) {
   const campaign = await env.DB.prepare(
     "SELECT status, scheduled_for, sender_ref FROM email_campaigns WHERE id = ?",
@@ -1189,8 +1205,10 @@ async function refreshCampaignStatus(env: Env, campaignId: string) {
     .first<{ status: string; scheduled_for: string | null; sender_ref: string | null }>();
   if (!campaign || campaign.status === "cancelled" || campaign.status === "draft") return;
   const counts = await env.DB.prepare(
-    `SELECT status, COUNT(*) AS count FROM email_campaign_recipient_jobs
-     WHERE campaign_id = ? AND kind = 'campaign' GROUP BY status`,
+    `SELECT CASE WHEN ${STALE_ACCEPTED_SQL} THEN 'accepted_stale' ELSE status END AS status,
+            COUNT(*) AS count
+     FROM email_campaign_recipient_jobs
+     WHERE campaign_id = ? AND kind = 'campaign' GROUP BY 1`,
   )
     .bind(campaignId)
     .all<{ status: string; count: number }>();
@@ -1222,7 +1240,8 @@ async function refreshCampaignStatus(env: Env, campaignId: string) {
       (values.delivered || 0) +
       (values.bounced || 0) +
       (values.complained || 0) +
-      (values.suppressed || 0);
+      (values.suppressed || 0) +
+      (values.accepted_stale || 0);
     status = delivered > 0 ? "sent" : "failed";
     sentAt = delivered > 0 ? new Date().toISOString() : null;
     failureReason = delivered > 0 ? null : "No recipients were accepted";
