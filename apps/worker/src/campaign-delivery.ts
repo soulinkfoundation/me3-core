@@ -1098,10 +1098,10 @@ async function reconcileUnknownCampaignJobs(env: Env, fetcher: typeof fetch) {
   const config = await getManagedCampaignConfig(env).catch(() => null);
   if (!config) return;
   const unknown = await env.DB.prepare(
-    `SELECT id, campaign_id FROM email_campaign_recipient_jobs
+    `SELECT id, campaign_id, updated_at FROM email_campaign_recipient_jobs
      WHERE status IN ('delivery_unknown', 'unresolved')
      ORDER BY updated_at LIMIT 20`,
-  ).all<{ id: string; campaign_id: string }>();
+  ).all<{ id: string; campaign_id: string; updated_at: string }>();
   for (const job of unknown.results || []) {
     const response = await managedFetch(
       config,
@@ -1109,6 +1109,14 @@ async function reconcileUnknownCampaignJobs(env: Env, fetcher: typeof fetch) {
       { method: "GET" },
       fetcher,
     ).catch(() => null);
+    // ME3 Cloud records a delivery before handing it on, so one it still doesn't know after a
+    // while was turned away before sending. It never went out and can be sent again.
+    if (response?.status === 404 && isOlderThan(job.updated_at, UNKNOWN_NOT_FOUND_MINUTES)) {
+      const now = new Date().toISOString();
+      await updateJob(env, job.id, "failed", "not_sent", now, now);
+      await refreshCampaignStatus(env, job.campaign_id);
+      continue;
+    }
     if (!response?.ok) continue;
     const body = await response.json().catch(() => null) as Record<string, unknown> | null;
     const state = typeof body?.state === "string" ? body.state : "";
@@ -1182,10 +1190,17 @@ async function updateSubscriberDeliveryStatus(
     .run();
 }
 
-// The provider accepted these, so they are out of ME3's hands. When a delivery report never
-// comes back, the campaign still finishes so the owner can see results and send to anyone missed.
-const STALE_ACCEPTED_SQL = `status = 'accepted'
+// The provider accepted these (or reported a soft bounce), so they are out of ME3's hands. When
+// no final report comes back, the campaign still finishes so the owner can see results and
+// send to anyone missed.
+const STALE_ACCEPTED_SQL = `status IN ('accepted', 'delayed')
   AND datetime(COALESCE(accepted_at, updated_at)) < datetime('now', '-1 hour')`;
+const UNKNOWN_NOT_FOUND_MINUTES = 15;
+
+function isOlderThan(timestamp: string, minutes: number) {
+  const time = Date.parse(timestamp.includes("T") ? timestamp : `${timestamp.replace(" ", "T")}Z`);
+  return Number.isFinite(time) && Date.now() - time > minutes * 60_000;
+}
 
 async function finishCampaignsWaitingOnReports(env: Env) {
   const waiting = await env.DB.prepare(
@@ -1205,7 +1220,7 @@ async function refreshCampaignStatus(env: Env, campaignId: string) {
     .first<{ status: string; scheduled_for: string | null; sender_ref: string | null }>();
   if (!campaign || campaign.status === "cancelled" || campaign.status === "draft") return;
   const counts = await env.DB.prepare(
-    `SELECT CASE WHEN ${STALE_ACCEPTED_SQL} THEN 'accepted_stale' ELSE status END AS status,
+    `SELECT CASE WHEN ${STALE_ACCEPTED_SQL} THEN status || '_stale' ELSE status END AS status,
             COUNT(*) AS count
      FROM email_campaign_recipient_jobs
      WHERE campaign_id = ? AND kind = 'campaign' GROUP BY 1`,

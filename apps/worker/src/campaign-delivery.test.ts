@@ -471,6 +471,28 @@ describe("campaign delivery lifecycle", () => {
     await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "sent" });
   });
 
+  it("finishes when an unknown send never reached ME3 Cloud or a soft bounce never settles", async () => {
+    await startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher);
+    await dispatchDueCampaignJobs(env, fetcher);
+    database.exec("UPDATE email_campaign_recipient_jobs SET status = 'delivery_unknown', updated_at = datetime('now', '-5 minutes')");
+    database.exec("UPDATE email_campaigns SET status = 'sending'");
+    await dispatchDueCampaignJobs(env, fetcher);
+    expect(database.prepare("SELECT status FROM email_campaign_recipient_jobs").get())
+      .toEqual({ status: "delivery_unknown" });
+
+    // Cloud has no record of it, so it was never sent and can go out again.
+    database.exec("UPDATE email_campaign_recipient_jobs SET updated_at = datetime('now', '-20 minutes')");
+    await dispatchDueCampaignJobs(env, fetcher);
+    expect(database.prepare("SELECT status, provider_reason FROM email_campaign_recipient_jobs").get())
+      .toEqual({ status: "failed", provider_reason: "not_sent" });
+    await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "failed" });
+
+    database.exec("UPDATE email_campaign_recipient_jobs SET status = 'delayed', terminal_at = NULL, accepted_at = datetime('now', '-2 hours')");
+    database.exec("UPDATE email_campaigns SET status = 'sending'");
+    await dispatchDueCampaignJobs(env, fetcher);
+    await expect(getCampaign(env, "owner", campaignId)).resolves.not.toMatchObject({ status: "sending" });
+  });
+
   it("deletes a terminal failed campaign and its delivery records", async () => {
     const current = await getCampaign(env, "owner", campaignId);
     const revisionId = current?.revision.id;
