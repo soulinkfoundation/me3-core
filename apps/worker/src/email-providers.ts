@@ -274,6 +274,9 @@ const MANAGED_GATEWAY_PROVIDER: EmailProviderAdapter = {
         fromName: message.fromName,
         replyToAddress: message.replyToAddress,
         toAddress: message.toAddress,
+        toAddresses: message.toAddresses,
+        ccAddresses: message.ccAddresses,
+        bccAddresses: message.bccAddresses,
         subject: message.subject,
         textBody: message.textBody,
         htmlBody: message.htmlBody,
@@ -1017,13 +1020,6 @@ export async function sendEmailWithProvider(
   if (recipientCount > MAX_MAIL_RECIPIENTS) {
     throw new EmailProviderInputError(`Send to at most ${MAX_MAIL_RECIPIENTS} people at once. Use a campaign for larger sends.`);
   }
-  // ME3 Cloud's managed gateway accepts exactly one recipient today and
-  // ignores unknown fields, so never hand it Cc/Bcc it would silently drop.
-  if (managedGateway && recipientCount > 1) {
-    throw new EmailProviderInputError(
-      "ME3 managed email sends to one recipient at a time for now. Remove the extra To, Cc or Bcc addresses, or send separately.",
-    );
-  }
   if (replyToAddress && !isValidEmail(replyToAddress)) {
     throw new EmailProviderInputError("Configured reply-to email address is invalid", 503);
   }
@@ -1035,6 +1031,8 @@ export async function sendEmailWithProvider(
           fromName,
           replyToAddress,
           toAddress,
+          ccAddresses,
+          bccAddresses,
           subject,
           attachments,
         })
@@ -2324,6 +2322,8 @@ async function createManagedEmailRequestFingerprint(
     fromName: string;
     replyToAddress: string;
     toAddress: string;
+    ccAddresses: string[];
+    bccAddresses: string[];
     subject: string;
     attachments: EmailProviderAttachment[];
   },
@@ -2348,6 +2348,9 @@ async function createManagedEmailRequestFingerprint(
         fromName: normalized.fromName,
         replyToAddress: normalized.replyToAddress,
         toAddress: normalized.toAddress,
+        // Only when present, so pending single-recipient fingerprints stay stable.
+        ...(normalized.ccAddresses.length ? { ccAddresses: normalized.ccAddresses } : {}),
+        ...(normalized.bccAddresses.length ? { bccAddresses: normalized.bccAddresses } : {}),
         subject: normalized.subject,
         textBody: input.textBody,
         htmlBody: input.htmlBody || null,

@@ -28,6 +28,9 @@ export type ManagedEmailGatewaySendInput = {
   fromName: string;
   replyToAddress: string;
   toAddress: string;
+  toAddresses?: string[];
+  ccAddresses?: string[];
+  bccAddresses?: string[];
   subject: string;
   textBody: string;
   htmlBody: string | null;
@@ -92,7 +95,7 @@ export async function sendManagedEmailThroughGateway(
       address: input.fromAddress,
       name: input.fromName,
     },
-    to: input.toAddress,
+    ...managedGatewayRecipients(input),
     subject: input.subject,
     text: input.textBody,
     ...(input.htmlBody ? { html: input.htmlBody } : {}),
@@ -208,6 +211,27 @@ export async function sendManagedEmailThroughGateway(
     providerMessageId,
     providerStatus: status,
     raw: { status, providerMessageId },
+  };
+}
+
+/**
+ * A single recipient stays a plain `to` string. Any multi-recipient send puts
+ * `to` in an array, even with one To address, so a gateway that predates Cc
+ * and Bcc rejects it as an invalid `to` instead of silently dropping copies.
+ */
+function managedGatewayRecipients(input: ManagedEmailGatewaySendInput): {
+  to: string | string[];
+  cc?: string[];
+  bcc?: string[];
+} {
+  const to = input.toAddresses?.length ? input.toAddresses : [input.toAddress];
+  const cc = input.ccAddresses || [];
+  const bcc = input.bccAddresses || [];
+  if (to.length === 1 && !cc.length && !bcc.length) return { to: to[0]! };
+  return {
+    to,
+    ...(cc.length ? { cc } : {}),
+    ...(bcc.length ? { bcc } : {}),
   };
 }
 
