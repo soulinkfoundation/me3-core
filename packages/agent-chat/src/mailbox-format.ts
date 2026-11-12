@@ -1,4 +1,5 @@
 import { decodeMimeHeaderValue, parseEmailAddressHeader, parseEmailAddressList } from "../../../shared/email-headers";
+import { parseMailRecipients } from "../../../shared/mail-recipients";
 import { type DbMailboxAliasRow, type DbMailboxMessageRow, type MailboxUnsubscribeAction, type AgentMailboxMessage } from "./mailbox-types";
 import { parseJsonRecord, parseJsonArray, isPlainObject } from "./domain-store";
 
@@ -60,6 +61,16 @@ export function serializeAgentMailbox(row: DbMailboxAliasRow, aliasAddress: stri
   };
 }
 
+/** Cc/Bcc for owner-written mail live in metadata_json.recipients. */
+export function getDraftCcBcc(row: Pick<DbMailboxMessageRow, "metadata_json"> | null | undefined): { cc: string[]; bcc: string[] } {
+  const recipients = parseJsonRecord(row?.metadata_json || null).recipients;
+  if (!isPlainObject(recipients)) return { cc: [], bcc: [] };
+  return {
+    cc: parseMailRecipients(recipients.cc),
+    bcc: parseMailRecipients(recipients.bcc),
+  };
+}
+
 export function serializeAgentMailboxMessage(row: DbMailboxMessageRow) {
   const metadata = parseJsonRecord(row.metadata_json);
   const headers = parseJsonRecord(row.raw_headers_json);
@@ -78,6 +89,8 @@ export function serializeAgentMailboxMessage(row: DbMailboxMessageRow) {
     fromAddress: fromHeader?.address || row.from_address,
     fromName: fromHeader?.name || null,
     toAddress: row.to_address,
+    ccAddresses: row.direction === "outbound" ? getDraftCcBcc(row).cc : [],
+    bccAddresses: row.direction === "outbound" ? getDraftCcBcc(row).bcc : [],
     recipientAddresses: row.direction === "inbound" ? getRecipientAddresses(headers, metadata) : [],
     subject: decodeMimeHeaderValue(row.subject || "(no subject)"),
     body,

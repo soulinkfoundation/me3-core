@@ -3,6 +3,12 @@ import {
   hasInstallEncryptionKey,
 } from "./install-secrets";
 import {
+  formatMailRecipients,
+  invalidMailRecipients,
+  MAX_MAIL_RECIPIENTS,
+  parseMailRecipients,
+} from "../../../shared/mail-recipients";
+import {
   hasManagedEmailGatewayCapability,
   isManagedEmailDeployment,
   ManagedEmailGatewayError,
@@ -92,7 +98,10 @@ export type EmailProviderSendRequest = {
   fromAddress?: string | null;
   fromName?: string | null;
   replyToAddress?: string | null;
+  /** One address, or a comma-separated list for owner mail with several recipients. */
   toAddress: string;
+  ccAddresses?: string[] | null;
+  bccAddresses?: string[] | null;
   subject: string;
   textBody: string;
   htmlBody?: string | null;
@@ -159,7 +168,11 @@ type EmailProviderSendMessage = {
   fromAddress: string;
   fromName: string;
   replyToAddress: string;
+  /** Header form of toAddresses ("a@x, b@y"). */
   toAddress: string;
+  toAddresses: string[];
+  ccAddresses: string[];
+  bccAddresses: string[];
   subject: string;
   textBody: string;
   htmlBody: string | null;
@@ -352,7 +365,9 @@ const CLOUDFLARE_EMAIL_PROVIDER: EmailProviderAdapter = {
         from: message.fromName
           ? { email: message.fromAddress, name: message.fromName }
           : message.fromAddress,
-        to: message.toAddress,
+        to: message.toAddresses.length === 1 ? message.toAddresses[0] : message.toAddresses,
+        ...(message.ccAddresses.length ? { cc: message.ccAddresses } : {}),
+        ...(message.bccAddresses.length ? { bcc: message.bccAddresses } : {}),
         replyTo: message.replyToAddress || undefined,
         subject: message.subject,
         text: message.textBody,
@@ -383,7 +398,9 @@ const CLOUDFLARE_EMAIL_PROVIDER: EmailProviderAdapter = {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          to: message.toAddress,
+          to: message.toAddresses.length === 1 ? message.toAddresses[0] : message.toAddresses,
+          ...(message.ccAddresses.length ? { cc: message.ccAddresses } : {}),
+          ...(message.bccAddresses.length ? { bcc: message.bccAddresses } : {}),
           from: message.fromName
             ? { address: message.fromAddress, name: message.fromName }
             : message.fromAddress,
@@ -489,6 +506,8 @@ const POSTMARK_PROVIDER: EmailProviderAdapter = {
       body: JSON.stringify({
         From: formatAddress(message.fromAddress, message.fromName),
         To: message.toAddress,
+        Cc: message.ccAddresses.length ? message.ccAddresses.join(", ") : undefined,
+        Bcc: message.bccAddresses.length ? message.bccAddresses.join(", ") : undefined,
         Subject: message.subject,
         TextBody: message.textBody,
         HtmlBody: message.htmlBody || undefined,
@@ -646,7 +665,9 @@ const MAILGUN_PROVIDER: EmailProviderAdapter = {
 
     const form = new FormData();
     form.append("from", formatAddress(message.fromAddress, message.fromName));
-    form.append("to", message.toAddress);
+    for (const address of message.toAddresses) form.append("to", address);
+    for (const address of message.ccAddresses) form.append("cc", address);
+    for (const address of message.bccAddresses) form.append("bcc", address);
     form.append("subject", message.subject);
     form.append("text", message.textBody);
     if (message.htmlBody) form.append("html", message.htmlBody);
@@ -972,7 +993,12 @@ export async function sendEmailWithProvider(
     ? await managedEmailOperationAuditId(ownerId, input.purpose, operationId!)
     : null;
   const { fromAddress, fromName, replyToAddress } = identity;
-  const toAddress = input.toAddress.trim().toLowerCase();
+  const toAddresses = parseMailRecipients(input.toAddress);
+  const ccAddresses = parseMailRecipients(input.ccAddresses || []).filter((address) => !toAddresses.includes(address));
+  const bccAddresses = parseMailRecipients(input.bccAddresses || []).filter(
+    (address) => !toAddresses.includes(address) && !ccAddresses.includes(address),
+  );
+  const toAddress = formatMailRecipients(toAddresses);
   const subject = input.subject.trim() || "(no subject)";
   const attachments = input.attachments || [];
   const requestedAt = new Date().toISOString();
@@ -980,8 +1006,23 @@ export async function sendEmailWithProvider(
   if (!isValidEmail(fromAddress)) {
     throw new EmailProviderInputError("Configured sender email address is invalid", 503);
   }
-  if (!isValidEmail(toAddress)) {
+  if (!toAddresses.length) {
     throw new EmailProviderInputError("Enter a valid recipient email address");
+  }
+  const invalidRecipients = invalidMailRecipients([...toAddresses, ...ccAddresses, ...bccAddresses]);
+  if (invalidRecipients.length) {
+    throw new EmailProviderInputError(`Check these recipient addresses: ${invalidRecipients.join(", ")}`);
+  }
+  const recipientCount = toAddresses.length + ccAddresses.length + bccAddresses.length;
+  if (recipientCount > MAX_MAIL_RECIPIENTS) {
+    throw new EmailProviderInputError(`Send to at most ${MAX_MAIL_RECIPIENTS} people at once. Use a campaign for larger sends.`);
+  }
+  // ME3 Cloud's managed gateway accepts exactly one recipient today and
+  // ignores unknown fields, so never hand it Cc/Bcc it would silently drop.
+  if (managedGateway && recipientCount > 1) {
+    throw new EmailProviderInputError(
+      "ME3 managed email sends to one recipient at a time for now. Remove the extra To, Cc or Bcc addresses, or send separately.",
+    );
   }
   if (replyToAddress && !isValidEmail(replyToAddress)) {
     throw new EmailProviderInputError("Configured reply-to email address is invalid", 503);
@@ -1018,6 +1059,9 @@ export async function sendEmailWithProvider(
     fromName,
     replyToAddress,
     toAddress,
+    toAddresses,
+    ccAddresses,
+    bccAddresses,
     subject,
     textBody: input.textBody,
     htmlBody: input.htmlBody || null,
@@ -1708,7 +1752,9 @@ async function sendSmtpMessage(
 
     await authenticateSmtp(session, ehloReply, config.smtpUsername, secret);
     await session.command(`MAIL FROM:<${message.fromAddress}>`, [250], "MAIL FROM");
-    await session.command(`RCPT TO:<${message.toAddress}>`, [250, 251], "RCPT TO");
+    for (const recipient of [...message.toAddresses, ...message.ccAddresses, ...message.bccAddresses]) {
+      await session.command(`RCPT TO:<${recipient}>`, [250, 251], "RCPT TO");
+    }
     await session.command("DATA", [354], "DATA");
     const accepted = await session.data(buildSmtpMessage(config, message), [250], "SMTP send");
     await session.command("QUIT", [221], "QUIT").catch(() => undefined);
@@ -1790,6 +1836,7 @@ function buildSmtpMessage(
   const headers = [
     headerLine("From", formatAddress(message.fromAddress, message.fromName)),
     headerLine("To", message.toAddress),
+    message.ccAddresses.length ? headerLine("Cc", message.ccAddresses.join(", ")) : null,
     headerLine("Subject", encodeMimeHeader(message.subject)),
     headerLine("Date", new Date().toUTCString()),
     headerLine(

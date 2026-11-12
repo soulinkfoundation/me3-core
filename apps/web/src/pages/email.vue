@@ -5,6 +5,9 @@ import { definePage } from "unplugin-vue-router/runtime";
 import { RouterView, useRoute, useRouter } from "vue-router";
 import AppDialog from "../components/AppDialog.vue";
 import MailComposeEditor from "../components/email/MailComposeEditor.vue";
+import MailRecipientField from "../components/email/MailRecipientField.vue";
+import MailSignatureBlock from "../components/email/MailSignatureBlock.vue";
+import { invalidMailRecipients, parseMailRecipients } from "../../../../shared/mail-recipients";
 import Button from "../components/Button.vue";
 import PageLoading from "../components/PageLoading.vue";
 import UiIcon from "../components/UiIcon.vue";
@@ -77,6 +80,8 @@ type InboxMessage = {
   fromAddress: string | null;
   fromName: string | null;
   toAddress: string | null;
+  ccAddresses?: string[];
+  bccAddresses?: string[];
   /** Core 0.1.254+: every address an inbound message was sent to, most specific first. */
   recipientAddresses?: string[];
   subject: string;
@@ -297,9 +302,43 @@ const composePreservedAttachmentKeys = ref<string[]>([]);
 const composePreservedAttachments = ref<MailboxAttachment[]>([]);
 const composeUploadedAttachments = ref<MailboxAttachment[]>([]);
 const composeUploadingAttachments = ref(false);
-const composeToFocused = ref(false);
-const composeToHasTyped = ref(false);
-const composeToActiveIndex = ref(0);
+const composeShowCcBcc = ref(false);
+const mailSignature = ref<string | null>(null);
+const composeIncludeSignature = ref(true);
+const replyIncludeSignature = ref(true);
+let mailSignatureLoaded = false;
+
+async function loadMailSignature() {
+  if (mailSignatureLoaded) return;
+  try {
+    const result = await api.get<{ signature: string | null }>("/mailbox/signature");
+    mailSignature.value = result?.signature || null;
+    mailSignatureLoaded = true;
+  } catch {
+    // Compose still works without a signature.
+  }
+}
+
+function handleSignatureSaved(signature: string | null) {
+  mailSignature.value = signature;
+  mailSignatureLoaded = true;
+}
+
+/** The owner's signature goes after their words and before any quoted text. */
+function withSignature(body: string, include: boolean): string {
+  const signature = mailSignature.value?.trim();
+  if (!include || !signature) return body;
+  const trimmed = body.trimEnd();
+  if (trimmed.endsWith(signature)) return trimmed;
+  return trimmed ? `${trimmed}\n\n${signature}` : signature;
+}
+
+function withoutSignature(body: string): { body: string; hadSignature: boolean } {
+  const signature = mailSignature.value?.trim();
+  const trimmed = body.trimEnd();
+  if (!signature || !trimmed.endsWith(signature)) return { body, hadSignature: false };
+  return { body: trimmed.slice(0, -signature.length).trimEnd(), hadSignature: true };
+}
 const composeInitialSnapshot = ref("");
 const composeDiscardConfirmOpen = ref(false);
 const COMPOSE_EXPANDED_KEY = "me3.mail.composeExpanded";
@@ -324,6 +363,8 @@ function toggleComposeExpanded() {
 const composeForm = ref({
   fromAddress: "",
   to: "",
+  cc: "",
+  bcc: "",
   subject: "",
   textBody: "",
 });
@@ -501,19 +542,6 @@ const contactRecipientOptions = computed(() =>
       email: contact.email?.trim() || "",
       search: `${contact.name} ${contact.email || ""}`.toLowerCase(),
     })),
-);
-
-const composeRecipientSuggestions = computed(() => {
-  if (!composeToFocused.value || !composeToHasTyped.value) return [];
-  const query = composeForm.value.to.trim().toLowerCase();
-  if (!query) return [];
-  return contactRecipientOptions.value
-    .filter((contact) => contact.search.includes(query))
-    .slice(0, 8);
-});
-
-const showComposeRecipientSuggestions = computed(
-  () => composeRecipientSuggestions.value.length > 0,
 );
 
 const emailTabConfig: Record<
@@ -2752,6 +2780,8 @@ function startInlineReply(message?: InboxMessage) {
   void Promise.all([loadProviderSettings(), loadContactsForCompose()]);
   replyTarget.value = target;
   replyForm.value = { textBody: "" };
+  replyIncludeSignature.value = true;
+  void loadMailSignature();
   replyAttachments.value = [];
   replyError.value = "";
   replyQuotedOpen.value = false;
@@ -2790,7 +2820,7 @@ async function sendInlineReply(sendNow: boolean) {
       fromAddress,
       to: replyRecipient.value,
       subject: replySubject.value,
-      textBody: `${replyForm.value.textBody.trim()}\n\n${replyQuoted.value}`,
+      textBody: `${withSignature(replyForm.value.textBody.trim(), replyIncludeSignature.value)}\n\n${replyQuoted.value}`,
       source: "user",
       replyToMessageId: target.id,
       uploadedAttachments: replyAttachments.value,
@@ -2859,17 +2889,9 @@ async function askMe3ToImproveReply() {
   }
 }
 
-const composeRecipientChip = computed(() => {
-  const address = composeForm.value.to.trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) return "";
-  const contact = contactRecipientOptions.value.find((candidate) => candidate.email.toLowerCase() === address.toLowerCase());
-  return contact?.name || address;
-});
-
-function clearComposeRecipient() {
-  composeForm.value.to = "";
-  composeToFocused.value = true;
-  void nextTick(() => document.getElementById("compose-to")?.focus());
+function revealComposeCcBcc(field: "cc" | "bcc") {
+  composeShowCcBcc.value = true;
+  void nextTick(() => document.getElementById(`compose-${field}`)?.focus());
 }
 
 /** Keeps Back working after a desktop-to-phone resize with a thread open. */
@@ -2887,6 +2909,7 @@ function getMessageTextBody(message: InboxMessage): string {
 function getComposeSnapshot(): string {
   return JSON.stringify({
     form: composeForm.value,
+    includeSignature: composeIncludeSignature.value,
     replyToMessageId: composeReplyToMessageId.value,
     preservedAttachmentKeys: composePreservedAttachmentKeys.value,
     uploadedAttachmentKeys: composeUploadedAttachments.value.map(
@@ -2906,9 +2929,14 @@ const composeCanSaveDraft = computed(
     Boolean(composeForm.value.textBody.trim()) ||
     composeVisibleAttachments.value.length > 0,
 );
+const composeRecipientsValid = computed(() => {
+  const to = parseMailRecipients(composeForm.value.to);
+  const all = [...to, ...parseMailRecipients(composeForm.value.cc), ...parseMailRecipients(composeForm.value.bcc)];
+  return to.length > 0 && invalidMailRecipients(all).length === 0;
+});
 const composeCanSend = computed(
   () =>
-    Boolean(composeForm.value.to.trim()) &&
+    composeRecipientsValid.value &&
     Boolean(composeForm.value.subject.trim()) &&
     Boolean(composeForm.value.textBody.trim()),
 );
@@ -2921,11 +2949,13 @@ function showComposeDialog() {
   });
 }
 
-function openComposeModal(
+async function openComposeModal(
   message?: InboxMessage,
   mode: "reply" | "forward" = "reply",
 ) {
   void Promise.all([loadProviderSettings(), loadContactsForCompose()]);
+  await loadMailSignature();
+  composeIncludeSignature.value = Boolean(mailSignature.value);
   composeError.value = "";
   composeDraftId.value = null;
   composeReplyToMessageId.value = null;
@@ -2933,9 +2963,7 @@ function openComposeModal(
   composePreservedAttachments.value = [];
   composeUploadedAttachments.value = [];
   composeUploadingAttachments.value = false;
-  composeToFocused.value = false;
-  composeToHasTyped.value = false;
-  composeToActiveIndex.value = 0;
+  composeShowCcBcc.value = false;
   const defaultFromAddress =
     replyFromAddressFor(message) ||
     outboundSenderOptions.value.find(
@@ -2953,12 +2981,17 @@ function openComposeModal(
       composePreservedAttachmentKeys.value = existingAttachments
         .map((attachment) => attachment.storageKey?.trim() || "")
         .filter(Boolean);
+      const savedBody = withoutSignature(getMessageTextBody(message));
+      composeIncludeSignature.value = savedBody.hadSignature;
       composeForm.value = {
         fromAddress: message.fromAddress || defaultFromAddress,
         to: message.toAddress || "",
+        cc: (message.ccAddresses || []).join(", "),
+        bcc: (message.bccAddresses || []).join(", "),
         subject: getDisplayText(message.subject),
-        textBody: getMessageTextBody(message),
+        textBody: savedBody.body,
       };
+      composeShowCcBcc.value = Boolean(message.ccAddresses?.length || message.bccAddresses?.length);
       showComposeDialog();
       return;
     }
@@ -2971,9 +3004,13 @@ function openComposeModal(
       composePreservedAttachmentKeys.value = forwardableAttachments
         .map((attachment) => attachment.storageKey?.trim() || "")
         .filter(Boolean);
+      // A forward carries the signature above the forwarded message.
+      const signature = mailSignature.value?.trim();
+      composeIncludeSignature.value = false;
       const forwardedLines = [
         "",
         "",
+        ...(signature ? [signature, ""] : []),
         "---------- Forwarded message ---------",
         `From: ${formatSenderValue(message)}`,
         `Date: ${formatDateTimePart(parseApiDate(message.createdAt), {
@@ -2992,6 +3029,8 @@ function openComposeModal(
       composeForm.value = {
         fromAddress: defaultFromAddress,
         to: "",
+        cc: "",
+        bcc: "",
         subject: /^fwd:\s*/i.test(getMessageSubject(message))
           ? getMessageSubject(message)
           : `Fwd: ${getMessageSubject(message)}`,
@@ -3006,6 +3045,8 @@ function openComposeModal(
       composeForm.value = {
         fromAddress: replyFromAddress,
         to: replyTo || "",
+        cc: "",
+        bcc: "",
         subject: /^re:\s*/i.test(getMessageSubject(message))
           ? getMessageSubject(message)
           : `Re: ${getMessageSubject(message).replace(/^fwd?:\s*/i, "")}`,
@@ -3017,6 +3058,8 @@ function openComposeModal(
     composeForm.value = {
       fromAddress: defaultFromAddress,
       to: "",
+      cc: "",
+      bcc: "",
       subject: "",
       textBody: "",
     };
@@ -3027,8 +3070,6 @@ function openComposeModal(
 function forceCloseComposeModal() {
   composeDiscardConfirmOpen.value = false;
   composeOpen.value = false;
-  composeToFocused.value = false;
-  composeToHasTyped.value = false;
 }
 
 function requestCloseComposeModal() {
@@ -3053,61 +3094,6 @@ function handleComposeKeydown(event: KeyboardEvent) {
   void saveDraft(true);
 }
 
-function selectComposeRecipient(contact: { email: string }) {
-  composeForm.value.to = contact.email;
-  composeToFocused.value = false;
-  composeToHasTyped.value = false;
-  composeToActiveIndex.value = 0;
-  void nextTick(() => {
-    document.getElementById("compose-subject")?.focus();
-  });
-}
-
-function handleComposeToInput() {
-  composeToFocused.value = true;
-  composeToHasTyped.value = true;
-  composeToActiveIndex.value = 0;
-}
-
-function handleComposeToBlur() {
-  window.setTimeout(() => {
-    composeToFocused.value = false;
-    composeToHasTyped.value = false;
-  }, 120);
-}
-
-function handleComposeToKeydown(event: KeyboardEvent) {
-  if (!showComposeRecipientSuggestions.value) return;
-  if (event.key === "ArrowDown") {
-    event.preventDefault();
-    composeToActiveIndex.value =
-      (composeToActiveIndex.value + 1) %
-      composeRecipientSuggestions.value.length;
-    return;
-  }
-  if (event.key === "ArrowUp") {
-    event.preventDefault();
-    composeToActiveIndex.value =
-      (composeToActiveIndex.value -
-        1 +
-        composeRecipientSuggestions.value.length) %
-      composeRecipientSuggestions.value.length;
-    return;
-  }
-  if (event.key === "Enter") {
-    const selected =
-      composeRecipientSuggestions.value[composeToActiveIndex.value];
-    if (selected) {
-      event.preventDefault();
-      selectComposeRecipient(selected);
-    }
-    return;
-  }
-  if (event.key === "Escape") {
-    composeToFocused.value = false;
-  }
-}
-
 async function saveDraft(sendNow = false) {
   if (composeSending.value) return;
   composeSending.value = true;
@@ -3117,8 +3103,10 @@ async function saveDraft(sendNow = false) {
     const payload = {
       fromAddress: composeForm.value.fromAddress || undefined,
       to: composeForm.value.to,
+      cc: parseMailRecipients(composeForm.value.cc),
+      bcc: parseMailRecipients(composeForm.value.bcc),
       subject: composeForm.value.subject,
-      textBody: composeForm.value.textBody,
+      textBody: withSignature(composeForm.value.textBody, composeIncludeSignature.value),
       source: "user",
       replyToMessageId: composeReplyToMessageId.value || undefined,
       preservedAttachmentKeys: composePreservedAttachmentKeys.value,
@@ -4422,6 +4410,11 @@ onBeforeUnmount(() => {
                             aria-label="Reply"
                           />
                         </div>
+                        <MailSignatureBlock
+                          v-model:included="replyIncludeSignature"
+                          :signature="mailSignature"
+                          @saved="handleSignatureSaved"
+                        />
                         <button type="button" class="inline-reply__quote-toggle" :aria-expanded="replyQuotedOpen" @click="replyQuotedOpen = !replyQuotedOpen">
                           <UiIcon name="Ellipsis" :size="14" aria-hidden="true" />
                           {{ replyQuotedOpen ? "Hide quoted text" : "Quoted text" }}
@@ -4517,47 +4510,16 @@ onBeforeUnmount(() => {
           </Button>
         </header>
         <div class="compose-rows">
-          <div class="compose-row compose-row--recipient">
-            <label for="compose-to">To</label>
-            <span v-if="composeRecipientChip && !composeToFocused" class="compose-chip">
-              {{ composeRecipientChip }}
-              <button type="button" class="compose-chip__remove" aria-label="Remove recipient" @click="clearComposeRecipient">
-                <UiIcon name="X" :size="12" aria-hidden="true" />
-              </button>
+          <MailRecipientField id="compose-to" v-model="composeForm.to" label="To" :contacts="contactRecipientOptions">
+            <span v-if="!composeShowCcBcc" class="compose-row__extras">
+              <button type="button" class="compose-row__extra" @click="revealComposeCcBcc('cc')">Cc</button>
+              <button type="button" class="compose-row__extra" @click="revealComposeCcBcc('bcc')">Bcc</button>
             </span>
-            <input
-              id="compose-to"
-              v-model="composeForm.to"
-              type="email"
-              autocomplete="email"
-              role="combobox"
-              aria-autocomplete="list"
-              aria-controls="compose-recipient-list"
-              :aria-expanded="showComposeRecipientSuggestions"
-              :aria-activedescendant="showComposeRecipientSuggestions ? `compose-recipient-${composeToActiveIndex}` : undefined"
-              :class="{ 'compose-row__input--hidden': composeRecipientChip && !composeToFocused }"
-              @focus="composeToFocused = true"
-              @input="handleComposeToInput"
-              @blur="handleComposeToBlur"
-              @keydown="handleComposeToKeydown"
-            />
-            <div v-if="showComposeRecipientSuggestions" id="compose-recipient-list" class="compose-recipient-list" role="listbox">
-              <button
-                v-for="(contact, index) in composeRecipientSuggestions"
-                :key="contact.id"
-                :id="`compose-recipient-${index}`"
-                type="button"
-                class="compose-recipient-option"
-                :class="{ 'is-active': index === composeToActiveIndex }"
-                role="option"
-                :aria-selected="index === composeToActiveIndex"
-                @mousedown.prevent="selectComposeRecipient(contact)"
-              >
-                <span class="compose-recipient-option__name">{{ contact.name }}</span>
-                <span class="compose-recipient-option__email">{{ contact.email }}</span>
-              </button>
-            </div>
-          </div>
+          </MailRecipientField>
+          <template v-if="composeShowCcBcc">
+            <MailRecipientField id="compose-cc" v-model="composeForm.cc" label="Cc" :contacts="contactRecipientOptions" />
+            <MailRecipientField id="compose-bcc" v-model="composeForm.bcc" label="Bcc" :contacts="contactRecipientOptions" />
+          </template>
           <label v-if="outboundSenderOptions.length > 1" class="compose-row">
             <span>From</span>
             <select v-model="composeForm.fromAddress">
@@ -4570,6 +4532,13 @@ onBeforeUnmount(() => {
           </label>
         </div>
         <MailComposeEditor v-model="composeForm.textBody" class="compose-editor" />
+        <MailSignatureBlock
+          v-if="composeMode !== 'forward'"
+          v-model:included="composeIncludeSignature"
+          class="compose-signature"
+          :signature="mailSignature"
+          @saved="handleSignatureSaved"
+        />
         <div v-if="composeVisibleAttachments.length" class="compose-attachment-list">
           <span v-for="(attachment, index) in composePreservedAttachments" :key="`${attachment.storageKey || index}`" class="compose-attachment-chip">
             <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
@@ -5901,70 +5870,14 @@ onBeforeUnmount(() => {
   resize: vertical;
 }
 
-.compose-recipient-list {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 4px);
-  right: 0;
-  left: 0;
-  max-height: 240px;
-  overflow-y: auto;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-bg);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
-}
 
-.compose-recipient-option {
-  display: grid;
-  width: 100%;
-  gap: 2px;
-  padding: 10px;
-  border: 0;
-  border-bottom: 1px solid var(--color-border);
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
 
-.compose-recipient-option:last-child {
-  border-bottom: 0;
-}
 
-.compose-recipient-option:hover,
-.compose-recipient-option.is-active {
-  background: var(--color-text);
-  color: var(--color-bg);
-}
 
-.compose-recipient-option__name,
-.compose-recipient-option__email {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.compose-recipient-option__name {
-  font-size: 13px;
-  font-weight: 700;
-}
 
-.compose-recipient-option__email {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
 
-.compose-recipient-option:hover .compose-recipient-option__email,
-.compose-recipient-option.is-active .compose-recipient-option__email {
-  color: inherit;
-}
 
-.compose-recipient-option:hover .compose-recipient-option__name,
-.compose-recipient-option.is-active .compose-recipient-option__name {
-  color: inherit;
-}
 
 .compose-attachments {
   display: grid;
@@ -7177,6 +7090,35 @@ onBeforeUnmount(() => {
   border-bottom-color: var(--ui-accent, var(--color-accent));
 }
 
+.compose-row__extras {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-self: flex-start;
+  gap: 2px;
+  padding-top: 6px;
+}
+
+.compose-row__extra {
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.compose-row__extra:hover {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+  color: var(--ui-text, var(--color-text));
+}
+
+.compose-row__extra:focus-visible {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+}
+
 .compose-row__input--hidden {
   position: absolute;
   width: 1px;
@@ -7184,30 +7126,7 @@ onBeforeUnmount(() => {
   opacity: 0;
 }
 
-.compose-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 2px 2px 10px;
-  border-radius: 999px;
-  background: var(--ui-accent-soft, rgba(34, 152, 116, 0.14));
-  color: var(--ui-accent-strong, var(--ui-accent, #229874));
-  font-size: 14px;
-  font-weight: 500;
-}
 
-.compose-chip__remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
 
 .compose-modal__card > * {
   flex-shrink: 0;

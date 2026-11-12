@@ -80,6 +80,9 @@ async function sendReviewedDraft(env: Env, ownerId: string, draftId: string, key
   }
   if (row.message_kind !== "draft" || !["pending_approval", "failed"].includes(row.status)) return { error: "Draft is not ready to send.", status: 409 };
   if (!("deliveryIdentity" in current) || !current.deliveryIdentity || !expected.deliveryIdentity) return { error: "Configure and review an effective email sender before sending.", status: 409 };
+  if (row.to_address?.includes(",") || isPlainObject(parseJsonRecord(row.metadata_json).recipients)) {
+    return { error: "Drafts with several recipients are sent by the owner from Email.", status: 409 };
+  }
   if (!row.to_address || !isValidEmail(row.to_address)) return { error: "Draft recipient is invalid", status: 400 };
   const reused = await env.DB.prepare("SELECT id FROM email_send_audit WHERE id = ?").bind(operationId).first();
   if (reused) return { error: "This send operation key was already used.", status: 409 };

@@ -1,5 +1,6 @@
 import { parseEmailAddressHeader } from "../../../../shared/email-headers";
 import { renderMailMarkdown } from "../../../../shared/mail-markdown";
+import { getMailboxSignature, normalizeMailboxSignature, saveMailboxSignature } from "../mailbox-signature";
 import { listVerifiedSendAddresses } from "../email-send-identities";
 import { ownerInstructionAddresses } from "../mailbox-instructions";
 import { getMailboxOriginal } from "../mailbox-original";
@@ -165,6 +166,8 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
         mailboxMessageId: draft.id,
         fromAddress: draftFromAddress,
         toAddress: draft.toAddress || "",
+        ccAddresses: draft.ccAddresses,
+        bccAddresses: draft.bccAddresses,
         subject: draft.subject || "(no subject)",
         textBody: rendered ? rendered.text : draft.body || "",
         htmlBody: rendered ? rendered.html : draft.htmlBody,
@@ -264,6 +267,24 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
       sources: [...overview.sources, ...sendAs],
       ownerAddresses: await ownerInstructionAddresses(c.env, ownerId),
     });
+  });
+
+  app.get("/api/mailbox/signature", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    return c.json({ signature: await getMailboxSignature(c.env, ownerId) });
+  });
+
+  app.put("/api/mailbox/signature", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const body = await c.req.json<{ signature?: unknown }>().catch(() => ({} as { signature?: unknown }));
+    const signature = normalizeMailboxSignature(body.signature);
+    if (signature && typeof signature === "object") return c.json({ error: signature.error }, 400);
+    if (!(await saveMailboxSignature(c.env, ownerId, signature))) {
+      return c.json({ error: "Set up your mailbox before adding a signature" }, 404);
+    }
+    return c.json({ signature });
   });
 
   app.get("/api/mailbox/events", async (c) => {

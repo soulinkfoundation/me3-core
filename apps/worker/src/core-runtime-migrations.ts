@@ -933,6 +933,15 @@ const runtimeMigrations: RuntimeMigration[] = [
       }
     },
   },
+  // Owner's email signature for compose and replies.
+  {
+    id: "0101_mailbox_signature",
+    checksum: "2026-11-12-mailbox-signature-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "mailbox_aliases")) || await columnExists(db, "mailbox_aliases", "signature")) return;
+      await db.prepare("ALTER TABLE mailbox_aliases ADD COLUMN signature TEXT").run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

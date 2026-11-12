@@ -10,6 +10,9 @@ export type AgentMailboxDraftInput = {
   fromAddress?: unknown;
   to?: unknown;
   toAddress?: unknown;
+  /** Owner mail only: extra recipients, as an array or a comma-separated string. */
+  cc?: unknown;
+  bcc?: unknown;
   subject?: unknown;
   textBody?: unknown;
   htmlBody?: unknown;
@@ -138,6 +141,8 @@ export type MailboxUnsubscribeAction = {
 export type NormalizedMailboxDraftInput = {
   fromAddress: string;
   toAddress: string;
+  ccAddresses: string[];
+  bccAddresses: string[];
   subject: string;
   textBody: string;
   htmlBody: string | null;

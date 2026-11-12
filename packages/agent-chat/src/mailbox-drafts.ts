@@ -3,7 +3,8 @@ import { type CoreAgentChatEnv, normalizeNullableText } from "./domain-store";
 import { type AgentMailboxDraftInput, type AgentMailboxMessage, type AgentMailbox, type AgentMailboxDraftSendInput, type AgentMailboxDraftFailureInput, type DbMailboxAliasRow, type NormalizedMailboxDraftInput, type DbMailboxMessageRow } from "./mailbox-types";
 import { getAgentMailboxRow, getAgentMailboxMessageById, isValidEmail, agentMailboxMessageSelectSql } from "./mailbox-store";
 import { normalizeAgentMailboxDraftInput } from "./mailbox-draft-input";
-import { serializeAgentMailboxMessage, serializeAgentMailbox } from "./mailbox-format";
+import { getDraftCcBcc, serializeAgentMailboxMessage, serializeAgentMailbox } from "./mailbox-format";
+import { parseMailRecipients } from "../../../shared/mail-recipients";
 
 export async function createAgentMailboxDraft(
   env: Pick<CoreAgentChatEnv, "DB">,
@@ -106,7 +107,9 @@ export async function getAgentMailboxDraftForApproval(
   if (!existing.to_address) {
     return { error: "Draft recipient is required", status: 400 };
   }
-  if (!isValidEmail(existing.to_address)) {
+  const ccBcc = getDraftCcBcc(existing);
+  const recipients = [...parseMailRecipients(existing.to_address), ...ccBcc.cc, ...ccBcc.bcc];
+  if (!recipients.length || recipients.some((address) => !isValidEmail(address))) {
     return { error: "Draft recipient is invalid", status: 400 };
   }
 
@@ -335,6 +338,9 @@ export async function updateAgentMailboxDraftRow(
 export function createDraftMetadata(input: NormalizedMailboxDraftInput): Record<string, unknown> {
   return {
     approval_required: true,
+    ...(input.ccAddresses.length || input.bccAddresses.length
+      ? { recipients: { cc: input.ccAddresses, bcc: input.bccAddresses } }
+      : {}),
     attachmentCount: input.preservedAttachments.length,
     attachments: input.preservedAttachments,
     outbound_headers: {

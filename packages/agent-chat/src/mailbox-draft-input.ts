@@ -1,7 +1,8 @@
 import { type CoreAgentChatEnv, normalizeNullableText, isPlainObject } from "./domain-store";
 import { type DbMailboxAliasRow, type AgentMailboxDraftInput, type DbMailboxMessageRow, type NormalizedMailboxDraftInput, type AgentMailboxAttachmentMetadata } from "./mailbox-types";
 import { normalizeEmailText, getAgentMailboxInternalAddress, isValidEmail, getAgentMailboxMessageById, getMailboxAttachmentMetadata } from "./mailbox-store";
-import { getDraftOutboundHeaders, getReplyThreadHeaders, createMessageIdHeader, stripAgentDraftWrapperText } from "./mailbox-format";
+import { formatMailRecipients, parseMailRecipients } from "../../../shared/mail-recipients";
+import { getDraftCcBcc, getDraftOutboundHeaders, getReplyThreadHeaders, createMessageIdHeader, stripAgentDraftWrapperText } from "./mailbox-format";
 
 export async function normalizeAgentMailboxDraftInput(
   env: Pick<CoreAgentChatEnv, "DB">,
@@ -17,7 +18,10 @@ export async function normalizeAgentMailboxDraftInput(
   const toAddress =
     rawToAddress === undefined
       ? existing?.to_address || ""
-      : normalizeEmailText(rawToAddress) || "";
+      : formatMailRecipients(parseMailRecipients(rawToAddress));
+  const existingCcBcc = getDraftCcBcc(existing);
+  const ccAddresses = body.cc === undefined ? existingCcBcc.cc : parseMailRecipients(body.cc);
+  const bccAddresses = body.bcc === undefined ? existingCcBcc.bcc : parseMailRecipients(body.bcc);
   if (!isValidEmail(fromAddress)) {
     return { error: "Draft sender is invalid", status: 400 };
   }
@@ -56,6 +60,8 @@ export async function normalizeAgentMailboxDraftInput(
   return {
     fromAddress,
     toAddress,
+    ccAddresses,
+    bccAddresses,
     subject:
       body.subject === undefined
         ? existing?.subject || ""
