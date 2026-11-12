@@ -942,6 +942,15 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.prepare("ALTER TABLE mailbox_aliases ADD COLUMN signature TEXT").run();
     },
   },
+  // A refresh response lost on the network must not sign the phone out.
+  {
+    id: "0102_mobile_refresh_previous_token",
+    checksum: "2026-11-12-mobile-refresh-previous-token-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "mobile_refresh_tokens"))) return;
+      await addColumnIfMissing(db, "mobile_refresh_tokens", "previous_token_hash", "TEXT");
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

@@ -38,6 +38,7 @@ type RefreshTokenRow = {
   platform: string;
   app_version: string | null;
   token_hash: string;
+  previous_token_hash?: string | null;
   status: "active" | "rotated" | "revoked";
   scope_json: string;
   expires_at: string;
@@ -110,6 +111,44 @@ describe("mobile pairing", () => {
       env,
       `Bearer ${refreshResponse.accessToken}`,
     )).toBeNull();
+  });
+
+  it("keeps a phone signed in when a refresh response is lost on the network", async () => {
+    const env = createEnv();
+    const tokens = await pairDevice(env, "ios-flaky-1");
+
+    // The server rotates, but the response never reaches the phone, so it still holds the old token.
+    await refreshMobileToken(env, { refreshToken: tokens.refreshToken, deviceId: "ios-flaky-1" }, origins);
+    const retried = await refreshMobileToken(
+      env,
+      { refreshToken: tokens.refreshToken, deviceId: "ios-flaky-1" },
+      origins,
+    );
+    expect(await authenticateMobileOwner(env, `Bearer ${retried.accessToken}`)).toBe("owner");
+
+    // Once the phone uses a token it received, older ones stop working.
+    const next = await refreshMobileToken(
+      env,
+      { refreshToken: retried.refreshToken, deviceId: "ios-flaky-1" },
+      origins,
+    );
+    await expect(
+      refreshMobileToken(env, { refreshToken: tokens.refreshToken, deviceId: "ios-flaky-1" }, origins),
+    ).rejects.toMatchObject({ status: 401 });
+    await refreshMobileToken(env, { refreshToken: next.refreshToken, deviceId: "ios-flaky-1" }, origins);
+  });
+
+  it("signs out with the previous refresh token after a lost rotation", async () => {
+    const env = createEnv();
+    const tokens = await pairDevice(env, "ios-flaky-2");
+    const rotated = await refreshMobileToken(
+      env,
+      { refreshToken: tokens.refreshToken, deviceId: "ios-flaky-2" },
+      origins,
+    );
+
+    await revokeMobileToken(env, { refreshToken: tokens.refreshToken, deviceId: "ios-flaky-2" });
+    expect(await authenticateMobileOwner(env, `Bearer ${rotated.accessToken}`)).toBeNull();
   });
 
   it("keeps refresh tokens issued before credential generations until the first reset", async () => {
@@ -521,13 +560,14 @@ class MobilePairingStatement {
     }
 
     if (this.sql.includes("SET token_hash = ?")) {
-      const [tokenHash, expiresAt, lastUsedAt, updatedAt, credentialGeneration, id] =
+      const [tokenHash, previousTokenHash, expiresAt, lastUsedAt, updatedAt, credentialGeneration, id] =
         this.values as string[];
       const row = this.state.refreshTokens.find(
         (token) => token.id === id && token.status === "active",
       );
       if (!row) return result(0);
       row.token_hash = tokenHash;
+      row.previous_token_hash = previousTokenHash;
       row.expires_at = expiresAt;
       row.last_used_at = lastUsedAt;
       row.updated_at = updatedAt;

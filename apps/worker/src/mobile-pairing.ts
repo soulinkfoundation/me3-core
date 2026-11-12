@@ -54,6 +54,8 @@ type MobileRefreshTokenRow = {
   platform: string;
   app_version: string | null;
   token_hash: string;
+  /** The token before the last rotation, accepted until the phone shows it received the new one. */
+  previous_token_hash: string | null;
   status: "active" | "rotated" | "revoked";
   scope_json: string;
   expires_at: string;
@@ -331,18 +333,22 @@ export async function refreshMobileToken(
   if (!refreshToken) throw new MobilePairingInputError("Refresh token is required", 401);
   if (!deviceId) throw new MobilePairingInputError("Device id is required", 401);
 
-  const row = await requireRefreshTokenRow(env, refreshToken, deviceId);
+  const { row, matched } = await requireRefreshTokenRow(env, refreshToken, deviceId);
   const newRefreshToken = createRefreshToken(row.id);
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000).toISOString();
+  // A lost response leaves the phone holding the token it sent, so that one stays usable until
+  // the phone presents the token it was given. Using the current token retires the one before it.
+  const previousTokenHash = matched === "current" ? row.token_hash : row.previous_token_hash;
 
   await env.DB.prepare(
     `UPDATE mobile_refresh_tokens
-     SET token_hash = ?, expires_at = ?, last_used_at = ?, updated_at = ?, credential_generation = ?
+     SET token_hash = ?, previous_token_hash = ?, expires_at = ?, last_used_at = ?, updated_at = ?, credential_generation = ?
      WHERE id = ? AND status = 'active'`,
   )
     .bind(
       await sha256Text(newRefreshToken),
+      previousTokenHash,
       expiresAt,
       now,
       now,
@@ -386,7 +392,7 @@ export async function revokeMobileToken(env: Env, input: unknown) {
     .bind(tokenId, deviceId)
     .first<MobileRefreshTokenRow>();
 
-  if (row && constantTimeEqual(await sha256Text(refreshToken), row.token_hash)) {
+  if (row && refreshTokenMatch(await sha256Text(refreshToken), row)) {
     const now = new Date().toISOString();
     await env.DB.prepare(
       `UPDATE mobile_refresh_tokens
@@ -547,7 +553,7 @@ async function requireRefreshTokenRow(
   env: Env,
   refreshToken: string,
   deviceId: string,
-): Promise<MobileRefreshTokenRow> {
+): Promise<{ row: MobileRefreshTokenRow; matched: "current" | "previous" }> {
   const tokenId = refreshTokenIdFromToken(refreshToken);
   if (!tokenId) throw new MobilePairingInputError("Refresh token was not accepted", 401);
 
@@ -563,7 +569,8 @@ async function requireRefreshTokenRow(
   if (Date.parse(row.expires_at) <= Date.now()) {
     throw new MobilePairingInputError("Refresh token has expired", 401);
   }
-  if (!constantTimeEqual(await sha256Text(refreshToken), row.token_hash)) {
+  const matched = refreshTokenMatch(await sha256Text(refreshToken), row);
+  if (!matched) {
     throw new MobilePairingInputError("Refresh token was not accepted", 401);
   }
   // A password change, reset, "sign out everywhere" or session-secret rotation retires the token.
@@ -571,7 +578,16 @@ async function requireRefreshTokenRow(
     throw new MobilePairingInputError("Refresh token was not accepted", 401);
   }
 
-  return row;
+  return { row, matched };
+}
+
+function refreshTokenMatch(
+  tokenHash: string,
+  row: Pick<MobileRefreshTokenRow, "token_hash" | "previous_token_hash">,
+): "current" | "previous" | null {
+  if (constantTimeEqual(tokenHash, row.token_hash)) return "current";
+  if (row.previous_token_hash && constantTimeEqual(tokenHash, row.previous_token_hash)) return "previous";
+  return null;
 }
 
 async function getMobileInstallDescriptor(env: Env, origins: MobileOriginOptions) {
