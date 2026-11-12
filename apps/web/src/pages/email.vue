@@ -4,6 +4,7 @@ import { storeToRefs } from "pinia";
 import { definePage } from "unplugin-vue-router/runtime";
 import { RouterView, useRoute, useRouter } from "vue-router";
 import AppDialog from "../components/AppDialog.vue";
+import MailComposeEditor from "../components/email/MailComposeEditor.vue";
 import Button from "../components/Button.vue";
 import PageLoading from "../components/PageLoading.vue";
 import UiIcon from "../components/UiIcon.vue";
@@ -23,6 +24,7 @@ import {
 } from "../stores/mailbox";
 import type { UiIconName } from "../utils/icons";
 import { decodeMimeHeaderValue } from "../../../../shared/email-headers";
+import { mailMarkdownToPlainText, renderMailMarkdownFragment } from "../../../../shared/mail-markdown";
 
 definePage({
   meta: {
@@ -300,6 +302,25 @@ const composeToHasTyped = ref(false);
 const composeToActiveIndex = ref(0);
 const composeInitialSnapshot = ref("");
 const composeDiscardConfirmOpen = ref(false);
+const COMPOSE_EXPANDED_KEY = "me3.mail.composeExpanded";
+const composeExpanded = ref(readComposeExpanded());
+
+function readComposeExpanded(): boolean {
+  try {
+    return window.localStorage.getItem(COMPOSE_EXPANDED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function toggleComposeExpanded() {
+  composeExpanded.value = !composeExpanded.value;
+  try {
+    window.localStorage.setItem(COMPOSE_EXPANDED_KEY, composeExpanded.value ? "1" : "0");
+  } catch {
+    // Per-viewer convenience only.
+  }
+}
 const composeForm = ref({
   fromAddress: "",
   to: "",
@@ -323,7 +344,8 @@ const replyUploading = ref(false);
 const replySending = ref(false);
 const replyAssisting = ref(false);
 const replyError = ref("");
-const replyTextareaRef = ref<HTMLTextAreaElement | null>(null);
+const replyTextareaRef = ref<InstanceType<typeof MailComposeEditor> | null>(null);
+const replyEditorWrapRef = ref<HTMLElement | null>(null);
 const lastUpdatedAt = ref<number | null>(null);
 let phoneLayoutQuery: MediaQueryList | null = null;
 const offset = ref(0);
@@ -2543,7 +2565,11 @@ function getDisplayText(value: string | null | undefined): string {
 }
 
 function getMessagePreview(message: InboxMessage): string {
-  return getDisplayText(message.cleanPreview || message.preview || message.body);
+  const preview = getDisplayText(message.cleanPreview || message.preview || message.body);
+  // Outbound bodies are written in light Markdown; show them as plain text.
+  return message.direction === "outbound"
+    ? mailMarkdownToPlainText(preview).replace(/\s+/g, " ")
+    : preview;
 }
 
 function getRowSenderName(message: InboxMessage): string {
@@ -2732,7 +2758,7 @@ function startInlineReply(message?: InboxMessage) {
   replyOpen.value = true;
   void nextTick(() => {
     replyTextareaRef.value?.focus();
-    replyTextareaRef.value?.scrollIntoView({ block: "nearest" });
+    replyEditorWrapRef.value?.scrollIntoView({ block: "nearest" });
   });
 }
 
@@ -3213,25 +3239,6 @@ function repairLikelyMojibake(value: string): string {
   }
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function renderInlineMarkdown(value: string): string {
-  return escapeHtml(value)
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
-    .replace(
-      /\b(https?:\/\/[^\s<]+)\b/g,
-      '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>',
-    );
-}
-
 function restoreLikelyMarkdownBreaks(value: string): string {
   return value
     .replace(/\s+(#{1,6}\s+)/g, "\n\n$1")
@@ -3242,67 +3249,13 @@ function restoreLikelyMarkdownBreaks(value: string): string {
 }
 
 function renderMarkdownBody(value: string): string {
-  const normalized = restoreLikelyMarkdownBreaks(value)
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .trim();
-  const lines = normalized.split("\n");
-  const chunks: string[] = [];
-  let paragraph: string[] = [];
-  let orderedList: string[] = [];
-
-  const flushParagraph = () => {
-    if (!paragraph.length) return;
-    chunks.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
-    paragraph = [];
-  };
-  const flushList = () => {
-    if (!orderedList.length) return;
-    chunks.push(`<ol>${orderedList.join("")}</ol>`);
-    orderedList = [];
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) {
-      flushParagraph();
-      flushList();
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      flushParagraph();
-      flushList();
-      const level = Math.min(heading[1].length, 3) + 1;
-      chunks.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
-      continue;
-    }
-
-    const ordered = line.match(/^\d+\.\s+-?\s*(.+)$/);
-    if (ordered) {
-      flushParagraph();
-      orderedList.push(`<li>${renderInlineMarkdown(ordered[1])}</li>`);
-      continue;
-    }
-
-    if (/^\*[^*]+\*$/.test(line) && line.length < 140) {
-      flushParagraph();
-      flushList();
-      chunks.push(
-        `<p><strong><em>${renderInlineMarkdown(line.slice(1, -1))}</em></strong></p>`,
-      );
-      continue;
-    }
-
-    flushList();
-    paragraph.push(line);
-  }
-
-  flushParagraph();
-  flushList();
-
-  return chunks.join("\n");
+  const normalized = value.replace(/\r\n?/g, "\n").trim();
+  // Some providers collapse a Markdown body onto one line; only then guess
+  // where its breaks were. Real line breaks (signatures, lists) are kept.
+  const source = normalized.includes("\n")
+    ? normalized
+    : restoreLikelyMarkdownBreaks(normalized);
+  return renderMailMarkdownFragment(source, { inlineStyles: false });
 }
 
 function getEmailFrameSecurityMeta(allowExternalContent = false): string {
@@ -3324,13 +3277,15 @@ function renderMarkdownMessageDocument(body: string): string {
     <style>
       html, body { margin: 0; min-height: 100%; overflow: visible; background: #fff; color: #24262b; }
       body { font: 16px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overflow-wrap: anywhere; }
-      p { margin: 0 0 18px; }
-      h2, h3, h4 { margin: 28px 0 14px; line-height: 1.25; }
-      h2 { font-size: 24px; }
-      h3 { font-size: 19px; }
+      p { margin: 0 0 14px; }
+      h2, h3, h4 { margin: 22px 0 10px; line-height: 1.25; }
+      h2 { font-size: 21px; }
+      h3 { font-size: 18px; }
       h4 { font-size: 16px; }
-      ol { margin: 24px 0 0 26px; padding: 0; }
-      li { margin: 5px 0; }
+      ul, ol { margin: 0 0 14px; padding-left: 24px; }
+      li { margin: 0 0 4px; }
+      blockquote { margin: 0 0 14px; padding-left: 12px; border-left: 3px solid #d0d4da; color: #555b66; }
+      body > :last-child { margin-bottom: 0; }
       a { color: #1a73e8; }
       img { max-width: 100%; height: auto; }
       table { max-width: 100%; }
@@ -4459,15 +4414,14 @@ onBeforeUnmount(() => {
                           <span><b>To:</b> {{ replyRecipient }}</span>
                           <span><b>Subject:</b> {{ replySubject }}</span>
                         </div>
-                        <textarea
-                          ref="replyTextareaRef"
-                          v-model="replyForm.textBody"
-                          class="inline-reply__body"
-                          rows="6"
-                          placeholder="Write your reply…"
-                          aria-label="Reply"
-                          @keydown="handleReplyKeydown"
-                        />
+                        <div ref="replyEditorWrapRef" class="inline-reply__body" @keydown="handleReplyKeydown">
+                          <MailComposeEditor
+                            ref="replyTextareaRef"
+                            v-model="replyForm.textBody"
+                            placeholder="Write your reply…"
+                            aria-label="Reply"
+                          />
+                        </div>
                         <button type="button" class="inline-reply__quote-toggle" :aria-expanded="replyQuotedOpen" @click="replyQuotedOpen = !replyQuotedOpen">
                           <UiIcon name="Ellipsis" :size="14" aria-hidden="true" />
                           {{ replyQuotedOpen ? "Hide quoted text" : "Quoted text" }}
@@ -4534,6 +4488,7 @@ onBeforeUnmount(() => {
     <AppDialog
       :open="composeOpen"
       class="compose-modal"
+      :class="{ 'compose-modal--expanded': composeExpanded }"
       labelled-by="compose-title"
       @close="requestCloseComposeModal"
     >
@@ -4544,6 +4499,15 @@ onBeforeUnmount(() => {
       >
         <header class="compose-modal__head">
           <h2 id="compose-title">{{ getComposeTitle() }}</h2>
+          <Button color="ghost" shape="soft" size="compact" icon-only type="button"
+            class="compose-modal__expand"
+            :aria-label="composeExpanded ? 'Exit full screen' : 'Full screen'"
+            :title="composeExpanded ? 'Exit full screen' : 'Full screen'"
+            :aria-pressed="composeExpanded"
+            @click="toggleComposeExpanded"
+          >
+            <UiIcon :name="composeExpanded ? 'Minimize2' : 'Maximize2'" :size="16" aria-hidden="true" />
+          </Button>
           <Button color="ghost" shape="soft" size="compact" icon-only type="button"
             aria-label="Close compose"
             :disabled="composeSending"
@@ -4605,7 +4569,7 @@ onBeforeUnmount(() => {
             <input id="compose-subject" v-model="composeForm.subject" type="text" />
           </label>
         </div>
-        <textarea v-model="composeForm.textBody" class="compose-body" rows="10" placeholder="Write your message…" aria-label="Message" />
+        <MailComposeEditor v-model="composeForm.textBody" class="compose-editor" />
         <div v-if="composeVisibleAttachments.length" class="compose-attachment-list">
           <span v-for="(attachment, index) in composePreservedAttachments" :key="`${attachment.storageKey || index}`" class="compose-attachment-chip">
             <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
@@ -5857,12 +5821,14 @@ onBeforeUnmount(() => {
 }
 
 .compose-modal__card {
-  display: grid;
-  gap: 14px;
-  width: min(100%, 620px);
-  max-height: calc(100dvh - 40px);
-  overflow: auto;
-  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  width: min(100%, 760px);
+  height: min(720px, calc(100dvh - 48px));
+  overflow: hidden;
+  padding: 16px 20px 18px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-bg);
@@ -5877,7 +5843,13 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.compose-modal__head {
+  gap: 4px;
+  margin: -6px -8px 0 0;
+}
+
 .compose-modal__head h2 {
+  flex: 1 1 auto;
   margin: 0;
   font-size: 18px;
   line-height: 1.2;
@@ -6531,7 +6503,7 @@ onBeforeUnmount(() => {
 }
 
 .mail-rail__compose {
-  margin: 0 6px 12px;
+  margin: 2px 0 14px;
 }
 
 .mail-rail__folders,
@@ -7052,21 +7024,23 @@ onBeforeUnmount(() => {
 }
 
 .inline-reply__body {
-  width: 100%;
   box-sizing: border-box;
-  min-height: 140px;
-  padding: 10px 12px;
+  padding: 0 12px 6px;
   border: 1px solid var(--ui-border, var(--color-border));
   border-radius: 10px;
   background: var(--ui-bg, var(--color-bg));
-  color: var(--ui-text, var(--color-text));
-  font: inherit;
-  font-size: 15px;
-  line-height: 1.55;
-  resize: vertical;
 }
 
-.inline-reply__body:focus {
+.inline-reply__body :deep(.mail-compose-editor__scroll) {
+  max-height: 50vh;
+}
+
+.inline-reply__body :deep(.mail-compose-editor__content) {
+  min-height: 120px;
+  padding: 10px 0;
+}
+
+.inline-reply__body:focus-within {
   outline: 2px solid var(--ui-accent, var(--color-accent));
   outline-offset: 1px;
 }
@@ -7235,22 +7209,23 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.compose-body {
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 220px;
-  padding: 12px 2px;
-  border: 0;
-  background: transparent;
-  color: var(--ui-text, var(--color-text));
-  font: inherit;
-  font-size: 15px;
-  line-height: 1.55;
-  resize: vertical;
+.compose-modal__card > * {
+  flex-shrink: 0;
 }
 
-.compose-body:focus {
-  outline: none;
+.compose-editor {
+  flex: 1 1 auto;
+  min-height: 160px;
+}
+
+.compose-modal--expanded :deep(.app-dialog__surface),
+.compose-modal--expanded .compose-modal__card {
+  width: min(100%, 1200px);
+  height: calc(100dvh - 48px);
+}
+
+.compose-modal--expanded .compose-editor :deep(.mail-compose-editor__content) {
+  max-width: 760px;
 }
 
 .compose-modal__actions {
@@ -7385,8 +7360,13 @@ onBeforeUnmount(() => {
     margin-right: 12px;
   }
 
+  .compose-modal__expand {
+    display: none !important;
+  }
+
   .compose-modal :deep(.app-dialog__surface),
-  .compose-modal__card {
+  .compose-modal__card,
+  .compose-modal--expanded .compose-modal__card {
     width: 100%;
     max-width: none;
     max-height: 100dvh;

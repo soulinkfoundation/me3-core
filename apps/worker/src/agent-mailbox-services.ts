@@ -1,4 +1,5 @@
 import { createAgentMailboxDraft, getAgentMailboxMessage, listAgentMailboxMessages, type AgentMailboxMessage } from "../../../packages/agent/src/services/mailbox";
+import { renderMailMarkdown } from "../../../shared/mail-markdown";
 import { getAgentMailboxMessageById, getAgentMailboxRow, serializeAgentMailboxMessage } from "../../../packages/agent/src/services/mailbox-records";
 import { getDraftOutboundHeaders, getMailboxAttachmentMetadata } from "../../../packages/agent/src/services/mailbox-drafts";
 import { isPlainObject, isValidEmail, parseJsonRecord } from "../../../packages/agent/src/services/mailbox-common";
@@ -113,13 +114,15 @@ async function sendReviewedDraft(env: Env, ownerId: string, draftId: string, key
   const [claimResult] = await env.DB.batch([claimed, pendingAudit]);
   if ((claimResult.meta?.changes || 0) !== 1) return { error: "Draft changed or is already being sent.", status: 409 };
 
+  const rendered = row.html_body ? null : renderMailMarkdown(current.bodyText || "");
   let result;
   try {
     result = await sendEmailWithProvider(env, ownerId, {
       purpose: row.source_id ? "reply" : "draft", mailboxId: mailbox.id, mailboxMessageId: draftId, operationId,
       fromAddress: externalFrom(row.from_address), approvedDeliveryIdentity: claim.deliveryIdentity,
-      toAddress: row.to_address, subject: current.subject, textBody: current.bodyText,
-      htmlBody: row.html_body, attachments, threadKey: row.thread_key, ...headers,
+      toAddress: row.to_address, subject: current.subject,
+      textBody: rendered ? rendered.text : current.bodyText, htmlBody: rendered ? rendered.html : row.html_body,
+      attachments, threadKey: row.thread_key, ...headers,
       metadata: { mailbox_message_id: draftId, source_id: row.source_id, agent_send_operation_id: operationId, agent_send_fingerprint: fingerprint },
       createdBy: "agent", approvedByUserId: ownerId,
     });

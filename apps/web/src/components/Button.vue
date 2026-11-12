@@ -164,7 +164,13 @@ button.me3-btn {
     "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
 }
 
+/* Icons are often passed in the default slot next to the text. Lay the label
+   out as a row so they centre on the text (not its baseline) and get the
+   button's own icon gap even when no whitespace separates them. */
 .me3-btn__label {
+  display: inline-flex;
+  align-items: center;
+  gap: inherit;
   line-height: 1.15;
 }
 

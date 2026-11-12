@@ -700,7 +700,10 @@ describe("EmailPage", () => {
     };
     setValue("#compose-to", "kim@example.com");
     setValue("#compose-subject", "Hello");
-    setValue(".compose-body", "Hi Kim");
+    const bodyEditor = document.querySelector(
+      ".compose-editor .ProseMirror",
+    ) as (HTMLElement & { editor?: { commands: { setContent: (value: string, options: { emitUpdate: boolean }) => void } } }) | null;
+    bodyEditor?.editor?.commands.setContent("<p>Hi <strong>Kim</strong></p>", { emitUpdate: true });
     await flushPromises();
 
     (
@@ -728,6 +731,11 @@ describe("EmailPage", () => {
     ).toHaveLength(1);
     expect(api.put).not.toHaveBeenCalled();
     expect(approvalAttempts).toBe(2);
+    expect(
+      vi.mocked(api.post).mock.calls.find(
+        ([endpoint]) => endpoint === "/mailbox/drafts",
+      )?.[1],
+    ).toMatchObject({ textBody: "Hi **Kim**" });
   });
 
   it("keeps an in-flight draft visible without exposing conflicting actions", async () => {

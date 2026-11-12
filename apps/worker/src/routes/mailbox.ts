@@ -1,4 +1,5 @@
 import { parseEmailAddressHeader } from "../../../../shared/email-headers";
+import { renderMailMarkdown } from "../../../../shared/mail-markdown";
 import { listVerifiedSendAddresses } from "../email-send-identities";
 import { ownerInstructionAddresses } from "../mailbox-instructions";
 import { getMailboxOriginal } from "../mailbox-original";
@@ -155,6 +156,9 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
         draft.fromAddress && !draft.fromAddress.toLowerCase().endsWith("@me3.local")
           ? draft.fromAddress
           : null;
+      // Drafts are written in light Markdown; send real formatting plus a clean
+      // plain-text alternative unless the draft already carries its own HTML.
+      const rendered = draft.htmlBody ? null : renderMailMarkdown(draft.body || "");
       result = await sendEmailWithProvider(c.env, ownerId, {
         purpose: draft.sourceId ? "reply" : "draft",
         mailboxId: mailbox.id,
@@ -162,8 +166,8 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
         fromAddress: draftFromAddress,
         toAddress: draft.toAddress || "",
         subject: draft.subject || "(no subject)",
-        textBody: draft.body || "",
-        htmlBody: draft.htmlBody,
+        textBody: rendered ? rendered.text : draft.body || "",
+        htmlBody: rendered ? rendered.html : draft.htmlBody,
         attachments,
         threadKey: draft.threadKey,
         messageIdHeader: outboundHeaders.messageIdHeader,
