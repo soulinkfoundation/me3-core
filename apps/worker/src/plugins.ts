@@ -402,6 +402,13 @@ const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
       description:
         "Stores owner-saved text carousel templates and the slide text kept with each Post.",
     },
+    {
+      id: "social.drop-suggestions-and-posting-plans",
+      path: "./apps/worker/migrations/0100_drop_social_suggestions_and_posting_plans.sql",
+      destructive: true,
+      description:
+        "Drops Suggestions (Ideas), Posting plans, reservations and Preferred posting times; ME3 no longer writes or plans social posts. Posts and Publications are kept.",
+    },
   ],
   queuesAndCrons: [...SOCIAL_PUBLISHING_RUNTIME.queuesAndCrons],
   notes: [

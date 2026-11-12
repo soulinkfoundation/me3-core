@@ -917,6 +917,22 @@ const runtimeMigrations: RuntimeMigration[] = [
       )`).run();
     },
   },
+  // ME3 no longer writes social posts or plans their timing (me3-9t6b.5): drop Ideas and Posting plans.
+  {
+    id: "0100_drop_social_suggestions_and_posting_plans",
+    checksum: "2026-11-12-drop-social-suggestions-and-posting-plans-v1",
+    async apply(db) {
+      for (const table of [
+        "social_posting_reservations",
+        "social_posting_plan_items",
+        "social_posting_plans",
+        "social_posting_preferences",
+        "social_suggestions",
+      ]) {
+        await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+      }
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

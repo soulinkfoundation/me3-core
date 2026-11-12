@@ -541,11 +541,6 @@ export type CreatePublicationInput = {
   requestContext?: unknown;
 };
 
-type CreatePublicationInternalOptions = {
-  publicationId?: string;
-  reservationId?: string;
-};
-
 export type ReschedulePublicationInput = {
   scheduledFor?: unknown;
   timezone?: unknown;
@@ -2344,7 +2339,6 @@ export async function createPostVersionPublication(
   versionId: unknown,
   input: CreatePublicationInput = {},
   fetcher: typeof fetch = fetchWithGlobalContext,
-  internal: CreatePublicationInternalOptions = {},
 ): Promise<Publication | null> {
   const gate = await getSocialPublishingRuntimeStatus(env);
   if (!gate.ready) throw new SocialPublishingGateError(gate);
@@ -2373,54 +2367,6 @@ export async function createPostVersionPublication(
     }
     scheduledFor = new Date(timestamp).toISOString();
     timezone = publicationTimezone(input.timezone);
-    if (internal.publicationId) {
-      const recovered = await getOwnedPublication(env, ownerId, internal.publicationId);
-      if (recovered) {
-        if (recovered.status === "cancelled" || recovered.status === "failed") {
-          throw new SocialPublishingInputError(
-            "The recovered Posting plan Publication ended without a safe schedule",
-            409,
-          );
-        }
-        if (
-          recovered.versionId !== version.id ||
-          recovered.scheduledFor !== scheduledFor ||
-          recovered.timezone !== timezone
-        ) {
-          throw new SocialPublishingInputError(
-            "The recovered Posting plan Publication does not match this exact Version and time",
-            409,
-          );
-        }
-        return recovered;
-      }
-    }
-    if (internal.reservationId) {
-      const reservation = await env.DB.prepare(
-        `SELECT reservation.id
-         FROM social_posting_reservations reservation
-         JOIN social_posting_plan_items item ON item.id = reservation.plan_item_id
-         JOIN social_posting_plans plan ON plan.id = item.plan_id
-         WHERE reservation.id = ? AND plan.user_id = ?
-           AND reservation.account_id = ? AND reservation.scheduled_for = ?
-           AND reservation.status IN ('reserved', 'fulfilled')
-           AND item.variant_id = ?`,
-      )
-        .bind(
-          internal.reservationId,
-          ownerId,
-          version.target_account_id,
-          scheduledFor,
-          version.id,
-        )
-        .first<{ id: string }>();
-      if (!reservation) {
-        throw new SocialPublishingInputError(
-          "Posting plan reservation is no longer valid. Refresh the plan before scheduling.",
-          409,
-        );
-      }
-    }
     const duplicate = await findScheduledPublication(env, version.id, scheduledFor);
     if (duplicate) {
       throw new SocialPublishingInputError(
@@ -2448,7 +2394,7 @@ export async function createPostVersionPublication(
 
   const requestedByType = input.requestedByType === "agent" ? "agent" : "owner";
   const requestContextJson = publicationRequestContextForVersion(version, input.requestContext);
-  const publicationId = internal.publicationId || randomToken("socpub");
+  const publicationId = randomToken("socpub");
   const now = new Date().toISOString();
   const managedXReservation = await reserveManagedXUsageForVersion(
     env,
@@ -2493,32 +2439,6 @@ export async function createPostVersionPublication(
              AND p.source_type <> 'legacy_content_bank_read_only'
              AND v.approval_status = 'approved'
              AND v.platform = ?
-             AND (
-               ? IS NULL
-               OR EXISTS (
-                 SELECT 1
-                 FROM social_posting_reservations own_reservation
-                 JOIN social_posting_plan_items own_item
-                   ON own_item.id = own_reservation.plan_item_id
-                 WHERE own_reservation.id = ?
-                   AND own_reservation.account_id = v.target_account_id
-                   AND own_reservation.scheduled_for = ?
-                   AND own_reservation.status = 'reserved'
-                   AND own_item.variant_id = v.id
-               )
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM social_posting_reservations reservation
-               WHERE reservation.account_id = v.target_account_id
-                 AND reservation.status = 'reserved'
-                 AND (
-                   ? IS NULL OR reservation.id <> ?
-                 )
-                 AND (
-                   reservation.scheduled_for = ?
-                   OR (? > reservation.range_start AND ? < reservation.range_end)
-                 )
-             )
              AND NOT EXISTS (
                SELECT 1
                FROM social_publications existing
@@ -2538,14 +2458,6 @@ export async function createPostVersionPublication(
           version.id,
           ownerId,
           version.platform,
-          internal.reservationId || null,
-          internal.reservationId || null,
-          scheduledFor,
-          internal.reservationId || null,
-          internal.reservationId || null,
-          scheduledFor,
-          scheduledFor,
-          scheduledFor,
           scheduledFor,
         ),
         env.DB.prepare(
@@ -2607,20 +2519,6 @@ export async function createPostVersionPublication(
       if (scheduledFor && await findScheduledPublication(env, version.id, scheduledFor)) {
         throw new SocialPublishingInputError(
           "This Version already has a Publication at that time",
-          409,
-        );
-      }
-      if (
-        scheduledFor &&
-        await findBlockingPostingReservation(
-          env,
-          version.target_account_id,
-          scheduledFor,
-          internal.reservationId || null,
-        )
-      ) {
-        throw new SocialPublishingInputError(
-          "This account has another Posting plan too close to that time",
           409,
         );
       }
@@ -2887,15 +2785,6 @@ export async function reschedulePublication(
            AND publication.updated_at = ?
            AND publication.approval_status_snapshot = 'approved'
            AND publication.platform = ?
-           AND NOT EXISTS (
-             SELECT 1 FROM social_posting_reservations reservation
-             WHERE reservation.account_id = publication.target_account_id_snapshot
-               AND reservation.status = 'reserved'
-               AND (
-                 reservation.scheduled_for = ?
-                 OR (? > reservation.range_start AND ? < reservation.range_end)
-               )
-           )
            AND EXISTS (
              SELECT 1
              FROM social_variants version
@@ -2920,9 +2809,6 @@ export async function reschedulePublication(
         existing.id,
         expectedUpdatedAt,
         existing.platform,
-        scheduledFor,
-        scheduledFor,
-        scheduledFor,
         ownerId,
       ),
       env.DB.prepare(
@@ -2965,13 +2851,6 @@ export async function reschedulePublication(
     refreshed.scheduled_for !== scheduledFor ||
     refreshed.timezone !== timezone
   ) {
-    if (await findBlockingPostingReservationForPublication(env, existing.id, scheduledFor)) {
-      await restoreManagedXReservation();
-      throw new SocialPublishingInputError(
-        "This account has another Posting plan too close to that time",
-        409,
-      );
-    }
     try {
       assertPublicationCanBeRescheduled(refreshed);
     } catch (error) {
@@ -4715,52 +4594,6 @@ async function findScheduledPublication(
      LIMIT 1`,
   )
     .bind(versionId, scheduledFor)
-    .first<{ id: string }>();
-}
-
-async function findBlockingPostingReservation(
-  env: SocialPublishingEnv,
-  accountId: string | null,
-  scheduledFor: string,
-  ownReservationId: string | null,
-): Promise<{ id: string } | null> {
-  if (!accountId) return null;
-  return env.DB.prepare(
-    `SELECT id FROM social_posting_reservations
-     WHERE account_id = ? AND status = 'reserved'
-       AND (? IS NULL OR id <> ?)
-       AND (scheduled_for = ? OR (? > range_start AND ? < range_end))
-     LIMIT 1`,
-  )
-    .bind(
-      accountId,
-      ownReservationId,
-      ownReservationId,
-      scheduledFor,
-      scheduledFor,
-      scheduledFor,
-    )
-    .first<{ id: string }>();
-}
-
-async function findBlockingPostingReservationForPublication(
-  env: SocialPublishingEnv,
-  publicationId: string,
-  scheduledFor: string,
-): Promise<{ id: string } | null> {
-  return env.DB.prepare(
-    `SELECT reservation.id
-     FROM social_publications publication
-     JOIN social_posting_reservations reservation
-       ON reservation.account_id = publication.target_account_id_snapshot
-     WHERE publication.id = ? AND reservation.status = 'reserved'
-       AND (
-         reservation.scheduled_for = ?
-         OR (? > reservation.range_start AND ? < reservation.range_end)
-       )
-     LIMIT 1`,
-  )
-    .bind(publicationId, scheduledFor, scheduledFor, scheduledFor)
     .first<{ id: string }>();
 }
 

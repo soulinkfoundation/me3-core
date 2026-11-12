@@ -263,12 +263,9 @@ pairings, and host-bound Cloudflare IDs. The local password hash and approved ow
 provider credentials remain portable. Restore creates a fresh JWT secret, leaves device credentials
 empty, and requires clients to pair again.
 
-Social account identity rows are retained so owner Posting plans, Preferred posting times, and
-Publication history keep stable references. Their access and refresh credentials, expiry, scopes,
-provider metadata, and verification state are irreversibly sanitized; every restored account is
-marked revoked until OAuth reconnects it. An interrupted Posting plan confirmation is restored as
-needs attention with no confirmation token, suggested rather than reserved items, and released
-reservations. Any Publication already created before the interruption remains owner data.
+Social account identity rows are retained so Publication history keeps stable references. Their
+access and refresh credentials, expiry, scopes, provider metadata, and verification state are
+irreversibly sanitized; every restored account is marked revoked until OAuth reconnects it.
 
 Source-backed Carousel models, exact Source evidence, uploaded raster media, deterministic SVG
 assets, content hashes, and Version attachments are portable owner data. Restores keep these
