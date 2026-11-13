@@ -37,6 +37,10 @@ export type AgentContactInput = Partial<{
   lastInteractionAt: string | null;
   nextFollowupAt: string | null;
   outreachStatus: AgentContactOutreachStatus;
+  /** Who the person is with. Stored in metadata.organisation. */
+  organisation: string | null;
+  /** What the owner offered this prospect. Stored in metadata.outreachOffer. */
+  offer: string | null;
   socialHandles: Record<string, string>;
   metadata: Record<string, unknown> | null;
 }>;
@@ -57,6 +61,8 @@ export type AgentContact = {
   lastInteractionAt: string | null;
   nextFollowupAt: string | null;
   outreachStatus: AgentContactOutreachStatus;
+  organisation: string | null;
+  offer: string | null;
   socialHandles: Record<string, string>;
   metadata: Record<string, unknown> | null;
   createdAt: string;

@@ -58,8 +58,11 @@ export function parseAgentContactInput(value: unknown): AgentContactInput {
       ? value.tags.filter((tag): tag is string => typeof tag === "string")
       : [],
     lastInteractionAt: normalizeNullableText(value.lastInteractionAt),
-    nextFollowupAt: normalizeNullableText(value.nextFollowupAt),
+    nextFollowupAt: normalizeFollowupAt(value.nextFollowupAt),
     outreachStatus: normalizeContactOutreachStatus(value.outreachStatus),
+    organisation:
+      value.organisation === undefined ? undefined : limitedText(value.organisation, 200),
+    offer: value.offer === undefined ? undefined : limitedText(value.offer, 2000),
     socialHandles: isPlainObject(value.socialHandles)
       ? stringRecord(value.socialHandles)
       : {},
@@ -248,34 +251,52 @@ export async function updateAgentContact(
   const existing = await getAgentContactRow(env, userId, contactId);
   if (!existing) return { error: "Contact not found", status: 404 };
 
+  // Only the fields the caller names change. parseAgentContactInput fills
+  // create-time defaults, so presence is read from the raw value.
+  const raw = isPlainObject(value) ? value : {};
+  const existingMetadata = parseJsonRecord(existing.metadata);
+  const cleared = (key: string) => raw[key] === null || raw[key] === "";
   const merged: AgentContactInput = {
     name: input.name ?? existing.name,
     email: input.email ?? existing.email,
     phone: input.phone ?? existing.phone,
-    source: input.source ?? existing.source,
+    source: CONTACT_SOURCES.has(String(raw.source) as AgentContactSource)
+      ? input.source
+      : existing.source,
     sourceRef: input.sourceRef ?? existing.source_ref,
-    relationship: input.relationship ?? existing.relationship,
-    status: input.status ?? existing.status,
+    relationship: CONTACT_RELATIONSHIPS.has(String(raw.relationship) as AgentContactRelationship)
+      ? input.relationship
+      : existing.relationship,
+    status: CONTACT_STATUSES.has(String(raw.status) as AgentContactStatus)
+      ? input.status
+      : existing.status,
     notes: input.notes ?? existing.notes,
-    tags: input.tags ?? parseJsonArray(existing.tags),
+    tags: Array.isArray(raw.tags) ? input.tags : parseJsonArray(existing.tags),
     lastInteractionAt: input.lastInteractionAt ?? existing.last_interaction_at,
-    nextFollowupAt: input.nextFollowupAt ?? existing.next_followup_at,
-    outreachStatus: input.outreachStatus ?? existing.outreach_status,
-    socialHandles: input.socialHandles ?? stringRecord(parseJsonRecord(existing.social_handles)),
-    metadata: input.metadata ?? parseJsonRecord(existing.metadata),
-    closeness:
-      input.closeness ??
-      (parseJsonRecord(existing.metadata).closeness as AgentContactCloseness),
+    nextFollowupAt: cleared("nextFollowupAt")
+      ? null
+      : (input.nextFollowupAt ?? existing.next_followup_at),
+    outreachStatus: cleared("outreachStatus")
+      ? null
+      : (input.outreachStatus ?? existing.outreach_status),
+    organisation:
+      input.organisation !== undefined
+        ? input.organisation
+        : limitedText(existingMetadata.organisation, 200),
+    offer:
+      input.offer !== undefined ? input.offer : limitedText(existingMetadata.outreachOffer, 2000),
+    socialHandles: isPlainObject(raw.socialHandles)
+      ? input.socialHandles
+      : stringRecord(parseJsonRecord(existing.social_handles)),
+    metadata: input.metadata ?? existingMetadata,
+    closeness: input.closeness ?? (existingMetadata.closeness as AgentContactCloseness),
   };
   if (isPlainObject(value) && "closeness" in value && !input.closeness) {
     merged.closeness = null;
     merged.metadata = { ...(merged.metadata || {}) };
     delete merged.metadata.closeness;
   }
-  const metadata = withCloseSince(
-    normalizeContactMetadata(merged),
-    parseJsonRecord(existing.metadata),
-  );
+  const metadata = withCloseSince(normalizeContactMetadata(merged), existingMetadata);
   if (
     merged.email &&
     (await contactEmailExists(env, userId, merged.email, contactId))
@@ -365,6 +386,8 @@ export function serializeAgentContact(row: DbContactRow): AgentContact {
     lastInteractionAt: row.last_interaction_at,
     nextFollowupAt: row.next_followup_at,
     outreachStatus: row.outreach_status,
+    organisation: limitedText(metadata.organisation, 200),
+    offer: limitedText(metadata.outreachOffer, 2000),
     socialHandles: stringRecord(parseJsonRecord(row.social_handles)),
     metadata: Object.keys(metadata).length > 0 ? metadata : null,
     createdAt: row.created_at,
@@ -425,6 +448,15 @@ export function normalizeContactMetadata(
 ): Record<string, unknown> | null {
   const metadata = { ...(input.metadata || {}) };
   if (input.closeness) metadata.closeness = input.closeness;
+  // undefined leaves the stored value alone; null removes it.
+  if (input.organisation !== undefined) {
+    if (input.organisation) metadata.organisation = input.organisation;
+    else delete metadata.organisation;
+  }
+  if (input.offer !== undefined) {
+    if (input.offer) metadata.outreachOffer = input.offer;
+    else delete metadata.outreachOffer;
+  }
   return Object.keys(metadata).length > 0 ? metadata : null;
 }
 
@@ -481,4 +513,15 @@ export function normalizeContactOutreachStatus(value: unknown): AgentContactOutr
   return OUTREACH_STATUSES.has(normalized as Exclude<AgentContactOutreachStatus, null>)
     ? (normalized as Exclude<AgentContactOutreachStatus, null>)
     : null;
+}
+
+function limitedText(value: unknown, max: number): string | null {
+  return normalizeNullableText(value)?.slice(0, max) ?? null;
+}
+
+/** Follow-up dates are stored as ISO timestamps so they compare as text. */
+function normalizeFollowupAt(value: unknown): string | null {
+  const text = normalizeNullableText(value);
+  const time = text ? Date.parse(text) : Number.NaN;
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }

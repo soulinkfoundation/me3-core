@@ -431,3 +431,81 @@ describe("adding someone by hand", () => {
       .toMatchObject({ status: 409 });
   });
 });
+
+describe("outreach prospects", () => {
+  function routes(env: Env) {
+    const app = new Hono() as unknown as AppHono;
+    registerContactsRoutes(app, {
+      requireOwner: async () => "alice",
+      unauthorized: (c) => c.json({ error: "Unauthorized" }, 401),
+    });
+    const send = async (path: string, method: string, body?: unknown) => {
+      const response = await app.request(path, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }, env);
+      return (await response.json()) as { contact: Record<string, unknown>; contacts: Record<string, unknown>[] };
+    };
+    return { send };
+  }
+  const prospect = {
+    name: "Mary Byrne", email: "mary@iacp.example", source: "outreach", relationship: "prospect",
+    organisation: "IACP", offer: "Member discount on ME3 Business",
+    outreachStatus: "sent", nextFollowupAt: "2026-11-20", tags: ["associations"],
+  };
+
+  it("round-trips organisation, offer, status and follow-up date through the contacts API", async () => {
+    const { env } = fixture();
+    const { send } = routes(env);
+    const { contact } = await send("/api/contacts", "POST", prospect);
+    expect(contact).toMatchObject({
+      relationship: "prospect", source: "outreach", organisation: "IACP",
+      offer: "Member discount on ME3 Business", outreachStatus: "sent",
+      nextFollowupAt: "2026-11-20T00:00:00.000Z",
+    });
+
+    const listed = (await send("/api/contacts", "GET")).contacts.find((row) => row.id === contact.id);
+    expect(listed).toMatchObject({ organisation: "IACP", offer: "Member discount on ME3 Business" });
+  });
+
+  it("changes only the fields a partial update names", async () => {
+    const { env } = fixture();
+    const { send } = routes(env);
+    const { contact } = await send("/api/contacts", "POST", prospect);
+
+    const replied = (await send(`/api/contacts/${contact.id}`, "PUT", { outreachStatus: "replied" })).contact;
+    expect(replied).toMatchObject({
+      relationship: "prospect", source: "outreach", tags: ["associations"],
+      organisation: "IACP", offer: "Member discount on ME3 Business",
+      outreachStatus: "replied", nextFollowupAt: "2026-11-20T00:00:00.000Z",
+    });
+
+    // Writing other metadata, or an unknown status, leaves the prospect fields alone.
+    const starred = (await send(`/api/contacts/${contact.id}`, "PUT", {
+      metadata: { role: "CEO" }, outreachStatus: "ghosted", relationship: "enemy",
+    })).contact;
+    expect(starred).toMatchObject({
+      organisation: "IACP", offer: "Member discount on ME3 Business",
+      outreachStatus: "replied", relationship: "prospect",
+    });
+  });
+
+  it("clears the follow-up date, offer and status when they are set to null", async () => {
+    const { env } = fixture();
+    const { send } = routes(env);
+    const { contact } = await send("/api/contacts", "POST", prospect);
+
+    const cleared = (await send(`/api/contacts/${contact.id}`, "PUT", {
+      nextFollowupAt: null, offer: null, outreachStatus: null,
+    })).contact;
+    expect(cleared).toMatchObject({
+      nextFollowupAt: null, offer: null, outreachStatus: null, organisation: "IACP",
+    });
+
+    const moved = (await send(`/api/contacts/${contact.id}`, "PUT", { nextFollowupAt: "not a date" })).contact;
+    expect(moved.nextFollowupAt).toBeNull();
+    const dated = (await send(`/api/contacts/${contact.id}`, "PUT", { nextFollowupAt: "2026-12-01T09:30:00+00:00" })).contact;
+    expect(dated.nextFollowupAt).toBe("2026-12-01T09:30:00.000Z");
+  });
+});
