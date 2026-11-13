@@ -738,6 +738,58 @@ describe("EmailPage", () => {
     ).toMatchObject({ textBody: "Hi **Kim**" });
   });
 
+  it("offers Track as outreach for someone new and sends the choice with the email", async () => {
+    const draft = { ...sentMessage, id: "draft-1", kind: "draft", status: "pending_approval", folder: "drafts", sentAt: null };
+    vi.mocked(api.post).mockImplementation(async (endpoint) => (endpoint === "/mailbox/drafts" ? { draft } : { ok: true }));
+    vi.mocked(api.get).mockImplementation(async (endpoint: string) =>
+      endpoint === "/contacts"
+        ? { contacts: [{ id: "c-kim", name: "Kim", email: "kim@example.com", isClient: true, isClose: false, status: "active" }], summary: emptyContactSummary() }
+        : mailboxResponseFor(endpoint),
+    );
+    mountEmailPage();
+    await flushPromises();
+    (document.querySelector(".mail-mobile-compose-btn") as HTMLElement).click();
+    await flushPromises();
+
+    const setValue = (selector: string, value: string) => {
+      const input = document.querySelector(selector) as HTMLInputElement;
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const toggle = () => document.querySelector('.compose-outreach [role="switch"]') as HTMLButtonElement | null;
+    expect(toggle()).toBeNull();
+
+    // A customer is never offered as outreach.
+    setValue("#compose-to", "kim@example.com");
+    await flushPromises();
+    expect(toggle()).toBeNull();
+
+    setValue("#compose-to", "info@irishyoga.example");
+    setValue("#compose-subject", "A member offer");
+    const bodyEditor = document.querySelector(".compose-editor .ProseMirror") as
+      (HTMLElement & { editor?: { commands: { setContent: (value: string, options: { emitUpdate: boolean }) => void } } }) | null;
+    bodyEditor?.editor?.commands.setContent("<p>Hi there</p>", { emitUpdate: true });
+    await flushPromises();
+
+    expect(toggle()?.getAttribute("aria-checked")).toBe("false");
+    toggle()!.click();
+    await flushPromises();
+    expect(toggle()?.getAttribute("aria-checked")).toBe("true");
+    const days = document.querySelector('.compose-outreach select[aria-label="Follow up in"]') as HTMLSelectElement;
+    expect(days.value).toBe("7");
+    days.value = "14";
+    days.dispatchEvent(new Event("change", { bubbles: true }));
+    await flushPromises();
+    setValue('.compose-outreach input[aria-label="What you offered"]', "Member discount");
+    await flushPromises();
+
+    (document.querySelector(".compose-modal__actions .me3-btn--primary") as HTMLElement).click();
+    await flushPromises();
+
+    expect(vi.mocked(api.post).mock.calls.find(([endpoint]) => endpoint === "/mailbox/drafts")?.[1])
+      .toMatchObject({ to: "info@irishyoga.example", outreach: { followUpDays: 14, offer: "Member discount" } });
+  });
+
   it("keeps an in-flight draft visible without exposing conflicting actions", async () => {
     routeTab = "drafts";
     const sendingDraft = {

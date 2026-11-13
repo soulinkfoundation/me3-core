@@ -1,6 +1,7 @@
-import { touchContactInteraction } from "./contact-people";
+import { CONTACT_IS_CLIENT_SQL, isCloseCloseness, touchContactInteraction } from "./contact-people";
 import type { AgentContactOutreachStatus } from "./contact-types";
-import { type CoreAgentChatEnv, isPlainObject, parseJsonRecord } from "./domain-store";
+import { createAgentContact, updateAgentContact } from "./contacts";
+import { type CoreAgentChatEnv, isPlainObject, normalizeNullableText, parseJsonRecord } from "./domain-store";
 import { getDraftCcBcc } from "./mailbox-format";
 import type { DbMailboxMessageRow } from "./mailbox-types";
 
@@ -119,12 +120,80 @@ export async function recordMailboxSendForContacts(
   const recipients = mailAddresses([message.to_address, ...cc, ...bcc]);
   if (recipients.length === 0) return;
   await touchContactInteraction(env, userId, { emails: recipients }, sentAt);
-  const outreach = parseJsonRecord(message.metadata_json || null).outreach;
-  await recordOutreachEmailSent(env, userId, {
-    recipients,
-    sentAt,
-    followUpDays: isPlainObject(outreach) ? outreachFollowUpDays(outreach.followUpDays) : null,
-  });
+  // "Track as outreach" in compose: the people it was sent To become prospects.
+  const outreach = normalizeDraftOutreach(parseJsonRecord(message.metadata_json || null).outreach);
+  if (outreach) {
+    await ensureOutreachProspects(env, userId, {
+      emails: mailAddresses([message.to_address]),
+      offer: outreach.offer,
+    });
+  }
+  await recordOutreachEmailSent(env, userId, { recipients, sentAt, followUpDays: outreach?.followUpDays });
+}
+
+export type DraftOutreach = { followUpDays: number; offer: string | null };
+
+export function normalizeDraftOutreach(value: unknown): DraftOutreach | null {
+  if (!isPlainObject(value)) return null;
+  return {
+    followUpDays: outreachFollowUpDays(value.followUpDays) || OUTREACH_DEFAULT_FOLLOWUP_DAYS,
+    offer: normalizeNullableText(value.offer)?.slice(0, 2000) ?? null,
+  };
+}
+
+const SHARED_INBOXES = new Set([
+  "info", "hello", "hi", "office", "admin", "contact", "enquiries", "inquiries", "mail", "team",
+  "membership", "members", "support", "secretary", "reception", "general",
+]);
+
+/** A starting name for someone known only by address; the owner can rename them. */
+export function nameFromEmailAddress(email: string): string {
+  const [local = "", domain = ""] = email.split("@");
+  const source = SHARED_INBOXES.has(local.toLowerCase()) ? domain.split(".")[0] || local : local;
+  const words = source.replace(/\+.*$/, "").split(/[._-]+/).filter(Boolean);
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ") || email;
+}
+
+/**
+ * Makes each address a prospect: a new contact for a stranger, a plain contact
+ * converted. Customers and Close people are never turned into prospects.
+ */
+export async function ensureOutreachProspects(
+  env: OutreachEnv,
+  userId: string,
+  input: { emails: string[]; offer?: string | null },
+): Promise<void> {
+  for (const email of input.emails) {
+    const existing = await env.DB.prepare(
+      `SELECT c.id, c.relationship, c.metadata, ${CONTACT_IS_CLIENT_SQL} AS is_client
+       FROM contacts c WHERE c.user_id = ? AND LOWER(TRIM(c.email)) = ? LIMIT 1`,
+    )
+      .bind(userId, email)
+      .first<{ id: string; relationship: string; metadata: string | null; is_client: number | null }>();
+    if (!existing) {
+      await createAgentContact(env, userId, {
+        name: nameFromEmailAddress(email),
+        email,
+        source: "outreach",
+        relationship: "prospect",
+        outreachStatus: "new",
+        ...(input.offer ? { offer: input.offer } : {}),
+      });
+      continue;
+    }
+    const metadata = parseJsonRecord(existing.metadata);
+    const offer = input.offer && !metadata.outreachOffer ? { offer: input.offer } : {};
+    if (existing.relationship === "prospect") {
+      if (offer.offer) await updateAgentContact(env, userId, existing.id, offer);
+      continue;
+    }
+    if (Number(existing.is_client || 0) > 0 || isCloseCloseness(metadata.closeness)) continue;
+    await updateAgentContact(env, userId, existing.id, {
+      relationship: "prospect",
+      outreachStatus: "new",
+      ...offer,
+    });
+  }
 }
 
 export type OutreachInboundKind = "reply" | "auto_reply" | "bounce" | "invite" | null;

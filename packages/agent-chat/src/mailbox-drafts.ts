@@ -345,6 +345,7 @@ export function createDraftMetadata(input: NormalizedMailboxDraftInput): Record<
       : {}),
     attachmentCount: input.preservedAttachments.length,
     attachments: input.preservedAttachments,
+    ...(input.outreach ? { outreach: input.outreach } : {}),
     outbound_headers: {
       message_id: input.messageIdHeader,
       in_reply_to: input.inReplyTo,

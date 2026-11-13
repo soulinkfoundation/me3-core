@@ -4,12 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import {
   createAgentContact,
+  createAgentMailboxDraft,
   listAgentContacts,
   markAgentMailboxDraftSent,
   recordOutreachBooking,
   recordOutreachEmailSent,
   recordOutreachInbound,
   updateAgentContact,
+  updateAgentMailboxDraft,
   upsertAgentContact,
 } from "@me3-core/plugin-agent-chat";
 import { registerContactsRoutes } from "./routes/contacts";
@@ -661,5 +663,95 @@ describe("outreach status sync", () => {
     await recordOutreachEmailSent(env, "alice", { recipients: ["mary@iacp.example"], sentAt: SENT });
     expect(raw.prepare("SELECT outreach_status, next_followup_at FROM contacts WHERE id = 'p-bob'").get())
       .toEqual({ outreach_status: "sent", next_followup_at: null });
+  });
+});
+
+describe("email tracked as outreach", () => {
+  function mailbox() {
+    const base = fixture();
+    base.raw.exec(`INSERT INTO mailbox_aliases (id, user_id, alias_local_part, forwarding_email, status)
+      VALUES ('alice-mailbox', 'alice', 'alice', '', 'active')`);
+    const send = async (draftId: string, sentAt = "2026-11-13T10:00:00.000Z") => {
+      base.raw.prepare("UPDATE mailbox_messages SET status = 'approved' WHERE id = ?").run(draftId);
+      return markAgentMailboxDraftSent(base.env, "alice", draftId, {
+        providerId: "test", providerMessageId: `msg-${draftId}`, approvedByUserId: "alice", sentAt,
+      });
+    };
+    const draft = async (input: Record<string, unknown>) => {
+      const created = await createAgentMailboxDraft(base.env, "alice", {
+        subject: "A member offer", textBody: "Hi there", source: "user", ...input,
+      });
+      if ("error" in created) throw new Error(created.error);
+      return created.draft;
+    };
+    const people = () =>
+      base.raw.prepare(
+        `SELECT name, email, source, relationship, outreach_status, next_followup_at,
+                json_extract(metadata, '$.outreachOffer') AS offer,
+                json_extract(metadata, '$.outreachFollowUpsSent') AS follow_ups
+         FROM contacts WHERE user_id = 'alice' ORDER BY email`,
+      ).all();
+    return { ...base, send, draft, people };
+  }
+
+  it("creates the prospect once when a tracked email is sent, with the offer and follow-up date", async () => {
+    const { send, draft, people } = mailbox();
+    const tracked = await draft({
+      to: "Info@IrishYoga.example, niamh.kelly@yti.example", cc: ["boss@example.com"],
+      outreach: { followUpDays: 10, offer: "Member discount" },
+    });
+
+    expect(people()).toEqual([]);
+    await send(tracked.id);
+    await send(tracked.id);
+
+    expect(people()).toEqual([
+      {
+        name: "Irishyoga", email: "info@irishyoga.example", source: "outreach", relationship: "prospect",
+        outreach_status: "sent", next_followup_at: "2026-11-23T10:00:00.000Z", offer: "Member discount", follow_ups: null,
+      },
+      {
+        name: "Niamh Kelly", email: "niamh.kelly@yti.example", source: "outreach", relationship: "prospect",
+        outreach_status: "sent", next_followup_at: "2026-11-23T10:00:00.000Z", offer: "Member discount", follow_ups: null,
+      },
+    ]);
+  });
+
+  it("leaves contacts alone when the email is not tracked", async () => {
+    const { send, draft, people } = mailbox();
+    await send((await draft({ to: "info@irishyoga.example" })).id);
+    await send((await draft({ to: "info@irishyoga.example", outreach: null })).id);
+    expect(people()).toEqual([]);
+  });
+
+  it("keeps the choice through later edits, and drops it when it is switched off", async () => {
+    const { env, send, draft, people } = mailbox();
+    const tracked = await draft({ to: "info@irishyoga.example", outreach: { followUpDays: 7, offer: "A talk" } });
+    await updateAgentMailboxDraft(env, "alice", tracked.id, { subject: "A better subject" });
+    await send(tracked.id);
+    expect(people()).toMatchObject([{ relationship: "prospect", offer: "A talk" }]);
+
+    const dropped = await draft({ to: "aoife@imta.example", outreach: { followUpDays: 7 } });
+    await updateAgentMailboxDraft(env, "alice", dropped.id, { outreach: null });
+    await send(dropped.id);
+    expect(people()).toHaveLength(1);
+  });
+
+  it("turns a plain contact into a prospect but never a customer or someone Close", async () => {
+    const { addContact, addBooking, send, draft, people } = mailbox();
+    addContact("c-plain", "alice", "Aoife Byrne", "aoife@imta.example");
+    addContact("c-customer", "alice", "Bríd", "brid@example.com");
+    addBooking("b-1", "alice-site", "brid@example.com", "2026-09-10 15:00:00");
+    addContact("c-close", "alice", "Dad", "dad@example.com", { metadata: '{"closeness":"close"}' });
+
+    await send((await draft({
+      to: "aoife@imta.example, brid@example.com, dad@example.com", outreach: { followUpDays: 7, offer: "Free setup" },
+    })).id);
+
+    expect(people()).toMatchObject([
+      { name: "Aoife Byrne", source: "manual", relationship: "prospect", outreach_status: "sent", offer: "Free setup" },
+      { name: "Bríd", relationship: "contact", outreach_status: null, offer: null },
+      { name: "Dad", relationship: "contact", outreach_status: null, offer: null },
+    ]);
   });
 });

@@ -2,6 +2,8 @@ import { type CoreAgentChatEnv, normalizeNullableText, isPlainObject } from "./d
 import { type DbMailboxAliasRow, type AgentMailboxDraftInput, type DbMailboxMessageRow, type NormalizedMailboxDraftInput, type AgentMailboxAttachmentMetadata } from "./mailbox-types";
 import { normalizeEmailText, getAgentMailboxInternalAddress, isValidEmail, getAgentMailboxMessageById, getMailboxAttachmentMetadata } from "./mailbox-store";
 import { formatMailRecipients, parseMailRecipients } from "../../../shared/mail-recipients";
+import { normalizeDraftOutreach } from "./contact-outreach";
+import { parseJsonRecord } from "./domain-store";
 import { getDraftCcBcc, getDraftOutboundHeaders, getReplyThreadHeaders, createMessageIdHeader, stripAgentDraftWrapperText } from "./mailbox-format";
 
 export async function normalizeAgentMailboxDraftInput(
@@ -80,6 +82,9 @@ export async function normalizeAgentMailboxDraftInput(
     inReplyTo: replyHeaders.inReplyTo || existingHeaders.inReplyTo,
     referencesHeader: replyHeaders.referencesHeader || existingHeaders.referencesHeader,
     createdBy,
+    outreach: normalizeDraftOutreach(
+      body.outreach === undefined ? parseJsonRecord(existing?.metadata_json || null).outreach : body.outreach,
+    ),
     preservedAttachments: mergeAttachmentMetadata([
       ...preservedAttachments,
       ...uploadedAttachments,

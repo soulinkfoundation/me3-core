@@ -12,6 +12,7 @@ import Button from "../components/Button.vue";
 import PageLoading from "../components/PageLoading.vue";
 import UiIcon from "../components/UiIcon.vue";
 import EmailBrief from "../components/email/EmailBrief.vue";
+import MailOutreachToggle, { type ComposeOutreach } from "../components/email/MailOutreachToggle.vue";
 import EmailOriginalDialog from "../components/email/EmailOriginalDialog.vue";
 import EmailRulesDialog from "../components/email/EmailRulesDialog.vue";
 import EmailSenderAvatar from "../components/email/EmailSenderAvatar.vue";
@@ -105,6 +106,7 @@ type InboxMessage = {
     contactId?: string;
     contactName?: string;
     contactRelationship?: string;
+    outreach?: { followUpDays?: number; offer?: string | null } | null;
     dueAt?: string | null;
     lastInteractionAt?: string | null;
     source?: string;
@@ -373,6 +375,8 @@ const composeForm = ref({
   subject: "",
   textBody: "",
 });
+// "Track as outreach": sending makes the To recipients prospects in People.
+const composeOutreach = ref<ComposeOutreach>({ on: false, followUpDays: 7, offer: "" });
 const briefRef = ref<InstanceType<typeof EmailBrief> | null>(null);
 const briefCount = ref<number | null>(null);
 const rulesOpen = ref(false);
@@ -2933,6 +2937,7 @@ function getMessageTextBody(message: InboxMessage): string {
 function getComposeSnapshot(): string {
   return JSON.stringify({
     form: composeForm.value,
+    outreach: composeOutreach.value,
     includeSignature: composeIncludeSignature.value,
     replyToMessageId: composeReplyToMessageId.value,
     preservedAttachmentKeys: composePreservedAttachmentKeys.value,
@@ -2957,6 +2962,17 @@ const composeRecipientsValid = computed(() => {
   const to = parseMailRecipients(composeForm.value.to);
   const all = [...to, ...parseMailRecipients(composeForm.value.cc), ...parseMailRecipients(composeForm.value.bcc)];
   return to.length > 0 && invalidMailRecipients(all).length === 0;
+});
+// Offered for new mail to anyone who is not already a customer or Close.
+const composeOutreachOffered = computed(() => {
+  if (composeMode.value !== "new" && composeMode.value !== "edit") return false;
+  if (composeReplyToMessageId.value) return false;
+  const to = parseMailRecipients(composeForm.value.to);
+  if (to.length === 0 || invalidMailRecipients(to).length > 0) return false;
+  return to.some((address) => {
+    const known = contacts.value.find((contact) => contact.email?.trim().toLowerCase() === address);
+    return !known || (!known.isClient && !known.isClose);
+  });
 });
 const composeCanSend = computed(
   () =>
@@ -2988,6 +3004,12 @@ async function openComposeModal(
   composeUploadedAttachments.value = [];
   composeUploadingAttachments.value = false;
   composeShowCcBcc.value = false;
+  const savedOutreach = message?.metadata?.outreach;
+  composeOutreach.value = {
+    on: Boolean(savedOutreach),
+    followUpDays: savedOutreach?.followUpDays || 7,
+    offer: savedOutreach?.offer || "",
+  };
   const defaultFromAddress =
     replyFromAddressFor(message) ||
     outboundSenderOptions.value.find(
@@ -3135,6 +3157,10 @@ async function saveDraft(sendNow = false) {
       replyToMessageId: composeReplyToMessageId.value || undefined,
       preservedAttachmentKeys: composePreservedAttachmentKeys.value,
       uploadedAttachments: composeUploadedAttachments.value,
+      outreach:
+        composeOutreachOffered.value && composeOutreach.value.on
+          ? { followUpDays: composeOutreach.value.followUpDays, offer: composeOutreach.value.offer.trim() || null }
+          : null,
     };
     let draftId = composeDraftId.value;
     const draftNeedsSaving =
@@ -4617,6 +4643,7 @@ onBeforeUnmount(() => {
           {{ composeError }}
           <router-link v-if="composeNeedsStorage" to="/account?section=storage">Activate storage</router-link>
         </p>
+        <MailOutreachToggle v-if="composeOutreachOffered" v-model="composeOutreach" />
         <footer class="compose-modal__actions">
           <label class="compose-attach" :class="{ 'is-disabled': composeUploadingAttachments }" title="Attach files">
             <UiIcon name="Paperclip" :size="16" aria-hidden="true" />

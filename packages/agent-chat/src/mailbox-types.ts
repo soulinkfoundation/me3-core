@@ -20,6 +20,8 @@ export type AgentMailboxDraftInput = {
   replyToMessageId?: unknown;
   preservedAttachmentKeys?: unknown;
   uploadedAttachments?: unknown;
+  /** Track as outreach: `{ followUpDays, offer }`; null switches it off. */
+  outreach?: unknown;
 };
 
 export type AgentMailboxMessageListOptions = {
@@ -153,6 +155,8 @@ export type NormalizedMailboxDraftInput = {
   referencesHeader: string | null;
   createdBy: string;
   preservedAttachments: AgentMailboxAttachmentMetadata[];
+  /** Sending makes the To recipients prospects with this offer and follow-up. */
+  outreach?: { followUpDays: number; offer: string | null } | null;
 };
 
 export type AgentMailboxAttachmentMetadata = {
