@@ -6,8 +6,10 @@ import draggable from "vuedraggable";
 import HomeWheelChart, { type HomeWheelArea } from "./HomeWheelChart.vue";
 import GratitudeCard from "./GratitudeCard.vue";
 import HomeNotesCard, { type HomeNote } from "./HomeNotesCard.vue";
-import SoupCard from "./SoupCard.vue";
-import { soupWhenLabel, type SoupServing, type SoupServingAction, type SoupToday } from "../../utils/soup";
+import NewsCard from "./NewsCard.vue";
+import NewsReader from "../news/NewsReader.vue";
+import NewsSettingsSheet from "../news/NewsSettingsSheet.vue";
+import { newsDate, type NewsPaper, type NewsPaperAction, type NewsRating, type NewsToday } from "../../utils/news";
 import AppDialog from "../AppDialog.vue";
 import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
 import GetSetUpStrip from "./GetSetUpStrip.vue";
@@ -100,7 +102,7 @@ const orderAnnouncement = ref("");
 const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 const reducedMotion = ref(motionPreference?.matches ?? false);
 function updateMotionPreference() { reducedMotion.value = motionPreference?.matches ?? false; }
-defineExpose({ refreshToday: loadToday, refreshSetup: () => setupStrip.value?.load() });
+defineExpose({ refreshToday: loadToday, refreshSetup: () => setupStrip.value?.load(), openNews, refreshNews: loadNews });
 const menu = ref<HomeCard | null>(null);
 const day = ref(localDateKey(new Date()));
 const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = {
@@ -127,34 +129,86 @@ function noteSaved(note: HomeNote) { notes.value = [note, ...notes.value].slice(
 const peopleCard = computed(() => rankHomePeople(contactsStore.contacts, contact => contact.reminderAt));
 const openPersonId = ref<string | null>(null);
 const openPerson = computed(() => contactsStore.contacts.find(contact => contact.id === openPersonId.value) || null);
-// News (me3-6ptk). The card id stays "soup" in saved Home layouts; owners only ever see "News".
-const soup = ref<SoupToday | null>(null);
-const soupServing = computed<SoupServing | null>(() => soup.value?.servings[0] ?? null);
-const soupShow = computed(() => Boolean(soup.value) && (!soup.value!.setUp || Boolean(soupServing.value)));
-const soupBusy = ref(false);
-async function loadSoup() {
-  await resource("soup", async () => { const today = await api.get<SoupToday>("/news/today"); if (!disposed) soup.value = today ?? null; });
+// News (me3-6ptk.5). The card id stays "soup" in saved Home layouts; owners only ever see "News".
+const news = ref<NewsToday | null>(null);
+const newsPaper = computed<NewsPaper | null>(() => news.value?.paper ?? null);
+const newsBuilding = ref(false);
+const newsReader = ref(false);
+const newsSettingsOpen = ref(false);
+const newsFresh = ref(false);
+let newsOpenWhenLoaded = false;
+// On Home: the intro until News is set up, then today's paper unless it is hidden until tomorrow.
+const newsShow = computed(() => Boolean(news.value) && (!news.value!.setUp || newsBuilding.value || Boolean(newsPaper.value && !newsPaper.value.hiddenAt)));
+const newsRead = computed(() => Boolean(newsPaper.value?.readAt));
+const newsDetail = computed(() => !newsPaper.value || !news.value ? "" : newsPaper.value.readAt ? `Read · tomorrow at ${news.value.nextTime}` : newsDate(newsPaper.value.dateKey, "short"));
+/** The card drops onto Home once for each new paper, and again when it is brought back. */
+function landNews(paper?: NewsPaper) {
+  if (paper) {
+    const key = `me3.news.landed.${paper.id}`;
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "1"); } catch { return; }
+  }
+  newsFresh.value = true;
+  window.setTimeout(() => { newsFresh.value = false; }, 900);
 }
-async function soupAct(serving: SoupServing, action: SoupServingAction, itemId: string) {
-  if (soupBusy.value) return;
-  soupBusy.value = true;
+async function loadNews() {
+  await resource("soup", async () => {
+    const today = await api.get<NewsToday>("/news/today");
+    if (disposed) return;
+    news.value = today ?? null;
+    if (today?.paper && !today.paper.readAt && !today.paper.hiddenAt) landNews(today.paper);
+    if (newsOpenWhenLoaded && today?.paper) { newsOpenWhenLoaded = false; newsReader.value = true; }
+  });
+}
+async function newsAct(action: NewsPaperAction, extra: Record<string, unknown> = {}) {
+  const paper = newsPaper.value;
+  if (!paper) return;
   try {
-    const result = await api.post<{ serving: SoupServing }>(`/news/servings/${encodeURIComponent(serving.id)}/act`, { action, itemId });
-    if (soup.value) soup.value = { ...soup.value, servings: soup.value.servings.map(item => item.id === result.serving.id ? result.serving : item).filter(item => item.status === "open") };
-    if (action === "later") toastSuccess("Kept on Home until tomorrow");
+    const result = await api.post<{ paper: NewsPaper }>(`/news/papers/${encodeURIComponent(paper.id)}/act`, { action, ...extra });
+    if (news.value) news.value = { ...news.value, paper: result.paper };
   } catch (error) { toastFromUnknown(error, "Couldn't update your news"); }
-  finally { soupBusy.value = false; }
 }
-async function soupServeNow() {
-  menu.value = null;
-  if (soupBusy.value) return;
-  soupBusy.value = true;
-  try { await api.post("/news/serve", { servingId: soup.value?.servingSpecs[0]?.id ?? "morning" }); await loadSoup(); toastSuccess("Served"); }
-  catch (error) { toastFromUnknown(error, "Couldn't serve just now"); }
-  finally { soupBusy.value = false; }
+async function newsHide() { menu.value = null; await newsAct("hide"); toastSuccess("Hidden until tomorrow’s news"); }
+async function newsBringBack() { await newsAct("unhide"); landNews(); }
+function newsDone() { newsReader.value = false; void newsAct("read"); }
+function newsRate(rating: NewsRating) { void newsAct("rate", { rating }); toastSuccess(rating === "sleepy" ? "I’ll mix it up tomorrow" : "Noted, more like this"); }
+function newsAsk(prompt: string) { newsReader.value = false; emit("ask", prompt); }
+async function newsBuild() {
+  if (newsBuilding.value) return;
+  newsBuilding.value = true;
+  try {
+    const result = await api.post<{ paper: NewsPaper }>("/news/build", {});
+    if (news.value) news.value = { ...news.value, paper: result.paper };
+    landNews();
+  } catch (error) { toastFromUnknown(error, "Couldn't get today's news just now"); }
+  finally { newsBuilding.value = false; }
 }
-const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value) && (id !== "people" || peopleCard.value.state !== "hidden") && (id !== "soup" || Boolean(soup.value))));
-const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id) && (id !== "soup" || soupShow.value)));
+/** Opens today's paper from chat or a notification: now, or as soon as it has loaded. */
+function openNews() {
+  if (newsPaper.value) { newsReader.value = true; return; }
+  newsOpenWhenLoaded = true;
+  void loadNews();
+}
+// Removing News from Home stops the daily paper; adding it back starts it again with today's.
+async function newsRemove() {
+  remove("soup");
+  if (!news.value?.setUp) return;
+  try { await api.patch("/news/settings", { paused: true }); news.value = { ...news.value, paused: true, paper: null }; toastSuccess("Removed. Find it again in + Add to Home"); }
+  catch (error) { toastFromUnknown(error, "Couldn't stop your news"); }
+}
+async function newsAdd() {
+  add("soup");
+  if (!news.value?.setUp) return;
+  try {
+    if (news.value.paused) await api.patch("/news/settings", { paused: false });
+    await loadNews();
+    if (newsPaper.value?.hiddenAt) await newsBringBack();
+    else if (!newsPaper.value) await newsBuild();
+  } catch (error) { toastFromUnknown(error, "Couldn't bring your news back"); }
+}
+const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value) && (id !== "people" || peopleCard.value.state !== "hidden") && (id !== "soup" || Boolean(news.value))));
+const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id) && (id !== "soup" || newsShow.value)));
+// A quiet way back to a paper hidden until tomorrow, while News is still on Home.
+const newsHidden = computed(() => Boolean(news.value?.setUp && !news.value.paused && newsPaper.value?.hiddenAt) && visibleHomeCards(layout.value).includes("soup"));
 // Cards already on Home sort first when the sheet opens, then the order holds still,
 // so adding one never slides a different tile under the next tap.
 const addOrder = ref<HomeCard[]>([]);
@@ -377,7 +431,7 @@ async function refresh() {
       } catch (error) { if (!(error instanceof ApiError && error.status === 404)) throw error; }
     }),
     resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed) gratitudeOn.value = Boolean(state.settings?.inToday); }),
-    loadSoup(),
+    loadNews(),
     loadNotes(),
     resource("people", async () => { await contactsStore.fetchContacts(); if (contactsStore.error) throw new Error(contactsStore.error); }),
     resource("tasks", plan.loadTasks),
@@ -443,7 +497,7 @@ watch(() => props.active, active => {
   void loadLayout();
   void setupStrip.value?.load();
   if (day.value !== today) day.value = today; else void loadToday();
-  void loadSoup();
+  void loadNews();
   void loadNotes();
 });
 onMounted(() => {
@@ -467,11 +521,11 @@ onBeforeUnmount(() => {
     <p v-if="offline || Object.keys(errors).length" class="home-offline" role="status"><UiIcon name="WifiOff" :size="16" /><span>{{ offline ? 'You’re offline.' : 'Home couldn’t fully refresh.' }} {{ lastRefresh ? `Showing the last available data · ${lastRefresh}.` : 'Connect to refresh Home.' }}</span><button type="button" :disabled="loading" @click="refresh">Try again</button></p>
     <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__more" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
       <template #item="{ element: card }: { element: HomeCard }">
-        <article :ref="el => setCardElement(card, el)" class="home-card" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
+        <article :ref="el => setCardElement(card, el)" class="home-card" :class="{ 'home-card--landing': card === 'soup' && newsFresh, 'home-card--line': card === 'soup' && newsRead }" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header class="home-card__header">
-            <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ card === 'soup' && soupServing ? soupServing.title : cards[card].title }}</span></RouterLink>
+            <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title" @click="card === 'soup' && newsPaper ? ($event.preventDefault(), newsReader = true) : undefined"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
             <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
-            <span v-else-if="card === 'soup' && soupServing" class="home-card__detail">{{ soupWhenLabel(soupServing) }}</span>
+            <span v-else-if="card === 'soup' && newsDetail" class="home-card__detail">{{ newsDetail }}</span>
             <span v-else-if="card === 'tasks' && tasksCard.tasks.length" class="home-card__detail">{{ tasksCard.view === 'now' ? 'Now' : 'Backlog' }}</span>
             <span v-else-if="card === 'inbox' && inboxStatus.badge" class="home-card__badge">{{ inboxStatus.badge }}</span>
             <span v-else-if="card === 'inbox' && inboxStatus.note" class="home-card__detail">{{ inboxStatus.note }}</span>
@@ -483,6 +537,7 @@ onBeforeUnmount(() => {
               </template>
             </div>
             <div class="home-card__controls">
+              <button v-if="card === 'soup' && newsRead" type="button" class="home-news-hide" aria-label="Hide until tomorrow" title="Hide until tomorrow" @click="newsHide"><UiIcon name="EyeOff" :size="18" /></button>
               <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-haspopup="menu" :aria-expanded="menu === card" title="Options. Drag to reorder." @click="menu === card ? closeMenu(card) : openMenu(card)" @keydown.alt.up.prevent="move(card, -1)" @keydown.alt.down.prevent="move(card, 1)"><UiIcon name="Ellipsis" :size="20" /></button>
             </div>
           </header>
@@ -491,12 +546,12 @@ onBeforeUnmount(() => {
             <button type="button" role="menuitemcheckbox" :aria-checked="showGratitude" @click="toggleGratitude"><span class="home-emoji home-emoji--menu" aria-hidden="true">🌅</span>Gratitude<span class="home-switch" :class="{ 'is-on': showGratitude }" aria-hidden="true" /></button>
           </div>
           <div v-else-if="menu === card" class="home-card__menu" role="menu" :aria-label="`${cards[card].title} options`" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
-            <template v-if="card === 'soup' && soup?.setUp">
-              <button type="button" role="menuitem" @click="menu = null; emit('ask', 'What\'s in my news?')"><UiIcon name="Settings" :size="16" />News settings</button>
-              <button v-if="soup.servingSpecs.length" type="button" role="menuitem" :disabled="soupBusy" @click="soupServeNow"><UiIcon name="RefreshCw" :size="16" />Get it now</button>
-              <button v-if="soupServing" type="button" role="menuitem" @click="menu = null; soupAct(soupServing, 'dismiss', '')"><UiIcon name="Check" :size="16" />Done with this</button>
+            <template v-if="card === 'soup' && news?.setUp">
+              <button v-if="newsPaper && !newsPaper.hiddenAt" type="button" role="menuitem" class="home-menu-two" @click="newsHide"><UiIcon name="EyeOff" :size="16" /><span>Hide until tomorrow<small>It comes back with tomorrow’s news</small></span></button>
+              <button type="button" role="menuitem" @click="menu = null; newsSettingsOpen = true"><UiIcon name="Settings" :size="16" />News settings</button>
+              <button type="button" role="menuitem" class="home-danger home-menu-two" @click="newsRemove"><UiIcon name="X" :size="16" /><span>Remove from Home<small>Stops your daily news</small></span></button>
             </template>
-            <button type="button" role="menuitem" class="home-danger" @click="remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
+            <button v-else type="button" role="menuitem" class="home-danger" @click="card === 'soup' ? newsRemove() : remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
           </div>
           <div class="home-card__body">
             <div v-if="cardPending(card)" class="home-skeleton" role="status" aria-label="Loading content"><i /><i /><i /></div>
@@ -582,19 +637,22 @@ onBeforeUnmount(() => {
             </template>
             <template v-else-if="card === 'accounts'"><div v-if="accountSummary" class="home-stats"><div><span class="home-muted">Income this month</span><strong>{{ accountSummary.income }}</strong></div><div><span class="home-muted">Expenses this month</span><strong>{{ accountSummary.expense }}</strong></div></div><RouterLink v-else to="/accounts" class="home-quiet">Open Accounts<UiIcon name="ArrowRight" :size="16" /></RouterLink></template>
             <HomeNotesCard v-else-if="card === 'notes'" :ref="el => { notesCard = el as typeof notesCard }" v-model:open="notesOpen" :notes="notes" @saved="noteSaved" />
-            <SoupCard v-else-if="card === 'soup'" :serving="soupServing" :set-up="Boolean(soup?.setUp)" :busy="soupBusy" @setup="emit('ask', 'Set up my news')" @act="soupAct" />
+            <NewsCard v-else-if="card === 'soup' && news" :today="news" :building="newsBuilding" @setup="emit('ask', 'Set up my news')" @open="newsReader = true" />
             <template v-else-if="card === 'people'"><template v-if="peopleCard.state === 'people'"><button v-for="person in peopleCard.people" :key="person.id" type="button" class="home-person" @click="openPersonId = person.id"><PersonAvatar :contact="person" :size="40" /><strong>{{ firstName(person.name) }}</strong><span class="home-muted home-person__since">{{ formatSinceShort(person.lastInTouchAt) || 'Not yet' }}</span></button></template><p v-else class="home-muted">All caught up.</p></template>
           </div>
         </article>
       </template>
     </draggable>
+    <button v-if="newsHidden" type="button" class="home-news-bring" @click="newsBringBack"><span aria-hidden="true">🗞️</span> Today’s news</button>
     <button type="button" class="home-add" @click="dialog = 'add'"><UiIcon name="Plus" :size="26" /><span>Add to Home</span></button>
     <AppDialog :open="dialog !== null" aria-label="Add to Home" @close="dialog = null">
       <section class="home-dialog"><header><h2>Add to Home</h2><button type="button" aria-label="Close Home editor" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>
-        <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in addCards" :key="card" type="button" :aria-label="cards[card].title" :aria-pressed="visible.includes(card)" class="home-add-tile" @click="visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
+        <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in addCards" :key="card" type="button" :aria-label="cards[card].title" :aria-pressed="visible.includes(card)" class="home-add-tile" @click="card === 'soup' ? (visible.includes(card) ? newsRemove() : newsAdd()) : visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
       </section>
     </AppDialog>
     <PersonSheet :contact="openPerson" @close="openPersonId = null" />
+    <NewsReader v-if="newsReader && newsPaper && news" :paper="newsPaper" :next-time="news.nextTime" @close="newsReader = false" @done="newsDone" @settings="newsSettingsOpen = true" @rate="newsRate" @ask="newsAsk" />
+    <NewsSettingsSheet :open="newsSettingsOpen" @close="newsSettingsOpen = false" />
     <AssistantApprovalDialog :approval="reviewApproval" :busy="Boolean(reviewApproval && busy.includes(reviewApproval.id))" :error="approvalError" @close="reviewApproval = null" @decide="decideCoreApproval" @resolved="paymentResolved" />
   </div>
 </template>
@@ -609,6 +667,19 @@ onBeforeUnmount(() => {
 .home-offline button { color: var(--ui-accent-strong); white-space: nowrap; }
 .home-card { position: relative; min-width: 0; background: var(--ui-surface); border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-sm); }
 .home-card--dragging { opacity: .4; }
+/* News: the card drops onto Home when a paper is new, and is one line once read. */
+.home-card--landing { animation: home-news-land .7s cubic-bezier(.2, 1.4, .4, 1) both; }
+@keyframes home-news-land { 0% { transform: translateY(-50px) rotate(-4deg); opacity: 0; } 60% { transform: translateY(4px) rotate(.6deg); opacity: 1; } 100% { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .home-card--landing { animation: none; } }
+.home-card--line .home-card__header { flex-wrap: nowrap; padding-bottom: 10px; }
+.home-card--line .home-card__detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.home-card--line .home-card__controls > button { width: 40px; min-width: 40px; }
+.home-card--line .home-card__body { display: none; }
+.home-card__controls > .home-news-hide { color: var(--ui-text-muted); }
+.home-news-bring { display: flex; justify-content: center; gap: 6px; justify-self: center; margin: 14px auto 0; padding: 6px 12px; background: transparent; color: var(--ui-text-muted); font-size: 14.5px; font-weight: 400; }
+.home-card__menu button.home-menu-two { height: auto; padding-top: 8px; padding-bottom: 8px; }
+.home-menu-two span { display: flex; flex-direction: column; line-height: 1.25; }
+.home-menu-two small { font-size: 12px; font-weight: 400; color: var(--ui-text-muted); }
 .home-card__header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 0 18px; }
 .home-card__title { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 40px; color: var(--ui-text); font-size: 15px; font-weight: 600; text-decoration: none; padding: 0; white-space: nowrap; }
 .home-card__title:hover { background: transparent; text-decoration: underline; text-underline-offset: 3px; }

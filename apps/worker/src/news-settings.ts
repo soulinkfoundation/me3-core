@@ -76,7 +76,15 @@ export function readTopicInputs(value: unknown, label: string): NewsTopicInput[]
 export function applyNewsPatch(taste: SoupTaste, input: Record<string, unknown>, context: { projectIds: Set<string>; defaultTime: string | null; place?: NewsPlace; city?: string; now?: Date }): SoupTaste {
   const prefs: NewsPrefs = { ...(taste.news || defaultNewsPrefs(context.defaultTime)), labels: { ...(taste.news?.labels || {}) } };
   const next: SoupTaste = { ...taste, news: prefs };
-  const remember = (topics: NewsTopicInput[]) => { for (const topic of topics) { const word = cleanSoupTopic(topic.label)!; if (topic.label.toLowerCase() === word) prefs.labels[word] = topic.label; } };
+  // A label is kept only when it carries its own capitals ("AI agents"); a plain lower-case one is shown
+  // with a capital first letter instead ("coaching" → "Coaching").
+  const remember = (topics: NewsTopicInput[]) => {
+    for (const topic of topics) {
+      const word = cleanSoupTopic(topic.label)!;
+      if (topic.label.toLowerCase() !== word) continue;
+      if (topic.label !== word) prefs.labels[word] = topic.label; else delete prefs.labels[word];
+    }
+  };
   if (input.work !== undefined) {
     const topics = readTopicInputs(input.work, "work");
     remember(topics);

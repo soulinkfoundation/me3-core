@@ -18,6 +18,8 @@ import SiteBuildAskCard from "../../components/first-site/SiteBuildAskCard.vue";
 import ChatFirstSite from "../../components/first-site/ChatFirstSite.vue";
 import ChatPeopleResults from "../../components/first-site/ChatPeopleResults.vue";
 import SoupBowl from "../../components/soup/SoupBowl.vue";
+import NewsChatCard from "../../components/news/NewsChatCard.vue";
+import { NEWS_PAPER_TOOL, NEWS_SETTINGS_READ_TOOL, NEWS_SETTINGS_TOOL, newsChatCardFromTool, type NewsChatCard as NewsChatCardData } from "../../utils/news";
 import { SOUP_SERVE_TOOL, soupServingIdFromTool, type SoupServing, type SoupServingAction } from "../../utils/soup";
 import Button from "../../components/Button.vue";
 import HomePanels from "../../components/home/HomePanels.vue";
@@ -459,6 +461,45 @@ async function soupAct(messageId: string, action: SoupServingAction, itemId: str
     soupByMessage.value = { ...soupByMessage.value, [messageId]: result.serving };
   } catch (error) { toastFromUnknown(error, "Couldn't update that"); }
 }
+// News (me3-6ptk): setup draws topic chips, then time choices, then "Read it now" under ME3's replies.
+const newsCardByMessage = ref<Record<string, NewsChatCardData>>({});
+// Once topics are on screen, ME3's next reply asks for a time. The time choices go under that reply
+// whether or not the model asked the app to show them.
+let newsTimeCardDue = false;
+function newsCardShown(messageId: string, card: NewsChatCardData) {
+  newsCardByMessage.value = { ...newsCardByMessage.value, [messageId]: card };
+  newsTimeCardDue = card.kind === "topics";
+  if (card.kind === "ready" || card.kind === "paper") newsFirstPaper = null;
+}
+// Choosing a time confirms the setup and starts today's paper; "Read it now" then goes under ME3's
+// next reply, however the model words it.
+let newsFirstPaper: Promise<NewsChatCardData | null> | null = null;
+async function newsTimeChosen(time: string) {
+  try { await api.patch("/news/settings", { time, setUp: true }); }
+  catch (error) { toastFromUnknown(error, "Couldn't save your news setup"); return; }
+  newsFirstPaper = api.post<{ paper: unknown }>("/news/build", {})
+    .then(result => newsChatCardFromTool({ card: "ready", time, paper: result.paper }))
+    .catch(() => null);
+  void submitAssistantText(`${time} please`);
+}
+async function newsShowFirstPaper(messageId: string) {
+  const pending = newsFirstPaper;
+  if (!pending) return;
+  const card = await pending;
+  if (pending !== newsFirstPaper) return;
+  newsFirstPaper = null;
+  if (card && !newsCardByMessage.value[messageId]) newsCardShown(messageId, card);
+  void homePanels.value?.refreshNews();
+}
+const lastNewsCardMessageId = computed(() => [...assistantConsoleMessages.value].reverse().find(message => message.id && newsCardByMessage.value[message.id])?.id ?? null);
+async function readNews() {
+  dismissComposer();
+  homeMode.value = true;
+  // The link's own marker is dropped, so a reload does not open the paper again.
+  const { news: _news, ...query } = route.query;
+  await router.replace({ query: { ...query, view: "home" } });
+  homePanels.value?.openNews();
+}
 function homeAsk(text: string) { void submitAssistantText(text); }
 const lastUserMessageAt = computed(() => [...chatMessages.value].reverse().find(message => message.role === "user")?.createdAt ?? null);
 async function loadSiteStarter() {
@@ -696,6 +737,8 @@ const canSendAssistantMessage = computed(
 const assistantComposerFooterRef = ref<HTMLElement | null>(null);
 useComposerClearance(assistantComposerFooterRef);
 onMounted(() => {
+  // A "Your news is ready" notification, or a link from chat, opens today's paper on Home.
+  if (routeQueryValue("news") === "open") void nextTick(() => readNews());
   void loadMissionStarter();
   void loadUpcomingEvent();
   void initializeAssistantPage().finally(() => loadSiteStarter());
@@ -1730,6 +1773,12 @@ async function submitAssistantText(
             const people = peopleRows(toolResult.data);
             if (people.length) { ensureAssistantMessage(); peopleByMessage.value = { ...peopleByMessage.value, [assistantMessageId]: people }; }
           }
+          if ([NEWS_SETTINGS_TOOL, NEWS_SETTINGS_READ_TOOL, NEWS_PAPER_TOOL].includes(String(data.toolName)) && data.state === "complete" && toolResult?.status === "ok") {
+            const card = newsChatCardFromTool(toolResult.data);
+            if (card) { ensureAssistantMessage(); newsCardShown(assistantMessageId, card); }
+            // Home shows the News card as soon as setup is confirmed.
+            if (card?.kind === "ready") void homePanels.value?.refreshNews();
+          }
           if (data.toolName === SOUP_SERVE_TOOL && data.state === "complete" && toolResult?.status === "ok") {
             const servingId = soupServingIdFromTool(toolResult.data);
             if (servingId) { ensureAssistantMessage(); void loadSoupServing(assistantMessageId, servingId); }
@@ -1754,6 +1803,8 @@ async function submitAssistantText(
 
         if (event.event === "done") {
           ensureAssistantMessage();
+          if (newsFirstPaper) void newsShowFirstPaper(assistantMessageId);
+          else if (newsTimeCardDue && !newsCardByMessage.value[assistantMessageId]) newsCardShown(assistantMessageId, { kind: "time", time: "", considered: 0, stories: 0, pages: 0 });
           assistantAwaitingResponse.value = false;
           const clientDoneAt = performance.now();
           console.info("ME3_ASSISTANT_LATENCY", {
@@ -1900,6 +1951,7 @@ function assistantToolStatusText(capabilityId: unknown): string {
   if (capabilityId === "core.people.search") return "Finding people…";
   if (capabilityId.startsWith("core.journal.")) return "Reading your Journal…";
   if (capabilityId === "core.news.serve") return "Finding something good…";
+  if (capabilityId === "core.news.paper") return "Getting today’s news ready…";
   if (capabilityId.startsWith("core.news.")) return "Checking your news…";
   if (capabilityId.startsWith("core.mission.")) return "Checking your tasks…";
   if (capabilityId.startsWith("core.social.")) return "Preparing social content…";
@@ -3105,6 +3157,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
             </div>
             <ChatPeopleResults v-if="message.id && peopleByMessage[message.id]" :people="peopleByMessage[message.id]" :busy="assistantSending" @book="bookPerson" />
             <section v-if="message.id && soupByMessage[message.id]" class="assistant-soup-bowl" aria-label="Picked for you"><SoupBowl :serving="soupByMessage[message.id]" @act="(action, itemId) => soupAct(message.id!, action, itemId)" /></section>
+            <NewsChatCard v-if="message.id && newsCardByMessage[message.id]" class="assistant-news-card" :card="newsCardByMessage[message.id]" :busy="assistantSending" :latest="message.id === lastNewsCardMessageId" @say="submitAssistantText" @time="newsTimeChosen" @read="readNews" />
           </article>
 
           <SiteBuildAskCard v-if="siteAskOpen && !siteBuilderMode" class="assistant-message assistant-message--assistant" :busy="assistantSending" @submit="submitSiteAsk" @close="closeSiteAsk" />
@@ -3837,6 +3890,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
 .assistant-listening__elapsed { color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
 .assistant-listening .button { min-width: 100px; }
 
+.assistant-news-card { margin-top: 10px; }
 .assistant-soup-bowl { box-sizing: border-box; width: min(560px, 100%); padding: 16px; border-radius: 20px; background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
 .assistant-message {
   display: flex;

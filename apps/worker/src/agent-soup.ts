@@ -45,10 +45,19 @@ export function newsPatchFromAgent(args: Record<string, unknown>, current: NewsS
 
 function describe(state: SoupTasteState) {
   const settings = describeNewsSettings(state);
+  const projects = state.projects.map(project => ({ id: project.id, name: project.name }));
+  if (settings.setUp) return { ...settings, projects };
+  const proposed = settings.work.length > 0 || settings.mine.length > 0;
+  // What to do next comes first, so even a small model acts on it instead of describing it.
   return {
+    nextStep: proposed
+      ? "Topics are proposed and shown to the owner as chips. If they have confirmed them, call core_news_settings_update with askTime true and ask what time the paper should be ready. If they have given a time, call core_news_settings_update with time and setUp true."
+      : "Call core_news_settings_update now, in this turn, with workTopics (about four plain topics for the owner's kind of work, from the snapshot or what they told you), interests (two or three things they love outside work), moreInterests (two or three more suggestions, left off) and city. If you know nothing about their work or interests yet, ask one short question first. Do not write the topics in your reply: the app shows them as chips to tap. Just say in one sentence what you based them on and ask them to tap the ones they want or add their own.",
+    // Reading while topics are proposed shows the chips again, so the owner can always see and change them.
+    ...(proposed ? { card: "topics" } : {}),
+    setupSteps: "1) propose topics with core_news_settings_update; 2) when confirmed, core_news_settings_update with askTime true; 3) when they give a time, core_news_settings_update with time and setUp true, which builds today's paper. Call it their news, never soup.",
     ...settings,
-    projects: state.projects.map(project => ({ id: project.id, name: project.name })),
-    ...(settings.setUp ? {} : { setupGuide: "Not set up yet. Setup is one short chat. 1) From the snapshot, call core_news_settings_update with workTopics (four plain topics for the owner's kind of work, each optionally '@ projectId'), interests (two or three things they love outside work, switched on), moreInterests (two or three more suggestions left off) and city. The app then shows the topics as chips the owner can tap; say in one sentence what you based them on and ask them to tap the ones they want or add their own. 2) When they say it looks good, call core_news_settings_update with askTime true and ask what time it should be ready; the app shows time choices. 3) When they give a time, call core_news_settings_update with time and setUp true; today's paper is built and the app shows a Read it now button. Reply that it is ready and when tomorrow's will be. Call it their news, never soup." }),
+    projects,
   };
 }
 

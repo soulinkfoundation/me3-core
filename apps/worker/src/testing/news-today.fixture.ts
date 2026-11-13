@@ -78,3 +78,21 @@ export function newsFixtureFor(request: { city?: string | null; topics?: string[
   const coach = /galway/i.test(request.city || "") || (request.topics || []).some(topic => /coach/i.test(topic));
   return structuredClone(coach ? NEWS_FIXTURE_COACH : NEWS_FIXTURE_FOUNDER);
 }
+
+/**
+ * The picks and notes the mockup shows, for local development without a model: the fixture then
+ * lays out all six pages with ME3's notes and actions in place.
+ */
+export function newsFixturePicks(news: NewsToday, request: { city?: string | null }) {
+  const coach = /galway/i.test(request.city || "");
+  const work = news.byTopic.slice(0, 3).map(entry => entry.stories[0]).filter(Boolean);
+  const notes = coach
+    ? [{ note: "You use AI notes with clients. Your intake form needs one line.", action: { label: "Draft the consent line", prompt: "Draft a consent line about AI note-taking for my intake form" } }, { note: "Most of your bookings come from Instagram. Your booking link still works in Stories." }, { note: "You were close to the old limit this year." }]
+    : [{ note: "Touches ME3 payments. You keep receipts already; limits are the gap.", action: { label: "Add a task", prompt: "Add a task: spending limits for agent payments" } }, { note: "This was the blocker on your payments task.", action: { label: "Reopen the task", prompt: "Reopen my Stripe Link wallets task" } }, { note: "Cheaper Haiku fallback for ME3." }];
+  const video = news.media.find(story => story.medium === "watch");
+  return {
+    lead: { id: news.frontPage[0].id, note: coach ? "Your Saturday walk-and-talk session is outdoors. Want me to message the group?" : "You’re in Galway on Sunday. I’ll check the train times." },
+    work: work.map((story, index) => ({ id: story.id, ...notes[index] })),
+    ...(video ? { video: { id: video.id, note: coach ? "Good for your Thursday group session." : "You’re writing the $49 Business page this week. Try it on that." } } : {}),
+  };
+}

@@ -13,7 +13,7 @@ import { getOwnerProfile } from "./sites";
 import { SoupUnavailableError, soupMinutes, type NewsStory, type NewsToday, type SoupBowlItem, type SoupClient, type SoupMedium } from "./soup-client";
 import { localInstant, localParts, runWithFastModel, soupClientFor } from "./soup-servings";
 import { SOUP_PLUGIN_ID, getSoupTaste, parseSoupTaste, type NewsPrefs, type SoupTaste } from "./soup-taste";
-import { newsFixtureFor, newsFixtureGood } from "./testing/news-today.fixture";
+import { newsFixtureFor, newsFixtureGood, newsFixturePicks } from "./testing/news-today.fixture";
 import { parseJsonRecord } from "./workspace-input";
 import type { Env } from "./types";
 
@@ -201,15 +201,17 @@ const LAYOUT_PROMPT = [
   "You are given today's candidate stories in sections (front, work, mine, local, media), the owner's topics, their coming week (calendar and open tasks) and the owner snapshot (mission, goals, projects, memories).",
   "Pick by id only, each story once: a front-page lead and two more front-page stories that matter most today; up to three work stories; one video and one thing to listen to from media; two stories for the owner's own topics; one local story.",
   "Different outlets often report the same event: pick it once and never place two stories about the same event.",
-  "Most stories get no note. Write a note only when a story clearly touches something specific in the snapshot, calendar or tasks (a named project, a trip, a session, a blocked task), and say what it changes for the owner in one plain sentence. Never invent facts that are not given. No emoji, no hype, no advice about feelings or health, and never mention the Wheel of Life, scores or areas.",
+  "Most stories get no note. A note that only says the story matches one of the owner's topics or interests is not a note: leave it out. Write a note only when a story clearly touches something specific in the snapshot, calendar or tasks (a named project, a trip, a session, a blocked task), and say what it changes for the owner in one plain sentence. Never invent facts that are not given. No emoji, no hype, no advice about feelings or health, and never mention the Wheel of Life, scores or areas.",
   "A work story may carry one next step (actionLabel and actionPrompt) when there is an obvious thing to do; most have none.",
   "If the owner found yesterday's paper dull, vary the mix of topics and sources.",
   "Call core_news_layout exactly once with no prose.",
 ].join(" ");
 
+/** A note has to say something about the owner's own work or week; "relevant to your interests" says nothing. */
+const EMPTY_NOTE = /^(?:relevant|related|relates|this (?:is|relates|matches|aligns)|matches|aligns|connected)\b|\byour (?:\w+ )*(?:interests?|topics?)\b/i;
 function cleanNote(value: unknown): string | undefined {
   const note = typeof value === "string" ? value.replace(/\s+/g, " ").replace(/^ME3\s*[·:-]\s*/i, "").trim() : "";
-  return note && note.length <= NOTE_MAX && !/wheel of life/i.test(note) ? note : undefined;
+  return note && note.length <= NOTE_MAX && !/wheel of life/i.test(note) && !EMPTY_NOTE.test(note) ? note : undefined;
 }
 
 /** Keeps only what the model was allowed to say: real ids, short notes, short actions. */
@@ -229,7 +231,8 @@ export function readPaperPicks(value: unknown, candidateIds: Iterable<string>): 
     const { actionLabel, actionPrompt } = entry as Record<string, unknown>;
     const label = typeof actionLabel === "string" ? actionLabel.replace(/\s+/g, " ").trim() : "";
     const prompt = typeof actionPrompt === "string" ? actionPrompt.replace(/\s+/g, " ").trim() : "";
-    return [{ ...pick, ...(label && label.length <= 32 && prompt && prompt.length <= 240 ? { action: { label, prompt } } : {}) }];
+    // A next step only stands on a story with a real note: without one there is no reason for it.
+    return [{ ...pick, ...(pick.note && label && label.length <= 32 && prompt && prompt.length <= 240 ? { action: { label, prompt } } : {}) }];
   }).slice(0, WORK_STORIES);
   const video = one(raw.video); if (video) picks.video = video;
   const listen = id(raw.listen); if (listen) picks.listen = { id: listen };
@@ -287,8 +290,19 @@ export function sameEvent(a: string, b: string): boolean {
   return shared / (left.size + right.size - shared) >= 0.5;
 }
 
-function toPaperStory(story: NewsStory, extra: { tag?: string; note?: string; action?: PaperStory["action"] } = {}): PaperStory {
+/** A note that mostly repeats the story's own words adds nothing, so it is not printed. */
+export function noteAddsSomething(note: string, story: Pick<NewsStory, "headline" | "summary">): boolean {
+  const said = [...words(note)];
+  if (said.length < 3) return true;
+  const printed = words(`${story.headline} ${story.summary}`);
+  return said.filter(word => printed.has(word)).length / said.length < 0.6;
+}
+
+function toPaperStory(story: NewsStory, given: { tag?: string; note?: string; action?: PaperStory["action"] } = {}): PaperStory {
   const minutes = soupMinutes(story);
+  const note = given.note && noteAddsSomething(given.note, story) ? given.note : undefined;
+  // A next step only stands beside a real note.
+  const extra = { tag: given.tag, note, action: note ? given.action : undefined };
   return {
     id: story.id, headline: story.headline, summary: story.summary, url: story.url, source: story.sources[0]?.name || "", medium: story.medium,
     ...(story.image ? { image: story.image.url } : {}), ...(story.publishedAt ? { publishedAt: story.publishedAt } : {}),
@@ -482,14 +496,17 @@ export async function composeNewsPaper(env: Env, ownerId: string, options: Compo
     if (!prefs) return fail("News is not set up");
     const client = soupClientFor(env);
     const exclude = await shownStoryIds(env, ownerId, now);
-    const candidates = toNewsCandidates(await gatherNews(env, client, taste, prefs, exclude, now), taste);
+    const news = await gatherNews(env, client, taste, prefs, exclude, now);
+    const candidates = toNewsCandidates(news, taste);
     if (!allCandidateIds(candidates).length) return fail("Soup had no stories");
-    const [picks, weather, good] = await Promise.all([
+    const [modelPicks, weather, good] = await Promise.all([
       loadWeek(env, ownerId, now).then(week => runWithFastModel(env, ownerId, "News picks", (model, ownerSnapshot, timeoutMs) =>
         writeNewsPicks(model, { candidates, taste, ownerSnapshot, week, date: options.dateKey, city: prefs.city, lastRating: prefs.lastRating }, AbortSignal.timeout(timeoutMs)))),
       prefs.lat !== null && prefs.lon !== null ? fetchWeather({ lat: prefs.lat, lon: prefs.lon }) : Promise.resolve(null),
       env.ME3_SOUP_NEWS_FIXTURE ? Promise.resolve(newsFixtureGood({ city: prefs.city })) : findGoodThing(client, exclude),
     ]);
+    // Local development on the fixture has no model to ask, so the fixture brings the mockup's picks.
+    const picks = modelPicks ?? (env.ME3_SOUP_NEWS_FIXTURE && news.frontPage.length ? readPaperPicks(newsFixturePicks(news, { city: prefs.city }), allCandidateIds(candidates)) : null);
     const laidOut = layoutPaper(candidates, picks, { labels: prefs.labels, city: prefs.city, weather, good });
     if (!laidOut) return fail("Nothing to lead with");
     const counts = countPaper(laidOut.pages, candidates.considered);

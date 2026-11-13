@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newsPatchFromAgent } from "./agent-soup";
-import { clockTime, countPaper, layoutPaper, newsBuildDue, newsDueMinutes, newsFromSearch, readPaperPicks, sameEvent, shouldBuildPaper, toNewsCandidates, writeNewsPicks } from "./news-paper";
+import { clockTime, countPaper, layoutPaper, noteAddsSomething, newsBuildDue, newsDueMinutes, newsFromSearch, readPaperPicks, sameEvent, shouldBuildPaper, toNewsCandidates, writeNewsPicks } from "./news-paper";
 import { applyNewsPatch, defaultNewsPrefs, describeNewsSettings, newsIsSetUp } from "./news-settings";
 import { cityFromTimezone, cleanCityName, describeWeather, geocodeCity } from "./news-weather";
 import { SoupUnavailableError, newsTodayQuery, readNewsToday, type SoupClient } from "./soup-client";
@@ -114,6 +114,16 @@ describe("news layout", () => {
     expect(result.pages.topics!.stories.map(story => story.tag)).toEqual(["Surfing", "Poetry"]);
   });
 
+  it("does not print a note that only repeats the story", () => {
+    const storm = { headline: "Storm Bram brings orange wind warnings to the west coast", summary: "Gusts up to 130 km/h from Saturday afternoon. Ferries to the islands are cancelled." };
+    expect(noteAddsSomething("Ferries to the islands are cancelled, so plan any travel to or from the west coast around the storm.", storm)).toBe(false);
+    expect(noteAddsSomething("You’re in Galway on Sunday. I’ll check the train times.", storm)).toBe(true);
+    expect(noteAddsSomething("Touches ME3 payments. You keep receipts already; limits are the gap.", { headline: "EU agrees first rules for AI agents that spend money for people", summary: "Agents need a named human, a spending limit and a receipt trail by 2028." })).toBe(true);
+    const candidates = toNewsCandidates(NEWS_FIXTURE_FOUNDER, founderTaste());
+    const result = layoutPaper(candidates, { lead: { id: candidates.front[0].id, note: "Ferries to the islands are cancelled and wind warnings cover the west coast." } }, extras)!;
+    expect(result.pages.front.lead.note).toBeUndefined();
+  });
+
   it("drops what the owner wants less of", () => {
     const candidates = toNewsCandidates(NEWS_FIXTURE_FOUNDER, { ...founderTaste(), lessOf: ["storm"] });
     expect(candidates.front.some(story => /storm/i.test(story.headline))).toBe(false);
@@ -140,12 +150,16 @@ describe("news picks", () => {
     const picks = readPaperPicks({
       lead: { id: "a", note: "ME3 · You're in Galway on Sunday." },
       briefs: ["b", "nope", "c", "a"],
-      work: [{ id: "b", note: "x".repeat(141), actionLabel: "Add a task", actionPrompt: "Add a task: check limits" }, { id: "c", note: "Your Wheel of Life says work is low." }, { id: "zzz" }],
+      work: [{ id: "b", note: "This was the blocker on your payments task.", actionLabel: "Add a task", actionPrompt: "Add a task: check limits" }, { id: "c", note: "Your Wheel of Life says work is low.", actionLabel: "Add a task", actionPrompt: "Add a task" }, { id: "zzz" }],
       video: { id: "nope" }, listen: { id: "c" }, topics: "none", local: { id: "a" },
     }, ids)!;
     expect(picks.lead).toEqual({ id: "a", note: "You're in Galway on Sunday." });
     expect(picks.briefs).toEqual(["b", "c"]);
-    expect(picks.work).toEqual([{ id: "b", action: { label: "Add a task", prompt: "Add a task: check limits" } }, { id: "c" }]);
+    expect(picks.work).toEqual([{ id: "b", note: "This was the blocker on your payments task.", action: { label: "Add a task", prompt: "Add a task: check limits" } }, { id: "c" }]);
+    // A note that only says "this matches your topics", or runs long, is dropped, and its action with it.
+    for (const note of ["Relevant to your AI agents and online payments interests: limits and receipts.", "This relates to running a small business.", "Good for your poetry interest.", "x".repeat(141)]) {
+      expect(readPaperPicks({ lead: { id: "a" }, work: [{ id: "b", note, actionLabel: "Add a task", actionPrompt: "Add a task" }] }, ids)!.work).toEqual([{ id: "b" }]);
+    }
     expect(picks.video).toBeUndefined();
     expect(picks.listen).toEqual({ id: "c" });
     expect(picks.topics).toEqual([]);
@@ -198,6 +212,8 @@ describe("news settings", () => {
     expect(settings.setUp).toBe(false);
     expect(settings.work).toEqual([{ word: "ai agents", label: "AI agents", on: true }, { word: "cloudflare", label: "Cloudflare", on: true }, { word: "marketing", label: "Marketing", on: false }]);
     expect(settings.mine.map(chip => chip.label)).toEqual(["Surfing", "Irish history"]);
+    // A lower-case topic from a model still reads as a title on its chip.
+    expect(describeNewsSettings({ taste: applyNewsPatch(emptySoupTaste(), { work: ["coaching", "Instagram marketing"] }, context), setUp: false, setUpAt: null, projects: [] }).work.map(chip => chip.label)).toEqual(["Coaching", "Instagram marketing"]);
   });
 
   it("is set up only once confirmed with at least one topic, and snaps the time to a quarter hour", () => {
