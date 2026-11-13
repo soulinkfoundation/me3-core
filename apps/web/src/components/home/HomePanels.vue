@@ -111,7 +111,7 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
   tasks: { title: "Tasks", href: "/tasks", emoji: "✅" },
   mission: { title: "Mission", href: "/mission", emoji: "🚀" },
   accounts: { title: "Accounts", href: "/accounts", emoji: "💰" },
-  soup: { title: "Soup", href: "/?view=home", emoji: "🍲" },
+  soup: { title: "News", href: "/?view=home", emoji: "🗞️" },
   notes: { title: "Notes", href: "/journal?tab=notes", emoji: "🗒️" },
 };
 // Notes (me3-qvyt): opt-in. The header's mic and + open the field inside the card.
@@ -127,29 +127,29 @@ function noteSaved(note: HomeNote) { notes.value = [note, ...notes.value].slice(
 const peopleCard = computed(() => rankHomePeople(contactsStore.contacts, contact => contact.reminderAt));
 const openPersonId = ref<string | null>(null);
 const openPerson = computed(() => contactsStore.contacts.find(contact => contact.id === openPersonId.value) || null);
-// The Human Soup (me3-ydf4): the cauldron intro until taste is set up, then only while a serving is open.
+// News (me3-6ptk). The card id stays "soup" in saved Home layouts; owners only ever see "News".
 const soup = ref<SoupToday | null>(null);
 const soupServing = computed<SoupServing | null>(() => soup.value?.servings[0] ?? null);
 const soupShow = computed(() => Boolean(soup.value) && (!soup.value!.setUp || Boolean(soupServing.value)));
 const soupBusy = ref(false);
 async function loadSoup() {
-  await resource("soup", async () => { const today = await api.get<SoupToday>("/soup/today"); if (!disposed) soup.value = today ?? null; });
+  await resource("soup", async () => { const today = await api.get<SoupToday>("/news/today"); if (!disposed) soup.value = today ?? null; });
 }
 async function soupAct(serving: SoupServing, action: SoupServingAction, itemId: string) {
   if (soupBusy.value) return;
   soupBusy.value = true;
   try {
-    const result = await api.post<{ serving: SoupServing }>(`/soup/servings/${encodeURIComponent(serving.id)}/act`, { action, itemId });
+    const result = await api.post<{ serving: SoupServing }>(`/news/servings/${encodeURIComponent(serving.id)}/act`, { action, itemId });
     if (soup.value) soup.value = { ...soup.value, servings: soup.value.servings.map(item => item.id === result.serving.id ? result.serving : item).filter(item => item.status === "open") };
     if (action === "later") toastSuccess("Kept on Home until tomorrow");
-  } catch (error) { toastFromUnknown(error, "Couldn't update your soup"); }
+  } catch (error) { toastFromUnknown(error, "Couldn't update your news"); }
   finally { soupBusy.value = false; }
 }
 async function soupServeNow() {
   menu.value = null;
   if (soupBusy.value) return;
   soupBusy.value = true;
-  try { await api.post("/soup/serve", { servingId: soup.value?.servingSpecs[0]?.id ?? "morning" }); await loadSoup(); toastSuccess("Served"); }
+  try { await api.post("/news/serve", { servingId: soup.value?.servingSpecs[0]?.id ?? "morning" }); await loadSoup(); toastSuccess("Served"); }
   catch (error) { toastFromUnknown(error, "Couldn't serve just now"); }
   finally { soupBusy.value = false; }
 }
@@ -492,8 +492,8 @@ onBeforeUnmount(() => {
           </div>
           <div v-else-if="menu === card" class="home-card__menu" role="menu" :aria-label="`${cards[card].title} options`" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
             <template v-if="card === 'soup' && soup?.setUp">
-              <button type="button" role="menuitem" @click="menu = null; emit('ask', 'What\'s in my soup?')"><UiIcon name="Search" :size="16" />Your soup</button>
-              <button v-if="soup.servingSpecs.length" type="button" role="menuitem" :disabled="soupBusy" @click="soupServeNow"><UiIcon name="RefreshCw" :size="16" />Serve now</button>
+              <button type="button" role="menuitem" @click="menu = null; emit('ask', 'What\'s in my news?')"><UiIcon name="Settings" :size="16" />News settings</button>
+              <button v-if="soup.servingSpecs.length" type="button" role="menuitem" :disabled="soupBusy" @click="soupServeNow"><UiIcon name="RefreshCw" :size="16" />Get it now</button>
               <button v-if="soupServing" type="button" role="menuitem" @click="menu = null; soupAct(soupServing, 'dismiss', '')"><UiIcon name="Check" :size="16" />Done with this</button>
             </template>
             <button type="button" role="menuitem" class="home-danger" @click="remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
@@ -582,7 +582,7 @@ onBeforeUnmount(() => {
             </template>
             <template v-else-if="card === 'accounts'"><div v-if="accountSummary" class="home-stats"><div><span class="home-muted">Income this month</span><strong>{{ accountSummary.income }}</strong></div><div><span class="home-muted">Expenses this month</span><strong>{{ accountSummary.expense }}</strong></div></div><RouterLink v-else to="/accounts" class="home-quiet">Open Accounts<UiIcon name="ArrowRight" :size="16" /></RouterLink></template>
             <HomeNotesCard v-else-if="card === 'notes'" :ref="el => { notesCard = el as typeof notesCard }" v-model:open="notesOpen" :notes="notes" @saved="noteSaved" />
-            <SoupCard v-else-if="card === 'soup'" :serving="soupServing" :set-up="Boolean(soup?.setUp)" :busy="soupBusy" @setup="emit('ask', 'Set up my soup')" @act="soupAct" />
+            <SoupCard v-else-if="card === 'soup'" :serving="soupServing" :set-up="Boolean(soup?.setUp)" :busy="soupBusy" @setup="emit('ask', 'Set up my news')" @act="soupAct" />
             <template v-else-if="card === 'people'"><template v-if="peopleCard.state === 'people'"><button v-for="person in peopleCard.people" :key="person.id" type="button" class="home-person" @click="openPersonId = person.id"><PersonAvatar :contact="person" :size="40" /><strong>{{ firstName(person.name) }}</strong><span class="home-muted home-person__since">{{ formatSinceShort(person.lastInTouchAt) || 'Not yet' }}</span></button></template><p v-else class="home-muted">All caught up.</p></template>
           </div>
         </article>

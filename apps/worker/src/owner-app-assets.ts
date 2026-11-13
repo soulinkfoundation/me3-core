@@ -12,7 +12,6 @@ export const OWNER_APP_ASSET_PATHS = [
   "/me3-logo-light.png", "/me3-logo-dark.png",
   "/me3-dog-head-emoji-smooth.png", "/me3-dog-head-emoji-smooth.webp",
   "/me3-dog-head-panting.gif", "/me3-dog-head-panting.webp",
-  "/soup-cauldron.webp",
 ];
 
 const ASSET_DIRECTORIES = new Set(["/assets", "/icons", "/images", "/landing-page-lab"]);

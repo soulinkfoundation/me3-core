@@ -106,7 +106,7 @@ function serialize(row: ServingRow): SoupServing {
 // ── Picks: one small model call ─────────────────────────────
 
 const picksTool: AgentTool = {
-  name: "core_soup_picks",
+  name: "core_news_picks",
   description: "Choose the items to serve and write one for-you line for each.",
   parameters: {
     type: "object",
@@ -139,7 +139,7 @@ const PICKS_PROMPT = [
   "Pick the number asked for, in order of fit. Prefer items that touch a live project, the mission or a stated interest; mix the two lanes when you can; drop anything that matches a less-of topic; drop near-duplicates.",
   "The for-you line is the product: say why this item matters to this owner this week, from a specific project, goal, mission line or interest. One plain sentence, no emoji, no hype, no second-guessing their feelings. Never give emotional support or advice about their inner life. Never mention the Wheel of Life, scores or areas, even if they shaped your choice. Never invent facts that are not in the snapshot.",
   "When nothing in the snapshot fits an item, say what the item gives in one plain sentence rather than forcing a link.",
-  "Call core_soup_picks exactly once with no prose.",
+  "Call core_news_picks exactly once with no prose.",
 ].join(" ");
 
 export async function writeSoupPicks(
@@ -441,7 +441,7 @@ export async function serveSoupNow(env: Env, ownerId: string, servingId: string,
   const owner = await getOwnerProfile(env, ownerId);
   if (!owner) throw new JournalInputError("Owner not found", 404);
   const { taste, setUp } = await getSoupTaste(env, ownerId);
-  if (!setUp) throw new JournalInputError("Set up your soup with ME3 first");
+  if (!setUp) throw new JournalInputError("Set up your news with ME3 first");
   const serving = taste.servings.find(item => item.id === servingId) ?? (servingId === "morning" ? taste.servings.find(item => item.kind === "headlines") : undefined);
   if (!serving) throw new JournalInputError("No such serving", 404);
   const timezone = normalizeTimeZone(owner.timezone) || "UTC";
@@ -522,5 +522,5 @@ export async function actOnSoupServing(env: Env, ownerId: string, id: string, in
 export function soupBriefingLine(serving: Pick<SoupServing, "kind" | "items"> | null): string | null {
   if (!serving || serving.kind !== "headlines" || !serving.items.length) return null;
   const rest = serving.items.length - 1;
-  return `🍲 ${serving.items[0].title}${rest > 0 ? `, + ${rest} more` : ""}`;
+  return `🗞️ ${serving.items[0].title}${rest > 0 ? `, + ${rest} more` : ""}`;
 }

@@ -443,11 +443,11 @@ const siteMissing = ref(false);
 const siteAskOpen = ref(routeQueryValue("build") === "site");
 const findSomeonePending = ref(false);
 const peopleByMessage = ref<Record<string, PersonRow[]>>({});
-// A bowl served in chat (core_soup_serve) is drawn under the reply from the stored serving, and waits on Home too.
+// A bowl served in chat (core_news_serve) is drawn under the reply from the stored serving, and waits on Home too.
 const soupByMessage = ref<Record<string, SoupServing>>({});
 async function loadSoupServing(messageId: string, servingId: string) {
   try {
-    const { serving } = await api.get<{ serving: SoupServing }>(`/soup/servings/${encodeURIComponent(servingId)}`);
+    const { serving } = await api.get<{ serving: SoupServing }>(`/news/servings/${encodeURIComponent(servingId)}`);
     soupByMessage.value = { ...soupByMessage.value, [messageId]: serving };
   } catch { /* The reply still stands without the card. */ }
 }
@@ -455,9 +455,9 @@ async function soupAct(messageId: string, action: SoupServingAction, itemId: str
   const serving = soupByMessage.value[messageId];
   if (!serving) return;
   try {
-    const result = await api.post<{ serving: SoupServing }>(`/soup/servings/${encodeURIComponent(serving.id)}/act`, { action, itemId });
+    const result = await api.post<{ serving: SoupServing }>(`/news/servings/${encodeURIComponent(serving.id)}/act`, { action, itemId });
     soupByMessage.value = { ...soupByMessage.value, [messageId]: result.serving };
-  } catch (error) { toastFromUnknown(error, "Couldn't update your soup"); }
+  } catch (error) { toastFromUnknown(error, "Couldn't update that"); }
 }
 function homeAsk(text: string) { void submitAssistantText(text); }
 const lastUserMessageAt = computed(() => [...chatMessages.value].reverse().find(message => message.role === "user")?.createdAt ?? null);
@@ -1899,8 +1899,8 @@ function assistantToolStatusText(capabilityId: unknown): string {
   if (capabilityId.startsWith("core.scheduling.")) return "Checking availability…";
   if (capabilityId === "core.people.search") return "Finding people…";
   if (capabilityId.startsWith("core.journal.")) return "Reading your Journal…";
-  if (capabilityId === "core.soup.serve") return "Ladling your soup…";
-  if (capabilityId.startsWith("core.soup.")) return "Checking your soup…";
+  if (capabilityId === "core.news.serve") return "Finding something good…";
+  if (capabilityId.startsWith("core.news.")) return "Checking your news…";
   if (capabilityId.startsWith("core.mission.")) return "Checking your tasks…";
   if (capabilityId.startsWith("core.social.")) return "Preparing social content…";
   if (capabilityId.startsWith("core.sites.")) return "Checking your site…";
@@ -3104,7 +3104,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
               </button>
             </div>
             <ChatPeopleResults v-if="message.id && peopleByMessage[message.id]" :people="peopleByMessage[message.id]" :busy="assistantSending" @book="bookPerson" />
-            <section v-if="message.id && soupByMessage[message.id]" class="assistant-soup-bowl" aria-label="Bowl from The Human Soup"><SoupBowl :serving="soupByMessage[message.id]" @act="(action, itemId) => soupAct(message.id!, action, itemId)" /></section>
+            <section v-if="message.id && soupByMessage[message.id]" class="assistant-soup-bowl" aria-label="Picked for you"><SoupBowl :serving="soupByMessage[message.id]" @act="(action, itemId) => soupAct(message.id!, action, itemId)" /></section>
           </article>
 
           <SiteBuildAskCard v-if="siteAskOpen && !siteBuilderMode" class="assistant-message assistant-message--assistant" :busy="assistantSending" @submit="submitSiteAsk" @close="closeSiteAsk" />

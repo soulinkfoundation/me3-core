@@ -7,7 +7,7 @@ import type { AgentModel } from "../../../packages/agent/src/types";
 
 // Failure modes: a pick that names an item Soup never offered, a for-you line that leaks the
 // Wheel of Life or runs long, a serving composed twice in one day or outside its window,
-// project text or names reaching a Soup query, and a 🍲 line that pushes the briefing past
+// project text or names reaching a Soup query, and a 🗞️ line that pushes the briefing past
 // its push budget.
 describe("soup picks", () => {
   it("keeps only picks for real candidates with short, plain for-you lines", () => {
@@ -27,12 +27,12 @@ describe("soup picks", () => {
 
   it("forces the picks tool and sends taste words, candidates and the snapshot", async () => {
     let seen: Parameters<AgentModel["step"]>[0] | undefined;
-    const model = { id: "fast", async step(step) { seen = step; return { text: "", toolCalls: [{ id: "1", name: "core_soup_picks", arguments: { picks: [{ itemId: "yt:a", forYou: "Fits the Soup launch page you are writing." }] } }] }; } } as AgentModel;
+    const model = { id: "fast", async step(step) { seen = step; return { text: "", toolCalls: [{ id: "1", name: "core_news_picks", arguments: { picks: [{ itemId: "yt:a", forYou: "Fits the Soup launch page you are writing." }] } }] }; } } as AgentModel;
     const taste = { ...emptySoupTaste(), workTopics: [{ topic: "agent payments", projectId: "p1", source: "project" as const }], interests: ["poetry"] };
     const candidate = { id: "yt:a", soup: "hackertube", soupTitle: "HackerTube", title: "Working backwards", url: "https://youtu.be/a", creator: "AWS", kind: "video" as const, medium: "listen" as const, minutes: 17, summary: "PR-FAQ first.", why: "HN loves it.", forYou: null, state: "served" as const };
     const picks = await writeSoupPicks(model, { candidates: [candidate], taste, ownerSnapshot: "Mission: ship ME3 payments", count: 1, occasion: "a 20-minute walk" }, new AbortController().signal);
     expect(picks).toEqual([{ itemId: "yt:a", forYou: "Fits the Soup launch page you are writing." }]);
-    expect(seen?.toolChoice).toBe("core_soup_picks");
+    expect(seen?.toolChoice).toBe("core_news_picks");
     expect(String(seen?.messages[1].content)).toContain("ship ME3 payments");
   });
 });
@@ -113,12 +113,12 @@ describe("soup taste from the agent", () => {
 describe("morning briefing soup line", () => {
   it("adds the first headline and a count when it fits, and never cuts the briefing", () => {
     const serving = { kind: "headlines" as const, items: [{ title: "Stripe opens Link agent wallets in the UK" }, { title: "b" }, { title: "c" }] as never };
-    expect(soupBriefingLine(serving)).toBe("🍲 Stripe opens Link agent wallets in the UK, + 2 more");
+    expect(soupBriefingLine(serving)).toBe("🗞️ Stripe opens Link agent wallets in the UK, + 2 more");
     expect(soupBriefingLine({ kind: "pick", items: [{ title: "x" }] as never })).toBeNull();
-    expect(withSoupLine({ title: "t", body: "Design review at 10:00." }, soupBriefingLine(serving)).body).toBe("Design review at 10:00. 🍲 Stripe opens Link agent wallets in the UK, + 2 more");
+    expect(withSoupLine({ title: "t", body: "Design review at 10:00." }, soupBriefingLine(serving)).body).toBe("Design review at 10:00. 🗞️ Stripe opens Link agent wallets in the UK, + 2 more");
     const full = { title: "t", body: "x".repeat(232) };
-    expect(withSoupLine(full, "🍲 Something").body).toBe(full.body);
-    const tight = withSoupLine({ title: "t", body: "x".repeat(200) }, "🍲 A very long headline that will not fit in the remaining room at all").body;
+    expect(withSoupLine(full, "🗞️ Something").body).toBe(full.body);
+    const tight = withSoupLine({ title: "t", body: "x".repeat(200) }, "🗞️ A very long headline that will not fit in the remaining room at all").body;
     expect(tight.length).toBeLessThanOrEqual(240);
     expect(tight.endsWith("…")).toBe(true);
   });

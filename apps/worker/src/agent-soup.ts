@@ -1,5 +1,5 @@
-// The agent's side of The Human Soup (me3-ydf4): the services behind core_soup_serve,
-// core_soup_taste_read and core_soup_taste_update, and the one-time setup offer in chat.
+// The agent's side of News (me3-6ptk, on the Soup code from me3-ydf4): the services behind core_news_serve,
+// core_news_settings_read and core_news_settings_update, and the one-time setup offer in chat.
 import type { AgentSoupServices } from "../../../packages/agent/src/tools/services";
 import { JournalInputError } from "./journal";
 import { normalizeDailyBriefingTime } from "./morning-calendar-push";
@@ -61,7 +61,7 @@ function describe(state: SoupTasteState, briefingTime: string) {
     headsUp: taste.headsUp,
     projects: state.projects.map(project => ({ id: project.id, name: project.name })),
     briefingTime,
-    ...(state.setUp ? {} : { setupGuide: `Not set up yet. Propose: For your work (four to six topic words from the active projects above, each as 'topic @ projectId') and ask what they love outside work; then ask whether to bring them something at set times (suggest headlines at ${briefingTime}, their briefing time, and something longer in the evening) or only when they ask. Wait for their answer, then call core_soup_taste_update once with setUp true.` }),
+    ...(state.setUp ? {} : { setupGuide: `Not set up yet. Propose: For your work (four to six topic words from the active projects above, each as 'topic @ projectId') and ask what they love outside work; then ask whether to bring them something at set times (suggest headlines at ${briefingTime}, their briefing time, and something longer in the evening) or only when they ask. Wait for their answer, then call core_news_settings_update once with setUp true. Call it their news, never soup.` }),
   };
 }
 
@@ -73,14 +73,14 @@ export function createAgentSoupServices(env: Env, ownerId: string): AgentSoupSer
   return {
     async serve(input) {
       const serving: SoupServing | null = await serveSoupAsk(env, ownerId, input);
-      if (!serving) return { served: false, note: "The Human Soup had nothing that fits right now. Say so in one line; do not invent an item." };
+      if (!serving) return { served: false, note: "Nothing that fits turned up right now. Say so in one line; do not invent an item." };
       const [pick, ...also] = serving.items;
       return {
         served: true,
         servingId: serving.id,
         pick: pick ? { title: pick.title, by: pick.creator, soup: pick.soupTitle, minutes: pick.minutes, medium: pick.medium, url: pick.url, forYou: pick.forYou, why: pick.why } : null,
         alsoGood: also.map(item => ({ title: item.title, minutes: item.minutes, url: item.url })),
-        note: "The web app shows the bowl card under your reply and it waits on Home. Reply in one short line (why this one, in your words); do not repeat the title, link or list the items.",
+        note: "The web app shows the pick as a card under your reply. Reply in one short line (why this one, in your words); do not repeat the title, link or list the items. Never call it soup or a bowl.",
       };
     },
     async readTaste() {
@@ -105,5 +105,5 @@ export function createAgentSoupServices(env: Env, ownerId: string): AgentSoupSer
 export async function soupSetupHint(env: Env, ownerId: string): Promise<string | null> {
   if (!await soupSuggestionDue(env, ownerId)) return null;
   if (!await markSoupSuggested(env, ownerId)) return null;
-  return "The Human Soup (data): on, not set up. After handling this turn's request, offer once, in one sentence, to serve the owner good things to read, watch and listen to, picked for their projects and what they love; it takes about a minute and they can say 'Set up my soup'. Do not set it up unless they say yes.";
+  return "News (data): on, not set up. After handling this turn's request, offer once, in one sentence, to have the owner's news ready every morning, picked for their work and the topics they love; it takes about a minute and they can say 'Set up my news'. Do not set it up unless they say yes.";
 }

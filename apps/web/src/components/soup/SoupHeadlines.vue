@@ -13,7 +13,7 @@ const emit = defineEmits<{ act: [action: SoupServingAction, itemId: string] }>()
       <span class="soup-hl__title">{{ item.title }} <span class="soup-hl__src">· {{ item.creator || item.soupTitle }}</span></span>
       <span v-if="item.forYou" class="soup-foryou">{{ item.forYou }}</span>
     </a>
-    <p v-if="serving.fallback" class="soup-headlines__note">Nothing new in the pot today, so these are older picks.</p>
+    <p v-if="serving.fallback" class="soup-headlines__note">Not much new today, so these are older picks.</p>
   </div>
 </template>
 

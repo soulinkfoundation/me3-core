@@ -4,8 +4,8 @@ import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import { soupActionIcon, soupActionLabel, soupHadIt, soupPick, type SoupServing, type SoupServingAction } from "../../utils/soup";
 
-// One pick from The Human Soup: the picture, the title and who made it, ME3's for-you line,
-// and Soup's own summary and quote behind "More". Listen/Watch/Read opens the original.
+// One pick asked for in chat (owners never see the word Soup): the picture, the title and who made it, ME3's for-you line,
+// and the source's own summary and quote behind "More". Listen/Watch/Read opens the original.
 const props = defineProps<{ serving: SoupServing; busy?: boolean; compact?: boolean }>();
 const emit = defineEmits<{ act: [action: SoupServingAction, itemId: string] }>();
 const open = ref(false);

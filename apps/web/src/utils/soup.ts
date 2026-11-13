@@ -1,6 +1,6 @@
 // The Human Soup on web (me3-ydf4.4): shared types and small helpers for the Home card and the chat bowl.
 import type { UiIconName } from "./icons";
-export const SOUP_SERVE_TOOL = "core_soup_serve";
+export const SOUP_SERVE_TOOL = "core_news_serve";
 
 export type SoupMedium = "watch" | "listen" | "read";
 export type SoupServingItem = {
@@ -39,7 +39,7 @@ export type SoupServing = {
 export type SoupToday = { setUp: boolean; servings: SoupServing[]; servingSpecs: Array<{ id: string; name: string; time: string; kind: "headlines" | "pick" }> };
 export type SoupServingAction = "open" | "finish" | "like" | "dislike" | "later" | "dismiss";
 
-/** The serving id a core_soup_serve result points at, or null when nothing was served. */
+/** The serving id a core_news_serve result points at, or null when nothing was served. */
 export function soupServingIdFromTool(data: unknown): string | null {
   const row = data && typeof data === "object" ? data as { served?: unknown; servingId?: unknown } : null;
   return row?.served === true && typeof row.servingId === "string" ? row.servingId : null;

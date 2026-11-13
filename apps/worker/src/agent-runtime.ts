@@ -91,7 +91,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
         prepareAgentImageInputs(env,imageScope,input.attachments||[],signal),
         loadAgentAttachmentManifest(env,imageScope,input.attachments||[]),
       ]);
-      // Soup is offered once in chat, after ME3 knows the owner's projects (me3-ydf4).
+      // News is offered once in chat, after ME3 knows the owner's projects (me3-6ptk; plugin id is still me3.soup).
       const soupHint=enabledPluginIds.has("me3.soup")?await soupSetupHint(env,input.userId):null;
       ownerSnapshot=[snapshot.prompt,soupHint].filter(Boolean).join("\n\n");
       const content=[input.messageText,input.attachmentTextContext].filter(Boolean).join("\n\n");
@@ -327,7 +327,7 @@ export function isToolAvailable(name:string,services:AgentDomainServices):boolea
   if(name==="core_scheduling_request_profile")return Boolean(services.scheduling?.requestNetwork);
   if(name==="core_scheduling_book_free_call")return Boolean(services.scheduling?.planFreeCall&&services.scheduling?.bookFreeCall);
   if(name.startsWith("core_cards_"))return Boolean(services.cards);
-  if(name.startsWith("core_soup_"))return Boolean(services.soup);
+  if(name.startsWith("core_news_"))return Boolean(services.soup);
   if(name==="core_social_site_post_share")return Boolean(services.socialShare);
   if(name.startsWith("core_coding_"))return Boolean(services.coding);
   if(name==="core_scheduling_approve")return Boolean(services.scheduling?.approve);
@@ -338,7 +338,7 @@ export function isToolAvailable(name:string,services:AgentDomainServices):boolea
 // turns, and the first-run site build (the web app's "Build me a landing page
 // site for" starter) starts with the sites group, so neither pays a loader step.
 const THREAD_TOOL_GROUP_TURNS=8;
-const TOOL_GROUP_HINTS:Array<[RegExp,string]>=[[/\b(?:landing page|web ?site|web ?page|home ?page|my site)\b/i,"sites"],[/\b(?:soup|headlines|anything good|something (?:good |short |long )?to (?:read|watch|listen)|podcast)\b/i,"soup"]];
+const TOOL_GROUP_HINTS:Array<[RegExp,string]>=[[/\b(?:landing page|web ?site|web ?page|home ?page|my site)\b/i,"sites"],[/\b(?:news|soup|headlines|anything good|something (?:good |short |long )?to (?:read|watch|listen)|podcast)\b/i,"news"]];
 async function loadThreadToolGroups(env:Env,scope:{ownerId:string;threadId:string;turnId:string}):Promise<string[]> {
   const rows=await env.DB.prepare("SELECT trace_json FROM me3_agent_turns WHERE owner_id=? AND thread_id=? AND turn_id<>? AND trace_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?").bind(scope.ownerId,scope.threadId,scope.turnId,THREAD_TOOL_GROUP_TURNS).all<{trace_json:string}>();
   const groups=new Set<string>();
