@@ -77,7 +77,34 @@ const taskSaving = ref(false);
 const taskActionId = ref("");
 const selectedTask = ref<WorkspaceTask | null>(null);
 const taskDialogOpen = ref(false);
-const taskTitleInput = ref<HTMLInputElement | null>(null);
+const taskTitleInput = ref<HTMLTextAreaElement | null>(null);
+const taskMenuOpen = ref(false);
+// The circle beside the title completes the task; the Status chip only chooses between Now and Backlog.
+const openTaskStatus = ref<"in_progress" | "backlog">("in_progress");
+const taskDraftDone = computed(() => taskDraft.value.status === "done");
+const taskDraftProjectName = computed(() => projects.value.find((project) => project.id === taskDraft.value.projectId)?.name || "Project");
+const taskDraftDateLabel = computed(() => {
+  const value = taskDraft.value.scheduledFor;
+  if (!value) return "Add date";
+  const date = new Date(`${value.slice(0, 10)}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" }).format(date);
+});
+function setOpenTaskStatus(status: string) {
+  openTaskStatus.value = status === "backlog" ? "backlog" : "in_progress";
+  if (!taskDraftDone.value) taskDraft.value.status = openTaskStatus.value;
+}
+function toggleTaskDraftDone() {
+  taskDraft.value.status = taskDraftDone.value ? openTaskStatus.value : "done";
+}
+function openTaskDatePicker(event: MouseEvent) {
+  try { (event.currentTarget as HTMLInputElement).showPicker(); } catch { /* the browser opens its own picker */ }
+}
+function sizeTaskTitle() {
+  const field = taskTitleInput.value;
+  if (!field) return;
+  field.style.height = "auto";
+  field.style.height = `${field.scrollHeight}px`;
+}
 const archiveConfirmOpen = ref(false);
 const deleteConfirmOpen = ref(false);
 const archivedTasks = ref<WorkspaceTask[]>([]);
@@ -232,6 +259,8 @@ function openNewTask() {
   archiveConfirmOpen.value = false;
   taskError.value = "";
   taskDraft.value = emptyTaskDraft();
+  taskMenuOpen.value = false;
+  openTaskStatus.value = taskDraft.value.status === "backlog" ? "backlog" : "in_progress";
   taskDialogOpen.value = true;
   focusTaskTitle();
 }
@@ -249,6 +278,8 @@ async function openTask(task: WorkspaceTask, updateRoute = true) {
     important: task.priority === 1,
     scheduledFor: task.scheduledFor || task.dueAt || "",
   };
+  taskMenuOpen.value = false;
+  openTaskStatus.value = taskDraft.value.status === "backlog" ? "backlog" : "in_progress";
   taskDialogOpen.value = true;
   if (updateRoute) {
     await router.replace({ query: { ...route.query, task: task.id } });
@@ -591,7 +622,7 @@ function apiMessage(caught: unknown, fallback: string): string {
 }
 
 function focusTaskTitle() {
-  void nextTick(() => taskTitleInput.value?.focus());
+  void nextTick(() => { sizeTaskTitle(); taskTitleInput.value?.focus(); });
 }
 
 function handleWindowClick(event: MouseEvent) {
@@ -836,8 +867,13 @@ onBeforeUnmount(() => {
       close-on-backdrop
       @close="closeTaskDialog"
     >
-      <form class="tasks-dialog" @submit.prevent="saveTask">
-        <header class="tasks-dialog__header">
+      <form
+        class="tasks-dialog"
+        :class="{ 'tasks-dialog--task': !selectedTaskArchived }"
+        @submit.prevent="saveTask"
+        @click="taskMenuOpen = false"
+      >
+        <header class="tasks-dialog__header" :class="{ 'tasks-dialog__header--task': !selectedTaskArchived }">
           <Button
             color="ghost"
             shape="soft"
@@ -847,9 +883,42 @@ onBeforeUnmount(() => {
           >
             Cancel
           </Button>
-          <h2 id="task-dialog-title">
+          <h2 id="task-dialog-title" :class="{ 'visually-hidden': !selectedTaskArchived }">
             {{ selectedTaskArchived ? "Archived task" : selectedTask ? "Task" : "New task" }}
           </h2>
+          <div v-if="selectedTask && !selectedTaskArchived" class="task-menu" @click.stop>
+            <Button
+              color="ghost"
+              shape="soft"
+              size="compact"
+              icon-only
+              type="button"
+              aria-label="More actions"
+              aria-haspopup="menu"
+              :aria-expanded="taskMenuOpen ? 'true' : 'false'"
+              title="More actions"
+              @click="taskMenuOpen = !taskMenuOpen; archiveConfirmOpen = false"
+            >
+              <UiIcon name="Ellipsis" :size="18" aria-hidden="true" />
+            </Button>
+            <div v-if="taskMenuOpen" class="task-menu__panel" role="menu">
+              <button
+                v-if="!archiveConfirmOpen"
+                type="button"
+                role="menuitem"
+                class="task-menu__item is-danger"
+                @click="archiveConfirmOpen = true"
+              >
+                <UiIcon name="Archive" :size="15" aria-hidden="true" />
+                Archive task
+              </button>
+              <div v-else class="task-menu__confirm">
+                <span>Archive this task?</span>
+                <Button color="danger" shape="soft" size="compact" type="button" :disabled="taskSaving" @click="archiveSelectedTask">Archive</Button>
+                <Button color="ghost" shape="soft" size="compact" type="button" @click="taskMenuOpen = false">Keep</Button>
+              </div>
+            </div>
+          </div>
           <Button
             v-if="selectedTask && selectedTaskArchived"
             color="primary"
@@ -921,22 +990,70 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-else class="tasks-dialog__content">
-          <label class="field">
-            <span>Task</span>
-            <input
+        <div v-else class="tasks-dialog__content task-editor" :class="{ 'is-done': taskDraftDone }">
+          <div class="task-editor__title-row">
+            <button
+              type="button"
+              class="task-editor__check"
+              :aria-pressed="taskDraftDone ? 'true' : 'false'"
+              :aria-label="taskDraftDone ? 'Mark as not done' : 'Complete task'"
+              :title="taskDraftDone ? 'Mark as not done' : 'Complete task'"
+              @click="toggleTaskDraftDone"
+            >
+              <UiIcon :name="taskDraftDone ? 'CircleCheck' : 'Circle'" :size="22" aria-hidden="true" />
+            </button>
+            <textarea
               ref="taskTitleInput"
               v-model="taskDraft.title"
-              type="text"
+              class="task-editor__title"
+              rows="1"
               autocomplete="off"
+              aria-label="Task"
+              placeholder="Task"
+              @input="sizeTaskTitle"
+              @keydown.enter.prevent="saveTask"
             />
-          </label>
-          <div
-            class="field task-description-field"
-            role="group"
-            aria-labelledby="task-description-label"
-          >
-            <span id="task-description-label">Description</span>
+          </div>
+
+          <div class="task-editor__props" role="group" aria-label="Task details">
+            <label class="task-chip" title="Project">
+              <UiIcon name="Target" :size="15" aria-hidden="true" />
+              <span>{{ taskDraftProjectName }}</span>
+              <select v-model="taskDraft.projectId" aria-label="Project">
+                <option v-for="project in projects" :key="project.id" :value="project.id">
+                  {{ project.name }}
+                </option>
+              </select>
+            </label>
+            <label class="task-chip" title="Status">
+              <UiIcon name="Clock" :size="15" aria-hidden="true" />
+              <span>{{ openTaskStatus === "backlog" ? "Backlog" : "Now" }}</span>
+              <select :value="openTaskStatus" aria-label="Status" @change="setOpenTaskStatus(($event.target as HTMLSelectElement).value)">
+                <option value="in_progress">Now</option>
+                <option value="backlog">Backlog</option>
+              </select>
+            </label>
+            <span class="task-chip" :class="{ 'is-empty': !taskDraft.scheduledFor }" title="Date">
+              <UiIcon name="Calendar" :size="15" aria-hidden="true" />
+              <span>{{ taskDraftDateLabel }}</span>
+              <input v-model="taskDraft.scheduledFor" type="date" aria-label="Date" @click="openTaskDatePicker" />
+              <button v-if="taskDraft.scheduledFor" type="button" class="task-chip__clear" aria-label="Clear date" title="Clear date" @click="taskDraft.scheduledFor = ''">
+                <UiIcon name="X" :size="13" aria-hidden="true" />
+              </button>
+            </span>
+            <button
+              type="button"
+              class="task-chip"
+              :class="{ 'is-on': taskDraft.important }"
+              :aria-pressed="taskDraft.important ? 'true' : 'false'"
+              @click="taskDraft.important = !taskDraft.important"
+            >
+              <UiIcon name="Star" :size="15" aria-hidden="true" />
+              Important
+            </button>
+          </div>
+
+          <div class="task-description-field">
             <TiptapEditor
               v-model="taskDraft.description"
               variant="section"
@@ -944,69 +1061,8 @@ onBeforeUnmount(() => {
               placeholder="Add details..."
             />
           </div>
-          <div class="tasks-dialog__grid">
-            <label class="field">
-              <span>Project</span>
-              <select v-model="taskDraft.projectId">
-                <option v-for="project in projects" :key="project.id" :value="project.id">
-                  {{ project.name }}
-                </option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Status</span>
-              <select v-model="taskDraft.status">
-                <option value="in_progress">Now</option>
-                <option value="backlog">Backlog</option>
-                <option value="done">Done</option>
-              </select>
-            </label>
-          </div>
-          <div class="tasks-dialog__grid">
-            <label class="field">
-              <span>Date</span>
-              <input v-model="taskDraft.scheduledFor" type="date" />
-            </label>
-            <label class="task-important">
-              <input v-model="taskDraft.important" type="checkbox" />
-              <span><UiIcon name="Star" :size="16" /> Important</span>
-            </label>
-          </div>
 
           <p v-if="taskError" class="dialog-error" role="alert">{{ taskError }}</p>
-
-          <div v-if="selectedTask" class="danger-zone">
-            <button
-              v-if="!archiveConfirmOpen"
-              type="button"
-              class="danger-zone__trigger"
-              @click="archiveConfirmOpen = true"
-            >
-              Archive task
-            </button>
-            <div v-else class="danger-zone__confirm">
-              <span>Archive this task?</span>
-              <Button
-                color="danger"
-                shape="soft"
-                size="compact"
-                type="button"
-                :disabled="taskSaving"
-                @click="archiveSelectedTask"
-              >
-                Archive
-              </Button>
-              <Button
-                color="ghost"
-                shape="soft"
-                size="compact"
-                type="button"
-                @click="archiveConfirmOpen = false"
-              >
-                Keep
-              </Button>
-            </div>
-          </div>
         </div>
       </form>
     </AppDialog>
@@ -1576,36 +1632,261 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
-.task-description-field :deep(.tiptap-editor) {
-  gap: 0;
-  font-weight: 500;
+/* The task reads like a note: a heading, one row of details, then a page to write on. */
+.tasks-dialog--task {
+  width: min(720px, calc(100vw - 32px));
+  height: min(760px, calc(100vh - 48px));
 }
 
-.task-description-field :deep(.editor-toolbar) {
-  position: static;
-  z-index: auto;
-  margin: 0;
-  border: 1px solid var(--ui-border);
+.tasks-dialog__header--task {
+  display: flex;
+  gap: 6px;
+  min-height: 52px;
   border-bottom: 0;
-  border-radius: var(--ui-radius-sm) var(--ui-radius-sm) 0 0;
-  background: var(--ui-bg);
 }
 
-.task-description-field :deep(.editor-content-wrapper) {
-  min-height: 150px;
-  border-color: var(--ui-border);
-  border-radius: 0 0 var(--ui-radius-sm) var(--ui-radius-sm);
-  background: var(--ui-bg);
+.tasks-dialog__header--task > :first-child {
+  margin-right: auto;
 }
 
-.task-description-field :deep(.editor-content-wrapper:focus-within) {
-  border-color: var(--ui-focus);
-  outline: 2px solid color-mix(in oklab, var(--ui-focus), transparent 65%);
+.task-menu {
+  position: relative;
+}
+
+.task-menu__panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+}
+
+.task-menu__item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-menu__item:hover,
+.task-menu__item:focus-visible {
+  background: var(--ui-surface-muted);
+  outline: none;
+}
+
+.task-menu__item.is-danger {
+  color: var(--ui-danger);
+}
+
+.task-menu__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.task-menu__confirm span {
+  width: 100%;
+}
+
+.task-editor {
+  --task-indent: 38px;
+  align-content: start;
+  gap: 8px;
+  padding: 4px 28px 24px;
+}
+
+.task-editor__title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.task-editor__check {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: 3px 0 0 -6px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ui-text-muted);
+  cursor: pointer;
+}
+
+.task-editor__check:hover {
+  background: var(--ui-surface-muted);
+}
+
+.task-editor__check[aria-pressed="true"] {
+  color: var(--ui-accent);
+}
+
+.task-editor__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 1.4rem;
+  font-weight: 600;
+  line-height: 1.3;
+  outline: none;
+  resize: none;
+}
+
+.task-editor.is-done .task-editor__title {
+  color: var(--ui-text-muted);
+  text-decoration: line-through;
+}
+
+.task-editor__props {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: var(--task-indent);
+}
+
+/* Each detail is a quiet chip; its real control lies over it, invisible. */
+.task-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid var(--ui-border);
+  border-radius: 999px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.task-chip:hover {
+  background: var(--ui-surface-muted);
+}
+
+.task-chip > svg {
+  color: var(--ui-text-muted);
+}
+
+.task-chip select,
+.task-chip input[type="date"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.task-chip.is-empty {
+  border-style: dashed;
+  color: var(--ui-text-muted);
+}
+
+.task-chip.is-on {
+  border-color: transparent;
+  background: var(--ui-accent-soft);
+}
+
+.task-chip.is-on > svg {
+  color: var(--ui-accent-strong);
+  fill: currentColor;
+}
+
+.task-chip__clear {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: -6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ui-text-muted);
+  cursor: pointer;
+}
+
+.task-chip__clear:hover {
+  background: var(--ui-border);
+  color: var(--ui-text);
+}
+
+.task-chip:focus-within,
+.task-chip:focus-visible,
+.task-editor__check:focus-visible {
+  outline: 2px solid var(--ui-focus);
   outline-offset: 1px;
 }
 
+.task-description-field {
+  margin-left: var(--task-indent);
+}
+
+.task-description-field :deep(.tiptap-editor) {
+  gap: 0;
+}
+
+/* The Journal's writing surface: one row of tools that stays put, and no box around the text. */
+.task-description-field :deep(.editor-toolbar) {
+  top: -4px;
+  flex-wrap: nowrap;
+  gap: 2px;
+  margin: 0 0 0 -8px;
+  padding: 6px 0;
+  overflow-x: auto;
+  border-radius: 0;
+  background: var(--ui-surface);
+  scrollbar-width: none;
+}
+
+.task-description-field :deep(.toolbar-btn),
+.task-description-field :deep(.toolbar-divider) {
+  flex: 0 0 auto;
+}
+
+.task-description-field :deep(.editor-content-wrapper) {
+  border: 0;
+  border-radius: 0;
+  padding: 6px 0 0;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1.65;
+}
+
 .task-description-field :deep(.editor-content-wrapper .ProseMirror) {
-  min-height: 150px;
+  min-height: 320px;
+  outline: none;
 }
 
 .field input:focus,
@@ -1614,29 +1895,6 @@ onBeforeUnmount(() => {
   border-color: var(--ui-focus);
   outline: 2px solid color-mix(in oklab, var(--ui-focus), transparent 65%);
   outline-offset: 1px;
-}
-
-.task-important {
-  display: flex;
-  min-height: 42px;
-  align-items: center;
-  gap: 9px;
-  color: var(--ui-text);
-  font-size: 13px;
-  font-weight: 680;
-  cursor: pointer;
-}
-
-.task-important input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--ui-accent);
-}
-
-.task-important span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .project-form-heading,
@@ -1766,6 +2024,22 @@ onBeforeUnmount(() => {
 
   .tasks-dialog__grid {
     grid-template-columns: 1fr;
+  }
+
+  .tasks-dialog--task {
+    width: 100vw;
+    height: min(92vh, 92dvh);
+  }
+
+  .task-editor {
+    --task-indent: 0px;
+    padding: 4px 16px 28px;
+  }
+
+  .task-editor__props {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 }
 

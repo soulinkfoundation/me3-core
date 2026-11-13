@@ -1684,7 +1684,7 @@ defineExpose({
         <span class="toolbar-underline">U</span>
       </button>
       <button
-        v-if="variant !== 'campaign' && !isSectionVariant"
+        v-if="variant !== 'campaign'"
         type="button"
         class="toolbar-btn"
         :class="{ active: editor?.isActive('strike') }"
@@ -1724,7 +1724,7 @@ defineExpose({
         H2
       </button>
       <button
-        v-if="variant !== 'campaign' && !isSectionVariant"
+        v-if="variant !== 'campaign'"
         type="button"
         class="toolbar-btn"
         :class="{ active: editor?.isActive('heading', { level: 3 }) }"
@@ -1744,7 +1744,7 @@ defineExpose({
         •
       </button>
       <button
-        v-if="variant !== 'campaign' && !isSectionVariant"
+        v-if="variant !== 'campaign'"
         type="button"
         class="toolbar-btn"
         :class="{ active: editor?.isActive('orderedList') }"
@@ -1754,7 +1754,7 @@ defineExpose({
         1.
       </button>
       <button
-        v-if="variant !== 'campaign' && !isSectionVariant"
+        v-if="variant !== 'campaign'"
         type="button"
         class="toolbar-btn"
         :class="{ active: taskButton === 'list' && editor?.isActive('taskList') }"
@@ -1764,9 +1764,9 @@ defineExpose({
       >
         <UiIcon name="CircleCheckBig" :size="16" aria-hidden="true" />
       </button>
-      <span v-if="variant !== 'campaign' && !isSectionVariant" class="toolbar-divider"></span>
+      <span v-if="variant !== 'campaign'" class="toolbar-divider"></span>
       <button
-        v-if="variant !== 'campaign' && !isSectionVariant"
+        v-if="variant !== 'campaign'"
         type="button"
         class="toolbar-btn"
         :class="{ active: editor?.isActive('blockquote') }"
@@ -2061,8 +2061,8 @@ defineExpose({
 }
 
 .toolbar-btn.active {
-  background: var(--color-primary, #007bff);
-  color: white;
+  background: var(--ui-accent-soft, var(--color-primary, #007bff));
+  color: var(--ui-accent-strong, white);
 }
 
 .toolbar-underline {
