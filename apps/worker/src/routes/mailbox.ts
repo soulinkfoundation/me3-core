@@ -53,6 +53,7 @@ import {
   markMailboxSpam,
   resolveBriefItem,
   resolveMailboxTriageForDraft,
+  reopenBriefItem,
   snoozeBriefItem,
   undoHandledAction,
 } from "../mailbox-brief";
@@ -379,6 +380,15 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     const ownerId = await requireOwner(c);
     if (!ownerId) return unauthorized(c);
     const result = await resolveBriefItem(c.env, ownerId, c.req.param("messageId"));
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
+  });
+
+  // "Bring back" on the Brief's cleared list.
+  app.post("/api/mailbox/brief/:messageId/reopen", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const result = await reopenBriefItem(c.env, ownerId, c.req.param("messageId"));
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
     return c.json(result);
   });

@@ -368,6 +368,7 @@ function message(overrides: Partial<AgentMailboxMessage>): AgentMailboxMessage {
     fromName: null,
     toAddress: "client@example.com",
     toAddresses: [],
+    updatedAt: null,
     ccAddresses: [],
     bccAddresses: [],
     recipientAddresses: [],

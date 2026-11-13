@@ -105,6 +105,8 @@ export function serializeAgentMailboxMessage(row: DbMailboxMessageRow) {
     folder: row.folder,
     spam: Boolean(row.spam_at),
     spamAt: row.spam_at ?? null,
+    /** Changes on every save; sent back as expectedUpdatedAt so a stale copy never overwrites a newer draft. */
+    updatedAt: row.updated_at ?? null,
     readAt: row.read_at,
     unread: row.direction === "inbound" && !row.read_at,
     agentSummary: row.agent_summary,

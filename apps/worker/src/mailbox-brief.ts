@@ -19,7 +19,7 @@ import {
   extractLoginCode,
   LOGIN_CODE_FRESH_MS,
 } from "./mailbox-triage";
-import { archiveConversationOfMessage, settleConversationOfMessage } from "./mailbox-conversations";
+import { archiveConversationOfMessage, moveMailboxConversation, settleConversationOfMessage } from "./mailbox-conversations";
 import { listDueFollowUps, type MailboxFollowUp } from "./mailbox-followups";
 import type { Env } from "./types";
 
@@ -82,8 +82,21 @@ export type MailboxLoginCode = {
   receivedAt: string;
 };
 
+/** A conversation that left the Brief today, and how ("you replied", "archived", ...). */
+export type MailboxClearedItem = {
+  messageId: string;
+  threadId: string;
+  sender: MailSenderIdentity;
+  subject: string;
+  how: MailboxClearedHow;
+  clearedAt: string;
+};
+export type MailboxClearedHow = "done" | "replied" | "replied_elsewhere" | "archived" | "trashed" | "spam";
+
 export type MailboxBrief = {
   needsYou: MailboxBriefItem[];
+  /** What left needs-you today, newest first, one per conversation (Core 0.1.268+). */
+  cleared: MailboxClearedItem[];
   /** Outreach: prospects past their follow-up date who have not answered. */
   followUps: MailboxFollowUp[];
   loginCodes: MailboxLoginCode[];
@@ -94,6 +107,9 @@ export type MailboxBrief = {
 };
 
 type ServiceError = { error: string; status: number };
+
+type ClearedRow = { message_id: string; resolved_at: string; resolved_how: string; subject: string | null; from_address: string | null; raw_headers_json: string | null; text_body: string; thread_id: string };
+const CLEARED_HOW = new Set<string>(["done", "replied", "replied_elsewhere", "archived", "trashed", "spam"]);
 
 type LoginCodeRow = {
   message_id: string;
@@ -182,14 +198,19 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
   const allNeedsYou = needsYouRows.results || [];
   // The same alert firing three times is one thing to deal with, not three: keep the newest
   // (urgent first) per sender and subject and fold the rest into it.
-  const folded = new Map<string, NeedsYouRow[]>();
+  // A conversation is one decision too, however many of its emails are still open: its newest
+  // (urgent first) stands for it. The folds chain, so a row can carry both kinds of repeat.
+  const groupByKey = new Map<string, NeedsYouRow[]>();
+  const rowGroups: NeedsYouRow[][] = [];
   for (const row of allNeedsYou) {
-    const key = briefDuplicateKey(row.from_address, row.subject);
-    const group = folded.get(key);
-    if (group) group.push(row); else folded.set(key, [row]);
+    const keys = [`thread:${row.thread_id}`, `repeat:${briefDuplicateKey(row.from_address, row.subject)}`];
+    let group = groupByKey.get(keys[0]) || groupByKey.get(keys[1]);
+    if (group) group.push(row);
+    else { group = [row]; rowGroups.push(group); }
+    for (const key of keys) if (!groupByKey.has(key)) groupByKey.set(key, group);
   }
-  const needsYou = [...folded.values()].map(group => group[0]);
-  const related = new Map<string, string[]>([...folded.values()].map(group => [group[0].message_id, group.slice(1).map(row => row.message_id)]));
+  const needsYou = rowGroups.map(group => group[0]);
+  const related = new Map<string, string[]>(rowGroups.map(group => [group[0].message_id, group.slice(1).map(row => row.message_id)]));
 
   const draftIds = needsYou.map(row => row.draft_id).filter((id): id is string => Boolean(id));
   const drafts = new Map<string, { body: string }>();
@@ -228,7 +249,32 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
     return code ? [{ row, code }] : [];
   });
 
-  const context = await createSenderDecorationContext(env, ownerId, [...needsYou, ...handled, ...codes.map(({ row }) => row)].map(row => row.from_address || ""), apiOrigin);
+  // What left needs-you today: the newest cleared email of each conversation that has nothing still open.
+  const clearedRows = await env.DB.prepare(
+    `SELECT t.message_id, t.resolved_at, t.resolved_how, m.subject, m.from_address, m.raw_headers_json,
+            SUBSTR(COALESCE(m.text_body, ''), 1, 600) AS text_body, ${threadKey} AS thread_id
+     FROM mailbox_triage t
+     JOIN mailbox_messages m ON m.id = t.message_id
+     WHERE t.user_id = ? AND t.category = 'needs_you' AND t.resolved_how IS NOT NULL AND t.resolved_at >= ?
+     ORDER BY t.resolved_at DESC, COALESCE(m.received_at, m.created_at) DESC, m.id DESC
+     LIMIT 100`,
+  ).bind(ownerId, dayStartsAt).all<ClearedRow>().catch(() => ({ results: [] as ClearedRow[] }));
+  const openThreads = new Set(allNeedsYou.map(row => row.thread_id));
+  const clearedByThread = new Map<string, ClearedRow>();
+  for (const row of clearedRows.results || []) {
+    if (!openThreads.has(row.thread_id) && !clearedByThread.has(row.thread_id)) clearedByThread.set(row.thread_id, row);
+  }
+  const clearedList = [...clearedByThread.values()];
+
+  const context = await createSenderDecorationContext(env, ownerId, [...needsYou, ...handled, ...codes.map(({ row }) => row), ...clearedList].map(row => row.from_address || ""), apiOrigin);
+  const cleared: MailboxClearedItem[] = await Promise.all(clearedList.map(async row => ({
+    messageId: row.message_id,
+    threadId: row.thread_id,
+    sender: await describeSender(env, context, { address: row.from_address, headerName: headerName(row.raw_headers_json), textBody: row.text_body, subject: row.subject }),
+    subject: row.subject || "(no subject)",
+    how: CLEARED_HOW.has(row.resolved_how) ? row.resolved_how as MailboxClearedHow : "done",
+    clearedAt: row.resolved_at,
+  })));
   const loginCodes: MailboxLoginCode[] = await Promise.all(codes.map(async ({ row, code }) => ({
     messageId: row.message_id,
     threadId: row.thread_id,
@@ -309,6 +355,7 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
 
   return {
     needsYou: items,
+    cleared,
     followUps,
     loginCodes,
     handled: { total: handled.length, groups: [...groups.values()] },
@@ -380,6 +427,14 @@ async function briefItemMessageIds(env: Pick<Env, "DB">, ownerId: string, messag
        AND (t.category = 'needs_you' OR t.status = 'pending' OR (t.status = 'failed' AND t.attempts < ?))`,
   ).bind(ownerId, message.from_address.trim().toLowerCase(), MAX_TRIAGE_ATTEMPTS).all<{ id: string; subject: string | null }>().catch(() => ({ results: [] as Array<{ id: string; subject: string | null }> }));
   const ids = new Set([messageId, ...(siblings.results || []).filter(row => briefDuplicateKey(message.from_address, row.subject) === key).map(row => row.id)]);
+  // The row stands for its conversation, so the conversation's other open emails go with it.
+  const conversation = await env.DB.prepare(
+    `SELECT t.message_id FROM mailbox_triage t JOIN mailbox_messages m ON m.id = t.message_id
+     JOIN mailbox_messages source ON source.id = ? AND source.mailbox_id = m.mailbox_id
+      AND ${mailboxCanonicalThreadKeySql("source")} = ${mailboxCanonicalThreadKeySql("m")}
+     WHERE t.user_id = ? AND t.resolved_at IS NULL`,
+  ).bind(messageId, ownerId).all<{ message_id: string }>().catch(() => ({ results: [] as Array<{ message_id: string }> }));
+  for (const row of conversation.results || []) ids.add(row.message_id);
   return [...ids];
 }
 
@@ -405,15 +460,39 @@ export async function snoozeBriefItem(env: Env, ownerId: string, messageId: stri
 export async function resolveBriefItem(env: Env, ownerId: string, messageId: string, now = new Date()): Promise<{ ok: true } | ServiceError> {
   if (!(await ownTriageRow(env, ownerId, messageId))) return { error: "Message not found", status: 404 };
   const ids = await briefItemMessageIds(env, ownerId, messageId);
-  await env.DB.prepare(`UPDATE mailbox_triage SET resolved_at = ?, updated_at = ? WHERE user_id = ? AND message_id IN (${ids.map(() => "?").join(",")})`)
+  await env.DB.prepare(`UPDATE mailbox_triage SET resolved_at = ?, resolved_how = 'done', updated_at = ? WHERE user_id = ? AND message_id IN (${ids.map(() => "?").join(",")})`)
     .bind(now.toISOString(), now.toISOString(), ownerId, ...ids).run();
+  return { ok: true };
+}
+
+/**
+ * "Bring back": a cleared row returns to needs-you, with the rest of its conversation's rows that
+ * cleared with it. If clearing it archived or trashed the conversation, that comes back to Inbox too.
+ */
+export async function reopenBriefItem(env: Env, ownerId: string, messageId: string, now = new Date()): Promise<{ ok: true } | ServiceError> {
+  const row = await env.DB.prepare(
+    `SELECT t.resolved_how, ${mailboxCanonicalThreadKeySql("m")} AS thread_id FROM mailbox_triage t
+     JOIN mailbox_messages m ON m.id = t.message_id WHERE t.user_id = ? AND t.message_id = ?`,
+  ).bind(ownerId, messageId).first<{ resolved_how: string | null; thread_id: string }>();
+  if (!row) return { error: "Message not found", status: 404 };
+  if (row.resolved_how === "archived" || row.resolved_how === "trashed" || row.resolved_how === "spam") {
+    const from = row.resolved_how === "archived" ? "archive" : row.resolved_how === "trashed" ? "trash" : "spam";
+    const moved = await moveMailboxConversation(env, ownerId, row.thread_id, "inbox", from, now);
+    if ("error" in moved) return moved;
+  }
+  await env.DB.prepare(
+    `UPDATE mailbox_triage SET resolved_at = NULL, resolved_how = NULL, snoozed_until = NULL, updated_at = ?
+     WHERE user_id = ? AND resolved_at IS NOT NULL AND category = 'needs_you' AND message_id IN (
+       SELECT m.id FROM mailbox_messages m JOIN mailbox_messages source ON source.id = ? AND source.mailbox_id = m.mailbox_id
+        AND ${mailboxCanonicalThreadKeySql("source")} = ${mailboxCanonicalThreadKeySql("m")})`,
+  ).bind(now.toISOString(), ownerId, messageId).run();
   return { ok: true };
 }
 
 /** A sent draft resolves the message it replied to, and the rest of that conversation's open items. Best effort. */
 export async function resolveMailboxTriageForDraft(env: Env, ownerId: string, draftId: string, now = new Date()): Promise<void> {
   await env.DB.prepare(
-    `UPDATE mailbox_triage SET resolved_at = ?, updated_at = ?
+    `UPDATE mailbox_triage SET resolved_at = ?, resolved_how = 'replied', updated_at = ?
      WHERE user_id = ? AND resolved_at IS NULL
        AND (draft_id = ?
          OR message_id IN (SELECT source_id FROM mailbox_messages WHERE id = ? AND source_id IS NOT NULL)

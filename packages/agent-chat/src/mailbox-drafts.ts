@@ -43,6 +43,10 @@ export async function updateAgentMailboxDraft(
   if (existing.status !== "pending_approval" && existing.status !== "failed") {
     return { error: "Draft is already being sent", status: 409 };
   }
+  // ME3 and the owner can both write to a draft: a save from a copy that is no longer current is refused.
+  if (typeof input.expectedUpdatedAt === "string" && input.expectedUpdatedAt && input.expectedUpdatedAt !== existing.updated_at) {
+    return { error: "This draft changed since you opened it", status: 409 };
+  }
 
   const normalized = await normalizeAgentMailboxDraftInput(env, mailbox, input, existing);
   if ("error" in normalized) return normalized;

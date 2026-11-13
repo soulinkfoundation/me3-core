@@ -57,7 +57,7 @@ export function agentMailboxMessageSelectSql(): string {
                  agent_idempotency_key, source_id, folder, spam_at, read_at,
                  agent_summary, agent_labels_json, forwarded_to, error_message,
                  created_by, approved_by_user_id, received_at, approved_at,
-                 sent_at, created_at
+                 sent_at, created_at, updated_at
           FROM mailbox_messages`;
 }
 

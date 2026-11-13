@@ -22,6 +22,8 @@ export type AgentMailboxDraftInput = {
   uploadedAttachments?: unknown;
   /** Track as outreach: `{ followUpDays, offer }`; null switches it off. */
   outreach?: unknown;
+  /** Saving a draft: the `updatedAt` the client last saw. A draft changed since is not overwritten (409). */
+  expectedUpdatedAt?: unknown;
 };
 
 export type AgentMailboxMessageListOptions = {
@@ -133,6 +135,7 @@ export type DbMailboxMessageRow = {
   approved_at: string | null;
   sent_at: string | null;
   created_at: string;
+  updated_at?: string | null;
 };
 
 export type MailboxUnsubscribeAction = {

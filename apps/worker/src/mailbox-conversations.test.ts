@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import { AGENT_SCHEMA_STATEMENTS } from "../../../packages/agent/src/store";
-import { getMailboxBrief, undoHandledAction } from "./mailbox-brief";
+import { createAgentMailboxDraft, updateAgentMailboxDraft } from "@me3-core/plugin-agent-chat";
+import { getMailboxBrief, reopenBriefItem, resolveBriefItem, resolveMailboxTriageForDraft, snoozeBriefItem, undoHandledAction } from "./mailbox-brief";
 import {
   MAILBOX_CONVERSATION_FOLDER_FIX_STATEMENTS,
   MAILBOX_CONVERSATION_SCHEMA_STATEMENTS,
@@ -289,5 +290,106 @@ describe("email conversations are one unit", () => {
     expect(folders(f.raw)).toMatchObject({ code1: "inbox", code2: "inbox" });
     await archiveStaleLoginCodes(f.env, { now: new Date(now.getTime() + 2 * 60 * 60_000) });
     expect(folders(f.raw)).toMatchObject({ code1: "archive", code2: "archive" });
+  });
+});
+
+// Failure modes (me3-kvu8.28): two emails of one conversation that both need the owner fill the
+// Brief twice, and Done or "tomorrow" on the row leaves the other one behind; the "cleared" list
+// cannot say how a row was cleared, lists mail that never needed the owner, or lists one
+// conversation twice; an item archived from Inbox vanishes without a trace; "Bring back" reopens
+// the row but leaves its conversation in Archive; a draft saved from a stale copy overwrites what
+// ME3 or the owner wrote since; a client built for the old Brief loses a field it reads.
+describe("the Brief is keyed by conversation", () => {
+  it("shows one row per conversation and clears or snoozes all of it", async () => {
+    const f = fixture();
+    receive(f.raw, { id: "ask1", body: "Can you confirm the terms?" });
+    receive(f.raw, { id: "ask2", subject: "One more thing", body: "And can we paint the storage room?" });
+    receive(f.raw, { id: "other", root: null, from: "leo@example.test", subject: "Meetup talk" });
+    for (const id of ["ask1", "ask2", "other"]) await runMailTriage(f.env, id, { classify: needsYou });
+
+    const brief = await getMailboxBrief(f.env, "owner");
+    expect(brief.needsYou.map(item => [item.messageId, item.threadId])).toEqual([["other", "<other@mail.test>"], ["ask2", ROOT]]);
+    expect(brief.needsYou[1].relatedMessageIds).toEqual(["ask1"]);
+    // Fields older clients read are still there.
+    expect(brief).toMatchObject({ followUps: [], loginCodes: [], handled: { total: 0 }, fyi: { inboxLeft: 0, unread: 3 } });
+    expect(brief.needsYou[0]).toMatchObject({ primaryAction: { kind: "draft_reply" }, secondaryAction: { kind: "remind_later" }, draft: null, duplicates: 0 });
+
+    expect(await snoozeBriefItem(f.env, "owner", "ask2")).toMatchObject({ ok: true });
+    expect((await getMailboxBrief(f.env, "owner")).needsYou.map(item => item.messageId)).toEqual(["other"]);
+    f.raw.exec("UPDATE mailbox_triage SET snoozed_until = NULL");
+    expect(await resolveBriefItem(f.env, "owner", "ask2")).toEqual({ ok: true });
+    const after = await getMailboxBrief(f.env, "owner");
+    expect(after.needsYou.map(item => item.messageId)).toEqual(["other"]);
+    expect(after.cleared.map(item => [item.threadId, item.how])).toEqual([[ROOT, "done"]]);
+  });
+
+  it("lists what left the Brief today with how, once per conversation, and only mail that needed the owner", async () => {
+    const f = fixture();
+    const now = new Date();
+    receive(f.raw, { id: "a1", root: "<a@mail.test>" });
+    receive(f.raw, { id: "a2", root: "<a@mail.test>" });
+    receive(f.raw, { id: "b", root: "<b@mail.test>", from: "leo@example.test" });
+    receive(f.raw, { id: "c", root: "<c@mail.test>", from: "dana@example.test" });
+    receive(f.raw, { id: "old", root: "<old@mail.test>", from: "sam@example.test" });
+    for (const id of ["a1", "a2", "b", "c", "old"]) await runMailTriage(f.env, id, { classify: needsYou });
+    receive(f.raw, { id: "note", root: "<n@mail.test>", from: "pat@example.test" });
+    await runMailTriage(f.env, "note", { classify: fyi });
+
+    await moveMailboxConversation(f.env, "owner", "<a@mail.test>", "archive", "inbox", now);
+    await moveMailboxConversation(f.env, "owner", "<b@mail.test>", "trash", "inbox", now);
+    await moveMailboxConversation(f.env, "owner", "<n@mail.test>", "archive", "inbox", now);
+    const draft = await createAgentMailboxDraft(f.env, "owner", { to: "dana@example.test", subject: "Re: Studio lease", textBody: "Yes.", source: "user", replyToMessageId: "c" });
+    if ("error" in draft || !draft.draft) throw new Error("draft not created");
+    await resolveMailboxTriageForDraft(f.env, "owner", draft.draft.id, now);
+    await resolveBriefItem(f.env, "owner", "old", new Date(now.getTime() - 3 * 24 * 60 * 60_000));
+
+    const brief = await getMailboxBrief(f.env, "owner", { now });
+    expect(brief.needsYou).toEqual([]);
+    expect(brief.cleared.map(item => [item.threadId, item.messageId, item.how]).sort()).toEqual([
+      ["<a@mail.test>", "a2", "archived"],
+      ["<b@mail.test>", "b", "trashed"],
+      ["<c@mail.test>", "c", "replied"],
+    ]);
+    expect(brief.cleared[0]).toMatchObject({ sender: { address: expect.any(String) }, subject: "Studio lease", clearedAt: now.toISOString() });
+  });
+
+  it("brings a cleared row back, with its conversation", async () => {
+    const f = fixture();
+    receive(f.raw, { id: "a1" });
+    receive(f.raw, { id: "a2" });
+    for (const id of ["a1", "a2"]) await runMailTriage(f.env, id, { classify: needsYou });
+    await moveMailboxConversation(f.env, "owner", ROOT, "archive", "inbox");
+    expect((await getMailboxBrief(f.env, "owner")).needsYou).toEqual([]);
+
+    expect(await reopenBriefItem(f.env, "owner", "a2")).toEqual({ ok: true });
+    expect(folders(f.raw)).toEqual({ a1: "inbox", a2: "inbox" });
+    const brief = await getMailboxBrief(f.env, "owner");
+    expect(brief.needsYou.map(item => item.messageId)).toEqual(["a2"]);
+    expect(brief.cleared).toEqual([]);
+
+    await resolveBriefItem(f.env, "owner", "a2");
+    expect(await reopenBriefItem(f.env, "owner", "a2")).toEqual({ ok: true });
+    expect((await getMailboxBrief(f.env, "owner")).needsYou.map(item => item.messageId)).toEqual(["a2"]);
+    expect(await reopenBriefItem(f.env, "other", "a2")).toMatchObject({ status: 404 });
+  });
+
+  it("refuses a draft save made from a stale copy", async () => {
+    const f = fixture();
+    receive(f.raw, { id: "ask" });
+    const created = await createAgentMailboxDraft(f.env, "owner", { to: "rosa@example.test", subject: "Re: Studio lease", textBody: "First version.", source: "agent", replyToMessageId: "ask" });
+    if ("error" in created || !created.draft) throw new Error("draft not created");
+    const opened = created.draft.updatedAt;
+    expect(typeof opened).toBe("string");
+    // ME3 rewrites it while the owner still has the first version open.
+    f.raw.prepare("UPDATE mailbox_messages SET text_body = 'ME3 rewrote this.', updated_at = '2030-01-01T00:00:00.000Z' WHERE id = ?").run(created.draft.id);
+
+    const stale = await updateAgentMailboxDraft(f.env, "owner", created.draft.id, { to: "rosa@example.test", subject: "Re: Studio lease", textBody: "The owner's edit.", expectedUpdatedAt: opened });
+    expect(stale).toMatchObject({ status: 409 });
+    expect(f.raw.prepare("SELECT text_body FROM mailbox_messages WHERE id = ?").get(created.draft.id)).toEqual({ text_body: "ME3 rewrote this." });
+
+    const current = await updateAgentMailboxDraft(f.env, "owner", created.draft.id, { to: "rosa@example.test", subject: "Re: Studio lease", textBody: "The owner's edit.", expectedUpdatedAt: "2030-01-01T00:00:00.000Z" });
+    expect(current).toMatchObject({ draft: { body: "The owner's edit." } });
+    // Without the check (older clients) a save still goes through.
+    expect(await updateAgentMailboxDraft(f.env, "owner", created.draft.id, { to: "rosa@example.test", subject: "Re: Studio lease", textBody: "Again." })).toMatchObject({ draft: { body: "Again." } });
   });
 });
