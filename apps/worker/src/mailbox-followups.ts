@@ -25,7 +25,7 @@ export type MailboxFollowUp = {
   daysWaiting: number;
   followUpNumber: number;
   followUpCap: number;
-  draft: { id: string; preview: string; body: string } | null;
+  draft: { id: string; preview: string; body: string; updatedAt?: string | null } | null;
 };
 
 type ProspectRow = {
@@ -73,11 +73,11 @@ async function lastSentTo(env: Pick<Env, "DB">, ownerId: string, email: string):
 async function pendingDraft(env: Pick<Env, "DB">, ownerId: string, draftId: unknown) {
   if (typeof draftId !== "string" || !draftId) return null;
   return env.DB.prepare(
-    `SELECT id, subject, to_address, text_body FROM mailbox_messages
+    `SELECT id, subject, to_address, text_body, updated_at FROM mailbox_messages
      WHERE id = ? AND mailbox_id IN (${OWNER_MAILBOXES}) AND message_kind = 'draft' AND status = 'pending_approval'`,
   )
     .bind(draftId, ownerId)
-    .first<{ id: string; subject: string | null; to_address: string | null; text_body: string | null }>();
+    .first<{ id: string; subject: string | null; to_address: string | null; text_body: string | null; updated_at: string | null }>();
 }
 
 async function dueProspect(env: Pick<Env, "DB">, ownerId: string, contactId: string): Promise<ProspectRow | null> {
@@ -126,7 +126,7 @@ export async function listDueFollowUps(env: Pick<Env, "DB">, ownerId: string, no
       followUpNumber: sentCount + 1,
       followUpCap: OUTREACH_FOLLOWUP_CAP,
       draft: draft
-        ? { id: draft.id, preview: cleanMailPreview(draft.text_body, { maxLength: 220 }), body: draft.text_body || "" }
+        ? { id: draft.id, preview: cleanMailPreview(draft.text_body, { maxLength: 220 }), body: draft.text_body || "", updatedAt: draft.updated_at }
         : null,
     });
   }

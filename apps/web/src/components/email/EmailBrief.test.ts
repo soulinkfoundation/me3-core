@@ -4,18 +4,18 @@ import EmailBrief from "./EmailBrief.vue";
 import { api } from "../../api";
 import type { MailboxBrief, MailboxFollowUp } from "./brief";
 
-vi.mock("../../api", () => ({ api: { get: vi.fn(), post: vi.fn() } }));
-const toasts = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+vi.mock("../../api", () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() } }));
+const toasts = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), plain: vi.fn() }));
 vi.mock("../../composables/useAppToast", () => ({
-  useAppToast: () => ({ toast: { success: toasts.success }, toastSuccess: toasts.success, toastFromUnknown: toasts.error }),
+  useAppToast: () => ({ toast: Object.assign(toasts.plain, { success: toasts.success, error: toasts.error }), toastSuccess: toasts.success, toastFromUnknown: toasts.error }),
 }));
 
 enableAutoUnmount(afterEach);
 
 // Failure modes: follow-ups are missing from the count so the Brief says
 // "all caught up" while prospects wait; a follow-up without a draft never gets
-// one; Send goes out without the owner's click; a sent, snoozed or stopped
-// follow-up stays on screen.
+// one; Send goes out without the owner's click, or without the edit the owner
+// just made; a sent, put-off or stopped follow-up stays on screen.
 function followUp(extra: Partial<MailboxFollowUp> = {}): MailboxFollowUp {
   return {
     contactId: "p-aoife", name: "Aoife", organisation: "IMTA", email: "aoife@imta.example",
@@ -35,9 +35,10 @@ async function mountBrief() {
   await flushPromises();
   return wrapper;
 }
-const cards = (wrapper: Awaited<ReturnType<typeof mountBrief>>) => wrapper.findAll(".brief-followup");
-const act = async (wrapper: Awaited<ReturnType<typeof mountBrief>>, label: string) => {
-  await wrapper.findAll(".brief-followup button").find((button) => button.text() === label)!.trigger("click");
+const rows = (wrapper: Awaited<ReturnType<typeof mountBrief>>) => wrapper.findAll(".brief-row");
+const press = async (wrapper: Awaited<ReturnType<typeof mountBrief>>, label: string, index = 0) => {
+  const button = rows(wrapper)[index].findAll("button").find((candidate) => candidate.text() === label || candidate.attributes("aria-label")?.startsWith(label));
+  await button!.trigger("click");
   await flushPromises();
 };
 
@@ -45,23 +46,24 @@ describe("Brief follow-ups due", () => {
   beforeEach(() => {
     vi.mocked(api.get).mockReset();
     vi.mocked(api.post).mockReset();
+    vi.mocked(api.put).mockReset();
     toasts.success.mockReset();
     current = briefWith([followUp()]);
     vi.mocked(api.get).mockImplementation(async () => current);
     vi.mocked(api.post).mockResolvedValue({ ok: true });
+    vi.mocked(api.put).mockResolvedValue({ draft: { id: "draft-1" } });
   });
 
-  it("counts follow-ups as things that need the owner and shows ME3's draft", async () => {
+  it("counts a follow-up as a row that needs the owner and shows ME3's draft in it", async () => {
     const wrapper = await mountBrief();
 
     expect(wrapper.get("h1").text()).toBe("1 thing needs you");
     expect(wrapper.emitted("countChanged")?.at(-1)).toEqual([1]);
-    expect(wrapper.text()).toContain("Follow-ups due");
-    const card = cards(wrapper)[0];
-    expect(card.text()).toContain("Aoife · IMTA");
-    expect(card.text()).toContain("No reply in 9 days · you offered free setup for 10 members");
-    expect(card.text()).toContain("ME3 drafted a follow-up");
-    expect(card.text()).toContain("bringing this back to the top of your inbox");
+    const row = rows(wrapper)[0];
+    expect(row.text()).toContain("Aoife · IMTA");
+    expect(row.text()).toContain("No reply in 9 days · you offered free setup for 10 members");
+    expect(row.text()).toContain("Follow-up drafted");
+    expect((row.get("textarea").element as HTMLTextAreaElement).value).toContain("bringing this back to the top of your inbox");
     expect(api.post).not.toHaveBeenCalled();
   });
 
@@ -74,36 +76,39 @@ describe("Brief follow-ups due", () => {
     const wrapper = await mountBrief();
 
     expect(vi.mocked(api.post).mock.calls).toEqual([["/mailbox/followups/p-aoife/draft"]]);
-    expect(cards(wrapper)[0].text()).toContain("follow-up 2 of 2");
-    expect(cards(wrapper)[0].text()).toContain("bringing this back to the top of your inbox");
+    expect(rows(wrapper)[0].text()).toContain("follow-up 2 of 2");
+    expect((rows(wrapper)[0].get("textarea").element as HTMLTextAreaElement).value).toContain("bringing this back to the top of your inbox");
   });
 
-  it("sends the draft only on Send, and opens it for Edit", async () => {
+  it("sends only on Send, with the owner's edit saved first", async () => {
     const wrapper = await mountBrief();
 
-    await act(wrapper, "Edit");
-    expect(wrapper.emitted("editDraft")?.[0]?.[0]).toBe("draft-1");
+    await rows(wrapper)[0].get("textarea").setValue("Hi Aoife, any thoughts?");
+    expect(api.put).not.toHaveBeenCalled();
     expect(api.post).not.toHaveBeenCalled();
 
-    await act(wrapper, "Send");
-    expect(api.post).toHaveBeenCalledWith("/mailbox/drafts/draft-1/approve");
-    expect(cards(wrapper)).toHaveLength(0);
+    await press(wrapper, "Send");
+    expect(api.put).toHaveBeenCalledWith("/mailbox/drafts/draft-1", { textBody: "Hi Aoife, any thoughts?" });
+    expect(api.post).toHaveBeenCalledWith("/mailbox/drafts/draft-1/approve", { holdSeconds: 10 });
+    expect(rows(wrapper)).toHaveLength(0);
     expect(wrapper.get("h1").text()).toBe("You're all caught up");
+    // This Core answered without holding the send, so it has gone.
     expect(toasts.success).toHaveBeenCalledWith("Follow-up sent to Aoife.");
   });
 
-  it("puts a follow-up off with Later and ends it with Stop following up", async () => {
+  it("puts a follow-up off until tomorrow from the menu and ends it with the Done check", async () => {
     current = briefWith([followUp(), followUp({ contactId: "p-mary", name: "Mary", organisation: null, offer: null })]);
     const wrapper = await mountBrief();
-    expect(cards(wrapper)[1].text()).toContain("No reply in 9 days");
-    expect(cards(wrapper)[1].text()).not.toContain("you offered");
+    expect(rows(wrapper)[1].text()).toContain("No reply in 9 days");
+    expect(rows(wrapper)[1].text()).not.toContain("you offered");
 
-    await act(wrapper, "Later");
+    await press(wrapper, "More");
+    await press(wrapper, "Remind me tomorrow morning");
     expect(api.post).toHaveBeenLastCalledWith("/mailbox/followups/p-aoife/later");
-    expect(cards(wrapper)).toHaveLength(1);
+    expect(rows(wrapper)).toHaveLength(1);
 
-    await act(wrapper, "Stop following up");
+    await press(wrapper, "Done: clear Mary");
     expect(api.post).toHaveBeenLastCalledWith("/mailbox/followups/p-mary/stop");
-    expect(cards(wrapper)).toHaveLength(0);
+    expect(rows(wrapper)).toHaveLength(0);
   });
 });

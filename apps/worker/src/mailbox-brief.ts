@@ -41,7 +41,8 @@ export type MailboxBriefItem = {
   pending: boolean;
   primaryAction: MailTriageAction | null;
   secondaryAction: MailTriageAction | null;
-  draft: { id: string; preview: string; body: string } | null;
+  /** updatedAt is the draft's version: send it back as expectedUpdatedAt when saving an edit (Core 0.1.268+). */
+  draft: { id: string; preview: string; body: string; updatedAt?: string | null } | null;
   /** Older messages from the same sender about the same thing, folded into this item. */
   duplicates: number;
   relatedMessageIds: string[];
@@ -213,12 +214,12 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
   const related = new Map<string, string[]>(rowGroups.map(group => [group[0].message_id, group.slice(1).map(row => row.message_id)]));
 
   const draftIds = needsYou.map(row => row.draft_id).filter((id): id is string => Boolean(id));
-  const drafts = new Map<string, { body: string }>();
+  const drafts = new Map<string, { body: string; updated_at: string | null }>();
   if (draftIds.length > 0) {
     const rows = await env.DB.prepare(
-      `SELECT id, COALESCE(text_body, '') AS body FROM mailbox_messages
+      `SELECT id, COALESCE(text_body, '') AS body, updated_at FROM mailbox_messages
        WHERE message_kind = 'draft' AND status = 'pending_approval' AND id IN (${draftIds.map(() => "?").join(",")})`,
-    ).bind(...draftIds).all<{ id: string; body: string }>();
+    ).bind(...draftIds).all<{ id: string; body: string; updated_at: string | null }>();
     for (const row of rows.results || []) drafts.set(row.id, row);
   }
 
@@ -300,7 +301,7 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
       pending,
       primaryAction: draft ? { kind: "send_draft", label: primary?.kind === "send_draft" ? primary.label : "Send reply" } : primary?.kind === "send_draft" ? { kind: "draft_reply", label: "Draft a reply" } : primary || { kind: "draft_reply", label: "Draft a reply" },
       secondaryAction: draft ? { kind: "edit_draft", label: "Edit" } : secondary?.kind === "edit_draft" ? { kind: "remind_later", label: "Tomorrow" } : secondary || { kind: "remind_later", label: "Tomorrow" },
-      draft: draft ? { id: row.draft_id!, preview: cleanMailPreview(draft.body, { maxLength: 160 }), body: draft.body } : null,
+      draft: draft ? { id: row.draft_id!, preview: cleanMailPreview(draft.body, { maxLength: 160 }), body: draft.body, updatedAt: draft.updated_at } : null,
       duplicates: related.get(row.message_id)?.length || 0,
       relatedMessageIds: related.get(row.message_id) || [],
     };

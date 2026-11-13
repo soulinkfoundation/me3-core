@@ -321,6 +321,12 @@ describe("the Brief is keyed by conversation", () => {
     // Fields older clients read are still there.
     expect(brief).toMatchObject({ followUps: [], loginCodes: [], handled: { total: 0 }, fyi: { inboxLeft: 0, unread: 3 } });
     expect(brief.needsYou[0]).toMatchObject({ primaryAction: { kind: "draft_reply" }, secondaryAction: { kind: "remind_later" }, draft: null, duplicates: 0 });
+    // A drafted row carries the draft's version, so an edit in the Brief can be saved safely.
+    const drafted = await createAgentMailboxDraft(f.env, "owner", { to: "leo@example.test", subject: "Re: Meetup talk", textBody: "Happy to.", source: "agent", replyToMessageId: "other" });
+    if ("error" in drafted || !drafted.draft) throw new Error("draft not created");
+    f.raw.prepare("UPDATE mailbox_triage SET draft_id = ? WHERE message_id = 'other'").run(drafted.draft.id);
+    expect((await getMailboxBrief(f.env, "owner")).needsYou[0].draft).toMatchObject({ id: drafted.draft.id, body: "Happy to.", updatedAt: drafted.draft.updatedAt });
+    f.raw.prepare("UPDATE mailbox_triage SET draft_id = NULL WHERE message_id = 'other'").run();
 
     expect(await snoozeBriefItem(f.env, "owner", "ask2")).toMatchObject({ ok: true });
     expect((await getMailboxBrief(f.env, "owner")).needsYou.map(item => item.messageId)).toEqual(["other"]);
@@ -397,6 +403,10 @@ describe("the Brief is keyed by conversation", () => {
 
     const current = await updateAgentMailboxDraft(f.env, "owner", created.draft.id, { to: "rosa@example.test", subject: "Re: Studio lease", textBody: "The owner's edit.", expectedUpdatedAt: "2030-01-01T00:00:00.000Z" });
     expect(current).toMatchObject({ draft: { body: "The owner's edit." } });
+    // The Brief saves only the text it edits: the recipient and subject stay as they were.
+    expect(await updateAgentMailboxDraft(f.env, "owner", created.draft.id, { textBody: "Only the words changed." })).toMatchObject({ draft: { body: "Only the words changed.", toAddress: "rosa@example.test", subject: "Re: Studio lease" } });
+    const brief = await getMailboxBrief(f.env, "owner");
+    void brief;
     // Without the check (older clients) a save still goes through.
     expect(await updateAgentMailboxDraft(f.env, "owner", created.draft.id, { to: "rosa@example.test", subject: "Re: Studio lease", textBody: "Again." })).toMatchObject({ draft: { body: "Again." } });
   });

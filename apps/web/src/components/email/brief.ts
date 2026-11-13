@@ -36,7 +36,8 @@ export type MailboxBriefItem = {
   pending: boolean;
   primaryAction: MailboxBriefAction | null;
   secondaryAction: MailboxBriefAction | null;
-  draft: { id: string; preview: string; body: string } | null;
+  /** updatedAt (Core 0.1.268+) is the draft's version, sent back as expectedUpdatedAt when an edit is saved. */
+  draft: { id: string; preview: string; body: string; updatedAt?: string | null } | null;
   /** Older messages from the same sender about the same thing, folded into this item (Core 0.1.232+). */
   duplicates?: number;
   relatedMessageIds?: string[];
@@ -78,11 +79,23 @@ export type MailboxFollowUp = {
   daysWaiting: number;
   followUpNumber: number;
   followUpCap: number;
-  draft: { id: string; preview: string; body: string } | null;
+  draft: { id: string; preview: string; body: string; updatedAt?: string | null } | null;
+};
+
+/** A conversation that left needs-you today, and how (Core 0.1.268+). */
+export type MailboxClearedItem = {
+  messageId: string;
+  threadId: string;
+  sender: MailSenderIdentity;
+  subject: string;
+  how: "done" | "replied" | "replied_elsewhere" | "archived" | "trashed" | "spam";
+  clearedAt: string;
 };
 
 export type MailboxBrief = {
   needsYou: MailboxBriefItem[];
+  /** Missing on older Workers. */
+  cleared?: MailboxClearedItem[];
   /** Missing on older Workers. */
   followUps?: MailboxFollowUp[];
   handled: { total: number; groups: MailboxHandledGroup[] };
