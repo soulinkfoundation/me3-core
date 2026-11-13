@@ -2,8 +2,10 @@ import {
   mailAddresses,
   recordMailboxSendForContacts,
   recordOutreachInbound,
+  type OutreachInboundChange,
   type OutreachInboundKind,
 } from "@me3-core/plugin-agent-chat";
+import type { MailHandledUndo } from "./mailbox-triage";
 import { mailboxCanonicalThreadKeySql } from "./mailbox-thread-key";
 import type { Env } from "./types";
 
@@ -32,6 +34,35 @@ export async function syncContactsFromSentMessage(
   } catch (error) {
     console.error("Contact update after send failed", error);
   }
+}
+
+const STATUS_WORDS: Record<string, string> = { replied: "Replied", booked: "Call booked" };
+
+async function logOutreachHandled(
+  env: Pick<Env, "DB">,
+  ownerId: string,
+  messageId: string,
+  change: OutreachInboundChange,
+): Promise<void> {
+  const who = change.organisation && change.organisation.toLowerCase() !== change.name.toLowerCase()
+    ? `${change.name} (${change.organisation})`
+    : change.name;
+  const bounced = change.status === "bounced";
+  const label = bounced ? `Email to ${who} bounced` : `Marked ${who} ${STATUS_WORDS[String(change.status)] || change.status}`;
+  const detail = bounced
+    ? "Check the address in People. The status and follow-up date were kept."
+    : change.status === "booked"
+      ? "They sent a calendar invite, so the follow-up was cancelled."
+      : "They answered, so the follow-up was cancelled.";
+  const undo: MailHandledUndo | null = bounced
+    ? null
+    : { kind: "restore_outreach", contactId: change.contactId, status: change.previousStatus, nextFollowupAt: change.previousFollowUpAt };
+  await env.DB.prepare(
+    `INSERT INTO mailbox_handled_actions (id, user_id, message_id, kind, label, detail, undo_json, created_at)
+     VALUES (?, ?, ?, 'outreach', ?, ?, ?, ?)`,
+  )
+    .bind(crypto.randomUUID(), ownerId, messageId, label.slice(0, 200), detail, undo ? JSON.stringify(undo) : null, new Date().toISOString())
+    .run();
 }
 
 export type ContactMailHistoryItem = { id: string; direction: "inbound" | "outbound"; subject: string; at: string };
@@ -106,6 +137,12 @@ export async function syncOutreachFromInbound(
       textBody: input.textBody,
       hasCalendarInvite,
     });
+    // The Brief's "Handled by ME3" says what changed and why, with an undo.
+    for (const change of result.changes) {
+      await logOutreachHandled(env, ownerId, input.messageId, change).catch((error) =>
+        console.error("Outreach handled entry failed", error),
+      );
+    }
     return result.kind;
   } catch (error) {
     console.error("Outreach status update failed", error);

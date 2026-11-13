@@ -70,7 +70,7 @@ export const MAIL_TRIAGE_SCHEMA = [
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
     message_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('receipt', 'newsletter', 'notification', 'login_code', 'instruction', 'spam', 'rule_archive', 'rule_reply')),
+    kind TEXT NOT NULL CHECK (kind IN ('receipt', 'newsletter', 'notification', 'login_code', 'instruction', 'spam', 'rule_archive', 'rule_reply', 'outreach')),
     label TEXT NOT NULL,
     detail TEXT,
     amount_cents INTEGER,
@@ -171,6 +171,29 @@ export const MAILBOX_SPAM_HANDLED_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_mailbox_handled_actions_user_created ON mailbox_handled_actions(user_id, created_at DESC)`,
 ] as const;
 
+/** Migration 0106: the handled log learns "outreach" (a prospect's status changed by an email). */
+export const MAILBOX_OUTREACH_HANDLED_STATEMENTS = [
+  `DROP TABLE IF EXISTS mailbox_handled_actions_next`,
+  `CREATE TABLE mailbox_handled_actions_next (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('receipt', 'newsletter', 'notification', 'login_code', 'instruction', 'spam', 'rule_archive', 'rule_reply', 'outreach')),
+    label TEXT NOT NULL,
+    detail TEXT,
+    amount_cents INTEGER,
+    currency TEXT,
+    undo_json TEXT,
+    undone_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `INSERT INTO mailbox_handled_actions_next (id, user_id, message_id, kind, label, detail, amount_cents, currency, undo_json, undone_at, created_at)
+   SELECT id, user_id, message_id, kind, label, detail, amount_cents, currency, undo_json, undone_at, created_at FROM mailbox_handled_actions`,
+  `DROP TABLE mailbox_handled_actions`,
+  `ALTER TABLE mailbox_handled_actions_next RENAME TO mailbox_handled_actions`,
+  `CREATE INDEX IF NOT EXISTS idx_mailbox_handled_actions_user_created ON mailbox_handled_actions(user_id, created_at DESC)`,
+] as const;
+
 export type MailTriageCategory = "needs_you" | "handled" | "fyi" | "noise";
 export type MailTriageUrgency = "low" | "normal" | "urgent";
 export type MailTriageActionKind =
@@ -184,7 +207,7 @@ export type MailTriageActionKind =
   | "unsubscribe"
   | "mark_done";
 export type MailTriageAction = { kind: MailTriageActionKind; label: string; url?: string | null };
-export type MailHandledKind = "receipt" | "newsletter" | "notification" | "login_code" | "instruction" | "spam" | "rule_archive" | "rule_reply";
+export type MailHandledKind = "receipt" | "newsletter" | "notification" | "login_code" | "instruction" | "spam" | "rule_archive" | "rule_reply" | "outreach";
 
 /** What the model returns for mail that rules and signals did not decide. */
 export type MailTriageDecision = {
@@ -782,7 +805,11 @@ export async function purgeStaleSpam(env: Env, options: { now?: Date; limit?: nu
   return { purged };
 }
 
-export type MailHandledUndo = { kind: "move_to_inbox" } | { kind: "remove_ledger_entry"; entryId: string };
+export type MailHandledUndo =
+  | { kind: "move_to_inbox" }
+  | { kind: "remove_ledger_entry"; entryId: string }
+  /** Outreach: put a prospect's status and follow-up date back as they were before this email. */
+  | { kind: "restore_outreach"; contactId: string; status: string | null; nextFollowupAt: string | null };
 
 async function logHandledAction(
   env: Env,

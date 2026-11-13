@@ -55,7 +55,7 @@ export type MailboxHandledItem = {
   amountCents: number | null;
   currency: string | null;
   createdAt: string;
-  undo: { kind: "move_to_inbox" | "remove_ledger_entry" } | null;
+  undo: { kind: "move_to_inbox" | "remove_ledger_entry" | "restore_outreach" } | null;
 };
 
 export type MailboxHandledGroup = {

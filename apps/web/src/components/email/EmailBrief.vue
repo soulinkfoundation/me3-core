@@ -454,7 +454,9 @@ async function undo(item: MailboxHandledItem) {
     toast.success(
       item.undo?.kind === "remove_ledger_entry"
         ? "Removed from Accounts."
-        : item.kind === "spam"
+        : item.undo?.kind === "restore_outreach"
+          ? "Status and follow-up date put back."
+          : item.kind === "spam"
           ? "Moved back to Inbox. ME3 will show this sender from now on."
           : "Moved back to Inbox.",
     );
@@ -489,6 +491,7 @@ function groupIcon(kind: string) {
     case "newsletter": return "FileText";
     case "notification": return "Archive";
     case "rule_reply": return "Send";
+    case "outreach": return "Send";
     case "spam": return "ShieldAlert";
     default: return "Sparkles";
   }

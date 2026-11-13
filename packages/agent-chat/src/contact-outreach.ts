@@ -21,6 +21,7 @@ const NOT_YET_ANSWERED = new Set<AgentContactOutreachStatus>([null, "new", "draf
 
 type ProspectRow = {
   id: string;
+  name: string;
   outreach_status: AgentContactOutreachStatus;
   next_followup_at: string | null;
   metadata: string | null;
@@ -42,7 +43,7 @@ export function outreachFollowUpDays(value: unknown): number | null {
 async function prospectsByEmail(env: OutreachEnv, userId: string, emails: string[]): Promise<ProspectRow[]> {
   if (emails.length === 0) return [];
   const rows = await env.DB.prepare(
-    `SELECT id, outreach_status, next_followup_at, metadata FROM contacts
+    `SELECT id, name, outreach_status, next_followup_at, metadata FROM contacts
      WHERE user_id = ? AND relationship = 'prospect' AND status != 'archived'
        AND LOWER(TRIM(email)) IN (${emails.map(() => "?").join(", ")})`,
   )
@@ -198,6 +199,16 @@ export async function ensureOutreachProspects(
 
 export type OutreachInboundKind = "reply" | "auto_reply" | "bounce" | "invite" | null;
 
+/** What an email did to one prospect, with what it replaced so the owner can undo it. */
+export type OutreachInboundChange = {
+  contactId: string;
+  name: string;
+  organisation: string | null;
+  status: AgentContactOutreachStatus | "bounced";
+  previousStatus: AgentContactOutreachStatus;
+  previousFollowUpAt: string | null;
+};
+
 export function isAutoReply(headers: Record<string, string>, subject: string): boolean {
   const autoSubmitted = (headers["auto-submitted"] || "").trim().toLowerCase();
   if (autoSubmitted && autoSubmitted !== "no") return true;
@@ -230,7 +241,15 @@ export async function recordOutreachInbound(
     textBody: string | null;
     hasCalendarInvite: boolean;
   },
-): Promise<{ kind: OutreachInboundKind; contactIds: string[] }> {
+): Promise<{ kind: OutreachInboundKind; contactIds: string[]; changes: OutreachInboundChange[] }> {
+  const describe = (prospect: ProspectRow, status: AgentContactOutreachStatus | "bounced"): OutreachInboundChange => ({
+    contactId: prospect.id,
+    name: prospect.name,
+    organisation: normalizeNullableText(parseJsonRecord(prospect.metadata).organisation),
+    status,
+    previousStatus: prospect.outreach_status,
+    previousFollowUpAt: prospect.next_followup_at,
+  });
   if (isBounce(input.headers, input.fromAddress, input.subject)) {
     const bounced = await prospectsByEmail(
       env,
@@ -242,26 +261,34 @@ export async function recordOutreachInbound(
         metadata: { ...parseJsonRecord(prospect.metadata), outreachBounced: true },
       });
     }
-    return { kind: "bounce", contactIds: bounced.map((prospect) => prospect.id) };
+    return {
+      kind: "bounce",
+      contactIds: bounced.map((prospect) => prospect.id),
+      changes: bounced.map((prospect) => describe(prospect, "bounced")),
+    };
   }
-  if (isAutoReply(input.headers, input.subject)) return { kind: "auto_reply", contactIds: [] };
+  if (isAutoReply(input.headers, input.subject)) return { kind: "auto_reply", contactIds: [], changes: [] };
 
   let prospects = await prospectsByEmail(env, userId, mailAddresses([input.fromAddress]));
   if (prospects.length === 0) {
     prospects = await prospectsByEmail(env, userId, mailAddresses(input.threadRecipients));
   }
-  if (prospects.length === 0) return { kind: null, contactIds: [] };
+  if (prospects.length === 0) return { kind: null, contactIds: [], changes: [] };
 
+  const changes: OutreachInboundChange[] = [];
   for (const prospect of prospects) {
     const status = prospect.outreach_status;
     const next: AgentContactOutreachStatus | undefined = input.hasCalendarInvite
       ? status === "booked" || status === "converted" ? undefined : "booked"
       : NOT_YET_ANSWERED.has(status) ? "replied" : undefined;
-    if (next) await saveProspect(env, userId, prospect, { status: next, followUpAt: null });
+    if (!next) continue;
+    await saveProspect(env, userId, prospect, { status: next, followUpAt: null });
+    changes.push(describe(prospect, next));
   }
   return {
     kind: input.hasCalendarInvite ? "invite" : "reply",
     contactIds: prospects.map((prospect) => prospect.id),
+    changes,
   };
 }
 

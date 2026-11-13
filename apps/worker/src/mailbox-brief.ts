@@ -168,6 +168,7 @@ const HANDLED_TITLES: Record<MailHandledKind, [string, string]> = {
   spam: ["spam filtered", "spam filtered"],
   rule_archive: ["email archived", "emails archived"],
   rule_reply: ["reply sent", "replies sent"],
+  outreach: ["outreach update", "outreach updates"],
 };
 
 export async function getOwnerDayStart(env: Pick<Env, "DB">, ownerId: string, now = new Date()): Promise<string> {
@@ -390,7 +391,7 @@ function parseAction(json: string | null): MailTriageAction | null {
 function parseUndo(json: string | null): MailHandledUndo | null {
   try {
     const parsed = JSON.parse(json || "null") as MailHandledUndo | null;
-    return parsed && (parsed.kind === "move_to_inbox" || (parsed.kind === "remove_ledger_entry" && typeof parsed.entryId === "string")) ? parsed : null;
+    return parsed && (parsed.kind === "move_to_inbox" || (parsed.kind === "remove_ledger_entry" && typeof parsed.entryId === "string") || (parsed.kind === "restore_outreach" && typeof parsed.contactId === "string")) ? parsed : null;
   } catch {
     return null;
   }
@@ -507,7 +508,7 @@ export async function resolveMailboxTriageForDraft(env: Env, ownerId: string, dr
   ).bind(now.toISOString(), now.toISOString(), ownerId, draftId, draftId, draftId).run().catch(() => undefined);
 }
 
-export async function undoHandledAction(env: Env, ownerId: string, actionId: string, now = new Date()): Promise<{ ok: true; restored: "inbox" | "ledger" | "none" } | ServiceError> {
+export async function undoHandledAction(env: Env, ownerId: string, actionId: string, now = new Date()): Promise<{ ok: true; restored: "inbox" | "ledger" | "outreach" | "none" } | ServiceError> {
   const row = await env.DB.prepare(
     "SELECT id, message_id, kind, undo_json, undone_at FROM mailbox_handled_actions WHERE user_id = ? AND id = ?",
   ).bind(ownerId, actionId).first<{ id: string; message_id: string; kind: MailHandledKind; undo_json: string | null; undone_at: string | null }>();
@@ -515,6 +516,15 @@ export async function undoHandledAction(env: Env, ownerId: string, actionId: str
   if (row.undone_at) return { ok: true, restored: "none" };
   const undo = parseUndo(row.undo_json);
   if (!undo) return { error: "This action cannot be undone", status: 409 };
+
+  if (undo.kind === "restore_outreach") {
+    // Only the prospect changes: the email stays where it is and keeps its place in the Brief.
+    await env.DB.prepare(
+      "UPDATE contacts SET outreach_status = ?, next_followup_at = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ? AND relationship = 'prospect'",
+    ).bind(undo.status, undo.nextFollowupAt, ownerId, undo.contactId).run();
+    await env.DB.prepare("UPDATE mailbox_handled_actions SET undone_at = ? WHERE id = ?").bind(now.toISOString(), row.id).run();
+    return { ok: true, restored: "outreach" };
+  }
 
   let restored: "inbox" | "ledger" = "inbox";
   if (undo.kind === "remove_ledger_entry") {

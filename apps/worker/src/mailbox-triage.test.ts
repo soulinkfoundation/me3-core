@@ -5,6 +5,7 @@ import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import { listAgentMailboxMessages, markAgentMailboxDraftSent } from "@me3-core/plugin-agent-chat";
 import { draftFollowUp, snoozeFollowUp, stopFollowUp } from "./mailbox-followups";
+import { syncOutreachFromInbound } from "./mailbox-outreach";
 import { draftBriefReply, getMailboxBrief, markMailboxNotSpam, markMailboxSpam, resolveBriefItem, resolveMailboxTriageForDraft, snoozeBriefItem, undoHandledAction, type MailReplyWriter } from "./mailbox-brief";
 import { listMailboxThreads, moveMailboxThread } from "./mailbox-threads";
 import {
@@ -48,6 +49,7 @@ function fixture() {
   }
   for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...ACCOUNTS_REMOVALS_SCHEMA, ...MAIL_TRIAGE_SCHEMA]) raw.exec(sql);
   raw.exec(readFileSync(new URL("../migrations/0105_mailbox_conversations.sql", import.meta.url), "utf8"));
+  raw.exec(readFileSync(new URL("../migrations/0106_mailbox_outreach_handled.sql", import.meta.url), "utf8"));
   raw.exec(`INSERT INTO owner_profile(id, email, timezone) VALUES('owner', 'me@owner.test', 'UTC');
     INSERT INTO mailbox_aliases(id,user_id,alias_local_part,forwarding_email,status) VALUES('mailbox','owner','owner','','active');
     INSERT INTO plugin_installations(plugin_id,version,enabled,status) VALUES('me3.accounts','0.1.0',1,'installed');
@@ -578,5 +580,66 @@ describe("follow-ups due", () => {
     expect((await getMailboxBrief(f.env, "owner", { now: NOW })).followUps).toEqual([]);
     expect(f.contact("Quiet")).toEqual({ status: "no_response", followUp: null, sent: 2 });
     expect(await draftFollowUp(f.env, "owner", "Quiet", { write: f.write })).toMatchObject({ status: 409 });
+  });
+});
+
+// Failure modes: ME3 changes a prospect's status and the owner never learns why;
+// the undo archives or re-files the prospect's email instead of restoring the
+// status; an auto-reply or an email that changed nothing is listed as handled.
+describe("outreach on the handled list", () => {
+  function outreach() {
+    const f = fixture();
+    f.raw.prepare(
+      `INSERT INTO contacts(id,user_id,name,email,relationship,outreach_status,next_followup_at,metadata)
+       VALUES('aoife','owner','Aoife','aoife@imta.example','prospect','sent','2026-11-20T09:00:00.000Z','{"organisation":"IMTA"}')`,
+    ).run();
+    const arrive = async (id: string, input: { from?: string; subject?: string; body?: string; headers?: Record<string, string>; ics?: boolean } = {}) => {
+      const from = input.from || "aoife@imta.example";
+      const subject = input.subject || "Re: ME3 for IMTA members";
+      insertMail(f.raw, { id, from, subject, body: input.body || "Sounds good, tell me more." });
+      return syncOutreachFromInbound(f.env, "owner", {
+        messageId: id, fromAddress: from, headers: input.headers || {}, subject, textBody: input.body || "Sounds good, tell me more.",
+        attachments: input.ics ? [{ filename: "invite.ics", mimeType: "text/calendar" }] : [],
+      });
+    };
+    const prospect = () => f.raw.prepare("SELECT outreach_status AS status, next_followup_at AS followUp FROM contacts WHERE id = 'aoife'").get();
+    const handled = async () => (await getMailboxBrief(f.env, "owner")).handled.groups.find((group) => group.kind === "outreach");
+    return { ...f, arrive, prospect, handled };
+  }
+
+  it("says why a prospect's status changed, and Undo puts the status and date back", async () => {
+    const f = outreach();
+    await f.arrive("reply-1");
+
+    expect(f.prospect()).toEqual({ status: "replied", followUp: null });
+    const group = await f.handled();
+    expect(group).toMatchObject({
+      title: "1 outreach update",
+      items: [{ messageId: "reply-1", label: "Marked Aoife (IMTA) Replied", detail: "They answered, so the follow-up was cancelled.", undo: { kind: "restore_outreach" } }],
+    });
+
+    expect(await undoHandledAction(f.env, "owner", group!.items[0].id)).toEqual({ ok: true, restored: "outreach" });
+    expect(f.prospect()).toEqual({ status: "sent", followUp: "2026-11-20T09:00:00.000Z" });
+    expect(f.raw.prepare("SELECT folder FROM mailbox_messages WHERE id = 'reply-1'").get()).toEqual({ folder: "inbox" });
+    expect(triageRows(f.raw)).toEqual([]);
+    expect(await f.handled()).toBeUndefined();
+  });
+
+  it("lists a call booked from an invite and a bounce, but not auto-replies or mail that changed nothing", async () => {
+    const f = outreach();
+    await f.arrive("ooo", { subject: "Automatic reply: ME3 for IMTA members", headers: { "auto-submitted": "auto-replied" } });
+    expect(await f.handled()).toBeUndefined();
+
+    await f.arrive("bounce", { from: "mailer-daemon@mx.example", subject: "Undelivered Mail Returned to Sender", body: "<aoife@imta.example>: 550 no such user" });
+    await f.arrive("invite", { subject: "Invitation: ME3 call", ics: true });
+    await f.arrive("chat", { subject: "Re: Invitation: ME3 call" });
+
+    expect(f.prospect()).toEqual({ status: "booked", followUp: null });
+    const group = await f.handled();
+    expect(group?.title).toBe("2 outreach updates");
+    expect(group?.items.map((item) => [item.messageId, item.label, item.undo?.kind ?? null]).sort()).toEqual([
+      ["bounce", "Email to Aoife (IMTA) bounced", null],
+      ["invite", "Marked Aoife (IMTA) Call booked", "restore_outreach"],
+    ]);
   });
 });

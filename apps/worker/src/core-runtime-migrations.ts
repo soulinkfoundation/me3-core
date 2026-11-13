@@ -16,7 +16,7 @@ import { AGENT_PAYMENTS_SCHEMA } from "./agent-payments";
 import { AGENT_COMPUTER_SCHEMA } from "./agent-computer";
 import { AGENT_COMMERCE_SCHEMA } from "./agent-commerce-store";
 import { AGENT_NETWORK_COMMERCE_SCHEMA } from "./agent-network-commerce";
-import { MAIL_TRIAGE_SCHEMA, MAILBOX_LOGIN_CODES_STATEMENTS, MAILBOX_MODEL_CALLS_SCHEMA, MAILBOX_SPAM_HANDLED_STATEMENTS, MAILBOX_SPAM_RULES_STATEMENTS } from "./mailbox-triage";
+import { MAIL_TRIAGE_SCHEMA, MAILBOX_LOGIN_CODES_STATEMENTS, MAILBOX_MODEL_CALLS_SCHEMA, MAILBOX_OUTREACH_HANDLED_STATEMENTS, MAILBOX_SPAM_HANDLED_STATEMENTS, MAILBOX_SPAM_RULES_STATEMENTS } from "./mailbox-triage";
 import { AI_USAGE_SETTLEMENTS_SCHEMA } from "./managed-ai-reconciliation";
 import { MAILBOX_INSTRUCTION_REPLAY_STATEMENTS, MAILBOX_INSTRUCTIONS_SCHEMA } from "./mailbox-instructions";
 import { MAILBOX_CONVERSATION_FOLDER_FIX_STATEMENTS, MAILBOX_CONVERSATION_SCHEMA_STATEMENTS } from "./mailbox-conversations";
@@ -1009,6 +1009,17 @@ const runtimeMigrations: RuntimeMigration[] = [
       const columns = await db.prepare("PRAGMA table_xinfo(mailbox_messages)").all<SqliteNameRow>();
       if (!(columns.results || []).some((row) => row.name === MAILBOX_CANONICAL_THREAD_KEY_COLUMN)) return;
       for (const statement of MAILBOX_CONVERSATION_FOLDER_FIX_STATEMENTS) await db.prepare(statement).run();
+    },
+  },
+  // Outreach: the Brief's handled log learns "outreach" (an email changed a prospect's status).
+  {
+    id: "0106_mailbox_outreach_handled",
+    checksum: "2026-11-13-mailbox-outreach-handled-v1",
+    async apply(db) {
+      const table = await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'mailbox_handled_actions'").first<SqliteDefinitionRow>();
+      // An install without mail triage yet gets the current schema when mail is first set up.
+      if (!table?.sql || table.sql.includes("'outreach'")) return;
+      await db.batch(MAILBOX_OUTREACH_HANDLED_STATEMENTS.map(sql => db.prepare(sql)));
     },
   },
 ];
