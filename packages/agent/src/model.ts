@@ -182,13 +182,23 @@ function openAiRequest(messages: readonly AgentMessage[], tools: readonly AgentT
   return {
     messages: messages.map(message => ({role:message.role,content:message.images?.length ? [{type:"text",text:message.content},...message.images.map(image=>({type:"image_url",image_url:{url:image.url}}))] : message.content,
       ...(message.toolCallId?{tool_call_id:message.toolCallId}:{}),
-      ...(message.toolCalls?.length?{tool_calls:message.toolCalls.map(call=>({id:call.id,type:"function",function:{name:call.name,arguments:JSON.stringify(call.arguments)}}))}:{}),
+      ...(message.toolCalls?.length?{tool_calls:message.toolCalls.map(call=>({id:call.id,type:"function",function:{name:call.name,arguments:JSON.stringify(call.arguments)},...toolCallExtra(model,call)}))}:{}),
     })),
     ...(tools.length?{tools:tools.map(tool=>({type:"function",function:{name:tool.name,description:tool.description,parameters:tool.parameters,strict:false}}))}:{}),
     ...(openAiReasoning?{max_completion_tokens:maxTokens}:{max_tokens:maxTokens}),
     ...(effort?{reasoning_effort:effort}:{}),
     stream_options: {include_usage:true},
   };
+}
+
+// Gemini rejects a tool result unless its call carries the thought signature it
+// streamed in extra_content. Calls made by another model (an earlier step or a
+// fallback) use the validator bypass Google documents for its OpenAI-compatible API.
+// https://ai.google.dev/gemini-api/docs/thought-signatures
+const GEMINI_SIGNATURE_BYPASS = {google:{thought_signature:"skip_thought_signature_validator"}};
+function toolCallExtra(model: string, call: AgentToolCall): Record<string, unknown> {
+  if (call.providerData) return {extra_content:call.providerData};
+  return model.startsWith("google/") ? {extra_content:GEMINI_SIGNATURE_BYPASS} : {};
 }
 
 // Anthropic rejects tool input schemas with anyOf/oneOf/allOf at the top level,
@@ -245,7 +255,7 @@ async function consumeStream(stream: ReadableStream<Uint8Array>, anthropic: bool
   let completed=false,nativeProtocol=anthropic;
   let usage: AgentUsage | undefined;
   let finalAnthropicUsage=false;
-  const calls=new Map<number,{id:string;name:string;json:string;input?:Record<string,unknown>}>();
+  const calls=new Map<number,{id:string;name:string;json:string;input?:Record<string,unknown>;extra?:Record<string,unknown>}>();
   const abort=()=>void reader.cancel("cancelled");signal.addEventListener("abort",abort,{once:true});
   async function consume(frame:string) {
     const data=frame.split("\n").filter(line=>line.startsWith("data:")).map(line=>line.slice(5).trimStart()).join("\n");
@@ -286,7 +296,9 @@ async function consumeStream(stream: ReadableStream<Uint8Array>, anthropic: bool
       for(const value of Array.isArray(delta.tool_calls)?delta.tool_calls:[]) {
         const valueRecord=record(value);const index=Number(valueRecord.index ?? 0);const fn=record(valueRecord.function);
         const call=calls.get(index)??{id:"",name:"",json:""};
-        if(valueRecord.id)call.id=String(valueRecord.id);if(fn.name)call.name+=String(fn.name);if(fn.arguments)call.json+=String(fn.arguments);calls.set(index,call);
+        if(valueRecord.id)call.id=String(valueRecord.id);if(fn.name)call.name+=String(fn.name);if(fn.arguments)call.json+=String(fn.arguments);
+        if(valueRecord.extra_content&&typeof valueRecord.extra_content==="object")call.extra=record(valueRecord.extra_content);
+        calls.set(index,call);
       }
     }
   }
@@ -302,7 +314,7 @@ async function consumeStream(stream: ReadableStream<Uint8Array>, anthropic: bool
     if(!completed)throw new Error("Model stream did not complete; no tool calls are accepted");
   } catch(error) {await reader.cancel().catch(()=>{});throw error;}
   finally {signal.removeEventListener("abort",abort);reader.releaseLock();}
-  return {text,toolCalls:[...calls.entries()].sort(([a],[b])=>a-b).map(([,call])=>({id:call.id || crypto.randomUUID(),name:call.name,arguments:parseArguments(call.json || JSON.stringify(call.input ?? {}))})),...(usage && (!anthropic || finalAnthropicUsage)?{usage}:{})};
+  return {text,toolCalls:[...calls.entries()].sort(([a],[b])=>a-b).map(([,call])=>({id:call.id || crypto.randomUUID(),name:call.name,arguments:parseArguments(call.json || JSON.stringify(call.input ?? {})),...(call.extra?{providerData:call.extra}:{})})),...(usage && (!anthropic || finalAnthropicUsage)?{usage}:{})};
 }
 
 function parseResponse(raw: unknown, anthropic: boolean): AgentModelResponse {
@@ -316,7 +328,7 @@ function parseResponse(raw: unknown, anthropic: boolean): AgentModelResponse {
   const content=Array.isArray(event.content)?event.content:[];const choice=record(Array.isArray(event.choices)?event.choices[0]:null);const message=record(choice.message);
   if(choice.finish_reason==="length" || event.stop_reason==="max_tokens")throw new Error("Model response was truncated");
   const text=typeof event.response==="string"?event.response:typeof message.content==="string"?message.content:content.filter(item=>record(item).type==="text").map(item=>record(item).text ?? "").join("");
-  const toolCalls: AgentToolCall[] = anthropic ? content.filter(item=>record(item).type==="tool_use").map(item=>{const block=record(item);return{id:String(block.id),name:String(block.name),arguments:record(block.input)};}) : (Array.isArray(message.tool_calls)?message.tool_calls:Array.isArray(event.tool_calls)?event.tool_calls:[]).map(item=>{const call=record(item);const fn=record(call.function ?? call);return{id:String(call.id ?? crypto.randomUUID()),name:String(fn.name),arguments:typeof fn.arguments==="string"?parseArguments(fn.arguments):record(fn.arguments)};});
+  const toolCalls: AgentToolCall[] = anthropic ? content.filter(item=>record(item).type==="tool_use").map(item=>{const block=record(item);return{id:String(block.id),name:String(block.name),arguments:record(block.input)};}) : (Array.isArray(message.tool_calls)?message.tool_calls:Array.isArray(event.tool_calls)?event.tool_calls:[]).map(item=>{const call=record(item);const fn=record(call.function ?? call);return{id:String(call.id ?? crypto.randomUUID()),name:String(fn.name),arguments:typeof fn.arguments==="string"?parseArguments(fn.arguments):record(fn.arguments),...(call.extra_content&&typeof call.extra_content==="object"?{providerData:record(call.extra_content)}:{})};});
   const usage=event.usage?readUsage(event.usage,anthropic):undefined;
   return {text,toolCalls,...(usage?{usage}:{})};
 }
@@ -331,7 +343,11 @@ function readUsage(value:unknown,anthropic:boolean,previous?:AgentUsage):AgentUs
   const input=anthropic
     ? usage.input_tokens===undefined && previous ? previous.inputTokens-previous.cachedInputTokens-(previous.cacheWriteInputTokens??0) : usage.input_tokens
     : usage.prompt_tokens ?? usage.input_tokens;
-  const output=usage.output_tokens!==undefined?usage.output_tokens:usage.completion_tokens!==undefined?usage.completion_tokens:previous?.outputTokens;
+  // OpenAI counts reasoning inside completion_tokens; Gemini reports it beside them
+  // (prompt + completion + reasoning = total) and bills it as output.
+  const reasoning=record(usage.completion_tokens_details).reasoning_tokens;
+  const separateReasoning=!anthropic&&typeof reasoning==="number"&&reasoning>0&&typeof usage.prompt_tokens==="number"&&typeof usage.completion_tokens==="number"&&usage.total_tokens===usage.prompt_tokens+usage.completion_tokens+reasoning?reasoning:0;
+  const output=usage.output_tokens!==undefined?usage.output_tokens:usage.completion_tokens!==undefined?(usage.completion_tokens as number)+separateReasoning:previous?.outputTokens;
   if (![input,output,cached,cacheWrite].every(count=>typeof count==="number" && Number.isSafeInteger(count) && count>=0)) return undefined;
   const totalInput=(input as number)+(anthropic?(cached as number)+(cacheWrite as number):0);
   if (!Number.isSafeInteger(totalInput) || (cached as number)+(cacheWrite as number)>totalInput) return undefined;

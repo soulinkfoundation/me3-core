@@ -1,6 +1,7 @@
 export type JsonSchema = Record<string, unknown>;
 export type AgentEffect = "read" | "write" | "external" | "destructive";
-export type AgentToolCall = { id: string; name: string; arguments: Record<string, unknown> };
+/** `providerData` is opaque provider state echoed back with the call on the next request (Gemini thought signatures). */
+export type AgentToolCall = { id: string; name: string; arguments: Record<string, unknown>; providerData?: Record<string, unknown> };
 export type AgentTargetSelection = { presentationId: string; candidateId: string };
 export type AgentTargetMetadata = { domain: string; idParameter: string; actionLabel: string; unsupportedArguments?: readonly string[]; ownerTimezoneParameter?: string };
 export type AgentTargetPresentationCard = {

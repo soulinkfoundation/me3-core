@@ -183,6 +183,28 @@ describe("new agent Cloudflare model transport", () => {
     await step("anthropic/claude-opus-5.5", "medium");
     expect(request.output_config).toEqual({effort:"medium"});
   });
+  it("echoes Gemini thought signatures and bills its separately reported reasoning", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const signature = {google:{thought_signature:"sig-1"}};
+    const model = createCloudflareModel({model:"google/gemini-3.8-flash",gatewayId:"test",ai:{run:async(_,input)=>{requests.push(input);return stream([
+      {choices:[{delta:{role:"assistant",tool_calls:[{index:0,id:"call_1",type:"function",extra_content:signature,function:{name:"save",arguments:'{"title":"A"}'}}]}}]},
+      {choices:[{delta:{content:""},finish_reason:"tool_calls"}],usage:{prompt_tokens:47,completion_tokens:27,total_tokens:181,completion_tokens_details:{reasoning_tokens:107}}},
+    ]);}}});
+    const signal = new AbortController().signal;
+    const first = await model.step({messages:[{role:"user",content:"Save A"}],tools:[tool],signal,onDelta:async()=>{}});
+    expect(first.toolCalls).toEqual([{id:"call_1",name:"save",arguments:{title:"A"},providerData:signature}]);
+    expect(first.usage).toMatchObject({inputTokens:47,outputTokens:134});
+    expect(first.usage?.estimatedCostUsd).toBeCloseTo((47*0.75+134*3.75)/1_000_000, 12);
+    // Calls from another model get Google's documented bypass signature.
+    await model.step({messages:[{role:"user",content:"Save A"},{role:"assistant",content:"",toolCalls:[...first.toolCalls,{id:"old",name:"save",arguments:{title:"B"}}]},{role:"tool",toolCallId:"call_1",content:"{}"},{role:"tool",toolCallId:"old",content:"{}"}],tools:[tool],signal,onDelta:async()=>{}});
+    const calls = (requests[1].messages as Array<{tool_calls?: Array<Record<string, unknown>>}>)[1].tool_calls;
+    expect(calls?.map(call => call.extra_content)).toEqual([signature,{google:{thought_signature:"skip_thought_signature_validator"}}]);
+  });
+  it("keeps OpenAI reasoning inside completion tokens", async () => {
+    const model = createCloudflareModel({model:"openai/gpt-6.1-terra",gatewayId:"test",ai:{run:async()=>({choices:[{message:{content:"Ready"}}],usage:{prompt_tokens:100,completion_tokens:50,total_tokens:150,completion_tokens_details:{reasoning_tokens:40}}})}});
+    const result = await model.step({messages:[],tools:[],signal:new AbortController().signal,onDelta:async()=>{}});
+    expect(result.usage).toMatchObject({inputTokens:100,outputTokens:50});
+  });
   it("charges the published Cloudflare cached-input and cache-write candidate rates", async () => {
     const cases: Array<[string, number]> = [["anthropic/claude-sonnet-5.5",0.00107],["anthropic/claude-sonnet-5",0.00107],["anthropic/claude-sonnet-4.6",0.001605],["moonshotai/kimi-k3",0.00153],["openai/gpt-6-astra",0.0053],["@cf/zai-org/glm-5.3-flash",0.000083]];
     for (const [name, expected] of cases) {
