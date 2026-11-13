@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
-import { listAgentMailboxMessages } from "@me3-core/plugin-agent-chat";
+import { listAgentMailboxMessages, markAgentMailboxDraftSent } from "@me3-core/plugin-agent-chat";
+import { draftFollowUp, snoozeFollowUp, stopFollowUp } from "./mailbox-followups";
 import { draftBriefReply, getMailboxBrief, markMailboxNotSpam, markMailboxSpam, resolveBriefItem, resolveMailboxTriageForDraft, snoozeBriefItem, undoHandledAction, type MailReplyWriter } from "./mailbox-brief";
 import { listMailboxThreads, moveMailboxThread } from "./mailbox-threads";
 import {
@@ -473,5 +474,108 @@ describe("mail triage pipeline", () => {
     expect(detail("news2")).toBe("");
     expect(group.title).toBe("2 newsletters set aside");
     expect(f.raw.prepare("SELECT status FROM mailbox_triage WHERE message_id = 'news2'").get()).toEqual({ status: "done" });
+  });
+});
+
+// Failure modes: a prospect who already answered, or whose date is still ahead,
+// is chased anyway; the Brief drafts the same follow-up twice; the follow-up
+// starts a new conversation instead of continuing the outreach thread; a sent
+// follow-up stays in the Brief; ME3 keeps chasing after two follow-ups.
+describe("follow-ups due", () => {
+  const NOW = new Date("2026-11-20T12:00:00.000Z");
+  function outreach() {
+    const f = fixture();
+    const prospect = (id: string, email: string, extra: Record<string, string | null> = {}) => {
+      const row = { relationship: "prospect", source: "outreach", outreach_status: "sent", next_followup_at: "2026-11-20T09:00:00.000Z", ...extra };
+      const columns = ["id", "user_id", "name", "email", ...Object.keys(row)];
+      f.raw.prepare(`INSERT INTO contacts (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`)
+        .run(id, "owner", id, email, ...Object.values(row));
+    };
+    const sentTo = (id: string, to: string, subject: string, sentAt: string) =>
+      f.raw.prepare(
+        `INSERT INTO mailbox_messages(id,mailbox_id,direction,message_kind,status,from_address,to_address,subject,text_body,metadata_json,folder,created_by,sent_at)
+         VALUES (?,'mailbox','outbound','email','sent','owner@me3.test',?,?,'Hi, I would love to offer your members a discount.',?,'sent','owner',?)`,
+      ).run(id, to, subject, JSON.stringify({ outbound_headers: { message_id: `<${id}@me3.test>` } }), sentAt);
+    const contact = (id: string) =>
+      f.raw.prepare("SELECT outreach_status AS status, next_followup_at AS followUp, json_extract(metadata,'$.outreachFollowUpsSent') AS sent FROM contacts WHERE id = ?").get(id);
+    const write = vi.fn<MailReplyWriter>(async () => ({ subject: "ignored", body: "Hi Aoife, just bringing this back to the top of your inbox." }));
+    return { ...f, prospect, sentTo, contact, write };
+  }
+
+  it("lists only prospects whose date has passed and who have not answered", async () => {
+    const f = outreach();
+    f.prospect("Aoife", "aoife@imta.example", { metadata: JSON.stringify({ organisation: "IMTA", outreachOffer: "Free setup for 10 members", outreachFollowUpsSent: 1 }), last_interaction_at: "2026-11-11T10:00:00.000Z" });
+    f.prospect("Answered", "niamh@yti.example", { outreach_status: "replied" });
+    f.prospect("Later", "later@isme.example", { next_followup_at: "2026-11-25T09:00:00.000Z" });
+    f.prospect("No date", "nodate@icf.example", { next_followup_at: null });
+    f.raw.exec("INSERT INTO contacts(id,user_id,name,email,next_followup_at) VALUES('friend','owner','Friend','friend@example.test','2026-11-01T09:00:00.000Z')");
+    f.sentTo("out-1", "aoife@imta.example", "ME3 for IMTA members", "2026-11-11T10:00:00.000Z");
+
+    const brief = await getMailboxBrief(f.env, "owner", { now: NOW });
+    expect(brief.followUps).toEqual([{
+      contactId: "Aoife", name: "Aoife", organisation: "IMTA", email: "aoife@imta.example",
+      offer: "Free setup for 10 members", subject: "ME3 for IMTA members", daysWaiting: 9,
+      followUpNumber: 2, followUpCap: 2, draft: null,
+    }]);
+  });
+
+  it("drafts one follow-up in the outreach thread and shows it on the Brief", async () => {
+    const f = outreach();
+    f.prospect("Aoife", "aoife@imta.example", { metadata: JSON.stringify({ outreachOffer: "Free setup" }) });
+    f.sentTo("out-1", "aoife@imta.example", "ME3 for IMTA members", "2026-11-11T10:00:00.000Z");
+
+    const drafted = await draftFollowUp(f.env, "owner", "Aoife", { write: f.write });
+    expect(drafted).toMatchObject({ draft: { to: "aoife@imta.example", subject: "Re: ME3 for IMTA members", body: expect.stringContaining("top of your inbox") } });
+    expect(f.write.mock.calls[0]?.[0]).toMatchObject({
+      instruction: expect.stringContaining("Free setup"),
+      body: expect.stringContaining("offer your members a discount"),
+    });
+    const again = await draftFollowUp(f.env, "owner", "Aoife", { write: f.write });
+    expect(f.write).toHaveBeenCalledTimes(1);
+    expect(again).toEqual(drafted);
+
+    const saved = f.raw.prepare("SELECT status, created_by, source_id, thread_key, json_extract(metadata_json,'$.outbound_headers.in_reply_to') AS in_reply_to FROM mailbox_messages WHERE message_kind = 'draft'").all();
+    expect(saved).toEqual([{ status: "pending_approval", created_by: "agent", source_id: "out-1", thread_key: "out-1", in_reply_to: "<out-1@me3.test>" }]);
+    const brief = await getMailboxBrief(f.env, "owner", { now: NOW });
+    expect(brief.followUps[0]?.draft).toMatchObject({ id: "draft" in drafted ? drafted.draft.id : "", body: expect.stringContaining("top of your inbox") });
+  });
+
+  it("clears a sent follow-up from the Brief, counts it and sets the next date", async () => {
+    const f = outreach();
+    f.prospect("Aoife", "aoife@imta.example");
+    f.sentTo("out-1", "aoife@imta.example", "ME3 for IMTA members", "2026-11-11T10:00:00.000Z");
+    const drafted = await draftFollowUp(f.env, "owner", "Aoife", { write: f.write });
+    if (!("draft" in drafted)) throw new Error("no draft");
+
+    f.raw.prepare("UPDATE mailbox_messages SET status = 'approved' WHERE id = ?").run(drafted.draft.id);
+    await markAgentMailboxDraftSent(f.env, "owner", drafted.draft.id, { providerId: "test", providerMessageId: "m-2", approvedByUserId: "owner", sentAt: NOW.toISOString() });
+
+    expect(f.contact("Aoife")).toEqual({ status: "sent", followUp: "2026-11-27T12:00:00.000Z", sent: 1 });
+    expect((await getMailboxBrief(f.env, "owner", { now: NOW })).followUps).toEqual([]);
+  });
+
+  it("puts a follow-up off until tomorrow, or stops it and discards the draft", async () => {
+    const f = outreach();
+    f.prospect("Aoife", "aoife@imta.example");
+    f.prospect("Mary", "mary@iacp.example");
+    f.raw.exec("INSERT INTO contacts(id,user_id,name,email,next_followup_at) VALUES('friend','owner','Friend','friend@example.test','2026-11-01T09:00:00.000Z')");
+    await draftFollowUp(f.env, "owner", "Mary", { write: f.write });
+
+    expect(await snoozeFollowUp(f.env, "owner", "Aoife", NOW)).toEqual({ ok: true, nextFollowupAt: "2026-11-21T08:00:00.000Z" });
+    expect(await stopFollowUp(f.env, "owner", "Mary")).toEqual({ ok: true });
+    expect(await stopFollowUp(f.env, "owner", "friend")).toMatchObject({ status: 404 });
+
+    expect(f.contact("Mary")).toMatchObject({ status: "sent", followUp: null });
+    expect(f.raw.prepare("SELECT status FROM mailbox_messages WHERE message_kind = 'draft'").all()).toEqual([{ status: "rejected" }]);
+    expect((await getMailboxBrief(f.env, "owner", { now: NOW })).followUps).toEqual([]);
+    expect((await getMailboxBrief(f.env, "owner", { now: new Date("2026-11-21T09:00:00.000Z") })).followUps.map((item) => item.contactId)).toEqual(["Aoife"]);
+  });
+
+  it("stops after two follow-ups and marks the prospect No response", async () => {
+    const f = outreach();
+    f.prospect("Quiet", "quiet@guild.example", { metadata: JSON.stringify({ outreachFollowUpsSent: 2 }) });
+    expect((await getMailboxBrief(f.env, "owner", { now: NOW })).followUps).toEqual([]);
+    expect(f.contact("Quiet")).toEqual({ status: "no_response", followUp: null, sent: 2 });
+    expect(await draftFollowUp(f.env, "owner", "Quiet", { write: f.write })).toMatchObject({ status: 409 });
   });
 });

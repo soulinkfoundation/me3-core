@@ -435,6 +435,24 @@ describe("People page", () => {
       expect(api.put).toHaveBeenLastCalledWith("/contacts/p-iacp", { offer: "Member discount, 3 months free" });
     });
 
+    it("asks ME3 to draft a follow-up for a prospect who has not answered, and opens Drafts", async () => {
+      const { router } = await mountPeople("/people?person=p-iacp");
+      const button = (text: string) =>
+        Array.from(document.querySelectorAll(".person-sheet button")).find((entry) => entry.textContent?.trim() === text) as HTMLButtonElement;
+      vi.mocked(api.post).mockResolvedValue({ draft: { id: "draft-1" } });
+
+      button("Draft follow-up").click();
+      await flushPromises();
+      expect(api.post).toHaveBeenCalledWith("/mailbox/followups/p-iacp/draft");
+      expect(router.currentRoute.value.fullPath).toBe("/email?tab=drafts");
+      expect(toasts.success).toHaveBeenCalledWith("ME3 drafted a follow-up. Read it before you send.");
+    });
+
+    it("offers no follow-up draft once a prospect has replied or has no email", async () => {
+      await mountPeople("/people?person=p-yti");
+      expect(document.querySelector(".person-sheet")?.textContent).not.toContain("Draft follow-up");
+    });
+
     it("starts and stops tracking someone as outreach from their panel", async () => {
       await mountPeople("/people?person=c-zoe");
       const button = (text: string) =>

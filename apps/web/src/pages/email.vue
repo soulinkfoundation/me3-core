@@ -2742,7 +2742,7 @@ async function reloadOpenThread() {
   await loadSelectedThread(selectedThreadSummary.value || stubThreadSummary(threadId, expandedId.value || ""));
 }
 
-async function editDraftFromBrief(draftId: string, _item: MailboxBriefItem) {
+async function editDraftFromBrief(draftId: string, _item?: MailboxBriefItem) {
   try {
     const data = await api.get<{ message: InboxMessage }>(`/mailbox/messages/${encodeURIComponent(draftId)}`);
     openComposeModal(data.message);

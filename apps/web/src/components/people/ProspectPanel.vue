@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useRouter } from "vue-router";
+import Button from "../Button.vue";
+import { api } from "../../api";
 import { useAppToast } from "../../composables/useAppToast";
 import { useContactsStore, type Contact, type ContactInput, type OutreachStatus } from "../../stores/contacts";
 import {
@@ -14,8 +17,10 @@ import {
 const props = defineProps<{ contact: Contact }>();
 
 const contactsStore = useContactsStore();
-const { toastError } = useAppToast();
+const router = useRouter();
+const { toastError, toastSuccess } = useAppToast();
 const saving = ref(false);
+const drafting = ref(false);
 const organisation = ref("");
 const offer = ref("");
 
@@ -48,6 +53,23 @@ async function save(patch: Partial<ContactInput>) {
     if (!updated) toastError(contactsStore.error || "Couldn't save that.");
   } finally {
     saving.value = false;
+  }
+}
+
+// ME3 writes the nudge as a reply in the outreach thread; the owner reads and sends it from Email.
+const canDraftFollowUp = computed(() => props.contact.outreachStatus === "sent" && Boolean(props.contact.email));
+
+async function draftFollowUp() {
+  if (drafting.value) return;
+  drafting.value = true;
+  try {
+    await api.post(`/mailbox/followups/${encodeURIComponent(props.contact.id)}/draft`);
+    toastSuccess("ME3 drafted a follow-up. Read it before you send.");
+    await router.push({ path: "/email", query: { tab: "drafts" } });
+  } catch (error) {
+    toastError(error instanceof Error ? error.message : "ME3 could not write a follow-up this time.");
+  } finally {
+    drafting.value = false;
   }
 }
 
@@ -128,6 +150,13 @@ function saveText(field: "organisation" | "offer", value: string) {
         </button>
       </div>
     </div>
+
+    <p v-if="contact.metadata?.outreachBounced" class="prospect-panel__bounced" role="status">
+      Your last email to {{ contact.email }} bounced. Check the address.
+    </p>
+    <Button v-if="canDraftFollowUp" color="outline" shape="soft" size="compact" type="button" :disabled="drafting" @click="draftFollowUp">
+      {{ drafting ? "Drafting…" : "Draft follow-up" }}
+    </Button>
   </div>
 </template>
 
@@ -203,6 +232,12 @@ function saveText(field: "organisation" | "offer", value: string) {
 .prospect-panel__date--due {
   color: var(--ui-accent-strong);
   font-weight: 600;
+}
+
+.prospect-panel__bounced {
+  margin: 0;
+  color: var(--ui-text-muted);
+  font-size: 13px;
 }
 
 .prospect-panel__clear {

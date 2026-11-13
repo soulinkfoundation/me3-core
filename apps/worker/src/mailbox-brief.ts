@@ -19,6 +19,7 @@ import {
   extractLoginCode,
   LOGIN_CODE_FRESH_MS,
 } from "./mailbox-triage";
+import { listDueFollowUps, type MailboxFollowUp } from "./mailbox-followups";
 import type { Env } from "./types";
 
 /**
@@ -82,6 +83,8 @@ export type MailboxLoginCode = {
 
 export type MailboxBrief = {
   needsYou: MailboxBriefItem[];
+  /** Outreach: prospects past their follow-up date who have not answered. */
+  followUps: MailboxFollowUp[];
   loginCodes: MailboxLoginCode[];
   handled: { total: number; groups: MailboxHandledGroup[] };
   fyi: { inboxLeft: number; unread: number };
@@ -298,8 +301,14 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
   const checked = await env.DB.prepare("SELECT MAX(triaged_at) AS checked_at FROM mailbox_triage WHERE user_id = ?")
     .bind(ownerId).first<{ checked_at: string | null }>().catch(() => null);
 
+  const followUps = await listDueFollowUps(env, ownerId, now).catch((error) => {
+    console.error("Follow-ups due could not be loaded", error);
+    return [] as MailboxFollowUp[];
+  });
+
   return {
     needsYou: items,
+    followUps,
     loginCodes,
     handled: { total: handled.length, groups: [...groups.values()] },
     fyi: {

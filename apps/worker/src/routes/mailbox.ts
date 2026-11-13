@@ -73,6 +73,7 @@ import {
   prepareMailboxDraftRetryAnyway,
 } from "../mailbox-delivery";
 import { syncContactsFromSentMessage } from "../mailbox-outreach";
+import { draftFollowUp, snoozeFollowUp, stopFollowUp } from "../mailbox-followups";
 import {
   isManagedEmailDeployment,
   MANAGED_EMAIL_INBOUND_PATH,
@@ -393,6 +394,31 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "ME3 could not write a reply this time." }, 502);
     }
+  });
+
+  // Outreach follow-ups on the Brief: ME3 drafts, the owner sends through draft approval.
+  app.post("/api/mailbox/followups/:contactId/draft", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const result = await draftFollowUp(c.env, ownerId, c.req.param("contactId"));
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result, 201);
+  });
+
+  app.post("/api/mailbox/followups/:contactId/later", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const result = await snoozeFollowUp(c.env, ownerId, c.req.param("contactId"));
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
+  });
+
+  app.post("/api/mailbox/followups/:contactId/stop", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const result = await stopFollowUp(c.env, ownerId, c.req.param("contactId"));
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
   });
 
   app.post("/api/mailbox/handled/:actionId/undo", async (c) => {

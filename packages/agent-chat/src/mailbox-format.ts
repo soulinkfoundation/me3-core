@@ -238,6 +238,16 @@ export function getReplyThreadHeaders(row?: DbMailboxMessageRow | null): {
   const previousReferences = normalizeReferencesHeader(
     rawHeaders.references ?? rawHeaders.References,
   );
+  if (!messageId && row.direction === "outbound") {
+    // Following up on the owner's own sent mail: its Message-ID lives in metadata.
+    const own = getDraftOutboundHeaders(row);
+    return {
+      inReplyTo: own.messageIdHeader,
+      referencesHeader: normalizeReferencesHeader(
+        [own.referencesHeader, own.messageIdHeader].filter(Boolean).join(" "),
+      ),
+    };
+  }
   return {
     inReplyTo: messageId,
     referencesHeader: normalizeReferencesHeader(

@@ -9,7 +9,9 @@ import {
   type MailboxBrief,
   type MailboxBriefAction,
   type MailboxBriefItem,
+  type MailboxFollowUp,
   type MailboxHandledItem,
+  mailInitials,
 } from "./brief";
 import EmailSenderAvatar from "./EmailSenderAvatar.vue";
 
@@ -26,7 +28,7 @@ const emit = defineEmits<{
   openThread: [threadId: string, messageId: string];
   openInbox: [];
   openRules: [];
-  editDraft: [draftId: string, item: MailboxBriefItem];
+  editDraft: [draftId: string, item?: MailboxBriefItem];
   countChanged: [count: number];
 }>();
 
@@ -40,9 +42,14 @@ const pending = ref<Set<string>>(new Set());
 const expandedGroups = ref<Set<string>>(new Set());
 let loadedAt = 0;
 
+const followUps = computed(() => brief.value?.followUps || []);
+const needsCount = computed(() => (brief.value?.needsYou.length || 0) + followUps.value.length);
+// Follow-ups ME3 has already been asked to draft, so a failed draft is not retried in a loop.
+const draftRequested = new Set<string>();
+
 const headline = computed(() => {
   if (!brief.value) return "";
-  const count = brief.value.needsYou.length;
+  const count = needsCount.value;
   if (count === 0) return "You're all caught up";
   return count === 1 ? "1 thing needs you" : `${count} things need you`;
 });
@@ -65,7 +72,8 @@ async function load(force = false) {
     brief.value = data;
     loadedAt = Date.now();
     offlineSince.value = null;
-    emit("countChanged", data.needsYou.length);
+    emit("countChanged", needsCount.value);
+    void draftMissingFollowUps();
   } catch (error) {
     const status = error && typeof error === "object" && "status" in error ? Number((error as { status?: unknown }).status) : 0;
     if (status === 404 || status === 405) {
@@ -86,7 +94,77 @@ async function load(force = false) {
 function removeItem(id: string) {
   if (!brief.value) return;
   brief.value = { ...brief.value, needsYou: brief.value.needsYou.filter((item) => item.messageId !== id) };
-  emit("countChanged", brief.value.needsYou.length);
+  emit("countChanged", needsCount.value);
+}
+
+// ME3 drafts each due follow-up once; nothing is sent until the owner presses Send.
+async function draftMissingFollowUps() {
+  const missing = followUps.value.filter((item) => !item.draft && !draftRequested.has(item.contactId));
+  if (missing.length === 0) return;
+  let drafted = false;
+  for (const item of missing) {
+    draftRequested.add(item.contactId);
+    try {
+      await api.post(`/mailbox/followups/${encodeURIComponent(item.contactId)}/draft`);
+      drafted = true;
+    } catch {
+      // The card stays, with "Draft a follow-up" to try again.
+    }
+  }
+  if (drafted) await load(true);
+}
+
+function followUpTitle(item: MailboxFollowUp): string {
+  return item.organisation && item.organisation.toLowerCase() !== item.name.toLowerCase()
+    ? `${item.name} · ${item.organisation}`
+    : item.name;
+}
+
+function followUpDetail(item: MailboxFollowUp): string {
+  const waited = item.daysWaiting === 1 ? "No reply in 1 day" : `No reply in ${item.daysWaiting} days`;
+  const parts = [item.daysWaiting > 0 ? waited : "No reply yet"];
+  if (item.offer) parts.push(`you offered ${item.offer}`);
+  if (item.followUpNumber > 1) parts.push(`follow-up ${item.followUpNumber} of ${item.followUpCap}`);
+  return parts.join(" · ");
+}
+
+function removeFollowUp(contactId: string) {
+  if (!brief.value) return;
+  brief.value = { ...brief.value, followUps: followUps.value.filter((item) => item.contactId !== contactId) };
+  emit("countChanged", needsCount.value);
+}
+
+async function followUpAction(kind: "send" | "draft" | "later" | "stop", item: MailboxFollowUp) {
+  const key = `followup:${item.contactId}`;
+  if (pending.value.has(key)) return;
+  pending.value = new Set([...pending.value, key]);
+  const path = `/mailbox/followups/${encodeURIComponent(item.contactId)}`;
+  try {
+    if (kind === "send") {
+      if (!item.draft) return;
+      await api.post(`/mailbox/drafts/${encodeURIComponent(item.draft.id)}/approve`);
+      removeFollowUp(item.contactId);
+      toastSuccess(`Follow-up sent to ${item.name}.`);
+    } else if (kind === "draft") {
+      await api.post(`${path}/draft`);
+      await load(true);
+    } else if (kind === "later") {
+      await api.post(`${path}/later`);
+      removeFollowUp(item.contactId);
+      toastSuccess("Back in the Brief tomorrow morning.");
+    } else {
+      await api.post(`${path}/stop`);
+      removeFollowUp(item.contactId);
+      toastSuccess(`ME3 won't follow up with ${item.name} again.`);
+    }
+  } catch (error) {
+    toastFromUnknown(error, "That didn't work");
+    await load(true);
+  } finally {
+    const next = new Set(pending.value);
+    next.delete(key);
+    pending.value = next;
+  }
 }
 
 async function perform(action: MailboxBriefAction, item: MailboxBriefItem) {
@@ -228,7 +306,7 @@ watch(() => props.active, (active) => { if (active) void load(); });
         <p v-if="subline">{{ subline }}</p>
       </header>
 
-      <div v-if="brief.needsYou.length === 0" class="brief-caught-up">
+      <div v-if="needsCount === 0" class="brief-caught-up">
         <UiIcon name="CircleCheck" :size="28" aria-hidden="true" />
         <p>
           {{ brief.handled.total > 0 ? `Nothing needs you. ME3 handled ${brief.handled.total} email${brief.handled.total === 1 ? "" : "s"} today.` : "Nothing needs you right now. ME3 checks new mail as it arrives." }}
@@ -240,7 +318,7 @@ watch(() => props.active, (active) => { if (active) void load(); });
         </div>
       </div>
 
-      <div v-else class="brief-panel" role="list">
+      <div v-else-if="brief.needsYou.length" class="brief-panel" role="list">
         <article
           v-for="item in brief.needsYou"
           :key="item.messageId"
@@ -288,6 +366,60 @@ watch(() => props.active, (active) => { if (active) void load(); });
           </div>
         </article>
       </div>
+
+      <template v-if="followUps.length">
+        <h2 class="brief-section">Follow-ups due <span>{{ followUps.length }}</span></h2>
+        <div class="brief-followups">
+          <article
+            v-for="item in followUps"
+            :key="item.contactId"
+            class="brief-followup"
+            :class="{ 'brief-item--pending': pending.has(`followup:${item.contactId}`) }"
+          >
+            <div class="brief-followup__who">
+              <span class="brief-followup__avatar" aria-hidden="true">{{ mailInitials(item.organisation || item.name) }}</span>
+              <span class="brief-followup__text">
+                <strong>{{ followUpTitle(item) }}</strong>
+                <span>{{ followUpDetail(item) }}</span>
+              </span>
+            </div>
+            <div v-if="item.draft" class="brief-followup__draft">
+              <small>ME3 drafted a follow-up</small>
+              {{ item.draft.body }}
+            </div>
+            <p v-else class="brief-followup__waiting">
+              {{ draftRequested.has(item.contactId) && !pending.has(`followup:${item.contactId}`) ? "No draft yet." : "ME3 is drafting a follow-up…" }}
+            </p>
+            <div class="brief-item__acts brief-followup__acts">
+              <Button
+                v-if="item.draft"
+                color="primary"
+                shape="soft"
+                size="compact"
+                type="button"
+                :disabled="pending.has(`followup:${item.contactId}`)"
+                @click="followUpAction('send', item)"
+              >
+                Send
+              </Button>
+              <Button
+                v-else
+                color="outline"
+                shape="soft"
+                size="compact"
+                type="button"
+                :disabled="pending.has(`followup:${item.contactId}`)"
+                @click="followUpAction('draft', item)"
+              >
+                Draft a follow-up
+              </Button>
+              <button v-if="item.draft" type="button" class="brief-quiet" :disabled="pending.has(`followup:${item.contactId}`)" @click="emit('editDraft', item.draft.id)">Edit</button>
+              <button type="button" class="brief-quiet brief-quiet--muted" :disabled="pending.has(`followup:${item.contactId}`)" @click="followUpAction('later', item)">Later</button>
+              <button type="button" class="brief-quiet brief-quiet--muted" :disabled="pending.has(`followup:${item.contactId}`)" @click="followUpAction('stop', item)">Stop following up</button>
+            </div>
+          </article>
+        </div>
+      </template>
 
       <template v-if="brief.handled.groups.length">
         <h2 class="brief-section">Handled by ME3 <span>Today</span></h2>
@@ -481,6 +613,79 @@ watch(() => props.active, (active) => { if (active) void load(); });
   gap: 4px 14px;
   margin-top: 6px;
   padding-left: 48px;
+}
+
+.brief-followups {
+  display: grid;
+  gap: 10px;
+}
+
+.brief-followup {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg, 12px);
+  background: var(--ui-surface);
+}
+
+.brief-followup__who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brief-followup__avatar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.brief-followup__text {
+  display: grid;
+  min-width: 0;
+}
+
+.brief-followup__text strong {
+  font-weight: 600;
+}
+
+.brief-followup__text span,
+.brief-followup__waiting {
+  margin: 0;
+  color: var(--ui-text-muted);
+  font-size: 12.5px;
+}
+
+.brief-followup__draft {
+  padding: 10px 12px;
+  border-radius: var(--ui-radius-md, 8px);
+  background: var(--ui-surface-muted);
+  color: var(--ui-text);
+  font-size: 13.5px;
+  white-space: pre-wrap;
+}
+
+.brief-followup__draft small {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ui-text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.brief-followup__acts {
+  margin-top: 0;
+  flex-wrap: wrap;
+  padding: 0;
 }
 
 .brief-tag {

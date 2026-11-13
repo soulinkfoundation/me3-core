@@ -67,8 +67,24 @@ export type MailboxHandledGroup = {
   items: MailboxHandledItem[];
 };
 
+/** Outreach: a prospect past their follow-up date who has not answered. */
+export type MailboxFollowUp = {
+  contactId: string;
+  name: string;
+  organisation: string | null;
+  email: string;
+  offer: string | null;
+  subject: string | null;
+  daysWaiting: number;
+  followUpNumber: number;
+  followUpCap: number;
+  draft: { id: string; preview: string; body: string } | null;
+};
+
 export type MailboxBrief = {
   needsYou: MailboxBriefItem[];
+  /** Missing on older Workers. */
+  followUps?: MailboxFollowUp[];
   handled: { total: number; groups: MailboxHandledGroup[] };
   fyi: { inboxLeft: number; unread: number };
   checkedAt: string | null;
