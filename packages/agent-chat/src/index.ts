@@ -14,7 +14,7 @@ export { buildReminderActionCard, buildMissionTaskActionCard } from "./action-ca
 
 export { MANAGED_AI_MODELS, estimateManagedAiUsage, estimateManagedKimiK3Usage } from "./managed-pricing";
 
-export { OUTREACH_DEFAULT_FOLLOWUP_DAYS, OUTREACH_FOLLOWUP_CAP, isAutoReply, isBounce, mailAddresses, outreachFollowUpDays, recordMailboxSendForContacts, recordOutreachBooking, recordOutreachEmailSent, recordOutreachInbound, type OutreachInboundKind } from "./contact-outreach";
+export { OUTREACH_DEFAULT_FOLLOWUP_DAYS, OUTREACH_FOLLOWUP_CAP, isAutoReply, isBounce, mailAddresses, outreachFollowUpDays, recordMailboxSendForContacts, recordOutreachBooking, recordOutreachEmailSent, recordOutreachInbound, listOutreachProspects, saveOutreachProspects, type OutreachInboundKind, type OutreachProspectInput, type OutreachProspectRecord } from "./contact-outreach";
 export { clearContactReminder, isCloseCloseness, laterInteractionTimestamp, setContactReminder, refreshContactInteractionsFromBookings, touchContactInteraction } from "./contact-people";
 
 export {

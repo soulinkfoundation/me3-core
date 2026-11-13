@@ -93,7 +93,14 @@ export type AgentSoupServices = {
   listSoups(signal: AbortSignal): Promise<unknown>;
 };
 
+/** Outreach prospects in People. See packages/agent-chat/src/contact-outreach.ts. */
+export type OutreachProspect = { id: string; name: string; email: string | null; status: string | null; [key: string]: unknown };
+export interface AgentOutreachServices {
+  list(input: { filter?: string; limit?: number }): Promise<{ prospects: OutreachProspect[]; total: number }>;
+  save(prospects: Array<Record<string, unknown>>): Promise<{ saved: Array<OutreachProspect & { created: boolean }>; skipped: Array<{ name: string; reason: string }> }>;
+}
 export interface AgentDomainServices {
+  outreach?: AgentOutreachServices;
   cards?: AgentHomeCardServices;
   soup?: AgentSoupServices;
   coding?: AgentCodingServices;

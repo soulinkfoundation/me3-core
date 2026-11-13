@@ -6,10 +6,12 @@ import {
   createAgentContact,
   createAgentMailboxDraft,
   listAgentContacts,
+  listOutreachProspects,
   markAgentMailboxDraftSent,
   recordOutreachBooking,
   recordOutreachEmailSent,
   recordOutreachInbound,
+  saveOutreachProspects,
   updateAgentContact,
   updateAgentMailboxDraft,
   upsertAgentContact,
@@ -753,5 +755,70 @@ describe("email tracked as outreach", () => {
       { name: "Bríd", relationship: "contact", outreach_status: null, offer: null },
       { name: "Dad", relationship: "contact", outreach_status: null, offer: null },
     ]);
+  });
+});
+
+// Failure modes: the assistant duplicates an organisation it was given twice;
+// it turns a customer or a Close friend into a prospect; it invents an address;
+// saving a prospect marks them Sent although nothing was sent; another owner's
+// contact is changed by ID.
+describe("assistant outreach list", () => {
+  const NOW = new Date("2026-11-13T10:00:00.000Z");
+
+  it("saves a list of organisations as prospects that have not been written to yet", async () => {
+    const { env } = fixture();
+    const saved = await saveOutreachProspects(env, "alice", [
+      { name: "IACP", email: "Office@IACP.example", organisation: "IACP", offer: "Member discount" },
+      { name: "IMTA", organisation: "IMTA" },
+      { name: "IACP again", email: "office@iacp.example", offer: "Something else" },
+      { name: "" },
+    ], NOW);
+
+    expect(saved.saved).toMatchObject([
+      { name: "IACP", email: "office@iacp.example", organisation: "IACP", offer: "Member discount", status: "new", created: true },
+      { name: "IMTA", email: null, organisation: "IMTA", status: "new", created: true },
+      { name: "IACP", email: "office@iacp.example", offer: "Something else", created: false },
+    ]);
+    expect(saved.skipped).toEqual([{ name: "", reason: "A name is required." }]);
+    const listed = await listOutreachProspects(env, "alice", {}, NOW);
+    expect(listed.prospects.map((prospect) => prospect.name).sort()).toEqual(["IACP", "IMTA"]);
+    expect(listed.prospects.every((prospect) => prospect.nextFollowupAt === null)).toBe(true);
+  });
+
+  it("updates status and follow-up date, and leaves customers, Close people and other owners alone", async () => {
+    const { env, addContact, addBooking } = fixture();
+    addContact("p-mary", "alice", "Mary", "mary@iacp.example", { relationship: "prospect", outreach_status: "sent" });
+    addContact("c-customer", "alice", "Bríd", "brid@example.com");
+    addBooking("b-1", "alice-site", "brid@example.com", "2026-09-10 15:00:00");
+    addContact("c-close", "alice", "Dad", "dad@example.com", { metadata: '{"closeness":"close"}' });
+    addContact("c-bob", "bob", "Bob's", "bobs@example.com");
+
+    const saved = await saveOutreachProspects(env, "alice", [
+      { contactId: "p-mary", status: "replied", followUpInDays: 3 },
+      { name: "Bríd", email: "brid@example.com" },
+      { contactId: "c-close" },
+      { contactId: "c-bob", status: "sent" },
+    ], NOW);
+
+    expect(saved.saved).toMatchObject([{ id: "p-mary", status: "replied", nextFollowupAt: "2026-11-16T10:00:00.000Z" }]);
+    expect(saved.skipped).toEqual([
+      { name: "Bríd", reason: "Already a customer; not tracked as outreach." },
+      { name: "Dad", reason: "Marked Close; not tracked as outreach." },
+      { name: "c-bob", reason: "Contact not found." },
+    ]);
+  });
+
+  it("lists who is due a follow-up", async () => {
+    const { env, addContact } = fixture();
+    const prospect = (id: string, extra: Record<string, string | null>) =>
+      addContact(id, "alice", id, `${id}@example.com`, { relationship: "prospect", ...extra });
+    prospect("due", { outreach_status: "sent", next_followup_at: "2026-11-10T09:00:00.000Z" });
+    prospect("waiting", { outreach_status: "sent", next_followup_at: "2026-11-20T09:00:00.000Z" });
+    prospect("agreed", { outreach_status: "converted" });
+    addContact("friend", "alice", "Friend", "friend@example.com");
+
+    expect((await listOutreachProspects(env, "alice", { filter: "due" }, NOW)).prospects.map((item) => item.id)).toEqual(["due"]);
+    expect((await listOutreachProspects(env, "alice", { filter: "open" }, NOW)).prospects.map((item) => item.id).sort()).toEqual(["due", "waiting"]);
+    expect((await listOutreachProspects(env, "alice", { filter: "all" }, NOW)).total).toBe(3);
   });
 });

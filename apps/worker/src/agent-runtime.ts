@@ -22,6 +22,7 @@ import { getManagedAiBillingSettings, managedAllowanceNotice, syncManagedAiUsage
 import { assertProvisionalHoldsCovered, MAX_PROVISIONAL_HOLDS } from "./managed-ai-holds";
 import { createStableAgentSchedulingServices } from "./agent-domain-scheduling";
 import { createAgentMailboxServices } from "./agent-mailbox-services";
+import { createAgentOutreachServices } from "./agent-outreach-services";
 import { prepareAgentImageInputs, resolveAgentImageInputs, loadAgentAttachmentManifest, type AgentAttachmentInput } from "./agent-image-input";
 import { createAgentImageGenerationServices, loadAgentGeneratedImageAction } from "./agent-image-generation";
 import { revalidateAgentImagePayload } from "./agent-image-projection";
@@ -302,6 +303,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     quotes: { save: (input, options) => saveOwnerQuote(env, ownerId, input, "agent", options?.signal, options?.authorization) },
     scheduling:createStableAgentSchedulingServices(env,ownerId),
     mailbox:createAgentMailboxServices(env,ownerId),
+    outreach:createAgentOutreachServices(env,ownerId),
     images:createAgentImageGenerationServices(env,ownerId),
     payments:parkedFeaturesOn(env)?{...createAgentPaymentServices(env,ownerId),...createAgentNetworkPaymentServices(env,ownerId)}:undefined,
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],

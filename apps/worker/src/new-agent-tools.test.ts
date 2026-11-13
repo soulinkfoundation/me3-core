@@ -57,7 +57,7 @@ const tool = (name:string):AgentTool => {
 describe("new agent domain tools", () => {
   it("ports all 40 active tools and declares safe external and destructive policies", () => {
     const tools = createDomainTools();
-    expect(tools.filter(tool => !["core_images_generate", "core_targets_present"].includes(tool.name))).toHaveLength(67); // Includes the three Soup tools, the Notes reader, the social queue, own-words draft, site-post share, nudge and library tools, the ME3 docs reader, memory search and forget, past-conversation search, saving the owner's Mission, owner-supplied quote saving, the seven payment tools (three for ME3 network purchases), the five custom card tools, the two Send to Claude tools, the first-site draft and free-call booking.
+    expect(tools.filter(tool => !["core_images_generate", "core_targets_present"].includes(tool.name))).toHaveLength(69); // Includes the three Soup tools, the Notes reader, the social queue, own-words draft, site-post share, nudge and library tools, the ME3 docs reader, memory search and forget, past-conversation search, saving the owner's Mission, owner-supplied quote saving, the seven payment tools (three for ME3 network purchases), the five custom card tools, the two Send to Claude tools, the first-site draft and free-call booking.
     expect(tool("core_targets_present")).toMatchObject({ effect: "read", approval: "none", endsTurn: true });
     expect(new Set(tools.map(tool => tool.name)).size).toBe(tools.length);
     for (const value of tools) {
@@ -464,5 +464,35 @@ describe("new agent domain tools", () => {
     ctx.approved = true; ctx.approvalData = pending.approval;
     expect(await tool("core_mailbox_send").execute({ draftId: "draft-1" }, ctx)).toMatchObject({ status: "ok" });
     expect(sends).toBe(1);
+  });
+
+  // Failure modes: "email these associations" sends mail, or marks people Sent,
+  // without the owner; a prospect with no name is saved; the tools are
+  // visible on every turn instead of loading on demand.
+  it("saves prospects for outreach without sending anything, and tells the model what comes next", async () => {
+    const ctx = context(); const saves: unknown[] = []; let drafts = 0;
+    ctx.services = {
+      mailbox: { createDraft: async () => { drafts++; return { draft: { id: "d" } }; } },
+      outreach: {
+        list: async () => ({ prospects: [{ id: "p-1", name: "IACP", status: "sent" }], total: 1 }),
+        save: async (prospects: unknown[]) => { saves.push(prospects); return { saved: [{ id: "p-1", name: "IACP", email: "office@iacp.example", status: "new", created: true }], skipped: [] }; },
+      },
+    } as never;
+
+    const saved = await tool("core_outreach_save").execute({ name: "IACP", email: "office@iacp.example", offer: "Member discount" }, ctx);
+    expect(saved).toMatchObject({ status: "ok", data: { saved: [{ id: "p-1", created: true }], next: expect.stringContaining("core_mailbox_draft") } });
+    expect(saves).toEqual([[{ name: "IACP", email: "office@iacp.example", offer: "Member discount" }]]);
+    expect(drafts).toBe(0);
+
+    expect(await tool("core_outreach_save").execute({ offer: "Member discount" }, ctx)).toMatchObject({ status: "error" });
+    expect(await tool("core_outreach_save").execute({ name: "IACP", send: true }, ctx)).toMatchObject({ status: "error" });
+    expect(saves).toHaveLength(1);
+
+    expect(await tool("core_outreach_list").execute({ filter: "due" }, ctx)).toMatchObject({ status: "ok", data: { prospects: [{ id: "p-1" }], total: 1 } });
+    for (const name of ["core_outreach_save", "core_outreach_list"]) {
+      expect(tool(name)).toMatchObject({ approval: "none", group: "outreach" });
+    }
+    expect(tool("core_outreach_save").effect).toBe("write");
+    expect(tool("core_outreach_list").effect).toBe("read");
   });
 });

@@ -1,6 +1,6 @@
 import { CONTACT_IS_CLIENT_SQL, isCloseCloseness, touchContactInteraction } from "./contact-people";
-import type { AgentContactOutreachStatus } from "./contact-types";
-import { createAgentContact, updateAgentContact } from "./contacts";
+import type { AgentContact, AgentContactOutreachStatus } from "./contact-types";
+import { createAgentContact, listAgentContacts, normalizeContactOutreachStatus, updateAgentContact } from "./contacts";
 import { type CoreAgentChatEnv, isPlainObject, normalizeNullableText, parseJsonRecord } from "./domain-store";
 import { getDraftCcBcc } from "./mailbox-format";
 import type { DbMailboxMessageRow } from "./mailbox-types";
@@ -279,4 +279,140 @@ export async function recordOutreachBooking(
     changed.push(prospect.id);
   }
   return changed;
+}
+
+// --- The assistant's view of outreach ----------------------------------------
+
+export type OutreachProspectInput = {
+  contactId?: unknown;
+  name?: unknown;
+  email?: unknown;
+  organisation?: unknown;
+  offer?: unknown;
+  status?: unknown;
+  followUpInDays?: unknown;
+};
+
+export type OutreachProspectRecord = {
+  id: string;
+  name: string;
+  email: string | null;
+  organisation: string | null;
+  offer: string | null;
+  status: AgentContactOutreachStatus;
+  nextFollowupAt: string | null;
+  followUpsSent: number;
+  lastInTouchAt: string | null;
+};
+
+function prospectRecord(contact: AgentContact): OutreachProspectRecord {
+  return {
+    id: contact.id,
+    name: contact.name,
+    email: contact.email,
+    organisation: contact.organisation,
+    offer: contact.offer,
+    status: contact.outreachStatus,
+    nextFollowupAt: contact.nextFollowupAt,
+    followUpsSent: Math.max(0, Number(contact.metadata?.outreachFollowUpsSent) || 0),
+    lastInTouchAt: contact.lastInTouchAt,
+  };
+}
+
+const DONE_STATUSES = new Set<AgentContactOutreachStatus>(["converted", "not_interested", "no_response"]);
+
+export async function listOutreachProspects(
+  env: OutreachEnv,
+  userId: string,
+  options: { filter?: unknown; limit?: unknown } = {},
+  now = new Date(),
+): Promise<{ prospects: OutreachProspectRecord[]; total: number }> {
+  const { contacts } = await listAgentContacts(env, userId);
+  const filter = options.filter === "due" || options.filter === "all" ? options.filter : "open";
+  const prospects = contacts
+    .filter((contact) => contact.relationship === "prospect" && contact.status !== "archived")
+    .filter((contact) => {
+      if (filter === "all") return true;
+      if (DONE_STATUSES.has(contact.outreachStatus)) return false;
+      if (filter === "open") return true;
+      const due = contact.nextFollowupAt ? Date.parse(contact.nextFollowupAt) : Number.NaN;
+      return Number.isFinite(due) && due <= now.getTime();
+    })
+    .map(prospectRecord);
+  const limit = Math.min(50, Math.max(1, Math.round(Number(options.limit)) || 25));
+  return { prospects: prospects.slice(0, limit), total: prospects.length };
+}
+
+/**
+ * Creates or updates prospects for the assistant. A new prospect starts as
+ * "new" (not written to yet): only a sent email, or the owner, marks Sent.
+ * Customers and Close people are never turned into prospects.
+ */
+export async function saveOutreachProspects(
+  env: OutreachEnv,
+  userId: string,
+  inputs: OutreachProspectInput[],
+  now = new Date(),
+): Promise<{
+  saved: Array<OutreachProspectRecord & { created: boolean }>;
+  skipped: Array<{ name: string; reason: string }>;
+}> {
+  const saved: Array<OutreachProspectRecord & { created: boolean }> = [];
+  const skipped: Array<{ name: string; reason: string }> = [];
+  for (const input of inputs.slice(0, 25)) {
+    const contactId = normalizeNullableText(input.contactId);
+    const name = normalizeNullableText(input.name);
+    const email = mailAddresses([typeof input.email === "string" ? input.email : null])[0] || null;
+    const label = name || contactId || email || "";
+    const { contacts } = await listAgentContacts(env, userId);
+    const existing = contactId
+      ? contacts.find((contact) => contact.id === contactId)
+      : email
+        ? contacts.find((contact) => contact.email?.trim().toLowerCase() === email)
+        : undefined;
+    if (contactId && !existing) {
+      skipped.push({ name: label, reason: "Contact not found." });
+      continue;
+    }
+    const days = outreachFollowUpDays(input.followUpInDays);
+    const status = normalizeContactOutreachStatus(input.status);
+    const fields = {
+      ...(input.organisation !== undefined ? { organisation: input.organisation } : {}),
+      ...(input.offer !== undefined ? { offer: input.offer } : {}),
+      ...(days ? { nextFollowupAt: new Date(now.getTime() + days * DAY_MS).toISOString() } : {}),
+    };
+    if (existing) {
+      if (existing.relationship !== "prospect" && existing.isClient) {
+        skipped.push({ name: existing.name, reason: "Already a customer; not tracked as outreach." });
+        continue;
+      }
+      if (existing.relationship !== "prospect" && existing.isClose) {
+        skipped.push({ name: existing.name, reason: "Marked Close; not tracked as outreach." });
+        continue;
+      }
+      const updated = await updateAgentContact(env, userId, existing.id, {
+        relationship: "prospect",
+        ...fields,
+        ...(status ? { outreachStatus: status } : existing.outreachStatus ? {} : { outreachStatus: "new" }),
+      });
+      if ("error" in updated) skipped.push({ name: existing.name, reason: updated.error });
+      else saved.push({ ...prospectRecord(updated), created: false });
+      continue;
+    }
+    if (!name) {
+      skipped.push({ name: label, reason: "A name is required." });
+      continue;
+    }
+    const created = await createAgentContact(env, userId, {
+      name,
+      email,
+      source: "agent",
+      relationship: "prospect",
+      outreachStatus: status || "new",
+      ...fields,
+    });
+    if ("error" in created) skipped.push({ name, reason: created.error });
+    else saved.push({ ...prospectRecord(created), created: true });
+  }
+  return { saved, skipped };
 }
