@@ -41,6 +41,8 @@ export type MailboxBriefItem = {
   /** Older messages from the same sender about the same thing, folded into this item (Core 0.1.232+). */
   duplicates?: number;
   relatedMessageIds?: string[];
+  /** What ME3 checked about the sender, in one line (Core 0.1.269+). */
+  checked?: string | null;
 };
 
 export type MailboxHandledItem = {

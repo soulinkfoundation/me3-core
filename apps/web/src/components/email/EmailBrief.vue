@@ -694,6 +694,10 @@ watch(() => props.active, (active) => { if (active) void load(); });
           </div>
 
           <div v-if="openKey === row.key" class="brief-work">
+            <p v-if="row.kind === 'mail' && row.item.checked" class="brief-work__checked">
+              <UiIcon name="Sparkles" :size="14" aria-hidden="true" />
+              <span><span class="sr-only">ME3 checked: </span>{{ row.item.checked }}</span>
+            </p>
             <div v-if="row.draft" class="brief-draft">
               <div class="brief-draft__head">
                 <strong>{{ row.kind === "followup" ? `Follow-up to ${row.name}` : `Reply to ${row.name}` }}</strong>
@@ -1241,6 +1245,21 @@ watch(() => props.active, (active) => { if (active) void load(); });
   display: grid;
   gap: 10px;
   padding: 0 16px 14px 64px;
+}
+
+.brief-work__checked {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.brief-work__checked :deep(svg) {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--ui-accent-strong, var(--ui-accent, #229874));
 }
 
 .brief-work__writing {

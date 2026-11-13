@@ -23,6 +23,7 @@ async function fixture(page: Page) {
       item("maya", "Maya Chen", "Thursday session", "Wants to move Thursday's session to Friday at 10:00.", {
         primaryAction: { kind: "send_draft", label: "Send reply" }, secondaryAction: { kind: "edit_draft", label: "Edit" },
         draft: { id: "d-maya", preview: "Hi Maya, Friday at 10:00 works", body: "Hi Maya,\n\nFriday at 10:00 works for me.\n\nJordan", updatedAt: "2026-11-13T09:53:00.000Z" },
+        checked: "14 earlier emails from this address, and you have written back before.",
       }),
       item("harbour", "Harbour Energy", "Payment failed", "Direct debit for £84.20 failed. They retry on Friday.", { primaryAction: { kind: "open_url", label: "Update payment details", url: "https://harbour.example/pay" } }),
       item("leo", "Leo Park", "Speaking at Makers Meetup", "Asks if you'd give a 15-minute talk on 4 December."),
@@ -101,6 +102,8 @@ test("each row is one decision: ME3's draft is edited in place and Send waits te
   await expect(rows(page)).toHaveCount(4);
   await expect(brief(page).getByRole("button", { name: /^Done: clear/ })).toHaveCount(4);
   await expect(brief(page)).not.toContainText("Handled by ME3");
+  // The open row says what ME3 checked about who wrote.
+  await expect(rows(page).first()).toContainText("14 earlier emails from this address, and you have written back before.");
   await expect(brief(page)).not.toContainText("That's everything for now");
   // A follow-up is a row like the others.
   await expect(rows(page).nth(3)).toContainText("Aoife · IMTA");

@@ -46,6 +46,8 @@ export type MailboxBriefItem = {
   /** Older messages from the same sender about the same thing, folded into this item. */
   duplicates: number;
   relatedMessageIds: string[];
+  /** What ME3 checked about the sender, in one line (Core 0.1.269+). Facts from the mailbox, not a model's opinion. */
+  checked?: string | null;
 };
 
 export type MailboxHandledItem = {
@@ -179,6 +181,28 @@ export async function getOwnerDayStart(env: Pick<Env, "DB">, ownerId: string, no
   return new Date(getUtcMsForLocalTime({ year: part("year"), month: part("month"), day: part("day"), hour: 0, minute: 0 }, timezone)).toISOString();
 }
 
+/**
+ * What ME3 checked about who wrote: how much mail has come from this address before, and whether
+ * the owner has ever written to it. A first-time sender asking for something is worth a second look.
+ */
+async function senderHistory(env: Env, ownerId: string, row: { message_id: string; from_address: string | null; received_at: string | null; created_at: string }): Promise<string | null> {
+  const address = (row.from_address || "").trim();
+  if (!address) return null;
+  const counts = await env.DB.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM mailbox_messages m JOIN mailbox_aliases a ON a.id = m.mailbox_id
+         WHERE a.user_id = ? AND m.direction = 'inbound' AND m.message_kind = 'email' AND m.id != ?
+           AND m.from_address = ? COLLATE NOCASE AND COALESCE(m.received_at, m.created_at) < ?) AS earlier,
+       (SELECT COUNT(*) FROM mailbox_messages m JOIN mailbox_aliases a ON a.id = m.mailbox_id
+         WHERE a.user_id = ? AND m.direction = 'outbound' AND m.message_kind = 'email' AND m.status = 'sent'
+           AND m.to_address = ? COLLATE NOCASE) AS written`,
+  ).bind(ownerId, row.message_id, address, row.received_at || row.created_at, ownerId, address).first<{ earlier: number; written: number }>();
+  const earlier = Number(counts?.earlier || 0);
+  const written = Number(counts?.written || 0) > 0;
+  if (earlier === 0) return written ? "First email from this address, though you have written to it before." : "First email from this address.";
+  return `${earlier} earlier ${earlier === 1 ? "email" : "emails"} from this address${written ? ", and you have written back before" : ""}.`;
+}
+
 export async function getMailboxBrief(env: Env, ownerId: string, options: { apiOrigin?: string | null; now?: Date } = {}): Promise<MailboxBrief> {
   const now = options.now || new Date();
   const apiOrigin = options.apiOrigin || null;
@@ -287,6 +311,7 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
   })));
   const items: MailboxBriefItem[] = await Promise.all(needsYou.map(async row => {
     const draft = row.draft_id ? drafts.get(row.draft_id) : null;
+    const history = row.status === "done" ? await senderHistory(env, ownerId, row) : null;
     const primary = parseAction(row.primary_action_json);
     const secondary = parseAction(row.secondary_action_json);
     const pending = row.status !== "done";
@@ -305,6 +330,7 @@ export async function getMailboxBrief(env: Env, ownerId: string, options: { apiO
       draft: draft ? { id: row.draft_id!, preview: cleanMailPreview(draft.body, { maxLength: 160 }), body: draft.body, updatedAt: draft.updated_at } : null,
       duplicates: related.get(row.message_id)?.length || 0,
       relatedMessageIds: related.get(row.message_id) || [],
+      checked: history,
     };
   }));
 

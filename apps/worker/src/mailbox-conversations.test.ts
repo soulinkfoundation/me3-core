@@ -337,6 +337,25 @@ describe("the Brief is keyed by conversation", () => {
     expect(after.cleared.map(item => [item.threadId, item.how])).toEqual([[ROOT, "done"]]);
   });
 
+  // Failure modes (what ME3 checked): a first-time sender reads as someone known; the count
+  // includes the email itself or another owner's mail; the owner's own earlier replies go unnoticed.
+  it("says what ME3 checked about the sender: earlier mail from them and whether the owner has written back", async () => {
+    const f = fixture();
+    receive(f.raw, { id: "old1", root: null, subject: "Hello" });
+    receive(f.raw, { id: "old2", root: null, subject: "Hello again" });
+    send(f.raw, { id: "answered", root: "<old1@mail.test>" });
+    receive(f.raw, { id: "ask", body: "Can you confirm the terms?" });
+    receive(f.raw, { id: "stranger", root: null, from: "leo@example.test", subject: "Meetup talk" });
+    receive(f.raw, { id: "elsewhere", root: null, from: "leo@example.test", subject: "Not yours", mailbox: "other-mailbox" });
+    for (const id of ["ask", "stranger"]) await runMailTriage(f.env, id, { classify: needsYou });
+
+    const brief = await getMailboxBrief(f.env, "owner");
+    expect(Object.fromEntries(brief.needsYou.map(item => [item.messageId, item.checked]))).toEqual({
+      ask: "2 earlier emails from this address, and you have written back before.",
+      stranger: "First email from this address.",
+    });
+  });
+
   it("lists what left the Brief today with how, once per conversation, and only mail that needed the owner", async () => {
     const f = fixture();
     const now = new Date();
