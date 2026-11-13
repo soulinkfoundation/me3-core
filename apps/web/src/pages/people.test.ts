@@ -38,6 +38,10 @@ function person(id: string, name: string, extra: Partial<Contact> = {}): Contact
     status: "active",
     notes: null,
     lastInteractionAt: null,
+    nextFollowupAt: null,
+    outreachStatus: null,
+    organisation: null,
+    offer: null,
     socialHandles: {},
     metadata: null,
     createdAt: "2026-01-01T00:00:00Z",
@@ -119,21 +123,21 @@ describe("People page", () => {
     });
   });
 
-  it("lists everyone A–Z with a star for Close and no Clients filter without clients", async () => {
+  it("lists everyone A–Z with a star for Close and no Customers filter without customers", async () => {
     const { wrapper } = await mountPeople();
 
     expect(wrapper.get("h1").text()).toBe("People");
     expect(rowNames(wrapper)).toEqual(["Aoife Byrne", "Dad", "Erum Shah", "Zoe Hart"]);
     expect(wrapper.findAll(".person-row__star")).toHaveLength(2);
-    expect(filterLabels(wrapper)).toEqual(["All", "Close"]);
+    expect(filterLabels(wrapper)).toEqual(["All", "Close", "Outreach"]);
     expect(wrapper.find(".person-avatar__badge").attributes("alt")).toBe("On Soulink");
   });
 
-  it("shows Clients once someone is a client", async () => {
+  it("shows Customers once someone has booked or bought", async () => {
     contacts.push(person("c-bríd", "Bríd Walsh", { isClient: true, lastInTouchAt: ago(10) }));
     const { wrapper } = await mountPeople();
 
-    expect(filterLabels(wrapper)).toEqual(["All", "Close", "Clients"]);
+    expect(filterLabels(wrapper)).toEqual(["All", "Close", "Customers", "Outreach"]);
     await wrapper.findAll(".people-chip")[2].trigger("click");
     expect(rowNames(wrapper)).toEqual(["Bríd Walsh"]);
     expect(wrapper.get(".person-row__since").text()).toBe("10d ago");
@@ -319,6 +323,140 @@ describe("People page", () => {
     await mountPeople("/people?person=c-zoe");
     const sheetInvite = Array.from(document.querySelectorAll(".person-sheet button")).find((button) => button.textContent?.includes("Invite to Soulink"));
     expect(sheetInvite).toBeDefined();
+  });
+
+  describe("Outreach", () => {
+    const inDays = (days: number) => {
+      const date = new Date();
+      date.setHours(9, 0, 0, 0);
+      date.setDate(date.getDate() + days);
+      return date.toISOString();
+    };
+    const prospect = (id: string, name: string, extra: Partial<Contact>) =>
+      person(id, name, { relationship: "prospect", source: "outreach", outreachStatus: "sent", ...extra });
+    const outreach = async (wrapper: Awaited<ReturnType<typeof mountPeople>>["wrapper"]) => {
+      await wrapper.findAll(".people-chip").find((chip) => chip.text() === "Outreach")!.trigger("click");
+    };
+    const groups = (wrapper: Awaited<ReturnType<typeof mountPeople>>["wrapper"]) =>
+      wrapper.findAll(".prospect-group").map((group) => ({
+        label: group.get(".prospect-group__label").text(),
+        rows: group.findAll(".prospect-row").map((row) => row.get(".prospect-row__title").text()),
+      }));
+    const tab = async (wrapper: Awaited<ReturnType<typeof mountPeople>>["wrapper"], label: string) => {
+      await wrapper.findAll(".prospect-tabs button").find((button) => button.text() === label)!.trigger("click");
+    };
+
+    beforeEach(() => {
+      contacts.push(
+        prospect("p-iacp", "Membership office", {
+          organisation: "IACP", offer: "Member discount", email: "office@iacp.example", nextFollowupAt: inDays(0),
+        }),
+        prospect("p-imta", "Aoife", { organisation: "IMTA", offer: "Free setup", nextFollowupAt: inDays(-2) }),
+        prospect("p-yti", "Niamh", { organisation: "Yoga Therapy Ireland", outreachStatus: "replied" }),
+        prospect("p-isme", "ISME", { organisation: "ISME", nextFollowupAt: inDays(5) }),
+        prospect("p-icf", "ICF Ireland", { outreachStatus: "converted" }),
+        prospect("p-iya", "Irish Yoga Association", { outreachStatus: "not_interested" }),
+        prospect("p-quiet", "Quiet Guild", { outreachStatus: "no_response" }),
+      );
+    });
+
+    it("groups open prospects into Follow up due and Waiting, most overdue first", async () => {
+      const { wrapper } = await mountPeople();
+      await outreach(wrapper);
+
+      expect(wrapper.findAll(".prospect-tabs button").map((button) => button.text()))
+        .toEqual(["Open", "Due", "Agreed", "No"]);
+      expect(groups(wrapper)).toEqual([
+        { label: "Follow up due", rows: ["IMTA · Aoife", "IACP · Membership office"] },
+        { label: "Waiting", rows: ["ISME", "Yoga Therapy Ireland · Niamh"] },
+      ]);
+      const due = wrapper.findAll(".prospect-row")[0];
+      expect(due.text()).toContain("Offered Free setup");
+      expect(due.text()).toContain("Sent");
+      expect(due.text()).toContain("Overdue 2 days");
+      expect(wrapper.findAll(".prospect-row")[1].text()).toContain("Follow up today");
+    });
+
+    it("filters by Due, Agreed and No", async () => {
+      const { wrapper } = await mountPeople();
+      await outreach(wrapper);
+
+      await tab(wrapper, "Due");
+      expect(groups(wrapper)).toEqual([{ label: "Follow up due", rows: ["IMTA · Aoife", "IACP · Membership office"] }]);
+      await tab(wrapper, "Agreed");
+      expect(groups(wrapper)).toEqual([{ label: "Done", rows: ["ICF Ireland"] }]);
+      await tab(wrapper, "No");
+      expect(groups(wrapper)).toEqual([{ label: "Done", rows: ["Irish Yoga Association", "Quiet Guild"] }]);
+      expect(wrapper.text()).toContain("No response");
+    });
+
+    it("searches prospects by organisation", async () => {
+      const { wrapper } = await mountPeople();
+      await outreach(wrapper);
+      await wrapper.get('input[aria-label="Search people"]').setValue("imta");
+      expect(groups(wrapper)).toEqual([{ label: "Follow up due", rows: ["IMTA · Aoife"] }]);
+    });
+
+    it("explains Outreach when no one is tracked yet", async () => {
+      contacts = contacts.filter((contact) => contact.relationship !== "prospect");
+      const { wrapper } = await mountPeople();
+      await outreach(wrapper);
+      expect(wrapper.text()).toContain("No outreach yet.");
+    });
+
+    it("sets status, offer and follow-up date from the prospect panel", async () => {
+      await mountPeople("/people?person=p-iacp");
+      const sheet = () => document.querySelector(".person-sheet") as HTMLElement;
+      const button = (text: string) =>
+        Array.from(sheet().querySelectorAll("button")).find((entry) => entry.textContent?.trim() === text) as HTMLButtonElement;
+      vi.mocked(api.put).mockImplementation(async (_path: string, body: unknown) => ({
+        ok: true, contact: { ...contacts.find((contact) => contact.id === "p-iacp"), ...(body as object) },
+      }));
+
+      expect(sheet().textContent).toContain("Follow up today");
+      expect(button("Sent").getAttribute("aria-pressed")).toBe("true");
+      button("Call booked").click();
+      await flushPromises();
+      expect(api.put).toHaveBeenLastCalledWith("/contacts/p-iacp", { outreachStatus: "booked" });
+
+      button("+1 week").click();
+      await flushPromises();
+      expect(api.put).toHaveBeenLastCalledWith("/contacts/p-iacp", { nextFollowupAt: inDays(7) });
+      button("Clear").click();
+      await flushPromises();
+      expect(api.put).toHaveBeenLastCalledWith("/contacts/p-iacp", { nextFollowupAt: null });
+
+      const offer = sheet().querySelector('textarea[aria-label="What I offered"]') as HTMLTextAreaElement;
+      expect(offer.value).toBe("Member discount");
+      offer.value = "Member discount, 3 months free";
+      offer.dispatchEvent(new Event("input"));
+      offer.dispatchEvent(new Event("change"));
+      await flushPromises();
+      expect(api.put).toHaveBeenLastCalledWith("/contacts/p-iacp", { offer: "Member discount, 3 months free" });
+    });
+
+    it("starts and stops tracking someone as outreach from their panel", async () => {
+      await mountPeople("/people?person=c-zoe");
+      const button = (text: string) =>
+        Array.from(document.querySelectorAll(".person-sheet button")).find((entry) => entry.textContent?.trim() === text) as HTMLButtonElement;
+      expect(document.querySelector(".prospect-panel")).toBeNull();
+      vi.mocked(api.put).mockImplementation(async (_path: string, body: unknown) => {
+        // A fresh list, as the API returns one.
+        contacts = contacts.map((contact) => (contact.id === "c-zoe" ? { ...contact, ...(body as object) } : contact));
+        return { ok: true, contact: contacts.find((contact) => contact.id === "c-zoe") };
+      });
+
+      button("Track as outreach").click();
+      await flushPromises();
+      expect(api.put).toHaveBeenLastCalledWith("/contacts/c-zoe", { relationship: "prospect", outreachStatus: "sent" });
+      expect(document.querySelector(".prospect-panel")).not.toBeNull();
+
+      button("Stop tracking").click();
+      await flushPromises();
+      expect(api.put).toHaveBeenLastCalledWith("/contacts/c-zoe", {
+        relationship: "contact", outreachStatus: null, nextFollowupAt: null,
+      });
+    });
   });
 
   it("hides Invite a friend when Soulink can't share invites", async () => {

@@ -5,6 +5,7 @@ import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import ContactReminder from "./ContactReminder.vue";
 import PersonAvatar from "./PersonAvatar.vue";
+import ProspectPanel from "./ProspectPanel.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { useSoulinkInvite } from "../../composables/useSoulinkInvite";
 import { useContactsStore, type Contact } from "../../stores/contacts";
@@ -16,6 +17,7 @@ import {
   soulinkChatUrl,
   soulinkProfileUrl,
 } from "../../utils/people";
+import { isProspect } from "../../utils/outreach";
 
 const props = defineProps<{ contact: Contact | null }>();
 const emit = defineEmits<{ close: [] }>();
@@ -25,6 +27,7 @@ const { toastSuccess, toastError } = useAppToast();
 const invite = useSoulinkInvite();
 const starring = ref(false);
 const markingInTouch = ref(false);
+const tracking = ref(false);
 
 const person = computed(() => props.contact);
 const onSoulink = computed(() => (person.value ? isSoulinkPerson(person.value) : false));
@@ -36,6 +39,7 @@ const detail = computed(() => (person.value ? personDetail(person.value) : ""));
 const lastInTouch = computed(() =>
   person.value ? formatSinceLong(person.value.lastInTouchAt) || "Not in touch yet" : "",
 );
+const prospect = computed(() => (person.value ? isProspect(person.value) : false));
 const titleId = computed(() => `person-sheet-${person.value?.id || "none"}`);
 
 async function toggleClose() {
@@ -53,6 +57,25 @@ async function toggleClose() {
     toastSuccess(updated.isClose ? "Added to Close" : "Removed from Close");
   } finally {
     starring.value = false;
+  }
+}
+
+// Outreach is opt-in per person: a prospect is someone the owner is trying to win work from.
+async function setTracking(on: boolean) {
+  const contact = person.value;
+  if (!contact || tracking.value) return;
+  tracking.value = true;
+  try {
+    const updated = await contactsStore.updateContact(
+      contact.id,
+      on
+        ? { relationship: "prospect", outreachStatus: "sent" }
+        : { relationship: "contact", outreachStatus: null, nextFollowupAt: null },
+    );
+    if (!updated) toastError(contactsStore.error || "Couldn't save that.");
+    else toastSuccess(on ? "Tracking as outreach" : "No longer tracked as outreach");
+  } finally {
+    tracking.value = false;
   }
 }
 
@@ -140,7 +163,8 @@ async function weTalked() {
         </a>
       </div>
 
-      <ContactReminder :contact="person" />
+      <ProspectPanel v-if="prospect" :contact="person" />
+      <ContactReminder v-else :contact="person" />
 
       <div class="person-sheet__footer">
         <button type="button" class="person-sheet__quiet" :disabled="markingInTouch" @click="weTalked">
@@ -150,6 +174,13 @@ async function weTalked() {
         <button v-if="!onSoulink && invite.available.value !== false" type="button" class="person-sheet__quiet" @click="invite.share()">
           <UiIcon name="UserPlus" :size="15" aria-hidden="true" />
           Invite to Soulink
+        </button>
+        <button v-if="prospect" type="button" class="person-sheet__quiet" :disabled="tracking" @click="setTracking(false)">
+          Stop tracking
+        </button>
+        <button v-else-if="!person.isClient" type="button" class="person-sheet__quiet" :disabled="tracking" @click="setTracking(true)">
+          <UiIcon name="Send" :size="15" aria-hidden="true" />
+          Track as outreach
         </button>
       </div>
     </section>

@@ -95,7 +95,8 @@ export function personDetail(contact: Contact): string {
     const label = contact.metadata?.soulinkSourceChatTitle;
     if (typeof label === "string" && label.trim() && label !== contact.name) return label.trim();
   }
-  if (contact.isClient) return "Client";
+  if (contact.isClient) return "Customer";
+  if (contact.organisation) return contact.organisation;
   return contact.email || contact.phone || "";
 }
 

@@ -21,6 +21,15 @@ export type ContactCloseness =
   | "acquaintance";
 
 export type ContactStatus = "active" | "archived" | "dormant";
+export type OutreachStatus =
+  | "new"
+  | "drafted"
+  | "sent"
+  | "replied"
+  | "booked"
+  | "converted"
+  | "not_interested"
+  | "no_response";
 export type ContactMetadata = {
   closeness?: ContactCloseness | null;
   avatarUrl?: string | null;
@@ -51,6 +60,10 @@ export type Contact = {
   status: ContactStatus;
   notes: string | null;
   lastInteractionAt: string | null;
+  nextFollowupAt: string | null;
+  outreachStatus: OutreachStatus | null;
+  organisation: string | null;
+  offer: string | null;
   socialHandles: Record<string, string>;
   metadata: ContactMetadata | null;
   createdAt: string;
@@ -82,6 +95,10 @@ export type ContactInput = {
   status?: ContactStatus;
   notes?: string | null;
   lastInteractionAt?: string | null;
+  nextFollowupAt?: string | null;
+  outreachStatus?: OutreachStatus | null;
+  organisation?: string | null;
+  offer?: string | null;
   socialHandles?: Record<string, string>;
   metadata?: ContactMetadata | null;
 };

@@ -10,6 +10,7 @@ function person(id: string, extra: Partial<Contact> = {}): Contact {
   return {
     id, userId: "owner", name: id, email: null, phone: null, source: "manual", sourceRef: null,
     relationship: "contact", closeness: "close", status: "active", notes: null, lastInteractionAt: null,
+    nextFollowupAt: null, outreachStatus: null, organisation: null, offer: null,
     socialHandles: {}, metadata: null, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
     bookingCount: 0, lastBookingAt: null, isClose: true, closeSince: daysAgo(100), isClient: false,
     lastInTouchAt: null, reminderAt: null, ...extra,

@@ -19,6 +19,16 @@ import {
   indexLetter,
   personDetail,
 } from "../utils/people";
+import {
+  OUTREACH_TABS,
+  followUpLabel,
+  groupProspects,
+  isFollowUpDue,
+  isProspect,
+  outreachStatusLabel,
+  prospectTitle,
+  type OutreachTab,
+} from "../utils/outreach";
 
 definePage({
   meta: {
@@ -29,7 +39,7 @@ definePage({
   },
 });
 
-type Filter = "all" | "close" | "clients";
+type Filter = "all" | "close" | "customers" | "outreach";
 
 const route = useRoute();
 const router = useRouter();
@@ -39,6 +49,7 @@ const { toastSuccess } = useAppToast();
 
 const loaded = ref(contacts.value.length > 0);
 const filter = ref<Filter>("all");
+const outreachTab = ref<OutreachTab>("open");
 const query = ref("");
 const addOpen = ref(false);
 const newPersonOpen = ref(false);
@@ -53,16 +64,18 @@ const hasClients = computed(() => people.value.some((contact) => contact.isClien
 const filters = computed<Array<{ id: Filter; label: string }>>(() => [
   { id: "all", label: "All" },
   { id: "close", label: "Close" },
-  ...(hasClients.value ? [{ id: "clients" as const, label: "Clients" }] : []),
+  ...(hasClients.value ? [{ id: "customers" as const, label: "Customers" }] : []),
+  { id: "outreach", label: "Outreach" },
 ]);
 
 const term = computed(() => query.value.trim().toLowerCase());
 const visible = computed(() => {
   const list = people.value.filter((contact) => {
     if (filter.value === "close" && !contact.isClose) return false;
-    if (filter.value === "clients" && !contact.isClient) return false;
+    if (filter.value === "customers" && !contact.isClient) return false;
+    if (filter.value === "outreach" && !isProspect(contact)) return false;
     if (!term.value) return true;
-    return [contact.name, contact.email, contact.phone, personDetail(contact)]
+    return [contact.name, contact.email, contact.phone, personDetail(contact), contact.organisation, contact.offer]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
@@ -76,6 +89,10 @@ const visible = computed(() => {
   }
   return list.sort(comparePeopleByName);
 });
+const prospectGroups = computed(() =>
+  filter.value === "outreach" ? groupProspects(visible.value, outreachTab.value, now.value) : [],
+);
+const hasProspects = computed(() => people.value.some(isProspect));
 const showIndex = computed(() => filter.value === "all" && !term.value && visible.value.length > 12);
 const letters = computed(() => Array.from(new Set(visible.value.map((contact) => indexLetter(contact.name)))));
 const firstOfLetter = computed(() => {
@@ -179,7 +196,7 @@ onMounted(async () => {
 onBeforeUnmount(() => window.removeEventListener("scroll", updatePullProgress));
 
 watch(hasClients, (value) => {
-  if (!value && filter.value === "clients") filter.value = "all";
+  if (!value && filter.value === "customers") filter.value = "all";
 });
 watch(filter, () => { now.value = Date.now(); });
 </script>
@@ -221,7 +238,64 @@ watch(filter, () => { now.value = Date.now(); });
       </button>
     </div>
 
-    <div class="people-body" :class="{ 'people-body--indexed': showIndex }">
+    <div v-if="filter === 'outreach'" class="people-body">
+      <div v-if="hasProspects" class="prospect-tabs" role="group" aria-label="Status">
+        <button
+          v-for="tab in OUTREACH_TABS"
+          :key="tab.id"
+          type="button"
+          :class="{ 'prospect-tabs__on': outreachTab === tab.id }"
+          :aria-pressed="outreachTab === tab.id"
+          @click="outreachTab = tab.id"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
+
+      <p v-if="loading && !loaded" class="people-empty" aria-live="polite">Loading…</p>
+      <template v-else-if="prospectGroups.length">
+        <section v-for="group in prospectGroups" :key="group.label" class="prospect-group">
+          <h2 class="prospect-group__label">{{ group.label }}</h2>
+          <ul class="people-list">
+            <li v-for="contact in group.people" :key="contact.id">
+              <button type="button" class="prospect-row" @click="openPerson(contact)">
+                <PersonAvatar :contact="contact" />
+                <span class="prospect-row__main">
+                  <span class="prospect-row__title">{{ prospectTitle(contact) }}</span>
+                  <span v-if="contact.offer" class="prospect-row__offer">Offered {{ contact.offer }}</span>
+                </span>
+                <span class="prospect-row__side">
+                  <span class="prospect-row__status" :class="`prospect-row__status--${contact.outreachStatus || 'new'}`">
+                    {{ outreachStatusLabel(contact.outreachStatus) }}
+                  </span>
+                  <span
+                    v-if="followUpLabel(contact, now)"
+                    class="prospect-row__date"
+                    :class="{ 'prospect-row__date--due': isFollowUpDue(contact, now) }"
+                  >
+                    {{ followUpLabel(contact, now) }}
+                  </span>
+                </span>
+              </button>
+            </li>
+          </ul>
+        </section>
+      </template>
+      <div v-else class="people-empty">
+        <template v-if="term">No one called “{{ query.trim() }}”.</template>
+        <template v-else-if="hasProspects">
+          <p>No one here.</p>
+        </template>
+        <template v-else>
+          <p>No outreach yet.</p>
+          <p class="people-empty__sub">
+            Open someone and choose Track as outreach. ME3 will keep their status up to date from Email and remind you to follow up.
+          </p>
+        </template>
+      </div>
+    </div>
+
+    <div v-else class="people-body" :class="{ 'people-body--indexed': showIndex }">
       <nav v-if="showIndex" class="people-index" aria-label="Jump to letter">
         <button
           v-for="letter in letters"
@@ -471,6 +545,122 @@ watch(filter, () => { now.value = Date.now(); });
   color: var(--ui-text-muted);
   font-size: 13.5px;
   font-variant-numeric: tabular-nums;
+}
+
+.prospect-tabs {
+  display: flex;
+  gap: 18px;
+  margin: 4px 0 6px;
+  border-bottom: 1px solid var(--ui-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.prospect-tabs button {
+  margin-bottom: -1px;
+  padding: 8px 0 9px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.prospect-tabs button.prospect-tabs__on {
+  border-color: var(--ui-text);
+  color: var(--ui-text);
+  font-weight: 600;
+}
+
+.prospect-group__label {
+  margin: 18px 0 6px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.prospect-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 9px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.prospect-row__main {
+  display: grid;
+  min-width: 0;
+}
+
+.prospect-row__title {
+  overflow: hidden;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prospect-row__offer {
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prospect-row__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.prospect-row__status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.prospect-row__status--replied,
+.prospect-row__status--booked {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+}
+
+.prospect-row__status--converted {
+  background: var(--ui-accent);
+  color: var(--ui-accent-contrast);
+}
+
+.prospect-row__date--due {
+  color: var(--ui-accent-strong);
+  font-weight: 600;
+}
+
+.prospect-row:focus-visible,
+.prospect-tabs button:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
 .people-empty {
