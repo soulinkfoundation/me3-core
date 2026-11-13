@@ -23,6 +23,27 @@ const saving = ref(false);
 const drafting = ref(false);
 const organisation = ref("");
 const offer = ref("");
+type HistoryItem = { id: string; direction: "inbound" | "outbound"; subject: string; at: string };
+const history = ref<HistoryItem[]>([]);
+
+// Subjects and dates only, from the owner's own ME3 Email.
+watch(
+  () => props.contact.id,
+  async (contactId) => {
+    history.value = [];
+    try {
+      const response = await api.get<{ history: HistoryItem[] }>(`/contacts/${encodeURIComponent(contactId)}/email-history`);
+      if (props.contact.id === contactId) history.value = response.history || [];
+    } catch {
+      // Older Workers have no history; the panel works without it.
+    }
+  },
+  { immediate: true },
+);
+
+function historyDate(value: string): string {
+  return new Date(value).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
 
 watch(
   () => [props.contact.id, props.contact.organisation, props.contact.offer],
@@ -151,6 +172,14 @@ function saveText(field: "organisation" | "offer", value: string) {
       </div>
     </div>
 
+    <div v-if="history.length" class="prospect-panel__field prospect-panel__history">
+      <span class="prospect-panel__label">History (from ME3 Email)</span>
+      <router-link v-for="item in history" :key="item.id" :to="{ path: '/email', query: { message: item.id } }">
+        <time :datetime="item.at">{{ historyDate(item.at) }}</time>
+        <span>{{ item.direction === "inbound" ? "They replied" : "You emailed" }}: “{{ item.subject || "(no subject)" }}”</span>
+      </router-link>
+    </div>
+
     <p v-if="contact.metadata?.outreachBounced" class="prospect-panel__bounced" role="status">
       Your last email to {{ contact.email }} bounced. Check the address.
     </p>
@@ -232,6 +261,25 @@ function saveText(field: "organisation" | "offer", value: string) {
 .prospect-panel__date--due {
   color: var(--ui-accent-strong);
   font-weight: 600;
+}
+
+.prospect-panel__history a {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 8px;
+  color: var(--ui-text);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.prospect-panel__history time {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+
+.prospect-panel__history a:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
 }
 
 .prospect-panel__bounced {

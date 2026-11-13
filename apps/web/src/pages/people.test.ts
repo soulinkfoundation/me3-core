@@ -453,6 +453,31 @@ describe("People page", () => {
       expect(document.querySelector(".person-sheet")?.textContent).not.toContain("Draft follow-up");
     });
 
+    it("shows the prospect's history from ME3 Email, linking each to the conversation", async () => {
+      const get = vi.mocked(api.get).getMockImplementation()!;
+      vi.mocked(api.get).mockImplementation(async (path: string) =>
+        path === "/contacts/p-iacp/email-history"
+          ? { history: [
+              { id: "m2", direction: "inbound", subject: "Re: ME3 for IACP members", at: "2026-11-05T09:00:00.000Z" },
+              { id: "m1", direction: "outbound", subject: "ME3 for IACP members", at: "2026-11-03T10:00:00.000Z" },
+            ] }
+          : get(path),
+      );
+      await mountPeople("/people?person=p-iacp");
+
+      const items = Array.from(document.querySelectorAll(".prospect-panel__history a"));
+      expect(items.map((item) => Array.from(item.children).map((part) => part.textContent?.trim()).join(" "))).toEqual([
+        "5 Nov They replied: “Re: ME3 for IACP members”",
+        "3 Nov You emailed: “ME3 for IACP members”",
+      ]);
+      expect(items[0].getAttribute("href")).toBe("/email?message=m2");
+    });
+
+    it("leaves the history out when ME3 Email has nothing for them", async () => {
+      await mountPeople("/people?person=p-imta");
+      expect(document.querySelector(".prospect-panel__history")).toBeNull();
+    });
+
     it("starts and stops tracking someone as outreach from their panel", async () => {
       await mountPeople("/people?person=c-zoe");
       const button = (text: string) =>

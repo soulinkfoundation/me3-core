@@ -822,3 +822,38 @@ describe("assistant outreach list", () => {
     expect((await listOutreachProspects(env, "alice", { filter: "all" }, NOW)).total).toBe(3);
   });
 });
+
+// Failure modes: the history shows another owner's mail, drafts that were never
+// sent, or mail with someone whose address merely contains the prospect's.
+describe("a person's email history", () => {
+  it("lists what was sent to and received from them, newest first, for the owner only", async () => {
+    const { raw, env, addContact } = fixture();
+    addContact("p-mary", "alice", "Mary", "Mary@IACP.example", { relationship: "prospect" });
+    addContact("p-none", "alice", "No Email", null);
+    raw.exec(`INSERT INTO mailbox_aliases (id, user_id, alias_local_part, forwarding_email, status) VALUES
+      ('alice-mailbox', 'alice', 'alice', '', 'active'), ('bob-mailbox', 'bob', 'bob', '', 'active')`);
+    const mail = (id: string, mailbox: string, direction: string, kind: string, status: string, from: string, to: string, subject: string, at: string) =>
+      raw.prepare(`INSERT INTO mailbox_messages (id, mailbox_id, direction, message_kind, status, from_address, to_address, subject, text_body, folder, sent_at, received_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'body', 'inbox', ?, ?)`)
+        .run(id, mailbox, direction, kind, status, from, to, subject, direction === "outbound" ? at : null, direction === "inbound" ? at : null);
+    mail("m1", "alice-mailbox", "outbound", "email", "sent", "alice@me3.test", "mary@iacp.example, other@x.example", "ME3 for IACP members", "2026-11-03T10:00:00.000Z");
+    mail("m2", "alice-mailbox", "inbound", "email", "received", "mary@iacp.example", "alice@me3.test", "Re: ME3 for IACP members", "2026-11-05T09:00:00.000Z");
+    mail("m3", "alice-mailbox", "outbound", "draft", "pending_approval", "alice@me3.test", "mary@iacp.example", "Unsent draft", "2026-11-06T09:00:00.000Z");
+    mail("m4", "alice-mailbox", "inbound", "email", "received", "rosemary@iacp.example", "alice@me3.test", "From someone else", "2026-11-07T09:00:00.000Z");
+    mail("m5", "bob-mailbox", "outbound", "email", "sent", "bob@me3.test", "mary@iacp.example", "Bob's email", "2026-11-08T09:00:00.000Z");
+
+    const app = new Hono() as unknown as AppHono;
+    registerContactsRoutes(app, { requireOwner: async () => "alice", unauthorized: (c) => c.json({ error: "Unauthorized" }, 401) });
+    const history = async (id: string) => {
+      const response = await app.request(`/api/contacts/${id}/email-history`, {}, env);
+      return { status: response.status, body: await response.json() as { history?: unknown[] } };
+    };
+
+    expect((await history("p-mary")).body.history).toEqual([
+      { id: "m2", direction: "inbound", subject: "Re: ME3 for IACP members", at: "2026-11-05T09:00:00.000Z" },
+      { id: "m1", direction: "outbound", subject: "ME3 for IACP members", at: "2026-11-03T10:00:00.000Z" },
+    ]);
+    expect((await history("p-none")).body.history).toEqual([]);
+    expect((await history("missing")).status).toBe(404);
+  });
+});

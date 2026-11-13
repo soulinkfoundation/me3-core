@@ -1,4 +1,5 @@
 import {
+  mailAddresses,
   recordMailboxSendForContacts,
   recordOutreachInbound,
   type OutreachInboundKind,
@@ -31,6 +32,39 @@ export async function syncContactsFromSentMessage(
   } catch (error) {
     console.error("Contact update after send failed", error);
   }
+}
+
+export type ContactMailHistoryItem = { id: string; direction: "inbound" | "outbound"; subject: string; at: string };
+
+/** The owner's ME3 Email with one person: subjects and dates only, newest first. */
+export async function listContactMailHistory(
+  env: Pick<Env, "DB">,
+  ownerId: string,
+  contactId: string,
+): Promise<{ history: ContactMailHistoryItem[] } | { error: string; status: 404 }> {
+  const contact = await env.DB.prepare("SELECT email FROM contacts WHERE user_id = ? AND id = ?")
+    .bind(ownerId, contactId)
+    .first<{ email: string | null }>();
+  if (!contact) return { error: "Contact not found", status: 404 };
+  const email = contact.email?.trim().toLowerCase();
+  if (!email) return { history: [] };
+  const rows = await env.DB.prepare(
+    `SELECT id, direction, COALESCE(subject, '') AS subject, to_address,
+            COALESCE(sent_at, received_at, created_at) AS at
+     FROM mailbox_messages
+     WHERE mailbox_id IN (SELECT id FROM mailbox_aliases WHERE user_id = ?)
+       AND message_kind = 'email' AND status IN ('sent', 'received')
+       AND (LOWER(TRIM(COALESCE(from_address, ''))) = ? OR INSTR(LOWER(COALESCE(to_address, '')), ?) > 0)
+     ORDER BY COALESCE(sent_at, received_at, created_at) DESC, id DESC LIMIT 40`,
+  )
+    .bind(ownerId, email, email)
+    .all<ContactMailHistoryItem & { to_address: string | null }>();
+  const history = (rows.results || [])
+    // INSTR also finds "rosemary@x" inside a search for "mary@x"; keep exact addresses only.
+    .filter((row) => row.direction === "inbound" || mailAddresses([row.to_address]).includes(email))
+    .slice(0, 8)
+    .map(({ id, direction, subject, at }) => ({ id, direction, subject, at }));
+  return { history };
 }
 
 export async function syncOutreachFromInbound(

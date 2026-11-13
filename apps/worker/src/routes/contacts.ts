@@ -7,6 +7,7 @@ import {
   setContactReminder,
   updateAgentContact,
 } from "@me3-core/plugin-agent-chat";
+import { listContactMailHistory } from "../mailbox-outreach";
 import type { AppContext, AppHono } from "../http/types";
 
 type ContactsRouteDeps = {
@@ -44,6 +45,16 @@ export function registerContactsRoutes(app: AppHono, deps: ContactsRouteDeps) {
     );
     if ("error" in contact) return c.json({ error: contact.error }, contact.status as any);
     return c.json({ ok: true, contact });
+  });
+
+  // What ME3 Email holds for this person: subjects and dates, for the prospect panel.
+  app.get("/api/contacts/:id/email-history", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+
+    const result = await listContactMailHistory(c.env, ownerId, c.req.param("id"));
+    if ("error" in result) return c.json({ error: result.error }, result.status);
+    return c.json(result);
   });
 
   // "We talked": the owner was in touch outside ME3 (phone, WhatsApp, in person).
