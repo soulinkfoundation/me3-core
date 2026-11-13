@@ -36,6 +36,7 @@ const routerPush = vi.fn();
 let routeTab = "sent";
 let routePath = "/email";
 let routeMessage = "";
+let routeComposeTo = "";
 
 vi.mock("vue-router", () => ({
   RouterView: {
@@ -43,7 +44,7 @@ vi.mock("vue-router", () => ({
   },
   useRoute: () => ({
     path: routePath,
-    query: { tab: routeTab, ...(routeMessage ? { message: routeMessage } : {}) },
+    query: { tab: routeTab, ...(routeMessage ? { message: routeMessage } : {}), ...(routeComposeTo ? { composeTo: routeComposeTo } : {}) },
   }),
   useRouter: () => ({
     replace: routerReplace,
@@ -197,6 +198,7 @@ describe("EmailPage", () => {
     routeTab = "sent";
     routePath = "/email";
     routeMessage = "";
+    routeComposeTo = "";
     document.body.innerHTML = '<div id="app-page-controls"></div>';
     window.matchMedia = vi.fn().mockReturnValue({
       matches: true,
@@ -736,6 +738,46 @@ describe("EmailPage", () => {
         ([endpoint]) => endpoint === "/mailbox/drafts",
       )?.[1],
     ).toMatchObject({ textBody: "Hi **Kim**" });
+  });
+
+  // Failure modes: Email on a prospect leaves ME3, so the send is never tracked;
+  // the link reopens compose on every reload; an unknown or address-less person
+  // opens an empty compose.
+  it("opens compose to a prospect from People with Track as outreach already on", async () => {
+    routeTab = "inbox";
+    routeComposeTo = "p-iacp";
+    vi.mocked(api.get).mockImplementation(async (endpoint: string) =>
+      endpoint === "/contacts"
+        ? { contacts: [
+            { id: "p-iacp", name: "Membership office", email: "Office@IACP.example", relationship: "prospect", offer: "Member discount", isClient: false, isClose: false, status: "active", metadata: { outreachFollowUpDays: 14 } },
+            { id: "c-none", name: "No Email", email: null, relationship: "contact", isClient: false, isClose: false, status: "active" },
+          ], summary: emptyContactSummary() }
+        : mailboxResponseFor(endpoint),
+    );
+    mountEmailPage();
+    for (let pass = 0; pass < 6; pass += 1) await flushPromises();
+
+    expect(Array.from(document.querySelectorAll(".compose-chip")).map((chip) => chip.textContent?.trim())).toEqual(["Membership office"]);
+    expect(document.querySelector('.compose-outreach [role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+    expect((document.querySelector('.compose-outreach select[aria-label="Follow up in"]') as HTMLSelectElement).value).toBe("14");
+    expect((document.querySelector('.compose-outreach input[aria-label="What you offered"]') as HTMLInputElement).value).toBe("Member discount");
+    expect(routerReplace).toHaveBeenCalledWith({ path: "/email", query: { tab: "inbox" } });
+  });
+
+  it("opens nothing for a person without an email address", async () => {
+    routeTab = "inbox";
+    routeComposeTo = "c-none";
+    vi.mocked(api.get).mockImplementation(async (endpoint: string) =>
+      endpoint === "/contacts"
+        ? { contacts: [{ id: "c-none", name: "No Email", email: null, relationship: "contact", isClient: false, isClose: false, status: "active" }], summary: emptyContactSummary() }
+        : mailboxResponseFor(endpoint),
+    );
+    mountEmailPage();
+    await flushPromises();
+    await flushPromises();
+    expect(document.querySelectorAll(".compose-chip")).toHaveLength(0);
+    expect(document.querySelector(".compose-outreach")).toBeNull();
+    expect(routerReplace).toHaveBeenCalledWith({ path: "/email", query: { tab: "inbox" } });
   });
 
   it("offers Track as outreach for someone new and sends the choice with the email", async () => {

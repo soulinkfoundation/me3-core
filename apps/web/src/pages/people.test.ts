@@ -478,6 +478,15 @@ describe("People page", () => {
       expect(document.querySelector(".prospect-panel__history")).toBeNull();
     });
 
+    it("opens ME3 Email compose for a prospect, so the send is tracked", async () => {
+      const { router } = await mountPeople("/people?person=p-iacp");
+      const sheet = document.querySelector(".person-sheet") as HTMLElement;
+      expect(sheet.querySelector('a[href^="mailto:"]')).toBeNull();
+      (Array.from(sheet.querySelectorAll("button")).find((entry) => entry.textContent?.trim() === "Email") as HTMLButtonElement).click();
+      await flushPromises();
+      expect(router.currentRoute.value.fullPath).toBe("/email?composeTo=p-iacp");
+    });
+
     it("starts and stops tracking someone as outreach from their panel", async () => {
       await mountPeople("/people?person=c-zoe");
       const button = (text: string) =>

@@ -3786,12 +3786,47 @@ onMounted(() => {
       await openMessageFromRoute();
     }
     void Promise.all([loadMailboxHealth(), loadFolderCounts(false)]);
+    void openComposeFromRoute();
   })();
 });
 
 watch(
   () => route.query.message,
   () => void openMessageFromRoute(),
+);
+
+// People's Email button on a prospect: /email?composeTo=<contact id>. The address
+// is looked up here, so it never sits in the URL, and the link is used once.
+async function openComposeFromRoute() {
+  const contactId = typeof route.query.composeTo === "string" ? route.query.composeTo.trim() : "";
+  if (!contactId) return;
+  const { composeTo: _composeTo, ...rest } = route.query;
+  void router.replace({ path: "/email", query: rest });
+  // Not loadContactsForCompose: it returns at once when a load is already under way.
+  if (!contacts.value.some((entry) => entry.id === contactId)) {
+    contactsRequested = true;
+    await contactsStore.fetchContacts();
+  }
+  const contact = contacts.value.find((entry) => entry.id === contactId);
+  const address = contact?.email?.trim().toLowerCase();
+  if (!contact || !address) return;
+  await openComposeModal();
+  composeForm.value.to = address;
+  if (contact.relationship === "prospect") {
+    const days = Number(contact.metadata?.outreachFollowUpDays);
+    composeOutreach.value = {
+      on: true,
+      followUpDays: [3, 7, 14, 30].includes(days) ? days : 7,
+      offer: contact.offer || "",
+    };
+  }
+  // Closing it untouched should not ask about unsaved changes.
+  composeInitialSnapshot.value = getComposeSnapshot();
+}
+
+watch(
+  () => route.query.composeTo,
+  () => void openComposeFromRoute(),
 );
 
 watch(

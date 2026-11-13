@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
 import AppDialog from "../AppDialog.vue";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
@@ -22,6 +23,7 @@ import { isProspect } from "../../utils/outreach";
 const props = defineProps<{ contact: Contact | null }>();
 const emit = defineEmits<{ close: [] }>();
 
+const router = useRouter();
 const contactsStore = useContactsStore();
 const { toastSuccess, toastError } = useAppToast();
 const invite = useSoulinkInvite();
@@ -77,6 +79,11 @@ async function setTracking(on: boolean) {
   } finally {
     tracking.value = false;
   }
+}
+
+function emailInMe3() {
+  const contact = person.value;
+  if (contact) void router.push({ path: "/email", query: { composeTo: contact.id } });
 }
 
 async function weTalked() {
@@ -146,7 +153,12 @@ async function weTalked() {
           </a>
         </template>
         <template v-else>
-          <Button v-if="phone" color="primary" class="person-sheet__primary" :href="`sms:${phone}`">
+          <!-- A prospect is emailed from ME3 Email, so the send is tracked and followed up. -->
+          <Button v-if="prospect && email" color="primary" class="person-sheet__primary" type="button" @click="emailInMe3">
+            <template #icon><UiIcon name="Mail" :size="18" aria-hidden="true" /></template>
+            Email
+          </Button>
+          <Button v-else-if="phone" color="primary" class="person-sheet__primary" :href="`sms:${phone}`">
             <template #icon><UiIcon name="MessageCircle" :size="18" aria-hidden="true" /></template>
             Message
           </Button>
@@ -158,7 +170,7 @@ async function weTalked() {
             <UiIcon name="Phone" :size="20" aria-hidden="true" />
           </a>
         </template>
-        <a v-if="email && (phone || onSoulink)" class="person-sheet__round" :href="`mailto:${email}`" aria-label="Email">
+        <a v-if="email && (phone || onSoulink) && !prospect" class="person-sheet__round" :href="`mailto:${email}`" aria-label="Email">
           <UiIcon name="Mail" :size="20" aria-hidden="true" />
         </a>
       </div>
