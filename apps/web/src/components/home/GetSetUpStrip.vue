@@ -5,6 +5,8 @@ import { api } from "../../api";
 import UiIcon from "../UiIcon.vue";
 import { loadProfileSite } from "../../utils/firstSite";
 import { setupSteps, type SetupStepId } from "../../utils/setupSteps";
+import { TOUR_VIDEO, TOUR_WATCHED_KEY, hasTourVideo } from "../../utils/tourVideo";
+import TourVideoDialog from "../TourVideoDialog.vue";
 
 /**
  * Home's Get set up strip for a new owner (iOS MobileFirstRunFlow, me3-56rr.10): compact chips that
@@ -17,9 +19,15 @@ const visible = ref(false);
 const siteDone = ref(false);
 const soulinkDone = ref(false);
 const missionOpened = ref(false);
+const tourWatched = ref(false);
+const tourOpen = ref(false);
 const MISSION_OPENED_KEY = "me3.home.missionOpened";
 
-const steps = computed(() => setupSteps({ site: siteDone.value, email: props.inboxCount > 0, mission: missionOpened.value, soulink: soulinkDone.value }));
+const steps = computed(() => setupSteps(
+  { tour: tourWatched.value, site: siteDone.value, email: props.inboxCount > 0, mission: missionOpened.value, soulink: soulinkDone.value },
+  { tourMinutes: hasTourVideo() ? TOUR_VIDEO.minutes : 0 },
+));
+const emailDone = computed(() => steps.value.find(step => step.id === "email")?.done ?? true);
 const allDone = computed(() => steps.value.every(step => step.done));
 
 async function load() {
@@ -28,7 +36,10 @@ async function load() {
     visible.value = dashboard.settings?.setupChecklistDismissed === false;
   } catch { visible.value = false; }
   if (!visible.value) return;
-  try { missionOpened.value = window.localStorage.getItem(MISSION_OPENED_KEY) === "1"; } catch { missionOpened.value = false; }
+  try {
+    missionOpened.value = window.localStorage.getItem(MISSION_OPENED_KEY) === "1";
+    tourWatched.value = window.localStorage.getItem(TOUR_WATCHED_KEY) === "1";
+  } catch { missionOpened.value = false; }
   const [site, soulink] = await Promise.allSettled([
     loadProfileSite(api.get),
     api.get<{ connection?: { status?: string } | null }>("/soulink/status"),
@@ -43,6 +54,7 @@ async function dismiss() {
 }
 
 function open(id: SetupStepId) {
+  if (id === "tour") { tourOpen.value = true; return; }
   if (id === "site") { emit("buildSite"); return; }
   if (id === "email") { void router.push("/email"); return; }
   if (id === "mission") {
@@ -63,13 +75,14 @@ defineExpose({ load });
       <strong>{{ allDone ? "You're all set." : "Get set up" }}</strong>
       <button type="button" class="setup-strip__x" aria-label="Hide Get set up" @click="dismiss"><UiIcon name="X" :size="16" /></button>
     </div>
-    <p v-if="!steps[1].done && agentAddress" class="setup-strip__hint">Email ME3 at <strong>{{ agentAddress }}</strong> and it acts on it.</p>
+    <p v-if="!emailDone && agentAddress" class="setup-strip__hint">Email ME3 at <strong>{{ agentAddress }}</strong> and it acts on it.</p>
     <div class="setup-strip__chips">
       <button v-for="step in steps" :key="step.id" type="button" class="setup-strip__chip" :class="{ 'is-done': step.done }" @click="open(step.id)">
         <UiIcon :name="step.done ? 'Check' : step.icon" :size="16" />
         <span>{{ step.label }}</span>
       </button>
     </div>
+    <TourVideoDialog :open="tourOpen" @close="tourOpen = false" @watched="tourWatched = true" />
   </section>
 </template>
 

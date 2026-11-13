@@ -15,6 +15,8 @@ import SoulinkConnectPanel from "../components/SoulinkConnectPanel.vue";
 import StatusBadge from "../components/StatusBadge.vue";
 import TelegramConnectPanel from "../components/TelegramConnectPanel.vue";
 import UiIcon from "../components/UiIcon.vue";
+import TourVideoDialog from "../components/TourVideoDialog.vue";
+import { hasTourVideo } from "../utils/tourVideo";
 import { useAppToast } from "../composables/useAppToast";
 import { useTheme, type ThemePreference } from "../composables/useTheme";
 import { useAuthStore } from "../stores/auth";
@@ -2322,6 +2324,9 @@ onMounted(async () => {
   await scrollToRouteHash();
 });
 
+const tourOpen = ref(false);
+const showTour = hasTourVideo();
+
 onBeforeUnmount(() => {
   stopStoragePolling();
 });
@@ -2337,6 +2342,17 @@ onBeforeUnmount(() => {
         </span>
       </template>
       <template #actions>
+        <Button
+          v-if="showTour"
+          size="compact"
+          type="button"
+          data-testid="account-tour"
+          @click="tourOpen = true"
+        >
+          <UiIcon name="Play" :size="16" aria-hidden="true" />
+          Watch the tour
+        </Button>
+        <TourVideoDialog :open="tourOpen" @close="tourOpen = false" />
         <div
           class="theme-segmented account-theme-switch"
           role="radiogroup"
