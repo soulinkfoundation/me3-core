@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { newsPatchFromAgent } from "./agent-soup";
 import { clockTime, countPaper, layoutPaper, noteAddsSomething, newsBuildDue, newsDueMinutes, newsFromSearch, readPaperPicks, sameEvent, shouldBuildPaper, toNewsCandidates, writeNewsPicks } from "./news-paper";
 import { applyNewsPatch, defaultNewsPrefs, describeNewsSettings, newsIsSetUp } from "./news-settings";
+import { NEWS_PUSH_TITLE, newsPushDue } from "./news-push";
 import { cityFromTimezone, cleanCityName, describeWeather, geocodeCity } from "./news-weather";
 import { SoupUnavailableError, newsTodayQuery, readNewsToday, type SoupClient } from "./soup-client";
 import { emptySoupTaste, snapNewsTime, type SoupTaste } from "./soup-taste";
@@ -260,5 +261,27 @@ describe("news place and weather", () => {
   it("says the weather the way a person would", () => {
     expect(describeWeather({ code: 3, temp: 10.6, windMax: 55, tomorrowCode: 61 })).toEqual({ emoji: "🌥️", temp: "11°", text: "Cloudy, strong wind, rain tomorrow" });
     expect(describeWeather({ code: 999, temp: 4 }).text).toBe("Cloudy");
+  });
+});
+
+describe("your news is ready", () => {
+  const prefs = { notify: true, paused: false, setUpAt: "2026-11-12T20:00:00.000Z" };
+  const paper = { status: "ready", deliver_at: "2026-11-13T06:45:00.000Z", read_at: null, hidden_at: null };
+  const at = (time: string) => new Date(`2026-11-13T${time}:00.000Z`);
+  it("is announced at the owner's time, not when the build finishes, and a late paper when it is ready", () => {
+    expect(newsPushDue(prefs, paper, at("06:20"))).toBe(false);
+    expect(newsPushDue(prefs, paper, at("06:45"))).toBe(true);
+    expect(newsPushDue(prefs, paper, at("09:10"))).toBe(true);
+    expect(newsPushDue(prefs, paper, at("10:45"))).toBe(false);
+  });
+  it("stays quiet when paused, switched off, not built, or already read or hidden", () => {
+    expect(newsPushDue({ ...prefs, notify: false }, paper, at("06:45"))).toBe(false);
+    expect(newsPushDue({ ...prefs, paused: true }, paper, at("06:45"))).toBe(false);
+    expect(newsPushDue({ ...prefs, setUpAt: null }, paper, at("06:45"))).toBe(false);
+    expect(newsPushDue(null, paper, at("06:45"))).toBe(false);
+    expect(newsPushDue(prefs, { ...paper, status: "failed" }, at("06:45"))).toBe(false);
+    expect(newsPushDue(prefs, { ...paper, read_at: "2026-11-13T06:30:00.000Z" }, at("06:45"))).toBe(false);
+    expect(newsPushDue(prefs, { ...paper, hidden_at: "2026-11-13T06:30:00.000Z" }, at("06:45"))).toBe(false);
+    expect(NEWS_PUSH_TITLE).toBe("🗞️ Your news is ready");
   });
 });

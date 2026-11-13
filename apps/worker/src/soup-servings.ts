@@ -526,10 +526,3 @@ export async function actOnSoupServing(env: Env, ownerId: string, id: string, in
     .bind(JSON.stringify(items), status, expiresAt, openedAt, finishedAt, now.toISOString(), id, ownerId).run();
   return (await getSoupServing(env, ownerId, id))!;
 }
-
-/** The headline line for the morning briefing push, within its own budget. */
-export function soupBriefingLine(serving: Pick<SoupServing, "kind" | "items"> | null): string | null {
-  if (!serving || serving.kind !== "headlines" || !serving.items.length) return null;
-  const rest = serving.items.length - 1;
-  return `🗞️ ${serving.items[0].title}${rest > 0 ? `, + ${rest} more` : ""}`;
-}

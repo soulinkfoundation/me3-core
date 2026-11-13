@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { parseWorkTopicLine } from "./agent-soup";
-import { withSoupLine } from "./morning-calendar-push";
-import { dueServings, readSoupPicks, servingQueries, soupBriefingLine, specForServing, writeSoupPicks } from "./soup-servings";
+import { dueServings, readSoupPicks, servingQueries, specForServing, writeSoupPicks } from "./soup-servings";
 import { emptySoupTaste, fadeWorkTopics, readServingSpecs } from "./soup-taste";
 import type { AgentModel } from "../../../packages/agent/src/types";
 
 // Failure modes: a pick that names an item Soup never offered, a for-you line that leaks the
 // Wheel of Life or runs long, a serving composed twice in one day or outside its window,
-// project text or names reaching a Soup query, and a 🗞️ line that pushes the briefing past
-// its push budget.
+// and project text or names reaching a Soup query.
 describe("soup picks", () => {
   it("keeps only picks for real candidates with short, plain for-you lines", () => {
     expect(readSoupPicks([
@@ -103,19 +101,5 @@ describe("soup taste from the agent", () => {
     const projects = new Set(["proj_1"]);
     expect(parseWorkTopicLine("agent payments @ proj_1", projects)).toEqual({ topic: "agent payments", projectId: "proj_1", source: "project" });
     expect(parseWorkTopicLine("poetry @ proj_unknown", projects)).toEqual({ topic: "poetry", projectId: null, source: "owner" });
-  });
-});
-
-describe("morning briefing soup line", () => {
-  it("adds the first headline and a count when it fits, and never cuts the briefing", () => {
-    const serving = { kind: "headlines" as const, items: [{ title: "Stripe opens Link agent wallets in the UK" }, { title: "b" }, { title: "c" }] as never };
-    expect(soupBriefingLine(serving)).toBe("🗞️ Stripe opens Link agent wallets in the UK, + 2 more");
-    expect(soupBriefingLine({ kind: "pick", items: [{ title: "x" }] as never })).toBeNull();
-    expect(withSoupLine({ title: "t", body: "Design review at 10:00." }, soupBriefingLine(serving)).body).toBe("Design review at 10:00. 🗞️ Stripe opens Link agent wallets in the UK, + 2 more");
-    const full = { title: "t", body: "x".repeat(232) };
-    expect(withSoupLine(full, "🗞️ Something").body).toBe(full.body);
-    const tight = withSoupLine({ title: "t", body: "x".repeat(200) }, "🗞️ A very long headline that will not fit in the remaining room at all").body;
-    expect(tight.length).toBeLessThanOrEqual(240);
-    expect(tight.endsWith("…")).toBe(true);
   });
 });

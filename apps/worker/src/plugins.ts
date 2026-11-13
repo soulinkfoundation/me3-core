@@ -1475,6 +1475,7 @@ const SOUP_PLUGIN: CorePluginManifestSummary = {
   queuesAndCrons: [
     { id: "soup.servings", kind: "cron", schedule: "*/15 * * * *", consumerEntrypoint: "dispatchDueSoupServings" },
     { id: "news.papers", kind: "cron", schedule: "*/15 * * * *", consumerEntrypoint: "dispatchDueNewsPapers" },
+    { id: "news.notifications", kind: "cron", schedule: "* * * * *", consumerEntrypoint: "dispatchDueNewsNotifications" },
   ],
   notes: [
     "Personalisation happens in ME3. The Human Soup receives topic words, a region and filters only, never who the owner is or why a story was picked.",

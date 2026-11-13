@@ -7,6 +7,7 @@ import { dispatchDueCalendarSourceRefreshes } from "./calendar-sources";
 import { dispatchDueCalendarPushNotifications } from "./calendar-push-notifications";
 import { dispatchDueMorningCalendarPushes } from "./morning-calendar-push";
 import { dispatchDueNewsPapers } from "./news-paper";
+import { dispatchDueNewsNotifications } from "./news-push";
 import { dispatchDueSoupServings } from "./soup-servings";
 import { dispatchDueGratitudeReminders } from "./gratitude";
 import { archiveStaleLoginCodes, purgeStaleSpam, retryPendingMailTriage } from "./mailbox-triage";
@@ -131,6 +132,8 @@ type ScheduledStep = readonly [name: string, run: (env: Env) => Promise<unknown>
 const MINUTE_SCHEDULED_STEPS: readonly ScheduledStep[] = [
   ["campaign dispatch", dispatchDueCampaignJobs],
   ["calendar push dispatch", dispatchDueCalendarPushNotifications],
+  // "Your news is ready" goes out at the owner's own minute; the quarter-hour list repeats it for installs without the minute cron.
+  ["news notifications", dispatchDueNewsNotifications],
   // Held email (Send with Undo, Schedule send) goes out even when no client is open.
   ["held email sends", dispatchDueMailboxSends],
 ];
@@ -146,6 +149,7 @@ const QUARTER_HOUR_SCHEDULED_STEPS: readonly ScheduledStep[] = [
   ["held email sends", dispatchDueMailboxSends],
   ["soup servings", dispatchDueSoupServings],
   ["news papers", dispatchDueNewsPapers],
+  ["news notifications", dispatchDueNewsNotifications],
   ["morning calendar push", dispatchDueMorningCalendarPushes],
   ["gratitude reminders", dispatchDueGratitudeReminders],
   ["calendar push dispatch", dispatchDueCalendarPushNotifications],
