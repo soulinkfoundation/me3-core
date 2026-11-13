@@ -17,7 +17,6 @@ import {
   listAgentMailboxMessages,
   markAgentMailboxDraftFailed,
   markAgentMailboxDraftSent,
-  moveAgentMailboxMessage,
   pauseAgentMailbox,
   rejectAgentMailboxDraft,
   setAgentMailboxMessageReadState,
@@ -79,6 +78,7 @@ import {
   MANAGED_EMAIL_INBOUND_PATH,
   receiveManagedEmailInbound,
 } from "../managed-email";
+import { getMailboxConversationLocation, moveMailboxMessage } from "../mailbox-conversations";
 import {
   listMailboxThreadMessages,
   listMailboxThreads,
@@ -519,10 +519,13 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     if (!ownerId) return unauthorized(c);
 
     const threadId = c.req.param("threadId");
-    const result = await listMailboxThreadMessages(c.env, ownerId, threadId);
+    const result = await listMailboxThreadMessages(c.env, ownerId, threadId, c.req.query("folder"));
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
     return c.json({
-      thread: summarizeMailboxThread(threadId, result.messages),
+      thread: {
+        ...summarizeMailboxThread(threadId, result.messages),
+        location: await getMailboxConversationLocation(c.env, ownerId, threadId),
+      },
       messages: await decorateMailboxMessages(c.env, ownerId, result.messages, apiOrigin(c)),
     });
   });
@@ -869,7 +872,7 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     if (!ownerId) return unauthorized(c);
 
     const body = await c.req.json<{ folder?: string }>().catch((): { folder?: string } => ({}));
-    const result = await moveAgentMailboxMessage(c.env, ownerId, c.req.param("messageId"), body.folder);
+    const result = await moveMailboxMessage(c.env, ownerId, c.req.param("messageId"), body.folder);
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
     return c.json(result);
   });

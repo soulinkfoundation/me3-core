@@ -1,10 +1,10 @@
 import {
   MAILBOX_FOLDERS,
   listAgentMailboxThreadMessages,
-  mailboxFolderSet,
   mailboxFolderWhere,
   type AgentMailboxMessage,
 } from "@me3-core/plugin-agent-chat";
+import { moveMailboxConversation } from "./mailbox-conversations";
 import type { Env } from "./types";
 import { decodeMimeHeaderValue } from "../../../shared/email-headers";
 import { mailboxCanonicalThreadKeySql } from "./mailbox-thread-key";
@@ -84,10 +84,24 @@ export async function listMailboxThreads(
   const matchingConditions = ["a.user_id = ?", notDiscardedDraftSql("m")];
   const bindings: (string | number)[] = [ownerId];
 
+  // What a conversation's row counts and previews: in Trash and Spam only what is there; anywhere
+  // else everything but messages the owner deleted on their own.
+  let rankedFolderSql = "";
   if (folder) {
     const where = mailboxFolderWhere(folder, "m.");
     matchingConditions.push(where.sql);
     bindings.push(...where.bindings);
+    // A conversation with anything in Inbox is in Inbox, not also in Archive.
+    if (folder === "archive") {
+      matchingConditions.push(
+        `NOT EXISTS (
+           SELECT 1 FROM mailbox_messages i
+           WHERE i.mailbox_id = m.mailbox_id AND ${mailboxCanonicalThreadKeySql("i")} = ${mailboxCanonicalThreadKeySql("m")}
+             AND i.folder = 'inbox' AND i.message_kind != 'draft'
+         )`,
+      );
+    }
+    rankedFolderSql = folder === "trash" || folder === "spam" ? ` AND ${where.sql}` : " AND m.folder != 'trash'";
   }
   if (query) {
     matchingConditions.push(
@@ -131,7 +145,7 @@ export async function listMailboxThreads(
        JOIN matching_threads mt
          ON mt.mailbox_id = m.mailbox_id
         AND mt.thread_id = ${canonicalThreadKey}
-       WHERE ${notDiscardedDraftSql("m")}
+       WHERE ${notDiscardedDraftSql("m")}${rankedFolderSql}
      ),
      participants AS (
        SELECT thread_id, TRIM(from_address) AS address
@@ -196,6 +210,7 @@ export async function listMailboxThreadMessages(
   env: Pick<Env, "DB">,
   ownerId: string,
   threadId: string,
+  folderInput?: unknown,
 ): Promise<{ messages: AgentMailboxMessage[] } | MailboxServiceError> {
   const storedThreads = await env.DB.prepare(
     `SELECT DISTINCT COALESCE(NULLIF(m.thread_key, ''), m.id) AS stored_thread_id
@@ -225,9 +240,19 @@ export async function listMailboxThreadMessages(
     (left, right) =>
       messageActivityTime(left) - messageActivityTime(right) || left.id.localeCompare(right.id),
   );
-  return ordered.length > 0
-    ? { messages: ordered }
-    : { error: "Thread not found", status: 404 };
+  if (ordered.length === 0) return { error: "Thread not found", status: 404 };
+  // Opened from Trash or Spam, a conversation shows what is there. Opened anywhere else it leaves
+  // out messages deleted on their own, unless nothing else is left.
+  const view = typeof folderInput === "string" ? folderInput.trim().toLowerCase() : "";
+  // Spam is stored as Trash with the spam flag set.
+  const shownIn = (message: AgentMailboxMessage) => (message.folder === "trash" && message.spam ? "spam" : message.folder);
+  const removed = (message: AgentMailboxMessage) => message.folder === "trash";
+  if (view === "trash" || view === "spam") {
+    const inView = ordered.filter((message) => shownIn(message) === view);
+    return inView.length > 0 ? { messages: inView } : { messages: ordered };
+  }
+  const kept = ordered.filter((message) => !removed(message));
+  return { messages: kept.some((message) => message.kind !== "draft") ? kept : ordered };
 }
 
 export function summarizeMailboxThread(
@@ -277,6 +302,7 @@ export async function setMailboxThreadReadState(
   return { ok: true, id: threadId, read };
 }
 
+/** Moves a whole conversation: see mailbox-conversations.ts for what each folder means. */
 export async function moveMailboxThread(
   env: Pick<Env, "DB">,
   ownerId: string,
@@ -284,27 +310,9 @@ export async function moveMailboxThread(
   folderInput: unknown,
   fromFolderInput: unknown,
 ): Promise<
-  { ok: true; id: string; folder: string; fromFolder: string } | MailboxServiceError
+  { ok: true; id: string; folder: string; fromFolder: string | null } | MailboxServiceError
 > {
-  const folder = normalizeFolder(folderInput);
-  if (!folder) return { error: "Invalid folder", status: 400 };
-  const fromFolder = normalizeFolder(fromFolderInput);
-  if (!fromFolder) return { error: "Invalid source folder", status: 400 };
-
-  const set = mailboxFolderSet(folder);
-  const from = mailboxFolderWhere(fromFolder);
-  const result = await env.DB.prepare(
-    `UPDATE mailbox_messages
-     SET ${set.sql}, updated_at = CURRENT_TIMESTAMP
-     WHERE mailbox_id IN (SELECT id FROM mailbox_aliases WHERE user_id = ?)
-       AND ${mailboxCanonicalThreadKeySql("mailbox_messages")} = ?
-       AND ${from.sql}
-       AND message_kind != 'draft'`,
-  )
-    .bind(...set.bindings, ownerId, threadId, ...from.bindings)
-    .run();
-  if ((result.meta?.changes || 0) === 0) return { error: "Thread not found", status: 404 };
-  return { ok: true, id: threadId, folder, fromFolder };
+  return moveMailboxConversation(env, ownerId, threadId, folderInput, fromFolderInput);
 }
 
 function notDiscardedDraftSql(alias: string): string {

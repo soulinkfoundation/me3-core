@@ -19,6 +19,7 @@ import { AGENT_NETWORK_COMMERCE_SCHEMA } from "./agent-network-commerce";
 import { MAIL_TRIAGE_SCHEMA, MAILBOX_LOGIN_CODES_STATEMENTS, MAILBOX_MODEL_CALLS_SCHEMA, MAILBOX_SPAM_HANDLED_STATEMENTS, MAILBOX_SPAM_RULES_STATEMENTS } from "./mailbox-triage";
 import { AI_USAGE_SETTLEMENTS_SCHEMA } from "./managed-ai-reconciliation";
 import { MAILBOX_INSTRUCTION_REPLAY_STATEMENTS, MAILBOX_INSTRUCTIONS_SCHEMA } from "./mailbox-instructions";
+import { MAILBOX_CONVERSATION_FOLDER_FIX_STATEMENTS, MAILBOX_CONVERSATION_SCHEMA_STATEMENTS } from "./mailbox-conversations";
 import { MAILBOX_CANONICAL_THREAD_KEY_COLUMN, mailboxCanonicalThreadKeyMigrationSql } from "./mailbox-thread-key";
 import type { Env } from "./types";
 
@@ -989,6 +990,25 @@ const runtimeMigrations: RuntimeMigration[] = [
         updated_at TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE (user_id, date_key)
       )`).run();
+    },
+  },
+  // Email conversations are one unit: snooze state, held sends, how a Brief row cleared, and
+  // the one-off fix for conversations that sat in two folders (me3-kvu8.26, me3-kvu8.27).
+  {
+    id: "0105_mailbox_conversations",
+    checksum: "2026-11-13-mailbox-conversations-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "mailbox_messages"))) return;
+      const [stateTable, stateIndex, , sendAfterIndex] = MAILBOX_CONVERSATION_SCHEMA_STATEMENTS;
+      await db.prepare(stateTable).run();
+      await db.prepare(stateIndex).run();
+      await addColumnIfMissing(db, "mailbox_messages", "send_after", "TEXT");
+      await db.prepare(sendAfterIndex).run();
+      await addColumnIfMissing(db, "mailbox_triage", "resolved_how", "TEXT");
+      // The fix reads the conversation key migration 0103 added.
+      const columns = await db.prepare("PRAGMA table_xinfo(mailbox_messages)").all<SqliteNameRow>();
+      if (!(columns.results || []).some((row) => row.name === MAILBOX_CANONICAL_THREAD_KEY_COLUMN)) return;
+      for (const statement of MAILBOX_CONVERSATION_FOLDER_FIX_STATEMENTS) await db.prepare(statement).run();
     },
   },
 ];

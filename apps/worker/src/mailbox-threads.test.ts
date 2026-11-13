@@ -219,58 +219,14 @@ describe("mailbox threads", () => {
     expect(calls[1]?.sql).toContain("mailbox_id = ? AND thread_key = ?");
   });
 
-  it("applies owner-scoped thread mutations without moving drafts", async () => {
+  // Moving a conversation is covered against real SQLite in mailbox-conversations.test.ts.
+  it("applies an owner-scoped read state to a whole thread", async () => {
     const fake = captureDb({ rows: [], changes: 2 });
 
     await expect(
       setMailboxThreadReadState({ DB: fake.db } as never, "owner", "thread-1", false),
     ).resolves.toEqual({ ok: true, id: "thread-1", read: false });
-    await expect(
-      moveMailboxThread(
-        { DB: fake.db } as never,
-        "owner",
-        "thread-1",
-        "archive",
-        "inbox",
-      ),
-    ).resolves.toEqual({
-      ok: true,
-      id: "thread-1",
-      folder: "archive",
-      fromFolder: "inbox",
-    });
-
     expect(fake.calls[0]?.values).toEqual([false, "owner", "thread-1"]);
-    expect(fake.calls[1]?.values).toEqual(["archive", "owner", "thread-1", "inbox"]);
-    expect(fake.calls[1]?.sql).toContain("AND folder = ?");
-    expect(fake.calls[1]?.sql).toContain("message_kind != 'draft'");
-  });
-
-  it("archives and restores only the active folder in mixed Inbox and Sent threads", async () => {
-    const messages = [
-      { id: "inbox-1", threadId: "thread-1", kind: "email", folder: "inbox" },
-      { id: "sent-1", threadId: "thread-1", kind: "email", folder: "sent" },
-      { id: "draft-1", threadId: "thread-1", kind: "draft", folder: "drafts" },
-    ];
-    const db = threadMoveDb(messages);
-
-    await expect(
-      moveMailboxThread(db as never, "owner", "thread-1", "archive", "inbox"),
-    ).resolves.toMatchObject({ ok: true });
-    expect(messages).toEqual([
-      { id: "inbox-1", threadId: "thread-1", kind: "email", folder: "archive" },
-      { id: "sent-1", threadId: "thread-1", kind: "email", folder: "sent" },
-      { id: "draft-1", threadId: "thread-1", kind: "draft", folder: "drafts" },
-    ]);
-
-    await expect(
-      moveMailboxThread(db as never, "owner", "thread-1", "inbox", "archive"),
-    ).resolves.toMatchObject({ ok: true });
-    expect(messages).toEqual([
-      { id: "inbox-1", threadId: "thread-1", kind: "email", folder: "inbox" },
-      { id: "sent-1", threadId: "thread-1", kind: "email", folder: "sent" },
-      { id: "draft-1", threadId: "thread-1", kind: "draft", folder: "drafts" },
-    ]);
   });
 
   it("groups legacy outbound roots and nested References chains without rewriting rows", async () => {
@@ -411,6 +367,7 @@ function message(overrides: Partial<AgentMailboxMessage>): AgentMailboxMessage {
     fromAddress: "owner@example.com",
     fromName: null,
     toAddress: "client@example.com",
+    toAddresses: [],
     ccAddresses: [],
     bccAddresses: [],
     recipientAddresses: [],
@@ -455,44 +412,6 @@ function captureDb(input: { rows: unknown[]; changes?: number }) {
               },
               async run() {
                 return { meta: { changes: input.changes ?? 0 } };
-              },
-            };
-          },
-        };
-      },
-    } as unknown as D1Database,
-  };
-}
-
-function threadMoveDb(
-  messages: Array<{ id: string; threadId: string; kind: string; folder: string }>,
-) {
-  return {
-    DB: {
-      prepare() {
-        return {
-          bind(
-            folder: string,
-            ownerId: string,
-            threadId: string,
-            fromFolder: string,
-          ) {
-            return {
-              async run() {
-                let changes = 0;
-                if (ownerId === "owner") {
-                  for (const message of messages) {
-                    if (
-                      message.threadId === threadId &&
-                      message.folder === fromFolder &&
-                      message.kind !== "draft"
-                    ) {
-                      message.folder = folder;
-                      changes += 1;
-                    }
-                  }
-                }
-                return { meta: { changes } };
               },
             };
           },
@@ -587,6 +506,13 @@ const CANONICAL_THREAD_KEY_MIGRATION = readFileSync(
 );
 
 const MAILBOX_SQLITE_SCHEMA = `
+  CREATE TABLE mailbox_triage (
+    message_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    resolved_at TEXT,
+    resolved_how TEXT,
+    updated_at TEXT
+  );
   CREATE TABLE mailbox_aliases (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL UNIQUE,

@@ -89,7 +89,9 @@ export function serializeAgentMailboxMessage(row: DbMailboxMessageRow) {
     fromAddress: fromHeader?.address || row.from_address,
     fromName: fromHeader?.name || null,
     toAddress: row.to_address,
-    ccAddresses: row.direction === "outbound" ? getDraftCcBcc(row).cc : [],
+    // Who a received message was written to, for Reply all: To and Cc as the sender set them.
+    toAddresses: row.direction === "inbound" ? parseEmailAddressList(getHeaderValue(headers, "to")).slice(0, 50) : [],
+    ccAddresses: row.direction === "outbound" ? getDraftCcBcc(row).cc : parseEmailAddressList(getHeaderValue(headers, "cc")).slice(0, 50),
     bccAddresses: row.direction === "outbound" ? getDraftCcBcc(row).bcc : [],
     recipientAddresses: row.direction === "inbound" ? getRecipientAddresses(headers, metadata) : [],
     subject: decodeMimeHeaderValue(row.subject || "(no subject)"),

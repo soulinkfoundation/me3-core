@@ -14,6 +14,7 @@ import {
   senderDomain,
 } from "./mailbox-sender-identity";
 import { notifyLoginCodeReceived, type LoginCodePush } from "./push-notifications";
+import { archiveConversationOfMessage, fileOwnerReplyFromElsewhere, ownerHasWrittenInConversationOfMessage, settleConversationOfMessage } from "./mailbox-conversations";
 import type { Env } from "./types";
 
 /**
@@ -360,6 +361,8 @@ export async function runMailTriage(env: Env, messageId: string, options: MailTr
       outcome.secondary ? JSON.stringify(outcome.secondary) : null,
       outcome.draftId, JSON.stringify(outcome.context), now.toISOString(), now.toISOString(), messageId,
     ).run();
+    // Mail that stayed in Inbox brings the rest of its conversation back from Archive.
+    await settleConversationOfMessage(env, messageId);
     if (row.from_address) await resolveSenderAvatar(env, senderDomain(row.from_address), now);
     if (outcome.handledKind === "login_code") await pushLoginCode(env, row, String(outcome.context.sender || ""), now, options);
   } catch (error) {
@@ -461,7 +464,9 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
     return outcome("fyi", "low", instruction.note.replace(/\s+/g, " ") || subject, "signal", null, null, null, null, { ...context, replayedInstruction: true });
   }
   if (instruction && "copied" in instruction) {
-    // The owner copied ME3 on mail to someone else: information, never a reply.
+    // The owner copied ME3 on mail to someone else: information, never a reply. It is the owner's
+    // own reply in that conversation, so it clears the conversation's Brief rows and brings nothing back to Inbox.
+    await fileOwnerReplyFromElsewhere(env, { messageId: row.message_id, userId: row.user_id }, options.now);
     return outcome("fyi", "low", instruction.note.replace(/\s+/g, " ") || subject, "signal", null, null, null, null, { ...context, copiedMe3: true });
   }
   if (instruction) {
@@ -486,7 +491,8 @@ async function decideTriage(env: Env, row: TriageMessageRow, options: MailTriage
     return outcome("handled", "low", `Spam · ${spamRule.label}`, "rule", "spam", null, null, null, { ...context, ruleId: spamRule.id });
   }
   const archiveRule = matches.find(rule => rule.kind === "archive_sender" || rule.kind === "archive_domain");
-  if (archiveRule && !alwaysShow) {
+  // A rule never hides a reply in a conversation the owner has written in.
+  if (archiveRule && !alwaysShow && !(await ownerHasWrittenInConversationOfMessage(env, row.message_id))) {
     await archiveMessage(env, row);
     await logHandledAction(env, row, { kind: "rule_archive", label: archiveRule.label, detail: subject, undo: { kind: "move_to_inbox" } });
     return outcome("handled", "low", `Archived · ${archiveRule.label}`, "rule", "rule_archive", null, null, null, { ...context, ruleId: archiveRule.id });
@@ -675,9 +681,7 @@ export async function archiveStaleLoginCodes(env: Env, options: { now?: Date; li
     .catch(() => ({ results: [] as Array<{ message_id: string; user_id: string; subject: string | null }> }));
   let archived = 0;
   for (const row of rows.results || []) {
-    const moved = await env.DB.prepare("UPDATE mailbox_messages SET folder = 'archive', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND folder = 'inbox'")
-      .bind(row.message_id).run();
-    if (!moved.meta?.changes) continue;
+    if (!(await archiveConversationOfMessage(env, row.message_id))) continue;
     await logHandledAction(env, row, { kind: "login_code", label: "Login code archived", detail: row.subject, undo: { kind: "move_to_inbox" } }, now);
     archived += 1;
   }
@@ -751,8 +755,8 @@ async function fileReceipt(env: Env, row: TriageMessageRow): Promise<{ entryId: 
 
 async function archiveMessage(env: Env, row: TriageMessageRow): Promise<void> {
   if (row.folder !== "inbox") return;
-  await env.DB.prepare("UPDATE mailbox_messages SET folder = 'archive', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND folder = 'inbox'")
-    .bind(row.message_id).run();
+  // Archive is for the whole conversation, so nothing of it is left behind in Inbox.
+  await archiveConversationOfMessage(env, row.message_id);
 }
 
 /** Spam waits in Trash with spam_at set; the Spam folder is that slice of Trash (see mailboxFolderWhere). */

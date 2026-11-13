@@ -19,6 +19,7 @@ import {
   extractLoginCode,
   LOGIN_CODE_FRESH_MS,
 } from "./mailbox-triage";
+import { archiveConversationOfMessage, settleConversationOfMessage } from "./mailbox-conversations";
 import { listDueFollowUps, type MailboxFollowUp } from "./mailbox-followups";
 import type { Env } from "./types";
 
@@ -446,6 +447,8 @@ export async function undoHandledAction(env: Env, ownerId: string, actionId: str
     `UPDATE mailbox_messages SET folder = 'inbox', spam_at = NULL, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND (? = 'move_to_inbox' OR folder = 'archive') AND mailbox_id IN (SELECT id FROM mailbox_aliases WHERE user_id = ?)`,
   ).bind(row.message_id, undo.kind, ownerId).run();
+  // The message is back in Inbox, so the rest of its conversation comes with it.
+  await settleConversationOfMessage(env, row.message_id);
   await env.DB.prepare("UPDATE mailbox_handled_actions SET undone_at = ? WHERE id = ?").bind(now.toISOString(), row.id).run();
   // "Not spam" is a lesson: the sender is shown from now on, whatever filtered them.
   if (row.kind === "spam") await trustSender(env, ownerId, await messageSender(env, ownerId, row.message_id), now);
@@ -572,6 +575,7 @@ export async function markMailboxNotSpam(
       await undoHandledAction(env, ownerId, handled.id, now);
     } else {
       await env.DB.prepare("UPDATE mailbox_messages SET folder = 'inbox', spam_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(row.id).run();
+      await settleConversationOfMessage(env, row.id);
       await env.DB.prepare("UPDATE mailbox_triage SET category = 'fyi', handled_kind = NULL, summary = NULL, updated_at = ? WHERE user_id = ? AND message_id = ?")
         .bind(now.toISOString(), ownerId, row.id).run();
     }
@@ -620,8 +624,12 @@ export async function createMailboxRule(
   let applied = false;
   if (message && kind !== "always_show_sender" && message.folder === "inbox") {
     const spam = kind === "spam_sender" || kind === "spam_domain";
-    await env.DB.prepare(`UPDATE mailbox_messages SET ${spam ? "folder = 'trash', spam_at = ?" : "folder = 'archive', spam_at = NULL"}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND folder = 'inbox'`)
-      .bind(...(spam ? [now.toISOString()] : []), message.id).run();
+    if (spam) {
+      await env.DB.prepare("UPDATE mailbox_messages SET folder = 'trash', spam_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND folder = 'inbox'")
+        .bind(now.toISOString(), message.id).run();
+    } else {
+      await archiveConversationOfMessage(env, message.id);
+    }
     const handledKind: MailHandledKind = spam ? "spam" : "rule_archive";
     await logHandled(env, ownerId, message.id, { kind: handledKind, label, detail: message.subject, undo: { kind: "move_to_inbox" } }, now);
     await env.DB.prepare("UPDATE mailbox_triage SET category = 'handled', handled_kind = ?, resolved_at = ?, updated_at = ? WHERE user_id = ? AND message_id = ?")

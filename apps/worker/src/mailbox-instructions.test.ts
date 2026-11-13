@@ -27,6 +27,7 @@ function fixture() {
   raw.exec(readFileSync(new URL("../migrations/0103_mailbox_canonical_thread_key.sql", import.meta.url), "utf8"));
   raw.exec("ALTER TABLE mailbox_messages ADD COLUMN spam_at TEXT");
   for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...ACCOUNTS_REMOVALS_SCHEMA, ...MAIL_TRIAGE_SCHEMA, ...MAILBOX_INSTRUCTION_REPLAY_STATEMENTS, ...AGENT_SCHEMA_STATEMENTS]) raw.exec(sql);
+  raw.exec(readFileSync(new URL("../migrations/0105_mailbox_conversations.sql", import.meta.url), "utf8"));
   raw.exec(`INSERT INTO owner_profile(id, email, timezone) VALUES('owner', 'Kieran@Gmail.test', 'UTC');
     INSERT INTO mailbox_aliases(id,user_id,alias_local_part,forwarding_email,status) VALUES('mailbox','owner','kieran','','active');`);
   const prepare = (sql: string) => {
