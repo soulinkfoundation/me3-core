@@ -19,6 +19,7 @@ import EmailSenderAvatar from "../components/email/EmailSenderAvatar.vue";
 import type { MailSenderIdentity, MailTriageTag, MailboxBriefItem } from "../components/email/brief";
 import { API_BASE, api } from "../api";
 import { findInlineImageIds, normalizeContentId, replaceInlineImages } from "../components/email/inlineImages";
+import { QUOTE_TOGGLE_STYLE, collapseQuotedHtml, isEmbeddedPicture, splitQuotedText } from "../components/email/quotedText";
 import { useAppToast } from "../composables/useAppToast";
 import { useAuthStore } from "../stores/auth";
 import { useContactsStore } from "../stores/contacts";
@@ -387,6 +388,7 @@ const selectMode = ref(false);
 const mobileMenuOpen = ref(false);
 const threadMoreOpen = ref(false);
 const expandedMessageIds = ref<Set<string>>(new Set());
+const earlierMessagesShown = ref(false);
 const replyOpen = ref(false);
 const replyTarget = ref<InboxMessage | null>(null);
 const replyForm = ref({ textBody: "" });
@@ -1019,6 +1021,22 @@ function getMessageAttachments(message: InboxMessage): MailboxAttachment[] {
   );
 }
 
+/**
+ * The attachments listed under a message, each with its position in the message (the download
+ * address uses it). Pictures the email shows in place are part of the message, not attachments.
+ */
+function listedAttachments(message: InboxMessage): Array<{ attachment: MailboxAttachment; index: number }> {
+  return (message.metadata?.attachments || [])
+    .map((attachment, index) => ({ attachment, index }))
+    .filter(
+      ({ attachment }) =>
+        attachment &&
+        typeof attachment === "object" &&
+        Boolean(attachment.filename || attachment.mimeType || attachment.size) &&
+        !isEmbeddedPicture(attachment, message.htmlBody),
+    );
+}
+
 function formatAttachmentName(
   attachment: MailboxAttachment,
   index: number,
@@ -1264,6 +1282,12 @@ function resetThreadPagination() {
   threadNextCursor.value = null;
 }
 
+/** In Trash and Spam a conversation shows what is there; elsewhere it leaves deleted messages out. */
+function threadViewQuery(): string {
+  const folder = isEmailTab(activeTab.value) ? emailTabConfig[activeTab.value].folderParam : "";
+  return folder === "trash" || folder === "spam" ? `?folder=${folder}` : "";
+}
+
 function clearOpenConversation() {
   threadRequestId += 1;
   clearDeliveryStatusRefreshes();
@@ -1278,6 +1302,7 @@ function clearOpenConversation() {
   replyTarget.value = null;
   threadMoreOpen.value = false;
   expandedMessageIds.value = new Set();
+  earlierMessagesShown.value = false;
 }
 
 function currentThreadPageKey(): string {
@@ -1507,7 +1532,7 @@ async function fetchThreadMessages(
     return loadedThreadMessages.value;
   }
   const data = await api.get<MailboxThreadResponse>(
-    `/mailbox/threads/${encodeURIComponent(thread.id)}`,
+    `/mailbox/threads/${encodeURIComponent(thread.id)}${threadViewQuery()}`,
   );
   if (selectedThreadId.value === thread.id) {
     loadedThreadId.value = thread.id;
@@ -1639,13 +1664,16 @@ async function loadSelectedThread(thread: MailboxThreadSummary) {
   threadDetailError.value = "";
   try {
     const data = await api.get<MailboxThreadResponse>(
-      `/mailbox/threads/${encodeURIComponent(thread.id)}`,
+      `/mailbox/threads/${encodeURIComponent(thread.id)}${threadViewQuery()}`,
     );
     if (requestId !== threadRequestId || selectedThreadId.value !== thread.id) {
       return;
     }
     loadedThreadId.value = thread.id;
     loadedThreadMessages.value = data.messages || [];
+    // Messages the owner has not read yet open with the latest one; the rest stay collapsed.
+    expandedMessageIds.value = new Set(loadedThreadMessages.value.filter((message) => message.unread).map((message) => message.id));
+    earlierMessagesShown.value = false;
     updateThreadSummary(thread.id, data.thread || thread);
     void Promise.all(loadedThreadMessages.value.map(loadDeliveryStatus));
     await markVisibleThreadRead();
@@ -2712,6 +2740,13 @@ function isCollapsedMessage(message: InboxMessage, index: number): boolean {
   );
 }
 
+/** More than three collapsed messages fold into one "N more" row between the first and the last of them. */
+const foldedMessageIds = computed<string[]>(() => {
+  if (earlierMessagesShown.value) return [];
+  const collapsed = selectedThreadMessages.value.filter((message, index) => isCollapsedMessage(message, index));
+  return collapsed.length > 3 ? collapsed.slice(1, -1).map((message) => message.id) : [];
+});
+
 function expandMessage(id: string) {
   expandedMessageIds.value = new Set([...expandedMessageIds.value, id]);
 }
@@ -3433,6 +3468,7 @@ function renderMarkdownMessageDocument(body: string): string {
       li { margin: 0 0 4px; }
       blockquote { margin: 0 0 14px; padding-left: 12px; border-left: 3px solid #d0d4da; color: #555b66; }
       body > :last-child { margin-bottom: 0; }
+      ${QUOTE_TOGGLE_STYLE}
       a { color: #1a73e8; }
       img { max-width: 100%; height: auto; }
       table { max-width: 100%; }
@@ -3457,6 +3493,7 @@ html, body { margin: 0; overflow: visible; background: #fff; color: #1b1f22; }
 body { overflow-wrap: anywhere; word-break: break-word; }
 img, table { max-width: 100% !important; height: auto; }
 pre { white-space: pre-wrap; }
+${QUOTE_TOGGLE_STYLE}
 </style>`;
 
   if (/<html[\s>]/i.test(safeBody)) {
@@ -3480,8 +3517,9 @@ pre { white-space: pre-wrap; }
 }
 
 function renderEmailHtml(message: InboxMessage): string {
+  // Quoted history folds behind "•••"; the earlier messages are already on screen above.
   return renderRichEmailDocument(
-    replaceInlineImages(getDisplayText(message.htmlBody), inlineImageUrls.value[message.id]),
+    collapseQuotedHtml(replaceInlineImages(getDisplayText(message.htmlBody), inlineImageUrls.value[message.id])),
     externalContentAllowedIds.value.has(message.id),
   );
 }
@@ -3525,8 +3563,12 @@ function allowExternalEmailContent(messageId: string) {
 }
 
 function renderMarkdownEmailHtml(message: InboxMessage): string {
+  const { body, quoted } = splitQuotedText(getMessageTextBody(message));
   return renderMarkdownMessageDocument(
-    renderMarkdownBody(getMessageTextBody(message)),
+    renderMarkdownBody(body) +
+      (quoted
+        ? `<details class="me3-quote"><summary aria-label="Show quoted text" title="Show quoted text">•••</summary>${renderMarkdownBody(quoted)}</details>`
+        : ""),
   );
 }
 
@@ -3558,6 +3600,8 @@ function resizeEmailFrame(event: Event, messageId: string) {
   };
 
   measure();
+  // Opening the quoted text changes the height of the message.
+  doc.addEventListener("toggle", () => measure(), true);
   requestAnimationFrame(measure);
   window.setTimeout(measure, 250);
 
@@ -4485,6 +4529,17 @@ onBeforeUnmount(() => {
                         </section>
 
                         <button
+                          v-else-if="foldedMessageIds[0] === message.id"
+                          type="button"
+                          class="message-fold"
+                          @click="earlierMessagesShown = true"
+                        >
+                          <span class="message-fold__count" aria-hidden="true">{{ foldedMessageIds.length }}</span>
+                          Show {{ foldedMessageIds.length }} more messages
+                        </button>
+                        <template v-else-if="foldedMessageIds.includes(message.id)" />
+
+                        <button
                           v-else-if="isCollapsedMessage(message, index)"
                           type="button"
                           class="message-collapsed"
@@ -4564,9 +4619,9 @@ onBeforeUnmount(() => {
                             />
                             <pre v-else class="message-body">{{ getMessageTextBody(message) }}</pre>
 
-                            <div v-if="getMessageAttachments(message).length > 0" class="message-attachments">
+                            <div v-if="listedAttachments(message).length > 0" class="message-attachments">
                               <a
-                                v-for="(attachment, attachmentIndex) in getMessageAttachments(message)"
+                                v-for="{ attachment, index: attachmentIndex } in listedAttachments(message)"
                                 :key="`${message.id}-${attachmentIndex}`"
                                 class="attachment-chip"
                                 :href="getAttachmentDownloadUrl(message, attachmentIndex)"
@@ -7022,6 +7077,43 @@ onBeforeUnmount(() => {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.message-fold {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 16px;
+  border: 0;
+  border-top: 1px solid var(--ui-border);
+  border-bottom: 1px solid var(--ui-border);
+  background: transparent;
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-fold:hover {
+  background: var(--ui-surface-muted);
+}
+
+.message-fold:focus-visible {
+  outline: 2px solid var(--ui-focus, var(--ui-accent));
+  outline-offset: -2px;
+}
+
+.message-fold__count {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ui-border-strong, var(--ui-border));
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .message-collapsed:hover {

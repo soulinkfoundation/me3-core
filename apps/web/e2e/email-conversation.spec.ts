@@ -30,6 +30,24 @@ function inbound(thread: (typeof THREADS)[number]) {
   };
 }
 
+/** Leo's conversation as a long one: five earlier messages (the fourth unread) and a latest one with quoted history, an embedded picture and a PDF. */
+const longThread = { on: false };
+function longMessages(thread: (typeof THREADS)[number]) {
+  const earlier = [1, 2, 3, 4, 5].map(number => ({
+    ...inbound(thread), id: `t3-old${number}`, body: `Earlier message ${number}`, preview: `Earlier message ${number}`,
+    unread: number === 4, readAt: number === 4 ? null : "2026-11-12T09:00:00.000Z", createdAt: `2026-11-12T0${number}:00:00.000Z`, receivedAt: `2026-11-12T0${number}:00:00.000Z`,
+  }));
+  const latest = {
+    ...inbound(thread), id: "t3-latest", body: "Here is the plan.",
+    htmlBody: `<div>Here is the plan.</div><img src="cid:plan@meetup" alt="Plan"><div>Leo · Makers Meetup</div><div class="gmail_quote"><div>On 12 Nov, Jordan wrote:</div><blockquote>What is the plan?${"<p>An earlier line of the conversation.</p>".repeat(24)}</blockquote></div>`,
+    metadata: { attachments: [
+      { filename: "plan.png", mimeType: "image/png", disposition: "inline", size: 2048, storageKey: "k1", contentId: "<plan@meetup>" },
+      { filename: "terms.pdf", mimeType: "application/pdf", disposition: "attachment", size: 182000, storageKey: "k2", contentId: null },
+    ] },
+  };
+  return [...earlier, latest];
+}
+
 async function fixture(page: Page) {
   const calls: Call[] = [];
   const archived = new Set<string>();
@@ -51,6 +69,7 @@ async function fixture(page: Page) {
     const data: unknown = path === "/auth/me" ? { ok: true, user: { id: "ui-owner", username: "owner", name: "Demo Owner", timezone: "UTC", email: "kieran@gmail.test" }, workspace: { hasProfileSite: true } }
       : path === "/mailbox" ? { mailbox: { aliasAddress: OWNER, status: "active", forwardingStatus: "verified" }, sources: [] }
       : path === "/mailbox/threads" ? { threads: url.searchParams.get("folder") === "inbox" ? THREADS.filter(candidate => !archived.has(candidate.id)) : [], nextCursor: null }
+      : thread?.id === "t3" && url.searchParams.get("long") !== "0" && longThread.on ? { thread: { ...thread, location: "inbox", messageCount: 6 }, messages: longMessages(thread) }
       : thread ? { thread: { ...thread, location: "inbox" }, messages: [inbound(thread)] }
       : path === "/mailbox/messages" ? { messages: [], total: 0, limit: 50, offset: 0 }
       : path === "/mailbox/brief" ? { needsYou: [], cleared: [], followUps: [], loginCodes: [], handled: { total: 0, groups: [] }, fyi: { inboxLeft: 3, unread: 0 }, checkedAt: "2026-11-13T09:41:00.000Z", dayStartsAt: "2026-11-13T00:00:00.000Z" }
@@ -127,4 +146,39 @@ test("Reply all keeps the people in Cc, and Send waits ten seconds with an Undo 
   await page.getByRole("button", { name: "Undo" }).click();
   await expect.poll(() => calls.some(call => call.path === "/mailbox/drafts/draft-1/cancel-send")).toBe(true);
   await expect(page.getByRole("region", { name: "Reply" }).getByRole("textbox", { name: "Reply" })).toContainText("Yes, the terms work for us.");
+});
+
+test("a long conversation folds its middle, opens what is unread, trims quoted history and lists only real attachments", async ({ page }, testInfo) => {
+  longThread.on = true;
+  try {
+    await fixture(page);
+    await page.setViewportSize({ width: 1360, height: 900 });
+    await page.goto("/email?tab=inbox");
+    await page.getByText("Meetup talk").first().click();
+    await expect(reader(page).getByRole("heading", { name: "Meetup talk" })).toBeVisible();
+
+    // Four read earlier messages fold to the first, a count and the last; the unread one is open.
+    await expect(reader(page).getByRole("button", { name: "Show 2 more messages" })).toBeVisible();
+    await expect(reader(page).locator(".message-collapsed")).toHaveCount(2);
+    await expect(reader(page).locator(".message-card")).toHaveCount(2);
+    await reader(page).getByRole("button", { name: "Show 2 more messages" }).click();
+    await expect(reader(page).locator(".message-collapsed")).toHaveCount(4);
+
+    // The picture the email shows in place is not listed again; the PDF is.
+    const latest = reader(page).locator(".message-card").last();
+    await expect(latest.locator(".attachment-chip")).toHaveCount(1);
+    await expect(latest.locator(".attachment-chip")).toContainText("terms.pdf");
+
+    // Quoted history sits behind the toggle; the signature stays in view.
+    const body = latest.frameLocator("iframe.message-html-frame");
+    await expect(body.getByText("Leo · Makers Meetup")).toBeVisible();
+    await expect(body.getByText("What is the plan?")).toBeHidden();
+    const before = await latest.locator("iframe.message-html-frame").evaluate(frame => (frame as HTMLIFrameElement).offsetHeight);
+    await body.locator("details.me3-quote > summary").click();
+    await expect(body.getByText("What is the plan?")).toBeVisible();
+    await expect.poll(() => latest.locator("iframe.message-html-frame").evaluate(frame => (frame as HTMLIFrameElement).offsetHeight)).toBeGreaterThan(before);
+    await page.screenshot({ path: testInfo.outputPath("conversation-long.png") });
+  } finally {
+    longThread.on = false;
+  }
 });
