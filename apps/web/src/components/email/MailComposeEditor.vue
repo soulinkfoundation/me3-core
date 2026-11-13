@@ -119,6 +119,13 @@ onBeforeUnmount(() => editor.value?.destroy());
       <button type="button" :class="{ 'is-active': editor.isActive('link') }" aria-label="Link" title="Link" @click="editLink">
         <UiIcon name="Link" :size="16" aria-hidden="true" />
       </button>
+      <button type="button" :class="{ 'is-active': editor.isActive('blockquote') }" aria-label="Quote" title="Quote" @click="editor.chain().focus().toggleBlockquote().run()">
+        <UiIcon name="TextQuote" :size="16" aria-hidden="true" />
+      </button>
+      <span class="mail-compose-editor__divider" aria-hidden="true" />
+      <button type="button" aria-label="Clear formatting" title="Clear formatting" @click="editor.chain().focus().unsetAllMarks().clearNodes().run()">
+        <UiIcon name="RemoveFormatting" :size="16" aria-hidden="true" />
+      </button>
     </div>
   </div>
 </template>

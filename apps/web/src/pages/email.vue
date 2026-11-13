@@ -90,6 +90,9 @@ type InboxMessage = {
   bccAddresses?: string[];
   /** Core 0.1.254+: every address an inbound message was sent to, most specific first. */
   recipientAddresses?: string[];
+  /** Core 0.1.268+: a draft Core is holding to send (Send with Undo), and when it last changed. */
+  sendAfter?: string | null;
+  updatedAt?: string;
   subject: string;
   body: string;
   htmlBody?: string | null;
@@ -392,8 +395,20 @@ const earlierMessagesShown = ref(false);
 const replyOpen = ref(false);
 const replyTarget = ref<InboxMessage | null>(null);
 const replyForm = ref({ textBody: "" });
-/** Reply answers the sender; Reply all also copies everyone else the message was written to. */
-const replyMode = ref<"reply" | "all">("reply");
+/** Reply answers the sender; Reply all also copies everyone else the message was written to; Forward sends it on. */
+type ReplyMode = "reply" | "all" | "forward";
+const replyMode = ref<ReplyMode>("reply");
+/** The reply's recipients in header form: the owner can remove or add anyone before sending. */
+const replyTo = ref("");
+const replyCc = ref("");
+const replyCcShown = ref(false);
+/** ME3's draft, when the reply box is editing it rather than a new reply. */
+const replyDraft = ref<InboxMessage | null>(null);
+/** Attachments that travel with a forward, or that ME3's draft already carries. */
+const replyKeptAttachments = ref<MailboxAttachment[]>([]);
+const replyDropActive = ref(false);
+const messageMenuId = ref<string | null>(null);
+const printOnlyMessageId = ref<string | null>(null);
 /** Set after Undo: the reply's saved draft, so sending again updates it instead of adding another. */
 const replyDraftId = ref<string | null>(null);
 const SEND_UNDO_SECONDS = 10;
@@ -853,7 +868,7 @@ function isDraftMessage(message: InboxMessage): boolean {
 }
 
 function draftStatusLabel(message: InboxMessage): string {
-  if (message.status === "approved") return "Sending";
+  if (message.status === "approved" || message.sendAfter) return "Sending";
   if (message.status === "failed") return "Failed";
   return "Draft";
 }
@@ -1300,7 +1315,10 @@ function clearOpenConversation() {
   mobileThreadOpen.value = false;
   replyOpen.value = false;
   replyTarget.value = null;
+  replyDraft.value = null;
+  replyDraftId.value = null;
   threadMoreOpen.value = false;
+  messageMenuId.value = null;
   expandedMessageIds.value = new Set();
   earlierMessagesShown.value = false;
 }
@@ -1976,7 +1994,14 @@ async function approveMessage(msg: InboxMessage) {
   removeMessageLocally(msg.id);
   cacheActiveMessages();
   try {
-    await runDraftAction(msg.id, "approve");
+    await sendDraftWithUndo(msg.id, {
+      sentText: "Email sent.",
+      // The draft is a draft again: show it where it was.
+      onUndone: async () => {
+        await loadMessages();
+      },
+    });
+    void reloadOpenThread();
     void loadFolderCounts();
   } catch (err) {
     messages.value = previousMessages;
@@ -2729,7 +2754,7 @@ const latestInboundMessage = computed(() =>
 );
 
 function isAgentDraft(message: InboxMessage): boolean {
-  return message.kind === "draft" && message.status === "pending_approval" && message.createdBy === "agent";
+  return message.kind === "draft" && message.status === "pending_approval" && message.createdBy === "agent" && !message.sendAfter;
 }
 
 function isCollapsedMessage(message: InboxMessage, index: number): boolean {
@@ -2822,16 +2847,6 @@ async function editDraftFromBrief(draftId: string, _item?: MailboxBriefItem) {
   }
 }
 
-async function approveAgentDraft(message: InboxMessage) {
-  await approveMessage(message);
-  await reloadOpenThread();
-  void briefRef.value?.refresh();
-}
-
-async function discardAgentDraft(message: InboxMessage) {
-  await rejectMessage(message);
-}
-
 async function alwaysArchiveSender(message: InboxMessage) {
   threadMoreOpen.value = false;
   try {
@@ -2847,11 +2862,9 @@ async function alwaysArchiveSender(message: InboxMessage) {
 
 // --- Inline reply at the end of the thread (Re:, quoted text collapsed, Cmd+Enter sends).
 
-const replyRecipient = computed(() => {
-  const target = replyTarget.value;
-  if (!target) return "";
+function replyAnswerAddress(target: InboxMessage): string {
   return getDisplayText(target.direction === "inbound" ? target.fromAddress : target.toAddress);
-});
+}
 
 /** Everyone else a message was written to: its To and Cc without the owner's own addresses and the person being answered. */
 function replyAllCopies(target: InboxMessage | null | undefined): string[] {
@@ -2872,17 +2885,15 @@ function replyAllCopies(target: InboxMessage | null | undefined): string[] {
   return [...copies.values()];
 }
 
-const replyCopies = computed(() => (replyMode.value === "all" ? replyAllCopies(replyTarget.value) : []));
-
 const replySubject = computed(() => {
+  if (replyDraft.value) return getDisplayText(replyDraft.value.subject);
   const subject = replyTarget.value ? getMessageSubject(replyTarget.value) : "";
+  if (replyMode.value === "forward") return /^fwd?:\s*/i.test(subject) ? subject : `Fwd: ${subject}`;
   return /^re:\s*/i.test(subject) ? subject : `Re: ${subject.replace(/^fwd?:\s*/i, "")}`;
 });
 
-const replyQuoted = computed(() => {
-  const target = replyTarget.value;
-  if (!target) return "";
-  const when = formatDateTimePart(parseApiDate(target.createdAt), {
+function formatMessageWhen(message: InboxMessage): string {
+  return formatDateTimePart(parseApiDate(message.createdAt), {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -2890,92 +2901,237 @@ const replyQuoted = computed(() => {
     minute: "2-digit",
     timeZone: auth.user?.timezone || undefined,
   });
+}
+
+/** The header block and body a forward carries below the owner's own words. */
+function forwardedMessageLines(message: InboxMessage): string[] {
+  return [
+    "---------- Forwarded message ---------",
+    `From: ${formatSenderValue(message)}`,
+    `Date: ${formatMessageWhen(message)}`,
+    `Subject: ${getMessageSubject(message)}`,
+    `To: ${formatRecipientValue(message)}`,
+    "",
+    getMessageTextBody(message),
+  ];
+}
+
+const replyQuoted = computed(() => {
+  const target = replyTarget.value;
+  if (!target) return "";
+  if (replyMode.value === "forward") return forwardedMessageLines(target).join("\n");
   const who = target.direction === "outbound" ? "you" : messageSenderName(target);
-  return `On ${when}, ${who} wrote:\n${getMessageTextBody(target).split("\n").map((line) => `> ${line}`).join("\n")}`;
+  return `On ${formatMessageWhen(target)}, ${who} wrote:\n${getMessageTextBody(target).split("\n").map((line) => `> ${line}`).join("\n")}`;
 });
 
-function startInlineReply(message?: InboxMessage, mode: "reply" | "all" = "reply") {
-  const target = message || latestEmailMessage.value;
+const replyCanSend = computed(() => {
+  const to = parseMailRecipients(replyTo.value);
+  const all = [...to, ...parseMailRecipients(replyCc.value)];
+  if (to.length === 0 || invalidMailRecipients(all).length > 0) return false;
+  return replyMode.value === "forward" || Boolean(replyForm.value.textBody.trim());
+});
+
+/** Switches between Reply, Reply all and Forward. What the owner has written stays; only the recipients change. */
+function setReplyMode(mode: ReplyMode) {
+  const target = replyTarget.value;
   if (!target) return;
+  replyMode.value = mode === "all" && !replyAllCopies(target).length ? "reply" : mode;
+  if (replyMode.value === "forward") {
+    replyTo.value = "";
+    replyCc.value = "";
+    replyKeptAttachments.value = getForwardableAttachments(target);
+  } else {
+    replyTo.value = replyAnswerAddress(target);
+    replyCc.value = replyMode.value === "all" ? replyAllCopies(target).join(", ") : "";
+    replyKeptAttachments.value = [];
+  }
+  replyCcShown.value = Boolean(replyCc.value);
+  replyError.value = "";
+}
+
+function showReplyBox(focusRecipients = false) {
   void Promise.all([loadProviderSettings(), loadContactsForCompose()]);
-  replyTarget.value = target;
-  replyMode.value = mode === "all" && replyAllCopies(target).length ? "all" : "reply";
-  replyDraftId.value = null;
-  replyForm.value = { textBody: "" };
-  replyIncludeSignature.value = true;
   void loadMailSignature();
-  replyAttachments.value = [];
   replyError.value = "";
   replyQuotedOpen.value = false;
   replyOpen.value = true;
+  messageMenuId.value = null;
   void nextTick(() => {
-    replyTextareaRef.value?.focus();
+    if (focusRecipients) document.getElementById("reply-to")?.focus();
+    else replyTextareaRef.value?.focus();
     replyEditorWrapRef.value?.scrollIntoView({ block: "nearest" });
   });
 }
 
+function startInlineReply(message?: InboxMessage, mode: ReplyMode = "reply") {
+  const target = message || latestEmailMessage.value;
+  if (!target) return;
+  // Changing who a reply goes to, or which message it answers, keeps what is already written.
+  const keepText = replyOpen.value && !replyDraft.value;
+  replyTarget.value = target;
+  replyDraft.value = null;
+  replyDraftId.value = null;
+  if (!keepText) {
+    replyForm.value = { textBody: "" };
+    replyIncludeSignature.value = true;
+    replyAttachments.value = [];
+  }
+  setReplyMode(mode);
+  showReplyBox(replyMode.value === "forward");
+}
+
+/** ME3's draft opens in the same reply box, so there is one place to edit and send. */
+async function reviewAgentDraft(draft: InboxMessage) {
+  await loadMailSignature();
+  const saved = withoutSignature(getMessageTextBody(draft));
+  replyTarget.value = latestInboundMessage.value || latestEmailMessage.value || draft;
+  replyDraft.value = draft;
+  replyDraftId.value = draft.id;
+  replyMode.value = "reply";
+  replyTo.value = draft.toAddress || "";
+  replyCc.value = (draft.ccAddresses || []).join(", ");
+  replyCcShown.value = Boolean(replyCc.value);
+  replyForm.value = { textBody: saved.body };
+  replyIncludeSignature.value = saved.hadSignature;
+  replyAttachments.value = [];
+  replyKeptAttachments.value = getForwardableAttachments(draft);
+  showReplyBox();
+}
+
+// A reply belongs to the conversation it was started in: opening another one closes it.
+watch(selectedThreadId, (next, previous) => {
+  if (previous && next !== previous && replyOpen.value) cancelInlineReply();
+});
+
 function cancelInlineReply() {
   replyOpen.value = false;
   replyTarget.value = null;
+  replyDraft.value = null;
+  replyDraftId.value = null;
   replyError.value = "";
+  replyDropActive.value = false;
+}
+
+async function discardReplyDraft() {
+  const draft = replyDraft.value;
+  if (!draft) return;
+  cancelInlineReply();
+  await rejectMessage(draft);
 }
 
 function handleReplyKeydown(event: KeyboardEvent) {
-  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && replyForm.value.textBody.trim() && !replySending.value) {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && replyCanSend.value && !replySending.value) {
     event.preventDefault();
     void sendInlineReply(true);
   }
 }
 
+/** Once a held send has gone (or been undone), what is on screen catches up. */
+function refreshAfterSend() {
+  if (selectedThreadId.value) void reloadOpenThread();
+  void loadFolderCounts();
+  void briefRef.value?.refresh();
+}
+
+/**
+ * Send with Undo. Core holds the send for a few seconds, so Undo works and closing the tab still
+ * sends. `onUndone` puts back whatever the owner was looking at before they pressed Send.
+ */
+async function sendDraftWithUndo(draftId: string, options: { sentText: string; onUndone: () => void | Promise<void> }) {
+  const sent = await api.post<{ held?: boolean }>(`/mailbox/drafts/${encodeURIComponent(draftId)}/approve`, { holdSeconds: SEND_UNDO_SECONDS });
+  if (!sent?.held) {
+    // An older Core sends at once.
+    toastSuccess(options.sentText);
+    return;
+  }
+  toast(`Sending in ${SEND_UNDO_SECONDS} seconds.`, {
+    duration: SEND_UNDO_SECONDS * 1000,
+    action: { label: "Undo", onClick: () => void undoHeldSend(draftId, options.onUndone) },
+  });
+  window.setTimeout(refreshAfterSend, (SEND_UNDO_SECONDS + 2) * 1000);
+}
+
+async function undoHeldSend(draftId: string, onUndone?: () => void | Promise<void>) {
+  try {
+    await api.post(`/mailbox/drafts/${encodeURIComponent(draftId)}/cancel-send`);
+  } catch (err) {
+    toastFromUnknown(err, "That email had already been sent");
+    refreshAfterSend();
+    return;
+  }
+  await onUndone?.();
+  toastSuccess("Send undone.");
+  refreshAfterSend();
+}
+
 async function sendInlineReply(sendNow: boolean) {
   const target = replyTarget.value;
   if (!target || replySending.value) return;
-  if (!replyForm.value.textBody.trim()) {
+  const draft = replyDraft.value;
+  const mode = replyMode.value;
+  const text = replyForm.value.textBody.trim();
+  const to = parseMailRecipients(replyTo.value);
+  const cc = parseMailRecipients(replyCc.value);
+  if (sendNow && to.length === 0) {
+    replyError.value = "Add who this goes to.";
+    return;
+  }
+  if (invalidMailRecipients([...to, ...cc]).length > 0) {
+    replyError.value = "One of the addresses is not a valid email address.";
+    return;
+  }
+  if (!text && mode !== "forward") {
     replyError.value = "Write a reply first.";
     return;
   }
   replySending.value = true;
   replyError.value = "";
   try {
-    const fromAddress = replyFromAddressFor(target) || outboundSenderOptions.value[0]?.address || undefined;
+    const signed = withSignature(text, replyIncludeSignature.value);
     const draftInput = {
-      fromAddress,
-      to: replyRecipient.value,
-      cc: replyCopies.value,
+      fromAddress: draft?.fromAddress || replyFromAddressFor(target) || outboundSenderOptions.value[0]?.address || undefined,
+      to: replyTo.value,
+      cc,
+      ...(draft ? { bcc: draft.bccAddresses || [] } : {}),
       subject: replySubject.value,
-      textBody: `${withSignature(replyForm.value.textBody.trim(), replyIncludeSignature.value)}\n\n${replyQuoted.value}`,
+      // ME3's draft is sent as it reads; a new reply carries the message it answers below it.
+      textBody: draft ? signed : [signed, replyQuoted.value].filter(Boolean).join("\n\n"),
       source: "user",
-      replyToMessageId: target.id,
+      replyToMessageId: draft || mode === "forward" ? undefined : target.id,
+      preservedAttachmentKeys: replyKeptAttachments.value.map((attachment) => attachment.storageKey?.trim() || "").filter(Boolean),
       uploadedAttachments: replyAttachments.value,
+      ...(draft?.updatedAt ? { expectedUpdatedAt: draft.updatedAt } : {}),
     };
-    // After an Undo the reply already has a saved draft: update it rather than adding a second one.
+    // ME3's draft, or a reply brought back by Undo, already has a saved draft: update it rather than adding a second one.
     const response = replyDraftId.value
       ? await api.put<{ draft: InboxMessage | null }>(`/mailbox/drafts/${replyDraftId.value}`, draftInput)
       : await api.post<{ draft: InboxMessage | null }>("/mailbox/drafts", draftInput);
     if (!response.draft) throw new Error("The draft could not be saved.");
+    const saved = response.draft;
     if (!sendNow) {
       cancelInlineReply();
       toastSuccess("Draft saved.");
     } else {
-      // Core holds the send for a few seconds, so Undo works and closing the tab still sends.
-      const undo = { target, mode: replyMode.value, textBody: replyForm.value.textBody, attachments: replyAttachments.value, includeSignature: replyIncludeSignature.value, draftId: response.draft.id };
-      const sent = await api.post<{ held?: boolean }>(`/mailbox/drafts/${response.draft.id}/approve`, { holdSeconds: SEND_UNDO_SECONDS });
+      const undo = {
+        target,
+        mode,
+        draft: draft ? saved : null,
+        draftId: saved.id,
+        to: replyTo.value,
+        cc: replyCc.value,
+        textBody: replyForm.value.textBody,
+        attachments: replyAttachments.value,
+        kept: replyKeptAttachments.value,
+        includeSignature: replyIncludeSignature.value,
+      };
+      // The draft is saved by now: if the send itself is refused, it is updated next time, not duplicated.
+      replyDraftId.value = saved.id;
+      if (draft) replyDraft.value = saved;
+      await sendDraftWithUndo(saved.id, {
+        sentText: mode === "forward" ? "Email sent." : "Reply sent.",
+        onUndone: () => restoreInlineReply(undo),
+      });
       cancelInlineReply();
-      if (sent?.held) {
-        toast(`Sending in ${SEND_UNDO_SECONDS} seconds.`, {
-          duration: SEND_UNDO_SECONDS * 1000,
-          action: { label: "Undo", onClick: () => void undoInlineReplySend(undo) },
-        });
-        // Once it has gone, the conversation shows the sent reply.
-        window.setTimeout(() => {
-          if (selectedThreadId.value) void reloadOpenThread();
-          void loadFolderCounts();
-          void briefRef.value?.refresh();
-        }, (SEND_UNDO_SECONDS + 2) * 1000);
-      } else {
-        // An older Core sends at once.
-        toastSuccess("Reply sent.");
-      }
     }
     await reloadOpenThread();
     void loadFolderCounts();
@@ -2987,34 +3143,121 @@ async function sendInlineReply(sendNow: boolean) {
   }
 }
 
-/** Undo within the Send window: the send is cancelled and the reply opens again as the owner left it. */
-async function undoInlineReplySend(undo: {
+/** Undo within the Send window: the reply opens again as the owner left it. */
+function restoreInlineReply(undo: {
   target: InboxMessage;
-  mode: "reply" | "all";
+  mode: ReplyMode;
+  draft: InboxMessage | null;
+  draftId: string;
+  to: string;
+  cc: string;
   textBody: string;
   attachments: MailboxAttachment[];
+  kept: MailboxAttachment[];
   includeSignature: boolean;
-  draftId: string;
 }) {
-  try {
-    await api.post(`/mailbox/drafts/${undo.draftId}/cancel-send`);
-  } catch (err) {
-    toastFromUnknown(err, "That email had already been sent");
-    return;
-  }
-  startInlineReply(undo.target, undo.mode);
+  replyTarget.value = undo.target;
+  replyMode.value = undo.mode;
+  replyDraft.value = undo.draft;
+  replyDraftId.value = undo.draftId;
+  replyTo.value = undo.to;
+  replyCc.value = undo.cc;
+  replyCcShown.value = Boolean(undo.cc);
   replyForm.value = { textBody: undo.textBody };
   replyAttachments.value = undo.attachments;
+  replyKeptAttachments.value = undo.kept;
   replyIncludeSignature.value = undo.includeSignature;
-  replyDraftId.value = undo.draftId;
-  toastSuccess("Send undone.");
-  void reloadOpenThread();
+  showReplyBox();
 }
 
-async function uploadReplyAttachments(event: Event) {
+/** A draft Core is holding (Send with Undo) is a draft again. */
+async function cancelHeldSend(message: InboxMessage) {
+  await undoHeldSend(message.id, async () => {
+    if (!selectedThreadId.value) await loadMessages();
+  });
+}
+
+/** "Delete this message" removes one message; the conversation stays where it is. */
+async function deleteOneMessage(message: InboxMessage) {
+  messageMenuId.value = null;
+  if (inboxBusy.value) return;
+  const from = messageFolder(message) || "inbox";
+  const others = selectedThreadMessages.value.filter((candidate) => candidate.id !== message.id && candidate.kind === "email");
+  if (others.length === 0) {
+    // The only message: this is the conversation.
+    await moveConversation(message, "trash");
+    return;
+  }
+  try {
+    await api.post(`/mailbox/messages/${encodeURIComponent(message.id)}/move`, { folder: "trash" });
+    toast("Message moved to Trash.", {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          void api
+            .post(`/mailbox/messages/${encodeURIComponent(message.id)}/move`, { folder: from })
+            .then(() => reloadOpenThread())
+            .catch((err) => toastFromUnknown(err, "The message could not be restored"));
+        },
+      },
+    });
+    await reloadOpenThread();
+  } catch (err) {
+    toastFromUnknown(err, "The message could not be deleted");
+  }
+}
+
+/**
+ * Prints the open conversation, or one message of it. Every message is opened first so nothing
+ * folded is left out; the print stylesheet hides the rest of the app.
+ */
+async function printConversation(message?: InboxMessage) {
+  threadMoreOpen.value = false;
+  messageMenuId.value = null;
+  printOnlyMessageId.value = message?.id || null;
+  if (!message) {
+    earlierMessagesShown.value = true;
+    expandedMessageIds.value = new Set(selectedThreadMessages.value.map((candidate) => candidate.id));
+  }
+  document.documentElement.classList.add("mail-printing");
+  const done = () => {
+    document.documentElement.classList.remove("mail-printing");
+    printOnlyMessageId.value = null;
+    window.removeEventListener("afterprint", done);
+  };
+  window.addEventListener("afterprint", done);
+  // Newly opened messages render in frames: give them a moment to load and size themselves.
+  await nextTick();
+  await new Promise((resolve) => window.setTimeout(resolve, 350));
+  window.print();
+}
+
+/** True when what is being dragged is files, so dragging text into the editor still works. */
+function dragHasFiles(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+}
+
+function handleReplyDragOver(event: DragEvent) {
+  if (!dragHasFiles(event)) return;
+  event.preventDefault();
+  replyDropActive.value = true;
+}
+
+function handleReplyDrop(event: DragEvent) {
+  if (!dragHasFiles(event)) return;
+  event.preventDefault();
+  replyDropActive.value = false;
+  void uploadReplyFiles(Array.from(event.dataTransfer?.files || []));
+}
+
+function uploadReplyAttachments(event: Event) {
   const input = event.target as HTMLInputElement | null;
   const files = Array.from(input?.files || []);
   if (input) input.value = "";
+  void uploadReplyFiles(files);
+}
+
+async function uploadReplyFiles(files: File[]) {
   if (files.length === 0 || replyUploading.value) return;
   replyUploading.value = true;
   replyError.value = "";
@@ -3046,7 +3289,7 @@ async function askMe3ToImproveReply() {
   replyError.value = "";
   try {
     const result = await api.post<{ subject: string; body: string }>("/mailbox/drafts/assist", {
-      to: replyRecipient.value,
+      to: replyTo.value,
       subject: replySubject.value,
       body: replyForm.value.textBody,
       instruction,
@@ -3188,7 +3431,6 @@ async function openComposeModal(
 
     if (mode === "forward") {
       composeMode.value = "forward";
-      const originalBody = getMessageTextBody(message);
       const forwardableAttachments = getForwardableAttachments(message);
       composePreservedAttachments.value = forwardableAttachments;
       composePreservedAttachmentKeys.value = forwardableAttachments
@@ -3201,20 +3443,7 @@ async function openComposeModal(
         "",
         "",
         ...(signature ? [signature, ""] : []),
-        "---------- Forwarded message ---------",
-        `From: ${formatSenderValue(message)}`,
-        `Date: ${formatDateTimePart(parseApiDate(message.createdAt), {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-          timeZone: auth.user?.timezone || undefined,
-        })}`,
-        `Subject: ${getMessageSubject(message)}`,
-        `To: ${formatRecipientValue(message)}`,
-        "",
-        originalBody,
+        ...forwardedMessageLines(message),
       ];
       composeForm.value = {
         fromAddress: defaultFromAddress,
@@ -3328,8 +3557,9 @@ async function saveDraft(sendNow = false) {
       composeInitialSnapshot.value = getComposeSnapshot();
     }
     draftSaved = true;
-    if (sendNow) {
-      await api.post(`/mailbox/drafts/${draftId}/approve`);
+    if (sendNow && draftId) {
+      const restore = captureComposeState();
+      await sendDraftWithUndo(draftId, { sentText: "Email sent.", onUndone: () => restoreComposeState(restore) });
     }
     forceCloseComposeModal();
     activeTab.value = sendNow ? "inbox" : "drafts";
@@ -3343,7 +3573,6 @@ async function saveDraft(sendNow = false) {
       mobileThreadOpen.value = true;
     } else if (sendNow) {
       mobileThreadOpen.value = false;
-      toastSuccess("Email sent.");
     }
     await loadFolderCounts();
   } catch (err) {
@@ -3357,10 +3586,59 @@ async function saveDraft(sendNow = false) {
   }
 }
 
-async function uploadComposeAttachments(event: Event) {
+/** What the compose window held when Send was pressed, so Undo can put it back. */
+function captureComposeState() {
+  return {
+    form: { ...composeForm.value },
+    draftId: composeDraftId.value,
+    replyToMessageId: composeReplyToMessageId.value,
+    preservedKeys: [...composePreservedAttachmentKeys.value],
+    preserved: [...composePreservedAttachments.value],
+    uploaded: [...composeUploadedAttachments.value],
+    outreach: { ...composeOutreach.value },
+    includeSignature: composeIncludeSignature.value,
+    showCcBcc: composeShowCcBcc.value,
+  };
+}
+
+function restoreComposeState(state: ReturnType<typeof captureComposeState>) {
+  composeForm.value = { ...state.form };
+  composeDraftId.value = state.draftId;
+  composeReplyToMessageId.value = state.replyToMessageId;
+  composePreservedAttachmentKeys.value = state.preservedKeys;
+  composePreservedAttachments.value = state.preserved;
+  composeUploadedAttachments.value = state.uploaded;
+  composeOutreach.value = state.outreach;
+  composeIncludeSignature.value = state.includeSignature;
+  composeShowCcBcc.value = state.showCcBcc;
+  composeMode.value = "edit";
+  composeError.value = "";
+  showComposeDialog();
+}
+
+const composeDropActive = ref(false);
+
+function handleComposeDragOver(event: DragEvent) {
+  if (!dragHasFiles(event)) return;
+  event.preventDefault();
+  composeDropActive.value = true;
+}
+
+function handleComposeDrop(event: DragEvent) {
+  if (!dragHasFiles(event)) return;
+  event.preventDefault();
+  composeDropActive.value = false;
+  void uploadComposeFiles(Array.from(event.dataTransfer?.files || []));
+}
+
+function uploadComposeAttachments(event: Event) {
   const input = event.target as HTMLInputElement | null;
   const files = Array.from(input?.files || []);
   if (input) input.value = "";
+  void uploadComposeFiles(files);
+}
+
+async function uploadComposeFiles(files: File[]) {
   if (files.length === 0 || composeUploadingAttachments.value) return;
 
   composeUploadingAttachments.value = true;
@@ -4152,7 +4430,7 @@ onBeforeUnmount(() => {
                           Restore
                         </Button>
                         <Button color="outline" shape="soft" size="compact" type="button"
-                          v-else
+                          v-else-if="activeTab !== 'sent'"
                           :disabled="inboxBusy"
                           title="Archive selected"
                           @click="moveSelectedMessages('archive')"
@@ -4261,7 +4539,7 @@ onBeforeUnmount(() => {
                         </Button>
                       </div>
                       <div v-else-if="!isDraftMessage(message) && !selectMode" class="mail-row__actions" aria-label="Conversation actions">
-                        <Button color="ghost" shape="soft" size="small" icon-only type="button"
+                        <Button v-if="activeTab !== 'sent'" color="ghost" shape="soft" size="small" icon-only type="button"
                           :aria-label="activeTab === 'archive' || activeTab === 'trash' ? 'Restore conversation to Inbox' : 'Archive conversation'"
                           :title="activeTab === 'archive' || activeTab === 'trash' ? 'Restore to Inbox' : 'Archive (E)'"
                           :disabled="inboxBusy"
@@ -4402,7 +4680,7 @@ onBeforeUnmount(() => {
                         title="Forward"
                         aria-label="Forward"
                         :disabled="inboxBusy || selectedThreadDetailUnavailable || isDraftMessage(selectedMessage)"
-                        @click="openComposeModal(selectedMessage, 'forward')"
+                        @click="startInlineReply(undefined, 'forward')"
                       >
                         <UiIcon name="Forward" :size="16" aria-hidden="true" />
                         <span class="thread-action__label">Forward</span>
@@ -4428,7 +4706,7 @@ onBeforeUnmount(() => {
                         <span class="thread-action__label">Inbox</span>
                       </Button>
                       <Button color="ghost" shape="soft" size="compact" type="button" class="thread-action"
-                        v-else
+                        v-else-if="activeTab !== 'sent'"
                         title="Archive (E)"
                         aria-label="Archive"
                         aria-keyshortcuts="E"
@@ -4470,6 +4748,7 @@ onBeforeUnmount(() => {
                         </Button>
                         <div v-if="threadMoreOpen" class="thread-more__menu" role="menu">
                           <button type="button" role="menuitem" :disabled="inboxBusy" @click="threadMoreOpen = false; markConversationRead(selectedMessage, false)">Mark as unread</button>
+                          <button type="button" role="menuitem" :disabled="selectedThreadDetailUnavailable" @click="printConversation()">Print conversation</button>
                           <button
                             v-if="selectedMessageFolder === 'spam'"
                             type="button"
@@ -4537,12 +4816,11 @@ onBeforeUnmount(() => {
                     </div>
                     <template v-else>
                       <template v-for="(message, index) in selectedThreadMessages" :key="message.id">
-                        <section v-if="isAgentDraft(message)" class="agent-draft-card" aria-label="ME3 drafted a reply">
+                        <section v-if="isAgentDraft(message)" class="agent-draft-card" :class="{ 'is-print-hidden': printOnlyMessageId }" aria-label="ME3 drafted a reply">
                           <p class="agent-draft-card__title">
                             <UiIcon name="Sparkles" :size="14" aria-hidden="true" />
-                            ME3 drafted a reply · waiting for your OK
+                            {{ replyDraft?.id === message.id ? "ME3's draft is open below" : "ME3 drafted a reply · waiting for your OK" }}
                           </p>
-                          <pre class="agent-draft-card__body">{{ getMessageTextBody(message) }}</pre>
                           <section v-if="isDeliveryUnknown(message)" class="delivery-unconfirmed" aria-label="Delivery needs confirmation" aria-live="polite">
                             <div>
                               <strong>Delivery could not be confirmed</strong>
@@ -4553,13 +4831,9 @@ onBeforeUnmount(() => {
                               <Button color="danger" shape="soft" size="compact" type="button" :disabled="Boolean(deliveryResolutionPending) || !deliveryStatuses[message.id]?.canRetryAnyway" @click="resolveUnconfirmedDelivery(message, 'retry-anyway')">Retry anyway</Button>
                             </div>
                           </section>
-                          <div class="agent-draft-card__actions">
-                            <Button color="primary" shape="soft" size="compact" type="button" :disabled="inboxBusy" @click="approveAgentDraft(message)">
-                              <UiIcon name="Send" :size="14" aria-hidden="true" />
-                              {{ actionPending === message.id ? "Sending…" : "Send" }}
-                            </Button>
-                            <button type="button" class="mail-quiet" :disabled="inboxBusy" @click="openComposeModal(message)">Edit</button>
-                            <button type="button" class="mail-quiet mail-quiet--muted" :disabled="inboxBusy" @click="discardAgentDraft(message)">Discard</button>
+                          <div v-if="replyDraft?.id !== message.id" class="agent-draft-card__actions">
+                            <Button color="primary" shape="soft" size="compact" type="button" :disabled="inboxBusy" @click="reviewAgentDraft(message)">Review</Button>
+                            <span class="agent-draft-card__preview">{{ getMessagePreview(message) }}</span>
                           </div>
                         </section>
 
@@ -4589,13 +4863,13 @@ onBeforeUnmount(() => {
                           <time>{{ formatRelativeDate(message.createdAt) }}</time>
                         </button>
 
-                        <article v-else class="message-card" :class="{ 'message-card--draft': isDraftMessage(message) }">
+                        <article v-else class="message-card" :class="{ 'message-card--draft': isDraftMessage(message), 'is-print-hidden': printOnlyMessageId && printOnlyMessageId !== message.id }">
                           <EmailSenderAvatar :name="messageSenderName(message)" :avatar-url="messageAvatar(message)" :size="36" class="message-card__avatar" />
                           <div class="message-card__body">
                             <div class="message-card__header">
                               <div class="message-card__who">
                                 <strong>
-                                  {{ isDraftMessage(message) ? (message.status === "approved" ? "Sending draft" : message.status === "failed" ? "Failed draft" : "Draft") : messageSenderName(message) }}
+                                  {{ isDraftMessage(message) ? (message.status === "approved" || message.sendAfter ? "Sending" : message.status === "failed" ? "Failed draft" : "Draft") : messageSenderName(message) }}
                                 </strong>
                                 <span v-if="isDraftMessage(message)" class="mail-tag mail-tag--muted">{{ draftStatusLabel(message) }}</span>
                                 <p>{{ messageRecipientLine(message) }}</p>
@@ -4604,6 +4878,35 @@ onBeforeUnmount(() => {
                                 </p>
                               </div>
                               <time class="message-card__time">{{ formatRelativeDate(message.createdAt) }}</time>
+                              <div v-if="message.kind === 'email' && !selectedThreadDetailUnavailable" class="message-card__tools">
+                                <button type="button" class="message-tool" title="Reply" :aria-label="`Reply to ${messageSenderName(message)}`" @click="startInlineReply(message)">
+                                  <UiIcon name="Reply" :size="16" aria-hidden="true" />
+                                </button>
+                                <button v-if="replyAllCopies(message).length" type="button" class="message-tool" title="Reply all" :aria-label="`Reply all to ${messageSenderName(message)}`" @click="startInlineReply(message, 'all')">
+                                  <UiIcon name="ReplyAll" :size="16" aria-hidden="true" />
+                                </button>
+                                <button type="button" class="message-tool" title="Forward" :aria-label="`Forward the message from ${messageSenderName(message)}`" @click="startInlineReply(message, 'forward')">
+                                  <UiIcon name="Forward" :size="16" aria-hidden="true" />
+                                </button>
+                                <div class="thread-more" @keydown.esc="messageMenuId = null">
+                                  <button
+                                    type="button"
+                                    class="message-tool"
+                                    title="More"
+                                    :aria-label="`More for the message from ${messageSenderName(message)}`"
+                                    aria-haspopup="menu"
+                                    :aria-expanded="messageMenuId === message.id"
+                                    @click="messageMenuId = messageMenuId === message.id ? null : message.id"
+                                  >
+                                    <UiIcon name="Ellipsis" :size="16" aria-hidden="true" />
+                                  </button>
+                                  <div v-if="messageMenuId === message.id" class="thread-more__menu" role="menu">
+                                    <button type="button" role="menuitem" @click="printConversation(message)">Print this message</button>
+                                    <button type="button" role="menuitem" @click="messageMenuId = null; originalMessage = message">Show original</button>
+                                    <button v-if="messageFolder(message) !== 'trash'" type="button" role="menuitem" :disabled="inboxBusy" @click="deleteOneMessage(message)">Delete this message</button>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
 
                             <section v-if="isDeliveryUnknown(message)" class="delivery-unconfirmed" aria-label="Delivery needs confirmation" aria-live="polite">
@@ -4669,7 +4972,10 @@ onBeforeUnmount(() => {
                               </a>
                             </div>
 
-                            <div v-if="isEditableDraft(message) && message.folder !== 'trash'" class="message-card__actions">
+                            <div v-if="message.sendAfter && isEditableDraft(message)" class="message-card__actions">
+                              <button type="button" class="mail-quiet" @click="cancelHeldSend(message)">Undo send</button>
+                            </div>
+                            <div v-else-if="isEditableDraft(message) && message.folder !== 'trash'" class="message-card__actions">
                               <Button color="primary" shape="soft" size="compact" type="button" :disabled="inboxBusy" @click="approveMessage(message)">
                                 <UiIcon name="Send" :size="14" aria-hidden="true" />
                                 {{ actionPending === message.id ? "Sending…" : "Send" }}
@@ -4681,17 +4987,43 @@ onBeforeUnmount(() => {
                         </article>
                       </template>
 
-                      <section v-if="replyOpen && replyTarget" class="inline-reply" aria-label="Reply">
-                        <div class="inline-reply__meta">
-                          <span><b>To:</b> {{ replyRecipient }}</span>
-                          <span v-if="replyCopies.length"><b>Cc:</b> {{ replyCopies.join(", ") }}</span>
-                          <span><b>Subject:</b> {{ replySubject }}</span>
+                      <section
+                        v-if="replyOpen && replyTarget"
+                        class="inline-reply"
+                        :class="{ 'inline-reply--drop': replyDropActive }"
+                        aria-label="Reply"
+                        @dragover="handleReplyDragOver"
+                        @dragleave="replyDropActive = false"
+                        @drop="handleReplyDrop"
+                      >
+                        <div class="inline-reply__head">
+                          <span v-if="replyDraft" class="inline-reply__label">
+                            <UiIcon name="Sparkles" :size="14" aria-hidden="true" />
+                            ME3's draft
+                          </span>
+                          <label v-else class="inline-reply__mode">
+                            <span class="sr-only">Reply type</span>
+                            <select :value="replyMode" aria-label="Reply type" @change="setReplyMode(($event.target as HTMLSelectElement).value as ReplyMode)">
+                              <option value="reply">Reply</option>
+                              <option v-if="replyAllCopies(replyTarget).length" value="all">Reply all</option>
+                              <option value="forward">Forward</option>
+                            </select>
+                          </label>
+                          <span class="inline-reply__subject">{{ replySubject }}</span>
+                        </div>
+                        <div class="inline-reply__recipients">
+                          <MailRecipientField id="reply-to" v-model="replyTo" label="To" :contacts="contactRecipientOptions">
+                            <span v-if="!replyCcShown" class="compose-row__extras">
+                              <button type="button" class="compose-row__extra" @click="replyCcShown = true">Cc</button>
+                            </span>
+                          </MailRecipientField>
+                          <MailRecipientField v-if="replyCcShown" id="reply-cc" v-model="replyCc" label="Cc" :contacts="contactRecipientOptions" />
                         </div>
                         <div ref="replyEditorWrapRef" class="inline-reply__body" @keydown="handleReplyKeydown">
                           <MailComposeEditor
                             ref="replyTextareaRef"
                             v-model="replyForm.textBody"
-                            placeholder="Write your reply…"
+                            :placeholder="replyMode === 'forward' ? 'Add a note…' : 'Write your reply…'"
                             aria-label="Reply"
                           />
                         </div>
@@ -4700,12 +5032,20 @@ onBeforeUnmount(() => {
                           :signature="mailSignature"
                           @saved="handleSignatureSaved"
                         />
-                        <button type="button" class="inline-reply__quote-toggle" :aria-expanded="replyQuotedOpen" @click="replyQuotedOpen = !replyQuotedOpen">
+                        <button v-if="!replyDraft" type="button" class="inline-reply__quote-toggle" :aria-expanded="replyQuotedOpen" @click="replyQuotedOpen = !replyQuotedOpen">
                           <UiIcon name="Ellipsis" :size="14" aria-hidden="true" />
-                          {{ replyQuotedOpen ? "Hide quoted text" : "Quoted text" }}
+                          {{ replyMode === "forward" ? (replyQuotedOpen ? "Hide forwarded message" : "Forwarded message") : replyQuotedOpen ? "Hide quoted text" : "Quoted text" }}
                         </button>
-                        <pre v-if="replyQuotedOpen" class="inline-reply__quoted">{{ replyQuoted }}</pre>
-                        <div v-if="replyAttachments.length || replyUploading" class="compose-attachment-list">
+                        <pre v-if="replyQuotedOpen && !replyDraft" class="inline-reply__quoted">{{ replyQuoted }}</pre>
+                        <div v-if="replyKeptAttachments.length || replyAttachments.length || replyUploading" class="compose-attachment-list">
+                          <span v-for="(attachment, index) in replyKeptAttachments" :key="`kept-${attachment.storageKey || index}`" class="compose-attachment-chip">
+                            <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
+                            <span>{{ formatAttachmentName(attachment, index) }}</span>
+                            <small v-if="formatAttachmentSize(attachment.size)">{{ formatAttachmentSize(attachment.size) }}</small>
+                            <Button color="ghost" shape="pill" size="small" icon-only class="compose-attachment-remove" type="button" :aria-label="`Remove ${formatAttachmentName(attachment, index)}`" @click="replyKeptAttachments = replyKeptAttachments.filter((_kept, keptIndex) => keptIndex !== index)">
+                              <UiIcon name="X" :size="13" aria-hidden="true" />
+                            </Button>
+                          </span>
                           <span v-for="(attachment, index) in replyAttachments" :key="`${attachment.storageKey || index}`" class="compose-attachment-chip">
                             <UiIcon name="Paperclip" :size="14" aria-hidden="true" />
                             <span>{{ formatAttachmentName(attachment, index) }}</span>
@@ -4728,9 +5068,10 @@ onBeforeUnmount(() => {
                             {{ replyAssisting ? "ME3 is writing…" : "Ask ME3 to improve" }}
                           </button>
                           <span class="inline-reply__spacer" />
-                          <button type="button" class="mail-quiet mail-quiet--muted" :disabled="replySending" @click="cancelInlineReply">Cancel</button>
-                          <Button color="outline" shape="soft" size="compact" type="button" :disabled="replySending || replyUploading || !replyForm.textBody.trim()" @click="sendInlineReply(false)">Save draft</Button>
-                          <Button color="primary" shape="soft" size="compact" type="button" :disabled="replySending || replyUploading || !replyForm.textBody.trim()" title="Send (⌘↵)" aria-keyshortcuts="Meta+Enter Control+Enter" @click="sendInlineReply(true)">
+                          <button type="button" class="mail-quiet mail-quiet--muted" :disabled="replySending" @click="cancelInlineReply">{{ replyDraft ? "Close" : "Cancel" }}</button>
+                          <button v-if="replyDraft" type="button" class="mail-quiet mail-quiet--muted" :disabled="replySending || inboxBusy" @click="discardReplyDraft">Discard draft</button>
+                          <Button color="outline" shape="soft" size="compact" type="button" :disabled="replySending || replyUploading || (!replyForm.textBody.trim() && replyMode !== 'forward')" @click="sendInlineReply(false)">Save draft</Button>
+                          <Button color="primary" shape="soft" size="compact" type="button" :disabled="replySending || replyUploading || !replyCanSend" title="Send (⌘↵)" aria-keyshortcuts="Meta+Enter Control+Enter" @click="sendInlineReply(true)">
                             <UiIcon name="Send" :size="14" aria-hidden="true" />
                             {{ replySending ? "Sending…" : "Send" }}
                           </Button>
@@ -4742,10 +5083,10 @@ onBeforeUnmount(() => {
                           Reply
                         </button>
                         <button v-if="replyAllCopies(latestEmailMessage).length" type="button" class="mail-quiet" @click="startInlineReply(undefined, 'all')">
-                          <UiIcon name="Reply" :size="14" aria-hidden="true" />
+                          <UiIcon name="ReplyAll" :size="14" aria-hidden="true" />
                           Reply all
                         </button>
-                        <button type="button" class="mail-quiet" @click="openComposeModal(latestEmailMessage, 'forward')">
+                        <button type="button" class="mail-quiet" @click="startInlineReply(undefined, 'forward')">
                           <UiIcon name="Forward" :size="14" aria-hidden="true" />
                           Forward
                         </button>
@@ -4776,8 +5117,12 @@ onBeforeUnmount(() => {
     >
       <form
         class="compose-modal__card"
+        :class="{ 'compose-modal__card--drop': composeDropActive }"
         @submit.prevent="saveDraft(false)"
         @keydown="handleComposeKeydown"
+        @dragover="handleComposeDragOver"
+        @dragleave="composeDropActive = false"
+        @drop="handleComposeDrop"
       >
         <header class="compose-modal__head">
           <h2 id="compose-title">{{ getComposeTitle() }}</h2>
@@ -7225,13 +7570,49 @@ onBeforeUnmount(() => {
   color: var(--ui-accent-strong, var(--ui-accent, #229874));
 }
 
-.agent-draft-card__body {
-  margin: 0;
-  font: inherit;
-  font-size: 15px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.agent-draft-card__preview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-card__who {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.message-card__tools {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  gap: 2px;
+  margin: -8px -8px 0 -6px;
+}
+
+.message-tool {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  cursor: pointer;
+}
+
+.message-tool:hover,
+.message-tool[aria-expanded="true"] {
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+  color: var(--ui-text, var(--color-text));
+}
+
+.message-tool:focus-visible {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+  outline-offset: 1px;
 }
 
 .agent-draft-card__actions,
@@ -7251,16 +7632,57 @@ onBeforeUnmount(() => {
   box-shadow: var(--ui-shadow-md, 0 2px 12px rgba(13, 18, 20, 0.1));
 }
 
-.inline-reply__meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 16px;
-  font-size: 13px;
-  color: var(--ui-text-muted, var(--color-text-muted));
+.inline-reply--drop {
+  outline: 2px dashed var(--ui-accent, var(--color-accent));
+  outline-offset: 2px;
 }
 
-.inline-reply__meta b {
+.inline-reply__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.inline-reply__label {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
   font-weight: 650;
+  color: var(--ui-accent-strong, var(--ui-accent, #229874));
+}
+
+.inline-reply__mode select {
+  min-height: 36px;
+  padding: 0 28px 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background-color: var(--ui-surface-muted, var(--color-bg-subtle));
+  color: var(--ui-text, var(--color-text));
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inline-reply__subject {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-reply__recipients {
+  display: grid;
+}
+
+.compose-modal__card--drop {
+  outline: 2px dashed var(--ui-accent, var(--color-accent));
+  outline-offset: -6px;
 }
 
 .inline-reply__body {
@@ -7276,7 +7698,7 @@ onBeforeUnmount(() => {
 }
 
 .inline-reply__body :deep(.mail-compose-editor__content) {
-  min-height: 120px;
+  min-height: 240px;
   padding: 10px 0;
 }
 
@@ -7622,4 +8044,54 @@ onBeforeUnmount(() => {
   }
 }
 
+</style>
+
+<style>
+/* Printing a conversation: only the reader, with every message laid out in full. */
+@media print {
+  /* Everything the reader sits inside, and the reader's own scroll area, grows to fit the pages. */
+  html.mail-printing,
+  html.mail-printing :has(.thread-pane),
+  html.mail-printing .thread-pane,
+  html.mail-printing .thread-scroll {
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  html.mail-printing body * {
+    visibility: hidden !important;
+  }
+
+  html.mail-printing .thread-pane,
+  html.mail-printing .thread-pane * {
+    visibility: visible !important;
+  }
+
+  html.mail-printing .thread-pane {
+    position: absolute !important;
+    top: 0;
+    left: 0;
+    width: 100% !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  html.mail-printing .thread-toolbar,
+  html.mail-printing .inline-reply,
+  html.mail-printing .inline-reply-cta,
+  html.mail-printing .message-card__tools,
+  html.mail-printing .message-card__actions,
+  html.mail-printing .agent-draft-card,
+  html.mail-printing .external-content-notice,
+  html.mail-printing .message-fold,
+  html.mail-printing .is-print-hidden {
+    display: none !important;
+  }
+
+  html.mail-printing .message-card {
+    break-inside: auto;
+  }
+}
 </style>
