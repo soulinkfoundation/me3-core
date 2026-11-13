@@ -28,6 +28,8 @@ vi.mock("./mailbox-attachment-staging", () => ({ reconcileMailboxAttachmentStagi
 vi.mock("./mailbox-triage", () => ({ retryPendingMailTriage: vi.fn(async () => undefined), archiveStaleLoginCodes: vi.fn(async () => undefined), purgeStaleSpam: vi.fn(async () => undefined) }));
 vi.mock("./mailbox-send", () => ({ dispatchDueMailboxSends: vi.fn(async () => undefined) }));
 vi.mock("./morning-calendar-push", () => ({ dispatchDueMorningCalendarPushes: vi.fn() }));
+vi.mock("./news-push", () => ({ dispatchDueNewsNotifications: vi.fn(async () => undefined) }));
+vi.mock("./news-paper", () => ({ dispatchDueNewsPapers: vi.fn(async () => undefined) }));
 vi.mock("./gratitude", () => ({ dispatchDueGratitudeReminders: vi.fn() }));
 vi.mock("./calendar-push-notifications", () => ({ dispatchDueCalendarPushNotifications: vi.fn() }));
 vi.mock("./agent-notifications", () => ({ retryAgentTurnNotifications: vi.fn() }));

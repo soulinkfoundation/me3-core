@@ -16,6 +16,9 @@ vi.mock("./campaign-delivery", async (original) => ({
 }));
 vi.mock("./booking-reminders", () => ({ dispatchDueBookingReminders: vi.fn() }));
 vi.mock("./calendar-push-notifications", () => ({ dispatchDueCalendarPushNotifications: vi.fn() }));
+// The minute cron also sends held email and announces News; neither is under test here.
+vi.mock("./mailbox-send", () => ({ dispatchDueMailboxSends: vi.fn(async () => undefined) }));
+vi.mock("./news-push", () => ({ dispatchDueNewsNotifications: vi.fn(async () => undefined) }));
 vi.mock("./managed-runtime-lifecycle", () => ({
   isManagedRuntime: () => true,
   getManagedInstallationId: () => "install-test",
