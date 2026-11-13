@@ -187,7 +187,12 @@ export function readSoupPicks(value: unknown, candidateIds: string[], count: num
   return picks;
 }
 
-async function pickWithModel(env: Env, ownerId: string, input: { candidates: SoupServingItem[]; taste: SoupTaste; count: number; occasion: string }): Promise<Array<{ itemId: string; forYou: string }> | null> {
+/**
+ * Runs one small model call over the owner snapshot with the fast model, falling back to the
+ * model the owner chats with. Returns null when no model could answer, so callers degrade to
+ * Soup's own order instead of failing.
+ */
+export async function runWithFastModel<T>(env: Env, ownerId: string, label: string, run: (model: AgentModel, ownerSnapshot: string, timeoutMs: number) => Promise<T>): Promise<T | null> {
   try {
     const owner = await getOwnerProfile(env, ownerId);
     if (!owner) return null;
@@ -203,18 +208,22 @@ async function pickWithModel(env: Env, ownerId: string, input: { candidates: Sou
       ? models.model
       : models.modelFor(fastName, { purpose: "soup_serving" });
     try {
-      return await writeSoupPicks(fast, { ...input, ownerSnapshot: snapshot.prompt }, AbortSignal.timeout(25_000));
+      return await run(fast, snapshot.prompt, 25_000);
     } catch (error) {
       // An install without the fast model's provider (local dev, some self-hosted) still gets its
-      // for-you lines from the model it chats with.
+      // lines from the model it chats with.
       if (fast.id === models.model.id) throw error;
-      console.warn("Soup picks retrying with the chat model", error instanceof Error ? error.message : error);
-      return await writeSoupPicks(models.model, { ...input, ownerSnapshot: snapshot.prompt }, AbortSignal.timeout(40_000));
+      console.warn(`${label} retrying with the chat model`, error instanceof Error ? error.message : error);
+      return await run(models.model, snapshot.prompt, 40_000);
     }
   } catch (error) {
-    console.warn("Soup picks fell back to Soup's own order", error instanceof Error ? error.message : error);
+    console.warn(`${label} fell back to Soup's own order`, error instanceof Error ? error.message : error);
     return null;
   }
+}
+
+async function pickWithModel(env: Env, ownerId: string, input: { candidates: SoupServingItem[]; taste: SoupTaste; count: number; occasion: string }): Promise<Array<{ itemId: string; forYou: string }> | null> {
+  return runWithFastModel(env, ownerId, "Soup picks", (model, ownerSnapshot, timeoutMs) => writeSoupPicks(model, { ...input, ownerSnapshot }, AbortSignal.timeout(timeoutMs)));
 }
 
 // ── Candidates ──────────────────────────────────────────────
@@ -379,21 +388,21 @@ export async function composeSoupServing(env: Env, ownerId: string, spec: Servin
 
 // ── Scheduling ──────────────────────────────────────────────
 
-function localParts(timezone: string, now: Date) {
+export function localParts(timezone: string, now: Date) {
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short", hourCycle: "h23" }).formatToParts(now);
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)!.value;
   const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(part("weekday"));
   return { dateKey: `${part("year")}-${part("month")}-${part("day")}`, minutes: Number(part("hour")) * 60 + Number(part("minute")), weekday };
 }
 
-function localInstant(dateKey: string, time: string, timezone: string): Date {
+export function localInstant(dateKey: string, time: string, timezone: string): Date {
   const [year, month, day] = dateKey.split("-").map(Number);
   const [hour, minute] = time.split(":").map(Number);
   return new Date(getUtcMsForLocalTime({ year, month, day, hour, minute }, timezone));
 }
 
 /** Local midnight at the end of the given day. */
-function endOfLocalDay(dateKey: string, timezone: string): Date {
+export function endOfLocalDay(dateKey: string, timezone: string): Date {
   return localInstant(addDaysToDateString(dateKey, 1), "00:00", timezone);
 }
 

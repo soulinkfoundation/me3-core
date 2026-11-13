@@ -183,6 +183,7 @@ const COPIED_TABLES = [
   "home_layout",
   "soup_taste",
   "soup_servings",
+  "news_papers",
   "home_cards",
   "home_card_versions",
   "home_card_entries",

@@ -85,6 +85,89 @@ export type SoupSignal = {
   consent?: { aggregate: boolean; soulinkResonance: boolean };
 };
 
+// ── News (me3-6ptk.3; Soup's thehumansoup-lnf.40.4 contract) ──
+// One call before the owner's paper is built: today's candidate stories for some topic words and
+// a region. Soup gathers once for everyone; picking and the personal notes happen in ME3.
+
+export type NewsStory = {
+  id: string;
+  headline: string;
+  /** The feed's own short excerpt (at most 500 characters). Never full text. */
+  summary: string;
+  url: string;
+  image?: { url: string; width?: number; height?: number };
+  sources: Array<{ name: string; url: string }>;
+  publishedAt?: string;
+  topics: string[];
+  category?: string;
+  medium: SoupMedium;
+  durationSeconds?: number;
+  embedUrl?: string;
+};
+export type NewsTodayRequest = { topics: string[]; country?: string | null; city?: string | null; since?: string; exclude?: string[] };
+export type NewsToday = {
+  contractVersion: string | null;
+  frontPage: NewsStory[];
+  byTopic: Array<{ topic: string; stories: NewsStory[] }>;
+  local: NewsStory[];
+  media: NewsStory[];
+  meta: { considered: number; grouped: boolean };
+};
+
+const NEWS_KEYS = new Set(["topics", "country", "city", "since", "exclude"]);
+
+/** The only shape ever sent to Soup's news API: topic words, a country, a city name and story IDs already shown. */
+export function newsTodayQuery(request: NewsTodayRequest): URLSearchParams {
+  for (const key of Object.keys(request)) if (!NEWS_KEYS.has(key)) throw new Error(`News requests never carry ${key}.`);
+  const params = new URLSearchParams();
+  const topics = [...new Set((request.topics || []).map(cleanSoupTopic).filter((topic): topic is string => !!topic))].slice(0, MAX_TOPICS);
+  if (topics.length) params.set("topics", topics.join(","));
+  if (typeof request.country === "string" && /^[A-Za-z]{2}$/.test(request.country)) params.set("country", request.country.toUpperCase());
+  const city = typeof request.city === "string" && !/[@\d]/.test(request.city) ? request.city.replace(/[^\p{L}\s.'-]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 60) : "";
+  if (city) params.set("city", city);
+  if (request.since && !Number.isNaN(Date.parse(request.since))) params.set("since", new Date(request.since).toISOString());
+  const exclude = (request.exclude || []).filter(id => typeof id === "string" && /^[\w:.-]{1,120}$/.test(id)).slice(0, MAX_EXCLUDE);
+  if (exclude.length) params.set("exclude", exclude.join(","));
+  // A plain identifier for the agent, and a mark that this is a scheduled build so no public count moves.
+  params.set("agent", SOUP_AGENT_ID);
+  params.set("scheduled", "1");
+  return params;
+}
+
+function readNewsStories(value: unknown): NewsStory[] {
+  return (Array.isArray(value) ? value : []).flatMap(entry => {
+    const row = entry as Partial<NewsStory> | null;
+    if (!row || typeof row.id !== "string" || typeof row.headline !== "string" || typeof row.url !== "string" || !/^https?:\/\//i.test(row.url)) return [];
+    const sources = (Array.isArray(row.sources) ? row.sources : []).filter(source => source && typeof source.name === "string" && typeof source.url === "string").map(source => ({ name: source.name, url: source.url }));
+    const image = row.image && typeof row.image.url === "string" && /^https:\/\//i.test(row.image.url) ? { url: row.image.url } : undefined;
+    const medium: SoupMedium = row.medium === "watch" || row.medium === "listen" ? row.medium : "read";
+    const story: NewsStory = { id: row.id, headline: row.headline.trim(), summary: typeof row.summary === "string" ? row.summary.trim().slice(0, 500) : "", url: row.url, sources, topics: Array.isArray(row.topics) ? row.topics.filter((topic): topic is string => typeof topic === "string").slice(0, 12) : [], medium };
+    if (image) story.image = image;
+    if (typeof row.publishedAt === "string") story.publishedAt = row.publishedAt;
+    if (typeof row.category === "string") story.category = row.category;
+    if (typeof row.durationSeconds === "number" && row.durationSeconds > 0) story.durationSeconds = row.durationSeconds;
+    if (typeof row.embedUrl === "string" && /^https:\/\//i.test(row.embedUrl)) story.embedUrl = row.embedUrl;
+    return story.headline ? [story] : [];
+  });
+}
+
+/** Reads a news response defensively: a field that is missing or the wrong shape becomes empty, never a crash. */
+export function readNewsToday(data: unknown): NewsToday {
+  const raw = (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
+  const meta = (raw.meta && typeof raw.meta === "object" ? raw.meta : {}) as Record<string, unknown>;
+  return {
+    contractVersion: typeof raw.contractVersion === "string" ? raw.contractVersion : null,
+    frontPage: readNewsStories(raw.frontPage),
+    byTopic: (Array.isArray(raw.byTopic) ? raw.byTopic : []).flatMap(entry => {
+      const row = entry as { topic?: unknown; stories?: unknown } | null;
+      return row && typeof row.topic === "string" ? [{ topic: row.topic.toLowerCase(), stories: readNewsStories(row.stories) }] : [];
+    }),
+    local: readNewsStories(raw.local),
+    media: readNewsStories(raw.media),
+    meta: { considered: typeof meta.considered === "number" ? meta.considered : 0, grouped: meta.grouped === true },
+  };
+}
+
 export class SoupUnavailableError extends Error {
   constructor(message: string, readonly status: number | null = null) { super(message); }
 }
@@ -139,6 +222,8 @@ export type SoupClient = {
   /** Search the pantry; when search is unavailable, serve bowls from the named or public soups instead. */
   find(request: SoupSearchRequest, signal?: AbortSignal): Promise<SoupSearchResult>;
   sendSignals(signals: SoupSignal[], signal?: AbortSignal): Promise<void>;
+  /** Today's candidate stories. Throws SoupUnavailableError with status 404 where Soup has no news API yet. */
+  newsToday(request: NewsTodayRequest, signal?: AbortSignal): Promise<NewsToday>;
 };
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -194,6 +279,9 @@ export function createSoupClient(options: { origin?: string | null; fetch?: Fetc
         if (!items.length && bowls.every(result => result.status === "rejected")) throw error;
         return { items, fallback: true, contractVersion: null };
       }
+    },
+    async newsToday(request, signal) {
+      return readNewsToday(await getJson<unknown>(`/v1/news/today?${newsTodayQuery(request)}`, signal));
     },
     async sendSignals(signals, signal) {
       if (!signals.length) return;

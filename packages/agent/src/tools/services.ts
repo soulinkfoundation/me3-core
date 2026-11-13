@@ -85,12 +85,14 @@ export interface AgentCodingServices {
   resolveRepository(repository: string): Promise<string>;
   send(input: { repository: string; title: string; brief: string }): Promise<unknown>;
 }
-/** The Human Soup (me3-ydf4): bowls, taste and servings. Everything personal stays in the install. */
+/** News (me3-6ptk, on the Soup services from me3-ydf4): settings, today's paper and a pick on request. Everything personal stays in the install. */
 export type AgentSoupServices = {
   serve(input: { topics: string[]; medium?: "watch" | "listen" | "read"; maxMinutes?: number; soups?: string[]; title?: string; occasion?: string }, signal: AbortSignal): Promise<unknown>;
+  /** The owner's news settings. */
   readTaste(): Promise<unknown>;
   updateTaste(patch: Record<string, unknown>): Promise<unknown>;
-  listSoups(signal: AbortSignal): Promise<unknown>;
+  /** Today's paper, built now if it is not ready yet. */
+  paper(input: { fresh?: boolean }, signal: AbortSignal): Promise<unknown>;
 };
 
 /** Outreach prospects in People. See packages/agent-chat/src/contact-outreach.ts. */

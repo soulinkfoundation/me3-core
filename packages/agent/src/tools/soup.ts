@@ -36,14 +36,21 @@ export function soupTools() {
       return ok(await soup(context).updateTaste(args));
     }, {
       parameters: objectSchema({
-        workTopics: list("For your work lane: each entry a topic word, optionally followed by ' @ ' and the projectId it follows, e.g. 'agent payments @ proj_123'. Replaces the lane."),
-        interests: list("Just for you lane: interests the owner stated, e.g. poetry, surfing. Replaces the lane."),
+        workTopics: list("For your work: the topics switched on, each a plain topic as the owner would write it (AI agents, Coaching), optionally followed by ' @ ' and the projectId it follows. Replaces the selected work topics."),
+        moreWorkTopics: list("More work topics to show as suggestions, switched off."),
+        interests: list("Just for you: the topics switched on, e.g. Surfing, Poetry. Hobbies and interests only. Replaces the selected ones."),
+        moreInterests: list("More personal topics to show as suggestions, switched off."),
         lessOf: list("Topics the owner wants less of. Replaces the list."),
-        soups: list("Collection handles to follow, from the menu in core_news_settings_read. Replaces the list."),
-        servings: list("The owner's servings, one per entry as 'HH:MM | kind | name', kind headlines or pick, e.g. '07:30 | headlines | Morning headlines'. Add ' | listen' or ' | 20min' for a pick's medium or length. An empty list means only when they ask. Replaces the list."),
-        headsUp: { type: "boolean", description: "Rare alerts when news touches a live project. Off unless the owner asks." },
-        setUp: { type: "boolean", description: "true once the owner has confirmed the proposal; the News card joins Home." },
+        city: { type: "string", description: "The town or city the owner lives in, for local news and weather, e.g. Galway. A place name only." },
+        time: { type: "string", description: "When the paper should be ready, local HH:MM on a quarter hour, e.g. 06:45. Weekends are an hour later." },
+        notify: { type: "boolean", description: "Whether to send one notification when the paper is ready." },
+        askTime: { type: "boolean", description: "During setup, true once the owner has confirmed the topics: the app shows time choices under your reply." },
+        setUp: { type: "boolean", description: "true once the owner has confirmed topics and given a time: News is switched on, today's paper is built and the News card joins Home." },
       }),
     }),
+    domainTool("core.news.paper", async (args, context) => {
+      context.signal.throwIfAborted();
+      return ok(await soup(context).paper({ fresh: args.fresh === true }, context.signal));
+    }, { parameters: objectSchema({ fresh: { type: "boolean", description: "true only when the owner asks for a new paper rather than today's." } }) }),
   ];
 }

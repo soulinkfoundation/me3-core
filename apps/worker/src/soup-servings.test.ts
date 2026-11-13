@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseServingLine, parseWorkTopicLine, tastePatchFromAgent } from "./agent-soup";
+import { parseWorkTopicLine } from "./agent-soup";
 import { withSoupLine } from "./morning-calendar-push";
 import { dueServings, readSoupPicks, servingQueries, soupBriefingLine, specForServing, writeSoupPicks } from "./soup-servings";
 import { emptySoupTaste, fadeWorkTopics, readServingSpecs } from "./soup-taste";
@@ -99,14 +99,10 @@ describe("soup servings schedule", () => {
 });
 
 describe("soup taste from the agent", () => {
-  it("reads topic @ project and HH:MM | kind | name lines", () => {
+  it("reads topic @ project lines", () => {
     const projects = new Set(["proj_1"]);
     expect(parseWorkTopicLine("agent payments @ proj_1", projects)).toEqual({ topic: "agent payments", projectId: "proj_1", source: "project" });
     expect(parseWorkTopicLine("poetry @ proj_unknown", projects)).toEqual({ topic: "poetry", projectId: null, source: "owner" });
-    expect(parseServingLine("07:30 | headlines | Morning headlines", 0)).toEqual({ id: "morning-headlines", name: "Morning headlines", time: "07:30", days: [], kind: "headlines" });
-    expect(parseServingLine("20:00 | pick | Something longer | listen | 45min", 1)).toEqual({ id: "something-longer", name: "Something longer", time: "20:00", days: [], kind: "pick", medium: "listen", maxMinutes: 45 });
-    expect(() => parseServingLine("morning", 0)).toThrow(/HH:MM/);
-    expect(tastePatchFromAgent({ interests: ["Poetry"], servings: [], setUp: true }, projects)).toEqual({ interests: ["Poetry"], servings: [], setUp: true });
   });
 });
 

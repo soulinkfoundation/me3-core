@@ -967,6 +967,30 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.prepare(statements.createIndex).run();
     },
   },
+  // News: one stored morning paper per owner and day (me3-6ptk.3).
+  {
+    id: "0104_news_papers",
+    checksum: "2026-11-13-news-papers-v1",
+    async apply(db) {
+      await db.prepare(`CREATE TABLE IF NOT EXISTS news_papers (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES owner_profile(id) ON DELETE CASCADE,
+        date_key TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'failed')),
+        paper_json TEXT NOT NULL DEFAULT '{}',
+        deliver_at TEXT NOT NULL,
+        ready_at TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        claimed_at INTEGER NOT NULL DEFAULT 0,
+        read_at TEXT,
+        hidden_at TEXT,
+        rating TEXT CHECK (rating IS NULL OR rating IN ('fire', 'ok', 'sleepy')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (user_id, date_key)
+      )`).run();
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

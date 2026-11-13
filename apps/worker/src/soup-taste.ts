@@ -30,6 +30,30 @@ export type SoupTaste = {
   soups: string[];
   servings: SoupServingSpec[];
   headsUp: boolean;
+  /** News (me3-6ptk): delivery time, region and the rest of the morning paper's settings. Null until News is set up. */
+  news: NewsPrefs | null;
+};
+export type NewsPrefs = {
+  /** Local HH:MM on a quarter hour. */
+  time: string;
+  weekendOffsetMinutes: number;
+  notify: boolean;
+  /** Removed from Home: no paper is built and nothing is announced. */
+  paused: boolean;
+  city: string | null;
+  /** ISO 3166-1 alpha-2. */
+  country: string | null;
+  lat: number | null;
+  lon: number | null;
+  /** How each topic word is shown: "ai agents" → "AI agents". */
+  labels: Record<string, string>;
+  /** Topics ME3 suggested that the owner has not switched on, kept so the chips stay put. */
+  moreWork: string[];
+  moreMine: string[];
+  /** The end-page rating of the latest paper read, to steer the next one. */
+  lastRating: "fire" | "ok" | "sleepy" | null;
+  /** When the owner confirmed their News setup. A Soup setup alone leaves this null. */
+  setUpAt: string | null;
 };
 export type SoupTasteState = {
   taste: SoupTaste;
@@ -44,7 +68,41 @@ const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const SERVING_ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const MEDIUMS = new Set<SoupMedium>(["watch", "listen", "read"]);
 
-export const emptySoupTaste = (): SoupTaste => ({ workTopics: [], mutedWorkTopics: [], interests: [], lessOf: [], soups: [], servings: [], headsUp: false });
+export const emptySoupTaste = (): SoupTaste => ({ workTopics: [], mutedWorkTopics: [], interests: [], lessOf: [], soups: [], servings: [], headsUp: false, news: null });
+
+export const NEWS_DEFAULT_TIME = "07:00";
+/** The cron ticks every quarter hour, so delivery times sit on one. */
+export function snapNewsTime(value: unknown): string | null {
+  if (typeof value !== "string" || !TIME.test(value.trim())) return null;
+  const [hour, minute] = value.trim().split(":").map(Number);
+  const total = Math.min(23 * 60 + 45, Math.round((hour * 60 + minute) / 15) * 15);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+export function readNewsPrefs(raw: unknown): NewsPrefs | null {
+  if (!isRecord(raw)) return null;
+  const words = (value: unknown) => Array.isArray(value) ? [...new Set(value.map(cleanSoupTopic).filter((topic): topic is string => !!topic))].slice(0, MAX_TOPICS_PER_LANE) : [];
+  const labels: Record<string, string> = {};
+  if (isRecord(raw.labels)) for (const [word, label] of Object.entries(raw.labels).slice(0, 80)) {
+    if (cleanSoupTopic(word) === word && typeof label === "string" && cleanSoupTopic(label) === word) labels[word] = label.replace(/\s+/g, " ").trim().slice(0, 40);
+  }
+  const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : null;
+  return {
+    time: snapNewsTime(raw.time) || NEWS_DEFAULT_TIME,
+    weekendOffsetMinutes: number(raw.weekendOffsetMinutes) === 0 ? 0 : 60,
+    notify: raw.notify !== false,
+    paused: raw.paused === true,
+    city: typeof raw.city === "string" && raw.city.trim() ? raw.city.trim().slice(0, 60) : null,
+    country: typeof raw.country === "string" && /^[A-Z]{2}$/.test(raw.country) ? raw.country : null,
+    lat: number(raw.lat),
+    lon: number(raw.lon),
+    labels,
+    moreWork: words(raw.moreWork),
+    moreMine: words(raw.moreMine),
+    lastRating: raw.lastRating === "fire" || raw.lastRating === "ok" || raw.lastRating === "sleepy" ? raw.lastRating : null,
+    setUpAt: typeof raw.setUpAt === "string" && !Number.isNaN(Date.parse(raw.setUpAt)) ? raw.setUpAt : null,
+  };
+}
 
 function topicList(value: unknown, label: string): string[] {
   if (value === undefined) return [];
@@ -106,6 +164,7 @@ export function parseSoupTaste(raw: unknown): SoupTaste {
     soups: Array.isArray(saved.soups) ? [...new Set(saved.soups.filter((handle): handle is string => typeof handle === "string" && /^[a-z0-9][a-z0-9/_-]{0,80}$/.test(handle)))].slice(0, 20) : [],
     servings,
     headsUp: saved.headsUp === true,
+    news: readNewsPrefs(saved.news),
   };
 }
 
@@ -176,7 +235,7 @@ export async function updateSoupTaste(env: Env, userId: string, input: unknown, 
   return getSoupTaste(env, userId);
 }
 
-async function earnSoupHomeCard(env: Env, userId: string) {
+export async function earnSoupHomeCard(env: Env, userId: string) {
   const row = await env.DB.prepare("SELECT layout_json FROM home_layout WHERE user_id = ?").bind(userId).first<{ layout_json: string }>();
   const saved = row ? parseJsonRecord(row.layout_json) : {};
   const list = (key: string) => Array.isArray(saved[key]) ? (saved[key] as unknown[]).filter((id): id is string => typeof id === "string") : [];

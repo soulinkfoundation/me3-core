@@ -53,6 +53,8 @@ export interface Env {
   ME3_AGENT_FAST_MODEL?: string;
   /** The Human Soup API origin; defaults to https://api.thehumansoup.ai. */
   ME3_SOUP_API_ORIGIN?: string;
+  /** Local development only: build News from the bundled fixture of Soup's news contract instead of calling Soup. */
+  ME3_SOUP_NEWS_FIXTURE?: string;
   /** Model for independent intent checks; defaults to the planner model. */
   ME3_AGENT_VERIFIER_MODEL?: string;
   /** Model for the new-record intent check; defaults to Haiku 5.5 on managed installs, else the intent verifier model. */

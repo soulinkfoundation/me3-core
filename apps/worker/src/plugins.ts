@@ -1428,7 +1428,9 @@ const SOUP_PLUGIN: CorePluginManifestSummary = {
     { id: "news.settings.api", path: "/api/news/settings", methods: ["GET", "PATCH"], auth: "owner" },
     { id: "news.serving.api", path: "/api/news/servings/:id", methods: ["GET"], auth: "owner" },
     { id: "news.serving.act.api", path: "/api/news/servings/:id/act", methods: ["POST"], auth: "owner" },
-    { id: "news.serve.api", path: "/api/news/serve", methods: ["POST"], auth: "owner" },
+    { id: "news.build.api", path: "/api/news/build", methods: ["POST"], auth: "owner" },
+    { id: "news.paper.api", path: "/api/news/papers/:id", methods: ["GET"], auth: "owner" },
+    { id: "news.paper.act.api", path: "/api/news/papers/:id/act", methods: ["POST"], auth: "owner" },
   ],
   uiSlots: [{ id: "soup.home-card", slot: "home.card", label: "News" }],
   agentTools: [
@@ -1456,10 +1458,24 @@ const SOUP_PLUGIN: CorePluginManifestSummary = {
       auditEventKind: "soup_taste_updated",
       examples: { positive: ["Set up my news.", "Less crypto in my news."], negative: ["What's in my news?"] },
     }),
+    agentTool({
+      id: "news.paper",
+      label: "Open today's news",
+      sideEffect: "read_external",
+      approvalMode: "none",
+      auditEventKind: "news_paper_read",
+      examples: { positive: ["What's in the news today?"], negative: ["Set up my news."] },
+    }),
   ],
   secrets: [],
-  migrations: [{ id: "0098_soup", path: "apps/worker/migrations/0098_soup.sql", destructive: false, description: "Soup taste and servings." }],
-  queuesAndCrons: [{ id: "soup.servings", kind: "cron", schedule: "*/15 * * * *", consumerEntrypoint: "dispatchDueSoupServings" }],
+  migrations: [
+    { id: "0098_soup", path: "apps/worker/migrations/0098_soup.sql", destructive: false, description: "News topics and settings (soup_taste) and earlier servings." },
+    { id: "0104_news_papers", path: "apps/worker/migrations/0104_news_papers.sql", destructive: false, description: "One stored morning paper per owner and day." },
+  ],
+  queuesAndCrons: [
+    { id: "soup.servings", kind: "cron", schedule: "*/15 * * * *", consumerEntrypoint: "dispatchDueSoupServings" },
+    { id: "news.papers", kind: "cron", schedule: "*/15 * * * *", consumerEntrypoint: "dispatchDueNewsPapers" },
+  ],
   notes: [
     "Personalisation happens in ME3. The Human Soup receives topic words, a region and filters only, never who the owner is or why a story was picked.",
     "Owners see News; plugin, permission and table ids keep their soup names.",

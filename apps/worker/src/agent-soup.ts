@@ -1,13 +1,12 @@
-// The agent's side of News (me3-6ptk, on the Soup code from me3-ydf4): the services behind core_news_serve,
-// core_news_settings_read and core_news_settings_update, and the one-time setup offer in chat.
+// The agent's side of News (me3-6ptk, on the Soup code from me3-ydf4): the services behind
+// core_news_settings_read, core_news_settings_update, core_news_paper and core_news_serve, and the
+// one-time setup offer in chat.
 import type { AgentSoupServices } from "../../../packages/agent/src/tools/services";
-import { JournalInputError } from "./journal";
-import { normalizeDailyBriefingTime } from "./morning-calendar-push";
-import { serveSoupAsk, soupClientFor, type SoupServing } from "./soup-servings";
-import { getSoupTaste, markSoupSuggested, soupSuggestionDue, updateSoupTaste, type SoupServingSpec, type SoupTastePatch, type SoupTasteState, type SoupWorkTopic } from "./soup-taste";
+import { buildNewsNow, type NewsPaper } from "./news-paper";
+import { describeNewsSettings, updateNewsSettings, type NewsSettings } from "./news-settings";
+import { serveSoupAsk, type SoupServing } from "./soup-servings";
+import { getSoupTaste, markSoupSuggested, soupSuggestionDue, type SoupTasteState, type SoupWorkTopic } from "./soup-taste";
 import type { Env } from "./types";
-
-const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 /** 'agent payments @ proj_123' (or '@ ME3 payments', the project's name) → a work topic that follows that project. */
 export function parseWorkTopicLine(line: string, projects: Set<string> | Map<string, string>): SoupWorkTopic | null {
@@ -19,57 +18,56 @@ export function parseWorkTopicLine(line: string, projects: Set<string> | Map<str
   return { topic, projectId, source: projectId ? "project" : "owner" };
 }
 
-/** '07:30 | headlines | Morning headlines' or '20:00 | pick | Something longer | listen | 20min'. */
-export function parseServingLine(line: string, index: number): SoupServingSpec {
-  const parts = line.split("|").map(part => part.trim());
-  const time = parts[0] || "";
-  const kind = parts[1] === "headlines" || parts[1] === "pick" ? parts[1] : null;
-  if (!TIME.test(time) || !kind) throw new JournalInputError(`Serving ${index + 1} must be 'HH:MM | headlines or pick | name', e.g. '07:30 | headlines | Morning headlines'.`);
-  const name = parts[2] || (kind === "headlines" ? "Headlines" : "Something good");
-  const spec: SoupServingSpec = { id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || `serving-${index + 1}`, name, time, days: [], kind };
-  for (const extra of parts.slice(3)) {
-    if (extra === "watch" || extra === "listen" || extra === "read") spec.medium = extra;
-    const minutes = /^(\d{1,3})\s*min/i.exec(extra);
-    if (minutes) spec.maxMinutes = Number(minutes[1]);
+/**
+ * The agent speaks in plain lines: selected topics, and the suggestions it wants shown but left
+ * off. A lane that is not mentioned stays as it is; a lane given without its suggestions keeps the
+ * suggestions already there.
+ */
+export function newsPatchFromAgent(args: Record<string, unknown>, current: NewsSettings, projects: Map<string, string>): Record<string, unknown> {
+  const lines = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+  const patch: Record<string, unknown> = {};
+  if (args.workTopics !== undefined || args.moreWorkTopics !== undefined) {
+    const on = args.workTopics !== undefined
+      ? lines(args.workTopics).map(line => parseWorkTopicLine(line, projects)).filter((topic): topic is SoupWorkTopic => !!topic).map(topic => ({ label: topic.topic, on: true, projectId: topic.projectId }))
+      : current.work.filter(chip => chip.on).map(chip => ({ label: chip.label, on: true }));
+    const off = args.moreWorkTopics !== undefined ? lines(args.moreWorkTopics).map(label => ({ label, on: false })) : current.work.filter(chip => !chip.on).map(chip => ({ label: chip.label, on: false }));
+    patch.work = [...on, ...off];
   }
-  return spec;
-}
-
-export function tastePatchFromAgent(args: Record<string, unknown>, projectIds: Set<string> | Map<string, string>): SoupTastePatch {
-  const patch: SoupTastePatch = {};
-  const lines = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-  if (args.workTopics !== undefined) patch.workTopics = lines(args.workTopics).map(line => parseWorkTopicLine(line, projectIds)).filter(Boolean);
-  if (args.interests !== undefined) patch.interests = lines(args.interests);
+  if (args.interests !== undefined || args.moreInterests !== undefined) {
+    const on = args.interests !== undefined ? lines(args.interests).map(label => ({ label, on: true })) : current.mine.filter(chip => chip.on).map(chip => ({ label: chip.label, on: true }));
+    const off = args.moreInterests !== undefined ? lines(args.moreInterests).map(label => ({ label, on: false })) : current.mine.filter(chip => !chip.on).map(chip => ({ label: chip.label, on: false }));
+    patch.mine = [...on, ...off];
+  }
   if (args.lessOf !== undefined) patch.lessOf = lines(args.lessOf);
-  if (args.soups !== undefined) patch.soups = lines(args.soups);
-  if (args.servings !== undefined) patch.servings = lines(args.servings).map(parseServingLine);
-  if (args.headsUp !== undefined) patch.headsUp = args.headsUp;
-  if (args.setUp !== undefined) patch.setUp = args.setUp;
+  for (const key of ["city", "time", "notify", "setUp"] as const) if (args[key] !== undefined) patch[key] = args[key];
   return patch;
 }
 
-function describe(state: SoupTasteState, briefingTime: string) {
-  const { taste } = state;
+function describe(state: SoupTasteState) {
+  const settings = describeNewsSettings(state);
   return {
-    setUp: state.setUp,
-    setUpAt: state.setUpAt,
-    workTopics: taste.workTopics.map(topic => ({ topic: topic.topic, projectId: topic.projectId, source: topic.source })),
-    interests: taste.interests,
-    lessOf: taste.lessOf,
-    soups: taste.soups,
-    servings: taste.servings,
-    headsUp: taste.headsUp,
+    ...settings,
     projects: state.projects.map(project => ({ id: project.id, name: project.name })),
-    briefingTime,
-    ...(state.setUp ? {} : { setupGuide: `Not set up yet. Propose: For your work (four to six topic words from the active projects above, each as 'topic @ projectId') and ask what they love outside work; then ask whether to bring them something at set times (suggest headlines at ${briefingTime}, their briefing time, and something longer in the evening) or only when they ask. Wait for their answer, then call core_news_settings_update once with setUp true. Call it their news, never soup.` }),
+    ...(settings.setUp ? {} : { setupGuide: "Not set up yet. Setup is one short chat. 1) From the snapshot, call core_news_settings_update with workTopics (four plain topics for the owner's kind of work, each optionally '@ projectId'), interests (two or three things they love outside work, switched on), moreInterests (two or three more suggestions left off) and city. The app then shows the topics as chips the owner can tap; say in one sentence what you based them on and ask them to tap the ones they want or add their own. 2) When they say it looks good, call core_news_settings_update with askTime true and ask what time it should be ready; the app shows time choices. 3) When they give a time, call core_news_settings_update with time and setUp true; today's paper is built and the app shows a Read it now button. Reply that it is ready and when tomorrow's will be. Call it their news, never soup." }),
+  };
+}
+
+/** A short digest of the paper for ME3's own use; the app draws the paper itself. */
+function digest(paper: NewsPaper) {
+  const line = (story: { headline: string; source: string; note?: string } | null | undefined) => story ? `${story.headline} (${story.source})${story.note ? ` — ${story.note}` : ""}` : null;
+  return {
+    paperId: paper.id,
+    counts: paper.counts,
+    frontPage: [paper.pages.front.lead, ...paper.pages.front.briefs].map(line),
+    yourWork: (paper.pages.work?.stories || []).map(line),
+    watchAndListen: [paper.pages.media?.video, paper.pages.media?.listen].map(line).filter(Boolean),
+    yourTopics: (paper.pages.topics?.stories || []).map(line),
+    nearYou: [paper.pages.near?.local, paper.pages.near?.good].map(line).filter(Boolean),
   };
 }
 
 export function createAgentSoupServices(env: Env, ownerId: string): AgentSoupServices {
-  const briefingTime = async () => {
-    const row = await env.DB.prepare("SELECT daily_briefing_time FROM owner_profile WHERE id = ?").bind(ownerId).first<{ daily_briefing_time: string | null }>();
-    return normalizeDailyBriefingTime(row?.daily_briefing_time) || "07:30";
-  };
+  const projectsOf = (state: SoupTasteState) => new Map(state.projects.map(project => [project.id, project.name]));
   return {
     async serve(input) {
       const serving: SoupServing | null = await serveSoupAsk(env, ownerId, input);
@@ -78,22 +76,36 @@ export function createAgentSoupServices(env: Env, ownerId: string): AgentSoupSer
       return {
         served: true,
         servingId: serving.id,
-        pick: pick ? { title: pick.title, by: pick.creator, soup: pick.soupTitle, minutes: pick.minutes, medium: pick.medium, url: pick.url, forYou: pick.forYou, why: pick.why } : null,
+        pick: pick ? { title: pick.title, by: pick.creator, minutes: pick.minutes, medium: pick.medium, url: pick.url, forYou: pick.forYou, why: pick.why } : null,
         alsoGood: also.map(item => ({ title: item.title, minutes: item.minutes, url: item.url })),
         note: "The web app shows the pick as a card under your reply. Reply in one short line (why this one, in your words); do not repeat the title, link or list the items. Never call it soup or a bowl.",
       };
     },
     async readTaste() {
-      const [state, time, menu] = await Promise.all([getSoupTaste(env, ownerId), briefingTime(), soupClientFor(env).listSoups(AbortSignal.timeout(6_000)).catch(() => [])]);
-      return { ...describe(state, time), menu: menu.map(soup => ({ handle: soup.handle, title: soup.title, tagline: soup.tagline, topics: soup.topics })) };
+      return describe(await getSoupTaste(env, ownerId));
     },
-    async updateTaste(patch) {
+    async updateTaste(args) {
       const current = await getSoupTaste(env, ownerId);
-      const state = await updateSoupTaste(env, ownerId, tastePatchFromAgent(patch, new Map(current.projects.map(project => [project.id, project.name]))));
-      return { ...describe(state, await briefingTime()), saved: true };
+      const wasSetUp = describeNewsSettings(current).setUp;
+      const patch = newsPatchFromAgent(args, describeNewsSettings(current), projectsOf(current));
+      const { firstSetUp } = Object.keys(patch).length ? await updateNewsSettings(env, ownerId, patch) : { firstSetUp: false };
+      const state = await getSoupTaste(env, ownerId);
+      const settings = describe(state);
+      if (firstSetUp || (args.setUp === true && !wasSetUp)) {
+        // The first paper is built straight away, so setup ends with something to read.
+        const paper = await buildNewsNow(env, ownerId).catch(() => null);
+        return { ...settings, saved: true, card: "ready", paper: paper ? digest(paper) : null, note: paper ? `Today's paper is ready and the app shows a Read it now button. Say so in one line and that tomorrow's will be ready at ${settings.time}. Do not list the stories.` : `Saved. Today's paper could not be put together just now; say the first one will be ready at ${settings.time} tomorrow.` };
+      }
+      if (args.askTime === true && !settings.setUp) return { ...settings, saved: true, card: "time", note: "The app shows time choices under your reply. Ask what time it should be ready, in one short line." };
+      if (!settings.setUp && (patch.work !== undefined || patch.mine !== undefined)) return { ...settings, saved: true, card: "topics", note: "The app shows these topics as chips under your reply. Say what you based them on in one sentence and ask the owner to tap the ones they want or add their own. Do not list the topics." };
+      return { ...settings, saved: true };
     },
-    async listSoups(signal) {
-      return soupClientFor(env).listSoups(signal);
+    async paper(input) {
+      const state = await getSoupTaste(env, ownerId);
+      if (!describeNewsSettings(state).setUp) return { ready: false, note: "News is not set up. Offer to set it up; the owner can say 'Set up my news'." };
+      const paper = await buildNewsNow(env, ownerId, { fresh: input.fresh === true });
+      if (!paper) return { ready: false, note: "Today's news could not be put together just now. Say so in one line." };
+      return { ready: true, card: "paper", ...digest(paper), note: "The app shows a Read your news button under your reply. Answer what the owner asked from this digest in a line or two; do not recite the whole paper." };
     },
   };
 }
