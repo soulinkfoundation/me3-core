@@ -5,6 +5,7 @@ import "vue-advanced-cropper/dist/style.css";
 import { useWizardStore } from "../../stores/wizard";
 import UiIcon from "../UiIcon.vue";
 import Button from "../Button.vue";
+import { loadRandomPhoto } from "../../utils/randomPhoto";
 
 const wizard = useWizardStore();
 
@@ -32,14 +33,13 @@ function cancelCrop() {
   showCropper.value = false;
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { signal: controller.signal });
-  } finally {
-    window.clearTimeout(timeout);
-  }
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function loadRandomBanner() {
@@ -47,51 +47,13 @@ async function loadRandomBanner() {
   isLoadingRandomBanner.value = true;
   randomBannerError.value = null;
 
-  // Picsum supports CORS, so we can fetch → blob → upload safely.
-  const seed = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const url = `https://picsum.photos/seed/${encodeURIComponent(seed)}/1200/400`;
-
   try {
-    const res = await fetchWithTimeout(url, 10_000);
-    if (!res.ok) throw new Error(`Failed to fetch banner (${res.status})`);
-
-    const fetchedBlob = await res.blob();
-    const objectUrl = URL.createObjectURL(fetchedBlob);
-
-    try {
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const image = new Image();
-        image.onload = () => resolve(image);
-        image.onerror = () =>
-          reject(new Error("Failed to decode banner image"));
-        image.src = objectUrl;
-      });
-
-      const outputCanvas = document.createElement("canvas");
-      outputCanvas.width = 1200;
-      outputCanvas.height = 400;
-
-      const ctx = outputCanvas.getContext("2d");
-      if (!ctx) throw new Error("Failed to prepare image canvas");
-
-      // Ensure JPEG has an opaque background.
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, 1200, 400);
-      ctx.drawImage(img, 0, 0, 1200, 400);
-
-      const blob = await new Promise<Blob | null>((resolve) => {
-        outputCanvas.toBlob(resolve, "image/jpeg", 0.9);
-      });
-      const dataUrl = outputCanvas.toDataURL("image/jpeg", 0.9);
-
-      wizard.updateProfile({
-        banner: dataUrl,
-        bannerBlob: blob,
-        bannerOriginalBlob: null,
-      });
-    } finally {
-      URL.revokeObjectURL(objectUrl);
-    }
+    const blob = await loadRandomPhoto(1200, 400);
+    wizard.updateProfile({
+      banner: await blobToDataUrl(blob),
+      bannerBlob: blob,
+      bannerOriginalBlob: null,
+    });
   } catch (e) {
     console.error(e);
     randomBannerError.value =

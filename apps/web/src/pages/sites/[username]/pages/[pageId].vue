@@ -11,6 +11,7 @@ import {
 } from "@me3-core/plugin-landing-pages";
 import { useSitesStore, type SitePageRevision } from "../../../../stores/sites";
 import { resolvePublicSiteUrl } from "../../../../utils/publicSiteUrl";
+import { loadRandomPhoto } from "../../../../utils/randomPhoto";
 import UiIcon from "../../../../components/UiIcon.vue";
 import { api } from "../../../../api";
 import { useAppToast } from "../../../../composables/useAppToast";
@@ -298,32 +299,15 @@ async function uploadHero(event: Event) {
   toastSuccess("Image ready. Save the draft to update the preview.");
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { signal: controller.signal });
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
 async function useRandomHero() {
   if (!draft.value || randomImageBusy.value) return;
   randomImageBusy.value = true;
   error.value = "";
 
-  const seed = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const imageUrl = `https://picsum.photos/seed/${encodeURIComponent(seed)}/1600/1000`;
-
   try {
-    const response = await fetchWithTimeout(imageUrl, 10_000);
-    if (!response.ok) {
-      throw new Error(`Could not load a random image (${response.status}).`);
-    }
     const uploaded = await sites.uploadImage(
       username.value,
-      await response.blob(),
+      await loadRandomPhoto(1600, 1000),
       "hero",
     );
     if (!uploaded) {

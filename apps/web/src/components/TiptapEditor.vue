@@ -17,6 +17,7 @@ import Image from "@tiptap/extension-image";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { compressImage, resizeImage } from "@/utils/imageCompression";
+import { loadRandomPhoto } from "@/utils/randomPhoto";
 import UiIcon from "./UiIcon.vue";
 import TiptapImageNode from "./TiptapImageNode.vue";
 import TiptapFaqNode from "./TiptapFaqNode.vue";
@@ -941,16 +942,6 @@ const DEFAULT_CAROUSEL_ITEMS: CarouselItem[] = [
   },
 ];
 
-async function fetchWithTimeout(input: RequestInfo | URL, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { signal: controller.signal });
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
 async function prepareImageAsset(
   blob: Blob,
   filename = "journal-image",
@@ -1019,13 +1010,9 @@ async function uploadCarouselFile(file: File): Promise<CarouselImageResult> {
 }
 
 async function uploadRandomCarouselImage(): Promise<CarouselImageResult> {
-  const seed = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const url = `https://picsum.photos/seed/${encodeURIComponent(seed)}/1200/900`;
-  const res = await fetchWithTimeout(url, 10_000);
-  if (!res.ok) {
+  const blob = await loadRandomPhoto(1200, 900).catch(() => {
     throw new Error("Couldn't load a random image. Please try again.");
-  }
-  const blob = await res.blob();
+  });
   return prepareImageAsset(blob, "random-image.jpg");
 }
 
