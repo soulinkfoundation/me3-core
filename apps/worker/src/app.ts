@@ -229,6 +229,7 @@ import {
   isSpaFallbackResponse,
   ownerAppAssetCacheControl,
 } from "./owner-app-assets";
+import { OWNER_APP_ROUTE_PREFIXES } from "./owner-app-routes";
 import type {
   BookingReminderQueueMessage,
   DbAgentChannelConnection,
@@ -378,32 +379,6 @@ const AUTH_RATE_LIMITS = {
     lockoutSeconds: 15 * 60,
   },
 } satisfies Record<string, AuthRateLimitPolicy>;
-const OWNER_APP_ROUTE_PREFIXES = [
-  "/account",
-  "/accounts",
-  "/assistant",
-  "/calendar",
-  "/contacts",
-  "/create",
-  "/email",
-  "/files",
-  "/journal",
-  "/login",
-  "/mobile",
-  "/mission-control",
-  "/sites",
-  "/social",
-  "/tasks",
-  "/agent",
-  "/auth",
-  "/clients",
-  "/dashboard",
-  "/home",
-  "/messages",
-  "/settings",
-  "/socials",
-  "/wheel-of-life",
-];
 // Owner app static file paths live in owner-app-assets.ts so the fast path and the SPA fallback agree.
 const STRICT_TRANSPORT_SECURITY_HEADER = "max-age=31536000";
 const fetchWithWorkerGlobalContext: typeof fetch = (input, init) =>
