@@ -23,6 +23,19 @@ export function cityFromTimezone(timezone: string | null | undefined): string | 
   return cleanCityName(last.replace(/_/g, " "));
 }
 
+/**
+ * Soup's news needs a country. When the owner's town was never looked up, the timezone gives a
+ * fair guess for the countries Soup has a front page for; anywhere else gets the world front page.
+ */
+export const NEWS_WORLD = "ZZ";
+export function countryFromTimezone(timezone: string | null | undefined): string {
+  const zone = timezone || "";
+  if (zone === "Europe/Dublin") return "IE";
+  if (zone === "Europe/London" || zone === "Europe/Belfast") return "GB";
+  if (/^(America\/(New_York|Chicago|Denver|Phoenix|Los_Angeles|Anchorage|Detroit|Boise|Indiana\/|Kentucky\/)|Pacific\/Honolulu|US\/)/.test(zone)) return "US";
+  return NEWS_WORLD;
+}
+
 export async function geocodeCity(name: string, options: { country?: string | null; fetch?: FetchLike; signal?: AbortSignal } = {}): Promise<NewsPlace | null> {
   const city = cleanCityName(name);
   if (!city) return null;

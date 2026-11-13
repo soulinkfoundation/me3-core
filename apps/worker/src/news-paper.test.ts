@@ -4,7 +4,7 @@ import { clockTime, countPaper, layoutPaper, noteAddsSomething, newsBuildDue, ne
 import { applyNewsPatch, defaultNewsPrefs, describeNewsSettings, newsIsSetUp } from "./news-settings";
 import { newsPrefsFromSoup } from "./news-migrate";
 import { NEWS_PUSH_TITLE, newsPushDue } from "./news-push";
-import { cityFromTimezone, cleanCityName, describeWeather, geocodeCity } from "./news-weather";
+import { cityFromTimezone, cleanCityName, countryFromTimezone, describeWeather, geocodeCity } from "./news-weather";
 import { SoupUnavailableError, newsTodayQuery, readNewsToday, type SoupClient } from "./soup-client";
 import { emptySoupTaste, snapNewsTime, type SoupTaste } from "./soup-taste";
 import { NEWS_FIXTURE_COACH, NEWS_FIXTURE_FOUNDER, newsFixtureFor } from "./testing/news-today.fixture";
@@ -250,6 +250,9 @@ describe("news place and weather", () => {
     expect(cityFromTimezone("Europe/Dublin")).toBe("Dublin");
     expect(cityFromTimezone("America/New_York")).toBe("New York");
     expect(cityFromTimezone("UTC")).toBeNull();
+    // Soup needs a country even when the town was never looked up.
+    expect([countryFromTimezone("Europe/Dublin"), countryFromTimezone("Europe/London"), countryFromTimezone("America/New_York"), countryFromTimezone("Asia/Tokyo"), countryFromTimezone(null)]).toEqual(["IE", "GB", "US", "ZZ", "ZZ"]);
+    expect(newsTodayQuery({ topics: ["yoga"], country: countryFromTimezone("Asia/Tokyo") }).get("country")).toBe("ZZ");
   });
   it("looks a city up with nothing but its name, and survives a failed lookup", async () => {
     let url = "";

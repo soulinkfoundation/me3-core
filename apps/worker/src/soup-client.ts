@@ -7,7 +7,7 @@
 // `soupSearchQuery`, which whitelists the fields.
 
 /** The Soup contract this client was written against (packages/core in the Soup repo). */
-export const SOUP_CONTRACT_VERSION = "2026-11-04.2";
+export const SOUP_CONTRACT_VERSION = "2026-11-13.1";
 export const DEFAULT_SOUP_API_ORIGIN = "https://api.thehumansoup.ai";
 /** Soup credits the agent that served a bowl; it is a plain identifier, never the owner. */
 export const SOUP_AGENT_ID = "me3";

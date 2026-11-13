@@ -8,7 +8,7 @@ import { addDaysToDateString, normalizeTimeZone } from "./calendar";
 import { JournalInputError } from "./journal";
 import { moveSoupSetupsToNews } from "./news-migrate";
 import { describeNewsSettings, newsIsSetUp, newsTopicLabel } from "./news-settings";
-import { fetchWeather, type NewsWeather } from "./news-weather";
+import { countryFromTimezone, fetchWeather, type NewsWeather } from "./news-weather";
 import { isCorePluginEnabled } from "./plugins";
 import { getOwnerProfile } from "./sites";
 import { SoupUnavailableError, soupMinutes, type NewsStory, type NewsToday, type SoupBowlItem, type SoupClient, type SoupMedium } from "./soup-client";
@@ -147,15 +147,17 @@ export async function newsFromSearch(client: SoupClient, topics: string[], optio
   return { contractVersion: null, frontPage: [], byTopic, local: [], media, meta: { considered: seen.size, grouped: false } };
 }
 
-async function gatherNews(env: Env, client: SoupClient, taste: SoupTaste, prefs: NewsPrefs, exclude: string[], now: Date): Promise<NewsToday> {
+async function gatherNews(env: Env, client: SoupClient, taste: SoupTaste, prefs: NewsPrefs, exclude: string[], now: Date, timezone: string | null): Promise<NewsToday> {
   const topics = [...taste.workTopics.map(topic => topic.topic), ...taste.interests].slice(0, 12);
-  const request = { topics, country: prefs.country, city: prefs.city, since: new Date(now.getTime() - FRESH_WINDOW_MS).toISOString(), exclude };
+  // Soup requires a country. `since` is left to Soup: its own windows keep a week of videos and
+  // podcasts and top a quiet topic up from the last three days, which a fixed cut-off would lose.
+  const request = { topics, country: prefs.country || countryFromTimezone(timezone), city: prefs.city, exclude };
   if (env.ME3_SOUP_NEWS_FIXTURE) return newsFixtureFor(request);
   try { return await client.newsToday(request, AbortSignal.timeout(12_000)); }
   catch (error) {
     // 404 or 405: this Soup deployment has no news API yet. Anything else is Soup being unreachable.
     if (!(error instanceof SoupUnavailableError) || (error.status !== 404 && error.status !== 405)) throw error;
-    return newsFromSearch(client, topics, { exclude, since: request.since });
+    return newsFromSearch(client, topics, { exclude, since: new Date(now.getTime() - FRESH_WINDOW_MS).toISOString() });
   }
 }
 
@@ -497,7 +499,8 @@ export async function composeNewsPaper(env: Env, ownerId: string, options: Compo
     if (!prefs) return fail("News is not set up");
     const client = soupClientFor(env);
     const exclude = await shownStoryIds(env, ownerId, now);
-    const news = await gatherNews(env, client, taste, prefs, exclude, now);
+    const owner = await getOwnerProfile(env, ownerId);
+    const news = await gatherNews(env, client, taste, prefs, exclude, now, owner?.timezone ?? null);
     const candidates = toNewsCandidates(news, taste);
     if (!allCandidateIds(candidates).length) return fail("Soup had no stories");
     const [modelPicks, weather, good] = await Promise.all([
