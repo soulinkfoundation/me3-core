@@ -72,6 +72,7 @@ import {
   markMailboxDraftSentByOwner,
   prepareMailboxDraftRetryAnyway,
 } from "../mailbox-delivery";
+import { syncContactsFromSentMessage } from "../mailbox-outreach";
 import {
   isManagedEmailDeployment,
   MANAGED_EMAIL_INBOUND_PATH,
@@ -782,6 +783,7 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     }
     const result = await markMailboxDraftSentByOwner(c.env, ownerId, draftId);
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    await syncContactsFromSentMessage(c.env, ownerId, draftId);
     const draft = await getAgentMailboxMessage(c.env, ownerId, draftId);
     if ("error" in draft) return c.json({ error: draft.error }, draft.status as any);
     const delivery = await getMailboxDraftDeliveryStatus(c.env, ownerId, draftId);

@@ -7,6 +7,7 @@ import type { DbMailboxMessageRow } from "../../../packages/agent/src/services/m
 import type { AgentMailboxServices, MailboxRecord } from "../../../packages/agent/src/tools/services";
 import { EMAIL_PROVIDER_IDS, EmailProviderInputError, getEmailDeliveryIdentity, sendEmailWithProvider, type EmailDeliveryIdentity, type EmailProviderAttachment } from "./email-providers";
 import { canonicalJson } from "../../../packages/agent/src/schema";
+import { syncContactsFromSentMessage } from "./mailbox-outreach";
 import type { Env } from "./types";
 
 type SendClaim = { operationId: string; fingerprint: string; reviewedUpdatedAt: string; deliveryIdentity?: EmailDeliveryIdentity; storedFromAddress?: string | null };
@@ -206,6 +207,7 @@ async function finishSend(env: Env, ownerId: string, mailboxId: string, id: stri
       before.to_address, before.subject, before.text_body, before.html_body, before.from_address, before.metadata_json, before.updated_at, before.source_id, before.thread_key).run();
   const row = await getAgentMailboxMessageById(env, mailboxId, id);
   if (!row || (result.meta?.changes || 0) === 0 && row.status !== "sent" || !(await matchesClaim(row, claim))) return unknownDelivery;
+  if ((result.meta?.changes || 0) > 0) await syncContactsFromSentMessage(env, ownerId, id);
   return { draft: claimedRecord(mailboxRecord(serializeAgentMailboxMessage(row)), claim) };
 }
 

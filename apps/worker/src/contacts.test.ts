@@ -6,6 +6,9 @@ import {
   createAgentContact,
   listAgentContacts,
   markAgentMailboxDraftSent,
+  recordOutreachBooking,
+  recordOutreachEmailSent,
+  recordOutreachInbound,
   updateAgentContact,
   upsertAgentContact,
 } from "@me3-core/plugin-agent-chat";
@@ -507,5 +510,156 @@ describe("outreach prospects", () => {
     expect(moved.nextFollowupAt).toBeNull();
     const dated = (await send(`/api/contacts/${contact.id}`, "PUT", { nextFollowupAt: "2026-12-01T09:30:00+00:00" })).contact;
     expect(dated.nextFollowupAt).toBe("2026-12-01T09:30:00.000Z");
+  });
+});
+
+describe("outreach status sync", () => {
+  function outreach() {
+    const base = fixture();
+    const prospect = (id: string, email: string, extra: Record<string, string | null> = {}) =>
+      base.addContact(id, "alice", id, email, { relationship: "prospect", source: "outreach", ...extra });
+    const row = (id: string) => {
+      const found = base.raw
+        .prepare("SELECT outreach_status, next_followup_at, metadata, last_interaction_at FROM contacts WHERE id = ?")
+        .get(id) as { outreach_status: string | null; next_followup_at: string | null; metadata: string | null; last_interaction_at: string | null };
+      return {
+        status: found.outreach_status,
+        followUp: found.next_followup_at,
+        metadata: JSON.parse(found.metadata || "{}") as Record<string, unknown>,
+        lastInteraction: found.last_interaction_at,
+      };
+    };
+    const inbound = (input: Partial<Parameters<typeof recordOutreachInbound>[2]>) =>
+      recordOutreachInbound(base.env, "alice", {
+        fromAddress: "mary@iacp.example", threadRecipients: [], headers: {}, subject: "Re: An offer",
+        textBody: "Thanks, tell me more.", hasCalendarInvite: false, ...input,
+      });
+    return { ...base, prospect, row, inbound };
+  }
+  const SENT = "2026-11-13T10:00:00.000Z";
+
+  it("marks a prospect Sent with a follow-up in 7 days when the owner's email goes out", async () => {
+    const { raw, env, prospect, addContact, row } = outreach();
+    prospect("p-mary", "mary@iacp.example", { outreach_status: "new" });
+    prospect("p-cc", "office@imta.example");
+    addContact("c-friend", "alice", "Friend", "friend@example.com");
+    raw.exec(`INSERT INTO mailbox_aliases (id, user_id, alias_local_part, forwarding_email, status)
+      VALUES ('alice-mailbox', 'alice', 'alice', '', 'active')`);
+    raw.exec(`INSERT INTO mailbox_messages (id, mailbox_id, direction, message_kind, status, to_address, subject, text_body, folder, metadata_json)
+      VALUES ('draft-1', 'alice-mailbox', 'outbound', 'draft', 'approved', 'Mary Byrne <Mary@IACP.example>, friend@example.com', 'An offer', 'Hi', 'drafts',
+        '{"recipients":{"cc":["office@imta.example"],"bcc":[]}}')`);
+
+    await markAgentMailboxDraftSent(env, "alice", "draft-1", {
+      providerId: "test", providerMessageId: "msg-1", approvedByUserId: "alice", sentAt: SENT,
+    });
+
+    expect(row("p-mary")).toMatchObject({ status: "sent", followUp: "2026-11-20T10:00:00.000Z", lastInteraction: SENT });
+    expect(row("p-cc")).toMatchObject({ status: "sent", followUp: "2026-11-20T10:00:00.000Z" });
+    expect(row("c-friend")).toMatchObject({ status: null, followUp: null, lastInteraction: SENT });
+  });
+
+  it("counts a later email to a prospect who has not replied as a follow-up and pushes the date", async () => {
+    const { env, prospect, row } = outreach();
+    prospect("p-mary", "mary@iacp.example", {
+      outreach_status: "sent", next_followup_at: "2026-11-10T09:00:00.000Z", metadata: '{"outreachFollowUpDays":3,"organisation":"IACP"}',
+    });
+    prospect("p-talking", "niamh@yti.example", { outreach_status: "replied" });
+    prospect("p-quiet", "quiet@guild.example", { outreach_status: "no_response" });
+
+    await recordOutreachEmailSent(env, "alice", {
+      recipients: ["mary@iacp.example", "niamh@yti.example", "quiet@guild.example"], sentAt: SENT,
+    });
+
+    expect(row("p-mary")).toMatchObject({
+      status: "sent", followUp: "2026-11-16T10:00:00.000Z",
+      metadata: { outreachFollowUpsSent: 1, outreachFollowUpDays: 3, organisation: "IACP" },
+    });
+    expect(row("p-talking")).toMatchObject({ status: "replied", followUp: null });
+    // Writing again to someone ME3 gave up on reopens them.
+    expect(row("p-quiet")).toMatchObject({ status: "sent", followUp: "2026-11-20T10:00:00.000Z" });
+  });
+
+  it("uses the follow-up days and offer chosen when the email was tracked as outreach", async () => {
+    const { env, prospect, row } = outreach();
+    prospect("p-mary", "mary@iacp.example");
+    await recordOutreachEmailSent(env, "alice", { recipients: ["mary@iacp.example"], sentAt: SENT, followUpDays: 14 });
+    expect(row("p-mary")).toMatchObject({
+      status: "sent", followUp: "2026-11-27T10:00:00.000Z", metadata: { outreachFollowUpDays: 14 },
+    });
+  });
+
+  it("sets Replied and clears the follow-up date when the prospect answers", async () => {
+    const { prospect, row, inbound } = outreach();
+    prospect("p-mary", "mary@iacp.example", { outreach_status: "sent", next_followup_at: "2026-11-20T10:00:00.000Z" });
+    prospect("p-other", "other@gmail.example", { outreach_status: "sent", next_followup_at: "2026-11-20T10:00:00.000Z" });
+
+    expect(await inbound({ fromAddress: "Mary@IACP.example" })).toMatchObject({ kind: "reply", contactIds: ["p-mary"] });
+    expect(row("p-mary")).toMatchObject({ status: "replied", followUp: null });
+    expect(row("p-other")).toMatchObject({ status: "sent", followUp: "2026-11-20T10:00:00.000Z" });
+  });
+
+  it("counts a reply from a colleague in the outreach thread, but never a stranger on the same domain", async () => {
+    const { prospect, row, inbound } = outreach();
+    prospect("p-office", "office@iacp.example", { outreach_status: "sent", next_followup_at: "2026-11-20T10:00:00.000Z" });
+
+    expect(await inbound({ fromAddress: "stranger@iacp.example" })).toMatchObject({ kind: null, contactIds: [] });
+    expect(row("p-office").status).toBe("sent");
+
+    await inbound({ fromAddress: "mary@iacp.example", threadRecipients: ["Office <office@iacp.example>"] });
+    expect(row("p-office")).toMatchObject({ status: "replied", followUp: null });
+  });
+
+  it("ignores auto-replies and out-of-office mail", async () => {
+    const { prospect, row, inbound } = outreach();
+    prospect("p-mary", "mary@iacp.example", { outreach_status: "sent", next_followup_at: "2026-11-20T10:00:00.000Z" });
+
+    expect(await inbound({ headers: { "auto-submitted": "auto-replied" } })).toMatchObject({ kind: "auto_reply" });
+    expect(await inbound({ subject: "Automatic reply: An offer" })).toMatchObject({ kind: "auto_reply" });
+    expect(await inbound({ subject: "Out of Office until Monday" })).toMatchObject({ kind: "auto_reply" });
+    expect(row("p-mary")).toMatchObject({ status: "sent", followUp: "2026-11-20T10:00:00.000Z" });
+  });
+
+  it("flags a bounce on the prospect without calling it a reply", async () => {
+    const { prospect, row, inbound } = outreach();
+    prospect("p-mary", "mary@iacp.example", { outreach_status: "sent", next_followup_at: "2026-11-20T10:00:00.000Z" });
+
+    const result = await inbound({
+      fromAddress: "MAILER-DAEMON@mx.example", subject: "Undelivered Mail Returned to Sender",
+      textBody: "The mail system\n<mary@iacp.example>: host said: 550 no such user",
+    });
+    expect(result).toMatchObject({ kind: "bounce", contactIds: ["p-mary"] });
+    expect(row("p-mary")).toMatchObject({
+      status: "sent", followUp: "2026-11-20T10:00:00.000Z", metadata: { outreachBounced: true },
+    });
+  });
+
+  it("sets Call booked from a calendar invite or a booking, and never moves a status backwards", async () => {
+    const { env, prospect, row, inbound } = outreach();
+    prospect("p-mary", "mary@iacp.example", { outreach_status: "replied", next_followup_at: "2026-11-20T10:00:00.000Z" });
+    prospect("p-aoife", "aoife@imta.example", { outreach_status: "sent", next_followup_at: "2026-11-20T10:00:00.000Z" });
+    prospect("p-agreed", "ciara@icf.example", { outreach_status: "converted" });
+    prospect("p-no", "no@isme.example", { outreach_status: "not_interested" });
+
+    expect(await inbound({ hasCalendarInvite: true })).toMatchObject({ kind: "invite" });
+    expect(row("p-mary")).toMatchObject({ status: "booked", followUp: null });
+    await inbound({});
+    expect(row("p-mary").status).toBe("booked");
+
+    await recordOutreachBooking(env, "alice", "Aoife@IMTA.example");
+    expect(row("p-aoife")).toMatchObject({ status: "booked", followUp: null });
+    await recordOutreachBooking(env, "alice", "ciara@icf.example");
+    expect(row("p-agreed").status).toBe("converted");
+
+    await inbound({ fromAddress: "no@isme.example" });
+    expect(row("p-no").status).toBe("not_interested");
+  });
+
+  it("leaves another owner's prospects alone", async () => {
+    const { env, addContact, raw, inbound } = outreach();
+    addContact("p-bob", "bob", "Mary", "mary@iacp.example", { relationship: "prospect", outreach_status: "sent" });
+    await inbound({});
+    await recordOutreachEmailSent(env, "alice", { recipients: ["mary@iacp.example"], sentAt: SENT });
+    expect(raw.prepare("SELECT outreach_status, next_followup_at FROM contacts WHERE id = 'p-bob'").get())
+      .toEqual({ outreach_status: "sent", next_followup_at: null });
   });
 });

@@ -5,6 +5,7 @@ import { touchContactInteraction, type AgentMailboxMessage } from "@me3-core/plu
 import type { EmailProviderAttachment } from "./email-providers";
 import { publishMailboxMessageReceived } from "./mailbox-events";
 import { enqueueMailTriage } from "./mailbox-triage";
+import { syncOutreachFromInbound } from "./mailbox-outreach";
 import { resolveMailboxThreadKey } from "./mailbox-threads";
 import { normalizeEmail, sha256Text } from "./sites";
 import type { DbMailboxAlias, Env } from "./types";
@@ -263,6 +264,15 @@ export async function deliverInboundEmail(
     // People: an email from a contact counts as being in touch (address only).
     await touchContactInteraction(env, mailbox.user_id, { emails: [fromAddress] }, now)
       .catch((error) => console.error("Contact last-in-touch update failed", error));
+    // Outreach: a prospect's answer sets Replied; auto-replies and bounces do not.
+    await syncOutreachFromInbound(env, mailbox.user_id, {
+      messageId: rowId,
+      fromAddress,
+      headers: parsed.headers,
+      subject: parsed.subject || "",
+      textBody: textBody.value,
+      attachments: storedAttachments,
+    });
 
     await publishMailboxMessageReceived(env, {
       ownerId: mailbox.user_id,

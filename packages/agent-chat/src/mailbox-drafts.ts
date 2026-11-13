@@ -1,4 +1,4 @@
-import { touchContactInteraction } from "./contact-people";
+import { recordMailboxSendForContacts } from "./contact-outreach";
 import { type CoreAgentChatEnv, normalizeNullableText } from "./domain-store";
 import { type AgentMailboxDraftInput, type AgentMailboxMessage, type AgentMailbox, type AgentMailboxDraftSendInput, type AgentMailboxDraftFailureInput, type DbMailboxAliasRow, type NormalizedMailboxDraftInput, type DbMailboxMessageRow } from "./mailbox-types";
 import { getAgentMailboxRow, getAgentMailboxMessageById, isValidEmail, agentMailboxMessageSelectSql } from "./mailbox-store";
@@ -188,8 +188,10 @@ export async function markAgentMailboxDraftSent(
     .run();
 
   const sent = await getAgentMailboxMessageById(env, mailbox.id, draftId);
-  if ((result.meta?.changes || 0) > 0 && sent?.to_address) {
-    await touchContactInteraction(env, userId, { emails: [sent.to_address] }, input.sentAt);
+  if ((result.meta?.changes || 0) > 0 && sent) {
+    // The email has gone; contact bookkeeping must never turn that into an error.
+    await recordMailboxSendForContacts(env, userId, sent, input.sentAt)
+      .catch((error) => console.error("Contact update after send failed", error));
   }
   if ((result.meta?.changes || 0) === 0) {
     if (!sent) return { error: "Draft not found", status: 404 };

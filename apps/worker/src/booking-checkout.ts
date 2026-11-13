@@ -31,6 +31,7 @@ import {
   getOwnerContact,
   sendBookingConfirmationEmails,
 } from "./transactional-emails";
+import { recordOutreachBooking } from "@me3-core/plugin-agent-chat";
 import type { DbBooking, DbSite, Env } from "./types";
 
 // One-to-one booking checkout shared by the site's own booking pages and the
@@ -432,6 +433,9 @@ export async function sendConfirmationEmailsForBooking(
     paymentInstructions?: string | null;
   },
 ) {
+  // Outreach: a prospect who books a call is Call booked.
+  await recordOutreachBooking(env, input.site.user_id, input.booking.guest_email)
+    .catch((error) => console.error("Outreach status update after booking failed", error));
   const owner = await getOwnerContact(env, input.site.user_id);
   const bookIntent = input.profile?.intents?.book as CoreBookIntent | undefined;
   const confirmationEmail = bookIntent?.confirmationEmail;

@@ -169,6 +169,41 @@ describe("inbound MIME and attachment persistence", () => {
     expect(JSON.stringify(rows)).not.toContain("Plain body");
   });
 
+  it("marks a prospect Replied when a colleague answers the outreach thread, and Call booked on an invite", async () => {
+    const { db, env } = setup();
+    db.exec(readFileSync(new URL("../migrations/0103_mailbox_canonical_thread_key.sql", import.meta.url), "utf8"));
+    db.exec(`INSERT INTO contacts (id, user_id, name, email, relationship, outreach_status, next_followup_at) VALUES
+      ('office', 'owner', 'IACP office', 'office@iacp.example', 'prospect', 'sent', '2026-11-20T09:00:00.000Z'),
+      ('away', 'owner', 'Away', 'away@imta.example', 'prospect', 'sent', '2026-11-20T09:00:00.000Z')`);
+    db.exec(`INSERT INTO mailbox_messages (id, mailbox_id, direction, message_kind, status, to_address, subject, text_body, folder, sent_at, metadata_json)
+      VALUES ('out-1', 'mailbox-1', 'outbound', 'email', 'sent', 'office@iacp.example', 'An offer', 'Hi', 'sent', '2026-11-13T10:00:00.000Z',
+        '{"outbound_headers":{"message_id":"<out-1@me3.app>"}}')`);
+    const prospect = (id: string) =>
+      db.prepare("SELECT outreach_status, next_followup_at FROM contacts WHERE id = ?").get(id) as Record<string, string | null>;
+    const mail = (lines: string[], from: string) => message(lines.join("\r\n"), { from });
+
+    await deliverInboundEmail(mail([
+      "From: Away <away@imta.example>", "To: owner@me3.app", "Subject: Automatic reply: An offer",
+      "Message-ID: <ooo-1@imta.example>", "Auto-Submitted: auto-replied", "", "I am away until Monday.",
+    ], "away@imta.example"), env);
+    expect(prospect("away")).toEqual({ outreach_status: "sent", next_followup_at: "2026-11-20T09:00:00.000Z" });
+
+    await deliverInboundEmail(mail([
+      "From: Mary <mary@iacp.example>", "To: owner@me3.app", "Subject: Re: An offer",
+      "Message-ID: <reply-1@iacp.example>", "In-Reply-To: <out-1@me3.app>", "References: <out-1@me3.app>", "", "Tell me more.",
+    ], "mary@iacp.example"), env);
+    expect(prospect("office")).toEqual({ outreach_status: "replied", next_followup_at: null });
+
+    await deliverInboundEmail(mail([
+      "From: IACP office <office@iacp.example>", "To: owner@me3.app", "Subject: Invitation: ME3 call",
+      "Message-ID: <invite-1@iacp.example>", 'Content-Type: multipart/mixed; boundary="b1"', "",
+      "--b1", "Content-Type: text/plain", "", "Join us on Tuesday.",
+      "--b1", 'Content-Type: text/calendar; name="invite.ics"', 'Content-Disposition: attachment; filename="invite.ics"', "",
+      "BEGIN:VCALENDAR", "END:VCALENDAR", "--b1--",
+    ], "office@iacp.example"), env);
+    expect(prospect("office").outreach_status).toBe("booked");
+  });
+
   it("retains cleanup work when R2 deletion fails and reconciles it later", async () => {
     const { db, env, objects, state } = setup(); state.failBatch = state.failDelete = true;
     await deliverInboundEmail(message(), env, { managedDelivery });

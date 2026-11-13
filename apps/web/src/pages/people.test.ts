@@ -448,7 +448,7 @@ describe("People page", () => {
 
       button("Track as outreach").click();
       await flushPromises();
-      expect(api.put).toHaveBeenLastCalledWith("/contacts/c-zoe", { relationship: "prospect", outreachStatus: "sent" });
+      expect(api.put).toHaveBeenLastCalledWith("/contacts/c-zoe", { relationship: "prospect", outreachStatus: "new" });
       expect(document.querySelector(".prospect-panel")).not.toBeNull();
 
       button("Stop tracking").click();

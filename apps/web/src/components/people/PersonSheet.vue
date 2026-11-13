@@ -69,7 +69,7 @@ async function setTracking(on: boolean) {
     const updated = await contactsStore.updateContact(
       contact.id,
       on
-        ? { relationship: "prospect", outreachStatus: "sent" }
+        ? { relationship: "prospect", outreachStatus: "new" }
         : { relationship: "contact", outreachStatus: null, nextFollowupAt: null },
     );
     if (!updated) toastError(contactsStore.error || "Couldn't save that.");
