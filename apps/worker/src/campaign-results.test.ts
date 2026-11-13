@@ -88,6 +88,23 @@ describe("campaign results", () => {
       .toEqual(["eve@example.test", "new@example.test"]);
   });
 
+  it("follows a copy of a copy back, so the first send's readers don't get it twice", async () => {
+    const { env, raw } = sentCampaignFixture();
+    raw.exec(`
+      INSERT INTO email_campaign_audience_members(id, snapshot_id, subscriber_id, normalized_email, permission_method, permission_granted_at, permission_evidence_json)
+        VALUES ('member-6', 'snapshot-1', 6, 'new@example.test', 'double_opt_in', '2026-01-01', '{}');
+      INSERT INTO email_campaigns(id, site_id, name, status, sent_at, current_revision_id, audience_filter_json)
+        VALUES ('campaign-2', 'site-1', 'September', 'sent', '${SENT_AT}', 'revision-1', '{"kind":"all","notSentBy":"campaign-1"}');
+      INSERT INTO email_campaign_recipient_jobs(id, campaign_id, revision_id, audience_member_id, kind, recipient_ref, recipient_email, status, next_attempt_at)
+        VALUES ('job-again-5', 'campaign-2', 'revision-1', 'member-5', 'campaign', 'ref-again-5', 'eve@example.test', 'failed', '${SENT_AT}'),
+               ('job-again-6', 'campaign-2', 'revision-1', 'member-6', 'campaign', 'ref-again-6', 'new@example.test', 'delivered', '${SENT_AT}');
+    `);
+
+    const audience = await listSiteAudience(env, "site-1", { kind: "all", notSentBy: "campaign-2" });
+
+    expect(audience.map((subscriber) => subscriber.email)).toEqual(["eve@example.test"]);
+  });
+
   it("gives the morning briefing one line per recent campaign", async () => {
     const { env, raw } = sentCampaignFixture();
     addInbound(raw, "reply-1", "ann@example.test", "Re: September newsletter", "2026-10-20 10:00:00");

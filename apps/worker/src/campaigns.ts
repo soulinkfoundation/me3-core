@@ -79,7 +79,7 @@ type SiteRow = Pick<
   "id" | "username" | "custom_domain" | "custom_domain_status"
 > & { campaign_mailing_address?: string | null };
 
-/** `notSentBy` limits a send to subscribers an earlier campaign didn't reach: new subscribers, plus anyone it refused, failed or cancelled. */
+/** `notSentBy` limits a send to subscribers an earlier campaign (and the sends it was copied from) didn't reach: new subscribers, plus anyone they refused, failed or cancelled. */
 export type CampaignAudienceFilter =
   | { kind: "all"; notSentBy?: string | null }
   | { kind: "customers"; itemRef: string | null; notSentBy?: string | null };
@@ -602,7 +602,17 @@ export async function listSiteAudience(
   const notSentFilter = filter.notSentBy
     ? `AND LOWER(TRIM(subscribers.email)) NOT IN (
         SELECT LOWER(TRIM(recipient_email)) FROM email_campaign_recipient_jobs
-        WHERE campaign_id = ? AND kind = 'campaign'
+        -- A copy of a copy follows the chain back, so nobody an earlier send reached gets it twice.
+        WHERE campaign_id IN (
+          WITH RECURSIVE chain(id) AS (
+            SELECT ?
+            UNION
+            SELECT json_extract(campaign.audience_filter_json, '$.notSentBy')
+            FROM email_campaigns campaign JOIN chain ON campaign.id = chain.id
+            WHERE json_extract(campaign.audience_filter_json, '$.notSentBy') IS NOT NULL
+          )
+          SELECT id FROM chain
+        ) AND kind = 'campaign'
           -- People the earlier send never reached (refused, failed, cancelled) get it this time.
           AND status NOT IN ('rejected', 'failed', 'cancelled')
       )`
