@@ -205,6 +205,11 @@ describe("email conversations are one unit", () => {
     expect(await moveMailboxConversation(f.env, "owner", ROOT, "archive", "sent")).toMatchObject({ ok: true });
     expect(folders(f.raw)).toEqual({ "only-sent": "sent" });
     expect(await getMailboxConversationLocation(f.env, "owner", ROOT)).toBe("sent");
+    // Undo of "Trash" from the Sent view asks for the conversation back in Sent: that is a restore.
+    await moveMailboxConversation(f.env, "owner", ROOT, "trash", "sent");
+    expect(folders(f.raw)).toEqual({ "only-sent": "trash" });
+    expect(await moveMailboxConversation(f.env, "owner", ROOT, "sent", "trash")).toMatchObject({ ok: true });
+    expect(folders(f.raw)).toEqual({ "only-sent": "sent" });
     expect(await moveMailboxConversation(f.env, "owner", ROOT, "sent", "inbox")).toMatchObject({ status: 400 });
     expect(await moveMailboxConversation(f.env, "owner", ROOT, "drafts", "inbox")).toMatchObject({ status: 400 });
     expect(await moveMailboxConversation(f.env, "owner", "<missing@mail.test>", "archive", "inbox")).toMatchObject({ status: 404 });

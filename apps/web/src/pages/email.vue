@@ -83,6 +83,8 @@ type InboxMessage = {
   fromAddress: string | null;
   fromName: string | null;
   toAddress: string | null;
+  /** Core 0.1.268+: To of a received message, as its sender set it. */
+  toAddresses?: string[];
   ccAddresses?: string[];
   bccAddresses?: string[];
   /** Core 0.1.254+: every address an inbound message was sent to, most specific first. */
@@ -388,6 +390,11 @@ const expandedMessageIds = ref<Set<string>>(new Set());
 const replyOpen = ref(false);
 const replyTarget = ref<InboxMessage | null>(null);
 const replyForm = ref({ textBody: "" });
+/** Reply answers the sender; Reply all also copies everyone else the message was written to. */
+const replyMode = ref<"reply" | "all">("reply");
+/** Set after Undo: the reply's saved draft, so sending again updates it instead of adding another. */
+const replyDraftId = ref<string | null>(null);
+const SEND_UNDO_SECONDS = 10;
 const replyQuotedOpen = ref(false);
 const replyAttachments = ref<MailboxAttachment[]>([]);
 const replyUploading = ref(false);
@@ -1102,6 +1109,26 @@ function selectNextMessageAfterRemoval(
   mobileThreadOpen.value = false;
 }
 
+/**
+ * After the open conversation leaves the list (archive, trash, spam, move): on desktop the next
+ * older conversation opens (the one below), or the one above when it was the last; with nothing
+ * left the reading pane is empty. On a phone the list comes back.
+ */
+function advanceAfterConversationRemoval(
+  previousMessages: InboxMessage[],
+  removedIds: Set<string>,
+  openMessageId: string | null,
+) {
+  clearOpenConversation();
+  if (!openMessageId || !isDesktopMailLayout()) return;
+  const index = previousMessages.findIndex((message) => message.id === openMessageId);
+  if (index < 0) return;
+  const next =
+    previousMessages.slice(index + 1).find((message) => !removedIds.has(message.id)) ||
+    [...previousMessages].slice(0, index).reverse().find((message) => !removedIds.has(message.id));
+  if (next) void selectMessage(next.id);
+}
+
 async function undoMessageMoves(
   moves: Array<{ id: string; folder: NonNullable<InboxMessage["folder"]> }>,
 ) {
@@ -1151,6 +1178,7 @@ function showMoveToast(
 async function undoThreadMoves(
   moves: Array<{ id: string; folder: NonNullable<InboxMessage["folder"]> }>,
   fromFolder: NonNullable<InboxMessage["folder"]>,
+  reselectThreadId: string | null = null,
 ) {
   const results = await Promise.allSettled(
     moves.map(({ id, folder }) =>
@@ -1161,6 +1189,11 @@ async function undoThreadMoves(
     ),
   );
   await Promise.all([loadMessages(), loadFolderCounts()]);
+  // The conversation the owner had open comes back open.
+  const restored = reselectThreadId
+    ? threadSummaries.value.find((thread) => thread.id === reselectThreadId)
+    : null;
+  if (restored) void selectMessage(restored.latestMessageId);
   if (results.every((result) => result.status === "fulfilled")) {
     toastSuccess(moves.length === 1 ? "Move undone." : "Moves undone.");
   } else {
@@ -1171,6 +1204,7 @@ async function undoThreadMoves(
 function showThreadMoveToast(
   folder: MoveFolder,
   moves: Array<{ id: string; folder: NonNullable<InboxMessage["folder"]> }>,
+  reselectThreadId: string | null = null,
 ) {
   const count = moves.length;
   const label =
@@ -1188,7 +1222,7 @@ function showThreadMoveToast(
   toast.success(label, {
     action: {
       label: "Undo",
-      onClick: () => void undoThreadMoves(moves, folder),
+      onClick: () => void undoThreadMoves(moves, folder, reselectThreadId),
     },
   });
 }
@@ -2070,7 +2104,7 @@ async function moveConversation(
     total.value = Math.max(0, total.value - 1);
     clearSelectedMessages();
     if (wasOpen) {
-      clearOpenConversation();
+      advanceAfterConversationRemoval(previousMessages, new Set([message.id]), previousExpandedId);
     }
 
     try {
@@ -2091,7 +2125,7 @@ async function moveConversation(
       toast.error("This conversation could not be moved. The folder was refreshed.");
       return;
     }
-    showThreadMoveToast(folder, [{ id: thread.id, folder: previousFolder }]);
+    showThreadMoveToast(folder, [{ id: thread.id, folder: previousFolder }], wasOpen ? thread.id : null);
     await loadFolderCounts();
   } catch (err) {
     error.value =
@@ -2107,6 +2141,8 @@ async function moveSelectedThreads(folder: MoveFolder) {
   bulkActionPending.value = true;
   try {
     const previousFolder = emailTabConfig[activeTab.value as EmailTab].folderParam;
+    const previousMessages = messages.value;
+    const previousExpandedId = expandedId.value;
     const selectedLatestIds = new Set(selected.map((message) => message.id));
     const selectedThreadIds = new Set(
       selected
@@ -2122,7 +2158,7 @@ async function moveSelectedThreads(folder: MoveFolder) {
     total.value = Math.max(0, total.value - selectedThreadIds.size);
     clearSelectedMessages();
     if (selectedThreadId.value && selectedThreadIds.has(selectedThreadId.value)) {
-      clearOpenConversation();
+      advanceAfterConversationRemoval(previousMessages, selectedLatestIds, previousExpandedId);
     }
     const moves = [...selectedThreadIds].map((id) => ({
       id,
@@ -2338,7 +2374,7 @@ function removeConversationsFromList(selected: InboxMessage[]): () => void {
   if (!threadMode.value) selectNextMessageAfterRemoval(previousMessages, ids);
   clearSelectedMessages();
   syncSelectedMessages(messages.value);
-  if (openThreadRemoved) clearOpenConversation();
+  if (openThreadRemoved) advanceAfterConversationRemoval(previousMessages, ids, previousExpandedId);
   cacheActiveMessages();
   return () => {
     messages.value = previousMessages;
@@ -2782,6 +2818,27 @@ const replyRecipient = computed(() => {
   return getDisplayText(target.direction === "inbound" ? target.fromAddress : target.toAddress);
 });
 
+/** Everyone else a message was written to: its To and Cc without the owner's own addresses and the person being answered. */
+function replyAllCopies(target: InboxMessage | null | undefined): string[] {
+  if (!target) return [];
+  const answered = (target.direction === "inbound" ? target.fromAddress : target.toAddress)?.trim().toLowerCase() || "";
+  const own = new Set<string>([
+    ...ownMailboxAddresses.value,
+    ...sendAsAddresses.value,
+    ...outboundSenderOptions.value.map((option) => option.address.toLowerCase()),
+    (auth.user?.email || "").trim().toLowerCase(),
+  ]);
+  const copies = new Map<string, string>();
+  for (const address of [...(target.direction === "inbound" ? target.toAddresses || [] : []), ...(target.ccAddresses || [])]) {
+    const key = address.trim().toLowerCase();
+    if (!key || key === answered || own.has(key) || isInternalMailboxAddress(key)) continue;
+    copies.set(key, address.trim());
+  }
+  return [...copies.values()];
+}
+
+const replyCopies = computed(() => (replyMode.value === "all" ? replyAllCopies(replyTarget.value) : []));
+
 const replySubject = computed(() => {
   const subject = replyTarget.value ? getMessageSubject(replyTarget.value) : "";
   return /^re:\s*/i.test(subject) ? subject : `Re: ${subject.replace(/^fwd?:\s*/i, "")}`;
@@ -2802,11 +2859,13 @@ const replyQuoted = computed(() => {
   return `On ${when}, ${who} wrote:\n${getMessageTextBody(target).split("\n").map((line) => `> ${line}`).join("\n")}`;
 });
 
-function startInlineReply(message?: InboxMessage) {
+function startInlineReply(message?: InboxMessage, mode: "reply" | "all" = "reply") {
   const target = message || latestEmailMessage.value;
   if (!target) return;
   void Promise.all([loadProviderSettings(), loadContactsForCompose()]);
   replyTarget.value = target;
+  replyMode.value = mode === "all" && replyAllCopies(target).length ? "all" : "reply";
+  replyDraftId.value = null;
   replyForm.value = { textBody: "" };
   replyIncludeSignature.value = true;
   void loadMailSignature();
@@ -2844,19 +2903,45 @@ async function sendInlineReply(sendNow: boolean) {
   replyError.value = "";
   try {
     const fromAddress = replyFromAddressFor(target) || outboundSenderOptions.value[0]?.address || undefined;
-    const response = await api.post<{ draft: InboxMessage | null }>("/mailbox/drafts", {
+    const draftInput = {
       fromAddress,
       to: replyRecipient.value,
+      cc: replyCopies.value,
       subject: replySubject.value,
       textBody: `${withSignature(replyForm.value.textBody.trim(), replyIncludeSignature.value)}\n\n${replyQuoted.value}`,
       source: "user",
       replyToMessageId: target.id,
       uploadedAttachments: replyAttachments.value,
-    });
+    };
+    // After an Undo the reply already has a saved draft: update it rather than adding a second one.
+    const response = replyDraftId.value
+      ? await api.put<{ draft: InboxMessage | null }>(`/mailbox/drafts/${replyDraftId.value}`, draftInput)
+      : await api.post<{ draft: InboxMessage | null }>("/mailbox/drafts", draftInput);
     if (!response.draft) throw new Error("The draft could not be saved.");
-    if (sendNow) await api.post(`/mailbox/drafts/${response.draft.id}/approve`);
-    cancelInlineReply();
-    toastSuccess(sendNow ? "Reply sent." : "Draft saved.");
+    if (!sendNow) {
+      cancelInlineReply();
+      toastSuccess("Draft saved.");
+    } else {
+      // Core holds the send for a few seconds, so Undo works and closing the tab still sends.
+      const undo = { target, mode: replyMode.value, textBody: replyForm.value.textBody, attachments: replyAttachments.value, includeSignature: replyIncludeSignature.value, draftId: response.draft.id };
+      const sent = await api.post<{ held?: boolean }>(`/mailbox/drafts/${response.draft.id}/approve`, { holdSeconds: SEND_UNDO_SECONDS });
+      cancelInlineReply();
+      if (sent?.held) {
+        toast(`Sending in ${SEND_UNDO_SECONDS} seconds.`, {
+          duration: SEND_UNDO_SECONDS * 1000,
+          action: { label: "Undo", onClick: () => void undoInlineReplySend(undo) },
+        });
+        // Once it has gone, the conversation shows the sent reply.
+        window.setTimeout(() => {
+          if (selectedThreadId.value) void reloadOpenThread();
+          void loadFolderCounts();
+          void briefRef.value?.refresh();
+        }, (SEND_UNDO_SECONDS + 2) * 1000);
+      } else {
+        // An older Core sends at once.
+        toastSuccess("Reply sent.");
+      }
+    }
     await reloadOpenThread();
     void loadFolderCounts();
     void briefRef.value?.refresh();
@@ -2865,6 +2950,30 @@ async function sendInlineReply(sendNow: boolean) {
   } finally {
     replySending.value = false;
   }
+}
+
+/** Undo within the Send window: the send is cancelled and the reply opens again as the owner left it. */
+async function undoInlineReplySend(undo: {
+  target: InboxMessage;
+  mode: "reply" | "all";
+  textBody: string;
+  attachments: MailboxAttachment[];
+  includeSignature: boolean;
+  draftId: string;
+}) {
+  try {
+    await api.post(`/mailbox/drafts/${undo.draftId}/cancel-send`);
+  } catch (err) {
+    toastFromUnknown(err, "That email had already been sent");
+    return;
+  }
+  startInlineReply(undo.target, undo.mode);
+  replyForm.value = { textBody: undo.textBody };
+  replyAttachments.value = undo.attachments;
+  replyIncludeSignature.value = undo.includeSignature;
+  replyDraftId.value = undo.draftId;
+  toastSuccess("Send undone.");
+  void reloadOpenThread();
 }
 
 async function uploadReplyAttachments(event: Event) {
@@ -4485,6 +4594,7 @@ onBeforeUnmount(() => {
                       <section v-if="replyOpen && replyTarget" class="inline-reply" aria-label="Reply">
                         <div class="inline-reply__meta">
                           <span><b>To:</b> {{ replyRecipient }}</span>
+                          <span v-if="replyCopies.length"><b>Cc:</b> {{ replyCopies.join(", ") }}</span>
                           <span><b>Subject:</b> {{ replySubject }}</span>
                         </div>
                         <div ref="replyEditorWrapRef" class="inline-reply__body" @keydown="handleReplyKeydown">
@@ -4540,6 +4650,10 @@ onBeforeUnmount(() => {
                         <button type="button" class="mail-quiet" @click="startInlineReply()">
                           <UiIcon name="Reply" :size="14" aria-hidden="true" />
                           Reply
+                        </button>
+                        <button v-if="replyAllCopies(latestEmailMessage).length" type="button" class="mail-quiet" @click="startInlineReply(undefined, 'all')">
+                          <UiIcon name="Reply" :size="14" aria-hidden="true" />
+                          Reply all
                         </button>
                         <button type="button" class="mail-quiet" @click="openComposeModal(latestEmailMessage, 'forward')">
                           <UiIcon name="Forward" :size="14" aria-hidden="true" />

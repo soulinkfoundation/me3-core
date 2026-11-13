@@ -105,10 +105,13 @@ export async function moveMailboxConversation(
   fromFolderInput?: unknown,
   now = new Date(),
 ): Promise<{ ok: true; id: string; folder: string; fromFolder: string | null } | ServiceError> {
-  const folder = normalizeFolder(folderInput, CONVERSATION_TARGETS);
-  if (!folder) return { error: "Invalid folder", status: 400 };
   const fromFolder = fromFolderInput === undefined || fromFolderInput === null ? null : normalizeFolder(fromFolderInput, SOURCE_FOLDERS);
   if (fromFolderInput !== undefined && fromFolderInput !== null && !fromFolder) return { error: "Invalid source folder", status: 400 };
+  // Sent is a view, not a place to move to. The one exception is undoing "Trash" from the Sent
+  // view: that is a restore, so sent mail returns to Sent and received mail to Inbox.
+  const requested = normalizeFolder(folderInput, SOURCE_FOLDERS);
+  const folder = requested === "sent" && fromFolder === "trash" ? "inbox" : normalizeFolder(folderInput, CONVERSATION_TARGETS);
+  if (!folder) return { error: "Invalid folder", status: 400 };
 
   const exists = await env.DB.prepare(
     `SELECT 1 AS found FROM mailbox_messages WHERE mailbox_id IN (${OWNER_MAILBOXES}) AND ${KEY} = ? AND ${REAL} LIMIT 1`,
