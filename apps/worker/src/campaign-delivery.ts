@@ -831,7 +831,7 @@ async function dispatchCampaignJob(
             ? {
                 status: "marketable",
                 method: job.permission_method,
-                grantedAt: job.permission_granted_at,
+                grantedAt: isoTimestamp(job.permission_granted_at),
                 evidenceRef: job.audience_member_id,
               }
             : null,
@@ -1197,8 +1197,15 @@ const STALE_ACCEPTED_SQL = `status IN ('accepted', 'delayed')
   AND datetime(COALESCE(accepted_at, updated_at)) < datetime('now', '-1 hour')`;
 const UNKNOWN_NOT_FOUND_MINUTES = 15;
 
+// SQLite's CURRENT_TIMESTAMP stores "YYYY-MM-DD HH:MM:SS" in UTC; ME3 Cloud only takes ISO 8601.
+function isoTimestamp(timestamp: string) {
+  if (timestamp.includes("T")) return timestamp;
+  const time = Date.parse(`${timestamp.replace(" ", "T")}Z`);
+  return Number.isFinite(time) ? new Date(time).toISOString() : timestamp;
+}
+
 function isOlderThan(timestamp: string, minutes: number) {
-  const time = Date.parse(timestamp.includes("T") ? timestamp : `${timestamp.replace(" ", "T")}Z`);
+  const time = Date.parse(isoTimestamp(timestamp));
   return Number.isFinite(time) && Date.now() - time > minutes * 60_000;
 }
 

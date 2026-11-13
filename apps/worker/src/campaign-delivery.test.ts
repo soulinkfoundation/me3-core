@@ -444,6 +444,13 @@ describe("campaign delivery lifecycle", () => {
     await expect(getCampaign(env, "owner", campaignId)).resolves.toMatchObject({ status: "cancelled" });
   });
 
+  it("sends permission dates stored by SQLite as ISO timestamps", async () => {
+    await startCampaignDelivery(env, "owner", campaignId, await approved(), fetcher);
+    database.exec("UPDATE email_campaign_audience_members SET permission_granted_at = '2026-08-26 20:29:25'");
+    await dispatchDueCampaignJobs(env, fetcher);
+    expect(requests.at(-1)?.recipient.permission?.grantedAt).toBe("2026-08-26T20:29:25.000Z");
+  });
+
   it("preserves delivery confirmation that arrives before the send response", async () => {
     const earlyCallbackFetcher: typeof fetch = async (input, init) => {
       const response = await fetcher(input, init);
