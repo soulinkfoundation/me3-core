@@ -20,6 +20,12 @@ const MANAGED_MODELS = [
   "anthropic/claude-sonnet-5.5",
   "anthropic/claude-haiku-5.5",
   "zai-org/glm-5.3-flash",
+  "anthropic/claude-fable-5.2",
+  "openai/gpt-6.1-terra",
+  "google/gemini-4-carbon",
+  "google/gemini-3.8-flash",
+  "xai/grok-4.7",
+  "deepseek-ai/deepseek-v4.1-flash-1017",
 ] as const;
 // Used once the monthly allowance is spent. The 15 Oct 2026 fallback eval had
 // GLM 4.7 Flash create an unrequested calendar event; Haiku made no unsafe writes.
@@ -129,7 +135,7 @@ async function fetchManagedAiBillingSettings(
       return unavailableSettings(true, apiError(payload));
     }
     await cacheManagedAiBillingPolicy(env, payload);
-    return payload;
+    return withBillableModels(payload);
   } catch (error) {
     console.error("Managed AI billing settings request failed", error);
     return unavailableSettings(true, "Managed billing is temporarily unavailable");
@@ -170,7 +176,7 @@ export async function updateManagedAiBillingSettings(
     throw new ManagedAiBillingInputError("Managed billing returned an invalid response", 502);
   }
   await cacheManagedAiBillingPolicy(env, payload);
-  return payload;
+  return withBillableModels(payload);
 }
 
 /** Starts a Stripe card setup for App Store subscribers and returns its URL. */
@@ -291,7 +297,7 @@ export async function syncManagedAiUsage(env: Env): Promise<ManagedAiBillingSett
     }
     if (isManagedAiBillingSettings(settings)) {
       await cacheManagedAiBillingPolicy(env, settings);
-      return settings;
+      return withBillableModels(settings);
     }
   } catch (error) {
     console.error("Managed AI usage sync failed", error);
@@ -479,6 +485,15 @@ export function readManagedAllowanceNotice(value: unknown): ManagedAllowanceNoti
   const kind = action?.kind;
   if (root.action !== null && !(action && (kind === "enable_overages" || kind === "subscribe") && typeof action.label === "string")) return null;
   return { kind: "allowance_used", title: root.title, message: root.message, resetsOn: root.resetsOn, action: action ? { kind: kind as "enable_overages" | "subscribe", label: action.label as string } : null };
+}
+
+// ME3 Cloud may offer models newer than this Core release. Usage of a model
+// missing from MANAGED_BILLABLE_TEXT_MODELS is never reported, so it is hidden
+// from the picker and refused at run time until Core is updated.
+function withBillableModels(settings: ManagedAiBillingSettings): ManagedAiBillingSettings {
+  const models = settings.models.filter((model) =>
+    MANAGED_BILLABLE_TEXT_MODELS.includes(model.id.trim().toLowerCase().replace(/^@cf\//, "")));
+  return models.length === settings.models.length ? settings : { ...settings, models };
 }
 
 function isManagedAiBillingSettings(value: unknown): value is ManagedAiBillingSettings {

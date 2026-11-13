@@ -51,6 +51,17 @@ const PRICING: Record<string, {input:number;output:number;cachedInput?:number;ca
   "@cf/deepseek-ai/deepseek-v4-flash-0731": {input:0.44,output:1.32,cachedInput:0.014},
   // https://developers.cloudflare.com/workers-ai/models/deepseek-v4.1-flash-1017/
   "@cf/deepseek-ai/deepseek-v4.1-flash-1017": {input:0.3,output:1.2,cachedInput:0.006},
+  // https://developers.cloudflare.com/ai/models/anthropic/claude-fable-5.2/
+  "anthropic/claude-fable-5.2": {input:8,output:40,cachedInput:0.2,cacheWriteInput:10},
+  // Short-context rates; ME3 keeps history well under the long-context tiers.
+  // https://developers.cloudflare.com/ai/models/openai/gpt-6.1-terra/
+  "openai/gpt-6.1-terra": {input:1,output:5,cachedInput:0.05,cacheWriteInput:1.25},
+  // https://developers.cloudflare.com/ai/models/google/gemini-4-carbon/
+  "google/gemini-4-carbon": {input:2,output:10,cachedInput:0.1},
+  // https://developers.cloudflare.com/ai/models/google/gemini-3.8-flash/
+  "google/gemini-3.8-flash": {input:0.75,output:3.75,cachedInput:0.075},
+  // https://developers.cloudflare.com/ai/models/xai/grok-4.7/
+  "xai/grok-4.7": {input:2,output:6,cachedInput:0.5},
 };
 
 /** Catalog price per million tokens, or null when the model has no known price. */
@@ -65,6 +76,7 @@ const REASONING_EFFORT: Array<[RegExp, string]> = [
   // Claude 5.5 thinks adaptively at "high" (Sonnet) or "medium" (Opus) by default.
   // At "low" the 20 Oct 2026 effort A/B kept pass rates and cut tool-turn p50 15-25%.
   [/^anthropic\/claude-(?:sonnet|opus)-5\.5/, "low"],
+  [/^xai\/grok-4/, "low"],
 ];
 // These reject forced tool_choice ("tool"/"any") with a 400; callers must
 // accept prose beside the one call they asked for.
@@ -98,7 +110,8 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
   // OpenAI reasoning models reject function tools with reasoning_effort on
   // /chat/completions (Cloudflare code 7003), so tool steps use Responses.
   const reasoningOpenAi = /^openai\/(?:gpt-[5-9]|o\d)/.test(model);
-  if (/^(openai|anthropic)\//.test(model) && !options.gatewayId) throw new Error("External models require the installation's AI Gateway");
+  // Every model outside Workers AI (@cf/) is a third-party provider reached through the gateway.
+  if (!model.startsWith("@cf/") && !options.gatewayId) throw new Error("External models require the installation's AI Gateway");
   return {
     id: model,
     async step({messages,tools,signal,onDelta,toolChoice}): Promise<AgentModelResponse> {

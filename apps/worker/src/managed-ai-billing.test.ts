@@ -3,7 +3,7 @@ import {
   estimateManagedAiUsage,
   estimateManagedKimiK3Usage,
 } from "../../../packages/agent-chat/src";
-import { syncManagedAiUsage } from "./managed-ai-billing";
+import { getManagedAiBillingSettings, syncManagedAiUsage } from "./managed-ai-billing";
 import type { Env } from "./types";
 
 afterEach(() => {
@@ -201,6 +201,50 @@ describe("managed Everyday AI billing", () => {
         inputTokens: 7,
         outputTokens: 1_800,
       }),
+    ]);
+  });
+});
+
+describe("managed model picker", () => {
+  it("offers only the models this Core release can bill", async () => {
+    const option = (id: string) => ({ id, label: id, description: "", recommended: false });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      available: true,
+      managed: true,
+      currency: "usd",
+      billingSource: "internal",
+      defaultModel: "anthropic/claude-sonnet-5.5",
+      models: ["anthropic/claude-sonnet-5.5", "google/gemini-4-carbon", "xai/grok-4.7", "deepseek-ai/deepseek-v4.1-flash-1017", "acme/future-model-9"].map(option),
+      eligible: false,
+      ineligibleReason: null,
+      overagesEnabled: false,
+      includedMonthlyCents: 1000,
+      monthlyMaximumCents: 1000,
+      minimumMonthlyMaximumCents: 1100,
+      maximumMonthlyMaximumCents: 50_000,
+      currentMonth: new Date().toISOString().slice(0, 7),
+      currentMonthUsageMicrousd: 0,
+      currentMonthBillableMicrousd: 0,
+      effectiveMaximumCents: 1000,
+      fallbackActive: false,
+    })));
+    const env = {
+      ME3_DEPLOYMENT_MODE: "managed",
+      ME3_COMMERCE_BRIDGE_ORIGIN: "https://api.me3.app",
+      ME3_COMMERCE_BRIDGE_TOKEN: "bridge-token",
+      DB: {
+        prepare() {
+          return { bind() { return { all: async () => ({ results: [] }), first: async () => null, run: async () => ({ success: true }) }; } };
+        },
+      },
+    } as unknown as Env;
+
+    const settings = await getManagedAiBillingSettings(env, { syncUsage: false });
+    expect(settings.models.map((model) => model.id)).toEqual([
+      "anthropic/claude-sonnet-5.5",
+      "google/gemini-4-carbon",
+      "xai/grok-4.7",
+      "deepseek-ai/deepseek-v4.1-flash-1017",
     ]);
   });
 });

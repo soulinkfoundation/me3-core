@@ -30,10 +30,16 @@ export const DEFAULT_WORKERS_AI_IMAGE_GENERATION_MODEL =
 export const DEFAULT_OPENAI_IMAGE_GENERATION_MODEL = "gpt-image-2.5-sunburst";
 
 const AI_MODEL_CAPABILITY_RECORDS: readonly AiModelCapabilityRecord[] = [
-  ...["openai/gpt-6.1-sol", "openai/gpt-6-astra", "anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "@cf/zai-org/glm-5.3-flash"].map(model => ({
+  ...["openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "openai/gpt-6-astra", "anthropic/claude-fable-5.2", "anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "xai/grok-4.7", "@cf/zai-org/glm-5.3-flash"].map(model => ({
     providerId: "workers-ai" as const,
     model,
     capabilities: ["text", "image_input", "long-context", "reasoning", "tool-use"] as AiAgentModelCapability[],
+  })),
+  // Image input through the gateway's Chat Completions shape is not verified for Gemini yet.
+  ...["google/gemini-4-carbon", "google/gemini-3.8-flash"].map(model => ({
+    providerId: "workers-ai" as const,
+    model,
+    capabilities: ["text", "long-context", "reasoning", "tool-use"] as AiAgentModelCapability[],
   })),
   {
     providerId: "anthropic",
