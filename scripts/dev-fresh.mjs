@@ -5,6 +5,7 @@
 //   pnpm dev:fresh -- --cloud=none skip ME3 Cloud; password setup only
 //   pnpm dev:fresh -- --no-standin start only the fresh owner
 //   pnpm dev:fresh -- --offset=100 a second install beside another (ports +100, own state)
+//   pnpm dev:fresh -- --var=ME3_SOUP_NEWS_FIXTURE:1  pass a variable to the owner's worker
 //
 // State lives in apps/worker/.wrangler/fresh, separate from `pnpm dev` state.
 import { spawn } from "node:child_process";
@@ -25,6 +26,10 @@ const CLOUD_ORIGINS = {
 const args = process.argv.slice(2);
 const cloudArg = args.find((arg) => arg.startsWith("--cloud="))?.split("=")[1] || "sandbox";
 const withStandin = !args.includes("--no-standin");
+const extraVars = Object.fromEntries(args.filter((arg) => arg.startsWith("--var=")).map((arg) => {
+  const [key, ...value] = arg.slice("--var=".length).split(":");
+  return [key, value.join(":")];
+}));
 if (!(cloudArg in CLOUD_ORIGINS)) {
   console.error(`Unknown --cloud=${cloudArg}. Use sandbox or none.`);
   process.exit(1);
@@ -98,6 +103,7 @@ async function main() {
   // The owner's people search also reads the stand-in's /me.json (local-only directory).
   startWorker(owner, {
     ME3_CLOUD_ORIGIN: cloudOrigin,
+    ...extraVars,
     ...(withStandin ? { ME3_LOCAL_DIRECTORY_ORIGINS: `http://127.0.0.1:${standin.workerPort}` } : {}),
   });
   if (withStandin) startWorker(standin, { ME3_CLOUD_ORIGIN: CLOUD_ORIGINS.none, ME3_SITE_USERNAME: STANDIN.username });

@@ -16,6 +16,9 @@ const devPort = Number(process.env.VITE_PORT || 4000)
 const localApiOrigin = `http://127.0.0.1:${Number(process.env.ME3_DEV_LOCAL_API_PORT || 8787)}`
 
 export default defineConfig({
+  // Each parallel install (pnpm dev:fresh -- --offset=N) keeps its own dependency cache; sharing one makes
+  // the dev servers re-optimize over each other and serve 504 Outdated Optimize Dep.
+  ...(devPort === 4000 ? {} : { cacheDir: `node_modules/.vite-${devPort}` }),
   plugins: [
     VueRouter({
       routesFolder: 'src/pages',
