@@ -271,7 +271,7 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
 .notes-tree__row {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   border-radius: var(--ui-radius-sm, 8px);
   color: var(--ui-text, var(--color-text));
@@ -338,10 +338,15 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
   color: var(--ui-text-muted, var(--color-text-muted));
 }
 
+/* Sits over the word count on hover, so it never narrows the row. */
 .notes-tree__row-actions {
-  position: relative;
+  position: absolute;
+  top: 4px;
+  right: 4px;
   display: flex;
   justify-content: center;
+  border-radius: var(--ui-radius-sm, 8px);
+  background: var(--ui-surface-muted, var(--color-surface-muted));
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
@@ -349,7 +354,6 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
 
 .notes-tree__row:hover .notes-tree__row-actions,
 .notes-tree__row:focus-within .notes-tree__row-actions,
-.notes-tree__row.is-active .notes-tree__row-actions,
 .notes-tree__row.is-menu-open .notes-tree__row-actions {
   opacity: 1;
   pointer-events: auto;
@@ -426,6 +430,17 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
   .notes-tree__row-actions {
     opacity: 1;
     pointer-events: auto;
+  }
+
+  .notes-tree__row {
+    grid-template-columns: minmax(0, 1fr) 36px;
+  }
+
+  .notes-tree__row-actions {
+    position: relative;
+    top: auto;
+    right: auto;
+    background: transparent;
   }
 
   .notes-tree__head .notes-tree__count {

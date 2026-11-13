@@ -21,13 +21,10 @@ import { findInlineTextMatch } from "../utils/inlineJournalChips";
 import { parseJournalReminderCapture } from "../utils/journalReminderCapture";
 import { journalBodyForEditor } from "../utils/journalContent";
 import { writtenGratitude } from "../utils/gratitude";
-import JournalDayPlan from "../components/today/JournalDayPlan.vue";
 import JournalNoteMoveMenu from "../components/journal/JournalNoteMoveMenu.vue";
 import JournalNotesTree from "../components/journal/JournalNotesTree.vue";
 import type { NoteFolder, NotePlacement } from "../utils/journalNotes";
-import { useAppToast } from "../composables/useAppToast";
-import { useTodayPlan } from "../composables/useTodayPlan";
-import { plainPreview, type HomeTask } from "../utils/homeSummary";
+import { plainPreview } from "../utils/homeSummary";
 
 definePage({
   meta: {
@@ -103,89 +100,32 @@ type TiptapEditorExpose = {
 
 const route = useRoute();
 const router = useRouter();
-// Today's page shows the focus goal and today's tasks above your notes, like the Home Today card.
-const plan = useTodayPlan();
-const planReady = ref(false);
-const { toastFromUnknown: toastPlanError } = useAppToast();
-async function loadPlan() {
-  try { await Promise.all([plan.loadTasks(), plan.loadGoals()]); planReady.value = true; }
-  catch { planReady.value = false; }
-}
-async function completePlanTask(task: HomeTask) {
-  try { await plan.complete(task); } catch (error) { toastPlanError(error, "Couldn't complete task"); }
-}
-async function focusPlanGoal(id: string) {
-  try { await plan.makeFocus(id); } catch (error) { toastPlanError(error, "Couldn't change your focus goal"); }
-}
-async function setPlanGoalProgress(id: string, progress: number) {
-  try { await plan.changeGoal(id, goal => { goal.progress = progress; }); } catch (error) { toastPlanError(error, "Couldn't save your progress"); }
-}
-// Today's page: the focus goal and tasks sit between the title and your notes.
-const showsDayPlan = computed(() => !currentArticle.value && currentDateIsToday.value && planReady.value);
-const dayTitle = computed(() => new Date(`${selectedDate.value}T12:00:00`).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" }));
-// Task moves text out of your notes and into today's tasks, so nothing is written twice. Undo puts it back.
-const movedTask = ref<{ id: string; previous: string } | null>(null);
-let movedTimer: ReturnType<typeof setTimeout> | undefined;
-function taskTitleFrom(text: string) {
-  return text.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s*)?(?:\[[ xX]\]\s*)?/gm, "").replace(/\s+/g, " ").trim().slice(0, 180);
-}
-async function moveToTask() {
-  const editor = editorRef.value?.editor;
-  if (!editor) return;
-  hideSelectionToolbar();
-  let { from, to } = editor.state.selection;
-  // Nothing selected: the task button takes the whole line the cursor is on.
-  if (from === to) { const $from = editor.state.selection.$from; from = $from.start(); to = $from.end(); }
-  const title = taskTitleFrom(editor.state.doc.textBetween(from, to, " "));
-  // An empty line just adds a task: type it in Today's list, or name it here on other pages.
-  if (!title) {
-    if (showsDayPlan.value) { addingTask.value = true; return; }
-    const typed = window.prompt("New task")?.trim();
-    if (typed) await addPlanTask(typed);
-    return;
-  }
-  const previous = description.value;
-  editor.chain().focus().deleteRange({ from, to }).run();
-  try {
-    const result = await api.post<{ task: HomeTask }>("/mission-control/tasks", { title, status: "in_progress" });
-    plan.tasks.value = [...plan.tasks.value, result.task];
-    clearTimeout(movedTimer);
-    movedTask.value = { id: result.task.id, previous };
-    movedTimer = setTimeout(() => { movedTask.value = null; }, 5000);
-  } catch (cause) {
-    description.value = previous;
-    toastPlanError(cause, "Couldn't create the task");
-  }
-}
-const addingTask = ref(false);
-async function addPlanTask(title: string) {
-  addingTask.value = false;
-  try {
-    const result = await api.post<{ task: HomeTask }>("/mission-control/tasks", { title: title.slice(0, 180), status: "in_progress" });
-    plan.tasks.value = [...plan.tasks.value, result.task];
-  } catch (cause) { toastPlanError(cause, "Couldn't create the task"); }
-}
-async function undoMove() {
-  const moved = movedTask.value; if (!moved) return;
-  movedTask.value = null; clearTimeout(movedTimer);
-  description.value = moved.previous;
-  plan.tasks.value = plan.tasks.value.filter(task => task.id !== moved.id);
-  try { await api.delete(`/mission-control/tasks/${encodeURIComponent(moved.id)}`); } catch (cause) { toastPlanError(cause, "Couldn't remove the task"); }
-}
 const auth = useAuthStore();
 const selectedDate = ref(normalizeLocalDateInput(rawDateQuery(route.query.date)) || todayKey());
+const dayTitle = computed(() => new Date(`${selectedDate.value}T12:00:00`).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" }));
 const datePickerOpen = ref(false);
 const datePickerMonth = ref(monthKey(selectedDate.value));
 const title = ref("");
 const description = ref("");
 const loadedEntry = ref<JournalEntry | null>(null);
 const archiveEntries = ref<JournalArchiveEntry[]>([]);
-const archiveOpen = ref(false);
-// At desktop widths the library is always visible beside a page-centred editor (see the CSS breakpoint).
+// The Daily and Notes buttons in the top bar show that list; pressing the shown one hides it.
+// Desktop starts with the list beside a page-centred editor and remembers if you hide it.
+// On phones the list takes the screen, and picking something returns to the editor.
 const WIDE_SCREEN_QUERY = "(min-width: 1180px)";
-const wideScreen = ref(typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(WIDE_SCREEN_QUERY).matches);
-const libraryVisible = computed(() => wideScreen.value || archiveOpen.value);
-const archiveMobileDetailOpen = ref(false);
+const NARROW_SCREEN_QUERY = "(max-width: 900px)";
+const LIBRARY_HIDDEN_KEY = "me3.journal.library.hidden";
+function mediaMatches(query: string) {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches;
+}
+function libraryHiddenPreference() {
+  try { return window.localStorage.getItem(LIBRARY_HIDDEN_KEY) === "1"; } catch { return false; }
+}
+const wideScreen = ref(mediaMatches(WIDE_SCREEN_QUERY));
+const narrowScreen = ref(mediaMatches(NARROW_SCREEN_QUERY));
+const libraryOpen = ref(wideScreen.value && !libraryHiddenPreference());
+const monthToggles = ref<Record<string, boolean>>({});
+const keyboardInset = ref(0);
 const archiveLoaded = ref(false);
 const libraryTab = ref<"daily" | "articles">("daily");
 const articles = ref<Article[]>([]);
@@ -242,7 +182,7 @@ const currentDateIsToday = computed(() => selectedDate.value === todayKey());
 const selectedDateLabel = computed(() =>
   currentDateIsToday.value
     ? "Today"
-    : formatDaySwitcherDate(selectedDate.value),
+    : formatDaySwitcherDate(selectedDate.value, narrowScreen.value ? "short" : "long"),
 );
 const saveStatusText = computed(() => {
   if (saveState.value === "saving") return "Saving";
@@ -257,6 +197,24 @@ const wordCount = computed(() => htmlToPlainText(description.value).split(/\s+/)
 const nonEmptyArchiveEntries = computed(() =>
   archiveEntries.value.filter(entryHasContent),
 );
+// The newest month and the month you are reading start open; older months stay folded until opened.
+const archiveMonths = computed(() => {
+  const months: { key: string; label: string; open: boolean; entries: JournalArchiveEntry[] }[] = [];
+  for (const entry of nonEmptyArchiveEntries.value) {
+    const key = monthKey(entry.date);
+    let month = months[months.length - 1];
+    if (!month || month.key !== key) {
+      const selected = !currentArticle.value && key === monthKey(selectedDate.value);
+      month = { key, label: formatArchiveMonth(entry.date), open: monthToggles.value[key] ?? (months.length === 0 || selected), entries: [] };
+      months.push(month);
+    }
+    month.entries.push(entry);
+  }
+  return months;
+});
+function toggleMonth(key: string, open: boolean) {
+  monthToggles.value = { ...monthToggles.value, [key]: !open };
+}
 const journalEntryDates = computed(() =>
   nonEmptyArchiveEntries.value.map((entry) => entry.date),
 );
@@ -370,13 +328,19 @@ function monthKey(dateKey: string): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function formatDaySwitcherDate(value: string): string {
+function formatDaySwitcherDate(value: string, month: "short" | "long" = "long"): string {
   const date = new Date(`${value}T12:00:00`);
   return new Intl.DateTimeFormat("en-GB", {
     weekday: "short",
     day: "numeric",
-    month: "long",
+    month,
   }).format(date);
+}
+
+// Rows sit under their month, so a row only needs its day: "Thu 12".
+function formatArchiveDay(value: string): string {
+  if (value === todayKey()) return "Today";
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric" }).format(new Date(`${value}T12:00:00`));
 }
 
 function formatArchiveDate(value: string): string {
@@ -526,7 +490,6 @@ async function performSave() {
     updateArchiveEntry(response.entry);
     void loadEntryLinks(response.entry.id);
     saveState.value = "saved";
-    if (archiveOpen.value) void loadArchive();
   } catch (saveError) {
     saveState.value = "error";
     error.value =
@@ -924,12 +887,7 @@ async function setDate(date: string) {
 async function selectArchiveEntry(entry: JournalArchiveEntry) {
   closeArchiveActions();
   await setDate(entry.date);
-  archiveMobileDetailOpen.value = true;
-}
-
-function showArchiveList() {
-  closeArchiveActions();
-  archiveMobileDetailOpen.value = false;
+  if (narrowScreen.value) libraryOpen.value = false;
 }
 
 function clearCurrentEntryForDeletedDate(date: string) {
@@ -962,9 +920,6 @@ async function deleteArchiveEntry(entry: JournalArchiveEntry) {
       (candidate) => candidate.date !== entry.date,
     );
     clearCurrentEntryForDeletedDate(entry.date);
-    if (archiveMobileDetailOpen.value && selectedDate.value === entry.date) {
-      archiveMobileDetailOpen.value = false;
-    }
   } catch (deleteError) {
     error.value =
       deleteError instanceof Error
@@ -987,16 +942,27 @@ function toggleDatePicker() {
   }
 }
 
-async function toggleArchive() {
-  datePickerOpen.value = false;
-  archiveMobileDetailOpen.value = false;
-  closeArchiveActions();
-  if (wideScreen.value) return;
-  archiveOpen.value = !archiveOpen.value;
-  if (archiveOpen.value) {
-    await flushPendingSave();
-    await loadLibrary();
+function setLibraryOpen(open: boolean) {
+  libraryOpen.value = open;
+  // Phones always start on the editor, so only larger screens remember the choice.
+  if (!narrowScreen.value) {
+    try { window.localStorage.setItem(LIBRARY_HIDDEN_KEY, open ? "0" : "1"); } catch { /* per-browser convenience only */ }
   }
+}
+
+async function pickLibraryTab(tab: "daily" | "articles") {
+  datePickerOpen.value = false;
+  closeArchiveActions();
+  if (libraryOpen.value && libraryTab.value === tab) {
+    setLibraryOpen(false);
+    return;
+  }
+  libraryTab.value = tab;
+  if (!libraryOpen.value) {
+    setLibraryOpen(true);
+    await flushPendingSave();
+  }
+  await (tab === "articles" ? loadArticles() : loadArchive());
 }
 
 async function loadLibrary() {
@@ -1005,12 +971,18 @@ async function loadLibrary() {
 }
 
 let wideScreenMedia: MediaQueryList | null = null;
-function handleWideScreenChange(event: MediaQueryListEvent) {
-  wideScreen.value = event.matches;
-  if (event.matches) {
-    archiveMobileDetailOpen.value = false;
-    void loadLibrary();
-  }
+let narrowScreenMedia: MediaQueryList | null = null;
+function handleScreenChange() {
+  wideScreen.value = Boolean(wideScreenMedia?.matches);
+  narrowScreen.value = Boolean(narrowScreenMedia?.matches);
+  libraryOpen.value = wideScreen.value && !libraryHiddenPreference();
+  if (libraryOpen.value) void loadLibrary();
+}
+
+// Keeps the dictate button above the on-screen keyboard.
+function updateKeyboardInset() {
+  const viewport = window.visualViewport;
+  keyboardInset.value = viewport ? Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop)) : 0;
 }
 
 async function loadArticles() {
@@ -1040,7 +1012,7 @@ async function openArticle(id: string) {
     description.value = journalBodyForEditor(response.article.body, response.article.bodyFormat);
     entryLinks.value = [];
     await nextTick();
-    archiveMobileDetailOpen.value = true;
+    if (narrowScreen.value) libraryOpen.value = false;
     saveState.value = "saved";
   } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not load note."; }
   finally { hydratingEntry.value = false; if (token === currentLoadToken) loading.value = false; }
@@ -1139,8 +1111,7 @@ function handleWindowKeydown(event: KeyboardEvent) {
       return;
     }
     datePickerOpen.value = false;
-    archiveOpen.value = false;
-    archiveMobileDetailOpen.value = false;
+    if (narrowScreen.value) libraryOpen.value = false;
   }
 }
 
@@ -1156,7 +1127,7 @@ watch(() => [route.query.tab, route.query.note, route.query.new], async ([tab, n
   const { tab: _tab, note: _note, new: _new, ...query } = route.query;
   await router.replace({ query });
   libraryTab.value = "articles";
-  if (!wideScreen.value) archiveOpen.value = true;
+  libraryOpen.value = true;
   await loadArticles();
   if (typeof note === "string") await openArticle(note);
   else if (fresh === "note") await createArticle();
@@ -1164,13 +1135,15 @@ watch(() => [route.query.tab, route.query.note, route.query.new], async ([tab, n
 
 onMounted(() => {
   void loadDay(selectedDate.value);
-  void loadPlan();
   if (typeof window.matchMedia === "function") {
     wideScreenMedia = window.matchMedia(WIDE_SCREEN_QUERY);
-    wideScreen.value = wideScreenMedia.matches;
-    wideScreenMedia.addEventListener("change", handleWideScreenChange);
+    narrowScreenMedia = window.matchMedia(NARROW_SCREEN_QUERY);
+    wideScreenMedia.addEventListener("change", handleScreenChange);
+    narrowScreenMedia.addEventListener("change", handleScreenChange);
   }
-  if (wideScreen.value) void loadLibrary();
+  if (libraryOpen.value) void loadLibrary();
+  window.visualViewport?.addEventListener("resize", updateKeyboardInset);
+  window.visualViewport?.addEventListener("scroll", updateKeyboardInset);
   window.addEventListener("click", handleWindowClick);
   window.addEventListener("keydown", handleWindowKeydown);
   document.addEventListener("selectionchange", updateSelectionToolbar);
@@ -1184,7 +1157,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearSaveTimer();
-  wideScreenMedia?.removeEventListener("change", handleWideScreenChange);
+  wideScreenMedia?.removeEventListener("change", handleScreenChange);
+  narrowScreenMedia?.removeEventListener("change", handleScreenChange);
+  window.visualViewport?.removeEventListener("resize", updateKeyboardInset);
+  window.visualViewport?.removeEventListener("scroll", updateKeyboardInset);
   if (inlineChipFrame !== null) {
     window.cancelAnimationFrame(inlineChipFrame);
   }
@@ -1204,7 +1180,10 @@ onBeforeUnmount(() => {
   <main class="journal">
     <Teleport to="#app-page-controls" defer>
     <header class="journal__topbar">
-      <div class="journal__topbar-spacer" />
+      <div class="journal__tabs" role="group" aria-label="Writing library">
+        <button type="button" :aria-pressed="libraryOpen && libraryTab === 'daily' ? 'true' : 'false'" :title="libraryOpen && libraryTab === 'daily' ? 'Hide daily pages' : 'Show daily pages'" @click="pickLibraryTab('daily')">Daily</button>
+        <button type="button" :aria-pressed="libraryOpen && libraryTab === 'articles' ? 'true' : 'false'" :title="libraryOpen && libraryTab === 'articles' ? 'Hide notes' : 'Show notes'" @click="pickLibraryTab('articles')">Notes</button>
+      </div>
       <div v-if="currentArticle" class="journal__day-switcher journal__note-location" @click.stop>
         <button
           type="button"
@@ -1270,144 +1249,83 @@ onBeforeUnmount(() => {
           :today-date="todayKey()"
           :marked-dates="journalEntryDates"
           aria-label="Choose journal date"
-          secondary-action-label="View library"
           @move-month="moveDatePickerMonth"
           @select-date="setDate"
           @today="setDate(todayKey())"
-          @secondary-action="toggleArchive"
         />
       </div>
-      <div class="journal__topbar-actions">
-        <Button
-          :color="voiceDictationState === 'listening' ? 'accent' : 'ghost'"
-          shape="soft"
-          size="compact"
-          icon-only
-          :aria-label="
-            voiceDictationState === 'listening'
-              ? 'Stop voice dictation'
-              : 'Start voice dictation'
-          "
-          :aria-pressed="voiceDictationState === 'listening' ? 'true' : 'false'"
-          :disabled="!canUseVoiceDictation"
-          :title="
-            voiceDictationState === 'listening'
-              ? 'Stop dictation'
-              : 'Voice dictation'
-          "
-          type="button"
-          @click="toggleVoiceDictation"
-        >
-          <UiIcon
-            :name="voiceDictationState === 'listening' ? 'Square' : 'Mic'"
-            :size="16"
-          />
-        </Button>
-        <Button
-          v-if="!wideScreen"
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          :active="archiveOpen"
-          aria-label="Library"
-          :aria-pressed="archiveOpen ? 'true' : 'false'"
-          title="Library"
-          type="button"
-          @click="toggleArchive"
-        >
-          <UiIcon name="BookOpen" :size="16" />
-        </Button>
-      </div>
+      <div class="journal__topbar-end" />
     </header>
     </Teleport>
 
     <div
       class="journal__workspace"
-      :class="{
-        'journal__workspace--archive-list':
-          archiveOpen && !archiveMobileDetailOpen,
-        'journal__workspace--archive-detail':
-          archiveOpen && archiveMobileDetailOpen,
-      }"
+      :class="{ 'journal__workspace--library': libraryOpen }"
     >
       <aside
-        v-if="libraryVisible"
+        v-if="libraryOpen"
         class="journal__archive"
-        aria-label="Writing library"
+        :aria-label="libraryTab === 'daily' ? 'Daily pages' : 'Notes'"
       >
-        <div class="journal__archive-head">
-          <div class="journal__tabs" aria-label="Library sections">
-            <button type="button" :aria-pressed="libraryTab === 'daily'" @click="libraryTab = 'daily'">Daily</button>
-            <button type="button" :aria-pressed="libraryTab === 'articles'" @click="libraryTab = 'articles'; loadArticles()">Notes</button>
-          </div>
-          <span v-if="archiveLoading">Loading</span>
-          <Button v-if="libraryTab === 'articles'" color="ghost" shape="soft" size="compact" icon-only type="button" aria-label="New note" title="New note" @click="createArticle()"><UiIcon name="Plus" :size="16" /></Button>
-          <Button v-if="!wideScreen" color="ghost" shape="soft" size="compact" icon-only type="button" aria-label="Close library" @click="archiveOpen = false"><UiIcon name="X" :size="16" /></Button>
-        </div>
         <template v-if="libraryTab === 'daily'">
-        <template v-for="(entry, index) in nonEmptyArchiveEntries" :key="entry.id">
-        <h3 v-if="index === 0 || monthKey(entry.date) !== monthKey(nonEmptyArchiveEntries[index - 1].date)" class="journal__month">{{ formatArchiveMonth(entry.date) }}</h3>
-        <div class="journal__archive-row" :class="{
-          'is-active': entry.date === selectedDate && !currentArticle,
-          'is-menu-open': archiveActionDate === entry.date,
-        }">
-          <button
-            type="button"
-            class="journal__archive-row-main"
-            :disabled="deletingDate === entry.date"
-            @click="selectArchiveEntry(entry)"
-          >
-            <span class="journal__library-row-head"><strong>{{ entry.date === todayKey() ? 'Today' : formatDaySwitcherDate(entry.date) }}</strong><small>{{ entry.date === todayKey() ? formatArchiveDate(entry.date) : `${archiveWordCount(entry)} words` }}</small></span>
-            <span v-if="entry.preview">{{ plainPreview(entry.preview) }}</span>
-          </button>
-          <div class="journal__archive-row-actions" @click.stop>
-            <Button
-              color="ghost"
-              shape="soft"
-              size="compact"
-              icon-only
-              class="journal__archive-menu-button"
-              :aria-label="`Actions for ${formatArchiveTitle(entry)}`"
-              aria-haspopup="menu"
-              :aria-expanded="
-                archiveActionDate === entry.date ? 'true' : 'false'
-              "
-              title="Entry actions"
-              type="button"
-              :disabled="deletingDate === entry.date"
-              @click="toggleArchiveActions(entry.date)"
-            >
-              <UiIcon name="Ellipsis" :size="16" aria-hidden="true" />
-            </Button>
-            <div
-              v-if="archiveActionDate === entry.date"
-              class="journal__archive-menu"
-              role="menu"
-            >
-              <button
-                type="button"
-                class="journal__archive-menu-item is-danger"
-                role="menuitem"
-                :disabled="deletingDate === entry.date"
-                @click="deleteArchiveEntry(entry)"
-              >
-                <UiIcon name="Trash2" :size="15" aria-hidden="true" />
-                Delete entry
-              </button>
-            </div>
-          </div>
-        </div>
+          <section v-for="month in archiveMonths" :key="month.key" class="journal__month">
+            <button type="button" class="journal__month-toggle" :aria-expanded="month.open ? 'true' : 'false'" @click="toggleMonth(month.key, month.open)">
+              <UiIcon class="journal__month-chevron" name="ChevronDown" :size="15" aria-hidden="true" />
+              <span>{{ month.label }}</span>
+              <small>{{ month.entries.length }}</small>
+            </button>
+            <template v-if="month.open">
+              <div v-for="entry in month.entries" :key="entry.id" class="journal__archive-row" :class="{
+                'is-active': entry.date === selectedDate && !currentArticle,
+                'is-menu-open': archiveActionDate === entry.date,
+              }">
+                <button
+                  type="button"
+                  class="journal__archive-row-main"
+                  :disabled="deletingDate === entry.date"
+                  :aria-label="`${formatArchiveTitle(entry)}, ${archiveWordCount(entry)} words`"
+                  @click="selectArchiveEntry(entry)"
+                >
+                  <span class="journal__library-row-head"><strong>{{ formatArchiveDay(entry.date) }}</strong><small>{{ archiveWordCount(entry).toLocaleString() }} words</small></span>
+                  <span v-if="entry.preview" class="journal__archive-preview">{{ plainPreview(entry.preview) }}</span>
+                </button>
+                <div class="journal__archive-row-actions" @click.stop>
+                  <Button
+                    color="ghost"
+                    shape="soft"
+                    size="compact"
+                    icon-only
+                    class="journal__archive-menu-button"
+                    :aria-label="`Actions for ${formatArchiveTitle(entry)}`"
+                    aria-haspopup="menu"
+                    :aria-expanded="archiveActionDate === entry.date ? 'true' : 'false'"
+                    title="Entry actions"
+                    type="button"
+                    :disabled="deletingDate === entry.date"
+                    @click="toggleArchiveActions(entry.date)"
+                  >
+                    <UiIcon name="Ellipsis" :size="16" aria-hidden="true" />
+                  </Button>
+                  <div v-if="archiveActionDate === entry.date" class="journal__archive-menu" role="menu">
+                    <button
+                      type="button"
+                      class="journal__archive-menu-item is-danger"
+                      role="menuitem"
+                      :disabled="deletingDate === entry.date"
+                      @click="deleteArchiveEntry(entry)"
+                    >
+                      <UiIcon name="Trash2" :size="15" aria-hidden="true" />
+                      Delete entry
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </section>
+          <p v-if="nonEmptyArchiveEntries.length === 0" class="journal__empty">{{ archiveLoading ? 'Loading…' : 'No saved entries yet.' }}</p>
         </template>
-        </template>
-        <p
-          v-if="libraryTab === 'daily' && !archiveLoading && nonEmptyArchiveEntries.length === 0"
-          class="journal__empty"
-        >
-          No saved entries yet.
-        </p>
-        <button v-if="libraryTab === 'daily'" type="button" class="journal__panel-action" @click="toggleDatePicker">Jump to date</button>
-        <template v-if="libraryTab === 'articles'">
+        <template v-else>
+          <button type="button" class="journal__new-note" @click="createArticle()"><UiIcon name="Plus" :size="16" aria-hidden="true" />New note</button>
           <JournalNotesTree
             :notes="articles"
             :folders="folders"
@@ -1423,26 +1341,11 @@ onBeforeUnmount(() => {
             @rename-folder="renameFolder"
             @delete-folder="deleteFolder"
           />
-          <p v-if="articles.length === 0" class="journal__empty">No notes yet. <button type="button" class="journal__empty-action" @click="createArticle()">Write your first note</button></p>
+          <p v-if="articles.length === 0" class="journal__empty">No notes yet.</p>
         </template>
       </aside>
 
       <section class="journal__sheet" :aria-label="currentArticle ? 'Note' : 'Daily page'">
-        <div v-if="archiveOpen" class="journal__mobile-detail-nav">
-          <Button
-            color="ghost"
-            shape="soft"
-            size="compact"
-            type="button"
-            @click="showArchiveList"
-          >
-            <template #icon>
-              <UiIcon name="ArrowLeft" :size="16" aria-hidden="true" />
-            </template>
-            Library
-          </Button>
-        </div>
-
         <p v-if="error" class="journal__message is-error">{{ error }}</p>
 
         <div
@@ -1460,19 +1363,13 @@ onBeforeUnmount(() => {
             :title-prefilled="!currentArticle"
             :title-max-length="180"
             :title-disabled="loading"
-            :task-button="showsDayPlan ? 'emit' : 'list'"
             :upload-image="uploadJournalImage"
             :placeholder="currentArticle ? 'Write your note here...' : 'Write about your day...'"
-            @task-command="moveToTask"
           >
             <template #title-meta>
               <span v-if="!loading" class="journal__title-meta">{{ wordCount.toLocaleString() }} {{ wordCount === 1 ? 'word' : 'words' }}<template v-if="saveStatusText"> · <strong>{{ saveStatusText }}</strong></template></span>
             </template>
-            <template #after-title>
-              <JournalDayPlan v-if="showsDayPlan" :tasks="plan.tasks.value" :goals="plan.goals.value" :busy="plan.busy.value" @complete="completePlanTask" @focus="focusPlanGoal" @progress="setPlanGoalProgress" :adding="addingTask" @add="addPlanTask" @cancel-add="addingTask = false" />
-            </template>
           </TiptapEditor>
-          <div v-if="movedTask" class="journal__moved" role="status">Moved to tasks<button type="button" @click="undoMove">Undo</button></div>
         </div>
 
         <div
@@ -1494,18 +1391,31 @@ onBeforeUnmount(() => {
 
         <div class="journal__status" aria-live="polite">
           <span v-if="loading">Loading</span>
-          <span v-else-if="voiceDictationState === 'listening'">
-            Recording {{ voiceRecordingElapsedLabel }}
-          </span>
-          <span v-else-if="voiceDictationState === 'processing'">
-            Transcribing
-          </span>
           <span v-else-if="voiceDictationStatusText">
             {{ voiceDictationStatusText }}
           </span>
         </div>
       </section>
     </div>
+
+    <!-- Dictation is a writing tool, so it sits by the page, not in the app's top bar. -->
+    <button
+      v-if="!(narrowScreen && libraryOpen) && voiceDictationState !== 'unsupported'"
+      type="button"
+      class="journal__dictate"
+      :class="{ 'is-listening': voiceDictationState === 'listening', 'is-busy': voiceDictationState === 'processing' }"
+      :style="keyboardInset ? { bottom: `${keyboardInset + 16}px` } : undefined"
+      :aria-label="voiceDictationState === 'listening' ? 'Stop voice dictation' : voiceDictationState === 'processing' ? 'Transcribing' : 'Start voice dictation'"
+      :aria-pressed="voiceDictationState === 'listening' ? 'true' : 'false'"
+      :title="voiceDictationState === 'listening' ? 'Stop dictation' : 'Dictate'"
+      :disabled="!canUseVoiceDictation"
+      @mousedown.prevent
+      @click="toggleVoiceDictation"
+    >
+      <UiIcon :name="voiceDictationState === 'listening' ? 'Square' : voiceDictationState === 'processing' ? 'RefreshCw' : 'Mic'" :size="20" aria-hidden="true" />
+      <span v-if="voiceDictationState === 'listening'">{{ voiceRecordingElapsedLabel }}</span>
+      <span v-else-if="voiceDictationState === 'processing'">Transcribing</span>
+    </button>
 
     <a
       v-for="chip in inlineJournalChips"
@@ -1543,7 +1453,7 @@ onBeforeUnmount(() => {
         aria-label="Create task from highlighted text"
         title="Create task"
         type="button"
-        @click="showsDayPlan ? moveToTask() : openCapture('task')"
+        @click="openCapture('task')"
       >
         <UiIcon name="CircleCheckBig" :size="16" />
       </Button>
@@ -1632,9 +1542,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.journal__focus { margin: 6px 0 4px; }
-.journal__tasks { margin: 4px 0 20px; }
-/* Same plain section titles as the Today card. */
 .journal {
   --workspace-topbar-height: 0px;
   display: flex;
@@ -1654,7 +1561,7 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
-.journal__topbar-spacer {
+.journal__topbar-end {
   min-width: 0;
 }
 
@@ -1672,21 +1579,6 @@ onBeforeUnmount(() => {
   color: var(--ui-text, var(--color-text));
   cursor: pointer;
   border-radius: var(--ui-radius-sm, 8px);
-}
-
-.journal__topbar-actions {
-  display: inline-flex;
-  align-items: center;
-  justify-self: end;
-  gap: 4px;
-}
-
-.journal__topbar-actions :deep(.me3-btn) {
-  min-width: 34px;
-}
-
-.journal__archive-button {
-  justify-self: end;
 }
 
 .journal__day-label:focus,
@@ -1760,69 +1652,51 @@ onBeforeUnmount(() => {
   }
 }
 
-.journal__tabs { display: flex; gap: 4px; padding: 3px; border-radius: var(--ui-radius-sm, 8px); background: var(--ui-surface-muted, var(--color-surface-muted)); }
-.journal__tabs button, .journal__panel-action, .journal__status button {
-  border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 7px 8px;
-  background: transparent; color: var(--ui-text, var(--color-text));
-  font: inherit; cursor: pointer;
+/* Quiet text buttons beside the back arrow; the shown list's button is filled. */
+.journal__tabs { display: inline-flex; align-items: center; gap: 2px; justify-self: start; }
+.journal__tabs button {
+  min-height: 34px; border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 0 10px;
+  background: transparent; color: var(--ui-text-muted, var(--color-text-muted));
+  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
 }
-.journal__tabs button[aria-pressed="true"] { background: var(--ui-primary); color: var(--ui-primary-contrast); font-weight: 600; }
-.journal__tabs button:focus-visible, .journal__panel-action:focus-visible, .journal__status button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
-.journal__panel-action { width: 100%; text-align: left; color: var(--ui-accent-strong, var(--ui-accent)); }
-.journal__status button { color: var(--ui-accent-strong, var(--ui-accent)); }
-.journal__month { margin: 16px 10px 4px; color: var(--ui-text-muted); font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.journal__library-row-head { display: flex; justify-content: space-between; gap: 8px; }
-.journal__library-row-head small { flex-shrink: 0; color: var(--ui-text-muted); font-size: .78rem; }
-.journal__archive > .journal__panel-action { margin-top: 12px; border: 1px solid var(--ui-border, var(--color-border)); text-align: center; color: var(--ui-text, var(--color-text)); }
+.journal__tabs button:hover { color: var(--ui-text, var(--color-text)); }
+.journal__tabs button[aria-pressed="true"] { background: var(--ui-surface-muted, var(--color-surface-muted)); color: var(--ui-text, var(--color-text)); }
+.journal__tabs button:focus-visible, .journal__month-toggle:focus-visible, .journal__new-note:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
 
+.journal__month { display: flex; flex-direction: column; gap: 2px; }
+.journal__month + .journal__month { margin-top: 6px; }
+.journal__month-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%; border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 7px 8px;
+  background: transparent; color: var(--ui-text, var(--color-text));
+  font: inherit; font-size: 0.88rem; font-weight: 600; text-align: left; cursor: pointer;
+}
+.journal__month-toggle:hover { background: var(--ui-surface-muted, var(--color-surface-muted)); }
+.journal__month-toggle small { margin-left: auto; color: var(--ui-text-muted, var(--color-text-muted)); font-size: 0.78rem; font-weight: 400; }
+.journal__month-chevron { color: var(--ui-text-muted, var(--color-text-muted)); transition: transform 0.15s ease; }
+.journal__month-toggle[aria-expanded="false"] .journal__month-chevron { transform: rotate(-90deg); }
+.journal__library-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.journal__library-row-head small { flex-shrink: 0; color: var(--ui-text-muted); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.journal__new-note {
+  display: flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 6px; border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 8px;
+  background: transparent; color: var(--ui-accent-strong, var(--ui-accent));
+  font: inherit; font-size: 0.88rem; font-weight: 600; text-align: left; cursor: pointer;
+}
+.journal__new-note:hover { background: var(--ui-surface-muted, var(--color-surface-muted)); }
+
+/* The list scrolls on its own, so a long page never carries it away. */
 .journal__archive {
   position: sticky;
   top: calc(var(--app-topbar-height) + var(--workspace-topbar-height));
-  align-self: stretch;
+  align-self: start;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
+  gap: 2px;
+  height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
   overflow-y: auto;
+  overscroll-behavior: contain;
   border-right: 1px solid var(--ui-border, var(--color-border));
-  padding-right: 14px;
+  padding: 8px 14px 24px 0;
   box-sizing: border-box;
-}
-
-.journal__archive-head {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 0 4px 10px;
-  background: var(--ui-bg, var(--color-bg));
-  color: var(--ui-text-muted, var(--color-text-muted));
-}
-
-.journal__archive-head .journal__tabs {
-  flex: 1;
-}
-
-.journal__archive-head .journal__tabs button {
-  flex: 1;
-}
-
-.journal__empty-action {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--ui-accent-strong, var(--ui-accent));
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.journal__empty-action:focus-visible {
-  outline: 2px solid var(--ui-focus, var(--ui-accent));
-  border-radius: 4px;
 }
 
 .journal__note-location-button {
@@ -1864,12 +1738,6 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
 }
 
-.journal__archive-head h2 {
-  margin: 0;
-  font-size: 0.9rem;
-}
-
-.journal__archive-head span,
 .journal__empty,
 .journal__status,
 .journal__message {
@@ -1877,10 +1745,14 @@ onBeforeUnmount(() => {
   color: var(--ui-text-muted, var(--color-text-muted));
 }
 
+.journal__empty {
+  margin: 8px;
+}
+
 .journal__archive-row {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   width: 100%;
   border: 0;
@@ -1921,26 +1793,32 @@ onBeforeUnmount(() => {
   opacity: 0.65;
 }
 
-.journal__archive-row-main strong,
-.journal__archive-row-main span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .journal__archive-row-main strong {
   font-size: 0.92rem;
+  font-weight: 600;
 }
 
-.journal__archive-row-main span {
+/* Two lines of the page's opening, so a row says what the day was about. */
+.journal__archive-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   font-size: 0.82rem;
+  line-height: 1.4;
   color: var(--ui-text-muted, var(--color-text-muted));
 }
 
+/* Sits over the word count on hover, so it never narrows the row. */
 .journal__archive-row-actions {
-  position: relative;
+  position: absolute;
+  top: 4px;
+  right: 4px;
   display: flex;
   justify-content: center;
+  border-radius: var(--ui-radius-sm, 8px);
+  background: var(--ui-surface-muted, var(--color-surface-muted));
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
@@ -1948,7 +1826,6 @@ onBeforeUnmount(() => {
 
 .journal__archive-row:hover .journal__archive-row-actions,
 .journal__archive-row:focus-within .journal__archive-row-actions,
-.journal__archive-row.is-active .journal__archive-row-actions,
 .journal__archive-row.is-menu-open .journal__archive-row-actions {
   opacity: 1;
   pointer-events: auto;
@@ -2012,11 +1889,6 @@ onBeforeUnmount(() => {
   margin: 0 auto;
 }
 
-.journal__mobile-detail-nav {
-  display: none;
-  flex-shrink: 0;
-}
-
 .journal__editor-wrap {
   display: flex;
   flex: 1;
@@ -2042,12 +1914,37 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+/* Beside the list the toolbar keeps to the page column and stays on one row, scrolling if it must. */
 .journal__workspace:has(.journal__archive)
   .journal__editor-wrap
   :deep(.tiptap-editor--workspace .editor-toolbar) {
   width: 100%;
   margin-left: 0;
   margin-right: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.journal__workspace:has(.journal__archive) .journal__editor-wrap :deep(.tiptap-editor--workspace .toolbar-btn),
+.journal__workspace:has(.journal__archive) .journal__editor-wrap :deep(.tiptap-editor--workspace .toolbar-divider) {
+  flex: 0 0 auto;
+}
+
+/* Desktop: one row that starts at the page's left edge and runs into the free space on the right. */
+@media (min-width: 1180px) {
+  .journal__workspace .journal__editor-wrap :deep(.tiptap-editor--workspace .editor-toolbar),
+  .journal__workspace:has(.journal__archive) .journal__editor-wrap :deep(.tiptap-editor--workspace .editor-toolbar) {
+    width: max-content;
+    max-width: calc(100% + 264px);
+    margin-left: -8px;
+    margin-right: 0;
+    padding-left: 0;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: visible;
+  }
 }
 
 .journal__editor-wrap :deep(.tiptap-editor--workspace .editor-content-wrapper) {
@@ -2067,8 +1964,38 @@ onBeforeUnmount(() => {
 
 .journal__title-meta { flex-shrink: 0; color: var(--ui-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .journal__title-meta strong { font-weight: 600; }
-.journal__moved { position: sticky; bottom: 16px; z-index: 5; display: flex; align-items: center; gap: 14px; width: max-content; margin: 8px auto 0; padding: 8px 8px 8px 16px; border-radius: 999px; background: var(--ui-text); color: var(--ui-surface); font-size: 14px; font-weight: 600; }
-.journal__moved button { min-height: 32px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--ui-accent); font: inherit; font-weight: 700; cursor: pointer; }
+
+.journal__dictate {
+  position: fixed;
+  right: max(20px, env(safe-area-inset-right));
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 52px;
+  height: 52px;
+  border: 1px solid var(--ui-border, var(--color-border));
+  border-radius: 999px;
+  padding: 0 15px;
+  background: var(--ui-surface, var(--color-surface));
+  color: var(--ui-text, var(--color-text));
+  box-shadow: var(--ui-shadow-md, 0 14px 32px rgba(15, 23, 42, 0.16));
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.journal__dictate:hover:not(:disabled) { color: var(--ui-accent-strong, var(--ui-accent)); }
+.journal__dictate:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 2px; }
+.journal__dictate.is-listening { border-color: transparent; background: var(--ui-primary); color: var(--ui-primary-contrast); }
+.journal__dictate.is-listening:hover { color: var(--ui-primary-contrast); }
+.journal__dictate.is-busy { cursor: default; color: var(--ui-text-muted, var(--color-text-muted)); }
+.journal__dictate.is-busy :deep(svg) { animation: journal-dictate-spin 1s linear infinite; }
+@keyframes journal-dictate-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .journal__dictate.is-busy :deep(svg) { animation: none; } }
 .journal__status {
   display: flex;
   align-items: center;
@@ -2226,19 +2153,16 @@ onBeforeUnmount(() => {
 
 @media (max-width: 900px) {
   .journal__topbar {
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto 1fr;
+    gap: 8px;
   }
 
-  .journal__topbar-spacer {
+  .journal__topbar-end {
     display: none;
   }
 
   .journal__day-switcher {
-    justify-self: start;
-  }
-
-  .journal__topbar-actions {
-    gap: 2px;
+    justify-self: end;
   }
 
   .journal__workspace,
@@ -2248,36 +2172,36 @@ onBeforeUnmount(() => {
     padding: 0 14px 12px;
   }
 
-  .journal__workspace:has(.journal__archive) {
-    grid-template-rows: minmax(0, 1fr);
-  }
-
+  /* The list takes the screen; picking a page or note returns to the editor. */
   .journal__archive {
     position: static;
+    height: auto;
     min-height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
-    max-height: none;
     border-right: 0;
-    border-bottom: 0;
-    padding: 0 0 12px;
+    padding: 4px 0 24px;
   }
 
-  .journal__workspace--archive-list .journal__sheet {
+  .journal__workspace--library .journal__sheet {
     display: none;
   }
 
-  .journal__workspace--archive-detail .journal__archive {
-    display: none;
-  }
-
-
-  .journal__mobile-detail-nav {
-    display: flex;
-    padding: 0 0 12px;
+  /* Room for the last lines to clear the dictate button. */
+  .journal__sheet {
+    padding-bottom: 72px;
   }
 }
 
+/* Touch has no hover, so the actions button keeps its own column. */
 @media (hover: none) {
+  .journal__archive-row {
+    grid-template-columns: minmax(0, 1fr) 36px;
+  }
+
   .journal__archive-row-actions {
+    position: relative;
+    top: auto;
+    right: auto;
+    background: transparent;
     opacity: 1;
     pointer-events: auto;
   }
@@ -2285,10 +2209,14 @@ onBeforeUnmount(() => {
 
 @media (max-width: 560px) {
   .journal__day-label {
-    min-width: 108px;
-    max-width: min(220px, calc(100vw - 180px));
+    min-width: 0;
     padding-inline: 6px;
     font-size: 14px;
+    white-space: nowrap;
+  }
+
+  .journal__tabs button {
+    padding: 0 8px;
   }
 
 }
