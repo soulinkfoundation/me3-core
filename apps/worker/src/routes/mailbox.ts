@@ -81,6 +81,16 @@ import {
 } from "../managed-email";
 import { getMailboxConversationLocation, moveMailboxMessage } from "../mailbox-conversations";
 import {
+  MAILBOX_INLINE_HOLD_MS,
+  cancelHeldMailboxDraft,
+  clearMailboxDraftHold,
+  deliverMailboxDraft,
+  dispatchHeldMailboxDraft,
+  holdMailboxDraft,
+  listMailboxDraftHolds,
+  reconcileMailboxDraftFromAudit,
+} from "../mailbox-send";
+import {
   listMailboxThreadMessages,
   listMailboxThreads,
   moveMailboxThread,
@@ -107,6 +117,12 @@ function backgroundWork(c: AppContext): ((work: Promise<unknown>) => void) | und
   }
 }
 
+/** Adds `sendAfter` to drafts whose send Core is holding ("Sending in 10 s", "Scheduled for ..."). */
+async function withDraftHolds<T extends { id: string; kind: string }>(env: Env, ownerId: string, messages: T[]): Promise<Array<T & { sendAfter: string | null }>> {
+  const holds = await listMailboxDraftHolds(env, ownerId, messages.filter((message) => message.kind === "draft").map((message) => message.id));
+  return messages.map((message) => ({ ...message, sendAfter: holds.get(message.id) || null }));
+}
+
 export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
   const { requireOwner, unauthorized } = deps;
 
@@ -117,125 +133,9 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
   /** Absolute URLs for signed sender avatars so native clients can load them directly. */
   const apiOrigin = (c: AppContext) => new URL(c.req.url).origin;
 
-  const deliveryUnknownResponse = async (
-    c: AppContext,
-    ownerId: string,
-    draftId: string,
-    message: string,
-    status = 502,
-  ) => {
-    let delivery;
-    try {
-      delivery = await getMailboxDraftDeliveryStatus(c.env, ownerId, draftId);
-    } catch {
-      delivery = null;
-    }
-    return c.json(
-      {
-        error: message,
-        ...(delivery && !("error" in delivery) ? { delivery } : {}),
-      },
-      status as any,
-    );
-  };
-
   const sendDraft = async (c: AppContext, ownerId: string, draftId: string) => {
-    let approval = await getAgentMailboxDraftForApproval(c.env, ownerId, draftId);
-    if (
-      "error" in approval &&
-      approval.status === 409 &&
-      (await reconcileMailboxDraftFromAudit(c.env, ownerId, draftId))
-    ) {
-      approval = await getAgentMailboxDraftForApproval(c.env, ownerId, draftId);
-    }
-    if ("error" in approval) return c.json({ error: approval.error }, approval.status as any);
-    if (approval.alreadySent) return c.json({ draft: approval.draft });
-
-    const { mailbox, draft } = approval;
-    let result: EmailProviderSendResponse;
-    try {
-      const outboundHeaders = getAgentMailboxOutboundHeaders(draft);
-      const attachments = await loadDraftProviderAttachments(c.env, draft);
-      const draftFromAddress =
-        draft.fromAddress && !draft.fromAddress.toLowerCase().endsWith("@me3.local")
-          ? draft.fromAddress
-          : null;
-      // Drafts are written in light Markdown; send real formatting plus a clean
-      // plain-text alternative unless the draft already carries its own HTML.
-      const rendered = draft.htmlBody ? null : renderMailMarkdown(draft.body || "");
-      result = await sendEmailWithProvider(c.env, ownerId, {
-        purpose: draft.sourceId ? "reply" : "draft",
-        mailboxId: mailbox.id,
-        mailboxMessageId: draft.id,
-        fromAddress: draftFromAddress,
-        toAddress: draft.toAddress || "",
-        ccAddresses: draft.ccAddresses,
-        bccAddresses: draft.bccAddresses,
-        subject: draft.subject || "(no subject)",
-        textBody: rendered ? rendered.text : draft.body || "",
-        htmlBody: rendered ? rendered.html : draft.htmlBody,
-        attachments,
-        threadKey: draft.threadKey,
-        messageIdHeader: outboundHeaders.messageIdHeader,
-        inReplyTo: outboundHeaders.inReplyTo,
-        referencesHeader: outboundHeaders.referencesHeader,
-        metadata: {
-          mailbox_message_id: draft.id,
-          source_id: draft.sourceId,
-        },
-        createdBy: draft.createdBy,
-        approvedByUserId: ownerId,
-      });
-    } catch (error) {
-      if (error instanceof EmailProviderDeliveryUnknownError) {
-        return deliveryUnknownResponse(
-          c,
-          ownerId,
-          draftId,
-          error.message,
-          error.status,
-        );
-      }
-      await markAgentMailboxDraftFailed(c.env, ownerId, draftId, {
-        errorMessage: error instanceof Error ? error.message : "Email send failed",
-      });
-      if (error instanceof EmailProviderInputError) {
-        return c.json({ error: error.message }, error.status as any);
-      }
-      throw error;
-    }
-
-    try {
-      const sent = await markAgentMailboxDraftSent(c.env, ownerId, draft.id, {
-        providerId: result.providerId,
-        providerMessageId: result.providerMessageId,
-        sentAt: result.sentAt,
-        approvedByUserId: ownerId,
-      });
-      if (!("error" in sent)) {
-        await resolveMailboxTriageForDraft(c.env, ownerId, draftId);
-        return c.json(sent);
-      }
-    } catch {
-      // The provider accepted the message and its sent audit is durable. Reconcile below.
-    }
-
-    try {
-      await reconcileMailboxDraftFromAudit(c.env, ownerId, draftId);
-      const reconciled = await getAgentMailboxMessage(c.env, ownerId, draftId);
-      if (!("error" in reconciled) && reconciled.message.status === "sent") {
-        return c.json({ draft: reconciled.message });
-      }
-    } catch {
-      // Keep the approved draft recoverable when local persistence is unavailable.
-    }
-
-    return deliveryUnknownResponse(
-      c,
-      ownerId,
-      draftId,
-      "The email provider accepted the message, but ME3 could not finish recording it. Check delivery status before retrying.",
-    );
+    const result = await deliverMailboxDraft(c.env, ownerId, draftId);
+    return c.json(result.body, result.status as any);
   };
 
   app.get("/api/mailbox", async (c) => {
@@ -355,7 +255,7 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     });
     return c.json({
       ...result,
-      messages: await decorateMailboxMessages(c.env, ownerId, result.messages, apiOrigin(c)),
+      messages: await withDraftHolds(c.env, ownerId, await decorateMailboxMessages(c.env, ownerId, result.messages, apiOrigin(c))),
     });
   });
 
@@ -536,7 +436,7 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
         ...summarizeMailboxThread(threadId, result.messages),
         location: await getMailboxConversationLocation(c.env, ownerId, threadId),
       },
-      messages: await decorateMailboxMessages(c.env, ownerId, result.messages, apiOrigin(c)),
+      messages: await withDraftHolds(c.env, ownerId, await decorateMailboxMessages(c.env, ownerId, result.messages, apiOrigin(c))),
     });
   });
 
@@ -579,7 +479,7 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
 
     const result = await getAgentMailboxMessage(c.env, ownerId, c.req.param("messageId"));
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
-    const [message] = await decorateMailboxMessages(c.env, ownerId, [result.message], apiOrigin(c));
+    const [message] = await withDraftHolds(c.env, ownerId, await decorateMailboxMessages(c.env, ownerId, [result.message], apiOrigin(c)));
     return c.json({ message });
   });
 
@@ -763,6 +663,8 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     const body = await c.req.json<AgentMailboxDraftInput>().catch((): AgentMailboxDraftInput => ({}));
     const result = await updateAgentMailboxDraft(c.env, ownerId, c.req.param("draftId"), body);
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    // An edited draft comes off its schedule: the owner sends or schedules it again.
+    await clearMailboxDraftHold(c.env, ownerId, c.req.param("draftId"));
     return c.json(result);
   });
 
@@ -779,7 +681,36 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     const ownerId = await requireOwner(c);
     if (!ownerId) return unauthorized(c);
 
-    return sendDraft(c, ownerId, c.req.param("draftId"));
+    // Send with Undo ({ holdSeconds }) and Schedule send ({ sendAt }): Core holds the send, so it
+    // still goes if the tab closes. With no body the draft is sent at once, as before.
+    const draftId = c.req.param("draftId");
+    const body = await c.req
+      .json<{ holdSeconds?: unknown; sendAt?: unknown }>()
+      .catch((): { holdSeconds?: unknown; sendAt?: unknown } => ({}));
+    if (body.holdSeconds === undefined && body.sendAt === undefined) return sendDraft(c, ownerId, draftId);
+
+    const held = await holdMailboxDraft(c.env, ownerId, draftId, body);
+    if ("error" in held) return c.json({ error: held.error }, held.status as any);
+    const delay = Date.parse(held.sendAfter) - Date.now();
+    const background = backgroundWork(c);
+    if (background && delay <= MAILBOX_INLINE_HOLD_MS) {
+      background(
+        new Promise((resolve) => setTimeout(resolve, Math.max(0, delay) + 250))
+          .then(() => dispatchHeldMailboxDraft(c.env, ownerId, draftId))
+          .catch((error) => console.error("Held email send failed", error)),
+      );
+    }
+    return c.json(held, 202);
+  });
+
+  // Undo within the Send window, or cancelling a scheduled send. The draft stays in Drafts.
+  app.post("/api/mailbox/drafts/:draftId/cancel-send", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+
+    const result = await cancelHeldMailboxDraft(c.env, ownerId, c.req.param("draftId"));
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
   });
 
   app.get("/api/mailbox/drafts/:draftId/delivery-status", async (c) => {
@@ -895,58 +826,6 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
     return c.json(result);
   });
-}
-
-async function reconcileMailboxDraftFromAudit(
-  env: Env,
-  ownerId: string,
-  draftId: string,
-): Promise<boolean> {
-  let audit: {
-    provider_id: string;
-    provider_message_id: string | null;
-    status: "sent" | "failed";
-    error_message: string | null;
-    sent_at: string | null;
-  } | null = null;
-  try {
-    audit = await env.DB.prepare(
-      `SELECT a.provider_id, a.provider_message_id, a.status, a.error_message, a.sent_at
-       FROM email_send_audit a
-       JOIN mailbox_messages m ON m.id = a.mailbox_message_id
-       JOIN mailbox_aliases mb ON mb.id = m.mailbox_id
-       WHERE a.user_id = ?
-         AND mb.user_id = ?
-         AND a.mailbox_message_id = ?
-         AND m.message_kind = 'draft'
-         AND m.status = 'approved'
-         AND a.requested_at >= COALESCE(m.approved_at, m.updated_at, m.created_at)
-         AND a.status IN ('sent', 'failed')
-       ORDER BY a.requested_at DESC, a.created_at DESC
-       LIMIT 1`,
-    )
-      .bind(ownerId, ownerId, draftId)
-      .first();
-  } catch {
-    return false;
-  }
-  if (!audit) return false;
-
-  if (audit.status === "failed") {
-    await markAgentMailboxDraftFailed(env, ownerId, draftId, {
-      errorMessage: audit.error_message || "Email provider send failed",
-    });
-    return true;
-  }
-  if (!audit.sent_at) return false;
-
-  const result = await markAgentMailboxDraftSent(env, ownerId, draftId, {
-    providerId: audit.provider_id,
-    providerMessageId: audit.provider_message_id,
-    sentAt: audit.sent_at,
-    approvedByUserId: ownerId,
-  });
-  return !("error" in result) && result.draft?.status === "sent";
 }
 
 // RFC 8058 one-click: a POST the list answers without a page. Returns the status, or null when the list

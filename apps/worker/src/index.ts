@@ -10,6 +10,7 @@ import { dispatchDueNewsPapers } from "./news-paper";
 import { dispatchDueSoupServings } from "./soup-servings";
 import { dispatchDueGratitudeReminders } from "./gratitude";
 import { archiveStaleLoginCodes, purgeStaleSpam, retryPendingMailTriage } from "./mailbox-triage";
+import { dispatchDueMailboxSends } from "./mailbox-send";
 import { retryAgentTurnNotifications } from "./agent-notifications";
 import {
   BOOKING_REMINDER_QUEUE_NAME,
@@ -130,6 +131,8 @@ type ScheduledStep = readonly [name: string, run: (env: Env) => Promise<unknown>
 const MINUTE_SCHEDULED_STEPS: readonly ScheduledStep[] = [
   ["campaign dispatch", dispatchDueCampaignJobs],
   ["calendar push dispatch", dispatchDueCalendarPushNotifications],
+  // Held email (Send with Undo, Schedule send) goes out even when no client is open.
+  ["held email sends", dispatchDueMailboxSends],
 ];
 
 const QUARTER_HOUR_SCHEDULED_STEPS: readonly ScheduledStep[] = [
@@ -140,6 +143,7 @@ const QUARTER_HOUR_SCHEDULED_STEPS: readonly ScheduledStep[] = [
   ["mail triage retry", retryPendingMailTriage],
   ["login code cleanup", archiveStaleLoginCodes],
   ["spam purge", purgeStaleSpam],
+  ["held email sends", dispatchDueMailboxSends],
   ["soup servings", dispatchDueSoupServings],
   ["news papers", dispatchDueNewsPapers],
   ["morning calendar push", dispatchDueMorningCalendarPushes],
