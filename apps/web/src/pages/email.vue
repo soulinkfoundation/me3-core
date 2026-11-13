@@ -17,6 +17,7 @@ import EmailRulesDialog from "../components/email/EmailRulesDialog.vue";
 import EmailSenderAvatar from "../components/email/EmailSenderAvatar.vue";
 import type { MailSenderIdentity, MailTriageTag, MailboxBriefItem } from "../components/email/brief";
 import { API_BASE, api } from "../api";
+import { findInlineImageIds, normalizeContentId, replaceInlineImages } from "../components/email/inlineImages";
 import { useAppToast } from "../composables/useAppToast";
 import { useAuthStore } from "../stores/auth";
 import { useContactsStore } from "../stores/contacts";
@@ -55,6 +56,7 @@ type MailboxAttachment = {
   disposition?: "attachment" | "inline" | null;
   size?: number | null;
   storageKey?: string | null;
+  contentId?: string | null;
   sourceMessageId?: string | null;
 };
 
@@ -290,6 +292,9 @@ const bulkActionPending = ref(false);
 const selectedMessageIds = ref<Set<string>>(new Set());
 const emailFrameHeights = ref<Record<string, number>>({});
 const externalContentAllowedIds = ref<Set<string>>(new Set());
+// Embedded pictures (cid:) per message, loaded from the message's own attachments.
+const inlineImageUrls = ref<Record<string, Record<string, string>>>({});
+const inlineImageRequests = new Set<string>();
 const emailFrameObservers = new WeakMap<HTMLIFrameElement, ResizeObserver>();
 const activeEmailFrameObservers = new Set<ResizeObserver>();
 const composeOpen = ref(false);
@@ -1608,8 +1613,11 @@ async function loadSelectedThread(thread: MailboxThreadSummary) {
     await markVisibleThreadRead();
   } catch (err) {
     if (requestId !== threadRequestId) return;
+    // Storage errors are not the owner's to read.
     threadDetailError.value =
-      err instanceof Error ? err.message : "Failed to load this conversation";
+      err instanceof Error && !/D1_|SQLITE/i.test(err.message)
+        ? err.message
+        : "This conversation could not be loaded. Try again in a moment.";
   } finally {
     if (requestId === threadRequestId) threadDetailLoading.value = false;
   }
@@ -1920,6 +1928,23 @@ async function approveMessage(msg: InboxMessage) {
 
 async function rejectMessage(msg: InboxMessage) {
   if (inboxBusy.value) return;
+  if (activeTab.value !== "drafts") {
+    // Outside Drafts the list row is the whole conversation: only its draft goes.
+    actionPending.value = msg.id;
+    try {
+      await runDraftAction(msg.id, "reject");
+      loadedThreadMessages.value = loadedThreadMessages.value.filter((message) => message.id !== msg.id);
+      await reloadOpenThread();
+      void loadMessages();
+      void loadFolderCounts();
+      void briefRef.value?.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "The draft could not be discarded");
+    } finally {
+      actionPending.value = null;
+    }
+    return;
+  }
   actionPending.value = msg.id;
   const previousMessages = messages.value;
   const previousTotal = total.value;
@@ -2730,7 +2755,6 @@ async function approveAgentDraft(message: InboxMessage) {
 
 async function discardAgentDraft(message: InboxMessage) {
   await rejectMessage(message);
-  await reloadOpenThread();
 }
 
 async function alwaysArchiveSender(message: InboxMessage) {
@@ -3322,9 +3346,33 @@ pre { white-space: pre-wrap; }
 
 function renderEmailHtml(message: InboxMessage): string {
   return renderRichEmailDocument(
-    getDisplayText(message.htmlBody),
+    replaceInlineImages(getDisplayText(message.htmlBody), inlineImageUrls.value[message.id]),
     externalContentAllowedIds.value.has(message.id),
   );
+}
+
+async function loadInlineImages(message: InboxMessage) {
+  if (inlineImageRequests.has(message.id) || !message.htmlBody) return;
+  const wanted = new Set(findInlineImageIds(getDisplayText(message.htmlBody)));
+  if (wanted.size === 0) return;
+  inlineImageRequests.add(message.id);
+  const urls: Record<string, string> = {};
+  await Promise.all(
+    (message.metadata?.attachments || []).map(async (attachment, index) => {
+      const id = normalizeContentId(attachment?.contentId);
+      if (!id || !wanted.has(id) || urls[id] || !attachment.storageKey) return;
+      if (!/^image\//i.test(attachment.mimeType || "")) return;
+      try {
+        const response = await fetch(getAttachmentDownloadUrl(message, index), { credentials: "include" });
+        if (response.ok) urls[id] = URL.createObjectURL(await response.blob());
+      } catch {
+        // The picture stays missing; the attachment is still listed below the message.
+      }
+    }),
+  );
+  if (Object.keys(urls).length > 0) {
+    inlineImageUrls.value = { ...inlineImageUrls.value, [message.id]: urls };
+  }
 }
 
 function hasExternalEmailContent(message: InboxMessage): boolean {
@@ -3580,8 +3628,19 @@ watch(
   },
 );
 
+watch(
+  loadedThreadMessages,
+  (list) => {
+    for (const message of list) void loadInlineImages(message);
+  },
+  { immediate: true },
+);
+
 onBeforeUnmount(() => {
   phoneLayoutQuery?.removeEventListener("change", syncMobileThreadOpen);
+  for (const urls of Object.values(inlineImageUrls.value)) {
+    for (const url of Object.values(urls)) URL.revokeObjectURL(url);
+  }
   clearDeliveryStatusRefreshes();
   for (const observer of activeEmailFrameObservers) {
     observer.disconnect();

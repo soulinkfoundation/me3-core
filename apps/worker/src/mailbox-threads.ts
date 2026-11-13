@@ -7,6 +7,9 @@ import {
 } from "@me3-core/plugin-agent-chat";
 import type { Env } from "./types";
 import { decodeMimeHeaderValue } from "../../../shared/email-headers";
+import { mailboxCanonicalThreadKeySql } from "./mailbox-thread-key";
+
+export { mailboxCanonicalThreadKeySql };
 
 const DEFAULT_THREAD_LIMIT = 50;
 const MAX_THREAD_LIMIT = 100;
@@ -77,7 +80,8 @@ export async function listMailboxThreads(
 
   const limit = normalizeLimit(options.limit);
   const query = typeof options.query === "string" ? options.query.trim().slice(0, 200) : "";
-  const matchingConditions = ["a.user_id = ?"];
+  // A discarded draft is gone: it never lists, counts, or stands in as a conversation's latest message.
+  const matchingConditions = ["a.user_id = ?", notDiscardedDraftSql("m")];
   const bindings: (string | number)[] = [ownerId];
 
   if (folder) {
@@ -127,6 +131,7 @@ export async function listMailboxThreads(
        JOIN matching_threads mt
          ON mt.mailbox_id = m.mailbox_id
         AND mt.thread_id = ${canonicalThreadKey}
+       WHERE ${notDiscardedDraftSql("m")}
      ),
      participants AS (
        SELECT thread_id, TRIM(from_address) AS address
@@ -211,7 +216,10 @@ export async function listMailboxThreadMessages(
   const messages = new Map<string, AgentMailboxMessage>();
   for (const batch of batches) {
     if ("error" in batch) continue;
-    for (const message of batch.messages) messages.set(message.id, message);
+    for (const message of batch.messages) {
+      if (message.kind === "draft" && message.status === "rejected") continue;
+      messages.set(message.id, message);
+    }
   }
   const ordered = [...messages.values()].sort(
     (left, right) =>
@@ -299,6 +307,10 @@ export async function moveMailboxThread(
   return { ok: true, id: threadId, folder, fromFolder };
 }
 
+function notDiscardedDraftSql(alias: string): string {
+  return `NOT (${alias}.message_kind = 'draft' AND ${alias}.status = 'rejected')`;
+}
+
 function serializeSummaryRow(row: MailboxThreadSummaryRow): MailboxThreadSummary {
   return {
     id: row.thread_id,
@@ -350,41 +362,6 @@ function normalizeActivity(value: string): string {
 
 function compactSnippet(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 280);
-}
-
-export function mailboxCanonicalThreadKeySql(alias: string): string {
-  const metadata = `${alias}.metadata_json`;
-  const headers = `${alias}.raw_headers_json`;
-  const replyReference = `COALESCE(
-    NULLIF(TRIM(CASE WHEN json_valid(${metadata}) THEN json_extract(${metadata}, '$.outbound_headers.references') END), ''),
-    NULLIF(TRIM(CASE WHEN json_valid(${headers}) THEN COALESCE(json_extract(${headers}, '$.references'), json_extract(${headers}, '$.References')) END), ''),
-    NULLIF(TRIM(CASE WHEN json_valid(${metadata}) THEN json_extract(${metadata}, '$.outbound_headers.in_reply_to') END), ''),
-    NULLIF(TRIM(CASE WHEN json_valid(${headers}) THEN COALESCE(json_extract(${headers}, '$."in-reply-to"'), json_extract(${headers}, '$."In-Reply-To"')) END), '')
-  )`;
-  const ownMessageId = `CASE
-    WHEN ${alias}.direction = 'outbound' AND json_valid(${metadata})
-      THEN COALESCE(
-        CASE
-          WHEN INSTR(TRIM(COALESCE(${alias}.provider_message_id, '')), '<') > 0
-            AND INSTR(TRIM(COALESCE(${alias}.provider_message_id, '')), '>') > 0
-            THEN NULLIF(TRIM(${alias}.provider_message_id), '')
-        END,
-        NULLIF(TRIM(json_extract(${metadata}, '$.outbound_headers.message_id')), '')
-      )
-    WHEN ${alias}.direction = 'inbound' AND json_valid(${headers})
-      THEN NULLIF(TRIM(COALESCE(json_extract(${headers}, '$."message-id"'), json_extract(${headers}, '$."Message-ID"'), json_extract(${headers}, '$.messageId'))), '')
-  END`;
-  const source = `TRIM(COALESCE(${replyReference}, ${ownMessageId}, NULLIF(${alias}.thread_key, ''), ${alias}.id))`;
-  return `CASE
-    WHEN INSTR(${source}, '<') > 0
-      AND INSTR(SUBSTR(${source}, INSTR(${source}, '<')), '>') > 0
-      THEN SUBSTR(
-        ${source},
-        INSTR(${source}, '<'),
-        INSTR(SUBSTR(${source}, INSTR(${source}, '<')), '>')
-      )
-    ELSE ${source}
-  END`;
 }
 
 function normalizeFolder(value: unknown): string | null | undefined {

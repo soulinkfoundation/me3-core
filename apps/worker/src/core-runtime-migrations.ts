@@ -19,6 +19,7 @@ import { AGENT_NETWORK_COMMERCE_SCHEMA } from "./agent-network-commerce";
 import { MAIL_TRIAGE_SCHEMA, MAILBOX_LOGIN_CODES_STATEMENTS, MAILBOX_MODEL_CALLS_SCHEMA, MAILBOX_SPAM_HANDLED_STATEMENTS, MAILBOX_SPAM_RULES_STATEMENTS } from "./mailbox-triage";
 import { AI_USAGE_SETTLEMENTS_SCHEMA } from "./managed-ai-reconciliation";
 import { MAILBOX_INSTRUCTION_REPLAY_STATEMENTS, MAILBOX_INSTRUCTIONS_SCHEMA } from "./mailbox-instructions";
+import { MAILBOX_CANONICAL_THREAD_KEY_COLUMN, mailboxCanonicalThreadKeyMigrationSql } from "./mailbox-thread-key";
 import type { Env } from "./types";
 
 type RuntimeMigration = {
@@ -949,6 +950,21 @@ const runtimeMigrations: RuntimeMigration[] = [
     async apply(db) {
       if (!(await tableExists(db, "mobile_refresh_tokens"))) return;
       await addColumnIfMissing(db, "mobile_refresh_tokens", "previous_token_hash", "TEXT");
+    },
+  },
+  // Thread queries look the conversation key up in an index instead of parsing every row's headers.
+  {
+    id: "0103_mailbox_canonical_thread_key",
+    checksum: "2026-11-13-mailbox-canonical-thread-key-v1",
+    async apply(db) {
+      if (!(await tableExists(db, "mailbox_messages"))) return;
+      const statements = mailboxCanonicalThreadKeyMigrationSql();
+      // table_info leaves generated columns out, so ask table_xinfo.
+      const columns = await db.prepare("PRAGMA table_xinfo(mailbox_messages)").all<SqliteNameRow>();
+      if (!(columns.results || []).some((row) => row.name === MAILBOX_CANONICAL_THREAD_KEY_COLUMN)) {
+        await db.prepare(statements.addColumn).run();
+      }
+      await db.prepare(statements.createIndex).run();
     },
   },
 ];

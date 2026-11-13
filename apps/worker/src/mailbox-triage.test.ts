@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import { listAgentMailboxMessages } from "@me3-core/plugin-agent-chat";
-import { getMailboxBrief, markMailboxNotSpam, markMailboxSpam, resolveBriefItem, snoozeBriefItem, undoHandledAction } from "./mailbox-brief";
+import { draftBriefReply, getMailboxBrief, markMailboxNotSpam, markMailboxSpam, resolveBriefItem, resolveMailboxTriageForDraft, snoozeBriefItem, undoHandledAction, type MailReplyWriter } from "./mailbox-brief";
 import { listMailboxThreads, moveMailboxThread } from "./mailbox-threads";
 import {
   MAIL_TRIAGE_SCHEMA,
@@ -42,7 +42,7 @@ afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.restoreAllMo
 function fixture() {
   const raw = new DatabaseSync(":memory:"); databases.push(raw);
   // The real migration chain for mail, so 0083's table rebuilds run against the shipped schema.
-  for (const name of ["0001_initial_public_schema", "0015_agent_runtime_idempotency", "0072_mailbox_triage", "0080_mailbox_login_codes", "0083_mailbox_spam", "0084_mailbox_model_calls"]) {
+  for (const name of ["0001_initial_public_schema", "0015_agent_runtime_idempotency", "0072_mailbox_triage", "0080_mailbox_login_codes", "0083_mailbox_spam", "0084_mailbox_model_calls", "0103_mailbox_canonical_thread_key"]) {
     raw.exec(readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), "utf8"));
   }
   for (const sql of [...ACCOUNTS_EMAIL_TRIAGE_SCHEMA, ...ACCOUNTS_REMOVALS_SCHEMA, ...MAIL_TRIAGE_SCHEMA]) raw.exec(sql);
@@ -239,6 +239,32 @@ describe("mail triage pipeline", () => {
       primaryAction: { kind: "send_draft", label: "Send reply" },
       secondaryAction: { kind: "edit_draft", label: "Edit" },
     });
+  });
+  // Guards against: the Brief drafting an answer to the first email of a conversation as if the later
+  // emails and the owner's own reply did not exist, and a reply to the newest email leaving the item open.
+  it("drafts a reply with the whole conversation in view, and a sent reply clears the conversation's item", async () => {
+    const f = fixture();
+    insertMail(f.raw, { id: "first", from: "jess@example.test", subject: "Partnering enquiry", body: "Who handles member benefits?", receivedAt: "2026-11-12T13:11:00.000Z" });
+    insertMail(f.raw, { id: "second", from: "jess@example.test", subject: "Re: Partnering enquiry", body: "Also, is there an events contact?", receivedAt: "2026-11-12T13:18:00.000Z", headers: { references: "<first@example.test>" } });
+    await runMailTriage(f.env, "first", { classify: async () => ({ category: "needs_you", urgency: "normal", summary: "Jess asks who handles member benefits.", action: { kind: "draft_reply", label: "Draft a reply" }, secondary: null, reply: null, url: null }) });
+    f.raw.prepare(
+      `INSERT INTO mailbox_messages(id,mailbox_id,direction,message_kind,status,from_address,to_address,subject,text_body,metadata_json,folder,created_by,source_id,sent_at)
+       VALUES ('sent','mailbox','outbound','email','sent','owner@me3.test','jess@example.test','Re: Partnering enquiry','Maya handles benefits.',?,'sent','owner','second','2026-11-13T09:06:00.000Z')`,
+    ).run(JSON.stringify({ outbound_headers: { references: "<first@example.test> <second@example.test>" } }));
+
+    const write = vi.fn<MailReplyWriter>(async () => ({ subject: "Re: Partnering enquiry", body: "Hi Jess, events are with Sam." }));
+    const drafted = await draftBriefReply(f.env, "owner", "first", { write });
+    expect(drafted).toMatchObject({ draft: { to: "jess@example.test" } });
+    expect(write.mock.calls[0]?.[0]).toMatchObject({
+      body: expect.stringContaining("events contact"),
+      thread: [
+        expect.objectContaining({ fromOwner: false, body: expect.stringContaining("member benefits") }),
+        expect.objectContaining({ fromOwner: true, body: expect.stringContaining("Maya handles benefits") }),
+      ],
+    });
+
+    await resolveMailboxTriageForDraft(f.env, "owner", "sent");
+    expect((await getMailboxBrief(f.env, "owner")).needsYou).toEqual([]);
   });
   it("sends a stranger on the owner's own mail provider to the model instead of filing it as FYI", async () => {
     const f = fixture();

@@ -15,8 +15,38 @@ import {
   setMailboxThreadReadState,
   summarizeMailboxThread,
 } from "./mailbox-threads";
+import {
+  MAILBOX_CANONICAL_THREAD_INDEX,
+  mailboxCanonicalThreadKeyMigrationSql,
+  mailboxCanonicalThreadKeySql,
+} from "./mailbox-thread-key";
 
 describe("mailbox threads", () => {
+  it("keeps migration 0103 identical to the runtime migration", () => {
+    const statements = mailboxCanonicalThreadKeyMigrationSql();
+    expect(CANONICAL_THREAD_KEY_MIGRATION).toContain(`${statements.addColumn};`);
+    expect(CANONICAL_THREAD_KEY_MIGRATION).toContain(`${statements.createIndex};`);
+  });
+
+  it("finds a conversation through the thread key index instead of scanning the mailbox", () => {
+    const directory = mkdtempSync(join(tmpdir(), "me3-mailbox-threads-"));
+    const database = join(directory, "mailbox.sqlite");
+    try {
+      sqliteExec(database, MAILBOX_SQLITE_SCHEMA);
+      sqliteExec(database, CANONICAL_THREAD_KEY_MIGRATION);
+      const plan = execFileSync("sqlite3", [database], {
+        input: `EXPLAIN QUERY PLAN
+         SELECT m.id FROM mailbox_messages m
+         WHERE m.mailbox_id = 'mailbox' AND ${mailboxCanonicalThreadKeySql("m")} = '<root@example.com>';`,
+        encoding: "utf8",
+      });
+      expect(plan).toContain(MAILBOX_CANONICAL_THREAD_INDEX);
+      expect(plan).not.toMatch(/SCAN m\b(?! USING)/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps nested replies on the root References message", () => {
     expect(
       resolveMailboxThreadKey(
@@ -255,6 +285,7 @@ describe("mailbox threads", () => {
           "utf8",
         ),
       );
+      sqliteExec(database, CANONICAL_THREAD_KEY_MIGRATION);
       sqliteExec(database, LEGACY_THREAD_FIXTURE);
       const env = { DB: sqliteD1(database) } as never;
 
@@ -323,6 +354,7 @@ describe("mailbox threads", () => {
           "utf8",
         ),
       );
+      sqliteExec(database, CANONICAL_THREAD_KEY_MIGRATION);
       sqliteExec(database, MANAGED_PROVIDER_THREAD_FIXTURE);
       const env = { DB: sqliteD1(database) } as never;
 
@@ -548,6 +580,11 @@ function sqliteLiteral(value: unknown): string {
   if (typeof value === "number") return String(value);
   return `'${String(value).replaceAll("'", "''")}'`;
 }
+
+const CANONICAL_THREAD_KEY_MIGRATION = readFileSync(
+  new URL("../migrations/0103_mailbox_canonical_thread_key.sql", import.meta.url),
+  "utf8",
+);
 
 const MAILBOX_SQLITE_SCHEMA = `
   CREATE TABLE mailbox_aliases (
