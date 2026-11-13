@@ -10,6 +10,15 @@
   "theme_color": "#ffffff",
   "orientation": "portrait-primary",
   "categories": ["business", "productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "New note",
+      "short_name": "New note",
+      "description": "Start a note in ME3",
+      "url": "/journal?new=note",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
   "icons": [
     {
       "src": "/icons/icon-192.png",

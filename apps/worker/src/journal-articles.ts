@@ -77,15 +77,43 @@ async function resolvePlacement(env: Env, ownerId: string, input: { projectId?: 
   return { projectId: input.projectId, folderId: input.folderId };
 }
 
-export async function listJournalArticles(env: Env, ownerId: string, projectId?: string) {
-  const rows = await (projectId
-    ? env.DB.prepare(
-      `SELECT ${fields} FROM journal_articles WHERE user_id = ? AND project_id = ? ORDER BY updated_at DESC, id DESC LIMIT 200`,
-    ).bind(ownerId, projectId)
-    : env.DB.prepare(
-      `SELECT ${fields} FROM journal_articles WHERE user_id = ? ORDER BY updated_at DESC, id DESC LIMIT 200`,
-    ).bind(ownerId)).all<ArticleRow>();
+// First non-empty line as plain text, for one-line rows on Home and in the mobile widgets.
+export function journalArticlePreview(body: string, format: ArticleRow["body_format"]) {
+  const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", apos: "'", nbsp: " " };
+  const text = format === "html"
+    ? body.replace(/<br\s*\/?>|<\/(p|div|h[1-6]|li|blockquote|pre|tr)>/gi, "\n").replace(/<[^>]*>/g, "")
+      .replace(/&(amp|lt|gt|quot|#39|apos|nbsp);/g, (_, name: string) => entities[name])
+    : body;
+  for (const raw of text.split("\n")) {
+    const line = (format === "markdown"
+      ? raw.replace(/^\s*(#{1,6}\s+|>\s?|[-*+]\s+(\[[ xX]\]\s+)?|\d+\.\s+)/, "").replace(/(\*\*|__|[*_`~])/g, "")
+      : raw).replace(/\s+/g, " ").trim();
+    if (line) return line.slice(0, 180);
+  }
+  return "";
+}
+
+const listLimit = (limit?: number) => Number.isInteger(limit) && limit! >= 1 && limit! <= 200 ? limit! : 200;
+
+export async function listJournalArticles(env: Env, ownerId: string, projectId?: string, limit?: number) {
+  const rows = await env.DB.prepare(
+    `SELECT ${fields} FROM journal_articles WHERE user_id = ?${projectId ? " AND project_id = ?" : ""} ORDER BY updated_at DESC, id DESC LIMIT ${listLimit(limit)}`,
+  ).bind(...(projectId ? [ownerId, projectId] : [ownerId])).all<ArticleRow>();
   return { articles: (rows.results || []).map(serialize) };
+}
+
+// One-line rows for Home's Notes card and the mobile widgets (me3-qvyt): no bodies.
+export async function listJournalArticlePreviews(env: Env, ownerId: string, projectId?: string, limit?: number) {
+  // The first line never needs the whole note; bodies can run to 1 MB each.
+  const rows = await env.DB.prepare(
+    `SELECT a.id, a.title, substr(a.body, 1, 4000) AS body, a.body_format, a.revision, a.project_id, a.folder_id, a.created_at, a.updated_at,
+      (SELECT name FROM mission_projects WHERE id = a.project_id AND user_id = a.user_id) AS project_name
+     FROM journal_articles a WHERE a.user_id = ?${projectId ? " AND a.project_id = ?" : ""} ORDER BY a.updated_at DESC, a.id DESC LIMIT ${listLimit(limit)}`,
+  ).bind(...(projectId ? [ownerId, projectId] : [ownerId])).all<ArticleRow & { project_name: string | null }>();
+  return { articles: (rows.results || []).map((row) => {
+    const { body, bodyFormat, ...rest } = serialize(row);
+    return { ...rest, preview: journalArticlePreview(body, bodyFormat), projectName: row.project_name ?? null };
+  }) };
 }
 
 export async function getJournalArticle(env: Env, ownerId: string, id: string) {

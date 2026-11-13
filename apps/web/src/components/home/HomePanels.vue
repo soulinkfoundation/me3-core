@@ -5,6 +5,7 @@ import { useAuthStore } from "../../stores/auth";
 import draggable from "vuedraggable";
 import HomeWheelChart, { type HomeWheelArea } from "./HomeWheelChart.vue";
 import GratitudeCard from "./GratitudeCard.vue";
+import HomeNotesCard, { type HomeNote } from "./HomeNotesCard.vue";
 import SoupCard from "./SoupCard.vue";
 import { soupWhenLabel, type SoupServing, type SoupServingAction, type SoupToday } from "../../utils/soup";
 import AppDialog from "../AppDialog.vue";
@@ -111,7 +112,17 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
   mission: { title: "Mission", href: "/mission", emoji: "🚀" },
   accounts: { title: "Accounts", href: "/accounts", emoji: "💰" },
   soup: { title: "Soup", href: "/?view=home", emoji: "🍲" },
+  notes: { title: "Notes", href: "/journal?tab=notes", emoji: "🗒️" },
 };
+// Notes (me3-qvyt): opt-in. The header's mic and + open the field inside the card.
+const notes = ref<HomeNote[]>([]);
+const notesOpen = ref(false);
+const notesCard = ref<InstanceType<typeof HomeNotesCard> | null>(null);
+const loadNotes = () => resource("notes", async () => {
+  const result = await api.get<{ articles: HomeNote[] }>("/journal/articles?limit=3&preview=1");
+  if (!disposed) notes.value = (result.articles || []).slice(0, 3);
+});
+function noteSaved(note: HomeNote) { notes.value = [note, ...notes.value].slice(0, 3); void loadNotes(); }
 // People appears once someone is Close (People v1).
 const peopleCard = computed(() => rankHomePeople(contactsStore.contacts, contact => contact.reminderAt));
 const openPersonId = ref<string | null>(null);
@@ -300,7 +311,7 @@ const completeGoal = (id: string) => updateGoal(id, goal => { goal.status = "com
 const setGoalProgress = (id: string, value: number) => updateGoal(id, goal => { goal.progress = value; });
 function focusGoalFromHome(id: string) { goalMenu.value = ""; plan.makeFocus(id).catch(error => toastFromUnknown(error, "Couldn't change your focus. Try again.")); }
 function beginPress(event: PointerEvent, card: HomeCard) {
-  if (event.pointerType === "mouse" || (event.target as HTMLElement).closest("a,button,input")) return;
+  if (event.pointerType === "mouse" || (event.target as HTMLElement).closest("a,button,input,textarea,select")) return;
   pressOrigin = { x: event.clientX, y: event.clientY };
   pressTimer = setTimeout(() => { openMenu(card); }, 600);
 }
@@ -367,6 +378,7 @@ async function refresh() {
     }),
     resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed) gratitudeOn.value = Boolean(state.settings?.inToday); }),
     loadSoup(),
+    loadNotes(),
     resource("people", async () => { await contactsStore.fetchContacts(); if (contactsStore.error) throw new Error(contactsStore.error); }),
     resource("tasks", plan.loadTasks),
     resource("mission", async () => {
@@ -432,6 +444,7 @@ watch(() => props.active, active => {
   void setupStrip.value?.load();
   if (day.value !== today) day.value = today; else void loadToday();
   void loadSoup();
+  void loadNotes();
 });
 onMounted(() => {
   motionPreference?.addEventListener("change", updateMotionPreference);
@@ -462,6 +475,13 @@ onBeforeUnmount(() => {
             <span v-else-if="card === 'tasks' && tasksCard.tasks.length" class="home-card__detail">{{ tasksCard.view === 'now' ? 'Now' : 'Backlog' }}</span>
             <span v-else-if="card === 'inbox' && inboxStatus.badge" class="home-card__badge">{{ inboxStatus.badge }}</span>
             <span v-else-if="card === 'inbox' && inboxStatus.note" class="home-card__detail">{{ inboxStatus.note }}</span>
+            <div v-if="card === 'notes'" class="home-notes-actions">
+              <button v-if="notesOpen" type="button" class="home-notes-cancel" @click="notesOpen = false">Cancel</button>
+              <template v-else>
+                <button type="button" aria-label="Dictate a note" title="Dictate a note" @click="notesCard?.dictate()"><UiIcon name="Mic" :size="18" /></button>
+                <button type="button" class="is-primary" aria-label="New note" title="New note" @click="notesOpen = true"><UiIcon name="Plus" :size="18" /></button>
+              </template>
+            </div>
             <div class="home-card__controls">
               <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-haspopup="menu" :aria-expanded="menu === card" title="Options. Drag to reorder." @click="menu === card ? closeMenu(card) : openMenu(card)" @keydown.alt.up.prevent="move(card, -1)" @keydown.alt.down.prevent="move(card, 1)"><UiIcon name="Ellipsis" :size="20" /></button>
             </div>
@@ -561,6 +581,7 @@ onBeforeUnmount(() => {
               </div>
             </template>
             <template v-else-if="card === 'accounts'"><div v-if="accountSummary" class="home-stats"><div><span class="home-muted">Income this month</span><strong>{{ accountSummary.income }}</strong></div><div><span class="home-muted">Expenses this month</span><strong>{{ accountSummary.expense }}</strong></div></div><RouterLink v-else to="/accounts" class="home-quiet">Open Accounts<UiIcon name="ArrowRight" :size="16" /></RouterLink></template>
+            <HomeNotesCard v-else-if="card === 'notes'" :ref="el => { notesCard = el as typeof notesCard }" v-model:open="notesOpen" :notes="notes" @saved="noteSaved" />
             <SoupCard v-else-if="card === 'soup'" :serving="soupServing" :set-up="Boolean(soup?.setUp)" :busy="soupBusy" @setup="emit('ask', 'Set up my soup')" @act="soupAct" />
             <template v-else-if="card === 'people'"><template v-if="peopleCard.state === 'people'"><button v-for="person in peopleCard.people" :key="person.id" type="button" class="home-person" @click="openPersonId = person.id"><PersonAvatar :contact="person" :size="40" /><strong>{{ firstName(person.name) }}</strong><span class="home-muted home-person__since">{{ formatSinceShort(person.lastInTouchAt) || 'Not yet' }}</span></button></template><p v-else class="home-muted">All caught up.</p></template>
           </div>
@@ -595,6 +616,11 @@ onBeforeUnmount(() => {
 .home-card__detail { color: var(--ui-text-muted); font-size: 12px; white-space: nowrap; }
 .home-card__badge { padding: 3px 8px; border-radius: 999px; background: var(--ui-accent-soft); color: var(--ui-accent-strong); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .home-card__controls { display: flex; margin-left: auto; }
+.home-notes-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.home-notes-actions + .home-card__controls { margin-left: 0; }
+.home-notes-actions button { display: grid; place-items: center; width: 36px; min-width: 36px; height: 36px; min-height: 36px; border-radius: 50%; background: var(--ui-surface-muted); }
+.home-notes-actions button.is-primary { background: var(--ui-accent); color: var(--ui-accent-contrast); }
+.home-notes-actions button.home-notes-cancel { width: auto; padding: 0 8px; border-radius: 12px; background: transparent; color: var(--ui-accent-strong); font-size: 14px; font-weight: 600; }
 button { cursor: pointer; font: inherit; color: var(--ui-text); background: transparent; border: 0; min-width: 44px; min-height: 44px; border-radius: 12px; }
 button:hover { background: var(--ui-surface-muted); }
 button:disabled { opacity: .35; cursor: default; }

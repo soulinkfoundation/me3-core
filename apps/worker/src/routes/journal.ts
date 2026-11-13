@@ -1,6 +1,6 @@
 import { JOURNAL_PLUGIN_ID, saveJournalDayForAgent } from "@me3-core/plugin-journal";
 import { createJournalFolder, deleteJournalFolder, listJournalFolders, renameJournalFolder } from "../journal-folders";
-import { createJournalArticle, deleteJournalArticle, getJournalArticle, listJournalArticles, updateJournalArticle } from "../journal-articles";
+import { createJournalArticle, deleteJournalArticle, getJournalArticle, listJournalArticlePreviews, listJournalArticles, updateJournalArticle } from "../journal-articles";
 import {
   JournalConflictError,
   JournalInputError,
@@ -21,7 +21,12 @@ export function registerJournalRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (!ownerId) return deps.unauthorized(c);
     const blocked = await requireJournalPlugin(c);
     if (blocked) return blocked;
-    try { return c.json(await listJournalArticles(c.env, ownerId, c.req.query("projectId") || undefined)); }
+    // limit and preview=1 serve Home's Notes card and the mobile widgets: a few one-line rows, no bodies.
+    try {
+      const projectId = c.req.query("projectId") || undefined;
+      const limit = Number(c.req.query("limit")) || undefined;
+      return c.json(await (c.req.query("preview") === "1" ? listJournalArticlePreviews : listJournalArticles)(c.env, ownerId, projectId, limit));
+    }
     catch (error) { return journalErrorResponse(c, error); }
   });
 

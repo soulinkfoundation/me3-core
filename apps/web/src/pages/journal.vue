@@ -8,7 +8,7 @@ import {
   watch,
 } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import type { Editor } from "@tiptap/core";
 import { ApiError, api } from "../api";
 import Button from "../components/Button.vue";
@@ -102,6 +102,7 @@ type TiptapEditorExpose = {
 };
 
 const route = useRoute();
+const router = useRouter();
 // Today's page shows the focus goal and today's tasks above your notes, like the Home Today card.
 const plan = useTodayPlan();
 const planReady = ref(false);
@@ -1147,6 +1148,19 @@ watch([title, description], scheduleSave);
 watch([entryLinks, description, projects], scheduleInlineJournalChips, {
   flush: "post",
 });
+
+// Links into Notes from Home's Notes card and the "New note" app shortcut (me3-qvyt):
+// ?tab=notes opens the Notes list, ?note=<id> opens that note, ?new=note starts one.
+watch(() => [route.query.tab, route.query.note, route.query.new], async ([tab, note, fresh]) => {
+  if (route.path !== "/journal" || (tab !== "notes" && typeof note !== "string" && fresh !== "note")) return;
+  const { tab: _tab, note: _note, new: _new, ...query } = route.query;
+  await router.replace({ query });
+  libraryTab.value = "articles";
+  if (!wideScreen.value) archiveOpen.value = true;
+  await loadArticles();
+  if (typeof note === "string") await openArticle(note);
+  else if (fresh === "note") await createArticle();
+}, { immediate: true, flush: "post" });
 
 onMounted(() => {
   void loadDay(selectedDate.value);
