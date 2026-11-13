@@ -4,7 +4,7 @@ import {
   mailboxFolderWhere,
   type AgentMailboxMessage,
 } from "@me3-core/plugin-agent-chat";
-import { moveMailboxConversation } from "./mailbox-conversations";
+import { mailboxConversationSnoozedSql, moveMailboxConversation } from "./mailbox-conversations";
 import type { Env } from "./types";
 import { decodeMimeHeaderValue } from "../../../shared/email-headers";
 import { mailboxCanonicalThreadKeySql } from "./mailbox-thread-key";
@@ -36,6 +36,7 @@ export type MailboxThreadListOptions = {
   query?: unknown;
   limit?: unknown;
   cursor?: unknown;
+  now?: Date;
 };
 
 type MailboxServiceError = { error: string; status: number };
@@ -72,7 +73,9 @@ export async function listMailboxThreads(
   ownerId: string,
   options: MailboxThreadListOptions = {},
 ): Promise<MailboxThreadList | MailboxServiceError> {
-  const folder = normalizeFolder(options.folder);
+  // Snoozed is a view of Inbox: the conversations hidden until their time.
+  const snoozedView = typeof options.folder === "string" && options.folder.trim().toLowerCase() === "snoozed";
+  const folder = snoozedView ? "inbox" : normalizeFolder(options.folder);
   if (folder === undefined) return { error: "Invalid folder", status: 400 };
 
   const cursor = decodeCursor(options.cursor);
@@ -100,6 +103,10 @@ export async function listMailboxThreads(
              AND i.folder = 'inbox' AND i.message_kind != 'draft'
          )`,
       );
+    }
+    if (folder === "inbox") {
+      matchingConditions.push(`${snoozedView ? "" : "NOT "}${mailboxConversationSnoozedSql("m")}`);
+      bindings.push((options.now || new Date()).toISOString());
     }
     rankedFolderSql = folder === "trash" || folder === "spam" ? ` AND ${where.sql}` : " AND m.folder != 'trash'";
   }

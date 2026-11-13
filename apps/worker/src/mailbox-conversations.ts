@@ -23,7 +23,12 @@ const OWNER_MAILBOXES = "SELECT id FROM mailbox_aliases WHERE user_id = ?";
 /** Not a draft: received mail, sent mail and system notes. */
 const REAL = "message_kind != 'draft'";
 const CONVERSATION_TARGETS = new Set(["inbox", "archive", "trash", "spam"]);
-const SOURCE_FOLDERS = new Set(["inbox", "archive", "trash", "spam", "sent", "drafts"]);
+/** The views a move can come from. Snoozed is Inbox mail that is hidden until its time. */
+const SOURCE_FOLDERS = new Set(["inbox", "archive", "trash", "spam", "sent", "drafts", "snoozed"]);
+const MESSAGE_FOLDERS = new Set(["inbox", "archive", "trash", "spam", "sent", "drafts"]);
+/** "Until someone replies" still comes back when nobody does. */
+const SNOOZE_UNTIL_REPLY_FALLBACK_MS = 3 * 24 * 60 * 60 * 1000;
+const MAX_SNOOZE_MS = 366 * 24 * 60 * 60 * 1000;
 
 /** Migration 0105, shared by the SQL file's test and the runtime migration. */
 export const MAILBOX_CONVERSATION_SCHEMA_STATEMENTS = [
@@ -109,7 +114,7 @@ export async function moveMailboxConversation(
   if (fromFolderInput !== undefined && fromFolderInput !== null && !fromFolder) return { error: "Invalid source folder", status: 400 };
   // Sent is a view, not a place to move to. The one exception is undoing "Trash" from the Sent
   // view: that is a restore, so sent mail returns to Sent and received mail to Inbox.
-  const requested = normalizeFolder(folderInput, SOURCE_FOLDERS);
+  const requested = normalizeFolder(folderInput, MESSAGE_FOLDERS);
   const folder = requested === "sent" && fromFolder === "trash" ? "inbox" : normalizeFolder(folderInput, CONVERSATION_TARGETS);
   if (!folder) return { error: "Invalid folder", status: 400 };
 
@@ -144,8 +149,87 @@ export async function moveMailboxConversation(
     ).bind(stamp, stamp, ownerId, threadId).run();
   }
 
+  // A move is a decision about the conversation, so any snooze on it ends.
+  await endConversationSnooze(env, ownerId, threadId, stamp);
   await recordConversationMoveInBrief(env, ownerId, threadId, folder, stamp);
   return { ok: true, id: threadId, folder, fromFolder };
+}
+
+// --- Snooze: a conversation leaves Inbox and the Brief until a time, then returns by itself. ---
+
+/** The condition that a conversation (of message alias `m`) is snoozed right now; binds one time. */
+export function mailboxConversationSnoozedSql(alias: string): string {
+  return `EXISTS (
+    SELECT 1 FROM mailbox_conversation_state cs
+    WHERE cs.mailbox_id = ${alias}.mailbox_id AND cs.thread_key = ${alias}.${KEY} AND cs.snoozed_until > ?
+  )`;
+}
+
+async function endConversationSnooze(env: Db, ownerId: string, threadId: string, stamp: string): Promise<void> {
+  const ended = await env.DB.prepare(
+    `DELETE FROM mailbox_conversation_state WHERE mailbox_id IN (${OWNER_MAILBOXES}) AND thread_key = ?`,
+  ).bind(ownerId, threadId).run();
+  if (!ended.meta?.changes) return;
+  await env.DB.prepare(
+    `UPDATE mailbox_triage SET snoozed_until = NULL, updated_at = ?
+     WHERE user_id = ? AND snoozed_until IS NOT NULL
+       AND message_id IN (SELECT id FROM mailbox_messages WHERE mailbox_id IN (${OWNER_MAILBOXES}) AND ${KEY} = ?)`,
+  ).bind(stamp, ownerId, ownerId, threadId).run();
+}
+
+/** Snoozes a conversation in Inbox until a time, or until someone replies (three days at most). */
+export async function snoozeMailboxConversation(
+  env: Db,
+  ownerId: string,
+  threadId: string,
+  input: { until?: unknown; untilReply?: unknown },
+  now = new Date(),
+): Promise<{ ok: true; id: string; snoozedUntil: string; untilReply: boolean } | ServiceError> {
+  const untilReply = input.untilReply === true;
+  const until = untilReply ? new Date(now.getTime() + SNOOZE_UNTIL_REPLY_FALLBACK_MS) : new Date(typeof input.until === "string" ? input.until : Number.NaN);
+  if (Number.isNaN(until.getTime()) || until.getTime() <= now.getTime()) return { error: "Choose a time in the future", status: 400 };
+  if (until.getTime() > now.getTime() + MAX_SNOOZE_MS) return { error: "Choose a time within a year", status: 400 };
+  const conversation = await env.DB.prepare(
+    `SELECT mailbox_id FROM mailbox_messages WHERE mailbox_id IN (${OWNER_MAILBOXES}) AND ${KEY} = ? AND ${REAL} LIMIT 1`,
+  ).bind(ownerId, threadId).first<{ mailbox_id: string }>();
+  if (!conversation) return { error: "Thread not found", status: 404 };
+  if ((await getMailboxConversationLocation(env, ownerId, threadId)) !== "inbox") {
+    return { error: "Only a conversation in Inbox can be snoozed", status: 409 };
+  }
+  const stamp = now.toISOString();
+  await env.DB.prepare(
+    `INSERT INTO mailbox_conversation_state (mailbox_id, thread_key, snoozed_until, snooze_until_reply, snoozed_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(mailbox_id, thread_key) DO UPDATE SET
+       snoozed_until = excluded.snoozed_until, snooze_until_reply = excluded.snooze_until_reply,
+       snoozed_at = excluded.snoozed_at, updated_at = excluded.updated_at`,
+  ).bind(conversation.mailbox_id, threadId, until.toISOString(), untilReply ? 1 : 0, stamp, stamp).run();
+  // Its Brief rows wait with it.
+  await env.DB.prepare(
+    `UPDATE mailbox_triage SET snoozed_until = ?, updated_at = ?
+     WHERE user_id = ? AND resolved_at IS NULL
+       AND message_id IN (SELECT id FROM mailbox_messages WHERE mailbox_id IN (${OWNER_MAILBOXES}) AND ${KEY} = ?)`,
+  ).bind(until.toISOString(), stamp, ownerId, ownerId, threadId).run();
+  return { ok: true, id: threadId, snoozedUntil: until.toISOString(), untilReply };
+}
+
+/** Brings a snoozed conversation back to Inbox and the Brief now. */
+export async function unsnoozeMailboxConversation(env: Db, ownerId: string, threadId: string, now = new Date()): Promise<{ ok: true; id: string } | ServiceError> {
+  const exists = await env.DB.prepare(
+    `SELECT 1 AS found FROM mailbox_messages WHERE mailbox_id IN (${OWNER_MAILBOXES}) AND ${KEY} = ? LIMIT 1`,
+  ).bind(ownerId, threadId).first<{ found: number }>();
+  if (!exists) return { error: "Thread not found", status: 404 };
+  await endConversationSnooze(env, ownerId, threadId, now.toISOString());
+  return { ok: true, id: threadId };
+}
+
+/** The conversation's snooze while it is still running. */
+export async function getMailboxConversationSnooze(env: Db, ownerId: string, threadId: string, now = new Date()): Promise<{ snoozedUntil: string; untilReply: boolean } | null> {
+  const row = await env.DB.prepare(
+    `SELECT snoozed_until, snooze_until_reply FROM mailbox_conversation_state
+     WHERE mailbox_id IN (${OWNER_MAILBOXES}) AND thread_key = ? AND snoozed_until > ?`,
+  ).bind(ownerId, threadId, now.toISOString()).first<{ snoozed_until: string; snooze_until_reply: number }>().catch(() => null);
+  return row ? { snoozedUntil: row.snoozed_until, untilReply: Boolean(row.snooze_until_reply) } : null;
 }
 
 /**
@@ -188,7 +272,7 @@ export async function moveMailboxMessage(
   folderInput: unknown,
   now = new Date(),
 ): Promise<{ ok: true; id: string; folder: string } | ServiceError> {
-  const folder = normalizeFolder(folderInput, SOURCE_FOLDERS);
+  const folder = normalizeFolder(folderInput, MESSAGE_FOLDERS);
   if (!folder) return { error: "Invalid folder", status: 400 };
   const message = await ownMessage(env, ownerId, messageId);
   if (!message) return { error: "Message not found", status: 404 };
@@ -216,6 +300,9 @@ export async function moveMailboxMessage(
 const CONVERSATION_OF_MESSAGE = `mailbox_id = (SELECT mailbox_id FROM mailbox_messages WHERE id = ?)
   AND ${KEY} = (SELECT ${KEY} FROM mailbox_messages WHERE id = ?)`;
 
+const CONVERSATION_STATE_OF_MESSAGE = `mailbox_id = (SELECT mailbox_id FROM mailbox_messages WHERE id = ?)
+  AND thread_key = (SELECT ${KEY} FROM mailbox_messages WHERE id = ?)`;
+
 /** Archives the received mail of a message's conversation that is in Inbox. Returns how many moved. */
 export async function archiveConversationOfMessage(env: Db, messageId: string): Promise<number> {
   const result = await env.DB.prepare(
@@ -237,7 +324,16 @@ export async function returnConversationOfMessageToInbox(env: Db, messageId: str
 /** After triage: mail that stayed in Inbox brings the rest of its conversation back with it. */
 export async function settleConversationOfMessage(env: Db, messageId: string): Promise<void> {
   const message = await env.DB.prepare("SELECT folder FROM mailbox_messages WHERE id = ?").bind(messageId).first<{ folder: string }>();
-  if (message?.folder === "inbox") await returnConversationOfMessageToInbox(env, messageId);
+  if (message?.folder !== "inbox") return;
+  await returnConversationOfMessageToInbox(env, messageId);
+  // New mail in Inbox wakes its conversation: a snooze, "until someone replies" or not, ends here.
+  const woken = await env.DB.prepare(`DELETE FROM mailbox_conversation_state WHERE ${CONVERSATION_STATE_OF_MESSAGE}`).bind(messageId, messageId).run();
+  if (woken.meta?.changes) {
+    await env.DB.prepare(
+      `UPDATE mailbox_triage SET snoozed_until = NULL
+       WHERE snoozed_until IS NOT NULL AND message_id IN (SELECT id FROM mailbox_messages WHERE ${CONVERSATION_OF_MESSAGE})`,
+    ).bind(messageId, messageId).run();
+  }
 }
 
 /** Has the owner sent mail in this message's conversation? Rules never hide a reply there. */

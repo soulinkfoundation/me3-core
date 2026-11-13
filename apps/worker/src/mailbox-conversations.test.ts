@@ -10,8 +10,11 @@ import {
   MAILBOX_CONVERSATION_FOLDER_FIX_STATEMENTS,
   MAILBOX_CONVERSATION_SCHEMA_STATEMENTS,
   getMailboxConversationLocation,
+  getMailboxConversationSnooze,
   moveMailboxConversation,
   moveMailboxMessage,
+  snoozeMailboxConversation,
+  unsnoozeMailboxConversation,
 } from "./mailbox-conversations";
 import { listMailboxThreadMessages, listMailboxThreads, moveMailboxThread } from "./mailbox-threads";
 import { MAIL_TRIAGE_SCHEMA, archiveStaleLoginCodes, runMailTriage, type MailTriageClassifier } from "./mailbox-triage";
@@ -396,5 +399,82 @@ describe("the Brief is keyed by conversation", () => {
     expect(current).toMatchObject({ draft: { body: "The owner's edit." } });
     // Without the check (older clients) a save still goes through.
     expect(await updateAgentMailboxDraft(f.env, "owner", created.draft.id, { to: "rosa@example.test", subject: "Re: Studio lease", textBody: "Again." })).toMatchObject({ draft: { body: "Again." } });
+  });
+});
+
+// Failure modes (me3-kvu8.24): a snoozed conversation still sits in Inbox or the Brief, or is in
+// neither Inbox nor Snoozed; it never comes back when its time passes; "until someone replies"
+// never comes back when nobody does; a reply does not wake it; archiving a snoozed conversation
+// leaves it to pop back into Inbox later; a time in the past is accepted; one owner snoozes
+// another's conversation; a conversation outside Inbox can be snoozed into limbo.
+describe("snoozing a conversation", () => {
+  const T0 = new Date("2026-11-13T10:00:00.000Z");
+  const hours = (count: number) => new Date(T0.getTime() + count * 3_600_000);
+  const listedAt = async (env: Env, folder: string, now: Date) => {
+    const result = await listMailboxThreads(env, "owner", { folder, now });
+    if ("error" in result) throw new Error(result.error);
+    return result.threads.map(thread => thread.id);
+  };
+
+  it("leaves Inbox and the Brief until its time, shows under Snoozed, then comes back by itself", async () => {
+    const f = fixture();
+    receive(f.raw, { id: "ask" });
+    receive(f.raw, { id: "other", root: null, from: "leo@example.test" });
+    for (const id of ["ask", "other"]) await runMailTriage(f.env, id, { classify: needsYou });
+
+    expect(await snoozeMailboxConversation(f.env, "owner", ROOT, { until: hours(20).toISOString() }, T0)).toEqual({ ok: true, id: ROOT, snoozedUntil: hours(20).toISOString(), untilReply: false });
+    expect(await listedAt(f.env, "inbox", hours(1))).toEqual(["<other@mail.test>"]);
+    expect(await listedAt(f.env, "snoozed", hours(1))).toEqual([ROOT]);
+    expect((await getMailboxBrief(f.env, "owner", { now: hours(1) })).needsYou.map(item => item.messageId)).toEqual(["other"]);
+    expect(await getMailboxConversationSnooze(f.env, "owner", ROOT, hours(1))).toEqual({ snoozedUntil: hours(20).toISOString(), untilReply: false });
+
+    expect(await listedAt(f.env, "inbox", hours(21))).toEqual(["<other@mail.test>", ROOT]);
+    expect(await listedAt(f.env, "snoozed", hours(21))).toEqual([]);
+    expect((await getMailboxBrief(f.env, "owner", { now: hours(21) })).needsYou.map(item => item.messageId).sort()).toEqual(["ask", "other"]);
+    expect(await getMailboxConversationSnooze(f.env, "owner", ROOT, hours(21))).toBeNull();
+  });
+
+  it("comes back after three days when it waited for a reply nobody sent, and at once when one arrives", async () => {
+    const f = fixture();
+    receive(f.raw, { id: "ask" });
+    await runMailTriage(f.env, "ask", { classify: needsYou });
+    expect(await snoozeMailboxConversation(f.env, "owner", ROOT, { untilReply: true }, T0)).toEqual({ ok: true, id: ROOT, snoozedUntil: hours(72).toISOString(), untilReply: true });
+    expect(await listedAt(f.env, "inbox", hours(71))).toEqual([]);
+    expect(await listedAt(f.env, "inbox", hours(73))).toEqual([ROOT]);
+
+    receive(f.raw, { id: "answer" });
+    await runMailTriage(f.env, "answer", { classify: needsYou });
+    expect(await listedAt(f.env, "inbox", hours(2))).toEqual([ROOT]);
+    expect(await listedAt(f.env, "snoozed", hours(2))).toEqual([]);
+    expect((await getMailboxBrief(f.env, "owner", { now: hours(2) })).needsYou.map(item => item.messageId)).toEqual(["answer"]);
+  });
+
+  it("ends the snooze when the conversation is archived or unsnoozed", async () => {
+    const f = fixture();
+    receive(f.raw, { id: "ask" });
+    await runMailTriage(f.env, "ask", { classify: needsYou });
+    await snoozeMailboxConversation(f.env, "owner", ROOT, { until: hours(20).toISOString() }, T0);
+    await moveMailboxConversation(f.env, "owner", ROOT, "archive", "snoozed", hours(1));
+    expect(await listedAt(f.env, "snoozed", hours(2))).toEqual([]);
+    expect(await listedAt(f.env, "archive", hours(2))).toEqual([ROOT]);
+    expect(await listedAt(f.env, "inbox", hours(21))).toEqual([]);
+
+    await moveMailboxConversation(f.env, "owner", ROOT, "inbox", "archive", hours(22));
+    await snoozeMailboxConversation(f.env, "owner", ROOT, { until: hours(40).toISOString() }, hours(22));
+    expect(await unsnoozeMailboxConversation(f.env, "owner", ROOT, hours(23))).toEqual({ ok: true, id: ROOT });
+    expect(await listedAt(f.env, "inbox", hours(23))).toEqual([ROOT]);
+    expect((await getMailboxBrief(f.env, "owner", { now: hours(23) })).needsYou.map(item => item.messageId)).toEqual(["ask"]);
+  });
+
+  it("refuses a past time, a conversation that is not in Inbox, and another owner's conversation", async () => {
+    const f = fixture();
+    receive(f.raw, { id: "ask" });
+    receive(f.raw, { id: "filed", root: "<filed@mail.test>", folder: "archive" });
+    expect(await snoozeMailboxConversation(f.env, "owner", ROOT, { until: hours(-1).toISOString() }, T0)).toMatchObject({ status: 400 });
+    expect(await snoozeMailboxConversation(f.env, "owner", ROOT, {}, T0)).toMatchObject({ status: 400 });
+    expect(await snoozeMailboxConversation(f.env, "owner", "<filed@mail.test>", { until: hours(5).toISOString() }, T0)).toMatchObject({ status: 409 });
+    expect(await snoozeMailboxConversation(f.env, "other", ROOT, { until: hours(5).toISOString() }, T0)).toMatchObject({ status: 404 });
+    expect(await unsnoozeMailboxConversation(f.env, "other", ROOT, T0)).toMatchObject({ status: 404 });
+    expect(await listedAt(f.env, "inbox", hours(1))).toEqual([ROOT]);
   });
 });

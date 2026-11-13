@@ -69,10 +69,13 @@ describe("mailbox threads", () => {
       summaryRow("thread-a", "2026-07-16T10:00:00.000Z"),
     ];
     const firstDb = captureDb({ rows: firstPage });
+    // Inbox leaves out conversations snoozed past this moment, so the list binds the time.
+    const now = new Date("2026-07-16T12:00:00.000Z");
     const result = await listMailboxThreads({ DB: firstDb.db } as never, "owner", {
       folder: "inbox",
       query: "100%_done",
       limit: 2,
+      now,
     });
 
     expect(result).toEqual({
@@ -89,6 +92,7 @@ describe("mailbox threads", () => {
     expect(firstDb.calls[0]?.values).toEqual([
       "owner",
       "inbox",
+      now.toISOString(),
       "%100\\%\\_done%",
       "%100\\%\\_done%",
       "%100\\%\\_done%",
@@ -101,10 +105,12 @@ describe("mailbox threads", () => {
       folder: "inbox",
       limit: 2,
       cursor: result.nextCursor,
+      now,
     });
     expect(nextDb.calls[0]?.values).toEqual([
       "owner",
       "inbox",
+      now.toISOString(),
       "2026-07-16T11:00:00.000Z",
       "2026-07-16T11:00:00.000Z",
       "thread-b",
@@ -507,6 +513,15 @@ const CANONICAL_THREAD_KEY_MIGRATION = readFileSync(
 );
 
 const MAILBOX_SQLITE_SCHEMA = `
+  CREATE TABLE mailbox_conversation_state (
+    mailbox_id TEXT NOT NULL,
+    thread_key TEXT NOT NULL,
+    snoozed_until TEXT,
+    snooze_until_reply INTEGER NOT NULL DEFAULT 0,
+    snoozed_at TEXT,
+    updated_at TEXT,
+    PRIMARY KEY (mailbox_id, thread_key)
+  );
   CREATE TABLE mailbox_triage (
     message_id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

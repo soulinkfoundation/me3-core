@@ -79,7 +79,13 @@ import {
   MANAGED_EMAIL_INBOUND_PATH,
   receiveManagedEmailInbound,
 } from "../managed-email";
-import { getMailboxConversationLocation, moveMailboxMessage } from "../mailbox-conversations";
+import {
+  getMailboxConversationLocation,
+  getMailboxConversationSnooze,
+  moveMailboxMessage,
+  snoozeMailboxConversation,
+  unsnoozeMailboxConversation,
+} from "../mailbox-conversations";
 import {
   MAILBOX_INLINE_HOLD_MS,
   cancelHeldMailboxDraft,
@@ -435,6 +441,7 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
       thread: {
         ...summarizeMailboxThread(threadId, result.messages),
         location: await getMailboxConversationLocation(c.env, ownerId, threadId),
+        snooze: await getMailboxConversationSnooze(c.env, ownerId, threadId),
       },
       messages: await withDraftHolds(c.env, ownerId, await decorateMailboxMessages(c.env, ownerId, result.messages, apiOrigin(c))),
     });
@@ -451,6 +458,26 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
       c.req.param("threadId"),
       body.read !== false,
     );
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
+  });
+
+  // Snooze: { until } a time, or { untilReply: true } (back after three days if nobody replies).
+  app.post("/api/mailbox/threads/:threadId/snooze", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const body = await c.req
+      .json<{ until?: unknown; untilReply?: unknown }>()
+      .catch((): { until?: unknown; untilReply?: unknown } => ({}));
+    const result = await snoozeMailboxConversation(c.env, ownerId, c.req.param("threadId"), body);
+    if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    return c.json(result);
+  });
+
+  app.post("/api/mailbox/threads/:threadId/unsnooze", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const result = await unsnoozeMailboxConversation(c.env, ownerId, c.req.param("threadId"));
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
     return c.json(result);
   });
