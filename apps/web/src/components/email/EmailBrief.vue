@@ -103,12 +103,18 @@ async function draftMissingFollowUps() {
   if (missing.length === 0) return;
   let drafted = false;
   for (const item of missing) {
+    const key = `followup:${item.contactId}`;
     draftRequested.add(item.contactId);
+    pending.value = new Set([...pending.value, key]);
     try {
       await api.post(`/mailbox/followups/${encodeURIComponent(item.contactId)}/draft`);
       drafted = true;
     } catch {
       // The card stays, with "Draft a follow-up" to try again.
+    } finally {
+      const next = new Set(pending.value);
+      next.delete(key);
+      pending.value = next;
     }
   }
   if (drafted) await load(true);
@@ -388,7 +394,7 @@ watch(() => props.active, (active) => { if (active) void load(); });
               {{ item.draft.body }}
             </div>
             <p v-else class="brief-followup__waiting">
-              {{ draftRequested.has(item.contactId) && !pending.has(`followup:${item.contactId}`) ? "No draft yet." : "ME3 is drafting a follow-up…" }}
+              {{ pending.has(`followup:${item.contactId}`) ? "ME3 is drafting a follow-up…" : "No draft yet." }}
             </p>
             <div class="brief-item__acts brief-followup__acts">
               <Button
