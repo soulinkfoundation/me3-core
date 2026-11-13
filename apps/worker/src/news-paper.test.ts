@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { newsPatchFromAgent } from "./agent-soup";
 import { clockTime, countPaper, layoutPaper, noteAddsSomething, newsBuildDue, newsDueMinutes, newsFromSearch, readPaperPicks, sameEvent, shouldBuildPaper, toNewsCandidates, writeNewsPicks } from "./news-paper";
 import { applyNewsPatch, defaultNewsPrefs, describeNewsSettings, newsIsSetUp } from "./news-settings";
+import { newsPrefsFromSoup } from "./news-migrate";
 import { NEWS_PUSH_TITLE, newsPushDue } from "./news-push";
 import { cityFromTimezone, cleanCityName, describeWeather, geocodeCity } from "./news-weather";
 import { SoupUnavailableError, newsTodayQuery, readNewsToday, type SoupClient } from "./soup-client";
@@ -283,5 +284,26 @@ describe("your news is ready", () => {
     expect(newsPushDue(prefs, { ...paper, read_at: "2026-11-13T06:30:00.000Z" }, at("06:45"))).toBe(false);
     expect(newsPushDue(prefs, { ...paper, hidden_at: "2026-11-13T06:30:00.000Z" }, at("06:45"))).toBe(false);
     expect(NEWS_PUSH_TITLE).toBe("🗞️ Your news is ready");
+  });
+});
+
+describe("moving a Soup setup to News", () => {
+  const now = new Date("2026-11-13T05:00:00.000Z");
+  const soup = (servings: SoupTaste["servings"]): SoupTaste => ({ ...emptySoupTaste(), workTopics: [{ topic: "agent payments", projectId: "p1", source: "project" }], interests: ["poetry"], lessOf: ["crypto"], servings });
+  const headlines = { id: "morning", name: "Morning headlines", time: "07:20", days: [], kind: "headlines" as const };
+  const evening = { id: "evening", name: "Something longer", time: "20:00", days: [], kind: "pick" as const };
+  it("takes the morning headlines time as the paper's time and keeps the topics", () => {
+    const prefs = newsPrefsFromSoup(soup([evening, headlines]), { briefingTime: "08:00", removedFromHome: false, place: { city: "Dublin", country: "IE", lat: 53.35, lon: -6.26 }, now })!;
+    expect(prefs).toMatchObject({ time: "07:15", weekendOffsetMinutes: 60, notify: true, paused: false, city: "Dublin", country: "IE", setUpAt: now.toISOString() });
+    expect(newsBuildDue(prefs, { minutes: 7 * 60, weekday: 5 })).toBe(true);
+  });
+  it("falls back to the briefing time, and stays paused when the Soup card was taken off Home", () => {
+    expect(newsPrefsFromSoup(soup([evening]), { briefingTime: "08:00", removedFromHome: true, now })).toMatchObject({ time: "08:00", paused: true, city: null });
+    expect(newsPrefsFromSoup(soup([evening]), { briefingTime: null, removedFromHome: false, now })!.time).toBe("07:00");
+  });
+  it("leaves News off for an owner who only wanted soup when they asked, has no topics, or is already on News", () => {
+    expect(newsPrefsFromSoup(soup([]), { briefingTime: "08:00", removedFromHome: false, now })).toBeNull();
+    expect(newsPrefsFromSoup({ ...emptySoupTaste(), servings: [headlines] }, { briefingTime: null, removedFromHome: false, now })).toBeNull();
+    expect(newsPrefsFromSoup({ ...soup([headlines]), news: defaultNewsPrefs() }, { briefingTime: null, removedFromHome: false, now })).toBeNull();
   });
 });

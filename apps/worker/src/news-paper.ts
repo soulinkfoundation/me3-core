@@ -6,6 +6,7 @@
 import type { AgentModel, AgentTool } from "../../../packages/agent/src/types";
 import { addDaysToDateString, normalizeTimeZone } from "./calendar";
 import { JournalInputError } from "./journal";
+import { moveSoupSetupsToNews } from "./news-migrate";
 import { describeNewsSettings, newsIsSetUp, newsTopicLabel } from "./news-settings";
 import { fetchWeather, type NewsWeather } from "./news-weather";
 import { isCorePluginEnabled } from "./plugins";
@@ -524,6 +525,8 @@ export async function composeNewsPaper(env: Env, ownerId: string, options: Compo
 /** Quarter-hour step: build the paper for every owner whose time is near, once per owner and day. */
 export async function dispatchDueNewsPapers(env: Env, now = new Date()) {
   if (!await isCorePluginEnabled(env, SOUP_PLUGIN_ID)) return { skipped: "plugin disabled" };
+  // Owners who had set up Soup are carried over first, so their paper is built on the same tick.
+  await moveSoupSetupsToNews(env, now).catch(error => console.warn("Moving Soup setups to News failed", error instanceof Error ? error.message : error));
   const owners = await env.DB.prepare("SELECT o.id, o.timezone, t.taste_json FROM soup_taste t JOIN owner_profile o ON o.id = t.user_id ORDER BY o.created_at ASC").all<{ id: string; timezone: string | null; taste_json: string }>();
   let built = 0;
   let failed = 0;

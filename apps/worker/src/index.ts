@@ -8,7 +8,6 @@ import { dispatchDueCalendarPushNotifications } from "./calendar-push-notificati
 import { dispatchDueMorningCalendarPushes } from "./morning-calendar-push";
 import { dispatchDueNewsPapers } from "./news-paper";
 import { dispatchDueNewsNotifications } from "./news-push";
-import { dispatchDueSoupServings } from "./soup-servings";
 import { dispatchDueGratitudeReminders } from "./gratitude";
 import { archiveStaleLoginCodes, purgeStaleSpam, retryPendingMailTriage } from "./mailbox-triage";
 import { dispatchDueMailboxSends } from "./mailbox-send";
@@ -147,7 +146,6 @@ const QUARTER_HOUR_SCHEDULED_STEPS: readonly ScheduledStep[] = [
   ["login code cleanup", archiveStaleLoginCodes],
   ["spam purge", purgeStaleSpam],
   ["held email sends", dispatchDueMailboxSends],
-  ["soup servings", dispatchDueSoupServings],
   ["news papers", dispatchDueNewsPapers],
   ["news notifications", dispatchDueNewsNotifications],
   ["morning calendar push", dispatchDueMorningCalendarPushes],

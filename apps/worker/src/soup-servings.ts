@@ -8,10 +8,9 @@ import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner
 import { createAgentModels } from "./agent-runtime";
 import { addDaysToDateString, getUtcMsForLocalTime, normalizeTimeZone } from "./calendar";
 import { JournalInputError } from "./journal";
-import { isCorePluginEnabled } from "./plugins";
 import { getOwnerProfile } from "./sites";
 import { createSoupClient, soupMinutes, type SoupBowlItem, type SoupClient, type SoupMedium, type SoupSearchRequest } from "./soup-client";
-import { SOUP_PLUGIN_ID, getSoupTaste, type SoupServingKind, type SoupServingSpec, type SoupTaste } from "./soup-taste";
+import { getSoupTaste, type SoupServingKind, type SoupServingSpec, type SoupTaste } from "./soup-taste";
 import { parseJsonArray } from "./workspace-input";
 import type { Env } from "./types";
 
@@ -423,26 +422,6 @@ export function dueServings(taste: SoupTaste, local: { minutes: number; weekday:
     const due = hour * 60 + minute;
     return local.minutes >= due - LEAD_MINUTES && local.minutes < due + CATCH_UP_MINUTES;
   });
-}
-
-/** Quarter-hour step: compose every serving whose time is near, once per owner and day. */
-export async function dispatchDueSoupServings(env: Env, now = new Date()) {
-  if (!await isCorePluginEnabled(env, SOUP_PLUGIN_ID)) return { skipped: "plugin disabled" };
-  const owners = await env.DB.prepare(`SELECT o.id, o.timezone, t.taste_json FROM soup_taste t JOIN owner_profile o ON o.id = t.user_id WHERE t.set_up_at IS NOT NULL ORDER BY o.created_at ASC`).all<{ id: string; timezone: string | null; taste_json: string }>();
-  let composed = 0;
-  let failed = 0;
-  for (const owner of owners.results || []) {
-    const timezone = normalizeTimeZone(owner.timezone) || "UTC";
-    const local = localParts(timezone, now);
-    const { taste } = await getSoupTaste(env, owner.id);
-    for (const serving of dueServings(taste, local)) {
-      const existing = await env.DB.prepare("SELECT status, claimed_at FROM soup_servings WHERE user_id = ? AND date_key = ? AND serving_id = ?").bind(owner.id, local.dateKey, serving.id).first<{ status: string; claimed_at: number }>();
-      if (existing && !(existing.status === "failed" || (existing.status === "pending" && existing.claimed_at < now.getTime() - 5 * 60_000))) continue;
-      const result = await composeSoupServing(env, owner.id, specForServing(serving, local.dateKey, timezone), now);
-      if (result) composed++; else failed++;
-    }
-  }
-  return { checkedAt: now.toISOString(), composed, failed };
 }
 
 /** Composes one of the owner's servings right now, for the dev trigger and the chat tool. */

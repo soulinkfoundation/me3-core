@@ -1473,7 +1473,6 @@ const SOUP_PLUGIN: CorePluginManifestSummary = {
     { id: "0104_news_papers", path: "apps/worker/migrations/0104_news_papers.sql", destructive: false, description: "One stored morning paper per owner and day." },
   ],
   queuesAndCrons: [
-    { id: "soup.servings", kind: "cron", schedule: "*/15 * * * *", consumerEntrypoint: "dispatchDueSoupServings" },
     { id: "news.papers", kind: "cron", schedule: "*/15 * * * *", consumerEntrypoint: "dispatchDueNewsPapers" },
     { id: "news.notifications", kind: "cron", schedule: "* * * * *", consumerEntrypoint: "dispatchDueNewsNotifications" },
   ],
