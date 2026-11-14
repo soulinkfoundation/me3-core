@@ -17,6 +17,7 @@ import {
   syncAccountsStripe,
   updateFinancialEntry,
 } from "../accounts";
+import { getAccountsSummary } from "../accounts-summary";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { isCorePluginEnabled } from "../plugins";
 import { getAccountsEmailTriageSettings, updateAccountsEmailTriageSettings } from "../accounts-email-triage";
@@ -215,6 +216,14 @@ export function registerAccountsRoutes(app: AppHono, deps: OwnerRouteDeps) {
     } catch (error) {
       return accountsErrorResponse(c, error);
     }
+  });
+
+  app.get("/api/accounts/summary", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireAccountsPlugin(c);
+    if (blocked) return blocked;
+    return c.json(await getAccountsSummary(c.env, ownerId));
   });
 
   app.get("/api/accounts/stripe/status", async (c) => {

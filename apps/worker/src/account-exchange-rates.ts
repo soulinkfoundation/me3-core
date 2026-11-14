@@ -68,7 +68,7 @@ export async function estimateAccountCurrencyTotal(
   };
 }
 
-async function getEcbExchangeRate(base: string, quote: string, date: string): Promise<ExchangeRate | null> {
+export async function getEcbExchangeRate(base: string, quote: string, date: string): Promise<ExchangeRate | null> {
   if (!isIsoDate(date)) return null;
   const cacheKey = new Request(`${CACHE_ORIGIN}/${base}/${quote}/${date}`);
   const cache = getDefaultCache();
