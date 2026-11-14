@@ -223,6 +223,10 @@ const showGratitude = computed(() => gratitudeOn.value && !unavailable.value.inc
 // Upcoming events only; an event drops off an hour after it starts.
 // Today is the calendar at a glance: finished events fade, the current one is marked, and an
 // event without an end counts as an hour long.
+function compactTime(value: string) {
+  const text = new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return text.replace(/:00(?=\s?[AP]M)/i, "").replace(/\s?([AP]M)$/i, (_, p) => ` ${p.toLowerCase()}`);
+}
 function eventState(event: { start: string; end?: string | null; allDay?: boolean }) {
   if (event.allDay) return "";
   const start = new Date(event.start).getTime(); const end = event.end ? new Date(event.end).getTime() : start + 3_600_000; const now = Date.now();
@@ -565,7 +569,7 @@ onBeforeUnmount(() => {
               <!-- The title already opens Calendar, so the empty day is one quiet line. Calendars connect from Settings. -->
               <p v-if="!events.length" class="home-empty-line">{{ calendarConnected ? 'Nothing scheduled' : "Today's events will show here" }}</p>
               <template v-else>
-                <RouterLink v-for="event in todayEvents" :key="event.id" :to="`/calendar?date=${day}`" class="home-line home-event" :class="eventState(event)"><span class="home-time">{{ event.allDay ? 'All day' : new Date(event.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</span><i class="home-event__bar" aria-hidden="true" /><span class="home-event__title">{{ event.title }}<template v-if="eventState(event) === 'is-now'"> · now</template></span></RouterLink>
+                <RouterLink v-for="event in todayEvents" :key="event.id" :to="`/calendar?date=${day}`" class="home-line home-event" :class="eventState(event)"><span class="home-time">{{ event.allDay ? 'All day' : compactTime(event.start) }}</span><i class="home-event__bar" aria-hidden="true" /><span class="home-event__title">{{ event.title }}<template v-if="eventState(event) === 'is-now'"> · now</template></span></RouterLink>
                 <p v-if="dayOver" class="home-empty-line">Nothing else today · <RouterLink :to="`/calendar?date=${tomorrowKey}`" aria-label="Open tomorrow in Calendar">Tomorrow</RouterLink></p>
               </template>
               <GratitudeCard v-if="showGratitude" section :active="active" @unavailable="unavailable.push('gratitude')" />
@@ -733,7 +737,7 @@ p { margin: 4px 0; }
 .home-line > a { color: inherit; text-decoration: none; flex: 1; min-width: 0; }
 .home-event { min-height: 32px; }
 .home-event > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.home-time { min-width: 50px; font-variant-numeric: tabular-nums; }
+.home-time { min-width: 50px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .home-task-check { display: grid; place-items: center; min-width: 36px; width: 36px; margin-left: -8px; flex-shrink: 0; color: var(--ui-text-muted); }
 .home-approval { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 2px 0 12px; margin: 2px 0 6px; background: var(--ui-accent-soft); border-radius: 14px; font-size: 14px; }
 .home-approval__what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
