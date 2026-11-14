@@ -16,6 +16,7 @@ import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages
 import { getAiSettings } from "./ai-providers";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
 import { loadAgentEmailDraft } from "./agent-email-draft";
+import { loadAgentNewsReply } from "./agent-news-card";
 import { ownerFacingMemory, rememberFromTurn } from "./agent-memory";
 import { suggestAgentReplies } from "./agent-suggested-replies";
 import { getManagedAiBillingSettings, managedAllowanceNotice, syncManagedAiUsage, MANAGED_AI_FALLBACK_MODEL, type ManagedAiBillingSettings, type ManagedAllowanceNotice } from "./managed-ai-billing";
@@ -270,14 +271,15 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
 async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void,allowanceNotice:Promise<ManagedAllowanceNotice|null>=Promise.resolve(null),followUps:Promise<string[]>=Promise.resolve([]),memoryReview:Promise<{memoryId:string;id:string;body:string;displayBody:string;status:"pending"}|null>=Promise.resolve(null)) {
   const scope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId};
   // The record loads overlap the follow-up and memory model calls rather than waiting behind them.
-  const [targetPresentation,imageAction,emailDraft,notice,suggestedReplies,memory]=await Promise.all([
+  const [targetPresentation,imageAction,emailDraft,news,notice,suggestedReplies,memory]=await Promise.all([
     result.targetPresentation||input.targetSelection?loadAgentTargetPresentation(env,scope):null,
     loadAgentGeneratedImageAction(env,scope),
     loadAgentEmailDraft(env,{ownerId:input.userId,turnId:input.turnId}),
+    loadAgentNewsReply(env,{ownerId:input.userId,turnId:input.turnId}),
     allowanceNotice,followUps,memoryReview,
   ]);
   const messageId=`${input.turnId}:assistant:${result.status}:${result.approvalId||"final"}`;
-  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(notice?{allowanceNotice:notice}:{}),...(emailDraft?{emailDraft}:{}),...(suggestedReplies.length?{suggestedReplies}:{}),...(memory?{memoryReview:memory}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
+  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(notice?{allowanceNotice:notice}:{}),...(emailDraft?{emailDraft}:{}),...(news.newsCard?{newsCard:news.newsCard}:{}),...(news.newsServingId?{newsServingId:news.newsServingId}:{}),...(suggestedReplies.length?{suggestedReplies}:{}),...(memory?{memoryReview:memory}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
   await env.DB.batch([
     env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)").bind(messageId,input.userId,input.threadId,result.replyText,JSON.stringify(payload)),
     env.DB.prepare("UPDATE me3_agent_turns SET response_json=?,trace_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND turn_id=?").bind(JSON.stringify(payload),JSON.stringify(result.trace),input.userId,input.turnId),

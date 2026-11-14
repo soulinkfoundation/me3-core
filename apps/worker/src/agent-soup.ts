@@ -87,7 +87,7 @@ export function createAgentSoupServices(env: Env, ownerId: string): AgentSoupSer
         servingId: serving.id,
         pick: pick ? { title: pick.title, by: pick.creator, minutes: pick.minutes, medium: pick.medium, url: pick.url, forYou: pick.forYou, why: pick.why } : null,
         alsoGood: also.map(item => ({ title: item.title, minutes: item.minutes, url: item.url })),
-        note: "The web app shows the pick as a card under your reply. Reply in one short line (why this one, in your words); do not repeat the title, link or list the items. Never call it soup or a bowl.",
+        note: "The pick is shown as a card under your reply. Reply in one short line (why this one, in your words); do not repeat the title, link or list the items. Call it a pick, and do not say where the card is.",
       };
     },
     async readTaste() {

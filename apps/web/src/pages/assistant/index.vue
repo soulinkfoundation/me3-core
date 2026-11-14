@@ -161,6 +161,8 @@ type AgentSandboxResponse = {
   allowanceNotice?: AgentChatAllowanceNotice | null;
   memoryReview?: AgentChatMemoryReview | null;
   emailDraft?: AgentChatServerEmailDraft | null;
+  newsCard?: unknown;
+  newsServingId?: string | null;
   contentAction?: {
     kind: "previewed" | "saved";
     itemId?: string;
@@ -194,6 +196,8 @@ type AssistantThreadMessage = {
   allowanceNotice?: AgentChatAllowanceNotice | null;
   memoryReview?: AgentChatMemoryReview | null;
   emailDraft?: AgentChatServerEmailDraft | null;
+  newsCard?: unknown;
+  newsServingId?: string | null;
   siteAction?: AgentSandboxResponse["siteAction"];
   trace?: AgentChatTurnTrace | null;
 };
@@ -490,6 +494,12 @@ async function newsShowFirstPaper(messageId: string) {
   newsFirstPaper = null;
   if (card && !newsCardByMessage.value[messageId]) newsCardShown(messageId, card);
   void homePanels.value?.refreshNews();
+}
+// The cards are saved with ME3's reply, so they are still there when the conversation is reopened.
+function restoreNewsCards(messageId: string, saved: { newsCard?: unknown; newsServingId?: string | null }) {
+  const card = newsChatCardFromTool(saved.newsCard);
+  if (card && !newsCardByMessage.value[messageId]) newsCardByMessage.value = { ...newsCardByMessage.value, [messageId]: card };
+  if (saved.newsServingId && !soupByMessage.value[messageId]) void loadSoupServing(messageId, saved.newsServingId);
 }
 const lastNewsCardMessageId = computed(() => [...assistantConsoleMessages.value].reverse().find(message => message.id && newsCardByMessage.value[message.id])?.id ?? null);
 async function readNews() {
@@ -927,6 +937,7 @@ function mapAssistantThreadMessages(messages: AssistantThreadMessage[]) {
       actionLabel: actionLink?.label || null,
     };
     if (message.role === "assistant") {
+      restoreNewsCards(message.id, message);
       mappedMessage.emailDraftAction = message.emailDraft
         ? createServerAgentChatEmailDraftAction(message, message.emailDraft)
         : createAgentChatEmailDraftAction(message, previousUserText);
@@ -1991,6 +2002,7 @@ function applyAssistantResultToMessage(
   message.targetPresentation = normalizeAgentTargetPresentation(result.targetPresentation);
   message.allowanceNotice = result.allowanceNotice || null;
   message.memoryReview = result.memoryReview || null;
+  if (message.id) restoreNewsCards(message.id, result);
   message.emailDraftAction = result.emailDraft
     ? createServerAgentChatEmailDraftAction(message, result.emailDraft)
     : createAgentChatEmailDraftAction(message, previousUserTextForAssistantMessage(message));
