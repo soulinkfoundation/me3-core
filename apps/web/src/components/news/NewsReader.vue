@@ -6,9 +6,10 @@ import NewsPhoto from "./NewsPhoto.vue";
 import NewsStoryRow from "./NewsStoryRow.vue";
 import { NEWS_PAGE_TITLES, newsDate, newsEmbedUrl, newsLength, newsPageKinds, type NewsPaper, type NewsRating } from "../../utils/news";
 
-// The paper, opened (me3-6ptk.5): a handful of pages you flick through, with a page turn. Tap the
-// edges or the arrows, swipe, or use the arrow keys. A paper has an end, where you can say how it
-// was. Stories open at their source; a video plays here only after a tap.
+// The paper, opened (me3-6ptk.5): a handful of pages you flick through, with a page turn. Swipe,
+// tap the edges or the dots, or use the arrow keys; with a mouse there are arrows too. The page's
+// name sits in the top bar, so the page starts with its stories. A paper has an end, where you can
+// say how it was. Anywhere on a story opens it at its source; a video plays here only after a tap.
 const props = defineProps<{ paper: NewsPaper; nextTime: string }>();
 const emit = defineEmits<{ close: []; done: []; settings: []; rate: [rating: NewsRating]; ask: [prompt: string] }>();
 
@@ -57,6 +58,17 @@ onBeforeUnmount(() => { document.documentElement.style.overflow = previousOverfl
 const video = computed(() => props.paper.pages.media?.video ?? null);
 const embed = computed(() => video.value ? newsEmbedUrl(video.value) : null);
 const videoLength = computed(() => video.value?.minutes ? `${video.value.minutes} min` : "");
+// The top bar names the page: "News" and the date on the front, the section and what is in it after.
+const title = computed(() => kind.value === "front" || kind.value === "end" ? "News" : kind.value === "near" ? props.paper.pages.near?.city || NEWS_PAGE_TITLES.near : NEWS_PAGE_TITLES[kind.value]);
+const subtitle = computed(() => {
+  const pages = props.paper.pages;
+  if (kind.value === "front") return `${newsDate(props.paper.dateKey, "long")} · Ready at ${props.paper.time}`;
+  if (kind.value === "work") return pages.work?.topics.join(" · ") || "";
+  if (kind.value === "media") return "Picked for this week";
+  if (kind.value === "topics") return pages.topics?.stories.map(story => story.tag).filter(Boolean).join(" · ") || "";
+  if (kind.value === "near") return pages.near?.weather ? "Weather and what’s on near you" : "What’s on near you";
+  return "";
+});
 const ratings: Array<{ id: NewsRating; emoji: string; label: string }> = [{ id: "fire", emoji: "🔥", label: "Loved it" }, { id: "ok", emoji: "🙂", label: "It was fine" }, { id: "sleepy", emoji: "😴", label: "A bit dull" }];
 const endLine = computed(() => {
   const { stories, videos } = props.paper.counts;
@@ -70,28 +82,28 @@ const endLine = computed(() => {
       <div class="news-reader__sheet">
         <div class="news-reader__top">
           <button type="button" aria-label="News settings" @click="emit('settings')"><UiIcon name="Ellipsis" :size="20" /></button>
+          <h2 class="news-reader__title">{{ title }}<small v-if="subtitle">{{ subtitle }}</small></h2>
           <button ref="closeEl" type="button" aria-label="Close" @click="emit('close')"><UiIcon name="X" :size="20" /></button>
         </div>
         <div :key="index" ref="pageEl" class="news-pg" :class="direction ? `news-pg--${direction}` : ''" :aria-label="NEWS_PAGE_TITLES[kind]">
           <template v-if="kind === 'front'">
-            <div class="news-mast"><span class="news-mast__nm">News</span><span class="news-mast__ed"><span>{{ newsDate(paper.dateKey, 'long') }}</span><span aria-hidden="true">·</span><span>Ready at {{ paper.time }}</span></span></div>
             <div class="news-lead">
-              <NewsPhoto :id="paper.pages.front.lead.id" :src="paper.pages.front.lead.image" :height="180" />
-              <a class="news-lead__ti" :href="paper.pages.front.lead.url" target="_blank" rel="noopener noreferrer">{{ paper.pages.front.lead.headline }}</a>
-              <p v-if="paper.pages.front.lead.summary" class="news-dek">{{ paper.pages.front.lead.summary }}</p>
-              <span class="news-src">{{ paper.pages.front.lead.source }}</span>
+              <a class="news-open" :href="paper.pages.front.lead.url" target="_blank" rel="noopener noreferrer">
+                <NewsPhoto :id="paper.pages.front.lead.id" :src="paper.pages.front.lead.image" :height="200" />
+                <span class="news-lead__ti">{{ paper.pages.front.lead.headline }}</span>
+                <span v-if="paper.pages.front.lead.summary" class="news-dek news-lead__dek">{{ paper.pages.front.lead.summary }}</span>
+                <span class="news-src">{{ paper.pages.front.lead.source }}</span>
+              </a>
               <span v-if="paper.pages.front.lead.note" class="news-note">{{ paper.pages.front.lead.note }}</span>
             </div>
             <div v-if="paper.pages.front.briefs.length" class="news-cols"><NewsStoryRow v-for="story in paper.pages.front.briefs" :key="story.id" :story="story" small /></div>
           </template>
 
           <template v-else-if="kind === 'work' && paper.pages.work">
-            <h2 class="news-pgt">Your work<small>{{ paper.pages.work.topics.join(' · ') }}</small></h2>
             <NewsStoryRow v-for="(story, i) in paper.pages.work.stories" :key="story.id" :story="story" :picture="i === 0 && Boolean(story.image)" @ask="emit('ask', $event)" />
           </template>
 
           <template v-else-if="kind === 'media' && paper.pages.media">
-            <h2 class="news-pgt">Watch &amp; listen<small>Picked for this week</small></h2>
             <template v-if="video">
               <div v-if="playing && embed" class="news-video"><iframe :src="embed" :title="video.headline" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" /></div>
               <component :is="embed ? 'button' : 'a'" v-else class="news-video__poster" v-bind="embed ? { type: 'button' } : { href: video.url, target: '_blank', rel: 'noopener noreferrer' }" :aria-label="`Play ${video.headline}`" @click="embed && (playing = true)">
@@ -99,25 +111,23 @@ const endLine = computed(() => {
               </component>
               <div class="news-video__text"><a class="news-video__ti" :href="video.url" target="_blank" rel="noopener noreferrer">{{ video.headline }}</a><span class="news-src">{{ video.source }}</span><span v-if="video.note" class="news-note">{{ video.note }}</span></div>
             </template>
-            <div v-if="paper.pages.media.listen" class="news-box news-listen">
+            <a v-if="paper.pages.media.listen" class="news-box news-listen" :href="paper.pages.media.listen.url" target="_blank" rel="noopener noreferrer" :aria-label="`Listen to ${paper.pages.media.listen.headline}`">
               <UiIcon name="Headphones" :size="24" />
               <span class="news-listen__text"><span class="news-serif news-listen__ti">{{ paper.pages.media.listen.headline }}</span><span class="news-src">{{ [paper.pages.media.listen.source, newsLength(paper.pages.media.listen)].filter(Boolean).join(' · ') }}</span></span>
-              <a class="news-listen__go" :href="paper.pages.media.listen.url" target="_blank" rel="noopener noreferrer" :aria-label="`Listen to ${paper.pages.media.listen.headline}`"><UiIcon name="Play" :size="16" /></a>
-            </div>
+              <span class="news-listen__go" aria-hidden="true"><UiIcon name="Play" :size="16" /></span>
+            </a>
           </template>
 
           <template v-else-if="kind === 'topics' && paper.pages.topics">
-            <h2 class="news-pgt">Your topics<small>{{ paper.pages.topics.stories.map(story => story.tag).filter(Boolean).join(' · ') }}</small></h2>
-            <div v-for="story in paper.pages.topics.stories" :key="story.id" class="news-topic">
-              <NewsPhoto :id="story.id" :src="story.image" :height="150" />
+            <a v-for="story in paper.pages.topics.stories" :key="story.id" class="news-topic news-open" :href="story.url" target="_blank" rel="noopener noreferrer">
+              <NewsPhoto :id="story.id" :src="story.image" :height="170" />
               <span v-if="story.tag" class="news-tag">{{ story.tag }}</span>
-              <a class="news-topic__ti" :href="story.url" target="_blank" rel="noopener noreferrer">{{ story.headline }}</a>
+              <span class="news-topic__ti">{{ story.headline }}</span>
               <span class="news-src">{{ story.source }}</span>
-            </div>
+            </a>
           </template>
 
           <template v-else-if="kind === 'near' && paper.pages.near">
-            <h2 class="news-pgt">{{ paper.pages.near.city || 'Near you' }}<small>{{ paper.pages.near.weather ? 'Weather and what’s on near you' : 'What’s on near you' }}</small></h2>
             <div v-if="paper.pages.near.weather" class="news-box news-weather"><span class="news-weather__big" aria-hidden="true">{{ paper.pages.near.weather.emoji }}</span><span class="news-weather__text"><span class="news-serif news-weather__temp">{{ paper.pages.near.weather.temp }}</span><span class="news-src">{{ paper.pages.near.weather.text }}</span></span></div>
             <NewsStoryRow v-if="paper.pages.near.local" :story="paper.pages.near.local" />
             <a v-if="paper.pages.near.good" class="news-box news-good" :href="paper.pages.near.good.url" target="_blank" rel="noopener noreferrer"><span class="news-src">One good thing</span><span class="news-serif news-good__ti">{{ paper.pages.near.good.headline }}</span><span class="news-src">{{ paper.pages.near.good.source }}</span></a>
@@ -150,10 +160,14 @@ const endLine = computed(() => {
 <style scoped>
 .news-reader { position: fixed; inset: 0; z-index: 1200; display: flex; justify-content: center; background: var(--ui-bg); color: var(--ui-text); }
 .news-reader__sheet { position: relative; display: flex; flex-direction: column; width: min(620px, 100%); height: 100%; perspective: 1400px; overflow: hidden; }
-.news-reader__top { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); right: 8px; z-index: 4; display: flex; gap: 2px; }
-.news-reader__top button { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; color: var(--ui-text); cursor: pointer; }
+.news-reader__top { flex: none; display: flex; align-items: center; gap: 4px; margin: 0 20px; padding: calc(8px + env(safe-area-inset-top, 0px)) 0 8px; box-shadow: inset 0 -2px 0 var(--ui-text); }
+.news-reader__top button:first-child { margin-left: -10px; }
+.news-reader__top button:last-child { margin-right: -10px; }
+.news-reader__title { flex: 1; min-width: 0; margin: 0; text-align: center; font-family: ui-serif, 'New York', Georgia, serif; font-size: 22px; font-weight: 800; letter-spacing: -.015em; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.news-reader__title small { display: block; margin-top: 2px; font-family: -apple-system, system-ui, sans-serif; font-size: 12px; font-weight: 400; letter-spacing: 0; color: var(--ui-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.news-reader__top button { flex: none; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; color: var(--ui-text); cursor: pointer; }
 .news-reader__top button:hover { background: var(--ui-surface-muted); }
-.news-pg { flex: 1; overflow-y: auto; padding: calc(56px + env(safe-area-inset-top, 0px)) 20px 120px; transform-origin: left center; backface-visibility: hidden; background: var(--ui-bg); }
+.news-pg { flex: 1; overflow-y: auto; padding: 14px 20px 84px; transform-origin: left center; backface-visibility: hidden; background: var(--ui-bg); }
 .news-pg--next { animation: news-flip-next .55s cubic-bezier(.3, .7, .2, 1) both; }
 .news-pg--prev { animation: news-flip-prev .55s cubic-bezier(.3, .7, .2, 1) both; }
 @keyframes news-flip-next { 0% { transform: rotateY(-75deg); opacity: .2; box-shadow: 30px 0 40px rgba(0, 0, 0, .2); } 100% { transform: none; opacity: 1; box-shadow: none; } }
@@ -163,23 +177,27 @@ const endLine = computed(() => {
 .news-edge:hover { background: none; }
 .news-edge--l { left: 0; }
 .news-edge--r { right: 0; }
-.news-turn { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; display: flex; align-items: center; gap: 10px; padding: 10px 18px calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--ui-bg); box-shadow: 0 -1px 0 var(--ui-border); }
-.news-turn__btn { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: var(--ui-surface-muted); color: var(--ui-text); cursor: pointer; }
+/* Just the page dots, floating over the page. Arrows join them only where there is a mouse to click them. */
+.news-turn { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0 18px calc(12px + env(safe-area-inset-bottom, 0px)); pointer-events: none; }
+.news-turn > * { pointer-events: auto; }
+.news-turn__btn { display: none; }
+@media (hover: hover) and (pointer: fine) { .news-turn__btn { display: flex; } }
+.news-turn__btn { align-items: center; justify-content: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: var(--ui-surface-muted); color: var(--ui-text); cursor: pointer; }
 .news-turn__btn:disabled { opacity: .3; cursor: default; }
-.news-dots { flex: 1; display: flex; justify-content: center; gap: 6px; }
-.news-dots button { width: 7px; height: 7px; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: var(--news-rule); cursor: pointer; }
+.news-dots { display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 14px; border-radius: 999px; background: color-mix(in srgb, var(--ui-surface-muted) 78%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.news-dots button { width: 7px; height: 7px; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--ui-text) 28%, transparent); cursor: pointer; }
 .news-dots button.is-on { width: 20px; border-radius: 999px; background: var(--ui-text); }
 
-.news-mast { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 0 8px; margin-bottom: 12px; box-shadow: inset 0 -3px 0 -2px var(--ui-text), inset 0 -6px 0 -4px var(--ui-text); }
-.news-mast__nm { font-family: ui-serif, 'New York', Georgia, serif; font-size: 38px; font-weight: 800; letter-spacing: -.02em; line-height: 1; }
-.news-mast__ed { display: flex; gap: 6px; font-size: 12px; color: var(--ui-text-muted); }
-.news-pgt { margin: 4px 0 10px; padding-bottom: 6px; font-family: ui-serif, 'New York', Georgia, serif; font-size: 30px; font-weight: 800; letter-spacing: -.015em; line-height: 1.05; box-shadow: inset 0 -2px 0 var(--ui-text); }
-.news-pgt small { display: block; margin-top: 4px; font-family: -apple-system, system-ui, sans-serif; font-size: 12.5px; font-weight: 400; letter-spacing: 0; color: var(--ui-text-muted); }
+/* A whole story is one link: picture, headline and summary all open it. */
+.news-open { display: flex; flex-direction: column; gap: 3px; padding: 0; color: var(--ui-text); text-decoration: none; }
+.news-open:hover { background: transparent; }
+.news-open:hover .news-lead__ti, .news-open:hover .news-topic__ti { text-decoration: underline; text-underline-offset: 3px; }
+.news-open:focus-visible { outline: 2px solid var(--ui-focus, currentColor); outline-offset: 4px; border-radius: 6px; }
 .news-lead { display: flex; flex-direction: column; gap: 3px; }
 .news-lead .news-photo { margin-bottom: 8px; }
 .news-lead__ti { font-family: ui-serif, 'New York', Georgia, serif; font-size: 25px; font-weight: 800; line-height: 1.12; letter-spacing: -.015em; color: var(--ui-text); text-decoration: none; padding: 0; }
-.news-lead__ti:hover, .news-topic__ti:hover, .news-video__ti:hover { background: transparent; text-decoration: underline; text-underline-offset: 3px; }
-.news-lead .news-dek { margin: 5px 0 3px; }
+.news-video__ti:hover { background: transparent; text-decoration: underline; text-underline-offset: 3px; }
+.news-lead__dek { margin: 5px 0 3px; display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .news-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; margin-top: 12px; padding-top: 10px; box-shadow: inset 0 1px 0 var(--ui-text); }
 .news-cols :deep(.news-st) { box-shadow: none; }
 .news-cols :deep(.news-st:nth-child(2)) { padding-left: 14px; box-shadow: inset 1px 0 0 var(--ui-border); }
@@ -192,11 +210,12 @@ const endLine = computed(() => {
 .news-video__len { position: absolute; right: 8px; bottom: 8px; padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .66); color: #fff; font-size: 12px; font-weight: 600; }
 .news-video__text { display: flex; flex-direction: column; gap: 3px; padding: 10px 0 12px; }
 .news-video__ti { font-family: ui-serif, 'New York', Georgia, serif; font-size: 20px; font-weight: 700; line-height: 1.24; color: var(--ui-text); text-decoration: none; padding: 0; }
-.news-listen { display: flex; align-items: center; gap: 12px; }
+.news-listen { display: flex; align-items: center; gap: 12px; color: var(--ui-text); text-decoration: none; }
+.news-listen:hover { background: var(--ui-surface-muted); }
 .news-listen__text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .news-listen__ti { font-size: 16px; font-weight: 700; }
 .news-listen__go { display: flex; align-items: center; justify-content: center; flex: none; width: 40px; height: 40px; padding: 0; border-radius: 50%; background: var(--ui-surface); color: var(--ui-text); }
-.news-topic { display: flex; flex-direction: column; gap: 3px; padding: 12px 0; box-shadow: inset 0 -1px 0 var(--ui-border); }
+.news-topic { padding: 12px 0; box-shadow: inset 0 -1px 0 var(--ui-border); }
 .news-topic:last-child { box-shadow: none; }
 .news-tag { align-self: flex-start; margin-top: 8px; padding: 2px 8px; border-radius: 999px; background: var(--ui-surface-muted); color: var(--ui-text-muted); font-size: 12px; }
 .news-topic__ti { font-family: ui-serif, 'New York', Georgia, serif; font-size: 17.5px; font-weight: 700; line-height: 1.24; color: var(--ui-text); text-decoration: none; padding: 0; }
