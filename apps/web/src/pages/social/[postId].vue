@@ -17,6 +17,7 @@ import SocialImageCropper from "../../components/social/SocialImageCropper.vue";
 import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue";
 import SocialMarks from "../../components/social/SocialMarks.vue";
 import SocialTextCarouselEditor from "../../components/social/SocialTextCarouselEditor.vue";
+import SocialTikTokSettings from "../../components/social/SocialTikTokSettings.vue";
 import { useSitesStore } from "../../stores/sites";
 import { useAppToast } from "../../composables/useAppToast";
 import { useSocialData } from "../../composables/useSocialData";
@@ -59,6 +60,14 @@ import {
   type VersionResult,
 } from "../../utils/social-posts";
 import { resolveLocalDateTimeToUtc } from "../../utils/timezone";
+import {
+  TIKTOK_BRANDED_POLICY_URL,
+  TIKTOK_MUSIC_TERMS_URL,
+  emptyTikTokChoices,
+  tiktokDeclaration,
+  tiktokDeliveryOptions,
+  type TikTokPostChoices,
+} from "../../utils/tiktok-post";
 
 definePage({
   meta: {
@@ -108,6 +117,21 @@ let postingPoll: number | undefined;
 
 const IN_FLIGHT = new Set(["scheduled", "queued", "publishing"]);
 
+/** TikTok's per-post choices live only on this screen: nothing preselected, nothing remembered. */
+const tiktokChoices = ref<Record<string, TikTokPostChoices>>({});
+const tiktokReady = ref<Record<string, { durationSeconds: number | null; problem: string | null }>>({});
+function tiktokChoicesFor(version: PostVersion): TikTokPostChoices {
+  return tiktokChoices.value[version.id] || emptyTikTokChoices();
+}
+function tiktokProblem(version: PostVersion): string | null {
+  if (version.platform !== "tiktok") return null;
+  return tiktokReady.value[version.id]?.problem ?? "Choose TikTok's settings.";
+}
+/** What goes to TikTok when the owner presses Post; pressing it is their consent. */
+function tiktokOptions(version: PostVersion) {
+  return tiktokDeliveryOptions(tiktokChoicesFor(version), tiktokReady.value[version.id]?.durationSeconds || 0);
+}
+
 const versions = computed(() => (detail.value ? visibleVersions(detail.value) : []));
 const active = computed(() => versions.value.find((version) => version.id === activeId.value) || versions.value[0] || null);
 const title = computed(() => (detail.value ? postTitle(detail.value) : "Post"));
@@ -116,7 +140,7 @@ const pending = computed(() =>
 );
 const scheduledVersions = computed(() => versions.value.filter((version) => version.publicationStatus === "scheduled"));
 function firstBlocker(version: PostVersion): string | null {
-  return versionChecks(withText(version), capabilities.value, accounts.value).find((check) => check.blocking)?.message || null;
+  return versionChecks(withText(version), capabilities.value, accounts.value).find((check) => check.blocking)?.message || tiktokProblem(version);
 }
 /** Platforms with a problem are skipped; the rest still post or schedule. */
 const blockers = computed(() =>
@@ -132,6 +156,9 @@ const schedulable = computed(() =>
 const skippedLabel = computed(() =>
   blockers.value.map(({ version, reason }) => `${networkLabel(version.platform)} (${reason.replace(/\.$/, "")})`).join(", "),
 );
+/** TikTok's consent line sits beside the Post button whenever TikTok is about to be posted. */
+const tiktokPosting = computed(() => ready.value.find((version) => version.platform === "tiktok") || null);
+const tiktokBrandedPolicy = computed(() => (tiktokPosting.value ? tiktokDeclaration(tiktokChoicesFor(tiktokPosting.value)).brandedPolicy : false));
 const removable = computed(() =>
   Boolean(active.value && versions.value.length > 1 && !active.value.publicationStatus),
 );
@@ -469,7 +496,7 @@ async function useImagesEverywhere() {
   const source = active.value;
   if (!source) return;
   for (const version of pending.value) {
-    if (version.id === source.id || version.platform === "youtube") continue;
+    if (version.id === source.id || version.platform === "youtube" || version.platform === "tiktok") continue;
     void saveVersion(version, { assetManifest: source.assetManifest.map((asset, index) => ({ ...asset, assetIndex: index })) });
   }
 }
@@ -682,6 +709,7 @@ async function addPlatform(network: SocialNetwork) {
       targetAccountId: account.id,
       bodyText: text,
       ...(network === "youtube" ? { format: "short_video" as const, title: youtubeTitleFrom(text) } : {}),
+      ...(network === "tiktok" ? { format: "short_video" as const } : {}),
     });
     setDetail(next);
     activeId.value = visibleVersions(next).find((version) => socialNetwork(version.platform) === network)?.id || activeId.value;
@@ -849,6 +877,7 @@ async function approve(version: PostVersion): Promise<PostVersion> {
     ...(version.platform === "youtube"
       ? { publishingSettings: { youtube: { privacyStatus: "private", madeForKids: false, containsSyntheticMedia: false } } }
       : {}),
+    ...(version.platform === "tiktok" ? { publishingSettings: { tiktok: tiktokOptions(version) } } : {}),
     approvalStatus: "approved",
   });
 }
@@ -888,7 +917,9 @@ async function postNow(only?: PostVersion) {
         version.id,
         version.platform === "youtube"
           ? { requestContext: { surface: "social-review", youtube: { privacyStatus: "private", madeForKids: false, containsSyntheticMedia: false } } }
-          : { requestContext: { surface: "social-review" } },
+          : version.platform === "tiktok"
+            ? { requestContext: { surface: "social-review", tiktok: tiktokOptions(version) } }
+            : { requestContext: { surface: "social-review" } },
       );
     }));
     await reload();
@@ -1339,6 +1370,15 @@ onMounted(async () => {
               <p v-else-if="activeMixed && activeVideo" class="post-note">{{ mixedMediaRule(active.platform, capabilities)?.guidance }}</p>
               <p v-else-if="activeVideoRule?.guidance && (activeVideo || !activeTakesImages) && active.platform !== 'youtube'" class="post-note">{{ activeVideoRule.guidance }}</p>
               <p v-if="active.platform === 'youtube'" class="post-note">Uploads as a private draft. You publish it in YouTube.</p>
+              <SocialTikTokSettings
+                v-if="active.platform === 'tiktok' && activeVideo && !activeLocked && active.publicationStatus !== 'published'"
+                :key="active.id"
+                :account-id="activeAccountRow?.id || null"
+                :video="activeVideo"
+                :choices="tiktokChoicesFor(active)"
+                @update:choices="tiktokChoices = { ...tiktokChoices, [active.id]: $event }"
+                @state="tiktokReady = { ...tiktokReady, [active.id]: { durationSeconds: $event.durationSeconds, problem: $event.problem } }"
+              />
             </div>
           </div>
 
@@ -1369,6 +1409,11 @@ onMounted(async () => {
             <span v-else-if="blockers.length" class="post-bar__hint post-bar__hint--skip">Skipping {{ skippedLabel }}.</span>
           </div>
           <div class="post-bar__actions">
+            <p v-if="tiktokPosting && !(scheduledVersions.length && !pending.length)" class="post-bar__consent">
+              By posting, you agree to TikTok's
+              <template v-if="tiktokBrandedPolicy"><a :href="TIKTOK_BRANDED_POLICY_URL" target="_blank" rel="noopener">Branded Content Policy</a> and </template>
+              <a :href="TIKTOK_MUSIC_TERMS_URL" target="_blank" rel="noopener">Music Usage Confirmation</a>.
+            </p>
             <template v-if="scheduledVersions.length && !pending.length">
               <Button class="post-header__quiet" color="ghost" shape="soft" size="compact" :disabled="busy !== null" @click="confirmCancel = true">Cancel schedule</Button>
               <Button color="primary" shape="pill" size="compact" :disabled="busy !== null || !scheduledIso || scheduleInPast" @click="moveSchedule">
@@ -1637,4 +1682,6 @@ onMounted(async () => {
   .post-preview { display: none; }
   .post-bar__actions { width: 100%; justify-content: flex-end; }
 }
+.post-bar__consent { flex-basis: 100%; margin: 0; color: var(--ui-text-muted); font-size: 12px; text-align: right; }
+.post-bar__consent a { color: inherit; text-decoration: underline; }
 </style>

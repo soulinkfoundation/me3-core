@@ -37,6 +37,7 @@ const SHAREABLE_PLATFORMS: readonly SocialPlatform[] = [
   "instagram",
   "instagram_business",
   "youtube",
+  "tiktok",
 ];
 /** X counts every link as 23 characters. */
 const X_LINK_LENGTH = 23;
@@ -46,7 +47,7 @@ export function sitePostSourceRef(siteUsername: string, slug: string): string {
   return `post:${siteUsername}/${slug}`;
 }
 
-/** One target per platform, in a stable order; TikTok is not shared to. */
+/** One target per platform, in a stable order; TikTok only takes video posts. */
 export function sitePostShareTargets(
   accounts: Array<{ id: string; platform: string; status: string }>,
 ): SitePostShareTarget[] {
@@ -67,6 +68,19 @@ export function buildSitePostShareVersions(
   for (const target of targets) {
     const platform = target.platform;
     const isInstagram = platform === "instagram" || platform === "instagram_business";
+    if (platform === "tiktok") {
+      // TikTok takes one video; ME3 adds no link, the owner's own words only.
+      if (snapshot.video) {
+        versions.push({
+          platform,
+          targetAccountId: target.accountId,
+          format: "short_video",
+          bodyText: shareText(platform, snapshot, "short_video"),
+          assetManifest: [{ url: snapshot.video.url, kind: "video" }],
+        });
+      }
+      continue;
+    }
     if (platform === "youtube" || isInstagram) {
       if (snapshot.video) {
         versions.push({
@@ -200,6 +214,8 @@ export function shareText(
     return `${clip(lead, room)}\n\n${url}`;
   }
   const limit = ruleFor(platform, contentType)?.maxTextCharacters ?? 2_200;
+  // TikTok's guidelines bar apps from adding links to the post.
+  if (platform === "tiktok") return clip(lead, limit);
   const tail = `\n\n${url}`;
   return `${clip(lead, limit - tail.length)}${tail}`;
 }

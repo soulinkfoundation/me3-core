@@ -8,10 +8,10 @@ import SocialMarks from "./SocialMarks.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { useSocialStore, type SocialAccountRow, type SocialPostDetail } from "../../stores/social";
 import {
-  SOCIAL_NETWORKS,
   accountName,
   accountState,
   accountsFor,
+  connectableNetworks,
   pausedPostCount,
   type SocialNetwork,
 } from "../../utils/social-posts";
@@ -35,7 +35,7 @@ const disconnecting = ref<SocialAccountRow | null>(null);
 const busy = ref(false);
 
 const rows = computed(() =>
-  SOCIAL_NETWORKS.map((network) => {
+  connectableNetworks(props.accounts).map((network) => {
     const state = accountState(network.id, props.accounts);
     const connected = accountsFor(network.id, props.accounts).find((account) => account.status === "active") || null;
     const paused = pausedPostCount(network.id, props.posts, props.accounts);

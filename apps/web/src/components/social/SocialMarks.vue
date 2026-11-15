@@ -48,4 +48,5 @@ const marks = computed(() => {
 .social-mark--instagram { background: #d62976; }
 .social-mark--facebook { background: #1877f2; }
 .social-mark--youtube { background: #e62117; }
+.social-mark--tiktok { background: #111; }
 </style>

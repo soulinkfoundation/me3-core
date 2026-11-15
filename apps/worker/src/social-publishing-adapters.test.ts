@@ -1252,46 +1252,27 @@ describe("Instagram publishing adapter", () => {
 });
 
 describe("TikTok draft upload adapter", () => {
-  it("initializes FILE_UPLOAD and streams a short video into the creator inbox", async () => {
+  it("asks TikTok to pull a stored video into the creator inbox", async () => {
     const markProviderWriteStarted = vi.fn(async () => undefined);
-    const videoBytes = new Uint8Array([1, 2, 3, 4]);
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/v2/post/publish/inbox/video/init/")) {
         expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer tiktok-token");
         expect(JSON.parse(String(init?.body))).toEqual({
           source_info: {
-            source: "FILE_UPLOAD",
-            video_size: 4,
-            chunk_size: 4,
-            total_chunk_count: 1,
+            source: "PULL_FROM_URL",
+            video_url: "https://owner.me3.app/api/social/media/socmedia_1",
           },
         });
         return Response.json({
-          data: {
-            publish_id: "v_inbox_file~demo-1",
-            upload_url: "https://open-upload.tiktokapis.com/video/?upload_id=demo-1",
-          },
+          data: { publish_id: "v_inbox_url~demo-1" },
           error: { code: "ok", message: "", log_id: "log-1" },
         });
       }
-      if (url === "https://media.example/short.mp4") {
-        expect(new Headers(init?.headers).get("Range")).toBe("bytes=0-3");
-        return new Response(videoBytes, { status: 206 });
-      }
-      if (url.startsWith("https://open-upload.tiktokapis.com/video/")) {
-        const headers = new Headers(init?.headers);
-        expect(init?.method).toBe("PUT");
-        expect(headers.get("Content-Type")).toBe("video/mp4");
-        expect(headers.get("Content-Length")).toBe("4");
-        expect(headers.get("Content-Range")).toBe("bytes 0-3/4");
-        expect(new Uint8Array(await new Response(init?.body).arrayBuffer())).toEqual(videoBytes);
-        return new Response(null, { status: 201 });
-      }
       if (url.endsWith("/v2/post/publish/status/fetch/")) {
-        expect(JSON.parse(String(init?.body))).toEqual({ publish_id: "v_inbox_file~demo-1" });
+        expect(JSON.parse(String(init?.body))).toEqual({ publish_id: "v_inbox_url~demo-1" });
         return Response.json({
-          data: { status: "SEND_TO_USER_INBOX", uploaded_bytes: 4 },
+          data: { status: "SEND_TO_USER_INBOX", downloaded_bytes: 4 },
           error: { code: "ok", message: "", log_id: "log-2" },
         });
       }
@@ -1303,10 +1284,10 @@ describe("TikTok draft upload adapter", () => {
       accountId: "creator-open-id",
       bodyText: "Editable in TikTok.",
       assets: [{
-        url: "https://media.example/short.mp4",
+        url: "https://owner.me3.app/api/social/media/socmedia_1",
         kind: "video",
         mimeType: "video/mp4",
-        byteLength: videoBytes.byteLength,
+        byteLength: 4,
       }],
       fetcher: fetcher as typeof fetch,
       markProviderWriteStarted,
@@ -1314,19 +1295,19 @@ describe("TikTok draft upload adapter", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      platformPostId: "v_inbox_file~demo-1",
+      platformPostId: "v_inbox_url~demo-1",
       providerResponse: {
         delivery: "creator_draft",
         creatorActionRequired: true,
       },
     });
     expect(markProviderWriteStarted).toHaveBeenCalledTimes(1);
-    expect(fetcher).toHaveBeenCalledTimes(4);
+    // ME3 never streams the bytes itself: init, then status.
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("queries creator settings and sends the exact caption through Direct Post", async () => {
     const markProviderWriteStarted = vi.fn(async () => undefined);
-    const videoBytes = new Uint8Array([1, 2, 3, 4]);
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/v2/post/publish/creator_info/query/")) {
@@ -1358,25 +1339,14 @@ describe("TikTok draft upload adapter", () => {
             is_aigc: false,
           },
           source_info: {
-            source: "FILE_UPLOAD",
-            video_size: 4,
-            chunk_size: 4,
-            total_chunk_count: 1,
+            source: "PULL_FROM_URL",
+            video_url: "https://media.example/direct.mp4",
           },
         });
         return Response.json({
-          data: {
-            publish_id: "v_pub_file~direct-1",
-            upload_url: "https://open-upload.tiktokapis.com/video/?upload_id=direct-1",
-          },
+          data: { publish_id: "v_pub_url~direct-1" },
           error: { code: "ok" },
         });
-      }
-      if (url === "https://media.example/direct.mp4") {
-        return new Response(videoBytes, { status: 206 });
-      }
-      if (url.startsWith("https://open-upload.tiktokapis.com/video/")) {
-        return new Response(null, { status: 201 });
       }
       if (url.endsWith("/v2/post/publish/status/fetch/")) {
         return Response.json({
@@ -1395,7 +1365,7 @@ describe("TikTok draft upload adapter", () => {
         url: "https://media.example/direct.mp4",
         kind: "video",
         mimeType: "video/mp4",
-        byteLength: videoBytes.byteLength,
+        byteLength: 4,
       }],
       providerOptions: {
         deliveryMode: "direct_publish",
@@ -1415,14 +1385,14 @@ describe("TikTok draft upload adapter", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      platformPostId: "v_pub_file~direct-1",
+      platformPostId: "v_pub_url~direct-1",
       providerResponse: {
         delivery: "direct_publish",
         creatorActionRequired: false,
       },
     });
     expect(markProviderWriteStarted).toHaveBeenCalledTimes(1);
-    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
   it("requires a reconnect when Direct Post scope is missing", async () => {
@@ -1564,23 +1534,13 @@ describe("TikTok draft upload adapter", () => {
   it("queues another status check while TikTok is still processing", async () => {
     vi.useFakeTimers();
     try {
-      const videoBytes = new Uint8Array([1, 2, 3, 4]);
       const fetcher = vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith("/v2/post/publish/inbox/video/init/")) {
           return Response.json({
-            data: {
-              publish_id: "processing-draft",
-              upload_url: "https://open-upload.tiktokapis.com/video/?upload_id=processing",
-            },
+            data: { publish_id: "processing-draft" },
             error: { code: "ok" },
           });
-        }
-        if (url === "https://media.example/short.mp4") {
-          return new Response(videoBytes, { status: 206 });
-        }
-        if (url.startsWith("https://open-upload.tiktokapis.com/video/")) {
-          return new Response(null, { status: 201 });
         }
         if (url.endsWith("/v2/post/publish/status/fetch/")) {
           return Response.json({
@@ -1599,7 +1559,7 @@ describe("TikTok draft upload adapter", () => {
           url: "https://media.example/short.mp4",
           kind: "video",
           mimeType: "video/mp4",
-          byteLength: videoBytes.byteLength,
+          byteLength: 4,
         }],
         fetcher: fetcher as typeof fetch,
       });
@@ -1614,69 +1574,35 @@ describe("TikTok draft upload adapter", () => {
           status: { data: { status: "PROCESSING_UPLOAD" } },
         },
       });
-      expect(fetcher).toHaveBeenCalledTimes(9);
+      expect(fetcher).toHaveBeenCalledTimes(7);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("uses sequential chunks and merges trailing bytes into the final chunk", async () => {
-    const byteLength = 70 * 1024 * 1024;
-    const uploadStatuses = [206, 201];
-    const sourceRanges: string[] = [];
-    const uploadRanges: string[] = [];
-    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith("/v2/post/publish/inbox/video/init/")) {
-        expect(JSON.parse(String(init?.body)).source_info).toEqual({
-          source: "FILE_UPLOAD",
-          video_size: byteLength,
-          chunk_size: 32 * 1024 * 1024,
-          total_chunk_count: 2,
-        });
-        return Response.json({
-          data: { publish_id: "chunked", upload_url: "https://upload.example/chunked" },
-          error: { code: "ok" },
-        });
-      }
-      if (url === "https://media.example/large.mp4") {
-        sourceRanges.push(new Headers(init?.headers).get("Range")!);
-        return new Response(new Uint8Array([1]), { status: 206 });
-      }
-      if (url === "https://upload.example/chunked") {
-        uploadRanges.push(new Headers(init?.headers).get("Content-Range")!);
-        return new Response(null, { status: uploadStatuses.shift()! });
-      }
-      if (url.endsWith("/v2/post/publish/status/fetch/")) {
-        return Response.json({
-          data: { status: "SEND_TO_USER_INBOX", uploaded_bytes: byteLength },
-          error: { code: "ok" },
-        });
-      }
-      throw new Error(`Unexpected TikTok request: ${url}`);
-    });
+  it("names the fix when TikTok has not verified the media host", async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      data: {},
+      error: { code: "url_ownership_unverified", message: "Please verify the domain." },
+    }, { status: 403 }));
 
     await expect(adapterFor("tiktok").publish({
       accessToken: "token",
       accountId: "creator",
       bodyText: "",
       assets: [{
-        url: "https://media.example/large.mp4",
+        url: "https://custom-domain.example/api/social/media/socmedia_2",
         kind: "video",
         mimeType: "video/mp4",
-        byteLength,
+        byteLength: 4,
       }],
       fetcher: fetcher as typeof fetch,
-    })).resolves.toMatchObject({ ok: true, platformPostId: "chunked" });
-
-    expect(sourceRanges).toEqual([
-      "bytes=0-33554431",
-      `bytes=33554432-${byteLength - 1}`,
-    ]);
-    expect(uploadRanges).toEqual([
-      `bytes 0-33554431/${byteLength}`,
-      `bytes 33554432-${byteLength - 1}/${byteLength}`,
-    ]);
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: "url_ownership_unverified",
+      errorMessage: "TikTok can't fetch videos from this site's address yet. ME3 support needs to verify the address with TikTok.",
+      failureClass: "rejected",
+    });
   });
 
   it("rejects missing, mixed, or unsupported video manifests", () => {
@@ -1690,6 +1616,13 @@ describe("TikTok draft upload adapter", () => {
     })).toEqual({
       ok: false,
       error: "TikTok supports MP4, QuickTime, and WebM video uploads.",
+    });
+    expect(adapterFor("tiktok").validateDraft({
+      bodyText: "",
+      assets: [{ url: "http://media.example/video.mp4", kind: "video", mimeType: "video/mp4", byteLength: 12 }],
+    })).toEqual({
+      ok: false,
+      error: "The TikTok video needs an https delivery URL.",
     });
   });
 });

@@ -20,8 +20,14 @@ export const SOCIAL_TABS: ReadonlyArray<{ id: SocialTab; label: string }> = [
   { id: "posted", label: "Posted" },
 ];
 
-/** The accounts the owner can connect, in the order the accounts sheet shows them. TikTok stays hidden. */
-export type SocialNetwork = "x" | "linkedin" | "instagram" | "facebook" | "youtube";
+/** The accounts the owner can connect, in the order the accounts sheet shows them. */
+export type SocialNetwork = "x" | "linkedin" | "instagram" | "facebook" | "youtube" | "tiktok";
+
+/**
+ * TikTok only lets an app post publicly for everyone once it passes TikTok's app review (me3-0fz).
+ * Until then only owners who already connected TikTok see it; flip this when review is approved.
+ */
+export const TIKTOK_OPEN_TO_ALL = false;
 
 export const SOCIAL_NETWORKS: ReadonlyArray<{
   id: SocialNetwork;
@@ -39,7 +45,15 @@ export const SOCIAL_NETWORKS: ReadonlyArray<{
     mark: "▶",
     note: "Uploads as a private draft. You publish it in YouTube.",
   },
+  { id: "tiktok", label: "TikTok", mark: "♪", note: "Posts a video to your TikTok profile" },
 ];
+
+/** Networks the accounts sheet offers: TikTok only once it's open to all, or already connected. */
+export function connectableNetworks(accounts: SocialAccountRow[]): typeof SOCIAL_NETWORKS {
+  return SOCIAL_NETWORKS.filter(
+    (network) => network.id !== "tiktok" || TIKTOK_OPEN_TO_ALL || accountsFor("tiktok", accounts).length > 0,
+  );
+}
 
 export const YOUTUBE_TITLE_LIMIT = 100;
 
@@ -65,7 +79,7 @@ export function networkMark(platform: SocialPlatform | string): string {
   return SOCIAL_NETWORKS.find((item) => item.id === socialNetwork(platform))?.mark || "•";
 }
 
-/** Platforms the owner can see on a post; TikTok drafts from the old app stay out of the owner UI. */
+/** Platforms the owner can see on a post, in the accounts sheet's order. */
 export function visibleVersions(detail: SocialPostDetail): PostVersion[] {
   const order = SOCIAL_NETWORKS.map((network) => network.id as string);
   return detail.versions
@@ -405,6 +419,9 @@ export function versionChecks(
   if (version.platform === "youtube" && videos.length === 0) {
     checks.push({ message: "YouTube Shorts needs a video.", blocking: true, field: "images" });
   }
+  if (version.platform === "tiktok" && videos.length === 0) {
+    checks.push({ message: "TikTok needs a video.", blocking: true, field: "images" });
+  }
   if (version.platform === "youtube") {
     const titleLength = Array.from(version.title?.trim() || "").length;
     if (!titleLength) checks.push({ message: "Give the Short a title.", blocking: true, field: "text" });
@@ -465,6 +482,14 @@ export function resultFor(version: PostVersion): VersionResult {
       if (version.platform === "youtube") {
         return { state: "posted", message: "Uploaded as a private draft", action: "open_youtube", actionLabel: "Publish in YouTube" };
       }
+      if (version.platform === "tiktok" && !version.platformPostUrl) {
+        return {
+          state: "posted",
+          message: "Sent to TikTok. It can take a few minutes to show on your profile.",
+          action: null,
+          actionLabel: null,
+        };
+      }
       return {
         state: "posted",
         // A caveat from posting (say the first comment didn't go up) stays beside the post.
@@ -524,6 +549,7 @@ const FOLDS: Partial<Record<SocialNetwork, { chars: number; lines: number; label
   linkedin: { chars: 210, lines: 3, label: "…see more" },
   instagram: { chars: 125, lines: 2, label: "… more" },
   facebook: { chars: 480, lines: 5, label: "See more" },
+  tiktok: { chars: 80, lines: 2, label: "… more" },
 };
 
 export function foldFor(platform: SocialPlatform | string): { chars: number; lines: number; label: string } | null {

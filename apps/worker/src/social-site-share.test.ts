@@ -113,7 +113,7 @@ describe("sharing a site post", () => {
     expect(versions.find((version) => version.platform === "linkedin")).toMatchObject({ format: "post" });
   });
 
-  it("picks one active account per platform and never TikTok", () => {
+  it("picks one active account per platform", () => {
     expect(sitePostShareTargets([
       { id: "t", platform: "tiktok", status: "active" },
       { id: "x-old", platform: "x", status: "revoked" },
@@ -122,7 +122,30 @@ describe("sharing a site post", () => {
     ])).toEqual([
       { platform: "x", accountId: "x-new" },
       { platform: "linkedin", accountId: "li" },
+      { platform: "tiktok", accountId: "t" },
     ]);
+  });
+
+  it("shares only video posts to TikTok, with no link added", () => {
+    const base = {
+      siteId: "site-1",
+      siteUsername: "kieran",
+      slug: "morning",
+      title: "Write before you scroll",
+      excerpt: "Ten minutes, every morning.",
+      type: "video",
+      canonicalUrl: "https://kieran.me3.app/blog/morning",
+      images: [],
+    };
+    const target = [{ platform: "tiktok" as const, accountId: "acct-tt" }];
+    expect(buildSitePostShareVersions({ ...base, video: null }, target)).toEqual([]);
+    expect(buildSitePostShareVersions({ ...base, video: { url: "https://kieran.me3.app/clip.mp4" } }, target)).toEqual([{
+      platform: "tiktok",
+      targetAccountId: "acct-tt",
+      format: "short_video",
+      bodyText: "Write before you scroll\n\nTen minutes, every morning.",
+      assetManifest: [{ url: "https://kieran.me3.app/clip.mp4", kind: "video" }],
+    }]);
   });
 
   it("reads images and the first paragraph from the post's markdown", () => {

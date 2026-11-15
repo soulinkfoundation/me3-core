@@ -119,7 +119,7 @@ async function refresh() {
 /** Plain words for the error codes the hosted sign-in bridge sends back. */
 function connectErrorMessage(code: string): string {
   const network = code.split("_")[0] || "";
-  const label = ["x", "linkedin", "instagram", "facebook", "youtube"].includes(network) ? networkLabel(network) : "That account";
+  const label = ["x", "linkedin", "instagram", "facebook", "youtube", "tiktok"].includes(network) ? networkLabel(network) : "That account";
   if (code === "facebook_no_page") return "Facebook didn't share a Page ME3 can post to. Try again and pick a Page.";
   if (code === "config" || code.endsWith("_config")) return `${label} isn't available to connect yet. ME3 needs to finish setting it up.`;
   if (code === "access_denied" || code === "user_denied") return `${label} wasn't connected because access wasn't allowed.`;
@@ -146,15 +146,17 @@ function platformFor(network: SocialNetwork): SocialPlatform {
   return (account?.platform as SocialPlatform) || network;
 }
 
-/** Every network except YouTube, plus YouTube once it's connected (it needs a video, so it starts unticked). */
+/** Video-only networks need a video, so they appear once connected and start unticked. */
+const VIDEO_ONLY = new Set<SocialNetwork>(["youtube", "tiktok"]);
 const composerChoices = computed(() =>
-  SOCIAL_NETWORKS.filter((network) => network.id !== "youtube" || connectedNetworks.value.includes("youtube")),
+  SOCIAL_NETWORKS.filter((network) => !VIDEO_ONLY.has(network.id) || connectedNetworks.value.includes(network.id)),
 );
+const composerTakesVideo = computed(() => composerNetworks.value.some((network) => VIDEO_ONLY.has(network)));
 
 function openComposer() {
   composerText.value = "";
   clearComposerMedia();
-  composerNetworks.value = connectedNetworks.value.filter((network) => network !== "youtube");
+  composerNetworks.value = connectedNetworks.value.filter((network) => !VIDEO_ONLY.has(network));
   if (!composerNetworks.value.length) composerNetworks.value = ["x", "linkedin"];
   composerOpen.value = true;
 }
@@ -270,9 +272,9 @@ async function createPost() {
         ...(network === "youtube" ? { format: "short_video" as const, title: youtubeTitleFrom(text) } : {}),
       })),
     });
-    // Images go to every platform but YouTube; the video goes to YouTube.
+    // Images go to every platform but YouTube and TikTok; the video goes to those two.
     await Promise.all(visibleVersions(detail).map((version) => {
-      const assetManifest = version.platform === "youtube"
+      const assetManifest = version.platform === "youtube" || version.platform === "tiktok"
         ? (video ? [mediaAsset(video, "video", 0)] : [])
         : images;
       return assetManifest.length ? social.updatePostVersion(version.id, { assetManifest }) : null;
@@ -430,7 +432,7 @@ onMounted(async () => {
           ref="composerMediaInput"
           class="visually-hidden"
           type="file"
-          :accept="composerNetworks.includes('youtube') ? 'image/*,video/*' : 'image/*'"
+          :accept="composerTakesVideo ? 'image/*,video/*' : 'image/*'"
           multiple
           @change="addComposerMedia"
         >
@@ -455,7 +457,7 @@ onMounted(async () => {
         <footer class="social-composer__footer">
           <div class="social-composer__attachments">
             <button type="button" class="social-composer__attach" :disabled="composerBusy" @click="composerMediaInput?.click()">
-              <UiIcon name="Image" :size="16" /> {{ composerNetworks.includes("youtube") ? "Photo or video" : "Photos" }}
+              <UiIcon name="Image" :size="16" /> {{ composerTakesVideo ? "Photo or video" : "Photos" }}
             </button>
             <button type="button" class="social-composer__attach" :disabled="composerBusy" @click="composerPickerOpen = true">
               <UiIcon name="Folder" :size="16" /> From Files
@@ -474,7 +476,7 @@ onMounted(async () => {
 
     <FilesMediaPicker
       :open="composerPickerOpen"
-      :kinds="composerNetworks.includes('youtube') ? ['image', 'video'] : ['image']"
+      :kinds="composerTakesVideo ? ['image', 'video'] : ['image']"
       @close="composerPickerOpen = false"
       @select="addComposerFiles"
     />

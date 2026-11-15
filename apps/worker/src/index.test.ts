@@ -10543,9 +10543,9 @@ describe("ME3 Worker auth", () => {
         draft: true,
         schedule: false,
         publish: true,
-        deliveryMode: "provider_draft",
-        supportedDeliveryModes: ["provider_draft", "direct_publish"],
-        deliveryLabel: "Draft or Direct Post",
+        deliveryMode: "direct_publish",
+        supportedDeliveryModes: ["direct_publish"],
+        deliveryLabel: "Posts directly after you choose TikTok's settings",
         reason: null,
       }),
     ]);

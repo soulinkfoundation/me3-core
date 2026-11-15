@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { account, capabilities, post, version } from "./social-posts.fixtures";
 import {
   attentionItems,
+  connectableNetworks,
   foldIndex,
   mentionsIn,
   renderPostText,
@@ -25,8 +26,21 @@ describe("social posts", () => {
     expect(postTab(post([version({ publicationStatus: "failed" })]))).toBe("scheduled");
   });
 
-  it("keeps TikTok out of the owner's view", () => {
-    expect(visibleVersions(post([version({ platform: "tiktok" }), version({ platform: "linkedin" })])).map((item) => item.platform)).toEqual(["linkedin"]);
+  it("lists TikTok after the other platforms on a post", () => {
+    expect(visibleVersions(post([version({ platform: "tiktok" }), version({ platform: "linkedin" })])).map((item) => item.platform)).toEqual(["linkedin", "tiktok"]);
+  });
+
+  it("offers TikTok only to owners who already connected it until app review passes", () => {
+    expect(connectableNetworks([]).map((network) => network.id)).not.toContain("tiktok");
+    expect(connectableNetworks([account("tiktok", "revoked")]).map((network) => network.id)).toContain("tiktok");
+  });
+
+  it("needs a video for TikTok and says when it's on its way", () => {
+    expect(versionChecks(version({ platform: "tiktok" }), capabilities)).toContainEqual({ message: "TikTok needs a video.", blocking: true, field: "images" });
+    expect(resultFor(version({ platform: "tiktok", publicationStatus: "published" }))).toMatchObject({
+      state: "posted",
+      message: "Sent to TikTok. It can take a few minutes to show on your profile.",
+    });
   });
 
   it("titles a pasted post from its first line, not an internal name", () => {

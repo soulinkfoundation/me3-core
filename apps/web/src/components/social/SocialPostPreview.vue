@@ -53,7 +53,7 @@ const xGrid = computed(() => props.media.slice(0, 4));
 
     <!-- X, LinkedIn and Facebook put the text above the media. -->
     <p v-if="network === 'x' && thread?.length" class="preview__text">{{ thread[0] }}</p>
-    <p v-else-if="network !== 'instagram' && network !== 'youtube' && text" class="preview__text">
+    <p v-else-if="network !== 'instagram' && network !== 'youtube' && network !== 'tiktok' && text" class="preview__text">
       {{ shownText }}<button v-if="fold !== null && !expanded" type="button" class="preview__more" @click="expanded = true">{{ foldLabel }}</button>
     </p>
 
@@ -84,6 +84,15 @@ const xGrid = computed(() => props.media.slice(0, 4));
         <video v-if="media[0]" :src="media[0].url" muted playsinline preload="metadata" />
         <span v-else class="preview__empty">Add a video</span>
         <b v-if="title" class="preview__short-title">{{ title }}</b>
+      </div>
+    </template>
+
+    <template v-else-if="network === 'tiktok'">
+      <!-- A playable preview of exactly what goes to TikTok: the owner's video and caption, nothing added. -->
+      <div class="preview__short preview__short--tiktok">
+        <video v-if="media[0]" :src="media[0].url" controls playsinline preload="metadata" />
+        <span v-else class="preview__empty">Add a video</span>
+        <p v-if="text" class="preview__short-caption"><b>{{ handleLabel || name }}</b> {{ shownText }}<button v-if="fold !== null && !expanded" type="button" class="preview__more preview__more--light" @click="expanded = true">{{ foldLabel }}</button></p>
       </div>
     </template>
 
@@ -190,4 +199,8 @@ const xGrid = computed(() => props.media.slice(0, 4));
 .preview__short { position: relative; display: grid; width: 60%; margin: 0 auto 12px; overflow: hidden; border-radius: var(--ui-radius-md); background: #000; aspect-ratio: 9 / 16; }
 .preview__short video { width: 100%; height: 100%; object-fit: cover; }
 .preview__short-title { position: absolute; right: 10px; bottom: 10px; left: 10px; color: #fff; font-size: 12.5px; text-shadow: 0 1px 3px rgba(0, 0, 0, .7); }
+.preview__short--tiktok video { object-fit: contain; }
+.preview__short-caption { position: absolute; right: 10px; bottom: 44px; left: 10px; margin: 0; color: #fff; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; white-space: pre-wrap; text-shadow: 0 1px 3px rgba(0, 0, 0, .7); pointer-events: none; }
+.preview__short-caption button { pointer-events: auto; }
+.preview__more--light { color: rgba(255, 255, 255, .85); }
 </style>
