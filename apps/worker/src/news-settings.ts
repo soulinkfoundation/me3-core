@@ -4,7 +4,8 @@
 // key holds the rest. Only topic words and a region ever leave the install.
 import { JournalInputError } from "./journal";
 import { normalizeDailyBriefingTime } from "./morning-calendar-push";
-import { cityFromTimezone, cleanCityName, geocodeCity, type NewsPlace } from "./news-weather";
+import { townToTry } from "./news-place";
+import { cleanCityName, geocodeCity, type NewsPlace } from "./news-weather";
 import { cleanSoupTopic } from "./soup-client";
 import { MAX_TOPICS_PER_LANE, NEWS_DEFAULT_TIME, earnSoupHomeCard, getSoupTaste, snapNewsTime, type NewsPrefs, type SoupTaste, type SoupTasteState, type SoupWorkTopic } from "./soup-taste";
 import { isRecord } from "./workspace-input";
@@ -139,6 +140,16 @@ async function ownerClock(env: Env, userId: string) {
   return { timezone: row?.timezone || null, briefingTime: normalizeDailyBriefingTime(row?.daily_briefing_time) };
 }
 
+/**
+ * Before a paper is built: an owner whose town was only guessed from their timezone gets the town
+ * on their profile instead. A town the owner chose is never changed.
+ */
+export async function settleOwnerTown(env: Env, userId: string, options: { geocode?: Geocode } = {}): Promise<void> {
+  const [current, clock] = await Promise.all([getSoupTaste(env, userId), ownerClock(env, userId)]);
+  if (!current.taste.news) return;
+  if (await townToTry(env, userId, current.taste.news.city, clock.timezone)) await updateNewsSettings(env, userId, {}, options);
+}
+
 export async function getNewsSettings(env: Env, userId: string): Promise<NewsSettings> {
   return describeNewsSettings(await getSoupTaste(env, userId));
 }
@@ -162,9 +173,10 @@ export async function updateNewsSettings(env: Env, userId: string, input: unknow
     if (!name) throw new JournalInputError("city must be a place name, like Galway");
     place = await geocode(name) ?? undefined;
     if (!place) city = name;
-  } else if (!current.taste.news?.city) {
-    const guess = cityFromTimezone(clock.timezone);
-    place = (guess ? await geocode(guess) : null) ?? undefined;
+  } else {
+    // Never chosen by the owner: their profile's town, else the city their timezone is named after.
+    const town = await townToTry(env, userId, current.taste.news?.city || null, clock.timezone);
+    place = (town ? await geocode(town.name, { country: town.country }) : null) ?? undefined;
   }
   const wasSetUp = newsIsSetUp(current);
   const next = applyNewsPatch(current.taste, input, { projectIds: new Set(current.projects.map(project => project.id)), defaultTime: clock.briefingTime, now, ...(place ? { place } : {}), ...(city ? { city } : {}) });

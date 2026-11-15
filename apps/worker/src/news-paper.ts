@@ -7,7 +7,7 @@ import type { AgentModel, AgentTool } from "../../../packages/agent/src/types";
 import { addDaysToDateString, normalizeTimeZone } from "./calendar";
 import { JournalInputError } from "./journal";
 import { moveSoupSetupsToNews } from "./news-migrate";
-import { describeNewsSettings, newsIsSetUp, newsTopicLabel } from "./news-settings";
+import { describeNewsSettings, newsIsSetUp, newsTopicLabel, settleOwnerTown } from "./news-settings";
 import { countryFromTimezone, fetchWeather, type NewsWeather } from "./news-weather";
 import { isCorePluginEnabled } from "./plugins";
 import { getOwnerProfile } from "./sites";
@@ -494,6 +494,7 @@ export async function composeNewsPaper(env: Env, ownerId: string, options: Compo
     return null;
   };
   try {
+    await settleOwnerTown(env, ownerId).catch(() => undefined);
     const { taste } = await getSoupTaste(env, ownerId);
     const prefs = taste.news;
     if (!prefs) return fail("News is not set up");
