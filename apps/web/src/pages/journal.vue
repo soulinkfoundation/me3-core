@@ -12,7 +12,6 @@ import { useRoute, useRouter } from "vue-router";
 import type { Editor } from "@tiptap/core";
 import { ApiError, api } from "../api";
 import Button from "../components/Button.vue";
-import DatePickerPopover from "../components/calendar/DatePickerPopover.vue";
 import TiptapEditor from "../components/TiptapEditor.vue";
 import UiIcon from "../components/UiIcon.vue";
 import { useVoiceDictation } from "../composables/useVoiceDictation";
@@ -24,7 +23,8 @@ import { writtenGratitude } from "../utils/gratitude";
 import JournalNoteMoveMenu from "../components/journal/JournalNoteMoveMenu.vue";
 import JournalNotesTree from "../components/journal/JournalNotesTree.vue";
 import type { NoteFolder, NotePlacement } from "../utils/journalNotes";
-import { plainPreview } from "../utils/homeSummary";
+import { homeTodayTasks, plainPreview, type HomeTask } from "../utils/homeSummary";
+import { useTodayPlan } from "../composables/useTodayPlan";
 
 definePage({
   meta: {
@@ -68,6 +68,7 @@ type MissionProject = {
   id: string;
   name: string;
   slug?: string | null;
+  icon?: string | null;
 };
 
 type JournalProjectLink = {
@@ -103,15 +104,13 @@ const router = useRouter();
 const auth = useAuthStore();
 const selectedDate = ref(normalizeLocalDateInput(rawDateQuery(route.query.date)) || todayKey());
 const dayTitle = computed(() => new Date(`${selectedDate.value}T12:00:00`).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" }));
-const datePickerOpen = ref(false);
-const datePickerMonth = ref(monthKey(selectedDate.value));
 const title = ref("");
 const description = ref("");
 const loadedEntry = ref<JournalEntry | null>(null);
 const archiveEntries = ref<JournalArchiveEntry[]>([]);
-// The Daily and Notes buttons in the top bar show that list; pressing the shown one hides it.
-// Desktop starts with the list beside a page-centred editor and remembers if you hide it.
-// On phones the list takes the screen, and picking something returns to the editor.
+// The top bar switches between Notes and Today (always today; past days open from the library).
+// The library (Notes | Daily) sits beside a page-centred editor on desktop and remembers if you hide it.
+// On phones the library takes the screen, and picking something returns to the editor.
 const WIDE_SCREEN_QUERY = "(min-width: 1180px)";
 const NARROW_SCREEN_QUERY = "(max-width: 900px)";
 const LIBRARY_HIDDEN_KEY = "me3.journal.library.hidden";
@@ -124,10 +123,16 @@ function libraryHiddenPreference() {
 const wideScreen = ref(mediaMatches(WIDE_SCREEN_QUERY));
 const narrowScreen = ref(mediaMatches(NARROW_SCREEN_QUERY));
 const libraryOpen = ref(wideScreen.value && !libraryHiddenPreference());
-const monthToggles = ref<Record<string, boolean>>({});
 const keyboardInset = ref(0);
 const archiveLoaded = ref(false);
-const libraryTab = ref<"daily" | "articles">("daily");
+const libraryTab = ref<"daily" | "articles">("articles");
+// True while the Notes side of the switch is showing, even before a note is open.
+const notesView = ref(false);
+// Today's open tasks fold into one line above the writing, so the page opens on the words.
+const plan = useTodayPlan();
+const tasksOpen = ref(false);
+const todayTasks = computed(() => homeTodayTasks(plan.tasks.value));
+const showTodayTasks = computed(() => !notesView.value && !currentArticle.value && currentDateIsToday.value && todayTasks.value.length > 0);
 const articles = ref<Article[]>([]);
 const currentArticle = ref<Article | null>(null);
 const folders = ref<NoteFolder[]>([]);
@@ -197,27 +202,20 @@ const wordCount = computed(() => htmlToPlainText(description.value).split(/\s+/)
 const nonEmptyArchiveEntries = computed(() =>
   archiveEntries.value.filter(entryHasContent),
 );
-// The newest month and the month you are reading start open; older months stay folded until opened.
+// Daily pages sit under month headings: scroll to the month, pick the day.
 const archiveMonths = computed(() => {
-  const months: { key: string; label: string; open: boolean; entries: JournalArchiveEntry[] }[] = [];
+  const months: { key: string; label: string; entries: JournalArchiveEntry[] }[] = [];
   for (const entry of nonEmptyArchiveEntries.value) {
     const key = monthKey(entry.date);
     let month = months[months.length - 1];
     if (!month || month.key !== key) {
-      const selected = !currentArticle.value && key === monthKey(selectedDate.value);
-      month = { key, label: formatArchiveMonth(entry.date), open: monthToggles.value[key] ?? (months.length === 0 || selected), entries: [] };
+      month = { key, label: formatArchiveMonth(entry.date), entries: [] };
       months.push(month);
     }
     month.entries.push(entry);
   }
   return months;
 });
-function toggleMonth(key: string, open: boolean) {
-  monthToggles.value = { ...monthToggles.value, [key]: !open };
-}
-const journalEntryDates = computed(() =>
-  nonEmptyArchiveEntries.value.map((entry) => entry.date),
-);
 const inlineJournalChipIds = computed(
   () => new Set(inlineJournalChips.value.map((chip) => chip.id)),
 );
@@ -307,18 +305,6 @@ function normalizeLocalDateInput(value: string): string {
 function rawDateQuery(value: unknown): string {
   const raw = Array.isArray(value) ? value[0] : value;
   return typeof raw === "string" ? raw : "";
-}
-
-function addDays(dateKey: string, days: number): string {
-  const [year, month, dayNumber] = dateKey.split("-").map(Number);
-  const date = new Date(year, month - 1, dayNumber + days);
-  return dateToKey(date);
-}
-
-function addMonths(monthKeyValue: string, months: number): string {
-  const [year, month] = monthKeyValue.split("-").map(Number);
-  const date = new Date(year, month - 1 + months, 1);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function monthKey(dateKey: string): string {
@@ -878,9 +864,7 @@ async function setDate(date: string) {
   if (!normalized || (normalized === selectedDate.value && !currentArticle.value)) return;
   await flushPendingSave();
   selectedDate.value = normalized;
-  libraryTab.value = "daily";
-  datePickerMonth.value = monthKey(normalized);
-  datePickerOpen.value = false;
+  notesView.value = false;
   await loadDay(normalized);
 }
 
@@ -930,18 +914,6 @@ async function deleteArchiveEntry(entry: JournalArchiveEntry) {
   }
 }
 
-function moveDatePickerMonth(direction: number) {
-  datePickerMonth.value = addMonths(datePickerMonth.value, direction);
-}
-
-function toggleDatePicker() {
-  datePickerOpen.value = !datePickerOpen.value;
-  datePickerMonth.value = monthKey(selectedDate.value);
-  if (datePickerOpen.value && !archiveLoaded.value) {
-    void loadArchive();
-  }
-}
-
 function setLibraryOpen(open: boolean) {
   libraryOpen.value = open;
   // Phones always start on the editor, so only larger screens remember the choice.
@@ -950,19 +922,47 @@ function setLibraryOpen(open: boolean) {
   }
 }
 
-async function pickLibraryTab(tab: "daily" | "articles") {
-  datePickerOpen.value = false;
+// Notes: the notes list, with the latest note open beside it on larger screens.
+async function showNotes() {
   closeArchiveActions();
-  if (libraryOpen.value && libraryTab.value === tab) {
-    setLibraryOpen(false);
-    return;
+  notesView.value = true;
+  libraryTab.value = "articles";
+  if (!libraryOpen.value) setLibraryOpen(true);
+  await flushPendingSave();
+  await loadArticles();
+  const latest = [...articles.value].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  if (!narrowScreen.value && !currentArticle.value && latest) await openArticle(latest.id);
+}
+
+// Today is always today's page.
+async function showToday() {
+  closeArchiveActions();
+  if (narrowScreen.value) libraryOpen.value = false;
+  notesView.value = false;
+  const today = todayKey();
+  if (currentArticle.value || selectedDate.value !== today) {
+    if (selectedDate.value === today) { await flushPendingSave(); await loadDay(today); }
+    else await setDate(today);
   }
+}
+
+async function toggleLibrary() {
+  closeArchiveActions();
+  if (libraryOpen.value) { setLibraryOpen(false); return; }
+  setLibraryOpen(true);
+  await flushPendingSave();
+  await (libraryTab.value === "articles" ? loadArticles() : loadArchive());
+}
+
+async function pickLibraryTab(tab: "daily" | "articles") {
+  closeArchiveActions();
   libraryTab.value = tab;
-  if (!libraryOpen.value) {
-    setLibraryOpen(true);
-    await flushPendingSave();
-  }
   await (tab === "articles" ? loadArticles() : loadArchive());
+}
+
+async function completeTask(task: HomeTask) {
+  try { await plan.complete(task); }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not finish that task."; }
 }
 
 async function loadLibrary() {
@@ -1007,7 +1007,7 @@ async function openArticle(id: string) {
     if (token !== currentLoadToken) return;
     hydratingEntry.value = true;
     currentArticle.value = response.article;
-    libraryTab.value = "articles";
+    notesView.value = true;
     title.value = response.article.title || "";
     description.value = journalBodyForEditor(response.article.body, response.article.bodyFormat);
     entryLinks.value = [];
@@ -1095,7 +1095,6 @@ async function deleteFolder(folder: NoteFolder) {
 }
 
 function handleWindowClick() {
-  datePickerOpen.value = false;
   noteLocationOpen.value = false;
   closeArchiveActions();
 }
@@ -1110,7 +1109,6 @@ function handleWindowKeydown(event: KeyboardEvent) {
       closeArchiveActions();
       return;
     }
-    datePickerOpen.value = false;
     if (narrowScreen.value) libraryOpen.value = false;
   }
 }
@@ -1128,6 +1126,7 @@ watch(() => [route.query.tab, route.query.note, route.query.new], async ([tab, n
   await router.replace({ query });
   libraryTab.value = "articles";
   libraryOpen.value = true;
+  notesView.value = true;
   await loadArticles();
   if (typeof note === "string") await openArticle(note);
   else if (fresh === "note") await createArticle();
@@ -1135,6 +1134,8 @@ watch(() => [route.query.tab, route.query.note, route.query.new], async ([tab, n
 
 onMounted(() => {
   void loadDay(selectedDate.value);
+  // Tasks are a side line on the page, so a failed load just leaves the line out.
+  void plan.loadTasks().catch(() => undefined);
   if (typeof window.matchMedia === "function") {
     wideScreenMedia = window.matchMedia(WIDE_SCREEN_QUERY);
     narrowScreenMedia = window.matchMedia(NARROW_SCREEN_QUERY);
@@ -1180,9 +1181,9 @@ onBeforeUnmount(() => {
   <main class="journal">
     <Teleport to="#app-page-controls" defer>
     <header class="journal__topbar">
-      <div class="journal__tabs" role="group" aria-label="Writing library">
-        <button type="button" :aria-pressed="libraryOpen && libraryTab === 'daily' ? 'true' : 'false'" :title="libraryOpen && libraryTab === 'daily' ? 'Hide daily pages' : 'Show daily pages'" @click="pickLibraryTab('daily')">Daily</button>
-        <button type="button" :aria-pressed="libraryOpen && libraryTab === 'articles' ? 'true' : 'false'" :title="libraryOpen && libraryTab === 'articles' ? 'Hide notes' : 'Show notes'" @click="pickLibraryTab('articles')">Notes</button>
+      <div class="journal__tabs" role="group" aria-label="Journal">
+        <button type="button" :aria-pressed="notesView ? 'true' : 'false'" @click="showNotes">Notes</button>
+        <button type="button" :aria-pressed="!notesView && currentDateIsToday ? 'true' : 'false'" @click="showToday">Today</button>
       </div>
       <div v-if="currentArticle" class="journal__day-switcher journal__note-location" @click.stop>
         <button
@@ -1207,54 +1208,25 @@ onBeforeUnmount(() => {
           @new-folder="createFolder"
         />
       </div>
-      <div v-else class="journal__day-switcher" aria-label="Selected day" @click.stop>
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          aria-label="Previous day"
-          title="Previous day"
-          type="button"
-          @click="setDate(addDays(selectedDate, -1))"
-        >
-          <UiIcon name="ChevronLeft" :size="18" />
-        </Button>
-        <button
-          type="button"
-          class="journal__day-label"
-          :aria-expanded="datePickerOpen"
-          aria-haspopup="dialog"
-          aria-label="Choose journal date"
-          @click="toggleDatePicker"
-        >
-          <strong>{{ selectedDateLabel }}</strong>
-        </button>
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          aria-label="Next day"
-          title="Next day"
-          type="button"
-          @click="setDate(addDays(selectedDate, 1))"
-        >
-          <UiIcon name="ChevronRight" :size="18" />
-        </Button>
-        <DatePickerPopover
-          v-if="datePickerOpen"
-          :month-key="datePickerMonth"
-          :selected-date="selectedDate"
-          :today-date="todayKey()"
-          :marked-dates="journalEntryDates"
-          aria-label="Choose journal date"
-          @move-month="moveDatePickerMonth"
-          @select-date="setDate"
-          @today="setDate(todayKey())"
-        />
+      <div v-else-if="!notesView && !currentDateIsToday" class="journal__day-switcher">
+        <strong class="journal__day-label">{{ selectedDateLabel }}</strong>
       </div>
-      <div class="journal__topbar-end" />
+      <span v-else aria-hidden="true" />
+      <div class="journal__topbar-end">
+        <Button
+          color="ghost"
+          shape="soft"
+          size="compact"
+          icon-only
+          type="button"
+          :aria-pressed="libraryOpen ? 'true' : 'false'"
+          :aria-label="libraryOpen ? 'Hide library' : 'Show library'"
+          :title="libraryOpen ? 'Hide library' : 'Library'"
+          @click="toggleLibrary"
+        >
+          <UiIcon name="BookOpen" :size="18" aria-hidden="true" />
+        </Button>
+      </div>
     </header>
     </Teleport>
 
@@ -1265,16 +1237,16 @@ onBeforeUnmount(() => {
       <aside
         v-if="libraryOpen"
         class="journal__archive"
-        :aria-label="libraryTab === 'daily' ? 'Daily pages' : 'Notes'"
+        aria-label="Library"
       >
+        <div class="journal__libtabs" role="tablist" aria-label="Library">
+          <button type="button" role="tab" :aria-selected="libraryTab === 'articles' ? 'true' : 'false'" @click="pickLibraryTab('articles')">Notes</button>
+          <button type="button" role="tab" :aria-selected="libraryTab === 'daily' ? 'true' : 'false'" @click="pickLibraryTab('daily')">Daily</button>
+        </div>
         <template v-if="libraryTab === 'daily'">
           <section v-for="month in archiveMonths" :key="month.key" class="journal__month">
-            <button type="button" class="journal__month-toggle" :aria-expanded="month.open ? 'true' : 'false'" @click="toggleMonth(month.key, month.open)">
-              <UiIcon class="journal__month-chevron" name="ChevronDown" :size="15" aria-hidden="true" />
-              <span>{{ month.label }}</span>
-              <small>{{ month.entries.length }}</small>
-            </button>
-            <template v-if="month.open">
+            <h3 class="journal__month-heading">{{ month.label }}</h3>
+            <template v-if="month.entries.length">
               <div v-for="entry in month.entries" :key="entry.id" class="journal__archive-row" :class="{
                 'is-active': entry.date === selectedDate && !currentArticle,
                 'is-menu-open': archiveActionDate === entry.date,
@@ -1348,7 +1320,15 @@ onBeforeUnmount(() => {
       <section class="journal__sheet" :aria-label="currentArticle ? 'Note' : 'Daily page'">
         <p v-if="error" class="journal__message is-error">{{ error }}</p>
 
+        <div v-if="notesView && !currentArticle" class="journal__notes-empty">
+          <p>{{ articles.length ? 'Pick a note, or start a new one.' : 'No notes yet.' }}</p>
+          <Button color="accent" shape="soft" size="compact" type="button" @click="createArticle()">
+            <UiIcon name="Plus" :size="16" aria-hidden="true" />New note
+          </Button>
+        </div>
+
         <div
+          v-show="!(notesView && !currentArticle)"
           ref="editorWrap"
           class="journal__editor-wrap"
           :class="{ 'is-loading': loading }"
@@ -1366,6 +1346,34 @@ onBeforeUnmount(() => {
             :upload-image="uploadJournalImage"
             :placeholder="currentArticle ? 'Write your note here...' : 'Write about your day...'"
           >
+            <template #after-title>
+              <div v-if="showTodayTasks" class="journal__tasks">
+                <button
+                  type="button"
+                  class="journal__tasks-line"
+                  :aria-expanded="tasksOpen ? 'true' : 'false'"
+                  @click="tasksOpen = !tasksOpen"
+                >
+                  <span class="journal__tasks-dot" aria-hidden="true" />
+                  <span>{{ todayTasks.length }} {{ todayTasks.length === 1 ? 'task' : 'tasks' }}</span>
+                  <UiIcon class="journal__tasks-chevron" name="ChevronRight" :size="16" aria-hidden="true" />
+                </button>
+                <div v-if="tasksOpen" class="journal__tasks-list">
+                  <div v-for="task in todayTasks" :key="task.id" class="journal__task">
+                    <button
+                      type="button"
+                      class="journal__task-ring"
+                      :disabled="plan.busy.value.includes(task.id)"
+                      :aria-label="`Mark ${task.title} done`"
+                      title="Mark done"
+                      @click="completeTask(task)"
+                    />
+                    <RouterLink :to="`/tasks?task=${encodeURIComponent(task.id)}`" class="journal__task-title">{{ task.title }}</RouterLink>
+                  </div>
+                  <RouterLink to="/tasks" class="journal__tasks-all">All tasks</RouterLink>
+                </div>
+              </div>
+            </template>
             <template #title-meta>
               <span v-if="!loading" class="journal__title-meta">{{ wordCount.toLocaleString() }} {{ wordCount === 1 ? 'word' : 'words' }}<template v-if="saveStatusText"> · <strong>{{ saveStatusText }}</strong></template></span>
             </template>
@@ -1400,7 +1408,7 @@ onBeforeUnmount(() => {
 
     <!-- Dictation is a writing tool, so it sits by the page, not in the app's top bar. -->
     <button
-      v-if="!(narrowScreen && libraryOpen) && voiceDictationState !== 'unsupported'"
+      v-if="!(narrowScreen && libraryOpen) && !(notesView && !currentArticle) && voiceDictationState !== 'unsupported'"
       type="button"
       class="journal__dictate"
       :class="{ 'is-listening': voiceDictationState === 'listening', 'is-busy': voiceDictationState === 'processing' }"
@@ -1562,6 +1570,8 @@ onBeforeUnmount(() => {
 }
 
 .journal__topbar-end {
+  display: flex;
+  justify-content: flex-end;
   min-width: 0;
 }
 
@@ -1601,14 +1611,6 @@ onBeforeUnmount(() => {
 
 .journal__day-label strong {
   font-weight: inherit;
-}
-
-.journal__day-label[aria-expanded="true"] {
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-}
-
-.journal__day-label:hover {
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
 }
 
 .journal__workspace {
@@ -1661,19 +1663,60 @@ onBeforeUnmount(() => {
 }
 .journal__tabs button:hover { color: var(--ui-text, var(--color-text)); }
 .journal__tabs button[aria-pressed="true"] { background: var(--ui-surface-muted, var(--color-surface-muted)); color: var(--ui-text, var(--color-text)); }
-.journal__tabs button:focus-visible, .journal__month-toggle:focus-visible, .journal__new-note:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
+.journal__tabs button:focus-visible, .journal__libtabs button:focus-visible, .journal__new-note:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
+
+/* Library tabs: Notes first, then Daily. */
+.journal__libtabs {
+  display: flex; gap: 2px; margin-bottom: 8px; padding: 3px;
+  border-radius: var(--ui-radius-sm, 8px); background: var(--ui-surface-muted, var(--color-surface-muted));
+}
+.journal__libtabs button {
+  flex: 1; min-height: 30px; border: 0; border-radius: calc(var(--ui-radius-sm, 8px) - 2px);
+  background: transparent; color: var(--ui-text-muted, var(--color-text-muted));
+  font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
+}
+.journal__libtabs button[aria-selected="true"] {
+  background: var(--ui-surface, var(--color-surface)); color: var(--ui-text, var(--color-text));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
 
 .journal__month { display: flex; flex-direction: column; gap: 2px; }
-.journal__month + .journal__month { margin-top: 6px; }
-.journal__month-toggle {
-  display: flex; align-items: center; gap: 6px; width: 100%; border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 7px 8px;
-  background: transparent; color: var(--ui-text, var(--color-text));
-  font: inherit; font-size: 0.88rem; font-weight: 600; text-align: left; cursor: pointer;
+.journal__month + .journal__month { margin-top: 10px; }
+.journal__month-heading {
+  margin: 0; padding: 6px 8px 4px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 0.78rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase;
 }
-.journal__month-toggle:hover { background: var(--ui-surface-muted, var(--color-surface-muted)); }
-.journal__month-toggle small { margin-left: auto; color: var(--ui-text-muted, var(--color-text-muted)); font-size: 0.78rem; font-weight: 400; }
-.journal__month-chevron { color: var(--ui-text-muted, var(--color-text-muted)); transition: transform 0.15s ease; }
-.journal__month-toggle[aria-expanded="false"] .journal__month-chevron { transform: rotate(-90deg); }
+
+/* Today's open tasks, folded into one line under the title. */
+.journal__tasks { margin: 2px 0 10px; }
+.journal__tasks-line {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; border: 0;
+  border-radius: var(--ui-radius-sm, 8px); padding: 0 12px;
+  background: var(--ui-surface-muted, var(--color-surface-muted)); color: var(--ui-text, var(--color-text));
+  font: inherit; font-size: 0.92rem; text-align: left; cursor: pointer;
+}
+.journal__tasks-line:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
+.journal__tasks-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ui-accent); }
+.journal__tasks-chevron { margin-left: auto; color: var(--ui-text-muted, var(--color-text-muted)); transition: transform 0.15s ease; }
+.journal__tasks-line[aria-expanded="true"] .journal__tasks-chevron { transform: rotate(90deg); }
+.journal__tasks-list { display: flex; flex-direction: column; padding: 6px 4px 0; }
+.journal__task { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; }
+.journal__task-ring {
+  flex-shrink: 0; width: 18px; height: 18px; margin-top: 2px; border: 2px solid var(--ui-text-muted, var(--color-text-muted));
+  border-radius: 50%; padding: 0; background: transparent; cursor: pointer;
+}
+.journal__task-ring:hover { border-color: var(--ui-accent); background: var(--ui-surface-muted, var(--color-surface-muted)); }
+.journal__task-ring:disabled { opacity: 0.5; cursor: progress; }
+.journal__task-title { color: var(--ui-text, var(--color-text)); font-size: 0.94rem; text-decoration: none; }
+.journal__task-title:hover { text-decoration: underline; }
+.journal__tasks-all { align-self: flex-start; margin-top: 4px; color: var(--ui-text-muted, var(--color-text-muted)); font-size: 0.86rem; }
+
+.journal__notes-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  min-height: 40vh; color: var(--ui-text-muted, var(--color-text-muted));
+}
+.journal__notes-empty p { margin: 0; }
 .journal__library-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .journal__library-row-head small { flex-shrink: 0; color: var(--ui-text-muted); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
 .journal__new-note {
@@ -2153,12 +2196,8 @@ onBeforeUnmount(() => {
 
 @media (max-width: 900px) {
   .journal__topbar {
-    grid-template-columns: auto 1fr;
+    grid-template-columns: auto 1fr auto;
     gap: 8px;
-  }
-
-  .journal__topbar-end {
-    display: none;
   }
 
   .journal__day-switcher {

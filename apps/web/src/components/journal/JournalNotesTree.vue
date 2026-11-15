@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import JournalNoteMoveMenu from "./JournalNoteMoveMenu.vue";
+import ProjectIcon from "../tasks/ProjectIcon.vue";
 import { groupNotes, type NoteFolder, type NotePlacement, type NoteProject, type NoteProjectGroup } from "../../utils/journalNotes";
 
 // The Notes tab of the Journal library: projects, then folders inside them, then loose notes.
@@ -31,6 +32,7 @@ const collapsed = ref(new Set<string>(readCollapsed()));
 const menu = ref<{ id: string; view: "actions" | "move"; up: boolean } | null>(null);
 
 const groups = computed(() => groupNotes(props.notes, props.folders, props.projects));
+const projectIcon = (projectId: string | null) => props.projects.find((project) => project.id === projectId)?.icon ?? null;
 
 function readCollapsed(): string[] {
   try {
@@ -110,7 +112,7 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
           @click="toggle(group.key)"
         >
           <UiIcon class="notes-tree__chevron" name="ChevronDown" :size="15" aria-hidden="true" />
-          <UiIcon v-if="group.projectId" name="Target" :size="15" aria-hidden="true" />
+          <ProjectIcon v-if="group.projectId" :icon="projectIcon(group.projectId)" :name="group.name" size="small" />
           <span class="notes-tree__name">{{ group.name }}</span>
           <span class="notes-tree__count">{{ group.count }}</span>
         </button>

@@ -5,7 +5,7 @@ export type NotePlacement = { projectId: string | null; folderId: string | null 
 
 export type NoteLike = { id: string; updatedAt: string; projectId?: string | null; folderId?: string | null };
 export type NoteFolder = { id: string; name: string; projectId: string | null };
-export type NoteProject = { id: string; name: string };
+export type NoteProject = { id: string; name: string; icon?: string | null };
 
 export type NoteFolderGroup<T> = { folder: NoteFolder; notes: T[] };
 export type NoteProjectGroup<T> = {
