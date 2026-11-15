@@ -9,7 +9,7 @@ import HomeNotesCard, { type HomeNote } from "./HomeNotesCard.vue";
 import NewsCard from "./NewsCard.vue";
 import NewsReader from "../news/NewsReader.vue";
 import NewsSettingsSheet from "../news/NewsSettingsSheet.vue";
-import { newsDate, type NewsPaper, type NewsPaperAction, type NewsRating, type NewsToday } from "../../utils/news";
+import { type NewsPaper, type NewsPaperAction, type NewsRating, type NewsToday } from "../../utils/news";
 import AppDialog from "../AppDialog.vue";
 import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
 import GetSetUpStrip from "./GetSetUpStrip.vue";
@@ -141,7 +141,8 @@ let newsOpenWhenLoaded = false;
 // On Home: the intro until News is set up, then today's paper unless it is hidden until tomorrow.
 const newsShow = computed(() => Boolean(news.value) && (!news.value!.setUp || newsBuilding.value || Boolean(newsPaper.value && !newsPaper.value.hiddenAt)));
 const newsRead = computed(() => Boolean(newsPaper.value?.readAt));
-const newsDetail = computed(() => !newsPaper.value || !news.value ? "" : newsPaper.value.readAt ? `Read · tomorrow at ${news.value.nextTime}` : newsDate(newsPaper.value.dateKey, "short"));
+// Unread, the title says "Today’s news" and needs no date; once read it says when the next one comes.
+const newsDetail = computed(() => newsPaper.value?.readAt && news.value ? `Read · tomorrow at ${news.value.nextTime}` : "");
 /** The card drops onto Home once for each new paper, and again when it is brought back. */
 function landNews(paper?: NewsPaper) {
   if (paper) {
@@ -529,7 +530,7 @@ onBeforeUnmount(() => {
       <template #item="{ element: card }: { element: HomeCard }">
         <article :ref="el => setCardElement(card, el)" class="home-card" :class="{ 'home-card--landing': card === 'soup' && newsFresh, 'home-card--line': card === 'soup' && newsRead }" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header class="home-card__header">
-            <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title" @click="card === 'soup' && newsPaper ? ($event.preventDefault(), newsReader = true) : undefined"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
+            <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title" @click="card === 'soup' && newsPaper ? ($event.preventDefault(), newsReader = true) : undefined"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ card === 'soup' && newsPaper && !newsPaper.readAt ? 'Today’s news' : cards[card].title }}</span></RouterLink>
             <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
             <span v-else-if="card === 'soup' && newsDetail" class="home-card__detail">{{ newsDetail }}</span>
             <span v-else-if="card === 'tasks' && tasksCard.tasks.length" class="home-card__detail">{{ tasksCard.view === 'now' ? 'Now' : 'Backlog' }}</span>

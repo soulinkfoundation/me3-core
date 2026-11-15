@@ -66,12 +66,6 @@ export function newsPageKinds(paper: Pick<NewsPaper, "pages">): NewsPageKind[] {
   return ["front", ...(pages.work ? ["work" as const] : []), ...(pages.media ? ["media" as const] : []), ...(pages.topics ? ["topics" as const] : []), ...(pages.near ? ["near" as const] : []), "end"];
 }
 
-/** "6 pages · 10 stories · 1 video · about 7 min" */
-export function newsMetaLine(paper: Pick<NewsPaper, "counts">): string {
-  const { pages, stories, videos, minutes } = paper.counts;
-  return [`${pages} pages`, `${stories} ${stories === 1 ? "story" : "stories"}`, ...(videos ? [`${videos} video${videos === 1 ? "" : "s"}`] : []), `about ${minutes} min`].join(" · ");
-}
-
 /** The paper's own day, from its date key, so it never shifts with the browser's timezone. */
 export function newsDate(dateKey: string, style: "long" | "short", locale?: string): string {
   const [year, month, day] = dateKey.split("-").map(Number);
