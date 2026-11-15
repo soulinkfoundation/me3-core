@@ -11,7 +11,7 @@ import { GRATITUDE_SETTINGS_SCHEMA, CARD_REMINDERS_SCHEMA } from "./gratitude-sc
 import { HOME_LAYOUT_SCHEMA } from "./home-layout";
 import { HOME_CARDS_SCHEMA } from "./home-cards";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
-import { ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
+import { ACCOUNTS_RECEIPTS_SCHEMA, ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { AGENT_PAYMENTS_SCHEMA } from "./agent-payments";
 import { AGENT_COMPUTER_SCHEMA } from "./agent-computer";
 import { AGENT_COMMERCE_SCHEMA } from "./agent-commerce-store";
@@ -1020,6 +1020,14 @@ const runtimeMigrations: RuntimeMigration[] = [
       // An install without mail triage yet gets the current schema when mail is first set up.
       if (!table?.sql || table.sql.includes("'outreach'")) return;
       await db.batch(MAILBOX_OUTREACH_HANDLED_STATEMENTS.map(sql => db.prepare(sql)));
+    },
+  },
+  // Accounts: the receipt or invoice photo behind an entry, kept in Files.
+  {
+    id: "0107_financial_entry_receipts",
+    checksum: "2026-11-15-financial-entry-receipts-v1",
+    async apply(db) {
+      await db.batch(ACCOUNTS_RECEIPTS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];

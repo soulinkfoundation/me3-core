@@ -24,6 +24,8 @@ import { assertProvisionalHoldsCovered, MAX_PROVISIONAL_HOLDS } from "./managed-
 import { createStableAgentSchedulingServices } from "./agent-domain-scheduling";
 import { createAgentMailboxServices } from "./agent-mailbox-services";
 import { createAgentOutreachServices } from "./agent-outreach-services";
+import { createAgentAccountsServices } from "./agent-accounts-services";
+import { createAgentContactServices } from "./agent-contact-services";
 import { prepareAgentImageInputs, resolveAgentImageInputs, loadAgentAttachmentManifest, type AgentAttachmentInput } from "./agent-image-input";
 import { createAgentImageGenerationServices, loadAgentGeneratedImageAction } from "./agent-image-generation";
 import { revalidateAgentImagePayload } from "./agent-image-projection";
@@ -306,6 +308,8 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     scheduling:createStableAgentSchedulingServices(env,ownerId),
     mailbox:createAgentMailboxServices(env,ownerId),
     outreach:createAgentOutreachServices(env,ownerId),
+    accounts:createAgentAccountsServices(env,ownerId),
+    contacts:createAgentContactServices(env,ownerId),
     images:createAgentImageGenerationServices(env,ownerId),
     payments:parkedFeaturesOn(env)?{...createAgentPaymentServices(env,ownerId),...createAgentNetworkPaymentServices(env,ownerId)}:undefined,
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
@@ -329,6 +333,8 @@ export function isToolAvailable(name:string,services:AgentDomainServices):boolea
   if(name==="core_scheduling_request_profile")return Boolean(services.scheduling?.requestNetwork);
   if(name==="core_scheduling_book_free_call")return Boolean(services.scheduling?.planFreeCall&&services.scheduling?.bookFreeCall);
   if(name.startsWith("core_cards_"))return Boolean(services.cards);
+  if(name.startsWith("core_accounts_"))return Boolean(services.accounts);
+  if(name.startsWith("core_contact_"))return Boolean(services.contacts);
   if(name.startsWith("core_news_"))return Boolean(services.soup);
   if(name==="core_social_site_post_share")return Boolean(services.socialShare);
   if(name.startsWith("core_coding_"))return Boolean(services.coding);
@@ -340,7 +346,7 @@ export function isToolAvailable(name:string,services:AgentDomainServices):boolea
 // turns, and the first-run site build (the web app's "Build me a landing page
 // site for" starter) starts with the sites group, so neither pays a loader step.
 const THREAD_TOOL_GROUP_TURNS=8;
-const TOOL_GROUP_HINTS:Array<[RegExp,string]>=[[/\b(?:landing page|web ?site|web ?page|home ?page|my site)\b/i,"sites"],[/\b(?:news|soup|headlines|anything good|something (?:good |short |long )?to (?:read|watch|listen)|podcast)\b/i,"news"]];
+const TOOL_GROUP_HINTS:Array<[RegExp,string]>=[[/\b(?:accounts|income|expenses?|profit|revenue|earn(?:ed|ings)?|spen[dt]|receipts?|invoices?|tax(?:es)?|vat)\b/i,"accounts"],[/\b(?:landing page|web ?site|web ?page|home ?page|my site)\b/i,"sites"],[/\b(?:news|soup|headlines|anything good|something (?:good |short |long )?to (?:read|watch|listen)|podcast)\b/i,"news"]];
 async function loadThreadToolGroups(env:Env,scope:{ownerId:string;threadId:string;turnId:string}):Promise<string[]> {
   const rows=await env.DB.prepare("SELECT trace_json FROM me3_agent_turns WHERE owner_id=? AND thread_id=? AND turn_id<>? AND trace_json IS NOT NULL ORDER BY updated_at DESC LIMIT ?").bind(scope.ownerId,scope.threadId,scope.turnId,THREAD_TOOL_GROUP_TURNS).all<{trace_json:string}>();
   const groups=new Set<string>();

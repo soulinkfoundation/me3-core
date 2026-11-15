@@ -31,6 +31,22 @@ export const ACCOUNTS_REMOVALS_SCHEMA = [
   )`,
 ] as const;
 
+// The receipt or invoice photo behind an entry, kept in Files. The hash stops the same
+// photo being logged twice. Mirrors migrations/0107_financial_entry_receipts.sql.
+export const ACCOUNTS_RECEIPTS_SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS financial_entry_receipts (
+    entry_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entry_id) REFERENCES financial_entries(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES owner_profile(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_financial_entry_receipts_hash
+    ON financial_entry_receipts(user_id, sha256)`,
+] as const;
+
 export type EntryType = "income" | "expense";
 type EntryStatus = "pending" | "paid" | "overdue" | "cancelled" | "needs_review";
 type EntrySource = "manual" | "email_triage" | "stripe" | "csv_import" | "website";
@@ -71,6 +87,7 @@ type FinancialEntryRow = {
   site_id: string | null;
   item_ref: string | null;
   item_title: string | null;
+  receipt_file_id?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -157,6 +174,12 @@ export async function listFinancialEntries(env: Env, userId: string, query: URLS
   if (query.get("status") && !status) throw new AccountsInputError("Invalid status filter");
   if (query.get("source") && !source) throw new AccountsInputError("Invalid source filter");
 
+  const dateFrom = query.get("dateFrom") ? parseDateValue(query.get("dateFrom")) : null;
+  const dateTo = query.get("dateTo") ? parseDateValue(query.get("dateTo")) : null;
+  if ((query.get("dateFrom") && !dateFrom) || (query.get("dateTo") && !dateTo)) {
+    throw new AccountsInputError("Invalid date filter");
+  }
+
   const sortBy = query.get("sortBy") || "date";
   const sortDir = query.get("sortDir") === "asc" ? "ASC" : "DESC";
   const sortColumn =
@@ -176,6 +199,8 @@ export async function listFinancialEntries(env: Env, userId: string, query: URLS
     categoryId,
     status,
     source,
+    dateFrom,
+    dateTo,
   });
   const fromClause = `FROM financial_entries e
     LEFT JOIN financial_categories fc ON fc.id = e.category_id
@@ -189,6 +214,7 @@ export async function listFinancialEntries(env: Env, userId: string, query: URLS
               e.refunded_amount_cents, e.customer_name, e.customer_email,
               e.payment_intent_id, e.site_id, e.item_ref, e.item_title,
               e.created_at, e.updated_at,
+              (SELECT r.file_id FROM financial_entry_receipts r WHERE r.entry_id = e.id) AS receipt_file_id,
               fc.name AS category_name, mp.name AS project_name
        ${fromClause}
        ${whereClause}
@@ -202,11 +228,21 @@ export async function listFinancialEntries(env: Env, userId: string, query: URLS
       .first<{ count: number }>(),
   ]);
 
+  // Sums across every match, not only this page; asked for by the assistant's entry list.
+  const totals = query.get("totals") === "1"
+    ? (await env.DB.prepare(
+        `SELECT UPPER(e.currency) AS currency, COALESCE(SUM(e.amount_cents), 0) AS total
+         ${fromClause} ${whereClause}
+         GROUP BY UPPER(e.currency) ORDER BY UPPER(e.currency)`,
+      ).bind(...params).all<CurrencyTotalRow>()).results || []
+    : undefined;
+
   return {
     entries: (entriesResult.results || []).map(serializeEntry),
     total: countResult?.count || 0,
     limit,
     offset,
+    ...(totals ? { totals: totals.map((row) => ({ currency: row.currency || "", amountCents: Number(row.total) || 0 })) } : {}),
   };
 }
 
@@ -418,6 +454,12 @@ export function buildAccountCustomers(
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label)),
   };
+}
+
+/** One entry in the shape the list returns, or null when it is not this owner's. */
+export async function getFinancialEntry(env: Env, userId: string, entryId: string) {
+  const entry = await getEntryForUser(env, userId, entryId);
+  return entry ? serializeEntry(entry) : null;
 }
 
 export async function createFinancialEntry(env: Env, userId: string, input: unknown) {
@@ -1467,6 +1509,8 @@ function buildEntryFiltersSql(filters: {
   categoryId?: string | null;
   status?: EntryStatus | null;
   source?: EntrySource | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
 }) {
   const conditions = ["e.user_id = ?", "e.entry_type = ?"];
   const params: Array<string | number | null> = [filters.userId, filters.entryType];
@@ -1484,6 +1528,15 @@ function buildEntryFiltersSql(filters: {
   if (filters.status) {
     conditions.push("e.status = ?");
     params.push(filters.status);
+  }
+  if (filters.dateFrom) {
+    conditions.push("e.date >= ?");
+    params.push(filters.dateFrom);
+  }
+  if (filters.dateTo) {
+    // Dates are stored as YYYY-MM-DD or a full timestamp; the day's end covers both.
+    conditions.push("e.date <= ?");
+    params.push(`${filters.dateTo}T23:59:59.999Z`);
   }
   if (filters.source) {
     if (filters.source === "website") {
@@ -1549,6 +1602,7 @@ async function getEntryForUser(env: Env, userId: string, entryId: string) {
               e.refunded_amount_cents, e.customer_name, e.customer_email,
               e.payment_intent_id, e.site_id, e.item_ref, e.item_title,
               e.created_at, e.updated_at,
+              (SELECT r.file_id FROM financial_entry_receipts r WHERE r.entry_id = e.id) AS receipt_file_id,
               fc.name AS category_name, mp.name AS project_name
        FROM financial_entries e
        LEFT JOIN financial_categories fc ON fc.id = e.category_id
@@ -1632,6 +1686,7 @@ function serializeEntry(entry: FinancialEntryRow) {
     siteId: entry.site_id,
     itemRef: entry.item_ref,
     itemTitle: entry.item_title,
+    receiptFileId: entry.receipt_file_id || null,
     createdAt: entry.created_at,
     updatedAt: entry.updated_at,
   };

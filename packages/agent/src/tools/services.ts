@@ -101,7 +101,29 @@ export interface AgentOutreachServices {
   list(input: { filter?: string; limit?: number }): Promise<{ prospects: OutreachProspect[]; total: number }>;
   save(prospects: Array<Record<string, unknown>>): Promise<{ saved: Array<OutreachProspect & { created: boolean }>; skipped: Array<{ name: string; reason: string }> }>;
 }
+/** Accounts for the assistant. Amounts are decimal strings in the entry's currency ("19.99"), never cents. */
+export type AccountsEntryRecord = {
+  id: string; entryType: "income" | "expense"; date: string; description: string; amount: string; currency: string;
+  status: string; category: string | null; source: string; notes: string | null; customerName: string | null; receiptFileId: string | null;
+};
+export type AccountsEntryInput = { entryType?: string; amount?: number; currency?: string; date?: string; description?: string; category?: string | null; status?: string; notes?: string | null };
+export interface AgentAccountsServices {
+  summary(): Promise<Record<string, unknown>>;
+  listEntries(input: { entryType?: string; dateFrom?: string; dateTo?: string; search?: string; category?: string; status?: string; limit?: number }): Promise<{ entries: AccountsEntryRecord[]; total: number; totals: Array<{ currency: string; amount: string }> }>;
+  getEntry(entryId: string): Promise<AccountsEntryRecord | null>;
+  /** With a receipt photo the entry is saved for review and the photo is kept in Files; the same photo twice returns the first entry. */
+  createEntry(input: AccountsEntryInput, scope: { threadId: string; receiptAttachmentId?: string }): Promise<{ entry: AccountsEntryRecord; duplicate?: boolean; receipt?: { saved: boolean; folder?: string; reason?: string } }>;
+  updateEntry(entryId: string, patch: AccountsEntryInput): Promise<{ entry: AccountsEntryRecord }>;
+}
+/** One person in the owner's People, with what ME3 holds about them. */
+export type ContactRecord = { id: string; name: string; email: string | null; [key: string]: unknown };
+export interface AgentContactServices {
+  read(contactId: string): Promise<{ contact: ContactRecord; [key: string]: unknown } | null>;
+  save(input: Record<string, unknown>, timezone: string): Promise<{ contact: ContactRecord; created: boolean; reminderAt?: string | null }>;
+}
 export interface AgentDomainServices {
+  accounts?: AgentAccountsServices;
+  contacts?: AgentContactServices;
   outreach?: AgentOutreachServices;
   cards?: AgentHomeCardServices;
   soup?: AgentSoupServices;

@@ -40,6 +40,7 @@ type Entry = {
   status: EntryStatus;
   source: EntrySource;
   sourceEmailId: string | null;
+  receiptFileId?: string | null;
   notes: string | null;
 };
 type MoneyTotal = { currency: string; amountCents: number };
@@ -733,6 +734,7 @@ onMounted(() => {
                 <td v-if="visibleEntryColumns.source">
                   <RouterLink v-if="entry.source === 'email_triage' && entry.sourceEmailId" class="accounts-source-link" :to="{ path: '/email', query: { message: entry.sourceEmailId } }">Email triage</RouterLink>
                   <span v-else>{{ sourceLabel(entry.source) }}</span>
+                  <a v-if="entry.receiptFileId" class="accounts-source-link accounts-receipt-link" :href="`/api/files/${entry.receiptFileId}/content`" target="_blank" rel="noopener">{{ entryType === "income" ? "Invoice" : "Receipt" }}</a>
                 </td>
                 <td class="accounts-table__actions-column">
                   <div class="accounts-table__row-actions">
@@ -872,6 +874,7 @@ onMounted(() => {
 .accounts-table--customers th:nth-child(3) { width: 25%; }
 .accounts-table--customers th:nth-child(4) { width: 17%; }
 .accounts-table a { color: inherit; text-decoration-color: var(--ui-border-strong); text-underline-offset: 3px; }
+.accounts-receipt-link { display: block; }
 .accounts-source-link:hover, .accounts-source-link:focus-visible, .accounts-table a:hover, .accounts-table a:focus-visible { color: var(--ui-text); }
 .accounts-table__row-actions { display: flex; justify-content: flex-end; gap: 4px; }
 .status-badge { display: inline-flex; width: fit-content; padding: 2px 6px; border-radius: var(--ui-radius-sm); background: var(--ui-surface-muted); font-size: 12px; }
