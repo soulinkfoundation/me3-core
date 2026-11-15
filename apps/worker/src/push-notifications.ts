@@ -38,6 +38,8 @@ export type CalendarPushAlert = {
   occurrenceId: string;
   alertOffsetMinutes: number;
   title: string;
+  /** A second line of the install's own, shown instead of the relay's "due now" copy. */
+  body?: string;
   contextType?: "card";
   contextId?: string;
 };

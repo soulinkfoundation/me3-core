@@ -3,7 +3,7 @@ import { newsPatchFromAgent } from "./agent-soup";
 import { clockTime, countPaper, layoutPaper, noteAddsSomething, newsBuildDue, newsDueMinutes, newsFromSearch, readPaperPicks, sameEvent, shouldBuildPaper, toNewsCandidates, writeNewsPicks } from "./news-paper";
 import { applyNewsPatch, defaultNewsPrefs, describeNewsSettings, newsIsSetUp } from "./news-settings";
 import { newsPrefsFromSoup } from "./news-migrate";
-import { NEWS_PUSH_TITLE, newsPushDue } from "./news-push";
+import { NEWS_PUSH_TITLE, newsPushBody, newsPushDue } from "./news-push";
 import { cityFromTimezone, cleanCityName, countryFromTimezone, describeWeather, geocodeCity } from "./news-weather";
 import { SoupUnavailableError, newsTodayQuery, readNewsToday, type SoupClient } from "./soup-client";
 import { emptySoupTaste, snapNewsTime, type SoupTaste } from "./soup-taste";
@@ -308,5 +308,24 @@ describe("moving a Soup setup to News", () => {
     expect(newsPrefsFromSoup(soup([]), { briefingTime: "08:00", removedFromHome: false, now })).toBeNull();
     expect(newsPrefsFromSoup({ ...emptySoupTaste(), servings: [headlines] }, { briefingTime: null, removedFromHome: false, now })).toBeNull();
     expect(newsPrefsFromSoup({ ...soup([headlines]), news: defaultNewsPrefs() }, { briefingTime: null, removedFromHome: false, now })).toBeNull();
+  });
+});
+
+describe("the news notification's second line", () => {
+  const paper = (headline: string, counts: Record<string, number>) => ({ pages: { front: { lead: { headline } } }, counts });
+  it("is the lead headline and how much more there is", () => {
+    expect(newsPushBody(paper("Storm Bram brings orange wind warnings to the west coast", { stories: 10, videos: 1, minutes: 7 })))
+      .toBe("Storm Bram brings orange wind warnings to the west coast. Plus 10 more, about 7 min.");
+    expect(newsPushBody(paper("Is this the end of the office?", { stories: 2, videos: 0, minutes: 0 }))).toBe("Is this the end of the office? Plus 1 more.");
+  });
+  it("is just the headline when it is the only story, and nothing without one", () => {
+    expect(newsPushBody(paper("One story today", { stories: 1, videos: 0, minutes: 2 }))).toBe("One story today");
+    expect(newsPushBody(paper("", { stories: 4 }))).toBeUndefined();
+    expect(newsPushBody(null)).toBeUndefined();
+  });
+  it("keeps a long headline to one readable line", () => {
+    const body = newsPushBody(paper("A".repeat(300), { stories: 3, videos: 0, minutes: 4 }))!;
+    expect(body.length).toBeLessThan(150);
+    expect(body).toContain("… Plus 2 more, about 4 min.");
   });
 });
