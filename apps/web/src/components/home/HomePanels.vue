@@ -569,7 +569,7 @@ onBeforeUnmount(() => {
                 <button type="button" class="home-approval__x" :aria-label="`Dismiss ${approval.title}`" :disabled="busy.includes(approval.id)" @click="dismiss(approval)"><UiIcon name="X" :size="16" /></button>
               </div>
               <!-- The title already opens Calendar, so the empty day is one quiet line. Calendars connect from Settings. -->
-              <p v-if="!events.length" class="home-empty-line">{{ calendarConnected ? 'Nothing scheduled' : "Today's events will show here" }}</p>
+              <p v-if="!events.length" class="home-empty-day"><i aria-hidden="true" />{{ calendarConnected ? 'Nothing scheduled' : 'No events yet' }}</p>
               <template v-else>
                 <RouterLink v-for="event in todayEvents" :key="event.id" :to="`/calendar?date=${day}`" class="home-line home-event" :class="eventState(event)"><span class="home-time">{{ event.allDay ? 'All day' : compactTime(event.start) }}</span><i class="home-event__bar" aria-hidden="true" /><span class="home-event__title">{{ event.title }}<template v-if="eventState(event) === 'is-now'"> · now</template></span></RouterLink>
                 <p v-if="dayOver" class="home-empty-line">Nothing else today · <RouterLink :to="`/calendar?date=${tomorrowKey}`" aria-label="Open tomorrow in Calendar">Tomorrow</RouterLink></p>
@@ -672,6 +672,15 @@ onBeforeUnmount(() => {
 .home-offline span { flex: 1; }
 .home-offline button { color: var(--ui-accent-strong); white-space: nowrap; }
 .home-card { position: relative; min-width: 0; background: var(--ui-surface); border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-sm); }
+/* A tap inside a card settles the card in a touch; the tapped row dims. */
+.home-card { transition: scale 180ms cubic-bezier(.2, .8, .2, 1); }
+.home-card:has(:is(a, button):not(.home-card__more):active) { scale: .985; }
+.home-card :is(a, button):not(.home-card__more) { transition: opacity 120ms ease; }
+.home-card :is(a, button):not(.home-card__more):active { opacity: .7; }
+@media (prefers-reduced-motion: reduce) { .home-card { transition: none; } .home-card:has(:is(a, button):not(.home-card__more):active) { scale: none; } }
+/* An empty day, shaped like an event row: a faint dashed bar where events would sit. */
+.home-empty-day { display: flex; align-items: center; gap: 10px; min-height: 28px; margin: 0; color: var(--ui-text-muted); font-size: 13px; opacity: .85; }
+.home-empty-day i { flex: none; width: 0; height: 16px; border-left: 1.5px dashed currentColor; opacity: .6; }
 /* Cards settle in under the greeting, one after another. */
 .home-grid > .home-card { animation: home-card-in 520ms cubic-bezier(.2, .8, .2, 1) both; }
 .home-grid > .home-card:nth-child(2) { animation-delay: 60ms; }
