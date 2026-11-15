@@ -69,7 +69,7 @@ describe("Accounts invoice hook on the agent mailbox with real SQLite", () => {
     expect(incoming.setReject).not.toHaveBeenCalled();
     const message = f.raw.prepare("SELECT id FROM mailbox_messages").get()!;
     expect(f.entries()).toEqual([expect.objectContaining({
-      user_id: "owner", entry_type: "expense", description: "Receipt", amount_cents: 2450,
+      user_id: "owner", entry_type: "expense", description: "Example: Receipt", amount_cents: 2450,
       currency: "EUR", source: "email_triage", status: "needs_review",
       source_ref: `email:${message.id}`, source_email_id: message.id,
     })]);
@@ -97,10 +97,19 @@ describe("Accounts invoice hook on the agent mailbox with real SQLite", () => {
     await deliverInboundEmail(mail("Lunch tomorrow", "See you at noon", "friend@example.test", "lunch-1"), f.env);
     const entryId = (description: string) => (f.raw.prepare("SELECT id FROM financial_entries WHERE description = ?").get(description) as { id: string }).id;
     expect(activity()).toEqual([
-      { plugin_id: "me3.accounts", activity_type: "accounts.email_entry_filed", title: "Filed a bill from Northwind Hosting", summary: "€49.00 added to Accounts.", related_id: entryId("Your upcoming invoice") },
-      { plugin_id: "me3.accounts", activity_type: "accounts.email_entry_filed", title: "Filed a receipt from Example", summary: "€24.50 added to Accounts for you to check.", related_id: entryId("Receipt") },
-      { plugin_id: "me3.accounts", activity_type: "accounts.email_entry_filed", title: "Logged a payment from Stripe", summary: "€49.00 added to Accounts.", related_id: entryId("Payment received") },
+      { plugin_id: "me3.accounts", activity_type: "accounts.email_entry_filed", title: "Filed a bill from Northwind Hosting", summary: "€49.00 added to Accounts.", related_id: entryId("Northwind Hosting: Your upcoming invoice") },
+      { plugin_id: "me3.accounts", activity_type: "accounts.email_entry_filed", title: "Filed a receipt from Example", summary: "€24.50 added to Accounts for you to check.", related_id: entryId("Example: Receipt") },
+      { plugin_id: "me3.accounts", activity_type: "accounts.email_entry_filed", title: "Logged a payment from Stripe", summary: "€49.00 added to Accounts.", related_id: entryId("Stripe: Payment received") },
     ]);
+  });
+
+  it("names the vendor of an invoice the owner forwarded, not the owner", async () => {
+    const f = fixture();
+    await deliverInboundEmail(mail("Fwd: Your invoice is available",
+      "---------- Forwarded message ---------\nFrom: Cloudflare <noreply@notify.cloudflare.com>\nDate: Fri, 17 Oct 2026\nSubject: Your invoice is available\nTo: Owner <owner@gmail.com>\n\nYour invoice is available. Amount due $5.00.",
+      "owner@gmail.com", "fwd-invoice-1"), f.env);
+    expect(f.entries()).toEqual([expect.objectContaining({ description: "Cloudflare: Your invoice is available", amount_cents: 500, currency: "USD" })]);
+    expect(f.raw.prepare("SELECT title FROM mission_plugin_activity").all()).toEqual([{ title: "Filed a receipt from Cloudflare" }]);
   });
 
   it("does not log a receipt again after the owner clears Recent work", async () => {

@@ -1,7 +1,7 @@
 import { decodeMimeHeaderValue } from "../../../shared/email-headers";
 import { ACCOUNTS_PLUGIN_ID, AccountsInputError, getOrCreateCategoryByName, isFinancialEntryRemoved } from "./accounts";
 import { getDefaultCommerceCurrency } from "./commerce-settings";
-import { brandNameFromDomain, describeSenderName, isGenericMailProvider, senderDomain } from "./mailbox-sender-identity";
+import { brandNameFromDomain, describeSenderName, isGenericMailProvider, parseForwardedMessage, senderDomain } from "./mailbox-sender-identity";
 import { recordOwnerActivity } from "./mission-activity";
 import { isCorePluginEnabled } from "./plugins";
 import { sha256Text } from "./sites";
@@ -86,11 +86,34 @@ export async function triageInboundInvoiceEmail(env: Env, mailboxId: string, mes
   return filed;
 }
 
-function invoiceActivityTitle(message: InvoiceMessage, extraction: InvoiceExtraction) {
-  const domain = senderDomain(message.from_address);
-  const sender = domain && !isGenericMailProvider(domain)
+/**
+ * Who the invoice is from. An invoice the owner forwarded arrives from their own address,
+ * so the original sender in the forwarded header names the vendor instead.
+ */
+function invoiceSender(message: InvoiceMessage): { address: string | null; name: string | null } {
+  const forward = parseForwardedMessage(message.text_body, decodeMimeHeaderValue(message.subject || ""));
+  const address = forward.originalSender?.address || (forward.isForward ? null : message.from_address);
+  if (!address) return { address: null, name: null };
+  const domain = senderDomain(address);
+  const name = domain && !isGenericMailProvider(domain)
     ? brandNameFromDomain(domain) || domain
-    : describeSenderName({ address: message.from_address });
+    : forward.originalSender?.name || describeSenderName({ address });
+  return { address, name };
+}
+
+function cleanInvoiceSubject(subject: string) {
+  let cleaned = subject;
+  while (/^\s*(?:fwd?|fw|re|tr|wg|aw)\s*:/i.test(cleaned)) cleaned = cleaned.replace(/^\s*(?:fwd?|fw|re|tr|wg|aw)\s*:\s*/i, "");
+  return cleaned.trim();
+}
+
+function invoiceDescription(vendor: string | null, subject: string) {
+  if (!vendor) return subject;
+  return subject.toLowerCase().includes(vendor.toLowerCase()) ? subject : `${vendor}: ${subject}`;
+}
+
+function invoiceActivityTitle(message: InvoiceMessage, extraction: InvoiceExtraction) {
+  const sender = invoiceSender(message).name || describeSenderName({ address: message.from_address });
   if (extraction.entryType === "income") return `Logged a payment from ${sender}`;
   return `Filed a ${extraction.status === "pending" ? "bill" : "receipt"} from ${sender}`;
 }
@@ -144,7 +167,8 @@ function scoreInvoiceMessage(message: InvoiceMessage) {
 }
 
 function extractInvoiceFromMessage(message: InvoiceMessage, score: number, defaultCurrency: string): InvoiceExtraction | null {
-  const subject = decodeMimeHeaderValue(message.subject || "").trim() || "Invoice";
+  const subject = cleanInvoiceSubject(decodeMimeHeaderValue(message.subject || "")) || "Invoice";
+  const sender = invoiceSender(message);
   const body = (message.text_body || "").replace(/\s+/g, " ").trim();
   const combined = `${subject}\n${body}`;
   const amount = parseInvoiceAmount(combined, defaultCurrency);
@@ -152,20 +176,20 @@ function extractInvoiceFromMessage(message: InvoiceMessage, score: number, defau
   const confidence = score >= 7 ? "high" : "medium";
   return {
     messageId: message.id,
-    entryType: inferInvoiceEntryType(message, combined),
-    description: subject,
+    entryType: inferInvoiceEntryType(sender.address, combined),
+    description: invoiceDescription(sender.name, subject),
     ...amount,
     date: (message.received_at || message.created_at).slice(0, 10),
     // A notice of a charge still to come is a bill, never money already spent.
     status: looksUpcoming(combined) ? "pending" : confidence === "high" && looksPaid(combined) ? "paid" : "needs_review",
-    categoryHint: inferInvoiceCategory(message),
+    categoryHint: inferInvoiceCategory(message, sender.address),
     confidence,
     sourceRef: `email:${message.id}`,
   };
 }
 
-function inferInvoiceEntryType(message: InvoiceMessage, text: string): "income" | "expense" {
-  return /\b(stripe|paypal|wise)\b/i.test(message.from_address || "") &&
+function inferInvoiceEntryType(senderAddress: string | null, text: string): "income" | "expense" {
+  return /\b(stripe|paypal|wise)\b/i.test(senderAddress || "") &&
     /\b(payment\s+of|payment\s+received|successful\s+payment|you\s+received)\b/i.test(text)
     ? "income" : "expense";
 }
@@ -196,8 +220,8 @@ function looksPaid(text: string) {
   return /\b(receipt|paid|payment received|payment confirmation|successful payment|thank you for your payment)\b/i.test(text);
 }
 
-function inferInvoiceCategory(message: InvoiceMessage) {
-  const text = `${decodeMimeHeaderValue(message.subject || "")}\n${message.from_address || ""}\n${message.text_body || ""}`;
+function inferInvoiceCategory(message: InvoiceMessage, senderAddress: string | null) {
+  const text = `${decodeMimeHeaderValue(message.subject || "")}\n${senderAddress || message.from_address || ""}\n${message.text_body || ""}`;
   if (/\b(hosting|cloudflare|vercel|netlify|aws|google cloud|render)\b/i.test(text)) return "Hosting";
   if (/\b(software|subscription|saas|github|notion|linear|figma|openai)\b/i.test(text)) return "Software";
   if (/\b(contractor|freelance|consultant)\b/i.test(text)) return "Contractor";
