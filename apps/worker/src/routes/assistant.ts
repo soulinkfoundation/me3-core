@@ -50,6 +50,7 @@ import {
 import type { AppContext, AppHono } from "../http/types";
 import type { Env } from "../types";
 import { getPrimaryAssistantThread, resolvePrimaryAssistantThread, type AssistantThreadRow } from "../assistant-primary-thread";
+import { needsArchivedTitle, sqliteTimestampToIso, titleArchivedThread } from "../assistant-thread-title";
 
 const MAX_ASSISTANT_ATTACHMENT_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_ASSISTANT_TEXT_ATTACHMENT_BYTES = 1 * 1024 * 1024;
@@ -57,6 +58,8 @@ const MAX_ASSISTANT_ATTACHMENT_UPLOAD_COUNT = 4;
 const MAX_ASSISTANT_EXTRACTED_TEXT_CHARS = 48_000;
 const DEFAULT_ASSISTANT_NAME = "ME3";
 const MAX_ASSISTANT_NAME_LENGTH = 48;
+// Untitled archived chats (older "ME3" ones) titled in the background per Archived chats visit.
+const ARCHIVED_TITLES_PER_LIST = 5;
 
 type AssistantRouteDeps = {
   requireOwner(c: AppContext): Promise<string | null>;
@@ -647,13 +650,19 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       originSurface: row.origin_surface,
       projectId: row.project_id,
       status: row.status,
-      pinnedAt: row.pinned_at,
-      archivedAt: row.archived_at,
-      deletedAt: row.deleted_at,
-      lastMessageAt: row.last_message_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      pinnedAt: sqliteTimestampToIso(row.pinned_at),
+      archivedAt: sqliteTimestampToIso(row.archived_at),
+      deletedAt: sqliteTimestampToIso(row.deleted_at),
+      lastMessageAt: sqliteTimestampToIso(row.last_message_at),
+      createdAt: sqliteTimestampToIso(row.created_at),
+      updatedAt: sqliteTimestampToIso(row.updated_at),
     };
+  }
+
+  // Titling runs after the response; tests without an execution context just let it run.
+  function afterResponse(c: AppContext | Context<{ Bindings: Env }>, work: Promise<unknown>) {
+    const quiet = work.catch((error) => console.warn("Archived chat titling failed", error));
+    try { c.executionCtx.waitUntil(quiet); } catch { /* no execution context */ }
   }
 
   function serializeAssistantMessage(row: AssistantMessageRow) {
@@ -922,6 +931,12 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       .bind(...bindings)
       .all<AssistantThreadRow>();
 
+    // Archived main chats from before titling still say "ME3": title a few per visit.
+    if (status === "archived") {
+      const untitled = (rows.results || []).filter((row) => needsArchivedTitle(row.title)).slice(0, ARCHIVED_TITLES_PER_LIST);
+      if (untitled.length) afterResponse(c, Promise.all(untitled.map((row) => titleArchivedThread(c.env, ownerId, row.id))));
+    }
+
     return c.json({ threads: (rows.results || []).map(serializeAssistantThread) });
   });
 
@@ -1015,6 +1030,10 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     )
       .bind(title, projectId, nextStatus, pinned ? 1 : 0, nextStatus, threadId, ownerId)
       .run();
+
+    if (nextStatus === "archived" && thread.status !== "archived" && needsArchivedTitle(title)) {
+      afterResponse(c, titleArchivedThread(c.env, ownerId, threadId));
+    }
 
     const updated = await getAssistantThread(c.env, ownerId, threadId);
     return c.json({ thread: updated ? serializeAssistantThread(updated) : serializeAssistantThread(thread) });

@@ -1,5 +1,8 @@
 import type { Env } from "./types";
 
+/** The main chat's name while it is in use; archiving gives it a real title (assistant-thread-title.ts). */
+export const PRIMARY_ASSISTANT_THREAD_TITLE = "ME3";
+
 export type AssistantThreadRow = {
   id: string;
   owner_id: string;
@@ -54,7 +57,7 @@ export async function resolvePrimaryAssistantThread(env: Env, ownerId: string): 
           AND t.status = 'active' AND t.project_id IS NULL
       )`).bind(ownerId, ownerId, crypto.randomUUID()),
     env.DB.prepare(`INSERT INTO assistant_threads(id, owner_id, title, origin_surface, status)
-      SELECT thread_id, owner_id, 'ME3', 'assistant', 'active'
+      SELECT thread_id, owner_id, '${PRIMARY_ASSISTANT_THREAD_TITLE}', 'assistant', 'active'
       FROM assistant_primary_threads WHERE owner_id = ?
       ON CONFLICT(id) DO NOTHING`).bind(ownerId),
   ]);
