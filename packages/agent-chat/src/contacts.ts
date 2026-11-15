@@ -258,8 +258,9 @@ export async function updateAgentContact(
   const cleared = (key: string) => raw[key] === null || raw[key] === "";
   const merged: AgentContactInput = {
     name: input.name ?? existing.name,
-    email: input.email ?? existing.email,
-    phone: input.phone ?? existing.phone,
+    // An edit form sends "" to clear a field; leaving the key out keeps it.
+    email: cleared("email") ? null : (input.email ?? existing.email),
+    phone: cleared("phone") ? null : (input.phone ?? existing.phone),
     source: CONTACT_SOURCES.has(String(raw.source) as AgentContactSource)
       ? input.source
       : existing.source,
@@ -270,7 +271,7 @@ export async function updateAgentContact(
     status: CONTACT_STATUSES.has(String(raw.status) as AgentContactStatus)
       ? input.status
       : existing.status,
-    notes: input.notes ?? existing.notes,
+    notes: cleared("notes") ? null : (input.notes ?? existing.notes),
     tags: Array.isArray(raw.tags) ? input.tags : parseJsonArray(existing.tags),
     lastInteractionAt: input.lastInteractionAt ?? existing.last_interaction_at,
     nextFollowupAt: cleared("nextFollowupAt")

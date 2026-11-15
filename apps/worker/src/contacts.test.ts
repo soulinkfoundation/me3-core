@@ -498,6 +498,14 @@ describe("outreach prospects", () => {
     });
   });
 
+  it("renames a person and clears email, phone and notes sent empty, keeping fields left out", async () => {
+    const { env } = fixture();
+    const { send } = routes(env);
+    const { contact } = await send("/api/contacts", "POST", { name: "Jimbo", email: "jim@example.test", phone: "+1 555 0100", notes: "Test" });
+    const edited = (await send(`/api/contacts/${contact.id}`, "PUT", { name: "Kieran Test", email: "", notes: "" })).contact;
+    expect(edited).toMatchObject({ name: "Kieran Test", email: null, phone: "+1 555 0100", notes: null });
+  });
+
   it("clears the follow-up date, offer and status when they are set to null", async () => {
     const { env } = fixture();
     const { send } = routes(env);
