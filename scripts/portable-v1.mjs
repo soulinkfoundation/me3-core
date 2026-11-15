@@ -110,6 +110,26 @@ export const RUNTIME_MIGRATIONS = [
   ["0085_mailbox_instruction_replay", "2026-10-22-mailbox-instruction-replay-v1"],
   ["0086_owner_credential_generation", "2026-10-22-owner-credential-generation-v1"],
   ["0087_ai_usage_settlements", "2026-10-22-ai-usage-settlements-v1"],
+  ["0088_drive_files_reuse_trashed_names", "2026-10-23-drive-files-reuse-trashed-names-v1"],
+  ["0089_journal_article_projects", "2026-10-23-journal-article-projects-v1"],
+  ["0090_social_facebook_pages", "2026-10-23-social-facebook-pages-v1"],
+  ["0091_email_campaign_approvals", "2026-10-24-email-campaign-approvals-v1"],
+  ["0092_campaign_mailing_address", "2026-10-26-campaign-mailing-address-v1"],
+  ["0093_owner_content_search_notes", "2026-10-26-owner-content-search-notes-v1"],
+  ["0094_journal_folders", "2026-10-26-journal-folders-v1"],
+  ["0095_site_branding_email_logo", "2026-10-25-site-branding-email-logo-v1"],
+  ["0096_shop_stock_and_downloads", "2026-10-27-shop-stock-and-downloads-v1"],
+  ["0097_email_send_identities", "2026-10-31-email-send-identities-v1"],
+  ["0098_soup", "2026-11-03-soup-v1"],
+  ["0099_social_text_carousels", "2026-11-11-social-text-carousels-v1"],
+  ["0100_drop_social_suggestions_and_posting_plans", "2026-11-12-drop-social-suggestions-and-posting-plans-v1"],
+  ["0101_mailbox_signature", "2026-11-12-mailbox-signature-v1"],
+  ["0102_mobile_refresh_previous_token", "2026-11-12-mobile-refresh-previous-token-v1"],
+  ["0103_mailbox_canonical_thread_key", "2026-11-13-mailbox-canonical-thread-key-v1"],
+  ["0104_news_papers", "2026-11-13-news-papers-v1"],
+  ["0105_mailbox_conversations", "2026-11-13-mailbox-conversations-v1"],
+  ["0106_mailbox_outreach_handled", "2026-11-13-mailbox-outreach-handled-v1"],
+  ["0107_financial_entry_receipts", "2026-11-15-financial-entry-receipts-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -169,11 +189,7 @@ const TRANSFORMED_TABLES = [
   "mailbox_aliases",
   "sites",
   "social_accounts",
-  "social_posting_plan_items",
-  "social_posting_plans",
-  "social_posting_reservations",
   "social_provider_settings",
-  "social_suggestions",
 ];
 const COPIED_TABLES = [
   "quotes",
@@ -251,6 +267,15 @@ const COPIED_TABLES = [
   "journal_entries",
   "journal_articles",
   "journal_project_links",
+  "journal_folders",
+  "financial_entry_receipts",
+  "mailbox_conversation_state",
+  "social_carousel_templates",
+  "social_text_carousels",
+  // Shop buyers' download links; the token travels hashed so links sent before a move keep working.
+  "commerce_downloads",
+  // Owner send-as addresses; a pending verification code travels hashed and expires on its own.
+  "email_send_identities",
   "mailbox_messages",
   // Agent-first Email owner state: triage decisions (resolved/snoozed/drafts), the handled log and owner rules.
   "mailbox_triage",
@@ -291,7 +316,6 @@ const COPIED_TABLES = [
   "social_carousel_render_set_media",
   "social_carousel_render_sets",
   "social_packages",
-  "social_posting_preferences",
   "social_publication_events",
   "social_publications",
   "social_variants",
@@ -354,38 +378,12 @@ const TRANSFORMS = {
       last_verified_at: "NULL",
     },
   },
-  social_posting_plan_items: {
-    columns: {
-      status: "CASE WHEN status = 'reserved' THEN 'suggested' ELSE status END",
-    },
-  },
-  social_posting_plans: {
-    columns: {
-      status: "CASE WHEN status = 'confirming' THEN 'needs_attention' ELSE status END",
-      confirmation_token: "NULL",
-      confirmation_started_at: "NULL",
-    },
-  },
-  social_posting_reservations: {
-    columns: {
-      status: "CASE WHEN status = 'reserved' THEN 'released' ELSE status END",
-    },
-  },
   social_provider_settings: {
     columns: {
       encrypted_client_secret: "NULL",
       secret_hint: "NULL",
       secret_updated_at: "NULL",
       enabled: "0",
-    },
-  },
-  social_suggestions: {
-    columns: {
-      status: "CASE WHEN status = 'choosing' THEN 'suggested' ELSE status END",
-      choose_token: "NULL",
-      choosing_at: "NULL",
-      choose_platforms_json:
-        "CASE WHEN status = 'choosing' THEN NULL ELSE choose_platforms_json END",
     },
   },
 };
@@ -404,6 +402,8 @@ const SENSITIVE_FIELD_POLICIES = new Map([
   ["ai_provider_credentials.encrypted_api_key", "preserve encrypted owner credential"],
   ["booking_holds.hold_token", "exclude one-time state"],
   ["bookings.meeting_guest_token_hash", "preserve hashed guest meeting authorization"],
+  ["commerce_downloads.token_hash", "preserve hashed buyer download authorization"],
+  ["email_send_identities.code_hash", "preserve hashed, expiring send-as verification code"],
   ["calendar_sources.encrypted_source_url", "preserve encrypted owner credential"],
   ["commerce_settings.encrypted_stripe_secret_key", "preserve encrypted owner commerce credential"],
   ["email_provider_settings.encrypted_secret", "preserve encrypted non-platform credential"],
@@ -422,14 +422,13 @@ const SENSITIVE_FIELD_POLICIES = new Map([
   ["mobile_pairings.code_hash", "exclude and re-pair"],
   ["mobile_refresh_tokens.credential_generation", "exclude and re-pair"],
   ["mobile_refresh_tokens.token_hash", "exclude and re-pair"],
+  ["mobile_refresh_tokens.previous_token_hash", "exclude and re-pair"],
   ["owner_profile.password_hash", "preserve local owner login"],
   ["sites.custom_domain_cf_id", "reset host-bound platform configuration"],
   ["social_accounts.access_token_ciphertext", "replace with noncredential reconnect marker"],
   ["social_accounts.refresh_token_ciphertext", "clear and reconnect"],
   ["social_accounts.token_expires_at", "clear and reconnect"],
   ["social_media_delivery_grants.token_hash", "exclude short-lived provider delivery grant"],
-  ["social_posting_plans.confirmation_token", "reset ephemeral confirmation claim"],
-  ["social_suggestions.choose_token", "reset ephemeral choose claim"],
   ["social_oauth_states.state", "exclude one-time state"],
   ["social_provider_settings.encrypted_client_secret", "exclude and reconnect"],
   ["social_provider_settings.secret_hint", "exclude credential metadata"],
