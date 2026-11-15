@@ -654,6 +654,50 @@ test("deletes retired dedicated Jobs queues even when a newer manifest omits the
   assert.ok(deletes[1].path.endsWith("legacy-job-1"));
 });
 
+test("waits out Cloudflare's queue listing lag after a deletion", async () => {
+  const fake = createCloudflareFixture();
+  fake.state.deleteListingLag = 2;
+  const pauses = [];
+  const result = await decommissionManagedInstall(contract(), {
+    request: fake.request,
+    deployTombstone: async () => { fake.state.producerBindings.clear(); fake.state.namespaces = []; },
+    pause: async (ms) => { pauses.push(ms); },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(fake.state.queues.has(DEDICATED_QUEUE), false);
+  assert.ok(pauses.length >= 2);
+});
+
+test("still fails closed when a deleted queue never leaves the listing", async () => {
+  const fake = createCloudflareFixture();
+  fake.state.deleteListingLag = 1000;
+  await assert.rejects(
+    decommissionManagedInstall(contract(), {
+      request: fake.request,
+      deployTombstone: async () => { fake.state.producerBindings.clear(); fake.state.namespaces = []; },
+      pause: async () => {},
+    }),
+    /managed queue deletion was not verified/,
+  );
+});
+
+test("treats a queue another run deleted mid-listing as having no consumers", async () => {
+  const fake = createCloudflareFixture();
+  fake.state.ghostQueues = [{
+    queue_id: "deleted-by-another-run",
+    queue_name: "me3-mi-other-social-publish",
+    consumers_total_count: 1,
+    producers_total_count: 0,
+    producers: [],
+  }];
+  const result = await decommissionManagedInstall(contract(), {
+    request: fake.request,
+    deployTombstone: async () => { fake.state.producerBindings.clear(); fake.state.namespaces = []; },
+    pause: async () => {},
+  });
+  assert.equal(result.ok, true);
+});
+
 test("accepts historical Jobs manifests when the retired queues are already absent", async () => {
   const fake = createCloudflareFixture();
   const result = await decommissionManagedInstall({
@@ -1153,6 +1197,10 @@ function createCloudflareFixture() {
       { name: "JWT_SECRET", type: "secret_text" },
     ],
     producerDetachPollsRemaining: 0,
+    // Simulated Cloudflare listing lag and concurrent deletions by other runs.
+    deleteListingLag: 0,
+    laggingQueues: new Map(),
+    ghostQueues: [],
     omitProducerArray: false,
     retainConsumerOnDelete: false,
     retainProducerBindingOnPatch: false,
@@ -1240,11 +1288,19 @@ function createCloudflareFixture() {
       const queueName = parsed.searchParams.get("name");
       if (queueName) {
         const queue = state.queues.get(queueName);
+        const lagging = state.laggingQueues.get(queueName);
+        if (!queue && lagging && lagging.remaining > 0) {
+          lagging.remaining -= 1;
+          return success([lagging.listing]);
+        }
         return success(queue ? [publicQueue(queue, state)] : []);
       }
       return success(
         Number(parsed.searchParams.get("page") || "1") === 1
-          ? [...state.queues.values()].map((queue) => publicQueue(queue, state))
+          ? [
+              ...[...state.queues.values()].map((queue) => publicQueue(queue, state)),
+              ...state.ghostQueues,
+            ]
           : [],
       );
     }
@@ -1276,6 +1332,12 @@ function createCloudflareFixture() {
           }),
           { status: 400, headers: { "Content-Type": "application/json" } },
         );
+      }
+      if (state.deleteListingLag > 0) {
+        state.laggingQueues.set(queue.queue_name, {
+          listing: publicQueue(queue, state),
+          remaining: state.deleteListingLag,
+        });
       }
       state.queues.delete(queue.queue_name);
       return success(null);

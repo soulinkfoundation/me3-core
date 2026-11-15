@@ -22,6 +22,8 @@ const LEGACY_SHARED_QUEUES = new Set([
   ...LEGACY_ASSISTANT_JOB_QUEUE_NAMES,
 ]);
 const QUEUE_DETACH_MAX_ATTEMPTS = 30;
+const QUEUE_LISTING_SETTLE_ATTEMPTS = 6;
+const QUEUE_LISTING_SETTLE_MS = 5_000;
 const QUEUE_DETACH_DELAY_MS = 1_000;
 export const MANAGED_DECOMMISSION_TOMBSTONE_SOURCE = [
   "export default {",
@@ -68,6 +70,7 @@ export async function decommissionManagedInstall(
     { accountId: input.accountId, apiToken: input.apiToken },
     request,
   );
+  api.pause = pause;
 
   const presence = await assertExistingResourceIdentities(api, contract);
   if (presence.d1) {
@@ -260,6 +263,7 @@ export async function deleteRetiredAssistantJobQueues(
     return { ok: true, deletedCount: 0 };
   }
   const api = createCloudflareApi(input, request);
+  api.pause = pause;
   const settings = await api(
     `/accounts/${input.accountId}/workers/scripts/${input.workerName}/settings`,
   );
@@ -628,9 +632,8 @@ async function assertManagedProviderResourcesAbsent(api, accountId, contract) {
     "Worker",
   );
   for (const queueName of contract.queueNames) {
-    const queue = await findQueue(api, accountId, queueName);
-    if (queueName.startsWith(`${contract.workerName}-`) && queue) {
-      throw new Error(`managed queue deletion was not verified: ${queueName}`);
+    if (queueName.startsWith(`${contract.workerName}-`)) {
+      await assertQueueGone(api, accountId, queueName);
     }
   }
   for (const queue of await listAllQueues(api, accountId)) {
@@ -697,10 +700,18 @@ async function deleteManagedQueueIfPresent(api, accountId, name) {
   const queue = await findQueue(api, accountId, name);
   if (!queue) return false;
   await deleteIfPresent(api, `/accounts/${accountId}/queues/${queue.queue_id}`);
-  if (await findQueue(api, accountId, name)) {
-    throw new Error(`managed queue deletion was not verified: ${name}`);
-  }
+  await assertQueueGone(api, accountId, name);
   return true;
+}
+
+// Cloudflare's queue listing lags a deletion by a few seconds, so absence is
+// re-checked briefly before a deletion counts as unverified.
+async function assertQueueGone(api, accountId, name) {
+  for (let attempt = 1; attempt <= QUEUE_LISTING_SETTLE_ATTEMPTS; attempt += 1) {
+    if (!(await findQueue(api, accountId, name))) return;
+    if (attempt < QUEUE_LISTING_SETTLE_ATTEMPTS) await (api.pause || delay)(QUEUE_LISTING_SETTLE_MS);
+  }
+  throw new Error(`managed queue deletion was not verified: ${name}`);
 }
 
 async function listAllQueues(api, accountId) {
@@ -1274,20 +1285,37 @@ export function orderedDedicatedQueueNames(queueNames, workerName) {
 
 async function listQueueConsumers(api, accountId, queue) {
   if (!queue?.queue_id) throw new Error("Cloudflare queue id is invalid");
-  const consumers = await api(
-    `/accounts/${accountId}/queues/${queue.queue_id}/consumers`,
-  );
-  if (!Array.isArray(consumers)) throw new Error("Cloudflare queue consumer listing is invalid");
+  let summary = queue;
+  let consumers;
   // Cloudflare exposes this endpoint as a single page. Require its length to
   // match the Queue summary before treating an exact Worker consumer as absent.
-  const expectedCount = Number(queue.consumers_total_count);
-  if (
-    !Number.isSafeInteger(expectedCount) ||
-    expectedCount < 0 ||
-    consumers.length !== expectedCount
-  ) {
-    const scope = LEGACY_SHARED_QUEUES.has(queue.queue_name) ? "shared" : "dedicated";
-    throw new Error(`Cloudflare ${scope} queue consumer listing is incomplete`);
+  // Other decommissions can delete queues concurrently and the summary count
+  // lags consumer changes, so re-read both briefly before failing closed. A
+  // queue that is gone has no consumers.
+  for (let attempt = 1; ; attempt += 1) {
+    consumers = await api(
+      `/accounts/${accountId}/queues/${summary.queue_id}/consumers`,
+      {},
+      { missingOk: true },
+    );
+    if (consumers === null) return [];
+    if (!Array.isArray(consumers)) throw new Error("Cloudflare queue consumer listing is invalid");
+    const expectedCount = Number(summary.consumers_total_count);
+    if (
+      Number.isSafeInteger(expectedCount) &&
+      expectedCount >= 0 &&
+      consumers.length === expectedCount
+    ) {
+      break;
+    }
+    if (attempt >= QUEUE_LISTING_SETTLE_ATTEMPTS) {
+      const scope = LEGACY_SHARED_QUEUES.has(queue.queue_name) ? "shared" : "dedicated";
+      throw new Error(`Cloudflare ${scope} queue consumer listing is incomplete`);
+    }
+    await (api.pause || delay)(QUEUE_LISTING_SETTLE_MS);
+    const refreshed = await findQueue(api, accountId, queue.queue_name);
+    if (!refreshed || refreshed.queue_id !== queue.queue_id) return [];
+    summary = refreshed;
   }
   if (consumers.some((consumer) => !isRecognizedQueueConsumer(consumer))) {
     throw new Error("Cloudflare queue consumer identity evidence is incomplete");
