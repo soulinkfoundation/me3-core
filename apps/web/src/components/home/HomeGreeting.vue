@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, ref } from "vue";
 import { firstName } from "../../utils/people";
 
-// "Good afternoon, Kieran", centred above the cards. The day's details live in the cards themselves.
+// "☀️ Good afternoon, Kieran" on one quiet, centred line above the cards. As Home opens, a soft light sweeps
+// across the words twice (the same shimmer as ME3's working line), then it rests.
 const props = defineProps<{ name?: string | null }>();
 
 const now = ref(new Date());
@@ -13,40 +14,48 @@ const salutation = computed(() => {
   const hour = now.value.getHours();
   return hour < 12 ? { text: "Good morning", emoji: "🌅" } : hour < 18 ? { text: "Good afternoon", emoji: "☀️" } : { text: "Good evening", emoji: "🌙" };
 });
-const first = computed(() => (props.name ? firstName(props.name) : "") || "");
+const line = computed(() => {
+  const first = props.name ? firstName(props.name) : "";
+  return first ? `${salutation.value.text}, ${first}` : salutation.value.text;
+});
 </script>
 
 <template>
   <h1 class="home-greeting" data-testid="home-greeting">
     <span class="home-greeting__emoji" aria-hidden="true">{{ salutation.emoji }}</span>
-    <span class="home-greeting__text">{{ salutation.text }}<template v-if="first">, <span class="home-greeting__name">{{ first }}</span></template></span>
+    <span class="home-greeting__text">{{ line }}</span>
   </h1>
 </template>
 
 <style scoped>
 .home-greeting {
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
-  width: min(620px, 100%); margin: 6px auto 22px; text-align: center;
-  font-size: clamp(26px, 6vw, 32px); font-weight: 500; line-height: 1.15; letter-spacing: -0.02em;
-  color: var(--ui-text);
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: min(620px, 100%); margin: 2px auto 14px; text-align: center;
+  font-size: 19px; font-weight: 400; line-height: 1.3; letter-spacing: -0.01em;
+  color: var(--ui-text-muted);
+  animation: home-greeting-rise 600ms cubic-bezier(.2, .8, .2, 1) both;
 }
 .home-greeting__emoji {
-  font-size: 34px; line-height: 1;
+  flex: none; font-size: 20px; line-height: 1;
   font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
-  animation: home-greeting-emoji 900ms cubic-bezier(.2, .9, .25, 1.25) both;
 }
-.home-greeting__text { animation: home-greeting-rise 700ms cubic-bezier(.2, .8, .2, 1) 120ms both; }
-.home-greeting__name { color: var(--ui-accent-strong); }
-@keyframes home-greeting-emoji {
-  0% { opacity: 0; transform: translateY(10px) scale(.6) rotate(-12deg); }
-  60% { opacity: 1; transform: translateY(-2px) scale(1.08) rotate(4deg); }
-  100% { opacity: 1; transform: none; }
+.home-greeting__text {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: linear-gradient(90deg, var(--ui-text-muted) 0%, var(--ui-text-muted) 35%, var(--ui-text) 50%, var(--ui-text-muted) 65%, var(--ui-text-muted) 100%);
+  background-size: 300% 100%; background-position: 100% 0;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: home-greeting-sweep 1.6s ease-in-out 250ms 2 both;
 }
 @keyframes home-greeting-rise {
-  from { opacity: 0; transform: translateY(8px); filter: blur(4px); }
+  from { opacity: 0; transform: translateY(6px); filter: blur(3px); }
   to { opacity: 1; transform: none; filter: none; }
 }
+@keyframes home-greeting-sweep {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .home-greeting__emoji, .home-greeting__text { animation: none; }
+  .home-greeting { animation: none; }
+  .home-greeting__text { animation: none; background: none; color: var(--ui-text-muted); }
 }
 </style>
