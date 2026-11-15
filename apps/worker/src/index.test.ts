@@ -8297,6 +8297,47 @@ describe("ME3 Worker auth", () => {
     fetchMock.mockRestore();
   });
 
+  it("returns phone-app Stripe onboarding to the app", async () => {
+    const env = createEnv();
+    const session = cookieHeader(await bootstrap(env));
+    env.ME3_COMMERCE_BRIDGE_ORIGIN = "https://commerce.me3.example";
+    env.ME3_COMMERCE_BRIDGE_TOKEN = "bridge-token";
+    env.CORE_WEB_ORIGIN = "https://core.example";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+      url: "https://connect.stripe.test/onboard",
+      accountId: "acct_123",
+      mode: "refresh",
+    })));
+
+    const onboardResponse = await app.fetch(
+      new Request("http://localhost/api/commerce/connect/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: session },
+        body: JSON.stringify({ country: "IE", app: "android" }),
+      }),
+      env,
+    );
+    expect(onboardResponse.status).toBe(200);
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      country: "IE",
+      returnUrl: "https://core.example/api/commerce/connect/return?app=android",
+    });
+    fetchMock.mockRestore();
+
+    const returnResponse = await app.fetch(
+      new Request("https://core.example/api/commerce/connect/return?app=android&stripe_connect=success"),
+      env,
+    );
+    expect(returnResponse.status).toBe(200);
+    expect(await returnResponse.text()).toContain("me3android://payments?stripe_connect=success");
+
+    const unknownApp = await app.fetch(
+      new Request("https://core.example/api/commerce/connect/return?app=evil"),
+      env,
+    );
+    expect(unknownApp.status).toBe(404);
+  });
+
   it("switches to Stripe Connect without deleting a stored direct key", async () => {
     const env = createEnv();
     const session = cookieHeader(await bootstrap(env));

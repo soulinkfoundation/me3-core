@@ -16,6 +16,13 @@ import {
   createManagedCommerceOnboardingLink,
   ManagedCommerceBridgeError,
 } from "../commerce-bridge";
+import {
+  parseStripeReturnApp,
+  STRIPE_APP_RETURN_PATH,
+  stripeAppDeepLink,
+  stripeAppReturnPage,
+  stripeAppReturnUrl,
+} from "../stripe-app-return";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import type { DbSite, Env } from "../types";
 import { requestCountry } from "../../../../shared/regional-pricing";
@@ -63,18 +70,22 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     if (!ownerId) return deps.unauthorized(c);
 
     const body = await c.req
-      .json<{ country?: unknown }>()
-      .catch((): { country?: unknown } => ({}));
+      .json<{ country?: unknown; app?: unknown }>()
+      .catch((): { country?: unknown; app?: unknown } => ({}));
     const country = typeof body.country === "string" ? body.country.trim().toUpperCase() : "";
     if (country && !/^[A-Z]{2}$/.test(country)) {
       return c.json({ error: "Choose a valid country." }, 400);
     }
 
     try {
-      const returnUrl = new URL("/settings?section=payments", deps.getCoreWebOrigin(c.env, c.req.url));
+      const webOrigin = deps.getCoreWebOrigin(c.env, c.req.url);
+      const app = parseStripeReturnApp(body.app);
+      const returnUrl = app
+        ? stripeAppReturnUrl(webOrigin, app)
+        : new URL("/settings?section=payments", webOrigin).toString();
       return c.json(await createManagedCommerceOnboardingLink(c.env, {
         country,
-        returnUrl: returnUrl.toString(),
+        returnUrl,
         mode,
       }));
     } catch (error) {
@@ -84,6 +95,17 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
 
   app.post("/api/commerce/connect/onboard", (c) => startStripeOnboarding(c, "onboard"));
   app.post("/api/commerce/connect/refresh", (c) => startStripeOnboarding(c, "refresh"));
+
+  // Public: Stripe redirects the owner's browser here, which has no ME3 session.
+  app.get(STRIPE_APP_RETURN_PATH, (c) => {
+    const target = parseStripeReturnApp(c.req.query("app"));
+    if (!target) return c.text("Not found", 404);
+    const page = stripeAppReturnPage(stripeAppDeepLink(target, c.req.query("stripe_connect")));
+    return c.html(page, 200, {
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+    });
+  });
 
   const startProductOrder = async (c: AppContext) => {
     const site = await getSiteByUsername(
