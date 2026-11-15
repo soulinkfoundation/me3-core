@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homeTasksCard, homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, plainPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, focusGoal, goalsWithFocus, homeInboxSoulink, homeMailTime } from "./homeSummary";
+import { homeTasksCard, homeTodayTasks, homeOpenTasks, homeDoneToday, homeGoalTasks, journalPreview, plainPreview, homeDateLabel, visibleHomeCards, emptyHomeLayout, newInstallHomeLayout, focusGoal, goalsWithFocus, homeInboxSoulink, homeMailTime } from "./homeSummary";
 
 describe("Home summaries", () => {
   // Failure modes: board order hides due work, archived/done work leaks into open tasks,
@@ -40,7 +40,7 @@ describe("Home summaries", () => {
     expect(homeDateLabel("2026-10-06", now, "en-GB")).toBe("Tue 6 Oct");
   });
   it("restores hidden cards and keeps a deduplicated saved order", () => {
-    expect(visibleHomeCards({ order: ["mission", "mission", "today"], hidden: ["inbox"], pinned: ["mission", "files"], earned: [] })).toEqual(["mission", "today", "people", "accounts"]);
+    expect(visibleHomeCards({ order: ["mission", "mission", "today"], hidden: ["inbox"], pinned: ["mission", "files"], earned: [] })).toEqual(["mission", "today", "people"]);
   });
   it("shows Tasks only when added by hand, never from an old earned layout", () => {
     expect(visibleHomeCards({ ...emptyHomeLayout(), earned: ["tasks"] })).not.toContain("tasks");
@@ -57,11 +57,16 @@ describe("Home summaries", () => {
     expect(homeTasksCard([done], now)).toEqual({ view: "backlog", tasks: [] });
   });
   it("drops the retired Writing card from saved layouts", () => {
-    expect(visibleHomeCards({ order: ["journal", "today"], hidden: [], pinned: ["journal"], earned: ["journal"] })).toEqual(["today", "people", "accounts"]);
+    expect(visibleHomeCards({ order: ["journal", "today"], hidden: [], pinned: ["journal"], earned: ["journal"] })).toEqual(["today", "people"]);
   });
   it("defaults Home to Today and People, keeping gratitude inside Today", () => {
-    expect(visibleHomeCards(emptyHomeLayout())).toEqual(["today", "people", "accounts"]);
+    expect(visibleHomeCards(emptyHomeLayout())).toEqual(["today", "people"]);
     expect(visibleHomeCards({ ...emptyHomeLayout(), pinned: ["gratitude"] })).not.toContain("gratitude");
+  });
+  it("starts a new install with Today, Inbox and Projects, People hidden and Accounts earned", () => {
+    expect(visibleHomeCards(newInstallHomeLayout())).toEqual(["today", "inbox", "tasks"]);
+    expect(visibleHomeCards({ ...newInstallHomeLayout(), earned: ["accounts"] })).toEqual(["today", "inbox", "tasks", "accounts"]);
+    expect(visibleHomeCards({ ...newInstallHomeLayout(), pinned: ["inbox", "tasks", "accounts"] })).toContain("accounts");
   });
   it("treats the first active goal as the focus and moves a new focus to the front", () => {
     const goals = [{ id: "a", status: "completed" as const }, { id: "b", status: "active" as const }, { id: "c", status: "active" as const }];

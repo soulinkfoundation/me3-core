@@ -22,7 +22,7 @@ import PersonSheet from "../people/PersonSheet.vue";
 import { useContactsStore } from "../../stores/contacts";
 import { ownMissionStatement } from "../../utils/missionStatement";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
-import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, homeDoneToday, homeInboxSoulink, homeMailTime, homeTasksCard, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
+import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, newInstallHomeLayout, homeDoneToday, homeInboxSoulink, homeMailTime, homeTasksCard, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
 import { useAppLoadingWhile } from "../../composables/useAppLoading";
 const emit = defineEmits<{ suggest: [text: string]; ask: [text: string]; approvalResolved: []; buildSite: [] }>();
@@ -295,7 +295,8 @@ async function loadLayout() {
     const result = await api.get<{ layout: HomeLayout | null }>("/home/layout");
     if (disposed || generation !== layoutGeneration) return;
     // First visit after the update: carry this browser's saved layout over once.
-    if (!result.layout) { if (Object.values(layout.value).some(list => list.length)) save(); return; }
+    // A brand-new install with nothing cached starts with the shared new-install layout.
+    if (!result.layout) { if (!Object.values(layout.value).some(list => list.length)) layout.value = newInstallHomeLayout(); save(); return; }
     layout.value = readLayout(result.layout); cache();
   } catch { /* Keep the cached layout; the next refresh tries again. */ }
 }

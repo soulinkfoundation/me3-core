@@ -17,7 +17,11 @@ export function visibleHomeCards(layout: HomeLayout): HomeCard[] {
     (HOME_DEFAULT_CARDS.includes(id as HomeCard) || layout.pinned.includes(id) || (id !== "tasks" && layout.earned.includes(id))),
   ).filter(id => !HOME_INSIDE_TODAY.includes(id));
 }
-export const HOME_DEFAULT_CARDS: HomeCard[] = ["today", "people", "accounts"];
+// Accounts is earned once it has entries, as on iOS and Android, rather than shown empty.
+export const HOME_DEFAULT_CARDS: HomeCard[] = ["today", "people"];
+// A new install starts with the cards a solo owner checks daily: Today, Inbox and Projects. People starts hidden
+// until the owner adds it from Add to Home. iOS (newInstall*) and Android (HomeLayout.NewInstall) start the same.
+export const newInstallHomeLayout = (): HomeLayout => ({ order: ["today", "inbox", "tasks"], hidden: ["people"], pinned: ["inbox", "tasks"], earned: [] });
 // Gratitude is a section of the Today card, switched on from its menu (server setting inToday), never a card of its own.
 export const HOME_INSIDE_TODAY: HomeCard[] = ["gratitude"];
 // The focus goal is the first active goal; making a goal the focus moves it to the front of the list.

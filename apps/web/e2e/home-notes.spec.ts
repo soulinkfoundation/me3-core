@@ -53,7 +53,7 @@ for (const dark of [false, true]) {
     await addDialog.getByRole('button', { name: 'Notes', exact: true }).click();
     await addDialog.getByRole('button', { name: 'Close Home editor', exact: true }).click();
     await expect(card.getByText('No notes yet')).toBeVisible();
-    expect(layout).toMatchObject({ pinned: ['notes'] });
+    expect(layout).toMatchObject({ pinned: expect.arrayContaining(['notes']) });
     await testInfo.attach(`notes-empty-${dark ? 'dark' : 'light'}`, { body: await card.screenshot(), contentType: 'image/png' });
 
     await card.getByRole('button', { name: 'New note', exact: true }).click();
