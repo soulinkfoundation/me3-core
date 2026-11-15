@@ -158,6 +158,8 @@ const ENTRY_STATUSES = new Set<EntryStatus>([
 const ENTRY_SOURCES = new Set<EntrySource>(["manual", "email_triage", "stripe", "csv_import", "website"]);
 const CURRENCY_REGEX = /^[A-Z]{3}$/;
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+/** `categoryId` filter value for entries with no category. */
+const UNCATEGORIZED = "uncategorized";
 const STRIPE_SYNC_INITIAL_LOOKBACK_DAYS = 365;
 
 export async function listFinancialEntries(env: Env, userId: string, query: URLSearchParams) {
@@ -324,6 +326,7 @@ export async function listAccountCustomers(env: Env, userId: string, query: URLS
     {
       search: query.get("search")?.trim() || "",
       item: query.get("item")?.trim() || "",
+      sort: query.get("sort") === "spent" ? "spent" : "recent",
       limit,
       offset,
       removedAt: new Map((removals.results || []).map((row) => [row.email, row.removed_at])),
@@ -334,7 +337,14 @@ export async function listAccountCustomers(env: Env, userId: string, query: URLS
 export function buildAccountCustomers(
   rows: AccountCustomerSourceRow[],
   contacts: AccountCustomerContactRow[],
-  options: { search?: string; item?: string; limit?: number; offset?: number; removedAt?: Map<string, string> } = {},
+  options: {
+    search?: string;
+    item?: string;
+    sort?: "recent" | "spent";
+    limit?: number;
+    offset?: number;
+    removedAt?: Map<string, string>;
+  } = {},
 ) {
   const contactByEmail = new Map<string, AccountCustomerContactRow>();
   for (const contact of contacts) {
@@ -418,6 +428,11 @@ export function buildAccountCustomers(
             purchases ? `${purchases} ${purchases === 1 ? "purchase" : "purchases"}` : "",
             bookings ? `${bookings} ${bookings === 1 ? "booking" : "bookings"}` : "",
           ].filter(Boolean).join(" · ");
+      const paid = new Map<string, number>();
+      for (const activity of customer.activities) {
+        if (activity.status !== "paid" || !activity.amountCents || !activity.currency) continue;
+        paid.set(activity.currency, (paid.get(activity.currency) || 0) + activity.amountCents);
+      }
       return {
         id: customer.id,
         name: customer.name,
@@ -425,6 +440,9 @@ export function buildAccountCustomers(
         contactId: customer.contactId,
         boughtOrBooked: summary,
         latestActivity: customer.activities[0].activityAt,
+        paidTotals: [...paid.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([currency, amountCents]) => ({ currency, amountCents })),
         siteNames: [...customer.siteNames].sort(),
         activities: customer.activities,
         itemKeys: customer.itemKeys,
@@ -441,7 +459,15 @@ export function buildAccountCustomers(
         ...customer.activities.map((activity) => activity.item),
       ].some((value) => value.toLowerCase().includes(search));
     })
-    .sort((a, b) => b.latestActivity.localeCompare(a.latestActivity));
+    .sort((a, b) => {
+      if (options.sort === "spent") {
+        // Customers rarely pay in more than one currency, so ranking by the raw sum is close enough.
+        const spent = (customer: typeof a) => customer.paidTotals.reduce((sum, total) => sum + total.amountCents, 0);
+        const difference = spent(b) - spent(a);
+        if (difference) return difference;
+      }
+      return b.latestActivity.localeCompare(a.latestActivity);
+    });
 
   const limit = options.limit ?? 50;
   const offset = options.offset ?? 0;
@@ -719,12 +745,18 @@ export async function exportFinancialEntriesCsv(
   userId: string,
   query: URLSearchParams,
 ): Promise<Response> {
+  // Without entryType the file holds income and expenses together, with a type column, for an accountant.
   const entryType = parseEntryType(query.get("entryType"));
-  if (!entryType) throw new AccountsInputError("entryType is required");
+  if (query.get("entryType") && !entryType) throw new AccountsInputError("Invalid entryType");
   const status = parseEntryStatus(query.get("status"));
   const source = parseEntrySource(query.get("source"));
   if (query.get("status") && !status) throw new AccountsInputError("Invalid status filter");
   if (query.get("source") && !source) throw new AccountsInputError("Invalid source filter");
+  const dateFrom = query.get("dateFrom") ? parseDateValue(query.get("dateFrom")) : null;
+  const dateTo = query.get("dateTo") ? parseDateValue(query.get("dateTo")) : null;
+  if ((query.get("dateFrom") && !dateFrom) || (query.get("dateTo") && !dateTo)) {
+    throw new AccountsInputError("Invalid date filter");
+  }
 
   const { whereClause, params } = buildEntryFiltersSql({
     userId,
@@ -733,9 +765,11 @@ export async function exportFinancialEntriesCsv(
     categoryId: query.get("categoryId")?.trim() || null,
     status,
     source,
+    dateFrom,
+    dateTo,
   });
   const result = await env.DB.prepare(
-    `SELECT e.date, e.description, COALESCE(fc.name, '') AS category_name,
+    `SELECT e.entry_type, e.date, e.description, COALESCE(fc.name, '') AS category_name,
             COALESCE(mp.name, '') AS project_name,
             e.amount_cents, e.currency, e.status, e.source, COALESCE(e.notes, '') AS notes
      FROM financial_entries e
@@ -746,6 +780,7 @@ export async function exportFinancialEntriesCsv(
   )
     .bind(...params)
     .all<{
+      entry_type: EntryType;
       date: string;
       description: string;
       category_name: string;
@@ -757,10 +792,12 @@ export async function exportFinancialEntriesCsv(
       notes: string;
     }>();
 
-  const csvRows = [["date", "description", "category", "project", "amount", "currency", "status", "source", "notes"].join(",")];
+  const header = ["date", "description", "category", "project", "amount", "currency", "status", "source", "notes"];
+  const csvRows = [(entryType ? header : ["type", ...header]).join(",")];
   for (const entry of result.results || []) {
     csvRows.push(
       [
+        ...(entryType ? [] : [escapeCsv(entry.entry_type)]),
         escapeCsv(entry.date),
         escapeCsv(entry.description),
         escapeCsv(entry.category_name),
@@ -774,7 +811,7 @@ export async function exportFinancialEntriesCsv(
     );
   }
 
-  const filename = `accounts-${entryType}-${new Date().toISOString().split("T")[0]}.csv`;
+  const filename = `accounts-${entryType || "all"}-${new Date().toISOString().split("T")[0]}.csv`;
   return new Response(csvRows.join("\n"), {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
@@ -1504,7 +1541,7 @@ function parseCategoryPayload(value: unknown) {
 
 function buildEntryFiltersSql(filters: {
   userId: string;
-  entryType: EntryType;
+  entryType: EntryType | null;
   search?: string | null;
   categoryId?: string | null;
   status?: EntryStatus | null;
@@ -1512,8 +1549,12 @@ function buildEntryFiltersSql(filters: {
   dateFrom?: string | null;
   dateTo?: string | null;
 }) {
-  const conditions = ["e.user_id = ?", "e.entry_type = ?"];
-  const params: Array<string | number | null> = [filters.userId, filters.entryType];
+  const conditions = ["e.user_id = ?"];
+  const params: Array<string | number | null> = [filters.userId];
+  if (filters.entryType) {
+    conditions.push("e.entry_type = ?");
+    params.push(filters.entryType);
+  }
   if (filters.search) {
     const pattern = `%${filters.search.trim().toLowerCase()}%`;
     conditions.push(
@@ -1521,7 +1562,9 @@ function buildEntryFiltersSql(filters: {
     );
     params.push(pattern, pattern, pattern, pattern);
   }
-  if (filters.categoryId) {
+  if (filters.categoryId === UNCATEGORIZED) {
+    conditions.push("e.category_id IS NULL");
+  } else if (filters.categoryId) {
     conditions.push("e.category_id = ?");
     params.push(filters.categoryId);
   }

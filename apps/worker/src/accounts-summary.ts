@@ -4,12 +4,21 @@ import { getDefaultCommerceCurrency } from "./commerce-settings";
 import type { Env } from "./types";
 
 /** Paid totals for one entry type, day and currency. */
-export type AccountsSummaryRow = { entry_type: "income" | "expense"; date: string; currency: string; total: number };
+export type AccountsSummaryRow = {
+  entry_type: "income" | "expense";
+  date: string;
+  currency: string;
+  total: number;
+  category_id?: string | null;
+  category_name?: string | null;
+};
 
 export type AccountsSummaryPeriod = { key: string; label: string; start: string; end: string };
 
 type MoneyTotal = { currency: string; amountCents: number };
-type Side = { totals: MoneyTotal[]; estimate: AccountCurrencyEstimate };
+type Total = { totals: MoneyTotal[]; estimate: AccountCurrencyEstimate };
+type Category = Total & { id: string | null; name: string };
+type Side = Total & { categories: Category[] };
 
 /**
  * Tax years that differ from the calendar year, keyed by the owner's default
@@ -33,10 +42,12 @@ export async function getAccountsSummary(env: Env, userId: string, now = new Dat
   const end = periods.reduce((latest, period) => (period.end > latest ? period.end : latest), periods[0].end);
   const [rowsResult, reviewResult] = await Promise.all([
     env.DB.prepare(
-      `SELECT entry_type, date, UPPER(currency) AS currency, COALESCE(SUM(amount_cents), 0) AS total
-       FROM financial_entries
-       WHERE user_id = ? AND status = 'paid' AND date >= ? AND date < ?
-       GROUP BY entry_type, date, UPPER(currency)`,
+      `SELECT e.entry_type, e.date, UPPER(e.currency) AS currency, COALESCE(SUM(e.amount_cents), 0) AS total,
+              fc.id AS category_id, fc.name AS category_name
+       FROM financial_entries e
+       LEFT JOIN financial_categories fc ON fc.id = e.category_id
+       WHERE e.user_id = ? AND e.status = 'paid' AND e.date >= ? AND e.date < ?
+       GROUP BY e.entry_type, e.date, UPPER(e.currency), fc.id`,
     ).bind(userId, start, end).all<AccountsSummaryRow>(),
     env.DB.prepare(
       `SELECT entry_type, COUNT(*) AS count
@@ -105,7 +116,7 @@ export async function buildAccountsSummary(
     return rates.get(key)!;
   };
 
-  const side = async (periodRows: AccountsSummaryRow[]): Promise<Side> => {
+  const total = async (periodRows: AccountsSummaryRow[]): Promise<Total> => {
     const byCurrency = new Map<string, number>();
     for (const row of periodRows) byCurrency.set(row.currency, (byCurrency.get(row.currency) || 0) + (Number(row.total) || 0));
     const totals = [...byCurrency.entries()]
@@ -134,6 +145,27 @@ export async function buildAccountsSummary(
     };
   };
 
+  /** Largest first; entries without a category share one "Uncategorized" row. */
+  const side = async (periodRows: AccountsSummaryRow[]): Promise<Side> => {
+    const groups = new Map<string, { id: string | null; name: string; rows: AccountsSummaryRow[] }>();
+    for (const row of periodRows) {
+      const id = row.category_id || null;
+      const key = id ?? "";
+      const group = groups.get(key) || { id, name: id ? row.category_name || "Uncategorized" : "Uncategorized", rows: [] };
+      group.rows.push(row);
+      groups.set(key, group);
+    }
+    const [overall, categories] = await Promise.all([
+      total(periodRows),
+      Promise.all([...groups.values()].map(async group => ({ id: group.id, name: group.name, ...(await total(group.rows)) }))),
+    ]);
+    const size = (category: Category) => category.estimate.amountCents ?? category.totals.reduce((sum, item) => sum + item.amountCents, 0);
+    return {
+      ...overall,
+      categories: categories.filter(category => category.totals.length).sort((a, b) => size(b) - size(a) || a.name.localeCompare(b.name)),
+    };
+  };
+
   return Promise.all(periods.map(async period => {
     const inPeriod = rows.filter(row => row.date >= period.start && row.date < period.end);
     const [income, expenses] = await Promise.all([
@@ -144,7 +176,7 @@ export async function buildAccountsSummary(
   }));
 }
 
-function net(income: Side, expenses: Side, target: string): Side {
+function net(income: Total, expenses: Total, target: string): Total {
   const byCurrency = new Map<string, number>();
   for (const total of income.totals) byCurrency.set(total.currency, (byCurrency.get(total.currency) || 0) + total.amountCents);
   for (const total of expenses.totals) byCurrency.set(total.currency, (byCurrency.get(total.currency) || 0) - total.amountCents);

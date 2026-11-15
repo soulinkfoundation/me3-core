@@ -268,6 +268,31 @@ describe("account customers", () => {
   });
 });
 
+describe("account customer totals", () => {
+  // Failure modes: unpaid or refunded money counted as paid; free bookings ranked above paying customers;
+  // currencies added together in the displayed total.
+  it("totals paid money per currency and can rank customers by it", () => {
+    const rows = [
+      customerActivity({ source_id: "a1", customer_email: "small@example.com", amount_cents: 1500, activity_at: "2026-11-01 10:00:00" }),
+      customerActivity({ source_id: "b1", customer_email: "big@example.com", amount_cents: 90000, activity_at: "2026-08-01 10:00:00" }),
+      customerActivity({ source_id: "b2", customer_email: "big@example.com", amount_cents: 5000, currency: "EUR", activity_at: "2026-08-02 10:00:00" }),
+      customerActivity({ source_id: "b3", customer_email: "big@example.com", amount_cents: 7000, status: "refunded", activity_at: "2026-08-03 10:00:00" }),
+      customerActivity({ source_id: "f1", activity_kind: "booking", customer_email: "free@example.com", amount_cents: null, currency: null, status: "confirmed", activity_at: "2026-11-10 10:00:00" }),
+    ];
+
+    const recent = buildAccountCustomers(rows, []);
+    expect(recent.customers.map(customer => customer.email)).toEqual(["free@example.com", "small@example.com", "big@example.com"]);
+
+    const ranked = buildAccountCustomers(rows, [], { sort: "spent" });
+    expect(ranked.customers.map(customer => customer.email)).toEqual(["big@example.com", "small@example.com", "free@example.com"]);
+    expect(ranked.customers[0].paidTotals).toEqual([
+      { currency: "EUR", amountCents: 5000 },
+      { currency: "USD", amountCents: 90000 },
+    ]);
+    expect(ranked.customers[2].paidTotals).toEqual([]);
+  });
+});
+
 function customerActivity(
   overrides: Partial<AccountCustomerSourceRow>,
 ): AccountCustomerSourceRow {

@@ -81,6 +81,29 @@ describe("accounts summary totals", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("breaks each side down by category, largest first, with uncategorised entries on their own row", async () => {
+    // Failure modes: categories leak across periods or types; uncategorised money disappears; order is not by size.
+    const periods = accountsSummaryPeriods(today, "EUR");
+    const summary = await buildAccountsSummary([
+      { ...row("expense", "2026-11-02", "EUR", 22_000), category_id: "c-work", category_name: "Workspace" },
+      { ...row("expense", "2026-11-03", "EUR", 1_000), category_id: "c-soft", category_name: "Software" },
+      { ...row("expense", "2026-11-05", "EUR", 2_000), category_id: "c-soft", category_name: "Software" },
+      { ...row("expense", "2026-11-06", "EUR", 500), category_id: null, category_name: null },
+      { ...row("expense", "2026-07-03", "EUR", 149_900), category_id: "c-eq", category_name: "Equipment" },
+      { ...row("income", "2026-11-04", "EUR", 50_000), category_id: "c-proj", category_name: "Projects" },
+    ], periods, "EUR", today);
+
+    const thisMonth = summary.find(period => period.key === "this_month")!;
+    expect(thisMonth.expenses.categories.map(category => [category.id, category.name, category.estimate.amountCents])).toEqual([
+      ["c-work", "Workspace", 22_000],
+      ["c-soft", "Software", 3_000],
+      [null, "Uncategorized", 500],
+    ]);
+    expect(thisMonth.income.categories.map(category => category.name)).toEqual(["Projects"]);
+    const thisYear = summary.find(period => period.key === "this_year")!;
+    expect(thisYear.expenses.categories[0]).toMatchObject({ id: "c-eq", name: "Equipment" });
+  });
+
   it("leaves the net unconverted when a reference rate is missing", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 503 })));
     vi.stubGlobal("caches", { default: { match: async () => undefined, put: async () => undefined } });
