@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { api } from "../api";
+import { importBatches, type ProspectImportRow } from "../utils/outreachImport";
 
 export type ContactSource =
   | "booking"
@@ -103,6 +104,14 @@ export type ContactInput = {
   metadata?: ContactMetadata | null;
 };
 
+export type ProspectImportResult = {
+  created: number;
+  updated: number;
+  skipped: Array<{ name: string; reason: string }>;
+  /** Set when a batch failed; earlier batches are already saved. */
+  error?: string;
+};
+
 type ContactsResponse = {
   contacts: Contact[];
   summary: ContactSummary;
@@ -176,6 +185,26 @@ export const useContactsStore = defineStore("contacts", () => {
     }
   }
 
+  // A pasted or uploaded outreach list, sent in batches. Nothing is emailed.
+  async function importProspects(rows: ProspectImportRow[]): Promise<ProspectImportResult> {
+    const total: ProspectImportResult = { created: 0, updated: 0, skipped: [] };
+    for (const batch of importBatches(rows)) {
+      try {
+        const response = await api.post<ProspectImportResult>("/contacts/outreach/import", { prospects: batch });
+        total.created += response.created || 0;
+        total.updated += response.updated || 0;
+        total.skipped.push(...(response.skipped || []));
+      } catch (err) {
+        const saved = total.created + total.updated;
+        const reason = err instanceof Error ? err.message : "Couldn't import the list.";
+        total.error = saved > 0 ? `${reason} ${saved} saved before it stopped.` : reason;
+        break;
+      }
+    }
+    if (total.created + total.updated > 0) await fetchContacts();
+    return total;
+  }
+
   async function markInTouch(contactId: string): Promise<Contact | null> {
     error.value = null;
     try {
@@ -234,6 +263,7 @@ export const useContactsStore = defineStore("contacts", () => {
     saving,
     error,
     fetchContacts,
+    importProspects,
     createContact,
     updateContact,
     markInTouch,

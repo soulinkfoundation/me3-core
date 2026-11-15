@@ -831,6 +831,91 @@ describe("assistant outreach list", () => {
   });
 });
 
+// Failure modes: a long list is cut off without a word; the sheet's own words
+// for a status ("Agreed", "Call booked") or its dates are dropped; importing an
+// old list reopens someone who said no, overwrites notes, or marks people the
+// owner never wrote to as Sent; another owner's contacts are touched.
+describe("importing a list of prospects", () => {
+  const NOW = new Date("2026-11-13T10:00:00.000Z");
+
+  function importApp(env: Env, ownerId: string | null = "alice") {
+    const app = new Hono() as unknown as AppHono;
+    registerContactsRoutes(app, {
+      requireOwner: async () => ownerId,
+      unauthorized: (c) => c.json({ error: "Unauthorized" }, 401),
+    });
+    const post = (body: unknown) =>
+      app.request("/api/contacts/outreach/import", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }, env);
+    return { post };
+  }
+
+  it("saves every row up to the limit it is given", async () => {
+    const { env } = fixture();
+    const rows = Array.from({ length: 40 }, (_, index) => ({ name: `Org ${index + 1}`, email: `office@org${index + 1}.example` }));
+    const saved = await saveOutreachProspects(env, "alice", rows, NOW, { limit: 100 });
+    expect(saved.saved).toHaveLength(40);
+    expect(saved.saved.every((prospect) => prospect.status === "new" && prospect.created)).toBe(true);
+  });
+
+  it("reads the sheet's status words, follow-up dates and notes", async () => {
+    const { raw, env } = fixture();
+    const saved = await saveOutreachProspects(env, "alice", [
+      { name: "IACP", email: "office@iacp.example", status: "Agreed", notes: "Met Mary at the AGM" },
+      { name: "IMTA", status: " call booked ", followUpAt: "2026-11-20" },
+      { name: "ISME", status: "No" },
+      { name: "ICF Ireland", status: "contacted" },
+      { name: "Yoga Therapy Ireland", status: "something else", followUpAt: "not a date" },
+    ], NOW);
+
+    expect(saved.saved).toMatchObject([
+      { name: "IACP", status: "converted" },
+      { name: "IMTA", status: "booked", nextFollowupAt: "2026-11-20T00:00:00.000Z" },
+      { name: "ISME", status: "not_interested" },
+      { name: "ICF Ireland", status: "sent" },
+      { name: "Yoga Therapy Ireland", status: "new", nextFollowupAt: null },
+    ]);
+    expect(raw.prepare("SELECT notes FROM contacts WHERE name = 'IACP'").get()).toEqual({ notes: "Met Mary at the AGM" });
+  });
+
+  it("leaves someone who said no alone, and keeps notes the owner already wrote", async () => {
+    const { raw, env, addContact } = fixture();
+    addContact("p-no", "alice", "ISME", "office@isme.example", { relationship: "prospect", outreach_status: "not_interested" });
+    addContact("p-open", "alice", "IMTA", "office@imta.example", { relationship: "prospect", outreach_status: "sent", notes: "Spoke to John" });
+
+    const saved = await saveOutreachProspects(env, "alice", [
+      { name: "ISME", email: "office@isme.example", status: "sent", offer: "Member discount" },
+      { name: "IMTA", email: "office@imta.example", notes: "From the sheet", offer: "Member discount" },
+    ], NOW, { keepClosed: true });
+
+    expect(saved.skipped).toEqual([{ name: "ISME", reason: "Marked No; left as it is." }]);
+    expect(saved.saved).toMatchObject([{ id: "p-open", status: "sent", offer: "Member discount", created: false }]);
+    expect(raw.prepare("SELECT outreach_status, metadata FROM contacts WHERE id = 'p-no'").get()).toEqual({ outreach_status: "not_interested", metadata: null });
+    expect(raw.prepare("SELECT notes FROM contacts WHERE id = 'p-open'").get()).toEqual({ notes: "Spoke to John" });
+  });
+
+  it("imports through the owner's API, and refuses a signed-out caller or an oversized batch", async () => {
+    const { raw, env, addContact } = fixture();
+    addContact("c-bob", "bob", "Bob's", "office@iacp.example");
+
+    const response = await importApp(env).post({ prospects: [
+      { name: "IACP", email: "office@iacp.example", organisation: "IACP", offer: "Member discount", status: "Sent" },
+      { name: "", email: "" },
+    ] });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true, created: 1, updated: 0,
+      skipped: [{ name: "", reason: "A name is required." }],
+    });
+    expect(raw.prepare("SELECT user_id, relationship, outreach_status, source FROM contacts WHERE name = 'IACP'").all())
+      .toEqual([{ user_id: "alice", relationship: "prospect", outreach_status: "sent", source: "outreach" }]);
+    expect(raw.prepare("SELECT relationship FROM contacts WHERE id = 'c-bob'").get()).toEqual({ relationship: "contact" });
+
+    expect((await importApp(env, null).post({ prospects: [{ name: "X" }] })).status).toBe(401);
+    expect((await importApp(env).post({ prospects: Array.from({ length: 101 }, (_, i) => ({ name: `Org ${i}` })) })).status).toBe(400);
+    expect((await importApp(env).post({ prospects: "IACP" })).status).toBe(400);
+  });
+});
+
 // Failure modes: the history shows another owner's mail, drafts that were never
 // sent, or mail with someone whose address merely contains the prospect's.
 describe("a person's email history", () => {

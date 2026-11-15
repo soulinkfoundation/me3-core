@@ -318,7 +318,36 @@ export type OutreachProspectInput = {
   offer?: unknown;
   status?: unknown;
   followUpInDays?: unknown;
+  /** A date from the owner's own list, e.g. "2026-11-20". */
+  followUpAt?: unknown;
+  notes?: unknown;
 };
+
+/** The assistant saves a few at a time; an imported list comes in batches of this many. */
+export const OUTREACH_IMPORT_BATCH = 100;
+
+// The words an owner's own list uses for a status, beside ME3's own values.
+const STATUS_WORDS: Record<string, Exclude<AgentContactOutreachStatus, null>> = {
+  "not sent": "new", "to contact": "new", "todo": "new", "to do": "new",
+  "contacted": "sent", "emailed": "sent", "waiting": "sent", "awaiting reply": "sent",
+  "responded": "replied", "in conversation": "replied",
+  "call booked": "booked", "meeting booked": "booked", "call": "booked", "meeting": "booked",
+  "agreed": "converted", "yes": "converted", "won": "converted", "partner": "converted",
+  "no": "not_interested", "declined": "not_interested", "lost": "not_interested", "not interested": "not_interested",
+  "no response": "no_response", "no reply": "no_response",
+};
+
+export function outreachStatusFromWords(value: unknown): AgentContactOutreachStatus {
+  if (typeof value !== "string") return null;
+  const words = value.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  return STATUS_WORDS[words] || normalizeContactOutreachStatus(words.replace(/ /g, "_"));
+}
+
+function followUpDate(value: unknown): string | null {
+  const text = normalizeNullableText(value);
+  const time = text ? Date.parse(text) : Number.NaN;
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
 
 export type OutreachProspectRecord = {
   id: string;
@@ -380,18 +409,30 @@ export async function saveOutreachProspects(
   userId: string,
   inputs: OutreachProspectInput[],
   now = new Date(),
+  options: {
+    limit?: number;
+    /** An imported list never reopens someone the owner marked No. */
+    keepClosed?: boolean;
+    source?: "agent" | "outreach";
+  } = {},
 ): Promise<{
   saved: Array<OutreachProspectRecord & { created: boolean }>;
   skipped: Array<{ name: string; reason: string }>;
 }> {
   const saved: Array<OutreachProspectRecord & { created: boolean }> = [];
   const skipped: Array<{ name: string; reason: string }> = [];
-  for (const input of inputs.slice(0, 25)) {
+  // Read People once; rows saved below are kept in step so a repeated address updates.
+  const { contacts } = await listAgentContacts(env, userId);
+  const remember = (contact: AgentContact) => {
+    const index = contacts.findIndex((item) => item.id === contact.id);
+    if (index >= 0) contacts[index] = contact;
+    else contacts.push(contact);
+  };
+  for (const input of inputs.slice(0, options.limit ?? 25)) {
     const contactId = normalizeNullableText(input.contactId);
     const name = normalizeNullableText(input.name);
     const email = mailAddresses([typeof input.email === "string" ? input.email : null])[0] || null;
     const label = name || contactId || email || "";
-    const { contacts } = await listAgentContacts(env, userId);
     const existing = contactId
       ? contacts.find((contact) => contact.id === contactId)
       : email
@@ -402,13 +443,19 @@ export async function saveOutreachProspects(
       continue;
     }
     const days = outreachFollowUpDays(input.followUpInDays);
-    const status = normalizeContactOutreachStatus(input.status);
+    const followUpAt = days ? new Date(now.getTime() + days * DAY_MS).toISOString() : followUpDate(input.followUpAt);
+    const status = outreachStatusFromWords(input.status);
+    const notes = normalizeNullableText(input.notes)?.slice(0, 5000) ?? null;
     const fields = {
       ...(input.organisation !== undefined ? { organisation: input.organisation } : {}),
       ...(input.offer !== undefined ? { offer: input.offer } : {}),
-      ...(days ? { nextFollowupAt: new Date(now.getTime() + days * DAY_MS).toISOString() } : {}),
+      ...(followUpAt ? { nextFollowupAt: followUpAt } : {}),
     };
     if (existing) {
+      if (options.keepClosed && existing.relationship === "prospect" && existing.outreachStatus === "not_interested") {
+        skipped.push({ name: existing.name, reason: "Marked No; left as it is." });
+        continue;
+      }
       if (existing.relationship !== "prospect" && existing.isClient) {
         skipped.push({ name: existing.name, reason: "Already a customer; not tracked as outreach." });
         continue;
@@ -420,10 +467,15 @@ export async function saveOutreachProspects(
       const updated = await updateAgentContact(env, userId, existing.id, {
         relationship: "prospect",
         ...fields,
+        // Notes the owner already wrote are never replaced by a list's.
+        ...(notes && !existing.notes?.trim() ? { notes } : {}),
         ...(status ? { outreachStatus: status } : existing.outreachStatus ? {} : { outreachStatus: "new" }),
       });
       if ("error" in updated) skipped.push({ name: existing.name, reason: updated.error });
-      else saved.push({ ...prospectRecord(updated), created: false });
+      else {
+        remember(updated);
+        saved.push({ ...prospectRecord(updated), created: false });
+      }
       continue;
     }
     if (!name) {
@@ -433,13 +485,17 @@ export async function saveOutreachProspects(
     const created = await createAgentContact(env, userId, {
       name,
       email,
-      source: "agent",
+      source: options.source || "agent",
       relationship: "prospect",
       outreachStatus: status || "new",
+      ...(notes ? { notes } : {}),
       ...fields,
     });
     if ("error" in created) skipped.push({ name, reason: created.error });
-    else saved.push({ ...prospectRecord(created), created: true });
+    else {
+      remember(created);
+      saved.push({ ...prospectRecord(created), created: true });
+    }
   }
   return { saved, skipped };
 }

@@ -6,12 +6,13 @@ import { useRoute, useRouter } from "vue-router";
 import AppPageBar from "../components/AppPageBar.vue";
 import UiIcon from "../components/UiIcon.vue";
 import AddSomeoneSheet from "../components/people/AddSomeoneSheet.vue";
+import ImportProspectsSheet from "../components/people/ImportProspectsSheet.vue";
 import NewPersonSheet from "../components/people/NewPersonSheet.vue";
 import PersonAvatar from "../components/people/PersonAvatar.vue";
 import PersonSheet from "../components/people/PersonSheet.vue";
 import { ApiError, api } from "../api";
 import { useAppToast } from "../composables/useAppToast";
-import { useContactsStore, type Contact } from "../stores/contacts";
+import { useContactsStore, type Contact, type ProspectImportResult } from "../stores/contacts";
 import {
   comparePeopleByName,
   firstName,
@@ -53,6 +54,7 @@ const outreachTab = ref<OutreachTab>("open");
 const query = ref("");
 const addOpen = ref(false);
 const newPersonOpen = ref(false);
+const importOpen = ref(false);
 const soulinkConnected = ref<boolean | null>(null);
 const pullEl = ref<HTMLElement | null>(null);
 const headEl = ref<HTMLElement | null>(null);
@@ -139,6 +141,12 @@ function onAdded(contact: Contact, created: boolean) {
   newPersonOpen.value = false;
   if (created) toastSuccess(`Added ${firstName(contact.name)}`);
   openPerson(contact);
+}
+
+function onImported(result: ProspectImportResult) {
+  outreachTab.value = "open";
+  const added = `${result.created} added`;
+  toastSuccess(result.updated ? `${added}, ${result.updated} updated` : added);
 }
 
 async function syncSoulink() {
@@ -252,6 +260,11 @@ watch(filter, () => { now.value = Date.now(); });
         </button>
       </div>
 
+      <button v-if="loaded && !term" type="button" class="prospect-import" @click="importOpen = true">
+        <UiIcon name="Upload" :size="16" aria-hidden="true" />
+        Import a list
+      </button>
+
       <p v-if="loading && !loaded" class="people-empty" aria-live="polite">Loading…</p>
       <template v-else-if="prospectGroups.length">
         <section v-for="group in prospectGroups" :key="group.label" class="prospect-group">
@@ -289,7 +302,7 @@ watch(filter, () => { now.value = Date.now(); });
         <template v-else>
           <p>No outreach yet.</p>
           <p class="people-empty__sub">
-            Open someone and choose Track as outreach. ME3 will keep their status up to date from Email and remind you to follow up.
+            Import a list, or open someone and choose Track as outreach. ME3 will keep their status up to date from Email and remind you to follow up.
           </p>
         </template>
       </div>
@@ -348,6 +361,7 @@ watch(filter, () => { now.value = Date.now(); });
     <PersonSheet :contact="openContact" @close="closePerson" />
     <AddSomeoneSheet :open="addOpen" @close="addOpen = false" @add-by-hand="addByHand" />
     <NewPersonSheet :open="newPersonOpen" @close="newPersonOpen = false" @saved="onAdded" />
+    <ImportProspectsSheet :open="importOpen" @close="importOpen = false" @imported="onImported" />
   </main>
 </template>
 
@@ -574,6 +588,28 @@ watch(filter, () => { now.value = Date.now(); });
   border-color: var(--ui-text);
   color: var(--ui-text);
   font-weight: 600;
+}
+
+.prospect-import {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  margin: 2px 0 6px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.prospect-import:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .prospect-group__label {

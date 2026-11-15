@@ -4,6 +4,8 @@ import {
   deleteAgentContact,
   listAgentContacts,
   markAgentContactInTouch,
+  OUTREACH_IMPORT_BATCH,
+  saveOutreachProspects,
   setContactReminder,
   updateAgentContact,
 } from "@me3-core/plugin-agent-chat";
@@ -31,6 +33,37 @@ export function registerContactsRoutes(app: AppHono, deps: ContactsRouteDeps) {
     const contact = await createAgentContact(c.env, ownerId, await c.req.json().catch(() => null));
     if ("error" in contact) return c.json({ error: contact.error }, contact.status as any);
     return c.json({ ok: true, contact }, 201);
+  });
+
+  // A pasted or uploaded list of prospects. Nothing is sent, and a status is
+  // only what the list itself says. The web app sends long lists in batches.
+  app.post("/api/contacts/outreach/import", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+
+    const body = await c.req.json<{ prospects?: unknown }>().catch((): { prospects?: unknown } => ({}));
+    const prospects = Array.isArray(body.prospects)
+      ? body.prospects.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+      : null;
+    if (!prospects || prospects.length === 0) return c.json({ error: "Add at least one person to import." }, 400);
+    if (prospects.length > OUTREACH_IMPORT_BATCH) {
+      return c.json({ error: `Import up to ${OUTREACH_IMPORT_BATCH} people at a time.` }, 400);
+    }
+    // A list names people; it never picks them by contact ID.
+    const rows = prospects.map(({ name, email, organisation, offer, status, followUpAt, notes }) => ({
+      name, email, organisation, offer, status, followUpAt, notes,
+    }));
+    const result = await saveOutreachProspects(c.env, ownerId, rows, new Date(), {
+      limit: OUTREACH_IMPORT_BATCH,
+      keepClosed: true,
+      source: "outreach",
+    });
+    return c.json({
+      ok: true,
+      created: result.saved.filter((prospect) => prospect.created).length,
+      updated: result.saved.filter((prospect) => !prospect.created).length,
+      skipped: result.skipped,
+    });
   });
 
   app.put("/api/contacts/:id", async (c) => {
