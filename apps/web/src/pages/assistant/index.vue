@@ -22,6 +22,7 @@ import NewsChatCard from "../../components/news/NewsChatCard.vue";
 import { NEWS_PAPER_TOOL, NEWS_SETTINGS_READ_TOOL, NEWS_SETTINGS_TOOL, newsChatCardFromTool, type NewsChatCard as NewsChatCardData } from "../../utils/news";
 import { SOUP_SERVE_TOOL, soupServingIdFromTool, type SoupServing, type SoupServingAction } from "../../utils/soup";
 import Button from "../../components/Button.vue";
+import ChatStartFreshMenu from "../../components/ChatStartFreshMenu.vue";
 import HomePanels from "../../components/home/HomePanels.vue";
 import AgentTargetChoices from "../../components/AgentTargetChoices.vue";
 import AgentMemoryReviewCard from "../../components/AgentMemoryReviewCard.vue";
@@ -266,7 +267,7 @@ type AssistantThreadMessagesResponse = {
 
 const ASSISTANT_HISTORY_PAGE_SIZE = 50;
 
-const { toastSuccess, toastFromUnknown, toastError } = useAppToast();
+const { toastSuccess, toastFromUnknown, toastError, toast } = useAppToast();
 const agentChat = useAgentChat();
 const assistantDisplayName = agentChat.assistantDisplayName;
 const contactsStore = useContactsStore();
@@ -858,7 +859,10 @@ async function startFresh() {
     await api.patch(`/assistant/threads/${encodeURIComponent(threadId)}`, { status: "archived" });
     assistantThreadId.value = null;
     agentChat.resetMessages();
-    toastSuccess("Chat archived. Find it in Your agent.");
+    toast.success("Chat archived", {
+      duration: 8000,
+      action: { label: "View", onClick: () => void router.push({ path: "/agent", query: { archived: threadId } }) },
+    });
     await router.replace({ query: { ...route.query, thread: undefined, project: undefined, new: undefined, view: "chat" } });
     await loadAssistantThreadFromRoute();
   } catch (err) {
@@ -2578,19 +2582,12 @@ function messageFromUnknown(err: unknown, fallback: string) {
   >
     <Teleport v-if="!siteBuilderMode" to="#app-page-controls" defer>
       <div class="home-chat-header">
-        <Button
+        <ChatStartFreshMenu
           v-if="!homeMode && assistantThreadId"
           class="home-chat-new"
-          color="ghost"
-          size="large"
-          icon-only
-          aria-label="Start fresh"
-          title="Start fresh"
           :disabled="assistantSending"
-          @click="startFresh"
-        >
-          <UiIcon name="SquarePen" :size="20" />
-        </Button>
+          @start-fresh="startFresh"
+        />
         <div class="home-chat-switcher" role="group" aria-label="Workspace view">
           <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
           <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>

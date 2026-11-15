@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
+import { useRoute } from "vue-router";
 import { api, ApiError } from "../api";
 import AppPageBar from "../components/AppPageBar.vue";
 import AgentDog from "../components/AgentDog.vue";
@@ -62,6 +63,7 @@ const showAllWork = ref(false);
 const showSources = ref(false);
 // Chats put away by Start fresh. They open read-only here: the main chat is never swapped back.
 const showArchived = ref(false);
+const archivedRow = ref<HTMLElement | null>(null);
 const archived = ref<ArchivedThread[] | null>(null);
 const archivedError = ref("");
 const openArchivedId = ref("");
@@ -236,7 +238,22 @@ function when(value: string) {
   return date.toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
-onMounted(load);
+// Chat links here with ?archived=1 (the list) or ?archived=<thread id> (that chat, opened).
+const route = useRoute();
+async function showArchivedFromRoute() {
+  const target = typeof route.query.archived === "string" ? route.query.archived : "";
+  if (!target) return false;
+  if (!showArchived.value) await toggleArchived();
+  if (target !== "1" && openArchivedId.value !== target) await openArchived(target);
+  return true;
+}
+
+onMounted(async () => {
+  const [, linked] = await Promise.all([load(), showArchivedFromRoute()]);
+  if (!linked) return;
+  await nextTick();
+  archivedRow.value?.scrollIntoView({ block: "start", behavior: "smooth" });
+});
 </script>
 
 <template>
@@ -354,7 +371,7 @@ onMounted(load);
             <span class="agent-row__text">{{ showAllWork ? 'Show less' : 'All activity' }}</span>
             <UiIcon :name="showAllWork ? 'ChevronUp' : 'ChevronDown'" :size="18" class="agent-row__chev" />
           </button>
-          <button type="button" class="agent-row" :aria-expanded="showArchived" @click="toggleArchived">
+          <button ref="archivedRow" type="button" class="agent-row" :aria-expanded="showArchived" @click="toggleArchived">
             <UiIcon name="Archive" :size="20" class="agent-row__icon" />
             <span class="agent-row__text">Archived chats</span>
             <UiIcon :name="showArchived ? 'ChevronUp' : 'ChevronDown'" :size="18" class="agent-row__chev" />
