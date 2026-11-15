@@ -13,6 +13,7 @@ import { newsDate, type NewsPaper, type NewsPaperAction, type NewsRating, type N
 import AppDialog from "../AppDialog.vue";
 import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
 import GetSetUpStrip from "./GetSetUpStrip.vue";
+import HomeGreeting from "./HomeGreeting.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import UiIcon from "../UiIcon.vue";
 import PersonAvatar from "../people/PersonAvatar.vue";
@@ -521,6 +522,7 @@ onBeforeUnmount(() => {
 <template>
   <div ref="panels" class="home-panels" aria-label="Home panels" :aria-busy="loading">
     <p class="sr-only" role="status">{{ orderAnnouncement }}</p>
+    <HomeGreeting :name="auth.user?.name" />
     <GetSetUpStrip ref="setupStrip" :inbox-count="mail.length" :agent-address="agentAddress" @build-site="emit('buildSite')" />
     <p v-if="offline || Object.keys(errors).length" class="home-offline" role="status"><UiIcon name="WifiOff" :size="16" /><span>{{ offline ? 'You’re offline.' : 'Home couldn’t fully refresh.' }} {{ lastRefresh ? `Showing the last available data · ${lastRefresh}.` : 'Connect to refresh Home.' }}</span><button type="button" :disabled="loading" @click="refresh">Try again</button></p>
     <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__more" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
@@ -670,6 +672,13 @@ onBeforeUnmount(() => {
 .home-offline span { flex: 1; }
 .home-offline button { color: var(--ui-accent-strong); white-space: nowrap; }
 .home-card { position: relative; min-width: 0; background: var(--ui-surface); border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-sm); }
+/* Cards settle in under the greeting, one after another. */
+.home-grid > .home-card { animation: home-card-in 520ms cubic-bezier(.2, .8, .2, 1) both; }
+.home-grid > .home-card:nth-child(2) { animation-delay: 60ms; }
+.home-grid > .home-card:nth-child(3) { animation-delay: 120ms; }
+.home-grid > .home-card:nth-child(n+4) { animation-delay: 180ms; }
+@keyframes home-card-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .home-grid > .home-card { animation: none; } }
 .home-card--dragging { opacity: .4; }
 /* News: the card drops onto Home when a paper is new, and is one line once read. */
 .home-card--landing { animation: home-news-land .7s cubic-bezier(.2, 1.4, .4, 1) both; }

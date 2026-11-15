@@ -74,6 +74,7 @@ import {
 } from "../../utils/aiModelCatalog";
 import AgentDog from "../../components/AgentDog.vue";
 import ChatPayments from "../../components/payments/ChatPayments.vue";
+import { createTextReveal } from "../../utils/textReveal";
 
 definePage({
   meta: {
@@ -1697,6 +1698,11 @@ async function submitAssistantText(
   let clientFirstTextAt: number | null = null;
   const assistantMessageId = newAssistantMessageId("assistant");
   let assistantMessageStarted = false;
+  // Deltas come in bursts; the reveal lets the reply flow in evenly.
+  const reveal = createTextReveal((chunk) => {
+    const message = chatMessages.value.find((item) => item.id === assistantMessageId);
+    if (message) message.text += chunk;
+  }, { immediate: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches });
 
   try {
     let result: AgentSandboxResponse | null = null;
@@ -1748,6 +1754,7 @@ async function submitAssistantText(
             const message = chatMessages.value.find(
               (item) => item.id === assistantMessageId,
             );
+            reveal.reset();
             if (message) message.text = "";
             assistantAwaitingResponse.value = true;
           }
@@ -1777,6 +1784,7 @@ async function submitAssistantText(
             const message = chatMessages.value.find(
               (item) => item.id === assistantMessageId,
             );
+            reveal.reset();
             if (message) message.text = "";
             assistantAwaitingResponse.value = true;
           }
@@ -1807,7 +1815,7 @@ async function submitAssistantText(
             (item) => item.id === assistantMessageId,
           );
           if (message && typeof data.text === "string") {
-            message.text += data.text;
+            reveal.push(data.text);
             if (data.text) {
               clientFirstTextAt ??= performance.now();
               assistantAwaitingResponse.value = false;
@@ -1818,6 +1826,7 @@ async function submitAssistantText(
 
         if (event.event === "done") {
           ensureAssistantMessage();
+          reveal.flush();
           if (newsFirstPaper) void newsShowFirstPaper(assistantMessageId);
           else if (newsTimeCardDue && !newsCardByMessage.value[assistantMessageId]) newsCardShown(assistantMessageId, { kind: "time", time: "", considered: 0, stories: 0, pages: 0 });
           assistantAwaitingResponse.value = false;
@@ -1878,6 +1887,7 @@ async function submitAssistantText(
       await setRouteThreadId(completedResult.threadId);
     }
   } catch (err) {
+    reveal.flush();
     assistantAwaitingResponse.value = false;
     if (isAbortError(err)) {
       setAssistantStoppedMessage(assistantMessageId, assistantMessageStarted);
@@ -1903,11 +1913,9 @@ async function submitAssistantText(
     assistantAwaitingResponse.value = false;
     assistantSending.value = false;
     assistantTurnStatusText.value = "";
-    if (assistantMessageStarted) {
-      await scrollAssistantMessageIntoView(assistantMessageId);
-    } else {
-      await scrollAssistantToBottom();
-    }
+    reveal.flush();
+    // The reply was brought to its start when it began; jumping again when it ends would pull a reader off their place.
+    if (!assistantMessageStarted) await scrollAssistantToBottom();
     await nextTick();
     autosizeAssistantComposer();
     assistantComposerRef.value?.focus();
