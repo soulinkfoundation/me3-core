@@ -118,6 +118,11 @@ describe("Home Core approval review", () => {
 
 describe("Home People card", () => {
   const card = () => document.body.querySelector('[aria-label="People"]');
+  // A new install starts with Today alone; these cover an install whose saved layout has People on.
+  beforeEach(() => {
+    const original = vi.mocked(api.get).getMockImplementation()!;
+    vi.mocked(api.get).mockImplementation(async endpoint => endpoint === "/home/layout" ? { layout: { order: ["today", "people"], hidden: [], pinned: ["people"], earned: [] } } as never : original(endpoint));
+  });
   it("is hidden until someone is Close", async () => {
     people = [contact("c-1", "Brian Lynch", { isClose: false, closeness: null, lastInTouchAt: daysAgo(60) })];
     render(); await flushPromises();

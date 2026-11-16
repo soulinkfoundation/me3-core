@@ -7,7 +7,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "happy-dom",
-    exclude: ["e2e/**", "node_modules/**", "dist/**"],
+    exclude: ["e2e/**", "e2e-real/**", "node_modules/**", "dist/**"],
   },
   resolve: {
     alias: {

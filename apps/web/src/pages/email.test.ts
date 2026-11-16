@@ -34,6 +34,8 @@ vi.mock("../composables/useAppToast", () => ({
 const routerReplace = vi.fn();
 const routerPush = vi.fn();
 let routeTab = "sent";
+// Folder the default fixtures serve their sent message from.
+let fixtureFolder = "sent";
 let routePath = "/email";
 let routeMessage = "";
 let routeComposeTo = "";
@@ -140,7 +142,7 @@ function mailboxResponseFor(endpoint: string) {
   if (endpoint.startsWith("/mailbox/threads?")) {
     const params = new URLSearchParams(endpoint.split("?")[1] || "");
     const threads =
-      params.get("folder") === "sent" ? [threadSummaryFor()] : [];
+      params.get("folder") === fixtureFolder ? [threadSummaryFor()] : [];
     return { threads, nextCursor: null };
   }
   if (endpoint === "/mailbox/threads/thread-1") {
@@ -150,7 +152,7 @@ function mailboxResponseFor(endpoint: string) {
     const params = new URLSearchParams(endpoint.split("?")[1] || "");
     const limit = Number(params.get("limit") || 50);
     const folder = params.get("folder");
-    const messages = folder === "sent" && limit > 0 ? [sentMessage] : [];
+    const messages = folder === fixtureFolder && limit > 0 ? [sentMessage] : [];
     return { messages, total: messages.length, limit, offset: 0 };
   }
   throw new Error(`Unexpected GET ${endpoint}`);
@@ -196,6 +198,7 @@ describe("EmailPage", () => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     routeTab = "sent";
+    fixtureFolder = "sent";
     routePath = "/email";
     routeMessage = "";
     routeComposeTo = "";
@@ -317,7 +320,9 @@ describe("EmailPage", () => {
     expect(wrapper.text()).toContain("Nothing sent yet.");
   });
 
+  // Sent offers no Archive, so the archive cases run from Inbox.
   it("removes a message before its archive request completes", async () => {
+    routeTab = fixtureFolder = "inbox";
     const archive = deferred<{ ok: boolean }>();
     vi.mocked(api.post).mockImplementation(() => archive.promise);
     const wrapper = mountEmailPage();
@@ -330,9 +335,9 @@ describe("EmailPage", () => {
 
     expect(api.post).toHaveBeenCalledWith("/mailbox/threads/thread-1/move", {
       folder: "archive",
-      fromFolder: "sent",
+      fromFolder: "inbox",
     });
-    expect(wrapper.text()).toContain("Nothing sent yet.");
+    expect(wrapper.text()).toContain("Nothing in Inbox.");
 
     archive.resolve({ ok: true });
     await flushPromises();
@@ -462,6 +467,7 @@ describe("EmailPage", () => {
   });
 
   it("reconciles the folder after a partially successful bulk move", async () => {
+    routeTab = "inbox";
     const first = {
       ...sentMessage,
       id: "sent-1",
@@ -480,7 +486,7 @@ describe("EmailPage", () => {
         const params = new URLSearchParams(endpoint.split("?")[1] || "");
         return {
           threads:
-            params.get("folder") === "sent"
+            params.get("folder") === "inbox"
               ? serverMessages.map(threadSummaryFor)
               : [],
           nextCursor: null,
@@ -489,7 +495,7 @@ describe("EmailPage", () => {
       if (endpoint.startsWith("/mailbox/messages?")) {
         const params = new URLSearchParams(endpoint.split("?")[1] || "");
         const visible =
-          params.get("folder") === "sent" &&
+          params.get("folder") === "inbox" &&
           Number(params.get("limit") || 50) > 0
             ? serverMessages
             : [];
