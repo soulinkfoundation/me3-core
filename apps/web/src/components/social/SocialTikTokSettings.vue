@@ -1,23 +1,23 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useId, watch } from "vue";
 import { useSocialStore, type SocialMediaAsset, type TikTokCreatorInfo } from "../../stores/social";
+import { formatVideoDuration } from "@me3-core/plugin-social-publishing/composer";
 import {
-  TIKTOK_BRANDED_POLICY_URL,
-  TIKTOK_MUSIC_TERMS_URL,
   fitTikTokChoices,
   tiktokChoicesProblem,
-  tiktokDeclaration,
   tiktokDisclosureLabel,
   tiktokPrivacyDisabled,
   tiktokPrivacyLabel,
+  tiktokToChoose,
   type TikTokPostChoices,
 } from "../../utils/tiktok-post";
 import { TIKTOK_OPEN_TO_ALL } from "../../utils/social-posts";
 
 /**
  * TikTok's required post settings (Content Sharing Guidelines): the account it goes to, who can see it
- * with nothing preselected, interactions off until ticked, commercial disclosure and the consent line.
- * Loaded fresh each time the screen opens; nothing is remembered between posts.
+ * with nothing preselected, interactions off until ticked, and commercial disclosure. One compact block,
+ * never collapsed, loaded fresh each time the screen opens; nothing is remembered or prefilled (me3-vque).
+ * The consent line sits beside the Post button on the post screen.
  */
 const props = defineProps<{
   accountId: string | null;
@@ -41,7 +41,12 @@ let sequence = 0;
 
 const problem = computed(() => loadError.value || tiktokChoicesProblem(props.choices, creator.value, durationSeconds.value));
 const disclosureLabel = computed(() => tiktokDisclosureLabel(props.choices));
-const declaration = computed(() => tiktokDeclaration(props.choices));
+const toChoose = computed(() => tiktokToChoose(props.choices));
+const INTERACTIONS = [
+  { key: "allowComment", label: "Comment", off: "commentDisabled", why: "Comments are off in your TikTok settings" },
+  { key: "allowDuet", label: "Duet", off: "duetDisabled", why: "Duets are off in your TikTok settings" },
+  { key: "allowStitch", label: "Stitch", off: "stitchDisabled", why: "Stitch is off in your TikTok settings" },
+] as const;
 const needsKind = computed(() => props.choices.disclose && !props.choices.yourBrand && !props.choices.brandedContent);
 
 function set(patch: Partial<TikTokPostChoices>) {
@@ -97,7 +102,10 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
 
 <template>
   <section class="tiktok" :aria-labelledby="`${id}-title`">
-    <h3 :id="`${id}-title`" class="tiktok__title">Posting on TikTok</h3>
+    <header class="tiktok__head">
+      <h3 :id="`${id}-title`" class="tiktok__title">TikTok</h3>
+      <span v-if="creator && toChoose" class="tiktok__count">{{ toChoose }} to choose</span>
+    </header>
 
     <p v-if="loading" class="tiktok__note">Checking your TikTok account…</p>
     <p v-else-if="loadError" class="tiktok__problem" role="alert">{{ loadError }}</p>
@@ -106,15 +114,21 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
       <div class="tiktok__creator">
         <img v-if="creator.avatarUrl" :src="creator.avatarUrl" alt="">
         <span v-else class="tiktok__avatar" aria-hidden="true">{{ creator.nickname.slice(0, 1).toUpperCase() }}</span>
-        <span>Posts to <b>{{ creator.nickname }}</b> <small>@{{ creator.username }}</small></span>
+        <span>
+          Posts to <b>{{ creator.nickname }}</b> <small>@{{ creator.username }}</small>
+          <small v-if="creator.maxVideoPostDurationSeconds"> · videos up to {{ formatVideoDuration(creator.maxVideoPostDurationSeconds) }} on this account</small>
+        </span>
       </div>
 
       <label class="tiktok__field">
-        <span>Who can see this</span>
+        <span>Who can see it <span class="tiktok__required" aria-hidden="true">*</span><span class="visually-hidden">(required)</span></span>
         <select
           class="post-field"
           :value="choices.privacyLevel"
           :disabled="locked"
+          required
+          aria-required="true"
+          :aria-invalid="!choices.privacyLevel || undefined"
           @change="set({ privacyLevel: ($event.target as HTMLSelectElement).value as TikTokPostChoices['privacyLevel'] })"
         >
           <option value="" disabled>Choose who can see it</option>
@@ -126,23 +140,24 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
             :title="tiktokPrivacyDisabled(level, choices) || undefined"
           >{{ tiktokPrivacyLabel(level) }}</option>
         </select>
-        <small v-if="!TIKTOK_OPEN_TO_ALL" class="tiktok__hint">Until TikTok approves ME3, TikTok only takes posts set to Only me, from a private account.</small>
+        <small class="tiktok__hint">Options come from your TikTok account.<template v-if="!TIKTOK_OPEN_TO_ALL"> Until TikTok approves ME3, only "Only me" works, from a private account.</template></small>
       </label>
 
       <fieldset class="tiktok__group" :disabled="locked">
         <legend>Let viewers</legend>
-        <label :title="creator.commentDisabled ? 'Comments are off in your TikTok settings.' : undefined">
-          <input type="checkbox" :checked="choices.allowComment" :disabled="creator.commentDisabled" @change="set({ allowComment: ($event.target as HTMLInputElement).checked })">
-          Comment
+        <label v-for="item in INTERACTIONS" :key="item.key" :class="{ 'is-off': creator[item.off] }">
+          <input
+            type="checkbox"
+            :checked="choices[item.key]"
+            :disabled="creator[item.off]"
+            :aria-describedby="creator[item.off] ? `${id}-${item.key}-why` : undefined"
+            @change="set({ [item.key]: ($event.target as HTMLInputElement).checked })"
+          >
+          <span>{{ item.label }}</span>
         </label>
-        <label :title="creator.duetDisabled ? 'Duets are off in your TikTok settings.' : undefined">
-          <input type="checkbox" :checked="choices.allowDuet" :disabled="creator.duetDisabled" @change="set({ allowDuet: ($event.target as HTMLInputElement).checked })">
-          Duet
-        </label>
-        <label :title="creator.stitchDisabled ? 'Stitch is off in your TikTok settings.' : undefined">
-          <input type="checkbox" :checked="choices.allowStitch" :disabled="creator.stitchDisabled" @change="set({ allowStitch: ($event.target as HTMLInputElement).checked })">
-          Stitch
-        </label>
+        <template v-for="item in INTERACTIONS" :key="`${item.key}-why`">
+          <small v-if="creator[item.off]" :id="`${id}-${item.key}-why`" class="tiktok__why">{{ item.why }}.</small>
+        </template>
       </fieldset>
 
       <fieldset class="tiktok__group tiktok__group--stack" :disabled="locked">
@@ -174,26 +189,19 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
       </fieldset>
 
       <p v-if="problem && !needsKind" class="tiktok__problem">{{ problem }}</p>
-      <p class="tiktok__declaration">
-        <template v-if="declaration.brandedPolicy">
-          By posting, you agree to TikTok's
-          <a :href="TIKTOK_BRANDED_POLICY_URL" target="_blank" rel="noopener">Branded Content Policy</a>
-          and
-          <a :href="TIKTOK_MUSIC_TERMS_URL" target="_blank" rel="noopener">Music Usage Confirmation</a>.
-        </template>
-        <template v-else>
-          By posting, you agree to TikTok's
-          <a :href="TIKTOK_MUSIC_TERMS_URL" target="_blank" rel="noopener">Music Usage Confirmation</a>.
-        </template>
-      </p>
-      <p class="tiktok__note">Nothing goes to TikTok until you press Post. After that, TikTok can take a few minutes to process the video before it shows on your profile.</p>
+      <p class="tiktok__note">Nothing goes to TikTok until you press Post.</p>
     </template>
   </section>
 </template>
 
 <style scoped>
 .tiktok { display: grid; gap: 10px; margin-top: 4px; padding: 12px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); background: var(--ui-surface); }
+.tiktok__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .tiktok__title { margin: 0; font-size: 14px; font-weight: 650; }
+.tiktok__why { flex-basis: 100%; }
+.tiktok__count { color: var(--ui-text-muted); font-size: 12.5px; }
+.tiktok__required { color: var(--ui-danger, #c62828); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .tiktok__creator { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
 .tiktok__creator img, .tiktok__avatar { flex: none; width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
 .tiktok__avatar { display: grid; place-items: center; background: var(--ui-surface-muted); color: var(--ui-text-muted); font-weight: 650; }
@@ -211,6 +219,4 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
 .tiktok__switch span { font-weight: 600; }
 .tiktok__note { margin: 0; color: var(--ui-text-muted); font-size: 12.5px; }
 .tiktok__problem { margin: 0; color: var(--ui-danger, #c62828); font-size: 12.5px; }
-.tiktok__declaration { margin: 0; font-size: 12.5px; }
-.tiktok__declaration a { color: inherit; text-decoration: underline; }
 </style>

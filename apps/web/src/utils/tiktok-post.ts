@@ -1,3 +1,4 @@
+import { formatVideoDuration } from "@me3-core/plugin-social-publishing/composer";
 import type { TikTokCreatorInfo, TikTokPrivacyLevel, TikTokPublishingSettings } from "../stores/social";
 
 /**
@@ -95,9 +96,14 @@ export function tiktokChoicesProblem(
   }
   if (!durationSeconds) return "ME3 couldn't read the video's length. Try adding it again.";
   if (durationSeconds > creator.maxVideoPostDurationSeconds) {
-    return `This TikTok account takes videos up to ${creator.maxVideoPostDurationSeconds} seconds.`;
+    return `This TikTok account takes videos up to ${formatVideoDuration(creator.maxVideoPostDurationSeconds)}.`;
   }
   return null;
+}
+
+/** How many required choices are still to make (me3-vque): who can see it, and what a disclosure promotes. */
+export function tiktokToChoose(choices: TikTokPostChoices): number {
+  return Number(!choices.privacyLevel) + Number(choices.disclose && !choices.yourBrand && !choices.brandedContent);
 }
 
 /** What ME3 sends to TikTok when the owner presses Post: the press is their consent. */

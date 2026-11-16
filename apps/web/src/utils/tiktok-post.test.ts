@@ -39,7 +39,7 @@ describe("TikTok post choices", () => {
   it("is ready once an audience is chosen and the video fits", () => {
     const choices = { ...emptyTikTokChoices(), privacyLevel: "PUBLIC_TO_EVERYONE" as const };
     expect(tiktokChoicesProblem(choices, creator, 12)).toBeNull();
-    expect(tiktokChoicesProblem(choices, creator, 61)).toBe("This TikTok account takes videos up to 60 seconds.");
+    expect(tiktokChoicesProblem(choices, creator, 61)).toBe("This TikTok account takes videos up to 1:00.");
     expect(tiktokChoicesProblem(choices, creator, null)).toMatch(/length/);
     expect(tiktokChoicesProblem(choices, null, 12)).toMatch(/loading/);
   });
