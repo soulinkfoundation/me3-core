@@ -1632,6 +1632,7 @@ describe("TikTok draft upload adapter", () => {
     const fetcher = vi.fn();
     await expect(adapterFor("tiktok").publish({
       accessToken: "tiktok-token",
+      accountId: "tiktok-account",
       bodyText: "Hi",
       assets: [files],
       fetcher: fetcher as unknown as typeof fetch,
