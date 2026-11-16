@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import type { SiteLayout } from "@me3-core/site-renderer";
 import { useWizardStore } from "../../stores/wizard";
@@ -8,6 +8,7 @@ import AppDialog from "../AppDialog.vue";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import { useAppToast } from "../../composables/useAppToast";
+import { api } from "../../api";
 
 const wizard = useWizardStore();
 const showFooter = ref(false);
@@ -42,6 +43,32 @@ function chooseLogo(event: Event) {
 function removeLogo() {
   wizard.updateProfile({ logo: null, logoBlob: null });
 }
+
+// The "Made with ME3" badge on published pages. It's an owner-wide choice, saved straight away.
+// "auto" (owners from before the badge was on by default) follows the install's own rule.
+type SiteBadgeState = { preference: "auto" | "shown" | "hidden"; automaticallyShown: boolean };
+const siteBadge = ref<SiteBadgeState | null>(null);
+const siteBadgeSaving = ref(false);
+const siteBadgeShown = computed(() =>
+  siteBadge.value?.preference === "auto" ? siteBadge.value.automaticallyShown : siteBadge.value?.preference === "shown",
+);
+async function setSiteBadgeShown(shown: boolean) {
+  if (!siteBadge.value) return;
+  const previous = siteBadge.value;
+  siteBadge.value = { ...previous, preference: shown ? "shown" : "hidden" };
+  siteBadgeSaving.value = true;
+  try {
+    siteBadge.value = await api.put<SiteBadgeState>("/site-badge", { preference: shown ? "shown" : "hidden" });
+  } catch {
+    siteBadge.value = previous;
+    toastError("Couldn't save the badge setting.");
+  } finally {
+    siteBadgeSaving.value = false;
+  }
+}
+onMounted(() => {
+  void api.get<SiteBadgeState>("/site-badge").then((state) => { siteBadge.value = state; }).catch(() => null);
+});
 
 const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f"];
 </script>
@@ -94,6 +121,10 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
         <label v-for="mode in ['auto', 'light', 'dark'] as const" :key="mode" :class="{ selected: wizard.colorMode === mode }"><input type="radio" name="site-color-mode" :value="mode" :checked="wizard.colorMode === mode" @change="wizard.setColorMode(mode)" />{{ mode === 'auto' ? 'Auto' : mode === 'light' ? 'Light' : 'Dark' }}</label>
       </div>
       <label class="look-visitor-switch"><input type="checkbox" :checked="wizard.visitorThemeToggle" @change="wizard.setVisitorThemeToggle(($event.target as HTMLInputElement).checked)" />Show a light/dark switch to visitors</label>
+    </fieldset>
+    <fieldset v-if="siteBadge"><legend>Badge</legend>
+      <label class="look-visitor-switch"><input type="checkbox" :checked="siteBadgeShown" :disabled="siteBadgeSaving" aria-describedby="look-badge-hint" @change="setSiteBadgeShown(($event.target as HTMLInputElement).checked)" />Show the Made with ME3 badge</label>
+      <p id="look-badge-hint" class="look-logo__hint">A small link in the corner of your published pages.</p>
     </fieldset>
     <button type="button" class="look-footer-link" @click="showFooter = true"><UiIcon name="Settings" :size="16" />Customize footer</button>
     <RouterLink class="look-footer-link" :to="{ path: '/settings', query: { section: 'domain', ...(wizard.username ? { site: wizard.username } : {}) } }"><UiIcon name="Globe" :size="16" />Custom domain</RouterLink>

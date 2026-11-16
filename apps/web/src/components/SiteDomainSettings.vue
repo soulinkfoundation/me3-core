@@ -5,14 +5,12 @@ import { api } from "../api";
 import { AGENT_LANDING_PAGE_SITE_TEMPLATE_ID } from "@me3-core/plugin-landing-pages";
 import { useSitesStore, type Site } from "../stores/sites";
 import { permanentPublicSiteUrl } from "../utils/publicSiteUrl";
-import AppSwitch from "./AppSwitch.vue";
 import Button from "./Button.vue";
 import ConfirmationDialog from "./ConfirmationDialog.vue";
 import CustomDomain from "./CustomDomain.vue";
 
 /**
- * Settings home for each site's address: custom domain setup, the Made with ME3 badge, and
- * deleting an older site. Editing a site (content, logo, accent) happens in the site editor.
+ * Settings home for each site's address: custom domain setup and deleting an older site. Editing a site (content, logo, accent) happens in the site editor.
  */
 const route = useRoute();
 const sites = useSitesStore();
@@ -47,31 +45,6 @@ function toggleDomain(username: string) {
   openDomain.value = openDomain.value === username ? null : username;
 }
 
-// The "Made with ME3" badge on published pages. "auto" follows the install default.
-type SiteBadgeState = { preference: "auto" | "shown" | "hidden"; automaticallyShown: boolean };
-const siteBadge = ref<SiteBadgeState | null>(null);
-const siteBadgeSaving = ref(false);
-const siteBadgeShown = computed(() =>
-  siteBadge.value?.preference === "auto"
-    ? siteBadge.value.automaticallyShown
-    : siteBadge.value?.preference === "shown",
-);
-const hasPublishedSite = computed(() => listedSites.value.some((site) => site.published_at));
-
-async function setSiteBadgeShown(shown: boolean): Promise<void> {
-  if (!siteBadge.value) return;
-  const previous = siteBadge.value;
-  siteBadge.value = { ...previous, preference: shown ? "shown" : "hidden" };
-  siteBadgeSaving.value = true;
-  try {
-    siteBadge.value = await api.put<SiteBadgeState>("/site-badge", { preference: shown ? "shown" : "hidden" });
-  } catch {
-    siteBadge.value = previous;
-  } finally {
-    siteBadgeSaving.value = false;
-  }
-}
-
 const deleteTarget = ref<Site | null>(null);
 const deleting = ref(false);
 async function confirmDelete() {
@@ -88,7 +61,6 @@ onMounted(async () => {
   void api.get<{ deploymentMode?: string }>("/config")
     .then((config) => { managed.value = config.deploymentMode === "managed"; })
     .catch(() => { managed.value = false; });
-  void api.get<SiteBadgeState>("/site-badge").then((state) => { siteBadge.value = state; }).catch(() => null);
   await sites.ensureSites();
 });
 </script>
@@ -154,19 +126,6 @@ onMounted(async () => {
       </li>
     </ul>
 
-    <div v-if="siteBadge && hasPublishedSite" class="site-domains__badge">
-      <div>
-        <strong>Made with ME3 badge</strong>
-        <p>A small link in the corner of your published pages.</p>
-      </div>
-      <AppSwitch
-        :model-value="siteBadgeShown"
-        label="Show the Made with ME3 badge"
-        :disabled="siteBadgeSaving"
-        @update:model-value="setSiteBadgeShown"
-      />
-    </div>
-
     <ConfirmationDialog
       :open="Boolean(deleteTarget)"
       title="Delete site?"
@@ -191,7 +150,6 @@ onMounted(async () => {
 }
 
 .site-domains__empty,
-.site-domains__badge,
 .site-domains__danger {
   display: flex;
   align-items: center;
@@ -200,8 +158,7 @@ onMounted(async () => {
   flex-wrap: wrap;
 }
 
-.site-domains__empty p,
-.site-domains__badge p {
+.site-domains__empty p {
   margin: 2px 0 0;
   color: var(--ui-text-muted, var(--color-text-muted));
   font-size: 13px;

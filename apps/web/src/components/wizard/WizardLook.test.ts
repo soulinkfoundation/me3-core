@@ -5,6 +5,9 @@ import { useWizardStore } from "../../stores/wizard";
 import WizardLook from "./WizardLook.vue";
 
 const toastHarness = vi.hoisted(() => ({ error: vi.fn() }));
+const apiHarness = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
+
+vi.mock("../../api", () => ({ api: apiHarness, API_BASE: "/api", ApiError: class extends Error {} }));
 
 vi.mock("../../composables/useAppToast", () => ({
   useAppToast: () => ({ toastError: toastHarness.error }),
@@ -25,6 +28,7 @@ describe("WizardLook logo", () => {
     setActivePinia(createPinia());
     localStorage.clear();
     vi.clearAllMocks();
+    apiHarness.get.mockRejectedValue(new Error("offline"));
   });
 
   it("adds and removes a site logo", async () => {
@@ -55,5 +59,34 @@ describe("WizardLook logo", () => {
 
     expect(wizard.profile.logo).toBeNull();
     expect(toastHarness.error).toHaveBeenCalledWith("That logo is too large. Choose an image under 1.9 MB.");
+  });
+});
+
+describe("WizardLook badge", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+  });
+
+  it("shows the owner's badge choice and saves a change", async () => {
+    apiHarness.get.mockResolvedValue({ preference: "shown", automaticallyShown: false });
+    apiHarness.put.mockResolvedValue({ preference: "hidden", automaticallyShown: false });
+    const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true, RouterLink: true } } });
+    await flushPromises();
+
+    const badge = wrapper.get<HTMLInputElement>('input[aria-describedby="look-badge-hint"]');
+    expect(badge.element.checked).toBe(true);
+    badge.element.checked = false;
+    await badge.trigger("change");
+    await flushPromises();
+    expect(apiHarness.put).toHaveBeenCalledWith("/site-badge", { preference: "hidden" });
+    expect(badge.element.checked).toBe(false);
+  });
+
+  it("hides the switch when the badge setting can't be read", async () => {
+    apiHarness.get.mockRejectedValue(new Error("offline"));
+    const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true, RouterLink: true } } });
+    await flushPromises();
+    expect(wrapper.find('input[aria-describedby="look-badge-hint"]').exists()).toBe(false);
   });
 });

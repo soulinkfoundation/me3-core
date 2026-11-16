@@ -34,7 +34,7 @@ function mountSettings(sites: Site[]) {
   store.sites = sites;
   store.ensureSites = vi.fn(async () => undefined) as never;
   return mount(SiteDomainSettings, {
-    global: { stubs: { CustomDomain: true, AppSwitch: true, ConfirmationDialog: true, RouterLink: true } },
+    global: { stubs: { CustomDomain: true, ConfirmationDialog: true, RouterLink: true } },
   });
 }
 
@@ -43,7 +43,7 @@ describe("SiteDomainSettings", () => {
     setActivePinia(createPinia());
     query = {};
     apiGet.mockImplementation((path: string) =>
-      path === "/config" ? Promise.resolve({ deploymentMode: "managed" }) : Promise.resolve({ preference: "auto", automaticallyShown: true }),
+      path === "/config" ? Promise.resolve({ deploymentMode: "managed" }) : Promise.reject(new Error("unexpected")),
     );
   });
 
@@ -52,7 +52,7 @@ describe("SiteDomainSettings", () => {
     await flushPromises();
     const rows = wrapper.findAll(".site-domains__text").map((row) => row.text());
     expect(rows).toEqual(["@kieranwww.kieranbutler.com", "@studioDefault ME3 address"]);
-    expect(wrapper.text()).toContain("Made with ME3 badge");
+    expect(wrapper.text()).not.toContain("Made with ME3 badge");
   });
 
   it("opens domain setup in place, and offers delete only for older sites", async () => {
