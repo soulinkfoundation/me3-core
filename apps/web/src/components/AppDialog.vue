@@ -62,6 +62,8 @@ function requestClose() {
 }
 
 function handleCancel(event: Event) {
+  // A file input inside the dialog fires a bubbling "cancel" when its picker is dismissed.
+  if (event.target !== dialog.value) return;
   event.preventDefault();
   requestClose();
 }

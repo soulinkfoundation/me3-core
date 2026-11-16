@@ -1,39 +1,29 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import AppDialog from "../../components/AppDialog.vue";
 import AppPageBar from "../../components/AppPageBar.vue";
 import Button from "../../components/Button.vue";
 import PageLoading from "../../components/PageLoading.vue";
 import UiIcon from "../../components/UiIcon.vue";
-import FilesMediaPicker from "../../components/files/FilesMediaPicker.vue";
-import SocialAccountAvatar from "../../components/social/SocialAccountAvatar.vue";
 import SocialAccountsSheet from "../../components/social/SocialAccountsSheet.vue";
 import SocialMarks from "../../components/social/SocialMarks.vue";
+import SocialNewPost from "../../components/social/SocialNewPost.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { useSocialData } from "../../composables/useSocialData";
-import { API_BASE } from "../../api";
-import type { DriveFile, SocialMediaAsset, SocialPlatform } from "../../stores/social";
-import { uploadDriveFiles } from "../../utils/drive-upload";
-import { composerRows, type ComposerRow } from "@me3-core/plugin-social-publishing/composer";
 import {
   SOCIAL_NETWORKS,
   SOCIAL_TABS,
   accountState,
-  activeAccount,
   attentionItems,
   formatWhen,
   lastPostedAt,
   networkLabel,
-  youtubeTitleFrom,
   nextScheduledAt,
   postRowDetail,
   postTab,
   postTitle,
-  socialNetwork,
   visibleVersions,
-  type SocialNetwork,
   type SocialTab,
 } from "../../utils/social-posts";
 
@@ -48,21 +38,12 @@ definePage({
 
 const route = useRoute();
 const router = useRouter();
-const { toastError, toastSuccess, toastFromUnknown } = useAppToast();
+const { toastError, toastSuccess } = useAppToast();
 const data = useSocialData();
-const { social, accounts, posts, capabilities, siteId, hostedPlatforms } = data;
+const { accounts, posts, capabilities, siteId, hostedPlatforms } = data;
 const tab = ref<SocialTab>(tabFromQuery(route.query.tab));
 const accountsOpen = ref(false);
 const composerOpen = ref(false);
-const composerText = ref("");
-const composerNetworks = ref<SocialNetwork[]>([]);
-const composerBusy = ref(false);
-/** Media for the new post: a device upload (`file`) or something already in Files (`driveFile`). */
-type ComposerMedia = { kind: "image" | "video"; name: string; preview: string; file?: File; driveFile?: DriveFile };
-const composerMedia = ref<ComposerMedia[]>([]);
-const composerPickerOpen = ref(false);
-const composerMediaInput = ref<HTMLInputElement | null>(null);
-const composerTitleId = `social-new-post-${useId()}`;
 
 function tabFromQuery(value: unknown): SocialTab {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -143,179 +124,10 @@ function handleOAuthReturn() {
   void router.replace({ query });
 }
 
-function platformFor(network: SocialNetwork): SocialPlatform {
-  const account = activeAccount(network as SocialPlatform, accounts.value);
-  return (account?.platform as SocialPlatform) || network;
-}
-
-/** Video-only networks need a video, so they appear once connected and start unticked. */
-const VIDEO_ONLY = new Set<SocialNetwork>(["youtube", "tiktok"]);
-const composerChoices = computed(() =>
-  SOCIAL_NETWORKS.filter((network) => !VIDEO_ONLY.has(network.id) || connectedNetworks.value.includes(network.id)),
-);
-
 function openComposer() {
-  composerText.value = "";
-  clearComposerMedia();
-  composerNetworks.value = connectedNetworks.value.filter((network) => !VIDEO_ONLY.has(network));
-  if (!composerNetworks.value.length) composerNetworks.value = ["x", "linkedin"];
   composerOpen.value = true;
 }
 
-function toggleComposerNetwork(network: SocialNetwork) {
-  composerNetworks.value = composerNetworks.value.includes(network)
-    ? composerNetworks.value.filter((item) => item !== network)
-    : [...composerNetworks.value, network];
-}
-
-/** What each network gets from the picked media, from the shared New post rules (me3-s0ib). */
-const composerRowsByNetwork = computed(() => {
-  const media = composerMedia.value;
-  const rows = composerRows({
-    type: !media.length ? "text" : media[0]!.kind === "video" ? "video" : "images",
-    media: { items: media.map((item) => item.kind), video: null, firstKind: media[0]?.kind ?? null },
-    accounts: SOCIAL_NETWORKS.map((network) => ({ id: network.id, network: network.id })),
-  });
-  return new Map(rows.map((row) => [row.network as SocialNetwork, row]));
-});
-
-/** One line under New post when a ticked network won't get all of the media. */
-const composerNote = computed(() => {
-  if (!composerMedia.value.length) return null;
-  const notes = composerNetworks.value.flatMap((network) => {
-    const row: ComposerRow | undefined = composerRowsByNetwork.value.get(network);
-    if (!row) return [];
-    if (!row.canTake) return [`${networkLabel(network)}: ${row.reason}`];
-    return row.label?.includes(", not the") || row.tone === "warn" ? [`${networkLabel(network)} gets ${row.label!.charAt(0).toLowerCase()}${row.label!.slice(1)}`] : [];
-  });
-  return notes.length ? `${notes.join(". ")}.` : null;
-});
-
-/**
- * Avatar and name for each network in the New post dialog. Only the network's
- * own profile picture is shown; another account's or the ME3 profile picture
- * would make the row look like the wrong account is connected.
- */
-function composerAccount(network: SocialNetwork) {
-  const account = activeAccount(network as SocialPlatform, accounts.value);
-  return {
-    avatarUrl: account?.avatarSource === "provider" ? account.avatarUrl || null : null,
-    name: account?.displayName || account?.handle || null,
-    handle: account?.handle || null,
-  };
-}
-
-function addComposerItem(item: ComposerMedia) {
-  // One video per post: a new one replaces the old.
-  if (item.kind === "video") {
-    for (const old of composerMedia.value.filter((media) => media.kind === "video")) releasePreview(old);
-    composerMedia.value = composerMedia.value.filter((media) => media.kind !== "video");
-  }
-  composerMedia.value = [...composerMedia.value, item];
-}
-
-function releasePreview(item: ComposerMedia) {
-  if (item.file) URL.revokeObjectURL(item.preview);
-}
-
-function addComposerFiles(files: DriveFile[]) {
-  for (const driveFile of files) {
-    if (composerMedia.value.some((item) => item.driveFile?.id === driveFile.id)) continue;
-    addComposerItem({
-      kind: driveFile.mimeType.startsWith("video/") ? "video" : "image",
-      name: driveFile.filename,
-      preview: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(driveFile.id)}/content`,
-      driveFile,
-    });
-  }
-}
-
-function addComposerMedia(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const picked = Array.from(input.files || []).filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
-  input.value = "";
-  for (const file of picked) {
-    addComposerItem({ kind: file.type.startsWith("video/") ? "video" : "image", name: file.name, preview: URL.createObjectURL(file), file });
-  }
-}
-
-function removeComposerMedia(index: number) {
-  const [removed] = composerMedia.value.splice(index, 1);
-  if (removed) releasePreview(removed);
-  composerMedia.value = [...composerMedia.value];
-}
-
-function clearComposerMedia() {
-  for (const item of composerMedia.value) releasePreview(item);
-  composerMedia.value = [];
-}
-
-function mediaAsset(file: DriveFile, kind: "image" | "video", assetIndex: number): SocialMediaAsset {
-  return {
-    url: `${API_BASE.replace(/\/$/, "")}/files/${encodeURIComponent(file.id)}/content`,
-    fileId: file.id,
-    filename: file.filename,
-    mimeType: file.mimeType,
-    kind,
-    altText: "",
-    contentHash: file.sha256 ? `sha256:${file.sha256.toLowerCase()}` : undefined,
-    byteLength: file.size,
-    assetIndex,
-  };
-}
-
-/** Files picks are already in Files; device picks upload first. */
-async function driveFileFor(item: ComposerMedia): Promise<DriveFile> {
-  if (item.driveFile) return item.driveFile;
-  const [uploaded] = await uploadDriveFiles<DriveFile>([item.file!], { folderId: null, onConflict: "rename" });
-  if (!uploaded) throw new Error(`${item.name} didn't upload.`);
-  return uploaded;
-}
-
-async function createPost() {
-  const text = composerText.value.trim();
-  if (!text || !composerNetworks.value.length || composerBusy.value) return;
-  composerBusy.value = true;
-  try {
-    const picked = composerMedia.value;
-    const files = await Promise.all(picked.map(driveFileFor));
-    const rows = composerRowsByNetwork.value;
-    const detail = await social.createSocialPost({
-      siteId: siteId.value,
-      sourceType: "pasted",
-      sourceSnapshot: text,
-      sourceText: text,
-      ideaText: text,
-      versions: composerNetworks.value.map((network) => {
-        const format = rows.get(network)?.format;
-        return {
-          platform: platformFor(network),
-          bodyText: text,
-          // A Short needs a title and one video; the owner adds the video on the next screen.
-          ...(network === "youtube" ? { format: "short_video" as const, title: youtubeTitleFrom(text) } : {}),
-          ...(format ? { format } : {}),
-        };
-      }),
-    });
-    // Each network gets the photos, the video or both, as it accepts them.
-    await Promise.all(visibleVersions(detail).map((version) => {
-      const network = socialNetwork(version.platform);
-      const row = network ? rows.get(network) : null;
-      if (!row) return null;
-      const assetManifest = row.items.map((index, position) => mediaAsset(files[index]!, picked[index]!.kind, position));
-      return assetManifest.length ? social.updatePostVersion(version.id, { assetManifest }) : null;
-    }));
-    composerOpen.value = false;
-    clearComposerMedia();
-    await router.push(`/social/${encodeURIComponent(detail.post.id)}`);
-  } catch (caught) {
-    toastFromUnknown(caught, "Couldn't save the draft. Try again.");
-  } finally {
-    composerBusy.value = false;
-  }
-}
-
-onBeforeUnmount(clearComposerMedia);
 
 onMounted(async () => {
   // Older links (calendar, chat) still point at /social?postId=…
@@ -435,77 +247,13 @@ onMounted(async () => {
       @changed="refresh"
     />
 
-    <AppDialog :open="composerOpen" :labelled-by="composerTitleId" close-on-backdrop @close="composerOpen = false">
-      <form class="social-composer" @submit.prevent="createPost">
-        <header class="social-composer__header">
-          <h2 :id="composerTitleId">New post</h2>
-          <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Close" @click="composerOpen = false">
-            <UiIcon name="X" :size="18" />
-          </Button>
-        </header>
-        <label class="visually-hidden" for="social-composer-text">What do you want to say?</label>
-        <textarea id="social-composer-text" v-model="composerText" rows="5" placeholder="What do you want to say?" />
-        <ul v-if="composerMedia.length" class="social-composer__media" aria-label="Media">
-          <li v-for="(item, index) in composerMedia" :key="item.preview">
-            <video v-if="item.kind === 'video'" :src="item.preview" muted preload="metadata" />
-            <img v-else :src="item.preview" :alt="item.name">
-            <button type="button" :aria-label="`Remove ${item.name}`" @click="removeComposerMedia(index)">
-              <UiIcon name="X" :size="12" />
-            </button>
-          </li>
-        </ul>
-        <input
-          ref="composerMediaInput"
-          class="visually-hidden"
-          type="file"
-          accept="image/*,video/*"
-          multiple
-          @change="addComposerMedia"
-        >
-        <div class="social-composer__networks" role="group" aria-label="Post to">
-          <button
-            v-for="network in composerChoices"
-            :key="network.id"
-            type="button"
-            :aria-pressed="composerNetworks.includes(network.id)"
-            :aria-label="composerAccount(network.id).handle ? `${network.label}, ${composerAccount(network.id).handle}` : network.label"
-            :title="network.label"
-            @click="toggleComposerNetwork(network.id)"
-          >
-            <SocialAccountAvatar
-              :network="network.id"
-              :avatar-url="composerAccount(network.id).avatarUrl"
-              :name="composerAccount(network.id).name || network.label"
-              :selected="composerNetworks.includes(network.id)"
-            />
-          </button>
-        </div>
-        <p v-if="composerNote" class="social-composer__note">{{ composerNote }}</p>
-        <footer class="social-composer__footer">
-          <div class="social-composer__attachments">
-            <button type="button" class="social-composer__attach" :disabled="composerBusy" @click="composerMediaInput?.click()">
-              <UiIcon name="Image" :size="16" /> Photo or video
-            </button>
-            <button type="button" class="social-composer__attach" :disabled="composerBusy" @click="composerPickerOpen = true">
-              <UiIcon name="Folder" :size="16" /> From Files
-            </button>
-          </div>
-          <Button
-            type="submit"
-            color="primary"
-            shape="pill"
-            size="compact"
-            :disabled="composerBusy || !composerText.trim() || !composerNetworks.length"
-          >{{ composerBusy ? (composerMedia.length ? "Uploading…" : "Saving…") : "Review" }}</Button>
-        </footer>
-      </form>
-    </AppDialog>
-
-    <FilesMediaPicker
-      :open="composerPickerOpen"
-      :kinds="['image', 'video']"
-      @close="composerPickerOpen = false"
-      @select="addComposerFiles"
+    <SocialNewPost
+      :open="composerOpen"
+      :accounts="accounts"
+      :capabilities="capabilities"
+      :site-id="siteId"
+      @close="composerOpen = false"
+      @connect="composerOpen = false; accountsOpen = true"
     />
   </main>
 </template>
@@ -587,71 +335,10 @@ onMounted(async () => {
 .social-state__example { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 0; border-top: 1px solid var(--ui-border); border-bottom: 1px solid var(--ui-border); font-size: 14px; font-weight: 600; opacity: .55; }
 .social-state__example > span:nth-child(2) { flex: 1 1 auto; }
 
-.social-composer {
-  box-sizing: border-box;
-  display: grid;
-  gap: 12px;
-  width: min(520px, calc(100vw - 32px));
-  padding: 16px 18px;
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface);
-  box-shadow: var(--ui-shadow-md);
-}
-.social-composer__header { display: flex; align-items: center; justify-content: space-between; }
-.social-composer__header h2 { margin: 0; font-size: 17px; font-weight: 650; }
-.social-composer textarea {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--ui-border-strong);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface);
-  color: var(--ui-text);
-  font: 14px/1.5 var(--font-sans);
-  resize: vertical;
-}
-.social-composer__networks { display: flex; flex-wrap: wrap; gap: 4px; }
 /* 32px avatar + 6px padding keeps a 44px tap target. */
-.social-composer__networks button { display: inline-grid; padding: 6px; border: 0; border-radius: 50%; background: none; cursor: pointer; }
-.social-composer__networks button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 1px; }
-.social-composer__note { margin: 0; color: var(--ui-text-muted); font-size: var(--ui-font-size-sm, 13px); }
-.social-composer__attachments { display: flex; flex-wrap: wrap; gap: 2px; }
-.social-composer__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.social-composer__attach {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: var(--ui-radius-md);
-  background: transparent;
-  color: var(--ui-text-muted);
-  font: 500 13px var(--font-sans);
-  cursor: pointer;
-}
-.social-composer__attach:hover, .social-composer__attach:focus-visible { background: var(--ui-surface-muted); color: var(--ui-text); outline: none; }
-.social-composer__media { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.social-composer__media li { position: relative; width: 64px; height: 64px; overflow: hidden; border-radius: var(--ui-radius-sm); background: var(--ui-surface-muted); }
-.social-composer__media img, .social-composer__media video { width: 100%; height: 100%; object-fit: cover; }
-.social-composer__media button {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, .6);
-  color: #fff;
-  cursor: pointer;
-}
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 @media (max-width: 640px) {
   .social-tabs button { gap: 4px; padding: 0 6px; font-size: 13px; }
-  .social-composer { width: 100vw; border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0; padding-bottom: 28px; }
 }
 </style>

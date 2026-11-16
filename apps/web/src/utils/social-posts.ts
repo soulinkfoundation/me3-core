@@ -75,6 +75,42 @@ export function networkLabel(platform: SocialPlatform | string): string {
   return SOCIAL_NETWORKS.find((item) => item.id === network)?.label || "Social";
 }
 
+/**
+ * The accounts New post lists (me3-hzsw): connected ones only, in the accounts sheet's order.
+ * `named` is true when another account shares the network, so the row shows its name.
+ */
+export function newPostAccounts(accounts: SocialAccountRow[]): Array<{ account: SocialAccountRow; network: SocialNetwork; named: boolean }> {
+  const active = accounts.filter((account) => account.status === "active" && socialNetwork(account.platform));
+  const order = SOCIAL_NETWORKS.map((network) => network.id as string);
+  return active
+    .map((account) => ({ account, network: socialNetwork(account.platform)! }))
+    .sort((a, b) => order.indexOf(a.network) - order.indexOf(b.network))
+    .map((item, _index, all) => ({ ...item, named: all.filter((other) => other.network === item.network).length > 1 }));
+}
+
+/**
+ * The caption counter under New post: the tightest limit among the ticked accounts, named.
+ * Going over is never blocked here; the next screen offers a thread or shortening.
+ */
+export function newPostCaptionNote(
+  text: string,
+  platforms: SocialPlatform[],
+  capabilities: SocialPlatformCapabilities[],
+): { text: string; over: boolean } | null {
+  const limits = platforms
+    .map((platform) => ({ platform, limit: textLimit(platform, capabilities) }))
+    .filter((item): item is { platform: SocialPlatform; limit: number } => item.limit !== null);
+  if (!limits.length) return null;
+  const tightest = limits.reduce((least, item) => (item.limit < least.limit ? item : least));
+  const label = networkLabel(tightest.platform);
+  const left = tightest.limit - Array.from(text).length;
+  if (left >= 0) return { text: `${left.toLocaleString()} left for ${label}`, over: false };
+  const over = `${(-left).toLocaleString()} over for ${label}.`;
+  return socialNetwork(tightest.platform) === "x"
+    ? { text: `${over} The X version will need a thread or shortening on the next screen.`, over: true }
+    : { text: `${over} You can shorten it on the next screen.`, over: true };
+}
+
 export function networkMark(platform: SocialPlatform | string): string {
   return SOCIAL_NETWORKS.find((item) => item.id === socialNetwork(platform))?.mark || "•";
 }

@@ -78,3 +78,22 @@ describe("New post: what each account gets", () => {
     expect(formatVideoDuration(0.5)).toBe("half a second");
   });
 });
+
+describe("New post: accounts and caption counter (me3-hzsw)", () => {
+  it("lists connected accounts in the accounts sheet's order and names ones that share a network", async () => {
+    const { account } = await import("./social-posts.fixtures");
+    const { newPostAccounts } = await import("./social-posts");
+    const second = { ...account("x"), id: "x-2" };
+    expect(newPostAccounts([account("tiktok"), account("facebook", "expired"), second, account("x"), account("linkedin")])
+      .map(({ account: item, network, named }) => [item.id, network, named]))
+      .toEqual([["x-2", "x", true], ["account-x", "x", true], ["account-linkedin", "linkedin", false], ["account-tiktok", "tiktok", false]]);
+  });
+
+  it("uses the tightest ticked limit and names it", async () => {
+    const { capabilities } = await import("./social-posts.fixtures");
+    const { newPostCaptionNote } = await import("./social-posts");
+    expect(newPostCaptionNote("a".repeat(67), ["linkedin", "x"], capabilities)).toEqual({ text: "213 left for X", over: false });
+    expect(newPostCaptionNote("a".repeat(2_201), ["linkedin", "instagram"], capabilities)).toEqual({ text: "1 over for Instagram. You can shorten it on the next screen.", over: true });
+    expect(newPostCaptionNote("hi", [], capabilities)).toBeNull();
+  });
+});
