@@ -135,6 +135,13 @@ export const DRIVE_MULTIPART_PART_BYTES = 10 * 1024 * 1024;
 export const MAX_DRIVE_MULTIPART_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const DRIVE_MULTIPART_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const MAX_PREVIEW_BYTES = 512 * 1024;
+// Thumbnails are made once, on first request, and kept beside the bucket's drive files.
+const THUMBNAIL_WIDTH = 480;
+const THUMBNAIL_QUALITY = 75;
+const THUMBNAIL_MAX_SOURCE_BYTES = 70 * 1024 * 1024;
+const THUMBNAIL_FALLBACK_MAX_BYTES = 12 * 1024 * 1024;
+// A file's bytes never change under the same id, so its thumbnail can be cached for good.
+const THUMBNAIL_CACHE_CONTROL = "private, max-age=31536000, immutable";
 const MAX_EXTRACTED_TEXT_CHARS = 80_000;
 const MAX_NAME_LENGTH = 160;
 const ROOT_FOLDER_ID: string | null = null;
@@ -776,6 +783,7 @@ export async function deleteDriveFile(
   if (!isSharedAssistantAsset) {
     await env.SITE_ASSETS.delete(current.storage_key);
   }
+  await env.SITE_ASSETS.delete(driveThumbnailKey(ownerId, fileId)).catch(() => undefined);
 
   const result = await env.DB.prepare(
     `UPDATE drive_files
@@ -886,6 +894,73 @@ export async function getDriveFileContentResponse(
   headers.set("X-Content-Type-Options", "nosniff");
 
   return new Response(object.body, { status: range ? 206 : 200, headers });
+}
+
+/**
+ * A small WebP of an image file. The first request resizes the original and stores the
+ * result; later requests read the stored copy. Without the Images service (or for a
+ * format it cannot read) a modest original is served instead, and anything else is a 404
+ * so the client can fall back to an icon.
+ */
+export async function getDriveFileThumbnailResponse(
+  env: Env,
+  ownerId: string,
+  fileIdInput: string,
+): Promise<Response> {
+  if (!env.SITE_ASSETS) {
+    throw new DriveInputError("File storage is not configured.", 503);
+  }
+
+  const fileId = normalizeRequiredId(fileIdInput, "File id");
+  const row = await requireReadyFileRow(env, ownerId, fileId);
+  if (row.preview_kind !== "image") {
+    throw new DriveInputError("This file has no thumbnail.", 404);
+  }
+
+  const thumbnailKey = driveThumbnailKey(ownerId, fileId);
+  const stored = await env.SITE_ASSETS.get(thumbnailKey);
+  if (stored) return thumbnailResponse(stored.body, stored.size);
+
+  const size = Number(row.size || 0);
+  if (env.IMAGES && size <= THUMBNAIL_MAX_SOURCE_BYTES) {
+    const original = await env.SITE_ASSETS.get(row.storage_key);
+    if (!original) throw new DriveInputError("File not found.", 404);
+    try {
+      const result = await env.IMAGES.input(original.body)
+        .transform({ width: THUMBNAIL_WIDTH, fit: "scale-down" })
+        .output({ format: "image/webp", quality: THUMBNAIL_QUALITY, anim: false });
+      const transformed = result.response();
+      if (!transformed.ok) throw new Error(`Image transformation failed (${transformed.status})`);
+      const bytes = await transformed.arrayBuffer();
+      await env.SITE_ASSETS.put(thumbnailKey, bytes, {
+        httpMetadata: { contentType: "image/webp" },
+      });
+      return thumbnailResponse(bytes, bytes.byteLength);
+    } catch (error) {
+      // SVG, HEIC and damaged files land here; fall through to the original.
+      console.warn("Drive thumbnail failed", { fileId, error: String(error) });
+    }
+  }
+
+  if (size > THUMBNAIL_FALLBACK_MAX_BYTES) {
+    throw new DriveInputError("This file has no thumbnail.", 404);
+  }
+  return getDriveFileContentResponse(env, ownerId, fileId);
+}
+
+function thumbnailResponse(body: BodyInit, size: number): Response {
+  return new Response(body, {
+    headers: {
+      "Content-Type": "image/webp",
+      "Content-Length": String(size),
+      "Cache-Control": THUMBNAIL_CACHE_CONTROL,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
+function driveThumbnailKey(ownerId: string, fileId: string): string {
+  return `drive-thumbnails/${safeStorageSegment(ownerId, "owner")}/${fileId}.webp`;
 }
 
 export function parseSingleByteRange(

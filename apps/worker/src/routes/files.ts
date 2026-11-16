@@ -7,6 +7,7 @@ import {
   deleteDriveFile,
   deleteDriveFolder,
   getDriveFileContentResponse,
+  getDriveFileThumbnailResponse,
   getDriveFilePreview,
   getDriveMultipartUpload,
   getDriveStatus,
@@ -195,6 +196,17 @@ export function registerFilesRoutes(app: AppHono, deps: OwnerRouteDeps) {
         download: c.req.query("download") === "1",
         rangeHeader: c.req.header("Range"),
       });
+    } catch (error) {
+      return filesErrorResponse(c, error);
+    }
+  });
+
+  app.get("/api/files/:fileId/thumbnail", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+
+    try {
+      return await getDriveFileThumbnailResponse(c.env, ownerId, c.req.param("fileId"));
     } catch (error) {
       return filesErrorResponse(c, error);
     }

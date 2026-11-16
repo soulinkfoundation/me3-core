@@ -101,8 +101,7 @@ type DialogMode = "new-folder" | "rename" | "move" | "delete";
 type ViewMode = "list" | "grid";
 
 const VIEW_MODE_STORAGE_KEY = "me3.files.viewMode";
-// Thumbnails load the original image, so skip very large files.
-const THUMBNAIL_MAX_BYTES = 12 * 1024 * 1024;
+const BULK_CONCURRENCY = 3;
 
 const route = useRoute();
 const router = useRouter();
@@ -113,6 +112,11 @@ const currentFiles = ref<DriveFile[]>([]);
 const currentFolderId = ref<string | null>(folderIdFromRoute());
 const viewMode = ref<ViewMode>(readStoredViewMode());
 const failedThumbnails = ref<Set<string>>(new Set());
+// Ticked rows, by row key. Separate from `selected`, the one item shown in the preview.
+const checkedKeys = ref<Set<string>>(new Set());
+const draggingKeys = ref<string[]>([]);
+const dropTargetKey = ref<string | null>(null);
+let checkAnchorIndex: number | null = null;
 const selected = ref<{ kind: DriveItem["kind"]; id: string } | null>(null);
 const preview = ref<PreviewResponse | null>(null);
 const pdfPreviewUrl = ref("");
@@ -130,7 +134,7 @@ const sortDirection = ref<"asc" | "desc">("asc");
 const rowMenuId = ref<string | null>(null);
 const uploadInput = ref<HTMLInputElement | null>(null);
 const dialogMode = ref<DialogMode | null>(null);
-const dialogItem = ref<DriveItem | null>(null);
+const dialogItems = ref<DriveItem[]>([]);
 const dialogName = ref("");
 const dialogFolderId = ref<string | null>(null);
 let searchTimer: number | null = null;
@@ -194,13 +198,21 @@ const breadcrumbs = computed(() => {
   return trail;
 });
 const parentFolderName = computed(() => breadcrumbs.value.at(-2)?.name || "Files");
-const folderOptions = computed(() => {
-  const movingFolder = dialogItem.value?.kind === "folder" ? dialogItem.value.folder : null;
-  return folders.value.filter((folder) => {
-    if (!movingFolder) return true;
-    return folder.id !== movingFolder.id && !folder.path.startsWith(`${movingFolder.path}/`);
-  });
-});
+const dialogItem = computed(() =>
+  dialogItems.value.length === 1 ? dialogItems.value[0] || null : null,
+);
+const folderOptions = computed(() =>
+  folders.value.filter((folder) =>
+    dialogItems.value.every((item) => item.kind !== "folder" || !isInsideFolder(folder, item.folder)),
+  ),
+);
+const checkedItems = computed(() =>
+  sortedItems.value.filter((item) => checkedKeys.value.has(rowKey(item))),
+);
+const checkedCount = computed(() => checkedItems.value.length);
+const allChecked = computed(
+  () => sortedItems.value.length > 0 && checkedCount.value === sortedItems.value.length,
+);
 const dialogTitle = computed(() => {
   if (dialogMode.value === "new-folder") return "New folder";
   if (dialogMode.value === "rename") return `Rename ${dialogItemName.value}`;
@@ -208,7 +220,9 @@ const dialogTitle = computed(() => {
   if (dialogMode.value === "delete") return `Delete ${dialogItemName.value}`;
   return "";
 });
-const dialogItemName = computed(() => (dialogItem.value ? itemName(dialogItem.value) : "item"));
+const dialogItemName = computed(() =>
+  dialogItem.value ? itemName(dialogItem.value) : countLabel(dialogItems.value.length),
+);
 const dialogSubmitLabel = computed(() => {
   if (dialogMode.value === "delete") return "Delete";
   if (dialogMode.value === "move") return "Move";
@@ -266,6 +280,7 @@ watch(viewMode, (mode) => {
 });
 
 watch(currentFolderId, () => {
+  clearChecked();
   selected.value = null;
   preview.value = null;
   void loadItems();
@@ -413,6 +428,48 @@ function closePreview() {
   rowMenuId.value = null;
 }
 
+function handleRowClick(event: MouseEvent, item: DriveItem, index: number) {
+  if (event.shiftKey || event.metaKey || event.ctrlKey || checkedKeys.value.size > 0) {
+    checkItem(item, index, event.shiftKey);
+    return;
+  }
+  activateItem(item);
+}
+
+// Shift extends from the last ticked row; otherwise the row toggles.
+function checkItem(item: DriveItem, index: number, extend = false) {
+  const next = new Set(checkedKeys.value);
+  if (extend && checkAnchorIndex !== null) {
+    const [from, to] = [Math.min(checkAnchorIndex, index), Math.max(checkAnchorIndex, index)];
+    for (const rangeItem of sortedItems.value.slice(from, to + 1)) next.add(rowKey(rangeItem));
+  } else {
+    const key = rowKey(item);
+    if (!next.delete(key)) next.add(key);
+    checkAnchorIndex = index;
+  }
+  checkedKeys.value = next;
+}
+
+function toggleAllChecked() {
+  checkedKeys.value = allChecked.value ? new Set() : new Set(sortedItems.value.map(rowKey));
+  checkAnchorIndex = null;
+}
+
+function clearChecked() {
+  checkedKeys.value = new Set();
+  checkAnchorIndex = null;
+}
+
+function handleListKeydown(event: KeyboardEvent) {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+    event.preventDefault();
+    checkedKeys.value = new Set(sortedItems.value.map(rowKey));
+  } else if (event.key === "Escape" && checkedKeys.value.size > 0) {
+    event.preventDefault();
+    clearChecked();
+  }
+}
+
 function activateItem(item: DriveItem) {
   if (item.kind === "folder") {
     openFolder(item.id);
@@ -433,7 +490,7 @@ function handleRowKeydown(event: KeyboardEvent, item: DriveItem) {
 
 function openNewFolderDialog() {
   dialogMode.value = "new-folder";
-  dialogItem.value = null;
+  dialogItems.value = [];
   dialogName.value = "";
   dialogFolderId.value = currentFolderId.value;
 }
@@ -441,34 +498,41 @@ function openNewFolderDialog() {
 function openRenameDialog(item: DriveItem | null = selectedItem.value) {
   if (!item) return;
   dialogMode.value = "rename";
-  dialogItem.value = item;
+  dialogItems.value = [item];
   dialogName.value = itemName(item);
   dialogFolderId.value = null;
   rowMenuId.value = null;
 }
 
-function openMoveDialog(item: DriveItem | null = selectedItem.value) {
-  if (!item) return;
+function openMoveDialog(target: DriveItem | DriveItem[] | null = selectedItem.value) {
+  const items = dialogTargets(target);
+  if (!items.length) return;
   dialogMode.value = "move";
-  dialogItem.value = item;
+  dialogItems.value = items;
   dialogName.value = "";
-  dialogFolderId.value = item.kind === "folder" ? item.folder.parentId : item.file.folderId;
+  dialogFolderId.value = itemFolderId(items[0]!);
   rowMenuId.value = null;
 }
 
-function openDeleteDialog(item: DriveItem | null = selectedItem.value) {
-  if (!item) return;
+function openDeleteDialog(target: DriveItem | DriveItem[] | null = selectedItem.value) {
+  const items = dialogTargets(target);
+  if (!items.length) return;
   dialogMode.value = "delete";
-  dialogItem.value = item;
+  dialogItems.value = items;
   dialogName.value = "";
   dialogFolderId.value = null;
   rowMenuId.value = null;
 }
 
+function dialogTargets(target: DriveItem | DriveItem[] | null): DriveItem[] {
+  if (!target) return [];
+  return Array.isArray(target) ? target : [target];
+}
+
 function closeDialog() {
   if (actionBusy.value) return;
   dialogMode.value = null;
-  dialogItem.value = null;
+  dialogItems.value = [];
   dialogName.value = "";
   dialogFolderId.value = null;
 }
@@ -488,12 +552,15 @@ async function submitDialog() {
     } else if (dialogMode.value === "rename" && dialogItem.value) {
       await renameItem(dialogItem.value, dialogName.value.trim());
       toastSuccess("Renamed.");
-    } else if (dialogMode.value === "move" && dialogItem.value) {
-      await moveItem(dialogItem.value, dialogFolderId.value);
-      toastSuccess("Moved.");
-    } else if (dialogMode.value === "delete" && dialogItem.value) {
-      await deleteItem(dialogItem.value);
-      toastSuccess("Deleted.");
+    } else if (dialogMode.value === "move" && dialogItems.value.length) {
+      const destination = dialogFolderId.value;
+      const items = dialogItems.value.filter((item) => canMoveInto(item, destination));
+      reportBulk("moved", items.length, await runBulk(items, (item) => moveItem(item, destination)));
+      clearChecked();
+    } else if (dialogMode.value === "delete" && dialogItems.value.length) {
+      const items = dialogItems.value;
+      reportBulk("deleted", items.length, await runBulk(items, deleteItem));
+      clearChecked();
       selected.value = null;
     }
     closeDialogAfterAction();
@@ -503,6 +570,117 @@ async function submitDialog() {
   } finally {
     actionBusy.value = false;
   }
+}
+
+// Runs one request per item, a few at a time, and returns how many failed.
+async function runBulk(
+  items: DriveItem[],
+  action: (item: DriveItem) => Promise<void>,
+): Promise<number> {
+  const queue = [...items];
+  let failed = 0;
+  const worker = async () => {
+    for (let item = queue.shift(); item; item = queue.shift()) {
+      try {
+        await action(item);
+      } catch {
+        failed += 1;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(BULK_CONCURRENCY, queue.length) }, worker));
+  return failed;
+}
+
+function reportBulk(verb: "moved" | "deleted", total: number, failed: number) {
+  const done = total - failed;
+  if (done > 0) toastSuccess(`${done === 1 ? "1 item" : `${done} items`} ${verb}.`);
+  if (failed > 0) {
+    error.value = `${failed} of ${countLabel(total)} could not be ${verb}. Try again.`;
+  }
+}
+
+function countLabel(count: number): string {
+  return count === 1 ? "1 item" : `${count} items`;
+}
+
+function itemFolderId(item: DriveItem): string | null {
+  return item.kind === "folder" ? item.folder.parentId : item.file.folderId;
+}
+
+function isInsideFolder(folder: DriveFolder, ancestor: DriveFolder): boolean {
+  return folder.id === ancestor.id || folder.path.startsWith(`${ancestor.path}/`);
+}
+
+// False when the item is already there, or a folder would land inside itself.
+function canMoveInto(item: DriveItem, folderId: string | null): boolean {
+  if (itemFolderId(item) === folderId) return false;
+  if (item.kind === "file" || folderId === null) return true;
+  const target = folders.value.find((folder) => folder.id === folderId);
+  return Boolean(target) && !isInsideFolder(target!, item.folder);
+}
+
+function isInternalDrag(): boolean {
+  return draggingKeys.value.length > 0;
+}
+
+// Dragging a ticked row carries every ticked row; any other row travels alone.
+function handleItemDragStart(event: DragEvent, item: DriveItem) {
+  const key = rowKey(item);
+  draggingKeys.value = checkedKeys.value.has(key) ? [...checkedKeys.value] : [key];
+  rowMenuId.value = null;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", itemName(item));
+  }
+}
+
+function handleItemDragEnd() {
+  draggingKeys.value = [];
+  dropTargetKey.value = null;
+}
+
+function droppableItems(folderId: string | null): DriveItem[] {
+  if (!isInternalDrag()) return [];
+  return combinedItems.value.filter(
+    (item) => draggingKeys.value.includes(rowKey(item)) && canMoveInto(item, folderId),
+  );
+}
+
+function handleFolderDragOver(event: DragEvent, folderId: string | null) {
+  if (droppableItems(folderId).length === 0) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  dropTargetKey.value = folderId ?? "root";
+}
+
+function handleFolderDragLeave(folderId: string | null) {
+  if (dropTargetKey.value === (folderId ?? "root")) dropTargetKey.value = null;
+}
+
+async function handleFolderDrop(event: DragEvent, folderId: string | null) {
+  const items = droppableItems(folderId);
+  handleItemDragEnd();
+  if (items.length === 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  actionBusy.value = true;
+  error.value = "";
+  try {
+    reportBulk("moved", items.length, await runBulk(items, (item) => moveItem(item, folderId)));
+    clearChecked();
+    await refreshFoldersAndItems();
+  } catch (e) {
+    error.value = apiErrorMessage(e, "Move failed");
+  } finally {
+    actionBusy.value = false;
+  }
+}
+
+function handleWorkspaceDragOver(event: DragEvent) {
+  if (isInternalDrag() || !event.dataTransfer?.types.includes("Files")) return;
+  event.preventDefault();
+  dropActive.value = true;
 }
 
 async function renameItem(item: DriveItem, name: string) {
@@ -531,7 +709,7 @@ async function deleteItem(item: DriveItem) {
 
 function closeDialogAfterAction() {
   dialogMode.value = null;
-  dialogItem.value = null;
+  dialogItems.value = [];
   dialogName.value = "";
   dialogFolderId.value = null;
 }
@@ -575,6 +753,8 @@ async function uploadFileList(list: FileList | File[] | null | undefined) {
 
 function handleDrop(event: DragEvent) {
   dropActive.value = false;
+  if (isInternalDrag()) return;
+  event.preventDefault();
   void uploadFileList(event.dataTransfer?.files);
 }
 
@@ -593,6 +773,10 @@ function closeRowMenu() {
 }
 
 function reconcileSelection() {
+  if (checkedKeys.value.size > 0) {
+    const visible = new Set(combinedItems.value.map(rowKey));
+    checkedKeys.value = new Set([...checkedKeys.value].filter((key) => visible.has(key)));
+  }
   if (!selected.value) return;
   const stillVisible = combinedItems.value.some(
     (item) => item.kind === selected.value?.kind && item.id === selected.value.id,
@@ -628,8 +812,8 @@ function itemTypeLabel(item: DriveItem): string {
 
 function thumbnailUrl(item: DriveItem): string | null {
   if (item.kind !== "file" || item.file.previewKind !== "image") return null;
-  if (item.file.size > THUMBNAIL_MAX_BYTES || failedThumbnails.value.has(item.id)) return null;
-  return contentUrl(item.file);
+  if (failedThumbnails.value.has(item.id)) return null;
+  return `${API_BASE}/files/${encodeURIComponent(item.id)}/thumbnail`;
 }
 
 function markThumbnailFailed(fileId: string) {
@@ -778,10 +962,10 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
       v-else
       class="files-workspace"
       :class="{ 'is-drop-active': dropActive }"
-      @dragenter.prevent="dropActive = true"
-      @dragover.prevent="dropActive = true"
-      @dragleave.prevent="dropActive = false"
-      @drop.prevent="handleDrop"
+      @dragenter="handleWorkspaceDragOver"
+      @dragover="handleWorkspaceDragOver"
+      @dragleave="dropActive = false"
+      @drop="handleDrop"
     >
       <div v-if="error || uploadProgress" class="files-status-line" aria-live="polite">
         <p v-if="error" class="files-status-line__error" role="alert">{{ error }}</p>
@@ -800,8 +984,11 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
           <button
             type="button"
             class="files-tree__row"
-            :class="{ 'is-active': currentFolderId === null }"
+            :class="{ 'is-active': currentFolderId === null, 'is-drop-target': dropTargetKey === 'root' }"
             @click="openFolder(null)"
+            @dragover="handleFolderDragOver($event, null)"
+            @dragleave="handleFolderDragLeave(null)"
+            @drop="handleFolderDrop($event, null)"
           >
             <UiIcon name="Folder" :size="16" aria-hidden="true" />
             <span>Files</span>
@@ -811,9 +998,15 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
             :key="folder.id"
             type="button"
             class="files-tree__row"
-            :class="{ 'is-active': currentFolderId === folder.id }"
+            :class="{
+              'is-active': currentFolderId === folder.id,
+              'is-drop-target': dropTargetKey === folder.id,
+            }"
             :style="{ '--folder-depth': String(folder.path.split('/').length + 1) }"
             @click="openFolder(folder.id)"
+            @dragover="handleFolderDragOver($event, folder.id)"
+            @dragleave="handleFolderDragLeave(folder.id)"
+            @drop="handleFolderDrop($event, folder.id)"
           >
             <UiIcon name="Folder" :size="16" aria-hidden="true" />
             <span>{{ folder.name }}</span>
@@ -821,7 +1014,58 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
         </aside>
 
         <section class="files-list-panel" aria-label="Current folder">
-          <div class="files-list-controls">
+          <div v-if="checkedCount > 0" class="files-list-controls files-selection-bar">
+            <div class="files-path">
+              <button
+                type="button"
+                class="files-icon-button"
+                aria-label="Clear selection"
+                title="Clear selection"
+                @click="clearChecked"
+              >
+                <UiIcon name="X" :size="16" aria-hidden="true" />
+              </button>
+              <strong aria-live="polite">{{ checkedCount }} selected</strong>
+              <button
+                v-if="!allChecked"
+                type="button"
+                class="files-text-button"
+                @click="toggleAllChecked"
+              >
+                Select all
+              </button>
+            </div>
+            <div class="files-list-controls__sort">
+              <Button
+                color="outline"
+                shape="soft"
+                size="compact"
+                type="button"
+                :disabled="actionBusy"
+                @click="openMoveDialog(checkedItems)"
+              >
+                <template #icon>
+                  <UiIcon name="Folder" :size="15" aria-hidden="true" />
+                </template>
+                Move
+              </Button>
+              <Button
+                color="danger"
+                shape="soft"
+                size="compact"
+                type="button"
+                :disabled="actionBusy"
+                @click="openDeleteDialog(checkedItems)"
+              >
+                <template #icon>
+                  <UiIcon name="Trash2" :size="15" aria-hidden="true" />
+                </template>
+                Delete
+              </Button>
+            </div>
+          </div>
+
+          <div v-else class="files-list-controls">
             <div class="files-path">
               <button
                 v-if="currentFolderId"
@@ -836,7 +1080,15 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
               <nav class="files-breadcrumbs" aria-label="Folder path">
                 <ol>
                   <li>
-                    <button v-if="currentFolderId" type="button" @click="openFolder(null)">
+                    <button
+                      v-if="currentFolderId"
+                      type="button"
+                      :class="{ 'is-drop-target': dropTargetKey === 'root' }"
+                      @click="openFolder(null)"
+                      @dragover="handleFolderDragOver($event, null)"
+                      @dragleave="handleFolderDragLeave(null)"
+                      @drop="handleFolderDrop($event, null)"
+                    >
                       Files
                     </button>
                     <span v-else aria-current="page">Files</span>
@@ -846,7 +1098,15 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
                     <span v-if="index === breadcrumbs.length - 1" aria-current="page">
                       {{ crumb.name }}
                     </span>
-                    <button v-else type="button" @click="openFolder(crumb.id)">
+                    <button
+                      v-else
+                      type="button"
+                      :class="{ 'is-drop-target': dropTargetKey === crumb.id }"
+                      @click="openFolder(crumb.id)"
+                      @dragover="handleFolderDragOver($event, crumb.id)"
+                      @dragleave="handleFolderDragLeave(crumb.id)"
+                      @drop="handleFolderDrop($event, crumb.id)"
+                    >
                       {{ crumb.name }}
                     </button>
                   </li>
@@ -920,11 +1180,22 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
           <div
             v-else
             class="files-list"
-            :class="{ 'files-list--grid': viewMode === 'grid' }"
+            :class="{ 'files-list--grid': viewMode === 'grid', 'is-selecting': checkedCount > 0 }"
             role="listbox"
             aria-label="Files and folders"
+            aria-multiselectable="true"
+            @keydown="handleListKeydown"
           >
-            <div class="files-list__header" aria-hidden="true">
+            <div class="files-list__header">
+              <label class="files-row__check">
+                <input
+                  type="checkbox"
+                  aria-label="Select all"
+                  :checked="allChecked"
+                  :indeterminate.prop="checkedCount > 0 && !allChecked"
+                  @change="toggleAllChecked"
+                />
+              </label>
               <span>Name</span>
               <span>Type</span>
               <span>Size</span>
@@ -932,16 +1203,39 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
               <span />
             </div>
             <div
-              v-for="item in sortedItems"
+              v-for="(item, index) in sortedItems"
               :key="rowKey(item)"
               class="files-row"
-              :class="{ 'is-selected': selected?.kind === item.kind && selected?.id === item.id }"
+              :class="{
+                'is-selected': selected?.kind === item.kind && selected?.id === item.id,
+                'is-checked': checkedKeys.has(rowKey(item)),
+                'is-dragging': draggingKeys.includes(rowKey(item)),
+                'is-drop-target': item.kind === 'folder' && dropTargetKey === item.id,
+                'files-row--folder': item.kind === 'folder',
+              }"
               role="option"
               tabindex="0"
-              :aria-selected="selected?.kind === item.kind && selected?.id === item.id"
-              @click="activateItem(item)"
+              draggable="true"
+              :aria-selected="
+                checkedKeys.has(rowKey(item)) ||
+                (selected?.kind === item.kind && selected?.id === item.id)
+              "
+              @click="handleRowClick($event, item, index)"
               @keydown="handleRowKeydown($event, item)"
+              @dragstart="handleItemDragStart($event, item)"
+              @dragend="handleItemDragEnd"
+              @dragover="item.kind === 'folder' && handleFolderDragOver($event, item.id)"
+              @dragleave="item.kind === 'folder' && handleFolderDragLeave(item.id)"
+              @drop="item.kind === 'folder' && handleFolderDrop($event, item.id)"
             >
+              <label class="files-row__check" @click.stop>
+                <input
+                  type="checkbox"
+                  :aria-label="`Select ${itemName(item)}`"
+                  :checked="checkedKeys.has(rowKey(item))"
+                  @click="checkItem(item, index, $event.shiftKey)"
+                />
+              </label>
               <div class="files-row__name">
                 <span class="files-thumb" aria-hidden="true">
                   <img
@@ -1391,6 +1685,14 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
   white-space: nowrap;
 }
 
+.files-tree__row.is-drop-target,
+.files-breadcrumbs button.is-drop-target,
+.files-row.is-drop-target {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+  outline-offset: -2px;
+  background: var(--ui-accent-soft, var(--color-bg-subtle));
+}
+
 .files-tree__row:hover,
 .files-tree__row:focus-visible,
 .files-tree__row.is-active {
@@ -1479,6 +1781,30 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
   font-weight: 650;
 }
 
+.files-selection-bar {
+  background: var(--ui-accent-soft, var(--color-bg-subtle));
+}
+
+.files-selection-bar strong {
+  font-size: 14px;
+}
+
+.files-text-button {
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--ui-radius-sm, 6px);
+  background: transparent;
+  color: var(--ui-accent, var(--color-accent));
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.files-text-button:hover,
+.files-text-button:focus-visible {
+  text-decoration: underline;
+}
+
 .files-list-controls__meta {
   display: flex;
   flex-shrink: 0;
@@ -1562,7 +1888,9 @@ button.files-icon-button {
 .files-list__header,
 .files-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(90px, 120px) 88px minmax(120px, 150px) 42px;
+  grid-template-columns:
+    20px minmax(220px, 1fr) minmax(90px, 120px) 88px minmax(120px, 150px)
+    42px;
   gap: 10px;
   align-items: center;
   min-height: 46px;
@@ -1592,6 +1920,30 @@ button.files-icon-button {
 .files-row:focus-visible,
 .files-row.is-selected {
   background: var(--ui-surface-muted, var(--color-bg-subtle));
+}
+
+.files-row.is-checked {
+  background: var(--ui-accent-soft, var(--color-bg-subtle));
+}
+
+.files-row.is-dragging {
+  opacity: 0.45;
+}
+
+.files-row__check {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.files-row__check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ui-accent, var(--color-accent));
+  cursor: pointer;
 }
 
 .files-row:focus-visible {
@@ -1634,10 +1986,10 @@ button.files-icon-button {
 
 .files-list--grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   align-content: start;
-  gap: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 10px;
 }
 
 .files-list--grid .files-list__header,
@@ -1646,35 +1998,99 @@ button.files-icon-button {
   display: none;
 }
 
+/* A card is the picture with one caption line; its controls float over the picture. */
 .files-list--grid .files-row {
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 6px 8px;
+  align-items: baseline;
   min-height: 0;
-  padding: 8px;
-  border: 1px solid var(--ui-border, var(--color-border));
+  padding: 6px 6px 8px;
+  border: none;
   border-radius: var(--ui-radius-md, 8px);
-  background: var(--ui-surface, var(--color-bg));
 }
 
-.files-list--grid .files-row:hover,
-.files-list--grid .files-row.is-selected {
-  border-color: var(--ui-accent, var(--color-accent));
+.files-list--grid .files-row.is-checked {
+  background: var(--ui-accent-soft, var(--color-bg-subtle));
+}
+
+.files-list--grid .files-row.is-selected .files-thumb,
+.files-list--grid .files-row.is-checked .files-thumb {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+  outline-offset: -2px;
 }
 
 .files-list--grid .files-row__name {
-  grid-column: 1 / -1;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
+  display: contents;
 }
 
 .files-list--grid .files-thumb {
-  flex: none;
+  grid-column: 1 / -1;
   width: 100%;
   height: auto;
   aspect-ratio: 4 / 3;
   background: var(--ui-surface-muted, var(--color-bg-subtle));
   color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.files-list--grid .files-row__label {
+  padding-left: 2px;
+  color: var(--ui-text, var(--color-text));
+  font-weight: 650;
+}
+
+.files-list--grid .files-row__size {
+  padding-right: 2px;
+  font-size: 11px;
+}
+
+.files-list--grid .files-row--folder .files-row__size {
+  display: none;
+}
+
+.files-list--grid .files-row__check,
+.files-list--grid .files-row__actions {
+  position: absolute;
+  top: 12px;
+  z-index: 1;
+  opacity: 0;
+}
+
+.files-list--grid .files-row__check {
+  left: 12px;
+  width: 26px;
+  height: 26px;
+}
+
+.files-list--grid .files-row__actions {
+  right: 12px;
+}
+
+.files-list--grid .files-row__check,
+.files-list--grid .files-row__actions .files-icon-button {
+  border: none;
+  border-radius: var(--ui-radius-sm, 6px);
+  background: color-mix(in oklab, var(--ui-surface, var(--color-bg)), transparent 12%);
+}
+
+.files-list--grid .files-row__actions .files-icon-button {
+  width: 26px;
+  height: 26px;
+}
+
+.files-list--grid.is-selecting .files-row__check,
+.files-list--grid .files-row:hover .files-row__check,
+.files-list--grid .files-row:focus-within .files-row__check,
+.files-list--grid .files-row:hover .files-row__actions,
+.files-list--grid .files-row:focus-within .files-row__actions,
+.files-list--grid .files-row__actions:has([aria-expanded="true"]) {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .files-list--grid .files-row__check,
+  .files-list--grid .files-row__actions {
+    opacity: 1;
+  }
 }
 
 .files-row__actions {
@@ -2014,8 +2430,8 @@ button.files-icon-button {
   }
 
   .files-list:not(.files-list--grid) .files-row {
-    grid-template-columns: minmax(0, 1fr) 42px;
-    gap: 6px;
+    grid-template-columns: 24px minmax(0, 1fr) 42px;
+    gap: 8px;
     min-height: 58px;
   }
 
@@ -2024,7 +2440,7 @@ button.files-icon-button {
   }
 
   .files-list:not(.files-list--grid) .files-row__actions {
-    grid-column: 2;
+    grid-column: 3;
     grid-row: 1;
   }
 

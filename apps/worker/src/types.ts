@@ -112,6 +112,8 @@ export interface ImageTransformationsPipeline {
   output(options: {
     format: "image/jpeg" | "image/webp";
     quality?: number;
+    /** false keeps only the first frame of an animated image. */
+    anim?: boolean;
   }): Promise<{ response(): Response }>;
 }
 

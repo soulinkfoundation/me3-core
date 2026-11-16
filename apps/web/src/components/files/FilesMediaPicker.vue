@@ -217,7 +217,7 @@ function confirm() {
               @click="toggle(file)"
             >
               <video v-if="mediaKind(file) === 'video'" :src="`${contentUrl(file)}#t=0.1`" preload="metadata" muted playsinline />
-              <img v-else :src="contentUrl(file)" alt="" loading="lazy">
+              <img v-else :src="`${API_BASE}/files/${encodeURIComponent(file.id)}/thumbnail`" alt="" loading="lazy" decoding="async">
               <span v-if="mediaKind(file) === 'video'" class="files-picker__badge">
                 <UiIcon name="Play" :size="11" /> {{ extension(file) }}
               </span>

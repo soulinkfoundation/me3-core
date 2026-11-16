@@ -5,6 +5,7 @@ import {
   createDriveMultipartUpload,
   deleteDriveFile,
   getDriveFileContentResponse,
+  getDriveFileThumbnailResponse,
   updateDriveFile,
   uploadDriveMultipartPart,
 } from "./files";
@@ -222,7 +223,8 @@ describe("deleteDriveFile", () => {
       fileId: "file-1",
     });
 
-    expect(deleteObject).not.toHaveBeenCalled();
+    expect(deleteObject).not.toHaveBeenCalledWith(readyFile.storage_key);
+    expect(deleteObject).toHaveBeenCalledWith("drive-thumbnails/owner-1/file-1.webp");
     expect(update).toHaveBeenCalledTimes(1);
   });
 });
@@ -280,6 +282,78 @@ describe("getDriveFileContentResponse", () => {
     expect(response.status).toBe(416);
     expect(response.headers.get("Content-Range")).toBe("bytes */42");
     expect(getObject).not.toHaveBeenCalled();
+  });
+});
+
+// Synthetic storage; the Images service is simulated.
+describe("getDriveFileThumbnailResponse", () => {
+  const thumbnailKey = "drive-thumbnails/owner-1/file-1.webp";
+  const original = () => ({ body: new Uint8Array(42), size: 42, httpEtag: '"etag-1"', writeHttpMetadata() {} });
+  function images(response: Response) {
+    const output = vi.fn(async () => ({ response: () => response }));
+    const transform = vi.fn(() => ({ output }));
+    return { binding: { input: vi.fn(() => ({ transform })) }, transform, output };
+  }
+
+  it("resizes the original once, stores the result and serves it for long-term caching", async () => {
+    const { env, getObject, putObject } = createEnv({
+      getObject: async (key) => (key === thumbnailKey ? null : original()),
+    });
+    const { binding, transform } = images(new Response(new Uint8Array(7)));
+    env.IMAGES = binding as unknown as Env["IMAGES"];
+
+    const response = await getDriveFileThumbnailResponse(env, "owner-1", "file-1");
+
+    expect(response.headers.get("Content-Type")).toBe("image/webp");
+    expect(response.headers.get("Cache-Control")).toBe("private, max-age=31536000, immutable");
+    expect((await response.arrayBuffer()).byteLength).toBe(7);
+    expect(transform).toHaveBeenCalledWith({ width: 480, fit: "scale-down" });
+    expect(getObject).toHaveBeenCalledWith(readyFile.storage_key);
+    expect(putObject).toHaveBeenCalledWith(thumbnailKey, expect.any(ArrayBuffer), {
+      httpMetadata: { contentType: "image/webp" },
+    });
+  });
+
+  it("serves a stored thumbnail without reading the original or resizing again", async () => {
+    const { env, getObject, putObject } = createEnv({
+      getObject: async () => ({ body: new Uint8Array(7), size: 7 }),
+    });
+    const { binding } = images(new Response(new Uint8Array(7)));
+    env.IMAGES = binding as unknown as Env["IMAGES"];
+
+    const response = await getDriveFileThumbnailResponse(env, "owner-1", "file-1");
+
+    expect(response.headers.get("Content-Length")).toBe("7");
+    expect(getObject).toHaveBeenCalledTimes(1);
+    expect(getObject).toHaveBeenCalledWith(thumbnailKey);
+    expect(binding.input).not.toHaveBeenCalled();
+    expect(putObject).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the original when the image cannot be resized", async () => {
+    const { env, putObject } = createEnv({
+      getObject: async (key) => (key === thumbnailKey ? null : original()),
+    });
+    env.IMAGES = images(new Response(null, { status: 415 })).binding as unknown as Env["IMAGES"];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const response = await getDriveFileThumbnailResponse(env, "owner-1", "file-1");
+
+    expect(response.headers.get("Cache-Control")).toBe("private, max-age=300");
+    expect(response.headers.get("Content-Length")).toBe("42");
+    expect(putObject).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("serves the original when the install has no Images service", async () => {
+    const { env } = createEnv({
+      getObject: async (key) => (key === thumbnailKey ? null : original()),
+    });
+
+    const response = await getDriveFileThumbnailResponse(env, "owner-1", "file-1");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Length")).toBe("42");
   });
 });
 
