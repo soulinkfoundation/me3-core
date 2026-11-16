@@ -50,8 +50,8 @@ export function registerContactsRoutes(app: AppHono, deps: ContactsRouteDeps) {
       return c.json({ error: `Import up to ${OUTREACH_IMPORT_BATCH} people at a time.` }, 400);
     }
     // A list names people; it never picks them by contact ID.
-    const rows = prospects.map(({ name, email, organisation, offer, status, followUpAt, notes }) => ({
-      name, email, organisation, offer, status, followUpAt, notes,
+    const rows = prospects.map(({ name, email, phone, organisation, offer, status, followUpAt, notes }) => ({
+      name, email, phone, organisation, offer, status, followUpAt, notes,
     }));
     const result = await saveOutreachProspects(c.env, ownerId, rows, new Date(), {
       limit: OUTREACH_IMPORT_BATCH,

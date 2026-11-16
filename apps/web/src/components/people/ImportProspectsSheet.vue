@@ -101,7 +101,7 @@ async function runImport() {
           <input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" @change="pickFile" />
         </label>
         <p class="import-prospects__hint">
-          With a heading row, ME3 reads name, organisation, email, offer, status, follow up and notes.
+          With a heading row, ME3 reads name, organisation, email, phone, offer, status, follow up and notes.
         </p>
         <div v-if="parsed.rows.length" class="import-prospects__preview" aria-live="polite">
           <p class="import-prospects__summary">
@@ -110,7 +110,7 @@ async function runImport() {
           <ul class="import-prospects__list">
             <li v-for="(row, index) in preview" :key="index">
               <span>{{ row.organisation && row.organisation !== row.name ? `${row.organisation} · ${row.name}` : row.name }}</span>
-              <span class="import-prospects__reason">{{ [row.email, row.status].filter(Boolean).join(" · ") }}</span>
+              <span class="import-prospects__reason">{{ [row.email, row.phone, row.status].filter(Boolean).join(" · ") }}</span>
             </li>
             <li v-if="parsed.rows.length > preview.length" class="import-prospects__reason">
               and {{ parsed.rows.length - preview.length }} more

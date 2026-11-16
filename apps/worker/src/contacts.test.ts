@@ -893,6 +893,24 @@ describe("importing a list of prospects", () => {
     expect(raw.prepare("SELECT notes FROM contacts WHERE id = 'p-open'").get()).toEqual({ notes: "Spoke to John" });
   });
 
+  // Failure modes: the route drops the phone; a list's number replaces one the owner saved.
+  it("saves a phone from the list, without replacing one the owner already has", async () => {
+    const { raw, env, addContact } = fixture();
+    addContact("p-open", "alice", "IMTA", "office@imta.example", { relationship: "prospect", outreach_status: "sent", phone: "087 000 0000" });
+
+    const response = await importApp(env).post({ prospects: [
+      { name: "AFPA", email: "info@afpa.example", phone: " 01 412 4917 " },
+      { name: "IMTA", email: "office@imta.example", phone: "01 999 9999" },
+      { name: "EMCC", phone: 12345 },
+    ] });
+    expect(response.status).toBe(200);
+    expect(raw.prepare("SELECT name, phone FROM contacts ORDER BY name").all()).toEqual([
+      { name: "AFPA", phone: "01 412 4917" },
+      { name: "EMCC", phone: null },
+      { name: "IMTA", phone: "087 000 0000" },
+    ]);
+  });
+
   it("imports through the owner's API, and refuses a signed-out caller or an oversized batch", async () => {
     const { raw, env, addContact } = fixture();
     addContact("c-bob", "bob", "Bob's", "office@iacp.example");

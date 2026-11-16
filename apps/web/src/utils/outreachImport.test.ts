@@ -56,6 +56,16 @@ describe("reading a pasted or uploaded list of prospects", () => {
     expect(parseProspectList("  \n").rows).toEqual([]);
   });
 
+  // Failure mode: a Phone, Tel or Mobile column is ignored, so numbers never reach People.
+  it("reads a phone column under the owner's own heading", () => {
+    expect(parseProspectList("Organisation,Phone\nAFPA,01 412 4917\n").rows).toEqual([
+      { name: "AFPA", organisation: "AFPA", phone: "01 412 4917" },
+    ]);
+    expect(parseProspectList("Name\tTel\tMobile\nIHF\t\t087 118 0351\n").rows).toEqual([
+      { name: "IHF", phone: "087 118 0351" },
+    ]);
+  });
+
   it("splits a long list into batches the server accepts", () => {
     const rows = Array.from({ length: 120 }, (_, index) => ({ name: `Org ${index}` }));
     expect(importBatches(rows).map((batch) => batch.length)).toEqual([50, 50, 20]);

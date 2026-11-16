@@ -314,6 +314,7 @@ export type OutreachProspectInput = {
   contactId?: unknown;
   name?: unknown;
   email?: unknown;
+  phone?: unknown;
   organisation?: unknown;
   offer?: unknown;
   status?: unknown;
@@ -446,6 +447,7 @@ export async function saveOutreachProspects(
     const followUpAt = days ? new Date(now.getTime() + days * DAY_MS).toISOString() : followUpDate(input.followUpAt);
     const status = outreachStatusFromWords(input.status);
     const notes = normalizeNullableText(input.notes)?.slice(0, 5000) ?? null;
+    const phone = (typeof input.phone === "string" ? normalizeNullableText(input.phone)?.slice(0, 40) : null) ?? null;
     const fields = {
       ...(input.organisation !== undefined ? { organisation: input.organisation } : {}),
       ...(input.offer !== undefined ? { offer: input.offer } : {}),
@@ -469,6 +471,7 @@ export async function saveOutreachProspects(
         ...fields,
         // Notes the owner already wrote are never replaced by a list's.
         ...(notes && !existing.notes?.trim() ? { notes } : {}),
+        ...(phone && !existing.phone?.trim() ? { phone } : {}),
         ...(status ? { outreachStatus: status } : existing.outreachStatus ? {} : { outreachStatus: "new" }),
       });
       if ("error" in updated) skipped.push({ name: existing.name, reason: updated.error });
@@ -489,6 +492,7 @@ export async function saveOutreachProspects(
       relationship: "prospect",
       outreachStatus: status || "new",
       ...(notes ? { notes } : {}),
+      ...(phone ? { phone } : {}),
       ...fields,
     });
     if ("error" in created) skipped.push({ name, reason: created.error });

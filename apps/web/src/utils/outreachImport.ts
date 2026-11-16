@@ -4,6 +4,7 @@
 export type ProspectImportRow = {
   name: string;
   email?: string;
+  phone?: string;
   organisation?: string;
   offer?: string;
   /** The list's own word for it ("Sent", "Agreed"); the server maps it. */
@@ -20,6 +21,7 @@ export const IMPORT_BATCH_SIZE = 50;
 const HEADERS: Record<Field, string[]> = {
   name: ["name", "full name", "contact", "contact name", "person"],
   email: ["email", "e mail", "email address", "e mail address"],
+  phone: ["phone", "phone number", "telephone", "tel", "mobile", "mobile number"],
   organisation: ["organisation", "organization", "org", "company", "business", "association"],
   offer: ["offer", "offered", "what was offered", "pitch"],
   status: ["status", "stage", "outcome"],
@@ -101,6 +103,7 @@ function rowFrom(values: Partial<Record<Field, string>>): ProspectImportRow | nu
   return {
     name,
     ...(email ? { email } : {}),
+    ...(values.phone ? { phone: values.phone } : {}),
     ...(organisation ? { organisation } : {}),
     ...(values.offer ? { offer: values.offer } : {}),
     ...(values.status ? { status: values.status } : {}),
