@@ -1,0 +1,2668 @@
+{
+  "$comment": "New post cases (me3-s0ib). Shared by me3-core web unit tests and me3-ios unit tests: copy this file, don't edit the copy. Rows are in the order of the input accounts.",
+  "cases": [
+    {
+      "name": "Text only",
+      "input": {
+        "type": "text",
+        "media": {
+          "items": []
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "Text post",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "Text post",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Needs an image or video",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": true,
+          "ticked": true,
+          "label": "Post on your Page",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Video only",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Video only",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Images, none picked yet",
+      "input": {
+        "type": "images",
+        "media": {
+          "items": []
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "Up to 4 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "Up to 20 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Up to 20 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": true,
+          "ticked": true,
+          "label": "Up to 10 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Video only",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Video only",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "6 images",
+      "input": {
+        "type": "images",
+        "media": {
+          "items": [
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image"
+          ],
+          "firstKind": "image"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "First 4 of 6 images",
+          "reason": null,
+          "tone": "warn",
+          "actions": [
+            {
+              "kind": "reorder",
+              "label": "Reorder to choose"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "6 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Carousel of 6",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": true,
+          "ticked": true,
+          "label": "6 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Video only",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Video only",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Video 0:48, vertical",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 48,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Reel",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Can't take video yet",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Short, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": "short",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video. You choose who sees it on the next screen.",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Video 3:20, vertical",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 200,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Reel",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Can't take video yet",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Regular video, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": "regular",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video. You choose who sees it on the next screen.",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Video 0:48, landscape",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 48,
+            "width": 1920,
+            "height": 1080
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Reel",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": "Reels show best vertical (9:16).",
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Can't take video yet",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Regular video, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": "regular",
+          "hint": "Square or vertical would make it a Short.",
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video. You choose who sees it on the next screen.",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": "TikTok shows best vertical (9:16).",
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Video 21:00, too long for X and Instagram",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 1260,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Too long: X takes up to 20:00",
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "pick_cut",
+              "label": "Pick a shorter cut"
+            }
+          ],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Too long: Instagram takes up to 15:00",
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "pick_cut",
+              "label": "Pick a shorter cut"
+            }
+          ],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Can't take video yet",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Regular video, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": "regular",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Too long: TikTok takes up to 10:00 on this account",
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "pick_cut",
+              "label": "Pick a shorter cut"
+            }
+          ],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Video 0:02, too short for LinkedIn and Instagram",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 2,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Too short: LinkedIn needs at least 0:03",
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "pick_cut",
+              "label": "Pick a longer cut"
+            }
+          ],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Too short: Instagram needs at least 0:03",
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "pick_cut",
+              "label": "Pick a longer cut"
+            }
+          ],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Can't take video yet",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Short, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": "short",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video. You choose who sees it on the next screen.",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Video 12:00, too long for this TikTok account",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 720,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Reel",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Can't take video yet",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Regular video, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": "regular",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Too long: TikTok takes up to 10:00 on this account",
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "pick_cut",
+              "label": "Pick a shorter cut"
+            }
+          ],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "TikTok length unknown",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 48,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": null
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Reel",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Can't take video yet",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Short, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": "short",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video. You choose who sees it on the next screen.",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": true
+        }
+      ]
+    },
+    {
+      "name": "Video metadata unreadable",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": null,
+            "width": null,
+            "height": null
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Reel",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Can't take video yet",
+          "tone": "normal",
+          "actions": [],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video. You choose who sees it on the next screen.",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Images, then a video",
+      "input": {
+        "type": "images",
+        "media": {
+          "items": [
+            "image",
+            "image",
+            "image",
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 31,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "image"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "3 images, not the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "swap_to_video",
+              "label": "Send the video instead"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "3 images, not the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "swap_to_video",
+              "label": "Send the video instead"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Carousel: 3 images and the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": true,
+          "ticked": true,
+          "label": "3 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": false,
+          "label": "Would get just the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            3
+          ],
+          "format": "short_video",
+          "youtubeKind": "short",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": false,
+          "label": "Would get just the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            3
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Images, then a video, X swapped to the video",
+      "input": {
+        "type": "images",
+        "media": {
+          "items": [
+            "image",
+            "image",
+            "image",
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 31,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "image"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ],
+        "swapped": [
+          "x-1"
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "The video, not the images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "swap_to_images",
+              "label": "Send the images instead"
+            }
+          ],
+          "items": [
+            3
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "3 images, not the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "swap_to_video",
+              "label": "Send the video instead"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Carousel: 3 images and the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": true,
+          "ticked": true,
+          "label": "3 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": false,
+          "label": "Would get just the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            3
+          ],
+          "format": "short_video",
+          "youtubeKind": "short",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": false,
+          "label": "Would get just the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            3
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Video, then images",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video",
+            "image",
+            "image"
+          ],
+          "video": {
+            "durationSeconds": 31,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "The video, not the images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "swap_to_images",
+              "label": "Send the images instead"
+            }
+          ],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "The video, not the images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "swap_to_images",
+              "label": "Send the images instead"
+            }
+          ],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Carousel: 2 images and the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": true,
+          "ticked": true,
+          "label": "2 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            1,
+            2
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Short, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": "short",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video. You choose who sees it on the next screen.",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "10 images and a video",
+      "input": {
+        "type": "images",
+        "media": {
+          "items": [
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 31,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "image"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "First 4 of 10 images, not the video",
+          "reason": null,
+          "tone": "warn",
+          "actions": [
+            {
+              "kind": "reorder",
+              "label": "Reorder to choose"
+            },
+            {
+              "kind": "swap_to_video",
+              "label": "Send the video instead"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "10 images, not the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "swap_to_video",
+              "label": "Send the video instead"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Carousel: 10 images and the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": true,
+          "ticked": true,
+          "label": "10 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": false,
+          "label": "Would get just the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            10
+          ],
+          "format": "short_video",
+          "youtubeKind": "short",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": false,
+          "label": "Would get just the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            10
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "20 images and a video",
+      "input": {
+        "type": "images",
+        "media": {
+          "items": [
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 31,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "image"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          },
+          {
+            "id": "instagram-1",
+            "network": "instagram"
+          },
+          {
+            "id": "facebook-1",
+            "network": "facebook"
+          },
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          },
+          {
+            "id": "tiktok-1",
+            "network": "tiktok",
+            "tiktokMaxVideoSeconds": 600
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "First 4 of 20 images, not the video",
+          "reason": null,
+          "tone": "warn",
+          "actions": [
+            {
+              "kind": "reorder",
+              "label": "Reorder to choose"
+            },
+            {
+              "kind": "swap_to_video",
+              "label": "Send the video instead"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "20 images, not the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "swap_to_video",
+              "label": "Send the video instead"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "instagram-1",
+          "network": "instagram",
+          "canTake": true,
+          "ticked": true,
+          "label": "Carousel, first 20 of 21",
+          "reason": null,
+          "tone": "warn",
+          "actions": [
+            {
+              "kind": "reorder",
+              "label": "Reorder to choose"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "facebook-1",
+          "network": "facebook",
+          "canTake": true,
+          "ticked": true,
+          "label": "First 10 of 20 images",
+          "reason": null,
+          "tone": "warn",
+          "actions": [
+            {
+              "kind": "reorder",
+              "label": "Reorder to choose"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": false,
+          "label": "Would get just the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            20
+          ],
+          "format": "short_video",
+          "youtubeKind": "short",
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "tiktok-1",
+          "network": "tiktok",
+          "canTake": true,
+          "ticked": false,
+          "label": "Would get just the video",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            20
+          ],
+          "format": "short_video",
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Two accounts on one platform",
+      "input": {
+        "type": "images",
+        "media": {
+          "items": [
+            "image",
+            "image",
+            "image",
+            "image",
+            "image",
+            "image"
+          ],
+          "firstKind": "image"
+        },
+        "accounts": [
+          {
+            "id": "x-1",
+            "network": "x"
+          },
+          {
+            "id": "x-2",
+            "network": "x"
+          },
+          {
+            "id": "linkedin-1",
+            "network": "linkedin"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "x-1",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "First 4 of 6 images",
+          "reason": null,
+          "tone": "warn",
+          "actions": [
+            {
+              "kind": "reorder",
+              "label": "Reorder to choose"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "x-2",
+          "network": "x",
+          "canTake": true,
+          "ticked": true,
+          "label": "First 4 of 6 images",
+          "reason": null,
+          "tone": "warn",
+          "actions": [
+            {
+              "kind": "reorder",
+              "label": "Reorder to choose"
+            }
+          ],
+          "items": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        },
+        {
+          "accountId": "linkedin-1",
+          "network": "linkedin",
+          "canTake": true,
+          "ticked": true,
+          "label": "6 images",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    }
+  ]
+}

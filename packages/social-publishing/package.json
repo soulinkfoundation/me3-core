@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./composer": "./src/composer.ts",
+    "./fixtures/new-post-cases.json": "./fixtures/new-post-cases.json"
   },
   "scripts": {
     "build": "tsc --noEmit",

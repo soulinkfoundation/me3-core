@@ -1,3 +1,4 @@
+import { SOCIAL_PLATFORMS } from "./platforms";
 import {
   adapterFor,
   normalizeTikTokDeliveryOptions,
@@ -117,6 +118,9 @@ export {
   canScheduleSocialPlatform,
   getSocialPlatformCapabilities,
   socialPlatformCapabilities,
+  VIDEO_DURATION_SECONDS,
+  YOUTUBE_SHORT_MAX_SECONDS,
+  YOUTUBE_UNVERIFIED_MAX_SECONDS,
   type SocialContentType,
   type SocialDeliveryMode,
   type SocialMediaKind,
@@ -237,15 +241,7 @@ export type ManagedXAllowance = {
   resetsAt: string;
 };
 
-export const SOCIAL_PLATFORMS = [
-  "x",
-  "linkedin",
-  "instagram",
-  "instagram_business",
-  "facebook",
-  "youtube",
-  "tiktok",
-] as const;
+export { SOCIAL_PLATFORMS };
 
 export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 
@@ -5735,3 +5731,20 @@ function parseStringArray(raw: string | null): string[] {
     return [];
   }
 }
+
+export {
+  composerImageLimit,
+  composerRows,
+  formatVideoDuration,
+  youtubeVideoKind,
+  type ComposerAccountInput,
+  type ComposerAction,
+  type ComposerActionKind,
+  type ComposerInput,
+  type ComposerMediaInput,
+  type ComposerMediaKind,
+  type ComposerNetwork,
+  type ComposerPostType,
+  type ComposerRow,
+  type ComposerVideoInfo,
+} from "./composer";

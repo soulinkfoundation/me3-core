@@ -1,4 +1,4 @@
-import type { SocialPlatform } from "./index";
+import type { SocialPlatform } from "./platforms";
 
 export type SocialContentType = "text" | "image" | "carousel" | "short_video" | "document";
 export type SocialDeliveryMode = "direct_publish" | "provider_draft" | "draft_only";
@@ -15,6 +15,14 @@ export type SocialPlatformContentRule = {
   allowedMimeTypes: string[];
   maxBytesPerItem: number | null;
   guidance: string | null;
+  /** Shortest video the platform accepts, in seconds. Null when it states none. */
+  minVideoDurationSeconds?: number | null;
+  /**
+   * Longest video the platform accepts, in seconds. Null when there's no fixed limit:
+   * YouTube takes any length (15 minutes and over needs a verified channel), and TikTok's
+   * limit comes from creator_info for each account at post time.
+   */
+  maxVideoDurationSeconds?: number | null;
 };
 
 export type SocialPlatformCapabilities = {
@@ -85,6 +93,7 @@ const shortVideoRule = (
   allowedMimeTypes: string[],
   maxBytesPerItem: number,
   guidance: string,
+  duration: { min: number | null; max: number | null },
 ): SocialPlatformContentRule => ({
   contentType: "short_video",
   label: "Short video",
@@ -96,7 +105,29 @@ const shortVideoRule = (
   allowedMimeTypes,
   maxBytesPerItem,
   guidance,
+  minVideoDurationSeconds: duration.min,
+  maxVideoDurationSeconds: duration.max,
 });
+
+/**
+ * Video lengths from each platform's API docs, checked 2026-11-16 (me3-s0ib):
+ * X tweet_video 0.5 s to 20 min (125 min for Premium, which ME3 can't see; 140 s is DMs only),
+ * LinkedIn Videos API 3 s to 30 min, Instagram Reels 3 s to 15 min, TikTok per account from
+ * creator_info (the API allows up to 10 min). YouTube takes any length.
+ */
+export const VIDEO_DURATION_SECONDS = {
+  x: { min: 0.5, max: 20 * 60 },
+  linkedin: { min: 3, max: 30 * 60 },
+  instagram: { min: 3, max: 15 * 60 },
+  youtube: { min: null, max: null },
+  tiktok: { min: null, max: null },
+} as const;
+
+/** YouTube files a video as a Short when it's this long or shorter and square or vertical. */
+export const YOUTUBE_SHORT_MAX_SECONDS = 3 * 60;
+
+/** YouTube needs a verified channel (longUploadsStatus allowed) above this length. */
+export const YOUTUBE_UNVERIFIED_MAX_SECONDS = 15 * 60;
 
 const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> = {
   linkedin: {
@@ -124,6 +155,7 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
         ["video/mp4"],
         500 * 1024 * 1024,
         "Publishes one MP4 video (75 KB to 500 MB). LinkedIn takes one video or images, not both.",
+        VIDEO_DURATION_SECONDS.linkedin,
       ),
       {
         contentType: "document",
@@ -156,6 +188,7 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
         ["video/mp4"],
         512 * 1024 * 1024,
         "Publishes one MP4 video. X accepts one video or up to four images per post.",
+        VIDEO_DURATION_SECONDS.x,
       ),
     ],
     reason: null,
@@ -172,8 +205,8 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
       {
         ...carouselRule(
           2_200,
-          10,
-          "Two to ten photos and videos, in order, publish as a carousel.",
+          20,
+          "Two to twenty photos and videos, in order, publish as a carousel.",
           ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime"],
         ),
         allowedMediaKinds: ["image", "video"],
@@ -183,6 +216,7 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
         ["video/mp4", "video/quicktime"],
         1024 * 1024 * 1024,
         "Publishes as an Instagram Reel. A vertical 9:16 video is recommended.",
+        VIDEO_DURATION_SECONDS.instagram,
       ),
     ],
     reason: null,
@@ -199,8 +233,8 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
       {
         ...carouselRule(
           2_200,
-          10,
-          "Two to ten photos and videos, in order, publish as a carousel.",
+          20,
+          "Two to twenty photos and videos, in order, publish as a carousel.",
           ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime"],
         ),
         allowedMediaKinds: ["image", "video"],
@@ -210,6 +244,7 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
         ["video/mp4", "video/quicktime"],
         1024 * 1024 * 1024,
         "Publishes as an Instagram Reel. A vertical 9:16 video is recommended.",
+        VIDEO_DURATION_SECONDS.instagram,
       ),
     ],
     reason: null,
@@ -241,6 +276,7 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
         ["video/*", "application/octet-stream"],
         256 * 1024 * 1024 * 1024,
         "Choose the audience, visibility, and content disclosures before uploading. YouTube derives Shorts eligibility from the video.",
+        VIDEO_DURATION_SECONDS.youtube,
       ),
     ],
     reason: null,
@@ -259,6 +295,7 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
         ["video/mp4", "video/quicktime", "video/webm"],
         4 * 1024 * 1024 * 1024,
         "TikTok takes one vertical video. Choose who can see it before you post.",
+        VIDEO_DURATION_SECONDS.tiktok,
       ),
     ],
     reason: null,

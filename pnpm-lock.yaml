@@ -52,6 +52,9 @@ importers:
       '@me3-core/plugin-mission-control':
         specifier: workspace:*
         version: link:../../packages/mission-control
+      '@me3-core/plugin-social-publishing':
+        specifier: workspace:*
+        version: link:../../packages/social-publishing
       '@me3-core/site-renderer':
         specifier: workspace:*
         version: link:../../packages/site-renderer

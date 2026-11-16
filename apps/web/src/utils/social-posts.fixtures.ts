@@ -88,7 +88,7 @@ export const capabilities: SocialPlatformCapabilities[] = [
     reason: null,
     contentRules: [
       { contentType: "image", label: "", requiresText: true, maxTextCharacters: 2200, minMediaItems: 1, maxMediaItems: 10, allowedMediaKinds: ["image"], allowedMimeTypes: ["image/jpeg"], maxBytesPerItem: null, guidance: null },
-      { contentType: "carousel", label: "", requiresText: true, maxTextCharacters: 2200, minMediaItems: 2, maxMediaItems: 10, allowedMediaKinds: ["image", "video"], allowedMimeTypes: ["image/jpeg", "video/mp4", "video/quicktime"], maxBytesPerItem: null, guidance: "Two to ten photos and videos, in order, publish as a carousel." },
+      { contentType: "carousel", label: "", requiresText: true, maxTextCharacters: 2200, minMediaItems: 2, maxMediaItems: 20, allowedMediaKinds: ["image", "video"], allowedMimeTypes: ["image/jpeg", "video/mp4", "video/quicktime"], maxBytesPerItem: null, guidance: "Two to twenty photos and videos, in order, publish as a carousel." },
       { contentType: "short_video", label: "", requiresText: true, maxTextCharacters: 2200, minMediaItems: 1, maxMediaItems: 1, allowedMediaKinds: ["video"], allowedMimeTypes: ["video/mp4", "video/quicktime"], maxBytesPerItem: 1024 * 1024 * 1024, guidance: "Publishes as an Instagram Reel." },
     ],
   },

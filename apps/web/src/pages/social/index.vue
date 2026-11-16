@@ -16,14 +16,13 @@ import { useSocialData } from "../../composables/useSocialData";
 import { API_BASE } from "../../api";
 import type { DriveFile, SocialMediaAsset, SocialPlatform } from "../../stores/social";
 import { uploadDriveFiles } from "../../utils/drive-upload";
+import { composerRows, type ComposerRow } from "@me3-core/plugin-social-publishing/composer";
 import {
   SOCIAL_NETWORKS,
   SOCIAL_TABS,
   accountState,
   activeAccount,
   attentionItems,
-  composerMediaFor,
-  composerVideoNote,
   formatWhen,
   lastPostedAt,
   networkLabel,
@@ -169,10 +168,28 @@ function toggleComposerNetwork(network: SocialNetwork) {
     : [...composerNetworks.value, network];
 }
 
-const composerImages = computed(() => composerMedia.value.filter((item) => item.kind === "image"));
-const composerVideo = computed(() => composerMedia.value.find((item) => item.kind === "video") || null);
-const composerMediaCounts = computed(() => ({ images: composerImages.value.length, video: Boolean(composerVideo.value) }));
-const composerNote = computed(() => composerVideoNote(composerNetworks.value, composerMediaCounts.value));
+/** What each network gets from the picked media, from the shared New post rules (me3-s0ib). */
+const composerRowsByNetwork = computed(() => {
+  const media = composerMedia.value;
+  const rows = composerRows({
+    type: !media.length ? "text" : media[0]!.kind === "video" ? "video" : "images",
+    media: { items: media.map((item) => item.kind), video: null, firstKind: media[0]?.kind ?? null },
+    accounts: SOCIAL_NETWORKS.map((network) => ({ id: network.id, network: network.id })),
+  });
+  return new Map(rows.map((row) => [row.network as SocialNetwork, row]));
+});
+
+/** One line under New post when a ticked network won't get all of the media. */
+const composerNote = computed(() => {
+  if (!composerMedia.value.length) return null;
+  const notes = composerNetworks.value.flatMap((network) => {
+    const row: ComposerRow | undefined = composerRowsByNetwork.value.get(network);
+    if (!row) return [];
+    if (!row.canTake) return [`${networkLabel(network)}: ${row.reason}`];
+    return row.label?.includes(", not the") || row.tone === "warn" ? [`${networkLabel(network)} gets ${row.label!.charAt(0).toLowerCase()}${row.label!.slice(1)}`] : [];
+  });
+  return notes.length ? `${notes.join(". ")}.` : null;
+});
 
 /**
  * Avatar and name for each network in the New post dialog. Only the network's
@@ -260,10 +277,9 @@ async function createPost() {
   if (!text || !composerNetworks.value.length || composerBusy.value) return;
   composerBusy.value = true;
   try {
-    const images = (await Promise.all(composerImages.value.map(driveFileFor)))
-      .map((file, index) => mediaAsset(file, "image", index));
-    const video = composerVideo.value ? await driveFileFor(composerVideo.value) : null;
-    const counts = composerMediaCounts.value;
+    const picked = composerMedia.value;
+    const files = await Promise.all(picked.map(driveFileFor));
+    const rows = composerRowsByNetwork.value;
     const detail = await social.createSocialPost({
       siteId: siteId.value,
       sourceType: "pasted",
@@ -271,7 +287,7 @@ async function createPost() {
       sourceText: text,
       ideaText: text,
       versions: composerNetworks.value.map((network) => {
-        const { format } = composerMediaFor(network, counts);
+        const format = rows.get(network)?.format;
         return {
           platform: platformFor(network),
           bodyText: text,
@@ -284,12 +300,9 @@ async function createPost() {
     // Each network gets the photos, the video or both, as it accepts them.
     await Promise.all(visibleVersions(detail).map((version) => {
       const network = socialNetwork(version.platform);
-      if (!network) return null;
-      const takes = composerMediaFor(network, counts);
-      const assetManifest = [
-        ...(takes.images ? images : []),
-        ...(takes.video && video ? [mediaAsset(video, "video", takes.images ? images.length : 0)] : []),
-      ];
+      const row = network ? rows.get(network) : null;
+      if (!row) return null;
+      const assetManifest = row.items.map((index, position) => mediaAsset(files[index]!, picked[index]!.kind, position));
       return assetManifest.length ? social.updatePostVersion(version.id, { assetManifest }) : null;
     }));
     composerOpen.value = false;

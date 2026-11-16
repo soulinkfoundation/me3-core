@@ -1203,11 +1203,11 @@ describe("Instagram publishing adapter", () => {
     })).toEqual({ ok: false, error: "Instagram supports MP4 and QuickTime video uploads." });
     expect(adapterFor("instagram").validateDraft({
       bodyText: "Too many.",
-      assets: Array.from({ length: 11 }, (_, index) => ({
+      assets: Array.from({ length: 21 }, (_, index) => ({
         url: `https://media.example/${index}.jpg`,
         kind: "image" as const,
       })),
-    })).toEqual({ ok: false, error: "Instagram carousels support up to 10 photos and videos." });
+    })).toEqual({ ok: false, error: "Instagram carousels support up to 20 photos and videos." });
     expect(adapterFor("instagram").validateDraft({
       bodyText: "A deck.",
       assets: [{ url: "https://media.example/deck.pdf", kind: "document", mimeType: "application/pdf" }],

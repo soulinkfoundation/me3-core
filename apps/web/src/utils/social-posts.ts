@@ -75,39 +75,6 @@ export function networkLabel(platform: SocialPlatform | string): string {
   return SOCIAL_NETWORKS.find((item) => item.id === network)?.label || "Social";
 }
 
-/**
- * Which of the New post media each network gets (photos, the one video, or both).
- * YouTube and TikTok take only the video. X and LinkedIn take one video or photos, not both,
- * so a video wins there. Instagram mixes photos and a video in one carousel of up to ten.
- * Facebook Pages take photos only until ME3 can post video to a Page.
- */
-export function composerMediaFor(
-  network: SocialNetwork,
-  media: { images: number; video: boolean },
-): { images: boolean; video: boolean; format?: "short_video" } {
-  const videoOnly = { images: false, video: true, format: "short_video" as const };
-  if (network === "youtube" || network === "tiktok") return media.video ? videoOnly : { images: false, video: false };
-  if (network === "facebook") return { images: true, video: false };
-  if (!media.video) return { images: true, video: false };
-  if (network === "instagram") {
-    if (!media.images) return videoOnly;
-    return media.images < 10 ? { images: true, video: true } : { images: true, video: false };
-  }
-  return videoOnly;
-}
-
-/** One line under New post when a picked video won't reach every ticked network. */
-export function composerVideoNote(networks: SocialNetwork[], media: { images: number; video: boolean }): string | null {
-  if (!media.video) return null;
-  const notes: string[] = [];
-  if (networks.includes("facebook")) notes.push("Facebook gets the text and photos, not the video");
-  const videoWins = networks.filter((network) => network === "x" || network === "linkedin");
-  if (media.images && videoWins.length) {
-    notes.push(`${videoWins.map((network) => networkLabel(network)).join(" and ")} ${videoWins.length > 1 ? "get" : "gets"} the video, not the photos`);
-  }
-  return notes.length ? `${notes.join(". ")}.` : null;
-}
-
 export function networkMark(platform: SocialPlatform | string): string {
   return SOCIAL_NETWORKS.find((item) => item.id === socialNetwork(platform))?.mark || "•";
 }

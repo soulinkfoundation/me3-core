@@ -20,6 +20,7 @@
     "@me3-core/plugin-journal": "workspace:*",
     "@me3-core/plugin-landing-pages": "workspace:*",
     "@me3-core/plugin-mission-control": "workspace:*",
+    "@me3-core/plugin-social-publishing": "workspace:*",
     "@me3-core/site-renderer": "workspace:*",
     "@tanstack/vue-table": "^8.21.3",
     "@tiptap/core": "^3.34.0",

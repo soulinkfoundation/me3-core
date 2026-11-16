@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import { account, capabilities, post, version } from "./social-posts.fixtures";
 import {
   attentionItems,
-  composerMediaFor,
-  composerVideoNote,
   connectableNetworks,
   foldIndex,
   mentionsIn,
@@ -109,8 +107,8 @@ describe("social posts", () => {
     const clip = { url: "/c.mov", kind: "video" as const, mimeType: "video/quicktime", byteLength: 1000 };
     const pdf = { url: "/d.pdf", kind: "document" as const, mimeType: "application/pdf", byteLength: 1000, filename: "Deck.pdf" };
     expect(versionChecks(version({ platform: "instagram", assetManifest: [clip, photo] }), capabilities)).toEqual([]);
-    expect(versionChecks(version({ platform: "instagram", assetManifest: Array.from({ length: 11 }, () => clip) }), capabilities)[0]?.message)
-      .toBe("Instagram takes up to 10 photos and videos.");
+    expect(versionChecks(version({ platform: "instagram", assetManifest: Array.from({ length: 21 }, () => clip) }), capabilities)[0]?.message)
+      .toBe("Instagram takes up to 20 photos and videos.");
     expect(versionChecks(version({ platform: "linkedin", assetManifest: [pdf] }), capabilities)).toEqual([]);
     expect(versionChecks(version({ platform: "linkedin", assetManifest: [pdf, photo] }), capabilities)[0]?.message)
       .toBe("LinkedIn posts a PDF on its own, without photos or video.");
@@ -144,24 +142,5 @@ describe("social posts", () => {
     expect(renderPostText("Built at @ME3. Not @ME3x.", options)).toBe("Built at @me3_app. Not @ME3x.\n\n#AI");
     const counted = version({ bodyText: "a".repeat(276), publishingSettings: { post: { hashtags: "#AI" } } });
     expect(versionChecks(counted, capabilities)[0]?.message).toBe("281 characters, X's limit is 280.");
-  });
-
-  it("sends a New post video to every network that takes one", () => {
-    const videoOnly = { images: 0, video: true };
-    for (const network of ["x", "linkedin", "instagram", "youtube", "tiktok"] as const) {
-      expect(composerMediaFor(network, videoOnly)).toEqual({ images: false, video: true, format: "short_video" });
-    }
-    expect(composerMediaFor("facebook", videoOnly)).toEqual({ images: true, video: false });
-    expect(composerMediaFor("x", { images: 2, video: false })).toEqual({ images: true, video: false });
-    expect(composerMediaFor("tiktok", { images: 2, video: false })).toEqual({ images: false, video: false });
-    expect(composerMediaFor("instagram", { images: 2, video: true })).toEqual({ images: true, video: true });
-    expect(composerMediaFor("linkedin", { images: 2, video: true })).toMatchObject({ images: false, video: true });
-  });
-
-  it("says when a video won't reach a ticked network", () => {
-    expect(composerVideoNote(["x", "facebook"], { images: 0, video: true })).toBe("Facebook gets the text and photos, not the video.");
-    expect(composerVideoNote(["x", "linkedin", "instagram"], { images: 1, video: true }))
-      .toBe("X and LinkedIn get the video, not the photos.");
-    expect(composerVideoNote(["x", "facebook"], { images: 1, video: false })).toBeNull();
   });
 });
