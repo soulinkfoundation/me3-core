@@ -84,13 +84,15 @@ try {
   const archive = join(work, "hosted-portable");
   await step("Export it the way the hosted lifecycle does", () => {
     const env = { ...process.env, ME3_PORTABLE_PASSPHRASE: PASSPHRASE };
-    run("node", [join(REPO_ROOT, "scripts/prepare-managed-portable-capture.mjs"), hosted.database], { env });
+    // The hosted install exports with the scripts of the release it runs, not
+    // this checkout's: a new migration adds tables the released schema lacks.
+    run("node", [join(sourceDir, "scripts/prepare-managed-portable-capture.mjs"), hosted.database], { env });
     run("node", [
-      join(REPO_ROOT, "scripts/portable.mjs"), "export",
+      join(sourceDir, "scripts/portable.mjs"), "export",
       "--db", hosted.database, "--r2-dir", hosted.r2Directory, "--output", archive,
       "--managed-hosted", "--core-root", sourceDir,
     ], { env });
-    run("node", [join(REPO_ROOT, "scripts/portable.mjs"), "verify", "--archive", archive, "--core-root", sourceDir], { env });
+    run("node", [join(sourceDir, "scripts/portable.mjs"), "verify", "--archive", archive, "--core-root", sourceDir], { env });
   });
 
   const envelope = join(work, "owner.me3export");
