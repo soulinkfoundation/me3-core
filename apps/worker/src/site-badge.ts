@@ -2,8 +2,9 @@ import { readCachedManagedBillingSource, type ManagedAiBillingSettings } from ".
 import type { DbSite, Env } from "./types";
 
 // The "Create your own ME3 site" badge at the foot of published pages.
-// "auto" follows the install: on for self-hosted sites and managed free trials,
-// off once a managed install is paying, and off on an active custom domain.
+// New owners start with it "shown" (set when the owner row is created). "auto" is what owners
+// from before that keep: on for self-hosted sites and managed free trials, off once a managed
+// install is paying, and off on an active custom domain.
 export type SiteBadgePreference = "auto" | "shown" | "hidden";
 type BillingSource = ManagedAiBillingSettings["billingSource"];
 

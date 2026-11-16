@@ -226,7 +226,8 @@ const starterLeft = computed(() =>
   findCampaignStarterText({ blocks: campaignEditorHtmlToBlocks(richTextHtml.value) }),
 );
 const brandSettingsPath = computed(() =>
-  siteUsername.value ? `/sites/${encodeURIComponent(siteUsername.value)}` : "/sites",
+  // The email brand follows the site's logo and accent, set in the site editor's last step.
+  siteUsername.value ? `/create?site=${encodeURIComponent(siteUsername.value)}&step=publish` : "/create?step=publish",
 );
 
 async function initialize() {

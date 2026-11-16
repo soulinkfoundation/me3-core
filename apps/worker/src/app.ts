@@ -848,8 +848,8 @@ app.post("/api/admin/bootstrap", async (c) => {
   };
 
   await c.env.DB.prepare(
-    `INSERT INTO owner_profile (id, email, name, username, bio, avatar_url, timezone, password_hash, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `INSERT INTO owner_profile (id, email, name, username, bio, avatar_url, timezone, password_hash, site_badge, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'shown', CURRENT_TIMESTAMP)
      ON CONFLICT(id) DO UPDATE SET
        email = excluded.email,
        name = excluded.name,
@@ -2315,8 +2315,8 @@ async function upsertMe3ClaimedOwner(
     "ME3 Owner";
 
   await env.DB.prepare(
-    `INSERT INTO owner_profile (id, email, name, username, bio, avatar_url, timezone, password_hash, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `INSERT INTO owner_profile (id, email, name, username, bio, avatar_url, timezone, password_hash, site_badge, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'shown', CURRENT_TIMESTAMP)
      ON CONFLICT(id) DO UPDATE SET
        email = CASE WHEN owner_profile.password_hash IS NULL THEN excluded.email ELSE owner_profile.email END,
        name = excluded.name,

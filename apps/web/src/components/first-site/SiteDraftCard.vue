@@ -67,7 +67,7 @@ async function decide(decision: "approved" | "declined") {
 }
 
 function edit(step: string) {
-  void router.push({ path: `/sites/${encodeURIComponent(props.draft.username)}`, query: { edit: step } });
+  void router.push({ path: "/create", query: { site: props.draft.username, step } });
 }
 
 onMounted(() => { void loadPreview(); });

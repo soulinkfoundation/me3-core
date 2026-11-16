@@ -77,7 +77,7 @@ const customBackground = computed(() => {
   return background && background.startsWith("#") ? background : null;
 });
 const customAccent = computed(() => (settings.value?.accent.startsWith("#") ? settings.value.accent : null));
-const lookLink = computed(() => (props.siteUsername ? `/sites/${encodeURIComponent(props.siteUsername)}?edit=publish` : "/sites"));
+const lookLink = computed(() => (props.siteUsername ? `/create?site=${encodeURIComponent(props.siteUsername)}&step=publish` : "/create?step=publish"));
 
 // --- Loading ---------------------------------------------------------------
 

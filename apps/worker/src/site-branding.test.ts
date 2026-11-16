@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getSiteBranding, saveSiteEmailLogo, updateSiteBranding } from "./site-branding";
+import { getSiteBranding, saveSiteEmailLogo } from "./site-branding";
 import type { DbSite, Env } from "./types";
 
 type SqliteValue = null | number | string | Uint8Array;
@@ -110,43 +110,35 @@ describe("Site branding", () => {
     });
   });
 
-  it("updates only the reusable logo and email colours", async () => {
-    const updated = await updateSiteBranding(env, site, {
-      logoRef: "/brand/logo.webp",
-      accentColor: "#112233",
-      textColor: "#101010",
-    });
+  function writeProfile(profile: Record<string, unknown>) {
+    const bytes = new TextEncoder().encode(JSON.stringify(profile));
+    database.prepare(
+      "UPDATE site_files SET content = ?, size = ? WHERE site_id = 'site-1' AND path = 'src/me.json'",
+    ).run(bytes, bytes.length);
+  }
 
-    expect(updated).toMatchObject({
-      displayName: "Kieran Butler",
-      logoUrl: "https://sites.example.com/brand/logo.webp",
+  it("follows the logo and accent chosen in the Site editor", async () => {
+    await getSiteBranding(env, site, true);
+    writeProfile({
+      name: "Kieran Butler",
+      logo: "./media/new.png",
+      extensions: { "me3.app/site": { theme: "meadow", accent: "#112233" } },
+    });
+    expect(await getSiteBranding(env, site)).toMatchObject({
+      logoUrl: "https://sites.example.com/media/new.png",
       accentColor: "#112233",
-      backgroundColor: "#f4f5f4",
-      surfaceColor: "#ffffff",
-      textColor: "#101010",
       persisted: true,
     });
-  });
 
-  it("ignores legacy name and surface overrides", async () => {
-    const updated = await updateSiteBranding(env, site, {
-      displayName: "Legacy override",
-      logoRef: null,
-      accentColor: "#112233",
-      backgroundColor: "#000000",
-      surfaceColor: "#111111",
-      textColor: "#eeeeee",
-    });
-
-    expect(updated).toMatchObject({
-      displayName: "Kieran Butler",
-      backgroundColor: "#f4f5f4",
-      surfaceColor: "#ffffff",
+    writeProfile({ name: "Kieran Butler", avatar: "./media/me.jpg", extensions: { "me3.app/site": { theme: "meadow" } } });
+    expect(await getSiteBranding(env, site)).toMatchObject({
+      logoRef: "./media/me.jpg",
+      accentColor: "#3f6b35",
     });
   });
 
   it("keeps the email logo copy until the Site logo changes", async () => {
-    await updateSiteBranding(env, site, { logoRef: "./media/logo.png", accentColor: "#112233", textColor: "#101010" });
+    await getSiteBranding(env, site, true);
     const withEmailLogo = await saveSiteEmailLogo(env, site, { width: 180, height: 48, version: "abc" });
     expect(withEmailLogo).toMatchObject({
       emailLogoRef: "./files/email-logo.png?v=abc",
@@ -155,11 +147,12 @@ describe("Site branding", () => {
       emailLogoHeight: 48,
     });
 
-    const colourOnly = await updateSiteBranding(env, site, { logoRef: "./media/logo.png", accentColor: "#445566", textColor: "#101010" });
-    expect(colourOnly.emailLogoUrl).toBe("https://sites.example.com/files/email-logo.png?v=abc");
+    writeProfile({ name: "Kieran Butler", logo: "./media/logo.png", links: { _accent: "#445566" } });
+    const colourOnly = await getSiteBranding(env, site);
+    expect(colourOnly).toMatchObject({ accentColor: "#445566", emailLogoUrl: "https://sites.example.com/files/email-logo.png?v=abc" });
 
-    const newLogo = await updateSiteBranding(env, site, { logoRef: "./media/new.png", accentColor: "#445566", textColor: "#101010" });
-    expect(newLogo).toMatchObject({ emailLogoRef: null, emailLogoUrl: null, emailLogoWidth: null });
+    writeProfile({ name: "Kieran Butler", logo: "./media/new.png", links: { _accent: "#445566" } });
+    expect(await getSiteBranding(env, site)).toMatchObject({ emailLogoRef: null, emailLogoUrl: null, emailLogoWidth: null });
   });
 
   it("refuses an email logo bigger than the 200 by 64 slot", async () => {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { RouterLink } from "vue-router";
 import type { SiteLayout } from "@me3-core/site-renderer";
 import { useWizardStore } from "../../stores/wizard";
 import { vibes, selectableVibeIds } from "../../styles/vibes";
@@ -60,7 +61,7 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
             <Button color="neutral" shape="soft" size="compact" @click="logoInput?.click()">{{ wizard.profile.logo ? "Change logo" : "Upload logo" }}</Button>
             <Button v-if="wizard.profile.logo" color="ghost" size="compact" @click="removeLogo">Remove</Button>
           </div>
-          <p id="look-logo-hint" class="look-logo__hint">Shown in place of your name at the top of your site, and in the browser tab. PNG, JPEG or WebP, up to 1.9 MB.</p>
+          <p id="look-logo-hint" class="look-logo__hint">Shown in place of your name at the top of your site, in the browser tab and on your emails. PNG, JPEG or WebP, up to 1.9 MB.</p>
         </div>
         <input ref="logoInput" class="look-logo__input" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Choose site logo" aria-describedby="look-logo-hint" @change="chooseLogo" />
       </div>
@@ -95,6 +96,7 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
       <label class="look-visitor-switch"><input type="checkbox" :checked="wizard.visitorThemeToggle" @change="wizard.setVisitorThemeToggle(($event.target as HTMLInputElement).checked)" />Show a light/dark switch to visitors</label>
     </fieldset>
     <button type="button" class="look-footer-link" @click="showFooter = true"><UiIcon name="Settings" :size="16" />Customize footer</button>
+    <RouterLink class="look-footer-link" :to="{ path: '/settings', query: { section: 'domain', ...(wizard.username ? { site: wizard.username } : {}) } }"><UiIcon name="Globe" :size="16" />Custom domain</RouterLink>
     <AppDialog :open="showFooter" aria-label="Footer settings" close-on-backdrop @close="showFooter = false">
       <section class="look-footer-dialog">
         <header><h2>Footer settings</h2><button type="button" aria-label="Close footer settings" @click="showFooter = false"><UiIcon name="X" :size="20" /></button></header>
@@ -157,7 +159,7 @@ legend { padding: 0; margin-bottom: 12px; font-size: 13px; color: var(--ui-text-
 .look-appearance label { position: relative; display: grid; place-items: center; flex: 1; min-height: 44px; border-radius: 20px; cursor: pointer; }
 .look-appearance .selected { background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
 .look-visitor-switch { display: flex; align-items: center; gap: 10px; margin-top: 12px; min-height: 44px; font-size: 14px; }
-.look-footer-link { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--ui-text-muted); font: inherit; cursor: pointer; }
+.look-footer-link { text-decoration: none; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--ui-text-muted); font: inherit; cursor: pointer; }
 .look-footer-dialog { display: grid; gap: 14px; width: min(480px, 100%); margin: auto; padding: 24px; box-sizing: border-box; border-radius: 24px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
 .look-footer-dialog header { display: flex; justify-content: space-between; align-items: center; }
 .look-footer-dialog h2 { margin: 0; font-size: 20px; }.look-footer-dialog p { margin: 0; color: var(--ui-text-muted); font-size: 14px; }

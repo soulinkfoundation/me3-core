@@ -7,7 +7,6 @@ import { permanentPublicSiteUrl } from "../utils/publicSiteUrl";
 const props = defineProps<{
   siteId?: string;
   username: string;
-  showSettingsLink?: boolean;
   sitePublished?: boolean;
   siteRole?: "profile" | "organization";
   fallbackUrl?: string;
@@ -363,12 +362,6 @@ watch(
             </a>
           </div>
 
-          <div v-if="props.showSettingsLink !== false" class="support-link">
-            <router-link :to="`/sites/${encodeURIComponent(username)}`">
-              Site settings
-            </router-link>
-          </div>
-
           <button
             class="button secondary"
             :disabled="domainLoading"
@@ -411,7 +404,7 @@ watch(
                 ...(siteId ? { siteId } : {}),
                 site: username,
                 step: 'publish',
-                return: `/sites/${username}`,
+                return: '/settings?section=domain',
               },
             }"
           >

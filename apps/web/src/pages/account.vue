@@ -8,6 +8,7 @@ import { getEmailTestOperation, finishEmailTestOperation } from "../utils/emailT
 import Button from "../components/Button.vue";
 import CodingAgentSettings from "../components/CodingAgentSettings.vue";
 import EmailSendAs from "../components/email/EmailSendAs.vue";
+import SiteDomainSettings from "../components/SiteDomainSettings.vue";
 import PageLoading from "../components/PageLoading.vue";
 import AppPageBar from "../components/AppPageBar.vue";
 import PluginList from "../components/PluginList.vue";
@@ -470,13 +471,6 @@ const openSection = ref({
   timezone: false,
 });
 const showAiModelSection = true;
-
-const siteDomainSummaries = computed(() =>
-  sites.sites.filter(
-    (site) =>
-      site.site_role === "profile" || site.site_role === "organization",
-  ),
-);
 
 const saveDisabled = computed(
   () =>
@@ -2681,6 +2675,8 @@ onBeforeUnmount(() => {
             aria-labelledby="account-trigger-mailbox"
             :hidden="!openSection.mailbox"
           >
+            <SiteDomainSettings class="account-site-domains" />
+
             <PageLoading
               v-if="mailboxLoading || emailProviderLoading"
               compact
@@ -2689,24 +2685,6 @@ onBeforeUnmount(() => {
 
             <template v-else-if="mailboxAvailable">
               <div class="email-settings">
-                <section class="domain-email-section">
-                  <div class="setup-disclosure-intro">
-                    <div>
-                      <h3>Sites and website domains</h3>
-                    </div>
-                  </div>
-
-                  <ul v-if="siteDomainSummaries.length" class="site-domain-summary">
-                    <li v-for="site in siteDomainSummaries" :key="site.id">
-                      <span>@{{ site.username }}</span>
-                      <span>{{ site.custom_domain || "Default ME3 address" }}</span>
-                    </li>
-                  </ul>
-                  <Button color="outline" shape="soft" size="compact" to="/sites">
-                    Manage site domains
-                  </Button>
-                </section>
-
                 <section class="mailbox-setup">
                   <div class="setup-disclosure-intro">
                     <div>
@@ -5276,37 +5254,8 @@ onBeforeUnmount(() => {
   line-height: 1.45;
 }
 
-.domain-email-section {
-  display: grid;
-  gap: 12px;
-}
-
-.site-domain-summary {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.site-domain-summary li {
-  display: flex;
-  min-height: 40px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 10px;
-  border: 1px solid var(--ui-border, var(--color-border));
-  border-radius: var(--ui-radius-sm, 8px);
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-  color: var(--ui-text, var(--color-text));
-  font-size: 13px;
-}
-
-.site-domain-summary li span:last-child {
-  color: var(--ui-text-muted, var(--color-text-muted));
-  overflow-wrap: anywhere;
-  text-align: right;
+.account-site-domains {
+  margin-bottom: 24px;
 }
 
 .setup-guide-link {

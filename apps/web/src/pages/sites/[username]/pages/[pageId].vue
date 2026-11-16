@@ -35,7 +35,7 @@ const page = computed(() => sites.sitePages.find((candidate) => candidate.id ===
 const currentSite = computed(() =>
   sites.sites.find((candidate) => candidate.username === username.value),
 );
-const builderBackUrl = computed(() => `/sites/${username.value}`);
+const builderBackUrl = computed(() => `/create?site=${encodeURIComponent(username.value)}`);
 const draft = ref<LandingPageDocumentV3 | null>(null);
 const previewHtml = ref("");
 const activeSectionId = ref("");

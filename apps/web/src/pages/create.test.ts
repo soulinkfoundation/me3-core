@@ -37,7 +37,8 @@ describe("Site Wizard route initialization", () => {
       history: createMemoryHistory(),
       routes: [
         { path: "/create", component: { template: "<div />" } },
-        { path: "/sites/:username", component: { template: "<div />" } },
+        { path: "/settings", component: { template: "<div />" } },
+        { path: "/assistant", component: { template: "<div />" } },
       ],
     });
   });
@@ -210,7 +211,7 @@ describe("Site Wizard route initialization", () => {
     expect(wrapper.get(".wizard-intro").text()).toContain("Create your website");
   });
 
-  it("sends an older site to its own screen instead of the wizard", async () => {
+  it("sends an older site to its domain settings instead of the wizard", async () => {
     const sites = useSitesStore();
     sites.sites = [siteRecord("studio", "organization", null)];
     sites.ensureSites = vi.fn(async () => undefined) as never;
@@ -222,11 +223,11 @@ describe("Site Wizard route initialization", () => {
     shallowMount(CreatePage, { global: { plugins: [router] } });
     await flushPromises();
 
-    expect(router.currentRoute.value.path).toBe("/sites/studio");
+    expect(router.currentRoute.value.fullPath).toBe("/settings?section=domain&site=studio");
     expect(sites.getSiteContent).not.toHaveBeenCalled();
   });
 
-  it("exits an empty wizard to the sites dashboard", async () => {
+  it("exits an empty wizard to the assistant", async () => {
     const sites = useSitesStore();
     sites.sites = [];
     sites.ensureSites = vi.fn(async () => undefined) as never;
@@ -242,7 +243,7 @@ describe("Site Wizard route initialization", () => {
     await wrapper.get(".nav-btn.back").trigger("click");
     await flushPromises();
 
-    expect(router.currentRoute.value.path).toBe("/sites");
+    expect(router.currentRoute.value.path).toBe("/assistant");
   });
 });
 

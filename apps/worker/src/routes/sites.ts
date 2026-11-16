@@ -141,7 +141,6 @@ import {
   SiteBrandingInputError,
   getSiteBranding,
   saveSiteEmailLogo,
-  updateSiteBranding,
 } from "../site-branding";
 import {
   MARKETING_PERMISSION_ATTESTATION_VERSION,
@@ -251,28 +250,6 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
     if (!site) return c.json({ error: "Site not found" }, 404);
     return c.json({ branding: await getSiteBranding(c.env, site) });
-  });
-
-  app.put("/api/sites/:username/branding", async (c) => {
-    const ownerId = await deps.requireOwner(c);
-    if (!ownerId) return deps.unauthorized(c);
-    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
-    if (!site) return c.json({ error: "Site not found" }, 404);
-    try {
-      return c.json({
-        branding: await updateSiteBranding(
-          c.env,
-          site,
-          await c.req.json<Record<string, unknown>>().catch(() => ({})),
-        ),
-      });
-    } catch (error) {
-      if (error instanceof SiteBrandingInputError) {
-        return c.json({ error: error.message }, error.status);
-      }
-      console.error("Site branding update error:", error);
-      return c.json({ error: "Could not update Site branding" }, 500);
-    }
   });
 
   // The Site logo's bytes, same-origin, so the browser can draw the email copy on a canvas.

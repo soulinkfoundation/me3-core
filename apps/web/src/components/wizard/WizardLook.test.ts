@@ -29,7 +29,7 @@ describe("WizardLook logo", () => {
 
   it("adds and removes a site logo", async () => {
     const wizard = useWizardStore();
-    const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true } } });
+    const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true, RouterLink: true } } });
     const file = new File(["logo"], "logo.png", { type: "image/png" });
 
     chooseFile(wrapper.get<HTMLInputElement>('input[aria-label="Choose site logo"]').element, file);
@@ -47,7 +47,7 @@ describe("WizardLook logo", () => {
 
   it("rejects files that are too large", async () => {
     const wizard = useWizardStore();
-    const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true } } });
+    const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true, RouterLink: true } } });
     const file = new File([new Uint8Array(2_000_000)], "logo.png", { type: "image/png" });
 
     chooseFile(wrapper.get<HTMLInputElement>('input[aria-label="Choose site logo"]').element, file);

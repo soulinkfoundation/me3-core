@@ -41,7 +41,7 @@ const photo = computed(() => {
 });
 const editSite = computed(() => {
   const site = profile.value;
-  if (!site) return "/sites";
+  if (!site) return "/create";
   if (site.template_id === AGENT_LANDING_PAGE_SITE_TEMPLATE_ID && site.builder_thread_id) {
     return { path: "/assistant", query: { mode: "site-builder", thread: site.builder_thread_id } };
   }

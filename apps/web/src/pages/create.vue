@@ -241,11 +241,7 @@ function exitWizardDestination(): string {
   if (returnPath.startsWith("/") && !returnPath.startsWith("//")) {
     return returnPath;
   }
-  const site = (wizard.username || wizard.profile.handle || "")
-    .trim()
-    .toLowerCase();
-  if (site.length >= 3) return `/sites/${site}`;
-  return "/sites";
+  return "/assistant";
 }
 
 function handleExit() {
@@ -310,7 +306,7 @@ async function openWizardTarget() {
 
     if (!startingNewSite.value && targetSite?.site_role === "organization") {
       // Older sites stay live but no longer open in the wizard.
-      void router.replace(`/sites/${encodeURIComponent(targetSite.username)}`);
+      void router.replace({ path: "/settings", query: { section: "domain", site: targetSite.username } });
       return;
     }
     if (startingNewSite.value) {
@@ -408,7 +404,6 @@ watch(
           <span v-else>Your profile is private. Make it public in Basics when you’re ready to share it.</span>
         </div>
         <a v-if="siteIsPublic" class="wizard-live__view" :href="publishedSiteUrl" target="_blank" rel="noopener noreferrer"><UiIcon name="ExternalLink" :size="16" />View site</a>
-        <RouterLink v-else class="wizard-live__view" :to="`/sites/${encodeURIComponent(wizard.username)}`">View site</RouterLink>
       </section>
       <p v-if="publishProgress" class="wizard-publish-status" role="status">{{ publishProgress }}</p>
       <p v-if="publishNeedsStorage" class="wizard-publish-error" role="alert">{{ publishError }}<RouterLink to="/settings?section=storage">Activate storage</RouterLink></p>
