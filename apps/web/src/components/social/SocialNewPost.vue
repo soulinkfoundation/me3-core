@@ -26,6 +26,7 @@ import type {
 } from "../../stores/social";
 import { useSocialStore } from "../../stores/social";
 import { uploadDriveFiles } from "../../utils/drive-upload";
+import { readVideoInfo } from "../../utils/video-info";
 import {
   accountName,
   networkLabel,
@@ -85,11 +86,17 @@ const textarea = ref<HTMLTextAreaElement | null>(null);
 const imagesInput = ref<HTMLInputElement | null>(null);
 const videoInput = ref<HTMLInputElement | null>(null);
 const mediaList = ref<HTMLUListElement | null>(null);
+const cutInput = ref<HTMLInputElement | null>(null);
+/** A shorter cut of the video for one account's version only (me3-ic0c). Everyone else keeps the original. */
+const cuts = ref<Record<string, PickedMedia>>({});
+let cutFor: string | null = null;
+/** TikTok creator_info max_video_post_duration_sec per account, once loaded. */
+const tiktokMax = ref<Record<string, number>>({});
 let keySeed = 0;
 
 const listed = computed(() => newPostAccounts(props.accounts));
 
-function rowsFor(postType: ComposerPostType, items: PickedMedia[]): ComposerRow[] {
+function rowsFor(postType: ComposerPostType, items: PickedMedia[], only?: string): ComposerRow[] {
   return composerRows({
     type: postType,
     media: {
@@ -98,12 +105,26 @@ function rowsFor(postType: ComposerPostType, items: PickedMedia[]): ComposerRow[
       // The switch says which kind leads on X and LinkedIn.
       firstKind: postType === "video" ? "video" : postType === "images" ? "image" : null,
     },
-    accounts: listed.value.map(({ account, network }) => ({ id: account.id, network })),
+    accounts: listed.value
+      .filter(({ account }) => !only || account.id === only)
+      .map(({ account, network }) => ({ id: account.id, network, tiktokMaxVideoSeconds: tiktokMax.value[account.id] ?? null })),
     swapped: swapped.value,
   });
 }
 
-const rows = computed(() => rowsFor(type.value, type.value === "text" ? [] : media.value));
+/** The media one account gets: the post's own, with that account's shorter cut in place of the video. */
+function mediaFor(accountId: string): PickedMedia[] {
+  if (type.value === "text") return [];
+  const cut = cuts.value[accountId];
+  return cut ? media.value.map((item) => (item.kind === "video" ? cut : item)) : media.value;
+}
+
+const rows = computed(() => {
+  const all = rowsFor(type.value, mediaFor(""));
+  return all.map((row) => (cuts.value[row.accountId] && media.value.some((item) => item.kind === "video")
+    ? rowsFor(type.value, mediaFor(row.accountId), row.accountId)[0]!
+    : row));
+});
 
 /** Accounts each kind of post reaches before anything is picked, for the question's logos. */
 const reach = computed(() => {
@@ -192,6 +213,8 @@ function reset() {
   text.value = "";
   handTicks.value = {};
   swapped.value = [];
+  cuts.value = {};
+  tiktokMax.value = {};
   reorderHelp.value = "";
   clearMedia();
 }
@@ -201,6 +224,7 @@ watch(
   async (open) => {
     if (open) {
       reset();
+      loadTikTokLimits();
       await nextTick();
       heading.value?.focus();
     } else {
@@ -210,13 +234,40 @@ watch(
   { immediate: true },
 );
 
+/** Each TikTok account's own video length limit. Until it loads, or if it fails, TikTok stays tickable with no length claim. */
+function loadTikTokLimits() {
+  for (const { account, network } of listed.value) {
+    if (network !== "tiktok") continue;
+    social.getTikTokCreatorInfo(account.id)
+      .then((info) => {
+        const max = Number(info.maxVideoPostDurationSeconds);
+        if (Number.isFinite(max) && max > 0) tiktokMax.value = { ...tiktokMax.value, [account.id]: max };
+      })
+      .catch(() => {});
+  }
+}
+
+/** Reads a picked video's length and shape, then updates whichever list still holds it. */
+function measure(item: PickedMedia) {
+  if (item.kind !== "video") return;
+  void readVideoInfo(item.preview).then((video) => {
+    if (media.value.some((other) => other.key === item.key)) {
+      media.value = media.value.map((other) => (other.key === item.key ? { ...other, video } : other));
+    }
+    for (const [accountId, cut] of Object.entries(cuts.value)) {
+      if (cut.key === item.key) cuts.value = { ...cuts.value, [accountId]: { ...cut, video } };
+    }
+  });
+}
+
 function release(item: PickedMedia) {
   if (item.file) URL.revokeObjectURL(item.preview);
 }
 
 function clearMedia() {
-  for (const item of [...media.value, ...parked.splice(0)]) release(item);
+  for (const item of [...media.value, ...parked.splice(0), ...Object.values(cuts.value)]) release(item);
   media.value = [];
+  cuts.value = {};
 }
 
 /** From the question: Text goes to writing; Images and Video open the picker straight away. */
@@ -260,10 +311,13 @@ function addItems(items: PickedMedia[]) {
   let next = [...media.value];
   const video = items.find((item) => item.kind === "video");
   if (video) {
-    // One video per post: a new one replaces the old.
+    // One video per post: a new one replaces the old, and any shorter cuts of it.
     for (const old of next.filter((item) => item.kind === "video")) release(old);
+    for (const cut of Object.values(cuts.value)) release(cut);
+    cuts.value = {};
     next = next.filter((item) => item.kind !== "video");
     next.push(video);
+    measure(video);
   }
   const images = items.filter((item) => item.kind === "image");
   const room = MAX_IMAGES - next.filter((item) => item.kind === "image").length;
@@ -303,7 +357,37 @@ function remove(index: number) {
   const next = [...media.value];
   const [removed] = next.splice(index, 1);
   if (removed) release(removed);
+  if (removed?.kind === "video") {
+    for (const cut of Object.values(cuts.value)) release(cut);
+    cuts.value = {};
+  }
   media.value = next;
+}
+
+/** "Pick a shorter cut": a different video for this account's version only. */
+function pickCut(accountId: string) {
+  cutFor = accountId;
+  cutInput.value?.click();
+}
+
+function addCut(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = Array.from(input.files || []).find((item) => item.type.startsWith("video/"));
+  input.value = "";
+  const accountId = cutFor;
+  cutFor = null;
+  if (!file || !accountId) return;
+  const old = cuts.value[accountId];
+  if (old) release(old);
+  const cut: PickedMedia = { key: `m${keySeed++}`, kind: "video", name: file.name, preview: URL.createObjectURL(file), file };
+  cuts.value = { ...cuts.value, [accountId]: cut };
+  measure(cut);
+}
+
+function dropCut(accountId: string) {
+  const { [accountId]: cut, ...rest } = cuts.value;
+  if (cut) release(cut);
+  cuts.value = rest;
 }
 
 function move(index: number, by: number) {
@@ -327,6 +411,8 @@ function runAction(row: ComposerRow, action: ComposerAction) {
   if (action.kind === "reorder") {
     reorderHelp.value = "Drag the thumbnails, or focus one and use the arrow keys, to change the order.";
     mediaList.value?.querySelector<HTMLElement>("[data-thumb]")?.focus();
+  } else if (action.kind === "pick_cut") {
+    pickCut(row.accountId);
   } else if (action.kind === "swap_to_video" || action.kind === "swap_to_images") {
     swapped.value = swapped.value.includes(row.accountId)
       ? swapped.value.filter((id) => id !== row.accountId)
@@ -362,10 +448,11 @@ async function submit() {
   if (!words || !chosen.length || busy.value) return;
   busy.value = true;
   try {
-    const picked = type.value === "text" ? [] : media.value;
-    const used = [...new Set(chosen.flatMap((row) => row.items))].sort((a, b) => a - b);
-    const files = new Map<number, DriveFile>();
-    await Promise.all(used.map(async (index) => files.set(index, await driveFileFor(picked[index]!))));
+    // Upload each picked file once, whichever accounts use it.
+    const used = new Map<string, PickedMedia>();
+    for (const row of chosen) for (const index of row.items) used.set(mediaFor(row.accountId)[index]!.key, mediaFor(row.accountId)[index]!);
+    const files = new Map<string, DriveFile>();
+    await Promise.all([...used.values()].map(async (item) => files.set(item.key, await driveFileFor(item))));
     const detail = await social.createSocialPost({
       siteId: props.siteId,
       sourceType: "pasted",
@@ -385,7 +472,8 @@ async function submit() {
       const row = chosen.find((item) => accountFor(item).platform === version.platform)
         ?? chosen.find((item) => item.network === socialNetwork(version.platform));
       if (!row?.items.length) return null;
-      const assetManifest = row.items.map((index, position) => mediaAsset(files.get(index)!, picked[index]!.kind, position));
+      const own = mediaFor(row.accountId);
+      const assetManifest = row.items.map((index, position) => mediaAsset(files.get(own[index]!.key)!, own[index]!.kind, position));
       return social.updatePostVersion(version.id, { assetManifest });
     }));
     emit("close");
@@ -411,6 +499,7 @@ async function submit() {
 
       <input ref="imagesInput" class="visually-hidden" type="file" accept="image/*" multiple tabindex="-1" aria-hidden="true" @change="addFromDevice">
       <input ref="videoInput" class="visually-hidden" type="file" accept="video/*" tabindex="-1" aria-hidden="true" @change="addFromDevice">
+      <input ref="cutInput" class="visually-hidden" type="file" accept="video/*" tabindex="-1" aria-hidden="true" @change="addCut">
 
       <div v-if="step === 'ask'" class="new-post__ask">
         <button
@@ -496,7 +585,14 @@ async function submit() {
               <span v-if="namedRow(row)" class="new-post__name" aria-hidden="true">{{ accountName(accountFor(row)) }}</span>
             </label>
             <span :id="`${titleId}-${row.accountId}-says`" class="new-post__says" :class="{ 'is-warn': row.tone === 'warn' && row.canTake }">
-              {{ row.canTake ? row.label : row.reason }}<template v-if="row.hint"> {{ row.hint }}</template>
+              {{ row.canTake ? row.label : row.reason }}
+              <span v-if="row.hint" class="new-post__hint">{{ row.hint }}</span>
+            </span>
+            <span v-if="cuts[row.accountId] && type !== 'text'" class="new-post__cut">
+              Its own cut: {{ cuts[row.accountId]!.name }}
+              <button type="button" class="new-post__action" @click="dropCut(row.accountId)">
+                Use the original<span class="visually-hidden"> for {{ accessibleName(row) }}</span>
+              </button>
             </span>
             <span v-if="row.actions.length" class="new-post__actions">
               <button v-for="action in row.actions" :key="action.kind" type="button" class="new-post__action" @click="runAction(row, action)">
@@ -657,8 +753,10 @@ async function submit() {
 .new-post__who { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
 .new-post__name { max-width: 9em; overflow: hidden; font-size: var(--ui-font-size-sm, 13px); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .new-post__says { min-width: 0; font-size: 13.5px; line-height: 1.35; }
+.new-post__hint { display: block; color: var(--ui-text-muted); font-size: var(--ui-font-size-sm, 13px); }
 .new-post__says.is-warn { color: var(--ui-text); font-weight: 550; }
 .new-post__actions { grid-column: 3; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.new-post__cut { grid-column: 3; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; color: var(--ui-text-muted); font-size: var(--ui-font-size-sm, 13px); overflow-wrap: anywhere; }
 .new-post__action, .new-post__quiet {
   justify-self: start;
   padding: 2px 0;

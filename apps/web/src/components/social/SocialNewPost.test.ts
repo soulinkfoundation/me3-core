@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { account, capabilities, post, version } from "../../utils/social-posts.fixtures";
 import type { SocialAccountRow } from "../../stores/social";
 
+const apiGet = vi.fn();
 const apiPost = vi.fn();
 const apiPatch = vi.fn();
 const routerPush = vi.fn();
@@ -13,10 +14,12 @@ vi.mock("vue-router", () => ({ useRouter: () => ({ push: routerPush }) }));
 vi.mock("../../api", () => ({
   API_BASE: "/api",
   ApiError: class extends Error {},
-  api: { get: vi.fn(), post: (...args: unknown[]) => apiPost(...args), patch: (...args: unknown[]) => apiPatch(...args), delete: vi.fn() },
+  api: { get: (...args: unknown[]) => apiGet(...args), post: (...args: unknown[]) => apiPost(...args), patch: (...args: unknown[]) => apiPatch(...args), delete: vi.fn() },
 }));
 const uploadDriveFiles = vi.fn();
 vi.mock("../../utils/drive-upload", () => ({ uploadDriveFiles: (...args: unknown[]) => uploadDriveFiles(...args) }));
+const readVideoInfo = vi.fn();
+vi.mock("../../utils/video-info", () => ({ readVideoInfo: (...args: unknown[]) => readVideoInfo(...args) }));
 vi.mock("../../composables/useAppToast", () => ({
   useAppToast: () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastFromUnknown: vi.fn(), toast }),
 }));
@@ -51,6 +54,8 @@ describe("New post", () => {
     vi.clearAllMocks();
     URL.createObjectURL = vi.fn(() => "blob:preview");
     URL.revokeObjectURL = vi.fn();
+    apiGet.mockRejectedValue(new Error("offline"));
+    readVideoInfo.mockResolvedValue({ durationSeconds: null, width: null, height: null });
   });
 
   it("asks what you want to post, naming the accounts each option reaches", () => {
@@ -161,5 +166,73 @@ describe("New post", () => {
     expect(rows(wrapper).map((row) => row.name)).toEqual(["X, mayastudio"]);
     await wrapper.find(".new-post__quiet").trigger("click");
     expect(wrapper.emitted("connect")).toHaveLength(1);
+  });
+
+  describe("a video's length and shape (me3-ic0c)", () => {
+    const vertical = (durationSeconds: number) => ({ durationSeconds, width: 1080, height: 1920 });
+    const clip = (name = "clip.mp4") => new File(["x"], name, { type: "video/mp4" });
+    let objectUrls = 0;
+    beforeEach(() => {
+      objectUrls = 0;
+      URL.createObjectURL = vi.fn(() => `blob:${objectUrls++}`);
+    });
+
+    it("dims an account the video is too long for and offers a shorter cut for that account only", async () => {
+      readVideoInfo.mockImplementation(async (src: string) => (src === "blob:0" ? vertical(1260) : vertical(95)));
+      apiPost.mockResolvedValue({ post: post([version({ id: "vx", platform: "x" }), version({ id: "vl", platform: "linkedin" })], { id: "post-2" }) });
+      apiPatch.mockResolvedValue({ version: version() });
+      uploadDriveFiles.mockImplementation(async ([file]: File[]) => [{ id: `file-${file.name}`, filename: file.name, mimeType: file.type, size: 1 }]);
+      const wrapper = open([account("x"), account("linkedin"), account("youtube")]);
+      await wrapper.findAll(".new-post__option")[2]!.trigger("click");
+      await pick(wrapper, 1, [clip("long.mp4")]);
+      await flushPromises();
+      expect(rows(wrapper)).toEqual([
+        { name: "X, mayastudio", ticked: false, cant: true, says: "Too long: X takes up to 20:00" },
+        { name: "LinkedIn, mayastudio", ticked: true, cant: false, says: "Video" },
+        { name: "YouTube, mayastudio", ticked: true, cant: false, says: "Regular video, private draft" },
+      ]);
+      const action = wrapper.findAll(".new-post__row")[0]!.find(".new-post__action");
+      expect(action.text()).toBe("Pick a shorter cut for X, mayastudio");
+      await action.trigger("click");
+      await pick(wrapper, 2, [clip("short.mp4")]);
+      await flushPromises();
+      expect(rows(wrapper)[0]).toEqual({ name: "X, mayastudio", ticked: true, cant: false, says: "Video" });
+      expect(wrapper.find(".new-post__cut").text()).toContain("Its own cut: short.mp4");
+
+      await wrapper.find("textarea").setValue("Workshop.");
+      await wrapper.find("form").trigger("submit");
+      await flushPromises();
+      const sent = Object.fromEntries(apiPatch.mock.calls.map(([path, body]) => [path, (body as { assetManifest: Array<{ filename: string }> }).assetManifest[0]!.filename]));
+      expect(Object.values(sent).sort()).toEqual(["long.mp4", "short.mp4"]);
+    });
+
+    it("uses each TikTok account's own limit once it loads, and claims nothing before", async () => {
+      let answer: (value: unknown) => void = () => {};
+      apiGet.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      readVideoInfo.mockResolvedValue(vertical(720));
+      const wrapper = open([account("tiktok")]);
+      await wrapper.findAll(".new-post__option")[2]!.trigger("click");
+      await pick(wrapper, 1, [clip()]);
+      await flushPromises();
+      expect(rows(wrapper)[0]).toMatchObject({ ticked: true, says: "Video. You choose who sees it on the next screen." });
+      answer({ creatorInfo: { maxVideoPostDurationSeconds: 600 } });
+      await flushPromises();
+      expect(rows(wrapper)[0]).toMatchObject({ ticked: false, cant: true, says: "Too long: TikTok takes up to 10:00 on this account" });
+    });
+
+    it("hints at a vertical video for Reels without blocking, and claims nothing when metadata can't be read", async () => {
+      readVideoInfo.mockResolvedValueOnce({ durationSeconds: 48, width: 1920, height: 1080 });
+      const wrapper = open([account("instagram"), account("x")]);
+      await wrapper.findAll(".new-post__option")[2]!.trigger("click");
+      await pick(wrapper, 1, [clip()]);
+      await flushPromises();
+      expect(rows(wrapper)[1]).toMatchObject({ ticked: true });
+      expect(wrapper.findAll(".new-post__row")[1]!.find(".new-post__hint").text()).toBe("Reels show best vertical (9:16).");
+
+      readVideoInfo.mockResolvedValueOnce({ durationSeconds: null, width: null, height: null });
+      await pick(wrapper, 1, [clip("odd.mkv")]);
+      await flushPromises();
+      expect(rows(wrapper).map((row) => [row.ticked, row.says])).toEqual([[true, "Video"], [true, "Reel"]]);
+    });
   });
 });
