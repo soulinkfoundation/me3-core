@@ -268,6 +268,40 @@ test("detaches and verifies the permanent custom domain before Worker deletion",
   );
 });
 
+for (const { name, lag, ok } of [
+  { name: "waits out Cloudflare's custom domain listing lag after a detach", lag: 2, ok: true },
+  { name: "still fails closed when a detached custom domain never leaves the listing", lag: 1000, ok: false },
+]) {
+  test(name, async () => {
+    const fake = createCloudflareFixture();
+    let domain = { id: "managed-domain-id", hostname: "owner.me3.app", service: WORKER_NAME };
+    let listingsAfterDelete = null;
+    const request = async (url, init = {}) => {
+      const resource = new URL(url).pathname.replace(`/client/v4/accounts/${ACCOUNT_ID}`, "");
+      const method = init.method || "GET";
+      if (resource === "/workers/domains" && method === "GET") {
+        if (listingsAfterDelete === null) return success(domain ? [domain] : []);
+        listingsAfterDelete += 1;
+        return success(listingsAfterDelete <= lag ? [domain] : []);
+      }
+      if (resource === "/workers/domains/managed-domain-id" && method === "DELETE") {
+        listingsAfterDelete = 0;
+        return success(null);
+      }
+      return fake.request(url, init);
+    };
+    const input = waivedContract();
+    input.publicOrigin = "https://owner.me3.app";
+    const run = decommissionManagedInstall(input, {
+      request,
+      deployTombstone: async () => { fake.state.producerBindings.clear(); fake.state.namespaces = []; },
+      pause: async () => {},
+    });
+    if (ok) assert.equal((await run).ok, true);
+    else await assert.rejects(run, /managed custom domain absence was not verified/);
+  });
+}
+
 test("decommissions without S3 evidence only after persisted purge proof and verified REST absence", async () => {
   const fake = createCloudflareFixture();
   const stages = [];

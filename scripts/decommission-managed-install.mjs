@@ -675,13 +675,20 @@ export async function detachManagedCustomDomain(api, accountId, contract) {
   await assertManagedCustomDomainAbsent(api, accountId, contract);
 }
 
+// Cloudflare's Workers domain listing lags a detach by a few seconds, like the
+// queue listing, so absence is re-checked briefly before it counts as unverified.
 async function assertManagedCustomDomainAbsent(api, accountId, contract) {
   if (!contract.customHostname) return;
   const query = new URLSearchParams({ service: contract.workerName });
-  const domains = await api(`/accounts/${accountId}/workers/domains?${query}`);
-  if (!Array.isArray(domains) || domains.length !== 0) {
-    throw new Error("managed custom domain absence was not verified");
+  for (let attempt = 1; attempt <= QUEUE_LISTING_SETTLE_ATTEMPTS; attempt += 1) {
+    const domains = await api(`/accounts/${accountId}/workers/domains?${query}`);
+    if (!Array.isArray(domains)) {
+      throw new Error("managed custom domain absence was not verified");
+    }
+    if (domains.length === 0) return;
+    if (attempt < QUEUE_LISTING_SETTLE_ATTEMPTS) await (api.pause || delay)(QUEUE_LISTING_SETTLE_MS);
   }
+  throw new Error("managed custom domain absence was not verified");
 }
 
 async function findQueue(api, accountId, name) {
