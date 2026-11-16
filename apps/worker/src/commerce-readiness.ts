@@ -4,12 +4,15 @@ import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import { isCommerceReady } from "./commerce-settings";
 import type { Env } from "./types";
 import { regionalPricingError } from "../../../shared/regional-pricing";
+import { methodsCoverCurrency, type SavedPaymentMethod } from "../../../shared/pay-directly";
+import { listPaymentMethods } from "./pay-directly";
 
 type BookingOffer = {
   pricing?: {
     enabled?: boolean;
     paymentMethod?: "stripe" | "manual";
     paymentInstructions?: string;
+    currency?: string;
   };
 };
 
@@ -18,35 +21,41 @@ type CommerceProduct = {
   available?: boolean;
   paymentMethod?: "stripe" | "manual";
   paymentInstructions?: string;
+  currency?: string;
 };
+
+// A pay-directly offer needs a saved way to get paid that takes its currency, or a note.
+function manualPaymentBlockMessage(kind: "product" | "booking", currency: string | undefined): string {
+  const code = /^[A-Za-z]{3}$/.test(currency || "") ? ` in ${currency!.toUpperCase()}` : "";
+  return `Add a way to get paid${code} in Settings → Payments, or a note for buyers, for every pay-directly ${kind} before publishing.`;
+}
 
 function profileManualPaymentBlockReason(
   profile: Me3SiteProfile,
+  methods: SavedPaymentMethod[],
 ): string | null {
   const product = ((profile.products || []) as CommerceProduct[]).find(
     (candidate) =>
       candidate.available !== false &&
       candidate.paymentMethod === "manual" &&
-      !candidate.paymentInstructions?.trim(),
+      !candidate.paymentInstructions?.trim() &&
+      !methodsCoverCurrency(methods, candidate.currency),
   );
-  if (product) return "Add payment instructions for every pay-separately product before publishing.";
+  if (product) return manualPaymentBlockMessage("product", product.currency);
 
   const book = profile.intents?.book as BookIntentWithOffers | undefined;
   const offers = [
     ...(book?.offers || []),
     ...(book?.bookingTypes || []).flatMap((type) => type.offers || []),
   ];
-  if (
-    offers.some(
-      (offer) =>
-        offer.pricing?.enabled === true &&
-        offer.pricing.paymentMethod === "manual" &&
-        !offer.pricing.paymentInstructions?.trim(),
-    )
-  ) {
-    return "Add payment instructions for every pay-separately booking before publishing.";
-  }
-  return null;
+  const offer = offers.find(
+    (candidate) =>
+      candidate.pricing?.enabled === true &&
+      candidate.pricing.paymentMethod === "manual" &&
+      !candidate.pricing.paymentInstructions?.trim() &&
+      !methodsCoverCurrency(methods, candidate.pricing.currency),
+  );
+  return offer ? manualPaymentBlockMessage("booking", offer.pricing?.currency) : null;
 }
 
 type BookIntentWithOffers = {
@@ -96,7 +105,10 @@ export async function getProfileCommercePublishBlockReason(
     const error = productDeliveryError(product.delivery) || productOfferError(product);
     if (product.available !== false && error) return error;
   }
-  const manualPaymentError = profileManualPaymentBlockReason(profile);
+  const manualPaymentError = profileManualPaymentBlockReason(
+    profile,
+    await listPaymentMethods(env, ownerId),
+  );
   if (manualPaymentError) return manualPaymentError;
   if (!profileRequiresCommerce(profile) || await isCommerceReady(env, ownerId)) return null;
   return "Connect Stripe in Settings → Payments before publishing paid bookings or products.";

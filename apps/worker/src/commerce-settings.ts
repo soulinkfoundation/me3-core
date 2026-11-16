@@ -9,6 +9,7 @@ import {
   type ManagedCommerceConnectionStatus,
 } from "./commerce-bridge";
 import { getAgentCheckoutEnabled, setAgentCheckoutEnabled } from "./agent-commerce-store";
+import { listPaymentMethods, type PaymentMethod } from "./pay-directly";
 
 type CommerceSettingsRow = {
   user_id: string;
@@ -45,6 +46,8 @@ export type CommerceSettingsResponse = {
   };
   /** Buying agents can book and buy through the agent commerce API. */
   agentCheckout: { enabled: boolean };
+  /** Pay me directly: the owner's saved ways to get paid, in their order. Owner-only. */
+  payDirectly: { methods: PaymentMethod[] };
 };
 
 type StripeProviderPreference = "auto" | "direct" | "managed";
@@ -131,6 +134,7 @@ export async function getCommerceSettings(
       requirementsDue: managedStatus?.requirementsDue || [],
     },
     agentCheckout: { enabled: await getAgentCheckoutEnabled(env, ownerId) },
+    payDirectly: { methods: await listPaymentMethods(env, ownerId) },
   };
 }
 

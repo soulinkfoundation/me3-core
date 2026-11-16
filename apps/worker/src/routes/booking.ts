@@ -34,6 +34,7 @@ import {
   startPaidOneToOneCheckout,
 } from "../booking-checkout";
 import type { AppHono, OwnerRouteDeps } from "../http/types";
+import { manualPaymentAvailable } from "../pay-directly";
 import { finalizeStripeProductCheckout } from "../commerce-orders";
 import { getManagedCommerceBridgeConfig } from "../commerce-bridge";
 import {
@@ -188,9 +189,14 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
     if (
       offer.pricing?.enabled &&
       offer.pricing.paymentMethod === "manual" &&
-      !normalizeLongText(offer.pricing.paymentInstructions, 8000)
+      !(await manualPaymentAvailable(
+        c.env,
+        site.user_id,
+        normalizeLongText(offer.pricing.paymentInstructions, 8000),
+        offer.pricing.currency,
+      ))
     ) {
-      return c.json({ error: "Payment instructions are not configured for this booking" }, 409);
+      return c.json({ error: "Payment details are not set up for this booking" }, 409);
     }
     const timezone = resolveTimeZone(offer.availability.timezone);
     const slot = resolvePublicBookingSlot({
@@ -256,9 +262,14 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
     if (
       offer.pricing?.enabled &&
       offer.pricing.paymentMethod === "manual" &&
-      !normalizeLongText(offer.pricing.paymentInstructions, 8000)
+      !(await manualPaymentAvailable(
+        c.env,
+        site.user_id,
+        normalizeLongText(offer.pricing.paymentInstructions, 8000),
+        offer.pricing.currency,
+      ))
     ) {
-      return c.json({ error: "Payment instructions are not configured for this booking" }, 409);
+      return c.json({ error: "Payment details are not set up for this booking" }, 409);
     }
     const manualAmount =
       offer.pricing?.enabled && offer.pricing.paymentMethod === "manual"

@@ -13,6 +13,14 @@ import {
   updateCommerceSettings,
 } from "../commerce-settings";
 import {
+  PayDirectlyInputError,
+  createPaymentMethod,
+  deletePaymentMethod,
+  listPaymentMethods,
+  reorderPaymentMethods,
+  updatePaymentMethod,
+} from "../pay-directly";
+import {
   createManagedCommerceOnboardingLink,
   ManagedCommerceBridgeError,
 } from "../commerce-bridge";
@@ -61,6 +69,41 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
       return commerceSettingsErrorResponse(c, error);
     }
   });
+
+  // Pay me directly: the owner's saved ways to get paid. Owner-only; never part of the published site.
+  const paymentMethodRoute = (
+    handler: (c: AppContext, ownerId: string, body: unknown) => Promise<Record<string, unknown>>,
+    status: 200 | 201 = 200,
+  ) => async (c: AppContext) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const body = c.req.method === "GET" || c.req.method === "DELETE" ? null : await c.req.json().catch(() => null);
+    try {
+      return c.json({ ok: true, ...(await handler(c, ownerId, body)) }, status);
+    } catch (error) {
+      if (error instanceof PayDirectlyInputError) {
+        return c.json({ ok: false, error: error.message }, error.status as 400);
+      }
+      throw error;
+    }
+  };
+
+  app.get("/api/commerce/payment-methods", paymentMethodRoute(async (c, ownerId) => ({
+    methods: await listPaymentMethods(c.env, ownerId),
+  })));
+  app.post("/api/commerce/payment-methods", paymentMethodRoute(async (c, ownerId, body) => ({
+    method: await createPaymentMethod(c.env, ownerId, body),
+  }), 201));
+  app.put("/api/commerce/payment-methods/order", paymentMethodRoute(async (c, ownerId, body) => ({
+    methods: await reorderPaymentMethods(c.env, ownerId, body),
+  })));
+  app.patch("/api/commerce/payment-methods/:id", paymentMethodRoute(async (c, ownerId, body) => ({
+    method: await updatePaymentMethod(c.env, ownerId, c.req.param("id") || "", body),
+  })));
+  app.delete("/api/commerce/payment-methods/:id", paymentMethodRoute(async (c, ownerId) => {
+    await deletePaymentMethod(c.env, ownerId, c.req.param("id") || "");
+    return {};
+  }));
 
   async function startStripeOnboarding(
     c: AppContext,

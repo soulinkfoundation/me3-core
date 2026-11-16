@@ -26,6 +26,7 @@ import {
   type EventBookingType,
 } from "../event-booking";
 import type { AppHono } from "../http/types";
+import { manualPaymentAvailable } from "../pay-directly";
 import type { Env } from "../types";
 
 type EventBookingBody = {
@@ -98,9 +99,14 @@ export function registerEventBookingRoutes(app: AppHono) {
     if (
       context.offer.pricing?.enabled &&
       context.offer.pricing.paymentMethod === "manual" &&
-      !normalizeLongText(context.offer.pricing.paymentInstructions, 8000)
+      !(await manualPaymentAvailable(
+        c.env,
+        context.site.user_id,
+        normalizeLongText(context.offer.pricing.paymentInstructions, 8000),
+        context.offer.pricing.currency,
+      ))
     ) {
-      return c.json({ error: "Payment instructions are not configured for this event" }, 409);
+      return c.json({ error: "Payment details are not set up for this event" }, 409);
     }
     const manualAmount =
       context.offer.pricing?.enabled &&

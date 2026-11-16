@@ -28,6 +28,7 @@ import {
 import { getManagedCommerceBridgeConfig } from "./commerce-bridge";
 import { isCommerceReady } from "./commerce-settings";
 import { dispatchWebsitePaymentNotification } from "./payment-notifications";
+import { manualPaymentAvailable, prepareDirectPayment } from "./pay-directly";
 
 const PAYMENTS_UNAVAILABLE_MESSAGE =
   "Payments are not available for this purchase right now. Please contact the site owner.";
@@ -141,8 +142,8 @@ export async function createProductCheckout(
   }
   const paymentMethod = product.paymentMethod === "manual" ? "manual" : "stripe";
   const paymentInstructions = normalizeLongText(product.paymentInstructions, 8000);
-  if (paymentMethod === "manual" && !paymentInstructions) {
-    throw new CommerceOrderInputError("Payment instructions are not configured for this product.", 409);
+  if (paymentMethod === "manual" && !(await manualPaymentAvailable(env, site.user_id, paymentInstructions, currency))) {
+    throw new CommerceOrderInputError("Payment details are not set up for this product.", 409);
   }
   const orderId = crypto.randomUUID();
   const pageId = normalizeShortText(body.pageId, 100) || null;
@@ -186,6 +187,21 @@ export async function createProductCheckout(
     const extraMessage = productSendsPurchaseConfirmation(product.confirmationEmail)
       ? applyPurchaseEmailTokens(product.confirmationEmail.message, tokens)
       : "";
+    // The order's short reference, and the owner's saved ways to get paid ahead of their note.
+    const payment = await prepareDirectPayment(env, site.user_id, {
+      orderId,
+      amountMinor: amount,
+      currency,
+      note: paymentInstructions,
+    }).catch(async (error) => {
+      console.error("Pay-directly details could not be prepared for an order:", error);
+      await env.DB.prepare(
+        `UPDATE commerce_orders SET status = 'failed', updated_at = datetime('now') WHERE id = ?`,
+      )
+        .bind(orderId)
+        .run();
+      throw new CommerceOrderInputError("Payment details could not be emailed right now.", 502);
+    });
     const sent = await sendProductPaymentInstructionsEmail(env, {
       operationId: `order:${orderId}:payment-instructions`,
       ownerId: site.user_id,
@@ -196,7 +212,7 @@ export async function createProductCheckout(
       productTitle: tokens.productTitle,
       amountDue: amount,
       currency,
-      paymentInstructions,
+      paymentInstructions: payment.instructions,
       messageText: extraMessage,
     });
     if (sent.status !== "sent" && sent.status !== "pending") {

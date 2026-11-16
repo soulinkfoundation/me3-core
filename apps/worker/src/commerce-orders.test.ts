@@ -40,6 +40,8 @@ function createEnv(
   },
 ) {
   const orders: DbCommerceOrder[] = [];
+  // Rows of commerce_payment_methods: the owner's saved ways to get paid.
+  const paymentMethods: Array<Record<string, unknown>> = [];
   const profile = new TextEncoder().encode(
     JSON.stringify({
       version: "0.1",
@@ -86,6 +88,9 @@ function createEnv(
             } as T;
           }
           return null;
+        },
+        async all<T>() {
+          return { results: (sql.includes("FROM commerce_payment_methods") ? paymentMethods : []) as T[] };
         },
         async run() {
           if (sql.includes("INSERT INTO commerce_orders")) {
@@ -145,8 +150,47 @@ function createEnv(
       ME3_COMMERCE_BRIDGE_TOKEN: "bridge-token",
     } as unknown as Env,
     orders,
+    paymentMethods,
   };
 }
+
+// Failure modes: a pay-directly product with neither a note nor a saved method takes an
+// order the buyer cannot pay; one with a saved method and no note is still refused; the
+// buyer's email leaves out the payment link or the order reference; a saved bank account in
+// another currency counts as a way to pay.
+describe("pay-directly product orders", () => {
+  const product = { slug: "clarity-kit", title: "Clarity Kit", price: 4900, currency: "EUR", available: true, paymentMethod: "manual" };
+  const order = (env: Env) => createProductCheckout(env, site, "clarity-kit", { buyerName: "Buyer", buyerEmail: "buyer@example.com" }, "https://owner.example/order");
+  const row = (input: Record<string, unknown>) => ({ link: null, account_name: null, iban: null, bic: null, sort_code: null, account_number: null, currency: null, enabled: 1, created_at: "", updated_at: "", ...input });
+
+  it("refuses an order when there is neither a note nor a usable saved method", async () => {
+    const { env, orders, paymentMethods } = createEnv(product);
+    await expect(order(env)).rejects.toMatchObject({ status: 409, message: "Payment details are not set up for this product." });
+    paymentMethods.push(row({ id: "gbp", kind: "bank", account_name: "Owner", sort_code: "401234", account_number: "12345678", currency: "GBP" }));
+    paymentMethods.push(row({ id: "off", kind: "paypal", link: "https://paypal.me/owner", enabled: 0 }));
+    await expect(order(env)).rejects.toMatchObject({ status: 409 });
+    expect(orders).toHaveLength(0);
+    expect(sendProductPaymentInstructionsEmail).not.toHaveBeenCalled();
+  });
+
+  it("takes an order with a saved method and no note, and emails the link and reference", async () => {
+    const { env, orders, paymentMethods } = createEnv(product);
+    paymentMethods.push(row({ id: "pp", kind: "paypal", link: "https://paypal.me/owner" }));
+    sendProductPaymentInstructionsEmail.mockResolvedValueOnce({ status: "sent" });
+    await expect(order(env)).resolves.toMatchObject({ paymentMethod: "manual" });
+    expect(orders[0]).toMatchObject({ status: "pending", amount_due: 4900, payment_method: "manual" });
+    const sent = sendProductPaymentInstructionsEmail.mock.calls[0][1] as { paymentInstructions: string };
+    expect(sent.paymentInstructions).toContain("PayPal: https://paypal.me/owner/49EUR");
+    expect(sent.paymentInstructions).toMatch(/ME3-[2-9A-HJ-NP-Z]{4}/);
+  });
+
+  it("sends only the owner's note when no method is saved", async () => {
+    const { env } = createEnv({ ...product, paymentInstructions: "Pay at https://pay.example/clarity" });
+    sendProductPaymentInstructionsEmail.mockResolvedValueOnce({ status: "sent" });
+    await order(env);
+    expect(sendProductPaymentInstructionsEmail).toHaveBeenCalledWith(env, expect.objectContaining({ paymentInstructions: "Pay at https://pay.example/clarity" }));
+  });
+});
 
 describe("managed commerce orders", () => {
   it.each([["PK", 800000, "pkr"], ["US", 5000, "usd"], [null, 5000, "usd"]] as const)("persists the fixed price for %s in manual orders and emails", async (country, amount, currency) => {

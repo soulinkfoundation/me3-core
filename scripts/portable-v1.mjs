@@ -130,6 +130,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0105_mailbox_conversations", "2026-11-13-mailbox-conversations-v1"],
   ["0106_mailbox_outreach_handled", "2026-11-13-mailbox-outreach-handled-v1"],
   ["0107_financial_entry_receipts", "2026-11-15-financial-entry-receipts-v1"],
+  ["0108_pay_directly", "2026-11-16-pay-directly-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -248,6 +249,9 @@ const COPIED_TABLES = [
   "calendar_source_events",
   "calendar_sources",
   "commerce_orders",
+  // Pay me directly: the owner's saved ways to get paid and each order's payment reference.
+  "commerce_payment_methods",
+  "commerce_direct_payments",
   "commerce_settings",
   "contacts",
   "content_bank_items",

@@ -20,6 +20,7 @@ import {
   sendBookingConfirmationEmails,
 } from "./transactional-emails";
 import type { DbBooking, DbSite, Env } from "./types";
+import { bookingPaymentInstructions } from "./pay-directly";
 import { dispatchWebsitePaymentNotification } from "./payment-notifications";
 
 export type EventBookingType = "class" | "retreat";
@@ -840,12 +841,10 @@ async function notifyConfirmedEventBooking(
         bookingConfirmationMessage(input.bookIntent, source?.confirmationMessage),
         8000,
       ),
-      paymentInstructions: normalizeLongText(
-        input.offer.pricing?.paymentMethod === "manual"
-          ? input.offer.pricing.paymentInstructions
+      paymentInstructions:
+        input.offer.pricing?.enabled && input.offer.pricing.paymentMethod === "manual"
+          ? await bookingPaymentInstructions(env, input.site.user_id, input.booking, input.offer.pricing.paymentInstructions)
           : "",
-        8000,
-      ),
       sendHostCopy: confirmationEmail?.sendHostCopy !== false,
     }),
   );

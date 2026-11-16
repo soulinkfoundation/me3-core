@@ -33,6 +33,7 @@ import {
 } from "./transactional-emails";
 import { recordOutreachBooking } from "@me3-core/plugin-agent-chat";
 import type { DbBooking, DbSite, Env } from "./types";
+import { bookingPaymentInstructions } from "./pay-directly";
 
 // One-to-one booking checkout shared by the site's own booking pages and the
 // agent commerce API. Routes parse input; these functions own the rules.
@@ -152,8 +153,8 @@ export async function bookFreeOneToOne(
       bookingTitle: input.offer.title,
       timezone: resolveTimeZone(input.offer.availability.timezone),
       paymentInstructions:
-        input.offer.pricing?.paymentMethod === "manual"
-          ? input.offer.pricing.paymentInstructions
+        input.offer.pricing?.enabled && input.offer.pricing.paymentMethod === "manual"
+          ? await bookingPaymentInstructions(env, input.site.user_id, booking, input.offer.pricing.paymentInstructions)
           : null,
     });
     await dispatchWebsitePaymentNotification(env, input.site.user_id, {
