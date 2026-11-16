@@ -7,14 +7,14 @@
 // Every top-level entry in apps/web/public except the public site's own robots.txt, sitemap.xml and llms.txt;
 // anything missing here 404s on the installation host because the public site answers it.
 export const OWNER_APP_ASSET_PATHS = [
-  "/assets", "/icons", "/images", "/landing-page-lab", "/manifest.webmanifest", "/sw.js",
+  "/assets", "/icons", "/images", "/landing-page-lab", "/random-photos", "/manifest.webmanifest", "/sw.js",
   "/favicon.ico", "/favicon.png", "/flower.png", "/me3protocol.jpg",
   "/me3-logo-light.png", "/me3-logo-dark.png",
   "/me3-dog-head-emoji-smooth.png", "/me3-dog-head-emoji-smooth.webp",
   "/me3-dog-head-panting.gif", "/me3-dog-head-panting.webp",
 ];
 
-const ASSET_DIRECTORIES = new Set(["/assets", "/icons", "/images", "/landing-page-lab"]);
+const ASSET_DIRECTORIES = new Set(["/assets", "/icons", "/images", "/landing-page-lab", "/random-photos"]);
 
 export function isOwnerAppStaticAssetPath(pathname: string): boolean {
   return OWNER_APP_ASSET_PATHS.some((entry) =>
@@ -23,7 +23,7 @@ export function isOwnerAppStaticAssetPath(pathname: string): boolean {
 }
 
 const HASHED_ASSET = /^\/assets\/.+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
-const BRAND_IMAGE = /^\/(icons|images)\/|^\/(favicon\.(ico|png)|flower\.png|me3protocol\.jpg|me3-logo-(light|dark)\.png|me3-dog-head-[a-z-]+\.(png|webp|gif))$/;
+const BRAND_IMAGE = /^\/(icons|images|random-photos)\/|^\/(favicon\.(ico|png)|flower\.png|me3protocol\.jpg|me3-logo-(light|dark)\.png|me3-dog-head-[a-z-]+\.(png|webp|gif))$/;
 
 /**
  * Browser cache policy for an owner app static file, or null to keep what the
