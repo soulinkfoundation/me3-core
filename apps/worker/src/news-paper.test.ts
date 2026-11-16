@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newsPatchFromAgent } from "./agent-soup";
-import { clockTime, countPaper, layoutPaper, noteAddsSomething, newsBuildDue, newsDueMinutes, newsFromSearch, readPaperPicks, sameEvent, shouldBuildPaper, toNewsCandidates, writeNewsPicks } from "./news-paper";
+import { cleanSummary, clockTime, countPaper, layoutPaper, noteAddsSomething, newsBuildDue, newsDueMinutes, newsFromSearch, readPaperPicks, sameEvent, shouldBuildPaper, toNewsCandidates, writeNewsPicks } from "./news-paper";
 import { applyNewsPatch, defaultNewsPrefs, describeNewsSettings, newsIsSetUp } from "./news-settings";
 import { newsPrefsFromSoup } from "./news-migrate";
 import { NEWS_PUSH_TITLE, newsPushBody, newsPushDue } from "./news-push";
@@ -71,7 +71,7 @@ describe("news layout", () => {
       const result = layoutPaper(candidates, {}, extras)!;
       expect(result.frontOnly).toBe(false);
       expect(result.pages.front.lead.headline).toMatch(/^Storm Bram/);
-      expect(result.pages.front.briefs).toHaveLength(2);
+      expect(result.pages.front.briefs).toHaveLength(3);
       expect(result.pages.work!.stories).toHaveLength(3);
       expect(result.pages.work!.stories[0].headline).toBe(workLead);
       expect(result.pages.media!.video!.medium).toBe("watch");
@@ -79,16 +79,16 @@ describe("news layout", () => {
       expect(result.pages.topics!.stories).toHaveLength(2);
       expect(new Set(result.pages.topics!.stories.map(story => story.tag)).size).toBe(2);
       expect(result.pages.near!.local!.headline).toBe(local);
-      expect(countPaper(result.pages, fixture.meta.considered)).toMatchObject({ pages: 6, stories: 9 });
+      expect(countPaper(result.pages, fixture.meta.considered)).toMatchObject({ pages: 6, stories: 10 });
     }
   });
 
   it("still delivers a front page when the picks fail", () => {
     const result = layoutPaper(toNewsCandidates(NEWS_FIXTURE_FOUNDER, founderTaste()), null, extras)!;
     expect(result.frontOnly).toBe(true);
-    expect(result.pages.front.briefs).toHaveLength(2);
+    expect(result.pages.front.briefs).toHaveLength(3);
     expect(result.pages).toMatchObject({ work: null, media: null, topics: null, near: null });
-    expect(countPaper(result.pages, 214)).toMatchObject({ pages: 2, stories: 3, videos: 0 });
+    expect(countPaper(result.pages, 214)).toMatchObject({ pages: 2, stories: 4, videos: 0 });
   });
 
   it("has nothing to print when Soup offered nothing", () => {
@@ -103,7 +103,12 @@ describe("news layout", () => {
     const result = layoutPaper(candidates, { lead: { id: storm.id }, briefs: [stormAgain.id, storm.id] }, extras)!;
     const front = [result.pages.front.lead, ...result.pages.front.briefs].map(story => story.headline);
     expect(front.filter(headline => /Storm Bram/.test(headline))).toHaveLength(1);
-    expect(front).toHaveLength(3);
+    expect(front).toHaveLength(4);
+  });
+
+  it("drops a repeated headline and a trailing tag list from a feed summary", () => {
+    expect(cleanSummary("Release: datasette-agent 0.6a0 Accumulated small fixes for Datasette Agent. Tags: datasette-agent, llm, ai", "datasette-agent 0.6a0")).toBe("Accumulated small fixes for Datasette Agent.");
+    expect(cleanSummary("Ministers met on Monday to agree the plan.", "Ministers agree plan")).toBe("Ministers met on Monday to agree the plan.");
   });
 
   it("keeps the model's notes and actions only on the stories it picked", () => {
@@ -156,7 +161,7 @@ describe("news picks", () => {
       video: { id: "nope" }, listen: { id: "c" }, topics: "none", local: { id: "a" },
     }, ids)!;
     expect(picks.lead).toEqual({ id: "a", note: "You're in Galway on Sunday." });
-    expect(picks.briefs).toEqual(["b", "c"]);
+    expect(picks.briefs).toEqual(["b", "c", "a"]);
     expect(picks.work).toEqual([{ id: "b", note: "This was the blocker on your payments task.", action: { label: "Add a task", prompt: "Add a task: check limits" } }, { id: "c" }]);
     // A note that only says "this matches your topics", or runs long, is dropped, and its action with it.
     for (const note of ["Relevant to your AI agents and online payments interests: limits and receipts.", "This relates to running a small business.", "Good for your poetry interest.", "x".repeat(141)]) {

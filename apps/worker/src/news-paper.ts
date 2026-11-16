@@ -83,8 +83,8 @@ const FRESH_WINDOW_MS = 36 * 3_600_000;
 const EXCLUDE_WINDOW_DAYS = 7;
 const NOTE_MAX = 140;
 const WORK_STORIES = 3;
-const TOPIC_STORIES = 2;
-const BRIEFS = 2;
+const TOPIC_STORIES = 4;
+const BRIEFS = 4;
 /** Videos after the one ME3 picked, each short enough for a morning. */
 const MORE_VIDEOS = 2;
 const MORE_VIDEO_MAX_SECONDS = 30 * 60;
@@ -189,14 +189,14 @@ const layoutTool: AgentTool = {
     type: "object",
     properties: {
       lead: idNote,
-      briefs: { type: "array", maxItems: BRIEFS, items: { type: "string" }, description: "Two more front-page stories, by id." },
+      briefs: { type: "array", maxItems: BRIEFS, items: { type: "string" }, description: "Four more front-page stories, by id." },
       work: {
         type: "array", maxItems: WORK_STORIES,
         items: { type: "object", properties: { ...idNote.properties, actionLabel: { type: "string", description: "Optional next step in two to four words, e.g. Add a task, Draft the consent line." }, actionPrompt: { type: "string", description: "What the owner would say to ME3 to do that step, one sentence." } }, required: ["id"], additionalProperties: false },
       },
       video: idNote,
       listen: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
-      topics: { type: "array", maxItems: TOPIC_STORIES, items: { type: "string" }, description: "Stories for the owner's own topics, by id, from two different topics when possible." },
+      topics: { type: "array", maxItems: TOPIC_STORIES, items: { type: "string" }, description: "Stories for the owner's own topics, by id: one from each topic before a second from any, two per topic at most." },
       local: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
     },
     required: ["lead"],
@@ -210,7 +210,7 @@ const layoutTool: AgentTool = {
 const LAYOUT_PROMPT = [
   "You lay out the morning paper for the owner of a personal assistant called ME3.",
   "You are given today's candidate stories in sections (front, work, mine, local, media), the owner's topics, their coming week (calendar and open tasks) and the owner snapshot (mission, goals, projects, memories).",
-  "Pick by id only, each story once: a front-page lead and two more front-page stories that matter most today; up to three work stories; one video and one thing to listen to from media; two stories for the owner's own topics; one local story.",
+  "Pick by id only, each story once: a front-page lead and four more front-page stories that matter most today; up to three work stories; one video and one thing to listen to from media; up to four stories for the owner's own topics, one from each topic before a second from any; one local story.",
   "Different outlets often report the same event: pick it once and never place two stories about the same event.",
   "Most stories get no note. A note that only says the story matches one of the owner's topics or interests is not a note: leave it out. Write a note only when a story clearly touches something specific in the snapshot, calendar or tasks (a named project, a trip, a session, a blocked task), and say what it changes for the owner in one plain sentence. Never invent facts that are not given. No emoji, no hype, no advice about feelings or health, and never mention the Wheel of Life, scores or areas.",
   "A work story may carry one next step (actionLabel and actionPrompt) when there is an obvious thing to do; most have none.",
@@ -309,13 +309,25 @@ export function noteAddsSomething(note: string, story: Pick<NewsStory, "headline
   return said.filter(word => printed.has(word)).length / said.length < 0.6;
 }
 
+/**
+ * Feed summaries often repeat the headline behind a label ("Release: …") and end in a tag list.
+ * Neither is the story, so neither is printed.
+ */
+export function cleanSummary(summary: string, headline: string): string {
+  let text = summary.replace(/\s*\bTags?:\s[^\n]*$/i, "").trim();
+  const head = headline.trim();
+  const lead = text.match(/^(?:[\p{L} ]{1,24}:\s*)?/u)?.[0] || "";
+  if (head && text.slice(lead.length).toLowerCase().startsWith(head.toLowerCase())) text = text.slice(lead.length + head.length).replace(/^[\s:.,–—-]+/, "");
+  return text;
+}
+
 function toPaperStory(story: NewsStory, given: { tag?: string; note?: string; action?: PaperStory["action"] } = {}): PaperStory {
   const minutes = soupMinutes(story);
   const note = given.note && noteAddsSomething(given.note, story) ? given.note : undefined;
   // A next step only stands beside a real note.
   const extra = { tag: given.tag, note, action: note ? given.action : undefined };
   return {
-    id: story.id, headline: story.headline, summary: story.summary, url: story.url, source: story.sources[0]?.name || "", medium: story.medium,
+    id: story.id, headline: story.headline, summary: cleanSummary(story.summary, story.headline), url: story.url, source: story.sources[0]?.name || "", medium: story.medium,
     ...(story.image ? { image: story.image.url } : {}), ...(story.publishedAt ? { publishedAt: story.publishedAt } : {}),
     ...(extra.tag ? { tag: extra.tag } : {}), ...(extra.note ? { note: extra.note } : {}), ...(extra.action ? { action: extra.action } : {}),
     ...(minutes ? { minutes } : {}), ...(story.embedUrl ? { embedUrl: story.embedUrl } : {}),
@@ -374,8 +386,10 @@ export function layoutPaper(candidates: NewsCandidates, picks: PaperPicks | null
   const listen = take(listenPool.filter(story => story.audioUrl), picks.listen?.id) || take(listenPool, picks.listen?.id);
   // More to watch: short videos that play in place, in Soup's order.
   const moreVideos: NewsStory[] = [];
-  const short = watch.filter(story => story.embedUrl && (!story.durationSeconds || story.durationSeconds <= MORE_VIDEO_MAX_SECONDS));
-  while (video && moreVideos.length < MORE_VIDEOS) { const next = take(short); if (!next) break; moreVideos.push(next); }
+  // Ones that play in place come first; a short one that only opens at its source still beats none.
+  const short = watch.filter(story => !story.durationSeconds || story.durationSeconds <= MORE_VIDEO_MAX_SECONDS);
+  const playable = short.filter(story => story.embedUrl);
+  while (video && moreVideos.length < MORE_VIDEOS) { const next = take(playable) || take(short); if (!next) break; moreVideos.push(next); }
 
   const minePool = readable(mine);
   const topicOf = new Map(mine.map(entry => [entry.story.id, entry.topic]));

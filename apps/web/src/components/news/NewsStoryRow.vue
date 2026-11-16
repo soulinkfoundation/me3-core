@@ -19,10 +19,11 @@ const emit = defineEmits<{ ask: [prompt: string] }>();
         <NewsPhoto :id="story.id" :src="story.image" :height="72" />
       </span>
       <template v-else>
+        <NewsPhoto v-if="small && story.image" :id="story.id" :src="story.image" :height="96" class="news-st__pic" />
         <span class="news-st__ti">{{ story.headline }}</span>
         <span v-if="story.summary && !small" class="news-dek">{{ story.summary }}</span>
       </template>
-      <span class="news-src">{{ story.source }}</span>
+      <span class="news-src news-by">{{ story.source }}</span>
       <span v-if="newsSharedLine(story)" class="news-src news-shared">{{ newsSharedLine(story) }}</span>
     </a>
     <span v-if="story.note" class="news-note">{{ story.note }}</span>
@@ -41,6 +42,9 @@ const emit = defineEmits<{ ask: [prompt: string] }>();
 .news-st__open:hover .news-st__ti { text-decoration: underline; text-underline-offset: 3px; }
 .news-st__open:focus-visible { outline: 2px solid var(--ui-focus, currentColor); outline-offset: 2px; border-radius: 4px; }
 .news-st--small .news-st__ti { font-size: 15.5px; }
+.news-st__pic { margin-bottom: 6px; }
+/* A taste of the story, not the story: three lines, then the source has it. */
+.news-st .news-dek { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .news-act { align-self: flex-start; margin-top: 6px; padding: 7px 12px; border: 0; border-radius: 999px; background: var(--ui-surface-muted); color: var(--ui-text); font-size: 13.5px; font-weight: 600; cursor: pointer; }
 </style>
 
@@ -49,7 +53,9 @@ const emit = defineEmits<{ ask: [prompt: string] }>();
 .news-dek { font-size: 14.5px; line-height: 1.45; color: var(--ui-text-muted); }
 .news-src { font-size: 12.5px; color: var(--ui-text-muted); }
 .news-shared { font-weight: 600; }
-.news-note { font-size: 13.5px; line-height: 1.4; color: var(--ui-text-muted); }
-.news-note::before { content: 'ME3 · '; font-weight: 600; }
+/* Who wrote it, set like a newspaper byline. */
+.news-by { margin-top: 3px; font-size: 11px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; color: color-mix(in srgb, var(--ui-text) 72%, transparent); }
+.news-note { margin-top: 4px; padding-left: 10px; font-size: 13.5px; line-height: 1.4; color: var(--ui-text-muted); box-shadow: inset 2px 0 0 var(--ui-accent); }
+.news-note::before { content: 'ME3 · '; font-weight: 650; color: var(--ui-accent-strong, var(--ui-accent)); }
 .news-serif { font-family: ui-serif, 'New York', Georgia, 'Times New Roman', serif; }
 </style>

@@ -98,7 +98,7 @@ const endLine = computed(() => {
                 <NewsPhoto :id="paper.pages.front.lead.id" :src="paper.pages.front.lead.image" :height="200" />
                 <span class="news-lead__ti">{{ paper.pages.front.lead.headline }}</span>
                 <span v-if="paper.pages.front.lead.summary" class="news-dek news-lead__dek">{{ paper.pages.front.lead.summary }}</span>
-                <span class="news-src">{{ paper.pages.front.lead.source }}</span>
+                <span class="news-src news-by">{{ paper.pages.front.lead.source }}</span>
                 <span v-if="newsSharedLine(paper.pages.front.lead)" class="news-src news-shared">{{ newsSharedLine(paper.pages.front.lead) }}</span>
               </a>
               <span v-if="paper.pages.front.lead.note" class="news-note">{{ paper.pages.front.lead.note }}</span>
@@ -114,9 +114,9 @@ const endLine = computed(() => {
             <div v-for="(item, n) in videos" :key="item.story.id" class="news-watch" :class="{ 'news-watch--more': n > 0 }">
               <div v-if="playing === item.story.id && item.embed" class="news-video"><iframe :src="item.embed" :title="item.story.headline" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" /></div>
               <component :is="item.embed ? 'button' : 'a'" v-else class="news-video__poster" v-bind="item.embed ? { type: 'button' } : { href: item.story.url, target: '_blank', rel: 'noopener noreferrer' }" :aria-label="`Play ${item.story.headline}`" @click="item.embed && play(item.story.id)">
-                <NewsPhoto :id="item.story.id" :src="item.story.image" :height="n === 0 ? 210 : 170"><span class="news-video__play"><UiIcon name="Play" :size="22" /></span><span v-if="item.length" class="news-video__len">{{ item.length }}</span></NewsPhoto>
+                <NewsPhoto :id="item.story.id" :src="item.story.image" :height="n === 0 ? 210 : 170" ratio="16 / 9"><span class="news-video__play"><UiIcon name="Play" :size="22" /></span><span v-if="item.length" class="news-video__len">{{ item.length }}</span></NewsPhoto>
               </component>
-              <div class="news-video__text"><a class="news-video__ti" :class="{ 'news-video__ti--more': n > 0 }" :href="item.story.url" target="_blank" rel="noopener noreferrer">{{ item.story.headline }}</a><span class="news-src">{{ item.story.source }}</span><span v-if="item.story.note" class="news-note">{{ item.story.note }}</span></div>
+              <div class="news-video__text"><a class="news-video__ti" :class="{ 'news-video__ti--more': n > 0 }" :href="item.story.url" target="_blank" rel="noopener noreferrer">{{ item.story.headline }}</a><span class="news-src news-by">{{ item.story.source }}</span><span v-if="item.story.note" class="news-note">{{ item.story.note }}</span></div>
             </div>
             <template v-if="paper.pages.media.listen">
               <!-- With its own audio file a listen plays here; otherwise it opens at its source. -->
@@ -141,7 +141,7 @@ const endLine = computed(() => {
               <NewsPhoto :id="story.id" :src="story.image" :height="170" />
               <span v-if="story.tag" class="news-tag">{{ story.tag }}</span>
               <span class="news-topic__ti">{{ story.headline }}</span>
-              <span class="news-src">{{ story.source }}</span>
+              <span class="news-src news-by">{{ story.source }}</span>
               <span v-if="newsSharedLine(story)" class="news-src news-shared">{{ newsSharedLine(story) }}</span>
             </a>
           </template>
@@ -179,11 +179,11 @@ const endLine = computed(() => {
 <style scoped>
 .news-reader { position: fixed; inset: 0; z-index: 1200; display: flex; justify-content: center; background: var(--ui-bg); color: var(--ui-text); }
 .news-reader__sheet { position: relative; display: flex; flex-direction: column; width: min(620px, 100%); height: 100%; perspective: 1400px; overflow: hidden; }
-.news-reader__top { flex: none; display: flex; align-items: center; gap: 4px; margin: 0 20px; padding: calc(8px + env(safe-area-inset-top, 0px)) 0 8px; box-shadow: inset 0 -2px 0 var(--ui-text); }
+.news-reader__top { flex: none; display: flex; align-items: flex-start; gap: 4px; margin: 0 20px; padding: calc(8px + env(safe-area-inset-top, 0px)) 0 8px; box-shadow: inset 0 -2px 0 var(--ui-text); }
 .news-reader__top button:first-child { margin-left: -10px; }
 .news-reader__top button:last-child { margin-right: -10px; }
-.news-reader__title { flex: 1; min-width: 0; margin: 0; text-align: center; font-family: ui-serif, 'New York', Georgia, serif; font-size: 22px; font-weight: 800; letter-spacing: -.015em; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.news-reader__title small { display: block; margin-top: 2px; font-family: -apple-system, system-ui, sans-serif; font-size: 12px; font-weight: 400; letter-spacing: 0; color: var(--ui-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.news-reader__title { flex: 1; min-width: 0; margin: 0; text-align: center; font-family: ui-serif, 'New York', Georgia, serif; font-size: 22px; font-weight: 800; letter-spacing: -.015em; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-top: 8px; }
+.news-reader__title small { display: block; margin-top: 6px; font-family: -apple-system, system-ui, sans-serif; font-size: 12px; font-weight: 400; letter-spacing: 0; color: var(--ui-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .news-reader__top button { flex: none; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; color: var(--ui-text); cursor: pointer; }
 .news-reader__top button:hover { background: var(--ui-surface-muted); }
 .news-pg { flex: 1; overflow-y: auto; padding: 14px 20px 84px; transform-origin: left center; backface-visibility: hidden; background: var(--ui-bg); }
@@ -219,7 +219,8 @@ const endLine = computed(() => {
 .news-lead__dek { margin: 5px 0 3px; display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .news-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; margin-top: 12px; padding-top: 10px; box-shadow: inset 0 1px 0 var(--ui-text); }
 .news-cols :deep(.news-st) { box-shadow: none; }
-.news-cols :deep(.news-st:nth-child(2)) { padding-left: 14px; box-shadow: inset 1px 0 0 var(--ui-border); }
+.news-cols :deep(.news-st:nth-child(even)) { padding-left: 14px; box-shadow: inset 1px 0 0 var(--ui-border); }
+.news-cols :deep(.news-st:nth-child(n + 3)) { border-top: 1px solid var(--ui-border); }
 .news-box { padding: 12px 14px; border-radius: 14px; background: var(--ui-surface-muted); margin-top: 12px; }
 .news-video { position: relative; height: 0; padding-bottom: 56.25%; border-radius: 6px; overflow: hidden; background: #000; }
 .news-video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
