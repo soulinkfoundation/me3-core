@@ -18,12 +18,14 @@ export type NewsStory = {
   medium: "read" | "watch" | "listen";
   minutes?: number;
   embedUrl?: string;
+  /** A listen's own audio file, played in the paper. */
+  audioUrl?: string;
 };
 export type NewsWeather = { emoji: string; temp: string; text: string };
 export type NewsPages = {
   front: { lead: NewsStory; briefs: NewsStory[] };
   work: { topics: string[]; stories: NewsStory[] } | null;
-  media: { video: NewsStory | null; listen: NewsStory | null } | null;
+  media: { video: NewsStory | null; listen: NewsStory | null; more?: NewsStory[] } | null;
   topics: { stories: NewsStory[] } | null;
   near: { city: string | null; weather: NewsWeather | null; local: NewsStory | null; good: NewsStory | null } | null;
 };

@@ -79,7 +79,7 @@ describe("news layout", () => {
       expect(result.pages.topics!.stories).toHaveLength(2);
       expect(new Set(result.pages.topics!.stories.map(story => story.tag)).size).toBe(2);
       expect(result.pages.near!.local!.headline).toBe(local);
-      expect(countPaper(result.pages, fixture.meta.considered)).toMatchObject({ pages: 6, stories: 9, videos: 1 });
+      expect(countPaper(result.pages, fixture.meta.considered)).toMatchObject({ pages: 6, stories: 9 });
     }
   });
 
@@ -327,5 +327,27 @@ describe("the news notification's second line", () => {
     const body = newsPushBody(paper("A".repeat(300), { stories: 3, videos: 0, minutes: 4 }))!;
     expect(body.length).toBeLessThan(150);
     expect(body).toContain("… Plus 2 more, about 4 min.");
+  });
+});
+
+describe("watch and listen", () => {
+  const laidOut = () => layoutPaper(toNewsCandidates(NEWS_FIXTURE_FOUNDER, founderTaste()), {}, extras)!;
+  it("prefers a listen that plays in the paper, and carries its audio file", () => {
+    const listen = laidOut().pages.media!.listen!;
+    expect(listen.headline).toBe("How solo founders price a done-for-you tier");
+    expect(listen.audioUrl).toBe("https://example.com/audio/done-for-you.mp3");
+  });
+  it("adds up to two more short videos that play in place, and counts them", () => {
+    const { pages } = laidOut();
+    expect(pages.media!.video!.headline).toMatch(/^Working backwards/);
+    // The 96-minute keynote and the video with no player are left out.
+    expect(pages.media!.more!.map(story => story.headline)).toEqual(["Agent wallets explained in six minutes", "A landing page reviewed live"]);
+    expect(pages.media!.more!.every(story => story.embedUrl)).toBe(true);
+    expect(countPaper(pages, 0).videos).toBe(3);
+  });
+  it("keeps the picked listen when none has an audio file", () => {
+    const pages = layoutPaper(toNewsCandidates(NEWS_FIXTURE_COACH, coachTaste()), {}, extras)!.pages;
+    expect(pages.media!.listen!.audioUrl).toBeUndefined();
+    expect(pages.media!.more).toBeUndefined();
   });
 });

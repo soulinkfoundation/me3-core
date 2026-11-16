@@ -18,17 +18,19 @@ const index = ref(0);
 const direction = ref<"next" | "prev" | "">("");
 const kind = computed(() => kinds.value[index.value]);
 const last = computed(() => kinds.value.length - 1);
-const playing = ref(false);
+/** The video playing in place, by story id. One at a time; it stops when the page turns. */
+const playing = ref<string | null>(null);
+const listening = ref(false);
 const pageEl = ref<HTMLElement | null>(null);
 const closeEl = ref<HTMLButtonElement | null>(null);
 function go(target: number) {
   if (target < 0 || target > last.value || target === index.value) return;
   direction.value = target > index.value ? "next" : "prev";
   index.value = target;
-  playing.value = false;
+  playing.value = null; listening.value = false;
   void nextTick(() => { if (pageEl.value) pageEl.value.scrollTop = 0; });
 }
-watch(() => props.paper.id, () => { index.value = 0; direction.value = ""; playing.value = false; });
+watch(() => props.paper.id, () => { index.value = 0; direction.value = ""; playing.value = null; listening.value = false; });
 function keys(event: KeyboardEvent) {
   // The settings sheet opens over the paper and takes the keyboard while it is up.
   if (document.querySelector("dialog[open]")) return;
@@ -55,9 +57,13 @@ onMounted(() => {
 });
 onBeforeUnmount(() => { document.documentElement.style.overflow = previousOverflow; window.removeEventListener("keydown", keys); });
 
-const video = computed(() => props.paper.pages.media?.video ?? null);
-const embed = computed(() => video.value ? newsEmbedUrl(video.value) : null);
-const videoLength = computed(() => video.value?.minutes ? `${video.value.minutes} min` : "");
+// The video ME3 picked, then up to two more. Each plays here after a tap when it has a player.
+const videos = computed(() => {
+  const media = props.paper.pages.media;
+  return [media?.video, ...(media?.more || [])].filter((story): story is NonNullable<typeof story> => Boolean(story)).map(story => ({ story, embed: newsEmbedUrl(story), length: story.minutes ? `${story.minutes} min` : "" }));
+});
+function play(id: string) { listening.value = false; playing.value = id; }
+function listen() { playing.value = null; listening.value = true; }
 // The top bar names the page: "News" and the date on the front, the section and what is in it after.
 const title = computed(() => kind.value === "front" || kind.value === "end" ? "News" : kind.value === "near" ? props.paper.pages.near?.city || NEWS_PAGE_TITLES.near : NEWS_PAGE_TITLES[kind.value]);
 const subtitle = computed(() => {
@@ -72,7 +78,7 @@ const subtitle = computed(() => {
 const ratings: Array<{ id: NewsRating; emoji: string; label: string }> = [{ id: "fire", emoji: "🔥", label: "Loved it" }, { id: "ok", emoji: "🙂", label: "It was fine" }, { id: "sleepy", emoji: "😴", label: "A bit dull" }];
 const endLine = computed(() => {
   const { stories, videos } = props.paper.counts;
-  return `${stories} ${stories === 1 ? "story" : "stories"}${videos ? " and a video" : ""}. Tomorrow’s will be ready at ${props.nextTime}.`;
+  return `${stories} ${stories === 1 ? "story" : "stories"}${videos === 1 ? " and a video" : videos > 1 ? ` and ${videos} videos` : ""}. Tomorrow’s will be ready at ${props.nextTime}.`;
 });
 </script>
 
@@ -104,18 +110,29 @@ const endLine = computed(() => {
           </template>
 
           <template v-else-if="kind === 'media' && paper.pages.media">
-            <template v-if="video">
-              <div v-if="playing && embed" class="news-video"><iframe :src="embed" :title="video.headline" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" /></div>
-              <component :is="embed ? 'button' : 'a'" v-else class="news-video__poster" v-bind="embed ? { type: 'button' } : { href: video.url, target: '_blank', rel: 'noopener noreferrer' }" :aria-label="`Play ${video.headline}`" @click="embed && (playing = true)">
-                <NewsPhoto :id="video.id" :src="video.image" :height="210"><span class="news-video__play"><UiIcon name="Play" :size="22" /></span><span v-if="videoLength" class="news-video__len">{{ videoLength }}</span></NewsPhoto>
+            <div v-for="(item, n) in videos" :key="item.story.id" class="news-watch" :class="{ 'news-watch--more': n > 0 }">
+              <div v-if="playing === item.story.id && item.embed" class="news-video"><iframe :src="item.embed" :title="item.story.headline" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" /></div>
+              <component :is="item.embed ? 'button' : 'a'" v-else class="news-video__poster" v-bind="item.embed ? { type: 'button' } : { href: item.story.url, target: '_blank', rel: 'noopener noreferrer' }" :aria-label="`Play ${item.story.headline}`" @click="item.embed && play(item.story.id)">
+                <NewsPhoto :id="item.story.id" :src="item.story.image" :height="n === 0 ? 210 : 170"><span class="news-video__play"><UiIcon name="Play" :size="22" /></span><span v-if="item.length" class="news-video__len">{{ item.length }}</span></NewsPhoto>
               </component>
-              <div class="news-video__text"><a class="news-video__ti" :href="video.url" target="_blank" rel="noopener noreferrer">{{ video.headline }}</a><span class="news-src">{{ video.source }}</span><span v-if="video.note" class="news-note">{{ video.note }}</span></div>
+              <div class="news-video__text"><a class="news-video__ti" :class="{ 'news-video__ti--more': n > 0 }" :href="item.story.url" target="_blank" rel="noopener noreferrer">{{ item.story.headline }}</a><span class="news-src">{{ item.story.source }}</span><span v-if="item.story.note" class="news-note">{{ item.story.note }}</span></div>
+            </div>
+            <template v-if="paper.pages.media.listen">
+              <!-- With its own audio file a listen plays here; otherwise it opens at its source. -->
+              <div v-if="paper.pages.media.listen.audioUrl" class="news-box news-listen-box">
+                <button type="button" class="news-listen" :aria-label="`Listen to ${paper.pages.media.listen.headline}`" :aria-expanded="listening" @click="listen">
+                  <UiIcon name="Headphones" :size="24" />
+                  <span class="news-listen__text"><span class="news-serif news-listen__ti">{{ paper.pages.media.listen.headline }}</span><span class="news-src">{{ [paper.pages.media.listen.source, newsLength(paper.pages.media.listen)].filter(Boolean).join(' · ') }}</span></span>
+                  <span v-if="!listening" class="news-listen__go" aria-hidden="true"><UiIcon name="Play" :size="16" /></span>
+                </button>
+                <audio v-if="listening" class="news-listen__audio" :src="paper.pages.media.listen.audioUrl" controls autoplay preload="none" />
+              </div>
+              <a v-else class="news-box news-listen" :href="paper.pages.media.listen.url" target="_blank" rel="noopener noreferrer" :aria-label="`Listen to ${paper.pages.media.listen.headline}`">
+                <UiIcon name="Headphones" :size="24" />
+                <span class="news-listen__text"><span class="news-serif news-listen__ti">{{ paper.pages.media.listen.headline }}</span><span class="news-src">{{ [paper.pages.media.listen.source, newsLength(paper.pages.media.listen)].filter(Boolean).join(' · ') }}</span></span>
+                <span class="news-listen__go" aria-hidden="true"><UiIcon name="Play" :size="16" /></span>
+              </a>
             </template>
-            <a v-if="paper.pages.media.listen" class="news-box news-listen" :href="paper.pages.media.listen.url" target="_blank" rel="noopener noreferrer" :aria-label="`Listen to ${paper.pages.media.listen.headline}`">
-              <UiIcon name="Headphones" :size="24" />
-              <span class="news-listen__text"><span class="news-serif news-listen__ti">{{ paper.pages.media.listen.headline }}</span><span class="news-src">{{ [paper.pages.media.listen.source, newsLength(paper.pages.media.listen)].filter(Boolean).join(' · ') }}</span></span>
-              <span class="news-listen__go" aria-hidden="true"><UiIcon name="Play" :size="16" /></span>
-            </a>
           </template>
 
           <template v-else-if="kind === 'topics' && paper.pages.topics">
@@ -210,7 +227,12 @@ const endLine = computed(() => {
 .news-video__len { position: absolute; right: 8px; bottom: 8px; padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .66); color: #fff; font-size: 12px; font-weight: 600; }
 .news-video__text { display: flex; flex-direction: column; gap: 3px; padding: 10px 0 12px; }
 .news-video__ti { font-family: ui-serif, 'New York', Georgia, serif; font-size: 20px; font-weight: 700; line-height: 1.24; color: var(--ui-text); text-decoration: none; padding: 0; }
+.news-watch--more { padding-top: 12px; box-shadow: inset 0 1px 0 var(--ui-border); }
+.news-video__ti--more { font-size: 17.5px; }
 .news-listen { display: flex; align-items: center; gap: 12px; color: var(--ui-text); text-decoration: none; }
+.news-listen-box { display: flex; flex-direction: column; gap: 10px; }
+button.news-listen { width: 100%; padding: 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+.news-listen__audio { width: 100%; height: 40px; }
 .news-listen:hover { background: var(--ui-surface-muted); }
 .news-listen__text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .news-listen__ti { font-size: 16px; font-weight: 700; }

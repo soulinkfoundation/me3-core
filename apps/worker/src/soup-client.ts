@@ -7,7 +7,7 @@
 // `soupSearchQuery`, which whitelists the fields.
 
 /** The Soup contract this client was written against (packages/core in the Soup repo). */
-export const SOUP_CONTRACT_VERSION = "2026-11-13.1";
+export const SOUP_CONTRACT_VERSION = "2026-11-15.1";
 export const DEFAULT_SOUP_API_ORIGIN = "https://api.thehumansoup.ai";
 /** Soup credits the agent that served a bowl; it is a plain identifier, never the owner. */
 export const SOUP_AGENT_ID = "me3";
@@ -103,6 +103,8 @@ export type NewsStory = {
   medium: SoupMedium;
   durationSeconds?: number;
   embedUrl?: string;
+  /** A podcast episode's own audio file (https), so it can be played without leaving the app. */
+  audioUrl?: string;
 };
 export type NewsTodayRequest = { topics: string[]; country?: string | null; city?: string | null; since?: string; exclude?: string[] };
 export type NewsToday = {
@@ -147,6 +149,7 @@ function readNewsStories(value: unknown): NewsStory[] {
     if (typeof row.category === "string") story.category = row.category;
     if (typeof row.durationSeconds === "number" && row.durationSeconds > 0) story.durationSeconds = row.durationSeconds;
     if (typeof row.embedUrl === "string" && /^https:\/\//i.test(row.embedUrl)) story.embedUrl = row.embedUrl;
+    if (typeof row.audioUrl === "string" && /^https:\/\//i.test(row.audioUrl) && row.audioUrl.length <= 2000) story.audioUrl = row.audioUrl;
     return story.headline ? [story] : [];
   });
 }

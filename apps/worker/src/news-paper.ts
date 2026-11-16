@@ -38,11 +38,14 @@ export type PaperStory = {
   medium: SoupMedium;
   minutes?: number;
   embedUrl?: string;
+  /** A listen's own audio file, played in the paper. Without it the listen opens at its source. */
+  audioUrl?: string;
 };
 export type NewsPaperPages = {
   front: { lead: PaperStory; briefs: PaperStory[] };
   work: { topics: string[]; stories: PaperStory[] } | null;
-  media: { video: PaperStory | null; listen: PaperStory | null } | null;
+  /** `more`: up to two further videos that play in place, after the one ME3 picked. */
+  media: { video: PaperStory | null; listen: PaperStory | null; more?: PaperStory[] } | null;
   topics: { stories: PaperStory[] } | null;
   near: { city: string | null; weather: NewsWeather | null; local: PaperStory | null; good: PaperStory | null } | null;
 };
@@ -80,6 +83,9 @@ const NOTE_MAX = 140;
 const WORK_STORIES = 3;
 const TOPIC_STORIES = 2;
 const BRIEFS = 2;
+/** Videos after the one ME3 picked, each short enough for a morning. */
+const MORE_VIDEOS = 2;
+const MORE_VIDEO_MAX_SECONDS = 30 * 60;
 
 // ── Candidates ──────────────────────────────────────────────
 
@@ -311,6 +317,7 @@ function toPaperStory(story: NewsStory, given: { tag?: string; note?: string; ac
     ...(story.image ? { image: story.image.url } : {}), ...(story.publishedAt ? { publishedAt: story.publishedAt } : {}),
     ...(extra.tag ? { tag: extra.tag } : {}), ...(extra.note ? { note: extra.note } : {}), ...(extra.action ? { action: extra.action } : {}),
     ...(minutes ? { minutes } : {}), ...(story.embedUrl ? { embedUrl: story.embedUrl } : {}),
+    ...(story.audioUrl ? { audioUrl: story.audioUrl } : {}),
   };
 }
 
@@ -361,7 +368,12 @@ export function layoutPaper(candidates: NewsCandidates, picks: PaperPicks | null
   const watch = candidates.media.filter(story => story.medium === "watch");
   const listenPool = candidates.media.filter(story => story.medium === "listen");
   const video = take(watch, picks.video?.id);
-  const listen = take(listenPool, picks.listen?.id);
+  // A listen that plays in the paper comes before one that only opens a web page.
+  const listen = take(listenPool.filter(story => story.audioUrl), picks.listen?.id) || take(listenPool, picks.listen?.id);
+  // More to watch: short videos that play in place, in Soup's order.
+  const moreVideos: NewsStory[] = [];
+  const short = watch.filter(story => story.embedUrl && (!story.durationSeconds || story.durationSeconds <= MORE_VIDEO_MAX_SECONDS));
+  while (video && moreVideos.length < MORE_VIDEOS) { const next = take(short); if (!next) break; moreVideos.push(next); }
 
   const minePool = readable(mine);
   const topicOf = new Map(mine.map(entry => [entry.story.id, entry.topic]));
@@ -384,7 +396,7 @@ export function layoutPaper(candidates: NewsCandidates, picks: PaperPicks | null
     pages: {
       front,
       work: workStories.length ? { topics: candidates.work.map(entry => label(entry.topic)), stories: workStories } : null,
-      media: video || listen ? { video: video ? toPaperStory(video, { note: picks.video?.id === video.id ? picks.video.note : undefined }) : null, listen: listen ? toPaperStory(listen) : null } : null,
+      media: video || listen ? { video: video ? toPaperStory(video, { note: picks.video?.id === video.id ? picks.video.note : undefined }) : null, listen: listen ? toPaperStory(listen) : null, ...(moreVideos.length ? { more: moreVideos.map(story => toPaperStory(story)) } : {}) } : null,
       topics: topicStories.length ? { stories: topicStories } : null,
       near,
     },
@@ -395,7 +407,7 @@ export function countPaper(pages: NewsPaperPages, considered: number): NewsPaper
   const stories = 1 + pages.front.briefs.length + (pages.work?.stories.length || 0) + (pages.topics?.stories.length || 0) + (pages.near?.local ? 1 : 0) + (pages.near?.good ? 1 : 0);
   const sections = 1 + [pages.work, pages.media, pages.topics, pages.near].filter(Boolean).length;
   // Every paper ends with its own last page.
-  return { pages: sections + 1, stories, videos: pages.media?.video ? 1 : 0, minutes: Math.max(1, Math.round(stories * 0.6 + (pages.media ? 1 : 0))), considered };
+  return { pages: sections + 1, stories, videos: (pages.media?.video ? 1 : 0) + (pages.media?.more?.length || 0), minutes: Math.max(1, Math.round(stories * 0.6 + (pages.media ? 1 : 0))), considered };
 }
 
 // ── When ────────────────────────────────────────────────────
@@ -450,7 +462,7 @@ async function shownStoryIds(env: Env, ownerId: string, now: Date): Promise<stri
   for (const row of rows.results || []) {
     const pages = (parseJsonRecord(row.paper_json) as { pages?: NewsPaperPages }).pages;
     if (!pages?.front?.lead) continue;
-    for (const story of [pages.front.lead, ...pages.front.briefs, ...(pages.work?.stories || []), pages.media?.video, pages.media?.listen, ...(pages.topics?.stories || []), pages.near?.local, pages.near?.good]) if (story) ids.add(story.id);
+    for (const story of [pages.front.lead, ...pages.front.briefs, ...(pages.work?.stories || []), pages.media?.video, pages.media?.listen, ...(pages.media?.more || []), ...(pages.topics?.stories || []), pages.near?.local, pages.near?.good]) if (story) ids.add(story.id);
   }
   return [...ids];
 }

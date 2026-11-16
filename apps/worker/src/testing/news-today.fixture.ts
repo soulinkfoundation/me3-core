@@ -27,7 +27,13 @@ const FRONT: NewsStory[] = [
 
 const MEDIA_FOUNDER: NewsStory[] = [
   story("Working backwards: write the press release before you build", "AWS Events", { medium: "watch", durationSeconds: 1022, embedUrl: "https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ", image: picture("working-backwards"), topics: ["running a small business"] }),
-  story("How solo founders price a done-for-you tier", "Indie Hackers podcast", { medium: "listen", durationSeconds: 720, topics: ["running a small business"] }),
+  // The first listen has no audio file: the one that plays in the paper is preferred.
+  story("The pricing page teardown", "Founders Weekly", { medium: "listen", durationSeconds: 1500, topics: ["running a small business"] }),
+  story("How solo founders price a done-for-you tier", "Indie Hackers podcast", { medium: "listen", durationSeconds: 720, audioUrl: "https://example.com/audio/done-for-you.mp3", topics: ["running a small business"] }),
+  story("A full keynote on agent platforms", "AWS Events", { medium: "watch", durationSeconds: 5792, embedUrl: "https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ", topics: ["ai agents"] }),
+  story("Agent wallets explained in six minutes", "Stripe", { medium: "watch", durationSeconds: 390, embedUrl: "https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ", image: picture("wallets"), topics: ["online payments"] }),
+  story("A landing page reviewed live", "Indie Hackers", { medium: "watch", durationSeconds: 328, embedUrl: "https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ", image: picture("landing"), topics: ["running a small business"] }),
+  story("Behind the scenes at a hardware lab", "Some Channel", { medium: "watch", durationSeconds: 600, topics: ["ai agents"] }),
 ];
 const MEDIA_COACH: NewsStory[] = [
   story("The one coaching question that changes everything", "TEDx Talks", { medium: "watch", durationSeconds: 860, embedUrl: "https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ", image: picture("coaching-question"), topics: ["coaching"] }),
