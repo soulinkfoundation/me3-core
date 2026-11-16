@@ -595,6 +595,7 @@ export async function listSiteAudience(
           WHERE b.site_id = subscribers.site_id
             AND LOWER(TRIM(b.guest_email)) = LOWER(TRIM(subscribers.email))
             AND b.status = 'confirmed'
+            AND COALESCE(b.payment_status, '') <> 'pending'
             ${filter.itemRef?.startsWith("product:") ? "AND 0" : filter.itemRef?.startsWith("booking:") ? "AND ('booking:' || COALESCE(b.offer_id, b.booking_type, 'booking')) = ?" : ""}
         )
       )`

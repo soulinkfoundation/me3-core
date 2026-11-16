@@ -245,8 +245,18 @@ You can reply to this email to contact ${details.hostName}.
 /** Tells the guest their booking moved or was cancelled. A moved Soulink booking keeps its join link. */
 export async function sendGuestBookingChangeEmail(
   env: Env,
-  details: BookingEmailDetails & { change: "rescheduled" | "cancelled"; previousStartsAt?: string | null },
+  details: BookingEmailDetails & {
+    change: "rescheduled" | "cancelled";
+    previousStartsAt?: string | null;
+    /** The booking was still waiting for the guest's payment. */
+    awaitingPayment?: boolean;
+  },
 ): Promise<TransactionalEmailResult> {
+  const paymentNote = !details.awaitingPayment
+    ? ""
+    : details.change === "cancelled"
+      ? `You do not need to pay. If you have already paid, reply to this email and ${details.hostName} will sort it out with you.`
+      : `Your booking is confirmed once ${details.hostName} has received your payment.`;
   const startTime = formatBookingTime(details.startsAt, details.timezone);
   const previousTime = details.previousStartsAt ? formatBookingTime(details.previousStartsAt, details.timezone) : null;
   const moved = details.change === "rescheduled";
@@ -258,7 +268,7 @@ ${moved ? `${details.hostName} moved your booking.` : `${details.hostName} cance
 
 ${details.bookingTitle} with ${details.hostName}
 ${moved ? `New time: ${startTime}${previousTime ? `\nWas: ${previousTime}` : ""}` : startTime}
-${moved && details.meetingUrl ? `Join call (same link as before): ${details.meetingUrl}\n` : ""}${calendarUrl ? `Add to Google Calendar: ${calendarUrl}\n` : ""}
+${moved && details.meetingUrl ? `Join call (same link as before): ${details.meetingUrl}\n` : ""}${calendarUrl ? `Add to Google Calendar: ${calendarUrl}\n` : ""}${paymentNote ? `\n${paymentNote}\n` : ""}
 You can reply to this email to contact ${details.hostName}.
 
 - ${details.hostName}`;
@@ -273,6 +283,7 @@ You can reply to this email to contact ${details.hostName}.
     ],
     notesLabel: "Your notes",
     calendarUrl,
+    message: paymentNote || null,
     footer: `Reply to this email to contact ${escapeHtml(details.hostName)}.`,
   });
   return sendWorkflowEmail(env, details.ownerId, {
@@ -349,6 +360,95 @@ ${details.meetingHostUrl || details.meetingUrl ? `Your call room: ${details.meet
       test: details.test || false,
     },
   });
+}
+
+/**
+ * A pay-directly booking is held, not booked: the guest gets how to pay, with no join link or
+ * calendar link, and the owner hears that a booking is waiting for payment.
+ */
+export async function sendBookingAwaitingPaymentEmails(
+  env: Env,
+  details: BookingEmailDetails & { reference?: string | null },
+): Promise<{ guest: TransactionalEmailResult; host: TransactionalEmailResult }> {
+  const startTime = formatBookingTime(details.startsAt, details.timezone);
+  const amountDue = details.amountDue && details.currency ? formatCurrencyAmount(details.amountDue, details.currency) : "";
+  const paymentInstructions = details.paymentInstructions?.trim() || "";
+  const guestText = `Hi ${details.guestName},
+
+${details.hostName} is holding this time for you. Your booking is confirmed once ${details.hostName} has received your payment.
+
+${details.bookingTitle} with ${details.hostName}
+${startTime}
+Duration: ${details.durationMinutes} minutes${amountDue ? `\nAmount due: ${amountDue}` : ""}
+
+Payment details:
+${paymentInstructions}${details.notes ? `\n\nYour notes:\n${details.notes}` : ""}
+
+You can reply to this email to contact ${details.hostName}.
+
+- ${details.hostName}`;
+  const guest = await sendWorkflowEmail(env, details.ownerId, {
+    operationId: details.bookingId ? `booking:${details.bookingId}:guest-payment-details` : undefined,
+    toAddress: details.guestEmail,
+    subject: `Payment details: ${details.bookingTitle}`,
+    textBody: guestText,
+    htmlBody: bookingEmailHtml({
+      title: "Payment details",
+      subtitle: `Your booking is confirmed once ${details.hostName} has received your payment`,
+      rows: [
+        ["With", details.hostName],
+        ["When", startTime],
+        ["Duration", `${details.durationMinutes} minutes`],
+        ...(amountDue ? [["Amount due", amountDue] as [string, string]] : []),
+      ],
+      notesLabel: "Your notes",
+      notes: details.notes,
+      message: `Payment details:\n${paymentInstructions}`,
+      footer: `Reply to this email to contact ${escapeHtml(details.hostName)}.`,
+    }),
+    fromName: details.hostName,
+    replyToAddress: details.hostEmail || null,
+    metadata: { booking_id: details.bookingId, booking_email: "guest_payment_details" },
+  });
+  if (!details.hostEmail) return { guest, host: { status: "skipped", error: "Host email is not configured" } };
+
+  const reference = details.reference?.trim() || "";
+  const hostText = `Hi ${details.hostName},
+
+${details.guestName} booked ${details.bookingTitle} and has been sent your payment details. The time is held for them.
+
+Guest: ${details.guestName}
+Email: ${details.guestEmail}
+${startTime}${amountDue ? `\nAmount due: ${amountDue}` : ""}${reference ? `\nReference: ${reference}` : ""}${details.notes ? `\n\nGuest notes:\n${details.notes}` : ""}
+
+When the money arrives, mark it as paid in ME3 Accounts. ME3 then confirms the booking with ${details.guestName}.
+
+- ME3`;
+  const host = await sendWorkflowEmail(env, details.ownerId, {
+    operationId: details.bookingId ? `booking:${details.bookingId}:host-awaiting-payment` : undefined,
+    toAddress: details.hostEmail,
+    subject: `Waiting for payment: ${details.guestName}`,
+    textBody: hostText,
+    htmlBody: bookingEmailHtml({
+      title: "Waiting for payment",
+      subtitle: `${details.guestName} has been sent your payment details`,
+      rows: [
+        ["Guest", details.guestName],
+        ["Email", details.guestEmail],
+        ["Booking", details.bookingTitle],
+        ["When", startTime],
+        ...(amountDue ? [["Amount due", amountDue] as [string, string]] : []),
+        ...(reference ? [["Reference", reference] as [string, string]] : []),
+      ],
+      notesLabel: "Guest notes",
+      notes: details.notes,
+      footer: `When the money arrives, mark it as paid in ME3 Accounts. ME3 then confirms the booking with ${escapeHtml(details.guestName)}.`,
+    }),
+    fromName: "ME3",
+    replyToAddress: details.guestEmail,
+    metadata: { booking_id: details.bookingId, booking_email: "host_awaiting_payment" },
+  });
+  return { guest, host };
 }
 
 export async function sendProductPurchaseConfirmationEmail(
@@ -468,7 +568,7 @@ export function bookingDetailsFromBooking(input: {
     amountDue:
       !input.booking.amount_paid &&
       input.booking.is_free_booking === 0 &&
-      input.booking.payment_status === "not_required"
+      (input.booking.payment_status === "not_required" || input.booking.payment_status === "pending")
         ? input.booking.suggested_amount
         : null,
     currency: input.booking.currency,

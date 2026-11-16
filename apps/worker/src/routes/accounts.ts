@@ -21,6 +21,7 @@ import { getAccountsSummary } from "../accounts-summary";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { isCorePluginEnabled } from "../plugins";
 import { getAccountsEmailTriageSettings, updateAccountsEmailTriageSettings } from "../accounts-email-triage";
+import { DirectPaymentError, listWaitingPayments, markBookingPaid } from "../pay-directly-bookings";
 
 export function registerAccountsRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.get("/api/accounts/email-triage", async c => {
@@ -47,6 +48,27 @@ export function registerAccountsRoutes(app: AppHono, deps: OwnerRouteDeps) {
     if (blocked) return blocked;
     try { return c.json(await recordManualOrderPayment(c.env, ownerId, c.req.param("id"))); }
     catch (error) { if (error instanceof Error && "status" in error) return c.json({ error: error.message }, 404); throw error; }
+  });
+  // Everything still waiting to be paid directly: product orders, bookings and events.
+  app.get("/api/accounts/waiting", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireAccountsPlugin(c);
+    if (blocked) return blocked;
+    return c.json(await listWaitingPayments(c.env, ownerId));
+  });
+  // The owner has been paid for a held booking or event booking. Safe to repeat.
+  app.post("/api/accounts/bookings/:id/manual-payment", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireAccountsPlugin(c);
+    if (blocked) return blocked;
+    const body = await c.req.json<unknown>().catch(() => ({}));
+    try { return c.json(await markBookingPaid(c.env, ownerId, c.req.param("id"), body)); }
+    catch (error) {
+      if (error instanceof DirectPaymentError) return c.json({ ok: false, error: error.message }, error.status);
+      throw error;
+    }
   });
   app.put("/api/accounts/orders/:id/fulfillment", async (c) => {
     const ownerId = await deps.requireOwner(c);

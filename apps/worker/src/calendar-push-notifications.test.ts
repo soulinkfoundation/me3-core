@@ -68,7 +68,7 @@ function calendarPushDb() {
     CREATE TABLE mission_tasks (id TEXT, user_id TEXT, title TEXT, due_at TEXT, scheduled_for TEXT, archived_at TEXT, status TEXT);
     CREATE TABLE user_calendar_events (id TEXT, user_id TEXT, title TEXT, notes TEXT, location TEXT, starts_at TEXT, ends_at TEXT, timezone TEXT, all_day INTEGER, kind TEXT, recurrence_rule TEXT, created_at TEXT);
     CREATE TABLE sites (id TEXT, user_id TEXT);
-    CREATE TABLE bookings (id TEXT, site_id TEXT, guest_name TEXT, status TEXT, starts_at TEXT, ends_at TEXT);
+    CREATE TABLE bookings (id TEXT, site_id TEXT, guest_name TEXT, status TEXT, starts_at TEXT, ends_at TEXT, payment_status TEXT);
     CREATE TABLE user_reminders (id TEXT, user_id TEXT, title TEXT, notes TEXT, remind_at TEXT, timezone TEXT, recurrence_rule TEXT, context_type TEXT, context_id TEXT, context_label TEXT, status TEXT, delivered_at TEXT, dismissed_at TEXT, created_at TEXT);
     CREATE TABLE calendar_sources (id TEXT, user_id TEXT, status TEXT);
     CREATE TABLE calendar_source_events (id TEXT, source_id TEXT, external_key TEXT, external_uid TEXT, title TEXT, notes TEXT, location TEXT, starts_at TEXT, ends_at TEXT, timezone TEXT, all_day INTEGER, is_busy INTEGER, created_at TEXT);

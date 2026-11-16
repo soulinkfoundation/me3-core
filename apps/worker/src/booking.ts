@@ -662,6 +662,9 @@ export async function createConfirmedOneToOneBooking(
     : null;
   const bookingId = crypto.randomUUID();
   const meeting = await resolveBookingMeeting(env, input.site.user_id, input.offer, bookingId, input.site.id, input.offer.id);
+  // A pay-directly booking with an amount due is held: it stays 'confirmed' so the slot stays taken,
+  // and 'pending' keeps back the booked email, the join link and the reminders until the owner is paid.
+  const awaitingPayment = manualPayment && Number(suggestedAmount) > 0;
   await env.DB.prepare(
     `INSERT INTO bookings
      (id, site_id, offer_id, booking_type, guest_name, guest_email, starts_at, ends_at,
@@ -670,7 +673,7 @@ export async function createConfirmedOneToOneBooking(
       page_id, action_id, campaign, meeting_provider, meeting_url, meeting_host_url,
       meeting_guest_token_hash, meeting_title)
      VALUES (?, ?, ?, 'one_to_one', ?, ?, ?, ?, ?, 'confirmed', ?, datetime('now'),
-             NULL, NULL, ?, ?, 'not_required', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             NULL, NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       bookingId,
@@ -684,6 +687,7 @@ export async function createConfirmedOneToOneBooking(
       input.notes || null,
       suggestedAmount,
       currency,
+      awaitingPayment ? AWAITING_PAYMENT : "not_required",
       manualPayment ? 0 : 1,
       input.pageId || null,
       input.actionId || null,
@@ -708,7 +712,7 @@ export async function createConfirmedOneToOneBooking(
     .bind(bookingId)
     .first<DbBooking>();
 
-  if (booking) {
+  if (booking && !isAwaitingPayment(booking)) {
     scheduleBookingRemindersForBooking(env, {
       booking,
       bookingTitle: input.offer.title,
@@ -949,6 +953,13 @@ export function appendQueryParams(url: string, params: Record<string, string>): 
   return parsed.toString().replace("%7BCHECKOUT_SESSION_ID%7D", "{CHECKOUT_SESSION_ID}");
 }
 
+/** bookings.payment_status while a pay-directly booking waits for the owner to be paid. */
+export const AWAITING_PAYMENT = "pending" as const;
+
+export function isAwaitingPayment(booking: Pick<DbBooking, "payment_status">): boolean {
+  return booking.payment_status === AWAITING_PAYMENT;
+}
+
 export function serializeBooking(booking: DbBooking) {
   return {
     id: booking.id,
@@ -964,9 +975,11 @@ export function serializeBooking(booking: DbBooking) {
     notes: booking.notes,
     paymentStatus: booking.payment_status || "not_required",
     amountPaid: booking.amount_paid,
+    amountDue: isAwaitingPayment(booking) ? booking.suggested_amount : null,
     currency: booking.currency,
     paidAt: booking.paid_at,
     meetingProvider: booking.meeting_provider || null,
-    meetingUrl: booking.meeting_url || null,
+    // No join link while a pay-directly booking is waiting for payment.
+    meetingUrl: isAwaitingPayment(booking) ? null : booking.meeting_url || null,
   };
 }

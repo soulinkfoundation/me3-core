@@ -123,6 +123,8 @@ export async function scheduleBookingRemindersForBooking(
     reminders?: BookingReminderSettings | null;
   },
 ): Promise<number> {
+  // A pay-directly booking gets its reminders once the owner marks it paid.
+  if (input.booking.payment_status === "pending") return 0;
   const owner = await getBookingOwner(env, input.booking.site_id);
   if (!owner?.email) return 0;
 
@@ -417,6 +419,10 @@ export async function deliverBookingReminder(
   if (booking.status !== "confirmed") {
     await cancelPendingBookingReminders(env, booking.id);
     return { status: "skipped", reason: "Booking no longer confirmed" };
+  }
+  if (booking.payment_status === "pending") {
+    await cancelPendingBookingReminders(env, booking.id);
+    return { status: "skipped", reason: "Booking is waiting for payment" };
   }
 
   const result = await sendBookingReminder(env, reminder, payload);

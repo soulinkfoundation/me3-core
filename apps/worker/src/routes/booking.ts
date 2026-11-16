@@ -83,7 +83,9 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
   app.delete("/api/book/cancel/:id", async (c) => {
     const ownerId = await requireOwner(c);
     if (!ownerId) return unauthorized(c);
-    try { return c.json(await cancelOwnerBooking(c.env, ownerId, c.req.param("id"))); }
+    // ?reverseIncome=1 also removes the Accounts income of a booking the owner had marked paid.
+    const reverseIncome = ["1", "true"].includes(c.req.query("reverseIncome") || "");
+    try { return c.json(await cancelOwnerBooking(c.env, ownerId, c.req.param("id"), { reverseIncome })); }
     catch (error) {
       if (error instanceof BookingChangeError) return c.json({ error: error.message }, error.status);
       throw error;

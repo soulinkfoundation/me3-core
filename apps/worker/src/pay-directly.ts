@@ -7,6 +7,7 @@ import {
   type PaymentMethodKind,
   type SavedPaymentMethod,
 } from "../../../shared/pay-directly";
+import { bookingDetailsFromBooking, sendBookingAwaitingPaymentEmails } from "./transactional-emails";
 import type { DbBooking, Env } from "./types";
 
 // Mirrors migrations/0108_pay_directly.sql.
@@ -315,5 +316,51 @@ export async function bookingPaymentInstructions(
     // The booking is already confirmed; the guest still gets the owner's note.
     console.error("Pay-directly details could not be prepared for a booking:", error);
     return trimmed;
+  }
+}
+
+/**
+ * A held pay-directly booking: the guest is emailed how to pay (no join link, no calendar link)
+ * and the owner is told a booking is waiting for payment.
+ */
+export async function sendAwaitingPaymentEmails(
+  env: Env,
+  input: {
+    ownerId: string;
+    booking: DbBooking;
+    hostName: string;
+    hostEmail: string | null;
+    bookingTitle: string;
+    timezone: string;
+    note: string | null | undefined;
+  },
+): Promise<void> {
+  const note = (input.note || "").trim().slice(0, 8000);
+  let payment = { reference: "", instructions: note };
+  try {
+    payment = await prepareDirectPayment(env, input.ownerId, {
+      bookingId: input.booking.id,
+      amountMinor: input.booking.suggested_amount ?? null,
+      currency: input.booking.currency,
+      note,
+    });
+  } catch (error) {
+    // The time is already held; the guest still hears from the owner.
+    console.error("Pay-directly details could not be prepared for a booking:", error);
+  }
+  const result = await sendBookingAwaitingPaymentEmails(env, {
+    ...bookingDetailsFromBooking({
+      booking: { ...input.booking, meeting_url: null, meeting_host_url: null },
+      ownerId: input.ownerId,
+      hostName: input.hostName,
+      hostEmail: input.hostEmail,
+      bookingTitle: input.bookingTitle,
+      timezone: input.timezone,
+    }),
+    paymentInstructions: payment.instructions || `${input.hostName} will be in touch with how to pay.`,
+    reference: payment.reference,
+  });
+  if (result.guest.status === "failed" || result.host.status === "failed") {
+    console.error("Booking payment details email issue:", result);
   }
 }

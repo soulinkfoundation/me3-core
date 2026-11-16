@@ -1,8 +1,10 @@
 import type Stripe from "stripe";
 import { scheduleBookingRemindersForBooking } from "./booking-reminders";
 import {
+  AWAITING_PAYMENT,
   appendQueryParams,
   bookingConfirmationMessage,
+  isAwaitingPayment,
   loadSiteProfileForCommerce,
   normalizeLongText,
   resolveBookingSlot,
@@ -20,7 +22,7 @@ import {
   sendBookingConfirmationEmails,
 } from "./transactional-emails";
 import type { DbBooking, DbSite, Env } from "./types";
-import { bookingPaymentInstructions } from "./pay-directly";
+import { bookingPaymentInstructions, sendAwaitingPaymentEmails } from "./pay-directly";
 import { dispatchWebsitePaymentNotification } from "./payment-notifications";
 
 export type EventBookingType = "class" | "retreat";
@@ -335,14 +337,16 @@ export async function createConfirmedEventBooking(
     input.offer.pricing?.enabled === true &&
     input.offer.pricing.paymentMethod === "manual";
   const bookingId = crypto.randomUUID();
+  // The total for every attendee. With an amount due the seats are held until the owner is paid.
+  const amountDue = manualPayment ? (input.amountDuePerAttendeeCents || 0) * input.quantity : null;
   const result = await env.DB.prepare(
     `INSERT INTO bookings
      (id, site_id, offer_id, booking_type, guest_name, guest_email, starts_at, ends_at,
       duration_minutes, status, notes, created_at, payment_intent_id, amount_paid,
       suggested_amount, currency, payment_status, is_free_booking, paid_at,
-      page_id, action_id, campaign, quantity)
+      page_id, action_id, campaign, quantity, meeting_title)
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, datetime('now'),
-            NULL, NULL, ?, ?, 'not_required', ?, NULL, ?, ?, ?, ?
+            NULL, NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?
      WHERE ? IS NULL OR
        COALESCE((
          SELECT SUM(COALESCE(quantity, 1)) FROM bookings
@@ -367,17 +371,17 @@ export async function createConfirmedEventBooking(
       input.occurrence.endsAt,
       input.occurrence.durationMinutes,
       input.notes || null,
-      manualPayment
-        ? (input.amountDuePerAttendeeCents || 0) * input.quantity
-        : null,
+      amountDue,
       manualPayment
         ? String(input.paymentCurrency || input.offer.pricing?.currency || "USD").toLowerCase()
         : null,
+      Number(amountDue) > 0 ? AWAITING_PAYMENT : "not_required",
       manualPayment ? 0 : 1,
       input.pageId || null,
       input.actionId || null,
       input.campaign || null,
       input.quantity,
+      input.offer.title,
       input.offer.capacity,
       input.site.id,
       input.offer.id,
@@ -397,12 +401,26 @@ export async function createConfirmedEventBooking(
 
   const booking = await findEventBookingById(env, bookingId);
   if (booking) {
-    await notifyConfirmedEventBooking(env, {
-      site: input.site,
-      bookIntent: input.bookIntent,
-      offer: input.offer,
-      booking,
-    });
+    if (isAwaitingPayment(booking)) {
+      const owner = await getOwnerContact(env, input.site.user_id);
+      const profile = await loadSiteProfileForCommerce(env, input.site);
+      await sendAwaitingPaymentEmails(env, {
+        ownerId: input.site.user_id,
+        booking,
+        hostName: profile?.name || owner.name || input.site.username,
+        hostEmail: owner.email,
+        bookingTitle: input.offer.title,
+        timezone: input.offer.timezone,
+        note: input.offer.pricing?.paymentInstructions,
+      });
+    } else {
+      await notifyConfirmedEventBooking(env, {
+        site: input.site,
+        bookIntent: input.bookIntent,
+        offer: input.offer,
+        booking,
+      });
+    }
     await dispatchWebsitePaymentNotification(env, input.site.user_id, {
       sourceKind: "booking",
       sourceId: booking.id,
@@ -804,7 +822,8 @@ export function serializePublicEventOffer(offer: ResolvedEventBookingOffer) {
   };
 }
 
-async function notifyConfirmedEventBooking(
+/** The booked email and session reminders for a confirmed (free, card-paid or marked-paid) event booking. */
+export async function notifyConfirmedEventBooking(
   env: Env,
   input: {
     site: DbSite;
@@ -842,7 +861,7 @@ async function notifyConfirmedEventBooking(
         8000,
       ),
       paymentInstructions:
-        input.offer.pricing?.enabled && input.offer.pricing.paymentMethod === "manual"
+        input.offer.pricing?.enabled && input.offer.pricing.paymentMethod === "manual" && !input.booking.amount_paid
           ? await bookingPaymentInstructions(env, input.site.user_id, input.booking, input.offer.pricing.paymentInstructions)
           : "",
       sendHostCopy: confirmationEmail?.sendHostCopy !== false,
@@ -876,7 +895,7 @@ function eventBookingSelect(where: string): string {
   return `SELECT id, site_id, offer_id, booking_type, guest_name, guest_email, starts_at, ends_at,
                  duration_minutes, calendar_event_id, status, notes, created_at, cancelled_at,
                  payment_intent_id, amount_paid, suggested_amount, currency, payment_status,
-                 is_free_booking, paid_at, page_id, action_id, campaign, quantity
+                 is_free_booking, paid_at, page_id, action_id, campaign, quantity, meeting_title
           FROM bookings ${where}`;
 }
 

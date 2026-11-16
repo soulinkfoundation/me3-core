@@ -1,5 +1,6 @@
 import { resolveTimeZone } from "./calendar";
 import { loadSiteProfileForCommerce, resolveOneToOneBookingOffer, serializeBooking, type CoreBookIntent } from "./booking";
+import { deleteFinancialEntry, syncWebsiteIncomeEntries } from "./accounts";
 import { getSiteById } from "./booking-checkout";
 import { cancelPendingBookingReminders, scheduleBookingRemindersForBooking } from "./booking-reminders";
 import { bookingDetailsFromBooking, getOwnerContact, sendGuestBookingChangeEmail } from "./transactional-emails";
@@ -42,7 +43,11 @@ async function bookingContext(env: Env, booking: DbBooking) {
 
 async function emailGuest(env: Env, booking: DbBooking, context: Awaited<ReturnType<typeof bookingContext>>,
   change: "rescheduled" | "cancelled", previousStartsAt?: string) {
+  // A booking still waiting for payment has not been given its join link.
+  const awaitingPayment = booking.payment_status === "pending";
+  if (awaitingPayment) booking = { ...booking, meeting_url: null, meeting_host_url: null };
   const result = await sendGuestBookingChangeEmail(env, {
+    awaitingPayment,
     ...bookingDetailsFromBooking({ booking, ownerId: context.site.user_id, hostName: context.hostName, hostEmail: context.hostEmail,
       bookingTitle: context.title, timezone: context.timezone }),
     change, previousStartsAt,
@@ -51,9 +56,47 @@ async function emailGuest(env: Env, booking: DbBooking, context: Awaited<ReturnT
   return result.status;
 }
 
-/** Cancels a confirmed booking: its Soulink guest link stops working and the guest is emailed. */
-export async function cancelOwnerBooking(env: Env, ownerId: string, bookingId: string) {
+/** What the owner needs to know after cancelling a booking they had marked paid. ME3 never refunds. */
+export type CancelledDirectPayment = {
+  paidDirectly: true;
+  amountCents: number;
+  currency: string;
+  /** The Accounts income entry that can still be removed (DELETE /api/accounts/entries/:id). */
+  incomeEntryId: string | null;
+  incomeReversed: boolean;
+  message: string;
+};
+
+function formatMoney(amountCents: number, currency: string): string {
+  try { return new Intl.NumberFormat("en", { style: "currency", currency }).format(amountCents / 100); }
+  catch { return `${(amountCents / 100).toFixed(2)} ${currency}`; }
+}
+
+async function settleCancelledDirectPayment(env: Env, ownerId: string, booking: DbBooking, reverseIncome: boolean): Promise<CancelledDirectPayment> {
+  const amountCents = Number(booking.amount_paid);
+  const currency = String(booking.currency || "USD").toUpperCase();
+  const entry = await env.DB.prepare("SELECT id FROM financial_entries WHERE user_id = ? AND source_ref = ?")
+    .bind(ownerId, `website:booking:${booking.id}`).first<{ id: string }>().catch(() => null);
+  if (entry && reverseIncome) await deleteFinancialEntry(env, ownerId, entry.id);
+  const guest = booking.guest_name.trim() || "the guest";
+  return {
+    paidDirectly: true,
+    amountCents,
+    currency,
+    incomeEntryId: reverseIncome ? null : entry?.id || null,
+    incomeReversed: reverseIncome,
+    message: `ME3 does not move money. ${guest} paid you ${formatMoney(amountCents, currency)} directly, so refund ${guest} yourself if they are due it back.`,
+  };
+}
+
+/** Cancels a confirmed booking: its Soulink guest link stops working and the guest is emailed. A held
+ * pay-directly booking frees its slot; one already marked paid comes back with the refund note in `payment`. */
+export async function cancelOwnerBooking(env: Env, ownerId: string, bookingId: string, options: { reverseIncome?: boolean } = {}) {
   const booking = await loadOwnerBooking(env, ownerId, bookingId);
+  const paidDirectly = booking.payment_status === "succeeded" && !booking.payment_intent_id && Number(booking.amount_paid) > 0;
+  // Website income reaches Accounts when Accounts is next opened, and only for confirmed bookings.
+  // Record it before cancelling so money the owner did receive is not silently dropped.
+  if (paidDirectly) await syncWebsiteIncomeEntries(env, ownerId).catch((error) => console.error("Income sync before cancelling failed:", error));
   const changed = await env.DB.prepare(
     "UPDATE bookings SET status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'confirmed'",
   ).bind(booking.id).run();
@@ -61,7 +104,8 @@ export async function cancelOwnerBooking(env: Env, ownerId: string, bookingId: s
   await cancelPendingBookingReminders(env, booking.id);
   const cancelled: DbBooking = { ...booking, status: "cancelled" };
   const guestEmail = await emailGuest(env, cancelled, await bookingContext(env, booking), "cancelled");
-  return { booking: serializeBooking(cancelled), guestEmail };
+  const payment = paidDirectly ? await settleCancelledDirectPayment(env, ownerId, booking, options.reverseIncome === true) : null;
+  return { booking: serializeBooking(cancelled), guestEmail, payment };
 }
 
 /** Moves a confirmed one-to-one booking in place. The booking keeps its id and guest token, so the guest's

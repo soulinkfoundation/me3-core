@@ -446,6 +446,7 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
       `SELECT b.id, b.meeting_title, b.guest_name, b.starts_at, b.ends_at
        FROM bookings b JOIN sites s ON s.id = b.site_id
        WHERE s.user_id = ? AND b.status = 'confirmed' AND b.meeting_provider = 'soulink'
+         AND COALESCE(b.payment_status, '') <> 'pending'
          AND b.ends_at > datetime('now') AND b.starts_at < datetime('now', '+90 days')
        ORDER BY b.starts_at LIMIT 50`,
     ).bind(connection.user_id).all<{ id: string; meeting_title: string | null; guest_name: string; starts_at: string; ends_at: string }>();

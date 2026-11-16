@@ -11,6 +11,7 @@ import {
   findActiveBookingHoldOverlap,
   findConfirmedBookingOverlap,
   getStripe,
+  isAwaitingPayment,
   listOneToOneBookingSources,
   loadSiteProfileForCommerce,
   normalizeLongText,
@@ -33,7 +34,7 @@ import {
 } from "./transactional-emails";
 import { recordOutreachBooking } from "@me3-core/plugin-agent-chat";
 import type { DbBooking, DbSite, Env } from "./types";
-import { bookingPaymentInstructions } from "./pay-directly";
+import { bookingPaymentInstructions, sendAwaitingPaymentEmails } from "./pay-directly";
 
 // One-to-one booking checkout shared by the site's own booking pages and the
 // agent commerce API. Routes parse input; these functions own the rules.
@@ -146,17 +147,30 @@ export async function bookFreeOneToOne(
   if (booking instanceof BookingMeetingError) return failure(booking.message, 409);
 
   if (booking) {
-    await sendConfirmationEmailsForBooking(env, {
-      site: input.site,
-      profile: input.profile,
-      booking,
-      bookingTitle: input.offer.title,
-      timezone: resolveTimeZone(input.offer.availability.timezone),
-      paymentInstructions:
-        input.offer.pricing?.enabled && input.offer.pricing.paymentMethod === "manual"
-          ? await bookingPaymentInstructions(env, input.site.user_id, booking, input.offer.pricing.paymentInstructions)
-          : null,
-    });
+    if (isAwaitingPayment(booking)) {
+      const owner = await getOwnerContact(env, input.site.user_id);
+      await sendAwaitingPaymentEmails(env, {
+        ownerId: input.site.user_id,
+        booking,
+        hostName: input.profile?.name || owner.name || input.site.username,
+        hostEmail: owner.email,
+        bookingTitle: input.offer.title,
+        timezone: resolveTimeZone(input.offer.availability.timezone),
+        note: input.offer.pricing?.paymentInstructions,
+      });
+    } else {
+      await sendConfirmationEmailsForBooking(env, {
+        site: input.site,
+        profile: input.profile,
+        booking,
+        bookingTitle: input.offer.title,
+        timezone: resolveTimeZone(input.offer.availability.timezone),
+        paymentInstructions:
+          input.offer.pricing?.enabled && input.offer.pricing.paymentMethod === "manual"
+            ? await bookingPaymentInstructions(env, input.site.user_id, booking, input.offer.pricing.paymentInstructions)
+            : null,
+      });
+    }
     await dispatchWebsitePaymentNotification(env, input.site.user_id, {
       sourceKind: "booking",
       sourceId: booking.id,

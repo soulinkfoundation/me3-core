@@ -1609,8 +1609,9 @@ function createEnv(): Env & {
               }
 
               if (sql.includes("INSERT INTO bookings")) {
-                const isUnpaidConfirmedBooking = sql.includes("'not_required'");
-                const isFreeBooking = isUnpaidConfirmedBooking && values[11] === 1;
+                // Free and pay-directly bookings bind their payment status; card bookings are 'succeeded'.
+                const isUnpaidConfirmedBooking = !sql.includes("'succeeded'");
+                const isFreeBooking = isUnpaidConfirmedBooking && values[12] === 1;
                 state.bookings.push({
                   id: values[0] as string,
                   site_id: values[1] as string,
@@ -1639,7 +1640,7 @@ function createEnv(): Env & {
                     ? (values[10] as DbBooking["currency"])
                     : (values[12] as DbBooking["currency"]),
                   payment_status: isUnpaidConfirmedBooking
-                    ? "not_required"
+                    ? (values[11] as DbBooking["payment_status"])
                     : "succeeded",
                   is_free_booking: isFreeBooking ? 1 : 0,
                   paid_at: isUnpaidConfirmedBooking
@@ -8474,7 +8475,7 @@ describe("ME3 Worker auth", () => {
     });
   });
 
-  it("confirms pay-separately bookings and emails the selected amount", async () => {
+  it("holds pay-separately bookings and emails the selected amount", async () => {
     const env = createEnv();
     await bootstrap(env);
     addBookableSite(env, {
@@ -8522,9 +8523,10 @@ describe("ME3 Worker auth", () => {
     expect(env.bookings[0]).toMatchObject({
       suggested_amount: 9500,
       currency: "eur",
-      payment_status: "not_required",
+      payment_status: "pending",
       is_free_booking: 0,
     });
+    expect(env.emailSends[0].subject).toBe("Payment details: Manual session");
     expect(env.emailSends[0]).toMatchObject({
       to: "manual@example.com",
       text: expect.stringContaining("Amount due: €95.00"),

@@ -142,6 +142,7 @@ export async function loadCalendarPushItems(env: Env, userId: string, queryStart
       `SELECT b.* FROM bookings b
        JOIN sites s ON s.id = b.site_id
        WHERE s.user_id = ? AND b.status = 'confirmed'
+         AND COALESCE(b.payment_status, '') <> 'pending'
          AND b.ends_at > ? AND b.starts_at < ?`,
     ).bind(userId, queryStart, queryEnd).all<DbBooking>(),
     env.DB.prepare(

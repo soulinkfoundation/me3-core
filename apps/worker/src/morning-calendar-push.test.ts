@@ -20,7 +20,7 @@ function fixture(timezone = "Europe/Dublin", time = "07:30") {
       starts_at TEXT, ends_at TEXT, timezone TEXT, all_day INTEGER, kind TEXT, recurrence_rule TEXT, created_at TEXT);
     CREATE TABLE sites(id TEXT, user_id TEXT);
     INSERT INTO sites VALUES('site','owner');
-    CREATE TABLE bookings(id TEXT, site_id TEXT, guest_name TEXT, starts_at TEXT, ends_at TEXT, status TEXT);
+    CREATE TABLE bookings(id TEXT, site_id TEXT, guest_name TEXT, starts_at TEXT, ends_at TEXT, status TEXT, payment_status TEXT);
     CREATE TABLE user_reminders(id TEXT, user_id TEXT, title TEXT, notes TEXT, remind_at TEXT, timezone TEXT,
       recurrence_rule TEXT, context_type TEXT, context_id TEXT, context_label TEXT, status TEXT,
       delivered_at TEXT, dismissed_at TEXT, created_at TEXT);
@@ -104,7 +104,7 @@ describe("morning calendar push with real SQLite", () => {
     const f = fixture();
     const activity = () => f.raw.prepare("SELECT user_id, plugin_id, activity_type, title, summary, related_id FROM mission_plugin_activity ORDER BY related_id").all();
     f.raw.exec(`INSERT INTO user_reminders VALUES('reminder','owner','Private reminder',NULL,'2026-10-13T20:00:00.000Z',NULL,NULL,NULL,NULL,NULL,'pending',NULL,NULL,'2026-01-01');
-      INSERT INTO bookings VALUES('booking','site','Private Guest','2026-10-13T10:00:00.000Z','2026-10-13T11:00:00.000Z','confirmed');`);
+      INSERT INTO bookings VALUES('booking','site','Private Guest','2026-10-13T10:00:00.000Z','2026-10-13T11:00:00.000Z','confirmed',NULL);`);
     f.fetch.mockResolvedValueOnce(Response.json({ ok: true, matched: 2, sent: 1, retryable: 1 }));
     f.fetch.mockResolvedValueOnce(Response.json({ ok: true, matched: 2, sent: 1, alreadySent: 1, retryable: 0 }));
     await f.dispatch(); expect(activity()).toEqual([]);
@@ -135,8 +135,8 @@ describe("morning calendar push with real SQLite", () => {
         '2025-10-12T23:00:00.000Z','2025-10-13T23:00:00.000Z','Europe/Dublin',1,'birthday','FREQ=YEARLY','2025-01-01');
       INSERT INTO user_calendar_events VALUES('sam','owner','Sam\u0027\u0027s birthday',NULL,NULL,
         '2026-10-12T23:00:00.000Z','2026-10-13T23:00:00.000Z','Europe/Dublin',1,'birthday',NULL,'2026-01-01');
-      INSERT INTO bookings VALUES('booking','site','Private Guest','2026-10-12T22:00:00.000Z','2026-10-13T00:30:00.000Z','confirmed');
-      INSERT INTO bookings VALUES('cancelled','site','Cancelled Guest','2026-10-13T10:00:00.000Z','2026-10-13T11:00:00.000Z','cancelled');
+      INSERT INTO bookings VALUES('booking','site','Private Guest','2026-10-12T22:00:00.000Z','2026-10-13T00:30:00.000Z','confirmed',NULL);
+      INSERT INTO bookings VALUES('cancelled','site','Cancelled Guest','2026-10-13T10:00:00.000Z','2026-10-13T11:00:00.000Z','cancelled',NULL);
       INSERT INTO user_reminders VALUES('reminder','owner','Private reminder','private notes','2026-10-13T20:00:00.000Z',NULL,NULL,NULL,NULL,NULL,'pending',NULL,NULL,'2026-01-01');
       INSERT INTO calendar_sources VALUES('source','owner','active'),('inactive','owner','inactive');
       INSERT INTO calendar_source_events VALUES('import','source','key',NULL,'Private subscribed event',NULL,NULL,'2026-10-13T08:00:00.000Z','2026-10-13T09:00:00.000Z',NULL,0,1,'2026-01-01');

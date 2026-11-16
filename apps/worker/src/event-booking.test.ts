@@ -14,6 +14,10 @@ vi.mock("./transactional-emails", () => ({
     guest: { status: "sent" },
     host: { status: "sent" },
   })),
+  sendBookingAwaitingPaymentEmails: vi.fn(async () => ({
+    guest: { status: "sent" },
+    host: { status: "sent" },
+  })),
 }));
 
 import {
@@ -291,7 +295,7 @@ class SqliteD1 {
         status TEXT NOT NULL, notes TEXT, created_at TEXT, cancelled_at TEXT,
         payment_intent_id TEXT, amount_paid INTEGER, suggested_amount INTEGER, currency TEXT,
         payment_status TEXT, is_free_booking INTEGER, paid_at TEXT, page_id TEXT,
-        action_id TEXT, campaign TEXT, quantity INTEGER NOT NULL DEFAULT 1
+        action_id TEXT, campaign TEXT, quantity INTEGER NOT NULL DEFAULT 1, meeting_title TEXT
       );
       CREATE TABLE booking_holds (
         id TEXT PRIMARY KEY, site_id TEXT NOT NULL, booking_id TEXT, offer_id TEXT,

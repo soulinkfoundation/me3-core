@@ -249,6 +249,7 @@ async function loadDailyBriefingBookings(
      FROM bookings b
      JOIN sites s ON b.site_id = s.id
      WHERE s.user_id = ? AND b.status = 'confirmed'
+       AND COALESCE(b.payment_status, '') <> 'pending'
        AND b.starts_at < ? AND b.ends_at > ?
      ORDER BY b.starts_at ASC
      LIMIT 12`,
