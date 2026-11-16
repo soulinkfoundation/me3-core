@@ -30,6 +30,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
         '/assistant/voice/transcribe': { text: 'Help me plan my day' },
         '/mission-control/tasks': { tasks: [] }, '/mission-control/projects': { projects: [] }, '/mission-control/approvals': { approvals: [] },
         '/calendar/feed': { events: [], sources: [] }, '/tasks/goals': { goals: [] }, '/journal/wheel': { settings: { segments: [] }, snapshots: [] },
+        '/assistant/starters': { firstRun: false, greeting: null, starters: [{ id: 'reply', emoji: '✉️', label: 'Reply to Tom', prompt: 'Help me reply to Tom.' }] },
         '/mailbox/messages': { messages: [] }, '/journal/archive': { entries: [] }, '/journal/articles': { articles: [] },
       };
       await route.fulfill({ status: 200, json: data[path] ?? {} });
@@ -38,7 +39,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     const idle = page.locator('.agent-dog[data-state="idle"]:visible');
     await expect(page.getByRole('heading', { name: 'What should I fetch?' })).toBeVisible();
     await expect(idle).toBeVisible();
-    await expect(page.getByRole('button', { name: "Help me reply to an email", exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Reply to Tom' })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('chat-empty.png'), fullPage: true });
     await page.emulateMedia({ reducedMotion: 'reduce' }); await expect(idle.locator('img')).toHaveCSS('animation-name', 'none');
     await page.emulateMedia({ reducedMotion: 'no-preference' });

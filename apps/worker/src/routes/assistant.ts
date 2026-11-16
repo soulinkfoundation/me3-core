@@ -1,3 +1,4 @@
+import { loadChatStarters } from "../chat-starters";
 import { readManagedAllowanceNotice, type ManagedAllowanceNotice } from "../managed-ai-billing";
 import { readAgentEmailDraft, type AgentEmailDraft } from "../agent-email-draft";
 import { readAgentNewsCard, readAgentNewsServingId, type AgentNewsCard } from "../agent-news-card";
@@ -546,6 +547,14 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     headers.set("X-Content-Type-Options", "nosniff");
 
     return new Response(object.body, { headers });
+  });
+
+  // Chat's empty-state starters for every client (me3-q6la.1). `tz` is the owner's IANA zone.
+  app.get("/api/assistant/starters", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    c.header("Cache-Control", "private, no-store");
+    return c.json(await loadChatStarters(c.env, ownerId, { timeZone: c.req.query("tz") }));
   });
 
   app.get("/api/assistant/settings", async (c) => {

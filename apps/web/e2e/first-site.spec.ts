@@ -77,6 +77,12 @@ async function fixture(page: Page, overrides: Partial<State> = {}) {
       : path === "/assistant/threads" ? { threads: [thread] }
       : path === "/assistant/threads/main/messages" ? { thread, messages: state.messages }
       : path === "/assistant/settings" ? { displayName: "ME3", assistantName: null }
+      : path === "/assistant/starters" ? (state.bio || state.messages.length
+        ? { firstRun: false, greeting: null, starters: [{ id: "next", emoji: "⏭️", label: "What's next?", prompt: "What should I focus on next?" }] }
+        : { firstRun: true, greeting: { title: "Hi Maya, I'm ME3", body: "Your assistant, website and inbox in one place. Where shall we start?" }, starters: [
+          { id: "site", emoji: "🌐", label: "Make my website", prompt: "Build my website.", action: "site_ask" },
+          { id: "help", emoji: "💡", label: "What can you help with?", prompt: "What can you help me with?" },
+          { id: "tour", emoji: "🧭", label: "Show me around", prompt: "Show me around ME3." }] })
       : path === "/ai-settings" ? { deploymentMode: "managed", providers: [] }
       : path === "/config" ? { deploymentMode: "managed", ownerAuthConfigured: true, ownerPasswordAuthConfigured: true, setupRequired: [] }
       : path === "/sites" ? { sites: [{ username: "maya", site_role: "profile", site_type: "profile" }] }
@@ -98,10 +104,14 @@ test("first landing goes from the Build your website card to a published site an
   const state = await fixture(page);
   await page.goto("/assistant");
 
-  // First landing: Chat opens on the ask card, and Home's Get set up is switched on.
+  // First landing: ME3's welcome and three starters from Core, no form yet; Home's Get set up is switched on.
+  await expect(page.getByRole("heading", { name: "Hi Maya, I'm ME3" })).toBeVisible();
+  await expect(page.getByTestId("chat-starter")).toHaveText(["🌐Make my website", "💡What can you help with?", "🧭Show me around"]);
   const ask = page.getByTestId("site-build-ask");
-  await expect(ask).toBeVisible();
+  await expect(ask).toHaveCount(0);
   await expect.poll(() => state.patches).toEqual([{ settings: { setupChecklistDismissed: false } }]);
+  await page.getByRole("button", { name: "Make my website" }).click();
+  await expect(ask).toBeVisible();
   await ask.getByLabel("About your work").fill("Sports massage and yoga for runners in Bristol.");
   await ask.getByLabel("Your website or social links (optional)").fill("maya.example");
   await ask.getByRole("button", { name: "Draft my site" }).click();

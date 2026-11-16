@@ -10,8 +10,7 @@ import {
 import { useRoute, useRouter } from "vue-router";
 import { definePage } from "unplugin-vue-router/runtime";
 import { api, type ApiStreamEvent } from "../../api";
-import { ownMissionStatement } from "../../utils/missionStatement";
-import { BUILD_SITE_PROMPT, assistantSuggestions, type AssistantSuggestion, type UpcomingEvent } from "../../utils/assistantSuggestions";
+import { EMPTY_CHAT_STARTERS, loadChatStarters, withConfigure, type ChatStarter, type ChatStarters } from "../../utils/chatStarters";
 import { useAuthStore } from "../../stores/auth";
 import { PEOPLE_SEARCH_TOOL, bookCallMessage, findPersonMessage, loadProfileSite, markFirstRunHandled, shouldStartFirstRun, peopleRows, showMeMessage, type PersonRow } from "../../utils/firstSite";
 import SiteBuildAskCard from "../../components/first-site/SiteBuildAskCard.vue";
@@ -374,7 +373,6 @@ const assistantPlaceholders = [
   "Draft an email to tell Sarah about...",
 ];
 // "Build a site" (mode "site-builder") returns to the starters once site building is polished enough to release.
-type StarterPrompt = AssistantSuggestion & { mode?: "site-builder" };
 const assistantAttachmentLimit = 4;
 const assistantAttachmentMaxBytes = 10_000_000;
 const assistantTextAttachmentMaxBytes = 1_000_000;
@@ -444,10 +442,12 @@ const showConfigureStarterPrompt = computed(() => {
   return aiDeploymentMode.value === "self_hosted" && !selectedModelSetup.value.configured;
 });
 
-// The starters follow the moment (see assistantSuggestions): next meeting, a first Mission, time of day.
-const missionMissing = ref(false);
+// The starters come from Core and follow the moment: a new owner's welcome, the next meeting, mail, time of day.
+const chatStarters = ref<ChatStarters>(EMPTY_CHAT_STARTERS);
+async function refreshChatStarters() {
+  try { chatStarters.value = await loadChatStarters(api.get); } catch { /* The empty state still stands without them. */ }
+}
 // The first site (me3-5u97.2 on web): the Build your website card, and people found after publishing.
-const siteMissing = ref(false);
 const siteAskOpen = ref(routeQueryValue("build") === "site");
 const findSomeonePending = ref(false);
 const peopleByMessage = ref<Record<string, PersonRow[]>>({});
@@ -516,17 +516,17 @@ function homeAsk(text: string) { void submitAssistantText(text); }
 const lastUserMessageAt = computed(() => [...chatMessages.value].reverse().find(message => message.role === "user")?.createdAt ?? null);
 async function loadSiteStarter() {
   let site: Awaited<ReturnType<typeof loadProfileSite>>;
-  try { site = await loadProfileSite(api.get); } catch { siteMissing.value = false; return; }
-  siteMissing.value = !site?.bio;
-  // First landing: open Get set up on Home and go straight to Chat with the Build your website card.
-  // Only a new owner: no bio yet and nothing ever said in Chat.
+  try { site = await loadProfileSite(api.get); } catch { return; }
+  // First landing: switch on Home's Get set up. Chat shows ME3's welcome and starters (from Core);
+  // the Build your website card opens only when the owner picks Make my website. Only a new owner:
+  // no bio yet and nothing ever said in Chat.
   if (chatMessages.value.some(message => message.createdAt) || assistantHistoryHasMore.value) return;
   const ownerKey = useAuthStore().user?.id || "";
   const storage = typeof window === "undefined" ? null : window.localStorage;
   if (!shouldStartFirstRun(storage, ownerKey, site?.bio)) return;
   markFirstRunHandled(storage, ownerKey);
   void api.patch("/mission-control/dashboard", { settings: { setupChecklistDismissed: false } }).then(() => homePanels.value?.refreshSetup()).catch(() => undefined);
-  if (!routeQueryValue("prompt")) await openSiteAsk();
+  if (!routeQueryValue("prompt")) await showWorkspace(false);
 }
 async function closeSiteAsk() {
   siteAskOpen.value = false;
@@ -548,41 +548,9 @@ function askWhoToFind() {
 function bookPerson(person: PersonRow) {
   if (person.freeCall) void submitAssistantText(bookCallMessage(person.freeCall.title, person.name));
 }
-const upcomingEvent = ref<UpcomingEvent | null>(null);
-const suggestionsNow = ref(new Date());
-async function loadMissionStarter() {
-  try {
-    const dashboard = await api.get<{ missionStatement?: string; mission?: { statement: string | null } }>("/mission-control/dashboard");
-    missionMissing.value = !ownMissionStatement(dashboard.mission?.statement ?? dashboard.missionStatement);
-  } catch { missionMissing.value = false; }
-}
-async function loadUpcomingEvent() {
-  type FeedEvent = { title?: string; startsAt?: string; allDay?: boolean; status?: string };
-  const now = new Date();
-  suggestionsNow.value = now;
-  try {
-    const end = new Date(now.getTime() + 90 * 60 * 1000);
-    const feed = await api.get<{ events?: FeedEvent[]; importedEvents?: FeedEvent[] }>(
-      `/calendar/feed?${new URLSearchParams({ start: now.toISOString(), end: end.toISOString() })}`,
-    );
-    upcomingEvent.value = [...(feed.events ?? []), ...(feed.importedEvents ?? [])]
-      .flatMap((event) => {
-        const startsAt = event.startsAt ? new Date(event.startsAt) : null;
-        if (!startsAt || event.allDay || event.status === "cancelled" || startsAt <= now) return [];
-        return [{ title: event.title || "your next event", startsAt }];
-      })
-      .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime())[0] ?? null;
-  } catch { upcomingEvent.value = null; }
-}
-const visibleStarterPrompts = computed<StarterPrompt[]>(() => {
+const visibleStarters = computed<ChatStarter[]>(() => {
   if (siteBuilderMode.value) return [];
-  return assistantSuggestions({
-    now: suggestionsNow.value,
-    upcomingEvent: upcomingEvent.value,
-    missionMissing: missionMissing.value,
-    needsConfigure: showConfigureStarterPrompt.value,
-    siteMissing: siteMissing.value,
-  });
+  return withConfigure(chatStarters.value.starters, showConfigureStarterPrompt.value);
 });
 const assistantMessageLabel = computed(
   () => `Message ${assistantDisplayName.value}`,
@@ -751,14 +719,13 @@ useComposerClearance(assistantComposerFooterRef);
 onMounted(() => {
   // A "Your news is ready" notification, or a link from chat, opens today's paper on Home.
   if (routeQueryValue("news") === "open") void nextTick(() => readNews());
-  void loadMissionStarter();
-  void loadUpcomingEvent();
+  void refreshChatStarters();
   void initializeAssistantPage().finally(() => loadSiteStarter());
   window.addEventListener("scroll", onAssistantScroll, { capture: true, passive: true });
 });
 watch(() => route.query.build, value => { if (value === "site") void openSiteAsk(); });
 // A fresh chat can open hours after the page did; refresh the moment its starters follow.
-watch(() => assistantConsoleMessages.value.length === 0, (empty) => { if (empty) void loadUpcomingEvent(); });
+watch(() => assistantConsoleMessages.value.length === 0, (empty) => { if (empty) void refreshChatStarters(); });
 
 async function initializeAssistantPage() {
   const routePrompt = routeAssistantPrompt();
@@ -1111,17 +1078,8 @@ async function useStarterPrompt(prompt: string) {
   await sendAssistantMessage();
 }
 
-async function startStarterPrompt(starter: StarterPrompt) {
-  if (starter.prompt === BUILD_SITE_PROMPT) { await openSiteAsk(); return; }
-  if (starter.mode === "site-builder" && !siteBuilderMode.value) {
-    await router.push({ path: "/assistant", query: { mode: "site-builder" } });
-    assistantDraft.value = starter.prompt;
-    assistantError.value = null;
-    await nextTick();
-    autosizeAssistantComposer();
-    assistantComposerRef.value?.focus();
-    return;
-  }
+async function startStarterPrompt(starter: ChatStarter) {
+  if (starter.action === "site_ask") { await openSiteAsk(); return; }
   await useStarterPrompt(starter.prompt);
 }
 
@@ -2637,22 +2595,24 @@ function messageFromUnknown(err: unknown, fallback: string) {
             class="assistant-empty-state"
           >
             <AgentDog :size="128" />
-            <h2 class="assistant-empty-state__heading">What should I fetch?</h2>
-            <p class="assistant-empty-state__hint">Ask for anything. I’ll do the legwork.</p>
+            <h2 class="assistant-empty-state__heading">{{ chatStarters.greeting?.title ?? "What should I fetch?" }}</h2>
+            <p class="assistant-empty-state__hint">{{ chatStarters.greeting?.body ?? "Ask for anything. I’ll do the legwork." }}</p>
             <div
-              v-if="visibleStarterPrompts.length"
+              v-if="visibleStarters.length"
               class="starter-prompt-list"
               aria-label="Starter prompts"
             >
               <button
-                v-for="prompt in visibleStarterPrompts"
-                :key="prompt.label"
+                v-for="starter in visibleStarters"
+                :key="starter.id"
                 type="button"
                 class="starter-prompt"
-                @click="startStarterPrompt(prompt)"
+                :class="{ 'starter-prompt--lead': chatStarters.firstRun && starter.action === 'site_ask' }"
+                data-testid="chat-starter"
+                @click="startStarterPrompt(starter)"
               >
-                <UiIcon :name="prompt.icon" :size="19" aria-hidden="true" />
-                <span>{{ prompt.label }}</span>
+                <span v-if="starter.emoji" class="starter-prompt__emoji" aria-hidden="true">{{ starter.emoji }}</span>
+                <span>{{ starter.label }}</span>
               </button>
             </div>
           </div>
@@ -3185,7 +3145,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
             :refresh-key="assistantPaymentsRefresh"
             :last-user-message-at="lastUserMessageAt"
             :busy="assistantSending"
-            @decided="refreshAssistantAfterApproval(); void loadSiteStarter()"
+            @decided="refreshAssistantAfterApproval(); void loadSiteStarter(); void refreshChatStarters()"
             @show-me="submitAssistantText(showMeMessage($event))"
             @find-someone="askWhoToFind"
           />
@@ -3897,9 +3857,12 @@ function messageFromUnknown(err: unknown, fallback: string) {
 }
 .assistant-empty-state__heading { margin: 6px 0 0; font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
 .assistant-empty-state__hint { margin: 0; color: var(--ui-text-muted); font-size: 15px; }
-.starter-prompt-list { display: flex; flex-direction: column; align-items: stretch; gap: 10px; width: min(340px, 100%); margin-top: 12px; }
-.starter-prompt { display: inline-flex; align-items: center; gap: 10px; min-height: 46px; border: 0; border-radius: 24px; padding: 10px 16px; background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); color: var(--ui-text); font: 500 15px var(--font-sans); text-align: left; cursor: pointer; }
-.starter-prompt svg { flex-shrink: 0; color: var(--ui-text-muted); }
+/* Small centred badges that wrap to one or two rows (me3-q6la.2). */
+.starter-prompt-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: min(520px, 100%); margin-top: 14px; }
+.starter-prompt { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; max-width: 100%; border: 1px solid var(--ui-border); border-radius: 999px; padding: 8px 14px; background: var(--ui-surface); color: var(--ui-text); font: 500 14px var(--font-sans); white-space: nowrap; cursor: pointer; }
+.starter-prompt > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.starter-prompt__emoji { flex-shrink: 0; font-size: 16px; line-height: 1; }
+.starter-prompt--lead { border-color: var(--ui-accent); }
 .starter-prompt:hover { background: var(--ui-surface-muted); }
 .starter-prompt:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 .assistant-listening { position: fixed; left: 50%; bottom: max(96px, calc(env(safe-area-inset-bottom, 0px) + 96px)); z-index: 41; display: grid; justify-items: center; gap: 12px; box-sizing: border-box; width: min(720px, calc(100vw - 28px)); padding: 32px 20px 20px; border-radius: 28px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); transform: translateX(-50%); }
