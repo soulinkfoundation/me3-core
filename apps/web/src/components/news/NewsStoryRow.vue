@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import NewsPhoto from "./NewsPhoto.vue";
-import type { NewsStory } from "../../utils/news";
+import { newsSharedLine, type NewsStory } from "../../utils/news";
 
 // One story in the paper: a serif headline, the source's own short summary, where it came from,
 // and ME3's note only when it has one. Anywhere on the story opens the original. Nothing is rewritten.
@@ -23,6 +23,7 @@ const emit = defineEmits<{ ask: [prompt: string] }>();
         <span v-if="story.summary && !small" class="news-dek">{{ story.summary }}</span>
       </template>
       <span class="news-src">{{ story.source }}</span>
+      <span v-if="newsSharedLine(story)" class="news-src news-shared">{{ newsSharedLine(story) }}</span>
     </a>
     <span v-if="story.note" class="news-note">{{ story.note }}</span>
     <button v-if="story.action" type="button" class="news-act" @click="emit('ask', story.action.prompt)">{{ story.action.label }}</button>
@@ -47,6 +48,7 @@ const emit = defineEmits<{ ask: [prompt: string] }>();
 /* Shared by every page of the paper. */
 .news-dek { font-size: 14.5px; line-height: 1.45; color: var(--ui-text-muted); }
 .news-src { font-size: 12.5px; color: var(--ui-text-muted); }
+.news-shared { font-weight: 600; }
 .news-note { font-size: 13.5px; line-height: 1.4; color: var(--ui-text-muted); }
 .news-note::before { content: 'ME3 · '; font-weight: 600; }
 .news-serif { font-family: ui-serif, 'New York', Georgia, 'Times New Roman', serif; }

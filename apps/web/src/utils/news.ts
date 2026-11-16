@@ -20,6 +20,8 @@ export type NewsStory = {
   embedUrl?: string;
   /** A listen's own audio file, played in the paper. */
   audioUrl?: string;
+  /** Trusted accounts that shared it on X. */
+  sharedBy?: { count: number; handles: string[] };
 };
 export type NewsWeather = { emoji: string; temp: string; text: string };
 export type NewsPages = {
@@ -110,4 +112,14 @@ export function newsChatCardFromTool(data: unknown): NewsChatCard | null {
   const counts = row.paper?.counts || row.counts;
   if (row.card === "ready" && !counts) return null;
   return { kind: row.card as NewsChatCard["kind"], time: typeof row.time === "string" ? row.time : "", considered: counts?.considered || 0, stories: (counts?.stories || 0) + (counts?.videos || 0), pages: counts?.pages || 0 };
+}
+
+/** "Shared on X by @rtenews and 3 others", or null when no trusted account shared the story. */
+export function newsSharedLine(story: Pick<NewsStory, "sharedBy">): string | null {
+  const shared = story.sharedBy;
+  if (!shared || shared.count < 1) return null;
+  const first = shared.handles[0];
+  if (!first) return `Shared on X by ${shared.count} ${shared.count === 1 ? "account" : "accounts"} you trust`;
+  const others = shared.count - 1;
+  return `Shared on X by @${first}${others > 0 ? ` and ${others} ${others === 1 ? "other" : "others"}` : ""}`;
 }

@@ -4,7 +4,7 @@ import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import NewsPhoto from "./NewsPhoto.vue";
 import NewsStoryRow from "./NewsStoryRow.vue";
-import { NEWS_PAGE_TITLES, newsDate, newsEmbedUrl, newsLength, newsPageKinds, type NewsPaper, type NewsRating } from "../../utils/news";
+import { NEWS_PAGE_TITLES, newsDate, newsEmbedUrl, newsLength, newsPageKinds, newsSharedLine, type NewsPaper, type NewsRating } from "../../utils/news";
 
 // The paper, opened (me3-6ptk.5): a handful of pages you flick through, with a page turn. Swipe,
 // tap the edges or the dots, or use the arrow keys; with a mouse there are arrows too. The page's
@@ -99,6 +99,7 @@ const endLine = computed(() => {
                 <span class="news-lead__ti">{{ paper.pages.front.lead.headline }}</span>
                 <span v-if="paper.pages.front.lead.summary" class="news-dek news-lead__dek">{{ paper.pages.front.lead.summary }}</span>
                 <span class="news-src">{{ paper.pages.front.lead.source }}</span>
+                <span v-if="newsSharedLine(paper.pages.front.lead)" class="news-src news-shared">{{ newsSharedLine(paper.pages.front.lead) }}</span>
               </a>
               <span v-if="paper.pages.front.lead.note" class="news-note">{{ paper.pages.front.lead.note }}</span>
             </div>
@@ -141,6 +142,7 @@ const endLine = computed(() => {
               <span v-if="story.tag" class="news-tag">{{ story.tag }}</span>
               <span class="news-topic__ti">{{ story.headline }}</span>
               <span class="news-src">{{ story.source }}</span>
+              <span v-if="newsSharedLine(story)" class="news-src news-shared">{{ newsSharedLine(story) }}</span>
             </a>
           </template>
 

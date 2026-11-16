@@ -7,7 +7,7 @@
 // `soupSearchQuery`, which whitelists the fields.
 
 /** The Soup contract this client was written against (packages/core in the Soup repo). */
-export const SOUP_CONTRACT_VERSION = "2026-11-15.1";
+export const SOUP_CONTRACT_VERSION = "2026-11-16.1";
 export const DEFAULT_SOUP_API_ORIGIN = "https://api.thehumansoup.ai";
 /** Soup credits the agent that served a bowl; it is a plain identifier, never the owner. */
 export const SOUP_AGENT_ID = "me3";
@@ -105,6 +105,8 @@ export type NewsStory = {
   embedUrl?: string;
   /** A podcast episode's own audio file (https), so it can be played without leaving the app. */
   audioUrl?: string;
+  /** Trusted accounts that shared this story on X: how many, and up to three of their handles. */
+  sharedBy?: { count: number; handles: string[] };
 };
 export type NewsTodayRequest = { topics: string[]; country?: string | null; city?: string | null; since?: string; exclude?: string[] };
 export type NewsToday = {
@@ -150,6 +152,11 @@ function readNewsStories(value: unknown): NewsStory[] {
     if (typeof row.durationSeconds === "number" && row.durationSeconds > 0) story.durationSeconds = row.durationSeconds;
     if (typeof row.embedUrl === "string" && /^https:\/\//i.test(row.embedUrl)) story.embedUrl = row.embedUrl;
     if (typeof row.audioUrl === "string" && /^https:\/\//i.test(row.audioUrl) && row.audioUrl.length <= 2000) story.audioUrl = row.audioUrl;
+    const shared = row.sharedBy as { count?: unknown; handles?: unknown } | null | undefined;
+    if (shared && typeof shared === "object" && typeof shared.count === "number" && Number.isInteger(shared.count) && shared.count > 0) {
+      const handles = (Array.isArray(shared.handles) ? shared.handles : []).filter((handle): handle is string => typeof handle === "string" && /^[A-Za-z0-9_]{1,15}$/.test(handle)).slice(0, 3);
+      story.sharedBy = { count: Math.max(shared.count, handles.length), handles };
+    }
     return story.headline ? [story] : [];
   });
 }

@@ -40,6 +40,8 @@ export type PaperStory = {
   embedUrl?: string;
   /** A listen's own audio file, played in the paper. Without it the listen opens at its source. */
   audioUrl?: string;
+  /** Trusted accounts that shared it on X, shown as "Shared on X by @handle and N others". */
+  sharedBy?: { count: number; handles: string[] };
 };
 export type NewsPaperPages = {
   front: { lead: PaperStory; briefs: PaperStory[] };
@@ -317,7 +319,7 @@ function toPaperStory(story: NewsStory, given: { tag?: string; note?: string; ac
     ...(story.image ? { image: story.image.url } : {}), ...(story.publishedAt ? { publishedAt: story.publishedAt } : {}),
     ...(extra.tag ? { tag: extra.tag } : {}), ...(extra.note ? { note: extra.note } : {}), ...(extra.action ? { action: extra.action } : {}),
     ...(minutes ? { minutes } : {}), ...(story.embedUrl ? { embedUrl: story.embedUrl } : {}),
-    ...(story.audioUrl ? { audioUrl: story.audioUrl } : {}),
+    ...(story.audioUrl ? { audioUrl: story.audioUrl } : {}), ...(story.sharedBy ? { sharedBy: story.sharedBy } : {}),
   };
 }
 

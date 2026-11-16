@@ -351,3 +351,18 @@ describe("watch and listen", () => {
     expect(pages.media!.more).toBeUndefined();
   });
 });
+
+describe("shared on X", () => {
+  it("carries who shared a story into the paper", () => {
+    const pages = layoutPaper(toNewsCandidates(NEWS_FIXTURE_FOUNDER, founderTaste()), {}, extras)!.pages;
+    expect(pages.front.lead.sharedBy).toEqual({ count: 4, handles: ["rtenews", "IrishTimes", "MetEireann"] });
+    expect(pages.work!.stories[0].sharedBy).toBeUndefined();
+  });
+  it("reads the field defensively", () => {
+    const read = (sharedBy: unknown) => readNewsToday({ frontPage: [{ id: "a", headline: "A", url: "https://example.com/a", sources: [{ name: "S", url: "https://example.com" }], sharedBy }] }).frontPage[0].sharedBy;
+    expect(read({ count: 3, handles: ["ok_handle", "bad handle!", 7, "a", "b", "c"] })).toEqual({ count: 3, handles: ["ok_handle", "a", "b"] });
+    expect(read({ count: 0, handles: ["x"] })).toBeUndefined();
+    expect(read({ count: 2 })).toEqual({ count: 2, handles: [] });
+    expect(read("many")).toBeUndefined();
+  });
+});

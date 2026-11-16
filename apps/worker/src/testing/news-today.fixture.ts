@@ -17,8 +17,8 @@ function story(headline: string, source: string, extra: Partial<NewsStory> & { s
 }
 
 const FRONT: NewsStory[] = [
-  story("Storm Bram brings orange wind warnings to the west coast", "RTÉ", { summary: "Gusts up to 130 km/h from Saturday afternoon. Ferries to the islands are cancelled.", image: picture("storm"), topics: ["weather", "ireland"] }),
-  story("Central banks hold rates as inflation settles near 2%", "Reuters", { summary: "The ECB and the Bank of England both left rates unchanged.", topics: ["economy"] }),
+  story("Storm Bram brings orange wind warnings to the west coast", "RTÉ", { summary: "Gusts up to 130 km/h from Saturday afternoon. Ferries to the islands are cancelled.", image: picture("storm"), topics: ["weather", "ireland"], sharedBy: { count: 4, handles: ["rtenews", "IrishTimes", "MetEireann"] } }),
+  story("Central banks hold rates as inflation settles near 2%", "Reuters", { summary: "The ECB and the Bank of England both left rates unchanged.", topics: ["economy"], sharedBy: { count: 1, handles: ["Reuters"] } }),
   story("Forty Irish firms make the four-day week permanent", "Irish Times", { summary: "A two-year trial ends with most firms keeping the shorter week.", topics: ["work"] }),
   // The same event from a second outlet: until grouping lands the picker must drop it.
   story("Orange wind warning issued as Storm Bram approaches", "Irish Times", { summary: "Met Éireann warns of dangerous coastal conditions.", topics: ["weather", "ireland"] }),
