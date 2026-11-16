@@ -64,6 +64,7 @@ import {
   TIKTOK_BRANDED_POLICY_URL,
   TIKTOK_MUSIC_TERMS_URL,
   emptyTikTokChoices,
+  tiktokBlocker,
   tiktokDeclaration,
   tiktokDeliveryOptions,
   type TikTokPostChoices,
@@ -125,7 +126,7 @@ function tiktokChoicesFor(version: PostVersion): TikTokPostChoices {
 }
 function tiktokProblem(version: PostVersion): string | null {
   if (version.platform !== "tiktok") return null;
-  return tiktokReady.value[version.id]?.problem ?? "Choose TikTok's settings.";
+  return tiktokBlocker(tiktokReady.value[version.id]);
 }
 /** What goes to TikTok when the owner presses Post; pressing it is their consent. */
 function tiktokOptions(version: PostVersion) {
@@ -155,6 +156,12 @@ const schedulable = computed(() =>
 );
 const skippedLabel = computed(() =>
   blockers.value.map(({ version, reason }) => `${networkLabel(version.platform)} (${reason.replace(/\.$/, "")})`).join(", "),
+);
+/** Says what stops posting, by platform, instead of pointing at marks the owner has to find. */
+const blockerSummary = computed(() =>
+  blockers.value.length === 1
+    ? blockers.value[0]!.reason
+    : blockers.value.map(({ version, reason }) => `${networkLabel(version.platform)}: ${reason.replace(/\.$/, "")}`).join(". ") + ".",
 );
 /** TikTok's consent line sits beside the Post button whenever TikTok is about to be posted. */
 const tiktokPosting = computed(() => ready.value.find((version) => version.platform === "tiktok") || null);
@@ -1405,7 +1412,7 @@ onMounted(async () => {
             <input id="post-time" v-model="when.time" type="time">
             <span class="post-bar__zone" :title="timezone">{{ timezoneLabel }}</span>
             <span v-if="scheduleInPast" class="post-bar__hint post-bar__hint--skip">That time has passed. Post now, or pick a later time.</span>
-            <span v-else-if="blockers.length && !ready.length" class="post-bar__hint">Fix the marked problems first.</span>
+            <span v-else-if="blockers.length && !ready.length" class="post-bar__hint post-bar__hint--problem" role="status">{{ blockerSummary }}</span>
             <span v-else-if="blockers.length" class="post-bar__hint post-bar__hint--skip">Skipping {{ skippedLabel }}.</span>
           </div>
           <div class="post-bar__actions">

@@ -12,6 +12,7 @@ import {
   tiktokPrivacyLabel,
   type TikTokPostChoices,
 } from "../../utils/tiktok-post";
+import { TIKTOK_OPEN_TO_ALL } from "../../utils/social-posts";
 
 /**
  * TikTok's required post settings (Content Sharing Guidelines): the account it goes to, who can see it
@@ -125,6 +126,7 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
             :title="tiktokPrivacyDisabled(level, choices) || undefined"
           >{{ tiktokPrivacyLabel(level) }}</option>
         </select>
+        <small v-if="!TIKTOK_OPEN_TO_ALL" class="tiktok__hint">Until TikTok approves ME3, TikTok only takes posts set to Only me, from a private account.</small>
       </label>
 
       <fieldset class="tiktok__group" :disabled="locked">
@@ -197,6 +199,7 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
 .tiktok__avatar { display: grid; place-items: center; background: var(--ui-surface-muted); color: var(--ui-text-muted); font-weight: 650; }
 .tiktok__creator small, .tiktok small { color: var(--ui-text-muted); font-size: 12px; }
 .tiktok__field { display: grid; gap: 4px; font-size: 13px; font-weight: 600; }
+.tiktok__hint { font-weight: 400; }
 .tiktok__field select { max-width: 280px; font-weight: 400; }
 .tiktok__group { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; padding: 0; border: 0; font-size: 13.5px; }
 .tiktok__group legend { margin-bottom: 4px; padding: 0; font-size: 13px; font-weight: 600; }

@@ -115,3 +115,11 @@ export function tiktokDeliveryOptions(choices: TikTokPostChoices, durationSecond
     videoDurationSeconds: Math.ceil(durationSeconds),
   };
 }
+
+/**
+ * What stops a TikTok post, from the settings panel's last report. No report yet means the
+ * settings haven't loaded; a report with no problem means TikTok is ready to post.
+ */
+export function tiktokBlocker(report: { problem: string | null } | undefined): string | null {
+  return report ? report.problem : "Choose TikTok's settings.";
+}

@@ -3,6 +3,7 @@ import type { TikTokCreatorInfo } from "../stores/social";
 import {
   emptyTikTokChoices,
   fitTikTokChoices,
+  tiktokBlocker,
   tiktokChoicesProblem,
   tiktokDeclaration,
   tiktokDeliveryOptions,
@@ -89,5 +90,13 @@ describe("TikTok post choices", () => {
       consent: true,
       videoDurationSeconds: 13,
     });
+  });
+});
+
+describe("tiktokBlocker", () => {
+  it("lets TikTok post once the settings report no problem", () => {
+    expect(tiktokBlocker({ problem: null })).toBeNull();
+    expect(tiktokBlocker({ problem: "Choose who can see it on TikTok." })).toBe("Choose who can see it on TikTok.");
+    expect(tiktokBlocker(undefined)).toBe("Choose TikTok's settings.");
   });
 });

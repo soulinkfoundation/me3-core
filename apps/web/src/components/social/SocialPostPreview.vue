@@ -36,11 +36,21 @@ const handleLabel = computed(() => (props.handle ? (props.handle.startsWith("@")
 const docAsset = computed(() => props.media.find((asset) => asset.kind === "document") || null);
 const current = computed(() => props.media[Math.min(slide.value, props.media.length - 1)] || null);
 const xGrid = computed(() => props.media.slice(0, 4));
+
+const tiktokVideo = ref<HTMLVideoElement | null>(null);
+const tiktokPlaying = ref(false);
+const tiktokProgress = ref(0);
+function toggleTikTok() {
+  const video = tiktokVideo.value;
+  if (!video) return;
+  if (video.paused) void video.play().catch(() => undefined);
+  else video.pause();
+}
 </script>
 
 <template>
   <article class="preview" :class="`preview--${network || 'other'}`" :aria-label="`${networkLabel(platform)} preview`">
-    <header class="preview__who">
+    <header v-if="network !== 'tiktok'" class="preview__who">
       <img v-if="avatarUrl" class="preview__avatar" :src="avatarUrl" alt="">
       <span v-else class="preview__avatar preview__avatar--blank" aria-hidden="true">{{ initial }}</span>
       <span class="preview__names">
@@ -88,11 +98,42 @@ const xGrid = computed(() => props.media.slice(0, 4));
     </template>
 
     <template v-else-if="network === 'tiktok'">
-      <!-- A playable preview of exactly what goes to TikTok: the owner's video and caption, nothing added. -->
-      <div class="preview__short preview__short--tiktok">
-        <video v-if="media[0]" :src="media[0].url" controls playsinline preload="metadata" />
+      <!-- Laid out like TikTok's For You feed: exactly the owner's video and caption, nothing added. -->
+      <div class="tt">
+        <video
+          v-if="media[0]"
+          ref="tiktokVideo"
+          :src="media[0].url"
+          playsinline
+          loop
+          preload="metadata"
+          @play="tiktokPlaying = true"
+          @pause="tiktokPlaying = false"
+          @timeupdate="tiktokProgress = ($event.target as HTMLVideoElement).currentTime / (($event.target as HTMLVideoElement).duration || 1)"
+        />
         <span v-else class="preview__empty">Add a video</span>
-        <p v-if="text" class="preview__short-caption"><b>{{ handleLabel || name }}</b> {{ shownText }}<button v-if="fold !== null && !expanded" type="button" class="preview__more preview__more--light" @click="expanded = true">{{ foldLabel }}</button></p>
+        <button v-if="media[0]" type="button" class="tt__tap" :aria-label="tiktokPlaying ? 'Pause preview' : 'Play preview'" @click="toggleTikTok">
+          <span v-if="!tiktokPlaying" class="tt__play" aria-hidden="true"><UiIcon name="Play" :size="30" /></span>
+        </button>
+        <div class="tt__tabs" aria-hidden="true"><span>Following</span><b>For You</b><UiIcon name="Search" :size="15" /></div>
+        <div class="tt__rail" aria-hidden="true">
+          <span class="tt__avatar">
+            <img v-if="avatarUrl" :src="avatarUrl" alt="">
+            <span v-else>{{ initial }}</span>
+            <i><UiIcon name="Plus" :size="9" /></i>
+          </span>
+          <span class="tt__action"><UiIcon name="Heart" :size="22" /><small>0</small></span>
+          <span class="tt__action"><UiIcon name="MessageCircle" :size="22" /><small>0</small></span>
+          <span class="tt__action"><UiIcon name="Bookmark" :size="21" /><small>0</small></span>
+          <span class="tt__action"><UiIcon name="Forward" :size="22" /><small>Share</small></span>
+          <span class="tt__disc"><img v-if="avatarUrl" :src="avatarUrl" alt=""></span>
+        </div>
+        <div class="tt__meta">
+          <b>{{ (handleLabel || name).replace(/^@/, "") }}</b>
+          <p v-if="text">{{ shownText }}<button v-if="fold !== null && !expanded" type="button" class="preview__more preview__more--light" @click="expanded = true">{{ foldLabel }}</button></p>
+          <span class="tt__sound"><UiIcon name="Music" :size="11" /> original sound - {{ (handleLabel || name).replace(/^@/, "") }}</span>
+        </div>
+        <span class="tt__progress" aria-hidden="true"><i :style="{ width: `${Math.round(tiktokProgress * 100)}%` }" /></span>
       </div>
     </template>
 
@@ -203,4 +244,34 @@ const xGrid = computed(() => props.media.slice(0, 4));
 .preview__short-caption { position: absolute; right: 10px; bottom: 44px; left: 10px; margin: 0; color: #fff; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; white-space: pre-wrap; text-shadow: 0 1px 3px rgba(0, 0, 0, .7); pointer-events: none; }
 .preview__short-caption button { pointer-events: auto; }
 .preview__more--light { color: rgba(255, 255, 255, .85); }
+
+/* TikTok For You feed */
+.preview--tiktok { border: 0; background: transparent; }
+.tt { position: relative; width: min(100%, 300px); margin: 0 auto; overflow: hidden; border-radius: 14px; background: #000; color: #fff; aspect-ratio: 9 / 16; font-family: var(--font-sans, system-ui); }
+.tt video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.tt .preview__empty { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255, 255, 255, .6); }
+.tt__tap { position: absolute; inset: 0; display: grid; place-items: center; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.tt__play { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: rgba(0, 0, 0, .35); color: rgba(255, 255, 255, .9); }
+.tt__tabs { position: absolute; top: 12px; right: 0; left: 0; display: flex; align-items: center; justify-content: center; gap: 14px; font-size: 13px; text-shadow: 0 1px 2px rgba(0, 0, 0, .5); pointer-events: none; }
+.tt__tabs span { color: rgba(255, 255, 255, .7); }
+.tt__tabs b { position: relative; }
+.tt__tabs b::after { position: absolute; right: 30%; bottom: -5px; left: 30%; height: 2px; border-radius: 1px; background: #fff; content: ""; }
+.tt__tabs svg { position: absolute; right: 12px; }
+.tt__rail { position: absolute; right: 8px; bottom: 64px; display: grid; justify-items: center; gap: 14px; pointer-events: none; }
+.tt__avatar { position: relative; width: 38px; height: 38px; margin-bottom: 6px; border: 1.5px solid #fff; border-radius: 50%; background: #333; }
+.tt__avatar img, .tt__avatar > span { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; font-size: 14px; font-weight: 700; }
+.tt__avatar i { position: absolute; bottom: -7px; left: 50%; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: #fe2c55; transform: translateX(-50%); }
+.tt__action { display: grid; justify-items: center; gap: 2px; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .5)); }
+.tt__action small { font-size: 10.5px; font-weight: 600; }
+.tt__disc { width: 30px; height: 30px; overflow: hidden; border: 6px solid #222; border-radius: 50%; background: #444; animation: tt-spin 4s linear infinite; }
+.tt__disc img { width: 100%; height: 100%; object-fit: cover; }
+.tt__meta { position: absolute; right: 60px; bottom: 16px; left: 12px; display: grid; gap: 4px; font-size: 12.5px; line-height: 1.35; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); pointer-events: none; }
+.tt__meta b { font-size: 13.5px; }
+.tt__meta p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.tt__meta button { pointer-events: auto; }
+.tt__sound { display: flex; align-items: center; gap: 4px; overflow: hidden; font-size: 11.5px; white-space: nowrap; }
+.tt__progress { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: rgba(255, 255, 255, .25); }
+.tt__progress i { display: block; height: 100%; background: rgba(255, 255, 255, .85); }
+@keyframes tt-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .tt__disc { animation: none; } }
 </style>
