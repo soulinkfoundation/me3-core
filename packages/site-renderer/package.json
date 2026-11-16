@@ -38,7 +38,7 @@
   },
   "devDependencies": {
     "typescript": "^5.3.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.12"
   },
   "dependencies": {
     "lucide": "0.515.0"
