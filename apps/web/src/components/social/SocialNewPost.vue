@@ -107,7 +107,12 @@ function rowsFor(postType: ComposerPostType, items: PickedMedia[], only?: string
     },
     accounts: listed.value
       .filter(({ account }) => !only || account.id === only)
-      .map(({ account, network }) => ({ id: account.id, network, tiktokMaxVideoSeconds: tiktokMax.value[account.id] ?? null })),
+      .map(({ account, network }) => ({
+        id: account.id,
+        network,
+        tiktokMaxVideoSeconds: tiktokMax.value[account.id] ?? null,
+        youtubeLongUploads: account.youtubeLongUploads ?? null,
+      })),
     swapped: swapped.value,
   });
 }
@@ -595,9 +600,14 @@ async function submit() {
               </button>
             </span>
             <span v-if="row.actions.length" class="new-post__actions">
-              <button v-for="action in row.actions" :key="action.kind" type="button" class="new-post__action" @click="runAction(row, action)">
-                {{ action.label }}<span class="visually-hidden"> for {{ accessibleName(row) }}</span>
-              </button>
+              <template v-for="action in row.actions" :key="action.kind">
+                <a v-if="action.href" class="new-post__action" :href="action.href" target="_blank" rel="noopener">
+                  {{ action.label }}<span class="visually-hidden"> (opens YouTube)</span>
+                </a>
+                <button v-else type="button" class="new-post__action" @click="runAction(row, action)">
+                  {{ action.label }}<span class="visually-hidden"> for {{ accessibleName(row) }}</span>
+                </button>
+              </template>
             </span>
           </div>
         </fieldset>

@@ -41,7 +41,7 @@ export const SOCIAL_NETWORKS: ReadonlyArray<{
   { id: "facebook", label: "Facebook", mark: "f", note: "Posts to a Page you manage" },
   {
     id: "youtube",
-    label: "YouTube Shorts",
+    label: "YouTube",
     mark: "▶",
     note: "Uploads as a private draft. You publish it in YouTube.",
   },
@@ -57,7 +57,7 @@ export function connectableNetworks(accounts: SocialAccountRow[]): typeof SOCIAL
 
 export const YOUTUBE_TITLE_LIMIT = 100;
 
-/** A Short's starting title: the first line of the owner's text, cut to YouTube's limit. */
+/** A YouTube video's starting title: the first line of the owner's text, cut to YouTube's limit. */
 export function youtubeTitleFrom(text: string): string {
   const firstLine = text.split("\n").map((line) => line.trim()).find(Boolean) || "";
   const chars = Array.from(firstLine);
@@ -71,7 +71,6 @@ export function socialNetwork(platform: SocialPlatform | string): SocialNetwork 
 
 export function networkLabel(platform: SocialPlatform | string): string {
   const network = socialNetwork(platform);
-  if (network === "youtube") return "YouTube";
   return SOCIAL_NETWORKS.find((item) => item.id === network)?.label || "Social";
 }
 
@@ -453,14 +452,14 @@ export function versionChecks(
     checks.push({ message, blocking: true, field: "images" });
   }
   if (version.platform === "youtube" && videos.length === 0) {
-    checks.push({ message: "YouTube Shorts needs a video.", blocking: true, field: "images" });
+    checks.push({ message: "YouTube needs a video.", blocking: true, field: "images" });
   }
   if (version.platform === "tiktok" && videos.length === 0) {
     checks.push({ message: "TikTok needs a video.", blocking: true, field: "images" });
   }
   if (version.platform === "youtube") {
     const titleLength = Array.from(version.title?.trim() || "").length;
-    if (!titleLength) checks.push({ message: "Give the Short a title.", blocking: true, field: "text" });
+    if (!titleLength) checks.push({ message: "Give the video a title.", blocking: true, field: "text" });
     else if (titleLength > YOUTUBE_TITLE_LIMIT) {
       checks.push({ message: `The title is ${titleLength} characters, YouTube's limit is ${YOUTUBE_TITLE_LIMIT}.`, blocking: true, field: "text" });
     }

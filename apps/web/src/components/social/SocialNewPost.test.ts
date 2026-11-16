@@ -234,5 +234,17 @@ describe("New post", () => {
       await flushPromises();
       expect(rows(wrapper).map((row) => [row.ticked, row.says])).toEqual([[true, "Video"], [true, "Reel"]]);
     });
+
+    it("asks for a verified YouTube channel before a video over 15 minutes (me3-8l29)", async () => {
+      readVideoInfo.mockResolvedValue(vertical(960));
+      const wrapper = open([{ ...account("youtube"), youtubeLongUploads: "eligible" }, account("linkedin")]);
+      await wrapper.findAll(".new-post__option")[2]!.trigger("click");
+      await pick(wrapper, 1, [clip()]);
+      await flushPromises();
+      expect(rows(wrapper)[1]).toEqual({ name: "YouTube, mayastudio", ticked: false, cant: true, says: "Verify your channel in YouTube to post videos over 15 minutes" });
+      const link = wrapper.findAll(".new-post__row")[1]!.find("a.new-post__action");
+      expect(link.attributes("href")).toBe("https://www.youtube.com/verify");
+      expect(link.attributes("target")).toBe("_blank");
+    });
   });
 });

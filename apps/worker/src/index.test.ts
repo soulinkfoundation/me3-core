@@ -11003,6 +11003,106 @@ describe("ME3 Worker auth", () => {
     }
   });
 
+  it("keeps a YouTube channel's long-upload status from the hosted handoff (me3-8l29)", async () => {
+    const env = createEnv();
+    env.ME3_SOCIAL_OAUTH_ORIGIN = "https://social-oauth.example";
+    const session = cookieHeader(
+      await coreApp.fetch(
+        new Request("http://localhost/api/admin/bootstrap", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Origin: "http://localhost:4000" },
+          body: JSON.stringify({
+            bootstrapCode: "owner-code",
+            email: "owner@example.com",
+            name: "ME3 Owner",
+            username: "owner",
+            password: "correct-horse-battery",
+          }),
+        }),
+        env,
+      ),
+    );
+    await coreApp.fetch(
+      new Request("http://localhost/api/plugins/me3.social-publishing/activate", {
+        method: "POST",
+        headers: { Cookie: session },
+      }),
+      env,
+    );
+
+    const authorizeResponse = await coreApp.fetch(
+      new Request("http://localhost/api/social/youtube/authorize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: session,
+        },
+        body: JSON.stringify({
+          siteId: "site-1",
+          returnPath: "/social",
+          credentialSource: "managed",
+        }),
+      }),
+      env,
+    );
+    const authorizeBody = (await authorizeResponse.json()) as { url: string };
+    const state = new URL(authorizeBody.url).searchParams.get("state");
+
+    const fetchMock = vi.fn(
+      function (this: typeof globalThis, input: RequestInfo | URL) {
+        expect(this).toBe(globalThis);
+        expect(String(input)).toBe("https://social-oauth.example/api/social/oauth/redeem");
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              account: {
+                id: "youtube-channel",
+                handle: "@owner",
+                displayName: "Owner Channel",
+                longUploadsStatus: "eligible",
+              },
+              token: {
+                accessToken: "youtube-access-token",
+                refreshToken: "youtube-refresh-token",
+                expiresAt: "2026-08-01T00:00:00.000Z",
+                scopes: ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"],
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const callbackResponse = await coreApp.fetch(
+        new Request(
+          `http://localhost/api/social/youtube/callback?state=${encodeURIComponent(
+            state || "",
+          )}&handoff=hosted-youtube-handoff`,
+        ),
+        env,
+      );
+
+      expect(callbackResponse.status).toBe(302);
+      expect(callbackResponse.headers.get("location")).toBe(
+        "http://localhost:4000/social?social_connected=youtube",
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(env.socialOauthStates).toHaveLength(0);
+      expect(env.socialAccounts).toEqual([
+        expect.objectContaining({ platform: "youtube", platform_account_id: "youtube-channel", status: "active" }),
+      ]);
+      expect(JSON.parse(String(env.socialAccounts[0]!.metadata_json))).toMatchObject({
+        credentialSource: "hosted_oauth",
+        youtubeLongUploads: "eligible",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("allows explicit BYO OAuth when the hosted bridge is configured", async () => {
     const env = createEnv();
     env.ME3_SOCIAL_OAUTH_ORIGIN = "https://social-oauth.example";

@@ -880,7 +880,7 @@ async function approve(version: PostVersion): Promise<PostVersion> {
   const account = activeAccount(version.platform, accounts.value);
   return social.updatePostVersion(version.id, {
     targetAccountId: account?.id || version.targetAccountId,
-    // YouTube Shorts always upload as a private draft the owner publishes in YouTube.
+    // YouTube videos always upload as a private draft the owner publishes in YouTube.
     ...(version.platform === "youtube"
       ? { publishingSettings: { youtube: { privacyStatus: "private", madeForKids: false, containsSyntheticMedia: false } } }
       : {}),
@@ -1312,7 +1312,7 @@ onMounted(async () => {
                   :value="active.title || ''"
                   :maxlength="YOUTUBE_TITLE_LIMIT + 20"
                   :readonly="activeLocked"
-                  placeholder="What's this Short called?"
+                  placeholder="What's this video called?"
                   @change="setTitle(active, ($event.target as HTMLInputElement).value)"
                 >
               </template>

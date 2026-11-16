@@ -212,12 +212,34 @@ export type SocialPublishingAccount = {
   avatarSource: "provider" | "owner_profile" | null;
   credentialSource: "hosted_oauth" | "byo";
   publishingDefaults: SocialPublishingDefaults;
+  /** YouTube only: the channel's longUploadsStatus ("allowed" can post over 15 minutes), or null when unknown. */
+  youtubeLongUploads: YouTubeLongUploadsStatus | null;
   status: string;
   scopes: string[];
   lastVerifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
+
+export type YouTubeLongUploadsStatus = "allowed" | "eligible" | "disallowed";
+
+function youtubeLongUploadsStatus(value: unknown): YouTubeLongUploadsStatus | null {
+  return value === "allowed" || value === "eligible" || value === "disallowed" ? value : null;
+}
+
+/** Reads the channel's long-upload status with a YouTube access token (youtube.readonly). Null when it can't. */
+async function fetchYouTubeLongUploads(accessToken: string, fetcher: typeof fetch): Promise<YouTubeLongUploadsStatus | null> {
+  try {
+    const response = await fetcher("https://www.googleapis.com/youtube/v3/channels?part=status&mine=true&maxResults=1", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { items?: Array<{ status?: { longUploadsStatus?: string } }> };
+    return youtubeLongUploadsStatus(body.items?.[0]?.status?.longUploadsStatus);
+  } catch {
+    return null;
+  }
+}
 
 export type SocialPublishingDefaults = {
   youtube?: {
@@ -1113,6 +1135,7 @@ export async function listSocialPublishingAccounts(
           ? "hosted_oauth" as const
           : "byo" as const,
       publishingDefaults: socialPublishingDefaultsFromMetadata(metadata),
+      youtubeLongUploads: row.platform === "youtube" ? youtubeLongUploadsStatus(metadata.youtubeLongUploads) : null,
       status: row.status,
       scopes: parseStringArray(row.scopes_json),
       lastVerifiedAt: row.last_verified_at,
@@ -1626,6 +1649,7 @@ async function completeHostedSocialOAuth(
       handle?: string | null;
       displayName?: string | null;
       avatarUrl?: string | null;
+      longUploadsStatus?: string | null;
     };
     token?: {
       accessToken?: string;
@@ -1693,6 +1717,10 @@ async function completeHostedSocialOAuth(
           : {}),
         ...(Object.keys(previousPublishingDefaults).length
           ? { publishingDefaults: previousPublishingDefaults }
+          : {}),
+        // me3-8l29: ME3 Cloud reads this on connect; kept so New post can flag long videos.
+        ...(stateRow.platform === "youtube" && youtubeLongUploadsStatus(payload.account.longUploadsStatus)
+          ? { youtubeLongUploads: youtubeLongUploadsStatus(payload.account.longUploadsStatus) }
           : {}),
       }),
       now,
@@ -5031,10 +5059,14 @@ async function resolvePublishingAccessToken(
     }
     if (!token) return null;
     const now = new Date().toISOString();
+    // me3-8l29: a refresh also re-reads whether the YouTube channel can post over 15 minutes.
+    const longUploads = row.platform === "youtube" ? await fetchYouTubeLongUploads(token.accessToken, fetcher) : null;
+    const nextMetadata = longUploads ? JSON.stringify({ ...metadata, youtubeLongUploads: longUploads }) : null;
     await env.DB.prepare(
       `UPDATE social_accounts
        SET access_token_ciphertext = ?, refresh_token_ciphertext = ?, token_expires_at = ?,
-           status = 'active', last_verified_at = ?, updated_at = ?
+           status = 'active', last_verified_at = ?, updated_at = ?,
+           metadata_json = COALESCE(?, metadata_json)
        WHERE id = ?`,
     )
       .bind(
@@ -5043,6 +5075,7 @@ async function resolvePublishingAccessToken(
         token.expiresAt,
         now,
         now,
+        nextMetadata,
         row.account_id,
       )
       .run();
@@ -5733,6 +5766,7 @@ function parseStringArray(raw: string | null): string[] {
 }
 
 export {
+  YOUTUBE_VERIFY_URL,
   composerImageLimit,
   composerRows,
   formatVideoDuration,

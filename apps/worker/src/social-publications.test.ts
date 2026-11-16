@@ -718,6 +718,77 @@ describe("reusable social Publications", () => {
     });
   });
 
+  it("re-reads a YouTube channel's long-upload status when it refreshes the token (me3-8l29)", async () => {
+    fixture.env.ME3_DEPLOYMENT_MODE = "managed";
+    fixture.db.exec(
+      `CREATE TABLE install_secrets (
+         name TEXT PRIMARY KEY,
+         value TEXT NOT NULL
+       );
+       INSERT INTO install_secrets (name, value) VALUES
+         ('ME3_CLOUD_OWNER_ID', 'cloud-owner'),
+         ('ME3_CORE_INSTALL_ID', 'core-install'),
+         ('ME3_CLOUD_CORE_TOKEN', 'core-update-token');`,
+    );
+    const metadata = {
+      credentialSource: "hosted_oauth",
+      youtubeLongUploads: "eligible",
+      publishingDefaults: { youtube: { privacyStatus: "private", madeForKids: false, containsSyntheticMedia: false } },
+    };
+    fixture.db.run(
+      `INSERT INTO social_accounts (
+         id, user_id, site_id, platform, platform_account_id, display_name, status,
+         scopes_json, metadata_json, access_token_ciphertext, refresh_token_ciphertext,
+         token_expires_at, created_at, updated_at
+       ) VALUES (?, 'owner', 'site-1', 'youtube', 'channel-1', 'YouTube channel', 'active',
+                 '["youtube.upload"]', ?, ?, ?,
+                 '2000-01-01T00:00:00.000Z', datetime('now'), datetime('now'))`,
+      "account-youtube",
+      JSON.stringify(metadata),
+      await encryptTestSecret("expired-youtube-token", TEST_TOKEN_ENCRYPTION_KEY),
+      await encryptTestSecret("youtube-refresh-token", TEST_TOKEN_ENCRYPTION_KEY),
+    );
+    seedApprovedVersion(fixture.db, {
+      postId: "post-youtube",
+      versionId: "version-youtube",
+      bodyText: "A long workshop video.",
+      platform: "youtube",
+      accountId: "account-youtube",
+    });
+    fixture.db.run(
+      `UPDATE social_variants
+       SET format = 'short_video', title = 'Workshop', asset_manifest_json = ?
+       WHERE id = 'version-youtube'`,
+      JSON.stringify([{ url: "https://media.example/long.mp4", kind: "video", mimeType: "video/mp4", byteLength: 4 }]),
+    );
+    const publication = await createPublication(fixture, "version-youtube");
+    const uploadUrl = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=long";
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "https://api.me3.app/api/social/oauth/refresh") {
+        return Response.json({ accessToken: "fresh-youtube-token", refreshToken: null, expiresAt: "2099-01-01T00:00:00.000Z" });
+      }
+      if (url.startsWith("https://www.googleapis.com/youtube/v3/channels?part=status")) {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer fresh-youtube-token");
+        return Response.json({ items: [{ status: { longUploadsStatus: "allowed" } }] });
+      }
+      if (url.includes("uploadType=resumable")) return new Response(null, { status: 200, headers: { Location: uploadUrl } });
+      if (url === "https://media.example/long.mp4") return new Response(new Uint8Array([1, 2, 3, 4]), { status: 206 });
+      if (url === uploadUrl) return Response.json({ id: "youtube-long" }, { status: 201 });
+      if (url.startsWith("https://www.googleapis.com/youtube/v3/videos?part=status")) {
+        return Response.json({ items: [{ id: "youtube-long", status: { uploadStatus: "uploaded", privacyStatus: "private" } }] });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    await publishQueuedPublication(fixture.env as never, publication.id, fetcher as unknown as typeof fetch);
+
+    expect(JSON.parse(fixture.db.first<{ metadata_json: string }>(
+      "SELECT metadata_json FROM social_accounts WHERE id = ?",
+      "account-youtube",
+    )!.metadata_json)).toEqual({ ...metadata, youtubeLongUploads: "allowed" });
+  });
+
   it("uses account-wide YouTube defaults when the queued upload runs", async () => {
     fixture.db.run(
       `INSERT INTO social_accounts (

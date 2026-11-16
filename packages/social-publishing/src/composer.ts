@@ -1,6 +1,7 @@
 import {
   VIDEO_DURATION_SECONDS,
   YOUTUBE_SHORT_MAX_SECONDS,
+  YOUTUBE_UNVERIFIED_MAX_SECONDS,
   socialPlatformCapabilities,
 } from "./capabilities";
 
@@ -38,6 +39,8 @@ export type ComposerAccountInput = {
   network: ComposerNetwork;
   /** TikTok creator_info max_video_post_duration_sec, when loaded. */
   tiktokMaxVideoSeconds?: number | null;
+  /** YouTube channels.list status.longUploadsStatus, when known. Only "allowed" posts over 15 minutes. */
+  youtubeLongUploads?: "allowed" | "eligible" | "disallowed" | null;
 };
 
 export type ComposerInput = {
@@ -48,9 +51,12 @@ export type ComposerInput = {
   swapped?: string[];
 };
 
-export type ComposerActionKind = "reorder" | "swap_to_video" | "swap_to_images" | "pick_cut";
+export type ComposerActionKind = "reorder" | "swap_to_video" | "swap_to_images" | "pick_cut" | "verify_youtube";
 
-export type ComposerAction = { kind: ComposerActionKind; label: string };
+/** `href` is set for actions that leave ME3, such as verifying a YouTube channel. */
+export type ComposerAction = { kind: ComposerActionKind; label: string; href?: string };
+
+export const YOUTUBE_VERIFY_URL = "https://www.youtube.com/verify";
 
 export type ComposerRow = {
   accountId: string;
@@ -130,6 +136,13 @@ function videoLength(account: ComposerAccountInput, video: ComposerVideoInfo | n
       ok: false,
       reason: `Too long: ${NAMES[network]} takes up to ${formatVideoDuration(max)}${where}`,
       action: { kind: "pick_cut", label: "Pick a shorter cut" },
+    };
+  }
+  if (network === "youtube" && duration > YOUTUBE_UNVERIFIED_MAX_SECONDS && account.youtubeLongUploads && account.youtubeLongUploads !== "allowed") {
+    return {
+      ok: false,
+      reason: "Verify your channel in YouTube to post videos over 15 minutes",
+      action: { kind: "verify_youtube", label: "Verify in YouTube", href: YOUTUBE_VERIFY_URL },
     };
   }
   if (min != null && duration < min) {

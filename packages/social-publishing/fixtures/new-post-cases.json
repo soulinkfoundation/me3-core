@@ -2560,6 +2560,138 @@
       ]
     },
     {
+      "name": "Video 16:00, YouTube channel not verified",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 960,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "youtube-1",
+            "network": "youtube",
+            "youtubeLongUploads": "eligible"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": false,
+          "ticked": false,
+          "label": null,
+          "reason": "Verify your channel in YouTube to post videos over 15 minutes",
+          "tone": "normal",
+          "actions": [
+            {
+              "kind": "verify_youtube",
+              "label": "Verify in YouTube",
+              "href": "https://www.youtube.com/verify"
+            }
+          ],
+          "items": [],
+          "format": null,
+          "youtubeKind": null,
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Video 16:00, YouTube channel verified",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 960,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "youtube-1",
+            "network": "youtube",
+            "youtubeLongUploads": "allowed"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Regular video, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": "regular",
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
+      "name": "Video 16:00, YouTube channel status unknown",
+      "input": {
+        "type": "video",
+        "media": {
+          "items": [
+            "video"
+          ],
+          "video": {
+            "durationSeconds": 960,
+            "width": 1080,
+            "height": 1920
+          },
+          "firstKind": "video"
+        },
+        "accounts": [
+          {
+            "id": "youtube-1",
+            "network": "youtube"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "accountId": "youtube-1",
+          "network": "youtube",
+          "canTake": true,
+          "ticked": true,
+          "label": "Regular video, private draft",
+          "reason": null,
+          "tone": "normal",
+          "actions": [],
+          "items": [
+            0
+          ],
+          "format": "short_video",
+          "youtubeKind": "regular",
+          "hint": null,
+          "lengthUnchecked": false
+        }
+      ]
+    },
+    {
       "name": "Two accounts on one platform",
       "input": {
         "type": "images",

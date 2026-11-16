@@ -211,7 +211,7 @@ describe("Social review", () => {
     });
     expect(wrapper.find(".post-tabs__add").exists()).toBe(false);
     expect(wrapper.find('input[type="file"][accept="video/*"]').exists()).toBe(true);
-    expect(wrapper.text()).toContain("YouTube Shorts needs a video.");
+    expect(wrapper.text()).toContain("YouTube needs a video.");
   });
 
   it("posts to the ready platforms and names the ones it skips", async () => {
@@ -231,7 +231,7 @@ describe("Social review", () => {
     const wrapper = mount(SocialPost, { global: { stubs } });
     await flushPromises();
 
-    expect(wrapper.text()).toContain("Skipping YouTube (YouTube Shorts needs a video).");
+    expect(wrapper.text()).toContain("Skipping YouTube (YouTube needs a video).");
     const postNow = wrapper.findAll("button").find((button) => button.text() === "Post now")!;
     expect(postNow.attributes("disabled")).toBeUndefined();
     const schedule = wrapper.findAll("button").find((button) => /^Schedule 1 post/.test(button.text()))!;
@@ -275,7 +275,7 @@ describe("Social review", () => {
 
     expect(apiDelete).toHaveBeenCalledWith("/social/versions/yt-1");
     expect(wrapper.findAll('[role="tab"]')).toHaveLength(1);
-    expect(wrapper.text()).not.toContain("YouTube Shorts needs a video.");
+    expect(wrapper.text()).not.toContain("YouTube needs a video.");
     // Only one platform left: nothing to remove.
     expect(wrapper.find(".post-remove").exists()).toBe(false);
   });

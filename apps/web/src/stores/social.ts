@@ -49,6 +49,8 @@ export type SocialAccountRow = {
   avatarSource?: "provider" | "owner_profile" | null;
   credentialSource: "hosted_oauth" | "byo";
   publishingDefaults?: SocialPublishingDefaults;
+  /** YouTube only: the channel's longUploadsStatus; only "allowed" can post over 15 minutes (me3-8l29). */
+  youtubeLongUploads?: "allowed" | "eligible" | "disallowed" | null;
   status: string;
   scopes?: string[];
   lastVerifiedAt: string | null;
