@@ -531,7 +531,9 @@ onBeforeUnmount(() => {
       <template #item="{ element: card }: { element: HomeCard }">
         <article :ref="el => setCardElement(card, el)" class="home-card" :class="{ 'home-card--landing': card === 'soup' && newsFresh, 'home-card--line': card === 'soup' && newsRead }" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header class="home-card__header">
-            <RouterLink :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title" @click="card === 'soup' && newsPaper ? ($event.preventDefault(), newsReader = true) : undefined"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ card === 'soup' && newsPaper && !newsPaper.readAt ? 'Today’s news' : cards[card].title }}</span></RouterLink>
+            <!-- News opens the paper in place; a RouterLink here would also navigate, since its own click handler runs before ours. -->
+            <button v-if="card === 'soup' && newsPaper" type="button" class="home-card__title" @click="newsReader = true"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ newsPaper.readAt ? cards[card].title : 'Today’s news' }}</span></button>
+            <RouterLink v-else :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
             <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
             <span v-else-if="card === 'soup' && newsDetail" class="home-card__detail">{{ newsDetail }}</span>
             <span v-else-if="card === 'tasks' && tasksCard.tasks.length" class="home-card__detail">{{ tasksCard.view === 'now' ? 'Now' : 'Backlog' }}</span>
@@ -705,7 +707,7 @@ onBeforeUnmount(() => {
 .home-menu-two span { display: flex; flex-direction: column; line-height: 1.25; }
 .home-menu-two small { font-size: 12px; font-weight: 400; color: var(--ui-text-muted); }
 .home-card__header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 0 18px; }
-.home-card__title { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 40px; color: var(--ui-text); font-size: 15px; font-weight: 600; text-decoration: none; padding: 0; white-space: nowrap; }
+.home-card__title { display: flex; border: 0; background: transparent; cursor: pointer; font-family: inherit; align-items: center; gap: 8px; min-width: 0; min-height: 40px; color: var(--ui-text); font-size: 15px; font-weight: 600; text-decoration: none; padding: 0; white-space: nowrap; }
 .home-card__title:hover { background: transparent; text-decoration: underline; text-underline-offset: 3px; }
 .home-emoji { font-size: 20px; line-height: 1; font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
 .home-card__detail { color: var(--ui-text-muted); font-size: 12px; white-space: nowrap; }
