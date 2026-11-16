@@ -104,6 +104,7 @@ import { registerAgentCommerceRoutes } from "./routes/agent-commerce";
 import { registerBookingRoutes } from "./routes/booking";
 import { registerEventBookingRoutes } from "./routes/event-booking";
 import { registerCommerceRoutes } from "./routes/commerce";
+import { registerPayRoutes } from "./routes/pay";
 import { registerCalendarRoutes } from "./routes/calendar";
 import { registerCalendarSourceRoutes } from "./routes/calendar-sources";
 import { registerCampaignRoutes } from "./routes/campaigns";
@@ -662,6 +663,7 @@ registerBookingRoutes(app, { requireOwner, unauthorized });
 registerEventBookingRoutes(app);
 registerAgentCommerceRoutes(app);
 registerCommerceRoutes(app, { requireOwner, unauthorized, getCoreWebOrigin });
+registerPayRoutes(app);
 registerUsernameRoutes(app);
 
 app.post("/api/auth/me3/start", async (c) => {

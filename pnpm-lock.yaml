@@ -227,6 +227,9 @@ importers:
       me3-protocol:
         specifier: ^5.0.0
         version: 5.0.0
+      qrcode:
+        specifier: 1.5.4
+        version: 1.5.4
       stripe:
         specifier: ^17.0.0
         version: 17.7.0

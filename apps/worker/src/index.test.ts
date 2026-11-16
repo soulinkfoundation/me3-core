@@ -494,6 +494,7 @@ function createEnv(): Env & {
         "journal_entries",
         "commerce_settings",
         "commerce_orders",
+        "commerce_direct_payments",
         "content_bank_items",
         "financial_entries",
         "social_packages",

@@ -26,7 +26,7 @@ import {
   type EventBookingType,
 } from "../event-booking";
 import type { AppHono } from "../http/types";
-import { manualPaymentAvailable } from "../pay-directly";
+import { bookingPayPath, manualPaymentAvailable } from "../pay-directly";
 import type { Env } from "../types";
 
 type EventBookingBody = {
@@ -135,7 +135,9 @@ export function registerEventBookingRoutes(app: AppHono) {
     if (!booking) {
       return c.json({ error: "There are not enough spaces left for that booking" }, 409);
     }
-    return c.json({ ok: true, booking: serializeEventBooking(booking) });
+    // A held pay-directly booking sends the buyer on to its pay page.
+    const payUrl = booking.payment_status === "pending" ? await bookingPayPath(c.env, context.site.user_id, booking.id) : null;
+    return c.json({ ok: true, booking: serializeEventBooking(booking), ...(payUrl ? { payUrl } : {}) });
   });
 
   app.post(

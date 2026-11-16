@@ -8,7 +8,8 @@ import {
   type SavedPaymentMethod,
 } from "../../../shared/pay-directly";
 import { bookingDetailsFromBooking, sendBookingAwaitingPaymentEmails } from "./transactional-emails";
-import type { DbBooking, Env } from "./types";
+import { getPublishedSiteBaseUrl } from "./sites";
+import type { DbBooking, DbSite, Env } from "./types";
 
 // Mirrors migrations/0108_pay_directly.sql.
 export const PAY_DIRECTLY_SCHEMA = [
@@ -46,6 +47,15 @@ export const PAY_DIRECTLY_SCHEMA = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_commerce_direct_payments_owner
     ON commerce_direct_payments(user_id, created_at)`,
+] as const;
+
+// Mirrors migrations/0109_pay_page.sql.
+export const PAY_PAGE_INDEX = `CREATE UNIQUE INDEX IF NOT EXISTS idx_commerce_direct_payments_pay_token
+  ON commerce_direct_payments(pay_token)`;
+export const PAY_PAGE_SCHEMA = [
+  "ALTER TABLE commerce_direct_payments ADD COLUMN pay_token TEXT",
+  "ALTER TABLE commerce_direct_payments ADD COLUMN note TEXT",
+  PAY_PAGE_INDEX,
 ] as const;
 
 /** A saved way to get paid, as the owner apps read it. */
@@ -277,23 +287,93 @@ export async function ensurePaymentReference(
   throw new Error("Could not create a payment reference");
 }
 
+/** Where a buyer's pay page lives, on whichever host served the site. Bank details are only ever served from here. */
+export function payPagePath(token: string): string {
+  return `/api/pay/${token}`;
+}
+
+function randomPayToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** The unguessable part of one order's pay page link, made on first use. */
+export async function ensurePayToken(env: Env, reference: string): Promise<string> {
+  await env.DB.prepare("UPDATE commerce_direct_payments SET pay_token = ? WHERE reference = ? AND pay_token IS NULL")
+    .bind(randomPayToken(), reference).run();
+  const row = await env.DB.prepare("SELECT pay_token FROM commerce_direct_payments WHERE reference = ?")
+    .bind(reference).first<{ pay_token: string | null }>();
+  if (!row?.pay_token) throw new Error("Could not create a pay page link");
+  return row.pay_token;
+}
+
+/** The pay page's full address for emails, or "" when this install does not know its public address. */
+async function payPageUrl(env: Env, siteId: string | undefined, token: string): Promise<string> {
+  if (!siteId) return "";
+  try {
+    const site = await env.DB.prepare("SELECT * FROM sites WHERE id = ?").bind(siteId).first<DbSite>();
+    const base = site ? await getPublishedSiteBaseUrl(env, site) : "";
+    return base ? `${new URL(base).origin}${payPagePath(token)}` : "";
+  } catch (error) {
+    console.error("Pay page address could not be worked out:", error);
+    return "";
+  }
+}
+
 /**
- * The reference and the payment details text for one pay-directly order or booking. With no
- * saved method the text is the owner's note alone, as before saved methods existed.
+ * The reference, pay page link and email text for one pay-directly order or booking. The email
+ * carries the link, not the payment options: bank details stay behind the order's own link.
+ * With no saved method for the currency the owner's note comes first, as before saved methods
+ * existed. An install that does not know its public address falls back to the options as text.
  */
 export async function prepareDirectPayment(
   env: Env,
   ownerId: string,
-  input: DirectPaymentTarget & { amountMinor: number | null; currency: string | null | undefined; note: string | null | undefined },
-): Promise<{ reference: string; instructions: string }> {
+  input: DirectPaymentTarget & {
+    amountMinor: number | null;
+    currency: string | null | undefined;
+    note: string | null | undefined;
+    /** The site the order was made on, for the pay page link in emails. */
+    siteId?: string;
+  },
+): Promise<{ reference: string; payToken: string; payPath: string; payUrl: string; instructions: string }> {
   const reference = await ensurePaymentReference(env, ownerId, input);
-  const note = input.note?.trim() || "";
+  const note = input.note?.trim().slice(0, 8000) || "";
+  // Without a pay page link (it could not be made) the email falls back to the options as text.
+  const payToken = await ensurePayToken(env, reference)
+    .then(async (token) => {
+      await env.DB.prepare("UPDATE commerce_direct_payments SET note = ? WHERE reference = ?").bind(note || null, reference).run();
+      return token;
+    })
+    .catch((error) => {
+      console.error("Pay page link could not be made:", error);
+      return "";
+    });
   const options = buildPaymentOptions(await listPaymentMethods(env, ownerId), {
     amountMinor: input.amountMinor,
     currency: input.currency || "",
     reference,
   });
-  return { reference, instructions: [paymentOptionsText(options, reference), note].filter(Boolean).join("\n\n") };
+  const payUrl = payToken ? await payPageUrl(env, input.siteId, payToken) : "";
+  const instructions = !payUrl
+    ? [paymentOptionsText(options, reference), note]
+    : options.length
+      ? [`Pay here: ${payUrl}\nReference: ${reference}`, note]
+      : [note, `Reference: ${reference}\nWhen you have paid, let us know here: ${payUrl}`];
+  return { reference, payToken, payPath: payToken ? payPagePath(payToken) : "", payUrl, instructions: instructions.filter(Boolean).join("\n\n") };
+}
+
+/** The pay page path for a held booking, for the public booking response. Null if it cannot be made. */
+export async function bookingPayPath(env: Env, ownerId: string, bookingId: string): Promise<string | null> {
+  try {
+    return payPagePath(await ensurePayToken(env, await ensurePaymentReference(env, ownerId, { bookingId })));
+  } catch (error) {
+    console.error("Pay page link could not be made for a booking:", error);
+    return null;
+  }
 }
 
 /** Payment details for a pay-directly booking's confirmation email: saved methods, then the owner's note. */
@@ -340,6 +420,7 @@ export async function sendAwaitingPaymentEmails(
   try {
     payment = await prepareDirectPayment(env, input.ownerId, {
       bookingId: input.booking.id,
+      siteId: input.booking.site_id,
       amountMinor: input.booking.suggested_amount ?? null,
       currency: input.booking.currency,
       note,

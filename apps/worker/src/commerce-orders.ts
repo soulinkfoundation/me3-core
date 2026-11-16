@@ -94,6 +94,8 @@ export async function createProductCheckout(
   url?: string;
   sessionId?: string;
   message?: string;
+  /** A pay-directly order's pay page, as a path on the host that served the site. */
+  payUrl?: string;
 }> {
   const buyerName = normalizeShortText(body.buyerName, 120);
   const buyerEmail = normalizeEmail(body.buyerEmail);
@@ -190,6 +192,7 @@ export async function createProductCheckout(
     // The order's short reference, and the owner's saved ways to get paid ahead of their note.
     const payment = await prepareDirectPayment(env, site.user_id, {
       orderId,
+      siteId: site.id,
       amountMinor: amount,
       currency,
       note: paymentInstructions,
@@ -229,6 +232,8 @@ export async function createProductCheckout(
     return {
       paymentMethod,
       orderId,
+      // The buyer's pay page for this order, on the host that served the site.
+      ...(payment.payPath ? { payUrl: payment.payPath } : {}),
       message: sent.status === "pending"
         ? "Your request is confirmed. Email delivery is still being confirmed."
         : "Your request is confirmed. Check your email for payment details.",

@@ -34,7 +34,7 @@ import {
   startPaidOneToOneCheckout,
 } from "../booking-checkout";
 import type { AppHono, OwnerRouteDeps } from "../http/types";
-import { manualPaymentAvailable } from "../pay-directly";
+import { bookingPayPath, manualPaymentAvailable } from "../pay-directly";
 import { finalizeStripeProductCheckout } from "../commerce-orders";
 import { getManagedCommerceBridgeConfig } from "../commerce-bridge";
 import {
@@ -223,7 +223,9 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
       campaign,
     });
     if (!result.ok) return c.json({ error: result.error }, result.status);
-    return c.json({ ok: true, booking: result.booking ? serializeBooking(result.booking) : null });
+    // A held pay-directly booking sends the buyer on to its pay page.
+    const payUrl = result.booking?.payment_status === "pending" ? await bookingPayPath(c.env, site.user_id, result.booking.id) : null;
+    return c.json({ ok: true, booking: result.booking ? serializeBooking(result.booking) : null, ...(payUrl ? { payUrl } : {}) });
   });
 
   app.post("/api/book/:username/free", async (c) => {
@@ -305,7 +307,9 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
       paymentCurrency: manualAmount?.currency,
     });
     if (!result.ok) return c.json({ error: result.error }, result.status);
-    return c.json({ ok: true, booking: result.booking ? serializeBooking(result.booking) : null });
+    // A held pay-directly booking sends the buyer on to its pay page.
+    const payUrl = result.booking?.payment_status === "pending" ? await bookingPayPath(c.env, site.user_id, result.booking.id) : null;
+    return c.json({ ok: true, booking: result.booking ? serializeBooking(result.booking) : null, ...(payUrl ? { payUrl } : {}) });
   });
 
   app.post("/api/book/:username/checkout-session", async (c) => {

@@ -13,7 +13,7 @@ import { HOME_CARDS_SCHEMA } from "./home-cards";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import { ACCOUNTS_RECEIPTS_SCHEMA, ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
 import { AGENT_PAYMENTS_SCHEMA } from "./agent-payments";
-import { PAY_DIRECTLY_SCHEMA } from "./pay-directly";
+import { PAY_DIRECTLY_SCHEMA, PAY_PAGE_INDEX } from "./pay-directly";
 import { AGENT_COMPUTER_SCHEMA } from "./agent-computer";
 import { AGENT_COMMERCE_SCHEMA } from "./agent-commerce-store";
 import { AGENT_NETWORK_COMMERCE_SCHEMA } from "./agent-network-commerce";
@@ -1037,6 +1037,16 @@ const runtimeMigrations: RuntimeMigration[] = [
     checksum: "2026-11-16-pay-directly-v1",
     async apply(db) {
       await db.batch(PAY_DIRECTLY_SCHEMA.map(sql => db.prepare(sql)));
+    },
+  },
+  // Pay me directly: each order's own pay page link, and the owner's note shown on it.
+  {
+    id: "0109_pay_page",
+    checksum: "2026-11-16-pay-page-v1",
+    async apply(db) {
+      await addColumnIfMissing(db, "commerce_direct_payments", "pay_token", "TEXT");
+      await addColumnIfMissing(db, "commerce_direct_payments", "note", "TEXT");
+      await db.prepare(PAY_PAGE_INDEX).run();
     },
   },
 ];

@@ -131,6 +131,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0106_mailbox_outreach_handled", "2026-11-13-mailbox-outreach-handled-v1"],
   ["0107_financial_entry_receipts", "2026-11-15-financial-entry-receipts-v1"],
   ["0108_pay_directly", "2026-11-16-pay-directly-v1"],
+  ["0109_pay_page", "2026-11-16-pay-page-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -407,6 +408,7 @@ const SENSITIVE_FIELD_POLICIES = new Map([
   ["booking_holds.hold_token", "exclude one-time state"],
   ["bookings.meeting_guest_token_hash", "preserve hashed guest meeting authorization"],
   ["commerce_downloads.token_hash", "preserve hashed buyer download authorization"],
+  ["commerce_direct_payments.pay_token", "preserve buyer pay page link so emailed links and reminders keep working after a move"],
   ["email_send_identities.code_hash", "preserve hashed, expiring send-as verification code"],
   ["calendar_sources.encrypted_source_url", "preserve encrypted owner credential"],
   ["commerce_settings.encrypted_stripe_secret_key", "preserve encrypted owner commerce credential"],

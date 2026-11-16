@@ -174,6 +174,11 @@ const productCheckoutScript = String.raw`function(config) {
         buyerName: values.get("buyerName"), buyerEmail: values.get("buyerEmail"), expectedAmount: config.expectedAmount, expectedCurrency: config.expectedCurrency, returnUrl: returnUrl.toString(),
       });
       if (result.paymentMethod === "manual") {
+        // A pay-directly order goes on to its own pay page; the email carries the same link.
+        if (typeof result.payUrl === "string" && result.payUrl.startsWith("/api/pay/")) {
+          window.location.assign(result.payUrl);
+          return;
+        }
         completed = true;
         details.hidden = true;
         message(result.message || "Your request is confirmed. Check your email for payment details.");
