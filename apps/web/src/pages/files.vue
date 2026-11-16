@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { definePage } from "unplugin-vue-router/runtime";
 import { API_BASE, ApiError, api } from "../api";
 import AppPageBar from "../components/AppPageBar.vue";
@@ -97,12 +98,21 @@ type DriveItem =
   | { kind: "file"; id: string; file: DriveFile };
 
 type DialogMode = "new-folder" | "rename" | "move" | "delete";
+type ViewMode = "list" | "grid";
 
+const VIEW_MODE_STORAGE_KEY = "me3.files.viewMode";
+// Thumbnails load the original image, so skip very large files.
+const THUMBNAIL_MAX_BYTES = 12 * 1024 * 1024;
+
+const route = useRoute();
+const router = useRouter();
 const status = ref<FilesStatusResponse | null>(null);
 const folders = ref<DriveFolder[]>([]);
 const currentFolders = ref<DriveFolder[]>([]);
 const currentFiles = ref<DriveFile[]>([]);
-const currentFolderId = ref<string | null>(null);
+const currentFolderId = ref<string | null>(folderIdFromRoute());
+const viewMode = ref<ViewMode>(readStoredViewMode());
+const failedThumbnails = ref<Set<string>>(new Set());
 const selected = ref<{ kind: DriveItem["kind"]; id: string } | null>(null);
 const preview = ref<PreviewResponse | null>(null);
 const pdfPreviewUrl = ref("");
@@ -170,6 +180,20 @@ const selectedFile = computed(() =>
 const selectedFolder = computed(() =>
   selectedItem.value?.kind === "folder" ? selectedItem.value.folder : null,
 );
+const currentFolder = computed(
+  () => folders.value.find((folder) => folder.id === currentFolderId.value) || null,
+);
+const breadcrumbs = computed(() => {
+  const byId = new Map(folders.value.map((folder) => [folder.id, folder]));
+  const trail: DriveFolder[] = [];
+  let cursor = currentFolder.value;
+  while (cursor && trail.length < 32) {
+    trail.unshift(cursor);
+    cursor = cursor.parentId ? byId.get(cursor.parentId) || null : null;
+  }
+  return trail;
+});
+const parentFolderName = computed(() => breadcrumbs.value.at(-2)?.name || "Files");
 const folderOptions = computed(() => {
   const movingFolder = dialogItem.value?.kind === "folder" ? dialogItem.value.folder : null;
   return folders.value.filter((folder) => {
@@ -224,6 +248,21 @@ onBeforeUnmount(() => {
   document.removeEventListener("click", closeRowMenu);
   if (searchTimer !== null) window.clearTimeout(searchTimer);
   clearPdfPreviewUrl();
+});
+
+watch(
+  () => route.query.folder,
+  () => {
+    currentFolderId.value = folderIdFromRoute();
+  },
+);
+
+watch(viewMode, (mode) => {
+  try {
+    localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+  } catch {
+    // The choice just won't be remembered.
+  }
 });
 
 watch(currentFolderId, () => {
@@ -340,9 +379,29 @@ function clearPdfPreviewUrl() {
   pdfPreviewUrl.value = "";
 }
 
+function folderIdFromRoute(): string | null {
+  const value = route.query.folder;
+  return typeof value === "string" && value ? value : null;
+}
+
+function readStoredViewMode(): ViewMode {
+  try {
+    return localStorage.getItem(VIEW_MODE_STORAGE_KEY) === "grid" ? "grid" : "list";
+  } catch {
+    return "list";
+  }
+}
+
+// The open folder lives in the URL, so browser Back steps out of a folder.
 function openFolder(folderId: string | null) {
-  currentFolderId.value = folderId;
   rowMenuId.value = null;
+  if (folderId === currentFolderId.value) return;
+  void router.push({ query: { ...route.query, folder: folderId || undefined } });
+}
+
+function goUp() {
+  if (!currentFolderId.value) return;
+  openFolder(currentFolder.value?.parentId ?? null);
 }
 
 function selectItem(item: DriveItem) {
@@ -366,6 +425,9 @@ function handleRowKeydown(event: KeyboardEvent, item: DriveItem) {
   if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
     activateItem(item);
+  } else if (event.key === "Backspace" && currentFolderId.value) {
+    event.preventDefault();
+    goUp();
   }
 }
 
@@ -557,20 +619,35 @@ function itemSize(item: DriveItem): number {
   return item.kind === "folder" ? 0 : item.file.size;
 }
 
-function itemPreviewKind(item: DriveItem): PreviewKind | "folder" {
-  return item.kind === "folder" ? "folder" : item.file.previewKind;
+function itemTypeLabel(item: DriveItem): string {
+  if (item.kind === "folder") return "Folder";
+  if (item.file.mimeType.startsWith("video/")) return "Video";
+  if (item.file.mimeType.startsWith("audio/")) return "Audio";
+  return formatPreviewKind(item.file.previewKind);
+}
+
+function thumbnailUrl(item: DriveItem): string | null {
+  if (item.kind !== "file" || item.file.previewKind !== "image") return null;
+  if (item.file.size > THUMBNAIL_MAX_BYTES || failedThumbnails.value.has(item.id)) return null;
+  return contentUrl(item.file);
+}
+
+function markThumbnailFailed(fileId: string) {
+  failedThumbnails.value = new Set(failedThumbnails.value).add(fileId);
 }
 
 function itemIcon(item: DriveItem): UiIconName {
   if (item.kind === "folder") return "Folder";
   if (item.file.previewKind === "image") return "Image";
+  if (item.file.mimeType.startsWith("video/")) return "Video";
+  if (item.file.mimeType.startsWith("audio/")) return "Music";
   if (item.file.previewKind === "pdf") return "FileText";
   if (item.file.previewKind === "spreadsheet" || item.file.previewKind === "csv") return "LayoutGrid";
   return "FileText";
 }
 
-function formatPreviewKind(kind: PreviewKind | "folder"): string {
-  if (kind === "folder") return "Folder";
+function formatPreviewKind(kind: PreviewKind): string {
+  if (kind === "download") return "File";
   if (kind === "pdf") return "PDF";
   if (kind === "csv") return "CSV";
   if (kind === "spreadsheet") return "Spreadsheet";
@@ -653,12 +730,13 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
           shape="soft"
           size="compact"
           type="button"
+          aria-label="New folder"
           @click="openNewFolderDialog"
         >
           <template #icon>
             <UiIcon name="Folder" :size="15" aria-hidden="true" />
           </template>
-          New folder
+          <span class="files-control-label">New folder</span>
         </Button>
 
         <Button
@@ -744,10 +822,41 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
 
         <section class="files-list-panel" aria-label="Current folder">
           <div class="files-list-controls">
-            <div class="files-list-controls__meta">
-              <span>{{ sortedItems.length }} items</span>
-              <span v-if="isSearching">Search: {{ searchQuery.trim() }}</span>
-              <PageLoading v-if="itemsLoading" label="Refreshing files" />
+            <div class="files-path">
+              <button
+                v-if="currentFolderId"
+                type="button"
+                class="files-icon-button"
+                :aria-label="`Back to ${parentFolderName}`"
+                :title="`Back to ${parentFolderName}`"
+                @click="goUp"
+              >
+                <UiIcon name="ArrowLeft" :size="16" aria-hidden="true" />
+              </button>
+              <nav class="files-breadcrumbs" aria-label="Folder path">
+                <ol>
+                  <li>
+                    <button v-if="currentFolderId" type="button" @click="openFolder(null)">
+                      Files
+                    </button>
+                    <span v-else aria-current="page">Files</span>
+                  </li>
+                  <li v-for="(crumb, index) in breadcrumbs" :key="crumb.id">
+                    <UiIcon name="ChevronRight" :size="14" aria-hidden="true" />
+                    <span v-if="index === breadcrumbs.length - 1" aria-current="page">
+                      {{ crumb.name }}
+                    </span>
+                    <button v-else type="button" @click="openFolder(crumb.id)">
+                      {{ crumb.name }}
+                    </button>
+                  </li>
+                </ol>
+              </nav>
+              <div class="files-list-controls__meta">
+                <span>{{ sortedItems.length }} {{ sortedItems.length === 1 ? "item" : "items" }}</span>
+                <span v-if="isSearching">Search: {{ searchQuery.trim() }}</span>
+                <PageLoading v-if="itemsLoading" label="Refreshing files" />
+              </div>
             </div>
             <div class="files-list-controls__sort">
               <label for="files-sort-select">Sort</label>
@@ -764,14 +873,35 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
                 @click="toggleSortDirection"
               >
                 <UiIcon
-                  :name="sortDirection === 'asc' ? 'ArrowUp' : 'ChevronDown'"
+                  :name="sortDirection === 'asc' ? 'ArrowUp' : 'ArrowDown'"
                   :size="16"
                   aria-hidden="true"
                 />
               </button>
-              <span class="files-list-view" title="List view">
-                <UiIcon name="List" :size="16" aria-hidden="true" />
-              </span>
+              <div class="files-view-toggle" role="group" aria-label="View">
+                <button
+                  type="button"
+                  class="files-icon-button"
+                  :class="{ 'is-active': viewMode === 'list' }"
+                  aria-label="List view"
+                  title="List view"
+                  :aria-pressed="viewMode === 'list'"
+                  @click="viewMode = 'list'"
+                >
+                  <UiIcon name="List" :size="16" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  class="files-icon-button"
+                  :class="{ 'is-active': viewMode === 'grid' }"
+                  aria-label="Grid view"
+                  title="Grid view"
+                  :aria-pressed="viewMode === 'grid'"
+                  @click="viewMode = 'grid'"
+                >
+                  <UiIcon name="LayoutGrid" :size="16" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -787,7 +917,13 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
             </p>
           </div>
 
-          <div v-else class="files-list" role="listbox" aria-label="Files and folders">
+          <div
+            v-else
+            class="files-list"
+            :class="{ 'files-list--grid': viewMode === 'grid' }"
+            role="listbox"
+            aria-label="Files and folders"
+          >
             <div class="files-list__header" aria-hidden="true">
               <span>Name</span>
               <span>Type</span>
@@ -803,17 +939,28 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
               role="option"
               tabindex="0"
               :aria-selected="selected?.kind === item.kind && selected?.id === item.id"
-              @click="selectItem(item)"
-              @dblclick="activateItem(item)"
+              @click="activateItem(item)"
               @keydown="handleRowKeydown($event, item)"
             >
               <div class="files-row__name">
-                <UiIcon :name="itemIcon(item)" :size="18" aria-hidden="true" />
-                <span>{{ itemName(item) }}</span>
+                <span class="files-thumb" aria-hidden="true">
+                  <img
+                    v-if="thumbnailUrl(item)"
+                    :src="thumbnailUrl(item) || undefined"
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    @error="markThumbnailFailed(item.id)"
+                  />
+                  <UiIcon v-else :name="itemIcon(item)" :size="viewMode === 'grid' ? 30 : 18" />
+                </span>
+                <span class="files-row__label" :title="itemName(item)">{{ itemName(item) }}</span>
               </div>
-              <span>{{ formatPreviewKind(itemPreviewKind(item)) }}</span>
-              <span>{{ item.kind === "folder" ? "-" : formatBytes(item.file.size) }}</span>
-              <span>{{ formatDate(itemUpdatedAt(item)) }}</span>
+              <span class="files-row__type">{{ itemTypeLabel(item) }}</span>
+              <span class="files-row__size">
+                {{ item.kind === "folder" ? "-" : formatBytes(item.file.size) }}
+              </span>
+              <span class="files-row__modified">{{ formatDate(itemUpdatedAt(item)) }}</span>
               <div class="files-row__actions">
                 <button
                   type="button"
@@ -996,7 +1143,7 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
             <dl class="files-details">
               <div>
                 <dt>Type</dt>
-                <dd>{{ formatPreviewKind(itemPreviewKind(selectedItem)) }}</dd>
+                <dd>{{ itemTypeLabel(selectedItem) }}</dd>
               </div>
               <div v-if="selectedFile">
                 <dt>Size</dt>
@@ -1269,8 +1416,72 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
   border-bottom: 1px solid var(--ui-border, var(--color-border));
 }
 
+.files-path {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.files-breadcrumbs {
+  min-width: 0;
+}
+
+.files-breadcrumbs ol {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.files-breadcrumbs li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  color: var(--ui-text-muted, var(--color-text-muted));
+}
+
+.files-breadcrumbs li:last-child {
+  flex-shrink: 1;
+}
+
+.files-breadcrumbs button,
+.files-breadcrumbs span {
+  max-width: 22ch;
+  padding: 4px 6px;
+  overflow: hidden;
+  border: none;
+  border-radius: var(--ui-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-breadcrumbs button {
+  cursor: pointer;
+}
+
+.files-breadcrumbs button:hover,
+.files-breadcrumbs button:focus-visible {
+  background: var(--ui-accent-soft, var(--color-bg-subtle));
+  color: var(--ui-accent, var(--color-accent));
+}
+
+.files-breadcrumbs [aria-current="page"] {
+  color: var(--ui-text, var(--color-text));
+  font-weight: 650;
+}
+
 .files-list-controls__meta {
   display: flex;
+  flex-shrink: 0;
   flex-wrap: wrap;
   gap: 10px;
   color: var(--ui-text-muted, var(--color-text-muted));
@@ -1298,7 +1509,6 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
   font: inherit;
 }
 
-.files-list-view,
 .files-icon-button {
   display: inline-flex;
   align-items: center;
@@ -1329,7 +1539,17 @@ button.files-icon-button {
   color: #dc2626;
 }
 
-.files-list-view {
+.files-icon-button {
+  flex-shrink: 0;
+}
+
+.files-view-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.files-view-toggle .is-active {
+  border-color: transparent;
   background: var(--ui-accent-soft, var(--color-bg-subtle));
   color: var(--ui-accent, var(--color-accent));
 }
@@ -1345,7 +1565,7 @@ button.files-icon-button {
   grid-template-columns: minmax(220px, 1fr) minmax(90px, 120px) 88px minmax(120px, 150px) 42px;
   gap: 10px;
   align-items: center;
-  min-height: 42px;
+  min-height: 46px;
   padding: 0 12px;
 }
 
@@ -1365,7 +1585,7 @@ button.files-icon-button {
   border-bottom: 1px solid var(--ui-border, var(--color-border));
   color: var(--ui-text-muted, var(--color-text-muted));
   font-size: 13px;
-  cursor: default;
+  cursor: pointer;
 }
 
 .files-row:hover,
@@ -1388,11 +1608,73 @@ button.files-icon-button {
   font-weight: 650;
 }
 
-.files-row__name span,
+.files-row__label,
 .files-row > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.files-thumb {
+  display: grid;
+  flex: 0 0 32px;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  border-radius: var(--ui-radius-sm, 6px);
+}
+
+.files-thumb img {
+  width: 100%;
+  height: 100%;
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+  object-fit: cover;
+}
+
+.files-list--grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.files-list--grid .files-list__header,
+.files-list--grid .files-row__type,
+.files-list--grid .files-row__modified {
+  display: none;
+}
+
+.files-list--grid .files-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  min-height: 0;
+  padding: 8px;
+  border: 1px solid var(--ui-border, var(--color-border));
+  border-radius: var(--ui-radius-md, 8px);
+  background: var(--ui-surface, var(--color-bg));
+}
+
+.files-list--grid .files-row:hover,
+.files-list--grid .files-row.is-selected {
+  border-color: var(--ui-accent, var(--color-accent));
+}
+
+.files-list--grid .files-row__name {
+  grid-column: 1 / -1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.files-list--grid .files-thumb {
+  flex: none;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+  color: var(--ui-text-muted, var(--color-text-muted));
 }
 
 .files-row__actions {
@@ -1681,6 +1963,11 @@ button.files-icon-button {
     overflow: auto;
   }
 
+  /* The breadcrumb and folder rows cover navigation on narrow screens. */
+  .files-tree {
+    display: none;
+  }
+
   .files-body:not(.files-body--preview-open) .files-preview {
     display: none;
   }
@@ -1689,22 +1976,8 @@ button.files-icon-button {
     overflow: hidden;
   }
 
-  .files-body--preview-open .files-tree,
   .files-body--preview-open .files-list-panel {
     display: none;
-  }
-
-  .files-tree {
-    height: 160px;
-    flex-direction: column;
-    border-right: none;
-    border-bottom: 1px solid var(--ui-border, var(--color-border));
-    overflow-x: hidden;
-    overflow-y: auto;
-  }
-
-  .files-tree__row {
-    flex: 0 0 auto;
   }
 
   .files-preview {
@@ -1728,23 +2001,49 @@ button.files-icon-button {
     gap: 6px;
   }
 
+  .files-list-controls {
+    flex-wrap: wrap;
+  }
+
+  .files-list-controls__sort {
+    margin-left: auto;
+  }
+
   .files-list__header {
     display: none;
   }
 
-  .files-row {
+  .files-list:not(.files-list--grid) .files-row {
     grid-template-columns: minmax(0, 1fr) 42px;
     gap: 6px;
     min-height: 58px;
   }
 
-  .files-row > span {
+  .files-list:not(.files-list--grid) .files-row > span {
     display: none;
   }
 
-  .files-row__actions {
+  .files-list:not(.files-list--grid) .files-row__actions {
     grid-column: 2;
     grid-row: 1;
+  }
+
+  .files-list:not(.files-list--grid) .files-thumb {
+    flex-basis: 40px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .files-list--grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 10px;
+    padding: 10px;
+  }
+}
+
+@media (max-width: 560px) {
+  .files-control-label {
+    display: none;
   }
 }
 </style>
