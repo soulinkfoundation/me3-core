@@ -603,7 +603,7 @@ onBeforeUnmount(() => {
               <template v-if="!inboxRows.length && (!brief || brief.handled.total === 0)">
                 <button v-if="agentAddress" type="button" class="home-copy" @click="copyAgentAddress"><span>{{ agentAddress }}</span><UiIcon name="Copy" :size="16" /><span class="sr-only">Copy agent email</span></button>
                 <RouterLink v-else to="/settings?section=mailbox" class="home-quiet"><UiIcon name="Plus" :size="16" />Set up agent email</RouterLink>
-                <p v-if="!brief" class="home-muted">CC me on any email. I never see your own inbox.</p>
+                <p v-if="!brief" class="home-muted">ME3's own email. Forward it invoices and anything it should know or handle. It never reads your inbox.</p>
               </template>
             </template>
             <template v-else-if="card === 'tasks'">
