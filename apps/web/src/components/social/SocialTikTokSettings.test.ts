@@ -45,8 +45,12 @@ describe("TikTok settings (me3-vque)", () => {
     expect(select.attributes("aria-required")).toBe("true");
     expect(wrapper.find(".tiktok__field").text()).toContain("Who can see it");
     expect(wrapper.findAll("option").map((option) => option.text())).toEqual(["Choose who can see it", "Only me", "Followers"]);
-    expect(wrapper.find(".tiktok__count").text()).toBe("1 to choose");
-    expect(wrapper.text()).toContain("videos up to 10:00 on this account");
+    // Highlighted until chosen, instead of a line saying so; the hint and length limit are tooltips.
+    expect(select.classes()).toContain("is-required");
+    expect(wrapper.find(".tiktok__creator").attributes("title")).toBe("Videos up to 10:00 on this account");
+    expect(wrapper.find(".tiktok__field").attributes("title")).toContain("Options come from your TikTok account.");
+    expect(wrapper.find(".tiktok__problem").exists()).toBe(false);
+    expect(wrapper.find("section").attributes("aria-label")).toBe("TikTok settings, 1 to choose");
   });
 
   it("starts Comment, Duet and Stitch unticked and says why one is off", async () => {
@@ -56,13 +60,15 @@ describe("TikTok settings (me3-vque)", () => {
     expect(boxes.map((box) => (box.element as HTMLInputElement).disabled)).toEqual([false, true, false]);
     const why = wrapper.find(`#${boxes[1]!.attributes("aria-describedby")}`);
     expect(why.text()).toBe("Duets are off in your TikTok settings.");
+    expect(boxes[1]!.element.closest("label")!.getAttribute("title")).toBe("Duets are off in your TikTok settings.");
   });
 
   it("counts what's left to choose and is never collapsed", async () => {
     const wrapper = await panel({ ...emptyTikTokChoices(), privacyLevel: "SELF_ONLY", disclose: true });
-    expect(wrapper.find(".tiktok__count").text()).toBe("1 to choose");
+    expect(wrapper.find("section").attributes("aria-label")).toBe("TikTok settings, 1 to choose");
     await wrapper.setProps({ choices: { ...emptyTikTokChoices(), privacyLevel: "SELF_ONLY", disclose: true, yourBrand: true } });
-    expect(wrapper.find(".tiktok__count").exists()).toBe(false);
+    expect(wrapper.find("section").attributes("aria-label")).toBe("TikTok settings");
+    expect(wrapper.text()).not.toContain("Nothing goes to TikTok");
     expect(wrapper.find("details").exists()).toBe(false);
     // The consent line lives beside Post on the post screen, not in the panel.
     expect(wrapper.text()).not.toContain("By posting");

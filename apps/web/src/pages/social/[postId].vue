@@ -360,6 +360,16 @@ const activeAccountLabel = computed(() => {
   const account = activeAccount(active.value.platform, accounts.value);
   return account ? accountName(account) : "";
 });
+/** The line under the text: which account, how long, saving. Only what changes as you write. */
+const footBits = computed(() => {
+  if (!active.value) return [];
+  const bits: string[] = [];
+  if (activeAccountLabel.value) bits.push(activeAccountLabel.value);
+  if (activeThread.value) bits.push(`${activeThread.value.length} posts`);
+  else if (activeLimit.value && activeLimit.value < 10000) bits.push(`${activeLength.value}/${activeLimit.value}`);
+  if (savingIds.value.has(active.value.id)) bits.push("Saving…");
+  return bits;
+});
 const activeLocked = computed(() =>
   Boolean(active.value && (active.value.publicationStatus === "published" || active.value.publicationStatus === "queued" || active.value.publicationStatus === "publishing")),
 );
@@ -1191,7 +1201,7 @@ onMounted(async () => {
           >
             <p v-if="dropping" class="post-drop" aria-hidden="true">Drop to add to {{ networkLabel(active.platform) }}</p>
             <label class="visually-hidden" :for="`post-text-${active.id}`">{{ networkLabel(active.platform) }} text</label>
-            <div class="post-field-wrap">
+            <div class="post-field-wrap" :title="activeFold !== null && activeFoldRule ? `Shaded text sits behind “${activeFoldRule.label.replace(/^…\s?/, '')}”` : undefined">
             <div ref="mirror" class="post-field post-field__mirror" aria-hidden="true"><template v-if="activeFold !== null">{{ activeText.slice(0, activeFold) }}<span class="post-fold" /><span class="post-fold__rest">{{ activeText.slice(activeFold) }}</span></template><template v-else>{{ activeText }}</template>{{ "\n" }}</div>
             <textarea
               :id="`post-text-${active.id}`"
@@ -1209,11 +1219,7 @@ onMounted(async () => {
             </div>
             <div class="post-field-foot">
               <span>
-                {{ networkLabel(active.platform) }} only<template v-if="activeAccountLabel"> · {{ activeAccountLabel }}</template>
-                <template v-if="activeThread"> · {{ activeThread.length }} posts</template>
-                <template v-else-if="activeLimit && activeLimit < 10000"> · {{ activeLength }}/{{ activeLimit }}</template>
-                <template v-if="activeFold !== null && activeFoldRule"> · Shaded text sits behind “{{ activeFoldRule.label.replace(/^…\s?/, "") }}”</template>
-                <template v-if="savingIds.has(active.id)"> · Saving…</template>
+                {{ footBits.join(" · ") }}
               </span>
               <span v-if="!activeLocked && (pending.length > 1 || removable)" class="post-field-foot__links">
                 <template v-if="pending.length > 1">
@@ -1226,12 +1232,12 @@ onMounted(async () => {
               </span>
             </div>
 
-            <p v-if="activeThread && !activeLocked" class="post-thread-note">
-              Thread of {{ activeThread.length }} posts. Put a line with <code>---</code> between posts.
+            <p v-if="activeThread && !activeLocked" class="post-thread-note" title="Put a line with --- between posts.">
+              Thread
               <button type="button" @click="makeOnePost">Make it one post</button>
             </p>
             <p v-if="shortenUndo && shortenUndo.id === active.id && !activeLocked" class="post-thread-note">
-              ME3 shortened this. Check it reads like you.
+              Shortened by ME3.
               <button type="button" @click="undoShorten">Undo</button>
             </p>
             <ul v-if="activeChecks.some((check) => check.field === 'text' || check.field === 'account')" class="post-checks">
@@ -1353,16 +1359,15 @@ onMounted(async () => {
                 <button v-if="activeTakesSlides" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="slidesOpen = true">
                   <UiIcon name="Images" :size="15" /> {{ textCarousel?.slides.length ? "Edit slides" : "Make text slides" }}
                 </button>
-                <button v-if="activeVideoRule" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="videoInput?.click()">
+                <button v-if="activeVideoRule" type="button" class="post-images__add" :title="(activeMixed && activeVideo ? mixedMediaRule(active.platform, capabilities)?.guidance : activeVideoRule.guidance) ?? undefined" :disabled="busy === 'upload'" @click="videoInput?.click()">
                   <UiIcon name="Plus" :size="15" /> {{ converting !== null ? `Converting… ${Math.round(converting * 100)}%` : busy === "upload" ? "Adding…" : activeVideoLabel }}
                 </button>
-                <button v-if="activeDocRule" type="button" class="post-images__add" :disabled="busy === 'upload'" @click="documentInput?.click()">
+                <button v-if="activeDocRule" type="button" class="post-images__add" :title="activeDocRule.guidance ?? undefined" :disabled="busy === 'upload'" @click="documentInput?.click()">
                   <UiIcon name="FileText" :size="15" /> {{ activeDocument ? "Replace PDF" : "Add a PDF" }}
                 </button>
-                <button type="button" class="post-images__add" :disabled="busy === 'upload'" @click="filesPickerOpen = true">
+                <button type="button" class="post-images__add" title="You can also drop files here, or paste a screenshot." :disabled="busy === 'upload'" @click="filesPickerOpen = true">
                   <UiIcon name="Folder" :size="15" /> From Files
                 </button>
-                <span class="post-images__hint">or drop files here, or paste a screenshot</span>
               </div>
               <ul v-if="activeChecks.some((check) => check.field === 'images')" class="post-checks">
                 <li v-for="check in activeChecks.filter((item) => item.field === 'images')" :key="check.message">
@@ -1373,10 +1378,7 @@ onMounted(async () => {
                   </button>
                 </li>
               </ul>
-              <p v-if="activeDocument && activeDocRule?.guidance" class="post-note">{{ activeDocRule.guidance }}</p>
-              <p v-else-if="activeMixed && activeVideo" class="post-note">{{ mixedMediaRule(active.platform, capabilities)?.guidance }}</p>
-              <p v-else-if="activeVideoRule?.guidance && (activeVideo || !activeTakesImages) && active.platform !== 'youtube'" class="post-note">{{ activeVideoRule.guidance }}</p>
-              <p v-if="active.platform === 'youtube'" class="post-note">Uploads as a private draft. You publish it in YouTube.</p>
+              <p v-if="active.platform === 'youtube'" class="post-note">Uploads as a private draft.</p>
               <SocialTikTokSettings
                 v-if="active.platform === 'tiktok' && activeVideo && !activeLocked && active.publicationStatus !== 'published'"
                 :key="active.id"

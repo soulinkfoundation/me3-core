@@ -483,7 +483,8 @@ describe("Social review", () => {
     const saved = apiPatch.mock.calls.at(-1)![1] as { bodyText: string; publishingSettings: unknown };
     expect(saved.publishingSettings).toEqual({ post: { thread: true } });
     expect(saved.bodyText.split("\n\n---\n\n").length).toBeGreaterThan(1);
-    expect(wrapper.text()).toContain("Thread of");
+    expect(wrapper.find(".post-thread-note").exists()).toBe(true);
+    expect(wrapper.find(".post-field-foot").text()).toMatch(/\d+ posts/);
 
     await button("Make it one post").trigger("click");
     await flushPromises();

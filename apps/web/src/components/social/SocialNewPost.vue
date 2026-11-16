@@ -44,7 +44,7 @@ import {
  * one row of pictures: grey until chosen, full colour when chosen, faded and crossed out when the
  * account can't take this post. Nothing is chosen for the owner. What each account gets comes from
  * the shared rules in packages/social-publishing, so web and iPhone say the same thing; on the row
- * it shows as a tooltip and in the line under it. The words and media are always the owner's own.
+ * it shows as a tooltip. The words and media are always the owner's own.
  */
 const props = defineProps<{
   open: boolean;
@@ -94,8 +94,6 @@ const cutInput = ref<HTMLInputElement | null>(null);
 /** A shorter cut of the video for one account's version only (me3-ic0c). Everyone else keeps the original. */
 const cuts = ref<Record<string, PickedMedia>>({});
 let cutFor: string | null = null;
-/** The account the pointer or focus is on, or was last tapped: its line under the row says what it gets. */
-const pointed = ref<string | null>(null);
 /** TikTok creator_info max_video_post_duration_sec per account, once loaded. */
 const tiktokMax = ref<Record<string, number>>({});
 let keySeed = 0;
@@ -196,7 +194,6 @@ function says(row: ComposerRow): string {
   return row.hint ? `${main}. ${row.hint}` : main;
 }
 
-const pointedRow = computed(() => rows.value.find((row) => row.accountId === pointed.value) ?? null);
 
 /** Rows with something to do (a swap, a shorter cut, a link) or their own cut, listed under the row. */
 const noteRows = computed(() => rows.value.filter((row) => row.actions.length || (cuts.value[row.accountId] && type.value !== "text")));
@@ -207,7 +204,6 @@ const canConnectMore = computed(() =>
 );
 
 function toggle(row: ComposerRow) {
-  pointed.value = row.accountId;
   if (!row.canTake) return;
   const next = !ticks.value[row.accountId];
   const platform = accountFor(row).platform;
@@ -236,7 +232,6 @@ function reset() {
   type.value = "text";
   text.value = "";
   handTicks.value = {};
-  pointed.value = null;
   swapped.value = [];
   cuts.value = {};
   tiktokMax.value = {};
@@ -605,7 +600,7 @@ async function submit() {
         </div>
 
         <div v-if="listed.length" class="new-post__accounts-block">
-          <div class="new-post__accounts" role="group" aria-label="Post to" @mouseleave="pointed = null">
+          <div class="new-post__accounts" role="group" aria-label="Post to">
             <button
               v-for="row in rows"
               :key="row.accountId"
@@ -618,8 +613,6 @@ async function submit() {
               :aria-describedby="`${titleId}-${row.accountId}-says`"
               :data-tip="says(row)"
               @click="toggle(row)"
-              @mouseenter="pointed = row.accountId"
-              @focus="pointed = row.accountId"
             >
               <SocialAccountAvatar
                 :network="row.network"
@@ -632,9 +625,6 @@ async function submit() {
               <span :id="`${titleId}-${row.accountId}-says`" class="visually-hidden">{{ says(row) }}</span>
             </button>
           </div>
-          <p v-if="pointedRow" class="new-post__status" aria-hidden="true">
-            <b>{{ accessibleName(pointedRow) }}</b>: {{ says(pointedRow) }}
-          </p>
           <ul v-if="noteRows.length" class="new-post__notes">
             <li v-for="row in noteRows" :key="row.accountId">
               <span class="new-post__note-who">{{ networkLabel(accountFor(row).platform) }}</span>
@@ -846,8 +836,6 @@ async function submit() {
 .new-post__account:first-child[data-tip]::after { left: 0; transform: none; }
 .new-post__account:last-child[data-tip]:not(:first-child)::after { right: 0; left: auto; transform: none; }
 .new-post__name { max-width: 6em; overflow: hidden; font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.new-post__status { margin: 0; color: var(--ui-text-muted); font-size: var(--ui-font-size-sm, 13px); line-height: 1.35; }
-.new-post__status b { color: var(--ui-text); font-weight: 600; }
 .new-post__notes { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: var(--ui-font-size-sm, 13px); line-height: 1.35; }
 .new-post__notes li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
 .new-post__note-who { font-weight: 600; }

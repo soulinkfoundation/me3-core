@@ -47,6 +47,9 @@ const INTERACTIONS = [
   { key: "allowDuet", label: "Duet", off: "duetDisabled", why: "Duets are off in your TikTok settings" },
   { key: "allowStitch", label: "Stitch", off: "stitchDisabled", why: "Stitch is off in your TikTok settings" },
 ] as const;
+const privacyHint = TIKTOK_OPEN_TO_ALL
+  ? "Options come from your TikTok account."
+  : "Options come from your TikTok account. Until TikTok approves ME3, only \"Only me\" works, from a private account.";
 const needsKind = computed(() => props.choices.disclose && !props.choices.yourBrand && !props.choices.brandedContent);
 
 function set(patch: Partial<TikTokPostChoices>) {
@@ -101,29 +104,25 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
 </script>
 
 <template>
-  <section class="tiktok" :aria-labelledby="`${id}-title`">
-    <header class="tiktok__head">
-      <h3 :id="`${id}-title`" class="tiktok__title">TikTok</h3>
-      <span v-if="creator && toChoose" class="tiktok__count">{{ toChoose }} to choose</span>
-    </header>
+  <section class="tiktok" :aria-label="toChoose && creator ? `TikTok settings, ${toChoose} to choose` : 'TikTok settings'">
 
     <p v-if="loading" class="tiktok__note">Checking your TikTok account…</p>
     <p v-else-if="loadError" class="tiktok__problem" role="alert">{{ loadError }}</p>
 
     <template v-else-if="creator">
-      <div class="tiktok__creator">
+      <div class="tiktok__creator" :title="creator.maxVideoPostDurationSeconds ? `Videos up to ${formatVideoDuration(creator.maxVideoPostDurationSeconds)} on this account` : undefined">
         <img v-if="creator.avatarUrl" :src="creator.avatarUrl" alt="">
         <span v-else class="tiktok__avatar" aria-hidden="true">{{ creator.nickname.slice(0, 1).toUpperCase() }}</span>
         <span>
           Posts to <b>{{ creator.nickname }}</b> <small>@{{ creator.username }}</small>
-          <small v-if="creator.maxVideoPostDurationSeconds"> · videos up to {{ formatVideoDuration(creator.maxVideoPostDurationSeconds) }} on this account</small>
         </span>
       </div>
 
-      <label class="tiktok__field">
+      <label class="tiktok__field" :title="privacyHint">
         <span>Who can see it <span class="tiktok__required" aria-hidden="true">*</span><span class="visually-hidden">(required)</span></span>
         <select
           class="post-field"
+          :class="{ 'is-required': !choices.privacyLevel }"
           :value="choices.privacyLevel"
           :disabled="locked"
           required
@@ -140,12 +139,12 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
             :title="tiktokPrivacyDisabled(level, choices) || undefined"
           >{{ tiktokPrivacyLabel(level) }}</option>
         </select>
-        <small class="tiktok__hint">Options come from your TikTok account.<template v-if="!TIKTOK_OPEN_TO_ALL"> Until TikTok approves ME3, only "Only me" works, from a private account.</template></small>
+        <span class="visually-hidden">{{ privacyHint }}</span>
       </label>
 
       <fieldset class="tiktok__group" :disabled="locked">
         <legend>Let viewers</legend>
-        <label v-for="item in INTERACTIONS" :key="item.key" :class="{ 'is-off': creator[item.off] }">
+        <label v-for="item in INTERACTIONS" :key="item.key" :class="{ 'is-off': creator[item.off] }" :title="creator[item.off] ? `${item.why}.` : undefined">
           <input
             type="checkbox"
             :checked="choices[item.key]"
@@ -156,40 +155,38 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
           <span>{{ item.label }}</span>
         </label>
         <template v-for="item in INTERACTIONS" :key="`${item.key}-why`">
-          <small v-if="creator[item.off]" :id="`${id}-${item.key}-why`" class="tiktok__why">{{ item.why }}.</small>
+          <span v-if="creator[item.off]" :id="`${id}-${item.key}-why`" class="visually-hidden">{{ item.why }}.</span>
         </template>
       </fieldset>
 
       <fieldset class="tiktok__group tiktok__group--stack" :disabled="locked">
         <legend class="visually-hidden">Commercial content</legend>
-        <label class="tiktok__switch">
-          <input type="checkbox" role="switch" :checked="choices.disclose" @change="set({ disclose: ($event.target as HTMLInputElement).checked })">
-          <span>
-            Disclose commercial content
-            <small>Turn on if this promotes you, a brand, product or service.</small>
-          </span>
+        <label class="tiktok__switch" title="Turn on if this promotes you, a brand, product or service.">
+          <input type="checkbox" role="switch" :checked="choices.disclose" :aria-describedby="`${id}-disclose-why`" @change="set({ disclose: ($event.target as HTMLInputElement).checked })">
+          <span>Disclose commercial content</span>
+          <span :id="`${id}-disclose-why`" class="visually-hidden">Turn on if this promotes you, a brand, product or service.</span>
         </label>
         <template v-if="choices.disclose">
-          <label>
+          <label title="You're promoting yourself or your own business.">
             <input type="checkbox" :checked="choices.yourBrand" @change="set({ yourBrand: ($event.target as HTMLInputElement).checked })">
-            <span>Your brand <small>You're promoting yourself or your own business.</small></span>
+            <span>Your brand</span>
           </label>
-          <label :title="choices.privacyLevel === 'SELF_ONLY' ? 'Branded content visibility cannot be set to private.' : undefined">
+          <label :title="choices.privacyLevel === 'SELF_ONLY' ? 'Branded content visibility cannot be set to private.' : 'You\'re promoting another brand or a third party.'">
             <input
               type="checkbox"
               :checked="choices.brandedContent"
               :disabled="choices.privacyLevel === 'SELF_ONLY'"
               @change="set({ brandedContent: ($event.target as HTMLInputElement).checked })"
             >
-            <span>Branded content <small>You're promoting another brand or a third party.</small></span>
+            <span>Branded content</span>
           </label>
           <p v-if="disclosureLabel" class="tiktok__note">{{ disclosureLabel }}</p>
           <p v-if="needsKind" class="tiktok__problem">You need to indicate if your content promotes yourself, a third party, or both.</p>
         </template>
       </fieldset>
 
-      <p v-if="problem && !needsKind" class="tiktok__problem">{{ problem }}</p>
-      <p class="tiktok__note">Nothing goes to TikTok until you press Post.</p>
+      <!-- Choosing who can see it is shown by the highlighted field, not repeated here. -->
+      <p v-if="problem && !needsKind && choices.privacyLevel" class="tiktok__problem">{{ problem }}</p>
     </template>
   </section>
 </template>
@@ -209,6 +206,7 @@ onBeforeUnmount(() => probe?.removeAttribute("src"));
 .tiktok__field { display: grid; gap: 4px; font-size: 13px; font-weight: 600; }
 .tiktok__hint { font-weight: 400; }
 .tiktok__field select { max-width: 280px; font-weight: 400; }
+.tiktok__field select.is-required { border-color: var(--ui-danger, #c62828); box-shadow: 0 0 0 1px var(--ui-danger, #c62828); }
 .tiktok__group { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; padding: 0; border: 0; font-size: 13.5px; }
 .tiktok__group legend { margin-bottom: 4px; padding: 0; font-size: 13px; font-weight: 600; }
 .tiktok__group--stack { display: grid; gap: 8px; }
