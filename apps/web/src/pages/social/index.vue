@@ -22,6 +22,8 @@ import {
   accountState,
   activeAccount,
   attentionItems,
+  composerMediaFor,
+  composerVideoNote,
   formatWhen,
   lastPostedAt,
   networkLabel,
@@ -30,6 +32,7 @@ import {
   postRowDetail,
   postTab,
   postTitle,
+  socialNetwork,
   visibleVersions,
   type SocialNetwork,
   type SocialTab,
@@ -151,7 +154,6 @@ const VIDEO_ONLY = new Set<SocialNetwork>(["youtube", "tiktok"]);
 const composerChoices = computed(() =>
   SOCIAL_NETWORKS.filter((network) => !VIDEO_ONLY.has(network.id) || connectedNetworks.value.includes(network.id)),
 );
-const composerTakesVideo = computed(() => composerNetworks.value.some((network) => VIDEO_ONLY.has(network)));
 
 function openComposer() {
   composerText.value = "";
@@ -169,6 +171,8 @@ function toggleComposerNetwork(network: SocialNetwork) {
 
 const composerImages = computed(() => composerMedia.value.filter((item) => item.kind === "image"));
 const composerVideo = computed(() => composerMedia.value.find((item) => item.kind === "video") || null);
+const composerMediaCounts = computed(() => ({ images: composerImages.value.length, video: Boolean(composerVideo.value) }));
+const composerNote = computed(() => composerVideoNote(composerNetworks.value, composerMediaCounts.value));
 
 /**
  * Avatar and name for each network in the New post dialog. Only the network's
@@ -259,24 +263,33 @@ async function createPost() {
     const images = (await Promise.all(composerImages.value.map(driveFileFor)))
       .map((file, index) => mediaAsset(file, "image", index));
     const video = composerVideo.value ? await driveFileFor(composerVideo.value) : null;
+    const counts = composerMediaCounts.value;
     const detail = await social.createSocialPost({
       siteId: siteId.value,
       sourceType: "pasted",
       sourceSnapshot: text,
       sourceText: text,
       ideaText: text,
-      versions: composerNetworks.value.map((network) => ({
-        platform: platformFor(network),
-        bodyText: text,
-        // A Short needs a title and one video; the owner adds the video on the next screen.
-        ...(network === "youtube" ? { format: "short_video" as const, title: youtubeTitleFrom(text) } : {}),
-      })),
+      versions: composerNetworks.value.map((network) => {
+        const { format } = composerMediaFor(network, counts);
+        return {
+          platform: platformFor(network),
+          bodyText: text,
+          // A Short needs a title and one video; the owner adds the video on the next screen.
+          ...(network === "youtube" ? { format: "short_video" as const, title: youtubeTitleFrom(text) } : {}),
+          ...(format ? { format } : {}),
+        };
+      }),
     });
-    // Images go to every platform but YouTube and TikTok; the video goes to those two.
+    // Each network gets the photos, the video or both, as it accepts them.
     await Promise.all(visibleVersions(detail).map((version) => {
-      const assetManifest = version.platform === "youtube" || version.platform === "tiktok"
-        ? (video ? [mediaAsset(video, "video", 0)] : [])
-        : images;
+      const network = socialNetwork(version.platform);
+      if (!network) return null;
+      const takes = composerMediaFor(network, counts);
+      const assetManifest = [
+        ...(takes.images ? images : []),
+        ...(takes.video && video ? [mediaAsset(video, "video", takes.images ? images.length : 0)] : []),
+      ];
       return assetManifest.length ? social.updatePostVersion(version.id, { assetManifest }) : null;
     }));
     composerOpen.value = false;
@@ -432,7 +445,7 @@ onMounted(async () => {
           ref="composerMediaInput"
           class="visually-hidden"
           type="file"
-          :accept="composerTakesVideo ? 'image/*,video/*' : 'image/*'"
+          accept="image/*,video/*"
           multiple
           @change="addComposerMedia"
         >
@@ -454,10 +467,11 @@ onMounted(async () => {
             />
           </button>
         </div>
+        <p v-if="composerNote" class="social-composer__note">{{ composerNote }}</p>
         <footer class="social-composer__footer">
           <div class="social-composer__attachments">
             <button type="button" class="social-composer__attach" :disabled="composerBusy" @click="composerMediaInput?.click()">
-              <UiIcon name="Image" :size="16" /> {{ composerTakesVideo ? "Photo or video" : "Photos" }}
+              <UiIcon name="Image" :size="16" /> Photo or video
             </button>
             <button type="button" class="social-composer__attach" :disabled="composerBusy" @click="composerPickerOpen = true">
               <UiIcon name="Folder" :size="16" /> From Files
@@ -476,7 +490,7 @@ onMounted(async () => {
 
     <FilesMediaPicker
       :open="composerPickerOpen"
-      :kinds="composerTakesVideo ? ['image', 'video'] : ['image']"
+      :kinds="['image', 'video']"
       @close="composerPickerOpen = false"
       @select="addComposerFiles"
     />
@@ -587,6 +601,7 @@ onMounted(async () => {
 /* 32px avatar + 6px padding keeps a 44px tap target. */
 .social-composer__networks button { display: inline-grid; padding: 6px; border: 0; border-radius: 50%; background: none; cursor: pointer; }
 .social-composer__networks button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 1px; }
+.social-composer__note { margin: 0; color: var(--ui-text-muted); font-size: var(--ui-font-size-sm, 13px); }
 .social-composer__attachments { display: flex; flex-wrap: wrap; gap: 2px; }
 .social-composer__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .social-composer__attach {

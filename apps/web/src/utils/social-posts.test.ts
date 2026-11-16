@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { account, capabilities, post, version } from "./social-posts.fixtures";
 import {
   attentionItems,
+  composerMediaFor,
+  composerVideoNote,
   connectableNetworks,
   foldIndex,
   mentionsIn,
@@ -143,5 +145,23 @@ describe("social posts", () => {
     const counted = version({ bodyText: "a".repeat(276), publishingSettings: { post: { hashtags: "#AI" } } });
     expect(versionChecks(counted, capabilities)[0]?.message).toBe("281 characters, X's limit is 280.");
   });
-});
 
+  it("sends a New post video to every network that takes one", () => {
+    const videoOnly = { images: 0, video: true };
+    for (const network of ["x", "linkedin", "instagram", "youtube", "tiktok"] as const) {
+      expect(composerMediaFor(network, videoOnly)).toEqual({ images: false, video: true, format: "short_video" });
+    }
+    expect(composerMediaFor("facebook", videoOnly)).toEqual({ images: true, video: false });
+    expect(composerMediaFor("x", { images: 2, video: false })).toEqual({ images: true, video: false });
+    expect(composerMediaFor("tiktok", { images: 2, video: false })).toEqual({ images: false, video: false });
+    expect(composerMediaFor("instagram", { images: 2, video: true })).toEqual({ images: true, video: true });
+    expect(composerMediaFor("linkedin", { images: 2, video: true })).toMatchObject({ images: false, video: true });
+  });
+
+  it("says when a video won't reach a ticked network", () => {
+    expect(composerVideoNote(["x", "facebook"], { images: 0, video: true })).toBe("Facebook gets the text and photos, not the video.");
+    expect(composerVideoNote(["x", "linkedin", "instagram"], { images: 1, video: true }))
+      .toBe("X and LinkedIn get the video, not the photos.");
+    expect(composerVideoNote(["x", "facebook"], { images: 1, video: false })).toBeNull();
+  });
+});
