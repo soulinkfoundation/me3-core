@@ -98,7 +98,7 @@ describe("New post", () => {
       { name: "YouTube, mayastudio", ticked: false, cant: true, says: "Video only" },
       { name: "TikTok, mayastudio", ticked: false, cant: true, says: "Video only" },
     ]);
-    expect(wrapper.find(".new-post__status").text()).toBe("Choose where to post.");
+    expect(wrapper.find(".new-post__status").exists()).toBe(false);
     expect(wrapper.find("button[type=submit]").attributes("disabled")).toBeDefined();
     await choose(wrapper, 0, 1, 3);
     // An account that can't take the post says why when tapped, and stays unchosen.

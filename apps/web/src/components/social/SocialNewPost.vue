@@ -632,12 +632,8 @@ async function submit() {
               <span :id="`${titleId}-${row.accountId}-says`" class="visually-hidden">{{ says(row) }}</span>
             </button>
           </div>
-          <p class="new-post__status" aria-hidden="true">
-            <template v-if="pointedRow">
-              <b>{{ accessibleName(pointedRow) }}</b>: {{ says(pointedRow) }}
-            </template>
-            <template v-else-if="tickedRows.length">Posting to {{ namesFor(tickedRows.map((row) => accountFor(row).platform)) }}.</template>
-            <template v-else>Choose where to post.</template>
+          <p v-if="pointedRow" class="new-post__status" aria-hidden="true">
+            <b>{{ accessibleName(pointedRow) }}</b>: {{ says(pointedRow) }}
           </p>
           <ul v-if="noteRows.length" class="new-post__notes">
             <li v-for="row in noteRows" :key="row.accountId">
@@ -723,18 +719,25 @@ async function submit() {
 .new-post__option-label { font-size: 15px; font-weight: 600; }
 
 .new-post__form { display: grid; gap: 12px; }
-.new-post__switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 3px; border-radius: var(--ui-radius-md); background: var(--ui-surface-muted); }
+/* The same pill switch as Social's Drafts · Scheduled · Posted tabs. */
+.new-post__switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
 .new-post__switch button {
-  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 10px;
   border: 0;
-  border-radius: var(--ui-radius-sm);
-  background: none;
+  border-radius: 999px;
+  background: transparent;
   color: var(--ui-text-muted);
-  font: 550 var(--ui-font-size-sm, 13px) / 1 var(--font-sans);
+  font: inherit;
+  font-size: 14px;
   cursor: pointer;
 }
-.new-post__switch button[aria-pressed="true"] { background: var(--ui-primary); color: var(--ui-primary-contrast); }
-.new-post__switch button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 1px; }
+.new-post__switch button:hover, .new-post__switch button:focus-visible { color: var(--ui-text); outline: none; }
+.new-post__switch button:focus-visible { box-shadow: inset 0 0 0 2px var(--ui-focus); }
+.new-post__switch button[aria-pressed="true"] { background: var(--ui-surface); color: var(--ui-text); font-weight: 750; box-shadow: var(--ui-shadow-sm); }
 .new-post textarea {
   box-sizing: border-box;
   width: 100%;
@@ -843,7 +846,7 @@ async function submit() {
 .new-post__account:first-child[data-tip]::after { left: 0; transform: none; }
 .new-post__account:last-child[data-tip]:not(:first-child)::after { right: 0; left: auto; transform: none; }
 .new-post__name { max-width: 6em; overflow: hidden; font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.new-post__status { min-height: 1.35em; margin: 0; color: var(--ui-text-muted); font-size: var(--ui-font-size-sm, 13px); line-height: 1.35; }
+.new-post__status { margin: 0; color: var(--ui-text-muted); font-size: var(--ui-font-size-sm, 13px); line-height: 1.35; }
 .new-post__status b { color: var(--ui-text); font-weight: 600; }
 .new-post__notes { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: var(--ui-font-size-sm, 13px); line-height: 1.35; }
 .new-post__notes li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
@@ -883,6 +886,7 @@ async function submit() {
 .new-post__attach:hover, .new-post__attach:focus-visible { background: var(--ui-surface-muted); color: var(--ui-text); outline: none; }
 
 @media (max-width: 640px) {
+  .new-post__switch button { padding: 0 6px; font-size: 13px; }
   .new-post { width: 100vw; max-height: 92dvh; border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0; padding-bottom: 28px; }
 }
 </style>
