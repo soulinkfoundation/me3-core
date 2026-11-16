@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 
-test("main chat persists across sessions while new and project chats stay available", async ({ page, browser }, testInfo) => {
+test("main chat persists across sessions, and old new-chat and project links open it", async ({ page, browser }, testInfo) => {
   const api = "http://127.0.0.1:8787/api";
   const credentials = { email: "owner@e2e.example.test", password: "local-e2e-password" };
   const bootstrap = await page.request.post(`${api}/admin/bootstrap`, {
@@ -24,20 +24,21 @@ test("main chat persists across sessions while new and project chats stay availa
   await expect(page).toHaveURL(new RegExp(`thread=${primaryId}`));
   await page.reload();
   await expect(page).toHaveURL(new RegExp(`thread=${primaryId}`));
+  // Chat is one conversation (01dbd629): an old "new chat" link opens the main thread instead of starting another.
   await page.goto("/assistant?new=1");
-  await expect(page).toHaveURL(/new=1/);
+  await expect(page).toHaveURL(new RegExp(`thread=${primaryId}`));
   await expect(page.locator(".assistant-page")).toBeVisible();
-  expect(new URL(page.url()).searchParams.has("thread")).toBe(false);
 
   const projectResponse = await page.request.post(`${api}/mission-control/projects`, { data: { name: "Synthetic agent project" } });
   expect(projectResponse.ok(), await projectResponse.text()).toBeTruthy();
   const projectId = (await projectResponse.json()).project.id;
   const assignMain = await page.request.patch(`${api}/assistant/threads/${primaryId}`, { data: { projectId } });
   expect(assignMain.status()).toBe(409);
+  // Project chats are gone too: a project link lands on the main thread, and no other thread is created.
   await page.goto(`/assistant?project=${projectId}`);
-  await expect(page.locator(".assistant-page")).toBeVisible();
-  expect(new URL(page.url()).searchParams.get("project")).toBe(projectId);
-  expect(new URL(page.url()).searchParams.has("thread")).toBe(false);
+  await expect(page).toHaveURL(new RegExp(`thread=${primaryId}`));
+  expect(new URL(page.url()).searchParams.has("project")).toBe(false);
+  expect((await (await page.request.get(`${api}/assistant/threads`)).json()).threads).toHaveLength(1);
 
   const fresh = await browser.newContext();
   try {
@@ -49,7 +50,8 @@ test("main chat persists across sessions while new and project chats stay availa
     await freshPage.goto("http://127.0.0.1:8787/assistant");
     await expect(freshPage).toHaveURL(new RegExp(`thread=${primaryId}`));
     await freshPage.getByRole("button", { name: "Chat", exact: true }).click();
-    await expect(freshPage.getByRole("heading", { name: "What should I fetch?" })).toBeVisible();
+    // A new owner (no bio, nothing said yet) gets ME3's welcome from Core's starters (d6e1a554).
+    await expect(freshPage.getByRole("heading", { name: "Hi, I'm ME3" })).toBeVisible();
     await expect(freshPage.locator('.agent-dog[data-state="idle"]:visible')).toBeVisible();
     await freshPage.screenshot({ path: testInfo.outputPath("chat-dog-real.png"), fullPage: true });
     await testInfo.attach("primary-conversation-evidence", {
@@ -59,8 +61,8 @@ test("main chat persists across sessions while new and project chats stay availa
         command: "pnpm --filter @me3/web exec playwright test --config playwright.real.config.ts e2e-real/assistant-primary-thread.spec.ts",
         seed: "Isolated local Wrangler D1; all migrations; synthetic bootstrap owner; no developer .dev.vars",
         primaryId, concurrentRequests: ids.length, freshSession: "same server mapping and browser route",
-        projectChats: "separate project route preserved", explicitNewChat: "preserved",
-        workingTreeChanges: true, chatEmptyState: "Dog and suggestions shown after fresh real Core login",
+        projectChats: "project link opens the main thread", explicitNewChat: "new-chat link opens the main thread",
+        workingTreeChanges: true, chatEmptyState: "Dog and new-owner welcome shown after fresh real Core login",
       }, null, 2),
     });
   } finally {

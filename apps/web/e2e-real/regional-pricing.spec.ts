@@ -15,8 +15,8 @@ test("save, reload and publish owner-selected country prices with a GBP default"
   await page.getByRole("checkbox", { name: "Make my profile public" }).check();
   await expect(page.locator(".nav-btn.next")).toBeEnabled();
   await page.goto("/create?step=additional-features");
-  await page.getByRole("checkbox", { name: "Enable products" }).press("Space");
-  await expect(page.getByRole("checkbox", { name: "Enable products" })).toBeChecked();
+  await page.getByRole("switch", { name: "Enable products" }).press("Space");
+  await expect(page.getByRole("switch", { name: "Enable products" })).toBeChecked();
   await page.goto("/create?step=products");
   await page.getByRole("button", { name: "+ Add product" }).click();
   await page.getByLabel("Product title").fill("Session guide");
@@ -71,8 +71,9 @@ test("save, reload and publish owner-selected country prices with a GBP default"
   await expect(page.getByLabel("Country 2", { exact: true })).toHaveValue("CA");
   await expect(page.getByLabel("Price 2 (CAD)", { exact: true })).toHaveValue("75");
   await page.goto("/create?step=publish");
-  await page.getByRole("button", { name: "Publish now" }).click();
-  await expect(page).toHaveURL(new RegExp(`/sites/${handle}(?:$|[/?])`));
+  // Publishing keeps the owner in the editor with a live bar (the site dashboard is retired).
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await expect(page.locator(".wizard-live")).toContainText("You’re live");
 
   const fresh = await page.context().browser()!.newContext();
   try {

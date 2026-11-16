@@ -4,7 +4,7 @@ export default defineConfig({
   testDir: "./e2e-real",
   timeout: 120_000,
   workers: 1,
-  reporter: [["html", { outputFolder: "playwright-report/real", open: "never" }]],
+  reporter: [["list"], ["html", { outputFolder: process.env.E2E_REAL_REPORT || "playwright-report/real", open: "never" }]],
   use: {
     baseURL: "http://127.0.0.1:8787",
     actionTimeout: 15_000,
