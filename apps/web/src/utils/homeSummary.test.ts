@@ -63,10 +63,10 @@ describe("Home summaries", () => {
     expect(visibleHomeCards(emptyHomeLayout())).toEqual(["today", "people"]);
     expect(visibleHomeCards({ ...emptyHomeLayout(), pinned: ["gratitude"] })).not.toContain("gratitude");
   });
-  it("starts a new install with Today, Inbox and Projects, People hidden and Accounts earned", () => {
-    expect(visibleHomeCards(newInstallHomeLayout())).toEqual(["today", "inbox", "tasks"]);
-    expect(visibleHomeCards({ ...newInstallHomeLayout(), earned: ["accounts"] })).toEqual(["today", "inbox", "tasks", "accounts"]);
-    expect(visibleHomeCards({ ...newInstallHomeLayout(), pinned: ["inbox", "tasks", "accounts"] })).toContain("accounts");
+  it("starts a new install with Today alone, People hidden and Accounts earned", () => {
+    expect(visibleHomeCards(newInstallHomeLayout())).toEqual(["today"]);
+    expect(visibleHomeCards({ ...newInstallHomeLayout(), earned: ["accounts"] })).toEqual(["today", "accounts"]);
+    expect(visibleHomeCards({ ...newInstallHomeLayout(), pinned: ["accounts"] })).toContain("accounts");
   });
   it("treats the first active goal as the focus and moves a new focus to the front", () => {
     const goals = [{ id: "a", status: "completed" as const }, { id: "b", status: "active" as const }, { id: "c", status: "active" as const }];
