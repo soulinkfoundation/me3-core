@@ -1446,16 +1446,25 @@ async function postXReply(
   }
 }
 
+/**
+ * A Files video's saved URL is ME3's private address; ME3 swaps it for a public delivery link when it posts,
+ * so only that link (`delivered`) has to be https. TikTok fetches the video itself and refuses anything else.
+ */
 function validateTikTokDraft(input: {
   bodyText: string;
   assets: SocialMediaAsset[];
-}): { ok: true } | { ok: false; error: string } {
+}, delivered = false): { ok: true } | { ok: false; error: string } {
   if (input.assets.length !== 1 || input.assets[0]?.kind !== "video") {
     return { ok: false, error: "TikTok draft upload requires exactly one video." };
   }
   const asset = input.assets[0];
-  if (!asset.url?.trim().startsWith("https://")) {
-    return { ok: false, error: "The TikTok video needs an https delivery URL." };
+  if ((delivered || !asset.fileId) && !asset.url?.trim().startsWith("https://")) {
+    return {
+      ok: false,
+      error: asset.fileId
+        ? "TikTok fetches the video from ME3, so ME3 needs a public https address. This installation doesn't have one (a local install can't post to TikTok)."
+        : "The TikTok video needs an https delivery URL.",
+    };
   }
   // TikTok pulls the file itself, so ME3 only rejects what it already knows won't work.
   const mimeType = normalizeMimeType(asset.mimeType);
@@ -1724,7 +1733,7 @@ const tikTokAdapter: SocialPublishAdapter = {
   validateDraft: validateTikTokDraft,
 
   async publish(input) {
-    const validation = validateTikTokDraft(input);
+    const validation = validateTikTokDraft(input, true);
     if (!validation.ok) {
       return providerError("tiktok_validation_failed", validation.error, undefined, "unsupported");
     }

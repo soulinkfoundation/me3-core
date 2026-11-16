@@ -1625,6 +1625,22 @@ describe("TikTok draft upload adapter", () => {
       error: "The TikTok video needs an https delivery URL.",
     });
   });
+
+  it("checks a Files video's delivery link when posting, not its saved private address", async () => {
+    const files = { url: "http://localhost:4300/api/files/f1/content", fileId: "f1", kind: "video" as const, mimeType: "video/mp4", byteLength: 12 };
+    expect(adapterFor("tiktok").validateDraft({ bodyText: "", assets: [files] })).toEqual({ ok: true });
+    const fetcher = vi.fn();
+    await expect(adapterFor("tiktok").publish({
+      accessToken: "tiktok-token",
+      bodyText: "Hi",
+      assets: [files],
+      fetcher: fetcher as unknown as typeof fetch,
+    })).resolves.toMatchObject({
+      ok: false,
+      errorMessage: "TikTok fetches the video from ME3, so ME3 needs a public https address. This installation doesn't have one (a local install can't post to TikTok).",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });
 
 describe("Facebook Page publishing adapter", () => {

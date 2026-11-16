@@ -34,12 +34,21 @@ function open(accounts: SocialAccountRow[] = connected) {
 }
 
 function rows(wrapper: ReturnType<typeof open>) {
-  return wrapper.findAll(".new-post__row").map((row) => ({
-    name: row.find(".new-post__who .visually-hidden").text(),
-    ticked: (row.find("input").element as HTMLInputElement).checked,
+  return wrapper.findAll(".new-post__account").map((row) => ({
+    name: row.attributes("aria-label"),
+    ticked: row.attributes("aria-pressed") === "true",
     cant: row.classes("is-cant"),
-    says: row.find(".new-post__says").text(),
+    says: row.attributes("data-tip"),
   }));
+}
+
+/** Chooses accounts by their place in the row. */
+async function choose(wrapper: ReturnType<typeof open>, ...indexes: number[]) {
+  for (const index of indexes) await wrapper.findAll(".new-post__account")[index]!.trigger("click");
+}
+
+function note(wrapper: ReturnType<typeof open>, network: string) {
+  return wrapper.findAll(".new-post__notes li").find((item) => item.find(".new-post__note-who").text() === network)!;
 }
 
 function pick(wrapper: ReturnType<typeof open>, input: number, files: File[]) {
@@ -68,21 +77,37 @@ describe("New post", () => {
     ]);
   });
 
-  it("ticks the accounts that can take text and gives the others their reason", async () => {
+  it("goes straight to writing without opening a file picker", async () => {
+    const click = vi.spyOn(HTMLInputElement.prototype, "click");
+    const wrapper = open();
+    await wrapper.findAll(".new-post__option")[1]!.trigger("click");
+    await wrapper.findAll(".new-post__switch button")[2]!.trigger("click");
+    expect(click).not.toHaveBeenCalled();
+    expect(wrapper.findAll(".new-post__attach").map((button) => button.text())).toEqual(["Add a video", "Add images", "From Files"]);
+    click.mockRestore();
+  });
+
+  it("chooses nothing for the owner and gives each account what it gets, or why not", async () => {
     const wrapper = open();
     await wrapper.findAll(".new-post__option")[0]!.trigger("click");
     expect(rows(wrapper)).toEqual([
-      { name: "X, mayastudio", ticked: true, cant: false, says: "Text post" },
-      { name: "LinkedIn, mayastudio", ticked: true, cant: false, says: "Text post" },
+      { name: "X, mayastudio", ticked: false, cant: false, says: "Text post" },
+      { name: "LinkedIn, mayastudio", ticked: false, cant: false, says: "Text post" },
       { name: "Instagram, mayastudio", ticked: false, cant: true, says: "Needs an image or video" },
-      { name: "Facebook, mayastudio", ticked: true, cant: false, says: "Post on your Page" },
+      { name: "Facebook, mayastudio", ticked: false, cant: false, says: "Post on your Page" },
       { name: "YouTube, mayastudio", ticked: false, cant: true, says: "Video only" },
       { name: "TikTok, mayastudio", ticked: false, cant: true, says: "Video only" },
     ]);
-    // A row that can't take the post stays focusable, but its tick doesn't change.
-    await wrapper.findAll(".new-post__row input")[2]!.trigger("click");
-    expect(rows(wrapper)[2]!.ticked).toBe(false);
+    expect(wrapper.find(".new-post__status").text()).toBe("Choose where to post.");
+    expect(wrapper.find("button[type=submit]").attributes("disabled")).toBeDefined();
+    await choose(wrapper, 0, 1, 3);
+    // An account that can't take the post says why when tapped, and stays unchosen.
+    await choose(wrapper, 2);
+    expect(rows(wrapper).map((row) => row.ticked)).toEqual([true, true, false, true, false, false]);
+    expect(wrapper.find(".new-post__status").text()).toBe("Instagram, mayastudio: Needs an image or video");
     expect(wrapper.find("button[type=submit]").text()).toBe("Review 3 posts");
+    // Everything that can be connected is, so there's no link to connect another.
+    expect(wrapper.find(".new-post__quiet").exists()).toBe(false);
   });
 
   it("says what each account gets from six images, and keeps hand-changed ticks across a switch", async () => {
@@ -90,12 +115,13 @@ describe("New post", () => {
     await wrapper.findAll(".new-post__option")[1]!.trigger("click");
     await pick(wrapper, 0, Array.from({ length: 6 }, (_, index) => new File(["x"], `p${index}.jpg`, { type: "image/jpeg" })));
     expect(rows(wrapper).map((row) => row.says)).toEqual(["First 4 of 6 images", "6 images", "Carousel of 6", "6 images", "Video only", "Video only"]);
-    await wrapper.findAll(".new-post__row input")[1]!.trigger("click");
-    expect(rows(wrapper)[1]!.ticked).toBe(false);
+    await choose(wrapper, 0, 1);
+    await choose(wrapper, 1);
+    expect(rows(wrapper).map((row) => row.ticked).slice(0, 2)).toEqual([true, false]);
 
     await wrapper.findAll(".new-post__switch button")[0]!.trigger("click");
     expect(toast).toHaveBeenCalledWith("Removed 6 items.", expect.objectContaining({ action: expect.objectContaining({ label: "Undo" }) }));
-    expect(rows(wrapper)[1]!.ticked).toBe(false);
+    expect(rows(wrapper).map((row) => row.ticked).slice(0, 2)).toEqual([true, false]);
     toast.mock.calls[0]![1].action.onClick();
     await flushPromises();
     expect(wrapper.findAll(".new-post__media li")).toHaveLength(6);
@@ -107,15 +133,15 @@ describe("New post", () => {
     await wrapper.findAll(".new-post__option")[1]!.trigger("click");
     await pick(wrapper, 0, [new File(["x"], "a.jpg", { type: "image/jpeg" }), new File(["x"], "b.jpg", { type: "image/jpeg" })]);
     await pick(wrapper, 1, [new File(["x"], "clip.mp4", { type: "video/mp4" })]);
-    expect(rows(wrapper).map((row) => [row.says, row.ticked])).toEqual([
-      ["2 images, not the video", true],
-      ["2 images, not the video", true],
-      ["Carousel: 2 images and the video", true],
-      ["2 images", true],
+    expect(rows(wrapper).map((row) => [row.says, row.cant])).toEqual([
+      ["2 images, not the video", false],
+      ["2 images, not the video", false],
+      ["Carousel: 2 images and the video", false],
+      ["2 images", false],
       ["Would get just the video", false],
       ["Would get just the video", false],
     ]);
-    await wrapper.findAll(".new-post__row")[0]!.find(".new-post__action").trigger("click");
+    await note(wrapper, "X").find(".new-post__action").trigger("click");
     expect(rows(wrapper)[0]!.says).toBe("The video, not the images");
   });
 
@@ -124,14 +150,16 @@ describe("New post", () => {
     const wrapper = open([account("x"), second, account("linkedin")]);
     await wrapper.findAll(".new-post__option")[0]!.trigger("click");
     expect(wrapper.findAll(".new-post__name").map((name) => name.text())).toEqual(["@mayastudio", "@mayaworks"]);
+    await choose(wrapper, 0, 2);
     expect(rows(wrapper).map((row) => row.ticked)).toEqual([true, false, true]);
-    await wrapper.findAll(".new-post__row input")[1]!.trigger("click");
+    await choose(wrapper, 1);
     expect(rows(wrapper).map((row) => row.ticked)).toEqual([false, true, true]);
   });
 
   it("names the tightest caption limit and never blocks going over it", async () => {
     const wrapper = open();
     await wrapper.findAll(".new-post__option")[0]!.trigger("click");
+    await choose(wrapper, 0, 1, 3);
     await wrapper.find("textarea").setValue("a".repeat(67));
     expect(wrapper.find(".new-post__count").text()).toBe("213 left for X");
     await wrapper.find("textarea").setValue("a".repeat(300));
@@ -146,6 +174,7 @@ describe("New post", () => {
     const wrapper = open([account("x"), account("instagram")]);
     await wrapper.findAll(".new-post__option")[1]!.trigger("click");
     await pick(wrapper, 0, Array.from({ length: 5 }, (_, index) => new File(["x"], `p${index}.jpg`, { type: "image/jpeg" })));
+    await choose(wrapper, 0, 1);
     await wrapper.find("textarea").setValue("Market day.");
     await wrapper.find("form").trigger("submit");
     await flushPromises();
@@ -186,12 +215,13 @@ describe("New post", () => {
       await wrapper.findAll(".new-post__option")[2]!.trigger("click");
       await pick(wrapper, 1, [clip("long.mp4")]);
       await flushPromises();
+      await choose(wrapper, 0, 1, 2);
       expect(rows(wrapper)).toEqual([
         { name: "X, mayastudio", ticked: false, cant: true, says: "Too long: X takes up to 20:00" },
         { name: "LinkedIn, mayastudio", ticked: true, cant: false, says: "Video" },
         { name: "YouTube, mayastudio", ticked: true, cant: false, says: "Regular video, private draft" },
       ]);
-      const action = wrapper.findAll(".new-post__row")[0]!.find(".new-post__action");
+      const action = note(wrapper, "X").find(".new-post__action");
       expect(action.text()).toBe("Pick a shorter cut for X, mayastudio");
       await action.trigger("click");
       await pick(wrapper, 2, [clip("short.mp4")]);
@@ -214,6 +244,7 @@ describe("New post", () => {
       await wrapper.findAll(".new-post__option")[2]!.trigger("click");
       await pick(wrapper, 1, [clip()]);
       await flushPromises();
+      await choose(wrapper, 0);
       expect(rows(wrapper)[0]).toMatchObject({ ticked: true, says: "Video. You choose who sees it on the next screen." });
       answer({ creatorInfo: { maxVideoPostDurationSeconds: 600 } });
       await flushPromises();
@@ -226,8 +257,8 @@ describe("New post", () => {
       await wrapper.findAll(".new-post__option")[2]!.trigger("click");
       await pick(wrapper, 1, [clip()]);
       await flushPromises();
-      expect(rows(wrapper)[1]).toMatchObject({ ticked: true });
-      expect(wrapper.findAll(".new-post__row")[1]!.find(".new-post__hint").text()).toBe("Reels show best vertical (9:16).");
+      await choose(wrapper, 0, 1);
+      expect(rows(wrapper)[1]).toMatchObject({ ticked: true, says: "Reel. Reels show best vertical (9:16)." });
 
       readVideoInfo.mockResolvedValueOnce({ durationSeconds: null, width: null, height: null });
       await pick(wrapper, 1, [clip("odd.mkv")]);
@@ -242,7 +273,7 @@ describe("New post", () => {
       await pick(wrapper, 1, [clip()]);
       await flushPromises();
       expect(rows(wrapper)[1]).toEqual({ name: "YouTube, mayastudio", ticked: false, cant: true, says: "Verify your channel in YouTube to post videos over 15 minutes" });
-      const link = wrapper.findAll(".new-post__row")[1]!.find("a.new-post__action");
+      const link = note(wrapper, "YouTube").find("a.new-post__action");
       expect(link.attributes("href")).toBe("https://www.youtube.com/verify");
       expect(link.attributes("target")).toBe("_blank");
     });

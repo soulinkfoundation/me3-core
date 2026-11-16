@@ -29,6 +29,8 @@ import { uploadDriveFiles } from "../../utils/drive-upload";
 import { readVideoInfo } from "../../utils/video-info";
 import {
   accountName,
+  accountState,
+  connectableNetworks,
   networkLabel,
   newPostAccounts,
   newPostCaptionNote,
@@ -38,9 +40,11 @@ import {
 } from "../../utils/social-posts";
 
 /**
- * New post (me3-hzsw): ask what's being posted, then tick every connected account that can
- * take it. What each account gets comes from the shared rules in packages/social-publishing,
- * so web and iPhone say the same thing. The words and media are always the owner's own.
+ * New post (me3-hzsw): ask what's being posted, then pick the connected accounts it goes to from
+ * one row of pictures: grey until chosen, full colour when chosen, faded and crossed out when the
+ * account can't take this post. Nothing is chosen for the owner. What each account gets comes from
+ * the shared rules in packages/social-publishing, so web and iPhone say the same thing; on the row
+ * it shows as a tooltip and in the line under it. The words and media are always the owner's own.
  */
 const props = defineProps<{
   open: boolean;
@@ -75,7 +79,7 @@ const text = ref("");
 const media = ref<PickedMedia[]>([]);
 /** Previews still referenced by an Undo toast; released when the dialog closes. */
 const parked: PickedMedia[] = [];
-/** Ticks the owner changed by hand, kept across type switches where the account can still take the post. */
+/** The accounts the owner chose, kept across type switches where the account can still take the post. */
 const handTicks = ref<Record<string, boolean>>({});
 const swapped = ref<string[]>([]);
 const busy = ref(false);
@@ -90,6 +94,8 @@ const cutInput = ref<HTMLInputElement | null>(null);
 /** A shorter cut of the video for one account's version only (me3-ic0c). Everyone else keeps the original. */
 const cuts = ref<Record<string, PickedMedia>>({});
 let cutFor: string | null = null;
+/** The account the pointer or focus is on, or was last tapped: its line under the row says what it gets. */
+const pointed = ref<string | null>(null);
 /** TikTok creator_info max_video_post_duration_sec per account, once loaded. */
 const tiktokMax = ref<Record<string, number>>({});
 let keySeed = 0;
@@ -153,16 +159,15 @@ function namesFor(platforms: string[]): string {
 }
 
 /**
- * Whether a row is ticked. One post holds one version per platform, so when two accounts
- * share a platform only one can be ticked; the first starts ticked.
+ * Whether an account is chosen. Nothing starts chosen; the owner picks. One post holds one
+ * version per platform, so when two accounts share a platform only one can be chosen.
  */
 const ticks = computed(() => {
   const result: Record<string, boolean> = {};
   const taken = new Set<string>();
   for (const row of rows.value) {
     const item = listed.value.find(({ account }) => account.id === row.accountId)!;
-    const hand = handTicks.value[row.accountId];
-    const ticked = row.canTake && (hand ?? row.ticked) && !taken.has(item.account.platform);
+    const ticked = row.canTake && handTicks.value[row.accountId] === true && !taken.has(item.account.platform);
     if (ticked) taken.add(item.account.platform);
     result[row.accountId] = ticked;
   }
@@ -185,11 +190,25 @@ function accessibleName(row: ComposerRow): string {
   return name ? `${networkLabel(account.platform)}, ${name}` : networkLabel(account.platform);
 }
 
-function toggle(event: Event, row: ComposerRow) {
-  if (!row.canTake) {
-    event.preventDefault();
-    return;
-  }
+/** What an account gets, or why it can't take this post: the tooltip and the line under the row. */
+function says(row: ComposerRow): string {
+  const main = (row.canTake ? row.label : row.reason) ?? "";
+  return row.hint ? `${main}. ${row.hint}` : main;
+}
+
+const pointedRow = computed(() => rows.value.find((row) => row.accountId === pointed.value) ?? null);
+
+/** Rows with something to do (a swap, a shorter cut, a link) or their own cut, listed under the row. */
+const noteRows = computed(() => rows.value.filter((row) => row.actions.length || (cuts.value[row.accountId] && type.value !== "text")));
+
+/** Shown while a network the owner could connect still has no account. */
+const canConnectMore = computed(() =>
+  connectableNetworks(props.accounts).some((network) => accountState(network.id, props.accounts) !== "connected"),
+);
+
+function toggle(row: ComposerRow) {
+  pointed.value = row.accountId;
+  if (!row.canTake) return;
   const next = !ticks.value[row.accountId];
   const platform = accountFor(row).platform;
   const changes: Record<string, boolean> = { [row.accountId]: next };
@@ -217,6 +236,7 @@ function reset() {
   type.value = "text";
   text.value = "";
   handTicks.value = {};
+  pointed.value = null;
   swapped.value = [];
   cuts.value = {};
   tiktokMax.value = {};
@@ -275,13 +295,11 @@ function clearMedia() {
   cuts.value = {};
 }
 
-/** From the question: Text goes to writing; Images and Video open the picker straight away. */
+/** From the question: every kind goes to writing; the media buttons sit under the words. */
 function choose(postType: ComposerPostType) {
   type.value = postType;
   step.value = "compose";
-  if (postType === "images") imagesInput.value?.click();
-  else if (postType === "video") videoInput.value?.click();
-  void nextTick(() => (postType === "text" ? textarea.value?.focus() : heading.value?.focus()));
+  void nextTick(() => textarea.value?.focus());
 }
 
 /** The switch: the words always stay; Text only removes media with Undo. */
@@ -306,11 +324,17 @@ function switchType(postType: ComposerPostType) {
     return;
   }
   type.value = postType;
-  const kind: ComposerMediaKind = postType === "video" ? "video" : "image";
-  if (postType !== "text" && !media.value.some((item) => item.kind === kind)) {
-    (postType === "video" ? videoInput : imagesInput).value?.click();
-  }
 }
+
+/** The media buttons under the words, the chosen kind first. */
+const attachButtons = computed(() => {
+  if (type.value === "text") return [];
+  const hasVideo = media.value.some((item) => item.kind === "video");
+  const hasImages = media.value.some((item) => item.kind === "image");
+  const images = { key: "images", label: hasImages ? "Add more images" : "Add images", icon: "Images" as const, open: () => imagesInput.value?.click() };
+  const video = { key: "video", label: hasVideo ? "Change the video" : "Add a video", icon: "Video" as const, open: () => videoInput.value?.click() };
+  return type.value === "video" ? [video, images] : [images, video];
+});
 
 function addItems(items: PickedMedia[]) {
   let next = [...media.value];
@@ -387,6 +411,10 @@ function addCut(event: Event) {
   const cut: PickedMedia = { key: `m${keySeed++}`, kind: "video", name: file.name, preview: URL.createObjectURL(file), file };
   cuts.value = { ...cuts.value, [accountId]: cut };
   measure(cut);
+  // Picking a cut for an account means posting there.
+  const platform = listed.value.find(({ account }) => account.id === accountId)?.account.platform;
+  const others = listed.value.filter(({ account }) => account.platform === platform && account.id !== accountId);
+  handTicks.value = { ...handTicks.value, ...Object.fromEntries(others.map(({ account }) => [account.id, false])), [accountId]: true };
 }
 
 function dropCut(accountId: string) {
@@ -567,39 +595,60 @@ async function submit() {
           <p class="visually-hidden" aria-live="polite">{{ reorderHelp }}</p>
         </template>
 
-        <fieldset v-if="listed.length" class="new-post__rows">
-          <legend class="visually-hidden">Post to</legend>
-          <div v-for="row in rows" :key="row.accountId" class="new-post__row" :class="{ 'is-cant': !row.canTake }">
-            <input
-              :id="`${titleId}-${row.accountId}`"
-              type="checkbox"
-              :checked="ticks[row.accountId]"
+        <div v-if="attachButtons.length" class="new-post__attachments">
+          <button v-for="button in attachButtons" :key="button.key" type="button" class="new-post__attach" :disabled="busy" @click="button.open()">
+            <UiIcon :name="button.icon" :size="16" /> {{ button.label }}
+          </button>
+          <button type="button" class="new-post__attach" :disabled="busy" @click="pickerOpen = true">
+            <UiIcon name="Folder" :size="16" /> From Files
+          </button>
+        </div>
+
+        <div v-if="listed.length" class="new-post__accounts-block">
+          <div class="new-post__accounts" role="group" aria-label="Post to" @mouseleave="pointed = null">
+            <button
+              v-for="row in rows"
+              :key="row.accountId"
+              type="button"
+              class="new-post__account"
+              :class="{ 'is-on': ticks[row.accountId], 'is-cant': !row.canTake }"
+              :aria-pressed="ticks[row.accountId] ? 'true' : 'false'"
               :aria-disabled="!row.canTake || undefined"
+              :aria-label="accessibleName(row)"
               :aria-describedby="`${titleId}-${row.accountId}-says`"
-              @click="toggle($event, row)"
+              :data-tip="says(row)"
+              @click="toggle(row)"
+              @mouseenter="pointed = row.accountId"
+              @focus="pointed = row.accountId"
             >
-            <label :for="`${titleId}-${row.accountId}`" class="new-post__who">
               <SocialAccountAvatar
-                class="new-post__avatar"
                 :network="row.network"
                 :avatar-url="accountFor(row).avatarSource === 'provider' ? accountFor(row).avatarUrl : null"
                 :name="accountName(accountFor(row))"
-                :size="30"
+                :selected="ticks[row.accountId]"
+                :size="40"
               />
-              <span class="visually-hidden">{{ accessibleName(row) }}</span>
               <span v-if="namedRow(row)" class="new-post__name" aria-hidden="true">{{ accountName(accountFor(row)) }}</span>
-            </label>
-            <span :id="`${titleId}-${row.accountId}-says`" class="new-post__says" :class="{ 'is-warn': row.tone === 'warn' && row.canTake }">
-              {{ row.canTake ? row.label : row.reason }}
-              <span v-if="row.hint" class="new-post__hint">{{ row.hint }}</span>
-            </span>
-            <span v-if="cuts[row.accountId] && type !== 'text'" class="new-post__cut">
-              Its own cut: {{ cuts[row.accountId]!.name }}
-              <button type="button" class="new-post__action" @click="dropCut(row.accountId)">
-                Use the original<span class="visually-hidden"> for {{ accessibleName(row) }}</span>
-              </button>
-            </span>
-            <span v-if="row.actions.length" class="new-post__actions">
+              <span :id="`${titleId}-${row.accountId}-says`" class="visually-hidden">{{ says(row) }}</span>
+            </button>
+          </div>
+          <p class="new-post__status" aria-hidden="true">
+            <template v-if="pointedRow">
+              <b>{{ accessibleName(pointedRow) }}</b>: {{ says(pointedRow) }}
+            </template>
+            <template v-else-if="tickedRows.length">Posting to {{ namesFor(tickedRows.map((row) => accountFor(row).platform)) }}.</template>
+            <template v-else>Choose where to post.</template>
+          </p>
+          <ul v-if="noteRows.length" class="new-post__notes">
+            <li v-for="row in noteRows" :key="row.accountId">
+              <span class="new-post__note-who">{{ networkLabel(accountFor(row).platform) }}</span>
+              <span :class="{ 'is-warn': row.tone === 'warn' && row.canTake }">{{ row.canTake ? row.label : row.reason }}</span>
+              <span v-if="cuts[row.accountId] && type !== 'text'" class="new-post__cut">
+                Its own cut: {{ cuts[row.accountId]!.name }}
+                <button type="button" class="new-post__action" @click="dropCut(row.accountId)">
+                  Use the original<span class="visually-hidden"> for {{ accessibleName(row) }}</span>
+                </button>
+              </span>
               <template v-for="action in row.actions" :key="action.kind">
                 <a v-if="action.href" class="new-post__action" :href="action.href" target="_blank" rel="noopener">
                   {{ action.label }}<span class="visually-hidden"> (opens YouTube)</span>
@@ -608,28 +657,14 @@ async function submit() {
                   {{ action.label }}<span class="visually-hidden"> for {{ accessibleName(row) }}</span>
                 </button>
               </template>
-            </span>
-          </div>
-        </fieldset>
-        <button type="button" class="new-post__quiet" @click="emit('connect')">
+            </li>
+          </ul>
+        </div>
+        <button v-if="canConnectMore || !listed.length" type="button" class="new-post__quiet" @click="emit('connect')">
           {{ listed.length ? "Connect another account" : "Connect an account to post" }}
         </button>
 
         <footer class="new-post__footer">
-          <div class="new-post__attachments">
-            <button v-if="type === 'images'" type="button" class="new-post__attach" :disabled="busy" @click="videoInput?.click()">
-              <UiIcon name="Plus" :size="16" /> {{ media.some((item) => item.kind === "video") ? "Change the video" : "Add a video" }}
-            </button>
-            <button v-if="type === 'video'" type="button" class="new-post__attach" :disabled="busy" @click="imagesInput?.click()">
-              <UiIcon name="Plus" :size="16" /> Add images
-            </button>
-            <button v-if="type === 'images' && !media.some((item) => item.kind === 'image')" type="button" class="new-post__attach" :disabled="busy" @click="imagesInput?.click()">
-              <UiIcon name="Plus" :size="16" /> Pick images
-            </button>
-            <button v-if="type !== 'text'" type="button" class="new-post__attach" :disabled="busy" @click="pickerOpen = true">
-              <UiIcon name="Folder" :size="16" /> From Files
-            </button>
-          </div>
           <Button type="submit" color="primary" shape="pill" size="compact" :disabled="busy || !text.trim() || !tickedRows.length">
             {{ reviewLabel }}
           </Button>
@@ -748,25 +783,73 @@ async function submit() {
 }
 .new-post__remove:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 1px; }
 
-.new-post__rows { display: grid; margin: 0; padding: 0; border: 0; min-width: 0; }
-.new-post__row {
+.new-post__accounts-block { display: grid; gap: 6px; min-width: 0; }
+.new-post__accounts { display: flex; flex-wrap: wrap; gap: 4px; }
+.new-post__account {
+  position: relative;
   display: grid;
-  grid-template-columns: 20px auto minmax(0, 1fr);
-  column-gap: 10px;
-  align-items: center;
-  padding: 7px 0;
-  border-top: 1px solid var(--ui-border);
+  justify-items: center;
+  gap: 2px;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: none;
+  color: var(--ui-text);
+  font: inherit;
+  cursor: pointer;
 }
-.new-post__row:first-of-type { border-top: 0; }
-.new-post__row input { width: 18px; height: 18px; margin: 0; accent-color: var(--ui-accent, #229874); cursor: pointer; }
-.new-post__row input:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 2px; }
-.new-post__who { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
-.new-post__name { max-width: 9em; overflow: hidden; font-size: var(--ui-font-size-sm, 13px); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.new-post__says { min-width: 0; font-size: 13.5px; line-height: 1.35; }
-.new-post__hint { display: block; color: var(--ui-text-muted); font-size: var(--ui-font-size-sm, 13px); }
-.new-post__says.is-warn { color: var(--ui-text); font-weight: 550; }
-.new-post__actions { grid-column: 3; display: flex; flex-wrap: wrap; gap: 4px 12px; }
-.new-post__cut { grid-column: 3; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; color: var(--ui-text-muted); font-size: var(--ui-font-size-sm, 13px); overflow-wrap: anywhere; }
+.new-post__account:hover { background: var(--ui-surface-muted); }
+.new-post__account:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 1px; }
+/* Chosen: full colour with a ring, so it doesn't rest on colour alone. */
+.new-post__account.is-on :deep(.social-avatar__face) { box-shadow: 0 0 0 2px var(--ui-surface), 0 0 0 4px var(--ui-accent, #229874); }
+/* Can't take this post: fainter than unchosen, crossed out, and no pointer. */
+.new-post__account.is-cant { cursor: not-allowed; }
+.new-post__account.is-cant:hover { background: none; }
+.new-post__account.is-cant :deep(.social-avatar) { opacity: .45; }
+.new-post__account.is-cant::before {
+  content: "";
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  z-index: 1;
+  width: 38px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ui-text-muted);
+  transform: translateX(-50%) rotate(-45deg);
+  pointer-events: none;
+}
+.new-post__account[data-tip]:hover::after,
+.new-post__account[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 2;
+  width: max-content;
+  max-width: 220px;
+  padding: 6px 9px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-text);
+  color: var(--ui-surface);
+  font: 500 12.5px / 1.35 var(--font-sans);
+  text-align: left;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+/* Keep the tooltip inside the dialog at either end of the row. */
+.new-post__account:first-child[data-tip]::after { left: 0; transform: none; }
+.new-post__account:last-child[data-tip]:not(:first-child)::after { right: 0; left: auto; transform: none; }
+.new-post__name { max-width: 6em; overflow: hidden; font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.new-post__status { min-height: 1.35em; margin: 0; color: var(--ui-text-muted); font-size: var(--ui-font-size-sm, 13px); line-height: 1.35; }
+.new-post__status b { color: var(--ui-text); font-weight: 600; }
+.new-post__notes { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: var(--ui-font-size-sm, 13px); line-height: 1.35; }
+.new-post__notes li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.new-post__note-who { font-weight: 600; }
+.new-post__notes .is-warn { font-weight: 550; }
+.new-post__cut { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; color: var(--ui-text-muted); overflow-wrap: anywhere; }
 .new-post__action, .new-post__quiet {
   justify-self: start;
   padding: 2px 0;
@@ -781,14 +864,9 @@ async function submit() {
 .new-post__quiet { color: var(--ui-text-muted); font-weight: 500; text-decoration: none; }
 .new-post__quiet:hover { color: var(--ui-text); text-decoration: underline; }
 .new-post__action:focus-visible, .new-post__quiet:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); outline-offset: 2px; }
-/* Rows that can't take the post fade only the tick box and logo; the reason keeps full contrast. */
-.new-post__row.is-cant input { opacity: .4; cursor: not-allowed; }
-.new-post__row.is-cant .new-post__avatar { opacity: .45; }
-.new-post__row.is-cant .new-post__who { cursor: not-allowed; }
-.new-post__row.is-cant .new-post__says { color: var(--ui-text-muted); }
 
-.new-post__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.new-post__attachments { display: flex; flex-wrap: wrap; gap: 2px; }
+.new-post__footer { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.new-post__attachments { display: flex; flex-wrap: wrap; gap: 2px; margin: -4px 0 0 -10px; }
 .new-post__attach {
   display: inline-flex;
   align-items: center;
