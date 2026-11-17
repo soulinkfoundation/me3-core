@@ -188,7 +188,7 @@ describe("pay-directly product orders", () => {
     const { env } = createEnv({ ...product, paymentInstructions: "Pay at https://pay.example/clarity" });
     sendProductPaymentInstructionsEmail.mockResolvedValueOnce({ status: "sent" });
     await order(env);
-    expect(sendProductPaymentInstructionsEmail).toHaveBeenCalledWith(env, expect.objectContaining({ paymentInstructions: "Pay at https://pay.example/clarity" }));
+    expect(sendProductPaymentInstructionsEmail).toHaveBeenCalledWith(env, expect.objectContaining({ paymentInstructions: expect.stringMatching(/^Pay at https:\/\/pay\.example\/clarity\n\nYour order is held until \d+ \w+ \d{4}\.$/) }));
   });
 });
 
@@ -349,7 +349,7 @@ describe("managed commerce orders", () => {
         buyerEmail: "buyer@example.com",
         amountDue: 4900,
         currency: "eur",
-        paymentInstructions: "Pay at https://pay.example/clarity",
+        paymentInstructions: expect.stringContaining("Pay at https://pay.example/clarity"),
       }),
     );
   });

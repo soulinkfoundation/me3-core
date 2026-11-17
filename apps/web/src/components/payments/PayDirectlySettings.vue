@@ -32,6 +32,28 @@ const form = reactive({
   iban: "", bic: "", currency: "EUR", sortCode: "", accountNumber: "",
 });
 const previewCurrency = ref("EUR");
+// If they don't pay: when the buyer is reminded and when an unpaid booking or order is released.
+const remindAfterDays = ref(2);
+const releaseAfterDays = ref(5);
+const holdSaving = ref(false);
+const holdError = ref("");
+const REMIND_CHOICES = Array.from({ length: 14 }, (_, index) => index + 1);
+const RELEASE_CHOICES = Array.from({ length: 29 }, (_, index) => index + 2);
+const days = (count: number) => (count === 1 ? "1 day" : `${count} days`);
+
+async function saveHold(field: "remindAfterDays" | "releaseAfterDays", event: Event) {
+  const value = Number((event.target as HTMLSelectElement).value);
+  const previous = { remindAfterDays: remindAfterDays.value, releaseAfterDays: releaseAfterDays.value };
+  holdSaving.value = true; holdError.value = "";
+  try {
+    const saved = await api.put<{ remindAfterDays: number; releaseAfterDays: number }>("/commerce/pay-directly-settings", { ...previous, [field]: value });
+    remindAfterDays.value = saved.remindAfterDays; releaseAfterDays.value = saved.releaseAfterDays;
+  } catch (error) {
+    // The select goes back to what is saved; the Worker's message says why.
+    (event.target as HTMLSelectElement).value = String(previous[field]);
+    holdError.value = error instanceof Error && error.message ? error.message : "Couldn't save that.";
+  } finally { holdSaving.value = false; }
+}
 
 const preview = computed(() => buyerPreview(methods.value, 6000, previewCurrency.value));
 const previewAmount = computed(() => new Intl.NumberFormat("en", { style: "currency", currency: previewCurrency.value }).format(60));
@@ -110,6 +132,12 @@ async function setEnabled(method: PaymentMethod, enabled: boolean) {
 }
 
 onMounted(async () => {
+  void api.get<{ payDirectly?: { remindAfterDays?: number; releaseAfterDays?: number } }>("/commerce/status")
+    .then((status) => {
+      remindAfterDays.value = status?.payDirectly?.remindAfterDays || 2;
+      releaseAfterDays.value = status?.payDirectly?.releaseAfterDays || 5;
+    })
+    .catch(() => undefined);
   try { await load(true); }
   catch (error) { loadError.value = error instanceof Error && error.message ? error.message : "Couldn't load your ways to get paid."; }
 });
@@ -148,6 +176,16 @@ onMounted(async () => {
         <li v-for="(line, index) in preview" :key="index"><strong>{{ line.name }}</strong><small>{{ line.hint }}</small></li>
       </ul>
       <p v-else class="pay-directly__empty">Nothing here takes {{ previewCurrency }} yet. Offers priced in {{ previewCurrency }} need a note for buyers, or add PayPal, Revolut, Wise or a {{ previewCurrency }} bank account.</p>
+    </div>
+
+    <div class="pay-directly__hold" aria-labelledby="pay-directly-hold-title">
+      <h4 id="pay-directly-hold-title">If they don’t pay</h4>
+      <label class="pay-directly__hold-row"><span>Remind them after</span>
+        <select name="remindAfterDays" :value="remindAfterDays" :disabled="holdSaving" @change="saveHold('remindAfterDays', $event)"><option v-for="count in REMIND_CHOICES" :key="count" :value="count">{{ days(count) }}</option></select></label>
+      <label class="pay-directly__hold-row"><span>Release the booking after</span>
+        <select name="releaseAfterDays" :value="releaseAfterDays" :disabled="holdSaving" @change="saveHold('releaseAfterDays', $event)"><option v-for="count in RELEASE_CHOICES" :key="count" :value="count">{{ days(count) }}</option></select></label>
+      <p v-if="holdError" class="pay-directly__error" role="alert">{{ holdError }}</p>
+      <p class="pay-directly__intro">ME3 sends one reminder, warns you the day before, then frees the spot and tells the buyer. A booking is always released before it starts. Once a buyer says they’ve paid, nothing is released until you decide. Shop orders are never sent until you mark them paid.</p>
     </div>
 
     <AppDialog :open="dialogOpen" labelled-by="pay-directly-dialog-title" @close="dialogOpen = false">
@@ -220,6 +258,10 @@ onMounted(async () => {
 .pay-directly__preview li { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface); }
 .pay-directly__preview li strong { font-size: 14px; }
 .pay-directly__preview li small { color: var(--ui-text-muted); font-size: 13px; line-height: 1.4; }
+.pay-directly__hold { display: grid; gap: 4px; }
+.pay-directly__hold-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; border-bottom: 1px solid var(--ui-border); font-size: 14px; }
+.pay-directly__hold-row select { min-height: 40px; padding: 0 8px; border: 1px solid var(--ui-border); border-radius: 8px; background: var(--ui-surface); color: var(--ui-text); font: inherit; font-size: 14px; }
+.pay-directly__hold .pay-directly__intro { margin-top: 6px; font-size: 13px; }
 .pay-directly__error { margin: 0; color: var(--ui-danger, #e5484d); font-size: 14px; }
 .pay-directly-dialog { display: grid; width: min(480px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 48px)); overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); color: var(--ui-text); }
 .pay-directly-dialog header, .pay-directly-dialog footer { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }

@@ -2,9 +2,6 @@ import type { ProductOffer } from "../../../shared/product-offer";
 
 /** Counted products use 30-minute Stripe checkouts; a little slack covers the webhook. */
 export const STOCK_CHECKOUT_HOLD_MINUTES = 35;
-/** A manual-payment request holds a copy while the buyer pays by other means. */
-const STOCK_MANUAL_HOLD_DAYS = 7;
-
 type StockedProduct = ProductOffer & { slug?: string };
 
 export type ProductAvailability = {
@@ -24,7 +21,11 @@ export function isCountedProduct(product: StockedProduct): boolean {
     : product.stock !== undefined && Boolean(product.stockSetAt);
 }
 
-/** Paid orders, open checkouts and pending manual payments since the owner last set the count. */
+/**
+ * Paid orders, open checkouts and pay-directly orders still waiting to be paid, since the owner last
+ * set the count. A pay-directly order holds its copy until the owner marks it paid or it is released
+ * (the owner's "release after" setting), when it stops being 'pending'.
+ */
 async function heldSince(
   db: D1Database,
   siteId: string,
@@ -40,10 +41,10 @@ async function heldSince(
        WHERE site_id = ? AND product_slug = ? AND created_at >= datetime(?)
          ${optionId === null ? "" : "AND option_id = ?"}
          AND (status = 'paid'
-           OR (status = 'pending' AND payment_method = 'manual' AND created_at > datetime(?, '-${STOCK_MANUAL_HOLD_DAYS} days'))
+           OR (status = 'pending' AND payment_method = 'manual')
            OR (status = 'pending' AND payment_method != 'manual' AND created_at > datetime(?, '-${STOCK_CHECKOUT_HOLD_MINUTES} minutes')))`,
     )
-    .bind(...[siteId, slug, stockSetAt, ...(optionId === null ? [] : [optionId]), at, at])
+    .bind(...[siteId, slug, stockSetAt, ...(optionId === null ? [] : [optionId]), at])
     .first<{ held: number }>();
   return Number(row?.held || 0);
 }

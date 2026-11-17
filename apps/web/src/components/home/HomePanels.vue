@@ -13,6 +13,7 @@ import { type NewsPaper, type NewsPaperAction, type NewsRating, type NewsToday }
 import AppDialog from "../AppDialog.vue";
 import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
 import GetSetUpStrip from "./GetSetUpStrip.vue";
+import PaymentsNeedYou from "./PaymentsNeedYou.vue";
 import HomeGreeting from "./HomeGreeting.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import UiIcon from "../UiIcon.vue";
@@ -526,6 +527,7 @@ onBeforeUnmount(() => {
     <p class="sr-only" role="status">{{ orderAnnouncement }}</p>
     <HomeGreeting :name="auth.user?.name" />
     <GetSetUpStrip ref="setupStrip" :inbox-count="mail.length" :agent-address="agentAddress" @build-site="emit('buildSite')" />
+    <PaymentsNeedYou />
     <p v-if="offline || Object.keys(errors).length" class="home-offline" role="status"><UiIcon name="WifiOff" :size="16" /><span>{{ offline ? 'You’re offline.' : 'Home couldn’t fully refresh.' }} {{ lastRefresh ? `Showing the last available data · ${lastRefresh}.` : 'Connect to refresh Home.' }}</span><button type="button" :disabled="loading" @click="refresh">Try again</button></p>
     <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__more" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
       <template #item="{ element: card }: { element: HomeCard }">

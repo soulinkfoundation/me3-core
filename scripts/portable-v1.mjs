@@ -132,6 +132,7 @@ export const RUNTIME_MIGRATIONS = [
   ["0107_financial_entry_receipts", "2026-11-15-financial-entry-receipts-v1"],
   ["0108_pay_directly", "2026-11-16-pay-directly-v1"],
   ["0109_pay_page", "2026-11-16-pay-page-v1"],
+  ["0110_pay_directly_holds", "2026-11-17-pay-directly-holds-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];

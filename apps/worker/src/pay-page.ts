@@ -1,7 +1,9 @@
 import { create as createQr } from "qrcode/lib/core/qrcode.js";
 import { buildPaymentOptions, paymentOptionHint, type PaymentOption } from "../../../shared/pay-directly";
 import { loadSiteProfileForCommerce } from "./booking";
-import { listPaymentMethods, payPagePath } from "./pay-directly";
+import { getPayDirectlyHoldSettings } from "./commerce-settings";
+import { holdState, listPaymentMethods, payPagePath } from "./pay-directly";
+import { notifyOwnerSaysPaid } from "./pay-directly-holds";
 import type { DbBooking, DbCommerceOrder, DbSite, Env } from "./types";
 
 // The buyer's pay page for one pay-directly order or booking. Everything here is reached only
@@ -15,8 +17,11 @@ export type PayPageOption = Omit<PaymentOption, "methodId"> & {
 export type PayPageData = {
   /** "order" is a product order; "booking" a one-to-one; "event" a class or retreat. */
   kind: "order" | "booking" | "event";
-  /** waiting: not paid. says_paid: the buyer tapped I've paid. paid: the owner confirmed. cancelled: no longer open. */
-  status: "waiting" | "says_paid" | "paid" | "cancelled";
+  /**
+   * waiting: not paid. says_paid: the buyer tapped I've paid. paid: the owner confirmed.
+   * released: it went unpaid and was released. cancelled: no longer open for another reason.
+   */
+  status: "waiting" | "says_paid" | "paid" | "released" | "cancelled";
   payeeName: string;
   payeeFirstName: string;
   buyerFirstName: string;
@@ -30,6 +35,8 @@ export type PayPageData = {
   options: PayPageOption[];
   note: string | null;
   saysPaidAt: string | null;
+  /** While waiting: when it is released if still unpaid (ISO). Null once the buyer says they paid. */
+  heldUntil: string | null;
 };
 
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
@@ -65,18 +72,24 @@ type DirectPaymentRow = {
   booking_id: string | null;
   says_paid_at: string | null;
   note: string | null;
+  created_at: string;
+  hold_started_at: string | null;
+  owner_warned_at: string | null;
+  released_at: string | null;
 };
 
 /** What the pay page shows for this link, or null when the link is not one ME3 made. */
 export async function getPayPageData(env: Env, token: string): Promise<PayPageData | null> {
   if (!TOKEN_PATTERN.test(token)) return null;
   const payment = await env.DB.prepare(
-    "SELECT reference, user_id, order_id, booking_id, says_paid_at, note FROM commerce_direct_payments WHERE pay_token = ?",
+    `SELECT reference, user_id, order_id, booking_id, says_paid_at, note, created_at, hold_started_at,
+            owner_warned_at, released_at
+     FROM commerce_direct_payments WHERE pay_token = ?`,
   ).bind(token).first<DirectPaymentRow>();
   if (!payment) return null;
 
   let subject: Pick<PayPageData, "kind" | "title" | "startsAt" | "quantity" | "amountCents" | "currency"> & {
-    siteId: string; buyerName: string; open: boolean; paid: boolean;
+    siteId: string; buyerName: string; open: boolean; paid: boolean; createdAt: string;
   };
   if (payment.order_id) {
     const order = await env.DB.prepare("SELECT * FROM commerce_orders WHERE id = ?").bind(payment.order_id).first<DbCommerceOrder>();
@@ -85,6 +98,7 @@ export async function getPayPageData(env: Env, token: string): Promise<PayPageDa
       kind: "order", title: order.product_title, startsAt: null, quantity: 1,
       amountCents: Number(order.amount_paid || order.amount_due || 0), currency: String(order.currency || "USD").toUpperCase(),
       siteId: order.site_id, buyerName: order.buyer_name, open: order.status === "pending", paid: order.status === "paid",
+      createdAt: order.created_at,
     };
   } else {
     const booking = await env.DB.prepare("SELECT * FROM bookings WHERE id = ?").bind(payment.booking_id).first<DbBooking>();
@@ -98,6 +112,7 @@ export async function getPayPageData(env: Env, token: string): Promise<PayPageDa
       siteId: booking.site_id, buyerName: booking.guest_name,
       open: booking.status === "confirmed" && booking.payment_status === "pending",
       paid: booking.status === "confirmed" && booking.payment_status !== "pending",
+      createdAt: booking.created_at,
     };
   }
 
@@ -117,7 +132,7 @@ export async function getPayPageData(env: Env, token: string): Promise<PayPageDa
     : [];
   return {
     kind: subject.kind,
-    status: subject.paid ? "paid" : !subject.open ? "cancelled" : payment.says_paid_at ? "says_paid" : "waiting",
+    status: subject.paid ? "paid" : !subject.open ? (payment.released_at ? "released" : "cancelled") : payment.says_paid_at ? "says_paid" : "waiting",
     payeeName,
     payeeFirstName: firstName(payeeName),
     buyerFirstName: firstName(subject.buyerName),
@@ -130,6 +145,13 @@ export async function getPayPageData(env: Env, token: string): Promise<PayPageDa
     options,
     note: subject.open ? payment.note?.trim() || null : null,
     saysPaidAt: isoUtc(payment.says_paid_at),
+    heldUntil: subject.open && !payment.says_paid_at
+      ? new Date(holdState(
+          { created_at: subject.createdAt, hold_started_at: payment.hold_started_at, starts_at: subject.startsAt, says_paid_at: null, owner_warned_at: payment.owner_warned_at },
+          await getPayDirectlyHoldSettings(env, site.user_id),
+          Date.now(),
+        ).releaseAtMs).toISOString()
+      : null,
   };
 }
 
@@ -137,9 +159,14 @@ export async function getPayPageData(env: Env, token: string): Promise<PayPageDa
 export async function recordSaysPaid(env: Env, token: string): Promise<PayPageData | null> {
   const data = await getPayPageData(env, token);
   if (!data || data.status !== "waiting") return data;
-  await env.DB.prepare(
+  const recorded = await env.DB.prepare(
     "UPDATE commerce_direct_payments SET says_paid_at = datetime('now') WHERE pay_token = ? AND says_paid_at IS NULL",
   ).bind(token).run();
+  if (Number(recorded.meta?.changes || 0) > 0) {
+    // The owner hears on the first tap only.
+    const owner = await env.DB.prepare("SELECT user_id FROM commerce_direct_payments WHERE pay_token = ?").bind(token).first<{ user_id: string }>();
+    if (owner) await notifyOwnerSaysPaid(env, owner.user_id, data.reference).catch((error) => console.error("Says-paid email to the owner failed:", error));
+  }
   return getPayPageData(env, token);
 }
 
@@ -221,6 +248,7 @@ h2{margin:0 0 8px;font-size:16px}
 .note{margin:16px 0;padding:14px 16px;border-radius:12px;background:var(--surface);white-space:pre-line}
 .primary{width:100%;min-height:52px;margin:12px 0 8px;border:0;border-radius:12px;background:var(--accent);color:var(--accent-text);font:inherit;font-weight:700;cursor:pointer}
 .small{margin:0;color:var(--muted);font-size:14px;text-align:center}
+.held{margin-top:12px}
 .tick{display:grid;place-items:center;width:48px;height:48px;margin:0 0 16px;border-radius:50%;background:var(--accent);color:var(--accent-text);font-size:26px}
 .summary{margin:20px 0;border-bottom:1px solid var(--border)}
 details{margin:20px 0 0}
@@ -260,6 +288,11 @@ export function renderPayPage(data: PayPageData, token: string): string {
   const what = [escapeHtml(data.title), whenMarkup(data.startsAt), data.quantity > 1 ? `${data.quantity} places` : ""].filter(Boolean).join(" · ");
   const header = `<p class="payee">${escapeHtml(data.payeeName)}</p>`;
 
+  if (data.status === "released") {
+    return shell(`${data.title}`, `${header}<h1>${data.kind === "order" ? "This order was closed" : "This booking was released"}</h1>
+      <p class="lede">${payee} did not receive payment in time, so there is nothing to pay now. If you have already paid, reply to the email from ${payee}.</p>
+      ${summaryRows(data, amount, "Released")}`);
+  }
   if (data.status === "cancelled") {
     return shell(`${data.title}`, `${header}<h1>${data.kind === "order" ? "This order is no longer open" : "This booking was cancelled"}</h1>
       <p class="lede">There is nothing to pay. If you have already paid, reply to the email from ${payee}.</p>
@@ -284,5 +317,6 @@ export function renderPayPage(data: PayPageData, token: string): string {
     <div class="reference">${copyRow("Reference", data.reference, data.reference)}</div>
     ${methods}
     <form method="post" action="${escapeHtml(payPagePath(token))}/paid"><button class="primary" type="submit">I’ve paid</button></form>
-    <p class="small">Tap this once you have sent the money, so ${payee} knows to look for it.</p>`);
+    <p class="small">Tap this once you have sent the money, so ${payee} knows to look for it.</p>
+    ${data.heldUntil ? `<p class="small held">Held until ${whenMarkup(data.heldUntil)}</p>` : ""}`);
 }

@@ -1,6 +1,10 @@
 import {
   buildPaymentOptions,
   methodsCoverCurrency,
+  payDirectlyDecideAtMs,
+  payDirectlyTimeline,
+  payDirectlyWarningLeadMs,
+  type PayDirectlyHoldSettings,
   parsePaymentMethodInput,
   paymentOptionsText,
   randomPaymentReference,
@@ -8,6 +12,7 @@ import {
   type SavedPaymentMethod,
 } from "../../../shared/pay-directly";
 import { bookingDetailsFromBooking, sendBookingAwaitingPaymentEmails } from "./transactional-emails";
+import { getPayDirectlyHoldSettings } from "./commerce-settings";
 import { getPublishedSiteBaseUrl } from "./sites";
 import type { DbBooking, DbSite, Env } from "./types";
 
@@ -56,6 +61,16 @@ export const PAY_PAGE_SCHEMA = [
   "ALTER TABLE commerce_direct_payments ADD COLUMN pay_token TEXT",
   "ALTER TABLE commerce_direct_payments ADD COLUMN note TEXT",
   PAY_PAGE_INDEX,
+] as const;
+
+// Mirrors migrations/0110_pay_directly_holds.sql.
+export const PAY_DIRECTLY_HOLDS_SCHEMA = [
+  "ALTER TABLE commerce_settings ADD COLUMN pay_directly_remind_days INTEGER NOT NULL DEFAULT 2",
+  "ALTER TABLE commerce_settings ADD COLUMN pay_directly_release_days INTEGER NOT NULL DEFAULT 5",
+  "ALTER TABLE commerce_direct_payments ADD COLUMN hold_started_at TEXT",
+  "ALTER TABLE commerce_direct_payments ADD COLUMN owner_warned_at TEXT",
+  "ALTER TABLE commerce_direct_payments ADD COLUMN owner_nudged_at TEXT",
+  "ALTER TABLE commerce_direct_payments ADD COLUMN released_at TEXT",
 ] as const;
 
 /** A saved way to get paid, as the owner apps read it. */
@@ -311,7 +326,7 @@ export async function ensurePayToken(env: Env, reference: string): Promise<strin
 }
 
 /** The pay page's full address for emails, or "" when this install does not know its public address. */
-async function payPageUrl(env: Env, siteId: string | undefined, token: string): Promise<string> {
+export async function payPageUrl(env: Env, siteId: string | undefined, token: string): Promise<string> {
   if (!siteId) return "";
   try {
     const site = await env.DB.prepare("SELECT * FROM sites WHERE id = ?").bind(siteId).first<DbSite>();
@@ -429,7 +444,15 @@ export async function sendAwaitingPaymentEmails(
     // The time is already held; the guest still hears from the owner.
     console.error("Pay-directly details could not be prepared for a booking:", error);
   }
+  const heldUntil = await getPayDirectlyHoldSettings(env, input.ownerId)
+    .then((settings) => new Date(holdState(
+      { created_at: input.booking.created_at, hold_started_at: null, starts_at: input.booking.starts_at, says_paid_at: null, owner_warned_at: null },
+      settings,
+      Date.now(),
+    ).releaseAtMs).toISOString())
+    .catch(() => null);
   const result = await sendBookingAwaitingPaymentEmails(env, {
+    heldUntil,
     ...bookingDetailsFromBooking({
       booking: { ...input.booking, meeting_url: null, meeting_host_url: null },
       ownerId: input.ownerId,
@@ -444,4 +467,58 @@ export async function sendAwaitingPaymentEmails(
   if (result.guest.status === "failed" || result.host.status === "failed") {
     console.error("Booking payment details email issue:", result);
   }
+}
+
+/** A D1 timestamp ("YYYY-MM-DD HH:MM:SS", UTC) or an ISO string, as milliseconds. */
+export function sqliteTimeMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const ms = Date.parse(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? `${value.replace(" ", "T")}Z` : value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+export type HoldTimes = {
+  created_at: string;
+  hold_started_at: string | null;
+  starts_at: string | null;
+  says_paid_at: string | null;
+  owner_warned_at: string | null;
+};
+
+export type HoldState = {
+  /** When the buyer's one reminder is due. */
+  remindAtMs: number;
+  /** When the owner is warned that release is coming. */
+  warnOwnerAtMs: number;
+  /** When it is released if still unpaid. Never before the owner has had their warning. */
+  releaseAtMs: number;
+  /** The buyer said they paid: nothing is released automatically. */
+  paused: boolean;
+  /** Paused: when the owner is asked to confirm or release. */
+  decideAtMs: number | null;
+};
+
+/**
+ * Where one unpaid order or booking stands. The clock starts when it was made, or when the owner
+ * last kept or restored it. Release waits for the owner's warning, so an order found late (or
+ * made before reminders existed) is never released without one, unless a booking is about to start.
+ */
+export function holdState(row: HoldTimes, settings: PayDirectlyHoldSettings, nowMs: number): HoldState {
+  const createdMs = sqliteTimeMs(row.created_at) ?? nowMs;
+  const heldFromMs = Math.max(createdMs, sqliteTimeMs(row.hold_started_at) ?? 0);
+  const startsAtMs = sqliteTimeMs(row.starts_at);
+  const timeline = payDirectlyTimeline({ heldFromMs, startsAtMs, ...settings });
+  const lead = payDirectlyWarningLeadMs(timeline.releaseAtMs - heldFromMs);
+  const warnedMs = sqliteTimeMs(row.owner_warned_at);
+  let releaseAtMs = timeline.releaseAtMs;
+  if (warnedMs !== null && warnedMs >= heldFromMs) releaseAtMs = Math.max(releaseAtMs, warnedMs + lead);
+  else if (nowMs > timeline.warnOwnerAtMs) releaseAtMs = Math.max(releaseAtMs, nowMs + lead);
+  if (startsAtMs !== null) releaseAtMs = Math.min(releaseAtMs, Math.max(timeline.releaseAtMs, startsAtMs - 3_600_000));
+  const saysPaidMs = sqliteTimeMs(row.says_paid_at);
+  return {
+    remindAtMs: timeline.remindAtMs,
+    warnOwnerAtMs: timeline.warnOwnerAtMs,
+    releaseAtMs,
+    paused: saysPaidMs !== null,
+    decideAtMs: saysPaidMs === null ? null : payDirectlyDecideAtMs({ saysPaidAtMs: Math.max(saysPaidMs, heldFromMs), startsAtMs }),
+  };
 }

@@ -318,3 +318,82 @@ export function randomPaymentReference(length = 4): string {
   for (const byte of bytes) code += PAYMENT_REFERENCE_ALPHABET[byte % PAYMENT_REFERENCE_ALPHABET.length];
   return `ME3-${code}`;
 }
+
+// ---------------------------------------------------------------------------
+// Holding, reminding and releasing unpaid pay-directly orders and bookings.
+
+export const PAY_DIRECTLY_DEFAULT_REMIND_DAYS = 2;
+export const PAY_DIRECTLY_DEFAULT_RELEASE_DAYS = 5;
+/** After "I've paid" nothing is released automatically; this long later the owner is asked to decide. */
+export const PAY_DIRECTLY_SAYS_PAID_PAUSE_DAYS = 3;
+
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+
+export type PayDirectlyHoldSettings = { remindAfterDays: number; releaseAfterDays: number };
+
+/** Remind after 1 to 14 days, release after 2 to 30, and always remind before releasing. */
+export function parsePayDirectlyHoldSettings(
+  input: { remindAfterDays?: unknown; releaseAfterDays?: unknown },
+  current: PayDirectlyHoldSettings,
+): { ok: true; value: PayDirectlyHoldSettings } | { ok: false; error: string } {
+  const whole = (value: unknown, fallback: number) => (value === undefined || value === null ? fallback : value);
+  const remindAfterDays = whole(input.remindAfterDays, current.remindAfterDays);
+  const releaseAfterDays = whole(input.releaseAfterDays, current.releaseAfterDays);
+  if (typeof remindAfterDays !== "number" || !Number.isInteger(remindAfterDays) || remindAfterDays < 1 || remindAfterDays > 14) {
+    return { ok: false, error: "Remind buyers after 1 to 14 days." };
+  }
+  if (typeof releaseAfterDays !== "number" || !Number.isInteger(releaseAfterDays) || releaseAfterDays < 2 || releaseAfterDays > 30) {
+    return { ok: false, error: "Release unpaid bookings after 2 to 30 days." };
+  }
+  if (remindAfterDays >= releaseAfterDays) return { ok: false, error: "Remind buyers before the booking is released." };
+  return { ok: true, value: { remindAfterDays, releaseAfterDays } };
+}
+
+export type PayDirectlyTimeline = {
+  /** When the buyer gets their one reminder. */
+  remindAtMs: number;
+  /** When the owner is warned that release is coming (a day before, less for a short hold). */
+  warnOwnerAtMs: number;
+  /** When an unpaid order or booking is released. Always before a booking starts. */
+  releaseAtMs: number;
+};
+
+/**
+ * When to remind, warn and release, counted from when the hold began. A booking that starts
+ * sooner than the release setting is released a day before it starts (or halfway to the start
+ * for a very late booking), and the reminder moves earlier in proportion.
+ */
+export function payDirectlyTimeline(input: {
+  heldFromMs: number;
+  /** A booking's start; null for a product order. */
+  startsAtMs: number | null;
+  remindAfterDays: number;
+  releaseAfterDays: number;
+}): PayDirectlyTimeline {
+  const full = input.releaseAfterDays * DAY_MS;
+  let releaseAtMs = input.heldFromMs + full;
+  if (input.startsAtMs !== null && input.startsAtMs > input.heldFromMs) {
+    const lead = input.startsAtMs - input.heldFromMs;
+    releaseAtMs = Math.min(releaseAtMs, Math.max(input.startsAtMs - DAY_MS, input.heldFromMs + lead / 2));
+  }
+  const window = releaseAtMs - input.heldFromMs;
+  return {
+    remindAtMs: input.heldFromMs + Math.round(window * (input.remindAfterDays / input.releaseAfterDays)),
+    warnOwnerAtMs: releaseAtMs - payDirectlyWarningLeadMs(window),
+    releaseAtMs,
+  };
+}
+
+/** How long before release the owner is warned: a day, or a third of a hold shorter than three days. */
+export function payDirectlyWarningLeadMs(windowMs: number): number {
+  return Math.min(DAY_MS, Math.round(windowMs / 3));
+}
+
+/** After "I've paid": when the owner is asked to confirm or release. Before a booking starts. */
+export function payDirectlyDecideAtMs(input: { saysPaidAtMs: number; startsAtMs: number | null }): number {
+  const pause = input.saysPaidAtMs + PAY_DIRECTLY_SAYS_PAID_PAUSE_DAYS * DAY_MS;
+  if (input.startsAtMs === null || input.startsAtMs <= input.saysPaidAtMs) return pause;
+  const lead = input.startsAtMs - input.saysPaidAtMs;
+  return Math.min(pause, Math.max(input.startsAtMs - DAY_MS, input.saysPaidAtMs + lead / 2));
+}

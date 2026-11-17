@@ -9,6 +9,7 @@ import { productAvailability } from "../product-stock";
 import { downloadResponse, ProductDownloadError, storeProductDownload } from "../product-downloads";
 import {
   CommerceSettingsInputError,
+  updatePayDirectlyHoldSettings,
   getCommerceSettings,
   updateCommerceSettings,
 } from "../commerce-settings";
@@ -52,6 +53,19 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
       ok: true,
       ...(await getCommerceSettings(c.env, ownerId)),
     });
+  });
+
+  // Pay me directly: days until an unpaid buyer is reminded and an unpaid booking or order is released.
+  app.put("/api/commerce/pay-directly-settings", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json({ ok: true, ...(await updatePayDirectlyHoldSettings(c.env, ownerId, body)) });
+    } catch (error) {
+      if (error instanceof CommerceSettingsInputError) return c.json({ ok: false, error: error.message }, 400);
+      throw error;
+    }
   });
 
   app.put("/api/commerce/settings", async (c) => {

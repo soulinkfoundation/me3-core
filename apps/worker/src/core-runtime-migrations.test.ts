@@ -759,9 +759,7 @@ class RuntimeMigrationStatement {
     }
     if (this.sql.includes("ALTER TABLE commerce_settings")) {
       const columns = this.db.columns.get("commerce_settings");
-      const column = this.sql.includes("preferred_stripe_provider")
-        ? "preferred_stripe_provider"
-        : "default_currency";
+      const column = this.sql.match(/ADD COLUMN (\w+)/)?.[1] || "default_currency";
       if (columns?.has(column)) {
         throw new Error(`duplicate column name: ${column}`);
       }

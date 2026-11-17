@@ -33,7 +33,7 @@ import type { CoreBookIntent } from "./booking";
 import { cancelOwnerBooking } from "./booking-changes";
 import { createConfirmedEventBooking, resolveEventBookingOffer, resolveEventOccurrence } from "./event-booking";
 import type { AppBindings } from "./http/types";
-import { PAY_DIRECTLY_SCHEMA, PAY_PAGE_SCHEMA, prepareDirectPayment } from "./pay-directly";
+import { PAY_DIRECTLY_HOLDS_SCHEMA, PAY_DIRECTLY_SCHEMA, PAY_PAGE_SCHEMA, prepareDirectPayment } from "./pay-directly";
 import { listWaitingPayments, markBookingPaid } from "./pay-directly-bookings";
 import { registerBookingRoutes } from "./routes/booking";
 import { registerPayRoutes } from "./routes/pay";
@@ -111,7 +111,7 @@ class SqliteD1 {
       );
       CREATE TABLE agent_commerce_rate_limits (key TEXT PRIMARY KEY, window_start INTEGER NOT NULL, request_count INTEGER NOT NULL);
     `);
-    for (const sql of [...PAY_DIRECTLY_SCHEMA, ...PAY_PAGE_SCHEMA]) this.raw.exec(sql);
+    for (const sql of [...PAY_DIRECTLY_SCHEMA, ...PAY_PAGE_SCHEMA, ...PAY_DIRECTLY_HOLDS_SCHEMA.filter((sql) => sql.includes("commerce_direct_payments"))]) this.raw.exec(sql);
     this.raw.prepare("INSERT INTO site_files (site_id, path, content) VALUES ('site-1', 'src/me.json', ?)")
       .run(Buffer.from(JSON.stringify({ name: "Kieran Butler", intents: { book: bookIntent } })));
     this.raw.exec(`INSERT INTO commerce_payment_methods (id, user_id, kind, link, account_name, iban, bic, sort_code, account_number, currency, enabled, sort_order) VALUES
@@ -202,7 +202,8 @@ describe("the buyer's journey on a published site", () => {
     expect(html).toContain("<svg");
     expect(html).toContain("Cash on the day is fine too.");
     expect(html).toContain("I’ve paid");
-    expect(html).not.toMatch(/Held until/i);
+    // Five days by default, but a booking is always released before it starts.
+    expect(html).toMatch(/Held until <time datetime="\d{4}-/);
     // Never claim the reference travels in every link.
     expect(html).not.toMatch(/reference (is|travels) in (every|each|all)/i);
     // The UK account is not offered for a euro booking.

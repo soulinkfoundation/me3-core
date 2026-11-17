@@ -368,9 +368,10 @@ ${details.meetingHostUrl || details.meetingUrl ? `Your call room: ${details.meet
  */
 export async function sendBookingAwaitingPaymentEmails(
   env: Env,
-  details: BookingEmailDetails & { reference?: string | null },
+  details: BookingEmailDetails & { reference?: string | null; /** When the hold ends if unpaid (ISO). */ heldUntil?: string | null },
 ): Promise<{ guest: TransactionalEmailResult; host: TransactionalEmailResult }> {
   const startTime = formatBookingTime(details.startsAt, details.timezone);
+  const heldUntil = details.heldUntil ? formatBookingTime(details.heldUntil, details.timezone) : "";
   const amountDue = details.amountDue && details.currency ? formatCurrencyAmount(details.amountDue, details.currency) : "";
   const paymentInstructions = details.paymentInstructions?.trim() || "";
   const guestText = `Hi ${details.guestName},
@@ -379,7 +380,7 @@ ${details.hostName} is holding this time for you. Your booking is confirmed once
 
 ${details.bookingTitle} with ${details.hostName}
 ${startTime}
-Duration: ${details.durationMinutes} minutes${amountDue ? `\nAmount due: ${amountDue}` : ""}
+Duration: ${details.durationMinutes} minutes${amountDue ? `\nAmount due: ${amountDue}` : ""}${heldUntil ? `\nHeld until: ${heldUntil}` : ""}
 
 Payment details:
 ${paymentInstructions}${details.notes ? `\n\nYour notes:\n${details.notes}` : ""}
@@ -400,6 +401,7 @@ You can reply to this email to contact ${details.hostName}.
         ["When", startTime],
         ["Duration", `${details.durationMinutes} minutes`],
         ...(amountDue ? [["Amount due", amountDue] as [string, string]] : []),
+        ...(heldUntil ? [["Held until", heldUntil] as [string, string]] : []),
       ],
       notesLabel: "Your notes",
       notes: details.notes,
@@ -449,6 +451,54 @@ When the money arrives, mark it as paid in ME3 Accounts. ME3 then confirms the b
     metadata: { booking_id: details.bookingId, booking_email: "host_awaiting_payment" },
   });
   return { guest, host };
+}
+
+/** One plain pay-directly email: a reminder, a release warning, a release notice or a says-paid nudge. */
+export async function sendPayDirectlyNotice(
+  env: Env,
+  ownerId: string,
+  input: {
+    operationId: string;
+    kind: string;
+    toAddress: string;
+    fromName: string;
+    replyToAddress?: string | null;
+    subject: string;
+    heading: string;
+    greeting: string;
+    paragraphs: string[];
+    /** Label and value pairs shown as a small table. */
+    rows: Array<[string, string]>;
+    link?: { label: string; url: string } | null;
+    signature: string;
+  },
+): Promise<TransactionalEmailResult> {
+  const rowsText = input.rows.map(([label, value]) => `${label}: ${value}`).join("\n");
+  const textBody = [
+    input.greeting,
+    ...input.paragraphs,
+    rowsText,
+    input.link ? `${input.link.label}: ${input.link.url}` : "",
+    `- ${input.signature}`,
+  ].filter(Boolean).join("\n\n");
+  const htmlBody = emailShell(`
+    <h1 style="margin:0 0 16px;font-size:24px;color:#111;">${escapeHtml(input.heading)}</h1>
+    ${input.paragraphs.map((text) => `<p style="margin:0 0 14px;color:#333;font-size:14px;line-height:1.6;">${renderPlainText(text)}</p>`).join("")}
+    <div style="background:#f8f8f8;border-radius:8px;padding:20px;margin:8px 0 24px;">${input.rows
+      .map(([label, value]) => `<p style="margin:0 0 8px;color:#333;font-size:14px;"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</p>`)
+      .join("")}</div>
+    ${input.link ? `<p style="margin:0 0 24px;"><a href="${escapeHtml(input.link.url)}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:8px;">${escapeHtml(input.link.label)}</a></p>` : ""}
+  `);
+  return sendWorkflowEmail(env, ownerId, {
+    operationId: input.operationId,
+    toAddress: input.toAddress,
+    subject: input.subject,
+    textBody,
+    htmlBody,
+    fromName: input.fromName,
+    replyToAddress: input.replyToAddress || null,
+    metadata: { pay_directly_email: input.kind },
+  });
 }
 
 export async function sendProductPurchaseConfirmationEmail(

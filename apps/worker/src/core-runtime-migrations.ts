@@ -1049,6 +1049,21 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.prepare(PAY_PAGE_INDEX).run();
     },
   },
+  // Pay me directly: the remind and release settings, and each hold's reminder, warning and release times.
+  {
+    id: "0110_pay_directly_holds",
+    checksum: "2026-11-17-pay-directly-holds-v1",
+    async apply(db) {
+      // Without the table the two settings read as their defaults (2 and 5 days).
+      if (await tableExists(db, "commerce_settings")) {
+        await addColumnIfMissing(db, "commerce_settings", "pay_directly_remind_days", "INTEGER NOT NULL DEFAULT 2");
+        await addColumnIfMissing(db, "commerce_settings", "pay_directly_release_days", "INTEGER NOT NULL DEFAULT 5");
+      }
+      for (const column of ["hold_started_at", "owner_warned_at", "owner_nudged_at", "released_at"]) {
+        await addColumnIfMissing(db, "commerce_direct_payments", column, "TEXT");
+      }
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

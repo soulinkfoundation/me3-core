@@ -10,6 +10,12 @@ import {
 } from "./commerce-bridge";
 import { getAgentCheckoutEnabled, setAgentCheckoutEnabled } from "./agent-commerce-store";
 import { listPaymentMethods, type PaymentMethod } from "./pay-directly";
+import {
+  PAY_DIRECTLY_DEFAULT_RELEASE_DAYS,
+  PAY_DIRECTLY_DEFAULT_REMIND_DAYS,
+  parsePayDirectlyHoldSettings,
+  type PayDirectlyHoldSettings,
+} from "../../../shared/pay-directly";
 
 type CommerceSettingsRow = {
   user_id: string;
@@ -46,8 +52,11 @@ export type CommerceSettingsResponse = {
   };
   /** Buying agents can book and buy through the agent commerce API. */
   agentCheckout: { enabled: boolean };
-  /** Pay me directly: the owner's saved ways to get paid, in their order. Owner-only. */
-  payDirectly: { methods: PaymentMethod[] };
+  /**
+   * Pay me directly: the owner's saved ways to get paid, in their order, and how many days until an
+   * unpaid buyer is reminded and an unpaid booking or order is released. Owner-only.
+   */
+  payDirectly: { methods: PaymentMethod[] } & PayDirectlyHoldSettings;
 };
 
 type StripeProviderPreference = "auto" | "direct" | "managed";
@@ -134,8 +143,43 @@ export async function getCommerceSettings(
       requirementsDue: managedStatus?.requirementsDue || [],
     },
     agentCheckout: { enabled: await getAgentCheckoutEnabled(env, ownerId) },
-    payDirectly: { methods: await listPaymentMethods(env, ownerId) },
+    payDirectly: { methods: await listPaymentMethods(env, ownerId), ...(await getPayDirectlyHoldSettings(env, ownerId)) },
   };
+}
+
+/** Days until an unpaid pay-directly buyer is reminded, and until their booking or order is released. */
+export async function getPayDirectlyHoldSettings(env: Env, ownerId: string): Promise<PayDirectlyHoldSettings> {
+  const defaults = { remindAfterDays: PAY_DIRECTLY_DEFAULT_REMIND_DAYS, releaseAfterDays: PAY_DIRECTLY_DEFAULT_RELEASE_DAYS };
+  try {
+    const row = await env.DB.prepare(
+      "SELECT pay_directly_remind_days AS remind, pay_directly_release_days AS release FROM commerce_settings WHERE user_id = ?",
+    ).bind(ownerId).first<{ remind: number | null; release: number | null }>();
+    const parsed = parsePayDirectlyHoldSettings(
+      { remindAfterDays: row?.remind ?? undefined, releaseAfterDays: row?.release ?? undefined },
+      defaults,
+    );
+    return parsed.ok ? parsed.value : defaults;
+  } catch {
+    // An install that has not run the migration yet behaves as the defaults.
+    return defaults;
+  }
+}
+
+export async function updatePayDirectlyHoldSettings(env: Env, ownerId: string, input: unknown): Promise<PayDirectlyHoldSettings> {
+  const body = input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+  const parsed = parsePayDirectlyHoldSettings(body, await getPayDirectlyHoldSettings(env, ownerId));
+  if (!parsed.ok) throw new CommerceSettingsInputError(parsed.error);
+  // A first row keeps the currency the owner already sees, rather than the column default.
+  const currency = await resolveDefaultCurrency(env, ownerId, await getCommerceSettingsRow(env, ownerId));
+  await env.DB.prepare(
+    `INSERT INTO commerce_settings (user_id, default_currency, pay_directly_remind_days, pay_directly_release_days)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       pay_directly_remind_days = excluded.pay_directly_remind_days,
+       pay_directly_release_days = excluded.pay_directly_release_days,
+       updated_at = CURRENT_TIMESTAMP`,
+  ).bind(ownerId, currency, parsed.value.remindAfterDays, parsed.value.releaseAfterDays).run();
+  return parsed.value;
 }
 
 export async function isCommerceReady(env: Env, ownerId: string): Promise<boolean> {

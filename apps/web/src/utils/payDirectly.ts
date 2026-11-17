@@ -28,7 +28,29 @@ export type WaitingPayment = {
   bookingType: "one_to_one" | "class" | "retreat" | null;
   startsAt: string | null;
   quantity: number;
+  /** When it is released if still unpaid; null once the buyer says they paid. */
+  heldUntil?: string | null;
+  ownerWarnedAt?: string | null;
+  /** The buyer said they paid a while ago: mark it paid or release it. */
+  needsDecision?: boolean;
+  needsYou?: boolean;
 };
+
+/** A booking released for non-payment that can be restored while its time is still free. */
+export type ReleasedBooking = {
+  kind: "booking" | "event";
+  id: string;
+  reference: string;
+  customerName: string;
+  title: string;
+  amountCents: number;
+  currency: string;
+  startsAt: string;
+  quantity: number;
+  releasedAt: string;
+};
+
+export type PayDirectlyHoldSettings = { remindAfterDays: number; releaseAfterDays: number };
 
 export const PAY_DIRECTLY_SETTINGS_PATH = "/account?section=payments";
 

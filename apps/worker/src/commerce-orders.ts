@@ -26,7 +26,7 @@ import {
   type ProductPurchaseConfirmationEmail,
 } from "../../../shared/product-purchase-confirmation";
 import { getManagedCommerceBridgeConfig } from "./commerce-bridge";
-import { isCommerceReady } from "./commerce-settings";
+import { getPayDirectlyHoldSettings, isCommerceReady } from "./commerce-settings";
 import { dispatchWebsitePaymentNotification } from "./payment-notifications";
 import { manualPaymentAvailable, prepareDirectPayment } from "./pay-directly";
 
@@ -205,6 +205,9 @@ export async function createProductCheckout(
         .run();
       throw new CommerceOrderInputError("Payment details could not be emailed right now.", 502);
     });
+    const heldUntil = new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(
+      Date.now() + (await getPayDirectlyHoldSettings(env, site.user_id)).releaseAfterDays * 86_400_000,
+    );
     const sent = await sendProductPaymentInstructionsEmail(env, {
       operationId: `order:${orderId}:payment-instructions`,
       ownerId: site.user_id,
@@ -215,7 +218,8 @@ export async function createProductCheckout(
       productTitle: tokens.productTitle,
       amountDue: amount,
       currency,
-      paymentInstructions: payment.instructions,
+      // The order (and its copy, for counted products) is kept until the owner's release setting.
+      paymentInstructions: `${payment.instructions}\n\nYour order is held until ${heldUntil}.`,
       messageText: extraMessage,
     });
     if (sent.status !== "sent" && sent.status !== "pending") {

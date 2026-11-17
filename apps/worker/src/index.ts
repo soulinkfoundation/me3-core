@@ -1,3 +1,4 @@
+import { runPayDirectlyFollowUps } from "./pay-directly-holds";
 import { reconcileProductOrders } from "./commerce-reconciliation";
 import { expireStaleAgentCheckouts } from "./agent-commerce";
 import { pollNetworkPurchases } from "./agent-network-commerce";
@@ -153,6 +154,7 @@ const QUARTER_HOUR_SCHEDULED_STEPS: readonly ScheduledStep[] = [
   ["calendar push dispatch", dispatchDueCalendarPushNotifications],
   ["agent turn notification retry", retryAgentTurnNotifications],
   ["booking reminders", dispatchDueBookingReminders],
+  ["pay-directly reminders and releases", (env) => runPayDirectlyFollowUps(env)],
   ["social publication dispatch", dispatchDueSocialPublications],
   ["stranded social publication recovery", recoverStrandedQueuedSocialPublications],
   ["calendar source refresh", dispatchDueCalendarSourceRefreshes],

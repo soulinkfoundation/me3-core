@@ -22,6 +22,7 @@ import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import { isCorePluginEnabled } from "../plugins";
 import { getAccountsEmailTriageSettings, updateAccountsEmailTriageSettings } from "../accounts-email-triage";
 import { DirectPaymentError, listWaitingPayments, markBookingPaid } from "../pay-directly-bookings";
+import { keepHolding, releaseWaiting, remindWaitingBuyer, restoreReleasedBooking } from "../pay-directly-holds";
 
 export function registerAccountsRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.get("/api/accounts/email-triage", async c => {
@@ -56,6 +57,23 @@ export function registerAccountsRoutes(app: AppHono, deps: OwnerRouteDeps) {
     const blocked = await requireAccountsPlugin(c);
     if (blocked) return blocked;
     return c.json(await listWaitingPayments(c.env, ownerId));
+  });
+  // Owner actions on one waiting order or booking, by its ME3-XXXX reference:
+  // remind (send the buyer's reminder now), keep (Keep holding / Not yet: start the hold again),
+  // release (free the slot or stock and tell the buyer), restore (put a released booking back).
+  const waitingActions = { remind: remindWaitingBuyer, keep: keepHolding, release: releaseWaiting, restore: restoreReleasedBooking };
+  app.post("/api/accounts/waiting/:reference/:action", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const blocked = await requireAccountsPlugin(c);
+    if (blocked) return blocked;
+    const action = waitingActions[c.req.param("action") as keyof typeof waitingActions];
+    if (!action) return c.json({ ok: false, error: "Not found" }, 404);
+    try { return c.json(await action(c.env, ownerId, c.req.param("reference"))); }
+    catch (error) {
+      if (error instanceof DirectPaymentError) return c.json({ ok: false, error: error.message }, error.status);
+      throw error;
+    }
   });
   // The owner has been paid for a held booking or event booking. Safe to repeat.
   app.post("/api/accounts/bookings/:id/manual-payment", async (c) => {

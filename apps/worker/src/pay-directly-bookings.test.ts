@@ -38,7 +38,7 @@ import { resolveOneToOneBookingOffer, serializeBooking, type CoreBookIntent } fr
 import { cancelOwnerBooking } from "./booking-changes";
 import { bookFreeOneToOne, finalizePaidBookingCheckout } from "./booking-checkout";
 import { createConfirmedEventBooking, resolveEventBookingOffer, resolveEventOccurrence } from "./event-booking";
-import { PAY_DIRECTLY_SCHEMA } from "./pay-directly";
+import { PAY_DIRECTLY_HOLDS_SCHEMA, PAY_DIRECTLY_SCHEMA, PAY_PAGE_SCHEMA } from "./pay-directly";
 import { listWaitingPayments, markBookingPaid } from "./pay-directly-bookings";
 import type { DbBooking, DbSite, Env } from "./types";
 
@@ -143,7 +143,7 @@ class SqliteD1 {
       CREATE TABLE financial_entry_removals (user_id TEXT NOT NULL, source_ref TEXT NOT NULL, payment_intent_id TEXT,
         removed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, source_ref));
     `);
-    for (const sql of PAY_DIRECTLY_SCHEMA) this.raw.exec(sql);
+    for (const sql of [...PAY_DIRECTLY_SCHEMA, ...PAY_PAGE_SCHEMA, ...PAY_DIRECTLY_HOLDS_SCHEMA.filter((sql) => sql.includes("commerce_direct_payments"))]) this.raw.exec(sql);
     this.raw.prepare("INSERT INTO site_files (site_id, path, content) VALUES ('site-1', 'src/me.json', ?)")
       .run(Buffer.from(JSON.stringify({ name: "Kieran", intents: { book: bookIntent } })));
     this.raw.exec(`INSERT INTO commerce_payment_methods (id, user_id, kind, link, enabled, sort_order)
@@ -383,7 +383,7 @@ describe("Waiting", () => {
     expect(waiting.map((item) => [item.kind, item.id]).sort()).toEqual([
       ["booking", call.id], ["event", lesson.id], ["order", "order-waiting"],
     ].sort());
-    expect(waiting.find((item) => item.kind === "order")).toEqual({
+    expect(waiting.find((item) => item.kind === "order")).toMatchObject({
       kind: "order", id: "order-waiting", reference: "ME3-PRNT", customerName: "Flo", customerEmail: "flo@example.invalid",
       title: "Signed print", amountCents: 2500, currency: "GBP", createdAt: "2026-11-10T09:00:00Z",
       saysPaidAt: null, remindedAt: null, bookingType: null, startsAt: null, quantity: 1,

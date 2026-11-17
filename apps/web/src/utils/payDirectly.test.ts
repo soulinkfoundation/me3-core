@@ -228,7 +228,7 @@ describe("Accounts → Waiting", () => {
     api.post.mockResolvedValue({ ok: true });
     const wrapper = mount(WaitingPayments, { global: { stubs } });
     await flushPromises();
-    const button = () => wrapper.findAll(".waiting-payments__row")[0].get("button");
+    const button = () => wrapper.findAll(".waiting-payments__row")[0].findAll("button").find((candidate) => /Mark paid|Yes, it arrived|Saving/.test(candidate.text()))!;
     await button().trigger("click");
     expect(api.post).not.toHaveBeenCalled();
     expect(button().text()).toBe("Yes, it arrived");
@@ -242,5 +242,73 @@ describe("Accounts → Waiting", () => {
     await flushPromises();
     expect(api.post).toHaveBeenLastCalledWith("/accounts/orders/o1/manual-payment", {});
     expect(wrapper.text()).toContain("Nothing is waiting to be paid");
+  });
+
+  it("reminds, keeps holding, releases after a second tap and restores, each by the order's reference", async () => {
+    const held = item({ heldUntil: "2026-11-22T10:00:00.000Z", remindedAt: "2026-11-17T10:00:00Z" });
+    const stale = item({ id: "b2", reference: "ME3-9QX2", customerName: "Tom Reilly", saysPaidAt: "2026-11-10T10:00:00Z", heldUntil: null, needsDecision: true });
+    api.get.mockResolvedValue({
+      waiting: [held, stale],
+      released: [{ kind: "booking", id: "b3", reference: "ME3-2LM8", customerName: "Maeve Doyle", title: "Group class", amountCents: 1500, currency: "EUR", startsAt: "2026-12-01T10:00:00.000Z", quantity: 1, releasedAt: "2026-11-16T10:00:00Z" }],
+      settings: { remindAfterDays: 2, releaseAfterDays: 7 },
+    });
+    api.post.mockResolvedValue({ ok: true });
+    const wrapper = mount(WaitingPayments, { global: { stubs } });
+    await flushPromises();
+    // The list reloads after each action, so rows are looked up afresh.
+    const action = (row: number, label: RegExp) => wrapper.findAll(".waiting-payments__row")[row].findAll("button").find((candidate) => label.test(candidate.text()))!;
+    const rows = wrapper.findAll(".waiting-payments__row");
+    expect(rows[0].text()).toContain("Held until");
+    expect(rows[0].text()).toContain("Reminded");
+    expect(rows[1].text()).toContain("Says paid");
+    expect(rows[1].text()).not.toContain("Held until");
+    expect(rows[1].text()).toContain("Tom said they paid a while ago");
+    expect(wrapper.get(".waiting-payments__note").text()).toContain("released after 7 days");
+
+    await action(0, /^Remind Ana$/).trigger("click");
+    await flushPromises();
+    expect(api.post).toHaveBeenLastCalledWith("/accounts/waiting/ME3-4F7K/remind", {});
+    await action(0, /^Keep holding$/).trigger("click");
+    await flushPromises();
+    expect(api.post).toHaveBeenLastCalledWith("/accounts/waiting/ME3-4F7K/keep", {});
+    await action(1, /^Not yet$/).trigger("click");
+    await flushPromises();
+    expect(api.post).toHaveBeenLastCalledWith("/accounts/waiting/ME3-9QX2/keep", {});
+
+    api.post.mockClear();
+    await action(1, /^Release$/).trigger("click");
+    expect(api.post).not.toHaveBeenCalled();
+    await action(1, /^Release and tell them\?$/).trigger("click");
+    await flushPromises();
+    expect(api.post).toHaveBeenLastCalledWith("/accounts/waiting/ME3-9QX2/release", {});
+
+    await wrapper.get(".waiting-payments__released").findAll("button").find((candidate) => candidate.text() === "Restore")!.trigger("click");
+    await flushPromises();
+    expect(api.post).toHaveBeenLastCalledWith("/accounts/waiting/ME3-2LM8/restore", {});
+  });
+});
+
+describe("Settings → Payments: If they don't pay", () => {
+  it("shows the saved days, saves a change, and puts the choice back when the Worker refuses it", async () => {
+    api.get.mockImplementation(async (path: string) => path === "/commerce/status"
+      ? { payDirectly: { methods: [], remindAfterDays: 3, releaseAfterDays: 7 } }
+      : { methods: [] });
+    const wrapper = mount(PayDirectlySettings, { global: { stubs } });
+    await flushPromises();
+    const remind = wrapper.get('select[name="remindAfterDays"]');
+    const release = wrapper.get('select[name="releaseAfterDays"]');
+    expect((remind.element as HTMLSelectElement).value).toBe("3");
+    expect((release.element as HTMLSelectElement).value).toBe("7");
+
+    api.put.mockResolvedValueOnce({ ok: true, remindAfterDays: 3, releaseAfterDays: 10 });
+    await release.setValue("10");
+    await flushPromises();
+    expect(api.put).toHaveBeenLastCalledWith("/commerce/pay-directly-settings", { remindAfterDays: 3, releaseAfterDays: 10 });
+
+    api.put.mockRejectedValueOnce(new Error("Remind buyers before the booking is released."));
+    await remind.setValue("12");
+    await flushPromises();
+    expect(wrapper.get(".pay-directly__hold [role=\"alert\"]").text()).toBe("Remind buyers before the booking is released.");
+    expect((remind.element as HTMLSelectElement).value).toBe("3");
   });
 });
