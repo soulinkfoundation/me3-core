@@ -2,8 +2,11 @@ import { findActiveBookingHoldOverlap, findConfirmedBookingOverlap, loadSiteProf
 import { cancelPendingBookingReminders } from "./booking-reminders";
 import { getPayDirectlyHoldSettings } from "./commerce-settings";
 import { getEventOccurrenceAvailability, resolveEventBookingOffer, type EventOccurrence } from "./event-booking";
+import { recordManualOrderPayment } from "./account-order-fulfillment";
+import { getDefaultCommerceCurrency } from "./commerce-settings";
 import { payPageUrl } from "./pay-directly";
-import { DirectPaymentError, loadWaitingHolds, type WaitingHold } from "./pay-directly-bookings";
+import { DirectPaymentError, loadWaitingHolds, markBookingPaid, type WaitingHold, type WaitingMatch } from "./pay-directly-bookings";
+import { matchPaymentEmail, parsePaymentEmail } from "./payment-email-matching";
 import { sendPayDirectlyNotice } from "./transactional-emails";
 import type { DbBooking, DbSite, Env } from "./types";
 import { PAY_DIRECTLY_SAYS_PAID_PAUSE_DAYS } from "../../../shared/pay-directly";
@@ -352,4 +355,79 @@ export async function notifyOwnerSaysPaid(env: Env, ownerId: string, reference: 
       "Nothing is released while you check.",
     ],
   });
+}
+
+// ---------------------------------------------------------------------------
+// Payment emails. A "money arrived" email from PayPal, Wise or Revolut Business that fits a waiting
+// order is shown to the owner as "Match found". It is evidence, never a confirmation.
+
+/**
+ * Looks at one inbound email. True when it was recorded as a possible payment for one or more
+ * waiting orders, in which case Accounts must not also file it as income: the income is counted
+ * once, from the order, when the owner confirms.
+ */
+export async function recordPaymentEmailMatch(
+  env: Env,
+  ownerId: string,
+  message: { id: string; fromAddress: string | null; subject: string | null; textBody: string | null; receivedAt: string },
+  now = new Date(),
+): Promise<boolean> {
+  const email = parsePaymentEmail(message, await getDefaultCommerceCurrency(env, ownerId).catch(() => "USD"));
+  if (!email) return false;
+  let holds: WaitingHold[];
+  try {
+    holds = await loadWaitingHolds(env, ownerId, await getPayDirectlyHoldSettings(env, ownerId), now.getTime());
+  } catch {
+    return false; // Pay me directly is not set up on this install yet.
+  }
+  const match = matchPaymentEmail(email, holds.map((hold) => hold.item));
+  if (!match) return false;
+
+  let recorded = 0;
+  for (const reference of match.references) {
+    const evidence: WaitingMatch = {
+      messageId: message.id,
+      provider: email.provider,
+      providerLabel: email.providerLabel,
+      amountCents: email.amountCents,
+      currency: email.currency,
+      payerName: email.payerName,
+      subject: (message.subject || "").slice(0, 200),
+      receivedAt: message.receivedAt,
+      by: match.by,
+      alsoFits: match.references.filter((other) => other !== reference),
+    };
+    // An order keeps the first email that matched it; a redelivery of the same email is harmless.
+    const result = await env.DB.prepare(
+      `UPDATE commerce_direct_payments SET matched_email_id = ?, matched_email_json = ?, match_dismissed_at = NULL
+       WHERE reference = ? AND user_id = ? AND released_at IS NULL
+         AND (matched_email_id IS NULL OR matched_email_id = ?)`,
+    ).bind(message.id, JSON.stringify(evidence), reference, ownerId, message.id).run();
+    recorded += Number(result.meta?.changes || 0);
+  }
+  return recorded > 0;
+}
+
+/**
+ * "Confirm" on a matched (or any) waiting order: the owner says the money arrived. The same as Mark
+ * paid, by reference, so a Home card can do it in one call. Income is recorded once, from the order.
+ */
+export async function confirmWaiting(env: Env, ownerId: string, reference: string, now = new Date()) {
+  const hold = await findHold(env, ownerId, reference, now);
+  if (hold.item.kind === "order") {
+    await recordManualOrderPayment(env, ownerId, hold.item.id);
+    return { ok: true as const };
+  }
+  const matched = hold.item.match;
+  const amountCents = matched && matched.currency === hold.item.currency ? matched.amountCents : undefined;
+  const paid = await markBookingPaid(env, ownerId, hold.item.id, amountCents ? { amountCents } : {});
+  return { ok: true as const, booking: paid.booking };
+}
+
+/** "Not yet" on a match: the suggestion is put away and the order stays waiting. Nothing is paid or released. */
+export async function dismissWaitingMatch(env: Env, ownerId: string, reference: string, now = new Date()) {
+  await findHold(env, ownerId, reference, now);
+  await env.DB.prepare("UPDATE commerce_direct_payments SET match_dismissed_at = ? WHERE reference = ? AND user_id = ?")
+    .bind(sqliteTime(now), reference, ownerId).run();
+  return { ok: true as const };
 }

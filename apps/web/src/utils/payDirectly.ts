@@ -34,7 +34,37 @@ export type WaitingPayment = {
   /** The buyer said they paid a while ago: mark it paid or release it. */
   needsDecision?: boolean;
   needsYou?: boolean;
+  /** A "money arrived" email that looks like it pays this. A suggestion only: the owner confirms. */
+  match?: WaitingMatch | null;
 };
+
+export type WaitingMatch = {
+  messageId: string;
+  provider: "paypal" | "wise" | "revolut";
+  providerLabel: string;
+  amountCents: number;
+  currency: string;
+  payerName: string | null;
+  subject: string;
+  receivedAt: string;
+  by: "reference" | "amount_and_name";
+  /** Other waiting orders the same email also fits: the owner has to choose. */
+  alsoFits: string[];
+};
+
+/** One sentence of evidence for a match, as shown in Waiting and on Home. */
+export function matchEvidence(item: Pick<WaitingPayment, "match" | "reference">): string {
+  const match = item.match;
+  if (!match) return "";
+  const amount = new Intl.NumberFormat(undefined, { style: "currency", currency: match.currency || "USD" }).format(match.amountCents / 100);
+  const at = new Date(match.receivedAt);
+  const time = Number.isNaN(at.getTime()) ? "" : ` at ${at.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`;
+  const what = `From ${match.providerLabel}’s email${time}: ${amount}${match.payerName ? ` from ${match.payerName}` : ""}`;
+  const how = match.by === "reference" ? `reference ${item.reference}` : "same amount and a similar name";
+  return match.alsoFits.length
+    ? `${what}. It also fits ${match.alsoFits.join(", ")}, so check which one it pays.`
+    : `${what}, ${how}.`;
+}
 
 /** A booking released for non-payment that can be restored while its time is still free. */
 export type ReleasedBooking = {

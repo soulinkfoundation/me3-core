@@ -38,7 +38,7 @@ import { resolveOneToOneBookingOffer, serializeBooking, type CoreBookIntent } fr
 import { cancelOwnerBooking } from "./booking-changes";
 import { bookFreeOneToOne, finalizePaidBookingCheckout } from "./booking-checkout";
 import { createConfirmedEventBooking, resolveEventBookingOffer, resolveEventOccurrence } from "./event-booking";
-import { PAY_DIRECTLY_HOLDS_SCHEMA, PAY_DIRECTLY_SCHEMA, PAY_PAGE_SCHEMA } from "./pay-directly";
+import { PAY_DIRECTLY_HOLDS_SCHEMA, PAY_DIRECTLY_MATCH_SCHEMA, PAY_DIRECTLY_SCHEMA, PAY_PAGE_SCHEMA } from "./pay-directly";
 import { listWaitingPayments, markBookingPaid } from "./pay-directly-bookings";
 import { getPayDirectlyHoldSettings, updatePayDirectlyHoldSettings } from "./commerce-settings";
 import { keepHolding, releaseWaiting, remindWaitingBuyer, restoreReleasedBooking, runPayDirectlyFollowUps } from "./pay-directly-holds";
@@ -152,7 +152,7 @@ class SqliteD1 {
       CREATE TABLE financial_entry_removals (user_id TEXT NOT NULL, source_ref TEXT NOT NULL, payment_intent_id TEXT,
         removed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, source_ref));
     `);
-    for (const sql of [...PAY_DIRECTLY_SCHEMA, ...PAY_PAGE_SCHEMA, ...PAY_DIRECTLY_HOLDS_SCHEMA.filter((sql) => sql.includes("commerce_direct_payments"))]) this.raw.exec(sql);
+    for (const sql of [...PAY_DIRECTLY_SCHEMA, ...PAY_PAGE_SCHEMA, ...PAY_DIRECTLY_HOLDS_SCHEMA.filter((sql) => sql.includes("commerce_direct_payments")), ...PAY_DIRECTLY_MATCH_SCHEMA]) this.raw.exec(sql);
     this.raw.prepare("INSERT INTO site_files (site_id, path, content) VALUES ('site-1', 'src/me.json', ?)")
       .run(Buffer.from(JSON.stringify({ name: "Kieran", intents: { book: bookIntent } })));
     this.raw.exec(`INSERT INTO commerce_payment_methods (id, user_id, kind, link, enabled, sort_order)

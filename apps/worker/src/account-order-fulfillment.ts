@@ -1,5 +1,6 @@
 import { AccountsInputError } from "./accounts";
 import { confirmManualProductOrder } from "./commerce-orders";
+import { releaseEmailMatchFromOthers } from "./pay-directly";
 import type { Env } from "./types";
 
 export async function updateOrderFulfillment(env: Env, ownerId: string, orderId: string, fulfilled: unknown) {
@@ -14,5 +15,6 @@ export async function updateOrderFulfillment(env: Env, ownerId: string, orderId:
 
 export async function recordManualOrderPayment(env: Env, ownerId: string, orderId: string) {
   await confirmManualProductOrder(env, ownerId, orderId);
+  await releaseEmailMatchFromOthers(env, ownerId, { orderId });
   return { ok: true };
 }

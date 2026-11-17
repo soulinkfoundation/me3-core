@@ -9,6 +9,7 @@ vi.mock("../composables/useAppToast", () => ({
 vi.mock("vue-router", () => ({ RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } }));
 
 import WaitingPayments from "../components/accounts/WaitingPayments.vue";
+import PaymentsNeedYou from "../components/home/PaymentsNeedYou.vue";
 import PayDirectlySettings from "../components/payments/PayDirectlySettings.vue";
 import PaymentCollectionFields from "../components/wizard/PaymentCollectionFields.vue";
 import { validateManualPaymentInstructions } from "../composables/usePublish";
@@ -327,6 +328,52 @@ describe("Accounts → Waiting", () => {
     await wrapper.get(".waiting-payments__released").findAll("button").find((candidate) => candidate.text() === "Restore")!.trigger("click");
     await flushPromises();
     expect(api.post).toHaveBeenLastCalledWith("/accounts/waiting/ME3-2LM8/restore", {});
+  });
+});
+
+// Failure modes: a match is shown as paid rather than as a suggestion; Confirm or Not yet goes to the
+// wrong order; an email that fits two orders offers a one-tap Confirm on Home instead of asking which.
+describe("a payment email that matches a waiting order", () => {
+  const match = { messageId: "m1", provider: "paypal" as const, providerLabel: "PayPal", amountCents: 6000, currency: "EUR", payerName: "Ana Silva", subject: "You've got money", receivedAt: "2026-11-17T14:02:00Z", by: "amount_and_name" as const, alsoFits: [] as string[] };
+  const booking = (over: Partial<WaitingPayment>): WaitingPayment => ({
+    kind: "booking", id: "b1", reference: "ME3-4F7K", customerName: "Ana Silva", customerEmail: "ana@example.invalid", title: "Intro session",
+    amountCents: 6000, currency: "EUR", createdAt: new Date().toISOString(), saysPaidAt: null, remindedAt: null, bookingType: "one_to_one",
+    startsAt: "2026-11-20T10:00:00.000Z", quantity: 1, heldUntil: "2026-11-22T10:00:00.000Z", needsYou: true, match, ...over,
+  });
+
+  it("shows Match found with the email as evidence in Waiting, and confirms or leaves it by reference", async () => {
+    api.get.mockResolvedValue({ waiting: [booking({})] });
+    api.post.mockResolvedValue({ ok: true });
+    const wrapper = mount(WaitingPayments, { global: { stubs } });
+    await flushPromises();
+    const row = () => wrapper.get(".waiting-payments__row");
+    expect(row().text()).toContain("Match found");
+    expect(row().get(".waiting-payments__match p").text()).toMatch(/^From PayPal’s email at .+: €60\.00 from Ana Silva, same amount and a similar name\.$/);
+    const button = (label: string) => row().findAll(".waiting-payments__match button").find((candidate) => candidate.text() === label)!;
+    await button("Not yet").trigger("click");
+    await flushPromises();
+    expect(api.post).toHaveBeenLastCalledWith("/accounts/waiting/ME3-4F7K/not-yet", {});
+    await button("Confirm").trigger("click");
+    await flushPromises();
+    expect(api.post).toHaveBeenLastCalledWith("/accounts/waiting/ME3-4F7K/confirm", {});
+  });
+
+  it("puts it on Home with Confirm and Not yet, but only asks which when the email fits two orders", async () => {
+    const other = booking({ id: "b2", reference: "ME3-2LM8", customerName: "Rita Silva", match: { ...match, alsoFits: ["ME3-4F7K"] } });
+    api.get.mockResolvedValue({ waiting: [booking({ match: { ...match, by: "reference" } }), other, booking({ id: "b3", reference: "ME3-ZZZZ", needsYou: false, match: null })] });
+    api.post.mockResolvedValue({ ok: true });
+    const wrapper = mount(PaymentsNeedYou, { global: { stubs } });
+    await flushPromises();
+    const items = wrapper.findAll(".payments-need-you__item");
+    expect(items).toHaveLength(2);
+    expect(items[0].text()).toContain("Ana Silva paid €60.00");
+    expect(items[0].text()).toContain("reference ME3-4F7K");
+    expect(items[1].text()).toContain("may be Rita Silva’s");
+    expect(items[1].text()).toContain("It also fits ME3-4F7K");
+    expect(items[1].find(".payments-need-you__actions").exists()).toBe(false);
+    await items[0].findAll("button").find((candidate) => candidate.text() === "Confirm")!.trigger("click");
+    await flushPromises();
+    expect(api.post).toHaveBeenLastCalledWith("/accounts/waiting/ME3-4F7K/confirm", {});
   });
 });
 

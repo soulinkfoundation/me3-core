@@ -1064,6 +1064,16 @@ const runtimeMigrations: RuntimeMigration[] = [
       }
     },
   },
+  // Pay me directly: a payment email that looks like it pays a waiting order, for the owner to confirm.
+  {
+    id: "0111_pay_directly_email_matches",
+    checksum: "2026-11-17-pay-directly-email-matches-v1",
+    async apply(db) {
+      for (const column of ["matched_email_id", "matched_email_json", "match_dismissed_at"]) {
+        await addColumnIfMissing(db, "commerce_direct_payments", column, "TEXT");
+      }
+    },
+  },
 ];
 
 let migrationPromise: Promise<void> | null = null;

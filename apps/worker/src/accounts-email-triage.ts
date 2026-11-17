@@ -3,6 +3,7 @@ import { ACCOUNTS_PLUGIN_ID, AccountsInputError, getOrCreateCategoryByName, isFi
 import { getDefaultCommerceCurrency } from "./commerce-settings";
 import { brandNameFromDomain, describeSenderName, isGenericMailProvider, parseForwardedMessage, senderDomain } from "./mailbox-sender-identity";
 import { recordOwnerActivity } from "./mission-activity";
+import { recordPaymentEmailMatch } from "./pay-directly-holds";
 import { isCorePluginEnabled } from "./plugins";
 import { sha256Text } from "./sites";
 import type { Env } from "./types";
@@ -65,6 +66,16 @@ export async function triageInboundInvoiceEmail(env: Env, mailboxId: string, mes
        AND m.status IN ('received', 'forwarded')`,
   ).bind(messageId, mailboxId).first<InvoiceMessage>();
   if (!message || !await isCorePluginEnabled(env, ACCOUNTS_PLUGIN_ID)) return false;
+  // A "money arrived" email that fits a waiting pay-directly order is shown to the owner as a match
+  // and is not filed here: its income is counted once, from the order, when the owner confirms it.
+  const matched = await recordPaymentEmailMatch(env, message.user_id, {
+    id: message.id,
+    fromAddress: invoiceSender(message).address,
+    subject: message.subject,
+    textBody: message.text_body,
+    receivedAt: message.received_at || message.created_at,
+  }).catch((error) => { console.error("Payment email matching failed:", error); return false; });
+  if (matched) return true;
   if (!(await getAccountsEmailTriageSettings(env, message.user_id)).enabled) return false;
   const score = scoreInvoiceMessage(message);
   if (score < MIN_INVOICE_MESSAGE_SCORE) return false;

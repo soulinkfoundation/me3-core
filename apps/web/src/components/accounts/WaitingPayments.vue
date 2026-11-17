@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { api } from "../../api";
 import { useAppToast } from "../../composables/useAppToast";
-import type { ReleasedBooking, WaitingPayment } from "../../utils/payDirectly";
+import { matchEvidence, type ReleasedBooking, type WaitingPayment } from "../../utils/payDirectly";
 import Button from "../Button.vue";
 import PageLoading from "../PageLoading.vue";
 
@@ -72,7 +72,7 @@ const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
 const day = (iso: string) => new Date(iso).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 /** Remind <name>, Keep holding / Not yet, Release and Restore: one call each, by the order's reference. */
-async function act(reference: string, action: "remind" | "keep" | "release" | "restore", done: string) {
+async function act(reference: string, action: "remind" | "keep" | "release" | "restore" | "confirm" | "not-yet", done: string) {
   if (acting.value) return;
   if (action === "release" && confirmingRelease.value !== reference) { confirmingRelease.value = reference; return; }
   acting.value = reference;
@@ -98,11 +98,18 @@ onMounted(load);
           <div class="waiting-payments__who">
             <strong>{{ item.customerName }}</strong>
             <span>{{ what(item) }}</span>
-            <small>{{ item.reference }} · Waiting {{ waitingFor(item).toLowerCase() }}<template v-if="item.heldUntil"> · Held until {{ day(item.heldUntil) }}</template><span v-if="item.saysPaidAt" class="waiting-payments__pill">Says paid</span><span v-if="item.remindedAt" class="waiting-payments__pill waiting-payments__pill--quiet">Reminded</span></small>
+            <small>{{ item.reference }} · Waiting {{ waitingFor(item).toLowerCase() }}<template v-if="item.heldUntil"> · Held until {{ day(item.heldUntil) }}</template><span v-if="item.match" class="waiting-payments__pill">Match found</span><span v-if="item.saysPaidAt" class="waiting-payments__pill">Says paid</span><span v-if="item.remindedAt" class="waiting-payments__pill waiting-payments__pill--quiet">Reminded</span></small>
+            <div v-if="item.match" class="waiting-payments__match">
+              <p>{{ matchEvidence(item) }}</p>
+              <div class="waiting-payments__actions">
+                <button type="button" :disabled="acting === item.reference" @click="act(item.reference, 'confirm', `Confirmed. ${firstName(item.customerName)} has their confirmation.`)">Confirm</button>
+                <button type="button" :disabled="acting === item.reference" @click="act(item.reference, 'not-yet', 'Left waiting.')">Not yet</button>
+              </div>
+            </div>
             <p v-if="item.needsDecision" class="waiting-payments__decide">{{ firstName(item.customerName) }} said they paid a while ago. Mark it paid if the money arrived, or release it. Not yet keeps it waiting and asks you again later.</p>
             <div class="waiting-payments__actions">
               <button type="button" :disabled="acting === item.reference" @click="act(item.reference, 'remind', `Reminder sent to ${firstName(item.customerName)}.`)">Remind {{ firstName(item.customerName) }}</button>
-              <button type="button" :disabled="acting === item.reference" @click="act(item.reference, 'keep', item.saysPaidAt ? 'Left waiting. ME3 asks you again later.' : `Held for another ${releaseAfterDays} days.`)">{{ item.saysPaidAt ? "Not yet" : "Keep holding" }}</button>
+              <button v-if="!item.match" type="button" :disabled="acting === item.reference" @click="act(item.reference, 'keep', item.saysPaidAt ? 'Left waiting. ME3 asks you again later.' : `Held for another ${releaseAfterDays} days.`)">{{ item.saysPaidAt ? "Not yet" : "Keep holding" }}</button>
               <button type="button" :disabled="acting === item.reference" @click="act(item.reference, 'release', `Released. ${firstName(item.customerName)} has been told.`)">{{ confirmingRelease === item.reference ? "Release and tell them?" : "Release" }}</button>
             </div>
           </div>
@@ -142,6 +149,8 @@ onMounted(load);
 .waiting-payments__who small { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
 .waiting-payments__pill { padding: 2px 8px; border-radius: 999px; background: var(--ui-primary); color: var(--ui-primary-contrast); font-size: 11px; font-weight: 700; }
 .waiting-payments__pill--quiet { background: var(--ui-surface-muted, var(--ui-bg)); color: var(--ui-text-muted); }
+.waiting-payments__match { margin-top: 4px; padding: 8px 10px; border-radius: 10px; background: var(--ui-surface-muted, var(--ui-bg)); color: var(--ui-text); font-size: 13px; line-height: 1.45; }
+.waiting-payments__match p { margin: 0; }
 .waiting-payments__decide { margin: 4px 0 0; color: var(--ui-text); font-size: 13px; line-height: 1.45; }
 .waiting-payments__actions { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 2px; }
 .waiting-payments__actions button { min-height: 36px; padding: 0; border: 0; background: transparent; color: var(--ui-accent-strong, var(--ui-accent)); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }

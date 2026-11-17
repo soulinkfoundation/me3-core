@@ -186,6 +186,7 @@ onMounted(async () => {
         <select name="releaseAfterDays" :value="releaseAfterDays" :disabled="holdSaving" @change="saveHold('releaseAfterDays', $event)"><option v-for="count in RELEASE_CHOICES" :key="count" :value="count">{{ days(count) }}</option></select></label>
       <p v-if="holdError" class="pay-directly__error" role="alert">{{ holdError }}</p>
       <p class="pay-directly__intro">ME3 sends one reminder, warns you the day before, then frees the spot and tells the buyer. A booking is always released before it starts. Once a buyer says they’ve paid, nothing is released until you decide. Shop orders are never sent until you mark them paid.</p>
+      <p class="pay-directly__intro">ME3 can also spot a payment for you. When PayPal or Wise emails you that money arrived and that email reaches your ME3 mailbox (use your ME3 address on the account, or forward the emails), ME3 matches it to the waiting order and asks you to confirm. It never marks anything paid by itself.</p>
     </div>
 
     <AppDialog :open="dialogOpen" labelled-by="pay-directly-dialog-title" @close="dialogOpen = false">

@@ -73,6 +73,34 @@ export const PAY_DIRECTLY_HOLDS_SCHEMA = [
   "ALTER TABLE commerce_direct_payments ADD COLUMN released_at TEXT",
 ] as const;
 
+// Mirrors migrations/0111_pay_directly_email_matches.sql.
+export const PAY_DIRECTLY_MATCH_SCHEMA = [
+  "ALTER TABLE commerce_direct_payments ADD COLUMN matched_email_id TEXT",
+  "ALTER TABLE commerce_direct_payments ADD COLUMN matched_email_json TEXT",
+  "ALTER TABLE commerce_direct_payments ADD COLUMN match_dismissed_at TEXT",
+] as const;
+
+/**
+ * Once an order is paid, the email that suggested it is used up: any other waiting order the same
+ * email also fitted stops showing it as a match.
+ */
+export async function releaseEmailMatchFromOthers(env: Env, ownerId: string, target: DirectPaymentTarget): Promise<void> {
+  const column = "orderId" in target ? "order_id" : "booking_id";
+  const id = "orderId" in target ? target.orderId : target.bookingId;
+  try {
+    const row = await env.DB.prepare(
+      `SELECT reference, matched_email_id FROM commerce_direct_payments WHERE ${column} = ? AND user_id = ?`,
+    ).bind(id, ownerId).first<{ reference: string; matched_email_id: string | null }>();
+    if (!row?.matched_email_id) return;
+    await env.DB.prepare(
+      `UPDATE commerce_direct_payments SET matched_email_id = NULL, matched_email_json = NULL
+       WHERE user_id = ? AND matched_email_id = ? AND reference <> ?`,
+    ).bind(ownerId, row.matched_email_id, row.reference).run();
+  } catch (error) {
+    console.error("Clearing a shared payment email match failed:", error);
+  }
+}
+
 /** A saved way to get paid, as the owner apps read it. */
 export type PaymentMethod = SavedPaymentMethod & { createdAt: string; updatedAt: string };
 

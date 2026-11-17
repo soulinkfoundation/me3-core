@@ -4,7 +4,7 @@ import { scheduleBookingRemindersForBooking } from "./booking-reminders";
 import { resolveTimeZone } from "./calendar";
 import { notifyConfirmedEventBooking, resolveEventBookingOffer } from "./event-booking";
 import { getPayDirectlyHoldSettings } from "./commerce-settings";
-import { ensurePaymentReference, holdState, listPaymentMethods, sqliteTimeMs, type HoldState } from "./pay-directly";
+import { ensurePaymentReference, holdState, listPaymentMethods, releaseEmailMatchFromOthers, sqliteTimeMs, type HoldState } from "./pay-directly";
 import type { PayDirectlyHoldSettings } from "../../../shared/pay-directly";
 import { bookingDetailsFromBooking, getOwnerContact, sendBookingConfirmationEmails } from "./transactional-emails";
 import type { DbBooking, DbSite, Env } from "./types";
@@ -77,6 +77,7 @@ export async function markBookingPaid(env: Env, ownerId: string, bookingId: stri
     await env.DB.prepare("UPDATE commerce_direct_payments SET method_id = ?, method_kind = ? WHERE booking_id = ?")
       .bind(method.id, method.kind, booking.id).run();
   }
+  await releaseEmailMatchFromOthers(env, ownerId, { bookingId: booking.id });
   await announcePaidBooking(env, paid).catch((error) => console.error("Booked email after a direct payment failed:", error));
   return { ok: true as const, alreadyPaid: false, booking: serializeBooking(paid), reference };
 }
@@ -140,8 +141,26 @@ export type WaitingPayment = {
   ownerWarnedAt: string | null;
   /** The buyer said they paid a while ago and it is still not marked paid: confirm it or release it. */
   needsDecision: boolean;
-  /** Worth showing on Home: the buyer says they paid, or release is close. */
+  /** Worth showing on Home: a payment email matches it, the buyer says they paid, or release is close. */
   needsYou: boolean;
+  /** A "money arrived" email that looks like it pays this. A suggestion: the owner confirms or leaves it. */
+  match: WaitingMatch | null;
+};
+
+export type WaitingMatch = {
+  /** The mailbox message that is the evidence. */
+  messageId: string;
+  provider: "paypal" | "wise" | "revolut";
+  providerLabel: string;
+  amountCents: number;
+  currency: string;
+  payerName: string | null;
+  subject: string;
+  receivedAt: string;
+  /** reference: the email carries this order's reference. amount_and_name: same amount and a similar payer name. */
+  by: "reference" | "amount_and_name";
+  /** References of other waiting orders the same email also fits. Not empty means the owner must choose. */
+  alsoFits: string[];
 };
 
 /** A booking released for non-payment that can still be put back while its time is free. */
@@ -180,7 +199,15 @@ type WaitingRow = {
   hold_started_at: string | null;
   owner_warned_at: string | null;
   owner_nudged_at: string | null;
+  matched_email_json: string | null;
+  match_dismissed_at: string | null;
 };
+
+function parseMatch(row: Pick<WaitingRow, "matched_email_json" | "match_dismissed_at">): WaitingMatch | null {
+  if (!row.matched_email_json || row.match_dismissed_at) return null;
+  try { return JSON.parse(row.matched_email_json) as WaitingMatch; }
+  catch { return null; }
+}
 
 /** One waiting order or booking with what the reminder and release job needs to act on it. */
 export type WaitingHold = {
@@ -209,7 +236,8 @@ export async function loadWaitingHolds(
             o.created_at AS created_at, NULL AS booking_type, NULL AS starts_at, 1 AS quantity,
             p.reference AS reference, p.says_paid_at AS says_paid_at, p.reminded_at AS reminded_at,
             p.pay_token AS pay_token, p.hold_started_at AS hold_started_at, p.owner_warned_at AS owner_warned_at,
-            p.owner_nudged_at AS owner_nudged_at
+            p.owner_nudged_at AS owner_nudged_at, p.matched_email_json AS matched_email_json,
+            p.match_dismissed_at AS match_dismissed_at
      FROM commerce_orders o
      JOIN sites s ON s.id = o.site_id
      LEFT JOIN commerce_direct_payments p ON p.order_id = o.id
@@ -224,7 +252,8 @@ export async function loadWaitingHolds(
             COALESCE(b.quantity, 1) AS quantity,
             p.reference AS reference, p.says_paid_at AS says_paid_at, p.reminded_at AS reminded_at,
             p.pay_token AS pay_token, p.hold_started_at AS hold_started_at, p.owner_warned_at AS owner_warned_at,
-            p.owner_nudged_at AS owner_nudged_at
+            p.owner_nudged_at AS owner_nudged_at, p.matched_email_json AS matched_email_json,
+            p.match_dismissed_at AS match_dismissed_at
      FROM bookings b
      JOIN sites s ON s.id = b.site_id
      LEFT JOIN commerce_direct_payments p ON p.booking_id = b.id
@@ -236,6 +265,7 @@ export async function loadWaitingHolds(
   for (const row of rows.results || []) {
     const state = holdState(row, settings, nowMs);
     const needsDecision = state.paused && state.decideAtMs !== null && nowMs >= state.decideAtMs;
+    const match = parseMatch(row);
     holds.push({
       state,
       siteId: row.site_id,
@@ -261,7 +291,8 @@ export async function loadWaitingHolds(
         heldUntil: state.paused ? null : new Date(state.releaseAtMs).toISOString(),
         ownerWarnedAt: (sqliteTimeMs(row.owner_warned_at) ?? 0) >= (sqliteTimeMs(row.hold_started_at) ?? 0) ? isoUtc(row.owner_warned_at) : null,
         needsDecision,
-        needsYou: state.paused || nowMs >= state.warnOwnerAtMs,
+        needsYou: Boolean(match) || state.paused || nowMs >= state.warnOwnerAtMs,
+        match,
       },
     });
   }
