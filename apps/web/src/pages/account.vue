@@ -10,6 +10,7 @@ import CodingAgentSettings from "../components/CodingAgentSettings.vue";
 import EmailSendAs from "../components/email/EmailSendAs.vue";
 import SiteDomainSettings from "../components/SiteDomainSettings.vue";
 import PageLoading from "../components/PageLoading.vue";
+import PayDirectlySettings from "../components/payments/PayDirectlySettings.vue";
 import AppPageBar from "../components/AppPageBar.vue";
 import PluginList from "../components/PluginList.vue";
 import SoulinkConnectPanel from "../components/SoulinkConnectPanel.vue";
@@ -4010,6 +4011,8 @@ onBeforeUnmount(() => {
                     Remove stored key
                   </Button>
                 </div>
+
+                <PayDirectlySettings />
 
                 <div v-if="PARKED_FEATURES.agentPayments && commerceSettings?.agentCheckout" class="agent-checkout-setting">
                   <label class="checkbox-row">

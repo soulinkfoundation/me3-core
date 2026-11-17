@@ -7,6 +7,7 @@ import AppDialog from "../components/AppDialog.vue";
 import AppPageBar from "../components/AppPageBar.vue";
 import Button from "../components/Button.vue";
 import PageLoading from "../components/PageLoading.vue";
+import WaitingPayments from "../components/accounts/WaitingPayments.vue";
 import UiIcon from "../components/UiIcon.vue";
 import { useAppToast } from "../composables/useAppToast";
 import { COMMERCE_CURRENCY_OPTIONS } from "../utils/commerce";
@@ -23,7 +24,7 @@ definePage({
 });
 
 type EntryType = "income" | "expense";
-type AccountsView = EntryType | "customers";
+type AccountsView = EntryType | "customers" | "waiting";
 type EntryStatus = "pending" | "paid" | "overdue" | "cancelled" | "needs_review";
 type EntrySource = "manual" | "email_triage" | "stripe" | "csv_import" | "website";
 type Category = { id: string; name: string; entryType: EntryType };
@@ -193,6 +194,8 @@ const currencyOptions = computed(() => {
 async function loadAccounts() {
   const requestId = ++accountsRequestId;
   const requestedView = currentView.value;
+  // Waiting loads itself (components/accounts/WaitingPayments.vue).
+  if (requestedView === "waiting") { loading.value = false; return; }
   loading.value = true;
   try {
     if (requestedView === "customers") {
@@ -499,7 +502,9 @@ function accountView(value: unknown): AccountsView {
     ? "expense"
     : value === "customers"
       ? "customers"
-      : "income";
+      : value === "waiting"
+        ? "waiting"
+        : "income";
 }
 
 const updatingOrder = ref<string | null>(null);
@@ -607,11 +612,11 @@ onMounted(() => {
     <AppPageBar title="Accounts">
       <template #actions>
         <div class="accounts-toolbar__actions">
-          <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Search and filter" :active="Boolean(activeFilterCount)" @click="filtersOpen = true">
+          <Button v-if="currentView !== 'waiting'" color="ghost" shape="soft" size="compact" icon-only aria-label="Search and filter" :active="Boolean(activeFilterCount)" @click="filtersOpen = true">
             <UiIcon name="Search" :size="17" /><span v-if="activeFilterCount" class="accounts-filter-count">{{ activeFilterCount }}</span>
           </Button>
-          <Button v-if="currentView !== 'customers'" color="ghost" shape="soft" size="compact" icon-only aria-label="Add entry" @click="openNewEntry"><UiIcon name="Plus" :size="18" /></Button>
-          <details v-if="currentView !== 'customers'" ref="actionsMenu" class="accounts-actions-menu">
+          <Button v-if="currentView !== 'customers' && currentView !== 'waiting'" color="ghost" shape="soft" size="compact" icon-only aria-label="Add entry" @click="openNewEntry"><UiIcon name="Plus" :size="18" /></Button>
+          <details v-if="currentView !== 'customers' && currentView !== 'waiting'" ref="actionsMenu" class="accounts-actions-menu">
             <summary aria-label="Account actions"><UiIcon name="Ellipsis" :size="18" /></summary>
             <div class="accounts-actions-menu__popover">
               <fieldset class="accounts-columns">
@@ -652,10 +657,15 @@ onMounted(() => {
           <button id="accounts-tab-customers" type="button" :class="{ 'is-active': currentView === 'customers' }" role="tab" :aria-selected="currentView === 'customers'" aria-controls="accounts-panel" @click="setView('customers')">
             Customers
           </button>
+          <button id="accounts-tab-waiting" type="button" :class="{ 'is-active': currentView === 'waiting' }" role="tab" :aria-selected="currentView === 'waiting'" aria-controls="accounts-panel" @click="setView('waiting')">
+            Waiting
+          </button>
         </div>
       </header>
 
       <section id="accounts-panel" role="tabpanel" :aria-labelledby="`accounts-tab-${currentView === 'expense' ? 'expenses' : currentView}`">
+        <WaitingPayments v-if="currentView === 'waiting'" />
+        <template v-else>
         <PageLoading v-if="loading && currentView !== 'customers' && !stats" compact label="Loading accounts..." />
         <div v-else-if="currentView !== 'customers'" class="accounts-summary">
           <div>
@@ -757,6 +767,7 @@ onMounted(() => {
           <summary>{{ importFeedback.skipped }} CSV {{ importFeedback.skipped === 1 ? "row was" : "rows were" }} skipped</summary>
           <ul><li v-for="error in importFeedback.errors" :key="`${error.row}:${error.reason}`">Row {{ error.row }}: {{ error.reason }}</li></ul>
         </details>
+        </template>
       </section>
     </div>
 
@@ -824,7 +835,7 @@ onMounted(() => {
 .accounts-page { width: 100%; min-width: 0; min-height: 100vh; min-height: 100dvh; overflow-x: hidden; padding: var(--workspace-topbar-padding-block) 24px 40px; background: var(--ui-bg); color: var(--ui-text); }
 .accounts-workspace { display: grid; width: min(1120px, 100%); min-width: 0; gap: 14px; margin: 0 auto; }
 .accounts-toolbar { display: flex; justify-content: center; padding: 4px 0 8px; }
-.accounts-tabs { display: grid; width: min(540px, 100%); grid-template-columns: repeat(3, 1fr); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
+.accounts-tabs { display: grid; width: min(640px, 100%); grid-template-columns: repeat(4, 1fr); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
 .accounts-tabs button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
 .accounts-tabs button:hover, .accounts-tabs button:focus-visible { color: var(--ui-text); outline: none; }
 .accounts-tabs button:focus-visible { box-shadow: inset 0 0 0 2px var(--ui-focus); }

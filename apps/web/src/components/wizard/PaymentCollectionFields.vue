@@ -1,18 +1,44 @@
 <script setup lang="ts">
+import { computed, onMounted, ref } from "vue";
+import { RouterLink } from "vue-router";
 import type { WizardPaymentMethod } from "../../stores/wizard";
+import { methodsOfferedFor, PAY_DIRECTLY_SETTINGS_PATH, paymentMethodName, usePayDirectlyMethods } from "../../utils/payDirectly";
 import StripePaymentSetupCallout from "./StripePaymentSetupCallout.vue";
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     modelValue: WizardPaymentMethod;
+    /** The owner's optional note for buyers (the offer's paymentInstructions). */
     instructions: string;
     inputId: string;
+    /** The offer's currency: a bank account is offered only for orders in its own currency. */
+    currency?: string;
     compact?: boolean;
   }>(),
   {
+    currency: "USD",
     compact: true,
   },
 );
+
+const TIDY_KEY = "me3.payDirectly.tidyNoteSeen";
+const { methods, loaded, load } = usePayDirectlyMethods();
+const offered = computed(() => methodsOfferedFor(methods.value, props.currency));
+const offeredNames = computed(() => offered.value.map((method) => paymentMethodName(method.kind)).join(", "));
+const tidySeen = ref(true);
+// Shown once: a note written before saved methods may repeat details buyers now get anyway.
+const suggestTidy = computed(() => !tidySeen.value && offered.value.length > 0 && Boolean(props.instructions.trim()));
+
+function dismissTidy() {
+  tidySeen.value = true;
+  try { localStorage.setItem(TIDY_KEY, "1"); } catch { /* per-browser convenience only */ }
+}
+
+onMounted(() => {
+  try { tidySeen.value = localStorage.getItem(TIDY_KEY) === "1"; } catch { tidySeen.value = false; }
+  // The Worker checks again on publish, so a failed load only hides the summary.
+  void load().catch(() => undefined);
+});
 
 const emit = defineEmits<{
   "update:modelValue": [value: WizardPaymentMethod];
@@ -55,31 +81,48 @@ function updateInstructions(event: Event) {
           @change="updateMethod"
         />
         <span>
-          <strong>Pay separately</strong>
+          <strong>Pay me directly</strong>
           <small>
-            Payment is not taken now. The customer receives payment details by
-            email after confirming.
+            The customer pays you by PayPal, Revolut, Wise or bank transfer. Their
+            booking or order is held until you mark it paid.
           </small>
         </span>
       </label>
     </div>
 
     <div v-if="modelValue === 'manual'" class="payment-instructions-field">
-      <label :for="`${inputId}-instructions`">Payment details for this offer</label>
+      <p v-if="offered.length" class="pay-directly-summary" data-test="pay-directly-offered">
+        Buyers paying in {{ currency }} are offered: <strong>{{ offeredNames }}</strong>.
+        <RouterLink :to="PAY_DIRECTLY_SETTINGS_PATH">Change in Settings → Payments</RouterLink>
+      </p>
+      <p v-else-if="loaded && !instructions.trim()" class="pay-directly-summary pay-directly-summary--missing" role="status" data-test="pay-directly-missing">
+        You have no way to get paid in {{ currency }} yet.
+        <RouterLink :to="PAY_DIRECTLY_SETTINGS_PATH">Add one in Settings → Payments</RouterLink>,
+        or write a note for buyers below.
+      </p>
+      <p v-else-if="loaded" class="pay-directly-summary">
+        Buyers get your note. To offer one-tap PayPal, Revolut, Wise or bank details,
+        <RouterLink :to="PAY_DIRECTLY_SETTINGS_PATH">save them in Settings → Payments</RouterLink>.
+      </p>
+      <label :for="`${inputId}-instructions`">Note for buyers (optional)</label>
       <textarea
         :id="`${inputId}-instructions`"
         :value="instructions"
-        rows="4"
+        rows="3"
         maxlength="4000"
-        required
         :aria-describedby="`${inputId}-instructions-help`"
-        placeholder="Add a payment link, bank details, or explain how to pay."
+        placeholder="e.g. Cash on the day is fine too."
         @input="updateInstructions"
       ></textarea>
       <small :id="`${inputId}-instructions-help`">
-        Required for Pay separately. ME3 includes these details privately in
-        the customer’s confirmation email; they never appear on your website.
+        Shown on the buyer’s payment page and in their email, under your ways to get
+        paid. It never appears on your website.
       </small>
+      <p v-if="suggestTidy" class="pay-directly-summary pay-directly-tidy" data-test="pay-directly-tidy">
+        Your saved ways to get paid are now shown to buyers for you. If this note
+        repeats those details, you can shorten it.
+        <button type="button" @click="dismissTidy">Got it</button>
+      </p>
     </div>
 
     <StripePaymentSetupCallout
@@ -156,6 +199,42 @@ function updateInstructions(event: Event) {
 .payment-instructions-field {
   display: grid;
   gap: 7px;
+}
+
+.pay-directly-summary {
+  margin: 0;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pay-directly-summary strong {
+  color: var(--ui-text, var(--color-text));
+}
+
+.pay-directly-summary a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+
+.pay-directly-summary--missing {
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border-strong, var(--color-border));
+  border-radius: var(--ui-radius-md, 10px);
+  color: var(--ui-text, var(--color-text));
+}
+
+.pay-directly-tidy button {
+  min-height: 32px;
+  margin-left: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border, var(--color-border));
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .payment-instructions-field label {

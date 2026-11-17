@@ -271,6 +271,25 @@ export function buildPaymentOptions(methods: SavedPaymentMethod[], order: Paymen
 
 const LINK_LABELS: Record<Exclude<PaymentMethodKind, "bank">, string> = { paypal: "PayPal", revolut: "Revolut", wise: "Wise" };
 
+/** "PayPal", "Revolut", "Wise" or "Bank transfer". */
+export function paymentMethodName(kind: PaymentMethodKind): string {
+  return kind === "bank" ? "Bank transfer" : LINK_LABELS[kind];
+}
+
+/**
+ * What tapping a PayPal, Revolut or Wise button does for the buyer, true to what the link
+ * carries: only some fill in the amount, and only Wise Business fills in the reference.
+ */
+export function paymentOptionHint(
+  option: Pick<PaymentOption, "kind" | "carriesAmount" | "carriesReference">,
+  amount: string,
+): string {
+  const name = paymentMethodName(option.kind);
+  if (option.carriesAmount && option.carriesReference) return `Opens ${name} with ${amount} and the reference filled in.`;
+  if (option.carriesAmount) return `Opens ${name} with ${amount} filled in. Add the reference as a note if you can.`;
+  return `Opens ${name}. Enter ${amount} and add the reference.`;
+}
+
 /** The options as plain text, for emails. Empty when there is nothing to offer. */
 export function paymentOptionsText(options: PaymentOption[], reference: string): string {
   if (!options.length) return "";

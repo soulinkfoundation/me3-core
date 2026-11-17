@@ -5,6 +5,7 @@ import { productPhotoPath, useWizardStore } from "../stores/wizard";
 import { productSendsPurchaseConfirmation } from "../../../../shared/product-purchase-confirmation";
 import { useSitesStore, type PublishManifest } from "../stores/sites";
 import { api } from "../api";
+import { payDirectlyReady, type PaymentMethod } from "../utils/payDirectly";
 import { resolvePublicSiteUrl } from "../utils/publicSiteUrl";
 import {
   exportSiteContentToMarkdown,
@@ -65,20 +66,27 @@ function validateShopConfirmationEmails(
   return null;
 }
 
-function validateManualPaymentInstructions(
-  wizard: ReturnType<typeof useWizardStore>,
+/**
+ * A "Pay me directly" offer needs a saved way to get paid that takes its currency, or a note
+ * for buyers. The Worker checks the same on publish; this names the offer before anything is sent.
+ */
+export function validateManualPaymentInstructions(
+  wizard: Pick<ReturnType<typeof useWizardStore>, "shopEnabled" | "products" | "bookingsEnabled" | "profile">,
+  methods: PaymentMethod[],
 ): string | null {
+  const fix = (currency: string) =>
+    `add a way to get paid in ${currency} in Settings → Payments, or a note for buyers.`;
   const product = wizard.shopEnabled
     ? wizard.products.find(
         (candidate) =>
           candidate.available &&
           candidate.price > 0 &&
           candidate.paymentMethod === "manual" &&
-          !candidate.paymentInstructions.trim(),
+          !payDirectlyReady(methods, candidate.currency, candidate.paymentInstructions),
       )
     : undefined;
   if (product) {
-    return `Offerings — "${product.title}": add payment instructions for pay separately.`;
+    return `Offerings — "${product.title}": ${fix(product.currency)}`;
   }
 
   const bookingOffers = wizard.bookingsEnabled
@@ -92,10 +100,10 @@ function validateManualPaymentInstructions(
     (candidate) =>
       candidate.pricing?.enabled &&
       candidate.pricing.paymentMethod === "manual" &&
-      !candidate.pricing.paymentInstructions.trim(),
+      !payDirectlyReady(methods, candidate.pricing.currency, candidate.pricing.paymentInstructions),
   );
-  if (booking) {
-    return `Bookings — "${booking.title}": add payment instructions for pay separately.`;
+  if (booking?.pricing) {
+    return `Bookings — "${booking.title}": ${fix(booking.pricing.currency)}`;
   }
   return null;
 }
@@ -167,7 +175,12 @@ export function usePublish() {
       if (shopConfirmationError) {
         throw new Error(shopConfirmationError);
       }
-      const manualPaymentError = validateManualPaymentInstructions(wizard);
+      // If the saved methods cannot be read, leave the check to the Worker rather than block wrongly.
+      const savedMethods = await api
+        .get<{ methods?: PaymentMethod[] }>("/commerce/payment-methods")
+        .then((response) => response.methods || [])
+        .catch(() => null);
+      const manualPaymentError = savedMethods ? validateManualPaymentInstructions(wizard, savedMethods) : null;
       if (manualPaymentError) {
         throw new Error(manualPaymentError);
       }

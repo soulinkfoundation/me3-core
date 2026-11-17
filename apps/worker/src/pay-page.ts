@@ -1,5 +1,5 @@
 import { create as createQr } from "qrcode/lib/core/qrcode.js";
-import { buildPaymentOptions, type PaymentOption } from "../../../shared/pay-directly";
+import { buildPaymentOptions, paymentOptionHint, type PaymentOption } from "../../../shared/pay-directly";
 import { loadSiteProfileForCommerce } from "./booking";
 import { listPaymentMethods, payPagePath } from "./pay-directly";
 import type { DbBooking, DbCommerceOrder, DbSite, Env } from "./types";
@@ -157,14 +157,6 @@ const groupSortCode = (sortCode: string) => sortCode.replace(/^(\d{2})(\d{2})(\d
 
 const METHOD_NAMES = { paypal: "PayPal", revolut: "Revolut", wise: "Wise" } as const;
 
-/** What tapping a method does, true to what its link carries: only some fill in the amount or the reference. */
-export function methodHint(option: Pick<PaymentOption, "kind" | "carriesAmount" | "carriesReference">, amount: string): string {
-  const name = METHOD_NAMES[option.kind as keyof typeof METHOD_NAMES];
-  if (option.carriesAmount && option.carriesReference) return `Opens ${name} with ${amount} and the reference filled in.`;
-  if (option.carriesAmount) return `Opens ${name} with ${amount} filled in. Add the reference as a note if you can.`;
-  return `Opens ${name}. Enter ${amount} and add the reference.`;
-}
-
 function copyRow(label: string, shown: string, copied: string): string {
   return `<div class="row"><span class="label">${escapeHtml(label)}</span><span class="value">${escapeHtml(shown)}</span><button type="button" class="copy" data-copy="${escapeHtml(copied)}">Copy</button></div>`;
 }
@@ -184,7 +176,7 @@ function methodsMarkup(data: PayPageData, amount: string): string {
   return data.options.map((option) => {
     if (option.kind !== "bank" || !option.bank) {
       const name = METHOD_NAMES[option.kind as keyof typeof METHOD_NAMES];
-      return `<a class="method" href="${escapeHtml(option.url || "")}" target="_blank" rel="noopener noreferrer"><strong>Pay with ${name}</strong><span>${escapeHtml(methodHint(option, amount))}</span></a>`;
+      return `<a class="method" href="${escapeHtml(option.url || "")}" target="_blank" rel="noopener noreferrer"><strong>Pay with ${name}</strong><span>${escapeHtml(paymentOptionHint(option, amount))}</span></a>`;
     }
     const bank = option.bank;
     return `<section class="bank"><h2>Bank transfer</h2>

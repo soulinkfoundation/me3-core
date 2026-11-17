@@ -617,6 +617,7 @@ defineExpose({
           v-model="productPaymentMethod"
           v-model:instructions="productPaymentInstructions"
           :input-id="`product-${selectedProduct.slug}`"
+          :currency="selectedProduct.currency"
         />
 
         <div class="form-group">
@@ -642,7 +643,7 @@ defineExpose({
           <p class="confirmation-email-lead">
             {{
               productPaymentMethod === "manual"
-                ? "ME3 sends the payment instructions above after the request is confirmed. Add an optional message if you need to include other next steps."
+                ? "ME3 emails the buyer a link to pay you directly, and their confirmation once you mark the order paid. Add an optional message if you need to include other next steps."
                 : "Buyers receive a standard order confirmation after payment. Add a custom message if needed."
             }}
           </p>

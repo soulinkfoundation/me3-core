@@ -1211,6 +1211,7 @@ onMounted(() => {
                   v-model="activeOfferPaymentMethod"
                   v-model:instructions="activeOfferPaymentInstructions"
                   :input-id="`booking-offer-${activeOffer.id}`"
+                  :currency="activeOffer.pricing?.currency"
                 />
               </div>
               <div class="offer-extra-settings">
@@ -1437,6 +1438,7 @@ onMounted(() => {
                   v-model="activeClassOfferPaymentMethod"
                   v-model:instructions="activeClassOfferPaymentInstructions"
                   :input-id="`class-offer-${activeClassOffer.id}`"
+                  :currency="activeClassOffer.pricing?.currency"
                 />
               </div>
             </div>
@@ -1653,6 +1655,7 @@ onMounted(() => {
                   v-model="activeRetreatOfferPaymentMethod"
                   v-model:instructions="activeRetreatOfferPaymentInstructions"
                   :input-id="`retreat-offer-${activeRetreatOffer.id}`"
+                  :currency="activeRetreatOffer.pricing?.currency"
                 />
               </div>
             </div>
