@@ -158,10 +158,17 @@ export interface WizardBookingPricing {
   allowFlexiblePricing?: boolean;
   allowFree: boolean;
   paymentMethod: WizardPaymentMethod;
+  /** "Let them choose": with paymentMethod "stripe", the buyer may pay the owner directly instead. */
+  allowPayDirectly?: boolean;
   paymentInstructions: string;
 }
 
 export type WizardPaymentMethod = "stripe" | "manual";
+
+/** The flag is only written for a card offer; older apps that do not know it see a plain card offer. */
+function exportAllowPayDirectly(offer: { paymentMethod: WizardPaymentMethod; allowPayDirectly?: boolean }): true | undefined {
+  return offer.paymentMethod !== "manual" && offer.allowPayDirectly === true ? true : undefined;
+}
 
 export interface WizardBookingConfirmationEmail {
   message: string;
@@ -459,6 +466,8 @@ export interface WizardProduct {
   currency: "USD" | "GBP" | "EUR" | "CAD" | "AUD" | "CHF" | "SGD" | "INR" | "PKR";
   available: boolean;
   paymentMethod: WizardPaymentMethod;
+  /** "Let them choose": with paymentMethod "stripe", the buyer may pay the owner directly instead. */
+  allowPayDirectly?: boolean;
   paymentInstructions: string;
   publishedAt?: string;
   excerpt?: string;
@@ -3511,9 +3520,10 @@ export const useWizardStore = defineStore("wizard", () => {
             publishedAt: undefined,
             excerpt: undefined,
             paymentMethod: p.paymentMethod,
+            allowPayDirectly: exportAllowPayDirectly(p),
             paymentInstructions:
-              p.paymentMethod === "manual"
-                ? p.paymentInstructions.trim()
+              p.paymentMethod === "manual" || exportAllowPayDirectly(p)
+                ? p.paymentInstructions.trim() || undefined
                 : undefined,
           };
           if (typeof p.available === "boolean") {
@@ -3750,6 +3760,7 @@ export const useWizardStore = defineStore("wizard", () => {
                   allowFlexiblePricing: offer.pricing.allowFlexiblePricing,
                   allowFree: offer.pricing.allowFree,
                   paymentMethod: offer.pricing.paymentMethod,
+                  allowPayDirectly: exportAllowPayDirectly(offer.pricing),
                   paymentInstructions: offer.pricing.paymentInstructions,
                 }
               : undefined,
@@ -3782,6 +3793,7 @@ export const useWizardStore = defineStore("wizard", () => {
                   allowFlexiblePricing: offer.pricing.allowFlexiblePricing,
                   allowFree: offer.pricing.allowFree,
                   paymentMethod: offer.pricing.paymentMethod,
+                  allowPayDirectly: exportAllowPayDirectly(offer.pricing),
                   paymentInstructions: offer.pricing.paymentInstructions,
                 }
               : undefined,
@@ -3818,6 +3830,7 @@ export const useWizardStore = defineStore("wizard", () => {
                   allowFlexiblePricing: offer.pricing.allowFlexiblePricing,
                   allowFree: offer.pricing.allowFree,
                   paymentMethod: offer.pricing.paymentMethod,
+                  allowPayDirectly: exportAllowPayDirectly(offer.pricing),
                   paymentInstructions: offer.pricing.paymentInstructions,
                 }
               : undefined,
@@ -3907,6 +3920,7 @@ export const useWizardStore = defineStore("wizard", () => {
               allowFlexiblePricing: pricing.allowFlexiblePricing,
               allowFree: pricing.allowFree,
               paymentMethod: pricing.paymentMethod,
+              allowPayDirectly: exportAllowPayDirectly(pricing),
               paymentInstructions: pricing.paymentInstructions,
             };
           }
@@ -4843,6 +4857,7 @@ export const useWizardStore = defineStore("wizard", () => {
       delivery?: ProductDelivery;
       confirmationEmail?: WizardProductConfirmationEmail;
       paymentMethod?: WizardPaymentMethod;
+      allowPayDirectly?: boolean;
       paymentInstructions?: string;
       images?: string[];
       stock?: number;
@@ -5296,6 +5311,7 @@ export const useWizardStore = defineStore("wizard", () => {
         options: p.options,
         available: p.available ?? true,
         paymentMethod: normalizeWizardPaymentMethod(p.paymentMethod),
+        allowPayDirectly: p.allowPayDirectly === true,
         paymentInstructions: normalizeWizardPaymentInstructions(
           p.paymentInstructions,
         ),

@@ -246,6 +246,14 @@ const productPaymentMethod = computed({
   },
 });
 
+const productAllowPayDirectly = computed({
+  get: () => selectedProduct.value?.allowPayDirectly === true,
+  set: (val: boolean) => {
+    if (selectedProductIndex.value === null) return;
+    wizard.updateProduct(selectedProductIndex.value, { allowPayDirectly: val });
+  },
+});
+
 const productPaymentInstructions = computed({
   get: () => selectedProduct.value?.paymentInstructions ?? "",
   set: (val: string) => {
@@ -616,6 +624,7 @@ defineExpose({
           v-if="selectedProductIsPaid && sellsDirectly"
           v-model="productPaymentMethod"
           v-model:instructions="productPaymentInstructions"
+          v-model:allow-pay-directly="productAllowPayDirectly"
           :input-id="`product-${selectedProduct.slug}`"
           :currency="selectedProduct.currency"
         />

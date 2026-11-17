@@ -192,6 +192,32 @@ describe("pay-directly product orders", () => {
   });
 });
 
+describe("a product that lets the buyer choose how to pay", () => {
+  const product = { slug: "clarity-kit", title: "Clarity Kit", price: 4900, currency: "EUR", available: true, paymentMethod: "stripe", allowPayDirectly: true, paymentInstructions: "Pay at https://pay.example/clarity" };
+  const order = (env: Env, body: Record<string, unknown> = {}) =>
+    createProductCheckout(env, site, "clarity-kit", { buyerName: "Buyer", buyerEmail: "buyer@example.com", ...body }, "https://owner.example/order");
+
+  it("takes a pay-directly order when the buyer chooses that", async () => {
+    const { env, orders } = createEnv(product);
+    sendProductPaymentInstructionsEmail.mockResolvedValueOnce({ status: "sent" });
+    await expect(order(env, { payDirectly: true })).resolves.toMatchObject({ paymentMethod: "manual" });
+    expect(orders[0]).toMatchObject({ status: "pending", amount_due: 4900, payment_method: "manual" });
+  });
+
+  it("goes to card checkout otherwise, and payDirectly does nothing on a card-only product", async () => {
+    const { env, orders } = createEnv(product);
+    // This fixture has no working card provider: failing there, not holding an order, is the point.
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("no network in this test"); }));
+    await expect(order(env)).rejects.toBeDefined();
+    const cardOnly = createEnv({ ...product, allowPayDirectly: undefined });
+    await expect(order(cardOnly.env, { payDirectly: true })).rejects.toBeDefined();
+    vi.unstubAllGlobals();
+    expect(orders.filter((row) => row.payment_method === "manual")).toHaveLength(0);
+    expect(cardOnly.orders.filter((row) => row.payment_method === "manual")).toHaveLength(0);
+    expect(sendProductPaymentInstructionsEmail).not.toHaveBeenCalled();
+  });
+});
+
 describe("managed commerce orders", () => {
   it.each([["PK", 800000, "pkr"], ["US", 5000, "usd"], [null, 5000, "usd"]] as const)("persists the fixed price for %s in manual orders and emails", async (country, amount, currency) => {
     const { env, orders } = createEnv({ slug: "session", title: "Session", price: 5000, currency: "USD", paymentMethod: "manual", paymentInstructions: "Transfer the amount shown", regionalPrices: [{ country: "PK", currency: "PKR", amount: 800000 }] });

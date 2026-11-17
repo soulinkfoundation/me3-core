@@ -6,6 +6,7 @@ import {
   getSiteByUsername,
   getStripe,
   loadSiteProfileForCommerce,
+  offerForBuyersPaymentChoice,
   normalizeBookingAmount,
   normalizeEmail,
   normalizeLongText,
@@ -174,7 +175,8 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
     );
     if ("error" in resolved) return c.json({ error: resolved.error }, resolved.status);
 
-    const offer = resolved.offer;
+    // On a "let them choose" offer the buyer may ask to pay the owner directly.
+    const offer = offerForBuyersPaymentChoice(resolved.offer, (body as { payDirectly?: unknown }).payDirectly);
     if (
       offer.pricing?.enabled &&
       offer.pricing.paymentMethod !== "manual"
@@ -255,8 +257,10 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
     const bookIntent = profile?.intents?.book as CoreBookIntent | undefined;
     if (!bookIntent?.enabled) return c.json({ error: "Booking is not enabled for this site" }, 404);
 
-    const offer = resolveOneToOneBookingOffer(bookIntent, normalizeShortText(body.offerId, 100));
-    if (!offer) return c.json({ error: "Booking offer not found" }, 404);
+    const listedOffer = resolveOneToOneBookingOffer(bookIntent, normalizeShortText(body.offerId, 100));
+    if (!listedOffer) return c.json({ error: "Booking offer not found" }, 404);
+    // On a "let them choose" offer the buyer may ask to pay the owner directly.
+    const offer = offerForBuyersPaymentChoice(listedOffer, body.payDirectly);
     if (
       offer.pricing?.enabled &&
       offer.pricing.paymentMethod !== "manual"

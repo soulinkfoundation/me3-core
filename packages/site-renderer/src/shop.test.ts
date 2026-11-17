@@ -55,4 +55,31 @@ describe("shop for real products", () => {
     expect(files["shop/index.html"]).toContain("from 20.00 GBP");
     expect(files["shop/index.html"]).toContain("3 options");
   });
+
+  // Failure modes: the chooser is missing on a "let them choose" offer, or appears on a card-only
+  // or pay-directly one; the buyer's choice is not sent with the order or booking.
+  it("asks how to pay only on a product that lets the buyer choose", async () => {
+    const product = { slug: "print", title: "Print", price: 2500, currency: "EUR", delivery: { kind: "manual", instructions: "" } };
+    const page = async (extra: Record<string, unknown>) => (await generateSiteHtml({ ...base, products: [{ ...product, ...extra }] } as never, []))["shop/print.html"];
+    const choose = await page({ paymentMethod: "stripe", allowPayDirectly: true });
+    expect(choose).toContain("How would you like to pay?");
+    expect(choose).toContain('name="payChoice" value="direct"');
+    expect(choose).toContain('"choose":true');
+    expect(choose).toContain("payDirectly: direct || undefined");
+    expect(await page({ paymentMethod: "stripe" })).not.toContain("data-pay-choice>");
+    expect(await page({ paymentMethod: "stripe" })).toContain('"choose":false');
+    // The flag means nothing on a pay-directly product.
+    expect(await page({ paymentMethod: "manual", allowPayDirectly: true })).toContain('"choose":false');
+  });
+
+  it("offers the chooser on a booking that lets the buyer choose, and sends the choice", async () => {
+    const book = (pricing: Record<string, unknown>) => ({ enabled: true, offers: [{ id: "intro", title: "Intro call", duration: 30, pricing: { enabled: true, suggestedAmount: 60, currency: "EUR", ...pricing } }], availability: { timezone: "Europe/Dublin", windows: { monday: ["09:00-12:00"] } } });
+    const home = async (pricing: Record<string, unknown>) => (await generateSiteHtml({ ...base, intents: { book: book(pricing) } } as never, []))["index.html"];
+    const choose = await home({ paymentMethod: "stripe", allowPayDirectly: true });
+    expect(choose).toContain("data-pay-choice hidden");
+    expect(choose).toContain('"paymentMethod":"stripe","allowPayDirectly":true');
+    expect(choose).toContain("payload.payDirectly=true");
+    expect(await home({ paymentMethod: "stripe" })).toContain('"paymentMethod":"stripe","allowPayDirectly":false');
+    expect(await home({ paymentMethod: "manual", allowPayDirectly: true })).toContain('"paymentMethod":"manual","allowPayDirectly":false');
+  });
 });

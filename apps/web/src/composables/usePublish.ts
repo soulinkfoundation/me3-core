@@ -81,7 +81,7 @@ export function validateManualPaymentInstructions(
         (candidate) =>
           candidate.available &&
           candidate.price > 0 &&
-          candidate.paymentMethod === "manual" &&
+          (candidate.paymentMethod === "manual" || candidate.allowPayDirectly === true) &&
           !payDirectlyReady(methods, candidate.currency, candidate.paymentInstructions),
       )
     : undefined;
@@ -99,7 +99,7 @@ export function validateManualPaymentInstructions(
   const booking = bookingOffers.find(
     (candidate) =>
       candidate.pricing?.enabled &&
-      candidate.pricing.paymentMethod === "manual" &&
+      (candidate.pricing.paymentMethod === "manual" || candidate.pricing.allowPayDirectly === true) &&
       !payDirectlyReady(methods, candidate.pricing.currency, candidate.pricing.paymentInstructions),
   );
   if (booking?.pricing) {

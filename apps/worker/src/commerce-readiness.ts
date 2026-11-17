@@ -4,13 +4,14 @@ import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import { isCommerceReady } from "./commerce-settings";
 import type { Env } from "./types";
 import { regionalPricingError } from "../../../shared/regional-pricing";
-import { methodsCoverCurrency, type SavedPaymentMethod } from "../../../shared/pay-directly";
+import { buyerMayPayDirectly, methodsCoverCurrency, type SavedPaymentMethod } from "../../../shared/pay-directly";
 import { listPaymentMethods } from "./pay-directly";
 
 type BookingOffer = {
   pricing?: {
     enabled?: boolean;
     paymentMethod?: "stripe" | "manual";
+    allowPayDirectly?: boolean;
     paymentInstructions?: string;
     currency?: string;
   };
@@ -20,11 +21,13 @@ type CommerceProduct = {
   delivery?: ProductDelivery;
   available?: boolean;
   paymentMethod?: "stripe" | "manual";
+  allowPayDirectly?: boolean;
   paymentInstructions?: string;
   currency?: string;
 };
 
-// A pay-directly offer needs a saved way to get paid that takes its currency, or a note.
+// A pay-directly offer needs a saved way to get paid that takes its currency, or a note. So does a
+// "let them choose" offer, which also needs Stripe (it is a card offer to profileRequiresCommerce).
 function manualPaymentBlockMessage(kind: "product" | "booking", currency: string | undefined): string {
   const code = /^[A-Za-z]{3}$/.test(currency || "") ? ` in ${currency!.toUpperCase()}` : "";
   return `Add a way to get paid${code} in Settings → Payments, or a note for buyers, for every pay-directly ${kind} before publishing.`;
@@ -37,7 +40,7 @@ function profileManualPaymentBlockReason(
   const product = ((profile.products || []) as CommerceProduct[]).find(
     (candidate) =>
       candidate.available !== false &&
-      candidate.paymentMethod === "manual" &&
+      (candidate.paymentMethod === "manual" || buyerMayPayDirectly(candidate)) &&
       !candidate.paymentInstructions?.trim() &&
       !methodsCoverCurrency(methods, candidate.currency),
   );
@@ -51,7 +54,7 @@ function profileManualPaymentBlockReason(
   const offer = offers.find(
     (candidate) =>
       candidate.pricing?.enabled === true &&
-      candidate.pricing.paymentMethod === "manual" &&
+      (candidate.pricing.paymentMethod === "manual" || buyerMayPayDirectly(candidate.pricing)) &&
       !candidate.pricing.paymentInstructions?.trim() &&
       !methodsCoverCurrency(methods, candidate.pricing.currency),
   );

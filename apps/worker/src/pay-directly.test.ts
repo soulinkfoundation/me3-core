@@ -308,6 +308,22 @@ describe("order references", () => {
   });
 });
 
+describe("offers that let the buyer choose", () => {
+  const profile = () => ({
+    version: "0.1", handle: "owner", name: "Owner",
+    products: [{ slug: "kit", title: "Kit", price: 4900, currency: "EUR", available: true, paymentMethod: "stripe", allowPayDirectly: true }],
+    intents: { book: { enabled: true, offers: [{ pricing: { enabled: true, paymentMethod: "stripe", allowPayDirectly: true, currency: "EUR" } }] } },
+  }) as unknown as Parameters<typeof getProfileCommercePublishBlockReason>[2];
+
+  it("need a way to get paid directly and Stripe before they publish", async () => {
+    const { env } = fixture();
+    expect(await getProfileCommercePublishBlockReason(env, "owner", profile())).toMatch(/way to get paid in EUR.*note/i);
+    await createPaymentMethod(env, "owner", { kind: "paypal", link: "paypal.me/owner" });
+    // The saved method is there; it is still a card offer, so Stripe has to be ready too.
+    expect(await getProfileCommercePublishBlockReason(env, "owner", profile())).toBe("Connect Stripe in Settings → Payments before publishing paid bookings or products.");
+  });
+});
+
 describe("pay-directly offers", () => {
   const profile = (overrides: { note?: string; currency?: string } = {}) => ({
     version: "0.1",

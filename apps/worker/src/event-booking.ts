@@ -22,6 +22,7 @@ import {
   sendBookingConfirmationEmails,
 } from "./transactional-emails";
 import type { DbBooking, DbSite, Env } from "./types";
+import { buyerMayPayDirectly } from "../../../shared/pay-directly";
 import { bookingPaymentInstructions, sendAwaitingPaymentEmails } from "./pay-directly";
 import { dispatchWebsitePaymentNotification } from "./payment-notifications";
 
@@ -817,6 +818,7 @@ export function serializePublicEventOffer(offer: ResolvedEventBookingOffer) {
           currency: offer.pricing.currency,
           paymentMethod:
             offer.pricing.paymentMethod === "manual" ? "manual" : "stripe",
+          ...(buyerMayPayDirectly(offer.pricing) ? { allowPayDirectly: true } : {}),
         }
       : { enabled: false },
   };

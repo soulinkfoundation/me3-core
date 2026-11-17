@@ -13,10 +13,13 @@ const props = withDefaults(
     inputId: string;
     /** The offer's currency: a bank account is offered only for orders in its own currency. */
     currency?: string;
+    /** "Let them choose": a card offer whose buyer may pay the owner directly instead. */
+    allowPayDirectly?: boolean;
     compact?: boolean;
   }>(),
   {
     currency: "USD",
+    allowPayDirectly: false,
     compact: true,
   },
 );
@@ -43,11 +46,19 @@ onMounted(() => {
 const emit = defineEmits<{
   "update:modelValue": [value: WizardPaymentMethod];
   "update:instructions": [value: string];
+  "update:allowPayDirectly": [value: boolean];
 }>();
+
+// "Let them choose" is saved as a card offer plus a flag, so older apps and buying agents,
+// which read anything that is not "manual" as card, keep treating it as a card offer.
+const choice = computed<"stripe" | "manual" | "choose">(() =>
+  props.modelValue === "manual" ? "manual" : props.allowPayDirectly ? "choose" : "stripe");
+const showsDirect = computed(() => choice.value !== "stripe");
 
 function updateMethod(event: Event) {
   const value = (event.target as HTMLInputElement).value;
   emit("update:modelValue", value === "manual" ? "manual" : "stripe");
+  emit("update:allowPayDirectly", value === "choose");
 }
 
 function updateInstructions(event: Event) {
@@ -64,7 +75,7 @@ function updateInstructions(event: Event) {
           type="radio"
           :name="`${inputId}-method`"
           value="stripe"
-          :checked="modelValue === 'stripe'"
+          :checked="choice === 'stripe'"
           @change="updateMethod"
         />
         <span>
@@ -77,7 +88,7 @@ function updateInstructions(event: Event) {
           type="radio"
           :name="`${inputId}-method`"
           value="manual"
-          :checked="modelValue === 'manual'"
+          :checked="choice === 'manual'"
           @change="updateMethod"
         />
         <span>
@@ -88,9 +99,25 @@ function updateInstructions(event: Event) {
           </small>
         </span>
       </label>
+      <label class="payment-method-option payment-method-option--wide">
+        <input
+          type="radio"
+          :name="`${inputId}-method`"
+          value="choose"
+          :checked="choice === 'choose'"
+          @change="updateMethod"
+        />
+        <span>
+          <strong>Let them choose</strong>
+          <small>
+            Card or paying you directly. Needs Stripe connected and a saved way to
+            get paid (or a note).
+          </small>
+        </span>
+      </label>
     </div>
 
-    <div v-if="modelValue === 'manual'" class="payment-instructions-field">
+    <div v-if="showsDirect" class="payment-instructions-field">
       <p v-if="offered.length" class="pay-directly-summary" data-test="pay-directly-offered">
         Buyers paying in {{ currency }} are offered: <strong>{{ offeredNames }}</strong>.
         <RouterLink :to="PAY_DIRECTLY_SETTINGS_PATH">Change in Settings → Payments</RouterLink>
@@ -164,6 +191,10 @@ function updateInstructions(event: Event) {
   border-radius: var(--ui-radius-md, 10px);
   background: var(--ui-bg, var(--color-bg));
   cursor: pointer;
+}
+
+.payment-method-option--wide {
+  grid-column: 1 / -1;
 }
 
 .payment-method-option:has(input:checked) {

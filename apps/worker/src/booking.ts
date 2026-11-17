@@ -1,3 +1,4 @@
+import { buyerMayPayDirectly, forBuyersPaymentChoice } from "../../../shared/pay-directly";
 import Stripe from "stripe";
 import { getUtcMsForLocalTime, resolveTimeZone } from "./calendar";
 import { scheduleBookingRemindersForBooking } from "./booking-reminders";
@@ -22,7 +23,10 @@ export type PaidBookingCheckoutBody = {
   actionId?: unknown;
   campaign?: unknown;
 };
-export type FreeBookingBody = Omit<PaidBookingCheckoutBody, "returnUrl">;
+export type FreeBookingBody = Omit<PaidBookingCheckoutBody, "returnUrl"> & {
+  /** On a "let them choose" offer: the buyer pays the owner directly instead of by card. */
+  payDirectly?: unknown;
+};
 export type PublicBookingConfirmBody = {
   offerId?: unknown;
   slotStart?: unknown;
@@ -48,6 +52,8 @@ export type CoreBookingPricing = {
   allowFlexiblePricing?: boolean;
   minimumAmount?: number;
   paymentMethod?: "stripe" | "manual";
+  /** "Let them choose": with paymentMethod "stripe", the buyer may pay the owner directly instead. */
+  allowPayDirectly?: boolean;
   paymentInstructions?: string;
 };
 export type CoreBookingOffer = {
@@ -626,9 +632,15 @@ export function serializePublicBookingOffer(offer: ResolvedOneToOneBookingOffer)
           currency: offer.pricing.currency,
           paymentMethod:
             offer.pricing.paymentMethod === "manual" ? "manual" : "stripe",
+          ...(buyerMayPayDirectly(offer.pricing) ? { allowPayDirectly: true } : {}),
         }
       : { enabled: false },
   };
+}
+
+/** The offer as this buyer pays for it: directly when they chose that on a "let them choose" offer. */
+export function offerForBuyersPaymentChoice<T extends { pricing?: CoreBookingPricing }>(offer: T, payDirectly: unknown): T {
+  return offer.pricing ? { ...offer, pricing: forBuyersPaymentChoice(offer.pricing, payDirectly) } : offer;
 }
 
 export async function createConfirmedOneToOneBooking(

@@ -397,3 +397,25 @@ export function payDirectlyDecideAtMs(input: { saysPaidAtMs: number; startsAtMs:
   const lead = input.startsAtMs - input.saysPaidAtMs;
   return Math.min(pause, Math.max(input.startsAtMs - DAY_MS, input.saysPaidAtMs + lead / 2));
 }
+
+// ---------------------------------------------------------------------------
+// "Let them choose": a card offer whose buyer may pay the owner directly instead.
+
+/**
+ * The flag sits beside paymentMethod: pricing.allowPayDirectly on a booking offer, allowPayDirectly
+ * on a product. paymentMethod stays "stripe", so anything that does not know the flag (older apps,
+ * buying agents) sees an ordinary card offer. It means nothing on a "manual" offer.
+ */
+export function buyerMayPayDirectly(
+  offer: { paymentMethod?: unknown; allowPayDirectly?: unknown } | null | undefined,
+): boolean {
+  return Boolean(offer) && offer!.paymentMethod !== "manual" && offer!.allowPayDirectly === true;
+}
+
+/** The same offer as this buyer chose to pay it: directly, when they asked to and the offer allows it. */
+export function forBuyersPaymentChoice<T extends { paymentMethod?: "stripe" | "manual"; allowPayDirectly?: boolean }>(
+  offer: T,
+  payDirectly: unknown,
+): T {
+  return payDirectly === true && buyerMayPayDirectly(offer) ? { ...offer, paymentMethod: "manual" } : offer;
+}

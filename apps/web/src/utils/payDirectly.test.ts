@@ -110,6 +110,48 @@ describe("the offer editor's payment fields", () => {
   });
 });
 
+// Failure modes: "Let them choose" is saved as a third paymentMethod value (which older apps would
+// rewrite to card-only), the flag is left on after switching away, or it publishes with no way to pay directly.
+describe("Let them choose", () => {
+  const mountFields = (props: Record<string, unknown>) => mount(PaymentCollectionFields, {
+    props: { modelValue: "stripe", instructions: "", inputId: "offer", currency: "EUR", ...props },
+    global: { stubs },
+  });
+
+  it("is saved as a card offer plus a flag, and cleared when another option is picked", async () => {
+    api.get.mockResolvedValue({ methods: [paypal] });
+    const wrapper = mountFields({});
+    await flushPromises();
+    await wrapper.get('input[value="choose"]').setValue(true);
+    expect(wrapper.emitted("update:modelValue")!.at(-1)).toEqual(["stripe"]);
+    expect(wrapper.emitted("update:allowPayDirectly")!.at(-1)).toEqual([true]);
+    await wrapper.setProps({ allowPayDirectly: true });
+    // The buyer may pay directly, so the saved methods and the note show.
+    expect(wrapper.get('[data-test="pay-directly-offered"]').text()).toContain("PayPal");
+    expect(wrapper.find("textarea").exists()).toBe(true);
+    expect((wrapper.get('input[value="choose"]').element as HTMLInputElement).checked).toBe(true);
+
+    await wrapper.get('input[value="manual"]').setValue(true);
+    expect(wrapper.emitted("update:modelValue")!.at(-1)).toEqual(["manual"]);
+    expect(wrapper.emitted("update:allowPayDirectly")!.at(-1)).toEqual([false]);
+    await wrapper.get('input[value="stripe"]').setValue(true);
+    expect(wrapper.emitted("update:allowPayDirectly")!.at(-1)).toEqual([false]);
+  });
+
+  it("needs a saved method or a note to publish, like a pay-directly offer", () => {
+    const wizard = (allowPayDirectly: boolean) => ({
+      shopEnabled: true,
+      products: [{ title: "Print", available: true, price: 25, currency: "EUR", paymentMethod: "stripe", allowPayDirectly, paymentInstructions: "" }],
+      bookingsEnabled: true,
+      profile: { booking: { offers: [{ title: "Intro session", pricing: { enabled: true, suggestedAmount: 60, currency: "EUR", paymentMethod: "stripe", allowPayDirectly, paymentInstructions: "" } }], classOffers: [], retreatOffers: [] } },
+    }) as never;
+    expect(validateManualPaymentInstructions(wizard(true), [])).toContain('Offerings — "Print": add a way to get paid in EUR');
+    expect(validateManualPaymentInstructions(wizard(true), [paypal])).toBeNull();
+    // A plain card offer needs nothing here.
+    expect(validateManualPaymentInstructions(wizard(false), [])).toBeNull();
+  });
+});
+
 describe("Settings → Payments: Pay me directly", () => {
   async function mountSettings(methods: PaymentMethod[] = []) {
     api.get.mockResolvedValue({ methods });

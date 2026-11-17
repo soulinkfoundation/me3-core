@@ -12,6 +12,8 @@ type ProductPurchase = {
   currency?: string;
   available?: boolean;
   paymentMethod?: "stripe" | "manual";
+  /** With paymentMethod "stripe": the buyer may pay the owner directly instead of by card. */
+  allowPayDirectly?: boolean;
   enabled: boolean;
 };
 
@@ -44,6 +46,8 @@ export function renderProductCheckout(product: ProductPurchase): string {
     ? `<fieldset class="product-options"><legend>Choose an option</legend>${options.map((option) => `<label class="product-option"><input type="radio" name="optionId" value="${escape(option.id)}" data-price="${option.price}"${option === firstOption && option.stock !== 0 ? " checked" : ""}${option.stock === 0 ? " disabled" : ""} required><span>${escape(option.label)}</span><span class="product-option-price">${escape((option.price / 100).toFixed(2))} ${escape((product.currency || "").toUpperCase())}</span>${option.stock === 0 ? '<span class="product-option-note">Sold out</span>' : ""}</label>`).join("")}</fieldset>`
     : "";
   const manual = product.paymentMethod === "manual";
+  // "Let them choose": a card product whose buyer may pay the owner directly instead.
+  const choose = !manual && product.allowPayDirectly === true;
   const physical = product.delivery?.kind === "physical";
   const money = (amount: number) => `${(amount / 100).toFixed(2)} ${(product.currency || "").toUpperCase()}`;
   const digital = product.delivery?.kind === "digital";
@@ -64,7 +68,7 @@ export function renderProductCheckout(product: ProductPurchase): string {
     : soldOut ? "Sold out."
     : !hasPrice || !product.username ? "This product is not ready for checkout yet." : "";
   if (unavailable) return `<section class="product-purchase" aria-label="Purchase">${price}${soldOut ? "" : stockLine}<p>${unavailable}</p></section>`;
-  const config = JSON.stringify({ username: product.username, slug: product.slug, expectedAmount: basePrice, expectedCurrency: product.currency, manual, physical, digital, counted, shipping: physical ? product.delivery?.shippingCost || 0 : 0, lowStock: LOW_STOCK_THRESHOLD }).replace(/</g, "\\u003c");
+  const config = JSON.stringify({ username: product.username, slug: product.slug, expectedAmount: basePrice, expectedCurrency: product.currency, manual, choose, physical, digital, counted, shipping: physical ? product.delivery?.shippingCost || 0 : 0, lowStock: LOW_STOCK_THRESHOLD }).replace(/</g, "\\u003c");
   return `<section class="product-purchase" aria-label="Purchase" data-product-purchase>
     ${price}${stockLine}${shipping}${deliveryInfo}${returns}
     <p class="product-status" data-product-status role="status" aria-live="polite"></p>
@@ -74,6 +78,7 @@ export function renderProductCheckout(product: ProductPurchase): string {
       <label for="product-buyer-name">Your name</label><input id="product-buyer-name" name="buyerName" autocomplete="name" maxlength="120" required>
       <label for="product-buyer-email">Email</label><input id="product-buyer-email" name="buyerEmail" type="email" autocomplete="email" maxlength="254" required>
       ${address}
+      ${choose ? '<fieldset class="pay-choice" data-pay-choice><legend>How would you like to pay?</legend><label><input type="radio" name="payChoice" value="card" checked><span><strong>Card, Apple Pay or Google Pay</strong><small>Pay now.</small></span></label><label><input type="radio" name="payChoice" value="direct"><span><strong>Pay directly</strong><small>By PayPal, bank transfer or similar. Your order is confirmed once your payment arrives.</small></span></label></fieldset>' : ""}
       ${manual ? '<p class="product-help">Payment is not taken now. We’ll email you the payment details.</p>' : ""}
       <button class="product-buy" type="submit">${manual ? "Request payment details" : digital ? "Buy and download" : "Continue to checkout"}</button>
     </form></div>` : '<button class="product-buy" type="button" disabled>Buy now</button><p class="product-help">Checkout is available on your published site.</p>'}
@@ -161,9 +166,10 @@ const productCheckoutScript = String.raw`function(config) {
     event.preventDefault();
     if (busy || completed || !form.reportValidity()) return;
     pending(true);
-    message(config.manual ? "Sending your request…" : "Opening secure checkout…");
+    const values = new FormData(form);
+    const direct = config.choose && values.get("payChoice") === "direct";
+    message(config.manual || direct ? "Sending your request…" : "Opening secure checkout…");
     try {
-      const values = new FormData(form);
       const returnUrl = new URL(window.location.href);
       returnUrl.searchParams.delete("purchase");
       returnUrl.searchParams.delete("session_id");
@@ -172,6 +178,7 @@ const productCheckoutScript = String.raw`function(config) {
         deliveryAddress: config.physical ? Object.fromEntries(["line1", "line2", "city", "region", "postalCode", "country"].map(key => [key, values.get(key)])) : undefined,
         optionId: values.get("optionId") || undefined,
         buyerName: values.get("buyerName"), buyerEmail: values.get("buyerEmail"), expectedAmount: config.expectedAmount, expectedCurrency: config.expectedCurrency, returnUrl: returnUrl.toString(),
+        payDirectly: direct || undefined,
       });
       if (result.paymentMethod === "manual") {
         // A pay-directly order goes on to its own pay page; the email carries the same link.
@@ -263,6 +270,7 @@ export const productCheckoutCss = `
 .product-address{display:grid;gap:10px;border:0;padding:0;margin:8px 0;min-width:0}.product-address legend{font-weight:700;margin-bottom:12px}
 .product-purchase select,.product-purchase input{box-sizing:border-box;width:100%;min-height:48px;padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font:inherit}
 .product-help{font-size:.9rem;color:var(--muted);margin:4px 0 12px}
+.pay-choice{display:grid;gap:8px;margin:12px 0;padding:0;border:0;min-width:0}.pay-choice[hidden]{display:none}.pay-choice legend{margin:0 0 8px;padding:0;font-weight:700}.pay-choice label{display:flex;align-items:flex-start;gap:10px;min-height:48px;padding:12px 14px;border:1px solid var(--border);border-radius:14px;cursor:pointer;text-align:left}.pay-choice label:has(input:checked){border-color:var(--text)}.pay-choice input{flex:0 0 auto;width:18px;height:18px;margin:3px 0 0;accent-color:var(--accent)}.pay-choice strong,.pay-choice small{display:block}.pay-choice small{color:var(--muted);font-size:.9rem;line-height:1.4}
 .product-stock{margin:-12px 0 16px;color:var(--muted)}.product-stock:empty{display:none}.product-stock.is-low{font-weight:700;color:var(--text)}
 .product-options{display:grid;gap:8px;border:0;padding:0;margin:0 0 8px;min-width:0}.product-options legend{font-weight:600;margin-bottom:8px}
 .product-option{display:flex;gap:10px;align-items:center;min-height:48px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-weight:400!important;cursor:pointer}

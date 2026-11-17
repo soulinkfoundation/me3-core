@@ -5,6 +5,7 @@ import {
   getStripe,
   loadSiteProfileForCommerce,
   normalizeBookingAmount,
+  offerForBuyersPaymentChoice,
   normalizeEmail,
   normalizeLongText,
   normalizeSiteCheckoutReturnUrl,
@@ -90,6 +91,8 @@ export function registerEventBookingRoutes(app: AppHono) {
     if (!guestName) return c.json({ error: "Name is required" }, 400);
     if (!guestEmail) return c.json({ error: "Enter a valid email address" }, 400);
     if (!quantity) return c.json({ error: "Choose a valid number of attendees" }, 400);
+    // On a "let them choose" offer the buyer may ask to pay the owner directly.
+    context.offer = offerForBuyersPaymentChoice(context.offer, (body as { payDirectly?: unknown }).payDirectly);
     if (
       context.offer.pricing?.enabled &&
       context.offer.pricing.paymentMethod !== "manual"

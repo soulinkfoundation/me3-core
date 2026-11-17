@@ -370,6 +370,14 @@ const activeOfferPaymentMethod = computed({
   },
 });
 
+const activeOfferAllowPayDirectly = computed({
+  get: () => activeOffer.value?.pricing?.allowPayDirectly === true,
+  set: (val: boolean) => {
+    if (!activeOffer.value) return;
+    wizard.setBookingOfferPricing(activeOffer.value.id, { allowPayDirectly: val });
+  },
+});
+
 const activeOfferPaymentInstructions = computed({
   get: () => activeOffer.value?.pricing?.paymentInstructions ?? "",
   set: (val: string) => {
@@ -525,6 +533,14 @@ const activeClassOfferPaymentMethod = computed({
   },
 });
 
+const activeClassOfferAllowPayDirectly = computed({
+  get: () => activeClassOffer.value?.pricing?.allowPayDirectly === true,
+  set: (val: boolean) => {
+    if (!activeClassOffer.value) return;
+    wizard.setClassOfferPricing(activeClassOffer.value.id, { allowPayDirectly: val });
+  },
+});
+
 const activeClassOfferPaymentInstructions = computed({
   get: () => activeClassOffer.value?.pricing?.paymentInstructions ?? "",
   set: (val: string) => {
@@ -657,6 +673,14 @@ const activeRetreatOfferPaymentMethod = computed({
     wizard.setRetreatOfferPricing(activeRetreatOffer.value.id, {
       paymentMethod: val,
     });
+  },
+});
+
+const activeRetreatOfferAllowPayDirectly = computed({
+  get: () => activeRetreatOffer.value?.pricing?.allowPayDirectly === true,
+  set: (val: boolean) => {
+    if (!activeRetreatOffer.value) return;
+    wizard.setRetreatOfferPricing(activeRetreatOffer.value.id, { allowPayDirectly: val });
   },
 });
 
@@ -1210,6 +1234,7 @@ onMounted(() => {
                 <PaymentCollectionFields
                   v-model="activeOfferPaymentMethod"
                   v-model:instructions="activeOfferPaymentInstructions"
+                  v-model:allow-pay-directly="activeOfferAllowPayDirectly"
                   :input-id="`booking-offer-${activeOffer.id}`"
                   :currency="activeOffer.pricing?.currency"
                 />
@@ -1437,6 +1462,7 @@ onMounted(() => {
                 <PaymentCollectionFields
                   v-model="activeClassOfferPaymentMethod"
                   v-model:instructions="activeClassOfferPaymentInstructions"
+                  v-model:allow-pay-directly="activeClassOfferAllowPayDirectly"
                   :input-id="`class-offer-${activeClassOffer.id}`"
                   :currency="activeClassOffer.pricing?.currency"
                 />
@@ -1654,6 +1680,7 @@ onMounted(() => {
                 <PaymentCollectionFields
                   v-model="activeRetreatOfferPaymentMethod"
                   v-model:instructions="activeRetreatOfferPaymentInstructions"
+                  v-model:allow-pay-directly="activeRetreatOfferAllowPayDirectly"
                   :input-id="`retreat-offer-${activeRetreatOffer.id}`"
                   :currency="activeRetreatOffer.pricing?.currency"
                 />

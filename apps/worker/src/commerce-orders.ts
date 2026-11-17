@@ -29,11 +29,14 @@ import { getManagedCommerceBridgeConfig } from "./commerce-bridge";
 import { getPayDirectlyHoldSettings, isCommerceReady } from "./commerce-settings";
 import { dispatchWebsitePaymentNotification } from "./payment-notifications";
 import { manualPaymentAvailable, prepareDirectPayment } from "./pay-directly";
+import { forBuyersPaymentChoice } from "../../../shared/pay-directly";
 
 const PAYMENTS_UNAVAILABLE_MESSAGE =
   "Payments are not available for this purchase right now. Please contact the site owner.";
 
 type ProductCheckoutBody = {
+  /** On a "let them choose" product: the buyer pays the owner directly instead of by card. */
+  payDirectly?: unknown;
   expectedCurrency?: unknown;
   expectedAmount?: unknown;
   deliveryAddress?: unknown;
@@ -56,6 +59,7 @@ type ProductRecord = {
   currency?: string;
   available?: boolean;
   paymentMethod?: "stripe" | "manual";
+  allowPayDirectly?: boolean;
   paymentInstructions?: string;
   confirmationEmail?: ProductPurchaseConfirmationEmail;
   stock?: number;
@@ -142,7 +146,8 @@ export async function createProductCheckout(
   if (!Number.isSafeInteger(amount) || amount < 50 || !/^[a-z]{3}$/.test(currency)) {
     throw new CommerceOrderInputError("Product price is not ready for checkout.", 409);
   }
-  const paymentMethod = product.paymentMethod === "manual" ? "manual" : "stripe";
+  // On a "let them choose" product the buyer may ask to pay the owner directly.
+  const paymentMethod = forBuyersPaymentChoice(product, body.payDirectly).paymentMethod === "manual" ? "manual" : "stripe";
   const paymentInstructions = normalizeLongText(product.paymentInstructions, 8000);
   if (paymentMethod === "manual" && !(await manualPaymentAvailable(env, site.user_id, paymentInstructions, currency))) {
     throw new CommerceOrderInputError("Payment details are not set up for this product.", 409);

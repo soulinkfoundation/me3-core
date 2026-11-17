@@ -36,6 +36,9 @@ import type { AppBindings } from "./http/types";
 import { PAY_DIRECTLY_HOLDS_SCHEMA, PAY_DIRECTLY_SCHEMA, PAY_PAGE_SCHEMA, prepareDirectPayment } from "./pay-directly";
 import { listWaitingPayments, markBookingPaid } from "./pay-directly-bookings";
 import { registerBookingRoutes } from "./routes/booking";
+import { registerEventBookingRoutes } from "./routes/event-booking";
+import { listAgentOfferings } from "./agent-commerce";
+import { resolvePaidOneToOneOffer, serializePublicBookingOffer, resolveOneToOneBookingOffer } from "./booking";
 import { registerPayRoutes } from "./routes/pay";
 import type { DbSite, Env } from "./types";
 
@@ -64,6 +67,13 @@ const bookIntent = {
       offers: [{
         id: "strategy", title: "Strategy call", duration: 60,
         pricing: { enabled: true, suggestedAmount: 60, currency: "EUR", paymentMethod: "manual", paymentInstructions: "Cash on the day is fine too." },
+      }, {
+        // "Let them choose": a card offer whose buyer may pay directly instead.
+        id: "choice", title: "Coaching hour", duration: 60,
+        pricing: { enabled: true, suggestedAmount: 90, currency: "EUR", paymentMethod: "stripe", allowPayDirectly: true },
+      }, {
+        id: "card", title: "Card only", duration: 60,
+        pricing: { enabled: true, suggestedAmount: 90, currency: "EUR", paymentMethod: "stripe" },
       }],
     },
     {
@@ -72,6 +82,10 @@ const bookIntent = {
         id: "movement", title: "Movement class", duration: 60, timezone: "UTC", capacity: 10,
         recurrence: { frequency: "weekly", weekday: "monday", startTime: "18:00", startDate: "2099-01-05" },
         pricing: { enabled: true, suggestedAmount: 20, currency: "EUR", paymentMethod: "manual" },
+      }, {
+        id: "workshop", title: "Workshop", duration: 60, timezone: "UTC", capacity: 10,
+        recurrence: { frequency: "weekly", weekday: "monday", startTime: "12:00", startDate: "2099-01-05" },
+        pricing: { enabled: true, suggestedAmount: 30, currency: "EUR", paymentMethod: "stripe", allowPayDirectly: true },
       }],
     },
   ],
@@ -169,6 +183,7 @@ beforeEach(() => {
   app = new Hono<AppBindings>();
   registerBookingRoutes(app, { requireOwner: async () => null, unauthorized: (c: any) => c.json({ error: "Unauthorized" }, 401) } as never);
   registerPayRoutes(app);
+  registerEventBookingRoutes(app);
   emails.length = 0;
 });
 
@@ -365,5 +380,71 @@ describe("what the pay page offers", () => {
     const html = await (await call(order.payPath)).text();
     expect(html).toContain("Pay me in person at the market.");
     expect(html).toContain("Kieran will be in touch about how to pay");
+  });
+});
+
+// Failure modes: a "let them choose" offer cannot be paid directly, or can no longer be paid by card;
+// a card-only offer can be booked without paying by sending payDirectly; an agent is offered
+// (or can use) the pay-directly side; the flag changes what a pay-directly or free offer does.
+describe("an offer that lets the buyer choose how to pay", () => {
+  const book = (body: Record<string, unknown>) => call("/api/book/kieran/free", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ localDate: "2099-01-05", localTime: "14:00", guestName: "Ada Lovelace", guestEmail: "ada@example.invalid", ...body }),
+  });
+
+  it("holds the booking with a pay page when the buyer chooses to pay directly", async () => {
+    const response = await book({ offerId: "choice", payDirectly: true });
+    const body = (await response.json()) as Record<string, any>;
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body.booking).toMatchObject({ paymentStatus: "pending", amountDue: 9000 });
+    expect((await details(body.payUrl)).payment).toMatchObject({ status: "waiting", title: "Coaching hour", amountCents: 9000 });
+    expect(emails.find((email) => email.toAddress === "ada@example.invalid")!.subject).toBe("Payment details: Coaching hour");
+  });
+
+  it("still sends a buyer who does not choose that to card checkout", async () => {
+    for (const body of [{ offerId: "choice" }, { offerId: "choice", payDirectly: false }, { offerId: "choice", payDirectly: "true" }]) {
+      const response = await book(body);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "Use checkout for paid booking offers" });
+    }
+    expect(database.raw.prepare("SELECT COUNT(*) AS count FROM bookings").get()).toEqual({ count: 0 });
+    // The card route still takes it: it is a card offer.
+    expect(resolvePaidOneToOneOffer(bookIntent, "choice")).toMatchObject({ id: "choice" });
+    expect(resolvePaidOneToOneOffer(bookIntent, "strategy")).toBeNull();
+  });
+
+  it("does not let payDirectly skip payment on a card-only offer", async () => {
+    const response = await book({ offerId: "card", payDirectly: true });
+    expect(response.status).toBe(400);
+    expect(database.raw.prepare("SELECT COUNT(*) AS count FROM bookings").get()).toEqual({ count: 0 });
+  });
+
+  it("tells the published site which offers show the chooser", () => {
+    const pricing = (id: string) => serializePublicBookingOffer(resolveOneToOneBookingOffer(bookIntent, id)!).pricing;
+    expect(pricing("choice")).toMatchObject({ paymentMethod: "stripe", allowPayDirectly: true });
+    expect(pricing("card")).not.toHaveProperty("allowPayDirectly");
+    expect(pricing("strategy")).not.toHaveProperty("allowPayDirectly");
+  });
+
+  it("holds a class the same way, and asks for checkout otherwise", async () => {
+    const register = (body: Record<string, unknown>) => call("/api/book/kieran/events/class/workshop/register", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ localDate: "2099-01-05", quantity: 2, guestName: "Ben Okri", guestEmail: "ben@example.invalid", ...body }),
+    });
+    expect((await register({})).status).toBe(402);
+    const response = await register({ payDirectly: true });
+    const body = (await response.json()) as Record<string, any>;
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(database.raw.prepare("SELECT payment_status, quantity, suggested_amount FROM bookings").get()).toEqual({ payment_status: "pending", quantity: 2, suggested_amount: 6000 });
+    expect((await details(body.payUrl)).payment).toMatchObject({ kind: "event", amountCents: 6000 });
+  });
+
+  it("is a card-only offer to buying agents, who never see the pay-directly one", () => {
+    const offerings = listAgentOfferings({ name: "Kieran", intents: { book: bookIntent } } as never, "EUR");
+    const ids = offerings.map((entry) => entry.offering.id).join(" ");
+    expect(ids).toContain("choice");
+    expect(ids).toContain("workshop");
+    expect(ids).not.toContain("strategy");
+    expect(offerings.find((entry) => entry.offering.id.includes("choice"))!.offering).toMatchObject({ amount: 9000, free: false });
   });
 });
