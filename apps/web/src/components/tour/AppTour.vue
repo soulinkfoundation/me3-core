@@ -105,7 +105,8 @@ function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index
       <span class="app-tour__spacer" />
       <button type="button" class="app-tour__skip" @click="tour.end('skipped')">Skip</button>
       <Button v-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="tour.go(tour.index - 1)">Back</Button>
-      <Button v-if="!(tour.isLast && !step.done)" :color="step.done ? 'primary' : 'ghost'" shape="soft" type="button" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
+      <!-- Next waits until the owner has done the step; Skip is always there if they're stuck. -->
+      <Button v-if="!(tour.isLast && !step.done)" :color="step.done ? 'primary' : 'ghost'" shape="soft" type="button" :disabled="!step.done" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
     </div>
   </section>
 </template>
