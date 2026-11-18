@@ -368,11 +368,6 @@ watch(voiceDictationStatusText, message => { if (message) toastError(message); }
 let assistantAbortController: AbortController | null = null;
 let assistantActiveRequestId: string | null = null;
 
-const assistantPlaceholders = [
-  "Ask {{assistantName}} anything...",
-  "Set a reminder tomorrow at 9am to...",
-  "Draft an email to tell Sarah about...",
-];
 // "Build a site" (mode "site-builder") returns to the starters once site building is polished enough to release.
 const assistantAttachmentLimit = 4;
 const assistantAttachmentMaxBytes = 10_000_000;
@@ -3284,7 +3279,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
             </span>
           </div>
           <div class="assistant-input-wrap">
-            <ComposerPrompt v-if="!assistantDraft && voiceDictationState !== 'listening' && voiceDictationState !== 'processing'" :prompts="assistantPlaceholders.map(p => p.replace('{{assistantName}}', assistantDisplayName))" :animate="!composerFocused && !assistantSending" />
+            <ComposerPrompt v-if="!assistantDraft && voiceDictationState !== 'listening' && voiceDictationState !== 'processing'" :text="`Message ${assistantDisplayName}…`" />
             <div
               v-if="voiceDictationState === 'listening'"
               class="assistant-composer__voice-wave"
