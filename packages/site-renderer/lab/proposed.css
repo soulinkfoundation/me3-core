@@ -188,3 +188,5 @@ body[data-vibe=tech]{--lab-btn-radius:0}
 body[data-vibe=tech] :is(.cta-button,.site-topbar__action,.site-action-dock__button,.newsletter-form button,.site-offer button){font-size:14px;letter-spacing:0}
 /* The booking steps' dock buttons stay hidden until the renderer's own booking-state rules show them. */
 .site-action-dock :is([data-booking-dock-continue],[data-booking-dock-select-time]){display:none}
+/* Phones: the header never carries the action button; the bottom dock does. */
+@media(max-width:760px){.site-topbar .site-topbar__action{display:none}}
