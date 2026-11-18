@@ -17,6 +17,9 @@ const router = useRouter();
 const { toastSuccess, toastFromUnknown } = useAppToast();
 const titleId = useId();
 const step = computed(() => tour.step);
+// Landing on Accounts or Social is the step, so it counts at once rather than after Core answers;
+// otherwise the card would jump to Back for a moment while the save is on its way.
+const done = computed(() => Boolean(step.value && (step.value.done || tourPlaceForPath(route.path) === step.value.id)));
 const total = computed(() => tour.tour?.steps.length ?? 0);
 const card = ref<HTMLElement | null>(null);
 const target = ref<TourTarget | null>(null);
@@ -45,7 +48,7 @@ function ring(element: HTMLElement | null) {
 
 function update() {
   if (!tour.open || !step.value || !card.value) { ring(null); placement.value = null; target.value = null; return; }
-  const next = step.value.done ? null : currentTourTarget(step.value.targets, id => Boolean(targetElement(id)));
+  const next = done.value ? null : currentTourTarget(step.value.targets, id => Boolean(targetElement(id)));
   target.value = next;
   const element = next ? targetElement(next.id) : null;
   ring(element);
@@ -60,7 +63,7 @@ watch(() => tour.open, open => {
   clearInterval(timer);
   if (open) { timer = setInterval(update, 200); void nextTick(update); } else update();
 }, { immediate: true });
-watch(() => [tour.index, step.value?.done], () => void nextTick(update));
+watch(() => [tour.index, done.value], () => void nextTick(update));
 onMounted(() => { window.addEventListener("me3:home-layout-changed", homeChanged); window.addEventListener("resize", update); });
 onBeforeUnmount(() => { clearInterval(timer); ring(null); window.removeEventListener("me3:home-layout-changed", homeChanged); window.removeEventListener("resize", update); });
 
@@ -91,12 +94,12 @@ function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index
     <div class="app-tour__head">
       <span class="app-tour__emoji" aria-hidden="true">{{ step.emoji }}</span>
       <h2 :id="titleId" class="app-tour__title">{{ step.title }}</h2>
-      <span v-if="step.done" class="app-tour__done" data-testid="tour-done">✓ Done</span>
+      <span v-if="done" class="app-tour__done" data-testid="tour-done">✓ Done</span>
     </div>
     <p class="app-tour__body">{{ step.body }}</p>
     <p v-if="target" class="app-tour__sr" aria-live="polite" data-testid="tour-hint">{{ target.hint }}</p>
     <div class="app-tour__actions">
-      <Button v-if="step.task && !step.done" color="primary" shape="soft" type="button" data-testid="tour-task" @click="doTask">{{ step.task.label }}</Button>
+      <Button v-if="step.task && !done" color="primary" shape="soft" type="button" data-testid="tour-task" @click="doTask">{{ step.task.label }}</Button>
       <Button v-if="step.copy" color="ghost" shape="soft" type="button" @click="copy">{{ step.copy.label }}</Button>
     </div>
     <div class="app-tour__foot">
@@ -106,7 +109,7 @@ function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index
       <button type="button" class="app-tour__skip" @click="tour.end('skipped')">Skip</button>
       <Button v-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="tour.go(tour.index - 1)">Back</Button>
       <!-- Next waits until the owner has done the step; Skip is always there if they're stuck. -->
-      <Button v-if="!(tour.isLast && !step.done)" :color="step.done ? 'primary' : 'ghost'" shape="soft" type="button" :disabled="!step.done" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
+      <Button v-if="!(tour.isLast && !done)" :color="done ? 'primary' : 'ghost'" shape="soft" type="button" :disabled="!done" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
     </div>
   </section>
 </template>
