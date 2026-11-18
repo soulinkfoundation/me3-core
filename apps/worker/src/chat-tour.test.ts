@@ -1,40 +1,119 @@
-import { describe, expect, it } from "vitest";
-import { chatTour, type TourContext } from "./chat-tour";
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync, readdirSync } from "node:fs";
+import { afterEach, describe, expect, it } from "vitest";
+import { Hono } from "hono";
+import type { Env } from "./types";
+import { registerAssistantRoutes } from "./routes/assistant";
+import { chatTour, type ChatTour, type TourContext } from "./chat-tour";
 
 // Failure modes (me3-q6la.5):
-// - a step points at something the install doesn't have (an address that isn't set up, a paper that isn't on);
-// - an owner whose site is built is offered Make my website again;
-// - the email step drifts from the agreed framing (ME3's own address; never reads your inbox);
-// - Try it does nothing, so the tour only talks.
-const base: TourContext = { site: { url: "maya.me3.app", built: false }, emailAddress: "maya@inbox.me3.app", news: { setUp: false, time: "07:30" } };
-const step = (context: Partial<TourContext>, id: string) => chatTour({ ...base, ...context }).steps.find(item => item.id === id);
+// - the tour loses the owner's place when they leave Chat, reload, or switch apps;
+// - a step ticks before the owner has done it, or never ticks once they have;
+// - a step points at a feature that's switched off on this install;
+// - the website step isn't last, or offers Make my website to an owner whose site is built;
+// - a bad progress write (unknown step or status) is saved instead of refused.
+const base: TourContext = {
+  siteBuilt: false, emailAddress: "maya@inbox.me3.app", layout: null, accounts: true, social: true, seen: [],
+  progress: { status: "new", stepId: null },
+};
+const tour = (context: Partial<TourContext> = {}) => chatTour({ ...base, ...context });
+const step = (context: Partial<TourContext>, id: string) => tour(context).steps.find(item => item.id === id)!;
+const layout = (patch: Partial<NonNullable<TourContext["layout"]>>) => ({ order: ["today"], hidden: ["inbox", "people"], pinned: [], earned: [], ...patch });
 
 describe("chatTour", () => {
-  it("walks website, email, paper and Home, and every step has something to try", () => {
-    const tour = chatTour(base);
-    expect(tour.steps.map(item => item.id)).toEqual(["website", "email", "news", "home"]);
-    for (const item of tour.steps) expect(item.tryIt).not.toBeNull();
+  it("walks Home, email, Accounts and Social, and ends on the website", () => {
+    expect(tour().steps.map(item => item.id)).toEqual(["home", "email", "accounts", "social", "website"]);
+    expect(tour().steps.every(item => !item.done)).toBe(true);
   });
 
-  it("offers Make my website only while the site isn't built", () => {
-    expect(step({}, "website")?.tryIt).toEqual({ kind: "site_ask", label: "Make my website" });
-    const built = step({ site: { url: "maya.me3.app", built: true } }, "website");
-    expect(built?.tryIt).toEqual({ kind: "open", label: "Open the editor", to: "website" });
-    expect(built?.body).toContain("maya.me3.app");
+  it("leaves out Accounts and Social when they're switched off", () => {
+    expect(tour({ accounts: false, social: false }).steps.map(item => item.id)).toEqual(["home", "email", "website"]);
   });
 
-  it("frames email as ME3's own address and copies the real one", () => {
-    const email = step({}, "email");
-    expect(email?.body).toContain("maya@inbox.me3.app is my own address");
-    expect(email?.body).toContain("I never read your inbox");
-    expect(email?.tryIt).toEqual({ kind: "copy", label: "Copy my address", value: "maya@inbox.me3.app" });
-    expect(step({ emailAddress: null }, "email")?.tryIt).toEqual({ kind: "open", label: "Set up my email", to: "email_settings" });
+  it("ticks Home once a card is added, and email only once the email card is on Home", () => {
+    expect(step({ layout: layout({ pinned: ["accounts"] }) }, "home").done).toBe(true);
+    expect(step({ layout: layout({ pinned: ["accounts"] }) }, "email").done).toBe(false);
+    expect(step({ layout: layout({ hidden: ["people"], pinned: ["inbox"] }) }, "email").done).toBe(true);
+    expect(step({ layout: layout({ pinned: ["inbox"] }) }, "email").done).toBe(false); // still hidden
   });
 
-  it("sets up the paper until it's on, then opens it; leaves it out when news isn't available", () => {
-    expect(step({}, "news")?.tryIt).toMatchObject({ kind: "prompt" });
-    expect(step({ news: { setUp: true, time: "07:30" } }, "news")?.tryIt).toEqual({ kind: "open", label: "Read today's paper", to: "news" });
-    expect(step({ news: { setUp: true, time: "07:30" } }, "news")?.body).toContain("07:30");
-    expect(chatTour({ ...base, news: null }).steps.map(item => item.id)).toEqual(["website", "email", "home"]);
+  it("ticks Accounts and Social once opened during the tour", () => {
+    expect(step({ seen: ["accounts"] }, "accounts").done).toBe(true);
+    expect(step({ seen: ["accounts"] }, "social").done).toBe(false);
+  });
+
+  it("offers Make my website until the site is built, then the editor", () => {
+    expect(step({}, "website").task).toEqual({ kind: "site_ask", label: "Make my website" });
+    const built = step({ siteBuilt: true }, "website");
+    expect(built.task).toEqual({ kind: "open", label: "Open the editor", to: "website" });
+    expect(built.done).toBe(true);
+  });
+
+  it("offers ME3's address to copy only when there is one", () => {
+    expect(step({}, "email").copy).toEqual({ label: "Copy my address", value: "maya@inbox.me3.app" });
+    expect(step({ emailAddress: null }, "email").copy).toBeNull();
+  });
+
+  it("forgets a saved step this install no longer shows", () => {
+    expect(tour({ social: false, progress: { status: "active", stepId: "social" } }).progress.stepId).toBeNull();
+  });
+});
+
+const databases: DatabaseSync[] = [];
+afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+
+function fixture() {
+  const raw = new DatabaseSync(":memory:"); databases.push(raw);
+  const directory = new URL("../migrations/", import.meta.url);
+  for (const file of readdirSync(directory).filter(name => name.endsWith(".sql")).sort()) raw.exec(readFileSync(new URL(file, directory), "utf8"));
+  raw.exec(`INSERT INTO owner_profile(id,username) VALUES('owner','synthetic');`);
+  const DB = { prepare(sql: string) {
+    const query = raw.prepare(sql); let values: unknown[] = [];
+    const statement = { bind(...args: unknown[]) { values = args; return statement; },
+      async first<T>() { return (query.get(...values as never[]) ?? null) as T | null; },
+      async all<T>() { return { results: query.all(...values as never[]) as T[] }; },
+      async run() { query.run(...values as never[]); return { success: true }; } };
+    return statement;
+  } };
+  const app = new Hono<{ Bindings: Env }>();
+  registerAssistantRoutes(app as never, { requireOwner: async () => "owner", unauthorized: () => new Response("Unauthorized", { status: 401 }), getSessionOwnerId: async () => "owner", getSetupRequired: async () => [] } as never);
+  const env = { DB } as unknown as Env;
+  const get = async () => (await app.request("/api/assistant/tour", {}, env)).json() as Promise<ChatTour>;
+  const put = (body: unknown) => app.request("/api/assistant/tour/progress", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, env);
+  return { raw, get, put };
+}
+
+describe("tour progress", () => {
+  it("starts new, then keeps the owner's step and what they've opened across reads", async () => {
+    const { get, put } = fixture();
+    expect((await get()).progress).toEqual({ status: "new", stepId: null });
+    expect((await put({ status: "active", stepId: "email" })).status).toBe(200);
+    await put({ seen: "accounts" });
+    const saved = await get();
+    expect(saved.progress).toEqual({ status: "active", stepId: "email" });
+    const accounts = saved.steps.find(item => item.id === "accounts");
+    if (accounts) expect(accounts.done).toBe(true);
+  });
+
+  it("ticks Home and email from the layout the owner saved", async () => {
+    const { raw, get } = fixture();
+    raw.prepare("INSERT INTO home_layout(user_id, layout_json) VALUES('owner', ?)").run(JSON.stringify({ order: ["today"], hidden: ["people"], pinned: ["inbox"], earned: [] }));
+    const steps = (await get()).steps;
+    expect(steps.find(item => item.id === "home")?.done).toBe(true);
+    expect(steps.find(item => item.id === "email")?.done).toBe(true);
+  });
+
+  it("refuses an unknown step, status or place", async () => {
+    const { put, get } = fixture();
+    expect((await put({ stepId: "news" })).status).toBe(400);
+    expect((await put({ status: "paused" })).status).toBe(400);
+    expect((await put({ seen: "settings" })).status).toBe(400);
+    expect((await get()).progress.status).toBe("new");
+  });
+
+  it("remembers a skip", async () => {
+    const { put, get } = fixture();
+    await put({ status: "skipped", stepId: "home" });
+    expect((await get()).progress.status).toBe("skipped");
   });
 });

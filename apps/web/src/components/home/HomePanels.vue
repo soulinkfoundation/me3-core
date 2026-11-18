@@ -104,7 +104,7 @@ const orderAnnouncement = ref("");
 const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 const reducedMotion = ref(motionPreference?.matches ?? false);
 function updateMotionPreference() { reducedMotion.value = motionPreference?.matches ?? false; }
-defineExpose({ refreshToday: loadToday, refreshSetup: () => setupStrip.value?.load(), openNews, refreshNews: loadNews });
+defineExpose({ openAdd: () => { dialog.value = "add"; }, refreshToday: loadToday, refreshSetup: () => setupStrip.value?.load(), openNews, refreshNews: loadNews });
 const menu = ref<HomeCard | null>(null);
 const day = ref(localDateKey(new Date()));
 const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = {
@@ -288,7 +288,9 @@ function readLayout(value: unknown): HomeLayout {
 function cache() { try { localStorage.setItem(storageKey.value, JSON.stringify(layout.value)); } catch { /* Layout remains usable when browser storage is unavailable. */ } }
 function save() {
   layoutGeneration++; cache();
-  api.put("/home/layout", layout.value).catch(error => toastFromUnknown(error, "Couldn't save your Home layout"));
+  api.put("/home/layout", layout.value)
+    .then(() => window.dispatchEvent(new Event("me3:home-layout-changed")))
+    .catch(error => toastFromUnknown(error, "Couldn't save your Home layout"));
 }
 async function loadLayout() {
   const generation = ++layoutGeneration;

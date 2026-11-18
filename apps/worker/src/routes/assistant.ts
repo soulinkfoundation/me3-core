@@ -1,5 +1,5 @@
 import { loadChatStarters } from "../chat-starters";
-import { loadChatTour } from "../chat-tour";
+import { loadChatTour, saveChatTourProgress, TourInputError } from "../chat-tour";
 import { readManagedAllowanceNotice, type ManagedAllowanceNotice } from "../managed-ai-billing";
 import { readAgentEmailDraft, type AgentEmailDraft } from "../agent-email-draft";
 import { readAgentNewsCard, readAgentNewsServingId, type AgentNewsCard } from "../agent-news-card";
@@ -564,6 +564,19 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     if (!ownerId) return unauthorized(c);
     c.header("Cache-Control", "private, no-store");
     return c.json(await loadChatTour(c.env, ownerId));
+  });
+
+  // Where the owner is in the tour, so it keeps its place across pages, reloads and apps.
+  app.put("/api/assistant/tour/progress", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    c.header("Cache-Control", "private, no-store");
+    try {
+      return c.json(await saveChatTourProgress(c.env, ownerId, await c.req.json().catch(() => null)));
+    } catch (error) {
+      if (error instanceof TourInputError) return c.json({ error: error.message }, 400);
+      throw error;
+    }
   });
 
   app.get("/api/assistant/settings", async (c) => {

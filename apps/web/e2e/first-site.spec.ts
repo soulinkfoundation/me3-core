@@ -25,12 +25,22 @@ const people = {
 };
 
 type Approval = { id: string; actionId: string; status: string; threadId: string; requestedAt: string; resolvedAt: string | null; payload: Record<string, unknown> };
-type State = { bio: string; dismissed: boolean; approvals: Approval[]; sent: string[]; decisions: Array<{ id: string; decision: string }>; themes: string[]; patches: unknown[]; messages: Array<{ id: string; role: string; text: string; createdAt: string }> };
+type State = { bio: string; dismissed: boolean; approvals: Approval[]; sent: string[]; decisions: Array<{ id: string; decision: string }>; themes: string[]; patches: unknown[]; layout: { order: string[]; hidden: string[]; pinned: string[]; earned: string[] } | null; tour: { status: string; stepId: string | null }; tourSaves: unknown[]; messages: Array<{ id: string; role: string; text: string; createdAt: string }> };
 
 const sse = (events: Array<[string, unknown]>) => events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join("");
 
+// Core's tour, ticked from the Home layout the page saved (chat-tour.ts does the same from the database).
+function tourOf(state: State) {
+  const pinned = state.layout?.pinned ?? []; const hidden = state.layout?.hidden ?? ["inbox"];
+  return { steps: [
+    { id: "home", emoji: "🏠", title: "Home", body: "Home shows your day.", task: { kind: "open", label: "Add a card to Home", to: "home_add" }, copy: null, done: pinned.length > 0 },
+    { id: "email", emoji: "✉️", title: "ME3's own email", body: "I have my own email address.", task: { kind: "open", label: "Add the email card", to: "home_add" }, copy: { label: "Copy my address", value: "maya@inbox.me3.app" }, done: pinned.includes("inbox") && !hidden.includes("inbox") },
+    { id: "website", emoji: "🌐", title: "Your website", body: "Tell me about your work and I'll make a first draft.", task: { kind: "site_ask", label: "Make my website" }, copy: null, done: false }],
+  progress: state.tour };
+}
+
 async function fixture(page: Page, overrides: Partial<State> = {}) {
-  const state: State = { bio: "", dismissed: true, approvals: [], sent: [], decisions: [], themes: [], patches: [], messages: [], ...overrides };
+  const state: State = { bio: "", dismissed: true, approvals: [], sent: [], decisions: [], themes: [], patches: [], layout: null, tour: { status: "new", stepId: null }, tourSaves: [], messages: [], ...overrides };
   const at = () => new Date(Date.now() + state.messages.length).toISOString();
   const say = (role: string, text: string) => state.messages.push({ id: `m${state.messages.length + 1}`, role, text, createdAt: at() });
   const view = (approval: Approval) => ({ ...approval.payload, ...approval, pluginId: "me3.core", title: approval.payload.title, summary: approval.payload.summary, payload: approval.payload, turnId: "t" });
@@ -66,6 +76,12 @@ async function fixture(page: Page, overrides: Partial<State> = {}) {
     }
     if (path === "/sites/maya/draft-preview-html") return route.fulfill({ status: 200, contentType: "text/html", body: `<h1>Maya Okafor</h1><p>Look: ${url.searchParams.get("theme")}</p>` });
     if (path === "/sites/maya/draft-theme" && method === "PUT") { state.themes.push(route.request().postDataJSON().theme); return json(route, { ok: true }); }
+    if (path === "/home/layout" && method === "PUT") { state.layout = route.request().postDataJSON(); return json(route, { layout: state.layout, updatedAt: at() }); }
+    if (path === "/assistant/tour/progress" && method === "PUT") {
+      const body = route.request().postDataJSON(); state.tourSaves.push(body);
+      state.tour = { status: body.status ?? (state.tour.status === "new" ? "active" : state.tour.status), stepId: body.stepId === undefined ? state.tour.stepId : body.stepId };
+      return json(route, tourOf(state));
+    }
     if (path === "/mission-control/dashboard" && method === "PATCH") {
       const body = route.request().postDataJSON(); state.patches.push(body); state.dismissed = body.settings.setupChecklistDismissed; return json(route, {});
     }
@@ -83,11 +99,8 @@ async function fixture(page: Page, overrides: Partial<State> = {}) {
           { id: "site", emoji: "🌐", label: "Make my website", prompt: "Build my website.", action: "site_ask" },
           { id: "help", emoji: "💡", label: "What can you help with?", prompt: "What can you help me with?" },
           { id: "tour", emoji: "🧭", label: "Show me around", prompt: "Show me around ME3.", action: "tour" }] })
-      : path === "/assistant/tour" ? { steps: [
-          { id: "website", emoji: "🌐", title: "Your website", body: "You have a page at maya.me3.app.", where: "Website", tryIt: { kind: "site_ask", label: "Make my website" } },
-          { id: "email", emoji: "✉️", title: "ME3's own email", body: "maya@inbox.me3.app is my own address. I never read your inbox.", where: "Home → Inbox", tryIt: { kind: "copy", label: "Copy my address", value: "maya@inbox.me3.app" } },
-          { id: "home", emoji: "🏠", title: "Home", body: "Home shows your day.", where: "Home", tryIt: { kind: "open", label: "Go to Home", to: "home" } }],
-        done: { title: "That's the tour", body: "Ask me anything, or pick something below to start." } }
+      : path === "/assistant/tour" ? tourOf(state)
+      : path === "/home/layout" ? { layout: state.layout, updatedAt: null }
       : path === "/ai-settings" ? { deploymentMode: "managed", providers: [] }
       : path === "/config" ? { deploymentMode: "managed", ownerAuthConfigured: true, ownerPasswordAuthConfigured: true, setupRequired: [] }
       : path === "/sites" ? { sites: [{ username: "maya", site_role: "profile", site_type: "profile" }] }
@@ -184,28 +197,47 @@ test("returning owners are not sent back to the first run, and Home's Review sho
   await expect(dialog).not.toContainText("Preview Path");
 });
 
-test("Show me around walks the steps one at a time, and Try it does the real thing", async ({ page, context }) => {
+test("Show me around stays over the app while the owner does each step, keeps its place, and ends on the website", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const state = await fixture(page);
   await page.goto("/assistant");
   await page.getByRole("button", { name: "Show me around" }).click();
-  const tour = page.getByTestId("chat-tour");
-  await expect(tour.getByRole("heading", { name: "Your website" })).toBeVisible();
+  const tour = page.getByTestId("app-tour");
+  await expect(tour.getByRole("heading", { name: "Home" })).toBeVisible();
   await expect(tour).toContainText("1 of 3");
-  await expect(tour).toContainText("You'll find this in Website.");
+  // Doing the step: Home opens with Add to Home, and adding a card ticks the step without closing the tour.
+  await tour.getByRole("button", { name: "Add a card to Home" }).click();
+  const add = page.getByRole("dialog", { name: "Add to Home" });
+  await add.getByRole("button", { name: "Inbox" }).click();
+  await page.keyboard.press("Escape");
+  await expect(tour.getByTestId("tour-done")).toBeVisible();
   await tour.getByRole("button", { name: "Next" }).click();
   await expect(tour.getByRole("heading", { name: "ME3's own email" })).toBeVisible();
+  await expect(tour.getByTestId("tour-done")).toBeVisible();
   await tour.getByRole("button", { name: "Copy my address" }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("maya@inbox.me3.app");
-  await tour.getByRole("button", { name: "Next" }).click();
-  await tour.getByRole("button", { name: "Finish" }).click();
-  await expect(tour.getByRole("heading", { name: "That's the tour" })).toBeVisible();
-  await tour.getByRole("button", { name: "Done" }).click();
-  await expect(tour).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Show me around" })).toBeVisible();
-  expect(state.sent).toEqual([]);
-  // Make my website from the tour opens the Build your website card.
-  await page.getByRole("button", { name: "Show me around" }).click();
-  await page.getByTestId("chat-tour").getByRole("button", { name: "Make my website" }).click();
+  // A reload picks up where the owner was.
+  await page.reload();
+  await expect(page.getByTestId("app-tour").getByRole("heading", { name: "ME3's own email" })).toBeVisible();
+  await page.getByTestId("app-tour").getByRole("button", { name: "Next" }).click();
+  // The website is last: no Finish until it's done; Make my website hands over to the Build your website card.
+  await expect(tour.getByRole("heading", { name: "Your website" })).toBeVisible();
+  await expect(tour.getByRole("button", { name: "Finish" })).toHaveCount(0);
+  await tour.getByRole("button", { name: "Make my website" }).click();
   await expect(page.getByTestId("site-build-ask")).toBeVisible();
+  await expect(tour).toHaveCount(0);
+  expect(state.tour.status).toBe("finished");
+  expect(state.sent).toEqual([]);
+});
+
+test("Skip tour closes it and it stays closed", async ({ page }) => {
+  const state = await fixture(page);
+  await page.goto("/assistant");
+  await page.getByRole("button", { name: "Show me around" }).click();
+  await page.getByTestId("app-tour").getByRole("button", { name: "Skip tour" }).click();
+  await expect(page.getByTestId("app-tour")).toHaveCount(0);
+  expect(state.tour.status).toBe("skipped");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Show me around" })).toBeVisible();
+  await expect(page.getByTestId("app-tour")).toHaveCount(0);
 });

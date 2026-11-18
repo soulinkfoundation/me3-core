@@ -7,8 +7,10 @@ import AgentChatLauncher from "./components/AgentChatLauncher.vue";
 import AppLoadingBar from "./components/AppLoadingBar.vue";
 import AppTopBar from "./components/AppTopBar.vue";
 import SoulinkJoinPrompt from "./components/SoulinkJoinPrompt.vue";
+import AppTour from "./components/tour/AppTour.vue";
 import { useMailboxRealtime } from "./composables/useMailboxRealtime";
 import { useAuthStore } from "./stores/auth";
+import { useTourStore } from "./stores/tour";
 
 /** Set true to show the floating agent chat launcher on supported pages. */
 const AGENT_LAUNCHER_UI_ENABLED = false;
@@ -46,6 +48,10 @@ const showAppShell = computed(
     route.meta.requiresAuth === true &&
     route.meta.hideAppShell !== true,
 );
+
+// Show me around keeps going across pages and reloads until the owner finishes or skips it.
+const tour = useTourStore();
+watch(showAppShell, shown => { if (shown) void tour.resume(auth.user?.id || ""); }, { immediate: true });
 
 const showAgentLauncher = computed(
   () =>
@@ -229,6 +235,7 @@ watch(
     :duration="5000"
   />
   <AgentChatLauncher v-if="showAgentLauncher" />
+  <AppTour v-if="showAppShell" />
 </template>
 
 <style scoped>
