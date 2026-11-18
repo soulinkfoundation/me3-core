@@ -140,3 +140,20 @@ body.is-scrolled .site-topbar{box-shadow:0 1px 0 var(--lab-card-edge),0 10px 30p
   .site-footer .links{grid-column:1;justify-self:center;justify-content:center;margin:0!important}
   .site-footer>p{grid-column:1;grid-row:auto;white-space:normal}
 }
+
+/* Cover: no action button in the header (the hero carries it), and header, hero and sections share one left edge. */
+body[data-layout=cover] .site-topbar__action{display:none!important}
+@media(min-width:761px){
+  body[data-layout=cover] .site-topbar__inner{width:min(1200px,100%);padding-left:48px;padding-right:48px}
+  body[data-layout=cover] .site-home-sections,body[data-layout=cover] .site-cover-links{width:min(1104px,calc(100% - 96px))}
+
+  /* Wide layouts: offers in three columns, newsletter a centred block about 60% wide. */
+  body:is([data-layout=cover],[data-layout=split]) .site-offers__grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+  body:is([data-layout=cover],[data-layout=split]) .site-home-sections .newsletter{box-sizing:border-box;width:min(100%,680px);margin-left:auto;margin-right:auto}
+  body:is([data-layout=cover],[data-layout=split]) .site-home-sections .newsletter:not(.has-image){justify-items:center;text-align:center}
+  body:is([data-layout=cover],[data-layout=split]) .site-home-sections .newsletter:not(.has-image) :is(.newsletter-title,.newsletter-desc,.newsletter-status){text-align:center}
+  body:is([data-layout=cover],[data-layout=split]) .site-home-sections .newsletter:not(.has-image) .newsletter-form{width:100%;max-width:480px}
+  body:is([data-layout=cover],[data-layout=split]) .site-home-sections .newsletter:not(.has-image) .newsletter-privacy{max-width:none}
+  body:is([data-layout=cover],[data-layout=split]) .site-home-sections .newsletter.has-image{width:min(100%,820px)}
+}
+@media(min-width:761px){body[data-layout=cover] .site-footer{padding-left:max(48px,calc((100% - 1104px)/2));padding-right:max(48px,calc((100% - 1104px)/2))}}
