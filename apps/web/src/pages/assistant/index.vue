@@ -1080,6 +1080,7 @@ async function useStarterPrompt(prompt: string) {
 
 // Show me around (me3-q6la.5): a tour over the whole app (components/tour/AppTour.vue). An older Core without it gets the prompt.
 const tourStore = useTourStore();
+watch(() => tourStore.open, open => { if (!open) void refreshChatStarters(); });
 async function openTour(fallbackPrompt: string) {
   if (!(await tourStore.start(useAuthStore().user?.id || ""))) await useStarterPrompt(fallbackPrompt);
 }
@@ -2623,7 +2624,10 @@ function messageFromUnknown(err: unknown, fallback: string) {
                 :key="starter.id"
                 type="button"
                 class="starter-prompt"
-                :class="{ 'starter-prompt--lead': chatStarters.firstRun && starter.action === 'site_ask' }"
+                :class="{
+                  'starter-prompt--lead': chatStarters.firstRun && (starter.action === 'site_ask' || visibleStarters.length === 1),
+                  'starter-prompt--pulse': chatStarters.firstRun && visibleStarters.length === 1,
+                }"
                 data-testid="chat-starter"
                 @click="startStarterPrompt(starter)"
               >
@@ -3880,6 +3884,14 @@ function messageFromUnknown(err: unknown, fallback: string) {
 .starter-prompt > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .starter-prompt__emoji { flex-shrink: 0; font-size: 16px; line-height: 1; }
 .starter-prompt--lead { border-color: var(--ui-accent); }
+/* The only choice on a first visit: a soft ring pulses out so it's clearly the thing to click. */
+.starter-prompt--pulse { padding: 10px 18px; font-size: 15px; animation: starter-pulse 2s ease-out infinite; }
+@keyframes starter-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ui-accent) 45%, transparent); }
+  70% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--ui-accent) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ui-accent) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .starter-prompt--pulse { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 30%, transparent); } }
 .starter-prompt:hover { background: var(--ui-surface-muted); }
 .starter-prompt:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 .assistant-listening { position: fixed; left: 50%; bottom: max(96px, calc(env(safe-area-inset-bottom, 0px) + 96px)); z-index: 41; display: grid; justify-items: center; gap: 12px; box-sizing: border-box; width: min(720px, calc(100vw - 28px)); padding: 32px 20px 20px; border-radius: 28px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); transform: translateX(-50%); }

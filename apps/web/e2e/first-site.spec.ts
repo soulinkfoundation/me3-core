@@ -95,6 +95,9 @@ async function fixture(page: Page, overrides: Partial<State> = {}) {
       : path === "/assistant/settings" ? { displayName: "ME3", assistantName: null }
       : path === "/assistant/starters" ? (state.bio || state.messages.length
         ? { firstRun: false, greeting: null, starters: [{ id: "next", emoji: "⏭️", label: "What's next?", prompt: "What should I focus on next?" }] }
+        : url.searchParams.get("tour") === "app" && state.tour.status === "new"
+          ? { firstRun: true, greeting: { title: "Hi Maya, I'm ME3", body: "Your assistant, website and inbox in one place. Let me show you around." }, starters: [
+            { id: "tour", emoji: "🧭", label: "Show me around", prompt: "Show me around ME3.", action: "tour" }] }
         : { firstRun: true, greeting: { title: "Hi Maya, I'm ME3", body: "Your assistant, website and inbox in one place. Where shall we start?" }, starters: [
           { id: "site", emoji: "🌐", label: "Make my website", prompt: "Build my website.", action: "site_ask" },
           { id: "help", emoji: "💡", label: "What can you help with?", prompt: "What can you help me with?" },
@@ -119,7 +122,8 @@ async function fixture(page: Page, overrides: Partial<State> = {}) {
 }
 
 test("first landing goes from the Build your website card to a published site and a booked call", async ({ page }, testInfo) => {
-  const state = await fixture(page);
+  // The owner has been through (or skipped) the tour, so all three starters show.
+  const state = await fixture(page, { tour: { status: "skipped", stepId: null } });
   await page.goto("/assistant");
 
   // First landing: ME3's welcome and three starters from Core, no form yet.
@@ -227,6 +231,17 @@ test("Show me around stays over the app while the owner does each step, keeps it
   await expect(tour).toHaveCount(0);
   expect(state.tour.status).toBe("finished");
   expect(state.sent).toEqual([]);
+});
+
+test("a brand-new owner gets one pulsing choice, Show me around; skipping the tour brings back the others", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/assistant");
+  await expect(page.getByRole("heading", { name: "Hi Maya, I'm ME3" })).toBeVisible();
+  await expect(page.getByTestId("chat-starter")).toHaveText(["🧭Show me around"]);
+  await expect(page.getByTestId("chat-starter")).toHaveClass(/starter-prompt--pulse/);
+  await page.getByRole("button", { name: "Show me around" }).click();
+  await page.getByTestId("app-tour").getByRole("button", { name: "Skip tour" }).click();
+  await expect(page.getByTestId("chat-starter")).toHaveText(["🌐Make my website", "💡What can you help with?", "🧭Show me around"]);
 });
 
 test("Skip tour closes it and it stays closed", async ({ page }) => {

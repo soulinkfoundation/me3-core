@@ -1,5 +1,5 @@
 // Chat's empty-state starters come from Core (GET /api/assistant/starters, me3-q6la.1), so web, iOS and
-// Android show the same ones. A starter sends its prompt; action "site_ask" opens the Build your website card and "tour" opens Show me around.
+// Android show the same ones. `tour=app` says this app draws Show me around, so a brand-new owner gets only that. A starter sends its prompt; action "site_ask" opens the Build your website card and "tour" opens Show me around.
 export type ChatStarter = { id: string; emoji: string; label: string; prompt: string; action?: "site_ask" | "tour" };
 export type ChatStarters = { firstRun: boolean; greeting: { title: string; body: string } | null; starters: ChatStarter[] };
 
@@ -14,7 +14,7 @@ export const CONFIGURE_STARTER: ChatStarter = { id: "configure", emoji: "⚙️"
 type GetJson = <T>(path: string) => Promise<T>;
 
 export async function loadChatStarters(get: GetJson, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone): Promise<ChatStarters> {
-  const result = await get<Partial<ChatStarters>>(`/assistant/starters?${new URLSearchParams({ tz: timeZone || "UTC" })}`);
+  const result = await get<Partial<ChatStarters>>(`/assistant/starters?${new URLSearchParams({ tz: timeZone || "UTC", tour: "app" })}`);
   return {
     firstRun: result.firstRun === true,
     greeting: result.greeting?.title ? result.greeting : null,

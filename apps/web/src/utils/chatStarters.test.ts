@@ -10,7 +10,7 @@ describe("chat starters", () => {
       paths.push(path);
       return { firstRun: true, greeting: { title: "Hi", body: "Start" }, starters: [{ id: "a", emoji: "🌐", label: "Make my website", prompt: "Build my website.", action: "site_ask" }, { id: "b", emoji: "", label: "", prompt: "" }] } as T;
     }, "Europe/London");
-    expect(paths).toEqual(["/assistant/starters?tz=Europe%2FLondon"]);
+    expect(paths).toEqual(["/assistant/starters?tz=Europe%2FLondon&tour=app"]);
     expect(result.starters.map(starter => starter.id)).toEqual(["a"]);
     expect(result.firstRun).toBe(true);
   });

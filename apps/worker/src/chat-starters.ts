@@ -29,6 +29,8 @@ export type ChatStarterContext = {
   nextEvent: { title: string; time: string } | null;
   /** The top email that needs the owner. */
   reply: { name: string; subject: string } | null;
+  /** The owner has never started Show me around, and this app draws it (`tour=app`). */
+  tourNew?: boolean;
 };
 
 export const MAX_CHAT_STARTERS = 4;
@@ -50,6 +52,17 @@ function clip(text: string, max = 28): string {
 }
 
 export function chatStarters(context: ChatStarterContext): ChatStarters {
+  if (context.siteMissing && !context.hasSpoken && context.tourNew) {
+    // One simple choice on the very first visit: the tour, which ends on Make my website.
+    return {
+      firstRun: true,
+      greeting: {
+        title: context.firstName ? `Hi ${context.firstName}, I'm ME3` : "Hi, I'm ME3",
+        body: "Your assistant, website and inbox in one place. Let me show you around.",
+      },
+      starters: [tour],
+    };
+  }
   if (context.siteMissing && !context.hasSpoken) {
     return {
       firstRun: true,
@@ -126,10 +139,10 @@ async function nextEventWithinHour(env: Env, ownerId: string, now: Date): Promis
 }
 
 /** Each source is read on its own: one that fails just leaves its starter out. */
-export async function loadChatStarters(env: Env, ownerId: string, options: { now?: Date; timeZone?: string | null } = {}): Promise<ChatStarters> {
+export async function loadChatStarters(env: Env, ownerId: string, options: { now?: Date; timeZone?: string | null; appTour?: boolean } = {}): Promise<ChatStarters> {
   const now = options.now ?? new Date();
   const clock = localClock(now, options.timeZone);
-  const [profile, spoken, mission, event, brief, owner] = await Promise.all([
+  const [profile, spoken, mission, event, brief, owner, tourRow] = await Promise.all([
     profileBioAndName(env, ownerId).catch(() => null),
     env.DB.prepare(`SELECT 1 AS spoken FROM assistant_messages WHERE owner_id = ? AND role = 'user' LIMIT 1`)
       .bind(ownerId).first<{ spoken: number }>().catch(() => ({ spoken: 1 })),
@@ -138,6 +151,10 @@ export async function loadChatStarters(env: Env, ownerId: string, options: { now
     nextEventWithinHour(env, ownerId, now).catch(() => null),
     getMailboxBrief(env, ownerId, { now }).catch(() => null),
     getOwnerProfile(env, ownerId).catch(() => null),
+    // A failed read counts as started, so the owner keeps every starter.
+    options.appTour
+      ? env.DB.prepare(`SELECT 1 AS started FROM chat_tour_progress WHERE user_id = ?`).bind(ownerId).first<{ started: number }>().catch(() => ({ started: 1 }))
+      : Promise.resolve({ started: 1 }),
   ]);
   const top = brief?.needsYou.find((item: { primaryAction: { kind: string } | null }) => ["send_draft", "edit_draft", "draft_reply"].includes(item.primaryAction?.kind ?? "")) ?? brief?.needsYou[0] ?? null;
   return chatStarters({
@@ -150,5 +167,6 @@ export async function loadChatStarters(env: Env, ownerId: string, options: { now
     missionMissing: mission === undefined ? false : !ownedMissionStatement(mission?.mission_statement ?? null),
     nextEvent: event ? { title: event.title, time: clock.time(new Date(event.startsAt)) } : null,
     reply: top ? { name: top.sender.name || top.sender.address, subject: top.subject } : null,
+    tourNew: !tourRow,
   });
 }

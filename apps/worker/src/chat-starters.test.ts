@@ -11,7 +11,9 @@ import { chatStarters, localClock, type ChatStarterContext } from "./chat-starte
 // - a broken read (site, mail, calendar) sends an established owner back into first run;
 // - starters go past the cap, or repeat;
 // - a generic starter (Wrap up today) shows where nothing real backs it;
-// - the owner's time zone is ignored, so a meeting shows at the wrong time.
+// - the owner's time zone is ignored, so a meeting shows at the wrong time;
+// - a brand-new owner gets more than Show me around, or keeps getting only it once the tour has started;
+// - an app that can't draw the tour (no tour=app) loses Make my website.
 
 const base: ChatStarterContext = { hour: 9, firstName: null, siteMissing: false, hasSpoken: true, missionMissing: false, nextEvent: null, reply: null };
 const ids = (context: Partial<ChatStarterContext>) => chatStarters({ ...base, ...context }).starters.map(starter => starter.id);
@@ -23,6 +25,14 @@ describe("chatStarters", () => {
     expect(result.greeting?.title).toBe("Hi Sam, I'm ME3");
     expect(result.starters.map(starter => starter.id)).toEqual(["site", "help", "tour"]);
     expect(result.starters[0].action).toBe("site_ask");
+  });
+
+  it("offers a brand-new owner only Show me around when the app draws the tour", () => {
+    const result = chatStarters({ ...base, siteMissing: true, hasSpoken: false, firstName: "Sam", tourNew: true });
+    expect(result.firstRun).toBe(true);
+    expect(result.starters.map(starter => starter.id)).toEqual(["tour"]);
+    expect(result.greeting?.body).toContain("Let me show you around");
+    expect(ids({ siteMissing: true, hasSpoken: false, tourNew: false })).toEqual(["site", "help", "tour"]);
   });
 
   it("is not first run once the owner has a bio or has spoken", () => {
@@ -84,7 +94,7 @@ function fixture() {
   registerAssistantRoutes(app as never, { requireOwner: async () => "owner", unauthorized: () => new Response("Unauthorized", { status: 401 }), getSessionOwnerId: async () => "owner", getSetupRequired: async () => [] } as never);
   const me = (profile: object) => raw.prepare("INSERT OR REPLACE INTO site_files(site_id,path,content) VALUES('site','src/me.json',?)").run(new TextEncoder().encode(JSON.stringify(profile)));
   const say = () => raw.prepare("INSERT INTO assistant_messages(id,owner_id,thread_id,role,content,created_at) VALUES('m1','owner','thread','user','Hi','2026-11-16T08:00:00Z')").run();
-  const get = async () => (await app.request("/api/assistant/starters?tz=Europe/London", {}, { DB } as unknown as Env)).json() as Promise<{ firstRun: boolean; greeting: { title: string } | null; starters: Array<{ id: string }> }>;
+  const get = async (query = "") => (await app.request(`/api/assistant/starters?tz=Europe/London${query}`, {}, { DB } as unknown as Env)).json() as Promise<{ firstRun: boolean; greeting: { title: string } | null; starters: Array<{ id: string }> }>;
   return { me, say, get, raw };
 }
 
@@ -104,6 +114,14 @@ describe("GET /api/assistant/starters", () => {
     const { raw, get } = fixture();
     raw.exec("UPDATE owner_profile SET name = 'Maya Okafor' WHERE id = 'owner'");
     expect((await get()).greeting?.title).toBe("Hi Maya, I'm ME3");
+  });
+
+  it("offers only the tour until it has started, and only to an app that draws it", async () => {
+    const { get, raw } = fixture();
+    expect((await get("&tour=app")).starters.map(starter => starter.id)).toEqual(["tour"]);
+    expect((await get()).starters.map(starter => starter.id)).toEqual(["site", "help", "tour"]);
+    raw.exec("INSERT INTO chat_tour_progress(user_id, status, step_id) VALUES('owner', 'skipped', 'home')");
+    expect((await get("&tour=app")).starters.map(starter => starter.id)).toEqual(["site", "help", "tour"]);
   });
 
   it("does not send an owner with a bio back into first run", async () => {

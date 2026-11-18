@@ -71,7 +71,7 @@ export function chatTour(context: TourContext): ChatTour {
     done: context.seen.includes("accounts"),
   });
   if (context.social) steps.push({
-    id: "social", emoji: "📣", title: "Social media made simple",
+    id: "social", emoji: "📣", title: "Socials made simple",
     body: "Connect your accounts and post everywhere from one place. Repost and schedule in a couple of taps.",
     task: { kind: "open", label: "Open Social", to: "social" }, copy: null,
     done: context.seen.includes("social"),

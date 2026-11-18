@@ -555,7 +555,8 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     const ownerId = await requireOwner(c);
     if (!ownerId) return unauthorized(c);
     c.header("Cache-Control", "private, no-store");
-    return c.json(await loadChatStarters(c.env, ownerId, { timeZone: c.req.query("tz") }));
+    // `tour=app`: this client draws Show me around over the app, so a brand-new owner is offered only that.
+    return c.json(await loadChatStarters(c.env, ownerId, { timeZone: c.req.query("tz"), appTour: c.req.query("tour") === "app" }));
   });
 
   // Show me around (me3-q6la.5): the tour's steps, written from what this install has.
