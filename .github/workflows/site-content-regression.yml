@@ -4,7 +4,19 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    paths:
+      - "packages/site-renderer/**"
+      - "apps/web/src/**"
+      - "apps/web/package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/site-content-regression.yml"
   pull_request:
+    paths:
+      - "packages/site-renderer/**"
+      - "apps/web/src/**"
+      - "apps/web/package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/site-content-regression.yml"
   workflow_dispatch:
 
 permissions:
