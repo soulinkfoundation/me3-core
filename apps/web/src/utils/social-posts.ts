@@ -561,6 +561,55 @@ export function resultFor(version: PostVersion): VersionResult {
   }
 }
 
+export type MarkState = "posting" | "posted" | "failed";
+
+/** How a platform's mark shows progress: a spinning ring while it posts, a tick once posted, a dot when it failed. */
+export function markState(version: PostVersion): MarkState | null {
+  switch (version.publicationStatus) {
+    case "queued":
+    case "publishing":
+      return "posting";
+    case "published":
+      return "posted";
+    case "failed":
+      return "failed";
+    default:
+      return null;
+  }
+}
+
+/** The platforms still posting in a list row, so their marks spin after the post page is closed. */
+export function postingMarks(detail: SocialPostDetail): Record<string, MarkState> {
+  return Object.fromEntries(
+    visibleVersions(detail)
+      .filter((version) => markState(version) === "posting")
+      .map((version) => [version.platform, "posting" as const]),
+  );
+}
+
+/** The full status for a platform's tab, read on hover and by screen readers. */
+export function markStatus(version: PostVersion): string | null {
+  const result = resultFor(version);
+  return result.state === "draft" ? null : `${networkLabel(version.platform)}: ${result.message}`;
+}
+
+/** The one button a posted version ends on. YouTube's upload is a private draft, so finishing there is the next step. */
+export function finishLink(
+  version: PostVersion,
+  handle?: string | null,
+): { label: string; href: string; primary: boolean } | null {
+  if (version.publicationStatus !== "published") return null;
+  if (version.platform === "youtube") {
+    return { label: "Publish in YouTube", href: version.platformPostUrl || "https://studio.youtube.com", primary: true };
+  }
+  if (version.platformPostUrl) return { label: `View on ${networkLabel(version.platform)}`, href: version.platformPostUrl, primary: false };
+  if (version.platform === "tiktok") {
+    const name = handle?.trim().replace(/^@/, "");
+    return { label: "Open TikTok", href: name ? `https://www.tiktok.com/@${encodeURIComponent(name)}` : "https://www.tiktok.com/", primary: false };
+  }
+  return null;
+}
+
 /** Provider messages can carry codes and internal names; keep the first plain sentence. */
 function plainError(message: string | null | undefined): string | null {
   const text = message?.replace(/\s+/g, " ").trim();

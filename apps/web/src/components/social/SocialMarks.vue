@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { networkLabel, networkMark, socialNetwork } from "../../utils/social-posts";
+import { networkLabel, networkMark, socialNetwork, type MarkState } from "../../utils/social-posts";
 
 const props = withDefaults(
-  defineProps<{ platforms: string[]; size?: "small" | "large" }>(),
-  { size: "small" },
+  /** `states` maps a platform to its progress: a spinning ring, a tick, or a red dot. */
+  defineProps<{ platforms: string[]; size?: "small" | "large"; states?: Record<string, MarkState> }>(),
+  { size: "small", states: () => ({}) },
 );
 
 // The TikTok logo; a text note at this size reads as a dot.
@@ -21,13 +22,36 @@ const marks = computed(() => {
       return true;
     });
 });
+
+const stateFor = computed(() => {
+  const byNetwork: Record<string, MarkState> = {};
+  for (const [platform, state] of Object.entries(props.states)) {
+    const network = socialNetwork(platform);
+    if (network) byNetwork[network] = state;
+  }
+  return byNetwork;
+});
+const label = computed(() =>
+  marks.value.map((network) => (stateFor.value[network] === "posting" ? `${networkLabel(network)}, posting` : networkLabel(network))).join(", "),
+);
 </script>
 
 <template>
-  <span class="social-marks" :class="`social-marks--${size}`" :aria-label="marks.map(networkLabel).join(', ')" role="img">
-    <span v-for="network in marks" :key="network" class="social-mark" :class="`social-mark--${network}`" aria-hidden="true">
-      <svg v-if="network === 'tiktok'" viewBox="0 0 24 24" fill="currentColor"><path :d="TIKTOK_PATH" /></svg>
+  <span class="social-marks" :class="`social-marks--${size}`" :aria-label="label" role="img">
+    <span
+      v-for="network in marks"
+      :key="network"
+      class="social-mark"
+      :class="[`social-mark--${network}`, stateFor[network] && `is-${stateFor[network]}`]"
+      aria-hidden="true"
+    >
+      <svg v-if="network === 'tiktok'" class="social-mark__logo" viewBox="0 0 24 24" fill="currentColor"><path :d="TIKTOK_PATH" /></svg>
       <template v-else>{{ networkMark(network) }}</template>
+      <span v-if="stateFor[network] === 'posting' || stateFor[network] === 'posted'" class="social-mark__ring" />
+      <span v-if="stateFor[network] === 'posted'" class="social-mark__tick">
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5" /></svg>
+      </span>
+      <span v-else-if="stateFor[network] === 'failed'" class="social-mark__dot" />
     </span>
   </span>
 </template>
@@ -35,6 +59,7 @@ const marks = computed(() => {
 <style scoped>
 .social-marks { display: inline-flex; flex: none; }
 .social-mark {
+  position: relative;
   display: inline-grid;
   place-items: center;
   width: 22px;
@@ -53,6 +78,45 @@ const marks = computed(() => {
 .social-mark--facebook { background: #1877f2; }
 .social-mark--youtube { background: #e62117; }
 .social-mark--tiktok { background: #111; }
-.social-mark svg { width: 11px; height: 11px; }
-.social-marks--large .social-mark svg { width: 16px; height: 16px; }
+.social-mark__logo { width: 11px; height: 11px; }
+.social-marks--large .social-mark__logo { width: 16px; height: 16px; }
+/* Progress: the ring spins while posting and settles solid once posted. */
+.social-mark__ring {
+  position: absolute;
+  inset: -4px;
+  border: 2px solid var(--ui-accent-soft);
+  border-top-color: var(--ui-accent);
+  border-radius: 50%;
+  animation: social-mark-spin 1.1s linear infinite;
+}
+.social-mark.is-posted .social-mark__ring { border-color: var(--ui-accent); animation: none; }
+.social-mark__tick {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--ui-bg);
+  border-radius: 50%;
+  background: var(--ui-success, var(--ui-accent));
+  color: #fff;
+}
+.social-mark__tick svg { width: 8px; height: 8px; }
+.social-mark__dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--ui-bg);
+  border-radius: 50%;
+  background: var(--ui-danger);
+}
+.social-mark.is-posting + .social-mark, .social-mark.is-posted + .social-mark { margin-left: -2px; }
+@keyframes social-mark-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .social-mark__ring { animation: none; border-color: var(--ui-accent-soft); border-top-color: var(--ui-accent); border-right-color: var(--ui-accent); }
+}
 </style>

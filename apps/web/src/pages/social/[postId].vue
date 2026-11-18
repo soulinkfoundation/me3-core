@@ -20,6 +20,7 @@ import SocialTextCarouselEditor from "../../components/social/SocialTextCarousel
 import SocialTikTokSettings from "../../components/social/SocialTikTokSettings.vue";
 import { useSitesStore } from "../../stores/sites";
 import { useAppToast } from "../../composables/useAppToast";
+import { useAppLoadingWhile } from "../../composables/useAppLoading";
 import { useSocialData } from "../../composables/useSocialData";
 import type { DriveFile, PostVersion, SocialMediaAsset, SocialPlatform, SocialPostDetail, SocialPostOptions, TextCarousel } from "../../stores/social";
 import { uploadDriveFiles } from "../../utils/drive-upload";
@@ -36,10 +37,12 @@ import {
   resultFor,
   SOCIAL_NETWORKS,
   socialNetwork,
-  suggestedTime,
   versionChecks,
   documentRule,
+  finishLink,
   isImageAsset,
+  markState,
+  markStatus,
   mentionsIn,
   renderPostText,
   moveLinkOut,
@@ -56,6 +59,7 @@ import {
   visibleVersions,
   YOUTUBE_TITLE_LIMIT,
   youtubeTitleFrom,
+  type MarkState,
   type SocialNetwork,
   type VersionResult,
 } from "../../utils/social-posts";
@@ -111,7 +115,7 @@ const trimProgress = ref<number | null>(null);
 const altAsset = computed(() => (altIndex.value === null ? null : activeTiles.value[altIndex.value] || null));
 const cropAsset = computed(() => (cropIndex.value === null ? null : activeTiles.value[cropIndex.value] || null));
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-const when = ref(localParts(suggestedTime()));
+const when = ref(localParts(new Date()));
 const saveChains = new Map<string, Promise<unknown>>();
 const saveTimers = new Map<string, number>();
 let postingPoll: number | undefined;
@@ -157,12 +161,6 @@ const schedulable = computed(() =>
 const skippedLabel = computed(() =>
   blockers.value.map(({ version, reason }) => `${networkLabel(version.platform)} (${reason.replace(/\.$/, "")})`).join(", "),
 );
-/** Says what stops posting, by platform, instead of pointing at marks the owner has to find. */
-const blockerSummary = computed(() =>
-  blockers.value.length === 1
-    ? blockers.value[0]!.reason
-    : blockers.value.map(({ version, reason }) => `${networkLabel(version.platform)}: ${reason.replace(/\.$/, "")}`).join(". ") + ".",
-);
 /** TikTok's consent line sits beside the Post button whenever TikTok is about to be posted. */
 const tiktokPosting = computed(() => ready.value.find((version) => version.platform === "tiktok") || null);
 const tiktokBrandedPolicy = computed(() => (tiktokPosting.value ? tiktokDeclaration(tiktokChoicesFor(tiktokPosting.value)).brandedPolicy : false));
@@ -174,10 +172,12 @@ const scheduledIso = computed(() => {
   return resolved.ok ? resolved.value : null;
 });
 const scheduleInPast = computed(() => Boolean(scheduledIso.value && Date.parse(scheduledIso.value) < Date.now() + 60_000));
-/** When the chosen time has passed or is minutes away, posting now is the obvious step. */
-const postNowFirst = computed(() =>
-  !schedulable.value.length || !scheduledIso.value || Date.parse(scheduledIso.value) < Date.now() + 15 * 60_000,
+/** The time starts at now; moved more than a couple of minutes ahead, the one button schedules instead. */
+const schedulingLater = computed(() =>
+  Boolean(schedulable.value.length && scheduledIso.value && Date.parse(scheduledIso.value) > Date.now() + 2 * 60_000),
 );
+/** Day and time show only when something here can be scheduled (TikTok and YouTube can't). */
+const showWhen = computed(() => Boolean(schedulable.value.length || (scheduledVersions.value.length && !pending.value.length)));
 const timezoneLabel = computed(() => {
   try {
     const date = scheduledIso.value ? new Date(scheduledIso.value) : new Date();
@@ -190,17 +190,35 @@ const timezoneLabel = computed(() => {
 });
 const scheduleLabel = computed(() => {
   const count = schedulable.value.length;
-  const at = scheduledIso.value ? ` for ${formatShortWhen(scheduledIso.value)}` : "";
-  return `Schedule ${count} post${count === 1 ? "" : "s"}${at}`;
+  return count > 1 ? `Schedule ${count}` : "Schedule";
 });
 const postNowLabel = computed(() => {
   const count = ready.value.length;
   return count > 1 ? `Post to ${count} platforms now` : "Post now";
 });
-const results = computed(() =>
-  versions.value
-    .map((version) => ({ version, result: resultFor(version) }))
-    .filter(({ result }) => result.state !== "draft"),
+/** The thin bar at the top of the app runs while any platform is posting. */
+const anyPosting = computed(() => versions.value.some((version) => markState(version) === "posting"));
+useAppLoadingWhile(anyPosting);
+const tabStates = computed(() =>
+  Object.fromEntries(versions.value.flatMap((version) => {
+    const state = markState(version);
+    return state ? [[version.id, state]] : [];
+  })) as Record<string, MarkState>,
+);
+const activePosting = computed(() => Boolean(active.value && markState(active.value) === "posting"));
+/** A failed platform's one-line reason and next step sit in the footer while its tab is open. */
+const activeFailure = computed(() => {
+  return active.value && markState(active.value) === "failed" ? resultFor(active.value) : null;
+});
+/** Each posted platform ends on one button: view it, open the app, or finish in YouTube. */
+const finishLinks = computed(() =>
+  versions.value.flatMap((version) => {
+    const link = finishLink(version, activeAccount(version.platform, accounts.value)?.handle);
+    return link ? [{ id: version.id, ...link }] : [];
+  }).sort((a, b) => Number(a.primary) - Number(b.primary)),
+);
+const showBar = computed(() =>
+  Boolean(pending.value.length || scheduledVersions.value.length || activePosting.value || finishLinks.value.length),
 );
 const activeChecks = computed(() => (active.value ? versionChecks(withText(active.value), capabilities.value, accounts.value) : []));
 const activeImages = computed(() => (active.value?.assetManifest || []).filter(isImageAsset));
@@ -1073,12 +1091,6 @@ async function runResult(version: PostVersion, result: VersionResult) {
   }
 }
 
-function resultHref(version: PostVersion, result: VersionResult): string | null {
-  if (result.action === "view") return version.platformPostUrl;
-  if (result.action === "open_youtube") return version.platformPostUrl || "https://studio.youtube.com";
-  return null;
-}
-
 // The URL names the platform, never an internal id.
 watch(activeId, (next) => {
   commentOpen.value = false;
@@ -1129,40 +1141,6 @@ onMounted(async () => {
           </template>
         </AppPageBar>
 
-        <section v-if="results.length" class="post-results" aria-label="Results">
-          <ul>
-            <li v-for="{ version, result } in results" :key="version.id" class="result-row">
-              <SocialMarks :platforms="[version.platform]" size="large" />
-              <div class="result-row__text">
-                <span class="result-row__name">{{ networkLabel(version.platform) }}</span>
-                <span class="result-row__detail" :class="`result-row__detail--${result.state}`">{{ result.message }}</span>
-              </div>
-              <a
-                v-if="resultHref(version, result)"
-                class="result-row__link"
-                :href="resultHref(version, result)!"
-                target="_blank"
-                rel="noopener"
-              >{{ result.actionLabel }} <UiIcon name="ArrowUpRight" :size="13" /></a>
-              <Button
-                v-else-if="result.action"
-                :color="result.action === 'mark_posted' ? 'outline' : 'primary'"
-                shape="pill"
-                size="small"
-                :disabled="busy !== null"
-                @click="runResult(version, result)"
-              >{{ result.actionLabel }}</Button>
-              <Button
-                v-if="result.state === 'failed' && result.action !== 'retry' && result.action !== 'reconnect'"
-                color="outline"
-                shape="pill"
-                size="small"
-                :disabled="busy !== null"
-                @click="postNow(version)"
-              >Try again</Button>
-            </li>
-          </ul>
-        </section>
 
         <div class="post-tabs" role="tablist" aria-label="Platforms">
           <button
@@ -1172,9 +1150,11 @@ onMounted(async () => {
             role="tab"
             :aria-selected="active?.id === version.id"
             :class="{ 'has-problem': tabHasProblem(version) }"
+            :title="markStatus(version) || undefined"
+            :aria-label="markStatus(version) || undefined"
             @click="flushText(active?.id || ''); activeId = version.id"
           >
-            <SocialMarks :platforms="[version.platform]" />
+            <SocialMarks :platforms="[version.platform]" :states="tabStates[version.id] ? { [version.platform]: tabStates[version.id]! } : undefined" />
             <span>{{ networkLabel(version.platform) }}</span>
             <span v-if="tabCount(version)" class="post-tabs__count">{{ tabCount(version) }}</span>
           </button>
@@ -1406,43 +1386,62 @@ onMounted(async () => {
           </aside>
         </section>
 
-        <footer v-if="pending.length || scheduledVersions.length" class="post-bar">
-          <div class="post-bar__when">
+        <footer v-if="showBar" class="post-bar">
+          <div v-if="showWhen" class="post-bar__when">
             <label class="visually-hidden" for="post-date">Day</label>
             <input id="post-date" v-model="when.date" type="date">
             <label class="visually-hidden" for="post-time">Time</label>
             <input id="post-time" v-model="when.time" type="time">
             <span class="post-bar__zone" :title="timezone">{{ timezoneLabel }}</span>
-            <span v-if="scheduleInPast" class="post-bar__hint post-bar__hint--skip">That time has passed. Post now, or pick a later time.</span>
-            <span v-else-if="blockers.length && !ready.length" class="post-bar__hint post-bar__hint--problem" role="status">{{ blockerSummary }}</span>
-            <span v-else-if="blockers.length" class="post-bar__hint post-bar__hint--skip">Skipping {{ skippedLabel }}.</span>
           </div>
           <div class="post-bar__actions">
-            <p v-if="tiktokPosting && !(scheduledVersions.length && !pending.length)" class="post-bar__consent">
-              By posting, you agree to TikTok's
-              <template v-if="tiktokBrandedPolicy"><a :href="TIKTOK_BRANDED_POLICY_URL" target="_blank" rel="noopener">Branded Content Policy</a> and </template>
-              <a :href="TIKTOK_MUSIC_TERMS_URL" target="_blank" rel="noopener">Music Usage Confirmation</a>.
-            </p>
+            <span v-if="scheduledVersions.length && !pending.length && scheduleInPast" class="post-bar__hint post-bar__hint--skip">That time has passed.</span>
+            <span v-else-if="blockers.length && ready.length" class="post-bar__hint post-bar__hint--skip">Skipping {{ skippedLabel }}.</span>
+            <span v-if="activePosting" class="post-bar__status" role="status">Posting to {{ networkLabel(active!.platform) }}…</span>
+            <template v-else-if="activeFailure">
+              <span class="post-bar__status post-bar__status--failed" role="status">{{ activeFailure.message }}</span>
+              <Button
+                v-if="activeFailure.action"
+                :color="activeFailure.action === 'mark_posted' ? 'outline' : 'primary'"
+                shape="pill"
+                size="compact"
+                :disabled="busy !== null"
+                @click="runResult(active!, activeFailure)"
+              >{{ activeFailure.actionLabel }}</Button>
+            </template>
+            <Button
+              v-for="link in finishLinks"
+              :key="link.id"
+              :href="link.href"
+              target="_blank"
+              rel="noopener"
+              :color="link.primary && !pending.length ? 'primary' : 'outline'"
+              shape="pill"
+              size="compact"
+            >{{ link.label }}</Button>
             <template v-if="scheduledVersions.length && !pending.length">
               <Button class="post-header__quiet" color="ghost" shape="soft" size="compact" :disabled="busy !== null" @click="confirmCancel = true">Cancel schedule</Button>
               <Button color="primary" shape="pill" size="compact" :disabled="busy !== null || !scheduledIso || scheduleInPast" @click="moveSchedule">
                 {{ busy === "move" ? "Moving…" : scheduledIso ? `Move to ${formatShortWhen(scheduledIso)}` : "Move" }}
               </Button>
             </template>
-            <template v-else>
-              <Button :color="postNowFirst ? 'primary' : 'outline'" shape="pill" size="compact" :disabled="busy !== null || !ready.length" @click="postNow()">
-                {{ busy === "post" ? "Posting…" : postNowLabel }}
-              </Button>
-              <Button
-                v-if="schedulable.length"
-                :color="postNowFirst ? 'outline' : 'primary'"
-                shape="pill"
-                size="compact"
-                :disabled="busy !== null || !scheduledIso || scheduleInPast"
-                @click="schedule"
-              >{{ busy === "schedule" ? "Scheduling…" : scheduleLabel }}</Button>
-            </template>
+            <Button
+              v-else-if="pending.length && schedulingLater"
+              color="primary"
+              shape="pill"
+              size="compact"
+              :disabled="busy !== null"
+              @click="schedule"
+            >{{ busy === "schedule" ? "Scheduling…" : scheduleLabel }}</Button>
+            <Button v-else-if="pending.length" color="primary" shape="pill" size="compact" :disabled="busy !== null || !ready.length" @click="postNow()">
+              {{ busy === "post" ? "Posting…" : postNowLabel }}
+            </Button>
           </div>
+          <p v-if="tiktokPosting && !(scheduledVersions.length && !pending.length)" class="post-bar__consent">
+            By posting, you agree to TikTok's
+            <template v-if="tiktokBrandedPolicy"><a :href="TIKTOK_BRANDED_POLICY_URL" target="_blank" rel="noopener">Branded Content Policy</a> and </template>
+            <a :href="TIKTOK_MUSIC_TERMS_URL" target="_blank" rel="noopener">Music Usage Confirmation</a>.
+          </p>
         </footer>
         <p v-if="scheduledVersions.length" class="post-note">Editing a scheduled post moves it back to Drafts.</p>
       </template>
@@ -1552,16 +1551,6 @@ onMounted(async () => {
 .post-header__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 :deep(.post-header__quiet) { color: var(--ui-text-muted); font-weight: 500; }
 
-.post-results { margin-top: 16px; padding: 4px 14px; border-radius: var(--ui-radius-lg); background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
-.post-results ul { margin: 0; padding: 0; list-style: none; }
-.result-row { display: flex; align-items: center; gap: 12px; min-height: 56px; }
-.result-row + .result-row { border-top: 1px solid var(--ui-border); }
-.result-row__text { display: grid; flex: 1 1 auto; min-width: 0; gap: 1px; }
-.result-row__name { font-size: 14px; font-weight: 600; }
-.result-row__detail { color: var(--ui-text-muted); font-size: 12.5px; }
-.result-row__detail--failed, .result-row__detail--retrying { color: var(--ui-danger); }
-.result-row__link { display: inline-flex; align-items: center; gap: 3px; color: var(--ui-text-muted); font-size: 13px; text-decoration: none; }
-.result-row__link:hover { color: var(--ui-text); text-decoration: underline; }
 
 .post-tabs { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 18px; border-bottom: 1px solid var(--ui-border); }
 .post-tabs button {
@@ -1574,6 +1563,7 @@ onMounted(async () => {
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--ui-text-muted);
+  min-height: 44px;
   font: 13.5px var(--font-sans);
   cursor: pointer;
 }
@@ -1672,14 +1662,16 @@ onMounted(async () => {
 
 .post-preview { position: sticky; top: calc(var(--app-topbar-height, 0px) + 12px); align-self: start; min-width: 0; }
 
-.post-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--ui-border); }
+.post-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 10px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--ui-border); }
 .post-bar__when { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .post-bar__when input { padding: 6px 10px; font-size: 13px; }
 .post-bar__hint { color: var(--ui-danger); font-size: 12.5px; }
 .post-bar__zone { color: var(--ui-text-muted); font-size: 12.5px; }
 .post-bar__hint--skip { color: var(--ui-text-muted); }
 .post-field-foot__links .post-remove { color: var(--ui-danger); }
-.post-bar__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.post-bar__actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.post-bar__status { color: var(--ui-text-muted); font-size: 12.5px; }
+.post-bar__status--failed { color: var(--ui-danger); }
 .post-note { margin: 8px 0 0; color: var(--ui-text-muted); font-size: 12.5px; }
 .post-state { display: grid; justify-items: start; gap: 8px; margin-top: 40px; }
 .post-state h1 { margin: 0; font-size: 20px; font-weight: 650; }

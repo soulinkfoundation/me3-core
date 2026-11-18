@@ -23,6 +23,7 @@ import {
   postRowDetail,
   postTab,
   postTitle,
+  postingMarks,
   visibleVersions,
   type SocialTab,
 } from "../../utils/social-posts";
@@ -213,7 +214,7 @@ onMounted(async () => {
           <ul v-if="rowsByTab[tab].length" class="social-list">
             <li v-for="detail in rowsByTab[tab]" :key="detail.post.id">
               <RouterLink class="social-row social-row--link" :to="`/social/${encodeURIComponent(detail.post.id)}`">
-                <SocialMarks :platforms="visibleVersions(detail).map((version) => version.platform)" />
+                <SocialMarks :platforms="visibleVersions(detail).map((version) => version.platform)" :states="postingMarks(detail)" />
                 <span class="social-row__text">
                   <span class="social-row__title">{{ postTitle(detail) }}</span>
                   <span

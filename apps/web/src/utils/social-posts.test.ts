@@ -13,6 +13,10 @@ import {
   postTab,
   postTitle,
   resultFor,
+  finishLink,
+  markState,
+  markStatus,
+  postingMarks,
   suggestedTime,
   versionChecks,
   visibleVersions,
@@ -73,6 +77,24 @@ describe("social posts", () => {
     // Provider codes and internal names never reach the owner.
     expect(resultFor(version({ publicationStatus: "failed", failureClass: "rejected", errorMessage: "Publication x_media_upload failed (#100)" })).message).toBe("X didn't accept this post.");
     expect(resultFor(version({ platform: "youtube", publicationStatus: "published" }))).toMatchObject({ message: "Uploaded as a private draft", action: "open_youtube", actionLabel: "Publish in YouTube" });
+  });
+
+  it("marks each platform's progress and spins only the ones still posting in the list", () => {
+    expect(markState(version({ publicationStatus: "queued" }))).toBe("posting");
+    expect(markState(version({ publicationStatus: "published" }))).toBe("posted");
+    expect(markState(version({ publicationStatus: "failed" }))).toBe("failed");
+    expect(markState(version({ publicationStatus: "scheduled" }))).toBeNull();
+    expect(markStatus(version({ publicationStatus: "publishing" }))).toBe("X: Posting…");
+    expect(markStatus(version())).toBeNull();
+    expect(postingMarks(post([version({ publicationStatus: "publishing" }), version({ platform: "linkedin", publicationStatus: "published" })]))).toEqual({ x: "posting" });
+  });
+
+  it("ends each posted platform on one button", () => {
+    expect(finishLink(version({ publicationStatus: "queued" }))).toBeNull();
+    expect(finishLink(version({ publicationStatus: "published", platformPostUrl: "https://x.com/m/status/1" }))).toEqual({ label: "View on X", href: "https://x.com/m/status/1", primary: false });
+    expect(finishLink(version({ platform: "youtube", publicationStatus: "published" }))).toEqual({ label: "Publish in YouTube", href: "https://studio.youtube.com", primary: true });
+    expect(finishLink(version({ platform: "tiktok", publicationStatus: "published" }), "@mayastudio")?.href).toBe("https://www.tiktok.com/@mayastudio");
+    expect(finishLink(version({ publicationStatus: "published" }))).toBeNull();
   });
 
   it("shows Needs attention only when something needs the owner", () => {

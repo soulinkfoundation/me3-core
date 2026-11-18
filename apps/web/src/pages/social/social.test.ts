@@ -36,6 +36,7 @@ vi.mock("../../composables/useAppToast", () => ({
   useAppToast: () => ({ toastError, toastSuccess: vi.fn(), toastFromUnknown: vi.fn(), toast: vi.fn() }),
 }));
 
+import { isAppLoading } from "../../composables/useAppLoading";
 import SocialIndex from "./index.vue";
 import SocialPost from "./[postId].vue";
 
@@ -162,7 +163,7 @@ describe("Social review", () => {
     const wrapper = mount(SocialPost, { global: { stubs } });
     await flushPromises();
 
-    expect(wrapper.text()).toContain("Scheduled for");
+    expect(wrapper.get("[role=tab]").attributes("aria-label")).toMatch(/^X: Scheduled for /);
     expect(wrapper.text()).toContain("Cancel schedule");
 
     await wrapper.get("textarea").setValue("Studio open day, edited.");
@@ -171,9 +172,10 @@ describe("Social review", () => {
     vi.useRealTimers();
 
     expect(apiPatch).toHaveBeenCalledWith("/social/versions/x-1", { bodyText: "Studio open day, edited." });
+    // Back in Drafts with the old time still ahead, the one button schedules again.
     const buttons = wrapper.findAll("button").map((button) => button.text());
-    expect(buttons).toContain("Post now");
-    expect(buttons.some((label) => /^Schedule 1 post for /.test(label))).toBe(true);
+    expect(buttons).toContain("Schedule");
+    expect(buttons).not.toContain("Post now");
     expect(buttons.some((label) => /Approve/.test(label))).toBe(false);
   });
 
@@ -232,15 +234,35 @@ describe("Social review", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("Skipping YouTube (YouTube needs a video).");
+    // The time starts at now, so the one button posts; a later time turns it into Schedule.
+    expect(wrapper.findAll(".post-bar button").map((button) => button.text())).toEqual(["Post now"]);
+    await wrapper.get("#post-date").setValue("2030-01-01");
+    expect(wrapper.findAll(".post-bar button").map((button) => button.text())).toEqual(["Schedule"]);
+    await wrapper.get("#post-date").setValue(new Date().toLocaleDateString("en-CA"));
+    await wrapper.get("#post-time").setValue("00:00");
     const postNow = wrapper.findAll("button").find((button) => button.text() === "Post now")!;
     expect(postNow.attributes("disabled")).toBeUndefined();
-    const schedule = wrapper.findAll("button").find((button) => /^Schedule 1 post/.test(button.text()))!;
-    expect(schedule.attributes("disabled")).toBeUndefined();
 
     await postNow.trigger("click");
     await flushPromises();
     const published = apiPost.mock.calls.map(([path]) => path).filter((path) => String(path).endsWith("/publish"));
     expect(published).toEqual(["/social/versions/x-1/publish"]);
+  });
+
+  it("hides the day and time when nothing on the post can be scheduled", async () => {
+    const youtube = { ...capabilities[0]!, platform: "youtube", schedule: false };
+    const base = status("included");
+    serve({
+      "/social/status": { ...base, plugin: { ...base.plugin, platformCapabilities: [...capabilities, youtube] } },
+      "/social/accounts": { accounts: [account("youtube")] },
+      "/social/posts/post-1": { post: post([version({ id: "yt-1", platform: "youtube", format: "short_video", title: "Open day" })]) },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+    expect(wrapper.find("#post-date").exists()).toBe(false);
+    expect(wrapper.findAll(".post-bar button").map((button) => button.text())).toEqual(["Post now"]);
   });
 
   it("removes a platform from the post after confirming", async () => {
@@ -368,7 +390,7 @@ describe("Social review", () => {
     expect(apiPatch).toHaveBeenLastCalledWith("/social/versions/x-1", { assetManifest: [expect.objectContaining({ fileId: "v1", kind: "video" })] });
   });
 
-  it("duplicates a post with its text and media, and offers Try again after a failure", async () => {
+  it("duplicates a post with its text and media, and puts a failure's reason and next step in the footer", async () => {
     const image = { url: "/api/files/f1/content", fileId: "f1", kind: "image" as const, mimeType: "image/png", altText: "", assetIndex: 0 };
     const current = post([
       version({ id: "x-1", assetManifest: [image] }),
@@ -385,7 +407,12 @@ describe("Social review", () => {
     const wrapper = mount(SocialPost, { global: { stubs } });
     await flushPromises();
 
-    expect(wrapper.findAll("button").some((button) => button.text() === "Try again")).toBe(true);
+    const linkedin = wrapper.findAll("[role=tab]").find((tab) => tab.text().includes("LinkedIn"))!;
+    expect(linkedin.attributes("aria-label")).toBe("LinkedIn: LinkedIn said no.");
+    expect(linkedin.find(".social-mark.is-failed").exists()).toBe(true);
+    await linkedin.trigger("click");
+    expect(wrapper.get(".post-bar").text()).toContain("LinkedIn said no.");
+    expect(wrapper.findAll(".post-bar button").some((button) => button.text() === "Edit and retry")).toBe(true);
     await wrapper.findAll("button").find((button) => button.text() === "Duplicate")!.trigger("click");
     await flushPromises();
 
@@ -398,6 +425,48 @@ describe("Social review", () => {
       ],
     }));
     expect(routerPush).toHaveBeenCalledWith("/social/post-2");
+  });
+
+  it("shows posting on the platform tab and top bar, then ends on each platform's button", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let current = post([
+      version({ id: "tt-1", platform: "tiktok", publicationStatus: "publishing" }),
+      version({ id: "yt-1", platform: "youtube", publicationStatus: "queued" }),
+    ]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("tiktok"), account("youtube")] },
+      "/social/posts/post-1": { get post() { return current; } },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    expect(wrapper.find(".post-results").exists()).toBe(false);
+    expect(isAppLoading.value).toBe(true);
+    const tiktok = wrapper.findAll("[role=tab]").find((tab) => tab.text().includes("TikTok"))!;
+    expect(tiktok.attributes("title")).toBe("TikTok: Posting…");
+    expect(tiktok.find(".social-mark.is-posting .social-mark__ring").exists()).toBe(true);
+    await tiktok.trigger("click");
+    expect(wrapper.get(".post-bar").text()).toBe("Posting to TikTok…");
+
+    current = post([
+      version({ id: "tt-1", platform: "tiktok", publicationStatus: "published" }),
+      version({ id: "yt-1", platform: "youtube", publicationStatus: "published", platformPostUrl: "https://studio.youtube.com/video/abc/edit" }),
+    ]);
+    vi.advanceTimersByTime(3_000);
+    await flushPromises();
+    vi.useRealTimers();
+
+    expect(isAppLoading.value).toBe(false);
+    expect(tiktok.find(".social-mark.is-posted .social-mark__tick").exists()).toBe(true);
+    const links = wrapper.findAll(".post-bar a").map((link) => [link.text(), link.attributes("href")]);
+    expect(links).toEqual([
+      ["Open TikTok", "https://www.tiktok.com/@mayastudio"],
+      ["Publish in YouTube", "https://studio.youtube.com/video/abc/edit"],
+    ]);
+    wrapper.unmount();
   });
 
   it("saves alt text to the same image on every draft platform", async () => {
