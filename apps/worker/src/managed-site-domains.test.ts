@@ -309,7 +309,7 @@ describe("agent domain offer", () => {
         eligibility: { eligible: true, mode: "sandbox" },
         options: [
           { domain: "river.com", included: true },
-          { domain: "river.ai", included: false, extra_yearly_cents: 6000 },
+          { domain: "river.ai", included: false, extra_first_year_cents: 6000, extra_yearly_cents: 6000 },
         ],
       }),
     );
@@ -322,7 +322,7 @@ describe("agent domain offer", () => {
       site: { username: "river" },
       options: [
         { domain: "river.com", included: true },
-        { domain: "river.ai", included: false, extraYearlyCents: 6000 },
+        { domain: "river.ai", included: false, extraFirstYearCents: 6000, extraYearlyCents: 6000 },
       ],
     });
   });

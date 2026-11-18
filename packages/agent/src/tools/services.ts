@@ -156,6 +156,6 @@ export interface AgentSiteStarterServices {
   /** Domains the owner can get through ME3 for their site; absent off ME3 hosting. */
   domainOptions?(query?: string): Promise<{
     available: boolean; message?: string; site?: { username: string; url?: string };
-    options: Array<{ domain: string; included: boolean; extraYearlyCents?: number }>;
+    options: Array<{ domain: string; included: boolean; extraFirstYearCents?: number; extraYearlyCents?: number }>;
   }>;
 }

@@ -1332,7 +1332,12 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
         {
           search: options.search,
           body: body
-            ? { domain: body.domain, registrant: body.registrant }
+            ? {
+                domain: body.domain,
+                registrant: body.registrant,
+                extra_first_year_cents: body.extra_first_year_cents,
+                extra_yearly_cents: body.extra_yearly_cents,
+              }
             : undefined,
         },
       );

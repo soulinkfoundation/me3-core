@@ -301,7 +301,7 @@ export type AgentDomainOffer = {
   /** Why no domains are offered, in ME3's words (not on hosting, not Business yet, already used). */
   message?: string;
   site?: { username: string; url?: string };
-  options: Array<{ domain: string; included: boolean; extraYearlyCents?: number }>;
+  options: Array<{ domain: string; included: boolean; extraFirstYearCents?: number; extraYearlyCents?: number }>;
 };
 
 /**
@@ -336,8 +336,14 @@ export async function getAgentDomainOffer(
         const option = entry as Record<string, unknown>;
         const domain = normalizeMessage(option.domain).toLowerCase();
         if (!domain) return [];
-        const extra = typeof option.extra_yearly_cents === "number" ? option.extra_yearly_cents : undefined;
-        return [{ domain, included: option.included === true, ...(extra ? { extraYearlyCents: extra } : {}) }];
+        const cents = (value: unknown) => (typeof value === "number" && value > 0 ? value : undefined);
+        const first = cents(option.extra_first_year_cents);
+        const yearly = cents(option.extra_yearly_cents);
+        return [{
+          domain, included: option.included === true,
+          ...(first ? { extraFirstYearCents: first } : {}),
+          ...(yearly ? { extraYearlyCents: yearly } : {}),
+        }];
       }).slice(0, 5)
     : [];
   return {
