@@ -18,6 +18,9 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   close: [];
+  // Fires once the dialog is showing, after the browser has placed its own initial focus,
+  // so a field focused here keeps it. Content inside a closed dialog cannot take focus.
+  opened: [];
 }>();
 
 const dialog = ref<HTMLDialogElement | null>(null);
@@ -46,6 +49,7 @@ watch(
           ? document.activeElement
           : null;
       element.showModal();
+      emit("opened");
       return;
     }
 

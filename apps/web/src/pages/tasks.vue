@@ -12,6 +12,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ApiError, api } from "../api";
 import AppDialog from "../components/AppDialog.vue";
 import Button from "../components/Button.vue";
+import FloatingActionButton from "../components/FloatingActionButton.vue";
 import IconPicker from "../components/IconPicker.vue";
 import PageLoading from "../components/PageLoading.vue";
 import TiptapEditor from "../components/TiptapEditor.vue";
@@ -78,8 +79,7 @@ const taskActionId = ref("");
 const selectedTask = ref<WorkspaceTask | null>(null);
 const taskDialogOpen = ref(false);
 const taskTitleInput = ref<HTMLTextAreaElement | null>(null);
-const taskMenuOpen = ref(false);
-// The circle beside the title completes the task; the Status chip only chooses between Now and Backlog.
+// The circle in the details row completes the task; the Status chip only chooses between Now and Backlog.
 const openTaskStatus = ref<"in_progress" | "backlog">("in_progress");
 const taskDraftDone = computed(() => taskDraft.value.status === "done");
 const taskDraftProjectName = computed(() => projects.value.find((project) => project.id === taskDraft.value.projectId)?.name || "Project");
@@ -255,17 +255,19 @@ async function selectMode(nextMode: TaskModeId) {
 }
 
 function openNewTask() {
+  const alreadyOpen = taskDialogOpen.value;
   selectedTask.value = null;
   archiveConfirmOpen.value = false;
   taskError.value = "";
   taskDraft.value = emptyTaskDraft();
-  taskMenuOpen.value = false;
   openTaskStatus.value = taskDraft.value.status === "backlog" ? "backlog" : "in_progress";
   taskDialogOpen.value = true;
-  focusTaskTitle();
+  // A closed dialog focuses the title from its `opened` event instead.
+  if (alreadyOpen) focusTaskTitle();
 }
 
 async function openTask(task: WorkspaceTask, updateRoute = true) {
+  const alreadyOpen = taskDialogOpen.value;
   selectedTask.value = task;
   archiveConfirmOpen.value = false;
   deleteConfirmOpen.value = false;
@@ -278,13 +280,12 @@ async function openTask(task: WorkspaceTask, updateRoute = true) {
     important: task.priority === 1,
     scheduledFor: task.scheduledFor || task.dueAt || "",
   };
-  taskMenuOpen.value = false;
   openTaskStatus.value = taskDraft.value.status === "backlog" ? "backlog" : "in_progress";
   taskDialogOpen.value = true;
+  if (alreadyOpen) focusTaskTitle();
   if (updateRoute) {
     await router.replace({ query: { ...route.query, task: task.id } });
   }
-  focusTaskTitle();
 }
 
 async function openTaskFromRoute() {
@@ -621,8 +622,23 @@ function apiMessage(caught: unknown, fallback: string): string {
   return caught instanceof ApiError ? caught.message : fallback;
 }
 
+// Runs once the dialog is showing: a field inside a closed <dialog> can be neither measured nor focused,
+// and showModal() would otherwise move focus to the first button (Cancel).
 function focusTaskTitle() {
-  void nextTick(() => { sizeTaskTitle(); taskTitleInput.value?.focus(); });
+  void nextTick(() => {
+    const field = taskTitleInput.value;
+    if (!field || selectedTaskArchived.value) return;
+    sizeTaskTitle();
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+  });
+}
+
+function saveOnTitleEnter(event: KeyboardEvent) {
+  // Enter that confirms an IME composition is not a save.
+  if (event.isComposing) return;
+  event.preventDefault();
+  void saveTask();
 }
 
 function handleWindowClick(event: MouseEvent) {
@@ -722,18 +738,6 @@ onBeforeUnmount(() => {
       <div class="tasks-topbar-actions">
         <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Goals" title="Goals" @click="router.push({ path: '/mission', query: { focus: 'goals' } })">
           <UiIcon name="Goal" :size="19" />
-        </Button>
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          aria-label="Add task"
-          title="Add task"
-          :disabled="loading || projects.length === 0"
-          @click="openNewTask"
-        >
-          <UiIcon name="Plus" :size="19" />
         </Button>
       </div>
     </header>
@@ -861,17 +865,24 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    <FloatingActionButton
+      label="Add task"
+      column="var(--tasks-column-width)"
+      :disabled="loading || projects.length === 0"
+      @click="openNewTask"
+    />
+
     <AppDialog
       :open="taskDialogOpen"
       labelled-by="task-dialog-title"
       close-on-backdrop
       @close="closeTaskDialog"
+      @opened="focusTaskTitle"
     >
       <form
         class="tasks-dialog"
         :class="{ 'tasks-dialog--task': !selectedTaskArchived }"
         @submit.prevent="saveTask"
-        @click="taskMenuOpen = false"
       >
         <header class="tasks-dialog__header" :class="{ 'tasks-dialog__header--task': !selectedTaskArchived }">
           <Button
@@ -886,39 +897,6 @@ onBeforeUnmount(() => {
           <h2 id="task-dialog-title" :class="{ 'visually-hidden': !selectedTaskArchived }">
             {{ selectedTaskArchived ? "Archived task" : selectedTask ? "Task" : "New task" }}
           </h2>
-          <div v-if="selectedTask && !selectedTaskArchived" class="task-menu" @click.stop>
-            <Button
-              color="ghost"
-              shape="soft"
-              size="compact"
-              icon-only
-              type="button"
-              aria-label="More actions"
-              aria-haspopup="menu"
-              :aria-expanded="taskMenuOpen ? 'true' : 'false'"
-              title="More actions"
-              @click="taskMenuOpen = !taskMenuOpen; archiveConfirmOpen = false"
-            >
-              <UiIcon name="Ellipsis" :size="18" aria-hidden="true" />
-            </Button>
-            <div v-if="taskMenuOpen" class="task-menu__panel" role="menu">
-              <button
-                v-if="!archiveConfirmOpen"
-                type="button"
-                role="menuitem"
-                class="task-menu__item is-danger"
-                @click="archiveConfirmOpen = true"
-              >
-                <UiIcon name="Archive" :size="15" aria-hidden="true" />
-                Archive task
-              </button>
-              <div v-else class="task-menu__confirm">
-                <span>Archive this task?</span>
-                <Button color="danger" shape="soft" size="compact" type="button" :disabled="taskSaving" @click="archiveSelectedTask">Archive</Button>
-                <Button color="ghost" shape="soft" size="compact" type="button" @click="taskMenuOpen = false">Keep</Button>
-              </div>
-            </div>
-          </div>
           <Button
             v-if="selectedTask && selectedTaskArchived"
             color="primary"
@@ -991,7 +969,19 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-else class="tasks-dialog__content task-editor" :class="{ 'is-done': taskDraftDone }">
-          <div class="task-editor__title-row">
+          <textarea
+            ref="taskTitleInput"
+            v-model="taskDraft.title"
+            class="task-editor__title"
+            rows="1"
+            autocomplete="off"
+            aria-label="Task"
+            placeholder="Task"
+            @input="sizeTaskTitle"
+            @keydown.enter="saveOnTitleEnter"
+          />
+
+          <div class="task-editor__props" role="group" aria-label="Task details">
             <button
               type="button"
               class="task-editor__check"
@@ -1002,20 +992,6 @@ onBeforeUnmount(() => {
             >
               <UiIcon :name="taskDraftDone ? 'CircleCheck' : 'Circle'" :size="22" aria-hidden="true" />
             </button>
-            <textarea
-              ref="taskTitleInput"
-              v-model="taskDraft.title"
-              class="task-editor__title"
-              rows="1"
-              autocomplete="off"
-              aria-label="Task"
-              placeholder="Task"
-              @input="sizeTaskTitle"
-              @keydown.enter.prevent="saveTask"
-            />
-          </div>
-
-          <div class="task-editor__props" role="group" aria-label="Task details">
             <label class="task-chip" title="Project">
               <UiIcon name="Target" :size="15" aria-hidden="true" />
               <span>{{ taskDraftProjectName }}</span>
@@ -1051,6 +1027,24 @@ onBeforeUnmount(() => {
               <UiIcon name="Star" :size="15" aria-hidden="true" />
               Important
             </button>
+            <template v-if="selectedTask">
+              <button
+                v-if="!archiveConfirmOpen"
+                type="button"
+                class="task-chip task-chip--archive"
+                @click="archiveConfirmOpen = true"
+              >
+                <UiIcon name="Archive" :size="15" aria-hidden="true" />
+                Archive
+              </button>
+              <span v-else class="task-chip-confirm" role="group" aria-label="Archive this task?">
+                <button type="button" class="task-chip is-danger" :disabled="taskSaving" @click="archiveSelectedTask">
+                  <UiIcon name="Archive" :size="15" aria-hidden="true" />
+                  Archive?
+                </button>
+                <button type="button" class="task-chip" @click="archiveConfirmOpen = false">Keep</button>
+              </span>
+            </template>
           </div>
 
           <div class="task-description-field">
@@ -1187,6 +1181,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .tasks-page {
+  /* The tasks column; the floating Add task button lines up with its right edge. */
+  --tasks-column-width: min(700px, calc(100% - 32px));
   position: relative;
   min-height: 100vh;
   min-height: 100dvh;
@@ -1305,7 +1301,7 @@ onBeforeUnmount(() => {
 
 .tasks-workspace {
   display: grid;
-  width: min(700px, calc(100% - 32px));
+  width: var(--tasks-column-width);
   margin: 0 auto;
   padding: 18px 0 112px;
 }
@@ -1649,75 +1645,12 @@ onBeforeUnmount(() => {
   margin-right: auto;
 }
 
-.task-menu {
-  position: relative;
-}
-
-.task-menu__panel {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 5;
-  min-width: 200px;
-  padding: 6px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface);
-  box-shadow: var(--ui-shadow-md);
-}
-
-.task-menu__item {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  border-radius: var(--ui-radius-sm);
-  padding: 8px 10px;
-  background: transparent;
-  color: var(--ui-text);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-}
-
-.task-menu__item:hover,
-.task-menu__item:focus-visible {
-  background: var(--ui-surface-muted);
-  outline: none;
-}
-
-.task-menu__item.is-danger {
-  color: var(--ui-danger);
-}
-
-.task-menu__confirm {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 6px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.task-menu__confirm span {
-  width: 100%;
-}
-
+/* Title, one row of details and actions, then the body fills the rest of the dialog. */
 .task-editor {
-  --task-indent: 38px;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   padding: 4px 28px 24px;
-}
-
-.task-editor__title-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
 }
 
 .task-editor__check {
@@ -1726,7 +1659,7 @@ onBeforeUnmount(() => {
   place-items: center;
   width: 32px;
   height: 32px;
-  margin: 3px 0 0 -6px;
+  margin-left: -6px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -1743,7 +1676,8 @@ onBeforeUnmount(() => {
 }
 
 .task-editor__title {
-  flex: 1;
+  flex: none;
+  width: 100%;
   min-width: 0;
   overflow: hidden;
   border: 0;
@@ -1768,7 +1702,6 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-left: var(--task-indent);
 }
 
 /* Each detail is a quiet chip; its real control lies over it, invisible. */
@@ -1806,6 +1739,32 @@ onBeforeUnmount(() => {
   height: 100%;
   opacity: 0;
   cursor: pointer;
+}
+
+.task-chip--archive {
+  margin-left: auto;
+  color: var(--ui-text-muted);
+}
+
+.task-chip--archive:hover:not(:disabled) {
+  color: var(--ui-danger, #dc2626);
+}
+
+.task-chip-confirm {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.task-chip.is-danger,
+.task-chip.is-danger > svg {
+  border-color: color-mix(in oklab, var(--ui-danger, #dc2626), transparent 60%);
+  color: var(--ui-danger, #dc2626);
+}
+
+.task-chip:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .task-chip.is-empty {
@@ -1850,10 +1809,13 @@ onBeforeUnmount(() => {
 }
 
 .task-description-field {
-  margin-left: var(--task-indent);
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
 }
 
 .task-description-field :deep(.tiptap-editor) {
+  flex: 1;
   gap: 0;
 }
 
@@ -1878,14 +1840,25 @@ onBeforeUnmount(() => {
 .task-description-field :deep(.editor-content-wrapper) {
   border: 0;
   border-radius: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
   padding: 6px 0 0;
   background: transparent;
   font-size: 16px;
   line-height: 1.65;
 }
 
+.task-description-field :deep(.editor-content-wrapper > div) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
 .task-description-field :deep(.editor-content-wrapper .ProseMirror) {
-  min-height: 320px;
+  flex: 1;
+  min-height: 160px;
   outline: none;
 }
 
@@ -1994,8 +1967,11 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 640px) {
+  .tasks-page {
+    --tasks-column-width: calc(100% - 28px);
+  }
+
   .tasks-workspace {
-    width: calc(100% - 28px);
     padding-top: 12px;
   }
 
@@ -2032,7 +2008,6 @@ onBeforeUnmount(() => {
   }
 
   .task-editor {
-    --task-indent: 0px;
     padding: 4px 16px 28px;
   }
 
