@@ -153,4 +153,9 @@ export type AgentSiteStarterDraft = {
 export interface AgentSiteStarterServices {
   draft(input: Record<string, unknown>): Promise<AgentSiteStarterDraft>;
   publish(): Promise<{ username: string; name: string; publicUrl: string; publishedAt: string; hasPhoto?: boolean }>;
+  /** Domains the owner can get through ME3 for their site; absent off ME3 hosting. */
+  domainOptions?(query?: string): Promise<{
+    available: boolean; message?: string; site?: { username: string; url?: string };
+    options: Array<{ domain: string; included: boolean; extraYearlyCents?: number }>;
+  }>;
 }

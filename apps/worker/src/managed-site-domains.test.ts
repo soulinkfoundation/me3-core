@@ -5,6 +5,7 @@ import {
   disconnectManagedSiteDomain,
   getManagedSiteDomainStatus,
   isManagedSiteDomainDeployment,
+  getAgentDomainOffer,
   requestManagedSiteDomainRegistration,
 } from "./managed-site-domains";
 import type { Env } from "./types";
@@ -256,3 +257,73 @@ function secretDb(values: Map<string, string>): D1Database {
     },
   } as unknown as D1Database;
 }
+
+// Failure modes for the agent's domain offer: it calls Cloud off ME3 hosting; it offers a second
+// domain when the site already has one; it drops the price of a domain that costs extra.
+describe("agent domain offer", () => {
+  function envWithSite(site: Record<string, unknown> | null, overrides: Partial<Env> = {}): Env {
+    const secrets = new Map([
+      ["ME3_CORE_INSTALL_ID", CORE_INSTALL_ID],
+      ["ME3_CLOUD_CORE_TOKEN", "core-update-token"],
+    ]);
+    return {
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind(name: string) {
+              return {
+                async first() {
+                  if (sql.includes("FROM sites")) return site;
+                  const value = secrets.get(name);
+                  return value ? { value } : null;
+                },
+              };
+            },
+          };
+        },
+      } as unknown as D1Database,
+      ME3_DEPLOYMENT_MODE: "managed",
+      ME3_MANAGED_INSTALLATION_ID: "mi-1234567890abcdef",
+      ...overrides,
+    } as Env;
+  }
+  const site = { id: "site-river", username: "river", site_role: "profile", custom_domain: null };
+
+  it("offers nothing and calls nothing off ME3 hosting", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const offer = await getAgentDomainOffer(envWithSite(site, { ME3_DEPLOYMENT_MODE: "self_hosted" }), "owner");
+    expect(offer).toMatchObject({ available: false, options: [] });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not offer another domain when the site already has one", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const offer = await getAgentDomainOffer(envWithSite({ ...site, custom_domain: "www.river.com" }), "owner");
+    expect(offer).toMatchObject({ available: false, message: "Your site already uses www.river.com." });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("searches by the site name and keeps what a pricier domain adds", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        eligibility: { eligible: true, mode: "sandbox" },
+        options: [
+          { domain: "river.com", included: true },
+          { domain: "river.ai", included: false, extra_yearly_cents: 6000 },
+        ],
+      }),
+    );
+    const offer = await getAgentDomainOffer(envWithSite(site), "owner");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.me3.app/v1/installs/${CORE_INSTALL_ID}/sites/site-river/domain/registration/search?q=river`,
+    );
+    expect(offer).toEqual({
+      available: true,
+      site: { username: "river" },
+      options: [
+        { domain: "river.com", included: true },
+        { domain: "river.ai", included: false, extraYearlyCents: 6000 },
+      ],
+    });
+  });
+});

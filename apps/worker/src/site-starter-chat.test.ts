@@ -21,3 +21,15 @@ describe("first-site draft reachable from a plain chat request", () => {
     expect(draft.description).toMatch(/Never say you cannot build websites/);
   });
 });
+
+// The domain offer must be reachable from "can I get my own .com?" in one step, and never claim a purchase.
+describe("domain offer reachable from chat", () => {
+  const tool = createDomainTools().find((entry) => entry.name === "core_sites_domain_options")!;
+
+  it("is visible on every turn and never registers or sends the owner elsewhere", () => {
+    expect(tool.group).toBeUndefined();
+    expect(tool.approval).not.toBe("required");
+    expect(tool.description).toMatch(/Never say you bought or registered a domain/);
+    expect(tool.description).toMatch(/never send them to another registrar/);
+  });
+});

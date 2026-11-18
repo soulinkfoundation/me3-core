@@ -32,6 +32,7 @@ import { revalidateAgentImagePayload } from "./agent-image-projection";
 import { createPeopleSearchToolServices } from "./network-directory";
 import { createWebResearchToolServices } from "./web-research";
 import { draftStarterSite, publishStarterSite } from "./site-starter";
+import { getAgentDomainOffer } from "./managed-site-domains";
 import { listCorePluginRecords } from "./plugins";
 import { beginManagedRuntimeWriteLease, isManagedRuntime, releaseManagedRuntimeWriteLease } from "./managed-runtime-lifecycle";
 import type { Env, OwnerProfile } from "./types";
@@ -314,7 +315,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     payments:parkedFeaturesOn(env)?{...createAgentPaymentServices(env,ownerId),...createAgentNetworkPaymentServices(env,ownerId)}:undefined,
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
     web:createWebResearchToolServices(env,ownerId),landingPageEnv:env as never,
-    sites:{draft:input=>draftStarterSite(env,ownerId,input),publish:()=>publishStarterSite(env,ownerId)},
+    sites:{draft:input=>draftStarterSite(env,ownerId,input),publish:()=>publishStarterSite(env,ownerId),domainOptions:query=>getAgentDomainOffer(env,ownerId,query)},
     // Parked after the first release (me3-5u97.6): tools hide until ME3_PARKED_FEATURES is "on".
     cards:parkedFeaturesOn(env)?createAgentHomeCardServices(env,ownerId):undefined,
     coding:await createCodingAgentServices(env),

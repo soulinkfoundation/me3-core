@@ -660,6 +660,41 @@ export const CORE_CHAT_CAPABILITIES = [
     },
   }),
   defineCoreChatCapability({
+    id: "core.sites.domain.options",
+    owner: "core",
+    pluginId: null,
+    ownerFacingLabel: "Find a domain for your site",
+    summary:
+      "Show the owner domains they can get for their website through ME3, such as theirname.com, as cards they tap to get one. Use it whenever the owner asks for their own domain, a .com, a web address or a custom domain, or asks how to put their site on one, and right after their site goes live if they ask what's next. Pass query only when they named the domain or words they want; otherwise leave it out and ME3 uses their site name. Never say you bought or registered a domain, never ask for their address or phone (the app collects them), and never send them to another registrar.",
+    category: "sites",
+    handler: {
+      surface: "chat",
+      route: "core.sites.domain.options",
+    },
+    sideEffect: "read_external",
+    approvalMode: "none",
+    requiresSetup: [],
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Words or a full domain the owner wants, such as \"river bakery\" or \"riverbakery.com\". Leave out to use their site name.",
+        },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "core_site_domain_options",
+    examples: {
+      positive: ["Can I get my own .com?", "Put my site on riverbakery.com.", "How do I get a custom domain?"],
+      negative: ["What is a domain name?", "Connect the domain I bought at GoDaddy."],
+    },
+    chat: {
+      intentKind: "read_action",
+      sideEffectLevel: "read",
+    },
+  }),
+  defineCoreChatCapability({
     id: "core.scheduling.request_profile",
     owner: "core",
     pluginId: null,

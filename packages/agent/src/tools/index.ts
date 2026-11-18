@@ -47,7 +47,7 @@ const oneStepConfirmations: Record<string, (data: unknown, timezone: string) => 
   core_people_search: confirmPeopleFound,
 };
 
-const ALWAYS_VISIBLE_TOOLS = new Set(["core_sites_starter_draft"]);
+const ALWAYS_VISIBLE_TOOLS = new Set(["core_sites_starter_draft", "core_sites_domain_options"]);
 
 export function createDomainTools(): AgentTool[] {
   const tools = [...accountsTools(), ...contactTools(), ...calendarTools(), ...cardTools(), ...codingTools(), ...conversationTools(), ...docsTools(), ...journalTools(), ...quoteTools(), ...mailboxTools(), ...outreachTools(), ...memoryTools(), ...paymentTools(), ...reminderTools(), ...schedulingTools(), ...siteTools(), ...socialTools(), ...soupTools(), ...taskTools(), ...webTools(), ...imageTools()];

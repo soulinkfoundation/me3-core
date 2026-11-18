@@ -28,6 +28,18 @@ export function siteTools() {
       const published = await service.publish();
       return ok({ ...published, clarityCall: "Free 30-minute clarity call", next: "Reply with one short sentence saying the site is live. The owner's app already shows the link, who can book them and the next steps under your reply, so do not repeat any of that, offer anything or give tips. Do not mention the Mission." });
     }),
+    // Shows domains as tappable cards in the app; the owner confirms their details there. Nothing is bought here.
+    domainTool("core.sites.domain.options", async (args, context) => {
+      const service = services(context).sites;
+      if (!service?.domainOptions) throw new Error("Getting a domain is unavailable on this installation.");
+      const offer = await service.domainOptions(optionalString(args.query));
+      return ok({
+        kind: "domain_offer", ...offer,
+        next: offer.available
+          ? "Reply in one short sentence that these are ready for their site and they can tap one to get it. Do not list the domains, prices or steps: the app shows them as cards under your reply. Never say you registered anything."
+          : "Tell the owner the message in one short sentence. Do not offer other ways to buy a domain.",
+      });
+    }),
     domainTool("core.sites.landing_page.designs", async () => ok({ designs: listAgentLandingPageDesigns() })),
     domainTool("core.sites.landing_page.list", async (args, context) => {
       const env = services(context).landingPageEnv || { DB: context.db };

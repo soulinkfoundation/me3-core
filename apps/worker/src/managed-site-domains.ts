@@ -295,3 +295,55 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 function normalizeMessage(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
+
+export type AgentDomainOffer = {
+  available: boolean;
+  /** Why no domains are offered, in ME3's words (not on hosting, not Business yet, already used). */
+  message?: string;
+  site?: { username: string; url?: string };
+  options: Array<{ domain: string; included: boolean; extraYearlyCents?: number }>;
+};
+
+/**
+ * What the agent shows when the owner asks for their own domain: a few names they can get through ME3.
+ * The owner picks one on the card and confirms their details in the app; the agent never registers.
+ */
+export async function getAgentDomainOffer(
+  env: Env,
+  ownerId: string,
+  query?: string,
+): Promise<AgentDomainOffer> {
+  if (!isManagedSiteDomainDeployment(env)) {
+    return { available: false, options: [], message: "Getting a domain through ME3 is part of ME3 hosting. You can still connect a domain you own in Settings." };
+  }
+  const site = await env.DB.prepare(
+    `SELECT id, username, site_role, custom_domain, custom_domain_status, published_at
+     FROM sites WHERE user_id = ? AND site_role = 'profile'
+     ORDER BY created_at LIMIT 1`,
+  )
+    .bind(ownerId)
+    .first<Pick<DbSite, "id" | "username" | "site_role" | "custom_domain" | "custom_domain_status" | "published_at">>();
+  if (!site) return { available: false, options: [], message: "Build your website first, then pick a domain for it." };
+  if (site.custom_domain) {
+    return { available: false, options: [], site: { username: site.username, url: `https://${site.custom_domain}` }, message: `Your site already uses ${site.custom_domain}.` };
+  }
+  const term = (query || site.username).trim().slice(0, 63);
+  const { body } = await requestManagedSiteDomainRegistration(env, site, "GET", { search: term });
+  const eligibility = (body.eligibility && typeof body.eligibility === "object" ? body.eligibility : {}) as Record<string, unknown>;
+  const options = Array.isArray(body.options)
+    ? body.options.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") return [];
+        const option = entry as Record<string, unknown>;
+        const domain = normalizeMessage(option.domain).toLowerCase();
+        if (!domain) return [];
+        const extra = typeof option.extra_yearly_cents === "number" ? option.extra_yearly_cents : undefined;
+        return [{ domain, included: option.included === true, ...(extra ? { extraYearlyCents: extra } : {}) }];
+      }).slice(0, 5)
+    : [];
+  return {
+    available: eligibility.eligible === true && options.length > 0,
+    site: { username: site.username },
+    options,
+    ...(eligibility.eligible === true ? {} : { message: normalizeMessage(eligibility.message) || undefined }),
+  };
+}
