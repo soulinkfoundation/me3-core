@@ -534,11 +534,13 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
   const location = displayLocation ? `<p class="location">${escapeHtml(displayLocation)}</p>` : "";
   const hero = `<section class="site-hero site-hero--${layout}">${banner}${layout === "split" ? `<div class="site-hero__portrait">${avatar}</div>` : ""}<div class="site-hero__intro">${layout === "split" ? location : avatar}<h1 class="name">${escapeHtml(title)}</h1>${profile.bio ? `<div class="bio">${renderRichText(profile.bio)}</div>` : ""}${layout === "split" ? "" : location}${generateButtons(profile)}${layout === "cover" ? "" : generateLinks(profile)}</div></section>`;
   const sections = profile.extensions?.["me3.app/site"]?.sections || DEFAULT_HOME_SECTIONS;
-  const showBooking = sections.some((section) => section.id === "booking" && section.visible);
+  // Offer cards open the booking calendar beneath themselves, so when they show, the separate booking block would repeat the offers.
+  const offersHtml = capabilities.bookingsEnabled && sections.some((section) => section.id === "offers" && section.visible)
+    ? generateOffers(profile, true) : "";
   const sectionHtml = sections.filter((section) => section.visible).map((section) => {
     switch (section.id) {
-      case "offers": return capabilities.bookingsEnabled ? generateOffers(profile, !showBooking) : "";
-      case "booking": return capabilities.bookingsEnabled ? generateBooking(profile) : "";
+      case "offers": return offersHtml;
+      case "booking": return capabilities.bookingsEnabled && !offersHtml ? generateBooking(profile) : "";
       case "writing": return generateLatestWriting(profile, fileMap);
       case "testimonials": return generateTestimonials(profile) || (placeholders ? testimonialsPlaceholder() : "");
       case "newsletter": return capabilities.newsletterSignup ? generateNewsletter(profile) : "";

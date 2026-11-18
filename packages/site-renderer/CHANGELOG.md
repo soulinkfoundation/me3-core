@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Show each offer once on the home page: when offer cards are shown, the separate booking block is left out and the cards open the calendar beneath themselves.
+
 ## 0.3.2
 
 - Centre the sun and moon icons inside the theme toggle button.

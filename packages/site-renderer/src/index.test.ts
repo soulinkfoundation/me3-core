@@ -199,6 +199,23 @@ describe("site generator", () => {
     expect(files["about.html"]).toContain('id="booking"');
   });
 
+  it("shows an offer once on the home page: offer cards replace the separate booking block", async () => {
+    const book = { enabled: true, offers: [{ id: "intro", title: "Intro call" }] };
+    const both = (await generateSiteHtml({
+      name: "Alex", intents: { book },
+      extensions: { "me3.app/site": { sections: [{ id: "offers", visible: true }, { id: "booking", visible: true }] } },
+    }, []))["index.html"];
+    expect(both).toContain('class="site-offer-booking" hidden');
+    expect(both.match(/id="booking"/g)).toHaveLength(1);
+
+    const bookingOnly = (await generateSiteHtml({
+      name: "Alex", intents: { book },
+      extensions: { "me3.app/site": { sections: [{ id: "offers", visible: false }, { id: "booking", visible: true }] } },
+    }, []))["index.html"];
+    expect(bookingOnly).not.toContain('class="site-offers"');
+    expect(bookingOnly).toContain('id="booking"');
+  });
+
   it("shows post images in latest writing and skips missing dates", async () => {
     const files = await generateSiteHtml({
       name: "Alex",
