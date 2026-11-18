@@ -76,33 +76,12 @@ async function requestManagedSiteDomain(
   method: "GET" | "POST" | "DELETE",
   body?: Record<string, unknown>,
 ): Promise<ManagedSiteDomainStatus> {
-  const [coreInstallId, coreUpdateToken] = await Promise.all([
-    getInstallSecret(env, CORE_INSTALL_ID_SECRET),
-    getInstallSecret(env, CORE_UPDATE_TOKEN_SECRET),
-  ]);
-  if (
-    !CORE_INSTALL_ID_PATTERN.test(coreInstallId) ||
-    !coreUpdateToken ||
-    coreUpdateToken.length > 1024
-  ) {
-    throw new ManagedSiteDomainError(
-      "Managed custom domains are not configured for this installation.",
-      503,
-    );
-  }
-
-  const requestInit: RequestInit = {
-      method,
-      headers: {
-        "X-ME3-Core-Install-ID": coreInstallId,
-        "X-ME3-Core-Update-Token": coreUpdateToken,
-        "X-ME3-Core-Site-ID": site.id,
-        "X-ME3-Core-Site-Username": site.username,
-        "X-ME3-Core-Site-Role": site.site_role || "profile",
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    };
+  const { coreInstallId, requestInit } = await managedDomainRequest(
+    env,
+    site,
+    method,
+    body,
+  );
   let response = await fetch(
     buildApiUrl(
       getMe3CloudApiOrigin(env),
@@ -132,6 +111,79 @@ async function requestManagedSiteDomain(
     );
   }
   return validateStatus(result);
+}
+
+/**
+ * "Get your domain" (included with Business): Cloud checks eligibility, searches
+ * Cloudflare Registrar and registers the domain to the owner, then connects it.
+ * Core passes the owner's request through; Cloud owns policy and validation.
+ */
+export async function requestManagedSiteDomainRegistration(
+  env: Env,
+  site: ManagedDomainSite,
+  method: "GET" | "POST",
+  options: { search?: string; body?: Record<string, unknown> } = {},
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const { coreInstallId, requestInit } = await managedDomainRequest(
+    env,
+    site,
+    method,
+    options.body,
+  );
+  const path = `/v1/installs/${encodeURIComponent(coreInstallId)}/sites/${encodeURIComponent(site.id)}/domain/registration${
+    options.search !== undefined
+      ? `/search?${new URLSearchParams({ q: options.search })}`
+      : ""
+  }`;
+  const response = await fetch(
+    buildApiUrl(getMe3CloudApiOrigin(env), path),
+    requestInit,
+  );
+  const result = await readJson(response);
+  if (!response.ok) {
+    throw new ManagedSiteDomainError(
+      normalizeMessage(result.error) ||
+        "ME3 Cloud could not set up this domain.",
+      response.status,
+    );
+  }
+  return { status: response.status, body: result };
+}
+
+async function managedDomainRequest(
+  env: Env,
+  site: ManagedDomainSite,
+  method: "GET" | "POST" | "DELETE",
+  body?: Record<string, unknown>,
+): Promise<{ coreInstallId: string; requestInit: RequestInit }> {
+  const [coreInstallId, coreUpdateToken] = await Promise.all([
+    getInstallSecret(env, CORE_INSTALL_ID_SECRET),
+    getInstallSecret(env, CORE_UPDATE_TOKEN_SECRET),
+  ]);
+  if (
+    !CORE_INSTALL_ID_PATTERN.test(coreInstallId) ||
+    !coreUpdateToken ||
+    coreUpdateToken.length > 1024
+  ) {
+    throw new ManagedSiteDomainError(
+      "Managed custom domains are not configured for this installation.",
+      503,
+    );
+  }
+
+  const requestInit: RequestInit = {
+      method,
+      headers: {
+        "X-ME3-Core-Install-ID": coreInstallId,
+        "X-ME3-Core-Update-Token": coreUpdateToken,
+        "X-ME3-Core-Site-ID": site.id,
+        "X-ME3-Core-Site-Username": site.username,
+        "X-ME3-Core-Site-Role": site.site_role || "profile",
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    };
+  return { coreInstallId, requestInit };
 }
 
 function validateStatus(value: Record<string, unknown>): ManagedSiteDomainStatus {

@@ -5,6 +5,7 @@ import {
   disconnectManagedSiteDomain,
   getManagedSiteDomainStatus,
   isManagedSiteDomainDeployment,
+  requestManagedSiteDomainRegistration,
 } from "./managed-site-domains";
 import type { Env } from "./types";
 
@@ -154,6 +155,53 @@ describe("managed site domains", () => {
         status: 400,
       }),
     );
+  });
+
+  it("passes domain search and registration through to the site's Cloud endpoint", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ options: [{ domain: "river.com" }] }))
+      .mockResolvedValueOnce(
+        Response.json({ domain: "river.com", state: "succeeded" }, { status: 201 }),
+      );
+    const env = createEnv();
+    const site = managedSite("studio", "organization");
+
+    await expect(
+      requestManagedSiteDomainRegistration(env, site, "GET", { search: "river bakery" }),
+    ).resolves.toEqual({ status: 200, body: { options: [{ domain: "river.com" }] } });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.me3.app/v1/installs/${CORE_INSTALL_ID}/sites/site-studio/domain/registration/search?q=river+bakery`,
+    );
+
+    const registrant = { name: "River Owner", email: "river@example.test" };
+    await expect(
+      requestManagedSiteDomainRegistration(env, site, "POST", {
+        body: { domain: "river.com", registrant },
+      }),
+    ).resolves.toMatchObject({ status: 201, body: { state: "succeeded" } });
+    expect(fetchMock.mock.calls[1]).toEqual([
+      `https://api.me3.app/v1/installs/${CORE_INSTALL_ID}/sites/site-studio/domain/registration`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ domain: "river.com", registrant }),
+      }),
+    ]);
+  });
+
+  it("keeps Cloud's registration refusal message and status", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(
+        { error: "Your included domain is ready after your first Business payment." },
+        { status: 403 },
+      ),
+    );
+    await expect(
+      requestManagedSiteDomainRegistration(createEnv(), managedSite("owner", "profile"), "GET"),
+    ).rejects.toMatchObject({
+      message: "Your included domain is ready after your first Business payment.",
+      status: 403,
+    });
   });
 
   it("only enables the bridge for identified managed installations", () => {

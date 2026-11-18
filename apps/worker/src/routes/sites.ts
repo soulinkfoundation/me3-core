@@ -48,6 +48,7 @@ import {
   disconnectManagedSiteDomain,
   getManagedSiteDomainStatus,
   isManagedSiteDomainDeployment,
+  requestManagedSiteDomainRegistration,
   type ManagedSiteDomainStatus,
 } from "../managed-site-domains";
 import {
@@ -1296,6 +1297,66 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       instructions: getCoreDomainInstructions(c.env, domain, site.username),
     });
   });
+
+  // "Get your domain" (included with Business on ME3 hosting). Cloud owns the
+  // policy, the Cloudflare Registrar calls and connecting the domain.
+  const domainRegistration = async (
+    c: AppContext,
+    method: "GET" | "POST",
+    options: { search?: string; requirePublished?: boolean } = {},
+  ) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username") ?? "");
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    if (!isManagedSiteDomainDeployment(c.env)) {
+      return c.json({ error: "Getting a domain is available on ME3 hosting." }, 404);
+    }
+    if (options.requirePublished && !site.published_at) {
+      return c.json(
+        { error: "Publish this site before getting a domain for it." },
+        409,
+      );
+    }
+    try {
+      const body =
+        method === "POST"
+          ? await c.req
+              .json<Record<string, unknown>>()
+              .catch((): Record<string, unknown> => ({}))
+          : undefined;
+      const result = await requestManagedSiteDomainRegistration(
+        c.env,
+        site,
+        method,
+        {
+          search: options.search,
+          body: body
+            ? { domain: body.domain, registrant: body.registrant }
+            : undefined,
+        },
+      );
+      return c.json(result.body, result.status === 201 ? 201 : 200);
+    } catch (error) {
+      if (error instanceof ManagedSiteDomainError) {
+        return c.json(
+          { error: error.message },
+          managedSiteDomainHttpStatus(error.status),
+        );
+      }
+      throw error;
+    }
+  };
+
+  app.get("/api/domains/:username/registration", (c) =>
+    domainRegistration(c, "GET"),
+  );
+  app.get("/api/domains/:username/registration/search", (c) =>
+    domainRegistration(c, "GET", { search: c.req.query("q") ?? "" }),
+  );
+  app.post("/api/domains/:username/registration", (c) =>
+    domainRegistration(c, "POST", { requirePublished: true }),
+  );
 
   app.post("/api/domains/:username/refresh", async (c) => {
     const ownerId = await deps.requireOwner(c);
