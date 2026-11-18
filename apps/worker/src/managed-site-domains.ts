@@ -150,6 +150,28 @@ export async function requestManagedSiteDomainRegistration(
   return { status: response.status, body: result };
 }
 
+/** Email on a domain bought elsewhere: the owner moves its nameservers to ME3 (me3-2wb3). */
+export async function requestManagedSiteDomainEmail(
+  env: Env,
+  site: ManagedDomainSite,
+  method: "GET" | "POST" | "DELETE",
+  options: { check?: boolean } = {},
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const { coreInstallId, requestInit } = await managedDomainRequest(env, site, method);
+  const path = `/v1/installs/${encodeURIComponent(coreInstallId)}/sites/${encodeURIComponent(site.id)}/domain/email${
+    options.check ? "/check" : ""
+  }`;
+  const response = await fetch(buildApiUrl(getMe3CloudApiOrigin(env), path), requestInit);
+  const result = await readJson(response);
+  if (!response.ok) {
+    throw new ManagedSiteDomainError(
+      normalizeMessage(result.error) || "ME3 Cloud could not set up email for this domain.",
+      response.status,
+    );
+  }
+  return { status: response.status, body: result };
+}
+
 async function managedDomainRequest(
   env: Env,
   site: ManagedDomainSite,

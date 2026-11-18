@@ -49,6 +49,7 @@ import {
   getManagedSiteDomainStatus,
   isManagedSiteDomainDeployment,
   requestManagedSiteDomainRegistration,
+  requestManagedSiteDomainEmail,
   type ManagedSiteDomainStatus,
 } from "../managed-site-domains";
 import {
@@ -1362,6 +1363,36 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.post("/api/domains/:username/registration", (c) =>
     domainRegistration(c, "POST", { requirePublished: true }),
   );
+
+  // Email on a domain bought elsewhere (ME3 hosting): Cloud creates the zone and gives the
+  // owner two nameservers; once they point at ME3, the domain gets email like a registered one.
+  const domainEmail = async (
+    c: AppContext,
+    method: "GET" | "POST" | "DELETE",
+    check = false,
+  ) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username") ?? "");
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    if (!isManagedSiteDomainDeployment(c.env)) {
+      return c.json({ error: "Email at your domain is available on ME3 hosting." }, 404);
+    }
+    try {
+      const result = await requestManagedSiteDomainEmail(c.env, site, method, { check });
+      return c.json(result.body);
+    } catch (error) {
+      if (error instanceof ManagedSiteDomainError) {
+        return c.json({ error: error.message }, managedSiteDomainHttpStatus(error.status));
+      }
+      throw error;
+    }
+  };
+
+  app.get("/api/domains/:username/email", (c) => domainEmail(c, "GET"));
+  app.post("/api/domains/:username/email", (c) => domainEmail(c, "POST"));
+  app.post("/api/domains/:username/email/check", (c) => domainEmail(c, "POST", true));
+  app.delete("/api/domains/:username/email", (c) => domainEmail(c, "DELETE"));
 
   app.post("/api/domains/:username/refresh", async (c) => {
     const ownerId = await deps.requireOwner(c);

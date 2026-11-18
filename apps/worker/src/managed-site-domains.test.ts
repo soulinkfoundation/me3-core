@@ -7,6 +7,7 @@ import {
   isManagedSiteDomainDeployment,
   getAgentDomainOffer,
   requestManagedSiteDomainRegistration,
+  requestManagedSiteDomainEmail,
 } from "./managed-site-domains";
 import type { Env } from "./types";
 
@@ -201,6 +202,26 @@ describe("managed site domains", () => {
       requestManagedSiteDomainRegistration(createEnv(), managedSite("owner", "profile"), "GET"),
     ).rejects.toMatchObject({
       message: "Your included domain is ready after your first Business payment.",
+      status: 403,
+    });
+  });
+
+  it("passes email-at-your-domain requests to the site's Cloud endpoint and keeps refusals", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ state: "waiting", name_servers: ["ada.ns.cloudflare.com"] }))
+      .mockResolvedValueOnce(Response.json({ state: "active" }))
+      .mockResolvedValueOnce(Response.json({ error: "Email at riverbakery.com is included with Business." }, { status: 403 }));
+    const env = createEnv();
+    const site = managedSite("studio", "organization");
+    await expect(requestManagedSiteDomainEmail(env, site, "POST")).resolves.toMatchObject({ body: { state: "waiting" } });
+    await expect(requestManagedSiteDomainEmail(env, site, "POST", { check: true })).resolves.toMatchObject({ body: { state: "active" } });
+    expect(fetchMock.mock.calls.map((call) => [call[0], (call[1] as RequestInit).method])).toEqual([
+      [`https://api.me3.app/v1/installs/${CORE_INSTALL_ID}/sites/site-studio/domain/email`, "POST"],
+      [`https://api.me3.app/v1/installs/${CORE_INSTALL_ID}/sites/site-studio/domain/email/check`, "POST"],
+    ]);
+    await expect(requestManagedSiteDomainEmail(env, site, "GET")).rejects.toMatchObject({
+      message: "Email at riverbakery.com is included with Business.",
       status: 403,
     });
   });
