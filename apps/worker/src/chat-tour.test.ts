@@ -47,6 +47,7 @@ describe("chatTour", () => {
     expect(step({}, "email").targets.map(target => target.id)).toEqual(["home_tab", "add_to_home", "add_inbox"]);
     expect(step({}, "accounts").targets.map(target => target.id)).toEqual(["profile_menu", "menu_accounts"]);
     expect(step({}, "social").targets.map(target => target.id)).toEqual(["profile_menu", "menu_social"]);
+    expect(step({}, "website").targets.map(target => target.id)).toEqual(["chat_tab"]);
     for (const id of ["home", "email", "accounts", "social"]) expect(step({}, id).task).toBeNull();
     for (const item of tour().steps) for (const target of item.targets) expect(target.hint).not.toBe("");
   });

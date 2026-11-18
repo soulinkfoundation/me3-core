@@ -19,7 +19,7 @@ export type TourTask = { kind: "open"; label: string; to: TourPlace } | { kind: 
  * What the card points at, in the order the owner reaches them. Each client draws the card beside the last one
  * it can see (Home tab, then + Add to Home once Home is open), with `hint` saying what to tap.
  */
-export type TourTargetId = "home_tab" | "add_to_home" | "add_inbox" | "profile_menu" | "menu_accounts" | "menu_social";
+export type TourTargetId = "home_tab" | "chat_tab" | "add_to_home" | "add_inbox" | "profile_menu" | "menu_accounts" | "menu_social";
 export type TourTarget = { id: TourTargetId; hint: string };
 export type TourStep = {
   id: TourStepId; emoji: string; title: string; body: string;
@@ -67,7 +67,7 @@ export function chatTour(context: TourContext): ChatTour {
     },
     {
       id: "email", emoji: "✉️", title: "ME3's own email",
-      body: "I have my own email address. Forward me invoices and I'll log them in your Accounts. Add my email card to Home for quick access.",
+      body: "Like any good assistant, I have my own email. Forward me invoices and I'll log them in your Accounts. Add my email card to Home for quick access.",
       targets: [{ id: "home_tab", hint: "Go to Home." }, { id: "add_to_home", hint: "Tap Add to Home." }, { id: "add_inbox", hint: "Pick Inbox." }],
       task: null,
       copy: context.emailAddress ? { label: "Copy my address", value: context.emailAddress } : null,
@@ -93,7 +93,8 @@ export function chatTour(context: TourContext): ChatTour {
     body: context.siteBuilt
       ? "Your website is ready. Change anything in the website editor, or ask me to. Find it any time under your profile picture."
       : "Tell me about your work and I'll make a first draft. You review it in the website editor before it goes live. Find it any time under your profile picture.",
-    targets: [{ id: "profile_menu", hint: "Your website lives here too." }],
+    // Back to Chat, where ME3 drafts it; no need for the menu again.
+    targets: [{ id: "chat_tab", hint: "Tap Chat at the top." }],
     task: context.siteBuilt ? { kind: "open", label: "Open the editor", to: "website" } : { kind: "site_ask", label: "Make my website" },
     copy: null,
     done: context.siteBuilt,

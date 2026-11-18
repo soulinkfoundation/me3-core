@@ -94,7 +94,7 @@ function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index
       <span v-if="step.done" class="app-tour__done" data-testid="tour-done">✓ Done</span>
     </div>
     <p class="app-tour__body">{{ step.body }}</p>
-    <p v-if="target" class="app-tour__hint" aria-live="polite" data-testid="tour-hint">👉 {{ target.hint }}</p>
+    <p v-if="target" class="app-tour__sr" aria-live="polite" data-testid="tour-hint">{{ target.hint }}</p>
     <div class="app-tour__actions">
       <Button v-if="step.task && !step.done" color="primary" shape="soft" type="button" data-testid="tour-task" @click="doTask">{{ step.task.label }}</Button>
       <Button v-if="step.copy" color="ghost" shape="soft" type="button" @click="copy">{{ step.copy.label }}</Button>
@@ -103,7 +103,7 @@ function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index
       <span class="app-tour__dots" aria-hidden="true"><i v-for="(item, dot) in tour.tour?.steps" :key="item.id" :class="{ 'is-on': dot <= tour.index }" /></span>
       <span class="app-tour__count">{{ tour.index + 1 }} of {{ total }}</span>
       <span class="app-tour__spacer" />
-      <button type="button" class="app-tour__skip" @click="tour.end('skipped')">Skip tour</button>
+      <button type="button" class="app-tour__skip" @click="tour.end('skipped')">Skip</button>
       <Button v-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="tour.go(tour.index - 1)">Back</Button>
       <Button v-if="!(tour.isLast && !step.done)" :color="step.done ? 'primary' : 'ghost'" shape="soft" type="button" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
     </div>
@@ -124,7 +124,8 @@ function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index
 .app-tour__title { flex: 1; margin: 0; font-size: 17px; font-weight: 600; }
 .app-tour__done { padding: 2px 10px; border-radius: 999px; background: var(--ui-accent-soft); color: var(--ui-accent-strong); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .app-tour__body { margin: 0; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
-.app-tour__hint { margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--ui-accent-soft); color: var(--ui-accent-strong); font-size: 14px; font-weight: 600; }
+/* The ring shows what to tap; screen readers hear the hint instead. */
+.app-tour__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .app-tour__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
 .app-tour__actions:empty { display: none; }
 .app-tour__actions :deep(.me3-btn), .app-tour__foot :deep(.me3-btn) { min-height: 44px; }

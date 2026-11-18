@@ -2573,7 +2573,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
         />
         <div class="home-chat-switcher" role="group" aria-label="Workspace view">
           <button type="button" :aria-pressed="homeMode" data-tour-target="home_tab" @click="showWorkspace(true)">Home</button>
-          <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>
+          <button type="button" :aria-pressed="!homeMode" :data-tour-target="homeMode ? 'chat_tab' : undefined" @click="showWorkspace(false)">Chat</button>
         </div>
       </div>
     </Teleport>
