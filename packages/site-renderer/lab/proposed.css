@@ -157,3 +157,16 @@ body[data-layout=cover] .site-topbar__action{display:none!important}
   body:is([data-layout=cover],[data-layout=split]) .site-home-sections .newsletter.has-image{width:min(100%,820px)}
 }
 @media(min-width:761px){body[data-layout=cover] .site-footer{padding-left:max(48px,calc((100% - 1104px)/2));padding-right:max(48px,calc((100% - 1104px)/2))}}
+
+/* Cover avatar: larger, no ring; a soft shadow lifts it off the photo instead. */
+.site-hero--cover .site-hero__avatar{border:0;box-shadow:0 6px 24px rgba(0,0,0,.3)}
+@media(min-width:761px){.site-hero--cover .site-hero__avatar{width:104px;height:104px;margin-bottom:28px}}
+@media(max-width:760px){.site-hero--cover .site-hero__avatar{width:92px;height:92px;margin-bottom:16px}}
+
+/* Shadow styles to compare, picked with the lab's Shadow control (sets data-lab-shadow on <html>). */
+html[data-lab-shadow=flat]{--lab-card-shadow:none;--lab-card-shadow-hover:0 0 0 1px var(--lab-card-edge)}
+html[data-lab-shadow=crisp]{--lab-card-edge:color-mix(in srgb,var(--text) 12%,transparent);--lab-card-shadow:0 1px 2px rgba(0,0,0,.07),0 2px 6px rgba(0,0,0,.04);--lab-card-shadow-hover:0 2px 4px rgba(0,0,0,.08),0 8px 16px rgba(0,0,0,.08)}
+html[data-lab-shadow=lifted]{--lab-card-edge:transparent;--lab-card-shadow:0 2px 6px rgba(0,0,0,.06),0 28px 56px -18px rgba(0,0,0,.32);--lab-card-shadow-hover:0 4px 10px rgba(0,0,0,.08),0 36px 70px -20px rgba(0,0,0,.4)}
+html[data-lab-shadow=glow]{--lab-card-edge:color-mix(in srgb,var(--accent) 18%,transparent);--lab-card-shadow:0 1px 2px rgba(0,0,0,.05),0 20px 44px -18px color-mix(in srgb,var(--accent) 55%,transparent);--lab-card-shadow-hover:0 2px 4px rgba(0,0,0,.06),0 28px 56px -18px color-mix(in srgb,var(--accent) 70%,transparent)}
+/* Lifted and glow also float the newsletter as a card. */
+html:is([data-lab-shadow=lifted],[data-lab-shadow=glow]) .site-home-sections .newsletter{background:var(--surface);border:1px solid var(--lab-card-edge);box-shadow:var(--lab-card-shadow)}
