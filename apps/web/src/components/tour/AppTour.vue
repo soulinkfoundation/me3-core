@@ -74,7 +74,7 @@ watch(() => [tour.index, done.value], () => void nextTick(update));
 onMounted(() => { window.addEventListener("me3:home-layout-changed", homeChanged); window.addEventListener("resize", update); });
 onBeforeUnmount(() => { clearInterval(timer); ring(null); window.removeEventListener("me3:home-layout-changed", homeChanged); window.removeEventListener("resize", update); });
 
-const position = computed(() => placement.value ? { top: `${placement.value.top}px`, left: `${placement.value.left}px`, right: "auto", bottom: "auto" } : undefined);
+const position = computed(() => placement.value ? { top: `${placement.value.top}px`, left: `${placement.value.left}px`, right: "auto", bottom: "auto", transform: "none" } : undefined);
 const arrowStyle = computed(() => !placement.value ? undefined
   : placement.value.side === "left" ? { top: `${placement.value.arrow}px` } : { left: `${placement.value.arrow}px` });
 
@@ -131,9 +131,10 @@ async function openScreen() { if (step.value?.screen) await router.push(tourScre
 </template>
 
 <style scoped>
-/* Docked in the corner unless it's pointing at something; under dialogs, so Add to Home stays usable. */
-.app-tour { position: fixed; z-index: 60; right: 24px; bottom: 96px; display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; width: min(344px, calc(100vw - 32px)); padding: 16px 16px 8px; border: 1px solid var(--ui-border); border-radius: 20px; background: var(--ui-surface); color: var(--ui-text); box-shadow: 0 12px 32px rgb(0 0 0 / 14%); transition: top .25s ease, left .25s ease; }
-@media (max-width: 640px) { .app-tour:not([style]) { right: 16px; left: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); width: auto; } }
+/* Under dialogs, so Add to Home stays usable. */
+/* With nothing to point at it sits centred near the bottom, clear of Chat's composer. */
+.app-tour { position: fixed; z-index: 60; left: 50%; bottom: 96px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; width: min(344px, calc(100vw - 32px)); padding: 16px 16px 8px; border: 1px solid var(--ui-border); border-radius: 20px; background: var(--ui-surface); color: var(--ui-text); box-shadow: 0 12px 32px rgb(0 0 0 / 14%); transition: top .25s ease, left .25s ease; }
+@media (max-width: 640px) { .app-tour:not([style]) { right: 16px; left: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); width: auto; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .app-tour { transition: none; } }
 .app-tour__arrow { position: absolute; width: 14px; height: 14px; background: var(--ui-surface); border: 1px solid var(--ui-border); transform: translate(-50%, -50%) rotate(45deg); }
 .app-tour--below .app-tour__arrow { top: 0; border-right: 0; border-bottom: 0; }
