@@ -93,8 +93,8 @@ describe("shop for real products", () => {
       expect(home).toContain('href="./shop/p1"');
       expect(home).toContain('src="./files/products/p1.jpg"');
       expect(home).toContain("€1");
-      expect(home).toContain('href="./shop/p4"');
-      expect(home).not.toContain('href="./shop/p5"');
+      expect(home).toContain('href="./shop/p3"');
+      expect(home).not.toContain('href="./shop/p4"');
     });
 
     it("lets the owner hide or move it, and adds it after offers on sites saved without it", async () => {

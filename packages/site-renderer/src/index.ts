@@ -759,12 +759,12 @@ function postThumbnailHtml(post: Me3Post, markdown: string, basePath: string, cl
   return `<img class="${className}" src="${escapeHtml(filePathForHtml(contentAssetPathForHtml(imagePath), basePath))}" alt="" loading="lazy" decoding="async">`;
 }
 
-/** The first few products on the home page, linking to the full shop. */
+/** The first three products on the home page, one row like Latest writing, linking to the full shop. */
 function generateHomeShop(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities): string {
   const products = (profile.products || []).filter((product) => product.slug && !product.draft);
   if (!products.length) return "";
   const path = resolveSiteSectionPaths(profile).shop;
-  const cards = products.slice(0, 4).map((product) => {
+  const cards = products.slice(0, 3).map((product) => {
     const slug = normalizeSitePath(product.slug || "");
     return renderShopCard(product, { slug, title: product.title || titleFromSlug(slug), excerpt: product.excerpt || "", basePath: "./", href: `./${path}/${slug}` });
   }).join("");

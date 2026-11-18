@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- A home Shop section shows the first four products as photo cards with prices and an All products link. It sits after offers by default, can be hidden or moved like other sections, and sites saved before it existed get it after offers.
+- A home Shop section shows the first three products in one row, like Latest writing (a sideways-swipe row on phones), as photo cards with prices and an All products link. It sits after offers by default, can be hidden or moved like other sections, and sites saved before it existed get it after offers.
 - The Shop page is wide, with image-led cards (4:5 photos, soft shadow, stock and download tags on the photo) in three columns, two on phones. `normalizeHomeSections` is exported for editors.
 - Product pages set the photo beside a buy panel: title, price with stock, option cards, one Buy button and short delivery facts, then the description. Buyer details open in a short step only after Buy; on phones the action bar becomes Buy now · price, then submits the step.
 - Shop and product prices read like a shop: €14, from €14, €4.50 (Intl currency format, whole amounts without cents).

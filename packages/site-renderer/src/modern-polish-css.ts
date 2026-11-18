@@ -187,11 +187,14 @@ body[data-layout=cover] .site-topbar__action{display:none!important}
 }
 @media(max-width:760px){.site-hero--split .links{justify-content:center}}
 
-/* Home Shop: four products, a 2×2 grid in the centred column and one row on the wide layouts. */
-.site-shop__grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:32px 20px}
+/* Home Shop: three products in one row like Latest writing; on phones a row you swipe sideways. */
+.site-shop__grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
 .site-shop__grid .shop-item-cover{aspect-ratio:1}
-@media(min-width:761px){body:is([data-layout=cover],[data-layout=split]) .site-shop__grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@media(max-width:760px){.site-shop__grid{gap:24px 14px}}
+@media(max-width:760px){
+  .site-shop__grid{display:flex;gap:12px;margin:0 -20px;padding:4px 20px 14px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-inline:20px;scrollbar-width:none}
+  .site-shop__grid::-webkit-scrollbar{display:none}
+  .site-shop__grid .shop-item{flex:0 0 68%;scroll-snap-align:start}
+}
 
 /* Minimal: offers are cards like every other layout, not full-width list rows. */
 body[data-layout=minimal] .site-offers__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
