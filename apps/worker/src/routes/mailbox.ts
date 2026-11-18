@@ -2,6 +2,7 @@ import { parseEmailAddressHeader } from "../../../../shared/email-headers";
 import { renderMailMarkdown } from "../../../../shared/mail-markdown";
 import { getMailboxSignature, normalizeMailboxSignature, saveMailboxSignature } from "../mailbox-signature";
 import { listVerifiedSendAddresses } from "../email-send-identities";
+import { listManagedEmailAddresses } from "../managed-email-outbound";
 import { ownerInstructionAddresses } from "../mailbox-instructions";
 import { getMailboxOriginal } from "../mailbox-original";
 import { dkimDomainAligned } from "../mailbox-sender-auth";
@@ -170,10 +171,26 @@ export function registerMailboxRoutes(app: AppHono, deps: MailboxRouteDeps) {
             outboundEnabled: true,
           }))
       : [];
+    // Addresses at the owner's own domain (ME3 hosting): they receive into this mailbox and,
+    // once ME3 Cloud can send for the domain, can be chosen as the sender.
+    const ownDomain = overview.mailbox
+      ? (await listManagedEmailAddresses(c.env))
+          .filter((entry) => entry.kind === "custom_domain")
+          .filter((entry) => !overview.sources.some((source) => source.address === entry.address))
+          .map((entry) => ({
+            id: `domain:${entry.address}`,
+            type: "custom_domain" as const,
+            address: entry.address,
+            status: entry.status === "active" ? "active" as const : "pending" as const,
+            inboundEnabled: entry.receiving,
+            outboundEnabled: entry.sending,
+            isDefaultSender: entry.default,
+          }))
+      : [];
     // Mail from these addresses is a request ME3 acts on; clients name them when explaining that.
     return c.json({
       ...overview,
-      sources: [...overview.sources, ...sendAs],
+      sources: [...overview.sources, ...ownDomain, ...sendAs],
       ownerAddresses: await ownerInstructionAddresses(c.env, ownerId),
     });
   });

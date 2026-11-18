@@ -235,6 +235,107 @@ function managedGatewayRecipients(input: ManagedEmailGatewaySendInput): {
   };
 }
 
+export type ManagedEmailAddress = {
+  address: string;
+  kind: "me3" | "custom_domain";
+  receiving: boolean;
+  sending: boolean;
+  default: boolean;
+  status?: "active" | "pending" | "failed";
+};
+
+/**
+ * The owner's addresses on ME3 hosting: handle@me3.app and hello@ each domain ME3 registered for them
+ * (any address there receives). Empty off hosting or when ME3 Cloud can't be reached.
+ */
+export async function listManagedEmailAddresses(env: Env): Promise<ManagedEmailAddress[]> {
+  if (!hasManagedEmailGatewayCapability(env)) return [];
+  try {
+    const config = await getManagedEmailGatewayConfig(env);
+    const response = await fetch(
+      new URL(`/v1/installs/${encodeURIComponent(config.coreInstallId)}/email/addresses`, config.origin),
+      {
+        method: "GET",
+        redirect: "manual",
+        headers: {
+          "X-ME3-Core-Install-ID": config.coreInstallId,
+          "X-ME3-Core-Update-Token": config.coreUpdateToken,
+        },
+        signal: AbortSignal.timeout(4000),
+      },
+    );
+    if (!response.ok) return [];
+    const body = await safeJson(response);
+    const list = isRecord(body) && Array.isArray(body.addresses) ? body.addresses : [];
+    const addresses = list.flatMap((entry): ManagedEmailAddress[] => {
+      if (!isRecord(entry) || typeof entry.address !== "string") return [];
+      const address = entry.address.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) return [];
+      const status = entry.status === "active" || entry.status === "pending" || entry.status === "failed" ? entry.status : undefined;
+      return [{
+        address,
+        kind: entry.kind === "custom_domain" ? "custom_domain" : "me3",
+        receiving: entry.receiving === true,
+        sending: entry.sending === true,
+        default: entry.default === true,
+        ...(status ? { status } : {}),
+      }];
+    });
+    await rememberManagedEmailAddresses(env, addresses);
+    return addresses;
+  } catch {
+    return [];
+  }
+}
+
+const MANAGED_EMAIL_ADDRESSES_KEY = "ME3_MANAGED_EMAIL_ADDRESSES";
+
+/** Sending reads this copy, saved whenever the mailbox lists addresses, so a send never waits on ME3 Cloud. */
+async function rememberManagedEmailAddresses(env: Env, addresses: ManagedEmailAddress[]): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO install_secrets (name, value, created_at, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+    )
+      .bind(MANAGED_EMAIL_ADDRESSES_KEY, JSON.stringify(addresses))
+      .run();
+  } catch {
+    // The copy is a convenience; sending falls back to handle@me3.app without it.
+  }
+}
+
+export async function cachedManagedEmailAddresses(env: Env): Promise<ManagedEmailAddress[]> {
+  if (!isManagedEmailDeployment(env)) return [];
+  const raw = await getInstallSecret(env, MANAGED_EMAIL_ADDRESSES_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is ManagedEmailAddress =>
+          isRecord(entry) && typeof entry.address === "string" && typeof entry.sending === "boolean")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Mail goes out from the address the owner chose when it's one ME3 can send from, else their default. */
+export function chooseManagedSendAddress(
+  addresses: ManagedEmailAddress[],
+  requested: string | null | undefined,
+): string | null {
+  const wanted = requested?.trim().toLowerCase();
+  const sendable = addresses.filter((entry) => entry.sending);
+  const domainOf = (address: string) => address.slice(address.lastIndexOf("@") + 1);
+  if (wanted) {
+    if (sendable.some((entry) => entry.address === wanted)) return wanted;
+    // Any address at one of the owner's own domains can send once that domain can.
+    if (sendable.some((entry) => entry.kind === "custom_domain" && domainOf(entry.address) === domainOf(wanted))) return wanted;
+  }
+  return sendable.find((entry) => entry.default && entry.kind === "custom_domain")?.address ?? null;
+}
+
 async function getManagedEmailGatewayConfig(env: Env): Promise<ManagedEmailGatewayConfig> {
   if (!isManagedEmailDeployment(env)) {
     throw new ManagedEmailGatewayError(

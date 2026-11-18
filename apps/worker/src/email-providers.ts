@@ -11,6 +11,8 @@ import {
 import {
   hasManagedEmailGatewayCapability,
   isManagedEmailDeployment,
+  cachedManagedEmailAddresses,
+  chooseManagedSendAddress,
   ManagedEmailGatewayError,
   MANAGED_EMAIL_PROVIDER_ID,
   sendManagedEmailThroughGateway,
@@ -861,7 +863,9 @@ async function deliveryIdentity(
   sendAs: VerifiedSendAs | null = null,
 ): Promise<EmailDeliveryIdentity> {
   const managed = resolved.providerId === MANAGED_EMAIL_PROVIDER_ID;
-  const fromAddress = (managed ? await getManagedEmailFromAddress(env, ownerId) : input.fromAddress || resolved.config.fromAddress).trim().toLowerCase();
+  // On ME3 hosting the owner may send from their own domain once ME3 Cloud can send for it.
+  const ownDomainAddress = managed ? chooseManagedSendAddress(await cachedManagedEmailAddresses(env), input.fromAddress) : null;
+  const fromAddress = (managed ? ownDomainAddress || await getManagedEmailFromAddress(env, ownerId) : input.fromAddress || resolved.config.fromAddress).trim().toLowerCase();
   const fromName = (input.fromName || sendAs?.displayName || (managed ? await getManagedEmailFromName(env, ownerId) : resolved.config.fromName) || "ME3").trim();
   // The provider's reply-to belongs to its own sender, not to a send-as address.
   const configuredReplyTo = sendAs ? "" : resolved.config.replyToAddress;
