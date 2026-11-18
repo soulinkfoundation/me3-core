@@ -82,7 +82,12 @@ async function fixture(page: Page, overrides: Partial<State> = {}) {
         : { firstRun: true, greeting: { title: "Hi Maya, I'm ME3", body: "Your assistant, website and inbox in one place. Where shall we start?" }, starters: [
           { id: "site", emoji: "🌐", label: "Make my website", prompt: "Build my website.", action: "site_ask" },
           { id: "help", emoji: "💡", label: "What can you help with?", prompt: "What can you help me with?" },
-          { id: "tour", emoji: "🧭", label: "Show me around", prompt: "Show me around ME3." }] })
+          { id: "tour", emoji: "🧭", label: "Show me around", prompt: "Show me around ME3.", action: "tour" }] })
+      : path === "/assistant/tour" ? { steps: [
+          { id: "website", emoji: "🌐", title: "Your website", body: "You have a page at maya.me3.app.", where: "Website", tryIt: { kind: "site_ask", label: "Make my website" } },
+          { id: "email", emoji: "✉️", title: "ME3's own email", body: "maya@inbox.me3.app is my own address. I never read your inbox.", where: "Home → Inbox", tryIt: { kind: "copy", label: "Copy my address", value: "maya@inbox.me3.app" } },
+          { id: "home", emoji: "🏠", title: "Home", body: "Home shows your day.", where: "Home", tryIt: { kind: "open", label: "Go to Home", to: "home" } }],
+        done: { title: "That's the tour", body: "Ask me anything, or pick something below to start." } }
       : path === "/ai-settings" ? { deploymentMode: "managed", providers: [] }
       : path === "/config" ? { deploymentMode: "managed", ownerAuthConfigured: true, ownerPasswordAuthConfigured: true, setupRequired: [] }
       : path === "/sites" ? { sites: [{ username: "maya", site_role: "profile", site_type: "profile" }] }
@@ -177,4 +182,30 @@ test("returning owners are not sent back to the first run, and Home's Review sho
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByTestId("site-draft-card")).toBeVisible();
   await expect(dialog).not.toContainText("Preview Path");
+});
+
+test("Show me around walks the steps one at a time, and Try it does the real thing", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const state = await fixture(page);
+  await page.goto("/assistant");
+  await page.getByRole("button", { name: "Show me around" }).click();
+  const tour = page.getByTestId("chat-tour");
+  await expect(tour.getByRole("heading", { name: "Your website" })).toBeVisible();
+  await expect(tour).toContainText("1 of 3");
+  await expect(tour).toContainText("You'll find this in Website.");
+  await tour.getByRole("button", { name: "Next" }).click();
+  await expect(tour.getByRole("heading", { name: "ME3's own email" })).toBeVisible();
+  await tour.getByRole("button", { name: "Copy my address" }).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("maya@inbox.me3.app");
+  await tour.getByRole("button", { name: "Next" }).click();
+  await tour.getByRole("button", { name: "Finish" }).click();
+  await expect(tour.getByRole("heading", { name: "That's the tour" })).toBeVisible();
+  await tour.getByRole("button", { name: "Done" }).click();
+  await expect(tour).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show me around" })).toBeVisible();
+  expect(state.sent).toEqual([]);
+  // Make my website from the tour opens the Build your website card.
+  await page.getByRole("button", { name: "Show me around" }).click();
+  await page.getByTestId("chat-tour").getByRole("button", { name: "Make my website" }).click();
+  await expect(page.getByTestId("site-build-ask")).toBeVisible();
 });

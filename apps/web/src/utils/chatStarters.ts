@@ -1,6 +1,6 @@
 // Chat's empty-state starters come from Core (GET /api/assistant/starters, me3-q6la.1), so web, iOS and
-// Android show the same ones. A starter sends its prompt, or with action "site_ask" opens the Build your website card.
-export type ChatStarter = { id: string; emoji: string; label: string; prompt: string; action?: "site_ask" };
+// Android show the same ones. A starter sends its prompt; action "site_ask" opens the Build your website card and "tour" opens Show me around.
+export type ChatStarter = { id: string; emoji: string; label: string; prompt: string; action?: "site_ask" | "tour" };
 export type ChatStarters = { firstRun: boolean; greeting: { title: string; body: string } | null; starters: ChatStarter[] };
 
 export const EMPTY_CHAT_STARTERS: ChatStarters = { firstRun: false, greeting: null, starters: [] };

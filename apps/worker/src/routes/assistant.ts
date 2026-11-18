@@ -1,4 +1,5 @@
 import { loadChatStarters } from "../chat-starters";
+import { loadChatTour } from "../chat-tour";
 import { readManagedAllowanceNotice, type ManagedAllowanceNotice } from "../managed-ai-billing";
 import { readAgentEmailDraft, type AgentEmailDraft } from "../agent-email-draft";
 import { readAgentNewsCard, readAgentNewsServingId, type AgentNewsCard } from "../agent-news-card";
@@ -555,6 +556,14 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     if (!ownerId) return unauthorized(c);
     c.header("Cache-Control", "private, no-store");
     return c.json(await loadChatStarters(c.env, ownerId, { timeZone: c.req.query("tz") }));
+  });
+
+  // Show me around (me3-q6la.5): the tour's steps, written from what this install has.
+  app.get("/api/assistant/tour", async (c) => {
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    c.header("Cache-Control", "private, no-store");
+    return c.json(await loadChatTour(c.env, ownerId));
   });
 
   app.get("/api/assistant/settings", async (c) => {

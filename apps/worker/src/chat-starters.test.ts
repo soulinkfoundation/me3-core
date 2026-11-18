@@ -100,6 +100,12 @@ describe("GET /api/assistant/starters", () => {
     expect((await get()).firstRun).toBe(false);
   });
 
+  it("greets a new owner by the name they signed up with when the site has none yet", async () => {
+    const { raw, get } = fixture();
+    raw.exec("UPDATE owner_profile SET name = 'Maya Okafor' WHERE id = 'owner'");
+    expect((await get()).greeting?.title).toBe("Hi Maya, I'm ME3");
+  });
+
   it("does not send an owner with a bio back into first run", async () => {
     const { me, get } = fixture();
     me({ name: "Sam Carter", bio: "Yoga teacher in Bristol." });

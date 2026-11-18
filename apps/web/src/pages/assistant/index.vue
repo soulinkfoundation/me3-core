@@ -14,6 +14,8 @@ import { EMPTY_CHAT_STARTERS, loadChatStarters, withConfigure, type ChatStarter,
 import { useAuthStore } from "../../stores/auth";
 import { PEOPLE_SEARCH_TOOL, bookCallMessage, findPersonMessage, loadProfileSite, markFirstRunHandled, shouldStartFirstRun, peopleRows, showMeMessage, type PersonRow } from "../../utils/firstSite";
 import SiteBuildAskCard from "../../components/first-site/SiteBuildAskCard.vue";
+import ChatTourCard from "../../components/tour/ChatTourCard.vue";
+import { loadChatTour, type ChatTour, type TourStep } from "../../utils/chatTour";
 import ChatFirstSite from "../../components/first-site/ChatFirstSite.vue";
 import ChatPeopleResults from "../../components/first-site/ChatPeopleResults.vue";
 import SoupBowl from "../../components/soup/SoupBowl.vue";
@@ -1078,8 +1080,37 @@ async function useStarterPrompt(prompt: string) {
   await sendAssistantMessage();
 }
 
+// Show me around (me3-q6la.5): Core's steps as one card in Chat. An older Core without them gets the prompt.
+const chatTour = ref<ChatTour | null>(null);
+async function openTour(fallbackPrompt: string) {
+  let tour: ChatTour | null = null;
+  try { tour = await loadChatTour(api.get); } catch { tour = null; }
+  if (!tour) { await useStarterPrompt(fallbackPrompt); return; }
+  await showWorkspace(false);
+  chatTour.value = tour;
+}
+function closeTour() { chatTour.value = null; }
+async function tryTourStep(step: TourStep) {
+  const tryIt = step.tryIt;
+  if (!tryIt) return;
+  if (tryIt.kind === "copy") {
+    try { await navigator.clipboard.writeText(tryIt.value); toastSuccess("Copied"); }
+    catch { toastFromUnknown(null, "Couldn't copy that"); }
+    return;
+  }
+  // Everything else leaves the tour for the thing itself.
+  closeTour();
+  if (tryIt.kind === "prompt") { await submitAssistantText(tryIt.prompt); return; }
+  if (tryIt.kind === "site_ask") { await openSiteAsk(); return; }
+  if (tryIt.to === "home") await showWorkspace(true);
+  else if (tryIt.to === "news") await readNews();
+  else if (tryIt.to === "website") await router.push("/sites");
+  else await router.push({ path: "/settings", query: { section: "mailbox" } });
+}
+
 async function startStarterPrompt(starter: ChatStarter) {
   if (starter.action === "site_ask") { await openSiteAsk(); return; }
+  if (starter.action === "tour") { await openTour(starter.prompt); return; }
   await useStarterPrompt(starter.prompt);
 }
 
@@ -2591,7 +2622,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
           />
 
           <div
-            v-else-if="assistantConsoleMessages.length === 0 && voiceDictationState !== 'listening' && !siteAskOpen"
+            v-else-if="assistantConsoleMessages.length === 0 && voiceDictationState !== 'listening' && !siteAskOpen && !chatTour"
             class="assistant-empty-state"
           >
             <AgentDog :size="128" />
@@ -3137,6 +3168,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
             <NewsChatCard v-if="message.id && newsCardByMessage[message.id]" class="assistant-news-card" :card="newsCardByMessage[message.id]" :busy="assistantSending" :latest="message.id === lastNewsCardMessageId" @say="submitAssistantText" @time="newsTimeChosen" @read="readNews" />
           </article>
 
+          <ChatTourCard v-if="chatTour && !siteBuilderMode" class="assistant-message assistant-message--assistant" :tour="chatTour" @try="tryTourStep" @close="closeTour" />
           <SiteBuildAskCard v-if="siteAskOpen && !siteBuilderMode" class="assistant-message assistant-message--assistant" :busy="assistantSending" @submit="submitSiteAsk" @close="closeSiteAsk" />
           <ChatFirstSite
             v-if="!siteBuilderMode"

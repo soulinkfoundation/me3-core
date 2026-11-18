@@ -1,6 +1,6 @@
 import { ownedMissionStatement } from "@me3-core/plugin-mission-control";
 import { getMailboxBrief } from "./mailbox-brief";
-import { siteFileContentToBytes } from "./sites";
+import { getOwnerProfile, siteFileContentToBytes } from "./sites";
 import type { Env } from "./types";
 
 /**
@@ -8,7 +8,8 @@ import type { Env } from "./types";
  * Clients draw what this returns, so a starter changes here without a client release.
  * A starter either sends `prompt` as the owner's message or, with `action`, opens a card in the app.
  */
-export type ChatStarterAction = "site_ask";
+/** "tour" opens Show me around; a client that predates it sends the prompt instead. */
+export type ChatStarterAction = "site_ask" | "tour";
 export type ChatStarter = { id: string; emoji: string; label: string; prompt: string; action?: ChatStarterAction };
 export type ChatStarters = {
   /** A new owner: no site bio yet and nothing said in Chat. Clients show `greeting` above the starters. */
@@ -41,7 +42,7 @@ export const MISSION_DRAFT_PROMPT =
 
 const site: ChatStarter = { id: "site", emoji: "🌐", label: "Make my website", prompt: BUILD_SITE_PROMPT, action: "site_ask" };
 const help: ChatStarter = { id: "help", emoji: "💡", label: "What can you help with?", prompt: HELP_PROMPT };
-const tour: ChatStarter = { id: "tour", emoji: "🧭", label: "Show me around", prompt: TOUR_PROMPT };
+const tour: ChatStarter = { id: "tour", emoji: "🧭", label: "Show me around", prompt: TOUR_PROMPT, action: "tour" };
 
 function clip(text: string, max = 28): string {
   const value = text.replace(/\s+/g, " ").trim();
@@ -128,7 +129,7 @@ async function nextEventWithinHour(env: Env, ownerId: string, now: Date): Promis
 export async function loadChatStarters(env: Env, ownerId: string, options: { now?: Date; timeZone?: string | null } = {}): Promise<ChatStarters> {
   const now = options.now ?? new Date();
   const clock = localClock(now, options.timeZone);
-  const [profile, spoken, mission, event, brief] = await Promise.all([
+  const [profile, spoken, mission, event, brief, owner] = await Promise.all([
     profileBioAndName(env, ownerId).catch(() => null),
     env.DB.prepare(`SELECT 1 AS spoken FROM assistant_messages WHERE owner_id = ? AND role = 'user' LIMIT 1`)
       .bind(ownerId).first<{ spoken: number }>().catch(() => ({ spoken: 1 })),
@@ -136,11 +137,13 @@ export async function loadChatStarters(env: Env, ownerId: string, options: { now
       .bind(ownerId).first<{ mission_statement: string | null }>().catch(() => undefined),
     nextEventWithinHour(env, ownerId, now).catch(() => null),
     getMailboxBrief(env, ownerId, { now }).catch(() => null),
+    getOwnerProfile(env, ownerId).catch(() => null),
   ]);
   const top = brief?.needsYou.find((item: { primaryAction: { kind: string } | null }) => ["send_draft", "edit_draft", "draft_reply"].includes(item.primaryAction?.kind ?? "")) ?? brief?.needsYou[0] ?? null;
   return chatStarters({
     hour: clock.hour,
-    firstName: profile?.name.split(/\s+/)[0] || null,
+    // The site's name, else the one given at signup.
+    firstName: (profile?.name || owner?.name || "").trim().split(/\s+/)[0] || null,
     // A read that failed counts as built, so an owner is never sent back into first run by an error.
     siteMissing: profile ? !profile.bio : false,
     hasSpoken: Boolean(spoken),
