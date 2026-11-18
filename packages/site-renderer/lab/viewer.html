@@ -65,7 +65,7 @@ const state = { theme: own.theme || M.themes[0].id, layout: own.layout || "card"
 try { Object.assign(state, Object.fromEntries(new URLSearchParams(location.hash.slice(1)))); } catch {}
 document.getElementById("source").textContent = `${M.name || "Profile"} · ${M.source}`;
 
-const page = (s = state) => `pages/${s.polish}/${s.theme}-${s.layout}-${s.mode}.html`;
+const page = (s = state) => `pages/${s.polish}/${s.theme}-${s.layout}-${s.mode}.html?v=${encodeURIComponent(M.generatedAt)}`;
 
 function renderControls() {
   for (const [key, list] of Object.entries(options)) {

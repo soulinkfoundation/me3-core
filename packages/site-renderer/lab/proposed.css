@@ -15,20 +15,19 @@
   body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar .site-theme-toggle{color:#fff;text-shadow:0 1px 12px rgba(0,0,0,.25)}
   body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar .nav-link:not(.active){color:rgba(255,255,255,.82)}
   body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar .nav-link.active{box-shadow:inset 0 -2px 0 #fff}
-  body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar__action{background:#fff;color:#1c1c1c}
+  body[data-page=home][data-layout=cover] .site-topbar__action{transition:opacity .25s ease,transform .25s ease}
+  body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar__action{opacity:0;transform:translateY(-4px);pointer-events:none}
   body[data-page=home][data-layout=cover].is-scrolled .site-topbar{background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:saturate(1.4) blur(14px);-webkit-backdrop-filter:saturate(1.4) blur(14px);border-bottom-color:var(--border)}
 
   .site-hero--cover{min-height:max(560px,min(94vh,960px));background:#111}
   .site-hero--cover .site-hero__banner img{animation:lab-settle 1.6s cubic-bezier(.2,.7,.2,1) both}
-  .site-hero--cover .site-hero__banner:after{background:linear-gradient(180deg,rgba(0,0,0,.42) 0,rgba(0,0,0,0) 22%,rgba(0,0,0,0) 42%,rgba(0,0,0,.72) 100%)}
   .site-hero--cover .site-hero__intro{width:min(1200px,100%);margin:0 auto;padding:0 48px 76px}
   .site-hero--cover .site-hero__avatar{display:block;width:76px;height:76px;margin:0 0 26px;border-width:2px}
   .site-hero--cover .name{display:block;max-width:14ch;margin:0 0 18px;font-size:clamp(3.6rem,7.2vw,7rem);line-height:.94;letter-spacing:-.045em}
-  .site-hero--cover .bio{max-width:34ch;margin:0 0 10px;font-size:clamp(1.15rem,1.5vw,1.4rem);line-height:1.45;color:rgba(255,255,255,.9)}
+  .site-hero--cover .bio{max-width:min(36rem,100%);margin:0 0 10px;font-size:clamp(1.15rem,1.5vw,1.4rem);line-height:1.45;color:rgba(255,255,255,.9)}
   .site-hero--cover .location{color:rgba(255,255,255,.7);font-size:.95rem}
   .site-hero--cover .buttons{gap:10px;margin:30px 0 0}
   .site-hero--cover .cta-button{min-height:50px;padding:0 24px}
-  .site-hero--cover .cta-button:not(:first-child){background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.4);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
   .site-hero--cover .site-hero__intro>*{animation:lab-rise .9s cubic-bezier(.2,.7,.2,1) both}
   .site-hero--cover .site-hero__intro>:nth-child(2){animation-delay:.08s}
   .site-hero--cover .site-hero__intro>:nth-child(3){animation-delay:.16s}
@@ -36,6 +35,12 @@
   .site-cover-links{width:min(1200px,calc(100% - 96px))}
   body[data-layout=cover] .site-home-sections{width:min(1200px,calc(100% - 96px))}
 }
+/* Cover, every width: text stays readable on any photo, one solid button and the rest glass. */
+.site-hero--cover .site-hero__banner:after{background:linear-gradient(180deg,rgba(0,0,0,.42) 0,rgba(0,0,0,0) 22%,rgba(0,0,0,.08) 42%,rgba(0,0,0,.74) 100%),radial-gradient(ellipse 80% 70% at 0 100%,rgba(0,0,0,.35),transparent 70%)}
+.site-hero--cover .name,.site-hero--cover .bio,.site-hero--cover .location{text-shadow:0 1px 2px rgba(0,0,0,.3),0 4px 28px rgba(0,0,0,.35)}
+.site-hero--cover .bio{text-wrap:balance}
+.site-hero--cover .cta-button:not(:first-child){background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.4);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);text-shadow:0 1px 2px rgba(0,0,0,.25)}
+
 /* Cover: social icons live in the hero, quiet glass circles under the buttons. */
 .site-hero--cover .links{justify-content:flex-start;gap:8px;margin:22px 0 0}
 .site-hero--cover .link-item{width:38px;height:38px;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.24);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:background .2s}
