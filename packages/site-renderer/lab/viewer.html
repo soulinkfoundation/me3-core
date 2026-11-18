@@ -21,6 +21,7 @@ header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;padding:12px
 .seg button[aria-pressed=true]{background:var(--on);color:var(--on-text)}
 .seg button.own::after{content:"";position:absolute;top:5px;right:5px;width:5px;height:5px;border-radius:50%;background:#3d9b7c}
 .spacer{flex:1}
+select{min-height:36px;padding:0 10px;border:0;border-radius:10px;background:var(--chip);color:var(--text);font:inherit;font-weight:500}
 .hint{color:var(--muted);font-size:12px}
 .open{color:var(--text);font-size:12px;text-decoration:none;border-bottom:1px solid var(--line)}
 main{flex:1;min-height:0;padding:20px;overflow:auto}
@@ -44,6 +45,7 @@ main{flex:1;min-height:0;padding:20px;overflow:auto}
   <div class="group"><label>Layout</label><div class="seg" id="layout"></div></div>
   <div class="group"><label>Mode</label><div class="seg" id="mode"></div></div>
   <div class="group"><label>Polish</label><div class="seg" id="polish"></div></div>
+  <div class="group" id="page-group"><label for="page">Page</label><select id="page"></select></div>
   <div class="group"><label>View</label><div class="seg" id="view"></div></div>
   <div class="spacer"></div>
   <span class="hint">← → theme · ↑ ↓ layout · D mode · P polish</span>
@@ -61,11 +63,17 @@ const options = {
   view: [["both", "Desktop + phone"], ["desktop", "Desktop"], ["phone", "Phone"], ["themes", "All themes"]],
 };
 const own = { theme: M.ownTheme, layout: M.ownLayout };
-const state = { theme: own.theme || M.themes[0].id, layout: own.layout || "card", mode: "light", polish: "current", view: "both" };
+const state = { theme: own.theme || M.themes[0].id, layout: own.layout || "card", mode: "light", polish: "current", page: "home", view: "both" };
 try { Object.assign(state, Object.fromEntries(new URLSearchParams(location.hash.slice(1)))); } catch {}
 document.getElementById("source").textContent = `${M.name || "Profile"} · ${M.source}`;
 
-const page = (s = state) => `pages/${s.polish}/${s.theme}-${s.layout}-${s.mode}.html?v=${encodeURIComponent(M.generatedAt)}`;
+const PAGES = M.pages || [{ id: "home", label: "Home", path: "index.html" }];
+if (!PAGES.some(p => p.id === state.page)) state.page = "home";
+const page = (s = state) => `pages/${s.polish}/${s.theme}-${s.layout}-${s.mode}/${(PAGES.find(p => p.id === s.page) || PAGES[0]).path}?v=${encodeURIComponent(M.generatedAt)}`;
+const pageSelect = document.getElementById("page");
+pageSelect.innerHTML = PAGES.map(p => `<option value="${p.id}">${p.id === "home" || p.id === "shop" ? p.label : "Product · " + p.label}</option>`).join("");
+pageSelect.onchange = () => set({ page: pageSelect.value });
+if (PAGES.length < 2) document.getElementById("page-group").hidden = true;
 
 function renderControls() {
   for (const [key, list] of Object.entries(options)) {
@@ -80,6 +88,7 @@ function renderControls() {
       el.append(b);
     }
   }
+  pageSelect.value = state.page;
   document.getElementById("open").href = page();
   location.replace("#" + new URLSearchParams(state));
 }

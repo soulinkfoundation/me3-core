@@ -5,11 +5,12 @@
  *
  *   pnpm --filter @me3-core/site-renderer lab -- --site https://kieran.me3.app
  *   pnpm --filter @me3-core/site-renderer lab            # built-in sample profile
+ *   ... lab -- --site https://kieran.me3.app --products  # add lab/sample-products.json (or --products path.json)
  *
  * Output goes to packages/site-renderer/.theme-lab/ (gitignored). Serve that
  * folder with any static server and open index.html.
  */
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateSiteHtml, siteThemes, type Me3SiteProfile, type SiteThemeId } from "../src/index.js";
@@ -108,14 +109,53 @@ const SAMPLE: Me3SiteProfile = {
   },
 };
 
+type ProductFixture = {
+  shopTitle?: string;
+  photos?: Record<string, string>;
+  products: Array<NonNullable<Me3SiteProfile["products"]>[number] & { description?: string }>;
+};
+
+/** --products [path]: merge a products fixture (default lab/sample-products.json) and fetch its photos once. */
+async function loadProducts(): Promise<{ products: Me3SiteProfile["products"]; shopTitle?: string; files: Array<{ name: string; content: string }> } | null> {
+  const index = process.argv.indexOf("--products");
+  if (index < 0) return null;
+  const value = process.argv[index + 1];
+  const path = value && !value.startsWith("--") ? value : join(here, "sample-products.json");
+  const fixture = JSON.parse(await readFile(path, "utf8")) as ProductFixture;
+  for (const [file, url] of Object.entries(fixture.photos || {})) {
+    const target = join(outDir, file);
+    if (await stat(target).then(() => true, () => false)) continue;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Could not fetch ${url} (${response.status})`);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, Buffer.from(await response.arrayBuffer()));
+  }
+  const files = fixture.products.filter((product) => product.description)
+    .map((product) => ({ name: `products/${product.slug}.md`, content: product.description! }));
+  const products = fixture.products.map(({ description, ...product }) => ({ ...product, file: description ? `products/${product.slug}.md` : undefined }));
+  return { products, shopTitle: fixture.shopTitle, files };
+}
+
 async function main() {
   const site = argValue("site");
   const source = site ? await profileFromSite(site) : { profile: SAMPLE };
+  const shop = await loadProducts();
+  if (shop) Object.assign(source.profile, { products: shop.products, shopTitle: shop.shopTitle });
   const proposedCss = await readFile(join(here, "proposed.css"), "utf8");
   const proposedHead = `<style data-theme-lab="proposed">${proposedCss}</style>`;
 
-  await rm(outDir, { recursive: true, force: true });
+  // Keep downloaded photos in files/ between runs; everything else is regenerated.
+  await rm(join(outDir, "pages"), { recursive: true, force: true });
+  await mkdir(join(outDir, "files"), { recursive: true });
   const themes = Object.keys(siteThemes) as SiteThemeId[];
+  const shopPath = "shop";
+  const pages = [
+    { id: "home", label: "Home", path: "index.html" },
+    ...(shop ? [
+      { id: "shop", label: "Shop", path: `${shopPath}/index.html` },
+      ...(shop.products || []).map((product) => ({ id: product.slug!, label: product.title || product.slug!, path: `${shopPath}/${product.slug}.html` })),
+    ] : []),
+  ];
   let count = 0;
   for (const theme of themes) {
     for (const layout of LAYOUTS) {
@@ -130,14 +170,19 @@ async function main() {
             ],
           } },
         };
-        const html = (await generateSiteHtml(profile, [], undefined, { baseUrl: site || "https://example.com" }))["index.html"];
-        if (!html) throw new Error("Renderer returned no index.html");
+        const output = await generateSiteHtml(profile, shop?.files || [], undefined, { baseUrl: site || "https://example.com" });
         for (const polish of POLISH) {
-          const page = polish === "proposed" ? html.replace("</head>", `${proposedHead}</head>`) : html;
-          const file = join(outDir, "pages", polish, `${theme}-${layout}-${mode}.html`);
-          await mkdir(dirname(file), { recursive: true });
-          await writeFile(file, page);
-          count++;
+          const dir = join(outDir, "pages", polish, `${theme}-${layout}-${mode}`);
+          await mkdir(dir, { recursive: true });
+          await symlink("../../../files", join(dir, "files"));
+          for (const page of pages) {
+            const html = output[page.path];
+            if (!html) throw new Error(`Renderer returned no ${page.path}`);
+            const file = join(dir, page.path);
+            await mkdir(dirname(file), { recursive: true });
+            await writeFile(file, polish === "proposed" ? html.replace("</head>", `${proposedHead}</head>`) : html);
+            count++;
+          }
         }
       }
     }
@@ -153,6 +198,7 @@ async function main() {
     layouts: LAYOUTS as readonly Layout[],
     modes: MODES,
     polish: POLISH,
+    pages,
   };
   const viewer = await readFile(join(here, "viewer.html"), "utf8");
   await writeFile(join(outDir, "index.html"), viewer.replace("/*MANIFEST*/null", JSON.stringify(manifest)));

@@ -1,0 +1,76 @@
+{
+  "note": "Sample shop for the theme lab: one of each simple product kind. Prices are in cents. Photos are Unsplash-licensed images served by picsum.photos, downloaded once into .theme-lab/files/.",
+  "shopTitle": "Shop",
+  "photos": {
+    "files/products/five-steps.jpg": "https://picsum.photos/id/367/1200/1200",
+    "files/products/morning-stillness.jpg": "https://picsum.photos/id/1068/1200/1200",
+    "files/products/ceremony-tea.jpg": "https://picsum.photos/id/225/1200/1200",
+    "files/products/ceremony-tea-2.jpg": "https://picsum.photos/id/312/1200/1200",
+    "files/products/quiet-mind-journal.jpg": "https://picsum.photos/id/24/1200/1200",
+    "files/products/stillness-mug.jpg": "https://picsum.photos/id/30/1200/1200"
+  },
+  "products": [
+    {
+      "slug": "five-steps-guide",
+      "title": "Five Steps to Remember",
+      "price": 900,
+      "currency": "eur",
+      "images": ["files/products/five-steps.jpg"],
+      "excerpt": "A short, practical guide to coming home to yourself in a noisy, AI-shaped world.",
+      "description": "A short, practical guide to coming home to yourself in a noisy, AI-shaped world.\n\nFive simple practices, each one under ten minutes, with journaling prompts and a printable daily card.\n\n- 42 pages, beautifully typeset\n- Works on any phone, tablet or e-reader\n- Yours to keep, with free updates",
+      "publishedAt": "2026-10-01T09:00:00.000Z",
+      "delivery": { "kind": "digital", "instructions": "", "file": { "id": "five-steps", "name": "five-steps-to-remember.pdf", "size": 4718592, "type": "application/pdf" } }
+    },
+    {
+      "slug": "morning-stillness",
+      "title": "Morning Stillness",
+      "price": 1500,
+      "currency": "eur",
+      "images": ["files/products/morning-stillness.jpg"],
+      "excerpt": "Seven guided meditations for the first quiet minutes of your day.",
+      "description": "Seven guided meditations, from five to twenty minutes, for the first quiet minutes of your day.\n\nRecorded in the Irish countryside with gentle ambient sound.",
+      "publishedAt": "2026-09-20T09:00:00.000Z",
+      "delivery": { "kind": "digital", "instructions": "", "file": { "id": "morning-stillness", "name": "morning-stillness.zip", "size": 98566144, "type": "application/zip" } }
+    },
+    {
+      "slug": "ceremony-tea",
+      "title": "Ceremony Tea",
+      "price": 1400,
+      "currency": "eur",
+      "images": ["files/products/ceremony-tea.jpg", "files/products/ceremony-tea-2.jpg"],
+      "excerpt": "A calming loose-leaf blend of tulsi, chamomile and lemon balm.",
+      "description": "A calming loose-leaf blend of organic tulsi, chamomile and lemon balm, made in small batches for slow evenings and morning sits.",
+      "publishedAt": "2026-09-10T09:00:00.000Z",
+      "stockSetAt": "2026-11-01T09:00:00.000Z",
+      "options": [
+        { "id": "100g", "label": "100 g pouch", "price": 1400, "stock": 3, "stockSetAt": "2026-11-01T09:00:00.000Z" },
+        { "id": "250g", "label": "250 g tin", "price": 2800, "stock": 1, "stockSetAt": "2026-11-01T09:00:00.000Z" }
+      ],
+      "delivery": { "kind": "physical", "instructions": "Ships within 3 working days from Ireland.", "returns": "Unopened tea can be returned within 14 days.", "shippingCost": 450, "countries": ["IE", "GB", "FR", "DE", "NL", "ES", "IT", "US"] }
+    },
+    {
+      "slug": "quiet-mind-journal",
+      "title": "The Quiet Mind Journal",
+      "price": 2200,
+      "currency": "eur",
+      "images": ["files/products/quiet-mind-journal.jpg"],
+      "excerpt": "A linen-bound journal with a gentle prompt for every day of the season.",
+      "description": "A linen-bound journal with 90 days of gentle prompts, printed on recycled paper.",
+      "publishedAt": "2026-08-30T09:00:00.000Z",
+      "delivery": { "kind": "physical", "instructions": "Ships within 3 working days from Ireland.", "returns": "Returns accepted within 14 days.", "shippingCost": 600, "countries": ["IE", "GB", "FR", "DE", "NL", "ES", "IT", "US"] }
+    },
+    {
+      "slug": "stillness-mug",
+      "title": "Stillness Mug",
+      "price": 1800,
+      "currency": "eur",
+      "images": ["files/products/stillness-mug.jpg"],
+      "excerpt": "A hand-glazed stoneware mug for your morning sit.",
+      "description": "A hand-glazed stoneware mug, made by a local potter. Each one is a little different.",
+      "publishedAt": "2026-08-15T09:00:00.000Z",
+      "stock": 0,
+      "stockSetAt": "2026-11-01T09:00:00.000Z",
+      "delivery": { "kind": "physical", "instructions": "Ships within 3 working days from Ireland.", "shippingCost": 600, "countries": ["IE", "GB"] }
+    }
+  ]
+}
