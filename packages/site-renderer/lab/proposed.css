@@ -190,3 +190,8 @@ body[data-vibe=tech] :is(.cta-button,.site-topbar__action,.site-action-dock__but
 .site-action-dock :is([data-booking-dock-continue],[data-booking-dock-select-time]){display:none}
 /* Phones: the header never carries the action button; the bottom dock does. */
 @media(max-width:760px){.site-topbar .site-topbar__action{display:none}}
+/* Phones: hero buttons are full width, one per row, in every layout. */
+@media(max-width:760px){
+  :is(.site-hero--split,.site-hero--minimal) .buttons{display:grid;grid-template-columns:1fr;gap:8px}
+  :is(.site-hero--split,.site-hero--minimal) .cta-button{width:100%}
+}
