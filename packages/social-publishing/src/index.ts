@@ -65,6 +65,7 @@ export {
   type CreatePostVersionInput,
   type CreateSocialPostInput,
   type PostVersion,
+  type PublishedHistoryEntry,
   type PostVersionPublishingSettings,
   type SocialPost,
   type SocialPostApprovalStatus,

@@ -120,6 +120,27 @@ describe("Social page", () => {
     expect(rows[2]!.find(".social-row__thumb").exists()).toBe(false);
   });
 
+  it("says how many times a post went out when it's more than once", async () => {
+    routeState.query = { tab: "posted" };
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x")] },
+      "/social/posts": {
+        posts: [
+          post([version({ publicationStatus: "published", publishedAt: "2026-11-18T09:46:00.000Z", publishedCount: 3 })], { id: "again" }),
+          post([version({ publicationStatus: "published", publishedAt: "2026-11-18T09:46:00.000Z", publishedCount: 1 })], { id: "once" }),
+        ],
+      },
+      "/sites": { sites: [] },
+    });
+    const wrapper = mount(SocialIndex, { global: { stubs } });
+    await flushPromises();
+
+    const details = wrapper.findAll(".social-row__detail").map((detail) => detail.text());
+    expect(details[0]).toMatch(/^Posted 3 times · /);
+    expect(details[1]).not.toContain("Posted");
+  });
+
   it("says in plain words why an account didn't connect", async () => {
     serve({
       "/social/status": status("included"),
@@ -273,6 +294,72 @@ describe("Social review", () => {
     await flushPromises();
     const published = apiPost.mock.calls.map(([path]) => path).filter((path) => String(path).endsWith("/publish"));
     expect(published).toEqual(["/social/versions/x-1/publish"]);
+  });
+
+  it("posts a published platform again from its footer and lists every time it went out", async () => {
+    const history = [
+      { publicationId: "pub-3", publishedAt: "2026-11-18T09:46:00.000Z", platformPostUrl: "https://x.com/maya/status/3" },
+      { publicationId: "pub-2", publishedAt: "2026-11-02T12:30:00.000Z", platformPostUrl: "https://x.com/maya/status/2" },
+      { publicationId: "pub-1", publishedAt: "2026-10-15T12:30:00.000Z", platformPostUrl: null },
+    ];
+    const posted = post([
+      version({
+        id: "x-1",
+        publicationStatus: "published",
+        approvalStatus: "approved",
+        platformPostUrl: "https://x.com/maya/status/3",
+        publishedAt: "2026-11-18T09:46:00.000Z",
+        publishedCount: 3,
+        publishedHistory: history,
+      }),
+    ]);
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x")] },
+      "/social/posts/post-1": { post: posted },
+      "/social/posts": { posts: [] },
+      "/sites": { sites: [{ id: "site-1", site_role: "profile" }] },
+    });
+    apiPatch.mockResolvedValue({ version: posted.versions[0] });
+    apiPost.mockResolvedValue({ publication: {} });
+    const wrapper = mount(SocialPost, { global: { stubs } });
+    await flushPromises();
+
+    // Posted more than once: the tick becomes the count, and the history opens from one line.
+    expect(wrapper.get("[role=tab] .social-mark__count").text()).toBe("3");
+    expect(wrapper.find("[role=tab] .social-mark__tick").exists()).toBe(false);
+    expect(wrapper.get(".post-history__toggle").text()).toContain("Posted 3 times");
+    await wrapper.get(".post-history__toggle").trigger("click");
+    const rows = wrapper.findAll(".post-history__list li");
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.find("a").exists() ? row.get("a").attributes("href") : null)).toEqual([
+      "https://x.com/maya/status/3",
+      "https://x.com/maya/status/2",
+      null,
+    ]);
+
+    expect(wrapper.get("textarea").attributes("readonly")).toBeDefined();
+    expect(wrapper.findAll(".post-bar button, .post-bar a").map((item) => item.text())).toEqual(["Post again", "View on X"]);
+    await wrapper.findAll(".post-bar button").find((button) => button.text() === "Post again")!.trigger("click");
+
+    // The normal footer for this one platform: Cancel, day and time, Post now; the text is editable again.
+    expect(wrapper.get("textarea").attributes("readonly")).toBeUndefined();
+    expect(wrapper.findAll(".post-bar button").map((button) => button.text())).toEqual(["Cancel", "Post now"]);
+    expect(wrapper.find("#post-date").exists()).toBe(true);
+    expect(wrapper.get(".post-bar__note").text()).toBe("X may refuse text it's already seen. Change a word if it does.");
+    expect(wrapper.find(".post-history").exists()).toBe(false);
+
+    await wrapper.get("#post-date").setValue("2030-01-01");
+    expect(wrapper.findAll(".post-bar button").map((button) => button.text())).toEqual(["Cancel", "Schedule"]);
+    await wrapper.findAll(".post-bar button").find((button) => button.text() === "Cancel")!.trigger("click");
+    expect(wrapper.findAll(".post-bar button, .post-bar a").map((item) => item.text())).toEqual(["Post again", "View on X"]);
+
+    await wrapper.findAll(".post-bar button").find((button) => button.text() === "Post again")!.trigger("click");
+    await wrapper.findAll(".post-bar button").find((button) => button.text() === "Post now")!.trigger("click");
+    await flushPromises();
+    const published = apiPost.mock.calls.map(([path]) => path).filter((path) => String(path).endsWith("/publish"));
+    expect(published).toEqual(["/social/versions/x-1/publish"]);
+    wrapper.unmount();
   });
 
   it("hides the day and time when nothing on the post can be scheduled", async () => {

@@ -218,8 +218,18 @@ export type PostVersion = {
   errorCode?: string | null;
   errorMessage: string | null;
   carouselRenderSetId?: string | null;
+  /** How many times this platform has gone out. */
+  publishedCount?: number;
+  /** Each time it went out, newest first. Only the single-post read includes it. */
+  publishedHistory?: PublishedHistoryEntry[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type PublishedHistoryEntry = {
+  publicationId: string;
+  publishedAt: string | null;
+  platformPostUrl: string | null;
 };
 
 export type CarouselHex = `#${string}`;

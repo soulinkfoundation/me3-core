@@ -44,6 +44,7 @@ import {
   markState,
   markStatus,
   mentionsIn,
+  postedTimes,
   renderPostText,
   moveLinkOut,
   takesCoverFrame,
@@ -140,8 +141,17 @@ function tiktokOptions(version: PostVersion) {
 const versions = computed(() => (detail.value ? visibleVersions(detail.value) : []));
 const active = computed(() => versions.value.find((version) => version.id === activeId.value) || versions.value[0] || null);
 const title = computed(() => (detail.value ? postTitle(detail.value) : "Post"));
+/** Post again: one published platform goes out again through the normal footer, alone. */
+const againId = ref<string | null>(null);
+const againVersion = computed(() =>
+  versions.value.find((version) => version.id === againId.value && version.publicationStatus === "published") || null,
+);
+const historyOpen = ref(false);
+/** Every time the open platform went out, newest first. */
+const activeHistory = computed(() => active.value?.publishedHistory || []);
+const canPostAgain = computed(() => Boolean(active.value && !againVersion.value && active.value.publicationStatus === "published"));
 const pending = computed(() =>
-  versions.value.filter((version) => !IN_FLIGHT.has(version.publicationStatus || "") && version.publicationStatus !== "published"),
+  againVersion.value ? [againVersion.value] : versions.value.filter((version) => !IN_FLIGHT.has(version.publicationStatus || "") && version.publicationStatus !== "published"),
 );
 const scheduledVersions = computed(() => versions.value.filter((version) => version.publicationStatus === "scheduled"));
 function firstBlocker(version: PostVersion): string | null {
@@ -212,13 +222,13 @@ const activeFailure = computed(() => {
 });
 /** Each posted platform ends on one button: view it, open the app, or finish in YouTube. */
 const finishLinks = computed(() =>
-  versions.value.flatMap((version) => {
+  againVersion.value ? [] : versions.value.flatMap((version) => {
     const link = finishLink(version, activeAccount(version.platform, accounts.value)?.handle);
     return link ? [{ id: version.id, ...link }] : [];
   }).sort((a, b) => Number(a.primary) - Number(b.primary)),
 );
 const showBar = computed(() =>
-  Boolean(pending.value.length || scheduledVersions.value.length || activePosting.value || finishLinks.value.length),
+  Boolean(pending.value.length || scheduledVersions.value.length || activePosting.value || finishLinks.value.length || canPostAgain.value),
 );
 const activeChecks = computed(() => (active.value ? versionChecks(withText(active.value), capabilities.value, accounts.value) : []));
 const activeImages = computed(() => (active.value?.assetManifest || []).filter(isImageAsset));
@@ -389,7 +399,11 @@ const footBits = computed(() => {
   return bits;
 });
 const activeLocked = computed(() =>
-  Boolean(active.value && (active.value.publicationStatus === "published" || active.value.publicationStatus === "queued" || active.value.publicationStatus === "publishing")),
+  Boolean(
+    active.value &&
+      active.value.id !== againVersion.value?.id &&
+      (active.value.publicationStatus === "published" || active.value.publicationStatus === "queued" || active.value.publicationStatus === "publishing"),
+  ),
 );
 
 function localParts(date: Date) {
@@ -933,7 +947,10 @@ async function schedule() {
     }));
     await reload();
     reportFailures(outcome, targets, "couldn't be scheduled. It's still in Drafts.");
-    if (outcome.every((item) => item.status === "fulfilled")) toastSuccess(`Scheduled for ${formatWhen(scheduledIso.value)}.`);
+    if (outcome.every((item) => item.status === "fulfilled")) {
+      againId.value = null;
+      toastSuccess(`Scheduled for ${formatWhen(scheduledIso.value)}.`);
+    }
   } finally {
     busy.value = null;
   }
@@ -959,6 +976,7 @@ async function postNow(only?: PostVersion) {
     }));
     await reload();
     reportFailures(outcome, targets, "wasn't sent.");
+    if (outcome.every((item) => item.status === "fulfilled")) againId.value = null;
   } finally {
     busy.value = null;
   }
@@ -970,6 +988,13 @@ function reportFailures(outcome: PromiseSettledResult<unknown>[], targets: PostV
     const reason = item.reason instanceof Error && item.reason.message ? item.reason.message : "";
     toastError(`${networkLabel(targets[index]!.platform)}: ${reason || fallback}`);
   });
+}
+
+function startPostAgain() {
+  if (!active.value || busy.value) return;
+  againId.value = active.value.id;
+  historyOpen.value = false;
+  when.value = localParts(new Date());
 }
 
 async function scheduledPublication(version: PostVersion) {
@@ -1093,6 +1118,8 @@ async function runResult(version: PostVersion, result: VersionResult) {
 
 // The URL names the platform, never an internal id.
 watch(activeId, (next) => {
+  if (againId.value !== next) againId.value = null;
+  historyOpen.value = false;
   commentOpen.value = false;
   editingVideo.value = null;
   cropIndex.value = null;
@@ -1154,7 +1181,11 @@ onMounted(async () => {
             :aria-label="markStatus(version) || undefined"
             @click="flushText(active?.id || ''); activeId = version.id"
           >
-            <SocialMarks :platforms="[version.platform]" :states="tabStates[version.id] ? { [version.platform]: tabStates[version.id]! } : undefined" />
+            <SocialMarks
+              :platforms="[version.platform]"
+              :states="tabStates[version.id] ? { [version.platform]: tabStates[version.id]! } : undefined"
+              :counts="{ [version.platform]: postedTimes(version) }"
+            />
             <span>{{ networkLabel(version.platform) }}</span>
             <span v-if="tabCount(version)" class="post-tabs__count">{{ tabCount(version) }}</span>
           </button>
@@ -1360,7 +1391,7 @@ onMounted(async () => {
               </ul>
               <p v-if="active.platform === 'youtube'" class="post-note">Uploads as a private draft.</p>
               <SocialTikTokSettings
-                v-if="active.platform === 'tiktok' && activeVideo && !activeLocked && active.publicationStatus !== 'published'"
+                v-if="active.platform === 'tiktok' && activeVideo && !activeLocked && (active.publicationStatus !== 'published' || againVersion?.id === active.id)"
                 :key="active.id"
                 :account-id="activeAccountRow?.id || null"
                 :video="activeVideo"
@@ -1386,7 +1417,21 @@ onMounted(async () => {
           </aside>
         </section>
 
-        <footer v-if="showBar" class="post-bar">
+        <div v-if="activeHistory.length > 1 && !againVersion" class="post-history">
+          <button type="button" class="post-history__toggle" :aria-expanded="historyOpen" @click="historyOpen = !historyOpen">
+            <strong>Posted {{ activeHistory.length }} times</strong>
+            <template v-if="activeHistory[0]?.publishedAt"> · last {{ formatWhen(activeHistory[0].publishedAt) }}</template>
+          </button>
+          <ul v-if="historyOpen" class="post-history__list">
+            <li v-for="entry in activeHistory" :key="entry.publicationId">
+              <span>{{ formatWhen(entry.publishedAt) || "Posted" }}</span>
+              <a v-if="entry.platformPostUrl" :href="entry.platformPostUrl" target="_blank" rel="noopener">View</a>
+            </li>
+          </ul>
+        </div>
+
+        <footer v-if="showBar" class="post-bar" :class="{ 'post-bar--again': againVersion }">
+          <Button v-if="againVersion" color="ghost" shape="soft" size="compact" :disabled="busy !== null" @click="againId = null">Cancel</Button>
           <div v-if="showWhen" class="post-bar__when">
             <label class="visually-hidden" for="post-date">Day</label>
             <input id="post-date" v-model="when.date" type="date">
@@ -1409,6 +1454,14 @@ onMounted(async () => {
                 @click="runResult(active!, activeFailure)"
               >{{ activeFailure.actionLabel }}</Button>
             </template>
+            <Button
+              v-if="canPostAgain"
+              color="outline"
+              shape="pill"
+              size="compact"
+              :disabled="busy !== null"
+              @click="startPostAgain"
+            >Post again</Button>
             <Button
               v-for="link in finishLinks"
               :key="link.id"
@@ -1437,6 +1490,7 @@ onMounted(async () => {
               {{ busy === "post" ? "Posting…" : postNowLabel }}
             </Button>
           </div>
+          <p v-if="againVersion?.platform === 'x'" class="post-bar__note">X may refuse text it's already seen. Change a word if it does.</p>
           <p v-if="tiktokPosting && !(scheduledVersions.length && !pending.length)" class="post-bar__consent">
             By posting, you agree to TikTok's
             <template v-if="tiktokBrandedPolicy"><a :href="TIKTOK_BRANDED_POLICY_URL" target="_blank" rel="noopener">Branded Content Policy</a> and </template>
@@ -1683,6 +1737,16 @@ onMounted(async () => {
   .post-preview { display: none; }
   .post-bar__actions { width: 100%; justify-content: flex-end; }
 }
+/* Post again: Cancel left, day and time in the middle, the button right. */
+.post-bar--again .post-bar__actions { margin-left: 0; }
+.post-bar__note { flex-basis: 100%; margin: 0; color: var(--ui-text-muted); font-size: 12px; }
+.post-history { margin-top: 14px; font-size: 13px; color: var(--ui-text-muted); }
+.post-history__toggle { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.post-history__toggle strong { color: var(--ui-text); font-weight: 600; }
+.post-history__toggle:hover strong { text-decoration: underline; }
+.post-history__list { display: grid; margin: 8px 0 0; padding: 0; list-style: none; }
+.post-history__list li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-variant-numeric: tabular-nums; }
+.post-history__list a { color: var(--ui-accent); font-weight: 600; text-decoration: none; }
 .post-bar__consent { flex-basis: 100%; margin: 0; color: var(--ui-text-muted); font-size: 12px; text-align: right; }
 .post-bar__consent a { color: inherit; text-decoration: underline; }
 </style>

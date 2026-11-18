@@ -204,6 +204,29 @@ export function formatWhen(iso: string | null, now = new Date()): string {
   return `${day}, ${time}`;
 }
 
+/** "Wed 18 Nov": the day alone, for list rows. */
+export function formatDay(iso: string | null, now = new Date()): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  }).format(date);
+}
+
+/** How many times a platform has gone out; the full history wins over the list's count. */
+export function postedTimes(version: PostVersion): number {
+  return version.publishedHistory?.length ?? version.publishedCount ?? (version.publicationStatus === "published" ? 1 : 0);
+}
+
+/** The most times any platform of a post has gone out, for the list row. */
+export function postPostedTimes(detail: SocialPostDetail): number {
+  return Math.max(0, ...visibleVersions(detail).map(postedTimes));
+}
+
 /** "Thu 12:30": the short form the Schedule button names. */
 export function formatShortWhen(iso: string): string {
   const date = new Date(iso);

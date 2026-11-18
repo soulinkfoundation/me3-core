@@ -86,8 +86,18 @@ export type PostVersion = {
   failureClass: import("./adapters").SocialPublishFailureClass | null;
   errorCode: string | null;
   errorMessage: string | null;
+  /** How many times this Version has gone out (published Publications only). */
+  publishedCount: number;
+  /** Each published Publication, newest first. Filled only on the single-Post read. */
+  publishedHistory?: PublishedHistoryEntry[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type PublishedHistoryEntry = {
+  publicationId: string;
+  publishedAt: string | null;
+  platformPostUrl: string | null;
 };
 
 export type SocialPostDetail = {
@@ -200,6 +210,7 @@ type VariantRow = {
   published_at?: string | null;
   publication_error_code?: string | null;
   publication_error_message?: string | null;
+  published_count?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -431,7 +442,9 @@ async function listPackageVariants(
              WHERE pub.variant_id = v.id
              ORDER BY CASE pub.status
                WHEN 'publishing' THEN 0 WHEN 'queued' THEN 1 WHEN 'scheduled' THEN 2 ELSE 3 END,
-               pub.created_at DESC LIMIT 1) AS publication_error_message
+               pub.created_at DESC LIMIT 1) AS publication_error_message,
+            (SELECT COUNT(*) FROM social_publications pub
+             WHERE pub.variant_id = v.id AND pub.status = 'published') AS published_count
      FROM social_variants v
      WHERE v.package_id = ?
      ORDER BY v.created_at ASC`,
@@ -623,10 +636,12 @@ async function updateSocialAccountVariant(
             (SELECT timezone FROM social_publications
              WHERE variant_id = ? AND status = 'scheduled'
              ORDER BY scheduled_for ASC LIMIT 1) AS timezone,
+            (SELECT COUNT(*) FROM social_publications
+             WHERE variant_id = ? AND status = 'published') AS published_count,
             created_at, updated_at
      FROM social_variants WHERE id = ?`,
   )
-    .bind(variantId, variantId, variantId)
+    .bind(variantId, variantId, variantId, variantId)
     .first<VariantRow>();
   return updated ? serializeVariant(updated) : null;
 }
@@ -742,7 +757,43 @@ export async function getSocialPost(
   postId: string,
 ): Promise<SocialPostDetail | null> {
   const detail = await getSocialContentPackage(env, ownerId, postId);
-  return detail ? canonicalDetail(detail) : null;
+  if (!detail) return null;
+  const canonical = canonicalDetail(detail);
+  const history = await listPublishedHistory(env, detail.package.id);
+  return {
+    ...canonical,
+    versions: canonical.versions.map((version) => ({
+      ...version,
+      publishedHistory: history.get(version.id) || [],
+    })),
+  };
+}
+
+/** Every published Publication of a Post's Versions, newest first, grouped by Version id. */
+async function listPublishedHistory(
+  env: SocialPostEnv,
+  packageId: string,
+): Promise<Map<string, PublishedHistoryEntry[]>> {
+  const rows = await env.DB.prepare(
+    `SELECT pub.id, pub.variant_id, pub.published_at, pub.platform_post_url
+     FROM social_publications pub
+     JOIN social_variants v ON v.id = pub.variant_id
+     WHERE v.package_id = ? AND pub.status = 'published'
+     ORDER BY COALESCE(pub.published_at, pub.updated_at, pub.created_at) DESC, pub.created_at DESC`,
+  )
+    .bind(packageId)
+    .all<{ id: string; variant_id: string; published_at: string | null; platform_post_url: string | null }>();
+  const byVersion = new Map<string, PublishedHistoryEntry[]>();
+  for (const row of rows.results || []) {
+    const entries = byVersion.get(row.variant_id) || [];
+    entries.push({
+      publicationId: row.id,
+      publishedAt: row.published_at || null,
+      platformPostUrl: row.platform_post_url || null,
+    });
+    byVersion.set(row.variant_id, entries);
+  }
+  return byVersion;
 }
 
 export async function listSocialPosts(
@@ -1185,6 +1236,7 @@ function serializeVariant(row: VariantRow): SocialAccountVariant {
     failureClass: parseFailureClass(row.publication_error_code),
     errorCode: row.publication_error_code || null,
     errorMessage: row.publication_error_message || null,
+    publishedCount: Number(row.published_count) || 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

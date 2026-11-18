@@ -11,7 +11,9 @@ import {
   createPostVersionPublication,
   disconnectSocialPublishingAccount,
   dispatchDueSocialPublications,
+  getSocialPost,
   listApprovedPostVersionsForScheduling,
+  listSocialPosts,
   listPostVersionPublications,
   processSocialPublishBatch,
   publishQueuedPublication,
@@ -558,6 +560,58 @@ describe("reusable social Publications", () => {
         { id: second.id, status: "queued" },
       ]),
     );
+  });
+
+  it("posts a published Version again as a new Publication and lists every publish", async () => {
+    const first = await createPublication(fixture, "version-1");
+    fixture.db.run(
+      `UPDATE social_publications
+       SET status = 'published', platform_post_url = 'https://linkedin.example/posts/first',
+           published_at = '2026-10-15T12:30:00.000Z', updated_at = datetime('now')
+       WHERE id = ?`,
+      first.id,
+    );
+
+    const again = await createPublication(fixture, "version-1");
+    expect(again).toMatchObject({ versionId: "version-1", status: "queued" });
+    expect(again.id).not.toBe(first.id);
+    fixture.db.run(
+      `UPDATE social_publications
+       SET status = 'published', platform_post_url = 'https://linkedin.example/posts/second',
+           published_at = '2026-11-18T09:46:00.000Z', updated_at = datetime('now')
+       WHERE id = ?`,
+      again.id,
+    );
+    expect(
+      fixture.db.first<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM social_variants WHERE package_id = 'post-1'",
+      )?.count,
+    ).toBe(1);
+
+    const detail = await getSocialPost(fixture.env as never, "owner", "post-1");
+    const version = detail?.versions.find((item) => item.id === "version-1");
+    expect(version).toMatchObject({ publicationStatus: "published", publishedCount: 2 });
+    expect(version?.publishedHistory).toEqual([
+      {
+        publicationId: again.id,
+        publishedAt: "2026-11-18T09:46:00.000Z",
+        platformPostUrl: "https://linkedin.example/posts/second",
+      },
+      {
+        publicationId: first.id,
+        publishedAt: "2026-10-15T12:30:00.000Z",
+        platformPostUrl: "https://linkedin.example/posts/first",
+      },
+    ]);
+
+    const listed = await listSocialPosts(fixture.env as never, "owner");
+    const listedVersion = listed
+      .find((item) => item.post.id === "post-1")
+      ?.versions.find((item) => item.id === "version-1");
+    expect(listedVersion?.publishedCount).toBe(2);
+    expect(listedVersion?.publishedHistory).toBeUndefined();
+
+    expect(await getSocialPost(fixture.env as never, "someone-else", "post-1")).toBeNull();
   });
 
   it("retries the queue handoff for an existing queued Publication", async () => {
@@ -2771,6 +2825,12 @@ const schemaSql = `
     status TEXT NOT NULL,
     idea_text TEXT NOT NULL DEFAULT '',
     post_title_snapshot TEXT,
+    source_ref TEXT,
+    source_snapshot TEXT,
+    source_text TEXT,
+    goal TEXT,
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    created_by TEXT NOT NULL DEFAULT 'user',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );

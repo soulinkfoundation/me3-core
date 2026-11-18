@@ -17,7 +17,9 @@ import {
   SOCIAL_TABS,
   accountState,
   attentionItems,
+  formatDay,
   formatWhen,
+  postPostedTimes,
   lastPostedAt,
   networkLabel,
   nextScheduledAt,
@@ -85,7 +87,10 @@ watch(tab, (next) => {
 });
 
 function rowWhen(detail: (typeof posts.value)[number]): string {
-  if (postTab(detail) === "posted") return formatWhen(lastPostedAt(detail));
+  if (postTab(detail) === "posted") {
+    const times = postPostedTimes(detail);
+    return times > 1 ? `Posted ${times} times · ${formatDay(lastPostedAt(detail))}` : formatWhen(lastPostedAt(detail));
+  }
   if (postTab(detail) === "scheduled") return formatWhen(nextScheduledAt(detail));
   return "";
 }

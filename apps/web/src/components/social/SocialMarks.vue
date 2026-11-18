@@ -4,8 +4,9 @@ import { networkLabel, networkMark, socialNetwork, type MarkState } from "../../
 
 const props = withDefaults(
   /** `states` maps a platform to its progress: a spinning ring, a tick, or a red dot. */
-  defineProps<{ platforms: string[]; size?: "tiny" | "small" | "large"; states?: Record<string, MarkState> }>(),
-  { size: "small", states: () => ({}) },
+  /** `counts` maps a platform to how many times it posted; above 1 the tick becomes that number. */
+  defineProps<{ platforms: string[]; size?: "tiny" | "small" | "large"; states?: Record<string, MarkState>; counts?: Record<string, number> }>(),
+  { size: "small", states: () => ({}), counts: () => ({}) },
 );
 
 // The TikTok logo; a text note at this size reads as a dot.
@@ -31,6 +32,14 @@ const stateFor = computed(() => {
   }
   return byNetwork;
 });
+const countFor = computed(() => {
+  const byNetwork: Record<string, number> = {};
+  for (const [platform, count] of Object.entries(props.counts)) {
+    const network = socialNetwork(platform);
+    if (network && count > 1) byNetwork[network] = count;
+  }
+  return byNetwork;
+});
 const label = computed(() =>
   marks.value.map((network) => (stateFor.value[network] === "posting" ? `${networkLabel(network)}, posting` : networkLabel(network))).join(", "),
 );
@@ -48,7 +57,8 @@ const label = computed(() =>
       <svg v-if="network === 'tiktok'" class="social-mark__logo" viewBox="0 0 24 24" fill="currentColor"><path :d="TIKTOK_PATH" /></svg>
       <template v-else>{{ networkMark(network) }}</template>
       <span v-if="stateFor[network] === 'posting' || stateFor[network] === 'posted'" class="social-mark__ring" />
-      <span v-if="stateFor[network] === 'posted'" class="social-mark__tick">
+      <span v-if="stateFor[network] === 'posted' && countFor[network]" class="social-mark__count">{{ countFor[network] > 99 ? "99+" : countFor[network] }}</span>
+      <span v-else-if="stateFor[network] === 'posted'" class="social-mark__tick">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5" /></svg>
       </span>
       <span v-else-if="stateFor[network] === 'failed'" class="social-mark__dot" />
@@ -107,6 +117,22 @@ const label = computed(() =>
   color: #fff;
 }
 .social-mark__tick svg { width: 8px; height: 8px; }
+.social-mark__count {
+  position: absolute;
+  right: -7px;
+  bottom: -6px;
+  display: grid;
+  place-items: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border: 2px solid var(--ui-bg);
+  border-radius: 8px;
+  background: var(--ui-success, var(--ui-accent));
+  color: #fff;
+  font: 700 8.5px/1 var(--font-sans, system-ui);
+  font-variant-numeric: tabular-nums;
+}
 .social-mark__dot {
   position: absolute;
   top: -3px;
