@@ -27,7 +27,6 @@
   .site-hero--cover .bio{max-width:min(36rem,100%);margin:0 0 10px;font-size:clamp(1.15rem,1.5vw,1.4rem);line-height:1.45;color:rgba(255,255,255,.9)}
   .site-hero--cover .location{color:rgba(255,255,255,.7);font-size:.95rem}
   .site-hero--cover .buttons{gap:10px;margin:30px 0 0}
-  .site-hero--cover .cta-button{min-height:50px;padding:0 24px}
   .site-hero--cover .site-hero__intro>*{animation:lab-rise .9s cubic-bezier(.2,.7,.2,1) both}
   .site-hero--cover .site-hero__intro>:nth-child(2){animation-delay:.08s}
   .site-hero--cover .site-hero__intro>:nth-child(3){animation-delay:.16s}
@@ -173,3 +172,19 @@ html:is([data-lab-shadow=lifted],[data-lab-shadow=glow]) .site-home-sections .ne
 
 /* Avatars carry the same card shadow as everything else, in every layout. */
 .site-hero__avatar,.site-hero--cover .site-hero__avatar{box-shadow:var(--lab-card-shadow)}
+
+/* Buttons: one shape per theme, a calmer weight, and text centred on its capital letters so every font sits in the middle. */
+body{--lab-btn-radius:var(--button-radius);--lab-btn-font:var(--font)}
+body[data-vibe=warm]{--lab-btn-radius:999px;--lab-btn-font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+body[data-vibe=paper]{--lab-btn-radius:12px;--lab-btn-font:"Fraunces",Georgia,serif}
+body[data-vibe=meadow],body[data-vibe=me3]{--lab-btn-radius:999px}
+body[data-vibe=tech]{--lab-btn-radius:0}
+:is(.cta-button,.site-topbar__action,.site-action-dock__button,.site-end-action__button,.site-menu-action,.newsletter-form button,.site-offer button,.booking-continue,.booking-submit){display:inline-block;box-sizing:border-box;height:auto;min-height:0;padding:16px 24px;border-radius:var(--lab-btn-radius);font-family:var(--lab-btn-font);font-size:15px;font-weight:600;letter-spacing:-.005em;line-height:1;text-align:center;vertical-align:middle;text-box:trim-both cap alphabetic}
+@supports(text-box:trim-both cap alphabetic){:is(.cta-button,.site-topbar__action,.site-action-dock__button,.site-end-action__button,.site-menu-action,.newsletter-form button,.site-offer button,.booking-continue,.booking-submit){padding-top:18px;padding-bottom:18px}}
+:is(.site-topbar__action,.site-offer button){font-size:14px;padding-left:20px;padding-right:20px}
+@supports(text-box:trim-both cap alphabetic){:is(.site-topbar__action,.site-offer button){padding-top:15px;padding-bottom:15px}}
+.cta-button .btn-icon{display:inline-flex;vertical-align:middle;margin-right:8px}
+.newsletter-form input[type=email]{border-radius:var(--lab-btn-radius)}
+body[data-vibe=tech] :is(.cta-button,.site-topbar__action,.site-action-dock__button,.newsletter-form button,.site-offer button){font-size:14px;letter-spacing:0}
+/* The booking steps' dock buttons stay hidden until the renderer's own booking-state rules show them. */
+.site-action-dock :is([data-booking-dock-continue],[data-booking-dock-select-time]){display:none}
