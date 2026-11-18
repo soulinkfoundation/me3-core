@@ -1512,12 +1512,11 @@ export async function completeSocialOAuth(
   const gate = await getSocialPublishingRuntimeStatus(env);
   const platform = normalizePlatform(platformInput);
   const frontend = options.webOrigin;
-  if (query.error) return buildFrontendRedirect(frontend, "/social", { social_error: query.error });
   if (!platform || !query.state) {
-    return buildFrontendRedirect(frontend, "/social", { social_error: "missing_params" });
+    return buildFrontendRedirect(frontend, "/social", { social_error: query.error || "missing_params" });
   }
   if (!gate.ready) {
-    return buildFrontendRedirect(frontend, "/social", { social_error: gate.status });
+    return buildFrontendRedirect(frontend, "/social", { social_error: query.error || gate.status });
   }
 
   const stateRow = await env.DB.prepare(
@@ -1529,7 +1528,11 @@ export async function completeSocialOAuth(
     .first<SocialOauthStateRow>();
 
   if (!stateRow || new Date(stateRow.expires_at) < new Date()) {
-    return buildFrontendRedirect(frontend, "/social", { social_error: "state_expired" });
+    return buildFrontendRedirect(frontend, "/social", { social_error: query.error || "state_expired" });
+  }
+  // A declined sign-in still goes back where it started, so a phone app gets its sheet back.
+  if (query.error) {
+    return buildFrontendRedirect(frontend, stateRow.return_path, { social_error: query.error });
   }
 
   if (query.handoff) {

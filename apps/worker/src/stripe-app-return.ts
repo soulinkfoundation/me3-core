@@ -6,7 +6,7 @@
 
 export type StripeReturnApp = "ios" | "android";
 
-const APP_SCHEMES: Record<StripeReturnApp, string> = {
+export const APP_SCHEMES: Record<StripeReturnApp, string> = {
   ios: "me3mobile",
   android: "me3android",
 };
@@ -29,8 +29,8 @@ export function stripeAppDeepLink(app: StripeReturnApp, result: unknown): string
   return `${APP_SCHEMES[app]}://payments?stripe_connect=${status}`;
 }
 
-export function stripeAppReturnPage(deepLink: string): string {
-  // deepLink is built from fixed values only, so it is safe to inline.
+export function stripeAppReturnPage(deepLink: string, message = "Stripe is done. Taking you back to ME3."): string {
+  // deepLink and message are built from fixed values only, so they are safe to inline.
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -48,7 +48,7 @@ export function stripeAppReturnPage(deepLink: string): string {
 </head>
 <body>
 <main>
-  <p>Stripe is done. Taking you back to ME3.</p>
+  <p>${message}</p>
   <a href="${deepLink}">Return to ME3</a>
 </main>
 <script>window.location.replace(${JSON.stringify(deepLink)});</script>

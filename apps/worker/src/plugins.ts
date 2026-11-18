@@ -289,6 +289,12 @@ const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
       methods: ["GET"],
       auth: "public",
     },
+    {
+      id: "social.oauth.app_return.api",
+      path: "/api/social/oauth/app-return",
+      methods: ["GET"],
+      auth: "public",
+    },
   ],
   uiSlots: [
     {

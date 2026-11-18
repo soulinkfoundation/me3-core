@@ -11006,6 +11006,76 @@ describe("ME3 Worker auth", () => {
     }
   });
 
+  it("returns phone-app social sign-in to the app, declined or connected", async () => {
+    const env = createEnv();
+    env.ME3_SOCIAL_OAUTH_ORIGIN = "https://social-oauth.example";
+    const session = cookieHeader(
+      await coreApp.fetch(
+        new Request("http://localhost/api/admin/bootstrap", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Origin: "http://localhost:4000" },
+          body: JSON.stringify({
+            bootstrapCode: "owner-code",
+            email: "owner@example.com",
+            name: "ME3 Owner",
+            username: "owner",
+            password: "correct-horse-battery",
+          }),
+        }),
+        env,
+      ),
+    );
+    await coreApp.fetch(
+      new Request("http://localhost/api/plugins/me3.social-publishing/activate", {
+        method: "POST",
+        headers: { Cookie: session },
+      }),
+      env,
+    );
+
+    const authorizeResponse = await coreApp.fetch(
+      new Request("http://localhost/api/social/linkedin/authorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: session },
+        body: JSON.stringify({ siteId: "site-1", returnPath: "/social", credentialSource: "managed", app: "ios" }),
+      }),
+      env,
+    );
+    const state = new URL(((await authorizeResponse.json()) as { url: string }).url).searchParams.get("state") || "";
+
+    const declined = await coreApp.fetch(
+      new Request(`http://localhost/api/social/linkedin/callback?state=${encodeURIComponent(state)}&error=access_denied`),
+      env,
+    );
+    expect(declined.status).toBe(302);
+    expect(declined.headers.get("location")).toBe(
+      "http://localhost:4000/api/social/oauth/app-return?app=ios&social_error=access_denied",
+    );
+
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      account: { id: "linkedin-owner", handle: "owner", displayName: "Owner LinkedIn" },
+      token: { accessToken: "linkedin-access-token", scopes: ["w_member_social"] },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }))));
+    try {
+      const connected = await coreApp.fetch(
+        new Request(`http://localhost/api/social/linkedin/callback?state=${encodeURIComponent(state)}&handoff=hosted-linkedin-handoff`),
+        env,
+      );
+      expect(connected.status).toBe(302);
+      const location = connected.headers.get("location") || "";
+      expect(location).toBe("http://localhost:4000/api/social/oauth/app-return?app=ios&social_connected=linkedin");
+
+      const page = await coreApp.fetch(new Request(location), env);
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain('window.location.replace("me3mobile://social?social_connected=linkedin")');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    const unknownApp = await coreApp.fetch(new Request("http://localhost/api/social/oauth/app-return?app=evil"), env);
+    expect(unknownApp.status).toBe(404);
+  });
+
   it("keeps a YouTube channel's long-upload status from the hosted handoff (me3-8l29)", async () => {
     const env = createEnv();
     env.ME3_SOCIAL_OAUTH_ORIGIN = "https://social-oauth.example";

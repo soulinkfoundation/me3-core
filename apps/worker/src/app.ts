@@ -68,6 +68,13 @@ import {
   startSocialOAuth,
   updateSocialProviderSettings,
 } from "./social-publishing";
+import { parseStripeReturnApp } from "./stripe-app-return";
+import {
+  SOCIAL_APP_RETURN_PATH,
+  socialAppDeepLink,
+  socialAppReturnPage,
+  socialAppReturnPath,
+} from "./social-app-return";
 import { syncPlanFeatures, syncSocialPlanAccess } from "./plan-features";
 import {
   getOrCreateInstallEncryptionKey,
@@ -1285,13 +1292,20 @@ app.post("/api/social/:platform/authorize", async (c) => {
   if (!ownerId) return unauthorized(c);
 
   const body = await c.req.json<unknown>().catch((): unknown => ({}));
+  const input = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  // The phone apps sign in inside an in-app browser sheet; finishing on the app-return page closes it.
+  const returnApp = parseStripeReturnApp(input.app);
   try {
     const hostedOAuthOrigin = await resolveHostedSocialOAuthOrigin(c.env);
     return c.json(
       await startSocialOAuth(
         c.env,
         ownerId,
-        { ...(body && typeof body === "object" ? body : {}), platform: c.req.param("platform") },
+        {
+          ...input,
+          ...(returnApp ? { returnPath: socialAppReturnPath(returnApp) } : {}),
+          platform: c.req.param("platform"),
+        },
         {
           apiOrigin: getCoreApiOrigin(c.env, c.req.url),
           hostedOAuthOrigin,
@@ -1307,6 +1321,20 @@ app.post("/api/social/:platform/authorize", async (c) => {
     }
     throw error;
   }
+});
+
+// Public: the social callback redirects the owner's in-app browser here, which has no ME3 session.
+app.get(SOCIAL_APP_RETURN_PATH, (c) => {
+  const target = parseStripeReturnApp(c.req.query("app"));
+  if (!target) return c.text("Not found", 404);
+  const deepLink = socialAppDeepLink(target, {
+    connected: c.req.query("social_connected"),
+    error: c.req.query("social_error"),
+  });
+  return c.html(socialAppReturnPage(deepLink), 200, {
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+  });
 });
 
 app.get("/api/social/:platform/callback", async (c) => {
