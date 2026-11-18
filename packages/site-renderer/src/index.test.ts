@@ -1420,7 +1420,7 @@ describe("site generator", () => {
     );
 
     expect(files["work-with-me/index.html"]).toContain("Pai Setup");
-    expect(files["work-with-me/index.html"]).toContain("75.00 EUR");
+    expect(files["work-with-me/index.html"]).toContain("€75");
     expect(files["work-with-me/index.html"]).toContain("Get help setting up a personal AI assistant.");
     expect(files["work-with-me/pai-setup.html"]).toContain("<h1>Pai Setup</h1>");
     expect(files["writing-1/index.html"]).toContain("Hello");
@@ -1456,7 +1456,7 @@ describe("site generator", () => {
  it("renders checkout for products even without a markdown file", async () => {
    const profile = {name: "Shop", handle:"shop", products:[{slug:"book",title:"Book",file:"missing.md",price:100,currency:"EUR",excerpt:"A book"}]};
    const files = await generateSiteHtml(profile, []);
-   expect(files["shop/book.html"]).toContain("1.00 EUR");
+   expect(files["shop/book.html"]).toContain("€1");
    expect(files["shop/book.html"]).toContain("Continue to checkout");
    expect(files["shop/book.html"]).toContain("data-product-checkout");
    const preview = await generateSiteHtml(profile, [], {productCheckoutEnabled:false});

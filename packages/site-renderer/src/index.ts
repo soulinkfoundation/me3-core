@@ -7,7 +7,7 @@ import { bookingNavigationScript } from "./booking-navigation.js";
 import { bookingConfirmationMarkup, bookingConfirmationRuntime, bookingConfirmationCss } from "./booking-confirmation.js";
 export { normalizeSiteTheme, siteThemes } from "./themes.js";
 export type { SiteColorMode, SiteThemeId } from "./themes.js";
-import { renderProductCheckout, productCheckoutCss } from "./product-checkout.js";
+import { renderProductCheckout, renderProductDock, productCheckoutCss } from "./product-checkout.js";
 import type { ProductOption } from "./product-offer.js";
 import { productShopCss, renderProductGallery, renderShopAvailabilityScript, renderShopCard } from "./product-shop.js";
 import { localizeRegionalPrices, regionalPricingCountries, type RegionalPrice } from "./regional-pricing.js";
@@ -776,13 +776,20 @@ function generateContentPageHtml(
     capabilities,
   );
   const endAction = profile.extensions?.["me3.app/site"] ? siteActionLink(profile, "site-end-action__button", basePath) : "";
+  const purchase = product ? { ...product, username: profile.handle || "", slug: product.slug || "", enabled: capabilities.productCheckoutEnabled } : null;
+  const gallery = product ? renderProductGallery(product, title, basePath) : "";
+  // A product page sets its photo beside a buy panel; the description follows the purchase box.
+  const main = purchase
+    ? `<main class="content content--product"><div class="product${gallery ? "" : " product--no-media"}">${gallery ? `<div class="product__media">${gallery}</div>` : ""}<div class="product__panel"><h1>${escapeHtml(title)}</h1>${renderProductCheckout(purchase)}${htmlContent.trim() ? `<div class="product__description">${htmlContent}</div>` : ""}</div></div></main>`
+    : `<main class="content"><h1>${escapeHtml(title)}</h1>${htmlContent}${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`;
   return pageShell(profile, {
     title: `${title} | ${profile.name || "ME3"}`,
     description: contentToPlainText(markdown).slice(0, 160),
     activeSlug,
     basePath,
     body: `${profile.extensions?.["me3.app/site"] ? "" : `<header class="page-header"><a class="back-link" href="${basePath}">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, basePath))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, activeSlug, basePath, "header")}</header>`}
-      <main class="content">${product ? renderProductGallery(product, title, basePath) : ""}<h1>${escapeHtml(title)}</h1>${htmlContent}${product ? renderProductCheckout({ ...product, username: profile.handle || "", slug: product.slug || "", enabled: capabilities.productCheckoutEnabled }) : ""}${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
+      ${main}`,
+    dock: purchase ? renderProductDock(purchase) : "",
     footer: generateFooter(profile, capabilities.footerCustomization),
     vibe: getVibe(profile),
     afterContainer: htmlContent.includes("<img") ? buildContentLightbox() : "",
@@ -848,6 +855,8 @@ function pageShell(
     vibe: string;
     afterContainer?: string;
     navigationEnabled?: boolean;
+    /** The phone action bar's own button for this page, such as a product's Buy button. Empty keeps the site's action. */
+    dock?: string;
   },
 ): string {
   const siteSettings = profile.extensions?.["me3.app/site"];
@@ -874,7 +883,7 @@ function pageShell(
     ? generateSiteTopbar(profile, options.activeSlug, options.basePath)
     : siteSettings?.visitorThemeToggle !== false
       ? `<div class="starter-theme-control">${themeToggleMarkup(false)}</div>` : "") : "";
-  const actionDock = modern ? siteActionLink(profile, "site-action-dock__button", options.basePath) : "";
+  const actionDock = modern ? options.dock || siteActionLink(profile, "site-action-dock__button", options.basePath) : "";
   const footer = modern ? generateModernFooter(profile, options.basePath, options.footer, navigationEnabled) : options.footer;
   return `<!DOCTYPE html>
 <html lang="en">
@@ -893,7 +902,7 @@ function pageShell(
     ${options.body}
     ${footer}
   </div>
-  ${actionDock ? `<div class="site-action-dock">${actionDock}${profile.intents?.book?.enabled ? `<button type="button" class="site-action-dock__button" data-booking-dock-select-time>Select a time</button><button type="button" class="site-action-dock__button" data-booking-dock-continue>Continue</button><script>document.querySelector('[data-booking-dock-continue]').addEventListener('click',function(){var next=document.querySelector('.booking-type-panel:not([hidden]) [data-booking-continue]:not(:disabled)');if(next)next.click();});document.querySelector('[data-booking-dock-select-time]').addEventListener('click',function(){var panel=document.querySelector('.booking-type-panel:not([hidden])');if(!panel)return;var target=panel.querySelector('.booking-slot:not(:disabled)')||panel.querySelector('.booking-day:not(:disabled)');if(target){target.focus({preventScroll:true});target.scrollIntoView({block:'center'});}});</script>` : ""}</div>` : ""}
+  ${actionDock ? `<div class="site-action-dock">${actionDock}${profile.intents?.book?.enabled && !options.dock ? `<button type="button" class="site-action-dock__button" data-booking-dock-select-time>Select a time</button><button type="button" class="site-action-dock__button" data-booking-dock-continue>Continue</button><script>document.querySelector('[data-booking-dock-continue]').addEventListener('click',function(){var next=document.querySelector('.booking-type-panel:not([hidden]) [data-booking-continue]:not(:disabled)');if(next)next.click();});document.querySelector('[data-booking-dock-select-time]').addEventListener('click',function(){var panel=document.querySelector('.booking-type-panel:not([hidden])');if(!panel)return;var target=panel.querySelector('.booking-slot:not(:disabled)')||panel.querySelector('.booking-day:not(:disabled)');if(target){target.focus({preventScroll:true});target.scrollIntoView({block:'center'});}});</script>` : ""}</div>` : ""}
   ${options.afterContainer || ""}
   ${navigationScript}
   ${modern ? `<script>(function(){function update(){document.body.classList.toggle("is-scrolled",window.scrollY>24)}addEventListener("scroll",update,{passive:true});update()})();</script>` : ""}

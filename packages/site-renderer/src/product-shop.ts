@@ -32,6 +32,17 @@ export function formatMoney(amount: number, currency = ""): string {
   return `${(amount / 100).toFixed(2)} ${currency.toUpperCase()}`.trim();
 }
 
+/** A shopper-facing price: "€14", "€4.50", "£1,200". Falls back to "14.00 XYZ" for codes Intl does not know. */
+export function displayMoney(amount: number, currency = ""): string {
+  const code = currency.toUpperCase();
+  const whole = amount % 100 === 0;
+  try {
+    return new Intl.NumberFormat("en", { style: "currency", currency: code, minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 }).format(amount / 100);
+  } catch {
+    return formatMoney(amount, code);
+  }
+}
+
 /** Copies left as published, or null when unlimited. Live counts replace this in the browser. */
 export function publishedStock(product: ShopProduct): number | null {
   const options = product.options || [];
@@ -75,9 +86,9 @@ export function shopCardPrice(product: ShopProduct): string {
   const prices = (product.options || []).map((option) => option.price).filter((price) => Number.isFinite(price));
   if (prices.length) {
     const lowest = Math.min(...prices);
-    return `${prices.some((price) => price !== lowest) ? "from " : ""}${formatMoney(lowest, product.currency || "USD")}`;
+    return `${prices.some((price) => price !== lowest) ? "from " : ""}${displayMoney(lowest, product.currency || "USD")}`;
   }
-  return typeof product.price === "number" && Number.isFinite(product.price) ? formatMoney(product.price, product.currency || "USD") : "";
+  return typeof product.price === "number" && Number.isFinite(product.price) ? displayMoney(product.price, product.currency || "USD") : "";
 }
 
 export function renderShopCard(product: ShopProduct, options: { slug: string; title: string; excerpt: string; basePath: string }): string {
@@ -123,9 +134,9 @@ export const productShopCss = `
 .shop-item-tag{justify-self:start;font-size:.8rem;padding:2px 9px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
 .shop-item-tag.is-urgent{font-weight:700;color:var(--text);border-color:currentColor}
 .product-gallery{display:grid;gap:10px;margin:0 0 24px}
-.product-gallery-main{display:block;width:100%;max-height:72vh;object-fit:contain;border-radius:var(--radius-md);background:var(--border)}
+.product-gallery-main{display:block;width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--radius,var(--radius-md));background:var(--raised,var(--border))}
 .product-gallery-thumbs{display:flex;gap:8px;overflow-x:auto}
-.product-gallery-thumb{flex:none;width:64px;height:64px;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:none;cursor:pointer}
+.product-gallery-thumb{flex:none;width:72px;height:72px;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:none;cursor:pointer}
 .product-gallery-thumb[aria-pressed="true"]{outline:2px solid var(--text);outline-offset:2px}
 .product-gallery-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .product-gallery-thumb:focus-visible{outline:3px solid var(--accent);outline-offset:2px}

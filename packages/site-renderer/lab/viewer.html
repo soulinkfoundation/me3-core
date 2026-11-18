@@ -100,7 +100,7 @@ function screen(src, size, width) {
   box.style.width = width + "px";
   box.style.height = Math.round(size.h * scale) + "px";
   const f = document.createElement("iframe");
-  f.src = src; f.loading = "lazy";
+  f.src = src; f.loading = "eager";
   f.style.width = size.w + "px"; f.style.height = size.h + "px";
   f.style.transform = `scale(${scale})`;
   box.append(f);

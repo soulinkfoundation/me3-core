@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Product pages set the photo beside a buy panel: title, price with stock, option cards, one Buy button and short delivery facts, then the description. Buyer details open in a short step only after Buy; on phones the action bar becomes Buy now · price, then submits the step.
+- Shop and product prices read like a shop: €14, from €14, €4.50 (Intl currency format, whole amounts without cents).
+
 ## 0.3.3
 
 - Cover is immersive on desktop: the banner fills the first screen, the header floats over it and turns frosted on scroll, and the name, bio, buttons and social icons sit on the photo. On phones the menu floats over the photo and the hero is centred.

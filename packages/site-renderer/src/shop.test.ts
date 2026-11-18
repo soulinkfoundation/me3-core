@@ -51,9 +51,33 @@ describe("shop for real products", () => {
     const page = files["shop/print.html"];
     expect(page).toMatch(/name="optionId" value="a4"/);
     expect(page).toMatch(/value="a2"[^>]*disabled/);
-    expect(page).toContain("35.00 GBP");
-    expect(files["shop/index.html"]).toContain("from 20.00 GBP");
+    expect(page).toContain("£35");
+    expect(files["shop/index.html"]).toContain("from £20");
     expect(files["shop/index.html"]).toContain("3 options");
+  });
+
+  // Failure modes: buyers face the details form before deciding to buy; the photo and the buy panel
+  // don't sit side by side; prices read like ledger entries; phones lose the Buy action below the fold.
+  it("leads the product page with the photo beside a buy panel and asks for details only after Buy", async () => {
+    const tea = { slug: "tea", title: "Ceremony Tea", price: 1400, currency: "EUR", images: ["files/products/tea.jpg"], options: [{ id: "100g", label: "100 g pouch", price: 1400 }, { id: "250g", label: "250 g tin", price: 2850 }], delivery: { kind: "physical" as const, instructions: "Ships in 3 days.", shippingCost: 450, countries: ["IE"] } };
+    const files = await generateSiteHtml({ ...base, products: [tea], extensions: { "me3.app/site": { theme: "me3" } } }, [{ name: "tea.md", content: "A calming blend." }]);
+    const page = files["shop/tea.html"];
+    expect(page).toMatch(/<div class="product"><div class="product__media">[\s\S]*data-product-gallery[\s\S]*<\/div><div class="product__panel"><h1>Ceremony Tea<\/h1>/);
+    expect(page).toContain(">€14</p>");
+    expect(page).toContain("€28.50");
+    expect(page).toContain("€4.50");
+    const start = page.indexOf("data-product-start");
+    expect(start).toBeGreaterThan(-1);
+    expect(page.indexOf('name="buyerEmail"')).toBeGreaterThan(start);
+    expect(page).toMatch(/class="product-step" data-product-step hidden/);
+    expect(page).toMatch(/class="site-action-dock"><button type="button" class="site-action-dock__button" data-product-dock>Buy now · €14<\/button>/);
+    expect(files["shop/index.html"]).toContain("from €14");
+  });
+
+  it("keeps the site's own action in the phone bar when a product can't be bought", async () => {
+    const files = await generateSiteHtml({ ...base, buttons: [{ text: "Say hello", url: "https://example.com" }], products: [{ slug: "mug", title: "Mug", price: 1800, currency: "EUR", stock: 0, stockSetAt: setAt }], extensions: { "me3.app/site": { theme: "me3" } } }, []);
+    expect(files["shop/mug.html"]).not.toContain("data-product-dock");
+    expect(files["shop/mug.html"]).toContain("Say hello");
   });
 
   // Failure modes: the chooser is missing on a "let them choose" offer, or appears on a card-only

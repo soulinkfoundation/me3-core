@@ -25,9 +25,9 @@ describe("regional pricing", () => {
     ] }] };
     expect(regionalPricingError(custom)).toBeNull();
     const files = await generateSiteHtml(custom, []);
-    expect(files["shop/kit.html"]).toContain("50.00 EUR");
-    expect(files["_pricing/CA/shop/kit.html"]).toContain("75.00 CAD");
-    expect(files["_pricing/GB/shop/kit.html"]).toContain("40.00 GBP");
+    expect(files["shop/kit.html"]).toContain("€50");
+    expect(files["_pricing/CA/shop/kit.html"]).toContain("CA$75");
+    expect(files["_pricing/GB/shop/kit.html"]).toContain("£40");
     expect(localizeRegionalPrices(custom, "PK").products[0]).toMatchObject({ price: 5000, currency: "EUR" });
   });
   it("rejects currencies with incompatible minor-unit precision", () => {
@@ -60,9 +60,9 @@ describe("regional pricing", () => {
   });
   it("generates PKR snapshots and keeps regional storage paths out of discovery files", async () => {
     const files = await generateSiteHtml(profile, [], undefined, { baseUrl: "https://example.test" });
-    expect(files["shop/kit.html"]).toContain("50.00 USD");
-    expect(files["_pricing/PK/shop/kit.html"]).toContain("8000.00 PKR");
-    expect(files["_pricing/PK/shop/kit.html"]).toContain("1000.00 PKR");
+    expect(files["shop/kit.html"]).toContain("$50");
+    expect(files["_pricing/PK/shop/kit.html"]).toMatch(/PKR\s8,000/);
+    expect(files["_pricing/PK/shop/kit.html"]).toMatch(/PKR\s1,000/);
     expect(files["_pricing/PK/index.html"]).toContain('"currency":"PKR"');
     expect(files["sitemap.xml"]).not.toContain("_pricing");
     expect(files["shop/kit.html"]).toContain('name="me3-pricing-countries" content="PK"');
@@ -78,11 +78,11 @@ describe("regional pricing", () => {
     Object.defineProperty(request, "cf", { value: { country: "PK" } });
     const pk = await serveSiteFileResponse({ DB } as unknown as Env, site, "shop/kit", true, "", request);
     expect(pk.status).toBe(200);
-    expect(await pk.text()).toContain("8000.00 PKR");
+    expect(await pk.text()).toMatch(/PKR\s8,000/);
     expect(pk.headers.get("Cache-Control")).toBe("private, no-store");
     expect(pk.headers.get("ETag")).toBeNull();
     const international = await serveSiteFileResponse({ DB } as unknown as Env, site, "shop/kit", true, "", new Request("https://example.test/shop/kit"));
-    expect(await international.text()).toContain("50.00 USD");
+    expect(await international.text()).toContain("$50");
     expect(international.headers.get("Cache-Control")).toBe("private, no-store");
     expect((await serveSiteFileResponse({ DB } as unknown as Env, site, "_pricing/PK/shop/kit", true, "", request)).status).toBe(404);
   });

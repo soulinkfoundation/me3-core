@@ -17,7 +17,7 @@ beforeEach(() => { window.history.replaceState(null, "", "/products/book"); });
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 describe("published product checkout", () => {
   it("shows price and prevents purchases in previews or unavailable products", () => {
-    expect(renderProductCheckout(product)).toContain("1.00 EUR");
+    expect(renderProductCheckout(product)).toContain(">€1</p>");
     for (const changed of [{enabled:false}, {available:false}, {price:0}]) {
       const html = renderProductCheckout({...product, ...changed});
       expect(html).not.toContain("<form");
