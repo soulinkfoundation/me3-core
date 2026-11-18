@@ -243,16 +243,35 @@ export type SitePresentationSettings = {
   accent?: string;
   visitorThemeToggle?: boolean;
   primaryAction?: { kind: "offer" | "subscribe" | "button"; id?: string };
-  sections?: Array<{ id: "offers" | "booking" | "writing" | "testimonials" | "newsletter"; visible: boolean }>;
+  sections?: Array<{ id: "offers" | "shop" | "booking" | "writing" | "testimonials" | "newsletter"; visible: boolean }>;
 };
 
 export const DEFAULT_HOME_SECTIONS: NonNullable<SitePresentationSettings["sections"]> = [
   { id: "offers", visible: true },
+  { id: "shop", visible: true },
   { id: "booking", visible: false },
   { id: "writing", visible: true },
   { id: "testimonials", visible: true },
   { id: "newsletter", visible: true },
 ];
+
+/**
+ * The owner's home sections, with any section added since they last saved placed where the defaults put it
+ * (Shop goes right after offers) and shown, so older sites pick up new sections without losing their order.
+ */
+export function normalizeHomeSections(sections: SitePresentationSettings["sections"] | undefined): NonNullable<SitePresentationSettings["sections"]> {
+  if (!Array.isArray(sections)) return DEFAULT_HOME_SECTIONS.map((section) => ({ ...section }));
+  const known = new Set(DEFAULT_HOME_SECTIONS.map((section) => section.id));
+  const result = sections.filter((section, index) => known.has(section.id) && sections.findIndex((other) => other.id === section.id) === index)
+    .map((section) => ({ id: section.id, visible: section.visible !== false }));
+  DEFAULT_HOME_SECTIONS.forEach((section, defaultIndex) => {
+    if (result.some((item) => item.id === section.id)) return;
+    const previous = DEFAULT_HOME_SECTIONS.slice(0, defaultIndex).map((item) => item.id);
+    const after = result.reduce((found, item, index) => (previous.includes(item.id) ? index : found), -1);
+    result.splice(after + 1, 0, { ...section });
+  });
+  return result;
+}
 
 type PricingConfig = {
   regionalPrices?: RegionalPrice[];
@@ -533,7 +552,7 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
   const displayLocation = formatPublicLocation(profile);
   const location = displayLocation ? `<p class="location">${escapeHtml(displayLocation)}</p>` : "";
   const hero = `<section class="site-hero site-hero--${layout}">${banner}${layout === "split" ? `<div class="site-hero__portrait">${avatar}</div>` : ""}<div class="site-hero__intro">${layout === "split" ? location : avatar}<h1 class="name">${escapeHtml(title)}</h1>${profile.bio ? `<div class="bio">${renderRichText(profile.bio)}</div>` : ""}${layout === "split" ? "" : location}${generateButtons(profile)}${generateLinks(profile)}</div></section>`;
-  const sections = profile.extensions?.["me3.app/site"]?.sections || DEFAULT_HOME_SECTIONS;
+  const sections = normalizeHomeSections(profile.extensions?.["me3.app/site"]?.sections);
   // Offer cards open the booking calendar beneath themselves, so when they show, the separate booking block would repeat the offers.
   const offersHtml = capabilities.bookingsEnabled && sections.some((section) => section.id === "offers" && section.visible)
     ? generateOffers(profile, true) : "";
@@ -541,6 +560,7 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
     switch (section.id) {
       case "offers": return offersHtml;
       case "booking": return capabilities.bookingsEnabled && !offersHtml ? generateBooking(profile) : "";
+      case "shop": return generateHomeShop(profile, capabilities);
       case "writing": return generateLatestWriting(profile, fileMap);
       case "testimonials": return generateTestimonials(profile) || (placeholders ? testimonialsPlaceholder() : "");
       case "newsletter": return capabilities.newsletterSignup ? generateNewsletter(profile) : "";
@@ -739,6 +759,19 @@ function postThumbnailHtml(post: Me3Post, markdown: string, basePath: string, cl
   return `<img class="${className}" src="${escapeHtml(filePathForHtml(contentAssetPathForHtml(imagePath), basePath))}" alt="" loading="lazy" decoding="async">`;
 }
 
+/** The first few products on the home page, linking to the full shop. */
+function generateHomeShop(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities): string {
+  const products = (profile.products || []).filter((product) => product.slug && !product.draft);
+  if (!products.length) return "";
+  const path = resolveSiteSectionPaths(profile).shop;
+  const cards = products.slice(0, 4).map((product) => {
+    const slug = normalizeSitePath(product.slug || "");
+    return renderShopCard(product, { slug, title: product.title || titleFromSlug(slug), excerpt: product.excerpt || "", basePath: "./", href: `./${path}/${slug}` });
+  }).join("");
+  const counted = capabilities.productCheckoutEnabled && products.some((product) => product.stock !== undefined || (product.options || []).some((option) => option.stock !== undefined));
+  return `<section class="site-shop"><div class="site-section-heading"><h2>${escapeHtml(profile.shopTitle || "Shop")}</h2><a href="./${escapeHtml(path)}/">All products →</a></div><div class="shop-items site-shop__grid">${cards}</div>${counted ? renderShopAvailabilityScript(profile.handle || "") : ""}</section>`;
+}
+
 function generateLatestWriting(profile: Me3SiteProfile, fileMap: Map<string, string>): string {
   const posts = (profile.posts || []).filter((post) => !post.draft && post.slug)
     .sort((a, b) => timestampForSort(b.publishedAt) - timestampForSort(a.publishedAt)).slice(0, 3);
@@ -815,7 +848,7 @@ function generateCollectionIndex(
     activeSlug,
     basePath: "../",
     body: `${profile.extensions?.["me3.app/site"] ? "" : `<header class="page-header"><a class="back-link" href="../">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, "../"))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, activeSlug, "../", "header")}</header>`}
-      <main class="content"><h1>${escapeHtml(title)}</h1><div class="${listClass}">${cards}</div>${activeSlug === "shop" && capabilities.productCheckoutEnabled && items.some((item) => (item as Me3Product).stock !== undefined || ((item as Me3Product).options || []).some((option) => option.stock !== undefined)) ? renderShopAvailabilityScript(profile.handle || "") : ""}${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
+      <main class="content${activeSlug === "shop" ? " content--shop" : ""}"><h1>${escapeHtml(title)}</h1><div class="${listClass}">${cards}</div>${activeSlug === "shop" && capabilities.productCheckoutEnabled && items.some((item) => (item as Me3Product).stock !== undefined || ((item as Me3Product).options || []).some((option) => option.stock !== undefined)) ? renderShopAvailabilityScript(profile.handle || "") : ""}${endAction ? `<aside class="site-end-action"><h2>Work with me</h2>${endAction}</aside>` : ""}</main>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
     vibe: getVibe(profile),
   });

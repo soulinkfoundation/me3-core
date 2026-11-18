@@ -187,6 +187,12 @@ body[data-layout=cover] .site-topbar__action{display:none!important}
 }
 @media(max-width:760px){.site-hero--split .links{justify-content:center}}
 
+/* Home Shop: four products, a 2×2 grid in the centred column and one row on the wide layouts. */
+.site-shop__grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:32px 20px}
+.site-shop__grid .shop-item-cover{aspect-ratio:1}
+@media(min-width:761px){body:is([data-layout=cover],[data-layout=split]) .site-shop__grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:760px){.site-shop__grid{gap:24px 14px}}
+
 /* Minimal: offers are cards like every other layout, not full-width list rows. */
 body[data-layout=minimal] .site-offers__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
 body[data-layout=minimal] .site-offer{display:flex;flex-direction:column;align-items:flex-start;padding:24px;border:1px solid var(--card-edge);border-radius:var(--radius);box-shadow:var(--card-shadow)}

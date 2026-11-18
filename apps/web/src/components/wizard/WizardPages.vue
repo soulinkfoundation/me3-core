@@ -12,7 +12,7 @@ import type { UiIconName } from "../../utils/icons";
 
 const wizard = useWizardStore();
 const editingHome = ref(false);
-const sectionLabels = { offers: "Offers", booking: "Booking calendar", writing: "Latest writing", testimonials: "Testimonials", newsletter: "Newsletter" } as const;
+const sectionLabels = { offers: "Offers", shop: "Shop", booking: "Booking calendar", writing: "Latest writing", testimonials: "Testimonials", newsletter: "Newsletter" } as const;
 
 function reorderPages(rows: Array<{ page: WizardPage; index: number }>) {
   const positions = rows.map(row => row.index).sort((a, b) => a - b);

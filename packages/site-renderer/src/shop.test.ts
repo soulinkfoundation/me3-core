@@ -80,6 +80,41 @@ describe("shop for real products", () => {
     expect(files["shop/mug.html"]).toContain("Say hello");
   });
 
+  // Failure modes: products never reach the home page; an owner can't hide them; sites saved before the
+  // Shop section existed lose it; the shop page stays squeezed into the text column.
+  describe("home Shop section", () => {
+    const products = [1, 2, 3, 4, 5].map((n) => ({ slug: `p${n}`, title: `Product ${n}`, price: n * 1000, currency: "EUR", images: [`files/products/p${n}.jpg`] }));
+    const site = (sections?: Array<{ id: string; visible: boolean }>) => generateSiteHtml({ ...base, products, shopTitle: "Shop", extensions: { "me3.app/site": { theme: "me3", ...(sections ? { sections } : {}) } } } as never, []);
+
+    it("shows the first products with prices and a link to the whole shop", async () => {
+      const home = (await site())["index.html"];
+      expect(home).toContain('<section class="site-shop">');
+      expect(home).toMatch(/<h2>Shop<\/h2><a href="\.\/shop\/">All products →<\/a>/);
+      expect(home).toContain('href="./shop/p1"');
+      expect(home).toContain('src="./files/products/p1.jpg"');
+      expect(home).toContain("€1");
+      expect(home).toContain('href="./shop/p4"');
+      expect(home).not.toContain('href="./shop/p5"');
+    });
+
+    it("lets the owner hide or move it, and adds it after offers on sites saved without it", async () => {
+      expect((await site([{ id: "shop", visible: false }, { id: "writing", visible: true }]))["index.html"]).not.toContain('<section class="site-shop">');
+      const older = (await site([{ id: "writing", visible: true }, { id: "offers", visible: true }, { id: "newsletter", visible: true }]))["index.html"];
+      expect(older).toContain('<section class="site-shop">');
+      const moved = (await site([{ id: "shop", visible: true }, { id: "writing", visible: true }]))["index.html"];
+      expect(moved).toContain('<section class="site-shop">');
+    });
+
+    it("leaves the home page alone when there are no products", async () => {
+      const home = (await generateSiteHtml({ ...base, extensions: { "me3.app/site": { theme: "me3" } } }, []))["index.html"];
+      expect(home).not.toContain('<section class="site-shop">');
+    });
+
+    it("gives the shop page its own wide layout", async () => {
+      expect((await site())["shop/index.html"]).toContain('<main class="content content--shop">');
+    });
+  });
+
   // Failure modes: the chooser is missing on a "let them choose" offer, or appears on a card-only
   // or pay-directly one; the buyer's choice is not sent with the order or booking.
   it("asks how to pay only on a product that lets the buyer choose", async () => {

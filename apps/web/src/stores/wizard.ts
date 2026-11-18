@@ -5,6 +5,7 @@ import { defineStore } from "pinia";
 import { ref, computed, watch } from "vue";
 import {
   DEFAULT_HOME_SECTIONS,
+  normalizeHomeSections,
   SITE_NAVIGATION_STYLE_LINK_KEY,
   SITE_LAYOUT_LINK_KEY,
   normalizeSiteLayout,
@@ -4363,7 +4364,7 @@ export const useWizardStore = defineStore("wizard", () => {
         username.value = storedUsername || "";
         vibe.value = normalizeVibeId(state.vibe);
         accentOverride.value = state.accentOverride || null;
-        homeSections.value = Array.isArray(state.homeSections) ? state.homeSections : DEFAULT_HOME_SECTIONS.map((section) => ({ ...section }));
+        homeSections.value = Array.isArray(state.homeSections) ? normalizeHomeSections(state.homeSections) : DEFAULT_HOME_SECTIONS.map((section) => ({ ...section }));
         primaryAction.value = state.primaryAction;
         colorMode.value = state.colorMode === "light" || state.colorMode === "dark" ? state.colorMode : "auto";
         visitorThemeToggle.value = state.visitorThemeToggle !== false;
@@ -4909,7 +4910,7 @@ export const useWizardStore = defineStore("wizard", () => {
     visitorThemeToggle.value = siteSettings?.visitorThemeToggle !== false;
     primaryAction.value = siteSettings?.primaryAction;
     homeSections.value = Array.isArray(siteSettings?.sections)
-      ? siteSettings.sections
+      ? normalizeHomeSections(siteSettings.sections)
       : siteSettings
         ? DEFAULT_HOME_SECTIONS.map((section) => ({ ...section }))
         : DEFAULT_HOME_SECTIONS.map((section) => ({ ...section, visible: section.id === "booking" || section.id === "testimonials" || section.id === "newsletter" }));

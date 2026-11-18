@@ -91,11 +91,11 @@ export function shopCardPrice(product: ShopProduct): string {
   return typeof product.price === "number" && Number.isFinite(product.price) ? displayMoney(product.price, product.currency || "USD") : "";
 }
 
-export function renderShopCard(product: ShopProduct, options: { slug: string; title: string; excerpt: string; basePath: string }): string {
+export function renderShopCard(product: ShopProduct, options: { slug: string; title: string; excerpt: string; basePath: string; href?: string }): string {
   const cover = productPhotoPaths(product)[0];
   const tag = shopCardTag(product);
   const price = shopCardPrice(product);
-  return `<a class="shop-item${cover ? " shop-item--with-cover" : ""}" href="./${escape(options.slug)}" data-shop-item="${escape(product.slug || "")}">`
+  return `<a class="shop-item${cover ? " shop-item--with-cover" : ""}" href="${escape(options.href || `./${options.slug}`)}" data-shop-item="${escape(product.slug || "")}">`
     + (cover ? `<img class="shop-item-cover" src="${escape(options.basePath + cover)}" alt="" loading="lazy" decoding="async">` : "")
     + `<div class="shop-item-title">${escape(options.title)}</div>`
     + (price ? `<div class="shop-item-price">${escape(price)}</div>` : "")
@@ -125,14 +125,29 @@ export function renderShopAvailabilityScript(username: string): string {
 export { externalShopLabel };
 
 export const productShopCss = `
-.shop-items{grid-template-columns:repeat(auto-fill,minmax(min(100%,180px),1fr));align-items:start}
-.shop-item{align-content:start;position:relative}
-.shop-item--with-cover{padding:0 0 14px;overflow:hidden}
-.shop-item--with-cover>:not(.shop-item-cover){margin-inline:14px}
-.shop-item-cover{display:block;width:100%;aspect-ratio:4/5;object-fit:cover;background:var(--border)}
-.shop-item-price{color:var(--muted)}
-.shop-item-tag{justify-self:start;font-size:.8rem;padding:2px 9px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
-.shop-item-tag.is-urgent{font-weight:700;color:var(--text);border-color:currentColor}
+.content.content--shop{width:min(1120px,calc(100% - 48px))}
+.shop-items{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:40px 24px;align-items:start}
+.shop-items .shop-item{position:relative;display:flex;flex-direction:column;gap:4px;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:var(--text);text-decoration:none}
+.shop-items .shop-item-cover{display:block;width:100%;aspect-ratio:4/5;margin:0 0 12px;object-fit:cover;border-radius:var(--radius,12px);background:var(--raised,var(--border));box-shadow:var(--card-shadow,none);transition:transform .35s cubic-bezier(.2,.7,.2,1),box-shadow .35s ease}
+.shop-items .shop-item:hover .shop-item-cover{transform:translateY(-4px);box-shadow:var(--card-shadow-hover,none)}
+.shop-items .shop-item:focus-visible{outline:3px solid var(--accent);outline-offset:6px;border-radius:var(--radius,12px)}
+.shop-item-title{font-family:var(--display-font,inherit);font-size:1.08rem;font-weight:600;line-height:1.3}
+.shop-item-price{color:var(--muted);font-variant-numeric:tabular-nums}
+.shop-item-excerpt{color:var(--muted);font-size:.92rem;line-height:1.5}
+.shop-item-tag{justify-self:start;align-self:flex-start;margin-top:6px;padding:3px 10px;border-radius:999px;border:1px solid var(--border);color:var(--muted);font-size:.78rem;font-weight:600}
+.shop-item--with-cover .shop-item-tag{position:absolute;top:12px;left:12px;margin:0;border:0;background:color-mix(in srgb,var(--surface) 88%,transparent);color:var(--text);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.shop-item-tag.is-urgent{color:var(--text);border-color:currentColor}
+.shop-item--with-cover .shop-item-tag.is-urgent{background:var(--accent);color:var(--accent-text,#fff)}
+.shop-items .shop-item:not(.shop-item--with-cover){padding:22px;border:1px solid var(--card-edge,var(--border));border-radius:var(--radius,12px);background:var(--surface);box-shadow:var(--card-shadow,none)}
+@media(max-width:900px){.shop-items{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){
+  .content.content--shop{width:calc(100% - 40px)}
+  .shop-items{gap:28px 14px}
+  .shop-items .shop-item-cover{margin-bottom:10px}
+  .shop-item-title{font-size:.98rem}
+  .shop-item-price{font-size:.92rem}
+  .shop-item--with-cover .shop-item-tag{top:8px;left:8px;padding:2px 8px;font-size:.72rem}
+}
 .product-gallery{display:grid;gap:10px;margin:0 0 24px}
 .product-gallery-main{display:block;width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--radius,var(--radius-md));background:var(--raised,var(--border))}
 .product-gallery-thumbs{display:flex;gap:8px;overflow-x:auto}
