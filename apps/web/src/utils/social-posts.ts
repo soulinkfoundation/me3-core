@@ -144,6 +144,18 @@ export function postTitle(detail: SocialPostDetail): string {
   return firstLine.length > 70 ? `${firstLine.slice(0, 67).trimEnd()}…` : firstLine;
 }
 
+/** The first picture or video on any platform, so a list row shows what was posted. Null for text-only posts. */
+export function postThumbnail(detail: SocialPostDetail, apiBase: string): { src: string; video: boolean } | null {
+  for (const version of visibleVersions(detail)) {
+    const asset = version.assetManifest.find((item) => item.kind !== "document" && item.url);
+    if (!asset) continue;
+    if (asset.kind === "video") return { src: `${asset.url.split("#")[0]}#t=0.1`, video: true };
+    if (asset.fileId) return { src: `${apiBase.replace(/\/$/, "")}/files/${encodeURIComponent(asset.fileId)}/thumbnail`, video: false };
+    return { src: asset.url, video: false };
+  }
+  return null;
+}
+
 export function postSourceLabel(detail: SocialPostDetail): string | null {
   switch (detail.post.sourceType) {
     case "journal":

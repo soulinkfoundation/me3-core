@@ -94,6 +94,32 @@ describe("Social page", () => {
     expect(wrapper.text()).not.toMatch(/Version|Publication|Source/);
   });
 
+  it("shows each post's date, platforms and picture, with a play badge on video", async () => {
+    serve({
+      "/social/status": status("included"),
+      "/social/accounts": { accounts: [account("x")] },
+      "/social/posts": {
+        posts: [
+          post([version({ publicationStatus: "scheduled", scheduledFor: "2030-10-30T12:30:00.000Z", assetManifest: [{ url: "/api/files/f1/content", fileId: "f1", kind: "image" }] })], { id: "photo" }),
+          post([version({ publicationStatus: "scheduled", scheduledFor: "2030-10-31T12:30:00.000Z", assetManifest: [{ url: "/api/files/v1/content", fileId: "v1", kind: "video" }] })], { id: "clip" }),
+          post([version({ publicationStatus: "scheduled", scheduledFor: "2030-11-01T12:30:00.000Z" })], { id: "words" }),
+        ],
+      },
+      "/sites": { sites: [] },
+    });
+    const wrapper = mount(SocialIndex, { global: { stubs } });
+    await flushPromises();
+
+    const rows = wrapper.findAll(".social-row--link");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]!.get(".social-row__detail").text()).not.toBe("");
+    expect(rows[0]!.find(".social-row__text .social-marks").exists()).toBe(true);
+    expect(rows[0]!.get(".social-row__thumb img").attributes("src")).toBe("/api/files/f1/thumbnail");
+    expect(rows[1]!.get(".social-row__thumb video").attributes("src")).toBe("/api/files/v1/content#t=0.1");
+    expect(rows[1]!.find(".social-row__play").exists()).toBe(true);
+    expect(rows[2]!.find(".social-row__thumb").exists()).toBe(false);
+  });
+
   it("says in plain words why an account didn't connect", async () => {
     serve({
       "/social/status": status("included"),

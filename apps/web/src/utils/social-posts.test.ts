@@ -11,6 +11,7 @@ import {
   threadParts,
   postRowDetail,
   postTab,
+  postThumbnail,
   postTitle,
   resultFor,
   finishLink,
@@ -28,6 +29,19 @@ describe("social posts", () => {
     expect(postTab(post([version({ publicationStatus: "scheduled" }), version({ platform: "linkedin", publicationStatus: "published" })]))).toBe("scheduled");
     expect(postTab(post([version({ publicationStatus: "published" })]))).toBe("posted");
     expect(postTab(post([version({ publicationStatus: "failed" })]))).toBe("scheduled");
+  });
+
+  it("shows the first picture or video from any platform, and nothing for text-only posts", () => {
+    expect(postThumbnail(post([version()]), "/api")).toBeNull();
+    const fileImage = { url: "/api/files/f%201/content", fileId: "f 1", kind: "image" as const };
+    const video = { url: "https://cdn.example/clip.mp4", kind: "video" as const };
+    expect(postThumbnail(post([version(), version({ platform: "linkedin", assetManifest: [fileImage] })]), "/api/"))
+      .toEqual({ src: "/api/files/f%201/thumbnail", video: false });
+    expect(postThumbnail(post([version({ assetManifest: [{ url: "https://cdn.example/a.png" }] })]), "/api"))
+      .toEqual({ src: "https://cdn.example/a.png", video: false });
+    expect(postThumbnail(post([version({ assetManifest: [video] })]), "/api"))
+      .toEqual({ src: "https://cdn.example/clip.mp4#t=0.1", video: true });
+    expect(postThumbnail(post([version({ platform: "linkedin", assetManifest: [{ url: "/doc.pdf", kind: "document" }] })]), "/api")).toBeNull();
   });
 
   it("lists TikTok after the other platforms on a post", () => {

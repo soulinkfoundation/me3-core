@@ -4,7 +4,7 @@ import { networkLabel, networkMark, socialNetwork, type MarkState } from "../../
 
 const props = withDefaults(
   /** `states` maps a platform to its progress: a spinning ring, a tick, or a red dot. */
-  defineProps<{ platforms: string[]; size?: "small" | "large"; states?: Record<string, MarkState> }>(),
+  defineProps<{ platforms: string[]; size?: "tiny" | "small" | "large"; states?: Record<string, MarkState> }>(),
   { size: "small", states: () => ({}) },
 );
 
@@ -70,6 +70,9 @@ const label = computed(() =>
   font: 700 9px/1 var(--font-sans, system-ui);
 }
 .social-mark + .social-mark { margin-left: -7px; }
+.social-marks--tiny .social-mark { width: 18px; height: 18px; border-width: 1.5px; font-size: 7.5px; }
+.social-marks--tiny .social-mark + .social-mark { margin-left: -5px; }
+.social-marks--tiny .social-mark__logo { width: 9px; height: 9px; }
 .social-marks--large .social-mark { width: 32px; height: 32px; border: 0; font-size: 12px; }
 /* Brand colours identify each network; X uses the text colour so it reads in light and dark. */
 .social-mark--x { background: var(--ui-text); color: var(--ui-bg); }

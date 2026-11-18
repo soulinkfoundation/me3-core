@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
 import { RouterLink, useRoute, useRouter } from "vue-router";
+import { API_BASE } from "../../api";
 import AppPageBar from "../../components/AppPageBar.vue";
 import Button from "../../components/Button.vue";
 import PageLoading from "../../components/PageLoading.vue";
@@ -22,6 +23,7 @@ import {
   nextScheduledAt,
   postRowDetail,
   postTab,
+  postThumbnail,
   postTitle,
   postingMarks,
   visibleVersions,
@@ -67,6 +69,7 @@ const counts = computed<Record<SocialTab, number>>(() => ({
   scheduled: rowsByTab.value.scheduled.length,
   posted: rowsByTab.value.posted.length,
 }));
+const thumbnails = computed(() => new Map(posts.value.map((detail) => [detail.post.id, postThumbnail(detail, API_BASE)])));
 const attention = computed(() => attentionItems(posts.value, accounts.value));
 const connectedNetworks = computed(() =>
   SOCIAL_NETWORKS.filter((network) => accountState(network.id, accounts.value) !== "not_connected").map((network) => network.id),
@@ -85,6 +88,13 @@ function rowWhen(detail: (typeof posts.value)[number]): string {
   if (postTab(detail) === "posted") return formatWhen(lastPostedAt(detail));
   if (postTab(detail) === "scheduled") return formatWhen(nextScheduledAt(detail));
   return "";
+}
+
+/** Under the title: what's wrong if anything, otherwise when it posts or posted. */
+function rowSubtitle(detail: (typeof posts.value)[number]): { text: string; danger: boolean } {
+  const info = postRowDetail(detail, capabilities.value, accounts.value);
+  if (info.tone === "danger") return { text: info.text, danger: true };
+  return { text: rowWhen(detail) || info.text, danger: false };
 }
 
 function moveTab(event: KeyboardEvent) {
@@ -214,15 +224,21 @@ onMounted(async () => {
           <ul v-if="rowsByTab[tab].length" class="social-list">
             <li v-for="detail in rowsByTab[tab]" :key="detail.post.id">
               <RouterLink class="social-row social-row--link" :to="`/social/${encodeURIComponent(detail.post.id)}`">
-                <SocialMarks :platforms="visibleVersions(detail).map((version) => version.platform)" :states="postingMarks(detail)" />
                 <span class="social-row__text">
                   <span class="social-row__title">{{ postTitle(detail) }}</span>
-                  <span
-                    class="social-row__detail"
-                    :class="{ 'social-row__detail--danger': postRowDetail(detail, capabilities, accounts).tone === 'danger' }"
-                  >{{ postRowDetail(detail, capabilities, accounts).text }}</span>
+                  <span class="social-row__detail" :class="{ 'social-row__detail--danger': rowSubtitle(detail).danger }">{{ rowSubtitle(detail).text }}</span>
+                  <SocialMarks
+                    class="social-row__marks"
+                    size="tiny"
+                    :platforms="visibleVersions(detail).map((version) => version.platform)"
+                    :states="postingMarks(detail)"
+                  />
                 </span>
-                <span v-if="rowWhen(detail)" class="social-row__when">{{ rowWhen(detail) }}</span>
+                <span v-if="thumbnails.get(detail.post.id)" class="social-row__thumb" aria-hidden="true">
+                  <video v-if="thumbnails.get(detail.post.id)!.video" :src="thumbnails.get(detail.post.id)!.src" preload="metadata" muted playsinline />
+                  <img v-else :src="thumbnails.get(detail.post.id)!.src" alt="" loading="lazy" decoding="async">
+                  <span v-if="thumbnails.get(detail.post.id)!.video" class="social-row__play"><UiIcon name="Play" :size="10" /></span>
+                </span>
               </RouterLink>
             </li>
           </ul>
@@ -315,8 +331,7 @@ onMounted(async () => {
 
 .social-panel { margin-top: 12px; }
 .social-list { margin: 0; padding: 0; list-style: none; }
-.social-list > li + li { border-top: 1px solid var(--ui-border); }
-.social-row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 2px; }
+.social-row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 10px 2px; }
 .social-row--link { color: inherit; text-decoration: none; border-radius: var(--ui-radius-sm); }
 .social-row--link:hover .social-row__title { text-decoration: underline; text-underline-offset: 3px; }
 .social-row--link:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
@@ -324,6 +339,10 @@ onMounted(async () => {
 .social-row__title { overflow: hidden; font-size: 14.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .social-row__detail { overflow: hidden; color: var(--ui-text-muted); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .social-row__detail--danger { color: var(--ui-danger); }
+.social-row__marks { margin-top: 4px; }
+.social-row__thumb { position: relative; display: grid; flex: none; place-items: center; width: 56px; height: 56px; overflow: hidden; border-radius: 8px; background: var(--ui-surface-muted); }
+.social-row__thumb img, .social-row__thumb video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.social-row__play { position: absolute; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: rgb(0 0 0 / 55%); color: #fff; }
 .social-row__when { flex: none; color: var(--ui-text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .social-empty { display: grid; justify-items: center; gap: 10px; margin-top: 56px; color: var(--ui-text-muted); font-size: 14px; text-align: center; }
