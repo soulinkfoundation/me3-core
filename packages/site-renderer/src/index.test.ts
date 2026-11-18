@@ -41,6 +41,7 @@ describe("site generator", () => {
       banner: "./files/banner.jpg",
       pages: [{ slug: "about", title: "About", file: "about.md" }],
       buttons: [{ text: "Contact", url: "https://example.com" }],
+      links: { instagram: "https://instagram.com/alex" },
       extensions: { "me3.app/site": { layout, theme: "meadow", colorMode: "dark" } },
     }, [{ name: "about.md", content: "About Alex" }]);
     const home = files["index.html"];
@@ -51,7 +52,12 @@ describe("site generator", () => {
     expect(about.match(/class="site-topbar"/g)).toHaveLength(1);
     expect(home).toContain('class="site-action-dock"');
     expect(home).toContain("@media(max-width:760px)");
-    if (layout === "cover") expect(home).toContain('class="site-cover-links"');
+    // Social links sit in the hero in every layout, including over the cover photo.
+    const hero = home.match(/<section class="site-hero[\s\S]*?<\/section>/)?.[0] || "";
+    expect(hero).toContain('aria-label="Instagram"');
+    expect(home).not.toContain("site-cover-links");
+    // The header's shadow follows the page's scroll state.
+    expect(home).toContain("is-scrolled");
     expect(about).toContain("Work with me");
   });
 

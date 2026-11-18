@@ -1,3 +1,4 @@
+import { modernPolishCss } from "./modern-polish-css.js";
 import { siteThemes, type SiteColorMode, type SiteThemeId } from "./themes.js";
 
 export function modernSiteCss(themeId: SiteThemeId, colorMode: SiteColorMode, accentOverride?: string): string {
@@ -11,7 +12,7 @@ export function modernSiteCss(themeId: SiteThemeId, colorMode: SiteColorMode, ac
     return `--bg:${palette.bg};--surface:${palette.surface};--raised:${palette.raised};--text:${palette.text};--muted:${palette.muted};--border:${palette.border};--accent:${customAccent || palette.accent};--accent-text:${accentText || palette.accentText};color-scheme:${mode}`;
   };
   const autoDark = colorMode === "auto" ? `@media(prefers-color-scheme:dark){html:not([data-color-mode]){${paletteCss("dark")}}}` : "";
-  return `:root{${paletteCss(colorMode === "dark" ? "dark" : "light")};--font:${theme.bodyFont};--display-font:${theme.displayFont};--radius:${theme.radius};--radius-sm:${theme.radius};--radius-md:${theme.buttonRadius};--button-radius:${theme.buttonRadius};--name-case:${theme.nameCase};--accent-soft:color-mix(in srgb,var(--accent) 12%,transparent);--ui-shadow-sm:0 4px 16px rgba(0,0,0,.06)}html[data-color-mode=light]{${paletteCss("light")}}html[data-color-mode=dark]{${paletteCss("dark")}}${autoDark}
+  return `:root{${paletteCss(colorMode === "dark" ? "dark" : "light")};--font:${theme.bodyFont};--display-font:${theme.displayFont};--radius:${theme.radius};--radius-sm:${theme.radius};--radius-md:${theme.buttonRadius};--button-radius:${theme.buttonRadius};--name-case:${theme.nameCase};--cta-radius:${theme.cta.radius};--cta-font:${theme.cta.font || theme.bodyFont};--cta-size:${theme.cta.size};--cta-tracking:${theme.cta.tracking};--accent-soft:color-mix(in srgb,var(--accent) 12%,transparent);--ui-shadow-sm:0 4px 16px rgba(0,0,0,.06)}html[data-color-mode=light]{${paletteCss("light")}}html[data-color-mode=dark]{${paletteCss("dark")}}${autoDark}
 body{background:var(--bg);color:var(--text);font-family:var(--font)}
 .container{background:var(--bg)}
 .name,.content h1,.content h2,.content h3,.booking h2,.newsletter h2,.testimonials h2{font-family:var(--display-font)}
@@ -94,8 +95,6 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-hero--cover .cta-button.primary{background:#fff;color:#222}
 .site-hero--cover .cta-button.secondary,.site-hero--cover .cta-button.outline{border-color:#fff;color:#fff}
 .site-hero--cover .link-item{color:#fff;background:#ffffff33}
-.site-cover-links{width:min(1080px,calc(100% - 48px));margin:24px auto 0}
-.site-cover-links .links{justify-content:flex-start;margin:0}
 .site-hero--minimal{margin-top:72px}
 .site-hero--minimal .site-hero__intro{text-align:left}
 .site-hero--minimal .site-hero__avatar{width:64px;height:64px;margin:0;border:0}
@@ -235,7 +234,6 @@ body[data-layout=minimal] .site-offer__actions{grid-column:2;grid-row:1/4;align-
   .site-hero--minimal .name{font-size:3.5rem}
   .site-home-sections{margin:44px 20px 80px}
   body[data-layout=cover] .site-home-sections{width:auto;margin:44px 20px 80px}
-  .site-cover-links{width:auto;margin:18px 20px 0}
   body[data-layout=cover] .site-writing__rows{grid-template-columns:1fr}
   .site-offers__grid{grid-template-columns:1fr}
   .booking-slot-group__buttons{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -259,5 +257,5 @@ body[data-layout=minimal] .site-offer__actions{grid-column:2;grid-row:1/4;align-
   body:has(.booking-type-panel[data-booking-shared-offer]:not([hidden]) [data-booking-continue]:disabled) [data-booking-dock-select-time]{display:inline-flex}
   body:has(.booking-type-panel:not([hidden]) .booking-form.is-visible) .site-action-dock{display:none}
 }
-`;
+${modernPolishCss}`;
 }

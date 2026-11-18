@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Cover is immersive on desktop: the banner fills the first screen, the header floats over it and turns frosted on scroll, and the name, bio, buttons and social icons sit on the photo. On phones the menu floats over the photo and the hero is centred.
+- Latest writing shows picture cards (image fills the card on Cover); offers, writing cards and avatars share one soft shadow; Minimal offers are cards.
+- Buttons take their shape, typeface and size from the theme (pills for Warm, Meadow and ME3, 12px for Paper, square for Tech) and centre text on cap height.
+- Lighter menu links, no header or footer rules (the header gains a shadow once scrolled), a one-row footer, a centred newsletter block on wide layouts, three-column offers on Cover and Split, and stacked full-width hero buttons on phones.
 - Show each offer once on the home page: when offer cards are shown, the separate booking block is left out and the cards open the calendar beneath themselves.
 
 ## 0.3.2
