@@ -57,22 +57,21 @@ function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index
     <div class="app-tour__actions">
       <Button v-if="step.task && !step.done" color="primary" shape="soft" type="button" data-testid="tour-task" @click="doTask">{{ step.task.label }}</Button>
       <Button v-if="step.copy" color="ghost" shape="soft" type="button" @click="copy">{{ step.copy.label }}</Button>
-      <span class="app-tour__spacer" />
-      <Button v-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="tour.go(tour.index - 1)">Back</Button>
-      <Button v-if="!(tour.isLast && !step.done)" :color="step.done ? 'primary' : 'ghost'" shape="soft" type="button" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
     </div>
     <div class="app-tour__foot">
       <span class="app-tour__dots" aria-hidden="true"><i v-for="(item, dot) in tour.tour?.steps" :key="item.id" :class="{ 'is-on': dot <= tour.index }" /></span>
       <span class="app-tour__count">{{ tour.index + 1 }} of {{ total }}</span>
       <span class="app-tour__spacer" />
       <button type="button" class="app-tour__skip" @click="tour.end('skipped')">Skip tour</button>
+      <Button v-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="tour.go(tour.index - 1)">Back</Button>
+      <Button v-if="!(tour.isLast && !step.done)" :color="step.done ? 'primary' : 'ghost'" shape="soft" type="button" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
     </div>
   </section>
 </template>
 
 <style scoped>
 /* Sits above the page, clear of Chat's composer; under dialogs, so Add to Home stays usable. */
-.app-tour { position: fixed; z-index: 60; right: 24px; bottom: 96px; display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; width: min(400px, calc(100vw - 32px)); padding: 16px 16px 6px; border: 1px solid var(--ui-border); border-radius: 20px; background: var(--ui-surface); color: var(--ui-text); box-shadow: 0 12px 32px rgb(0 0 0 / 14%); }
+.app-tour { position: fixed; z-index: 60; right: 24px; bottom: 96px; display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; width: min(344px, calc(100vw - 32px)); padding: 16px 16px 8px; border: 1px solid var(--ui-border); border-radius: 20px; background: var(--ui-surface); color: var(--ui-text); box-shadow: 0 12px 32px rgb(0 0 0 / 14%); }
 @media (max-width: 640px) { .app-tour { right: 16px; left: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); width: auto; } }
 .app-tour__head { display: flex; align-items: center; gap: 8px; }
 .app-tour__emoji { font-size: 20px; line-height: 1; }
@@ -80,9 +79,11 @@ function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index
 .app-tour__done { padding: 2px 10px; border-radius: 999px; background: var(--ui-accent-soft); color: var(--ui-accent-strong); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .app-tour__body { margin: 0; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
 .app-tour__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
-.app-tour__actions :deep(.me3-btn) { min-height: 44px; }
+.app-tour__actions:empty { display: none; }
+.app-tour__actions :deep(.me3-btn), .app-tour__foot :deep(.me3-btn) { min-height: 44px; }
 .app-tour__spacer { flex: 1; }
-.app-tour__foot { display: flex; align-items: center; gap: 8px; }
+.app-tour__foot { display: flex; align-items: center; gap: 4px; }
+.app-tour__count { margin-left: 4px; }
 .app-tour__dots { display: inline-flex; gap: 6px; }
 .app-tour__dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--ui-border); }
 .app-tour__dots i.is-on { background: var(--ui-accent); }
