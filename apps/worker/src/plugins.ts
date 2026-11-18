@@ -430,7 +430,7 @@ const SOCIAL_PUBLISHING_PLUGIN: CorePluginManifestSummary = {
 const MISSION_CONTROL_PLUGIN: CorePluginManifestSummary = {
   schemaVersion: CORE_PLUGIN_CATALOG_VERSION,
   id: "me3.mission-control",
-  name: "ME3 Tasks and Projects",
+  name: "ME3 Tasks",
   version: "0.1.0",
   description:
     "Focused owner workspace for organising projects and tasks across Now, Backlog, Review, and Completed.",

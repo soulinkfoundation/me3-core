@@ -49,14 +49,14 @@ const editSite = computed(() => {
 });
 function installed(id: string) { return plugins.value.some(plugin => plugin.id === id && plugin.enabled && plugin.status === "installed"); }
 // One Go to list shared with iOS (ProfileMenu.swift) and Android (HomeProfileSheet.kt), ordered for a solo
-// business owner: daily work (Email, Calendar, Projects), growth (People, Campaigns, Social), then Writing,
+// business owner: daily work (Email, Calendar, Tasks), growth (People, Campaigns, Social), then Writing,
 // the business (Accounts, Mission) and Files. Socials/Accounts are plugin-owned; Email and Files are Core
 // features. Campaigns is its own destination (Business); until plan gating lands its plugin record is the visibility gate. Wheel of Life lives in Mission, Edit site is in the
 // header and Chat is the top switch, so none of them repeat here. No hosted entitlement is inferred.
 const destinations = computed(() => [
   { label: "Email", path: "/email", emoji: APP_FEATURE_ICONS.email, visible: true },
   { label: "Calendar", path: "/calendar", emoji: APP_FEATURE_ICONS.calendar, visible: installed("me3.calendar") },
-  { label: "Projects", path: "/tasks", emoji: "✅", visible: installed("me3.mission-control") },
+  { label: "Tasks", path: "/tasks", emoji: "✅", visible: installed("me3.mission-control") },
   { label: "People", path: "/people", emoji: APP_FEATURE_ICONS.people, visible: true },
   { label: "Campaigns", path: "/email/campaigns", emoji: APP_FEATURE_ICONS.campaigns, visible: installed("me3.email-campaigns") },
   // Social is on for every owner whose plan includes it; the Worker switches its plugin record on (plan-features.ts).
