@@ -622,9 +622,9 @@ describe("X publishing adapter", () => {
     expect(markProviderCostStarted).toHaveBeenCalledTimes(1);
   });
 
-  it("uploads and publishes one MP4 video through X's chunked media flow", async () => {
+  it("uploads and publishes one MP4 video through X's v2 initialize, append, finalize and status endpoints", async () => {
     const videoBytes = new Uint8Array([1, 2, 3, 4]);
-    const commands: string[] = [];
+    const steps: string[] = [];
     const markProviderWriteStarted = vi.fn(async () => undefined);
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -632,33 +632,50 @@ describe("X publishing adapter", () => {
         expect(new Headers(init?.headers).get("Range")).toBe("bytes=0-3");
         return new Response(videoBytes, { status: 206 });
       }
-      if (url === "https://api.x.com/2/media/upload") {
-        const body = init?.body as FormData;
-        const command = String(body.get("command"));
-        commands.push(command);
+      if (url.startsWith("https://api.x.com/2/media/upload")) {
         expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer x-token");
-        if (command === "INIT") {
-          expect(body.get("command")).toBe("INIT");
-          expect(body.get("media_type")).toBe("video/mp4");
-          expect(body.get("total_bytes")).toBe("4");
-          expect(body.get("media_category")).toBe("tweet_video");
-          return Response.json({ data: { id: "video-media-1" } });
-        }
-        if (command === "APPEND") {
-          expect(body.get("media_id")).toBe("video-media-1");
-          expect(body.get("segment_index")).toBe("0");
-          expect(body.get("media")).toBeInstanceOf(Blob);
-          return new Response(null, { status: 204 });
-        }
-        expect(command).toBe("FINALIZE");
+        // X rejects the retired command=INIT/APPEND/FINALIZE form with
+        // "One or more parameters to your request was invalid."
+        if (init?.body instanceof FormData) expect(init.body.get("command")).toBeNull();
+      }
+      if (url === "https://api.x.com/2/media/upload/initialize") {
+        steps.push("initialize");
+        expect(init?.method).toBe("POST");
+        expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          media_type: "video/mp4",
+          total_bytes: 4,
+          media_category: "tweet_video",
+        });
+        return Response.json({ data: { id: "video-media-1" } });
+      }
+      if (url === "https://api.x.com/2/media/upload/video-media-1/append") {
+        steps.push("append");
+        expect(init?.method).toBe("POST");
+        const body = init?.body as FormData;
+        expect(body.get("segment_index")).toBe("0");
+        expect(body.get("media")).toBeInstanceOf(Blob);
+        return Response.json({ data: { expires_at: 1 } });
+      }
+      if (url === "https://api.x.com/2/media/upload/video-media-1/finalize") {
+        steps.push("finalize");
+        expect(init?.method).toBe("POST");
         return Response.json({
           data: {
             id: "video-media-1",
-            processing_info: { state: "succeeded" },
+            processing_info: { state: "pending", check_after_secs: 1 },
           },
         });
       }
+      if (url === "https://api.x.com/2/media/upload?command=STATUS&media_id=video-media-1") {
+        steps.push("status");
+        expect(init?.method ?? "GET").toBe("GET");
+        return Response.json({
+          data: { id: "video-media-1", processing_info: { state: "succeeded" } },
+        });
+      }
       if (url === "https://api.x.com/2/tweets") {
+        steps.push("tweet");
         expect(JSON.parse(String(init?.body))).toEqual({
           text: "A useful short video.",
           media: { media_ids: ["video-media-1"] },
@@ -683,9 +700,44 @@ describe("X publishing adapter", () => {
     });
 
     expect(result).toMatchObject({ ok: true, platformPostId: "video-post-1" });
-    expect(commands).toEqual(["INIT", "APPEND", "FINALIZE"]);
+    expect(steps).toEqual(["initialize", "append", "finalize", "status", "tweet"]);
     expect(markProviderWriteStarted).toHaveBeenCalledTimes(1);
-    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(fetcher).toHaveBeenCalledTimes(6);
+  });
+
+  it("explains in plain words when X cannot process the video", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "https://media.example/tall.mp4") return new Response(new Uint8Array([1, 2]), { status: 206 });
+      if (url === "https://api.x.com/2/media/upload/initialize") return Response.json({ data: { id: "m1" } });
+      if (url === "https://api.x.com/2/media/upload/m1/append") return Response.json({});
+      if (url === "https://api.x.com/2/media/upload/m1/finalize") {
+        return Response.json({
+          data: {
+            id: "m1",
+            processing_info: {
+              state: "failed",
+              error: { code: 1, name: "InvalidMedia", message: "Invalid or Unsupported media, Reason: UnsupportedMedia." },
+            },
+          },
+        });
+      }
+      throw new Error(`Unexpected X request: ${url}`);
+    });
+
+    const result = await adapterFor("x").publish({
+      accessToken: "x-token",
+      accountId: "x-owner",
+      bodyText: "Tall video",
+      assets: [{ url: "https://media.example/tall.mp4", kind: "video", mimeType: "video/mp4", byteLength: 2 }],
+      fetcher: fetcher as typeof fetch,
+    });
+
+    expect(result).toMatchObject({ ok: false, failureClass: "rejected" });
+    expect(JSON.stringify(result)).toContain(
+      "X could not process this video, so ME3 did not post it. X said: Invalid or Unsupported media, Reason: UnsupportedMedia.",
+    );
+    expect(fetcher).not.toHaveBeenCalledWith("https://api.x.com/2/tweets", expect.anything());
   });
 
   it.each([

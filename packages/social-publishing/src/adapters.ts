@@ -930,6 +930,19 @@ type XVideoUploadResult =
   | { ok: true; mediaId: string; providerResponses: unknown[] }
   | { ok: false; result: SocialPublishAdapterResult };
 
+const X_MEDIA_UPLOAD_URL = "https://api.x.com/2/media/upload";
+
+function xMediaUploadStepUrl(mediaId: string, step: "append" | "finalize"): string {
+  return `${X_MEDIA_UPLOAD_URL}/${encodeURIComponent(mediaId)}/${step}`;
+}
+
+function xVideoProcessingMessage(body: XErrorBody): string {
+  const reason = body.data?.processing_info?.error?.message?.trim();
+  return reason
+    ? `X could not process this video, so ME3 did not post it. X said: ${reason}`
+    : "X could not process this video, so ME3 did not post it. Try an MP4 under 20 minutes, recorded on a phone or exported at 1080p.";
+}
+
 async function uploadXVideo(
   input: Parameters<SocialPublishAdapter["publish"]>[0],
   asset: SocialMediaAsset,
@@ -937,18 +950,20 @@ async function uploadXVideo(
   const byteLength = asset.byteLength!;
   const mimeType = normalizeMimeType(asset.mimeType)!;
   const providerResponses: unknown[] = [];
-  const initBody = new FormData();
-  initBody.set("command", "INIT");
-  initBody.set("media_type", mimeType);
-  initBody.set("total_bytes", String(byteLength));
-  initBody.set("media_category", "tweet_video");
-
+  // X's v2 chunked upload uses dedicated initialize/append/finalize paths.
+  // The older `command=INIT|APPEND|FINALIZE` form on /2/media/upload is
+  // retired and fails with "One or more parameters to your request was
+  // invalid." Only STATUS still uses ?command= (as a GET).
   let initResponse: Response;
   try {
-    initResponse = await input.fetcher("https://api.x.com/2/media/upload", {
+    initResponse = await input.fetcher(`${X_MEDIA_UPLOAD_URL}/initialize`, {
       method: "POST",
-      headers: xAuthorizationHeaders(input.accessToken),
-      body: initBody,
+      headers: xHeaders(input.accessToken),
+      body: JSON.stringify({
+        media_type: mimeType,
+        total_bytes: byteLength,
+        media_category: "tweet_video",
+      }),
     });
   } catch (error) {
     return {
@@ -1046,8 +1061,6 @@ async function uploadXVideo(
     }
 
     const appendBody = new FormData();
-    appendBody.set("command", "APPEND");
-    appendBody.set("media_id", mediaId);
     appendBody.set("segment_index", String(segmentIndex));
     appendBody.set(
       "media",
@@ -1056,7 +1069,7 @@ async function uploadXVideo(
     );
     let appendResponse: Response;
     try {
-      appendResponse = await input.fetcher("https://api.x.com/2/media/upload", {
+      appendResponse = await input.fetcher(xMediaUploadStepUrl(mediaId, "append"), {
         method: "POST",
         headers: xAuthorizationHeaders(input.accessToken),
         body: appendBody,
@@ -1091,15 +1104,11 @@ async function uploadXVideo(
     segmentIndex += 1;
   }
 
-  const finalizeBody = new FormData();
-  finalizeBody.set("command", "FINALIZE");
-  finalizeBody.set("media_id", mediaId);
   let finalizeResponse: Response;
   try {
-    finalizeResponse = await input.fetcher("https://api.x.com/2/media/upload", {
+    finalizeResponse = await input.fetcher(xMediaUploadStepUrl(mediaId, "finalize"), {
       method: "POST",
       headers: xAuthorizationHeaders(input.accessToken),
-      body: finalizeBody,
     });
   } catch (error) {
     return {
@@ -1136,7 +1145,7 @@ async function uploadXVideo(
         ok: false,
         result: providerError(
           "x_video_processing",
-          xErrorMessage(processing, "X could not process the uploaded video."),
+          xVideoProcessingMessage(processing),
           processing,
           "rejected",
         ),
@@ -1147,7 +1156,7 @@ async function uploadXVideo(
       Math.max(1, Math.ceil(processingInfo.check_after_secs || 1)),
     );
     await wait(checkAfterSeconds * 1_000);
-    const statusUrl = new URL("https://api.x.com/2/media/upload");
+    const statusUrl = new URL(X_MEDIA_UPLOAD_URL);
     statusUrl.searchParams.set("command", "STATUS");
     statusUrl.searchParams.set("media_id", mediaId);
     let statusResponse: Response;
