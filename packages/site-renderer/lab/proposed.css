@@ -195,3 +195,4 @@ body[data-vibe=tech] :is(.cta-button,.site-topbar__action,.site-action-dock__but
   :is(.site-hero--split,.site-hero--minimal) .buttons{display:grid;grid-template-columns:1fr;gap:8px}
   :is(.site-hero--split,.site-hero--minimal) .cta-button{width:100%}
 }
+@media(max-width:760px){.site-hero--split .links{justify-content:center}}
