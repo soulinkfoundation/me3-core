@@ -121,10 +121,11 @@ async function openScreen() { if (step.value?.screen) await router.push(tourScre
       <span class="app-tour__dots" aria-hidden="true"><i v-for="(item, dot) in tour.tour?.steps" :key="item.id" :class="{ 'is-on': dot <= tour.index }" /></span>
       <span class="app-tour__count">{{ tour.index + 1 }} of {{ total }}</span>
       <span class="app-tour__spacer" />
-      <button type="button" class="app-tour__skip" @click="tour.end('skipped')">Skip</button>
+      <!-- Skip only on the first card: once they've started, the tour carries on to the end. -->
+      <button v-if="tour.index === 0" type="button" class="app-tour__skip" @click="tour.end('skipped')">Skip</button>
       <Button v-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="back">Back</Button>
-      <!-- Next waits until the owner has done the step; Skip is always there if they're stuck. -->
-      <Button v-if="!(tour.isLast && !done)" :color="done ? 'primary' : 'ghost'" shape="soft" type="button" :disabled="!done" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
+      <!-- One thing to do at a time: Next shows only once the owner has done the step. -->
+      <Button v-if="done" color="primary" shape="soft" type="button" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
     </div>
   </section>
 </template>

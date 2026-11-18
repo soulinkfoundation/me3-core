@@ -208,8 +208,8 @@ test("Show me around stays over the app while the owner does each step, keeps it
   const tour = page.getByTestId("app-tour");
   await expect(tour.getByRole("heading", { name: "Home" })).toBeVisible();
   await expect(tour).toContainText("1 of 3");
-  // Next waits until the owner has done the step.
-  await expect(tour.getByTestId("tour-next")).toBeDisabled();
+  // One thing to do: no Next until the owner has done the step.
+  await expect(tour.getByTestId("tour-next")).toHaveCount(0);
   // The card points at what to tap, and moves on as the owner does it: the Home tab, then + Add to Home.
   await expect(tour).toHaveAttribute("data-target", "home_tab");
   await expect(tour.getByTestId("tour-hint")).toHaveText("Tap Home at the top.");
@@ -221,7 +221,9 @@ test("Show me around stays over the app while the owner does each step, keeps it
   await add.getByRole("button", { name: "Inbox" }).click();
   await page.keyboard.press("Escape");
   await expect(tour.getByTestId("tour-done")).toBeVisible();
+  // Skip is only on the first card.
   await tour.getByRole("button", { name: "Next" }).click();
+  await expect(tour.getByRole("button", { name: "Skip", exact: true })).toHaveCount(0);
   await expect(tour.getByRole("heading", { name: "ME3's own email" })).toBeVisible();
   await expect(tour.getByTestId("tour-done")).toBeVisible();
   await tour.getByRole("button", { name: "Copy my address" }).click();
