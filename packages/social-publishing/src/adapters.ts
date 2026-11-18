@@ -1,4 +1,5 @@
 import type { SocialMediaAsset, SocialPlatform } from "./index";
+import { fetchSocialLinkPreview } from "./link-preview";
 import { sniffRasterMimeType, type RasterMimeType } from "./raster-mime";
 import { normalizePostOptions, THREAD_PART_LIMIT, xPostTexts } from "./post-options";
 
@@ -541,7 +542,7 @@ const linkedInAdapter: SocialPublishAdapter = {
       ? { media: uploadedImages[0]! }
       : uploadedImages.length > 1
         ? { multiImage: { images: uploadedImages } }
-        : undefined;
+        : await linkedInArticleContent(input);
 
     let postResponse: Response;
     await input.markProviderWriteStarted?.();
@@ -606,6 +607,33 @@ const linkedInAdapter: SocialPublishAdapter = {
       }));
   },
 };
+
+/**
+ * LinkedIn only shows a link card when the post carries `content.article`, and it needs the
+ * title from us because it doesn't read the page. Reading the page never blocks the post: if it
+ * fails, the card uses the link's host as its title.
+ */
+async function linkedInArticleContent(
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+): Promise<{ article: { source: string; title: string; description?: string } } | undefined> {
+  const link = firstLink(input.bodyText);
+  if (!link) return undefined;
+  let host: string;
+  try {
+    host = new URL(link).hostname.replace(/^www\./, "");
+  } catch {
+    return undefined;
+  }
+  const preview = await fetchSocialLinkPreview(link, input.fetcher).catch(() => null);
+  const title = preview && preview.title !== preview.url ? preview.title : host;
+  return {
+    article: {
+      source: link,
+      title,
+      ...(preview?.description ? { description: preview.description } : {}),
+    },
+  };
+}
 
 /** "Launch deck v2.pdf" → "Launch deck v2": LinkedIn shows the title above the document. */
 function linkedInDocumentTitle(asset: SocialMediaAsset): string {

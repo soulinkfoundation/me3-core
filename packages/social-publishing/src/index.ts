@@ -88,6 +88,7 @@ export {
   type SitePostSnapshot,
 } from "./site-share";
 
+export { fetchSocialLinkPreview, parseSocialLinkPreview, type SocialLinkPreview } from "./link-preview";
 export { RASTER_MIME_TYPES, sniffRasterMimeType, type RasterMimeType } from "./raster-mime";
 
 export {

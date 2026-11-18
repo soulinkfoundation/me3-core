@@ -44,6 +44,103 @@ describe("LinkedIn publishing adapter", () => {
     });
   });
 
+  it("posts a text link as an article card titled from the page", async () => {
+    let postBody: Record<string, unknown> | undefined;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v2/userinfo")) return Response.json({ sub: "member-1" });
+      if (url === "https://www.example.com/launch") {
+        return new Response(
+          '<html><head><title>Fallback</title><meta property="og:title" content="Our launch &amp; plans"><meta property="og:description" content="What we shipped."></head></html>',
+          { headers: { "content-type": "text/html; charset=utf-8" } },
+        );
+      }
+      if (url.endsWith("/rest/posts")) {
+        postBody = JSON.parse(String(init?.body));
+        return new Response("{}", { status: 201, headers: { "x-restli-id": "urn:li:share:link" } });
+      }
+      throw new Error(`Unexpected LinkedIn request: ${url}`);
+    });
+
+    const result = await adapterFor("linkedin").publish({
+      accessToken: "token",
+      accountId: "member-1",
+      bodyText: "Read about it: https://www.example.com/launch.",
+      assets: [],
+      fetcher: fetcher as typeof fetch,
+    });
+
+    expect(result).toMatchObject({ ok: true, platformPostId: "urn:li:share:link" });
+    expect(postBody).toMatchObject({
+      commentary: "Read about it: https://www.example.com/launch.",
+      content: {
+        article: {
+          source: "https://www.example.com/launch",
+          title: "Our launch & plans",
+          description: "What we shipped.",
+        },
+      },
+    });
+  });
+
+  it("falls back to the link's host when the page can't be read", async () => {
+    let postBody: Record<string, unknown> | undefined;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v2/userinfo")) return Response.json({ sub: "member-1" });
+      if (url === "https://www.example.com/down") throw new Error("network down");
+      if (url.endsWith("/rest/posts")) {
+        postBody = JSON.parse(String(init?.body));
+        return new Response("{}", { status: 201, headers: { "x-restli-id": "urn:li:share:down" } });
+      }
+      throw new Error(`Unexpected LinkedIn request: ${url}`);
+    });
+
+    const result = await adapterFor("linkedin").publish({
+      accessToken: "token",
+      accountId: "member-1",
+      bodyText: "https://www.example.com/down",
+      assets: [],
+      fetcher: fetcher as typeof fetch,
+    });
+
+    expect(result).toMatchObject({ ok: true, platformPostId: "urn:li:share:down" });
+    expect(postBody?.content).toEqual({
+      article: { source: "https://www.example.com/down", title: "example.com" },
+    });
+  });
+
+  it("keeps media posts with a link as media, not an article", async () => {
+    let postBody: Record<string, unknown> | undefined;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v2/userinfo")) return Response.json({ sub: "member-1" });
+      if (url === "https://cdn.example/post.png") {
+        return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/png" } });
+      }
+      if (url.includes("/rest/images?action=initializeUpload")) {
+        return Response.json({ value: { uploadUrl: "https://upload.linkedin.example/image", image: "urn:li:image:i1" } });
+      }
+      if (url === "https://upload.linkedin.example/image") return new Response(null, { status: 201 });
+      if (url.endsWith("/rest/posts")) {
+        postBody = JSON.parse(String(init?.body));
+        return new Response("{}", { status: 201, headers: { "x-restli-id": "urn:li:share:media" } });
+      }
+      throw new Error(`Unexpected LinkedIn request: ${url}`);
+    });
+
+    const result = await adapterFor("linkedin").publish({
+      accessToken: "token",
+      accountId: "member-1",
+      bodyText: "Photo and a link https://www.example.com/launch",
+      assets: [{ url: "https://cdn.example/post.png", kind: "image", mimeType: "image/png" }],
+      fetcher: fetcher as typeof fetch,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(postBody?.content).toEqual({ media: { id: "urn:li:image:i1" } });
+  });
+
   it("uploads one image and attaches its image URN to the post", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
