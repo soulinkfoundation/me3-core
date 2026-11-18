@@ -50,6 +50,17 @@ async function profileFromSite(site: string): Promise<{ profile: Me3SiteProfile;
     if (link.rel === "cta") buttons.push({ text: link.label || "Visit", url: link.href });
     else links[link.rel] = link.href;
   }
+  // me.json has no post images; the renderer uses each post's first content image, so read it from the post page.
+  const thumbnails = await Promise.all((me.posts || []).map(async (post) => {
+    const url = (post as { url?: string }).url;
+    if (!url) return undefined;
+    const response = await fetch(new URL(url, `${origin}/`)).catch(() => null);
+    const html = response?.ok ? await response.text() : "";
+    const content = html.slice(Math.max(0, html.search(/<(main|article)\b/i)));
+    const src = [...content.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)].map((match) => match[1])
+      .find((value) => value && !/logo|avatar/i.test(value));
+    return src ? new URL(src.replace(/&amp;/g, "&"), new URL(url, `${origin}/`)).toString() : undefined;
+  }));
   const offers = (me.services || []).map((service, index) => ({
     id: service.id || `offer-${index}`,
     title: service.title,
@@ -65,7 +76,10 @@ async function profileFromSite(site: string): Promise<{ profile: Me3SiteProfile;
       avatar: absolute(me.avatar), banner: absolute(me.banner),
       links, buttons,
       pages: (me.pages || []).map((page) => ({ slug: page.id, title: page.title })),
-      posts: (me.posts || []).map((post) => ({ slug: post.id, title: post.title, type: post.type, publishedAt: post.publishedAt, excerpt: post.excerpt })),
+      posts: (me.posts || []).map((post, index) => ({
+        slug: post.id, title: post.title, type: post.type, publishedAt: post.publishedAt, excerpt: post.excerpt,
+        media: thumbnails[index] ? { thumbnail: thumbnails[index] } : undefined,
+      })),
       blogEnabled: Boolean(me.posts?.length),
       intents: {
         book: offers.length ? { enabled: true, offers } : undefined,
