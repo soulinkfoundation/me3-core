@@ -82,6 +82,10 @@ const INSTAGRAM_GRAPH_VERSION = "v25.0";
 const FACEBOOK_MAX_CHARS = 63_206;
 const FACEBOOK_IMAGE_COUNT_LIMIT = 10;
 const FACEBOOK_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+const FACEBOOK_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/quicktime"]);
+/** Facebook fetches file_url uploads itself up to 1 GB; larger videos go through the resumable upload. */
+const FACEBOOK_VIDEO_URL_MAX_BYTES = 1024 * 1024 * 1024;
+const FACEBOOK_VIDEO_MAX_BYTES = 10 * 1024 * 1024 * 1024;
 const TIKTOK_UPLOAD_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/";
 const TIKTOK_DIRECT_POST_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/";
 const TIKTOK_CREATOR_INFO_URL =
@@ -2716,9 +2720,7 @@ function validateFacebookDraft(input: {
   }
   const documents = documentError(input.assets, "Facebook");
   if (documents) return documents;
-  if (input.assets.some((asset) => asset.kind === "video")) {
-    return { ok: false, error: "Facebook posts from ME3 support images, not video." };
-  }
+  if (input.assets.some((asset) => asset.kind === "video")) return validateFacebookVideo(input.assets);
   if (input.assets.length > FACEBOOK_IMAGE_COUNT_LIMIT) {
     return { ok: false, error: `Facebook posts from ME3 support up to ${FACEBOOK_IMAGE_COUNT_LIMIT} images.` };
   }
@@ -2734,7 +2736,32 @@ function validateFacebookDraft(input: {
   return { ok: true };
 }
 
-type FacebookGraphBody = { id?: string; post_id?: string; error?: { message?: string; code?: number } };
+function validateFacebookVideo(assets: SocialMediaAsset[]): { ok: true } | { ok: false; error: string } {
+  if (assets.length !== 1) {
+    return { ok: false, error: "A Facebook post takes one video on its own, without images." };
+  }
+  const video = assets[0]!;
+  if (!video.url?.trim()) return { ok: false, error: "The Facebook video needs a delivery URL." };
+  const mimeType = normalizeMimeType(video.mimeType);
+  if (mimeType && !FACEBOOK_VIDEO_MIME_TYPES.has(mimeType)) {
+    return { ok: false, error: "Facebook videos must be MP4 or MOV." };
+  }
+  if ((video.byteLength ?? 0) > FACEBOOK_VIDEO_MAX_BYTES) {
+    return { ok: false, error: "Facebook videos must be 10 GB or smaller." };
+  }
+  return { ok: true };
+}
+
+type FacebookGraphBody = {
+  id?: string;
+  post_id?: string;
+  video_id?: string;
+  upload_session_id?: string;
+  start_offset?: string;
+  end_offset?: string;
+  success?: boolean;
+  error?: { message?: string; code?: number };
+};
 
 function facebookFailureClass(status: number, body: FacebookGraphBody): SocialPublishFailureClass {
   // 190: token expired or revoked; 200-299: a permission was removed.
@@ -2756,17 +2783,21 @@ function firstLink(body: string): string | null {
 async function facebookGraphPost(
   input: Parameters<SocialPublishAdapter["publish"]>[0],
   path: string,
-  parameters: Record<string, string>,
+  parameters: Record<string, string> | FormData,
 ): Promise<{ ok: true; body: FacebookGraphBody } | { ok: false; status: number; body: FacebookGraphBody; error: unknown }> {
+  let init: RequestInit;
+  if (parameters instanceof FormData) {
+    parameters.set("access_token", input.accessToken);
+    init = { method: "POST", body: parameters };
+  } else {
+    init = {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ ...parameters, access_token: input.accessToken }),
+    };
+  }
   try {
-    const response = await input.fetcher(
-      `https://graph.facebook.com/${INSTAGRAM_GRAPH_VERSION}/${path}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ ...parameters, access_token: input.accessToken }),
-      },
-    );
+    const response = await input.fetcher(`https://graph.facebook.com/${INSTAGRAM_GRAPH_VERSION}/${path}`, init);
     const body = await readJson<FacebookGraphBody>(response);
     return response.ok ? { ok: true, body } : { ok: false, status: response.status, body, error: null };
   } catch (error) {
@@ -2778,6 +2809,8 @@ async function publishFacebookPage(
   input: Parameters<SocialPublishAdapter["publish"]>[0],
 ): Promise<SocialPublishAdapterResult> {
   const pageId = encodeURIComponent(input.accountId);
+  const video = input.assets.find((asset) => asset.kind === "video");
+  if (video) return publishFacebookVideo(input, pageId, video);
   const images = input.assets.filter((asset) => asset.kind !== "video");
   const message = input.bodyText.trim();
 
@@ -2879,4 +2912,209 @@ async function publishFacebookPage(
     platformPostUrl: facebookPostUrl(feed.body.id),
     providerResponse: { uploads, feed: feed.body },
   };
+}
+
+function facebookVideoError(
+  code: string,
+  result: { status: number; body: FacebookGraphBody; error: unknown },
+  fallback: string,
+  details: Record<string, unknown> = {},
+): SocialPublishAdapterResult {
+  if (result.status === 0) {
+    return providerError(code, fallback, { ...details, ...describeFetchError(result.error) }, "retryable");
+  }
+  return providerError(
+    code,
+    result.body.error?.message || `${fallback} (${result.status}).`,
+    { ...details, response: result.body },
+    facebookFailureClass(result.status, result.body),
+  );
+}
+
+/** One video as a Page post: Facebook fetches file_url itself, or ME3 sends it in chunks when it's large. */
+async function publishFacebookVideo(
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+  pageId: string,
+  video: SocialMediaAsset,
+): Promise<SocialPublishAdapterResult> {
+  const description = input.bodyText.trim();
+  const byteLength = video.byteLength ?? 0;
+  let videoId: string | undefined;
+  let providerResponse: unknown;
+
+  if (byteLength > FACEBOOK_VIDEO_URL_MAX_BYTES) {
+    const upload = await uploadFacebookVideoInChunks(input, pageId, video, byteLength);
+    if (!upload.ok) return upload.result;
+    await input.markProviderWriteStarted?.();
+    const finish = await facebookGraphPost(input, `${pageId}/videos`, {
+      upload_phase: "finish",
+      upload_session_id: upload.sessionId,
+      ...(description ? { description } : {}),
+    });
+    if (!finish.ok || finish.body.success === false) {
+      if (!finish.ok && finish.status === 0) {
+        return providerError(
+          "facebook_outcome_unknown",
+          "Facebook did not confirm whether the video was published. Check your Page before trying again.",
+          { ...describeFetchError(finish.error), videoId: upload.videoId },
+          "outcome_unknown",
+        );
+      }
+      const failed = finish.ok ? { status: 502, body: finish.body, error: null } : finish;
+      return facebookVideoError("facebook_video", failed, "Facebook could not publish the video", { videoId: upload.videoId });
+    }
+    videoId = upload.videoId;
+    providerResponse = { start: upload.start, finish: finish.body };
+  } else {
+    await input.markProviderWriteStarted?.();
+    const posted = await facebookGraphPost(input, `${pageId}/videos`, {
+      file_url: video.url,
+      ...(description ? { description } : {}),
+    });
+    if (!posted.ok) {
+      if (posted.status === 0) {
+        return providerError(
+          "facebook_outcome_unknown",
+          "Facebook did not confirm whether the video was published. Check your Page before trying again.",
+          describeFetchError(posted.error),
+          "outcome_unknown",
+        );
+      }
+      return facebookVideoError("facebook_video", posted, "Facebook video post failed");
+    }
+    videoId = posted.body.id;
+    providerResponse = posted.body;
+  }
+
+  if (!videoId) {
+    return providerError(
+      "facebook_missing_post_id",
+      "Facebook accepted the video but did not return its id. Check your Page before trying again.",
+      providerResponse,
+      "outcome_unknown",
+    );
+  }
+  return {
+    ok: true,
+    platformPostId: videoId,
+    platformPostUrl: (await facebookVideoPermalink(input, videoId)) ?? facebookPostUrl(videoId),
+    providerResponse,
+  };
+}
+
+async function uploadFacebookVideoInChunks(
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+  pageId: string,
+  video: SocialMediaAsset,
+  byteLength: number,
+): Promise<
+  | { ok: true; sessionId: string; videoId: string; start: FacebookGraphBody }
+  | { ok: false; result: SocialPublishAdapterResult }
+> {
+  const start = await facebookGraphPost(input, `${pageId}/videos`, {
+    upload_phase: "start",
+    file_size: String(byteLength),
+  });
+  if (!start.ok || !start.body.upload_session_id || !start.body.video_id) {
+    const failed = start.ok ? { status: 502, body: start.body, error: null } : start;
+    return { ok: false, result: facebookVideoError("facebook_video_start", failed, "Facebook could not start the video upload") };
+  }
+  const sessionId = start.body.upload_session_id;
+  const videoId = start.body.video_id;
+  const mimeType = normalizeMimeType(video.mimeType) || "video/mp4";
+  let startOffset = Number(start.body.start_offset);
+  let endOffset = Number(start.body.end_offset);
+  let chunkIndex = 0;
+
+  while (startOffset < endOffset) {
+    if (!Number.isSafeInteger(startOffset) || !Number.isSafeInteger(endOffset) || endOffset > byteLength) {
+      return {
+        ok: false,
+        result: providerError(
+          "facebook_video_range",
+          "Facebook asked for an unexpected part of the video. ME3 can safely try again.",
+          { startOffset, endOffset, byteLength, videoId },
+          "retryable",
+        ),
+      };
+    }
+    const expectedBytes = endOffset - startOffset;
+    let bytes: Uint8Array | null = null;
+    try {
+      const source = await input.fetcher(video.url, { headers: { Range: `bytes=${startOffset}-${endOffset - 1}` } });
+      if (!source.ok || source.status !== 206) {
+        return {
+          ok: false,
+          result: providerError(
+            "facebook_video_fetch",
+            `Could not load part ${chunkIndex + 1} of the video (${source.status}).`,
+            await source.text().catch(() => ""),
+            failureClassForStatus(source.status),
+          ),
+        };
+      }
+      bytes = await readBoundedBytes(source, expectedBytes);
+    } catch (error) {
+      return {
+        ok: false,
+        result: providerError(
+          "facebook_video_fetch",
+          `Could not load part ${chunkIndex + 1} of the video. ME3 can safely try again.`,
+          describeFetchError(error),
+          "retryable",
+        ),
+      };
+    }
+    if (!bytes || bytes.byteLength !== expectedBytes) {
+      return {
+        ok: false,
+        result: providerError(
+          "facebook_video_range",
+          `Part ${chunkIndex + 1} of the video did not contain the expected bytes.`,
+          { expectedBytes, receivedBytes: bytes?.byteLength ?? null },
+          "retryable",
+        ),
+      };
+    }
+
+    const form = new FormData();
+    form.set("upload_phase", "transfer");
+    form.set("upload_session_id", sessionId);
+    form.set("start_offset", String(startOffset));
+    form.set("video_file_chunk", new Blob([copyBytesToArrayBuffer(bytes)], { type: mimeType }), `chunk-${chunkIndex}`);
+    const transfer = await facebookGraphPost(input, `${pageId}/videos`, form);
+    if (!transfer.ok) {
+      return {
+        ok: false,
+        result: facebookVideoError("facebook_video_transfer", transfer, `Facebook could not take part ${chunkIndex + 1} of the video`, {
+          videoId,
+          startOffset,
+        }),
+      };
+    }
+    startOffset = Number(transfer.body.start_offset);
+    endOffset = Number(transfer.body.end_offset);
+    chunkIndex += 1;
+  }
+  return { ok: true, sessionId, videoId, start: start.body };
+}
+
+async function facebookVideoPermalink(
+  input: Parameters<SocialPublishAdapter["publish"]>[0],
+  videoId: string,
+): Promise<string | undefined> {
+  try {
+    const url = new URL(`https://graph.facebook.com/${INSTAGRAM_GRAPH_VERSION}/${encodeURIComponent(videoId)}`);
+    url.searchParams.set("fields", "permalink_url");
+    url.searchParams.set("access_token", input.accessToken);
+    const response = await input.fetcher(url, { method: "GET" });
+    if (!response.ok) return undefined;
+    const permalink = (await readJson<{ permalink_url?: string }>(response)).permalink_url?.trim();
+    if (!permalink) return undefined;
+    // Graph returns Page video permalinks as a path, e.g. "/maya/videos/123/".
+    if (permalink.startsWith("/")) return `https://www.facebook.com${permalink}`;
+    return permalink.startsWith("https://") ? permalink : undefined;
+  } catch {
+    return undefined;
+  }
 }

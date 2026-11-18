@@ -121,6 +121,7 @@ export const VIDEO_DURATION_SECONDS = {
   instagram: { min: 3, max: 15 * 60 },
   youtube: { min: null, max: null },
   tiktok: { min: null, max: null },
+  facebook: { min: 1, max: 4 * 60 * 60 },
 } as const;
 
 /** YouTube files a video as a Short when it's this long or shorter and square or vertical. */
@@ -260,6 +261,13 @@ const PLATFORM_CAPABILITIES: Record<SocialPlatform, SocialPlatformCapabilities> 
       textRule(63_206, "Publishes as a post on the connected Facebook Page."),
       imageRule(63_206, "Publishes as a photo post on the connected Facebook Page."),
       carouselRule(63_206, 10, "Two to ten ordered images publish as one Page post."),
+      shortVideoRule(
+        63_206,
+        ["video/mp4", "video/quicktime"],
+        10 * 1024 * 1024 * 1024,
+        "Publishes one MP4 or MOV video on its own as a Page post.",
+        VIDEO_DURATION_SECONDS.facebook,
+      ),
     ],
     reason: null,
   },

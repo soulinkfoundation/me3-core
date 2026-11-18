@@ -232,7 +232,6 @@ function videoRow(
   withImages: boolean,
 ): ComposerRow {
   const network = account.network;
-  if (network === "facebook") return cant(row, "Can't take video yet");
   const length = videoLength(account, media.video);
   const swapBack: ComposerAction[] =
     withImages && (network === "x" || network === "linkedin") ? [{ kind: "swap_to_images", label: "Send the images instead" }] : [];

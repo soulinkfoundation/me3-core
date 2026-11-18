@@ -73,7 +73,7 @@ describe("New post", () => {
     expect(wrapper.findAll(".new-post__option").map((option) => option.attributes("aria-label"))).toEqual([
       "Text only. Reaches X, LinkedIn and Facebook.",
       "Images. Reaches X, LinkedIn, Instagram and Facebook.",
-      "Video. Reaches X, LinkedIn, Instagram, YouTube and TikTok.",
+      "Video. Reaches X, LinkedIn, Instagram, Facebook, YouTube and TikTok.",
     ]);
   });
 

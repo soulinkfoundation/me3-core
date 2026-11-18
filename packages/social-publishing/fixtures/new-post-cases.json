@@ -522,14 +522,16 @@
         {
           "accountId": "facebook-1",
           "network": "facebook",
-          "canTake": false,
-          "ticked": false,
-          "label": null,
-          "reason": "Can't take video yet",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
           "tone": "normal",
           "actions": [],
-          "items": [],
-          "format": null,
+          "items": [
+            0
+          ],
+          "format": "short_video",
           "youtubeKind": null,
           "hint": null,
           "lengthUnchecked": false
@@ -668,14 +670,16 @@
         {
           "accountId": "facebook-1",
           "network": "facebook",
-          "canTake": false,
-          "ticked": false,
-          "label": null,
-          "reason": "Can't take video yet",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
           "tone": "normal",
           "actions": [],
-          "items": [],
-          "format": null,
+          "items": [
+            0
+          ],
+          "format": "short_video",
           "youtubeKind": null,
           "hint": null,
           "lengthUnchecked": false
@@ -814,14 +818,16 @@
         {
           "accountId": "facebook-1",
           "network": "facebook",
-          "canTake": false,
-          "ticked": false,
-          "label": null,
-          "reason": "Can't take video yet",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
           "tone": "normal",
           "actions": [],
-          "items": [],
-          "format": null,
+          "items": [
+            0
+          ],
+          "format": "short_video",
           "youtubeKind": null,
           "hint": null,
           "lengthUnchecked": false
@@ -966,14 +972,16 @@
         {
           "accountId": "facebook-1",
           "network": "facebook",
-          "canTake": false,
-          "ticked": false,
-          "label": null,
-          "reason": "Can't take video yet",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
           "tone": "normal",
           "actions": [],
-          "items": [],
-          "format": null,
+          "items": [
+            0
+          ],
+          "format": "short_video",
           "youtubeKind": null,
           "hint": null,
           "lengthUnchecked": false
@@ -1121,14 +1129,16 @@
         {
           "accountId": "facebook-1",
           "network": "facebook",
-          "canTake": false,
-          "ticked": false,
-          "label": null,
-          "reason": "Can't take video yet",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
           "tone": "normal",
           "actions": [],
-          "items": [],
-          "format": null,
+          "items": [
+            0
+          ],
+          "format": "short_video",
           "youtubeKind": null,
           "hint": null,
           "lengthUnchecked": false
@@ -1267,14 +1277,16 @@
         {
           "accountId": "facebook-1",
           "network": "facebook",
-          "canTake": false,
-          "ticked": false,
-          "label": null,
-          "reason": "Can't take video yet",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
           "tone": "normal",
           "actions": [],
-          "items": [],
-          "format": null,
+          "items": [
+            0
+          ],
+          "format": "short_video",
           "youtubeKind": null,
           "hint": null,
           "lengthUnchecked": false
@@ -1416,14 +1428,16 @@
         {
           "accountId": "facebook-1",
           "network": "facebook",
-          "canTake": false,
-          "ticked": false,
-          "label": null,
-          "reason": "Can't take video yet",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
           "tone": "normal",
           "actions": [],
-          "items": [],
-          "format": null,
+          "items": [
+            0
+          ],
+          "format": "short_video",
           "youtubeKind": null,
           "hint": null,
           "lengthUnchecked": false
@@ -1562,14 +1576,16 @@
         {
           "accountId": "facebook-1",
           "network": "facebook",
-          "canTake": false,
-          "ticked": false,
-          "label": null,
-          "reason": "Can't take video yet",
+          "canTake": true,
+          "ticked": true,
+          "label": "Video",
+          "reason": null,
           "tone": "normal",
           "actions": [],
-          "items": [],
-          "format": null,
+          "items": [
+            0
+          ],
+          "format": "short_video",
           "youtubeKind": null,
           "hint": null,
           "lengthUnchecked": false

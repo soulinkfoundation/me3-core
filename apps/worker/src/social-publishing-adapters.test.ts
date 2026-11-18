@@ -1725,10 +1725,121 @@ describe("Facebook Page publishing adapter", () => {
     expect(result).toMatchObject({ ok: false, failureClass: "reconnect_required" });
   });
 
-  it("rejects video", () => {
-    expect(adapterFor("facebook").validateDraft({
+  it("accepts one video on its own and rejects video mixed with images", () => {
+    const adapter = adapterFor("facebook");
+    expect(adapter.validateDraft({
       bodyText: "Clip",
-      assets: [{ url: "https://media.example/a.mp4", kind: "video" }],
-    })).toEqual({ ok: false, error: "Facebook posts from ME3 support images, not video." });
+      assets: [{ url: "https://media.example/a.mov", kind: "video", mimeType: "video/quicktime" }],
+    })).toEqual({ ok: true });
+    expect(adapter.validateDraft({
+      bodyText: "Clip",
+      assets: [
+        { url: "https://media.example/a.mp4", kind: "video", mimeType: "video/mp4" },
+        { url: "https://media.example/one.jpg", kind: "image" },
+      ],
+    })).toEqual({ ok: false, error: "A Facebook post takes one video on its own, without images." });
+    expect(adapter.validateDraft({
+      bodyText: "Clip",
+      assets: [{ url: "https://media.example/a.webm", kind: "video", mimeType: "video/webm" }],
+    })).toEqual({ ok: false, error: "Facebook videos must be MP4 or MOV." });
+  });
+
+  it("posts a video to the Page from its delivery URL and returns its permalink", async () => {
+    const { fetcher, calls } = graphFetcher([
+      { body: { id: "video-1" } },
+      { body: { permalink_url: "/maya/videos/video-1/", id: "video-1" } },
+    ]);
+    const markProviderWriteStarted = vi.fn();
+    const result = await adapterFor("facebook").publish({
+      accessToken: "page-token",
+      accountId: "page",
+      bodyText: "Studio tour",
+      assets: [{ url: "https://media.example/tour.mp4", kind: "video", mimeType: "video/mp4", byteLength: 4_000_000 }],
+      fetcher: fetcher as typeof fetch,
+      markProviderWriteStarted,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      platformPostId: "video-1",
+      platformPostUrl: "https://www.facebook.com/maya/videos/video-1/",
+    });
+    expect(markProviderWriteStarted).toHaveBeenCalledTimes(1);
+    expect(calls[0]).toEqual({
+      url: "https://graph.facebook.com/v25.0/page/videos",
+      body: { file_url: "https://media.example/tour.mp4", description: "Studio tour", access_token: "page-token" },
+    });
+    expect(calls[1]!.url).toBe(
+      "https://graph.facebook.com/v25.0/video-1?fields=permalink_url&access_token=page-token",
+    );
+  });
+
+  it("maps a rejected video to the same failure classes as images", async () => {
+    const { fetcher } = graphFetcher([
+      { status: 403, body: { error: { message: "Permissions error", code: 200 } } },
+    ]);
+    const result = await adapterFor("facebook").publish({
+      accessToken: "page-token",
+      accountId: "page",
+      bodyText: "Studio tour",
+      assets: [{ url: "https://media.example/tour.mp4", kind: "video", mimeType: "video/mp4" }],
+      fetcher: fetcher as typeof fetch,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: "facebook_video",
+      errorMessage: "Permissions error",
+      failureClass: "reconnect_required",
+    });
+  });
+
+  it("uploads a large video in chunks, then publishes it with its description", async () => {
+    const size = 1024 * 1024 * 1024 + 10;
+    const graph: Array<Record<string, unknown>> = [];
+    const ranges: string[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("https://media.example/")) {
+        const range = new Headers(init?.headers).get("Range")!;
+        ranges.push(range);
+        const [first, last] = range.replace("bytes=", "").split("-").map(Number);
+        return new Response(new Uint8Array(last! - first! + 1), { status: 206 });
+      }
+      if (init?.method === "GET") return new Response(JSON.stringify({}), { status: 200 });
+      const body = init?.body instanceof FormData
+        ? Object.fromEntries(
+          ["upload_phase", "upload_session_id", "start_offset", "video_file_chunk", "access_token"].flatMap((key) => {
+            const value = (init.body as FormData).get(key);
+            return value == null ? [] : [[key, typeof value === "string" ? value : `blob:${(value as Blob).size}`]];
+          }),
+        )
+        : Object.fromEntries(new URLSearchParams(String(init?.body)));
+      graph.push(body);
+      if (body.upload_phase === "start") {
+        return new Response(JSON.stringify({ upload_session_id: "s1", video_id: "video-9", start_offset: "0", end_offset: "6" }));
+      }
+      if (body.upload_phase === "transfer") {
+        const next = body.start_offset === "0" ? { start_offset: "6", end_offset: "10" } : { start_offset: "10", end_offset: "10" };
+        return new Response(JSON.stringify(next));
+      }
+      return new Response(JSON.stringify({ success: true }));
+    });
+    const result = await adapterFor("facebook").publish({
+      accessToken: "page-token",
+      accountId: "page",
+      bodyText: "Full class",
+      assets: [{ url: "https://media.example/class.mp4", kind: "video", mimeType: "video/mp4", byteLength: size }],
+      fetcher: fetcher as typeof fetch,
+    });
+
+    expect(result).toMatchObject({ ok: true, platformPostId: "video-9", platformPostUrl: "https://www.facebook.com/video-9" });
+    expect(ranges).toEqual(["bytes=0-5", "bytes=6-9"]);
+    expect(graph).toEqual([
+      { upload_phase: "start", file_size: String(size), access_token: "page-token" },
+      { upload_phase: "transfer", upload_session_id: "s1", start_offset: "0", video_file_chunk: "blob:6", access_token: "page-token" },
+      { upload_phase: "transfer", upload_session_id: "s1", start_offset: "6", video_file_chunk: "blob:4", access_token: "page-token" },
+      { upload_phase: "finish", upload_session_id: "s1", description: "Full class", access_token: "page-token" },
+    ]);
   });
 });
