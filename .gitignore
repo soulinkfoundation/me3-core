@@ -23,6 +23,9 @@ apps/web/site-ui-results/
 # Move rehearsal reports and scratch data
 .move-rehearsal/
 
+# Site renderer theme lab output
+.theme-lab/
+
 # Local web-research evaluation outputs
 .me3-evals/
 

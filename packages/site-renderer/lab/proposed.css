@@ -1,0 +1,41 @@
+/* Proposed polish, injected only into the lab's "Proposed" pages. Rules that win review move into modern-css.ts. */
+
+/* Menu: lighter, calmer links. */
+.site-topbar .nav-link{font-weight:500;letter-spacing:-.005em;color:var(--muted)}
+.site-topbar .nav-link.active{background:transparent;color:var(--text);box-shadow:inset 0 -2px 0 var(--accent);border-radius:0}
+.site-topbar .nav-link:not(.active):hover{background:transparent;color:var(--text)}
+.site-topbar__action{font-weight:600}
+.site-topbar__identity{font-weight:600}
+
+/* Cover becomes immersive on desktop: the banner fills the first screen and the header floats over it. */
+@media(min-width:761px){
+  body[data-page=home][data-layout=cover] .site-topbar{position:fixed;left:0;right:0;background:transparent;border-bottom-color:transparent;transition:background .3s ease,border-color .3s ease,backdrop-filter .3s ease}
+  body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar__identity,
+  body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar .nav-link,
+  body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar .site-theme-toggle{color:#fff;text-shadow:0 1px 12px rgba(0,0,0,.25)}
+  body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar .nav-link:not(.active){color:rgba(255,255,255,.82)}
+  body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar .nav-link.active{box-shadow:inset 0 -2px 0 #fff}
+  body[data-page=home][data-layout=cover]:not(.is-scrolled) .site-topbar__action{background:#fff;color:#1c1c1c}
+  body[data-page=home][data-layout=cover].is-scrolled .site-topbar{background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:saturate(1.4) blur(14px);-webkit-backdrop-filter:saturate(1.4) blur(14px);border-bottom-color:var(--border)}
+
+  .site-hero--cover{min-height:max(560px,min(94vh,960px));background:#111}
+  .site-hero--cover .site-hero__banner img{animation:lab-settle 1.6s cubic-bezier(.2,.7,.2,1) both}
+  .site-hero--cover .site-hero__banner:after{background:linear-gradient(180deg,rgba(0,0,0,.42) 0,rgba(0,0,0,0) 22%,rgba(0,0,0,0) 42%,rgba(0,0,0,.72) 100%)}
+  .site-hero--cover .site-hero__intro{width:min(1200px,100%);margin:0 auto;padding:0 48px 76px}
+  .site-hero--cover .site-hero__avatar{display:block;width:76px;height:76px;margin:0 0 26px;border-width:2px}
+  .site-hero--cover .name{display:block;max-width:14ch;margin:0 0 18px;font-size:clamp(3.6rem,7.2vw,7rem);line-height:.94;letter-spacing:-.045em}
+  .site-hero--cover .bio{max-width:34ch;margin:0 0 10px;font-size:clamp(1.15rem,1.5vw,1.4rem);line-height:1.45;color:rgba(255,255,255,.9)}
+  .site-hero--cover .location{color:rgba(255,255,255,.7);font-size:.95rem}
+  .site-hero--cover .buttons{gap:10px;margin:30px 0 0}
+  .site-hero--cover .cta-button{min-height:50px;padding:0 24px}
+  .site-hero--cover .cta-button:not(:first-child){background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.4);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+  .site-hero--cover .site-hero__intro>*{animation:lab-rise .9s cubic-bezier(.2,.7,.2,1) both}
+  .site-hero--cover .site-hero__intro>:nth-child(2){animation-delay:.08s}
+  .site-hero--cover .site-hero__intro>:nth-child(3){animation-delay:.16s}
+  .site-hero--cover .site-hero__intro>:nth-child(n+4){animation-delay:.24s}
+  .site-cover-links{width:min(1200px,calc(100% - 96px))}
+  body[data-layout=cover] .site-home-sections{width:min(1200px,calc(100% - 96px))}
+}
+@keyframes lab-settle{from{transform:scale(1.06)}to{transform:scale(1)}}
+@keyframes lab-rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.site-hero--cover .site-hero__banner img,.site-hero--cover .site-hero__intro>*{animation:none}}
