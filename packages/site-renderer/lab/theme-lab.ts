@@ -98,7 +98,7 @@ async function main() {
   const site = argValue("site");
   const source = site ? await profileFromSite(site) : { profile: SAMPLE };
   const proposedCss = await readFile(join(here, "proposed.css"), "utf8");
-  const proposedHead = `<style data-theme-lab="proposed">${proposedCss}</style><script>(function(){function s(){document.body.classList.toggle("is-scrolled",scrollY>24)}addEventListener("scroll",s,{passive:true});addEventListener("DOMContentLoaded",s)})();</script>`;
+  const proposedHead = `<style data-theme-lab="proposed">${proposedCss}</style><script>(function(){function s(){document.body.classList.toggle("is-scrolled",scrollY>24)}addEventListener("scroll",s,{passive:true});addEventListener("DOMContentLoaded",function(){s();var links=document.querySelector(".site-cover-links .links"),intro=document.querySelector(".site-hero--cover .site-hero__intro");if(links&&intro){intro.append(links);document.querySelector(".site-cover-links").remove()}})})();</script>`;
 
   await rm(outDir, { recursive: true, force: true });
   const themes = Object.keys(siteThemes) as SiteThemeId[];

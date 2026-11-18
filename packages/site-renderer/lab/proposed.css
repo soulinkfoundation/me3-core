@@ -36,6 +36,11 @@
   .site-cover-links{width:min(1200px,calc(100% - 96px))}
   body[data-layout=cover] .site-home-sections{width:min(1200px,calc(100% - 96px))}
 }
+/* Cover: social icons live in the hero, quiet glass circles under the buttons. */
+.site-hero--cover .links{justify-content:flex-start;gap:8px;margin:22px 0 0}
+.site-hero--cover .link-item{width:38px;height:38px;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.24);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:background .2s}
+.site-hero--cover .link-item:hover{background:rgba(255,255,255,.24)}
+.site-hero--cover .link-icon svg{width:17px;height:17px}
 @keyframes lab-settle{from{transform:scale(1.06)}to{transform:scale(1)}}
 @keyframes lab-rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.site-hero--cover .site-hero__banner img,.site-hero--cover .site-hero__intro>*{animation:none}}
