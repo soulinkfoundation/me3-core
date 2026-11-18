@@ -2572,7 +2572,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
           @start-fresh="startFresh"
         />
         <div class="home-chat-switcher" role="group" aria-label="Workspace view">
-          <button type="button" :aria-pressed="homeMode" @click="showWorkspace(true)">Home</button>
+          <button type="button" :aria-pressed="homeMode" data-tour-target="home_tab" @click="showWorkspace(true)">Home</button>
           <button type="button" :aria-pressed="!homeMode" @click="showWorkspace(false)">Chat</button>
         </div>
       </div>

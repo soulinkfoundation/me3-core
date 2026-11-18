@@ -8,19 +8,27 @@ import type { Env } from "./types";
 
 /**
  * Show me around (me3-q6la.5): a short tour that sits over the whole app, the same on web, iOS and Android.
- * Each step asks the owner to do one small real thing; Core ticks it from what the install now has
+ * Each step points at what to tap and asks the owner to do one small real thing themselves; Core ticks it from what the install now has
  * (a card on Home, a page visited, a site built), and keeps their place so the tour survives a reload
  * or a move to another app. The website comes last: it needs the owner's input and ends the tour.
  */
-/** One of the app's own places, which each client maps to its own screen. `home_add` is Home with Add to Home open; `website` is the website editor. */
-export type TourPlace = "home_add" | "accounts" | "social" | "website";
+/** One of the app's own places, which each client maps to its own screen: `website` is the website editor. */
+export type TourPlace = "website";
 export type TourTask = { kind: "open"; label: string; to: TourPlace } | { kind: "site_ask"; label: string };
+/**
+ * What the card points at, in the order the owner reaches them. Each client draws the card beside the last one
+ * it can see (Home tab, then + Add to Home once Home is open), with `hint` saying what to tap.
+ */
+export type TourTargetId = "home_tab" | "add_to_home" | "add_inbox" | "profile_menu" | "menu_accounts" | "menu_social";
+export type TourTarget = { id: TourTargetId; hint: string };
 export type TourStep = {
   id: TourStepId; emoji: string; title: string; body: string;
-  task: TourTask;
+  targets: TourTarget[];
+  /** A button for a step the owner can't do by tapping around (the website, which needs their input). */
+  task: TourTask | null;
   /** ME3's address, for the email step, so the owner can copy it. */
   copy: { label: string; value: string } | null;
-  /** The owner has done the task. */
+  /** The owner has done the step. */
   done: boolean;
 };
 export type TourStepId = "home" | "email" | "accounts" | "social" | "website";
@@ -53,13 +61,15 @@ export function chatTour(context: TourContext): ChatTour {
     {
       id: "home", emoji: "🏠", title: "Home",
       body: "Home shows your day: what's on, plus your own cards for quick access to what matters to you.",
-      task: { kind: "open", label: "Add a card to Home", to: "home_add" }, copy: null,
+      targets: [{ id: "home_tab", hint: "Tap Home at the top." }, { id: "add_to_home", hint: "Now tap Add to Home and pick any card." }],
+      task: null, copy: null,
       done: Boolean(context.layout?.pinned.length),
     },
     {
       id: "email", emoji: "✉️", title: "ME3's own email",
       body: "I have my own email address. Forward me invoices and I'll log them in your Accounts. Add my email card to Home for quick access.",
-      task: { kind: "open", label: "Add the email card", to: "home_add" },
+      targets: [{ id: "home_tab", hint: "Go to Home." }, { id: "add_to_home", hint: "Tap Add to Home." }, { id: "add_inbox", hint: "Pick Inbox." }],
+      task: null,
       copy: context.emailAddress ? { label: "Copy my address", value: context.emailAddress } : null,
       done: inboxOnHome(context.layout),
     },
@@ -67,13 +77,15 @@ export function chatTour(context: TourContext): ChatTour {
   if (context.accounts) steps.push({
     id: "accounts", emoji: "📒", title: "Accounts",
     body: "Track your income and expenses in one place. Purchases and bookings from your site show up on their own, and so do invoices sent to my email.",
-    task: { kind: "open", label: "Open Accounts", to: "accounts" }, copy: null,
+    targets: [{ id: "profile_menu", hint: "Tap your profile picture. Everything in ME3 is in this menu." }, { id: "menu_accounts", hint: "Now tap Accounts." }],
+    task: null, copy: null,
     done: context.seen.includes("accounts"),
   });
   if (context.social) steps.push({
     id: "social", emoji: "📣", title: "Socials made simple",
     body: "Connect your accounts and post everywhere from one place. Repost and schedule in a couple of taps.",
-    task: { kind: "open", label: "Open Social", to: "social" }, copy: null,
+    targets: [{ id: "profile_menu", hint: "Tap your profile picture again." }, { id: "menu_social", hint: "Tap Social." }],
+    task: null, copy: null,
     done: context.seen.includes("social"),
   });
   steps.push({
@@ -81,6 +93,7 @@ export function chatTour(context: TourContext): ChatTour {
     body: context.siteBuilt
       ? "Your website is ready. Change anything in the website editor, or ask me to. Find it any time under your profile picture."
       : "Tell me about your work and I'll make a first draft. You review it in the website editor before it goes live. Find it any time under your profile picture.",
+    targets: [{ id: "profile_menu", hint: "Your website lives here too." }],
     task: context.siteBuilt ? { kind: "open", label: "Open the editor", to: "website" } : { kind: "site_ask", label: "Make my website" },
     copy: null,
     done: context.siteBuilt,

@@ -14,7 +14,7 @@ const back = computed(() => {
 
 <template>
   <header class="app-top-bar" aria-label="App navigation">
-    <RouterLink v-if="!home" :to="back.to" class="app-home-link" :aria-label="back.label === 'Home' ? 'Home' : `Back to ${back.label}`" :title="back.label === 'Home' ? undefined : `Back to ${back.label}`"><UiIcon name="ArrowLeft" :size="18" /></RouterLink>
+    <RouterLink v-if="!home" :to="back.to" class="app-home-link" data-tour-target="back_home" :aria-label="back.label === 'Home' ? 'Home' : `Back to ${back.label}`" :title="back.label === 'Home' ? undefined : `Back to ${back.label}`"><UiIcon name="ArrowLeft" :size="18" /></RouterLink>
     <!-- Pages teleport their main control (day or month switcher, search) here instead of adding a second header row. -->
     <div id="app-page-controls" class="app-top-bar__controls" />
     <AppProfileMenu v-if="home" />

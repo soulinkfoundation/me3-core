@@ -123,7 +123,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <button ref="trigger" type="button" class="profile-trigger" aria-label="Open profile menu" aria-haspopup="menu" :aria-expanded="open" aria-controls="app-profile-menu" @click="toggle" @keydown.down.prevent="!open && toggle()">
+  <button ref="trigger" type="button" class="profile-trigger" data-tour-target="profile_menu" aria-label="Open profile menu" aria-haspopup="menu" :aria-expanded="open" aria-controls="app-profile-menu" @click="toggle" @keydown.down.prevent="!open && toggle()">
     <img v-if="photo" :src="photo" alt="" @error="failedPhoto = true" />
     <span v-else aria-hidden="true">{{ name.slice(0, 1).toUpperCase() }}</span>
   </button>
@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
         <div><strong>{{ name }}</strong><a :href="publicUrl" role="menuitem" tabindex="-1" target="_blank" rel="noopener noreferrer">{{ publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}<UiIcon name="ArrowUpRight" :size="14" /></a><RouterLink :to="editSite" role="menuitem" tabindex="-1" @click="close()">Edit site<UiIcon name="Pencil" :size="14" /></RouterLink></div>
       </header>
       <nav aria-label="Go to">
-        <RouterLink v-for="destination in destinations" :key="destination.path" :to="destination.path" class="profile-menu__row" role="menuitem" tabindex="-1" :aria-label="destination.label" :aria-current="route.fullPath === destination.path ? 'page' : undefined" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">{{ destination.emoji }}</span><span>{{ destination.label }}</span></RouterLink>
+        <RouterLink v-for="destination in destinations" :key="destination.path" :to="destination.path" class="profile-menu__row" :data-tour-target="destination.path === '/accounts' ? 'menu_accounts' : destination.path === '/social' ? 'menu_social' : undefined" role="menuitem" tabindex="-1" :aria-label="destination.label" :aria-current="route.fullPath === destination.path ? 'page' : undefined" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">{{ destination.emoji }}</span><span>{{ destination.label }}</span></RouterLink>
       </nav>
       <div class="profile-menu__settings">
         <RouterLink to="/agent" class="profile-menu__row" role="menuitem" tabindex="-1" @click="close()"><UiIcon name="Brain" :size="18" />Your agent</RouterLink>

@@ -33,9 +33,9 @@ const sse = (events: Array<[string, unknown]>) => events.map(([event, data]) => 
 function tourOf(state: State) {
   const pinned = state.layout?.pinned ?? []; const hidden = state.layout?.hidden ?? ["inbox"];
   return { steps: [
-    { id: "home", emoji: "🏠", title: "Home", body: "Home shows your day.", task: { kind: "open", label: "Add a card to Home", to: "home_add" }, copy: null, done: pinned.length > 0 },
-    { id: "email", emoji: "✉️", title: "ME3's own email", body: "I have my own email address.", task: { kind: "open", label: "Add the email card", to: "home_add" }, copy: { label: "Copy my address", value: "maya@inbox.me3.app" }, done: pinned.includes("inbox") && !hidden.includes("inbox") },
-    { id: "website", emoji: "🌐", title: "Your website", body: "Tell me about your work and I'll make a first draft.", task: { kind: "site_ask", label: "Make my website" }, copy: null, done: false }],
+    { id: "home", emoji: "🏠", title: "Home", body: "Home shows your day.", targets: [{ id: "home_tab", hint: "Tap Home at the top." }, { id: "add_to_home", hint: "Now tap Add to Home and pick any card." }], task: null, copy: null, done: pinned.length > 0 },
+    { id: "email", emoji: "✉️", title: "ME3's own email", body: "I have my own email address.", targets: [{ id: "home_tab", hint: "Go to Home." }, { id: "add_to_home", hint: "Tap Add to Home." }, { id: "add_inbox", hint: "Pick Inbox." }], task: null, copy: { label: "Copy my address", value: "maya@inbox.me3.app" }, done: pinned.includes("inbox") && !hidden.includes("inbox") },
+    { id: "website", emoji: "🌐", title: "Your website", body: "Tell me about your work and I'll make a first draft.", targets: [{ id: "profile_menu", hint: "Your website lives here too." }], task: { kind: "site_ask", label: "Make my website" }, copy: null, done: false }],
   progress: state.tour };
 }
 
@@ -208,8 +208,13 @@ test("Show me around stays over the app while the owner does each step, keeps it
   const tour = page.getByTestId("app-tour");
   await expect(tour.getByRole("heading", { name: "Home" })).toBeVisible();
   await expect(tour).toContainText("1 of 3");
-  // Doing the step: Home opens with Add to Home, and adding a card ticks the step without closing the tour.
-  await tour.getByRole("button", { name: "Add a card to Home" }).click();
+  // The card points at what to tap, and moves on as the owner does it: the Home tab, then + Add to Home.
+  await expect(tour).toHaveAttribute("data-target", "home_tab");
+  await expect(tour.getByTestId("tour-hint")).toHaveText("👉 Tap Home at the top.");
+  await expect(page.locator(".tour-target-ring")).toHaveText("Home");
+  await page.getByRole("group", { name: "Workspace view" }).getByRole("button", { name: "Home", exact: true }).click();
+  await expect(tour).toHaveAttribute("data-target", "add_to_home");
+  await page.getByRole("button", { name: "Add to Home" }).click();
   const add = page.getByRole("dialog", { name: "Add to Home" });
   await add.getByRole("button", { name: "Inbox" }).click();
   await page.keyboard.press("Escape");

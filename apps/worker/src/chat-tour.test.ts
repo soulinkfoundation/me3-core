@@ -42,6 +42,15 @@ describe("chatTour", () => {
     expect(step({ seen: ["accounts"] }, "social").done).toBe(false);
   });
 
+  it("points the owner at what to tap, in order, and gives a button only to the website", () => {
+    expect(step({}, "home").targets.map(target => target.id)).toEqual(["home_tab", "add_to_home"]);
+    expect(step({}, "email").targets.map(target => target.id)).toEqual(["home_tab", "add_to_home", "add_inbox"]);
+    expect(step({}, "accounts").targets.map(target => target.id)).toEqual(["profile_menu", "menu_accounts"]);
+    expect(step({}, "social").targets.map(target => target.id)).toEqual(["profile_menu", "menu_social"]);
+    for (const id of ["home", "email", "accounts", "social"]) expect(step({}, id).task).toBeNull();
+    for (const item of tour().steps) for (const target of item.targets) expect(target.hint).not.toBe("");
+  });
+
   it("offers Make my website until the site is built, then the editor", () => {
     expect(step({}, "website").task).toEqual({ kind: "site_ask", label: "Make my website" });
     const built = step({ siteBuilt: true }, "website");

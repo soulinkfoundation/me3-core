@@ -654,10 +654,10 @@ onBeforeUnmount(() => {
       </template>
     </draggable>
     <button v-if="newsHidden" type="button" class="home-news-bring" @click="newsBringBack"><span aria-hidden="true">🗞️</span> Today’s news</button>
-    <button type="button" class="home-add" @click="dialog = 'add'"><UiIcon name="Plus" :size="26" /><span>Add to Home</span></button>
+    <button type="button" class="home-add" data-tour-target="add_to_home" @click="dialog = 'add'"><UiIcon name="Plus" :size="26" /><span>Add to Home</span></button>
     <AppDialog :open="dialog !== null" aria-label="Add to Home" @close="dialog = null">
       <section class="home-dialog"><header><h2>Add to Home</h2><button type="button" aria-label="Close Home editor" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>
-        <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in addCards" :key="card" type="button" :aria-label="cards[card].title" :aria-pressed="visible.includes(card)" class="home-add-tile" @click="card === 'soup' ? (visible.includes(card) ? newsRemove() : newsAdd()) : visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
+        <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in addCards" :key="card" type="button" :aria-label="cards[card].title" :aria-pressed="visible.includes(card)" :data-tour-target="card === 'inbox' ? 'add_inbox' : undefined" class="home-add-tile" @click="card === 'soup' ? (visible.includes(card) ? newsRemove() : newsAdd()) : visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
       </section>
     </AppDialog>
     <PersonSheet :contact="openPerson" @close="openPersonId = null" />
