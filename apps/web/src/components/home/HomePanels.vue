@@ -221,6 +221,8 @@ const todayTasks = computed(() => homeTodayTasks(tasks.value));
 // Server setting (gratitude_settings.in_today), so it follows the owner across web and the apps.
 const gratitudeOn = ref(false);
 const showGratitude = computed(() => gratitudeOn.value && !unavailable.value.includes("gratitude"));
+// Today's page is on until the owner switches it off; a Core without the setting keeps it on.
+const todayPageOn = ref(true);
 // Upcoming events only; an event drops off an hour after it starts.
 // Today is the calendar at a glance: finished events fade, the current one is marked, and an
 // event without an end counts as an hour long.
@@ -260,6 +262,12 @@ async function toggleGratitude() {
   gratitudeOn.value = next;
   try { await api.patch("/gratitude/settings", { inToday: next }); }
   catch (error) { gratitudeOn.value = !next; toastFromUnknown(error, "Couldn't change Gratitude"); }
+}
+async function toggleTodayPage() {
+  const next = !todayPageOn.value;
+  todayPageOn.value = next;
+  try { await api.patch("/home/settings", { todayPage: next }); }
+  catch (error) { todayPageOn.value = !next; toastFromUnknown(error, "Couldn't change Today's page"); }
 }
 const activeGoals = computed(() => goals.value.filter(goal => goal.status !== "completed"));
 const lowestArea = computed(() => [...wheel.value].filter(area => area.value !== null).sort((a, b) => a.value! - b.value!)[0]);
@@ -438,6 +446,7 @@ async function refresh() {
         soulink.value = homeInboxSoulink(result.recentEvents || []).map(e => ({ ...e, outcome: result.recentEvents?.find(reply => e.providerEventId && reply.direction === "outbound" && reply.providerEventId === `${e.providerEventId}:reply`)?.textBody }));
       } catch (error) { if (!(error instanceof ApiError && error.status === 404)) throw error; }
     }),
+    api.get<{ todayPage?: boolean }>("/home/settings").then(settings => { if (!disposed) todayPageOn.value = settings.todayPage !== false; }).catch(() => undefined),
     resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed) gratitudeOn.value = Boolean(state.settings?.inToday); }),
     loadNews(),
     loadNotes(),
@@ -551,9 +560,10 @@ onBeforeUnmount(() => {
               <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-haspopup="menu" :aria-expanded="menu === card" title="Options. Drag to reorder." @click="menu === card ? closeMenu(card) : openMenu(card)" @keydown.alt.up.prevent="move(card, -1)" @keydown.alt.down.prevent="move(card, 1)"><UiIcon name="Ellipsis" :size="20" /></button>
             </div>
           </header>
-          <!-- Today's menu holds only the Gratitude switch; every card reorders by dragging its ⋯. -->
+          <!-- Today's menu holds only its section switches; every card reorders by dragging its ⋯. -->
           <div v-if="menu === card && card === 'today'" class="home-card__menu" role="menu" aria-label="Today options" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
             <button type="button" role="menuitemcheckbox" :aria-checked="showGratitude" @click="toggleGratitude"><span class="home-emoji home-emoji--menu" aria-hidden="true">🌅</span>Gratitude<span class="home-switch" :class="{ 'is-on': showGratitude }" aria-hidden="true" /></button>
+            <button type="button" role="menuitemcheckbox" :aria-checked="todayPageOn" @click="toggleTodayPage"><span class="home-emoji home-emoji--menu" aria-hidden="true">📝</span>Today's page<span class="home-switch" :class="{ 'is-on': todayPageOn }" aria-hidden="true" /></button>
           </div>
           <div v-else-if="menu === card" class="home-card__menu" role="menu" :aria-label="`${cards[card].title} options`" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
             <template v-if="card === 'soup' && news?.setUp">
@@ -579,7 +589,7 @@ onBeforeUnmount(() => {
                 <p v-if="dayOver" class="home-empty-line">Nothing else today · <RouterLink :to="`/calendar?date=${tomorrowKey}`" aria-label="Open tomorrow in Calendar">Tomorrow</RouterLink></p>
               </template>
               <GratitudeCard v-if="showGratitude" section :active="active" @unavailable="unavailable.push('gratitude')" />
-              <RouterLink to="/journal" class="home-tasksline" :aria-label="tasksLine.label">
+              <RouterLink v-if="todayPageOn" to="/journal" class="home-tasksline" :aria-label="tasksLine.label">
                 <span class="home-emoji" aria-hidden="true">📝</span>
                 <strong>Today's page</strong>
                 <span v-if="tasksLine.count" class="home-muted">· {{ tasksLine.count }}</span>

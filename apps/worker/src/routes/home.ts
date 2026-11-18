@@ -1,4 +1,4 @@
-import { getHomeLayout, saveHomeLayout } from "../home-layout";
+import { getHomeLayout, getHomeSettings, saveHomeLayout, updateHomeSettings } from "../home-layout";
 import { actOnHomeCard, createHomeCard, deleteHomeCard, getHomeCard, listHomeCards, rollbackHomeCard, updateHomeCard } from "../home-cards";
 import { JournalInputError } from "../journal";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
@@ -17,6 +17,9 @@ export function registerHomeRoutes(app: AppHono, deps: OwnerRouteDeps) {
   };
   app.get("/api/home/layout", async c => c.json(await getHomeLayout(c.env, await owner(c))));
   app.put("/api/home/layout", c => run(c, async () => saveHomeLayout(c.env, await owner(c), await body(c))));
+  // Today card sections every client honours: { todayPage } shows Today's page (on by default).
+  app.get("/api/home/settings", async c => c.json(await getHomeSettings(c.env, await owner(c))));
+  app.patch("/api/home/settings", c => run(c, async () => updateHomeSettings(c.env, await owner(c), await body(c))));
   // Custom cards: built by ME3 from chat or by the owner; drawn natively by every client.
   app.get("/api/home/cards", async c => c.json(await listHomeCards(c.env, await owner(c))));
   app.post("/api/home/cards", c => run(c, async () => createHomeCard(c.env, await owner(c), await body(c), "owner")));

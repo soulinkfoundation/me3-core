@@ -15,10 +15,11 @@ let people: object[] = [];
 let tasks: object[] = [];
 let goals: object[] = [];
 let gratitudeInToday = false;
+let homeSettings: object | Error = { todayPage: true };
 const daysAgo = (days: number) => new Date(Date.now() - days * 864e5).toISOString();
 const contact = (id: string, name: string, extra: object = {}) => ({ id, name, status: "active", source: "manual", socialHandles: {}, metadata: null, isClose: true, closeness: "close", closeSince: daysAgo(100), isClient: false, lastInTouchAt: null, reminderAt: null, ...extra });
 beforeEach(() => {
-  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = []; tasks = []; goals = []; gratitudeInToday = false;
+  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = []; tasks = []; goals = []; gratitudeInToday = false; homeSettings = { todayPage: true };
   vi.spyOn(HTMLDialogElement.prototype, "showModal").mockImplementation(function (this: HTMLDialogElement) { this.setAttribute("open", ""); });
   vi.spyOn(HTMLDialogElement.prototype, "close").mockImplementation(function (this: HTMLDialogElement) { this.removeAttribute("open"); });
   vi.mocked(api.get).mockImplementation(async endpoint => {
@@ -31,6 +32,7 @@ beforeEach(() => {
     if (endpoint.startsWith("/mission-control/tasks")) return { tasks } as never;
     if (endpoint === "/tasks/goals") return { goals } as never;
     if (endpoint === "/gratitude") return { date: "2026-10-14", timezone: "UTC", quote: null, gratitude: [], goodThings: [], days: [], settings: { quoteInBriefing: true, eveningReminder: false, inToday: gratitudeInToday } } as never;
+    if (endpoint === "/home/settings") { if (homeSettings instanceof Error) throw homeSettings; return homeSettings as never; }
     if (endpoint.startsWith("/journal/archive")) return { entries: [] } as never;
     if (endpoint === "/mission-control/wheel") return { snapshots: [], settings: { segments: [] } } as never;
     if (endpoint === "/plugins") return { plugins: [] } as never;
@@ -196,16 +198,47 @@ describe("Home Today card", () => {
     expect(today().textContent).toContain("Nothing else today");
     expect(today().querySelector('a[aria-label="Open tomorrow in Calendar"]')).toBeTruthy();
   });
-  it("keeps gratitude off until it is switched on from the Today menu, which holds only that switch", async () => {
+  it("keeps gratitude off until it is switched on from the Today menu, which holds only the section switches", async () => {
     render(); await flushPromises();
     expect(gratitude()).toBeNull();
     (today().querySelector('[aria-label="Today options"]') as HTMLButtonElement).click(); await flushPromises();
     const items = [...today().querySelectorAll('[role="menu"] button')];
-    expect(items.map(item => item.textContent?.replace("🌅", "").trim())).toEqual(["Gratitude"]);
+    expect(items.map(item => item.textContent?.replace(/🌅|📝/u, "").trim())).toEqual(["Gratitude", "Today's page"]);
     expect(items[0].getAttribute("aria-checked")).toBe("false");
     (items[0] as HTMLButtonElement).click(); await flushPromises();
     expect(gratitude()).toBeTruthy();
     expect(api.patch).toHaveBeenCalledWith("/gratitude/settings", { inToday: true });
+  });
+  // Failure modes: Today's page vanishing on installs that never chose (or on an older Core without
+  // the setting), the switch not saving, the saved choice not being honoured, a failed save sticking.
+  const todayPage = () => today().querySelector(".home-tasksline");
+  const todayPageSwitch = () => [...today().querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(item => item.textContent?.includes("Today's page"))!;
+  async function openTodayMenu() { (today().querySelector('[aria-label="Today options"]') as HTMLButtonElement).click(); await flushPromises(); }
+  it("shows Today's page by default, including on a Core without the setting", async () => {
+    homeSettings = new ApiError("Not found", 404);
+    render(); await flushPromises();
+    expect(todayPage()).toBeTruthy();
+    await openTodayMenu();
+    expect(todayPageSwitch().getAttribute("aria-checked")).toBe("true");
+  });
+  it("hides Today's page from the Today menu and saves the choice", async () => {
+    render(); await flushPromises();
+    await openTodayMenu(); todayPageSwitch().click(); await flushPromises();
+    expect(todayPage()).toBeNull();
+    expect(api.patch).toHaveBeenCalledWith("/home/settings", { todayPage: false });
+  });
+  it("honours a saved choice to hide Today's page", async () => {
+    homeSettings = { todayPage: false };
+    render(); await flushPromises();
+    expect(todayPage()).toBeNull();
+    await openTodayMenu();
+    expect(todayPageSwitch().getAttribute("aria-checked")).toBe("false");
+  });
+  it("puts Today's page back when saving the switch fails", async () => {
+    vi.mocked(api.patch).mockRejectedValueOnce(new Error("offline"));
+    render(); await flushPromises();
+    await openTodayMenu(); todayPageSwitch().click(); await flushPromises();
+    expect(todayPage()).toBeTruthy();
   });
 });
 

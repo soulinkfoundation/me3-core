@@ -8,7 +8,7 @@ import { MORNING_CALENDAR_PUSH_SCHEMA } from "./morning-calendar-push";
 import { QUOTES_SCHEMA } from "./quotes-schema";
 import { QUOTE_BOOKMARKS_SCHEMA } from "./quote-bookmarks-schema";
 import { GRATITUDE_SETTINGS_SCHEMA, CARD_REMINDERS_SCHEMA } from "./gratitude-schema";
-import { HOME_LAYOUT_SCHEMA } from "./home-layout";
+import { HOME_LAYOUT_SCHEMA, HOME_SETTINGS_SCHEMA } from "./home-layout";
 import { HOME_CARDS_SCHEMA } from "./home-cards";
 import { ACCOUNTS_EMAIL_TRIAGE_SCHEMA } from "./accounts-email-triage";
 import { ACCOUNTS_RECEIPTS_SCHEMA, ACCOUNTS_REMOVALS_SCHEMA } from "./accounts";
@@ -1072,6 +1072,13 @@ const runtimeMigrations: RuntimeMigration[] = [
       for (const column of ["matched_email_id", "matched_email_json", "match_dismissed_at"]) {
         await addColumnIfMissing(db, "commerce_direct_payments", column, "TEXT");
       }
+    },
+  },  // Home settings: Today's page in the Today card, shown until the owner switches it off.
+  {
+    id: "0113_home_settings",
+    checksum: "2026-11-18-home-settings-v1",
+    async apply(db) {
+      await db.batch(HOME_SETTINGS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
 ];
