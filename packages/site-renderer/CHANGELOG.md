@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.3
 
 - Cover is immersive on desktop: the banner fills the first screen, the header floats over it and turns frosted on scroll, and the name, bio, buttons and social icons sit on the photo. On phones the menu floats over the photo and the hero is centred.
 - Latest writing shows picture cards (image fills the card on Cover); offers, writing cards and avatars share one soft shadow; Minimal offers are cards.
