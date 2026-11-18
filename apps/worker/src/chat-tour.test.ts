@@ -46,10 +46,17 @@ describe("chatTour", () => {
     expect(step({}, "home").targets.map(target => target.id)).toEqual(["home_tab", "add_to_home"]);
     expect(step({}, "email").targets.map(target => target.id)).toEqual(["home_tab", "add_to_home", "add_inbox"]);
     expect(step({}, "accounts").targets.map(target => target.id)).toEqual(["profile_menu", "menu_accounts"]);
-    expect(step({}, "social").targets.map(target => target.id)).toEqual(["profile_menu", "menu_social"]);
-    expect(step({}, "website").targets.map(target => target.id)).toEqual(["chat_tab"]);
+    expect(step({}, "social").targets).toEqual([]);
+    expect(step({}, "website").targets).toEqual([]);
     for (const id of ["home", "email", "accounts", "social"]) expect(step({}, id).task).toBeNull();
     for (const item of tour().steps) for (const target of item.targets) expect(target.hint).not.toBe("");
+  });
+
+  // Failure mode: a step explains a screen the owner isn't looking at (Socials shown on Accounts, then Home).
+  it("ties each step to its screen, and teaches the menu only once", () => {
+    expect(tour().steps.map(item => item.screen)).toEqual(["home", "home", "accounts", "social", "chat"]);
+    expect(tour().steps.filter(item => item.targets.some(target => target.id === "profile_menu")).map(item => item.id)).toEqual(["accounts"]);
+    expect(step({}, "accounts").intro).toContain("profile picture");
   });
 
   it("offers Make my website until the site is built, then the editor", () => {

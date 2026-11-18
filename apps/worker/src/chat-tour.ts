@@ -21,8 +21,13 @@ export type TourTask = { kind: "open"; label: string; to: TourPlace } | { kind: 
  */
 export type TourTargetId = "home_tab" | "chat_tab" | "add_to_home" | "add_inbox" | "profile_menu" | "menu_accounts" | "menu_social";
 export type TourTarget = { id: TourTargetId; hint: string };
+/** The screen a step is about. Next takes the owner there, and the step's `body` explains it once they're on it. */
+export type TourScreen = "home" | "accounts" | "social" | "chat";
 export type TourStep = {
   id: TourStepId; emoji: string; title: string; body: string;
+  screen: TourScreen;
+  /** Shown instead of `body` until the owner reaches `screen` by the route the targets point along. */
+  intro: string | null;
   targets: TourTarget[];
   /** A button for a step the owner can't do by tapping around (the website, which needs their input). */
   task: TourTask | null;
@@ -61,6 +66,7 @@ export function chatTour(context: TourContext): ChatTour {
     {
       id: "home", emoji: "🏠", title: "Home",
       body: "Home shows your day: what's on, plus your own cards for quick access to what matters to you.",
+      screen: "home", intro: null,
       targets: [{ id: "home_tab", hint: "Tap Home at the top." }, { id: "add_to_home", hint: "Now tap Add to Home and pick any card." }],
       task: null, copy: null,
       done: Boolean(context.layout?.pinned.length),
@@ -68,6 +74,7 @@ export function chatTour(context: TourContext): ChatTour {
     {
       id: "email", emoji: "✉️", title: "ME3's own email",
       body: "Like any good assistant, I have my own email. Forward me invoices and I'll log them in your Accounts. Add my email card to Home for quick access.",
+      screen: "home", intro: null,
       targets: [{ id: "home_tab", hint: "Go to Home." }, { id: "add_to_home", hint: "Tap Add to Home." }, { id: "add_inbox", hint: "Pick Inbox." }],
       task: null,
       copy: context.emailAddress ? { label: "Copy my address", value: context.emailAddress } : null,
@@ -77,14 +84,18 @@ export function chatTour(context: TourContext): ChatTour {
   if (context.accounts) steps.push({
     id: "accounts", emoji: "📒", title: "Accounts",
     body: "Track your income and expenses in one place. Purchases and bookings from your site show up on their own, and so do invoices sent to my email.",
-    targets: [{ id: "profile_menu", hint: "Tap your profile picture. Everything in ME3 is in this menu." }, { id: "menu_accounts", hint: "Now tap Accounts." }],
+    // The one step that teaches the menu: everything else in ME3 lives there too.
+    screen: "accounts", intro: "Everything in ME3 is in your menu. Tap your profile picture, then Accounts.",
+    targets: [{ id: "profile_menu", hint: "Tap your profile picture." }, { id: "menu_accounts", hint: "Now tap Accounts." }],
     task: null, copy: null,
     done: context.seen.includes("accounts"),
   });
   if (context.social) steps.push({
     id: "social", emoji: "📣", title: "Socials made simple",
     body: "Connect your accounts and post everywhere from one place. Repost and schedule in a couple of taps.",
-    targets: [{ id: "profile_menu", hint: "Tap your profile picture again." }, { id: "menu_social", hint: "Tap Social." }],
+    // Next from Accounts goes straight to Social: the menu was learned once, no need to repeat it.
+    screen: "social", intro: null,
+    targets: [],
     task: null, copy: null,
     done: context.seen.includes("social"),
   });
@@ -93,8 +104,9 @@ export function chatTour(context: TourContext): ChatTour {
     body: context.siteBuilt
       ? "Your website is ready. Change anything in the website editor, or ask me to. Find it any time under your profile picture."
       : "Tell me about your work and I'll make a first draft. You review it in the website editor before it goes live. Find it any time under your profile picture.",
-    // Back to Chat, where ME3 drafts it; no need for the menu again.
-    targets: [{ id: "chat_tab", hint: "Tap Chat at the top." }],
+    // Next takes the owner to Chat, where ME3 drafts it.
+    screen: "chat", intro: null,
+    targets: [],
     task: context.siteBuilt ? { kind: "open", label: "Open the editor", to: "website" } : { kind: "site_ask", label: "Make my website" },
     copy: null,
     done: context.siteBuilt,

@@ -4,7 +4,9 @@ export type TourPlace = "website";
 export type TourTask = { kind: "open"; label: string; to: TourPlace } | { kind: "site_ask"; label: string };
 /** What the card points at, in the order the owner reaches them; elements carry `data-tour-target="<id>"`. */
 export type TourTarget = { id: string; hint: string };
-export type TourStep = { id: string; emoji: string; title: string; body: string; targets: TourTarget[]; task: TourTask | null; copy: { label: string; value: string } | null; done: boolean };
+/** The screen a step is about: Next takes the owner there, and the card explains it once they're on it. */
+export type TourScreen = "home" | "accounts" | "social" | "chat";
+export type TourStep = { id: string; emoji: string; title: string; body: string; screen: TourScreen | null; intro: string | null; targets: TourTarget[]; task: TourTask | null; copy: { label: string; value: string } | null; done: boolean };
 export type TourStatus = "new" | "active" | "finished" | "skipped";
 export type ChatTour = { steps: TourStep[]; progress: { status: TourStatus; stepId: string | null } };
 
@@ -14,7 +16,7 @@ type GetJson = <T>(path: string) => Promise<T>;
 export function readChatTour(tour: Partial<ChatTour> | null | undefined): ChatTour | null {
   const steps = (Array.isArray(tour?.steps) ? tour.steps : [])
     .filter(step => step?.title && step.body)
-    .map(step => ({ ...step, targets: Array.isArray(step.targets) ? step.targets.filter(target => target?.id) : [], task: step.task ?? null, copy: step.copy ?? null, done: step.done === true }));
+    .map(step => ({ ...step, screen: step.screen ?? null, intro: step.intro ?? null, targets: Array.isArray(step.targets) ? step.targets.filter(target => target?.id) : [], task: step.task ?? null, copy: step.copy ?? null, done: step.done === true }));
   if (!steps.length) return null;
   const status = tour?.progress?.status ?? "new";
   return { steps, progress: { status, stepId: tour?.progress?.stepId ?? null } };
@@ -70,4 +72,15 @@ export function placeTourCard(target: Box, card: { width: number; height: number
   if (avoid.bottom + gap + card.height <= view.height - margin) return horizontal(avoid.bottom + gap, "below");
   if (!around && avoid.top - gap - card.height >= margin) return horizontal(avoid.top - gap - card.height, "above");
   return null;
+}
+
+/** Whether the owner is looking at `screen` now. Home and Chat share /assistant and differ by `view`. */
+export function onTourScreen(screen: TourScreen | null, path: string, view: unknown): boolean {
+  if (!screen) return true;
+  if (screen === "home" || screen === "chat") return path === "/assistant" && (view === screen || (view === undefined && screen === "home"));
+  return tourPlaceForPath(path) === screen;
+}
+
+export function tourScreenRoute(screen: TourScreen) {
+  return screen === "home" || screen === "chat" ? { path: "/assistant", query: { view: screen } } : { path: `/${screen}` };
 }

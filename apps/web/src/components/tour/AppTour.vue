@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } fro
 import { useRoute, useRouter } from "vue-router";
 import Button from "../Button.vue";
 import { useAppToast } from "../../composables/useAppToast";
-import { currentTourTarget, placeTourCard, tourPlaceForPath, type TourPlacement, type TourTarget } from "../../utils/chatTour";
+import { currentTourTarget, onTourScreen, placeTourCard, tourPlaceForPath, tourScreenRoute, type TourPlacement, type TourStep, type TourTarget } from "../../utils/chatTour";
 import { useTourStore } from "../../stores/tour";
 
 /**
@@ -21,6 +21,13 @@ const step = computed(() => tour.step);
 // otherwise the card would jump to Back for a moment while the save is on its way.
 const done = computed(() => Boolean(step.value && (step.value.done || tourPlaceForPath(route.path) === step.value.id)));
 const total = computed(() => tour.tour?.steps.length ?? 0);
+const here = computed(() => Boolean(step.value && onTourScreen(step.value.screen, route.path, route.query.view)));
+// A step explains its screen once the owner is on it; on the way there it says how to get there.
+const text = computed(() => step.value && step.value.intro && !here.value && !done.value ? step.value.intro : step.value?.body ?? "");
+// A step with nothing to point at (Socials, the website) has Next bring the owner to its screen,
+// and a way there if they come back to it from somewhere else.
+const leads = (item: TourStep | null) => Boolean(item && item.screen && !item.targets.length);
+const takeThere = computed(() => leads(step.value) && !here.value && !step.value?.task);
 const card = ref<HTMLElement | null>(null);
 const target = ref<TourTarget | null>(null);
 const placement = ref<TourPlacement | null>(null);
@@ -85,7 +92,14 @@ async function copy() {
   try { await navigator.clipboard.writeText(value); toastSuccess("Copied"); }
   catch (error) { toastFromUnknown(error, "Couldn't copy that"); }
 }
-function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index + 1); }
+async function goTo(index: number) {
+  tour.go(index);
+  const item = tour.step;
+  if (item && leads(item) && !onTourScreen(item.screen, route.path, route.query.view)) await router.push(tourScreenRoute(item.screen!));
+}
+function next() { if (tour.isLast) tour.end("finished"); else void goTo(tour.index + 1); }
+function back() { void goTo(tour.index - 1); }
+async function openScreen() { if (step.value?.screen) await router.push(tourScreenRoute(step.value.screen)); }
 </script>
 
 <template>
@@ -96,10 +110,11 @@ function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index
       <h2 :id="titleId" class="app-tour__title">{{ step.title }}</h2>
       <span v-if="done" class="app-tour__done" data-testid="tour-done">✓ Done</span>
     </div>
-    <p class="app-tour__body">{{ step.body }}</p>
+    <p class="app-tour__body" data-testid="tour-body">{{ text }}</p>
     <p v-if="target" class="app-tour__sr" aria-live="polite" data-testid="tour-hint">{{ target.hint }}</p>
     <div class="app-tour__actions">
       <Button v-if="step.task && !done" color="primary" shape="soft" type="button" data-testid="tour-task" @click="doTask">{{ step.task.label }}</Button>
+      <Button v-if="takeThere" color="primary" shape="soft" type="button" @click="openScreen">Take me there</Button>
       <Button v-if="step.copy" color="ghost" shape="soft" type="button" @click="copy">{{ step.copy.label }}</Button>
     </div>
     <div class="app-tour__foot">
@@ -107,7 +122,7 @@ function next() { if (tour.isLast) tour.end("finished"); else tour.go(tour.index
       <span class="app-tour__count">{{ tour.index + 1 }} of {{ total }}</span>
       <span class="app-tour__spacer" />
       <button type="button" class="app-tour__skip" @click="tour.end('skipped')">Skip</button>
-      <Button v-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="tour.go(tour.index - 1)">Back</Button>
+      <Button v-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="back">Back</Button>
       <!-- Next waits until the owner has done the step; Skip is always there if they're stuck. -->
       <Button v-if="!(tour.isLast && !done)" :color="done ? 'primary' : 'ghost'" shape="soft" type="button" :disabled="!done" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
     </div>

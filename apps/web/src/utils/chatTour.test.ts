@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { currentTourTarget, placeTourCard, readChatTour, tourPlaceForPath, tourStartIndex, type ChatTour } from "./chatTour";
+import { currentTourTarget, onTourScreen, placeTourCard, tourScreenRoute, readChatTour, tourPlaceForPath, tourStartIndex, type ChatTour } from "./chatTour";
 
 // Failure modes: an older Core without the tour leaves Show me around doing nothing; a broken step draws an empty card;
 // the tour restarts from the top after a reload instead of the owner's step; a page that isn't Accounts or Social ticks a step.
-const step = (id: string) => ({ id, emoji: "🏠", title: id, body: "Hi", targets: [], task: null, copy: null, done: false });
+const step = (id: string) => ({ id, emoji: "🏠", title: id, body: "Hi", screen: null, intro: null, targets: [], task: null, copy: null, done: false });
 
 describe("readChatTour", () => {
   it("keeps only steps it can draw", () => {
@@ -77,5 +77,18 @@ describe("placeTourCard", () => {
     expect(placed.side).toBe("left");
     expect(overlaps(box(placed), menu)).toBe(false);
     expect(placeTourCard({ top: 300, left: 20, right: 355, bottom: 344 }, card, { width: 375, height: 812 }, { top: 60, left: 14, right: 361, bottom: 780 })).toBeNull();
+  });
+});
+
+// Failure mode: the card explains a screen the owner isn't on, or Next sends them somewhere else.
+describe("onTourScreen", () => {
+  it("tells Home from Chat by view, and knows Accounts and Social", () => {
+    expect(onTourScreen("home", "/assistant", "home")).toBe(true);
+    expect(onTourScreen("home", "/assistant", "chat")).toBe(false);
+    expect(onTourScreen("chat", "/assistant", "chat")).toBe(true);
+    expect(onTourScreen("social", "/social", undefined)).toBe(true);
+    expect(onTourScreen("social", "/accounts", undefined)).toBe(false);
+    expect(tourScreenRoute("social")).toEqual({ path: "/social" });
+    expect(tourScreenRoute("chat")).toEqual({ path: "/assistant", query: { view: "chat" } });
   });
 });

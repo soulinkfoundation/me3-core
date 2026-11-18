@@ -319,6 +319,11 @@ const copiedMessageKey = ref<string | null>(null);
 const homePanels = ref<InstanceType<typeof HomePanels> | null>(null);
 const homeMode = ref(route.query.view === "home" || (!route.query.thread && !route.query.new && !route.query.prompt && !route.query.project && route.query.view !== "chat"));
 useAgentChatPresence(assistantThreadId, computed(() => !homeMode.value));
+// Follow `view` when something else changes it while this page is open (the tour taking the owner to Chat).
+watch(() => route.query.view, view => {
+  if (view === "chat" && homeMode.value) { dismissComposer(); homeMode.value = false; }
+  else if (view === "home" && !homeMode.value) { dismissComposer(); homeMode.value = true; }
+});
 async function showWorkspace(home: boolean) {
   dismissComposer();
   homeMode.value = home;
@@ -2609,8 +2614,9 @@ function messageFromUnknown(err: unknown, fallback: string) {
             <AgentDog :size="128" />
             <h2 class="assistant-empty-state__heading">{{ chatStarters.greeting?.title ?? "What should I fetch?" }}</h2>
             <p class="assistant-empty-state__hint">{{ chatStarters.greeting?.body ?? "Ask for anything. I’ll do the legwork." }}</p>
+            <!-- While the tour is open its card is the next step, so the starters wait. -->
             <div
-              v-if="visibleStarters.length"
+              v-if="visibleStarters.length && !tourStore.open"
               class="starter-prompt-list"
               aria-label="Starter prompts"
             >

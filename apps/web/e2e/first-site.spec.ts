@@ -33,9 +33,9 @@ const sse = (events: Array<[string, unknown]>) => events.map(([event, data]) => 
 function tourOf(state: State) {
   const pinned = state.layout?.pinned ?? []; const hidden = state.layout?.hidden ?? ["inbox"];
   return { steps: [
-    { id: "home", emoji: "🏠", title: "Home", body: "Home shows your day.", targets: [{ id: "home_tab", hint: "Tap Home at the top." }, { id: "add_to_home", hint: "Now tap Add to Home and pick any card." }], task: null, copy: null, done: pinned.length > 0 },
-    { id: "email", emoji: "✉️", title: "ME3's own email", body: "I have my own email address.", targets: [{ id: "home_tab", hint: "Go to Home." }, { id: "add_to_home", hint: "Tap Add to Home." }, { id: "add_inbox", hint: "Pick Inbox." }], task: null, copy: { label: "Copy my address", value: "maya@inbox.me3.app" }, done: pinned.includes("inbox") && !hidden.includes("inbox") },
-    { id: "website", emoji: "🌐", title: "Your website", body: "Tell me about your work and I'll make a first draft.", targets: [{ id: "chat_tab", hint: "Tap Chat at the top." }], task: { kind: "site_ask", label: "Make my website" }, copy: null, done: false }],
+    { id: "home", emoji: "🏠", title: "Home", body: "Home shows your day.", screen: "home", intro: null, targets: [{ id: "home_tab", hint: "Tap Home at the top." }, { id: "add_to_home", hint: "Now tap Add to Home and pick any card." }], task: null, copy: null, done: pinned.length > 0 },
+    { id: "email", emoji: "✉️", title: "ME3's own email", body: "I have my own email address.", screen: "home", intro: null, targets: [{ id: "home_tab", hint: "Go to Home." }, { id: "add_to_home", hint: "Tap Add to Home." }, { id: "add_inbox", hint: "Pick Inbox." }], task: null, copy: { label: "Copy my address", value: "maya@inbox.me3.app" }, done: pinned.includes("inbox") && !hidden.includes("inbox") },
+    { id: "website", emoji: "🌐", title: "Your website", body: "Tell me about your work and I'll make a first draft.", screen: "chat", intro: null, targets: [], task: { kind: "site_ask", label: "Make my website" }, copy: null, done: false }],
   progress: state.tour };
 }
 
@@ -233,10 +233,8 @@ test("Show me around stays over the app while the owner does each step, keeps it
   // The website is last: no Finish until it's done; Make my website hands over to the Build your website card.
   await expect(tour.getByRole("heading", { name: "Your website" })).toBeVisible();
   await expect(tour.getByRole("button", { name: "Finish" })).toHaveCount(0);
-  // From Home it points back to Chat, where ME3 drafts the site; in Chat it has nothing more to point at.
-  await expect(tour).toHaveAttribute("data-target", "chat_tab");
-  await page.getByRole("group", { name: "Workspace view" }).getByRole("button", { name: "Chat", exact: true }).click();
-  await expect(tour).not.toHaveAttribute("data-target", /./);
+  // Next took the owner straight to Chat, where ME3 drafts the site: no extra taps.
+  await expect(page).toHaveURL(/view=chat/);
   await tour.getByRole("button", { name: "Make my website" }).click();
   await expect(page.getByTestId("site-build-ask")).toBeVisible();
   await expect(tour).toHaveCount(0);
