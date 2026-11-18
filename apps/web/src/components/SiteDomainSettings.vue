@@ -67,7 +67,7 @@ onMounted(async () => {
 
 <template>
   <section class="site-domains" aria-labelledby="site-domains-title">
-    <h3 id="site-domains-title">Sites and website domains</h3>
+    <h3 id="site-domains-title" class="site-domains__title">Website and domain</h3>
 
     <div v-if="!listedSites.length" class="site-domains__empty">
       <p>You don't have a website yet.</p>
@@ -145,8 +145,13 @@ onMounted(async () => {
   gap: 12px;
 }
 
-.site-domains h3 {
-  margin: 0;
+.site-domains__title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .site-domains__empty,

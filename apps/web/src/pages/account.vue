@@ -465,6 +465,7 @@ const openSection = ref({
   appConnections: false,
   account: false,
   codingAgents: false,
+  domain: false,
   mailbox: false,
   payments: false,
   plugins: route.query.section === "plugins",
@@ -529,6 +530,21 @@ const managedMailboxAddress = computed(() => {
     ? `${localPart}@me3.app`
     : "";
 });
+
+const managedAddressCopied = ref(false);
+
+async function copyManagedMailboxAddress() {
+  if (!managedMailboxAddress.value) return;
+  try {
+    await navigator.clipboard.writeText(managedMailboxAddress.value);
+    managedAddressCopied.value = true;
+    window.setTimeout(() => {
+      managedAddressCopied.value = false;
+    }, 1600);
+  } catch {
+    managedAddressCopied.value = false;
+  }
+}
 
 const mailboxRoutedAddress = computed(() => {
   const localPart =
@@ -1213,7 +1229,7 @@ async function loadMailbox() {
     const response = await api.get<MailboxResponse>("/mailbox");
     syncMailboxInputs(response);
   } catch (e: any) {
-    mailboxError.value = e.message || "Failed to load mailbox";
+    mailboxError.value = e.message || "Email settings could not be loaded.";
   } finally {
     mailboxLoading.value = false;
   }
@@ -2267,7 +2283,7 @@ function openRouteSection() {
   if (route.query.section === "soulink" || route.query.section === "telegram") {
     openSection.value.appConnections = true;
   }
-  if (route.query.section === "mailbox") {
+  if (route.query.section === "mailbox" || route.query.section === "email") {
     openSection.value.mailbox = true;
   }
   if (route.query.section === "coding") {
@@ -2281,7 +2297,7 @@ function openRouteSection() {
     route.query.section === "domain" ||
     route.query.section === "custom-domain"
   ) {
-    openSection.value.mailbox = true;
+    openSection.value.domain = true;
   }
   if (route.query.section === "ai" || route.query.section === "providers") {
     openSection.value.ai = true;
@@ -2657,6 +2673,31 @@ onBeforeUnmount(() => {
 
         <section class="card accordion-card primary-section">
           <button
+            id="account-trigger-domain"
+            class="accordion-trigger"
+            type="button"
+            :aria-expanded="openSection.domain"
+            aria-controls="account-panel-domain"
+            @click="openSection.domain = !openSection.domain"
+          >
+            <span class="accordion-title-wrap accordion-title-flex">
+              <h2>Website &amp; domain</h2>
+            </span>
+            <span class="accordion-chevron" aria-hidden="true">▼</span>
+          </button>
+          <div
+            id="account-panel-domain"
+            class="accordion-panel"
+            role="region"
+            aria-labelledby="account-trigger-domain"
+            :hidden="!openSection.domain"
+          >
+            <SiteDomainSettings class="account-site-domains" />
+          </div>
+        </section>
+
+        <section class="card accordion-card primary-section">
+          <button
             id="account-trigger-mailbox"
             class="accordion-trigger"
             type="button"
@@ -2665,7 +2706,7 @@ onBeforeUnmount(() => {
             @click="openSection.mailbox = !openSection.mailbox"
           >
             <span class="accordion-title-wrap accordion-title-flex">
-              <h2>Mailbox &amp; domains</h2>
+              <h2>Email</h2>
             </span>
             <span class="accordion-chevron" aria-hidden="true">▼</span>
           </button>
@@ -2676,8 +2717,6 @@ onBeforeUnmount(() => {
             aria-labelledby="account-trigger-mailbox"
             :hidden="!openSection.mailbox"
           >
-            <SiteDomainSettings class="account-site-domains" />
-
             <PageLoading
               v-if="mailboxLoading || emailProviderLoading"
               compact
@@ -2687,36 +2726,40 @@ onBeforeUnmount(() => {
             <template v-else-if="mailboxAvailable">
               <div class="email-settings">
                 <section class="mailbox-setup">
-                  <div class="setup-disclosure-intro">
-                    <div>
-                      <h3>Mailbox</h3>
-                      <p v-if="!mailboxCloudflareManaged">
-                        Follow the steps in the
-                        <button
-                          class="setup-guide-link"
-                          type="button"
-                          @click="mailboxGuideOpen = true"
-                        >
-                          setup guide</button
-                        >.
-                      </p>
-                    </div>
+                  <div
+                    v-if="!mailboxCloudflareManaged"
+                    class="setup-disclosure-intro"
+                  >
+                    <p>
+                      Follow the steps in the
+                      <button
+                        class="setup-guide-link"
+                        type="button"
+                        @click="mailboxGuideOpen = true"
+                      >
+                        setup guide</button
+                      >.
+                    </p>
                   </div>
 
                   <div
                     v-if="mailboxCloudflareManaged"
-                    class="email-address-save"
+                    class="email-address-display"
                   >
-                    <label class="field email-address-field">
-                      <span>ME3 email address</span>
-                      <input
-                        class="input email-address-input"
-                        type="email"
-                        :value="managedMailboxAddress"
-                        readonly
-                        aria-readonly="true"
-                      />
-                    </label>
+                    <div class="email-address-display__text">
+                      <span>Your email address</span>
+                      <strong>{{ managedMailboxAddress }}</strong>
+                    </div>
+                    <Button
+                      color="outline"
+                      shape="soft"
+                      size="compact"
+                      type="button"
+                      :disabled="!managedMailboxAddress"
+                      @click="copyManagedMailboxAddress"
+                    >
+                      {{ managedAddressCopied ? "Copied" : "Copy" }}
+                    </Button>
                   </div>
 
                   <div v-else class="email-address-save">
@@ -2783,8 +2826,12 @@ onBeforeUnmount(() => {
                   </div>
                 </details>
 
+                <EmailSendAs v-if="mailboxCloudflareManaged" />
+
                 <details class="email-disclosure">
-                  <summary>Email sender</summary>
+                  <summary>
+                    {{ mailboxCloudflareManaged ? "Advanced" : "Email sender" }}
+                  </summary>
                   <div class="email-disclosure-body">
                     <p v-if="!emailProviderEncryptionConfigured" class="error">
                       Install encryption is required before provider tokens can
@@ -2989,7 +3036,7 @@ onBeforeUnmount(() => {
                       <p class="email-provider-test-note">
                         {{
                           mailboxCloudflareManaged
-                            ? "Your ME3 mailbox remains active when you use a custom sender. Connecting a website domain does not configure email."
+                            ? ""
                             : "Save changes first."
                         }}
                         The test sends to
@@ -3003,7 +3050,7 @@ onBeforeUnmount(() => {
                   </div>
                 </details>
 
-                <EmailSendAs />
+                <EmailSendAs v-if="!mailboxCloudflareManaged" />
 
                 <p v-if="mailboxError" class="error">{{ mailboxError }}</p>
                 <p v-if="emailProviderError" class="error">
@@ -3013,7 +3060,7 @@ onBeforeUnmount(() => {
             </template>
 
             <p v-else class="error">
-              Mailbox configuration is not available in this Core install.
+              Email isn't available on this installation.
             </p>
           </div>
         </section>
@@ -4259,11 +4306,11 @@ onBeforeUnmount(() => {
           @keydown.escape="mailboxGuideOpen = false"
         >
           <header class="modal-header">
-            <h2 id="mailbox-guide-title">Configure your email mailbox</h2>
+            <h2 id="mailbox-guide-title">Set up email</h2>
             <button
               class="modal-close"
               type="button"
-              aria-label="Close mailbox setup guide"
+              aria-label="Close email setup guide"
               @click="mailboxGuideOpen = false"
             >
               ×
@@ -5257,8 +5304,28 @@ onBeforeUnmount(() => {
   line-height: 1.45;
 }
 
-.account-site-domains {
-  margin-bottom: 24px;
+.email-address-display {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.email-address-display__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.email-address-display__text span {
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font-size: 13px;
+}
+
+.email-address-display__text strong {
+  font-size: 16px;
+  overflow-wrap: anywhere;
 }
 
 .setup-guide-link {

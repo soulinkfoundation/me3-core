@@ -37,9 +37,21 @@ const displayName = ref("");
 const providerId = ref<ProviderId>("cloudflare-email");
 const codes = ref<Record<string, string>>({});
 const busy = ref<string | null>(null);
+const formOpen = ref(false);
 
 const addressValid = computed(() => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address.value.trim()));
 const providerReady = computed(() => configured.value.has(providerId.value));
+/** One connected provider is the obvious choice, so only ask when there are none or several. */
+const showProviderPicker = computed(
+  () => PROVIDERS.filter((item) => configured.value.has(item.id)).length !== 1,
+);
+/** The connect step only matters once there's an address to send as. */
+const showConnect = computed(() => formOpen.value && !providerReady.value && addressValid.value);
+function closeForm() {
+  formOpen.value = false;
+  address.value = "";
+  displayName.value = "";
+}
 const providerLabel = (id: string) => PROVIDERS.find((item) => item.id === id)?.label || id;
 
 async function loadProviders() {
@@ -77,8 +89,7 @@ async function add() {
       providerId: providerId.value,
     });
     replace(identity);
-    address.value = "";
-    displayName.value = "";
+    closeForm();
     toastSuccess(`Code sent to ${identity.address}. It arrives in your inbox through your forward.`);
   } catch (error) {
     toastFromUnknown(error, "The code could not be sent.");
@@ -135,11 +146,22 @@ onMounted(() => void Promise.all([load(), loadProviders()]));
 
 <template>
   <section class="send-as" :aria-labelledby="titleId">
-    <h3 :id="titleId">Send from other addresses</h3>
-    <p>
-      Send as addresses you forward to ME3, like a work address. Replies go out from the
-      address the mail was sent to.
-    </p>
+    <div class="send-as__head">
+      <div>
+        <h3 :id="titleId">Other addresses</h3>
+        <p>Send as an address you forward to ME3, like a work address.</p>
+      </div>
+      <Button
+        v-if="!formOpen"
+        color="outline"
+        shape="soft"
+        size="compact"
+        type="button"
+        @click="formOpen = true"
+      >
+        Add address
+      </Button>
+    </div>
 
     <ul v-if="identities.length" class="send-as__list">
       <li v-for="identity in identities" :key="identity.id" class="send-as__item">
@@ -180,7 +202,7 @@ onMounted(() => void Promise.all([load(), loadProviders()]));
       </li>
     </ul>
 
-    <form class="send-as__fields" @submit.prevent="add">
+    <form v-if="formOpen" class="send-as__fields" @submit.prevent="add">
       <label class="send-as__field">
         <span>Address</span>
         <input v-model="address" type="email" autocomplete="off" placeholder="you@yourdomain.com" />
@@ -189,7 +211,7 @@ onMounted(() => void Promise.all([load(), loadProviders()]));
         <span>Name (optional)</span>
         <input v-model="displayName" autocomplete="off" placeholder="How recipients see you" />
       </label>
-      <label class="send-as__field">
+      <label v-if="showProviderPicker" class="send-as__field">
         <span>Send through</span>
         <select v-model="providerId">
           <option v-for="item in PROVIDERS" :key="item.id" :value="item.id">
@@ -197,19 +219,26 @@ onMounted(() => void Promise.all([load(), loadProviders()]));
           </option>
         </select>
       </label>
-      <p class="send-as__hint">
-        The provider must be allowed to send for this address's domain. With Cloudflare Email,
-        add the domain under Email Sending in the Cloudflare account that holds it.
+      <p v-if="showConnect" class="send-as__hint">
+        {{ providerLabel(providerId) }} needs permission to send for this address's domain.
       </p>
-      <div v-if="providerReady" class="send-as__actions">
-        <Button color="primary" shape="soft" size="compact" type="submit" :disabled="!addressValid || busy !== null">
+      <div class="send-as__actions">
+        <Button color="ghost" shape="soft" size="compact" type="button" @click="closeForm">Cancel</Button>
+        <Button
+          v-if="providerReady"
+          color="primary"
+          shape="soft"
+          size="compact"
+          type="submit"
+          :disabled="!addressValid || busy !== null"
+        >
           {{ busy === "add" ? "Sending code…" : "Send code" }}
         </Button>
       </div>
     </form>
 
     <CampaignSenderSetup
-      v-if="!providerReady"
+      v-if="showConnect"
       :key="providerId"
       class="send-as__connect"
       :activate="false"
@@ -224,8 +253,9 @@ onMounted(() => void Promise.all([load(), loadProviders()]));
 
 <style scoped>
 .send-as { display: grid; gap: 8px; margin-top: 20px; }
+.send-as__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
 .send-as h3 { margin: 0; font-size: 15px; font-weight: 700; }
-.send-as > p { margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.45; }
+.send-as__head p { margin: 2px 0 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.45; }
 .send-as__list { display: grid; gap: 10px; margin: 4px 0 0; padding: 0; list-style: none; }
 .send-as__item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border-radius: 12px; background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
 .send-as__identity { display: grid; flex: 1 1 200px; min-width: 0; gap: 2px; font-size: 14px; }
@@ -243,6 +273,6 @@ onMounted(() => void Promise.all([load(), loadProviders()]));
 .send-as__field select:focus,
 .send-as__code input:focus { outline: none; border-bottom-color: var(--ui-accent); box-shadow: 0 1px 0 var(--ui-accent); }
 .send-as__hint { margin: -4px 0 0; color: var(--ui-text-muted); font-size: 12px; line-height: 1.45; }
-.send-as__actions { display: flex; justify-content: flex-end; }
+.send-as__actions { display: flex; justify-content: flex-end; gap: 8px; }
 .send-as__connect { margin-top: 8px; }
 </style>
