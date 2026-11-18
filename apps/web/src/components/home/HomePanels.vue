@@ -12,7 +12,6 @@ import NewsSettingsSheet from "../news/NewsSettingsSheet.vue";
 import { type NewsPaper, type NewsPaperAction, type NewsRating, type NewsToday } from "../../utils/news";
 import AppDialog from "../AppDialog.vue";
 import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
-import GetSetUpStrip from "./GetSetUpStrip.vue";
 import PaymentsNeedYou from "./PaymentsNeedYou.vue";
 import HomeGreeting from "./HomeGreeting.vue";
 import { useAppToast } from "../../composables/useAppToast";
@@ -26,8 +25,7 @@ import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people"
 import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, newInstallHomeLayout, homeDoneToday, homeInboxSoulink, homeMailTime, homeTasksCard, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
 import { useAppLoadingWhile } from "../../composables/useAppLoading";
-const emit = defineEmits<{ suggest: [text: string]; ask: [text: string]; approvalResolved: []; buildSite: [] }>();
-const setupStrip = ref<InstanceType<typeof GetSetUpStrip> | null>(null);
+const emit = defineEmits<{ suggest: [text: string]; ask: [text: string]; approvalResolved: [] }>();
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
 const auth = useAuthStore();
 const contactsStore = useContactsStore();
@@ -104,7 +102,7 @@ const orderAnnouncement = ref("");
 const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 const reducedMotion = ref(motionPreference?.matches ?? false);
 function updateMotionPreference() { reducedMotion.value = motionPreference?.matches ?? false; }
-defineExpose({ openAdd: () => { dialog.value = "add"; }, refreshToday: loadToday, refreshSetup: () => setupStrip.value?.load(), openNews, refreshNews: loadNews });
+defineExpose({ openAdd: () => { dialog.value = "add"; }, refreshToday: loadToday, openNews, refreshNews: loadNews });
 const menu = ref<HomeCard | null>(null);
 const day = ref(localDateKey(new Date()));
 const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = {
@@ -505,7 +503,6 @@ watch(() => props.active, active => {
   if (!active) return;
   const today = localDateKey(new Date());
   void loadLayout();
-  void setupStrip.value?.load();
   if (day.value !== today) day.value = today; else void loadToday();
   void loadNews();
   void loadNotes();
@@ -528,7 +525,6 @@ onBeforeUnmount(() => {
   <div ref="panels" class="home-panels" aria-label="Home panels" :aria-busy="loading">
     <p class="sr-only" role="status">{{ orderAnnouncement }}</p>
     <HomeGreeting :name="auth.user?.name" />
-    <GetSetUpStrip ref="setupStrip" :inbox-count="mail.length" :agent-address="agentAddress" @build-site="emit('buildSite')" />
     <PaymentsNeedYou />
     <p v-if="offline || Object.keys(errors).length" class="home-offline" role="status"><UiIcon name="WifiOff" :size="16" /><span>{{ offline ? 'You’re offline.' : 'Home couldn’t fully refresh.' }} {{ lastRefresh ? `Showing the last available data · ${lastRefresh}.` : 'Connect to refresh Home.' }}</span><button type="button" :disabled="loading" @click="refresh">Try again</button></p>
     <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__more" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">

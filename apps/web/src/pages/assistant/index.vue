@@ -518,7 +518,7 @@ const lastUserMessageAt = computed(() => [...chatMessages.value].reverse().find(
 async function loadSiteStarter() {
   let site: Awaited<ReturnType<typeof loadProfileSite>>;
   try { site = await loadProfileSite(api.get); } catch { return; }
-  // First landing: switch on Home's Get set up. Chat shows ME3's welcome and starters (from Core);
+  // First landing: Chat shows ME3's welcome and starters (from Core), including Show me around;
   // the Build your website card opens only when the owner picks Make my website. Only a new owner:
   // no bio yet and nothing ever said in Chat.
   if (chatMessages.value.some(message => message.createdAt) || assistantHistoryHasMore.value) return;
@@ -526,7 +526,6 @@ async function loadSiteStarter() {
   const storage = typeof window === "undefined" ? null : window.localStorage;
   if (!shouldStartFirstRun(storage, ownerKey, site?.bio)) return;
   markFirstRunHandled(storage, ownerKey);
-  void api.patch("/mission-control/dashboard", { settings: { setupChecklistDismissed: false } }).then(() => homePanels.value?.refreshSetup()).catch(() => undefined);
   if (!routeQueryValue("prompt")) await showWorkspace(false);
 }
 async function closeSiteAsk() {
@@ -2584,7 +2583,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
     >
     <main class="assistant-main" aria-label="Assistant console">
       <section class="assistant-console" aria-label="Assistant conversation">
-        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" :active="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @ask="homeAsk" @approval-resolved="refreshAssistantAfterApproval" @build-site="openSiteAsk" />
+        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" :active="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @ask="homeAsk" @approval-resolved="refreshAssistantAfterApproval" />
         <div
           v-show="!homeMode || siteBuilderMode"
           ref="assistantScrollerRef"
@@ -3165,6 +3164,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
             @decided="refreshAssistantAfterApproval(); void loadSiteStarter(); void refreshChatStarters()"
             @show-me="submitAssistantText(showMeMessage($event))"
             @find-someone="askWhoToFind"
+            @get-domain="submitAssistantText('Can I get my own domain for my site?')"
           />
 
           <ChatPayments

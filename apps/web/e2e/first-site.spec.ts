@@ -122,12 +122,11 @@ test("first landing goes from the Build your website card to a published site an
   const state = await fixture(page);
   await page.goto("/assistant");
 
-  // First landing: ME3's welcome and three starters from Core, no form yet; Home's Get set up is switched on.
+  // First landing: ME3's welcome and three starters from Core, no form yet.
   await expect(page.getByRole("heading", { name: "Hi Maya, I'm ME3" })).toBeVisible();
   await expect(page.getByTestId("chat-starter")).toHaveText(["🌐Make my website", "💡What can you help with?", "🧭Show me around"]);
   const ask = page.getByTestId("site-build-ask");
   await expect(ask).toHaveCount(0);
-  await expect.poll(() => state.patches).toEqual([{ settings: { setupChecklistDismissed: false } }]);
   await page.getByRole("button", { name: "Make my website" }).click();
   await expect(ask).toBeVisible();
   await ask.getByLabel("About your work").fill("Sports massage and yoga for runners in Bristol.");
@@ -168,12 +167,6 @@ test("first landing goes from the Build your website card to a published site an
   await expect.poll(() => state.decisions[1]).toEqual({ id: "call-1", decision: "approved" });
   await expect(page.locator(".chat-first-site")).toContainText("Booked: Free 20-minute call with Kieran (stand-in), Mon 2 Nov, 10:00");
   await page.screenshot({ path: testInfo.outputPath("booked.png"), fullPage: true });
-
-  // Home: the Website step ticks from the published bio.
-  await page.getByRole("group", { name: "Workspace view" }).getByRole("button", { name: "Home", exact: true }).click();
-  const strip = page.getByTestId("get-set-up");
-  await expect(strip.getByRole("button", { name: "Website" })).toHaveClass(/is-done/);
-  await expect(strip.getByRole("button", { name: "Email ME3" })).not.toHaveClass(/is-done/);
 });
 
 test("Find someone asks who, then searches for that name", async ({ page }) => {
@@ -186,11 +179,17 @@ test("Find someone asks who, then searches for that name", async ({ page }) => {
   await expect.poll(() => state.sent).toEqual(["Find Kieran on ME3."]);
 });
 
+test("Put it on your own domain asks ME3 for domains, as on iOS", async ({ page }) => {
+  const state = await fixture(page, { bio: "Sports massage.", approvals: [{ id: "draft-1", actionId: "core_sites_starter_draft", status: "approved", threadId: "main", requestedAt: new Date().toISOString(), resolvedAt: new Date(Date.now() + 60_000).toISOString(), payload: draftCard }] });
+  await page.goto("/assistant?view=chat&thread=main");
+  await page.getByTestId("site-live-card").getByRole("button", { name: "Put it on your own domain" }).click();
+  await expect.poll(() => state.sent).toEqual(["Can I get my own domain for my site?"]);
+});
+
 test("returning owners are not sent back to the first run, and Home's Review shows the draft card", async ({ page }) => {
   await fixture(page, { bio: "Sports massage.", approvals: [{ id: "draft-1", actionId: "core_sites_starter_draft", status: "pending", threadId: "main", requestedAt: new Date().toISOString(), resolvedAt: null, payload: draftCard }] });
   await page.goto("/assistant");
   await expect(page.getByTestId("site-build-ask")).toHaveCount(0);
-  await expect(page.getByTestId("get-set-up")).toHaveCount(0);
   await page.getByRole("button", { name: "Review", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByTestId("site-draft-card")).toBeVisible();

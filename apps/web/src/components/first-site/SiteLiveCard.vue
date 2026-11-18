@@ -6,7 +6,7 @@ import { useAppToast } from "../../composables/useAppToast";
 
 /** After the first publish: the link, and the next steps one at a time (iOS live card). */
 const props = defineProps<{ name: string; publicUrl: string; busy?: boolean }>();
-const emit = defineEmits<{ showMe: []; findSomeone: [] }>();
+const emit = defineEmits<{ showMe: []; findSomeone: []; getDomain: [] }>();
 const { toastSuccess, toastError } = useAppToast();
 const titleId = useId();
 const host = computed(() => props.publicUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""));
@@ -32,6 +32,8 @@ async function copyLink() {
       <Button color="ghost" shape="soft" :disabled="busy" @click="emit('findSomeone')"><UiIcon name="UserPlus" :size="18" />Find someone</Button>
       <Button class="site-live__primary" color="primary" shape="soft" :disabled="busy" @click="emit('showMe')"><UiIcon name="Search" :size="18" />See what they see</Button>
     </div>
+    <!-- As on iOS: ME3 replies with the domains the owner can put the site on. -->
+    <button type="button" class="site-live__domain" :disabled="busy" @click="emit('getDomain')"><UiIcon name="Globe" :size="16" />Put it on your own domain</button>
   </section>
 </template>
 
@@ -47,4 +49,7 @@ async function copyLink() {
 .site-live__btns :deep(.me3-btn) { min-height: 44px; }
 .site-live__btns :deep(svg) { margin-right: 6px; }
 .site-live__primary { flex: 1; min-width: 160px; }
+.site-live__domain { display: inline-flex; align-items: center; align-self: flex-start; gap: 6px; min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--ui-accent-strong); font-size: 14px; font-weight: 600; cursor: pointer; }
+.site-live__domain:disabled { opacity: .5; cursor: default; }
+.site-live__domain:focus-visible { outline: 2px solid var(--ui-accent); border-radius: 8px; }
 </style>

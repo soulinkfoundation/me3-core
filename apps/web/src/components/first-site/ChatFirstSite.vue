@@ -16,7 +16,7 @@ import {
  * A step drops away once the owner sends their next message.
  */
 const props = defineProps<{ threadId: string | null; refreshKey?: number; lastUserMessageAt?: string | null; busy?: boolean }>();
-const emit = defineEmits<{ decided: []; showMe: [searchQuery: string]; findSomeone: [] }>();
+const emit = defineEmits<{ decided: []; showMe: [searchQuery: string]; findSomeone: []; getDomain: [] }>();
 
 const approvals = ref<FirstSiteApproval[]>([]);
 let loadSeq = 0;
@@ -59,7 +59,7 @@ defineExpose({ load });
   <div v-if="draft || live || pendingCall || bookedCall" class="chat-first-site" aria-label="Your website">
     <SiteDraftCard v-if="draft" :key="draft.approvalId" :draft="draft" @resolved="resolved" />
     <SiteLiveCard v-else-if="live" :name="live.name" :public-url="live.publicUrl" :busy="busy"
-      @show-me="emit('showMe', live.searchQuery)" @find-someone="emit('findSomeone')" />
+      @show-me="emit('showMe', live.searchQuery)" @find-someone="emit('findSomeone')" @get-domain="emit('getDomain')" />
     <FreeCallBookingCard v-if="pendingCall" :key="pendingCall.approvalId" :call="pendingCall" @resolved="resolved" />
     <div v-else-if="bookedCall" class="chat-first-site__pill" role="status">
       <UiIcon name="CalendarCheck" :size="16" class="chat-first-site__mark" />
