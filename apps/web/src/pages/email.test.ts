@@ -202,7 +202,7 @@ describe("EmailPage", () => {
     routePath = "/email";
     routeMessage = "";
     routeComposeTo = "";
-    document.body.innerHTML = '<div id="app-page-controls"></div>';
+    document.body.innerHTML = '<div id="app-page-leading"></div><div id="app-page-controls"></div>';
     window.matchMedia = vi.fn().mockReturnValue({
       matches: true,
       media: "(min-width: 641px)",
@@ -232,6 +232,7 @@ describe("EmailPage", () => {
       setup() {
         return () =>
           h("div", [
+            h("div", { id: "app-page-leading" }),
             h("div", { id: "app-page-controls" }),
             h(EmailPage),
           ]);
@@ -243,7 +244,7 @@ describe("EmailPage", () => {
 
     expect(
       document.querySelector(
-        "#app-page-controls #mail-search-input-mobile-nav",
+        "#app-page-leading .mail-mobile-compose-btn",
       ),
     ).not.toBeNull();
     expect(wrapper.text()).toContain("ME3");
@@ -272,8 +273,8 @@ describe("EmailPage", () => {
       "drafts",
       "sent",
       "archive",
-      "spam",
       "trash",
+      "spam",
     ]);
     expect(wrapper.text()).not.toContain("More");
   });

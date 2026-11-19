@@ -35,7 +35,6 @@ import { mailMarkdownToPlainText, renderMailMarkdownFragment } from "../../../..
 definePage({
   meta: {
     requiresAuth: true,
-    hideTopBarOnWide: true,
     title: "Email | ME3",
     description: "Review email and assistant chat with your ME3 assistant.",
     robots: "noindex,follow",
@@ -625,8 +624,8 @@ const emailTabOrder: EmailTab[] = [
   "drafts",
   "sent",
   "archive",
-  "spam",
   "trash",
+  "spam",
 ];
 const emailTabIcons: Record<EmailTab, UiIconName> = {
   inbox: "Inbox",
@@ -1504,10 +1503,6 @@ async function applySearch() {
   clearOpenConversation();
   clearSelectedMessages();
   await loadMessages();
-}
-
-async function applyMobileSearch() {
-  await applySearch();
 }
 
 async function clearSearch() {
@@ -4148,10 +4143,28 @@ onBeforeUnmount(() => {
     class="agent-page"
     :class="{ 'agent-page--with-mobile-controls': isMailTab(activeTab) }"
   >
+    <!-- One header row: Compose on the left, the title (or, on phones in Inbox mode, the folder menu) centred, the app X on the right. -->
+    <Teleport to="#app-page-leading" defer>
+      <Button
+        v-if="isMailTab(activeTab)"
+        color="ghost"
+        shape="soft"
+        size="compact"
+        icon-only
+        class="mail-mobile-icon-btn mail-mobile-compose-btn"
+        type="button"
+        aria-label="Compose"
+        title="Compose"
+        @click="openComposeModal()"
+      >
+        <UiIcon name="SquarePen" :size="19" aria-hidden="true" />
+      </Button>
+    </Teleport>
     <Teleport to="#app-page-controls" defer>
-      <div v-if="isMailTab(activeTab)" class="mail-mobile-nav">
-        <!-- Phone width: a small centred title menu replaces the rail and folder tabs. -->
-        <div class="mail-title-menu" @keydown.esc="mobileMenuOpen = false">
+      <div class="mail-mobile-nav">
+        <h1 class="mail-header-title" :class="{ 'mail-header-title--wide-only': isEmailTab(activeTab) }">{{ activeTab === "telegram" ? "Telegram" : activeTab === "brief" ? "Email" : activeTabLabel }}</h1>
+        <!-- Phones in Inbox mode: the title is the folder menu, in the apps' order. Brief has no menu. -->
+        <div v-if="isEmailTab(activeTab)" class="mail-title-menu" @keydown.esc="mobileMenuOpen = false">
           <button
             type="button"
             class="mail-title-menu__button"
@@ -4160,15 +4173,16 @@ onBeforeUnmount(() => {
             @click="mobileMenuOpen = !mobileMenuOpen"
           >
             <span>{{ activeTabLabel }}</span>
-            <UiIcon name="ChevronDown" :size="15" aria-hidden="true" />
+            <UiIcon :name="mobileMenuOpen ? 'ChevronUp' : 'ChevronDown'" :size="15" aria-hidden="true" />
           </button>
           <div v-if="mobileMenuOpen" class="mail-title-menu__list" role="menu" aria-label="Mailbox folders">
             <button
-              v-for="tab in mailFolderTabs"
+              v-for="tab in mailFolderTabs.filter((item) => item.id !== 'brief')"
               :key="tab.id"
               type="button"
               role="menuitem"
               class="mail-title-menu__item"
+              :data-menu-folder="tab.id"
               :class="{ 'mail-title-menu__item--active': activeTab === tab.id }"
               @click="switchMailFolderTab(tab.id)"
             >
@@ -4182,36 +4196,6 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
-        <form
-          v-if="isEmailTab(activeTab)"
-          class="mail-search mail-search--mobile-nav"
-          role="search"
-          @submit.prevent="applyMobileSearch"
-        >
-          <label class="mail-search__label" for="mail-search-input-mobile-nav">{{ searchLabel }}</label>
-          <input
-            id="mail-search-input-mobile-nav"
-            v-model="searchQuery"
-            class="mail-search__input"
-            type="search"
-            :placeholder="searchLabel"
-            @search="!searchQuery && applyMobileSearch()"
-          />
-        </form>
-        <span v-else class="mail-mobile-nav__spacer" />
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          class="mail-mobile-icon-btn mail-mobile-compose-btn"
-          type="button"
-          aria-label="Compose"
-          title="Compose"
-          @click="openComposeModal()"
-        >
-          <UiIcon name="SquarePen" :size="18" aria-hidden="true" />
-        </Button>
       </div>
     </Teleport>
 
@@ -4319,6 +4303,11 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-else>
+            <!-- Phones: Brief | Inbox like the apps. The other folders live in the title menu in Inbox mode. -->
+            <div v-if="!mobileThreadOpen" class="mail-segments" role="group" aria-label="Email view">
+              <button type="button" :aria-pressed="activeTab === 'brief'" @click="switchMailFolderTab('brief')">Brief<template v-if="briefCount"> · {{ briefCount }}</template></button>
+              <button type="button" :aria-pressed="isEmailTab(activeTab)" @click="isEmailTab(activeTab) || switchMailFolderTab('inbox')">Inbox<template v-if="getVisibleFolderCount('inbox')"> · {{ getVisibleFolderCount("inbox") }}</template></button>
+            </div>
             <div
               class="mail-workspace"
               :class="{
@@ -4327,13 +4316,6 @@ onBeforeUnmount(() => {
               }"
             >
               <aside class="mail-rail" aria-label="Mailbox">
-                <router-link to="/assistant" class="mail-rail__home" aria-label="Home">
-                  <UiIcon name="ArrowLeft" :size="16" aria-hidden="true" />
-                </router-link>
-                <Button color="primary" shape="pill" size="compact" type="button" class="mail-rail__compose" @click="openComposeModal()">
-                  <UiIcon name="SquarePen" :size="16" aria-hidden="true" />
-                  Compose
-                </Button>
                 <nav class="mail-rail__folders" aria-label="Folders">
                   <button
                     v-for="tab in mailFolderTabs"
@@ -5587,63 +5569,17 @@ onBeforeUnmount(() => {
   outline-offset: 1px;
 }
 
-.mail-search--mobile-nav {
-  grid-template-columns: minmax(0, 1fr) 36px auto 36px;
-  width: 100%;
-}
-
-.mail-search--mobile-nav .mail-search__input {
-  height: 36px;
-}
-
-.mail-search--mobile-nav .mail-mobile-icon-btn {
-  flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
-  margin: 0;
-  padding: 0;
-}
-
-.mail-search--mobile-nav
-  .mail-search__button:not(.mail-search__button--refresh) {
-  border: 0;
-  background: var(--ui-surface, var(--color-bg));
-  color: var(--ui-text-muted, var(--color-text-muted));
-}
-
-.mail-search--mobile-nav
-  .mail-search__button:not(.mail-search__button--refresh):hover:not(:disabled) {
-  border: 0;
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-  color: var(--ui-text-muted, var(--color-text-muted));
-}
-
-.mail-search--mobile-nav .mail-mobile-compose-btn {
-  flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
-  min-height: 36px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ui-text-muted, var(--color-text-muted));
-}
-
-.mail-search--mobile-nav .mail-mobile-compose-btn:hover:not(:disabled),
-.mail-search--mobile-nav .mail-mobile-compose-btn:focus-visible {
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-  border-color: transparent;
-  color: var(--ui-text, var(--color-text));
-}
-
 .mail-mobile-icon-btn {
+  width: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: var(--ui-radius-sm);
+  padding: 0;
+  border-radius: 999px;
   background: transparent;
-  color: var(--ui-text-muted, var(--color-text-muted));
+  color: var(--ui-text, var(--color-text));
   font-size: inherit;
   font-weight: inherit;
   cursor: pointer;
@@ -5657,17 +5593,6 @@ onBeforeUnmount(() => {
 .mail-mobile-icon-btn:focus-visible {
   outline: 2px solid var(--color-text);
   outline-offset: 2px;
-}
-
-.mail-search--mobile-nav .mail-search__button--refresh {
-  border: 0;
-  background: transparent;
-  color: var(--ui-text-muted, var(--color-text-muted));
-}
-
-.mail-search--mobile-nav .mail-search__button--refresh:hover:not(:disabled) {
-  border-color: transparent;
-  color: var(--ui-text-muted, var(--color-text-muted));
 }
 
 .mail-search__button {
@@ -6925,17 +6850,54 @@ onBeforeUnmount(() => {
   color: var(--ui-text-muted, var(--color-text-muted));
 }
 
-/* Mobile top bar: title menu, search, compose */
+/* Header title; on phones in Inbox mode the folder menu stands in for it. */
 .mail-mobile-nav {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
+  justify-content: center;
   min-width: 0;
 }
 
-.mail-mobile-nav__spacer {
-  flex: 1 1 auto;
+.mail-header-title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ui-text, var(--color-text));
+  font-size: 16px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-segments {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 4px 16px 6px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--ui-surface-muted, var(--color-bg-subtle));
+}
+
+.mail-segments button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mail-segments button[aria-pressed="true"] {
+  background: var(--ui-accent, var(--color-accent));
+  color: var(--ui-accent-contrast, #fff);
+}
+
+.mail-segments button:focus-visible {
+  outline: 2px solid var(--ui-accent, var(--color-accent));
+  outline-offset: 2px;
 }
 
 .mail-title-menu {
@@ -6968,7 +6930,8 @@ onBeforeUnmount(() => {
   position: absolute;
   z-index: 30;
   top: calc(100% + 4px);
-  left: 0;
+  left: 50%;
+  transform: translateX(-50%);
   min-width: 240px;
   padding: 6px;
   border-radius: 14px;
@@ -7023,35 +6986,6 @@ onBeforeUnmount(() => {
   border-right: 1px solid var(--ui-border, var(--color-border));
   background: var(--ui-bg, var(--color-bg));
   overflow-y: auto;
-}
-
-.mail-rail__home {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  min-height: 36px;
-  margin: 0 0 8px;
-  padding: 0;
-  border-radius: 10px;
-  color: var(--ui-text-muted, var(--color-text-muted));
-  font-size: 14px;
-  font-weight: 500;
-  text-decoration: none;
-}
-
-.mail-rail__home:hover {
-  background: var(--ui-surface-muted, var(--color-bg-subtle));
-  color: var(--ui-text, var(--color-text));
-}
-
-.mail-rail__home:focus-visible {
-  outline: 2px solid var(--ui-accent, var(--color-accent));
-  outline-offset: 2px;
-}
-
-.mail-rail__compose {
-  margin: 2px 0 14px;
 }
 
 .mail-rail__folders,
@@ -7144,7 +7078,7 @@ onBeforeUnmount(() => {
 
 /* List */
 .mail-search--desktop {
-  display: none;
+  display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   gap: 8px;
   /* Auto width so the side margins sit inside the column instead of overflowing it. */
@@ -7901,13 +7835,16 @@ onBeforeUnmount(() => {
 }
 
 /* Layout */
-@media (min-width: 641px) {
-  .mail-mobile-nav {
+@media (max-width: 640px) {
+  .mail-header-title--wide-only {
     display: none;
   }
+}
 
-  .mail-search--desktop {
-    display: grid;
+@media (min-width: 641px) {
+  .mail-title-menu,
+  .mail-segments {
+    display: none;
   }
 
   .mail-workspace {
