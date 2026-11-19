@@ -21,6 +21,7 @@ import {
   suggestedTime,
   versionChecks,
   visibleVersions,
+  youtubeSettings,
 } from "./social-posts";
 
 describe("social posts", () => {
@@ -107,6 +108,11 @@ describe("social posts", () => {
     expect(finishLink(version({ publicationStatus: "queued" }))).toBeNull();
     expect(finishLink(version({ publicationStatus: "published", platformPostUrl: "https://x.com/m/status/1" }))).toEqual({ label: "View on X", href: "https://x.com/m/status/1", primary: false });
     expect(finishLink(version({ platform: "youtube", publicationStatus: "published" }))).toEqual({ label: "Publish in YouTube", href: "https://studio.youtube.com", primary: true });
+    // Only a private YouTube upload still needs finishing in YouTube.
+    const live = version({ platform: "youtube", publicationStatus: "published", platformPostUrl: "https://youtu.be/abc", publishingSettings: { youtube: youtubeSettings("public") } });
+    expect(resultFor(live).action).toBe("view");
+    expect(finishLink(live)).toEqual({ label: "View on YouTube", href: "https://youtu.be/abc", primary: false });
+    expect(resultFor({ ...live, publishingSettings: { youtube: youtubeSettings("unlisted") } }).message).toBe("Uploaded as unlisted");
     expect(finishLink(version({ platform: "tiktok", publicationStatus: "published" }), "@mayastudio")?.href).toBe("https://www.tiktok.com/@mayastudio");
     expect(finishLink(version({ publicationStatus: "published" }))).toBeNull();
   });

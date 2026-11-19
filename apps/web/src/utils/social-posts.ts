@@ -5,6 +5,8 @@ import type {
   SocialPlatform,
   SocialPlatformCapabilities,
   SocialPostDetail,
+  YouTubePrivacyStatus,
+  YouTubePublishingSettings,
 } from "../stores/social";
 
 /**
@@ -43,7 +45,7 @@ export const SOCIAL_NETWORKS: ReadonlyArray<{
     id: "youtube",
     label: "YouTube",
     mark: "▶",
-    note: "Uploads as a private draft. You publish it in YouTube.",
+    note: "Uploads a video to your YouTube channel",
   },
   { id: "tiktok", label: "TikTok", mark: "♪", note: "Posts a video to your TikTok profile" },
 ];
@@ -549,8 +551,11 @@ export function resultFor(version: PostVersion): VersionResult {
   const label = networkLabel(version.platform);
   switch (version.publicationStatus) {
     case "published":
-      if (version.platform === "youtube") {
+      if (version.platform === "youtube" && youtubePrivacyOf(version) === "private") {
         return { state: "posted", message: "Uploaded as a private draft", action: "open_youtube", actionLabel: "Publish in YouTube" };
+      }
+      if (version.platform === "youtube" && youtubePrivacyOf(version) === "unlisted") {
+        return { state: "posted", message: "Uploaded as unlisted", action: version.platformPostUrl ? "view" : null, actionLabel: version.platformPostUrl ? "View" : null };
       }
       if (version.platform === "tiktok" && !version.platformPostUrl) {
         return {
@@ -628,13 +633,13 @@ export function markStatus(version: PostVersion): string | null {
   return result.state === "draft" ? null : `${networkLabel(version.platform)}: ${result.message}`;
 }
 
-/** The one button a posted version ends on. YouTube's upload is a private draft, so finishing there is the next step. */
+/** The one button a posted version ends on. A private YouTube upload is a draft, so finishing there is the next step. */
 export function finishLink(
   version: PostVersion,
   handle?: string | null,
 ): { label: string; href: string; primary: boolean } | null {
   if (version.publicationStatus !== "published") return null;
-  if (version.platform === "youtube") {
+  if (version.platform === "youtube" && youtubePrivacyOf(version) === "private") {
     return { label: "Publish in YouTube", href: version.platformPostUrl || "https://studio.youtube.com", primary: true };
   }
   if (version.platformPostUrl) return { label: `View on ${networkLabel(version.platform)}`, href: version.platformPostUrl, primary: false };
@@ -804,4 +809,20 @@ export function renderPostText(body: string, options: SocialPostOptions | undefi
 
 export function postedTextFor(version: PostVersion): string {
   return renderPostText(version.bodyText, version.publishingSettings?.post);
+}
+
+/** Who can see a YouTube upload. API uploads are no longer forced private (YouTube API revision, 2 Nov 2026). */
+export const YOUTUBE_PRIVACY_OPTIONS: Array<{ id: YouTubePrivacyStatus; label: string }> = [
+  { id: "public", label: "Public" },
+  { id: "unlisted", label: "Unlisted" },
+  { id: "private", label: "Private" },
+];
+
+/** The saved YouTube privacy; uploads from before the choice existed went up private. */
+export function youtubePrivacyOf(version: PostVersion): YouTubePrivacyStatus {
+  return version.publishingSettings?.youtube?.privacyStatus ?? "private";
+}
+
+export function youtubeSettings(privacyStatus: YouTubePrivacyStatus): YouTubePublishingSettings {
+  return { privacyStatus, madeForKids: false, containsSyntheticMedia: false };
 }

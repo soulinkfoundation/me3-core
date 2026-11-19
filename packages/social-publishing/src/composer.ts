@@ -241,7 +241,7 @@ function videoRow(
   if (withImages && (network === "x" || network === "linkedin")) label = "The video, not the images";
   else if (network === "instagram") label = "Reel";
   else if (network === "youtube") {
-    label = `${youtubeKind === "short" ? "Short" : youtubeKind === "regular" ? "Regular video" : "Video"}, private draft`;
+    label = youtubeKind === "short" ? "Short" : youtubeKind === "regular" ? "Regular video" : "Video";
   } else if (network === "tiktok") label = `Video. ${TIKTOK_NEXT}`;
   else label = "Video";
   return {

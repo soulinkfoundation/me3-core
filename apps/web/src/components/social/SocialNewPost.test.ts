@@ -217,7 +217,7 @@ describe("New post", () => {
       expect(rows(wrapper)).toEqual([
         { name: "X, mayastudio", ticked: false, cant: true, says: "Too long: X takes up to 20:00" },
         { name: "LinkedIn, mayastudio", ticked: true, cant: false, says: "Video" },
-        { name: "YouTube, mayastudio", ticked: true, cant: false, says: "Regular video, private draft" },
+        { name: "YouTube, mayastudio", ticked: true, cant: false, says: "Regular video" },
       ]);
       const action = note(wrapper, "X").find(".new-post__action");
       expect(action.text()).toBe("Pick a shorter cut for X, mayastudio");

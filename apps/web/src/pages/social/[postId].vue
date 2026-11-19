@@ -22,7 +22,7 @@ import { useSitesStore } from "../../stores/sites";
 import { useAppToast } from "../../composables/useAppToast";
 import { useAppLoadingWhile } from "../../composables/useAppLoading";
 import { useSocialData } from "../../composables/useSocialData";
-import type { DriveFile, PostVersion, SocialMediaAsset, SocialPlatform, SocialPostDetail, SocialPostOptions, TextCarousel } from "../../stores/social";
+import type { DriveFile, PostVersion, SocialMediaAsset, SocialPlatform, SocialPostDetail, SocialPostOptions, TextCarousel, YouTubePrivacyStatus } from "../../stores/social";
 import { uploadDriveFiles } from "../../utils/drive-upload";
 import { convertVideo, planVideo, prepareImage, trimVideo } from "../../utils/media-prep";
 import {
@@ -58,7 +58,10 @@ import {
   versionTextLimit,
   videoRule,
   visibleVersions,
+  YOUTUBE_PRIVACY_OPTIONS,
   YOUTUBE_TITLE_LIMIT,
+  youtubePrivacyOf,
+  youtubeSettings,
   youtubeTitleFrom,
   type MarkState,
   type SocialNetwork,
@@ -130,6 +133,11 @@ const IN_FLIGHT = new Set(["scheduled", "queued", "publishing"]);
 
 /** TikTok's per-post choices live only on this screen: nothing preselected, nothing remembered. */
 const tiktokChoices = ref<Record<string, TikTokPostChoices>>({});
+/** Who can see each YouTube upload, chosen on this screen; Public until the owner picks or one was saved. */
+const youtubePrivacy = ref<Record<string, YouTubePrivacyStatus>>({});
+function youtubePrivacyFor(version: PostVersion): YouTubePrivacyStatus {
+  return youtubePrivacy.value[version.id] ?? (version.publishingSettings?.youtube ? youtubePrivacyOf(version) : "public");
+}
 const tiktokReady = ref<Record<string, { durationSeconds: number | null; problem: string | null }>>({});
 function tiktokChoicesFor(version: PostVersion): TikTokPostChoices {
   return tiktokChoices.value[version.id] || emptyTikTokChoices();
@@ -927,10 +935,7 @@ async function approve(version: PostVersion): Promise<PostVersion> {
   const account = activeAccount(version.platform, accounts.value);
   return social.updatePostVersion(version.id, {
     targetAccountId: account?.id || version.targetAccountId,
-    // YouTube videos always upload as a private draft the owner publishes in YouTube.
-    ...(version.platform === "youtube"
-      ? { publishingSettings: { youtube: { privacyStatus: "private", madeForKids: false, containsSyntheticMedia: false } } }
-      : {}),
+    ...(version.platform === "youtube" ? { publishingSettings: { youtube: youtubeSettings(youtubePrivacyFor(version)) } } : {}),
     ...(version.platform === "tiktok" ? { publishingSettings: { tiktok: tiktokOptions(version) } } : {}),
     approvalStatus: "approved",
   });
@@ -973,7 +978,7 @@ async function postNow(only?: PostVersion) {
       await social.publishPostVersion(
         version.id,
         version.platform === "youtube"
-          ? { requestContext: { surface: "social-review", youtube: { privacyStatus: "private", madeForKids: false, containsSyntheticMedia: false } } }
+          ? { requestContext: { surface: "social-review", youtube: youtubeSettings(youtubePrivacyFor(version)) } }
           : version.platform === "tiktok"
             ? { requestContext: { surface: "social-review", tiktok: tiktokOptions(version) } }
             : { requestContext: { surface: "social-review" } },
@@ -1395,7 +1400,21 @@ onMounted(async () => {
                   </button>
                 </li>
               </ul>
-              <p v-if="active.platform === 'youtube'" class="post-note">Uploads as a private draft.</p>
+              <div v-if="active.platform === 'youtube' && !activeLocked && (active.publicationStatus !== 'published' || againVersion?.id === active.id)" class="post-visibility">
+                <span class="post-visibility__label">Who can see it</span>
+                <div class="post-visibility__options" role="radiogroup" aria-label="YouTube visibility">
+                  <button
+                    v-for="option in YOUTUBE_PRIVACY_OPTIONS"
+                    :key="option.id"
+                    type="button"
+                    role="radio"
+                    :aria-checked="youtubePrivacyFor(active) === option.id"
+                    :class="{ 'is-on': youtubePrivacyFor(active) === option.id }"
+                    :disabled="busy !== null"
+                    @click="youtubePrivacy = { ...youtubePrivacy, [active.id]: option.id }"
+                  >{{ option.label }}</button>
+                </div>
+              </div>
               <SocialTikTokSettings
                 v-if="active.platform === 'tiktok' && activeVideo && !activeLocked && (active.publicationStatus !== 'published' || againVersion?.id === active.id)"
                 :key="active.id"
@@ -1740,6 +1759,21 @@ onMounted(async () => {
 .post-bar__status { color: var(--ui-text-muted); font-size: 12.5px; }
 .post-bar__status--failed { color: var(--ui-danger); }
 .post-note { margin: 8px 0 0; color: var(--ui-text-muted); font-size: 12.5px; }
+.post-visibility { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; }
+.post-visibility__label { font-size: 13px; font-weight: 600; }
+.post-visibility__options { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
+.post-visibility__options button {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ui-text-muted);
+  font: 500 13px var(--font-sans);
+  cursor: pointer;
+}
+.post-visibility__options button.is-on { background: var(--ui-primary); color: var(--ui-primary-contrast); }
+.post-visibility__options button:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
+.post-visibility__options button:disabled { cursor: default; opacity: 0.6; }
 .post-state { display: grid; justify-items: start; gap: 8px; margin-top: 40px; }
 .post-state h1 { margin: 0; font-size: 20px; font-weight: 650; }
 .post-state a { color: var(--ui-text-muted); }
