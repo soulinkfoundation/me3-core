@@ -37,9 +37,15 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       if (mobile) await page.screenshot({ path: testInfo.outputPath(`${name}-full.png`), fullPage: true, animations: 'disabled' });
     }
     await page.goto('/create?step=basics', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('.wizard-topbar').getByRole('button', { name: 'Publish', exact: true })).toHaveCount(0);
+    await expect(page.locator('.app-top-bar').getByRole('button', { name: 'Publish', exact: true })).toHaveCount(0);
     await expect(page.locator('.wizard-step-button small')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Close the editor' })).toBeVisible();
+    // Preview, the step picker and X share the app top bar's one row.
+    await expect(page.locator('.app-top-bar').getByRole('button', { name: 'Preview your site' })).toBeVisible();
+    await expect(page.locator('.app-top-bar__close')).toBeVisible();
+    // The step dots show on wide screens only; phones use the step picker.
+    await expect(page.locator('.progress-step')).not.toHaveCount(0);
+    if (mobile) await expect(page.locator('.wizard-header')).toBeHidden();
+    else await expect(page.locator('.progress-step').first()).toBeVisible();
     await expect(page.locator('.step-nav svg')).toHaveCount(0);
     await expect(page.locator('.step-nav').getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
     await page.locator('#name').fill('Demo Owner'); await page.locator('#handle').fill('demo-site');

@@ -44,6 +44,7 @@ test.describe("unified profile onboarding", () => {
       page.getByRole("heading", { name: "Let's start with the basics" }),
     ).toBeVisible();
     await expect(page.locator(".step-count")).toContainText("1/8");
+    await expect(page.locator(".progress-step")).toHaveCount(8);
   });
 
   test("hydrates an existing profile directly in /create", async ({ page }) => {
