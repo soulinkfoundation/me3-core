@@ -109,7 +109,7 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
     <p class="section-desc">Pick a look. Everything updates live.</p>
     <section v-if="unpayable.length" class="look-pay-check" role="status" aria-labelledby="look-pay-check-title">
       <h3 id="look-pay-check-title">{{ unpayable.length === 1 ? "1 paid offer can't take payment yet" : `${unpayable.length} paid offers can't take payment yet` }}</h3>
-      <p>{{ unpayable.length === 1 ? "It shows Enquire on your site until it can, and enquiries come to your email." : "They show Enquire on your site until they can, and enquiries come to your email." }}</p>
+      <p>{{ unpayable.length === 1 ? "It shows Enquire on your site until it can, and enquiries come to your ME3 inbox." : "They show Enquire on your site until they can, and enquiries come to your ME3 inbox." }}</p>
       <ul><li v-for="offer in unpayable" :key="offer.title">{{ offer.title || "Untitled" }}</li></ul>
       <Button v-if="openGettingPaid" color="neutral" shape="soft" size="compact" @click="openGettingPaid()">Set up getting paid</Button>
     </section>

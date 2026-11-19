@@ -38,9 +38,9 @@ import { requestCountry } from "../../../../shared/regional-pricing";
 import { parseMe3Json, type Me3Profile } from "me3-protocol";
 import { applyAgentCheckoutSetting } from "../agent-commerce";
 import { syncPublishedProfileToSoulinkDirectory } from "../network-directory";
-import { getSiteFileText, getSiteForOwner, isMissingSiteFilesTableError } from "../sites";
+import { getPublishedSiteBaseUrl, getSiteFileText, getSiteForOwner, isMissingSiteFilesTableError } from "../sites";
 import { republishForPaymentChange } from "../site-publish";
-import { getOwnerContact } from "../transactional-emails";
+import { cleanAbout, deliverSiteEnquiry, enquiryPage, parseEnquiry } from "../site-enquiry";
 
 type CommerceRouteDeps = OwnerRouteDeps & {
   getCoreWebOrigin(env: Env, requestUrl?: string): string;
@@ -203,17 +203,33 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     startProductOrder,
   );
 
-  // Public: a site's Enquire button (a paid offer nobody can pay for yet). Opens an email to the owner,
-  // so their address isn't written into the page.
-  app.get("/api/enquire/:username", async (c) => {
+  // Public: a site's Enquire button (a paid offer nobody can pay for yet) opens a short form. What the
+  // visitor sends lands in the owner's ME3 inbox, with the offer named in the subject.
+  app.on(["GET", "POST"], "/api/enquire/:username", async (c) => {
     const site = await getSiteByUsername(c.env, c.req.param("username"));
     if (!site?.published_at) return c.text("Not found", 404);
-    const { email } = await getOwnerContact(c.env, site.user_id);
-    if (!email || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(email)) return c.text("This site can't take enquiries yet.", 404);
-    const about = (c.req.query("about") || "").replace(/[\u0000-\u001f]+/g, " ").trim().slice(0, 120);
     c.header("Cache-Control", "no-store");
     c.header("X-Robots-Tag", "noindex");
-    return c.redirect(`mailto:${email}?subject=${encodeURIComponent(about ? `Enquiry: ${about}` : "Enquiry")}`, 302);
+    const profile = await loadSiteProfileForCommerce(c.env, site).catch(() => null);
+    const siteName = (typeof profile?.name === "string" && profile.name.trim()) || site.username;
+    const siteUrl = await getPublishedSiteBaseUrl(c.env, site);
+    const action = `/api/enquire/${encodeURIComponent(site.username)}`;
+    if (c.req.method === "GET") {
+      return c.html(enquiryPage({ siteName, siteUrl, about: cleanAbout(c.req.query("about")), action }));
+    }
+    const body = await c.req.parseBody().catch(() => ({}));
+    const form: Record<string, unknown> = Object.fromEntries(Object.entries(body).map(([key, value]) => [key, typeof value === "string" ? value : ""]));
+    const about = cleanAbout(form.about);
+    // Bots fill the hidden field; they get the thank-you page and nothing is filed.
+    if (String(form.website ?? "").trim()) return c.html(enquiryPage({ siteName, siteUrl, about, action, state: "sent" }));
+    const parsed = parseEnquiry(form);
+    if ("error" in parsed) {
+      return c.html(enquiryPage({ siteName, siteUrl, about, action, error: parsed.error, values: { name: String(form.name ?? ""), email: String(form.email ?? ""), message: String(form.message ?? "") } }), 400);
+    }
+    let waitUntil: ((work: Promise<unknown>) => void) | undefined;
+    try { const ctx = c.executionCtx; waitUntil = (work) => ctx.waitUntil(work); } catch { waitUntil = undefined; }
+    const state = await deliverSiteEnquiry(c.env, parsed.enquiry, { siteUrl, waitUntil });
+    return c.html(enquiryPage({ siteName, siteUrl, about, action, state }), state === "sent" ? 200 : 503);
   });
 
   // Live copies left, so a published page never sells what is gone.

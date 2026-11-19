@@ -61,7 +61,7 @@ export function offerCanTakePayment(terms: PaymentTerms, readiness: PaymentReadi
   return readiness.stripeReady;
 }
 
-/** Where a site's Enquire buttons go: the Worker opens an email to the owner, so the address isn't in the page. */
+/** Where a site's Enquire buttons go: a short form whose message lands in the owner's ME3 inbox. */
 export function siteEnquireUrl(username: string, about: string): string {
   const query = about.trim() ? `?about=${encodeURIComponent(about.trim().slice(0, 120))}` : "";
   return `/api/enquire/${encodeURIComponent(username)}${query}`;

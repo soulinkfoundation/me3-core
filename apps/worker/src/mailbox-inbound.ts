@@ -654,7 +654,7 @@ function parseJsonRecord(value: string | null): Record<string, unknown> {
   }
 }
 
-async function getActiveMailboxForInbound(env: Env): Promise<DbMailboxAlias | null> {
+export async function getActiveMailboxForInbound(env: Env): Promise<DbMailboxAlias | null> {
   return (
     (await env.DB.prepare(
       `SELECT id, user_id, alias_local_part, forwarding_email, forwarding_status,

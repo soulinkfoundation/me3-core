@@ -1,3 +1,4 @@
+import { SITE_ENQUIRY_PROVIDER_ID } from "./site-enquiry-source";
 import { decodeMimeHeaderValue } from "../../../shared/email-headers";
 import { ACCOUNTS_PLUGIN_ID, AccountsInputError, getOrCreateCategoryByName, isFinancialEntryRemoved } from "./accounts";
 import { getDefaultCommerceCurrency } from "./commerce-settings";
@@ -66,6 +67,8 @@ export async function triageInboundInvoiceEmail(env: Env, mailboxId: string, mes
        AND m.status IN ('received', 'forwarded')`,
   ).bind(messageId, mailboxId).first<InvoiceMessage>();
   if (!message || !await isCorePluginEnabled(env, ACCOUNTS_PLUGIN_ID)) return false;
+  // Anyone can type any sender into a site's Enquire form, so those messages never file money.
+  if (message.provider_id === SITE_ENQUIRY_PROVIDER_ID) return false;
   // A "money arrived" email that fits a waiting pay-directly order is shown to the owner as a match
   // and is not filed here: its income is counted once, from the order, when the owner confirms it.
   const matched = await recordPaymentEmailMatch(env, message.user_id, {
