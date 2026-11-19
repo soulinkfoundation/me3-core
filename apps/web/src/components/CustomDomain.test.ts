@@ -236,4 +236,15 @@ describe("CustomDomain", () => {
     );
     expect(wrapper.text()).not.toContain("Keep your permanent me3.app address");
   });
+
+  it("connects the suggested domain straight away when asked to", async () => {
+    sitesStore.connectDomain.mockResolvedValue({ ok: true });
+    mount(CustomDomain, {
+      props: { username: "clara", sitePublished: true, embedded: true, managed: true, initialDomain: "clarastudio.com", autoConnect: true },
+      global: { stubs: { RouterLink: true } },
+    });
+    await flushPromises();
+
+    expect(sitesStore.connectDomain).toHaveBeenCalledWith("clara", "www.clarastudio.com");
+  });
 });

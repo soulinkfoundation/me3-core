@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { RouterLink } from "vue-router";
 import type { SiteLayout } from "@me3-core/site-renderer";
 import { useWizardStore } from "../../stores/wizard";
 import { vibes, selectableVibeIds } from "../../styles/vibes";
@@ -10,9 +9,24 @@ import AppSwitch from "../AppSwitch.vue";
 import UiIcon from "../UiIcon.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { api } from "../../api";
+import { useSitesStore } from "../../stores/sites";
+import { permanentPublicSiteUrl } from "../../utils/publicSiteUrl";
+import WizardDomainSheet from "./WizardDomainSheet.vue";
+import { domainSheetOpen } from "../../utils/wizardPublish";
 
 const wizard = useWizardStore();
+const sites = useSitesStore();
 const showFooter = ref(false);
+const showDomain = domainSheetOpen;
+const site = computed(() => sites.sites.find((candidate) => candidate.username === wizard.username));
+// "clara.me3.app · Use your own", or the owner's domain and whether it's connected yet.
+const webAddress = computed(() => {
+  const own = site.value?.custom_domain;
+  if (own) return { value: own, hint: site.value?.custom_domain_status === "active" ? "Connected" : site.value?.custom_domain_status === "failed" ? "Needs attention" : "Waiting" };
+  const fallback = wizard.username ? permanentPublicSiteUrl(wizard.username, "profile").replace(/^https?:\/\//, "").replace(/\/$/, "") : "";
+  return { value: fallback, hint: "Use your own" };
+});
+const footerLabel = computed(() => wizard.profile.footer.mode === "none" ? "None" : wizard.profile.footer.mode === "custom" ? (wizard.profile.footer.text || "Custom") : "Powered by me3");
 const layouts: { id: SiteLayout; label: string }[] = [
   { id: "card", label: "Card" }, { id: "split", label: "Split" },
   { id: "cover", label: "Cover" }, { id: "minimal", label: "Minimal" },
@@ -68,6 +82,7 @@ async function setSiteBadgeShown(shown: boolean) {
   }
 }
 onMounted(() => {
+  void sites.ensureSites();
   void api.get<SiteBadgeState>("/site-badge").then((state) => { siteBadge.value = state; }).catch(() => null);
 });
 
@@ -78,6 +93,10 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
   <div class="step-look">
     <h2>Make it yours</h2>
     <p class="section-desc">Pick a look. Everything updates live.</p>
+    <div class="look-options look-options--top">
+      <button type="button" class="look-option" @click="showDomain = true"><span>Web address</span><span class="look-option__value"><span>{{ webAddress.value }}</span><small>{{ webAddress.hint }}</small></span><UiIcon name="ChevronRight" :size="18" aria-hidden="true" /></button>
+      <button type="button" class="look-option" @click="showFooter = true"><span>Footer</span><span class="look-option__value"><span>{{ footerLabel }}</span></span><UiIcon name="ChevronRight" :size="18" aria-hidden="true" /></button>
+    </div>
     <fieldset><legend>Layout</legend>
       <div class="look-layouts">
         <label v-for="choice in layouts" :key="choice.id" class="look-layout" :class="{ selected: layout === choice.id }">
@@ -123,9 +142,8 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
     <div class="look-options">
       <div class="look-option"><span>Light/dark switch for visitors</span><AppSwitch :model-value="wizard.visitorThemeToggle" label="Show a light/dark switch to visitors" @update:model-value="wizard.setVisitorThemeToggle" /></div>
       <div v-if="siteBadge" class="look-option"><span>Made with ME3 badge</span><AppSwitch :model-value="siteBadgeShown" :disabled="siteBadgeSaving" label="Show the Made with ME3 badge" @update:model-value="setSiteBadgeShown" /></div>
-      <button type="button" class="look-option" @click="showFooter = true"><span>Footer</span><UiIcon name="ChevronRight" :size="18" aria-hidden="true" /></button>
-      <RouterLink class="look-option" :to="{ path: '/settings', query: { section: 'domain', ...(wizard.username ? { site: wizard.username } : {}) } }"><span>Custom domain</span><UiIcon name="ChevronRight" :size="18" aria-hidden="true" /></RouterLink>
     </div>
+    <WizardDomainSheet :open="showDomain" @close="showDomain = false" />
     <AppDialog :open="showFooter" aria-label="Footer settings" close-on-backdrop @close="showFooter = false">
       <section class="look-footer-dialog">
         <header><h2>Footer settings</h2><button type="button" aria-label="Close footer settings" @click="showFooter = false"><UiIcon name="X" :size="20" /></button></header>
@@ -190,7 +208,12 @@ legend { padding: 0; margin-bottom: 12px; font-size: 13px; color: var(--ui-text-
 .look-options { display: grid; margin: 24px 0 0; padding: 4px 16px; border-radius: 18px; background: var(--ui-surface-muted); }
 .look-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 52px; padding: 0; border: 0; border-bottom: 1px solid var(--ui-border); background: transparent; color: var(--ui-text); font: 500 15px var(--font-sans); text-align: left; text-decoration: none; cursor: pointer; }
 .look-option:last-child { border-bottom: 0; }
-.look-option > svg { color: var(--ui-text-muted); }
+.look-options--top { margin-bottom: 20px; }
+.look-option > svg { flex: none; color: var(--ui-text-muted); }
+.look-option > span:first-child { flex: none; }
+.look-option__value { display: grid; flex: 1; justify-items: end; min-width: 0; color: var(--ui-text-muted); font-size: 14px; text-align: right; }
+.look-option__value span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.look-option__value small { color: var(--ui-accent-strong, var(--ui-accent)); font-size: 12.5px; font-weight: 600; }
 .look-footer-dialog { display: grid; gap: 14px; width: min(480px, 100%); margin: auto; padding: 24px; box-sizing: border-box; border-radius: 24px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
 .look-footer-dialog header { display: flex; justify-content: space-between; align-items: center; }
 .look-footer-dialog h2 { margin: 0; font-size: 20px; }.look-footer-dialog p { margin: 0; color: var(--ui-text-muted); font-size: 14px; }

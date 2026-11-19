@@ -15,6 +15,8 @@ const props = defineProps<{
   initialDomain?: string;
   embedded?: boolean;
   managed?: boolean;
+  /** Connect `initialDomain` straight away (the site editor's "Publish and connect"). */
+  autoConnect?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -47,6 +49,7 @@ const workerFallbackUrl = computed(
 onMounted(async () => {
   await loadDomainStatus();
   applyInitialDomain();
+  if (props.autoConnect && newDomain.value && !isConnected.value) await connectDomain();
 });
 
 async function loadDomainStatus(emitChange = false) {

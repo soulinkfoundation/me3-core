@@ -69,7 +69,10 @@ describe("WizardLook badge", () => {
   });
 
   it("shows the owner's badge choice and saves a change", async () => {
-    apiHarness.get.mockResolvedValue({ preference: "shown", automaticallyShown: false });
+    apiHarness.get.mockImplementation(async (path: string) => {
+      if (path === "/site-badge") return { preference: "shown", automaticallyShown: false };
+      throw new Error("offline");
+    });
     apiHarness.put.mockResolvedValue({ preference: "hidden", automaticallyShown: false });
     const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true, RouterLink: true } } });
     await flushPromises();

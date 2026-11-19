@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { definePage } from "unplugin-vue-router/runtime";
-import { computed, onMounted, ref, watch, type Component } from "vue";
+import { computed, onMounted, provide, ref, watch, type Component } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   useWizardStore,
@@ -9,6 +9,7 @@ import {
 import { useSitesStore } from "../stores/sites";
 import { usePublish } from "../composables/usePublish";
 import { useTopBarClose } from "../composables/useTopBar";
+import { WIZARD_PUBLISH_KEY } from "../utils/wizardPublish";
 import AppPageBar from "../components/AppPageBar.vue";
 import GeneratedSitePreview from "../components/GeneratedSitePreview.vue";
 import PageLoading from "../components/PageLoading.vue";
@@ -225,25 +226,28 @@ function handleIntroGetStarted() {
   showIntroScreen.value = false;
 }
 
-async function handlePublish() {
-  if (isPublishing.value) return;
+async function handlePublish(): Promise<boolean> {
+  if (isPublishing.value) return false;
   publishValidationError.value = "";
   if (wizard.profile.name.trim().length < 2 || wizard.username.trim().length < 3) {
     publishValidationError.value = "Add your name and a username of at least three characters in Basics before publishing.";
     wizard.goToStepId("basics");
-    return;
+    return false;
   }
   if (wizard.isCheckingUsername || wizard.isUsernameAvailable === false) {
     publishValidationError.value = "Choose an available username in Basics before publishing.";
     wizard.goToStepId("basics");
-    return;
+    return false;
   }
   const success = await publish({ openSite: false });
-  if (!success) return;
+  if (!success) return false;
   publishedSiteUrl.value = await resolvePublicSiteUrl(wizard.username, sites.sites.find(site => site.username === wizard.username));
   published.value = true;
   window.scrollTo({ top: 0, behavior: "instant" });
+  return true;
 }
+// The Publish step's Web address sheet publishes first when the site isn't live yet.
+provide(WIZARD_PUBLISH_KEY, handlePublish);
 async function copySiteLink() {
   try { await navigator.clipboard.writeText(publishedSiteUrl.value); toastSuccess("Site link copied."); }
   catch (error) { toastFromUnknown(error, "Couldn't copy the site link."); }
