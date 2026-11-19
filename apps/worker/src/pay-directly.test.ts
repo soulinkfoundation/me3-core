@@ -23,7 +23,8 @@ import {
   updatePaymentMethod,
 } from "./pay-directly";
 import { Hono } from "hono";
-import { getProfileCommercePublishBlockReason } from "./commerce-readiness";
+import { getPaymentReadiness, getProfileCommercePublishBlockReason, markUnpayableOffers } from "./commerce-readiness";
+import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import { registerCommerceRoutes } from "./routes/commerce";
 import type { Env } from "./types";
 
@@ -36,7 +37,7 @@ import type { Env } from "./types";
 // non-EUR order or a UK account; a switched-off method is still offered; two orders (or an
 // order and a booking) get the same reference; asking twice for the same order makes a
 // second reference; one owner edits or removes another owner's method; an offer with
-// neither a note nor a usable saved method publishes or takes orders; an offer with a note
+// neither a note nor a usable saved method takes orders (it shows Enquire, and still publishes); an offer with a note
 // changes behaviour once saved methods exist.
 
 const method = (input: Partial<SavedPaymentMethod> & Pick<SavedPaymentMethod, "id" | "kind">): SavedPaymentMethod => ({
@@ -308,19 +309,29 @@ describe("order references", () => {
   });
 });
 
+// The pages a paid offer renders: Book or Buy once a buyer can pay, Enquire until then. Publishing never waits on it.
+const enquireOf = (profile: Me3SiteProfile) => ({
+  product: (profile.products?.[0] as { enquireUrl?: string } | undefined)?.enquireUrl,
+  booking: (profile.intents?.book?.offers?.[0] as { enquireUrl?: string } | undefined)?.enquireUrl,
+});
+
 describe("offers that let the buyer choose", () => {
   const profile = () => ({
     version: "0.1", handle: "owner", name: "Owner",
     products: [{ slug: "kit", title: "Kit", price: 4900, currency: "EUR", available: true, paymentMethod: "stripe", allowPayDirectly: true }],
-    intents: { book: { enabled: true, offers: [{ pricing: { enabled: true, paymentMethod: "stripe", allowPayDirectly: true, currency: "EUR" } }] } },
-  }) as unknown as Parameters<typeof getProfileCommercePublishBlockReason>[2];
+    intents: { book: { enabled: true, offers: [{ title: "Session", pricing: { enabled: true, paymentMethod: "stripe", allowPayDirectly: true, currency: "EUR" } }] } },
+  }) as unknown as Me3SiteProfile;
 
-  it("need a way to get paid directly and Stripe before they publish", async () => {
+  it("publish either way, and show Enquire until both a way to get paid directly and Stripe are ready", async () => {
     const { env } = fixture();
-    expect(await getProfileCommercePublishBlockReason(env, "owner", profile())).toMatch(/way to get paid in EUR.*note/i);
+    expect(getProfileCommercePublishBlockReason(profile())).toBeNull();
+    const marked = async () => enquireOf(markUnpayableOffers(profile(), "owner", await getPaymentReadiness(env, "owner")));
+    expect(await marked()).toEqual({ product: "/api/enquire/owner?about=Kit", booking: "/api/enquire/owner?about=Session" });
     await createPaymentMethod(env, "owner", { kind: "paypal", link: "paypal.me/owner" });
     // The saved method is there; it is still a card offer, so Stripe has to be ready too.
-    expect(await getProfileCommercePublishBlockReason(env, "owner", profile())).toBe("Connect Stripe in Settings → Payments before publishing paid bookings or products.");
+    expect(await marked()).toEqual({ product: "/api/enquire/owner?about=Kit", booking: "/api/enquire/owner?about=Session" });
+    (env as { STRIPE_SECRET_KEY?: string }).STRIPE_SECRET_KEY = "sk_test_ready";
+    expect(await marked()).toEqual({ product: undefined, booking: undefined });
   });
 });
 
@@ -330,27 +341,38 @@ describe("pay-directly offers", () => {
     handle: "owner",
     name: "Owner",
     products: [{ slug: "kit", title: "Kit", price: 4900, currency: overrides.currency || "EUR", available: true, paymentMethod: "manual", paymentInstructions: overrides.note || "" }],
-    intents: { book: { enabled: true, offers: [{ pricing: { enabled: true, paymentMethod: "manual", currency: overrides.currency || "EUR", paymentInstructions: overrides.note || "" } }] } },
-  }) as unknown as Parameters<typeof getProfileCommercePublishBlockReason>[2];
+    intents: { book: { enabled: true, offers: [{ title: "Session", pricing: { enabled: true, paymentMethod: "manual", currency: overrides.currency || "EUR", paymentInstructions: overrides.note || "" } }] } },
+  }) as unknown as Me3SiteProfile;
+  const enquiring = { product: "/api/enquire/owner?about=Kit", booking: "/api/enquire/owner?about=Session" };
+  const bookable = { product: undefined, booking: undefined };
 
-  it("publish and take orders with a saved method or a note, and are blocked with neither", async () => {
+  it("take orders with a saved method or a note, show Enquire with neither, and always publish", async () => {
     const { env } = fixture();
-    expect(await getProfileCommercePublishBlockReason(env, "owner", profile())).toMatch(/way to get paid.*note/i);
+    const marked = async (overrides?: { note?: string; currency?: string }) =>
+      enquireOf(markUnpayableOffers(profile(overrides), "owner", await getPaymentReadiness(env, "owner")));
+    expect(getProfileCommercePublishBlockReason(profile())).toBeNull();
+    expect(await marked()).toEqual(enquiring);
     expect(await manualPaymentAvailable(env, "owner", "", "EUR")).toBe(false);
     // Existing offers with free text behave as before.
-    expect(await getProfileCommercePublishBlockReason(env, "owner", profile({ note: "Pay by bank transfer." }))).toBeNull();
+    expect(await marked({ note: "Pay by bank transfer." })).toEqual(bookable);
     expect(await manualPaymentAvailable(env, "owner", "Pay by bank transfer.", "EUR")).toBe(true);
 
     const bank = await createPaymentMethod(env, "owner", { kind: "bank", accountName: "Kieran Butler", iban: "IE29AIBK93115212345678" });
-    expect(await getProfileCommercePublishBlockReason(env, "owner", profile())).toBeNull();
+    expect(await marked()).toEqual(bookable);
     expect(await manualPaymentAvailable(env, "owner", "", "eur")).toBe(true);
     // A EUR bank account cannot take a USD order.
-    expect(await getProfileCommercePublishBlockReason(env, "owner", profile({ currency: "USD" }))).toMatch(/USD/);
+    expect(await marked({ currency: "USD" })).toEqual({ product: "/api/enquire/owner?about=Kit", booking: "/api/enquire/owner?about=Session" });
     expect(await manualPaymentAvailable(env, "owner", "", "USD")).toBe(false);
 
     await updatePaymentMethod(env, "owner", bank.id, { enabled: false });
-    expect(await getProfileCommercePublishBlockReason(env, "owner", profile())).toMatch(/way to get paid/i);
+    expect(await marked()).toEqual(enquiring);
     expect(await manualPaymentAvailable(env, "owner", "", "EUR")).toBe(false);
+  });
+
+  it("still blocks publish on content errors", () => {
+    const broken = profile();
+    (broken.products![0] as { delivery?: unknown }).delivery = { kind: "physical", instructions: "" };
+    expect(getProfileCommercePublishBlockReason(broken)).toMatch(/delivery instructions/i);
   });
 
   it("keeps the note alone when no method is saved, and adds the saved methods when there are", async () => {

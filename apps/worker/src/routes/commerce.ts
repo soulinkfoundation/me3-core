@@ -39,6 +39,8 @@ import { parseMe3Json, type Me3Profile } from "me3-protocol";
 import { applyAgentCheckoutSetting } from "../agent-commerce";
 import { syncPublishedProfileToSoulinkDirectory } from "../network-directory";
 import { getSiteFileText, getSiteForOwner, isMissingSiteFilesTableError } from "../sites";
+import { republishForPaymentChange } from "../site-publish";
+import { getOwnerContact } from "../transactional-emails";
 
 type CommerceRouteDeps = OwnerRouteDeps & {
   getCoreWebOrigin(env: Env, requestUrl?: string): string;
@@ -49,10 +51,10 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
 
-    return c.json({
-      ok: true,
-      ...(await getCommerceSettings(c.env, ownerId)),
-    });
+    const settings = await getCommerceSettings(c.env, ownerId);
+    // Stripe onboarding finishes on Stripe's side; the first status read after it flips Enquire to Book or Buy.
+    if (settings.stripe.connectionStatus !== "unavailable") queuePaymentRepublish(c, ownerId);
+    return c.json({ ok: true, ...settings });
   });
 
   // Pay me directly: days until an unpaid buyer is reminded and an unpaid booking or order is released.
@@ -75,6 +77,7 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     const body = await c.req.json().catch(() => ({}));
     try {
       const settings = await updateCommerceSettings(c.env, ownerId, body);
+      queuePaymentRepublish(c, ownerId);
       if (body && typeof body === "object" && "agentCheckoutEnabled" in body) {
         queueAgentCheckoutDirectorySync(c, ownerId);
       }
@@ -93,7 +96,10 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     if (!ownerId) return deps.unauthorized(c);
     const body = c.req.method === "GET" || c.req.method === "DELETE" ? null : await c.req.json().catch(() => null);
     try {
-      return c.json({ ok: true, ...(await handler(c, ownerId, body)) }, status);
+      const result = await handler(c, ownerId, body);
+      // A saved, changed or removed way to get paid changes which offers show Enquire.
+      if (c.req.method !== "GET") queuePaymentRepublish(c, ownerId);
+      return c.json({ ok: true, ...result }, status);
     } catch (error) {
       if (error instanceof PayDirectlyInputError) {
         return c.json({ ok: false, error: error.message }, error.status as 400);
@@ -197,6 +203,19 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     startProductOrder,
   );
 
+  // Public: a site's Enquire button (a paid offer nobody can pay for yet). Opens an email to the owner,
+  // so their address isn't written into the page.
+  app.get("/api/enquire/:username", async (c) => {
+    const site = await getSiteByUsername(c.env, c.req.param("username"));
+    if (!site?.published_at) return c.text("Not found", 404);
+    const { email } = await getOwnerContact(c.env, site.user_id);
+    if (!email || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(email)) return c.text("This site can't take enquiries yet.", 404);
+    const about = (c.req.query("about") || "").replace(/[\u0000-\u001f]+/g, " ").trim().slice(0, 120);
+    c.header("Cache-Control", "no-store");
+    c.header("X-Robots-Tag", "noindex");
+    return c.redirect(`mailto:${email}?subject=${encodeURIComponent(about ? `Enquiry: ${about}` : "Enquiry")}`, 302);
+  });
+
   // Live copies left, so a published page never sells what is gone.
   app.get("/api/shop/:username/availability", async (c) => {
     const site = await getSiteByUsername(c.env, c.req.param("username"));
@@ -254,6 +273,19 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
 
 // The network directory should stop (or resume) advertising agent checkout as
 // soon as the owner flips the switch, not at the next publish.
+/** Republishes the owner's live sites in the background when payment readiness changed since they were rendered. */
+function queuePaymentRepublish(c: AppContext, ownerId: string): void {
+  let executionCtx: { waitUntil(promise: Promise<unknown>): void };
+  try {
+    executionCtx = c.executionCtx;
+  } catch {
+    return;
+  }
+  executionCtx.waitUntil(
+    republishForPaymentChange(c.env, ownerId).catch((error) => console.error("Failed to republish after a payment change:", error)),
+  );
+}
+
 function queueAgentCheckoutDirectorySync(c: AppContext, ownerId: string): void {
   let executionCtx: { waitUntil(promise: Promise<unknown>): void };
   try {

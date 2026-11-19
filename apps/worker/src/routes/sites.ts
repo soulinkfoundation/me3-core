@@ -1529,11 +1529,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
           (await getSiteFileText(c.env, site.id, "public/me.json"));
       if (nextProfileJson) {
         const nextProfile = parseSiteProfile(nextProfileJson, site.username);
-        const commerceError = await getProfileCommercePublishBlockReason(
-          c.env,
-          ownerId,
-          nextProfile,
-        );
+        const commerceError = getProfileCommercePublishBlockReason(nextProfile);
         if (commerceError) return c.json({ error: commerceError }, 409);
       }
 
@@ -2163,11 +2159,7 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       const profile = parseSiteProfile(profileJson, site.username);
       isPrivateProfile =
         site.site_role === "profile" && profile.visibility === "private";
-      const commerceError = await getProfileCommercePublishBlockReason(
-        c.env,
-        ownerId,
-        profile,
-      );
+      const commerceError = getProfileCommercePublishBlockReason(profile);
       if (commerceError) return c.json({ error: commerceError }, 409);
     }
     if (isPrivateProfile) {

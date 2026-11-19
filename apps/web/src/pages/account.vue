@@ -865,12 +865,12 @@ const managedStripeDescription = computed(() => {
     return "Stripe needs more information before payments and payouts are ready.";
   }
   if (status === "pending") {
-    return "Continue Stripe setup before publishing paid bookings or products.";
+    return "Finish Stripe setup to take card payments. Until then, card offers on your site show Enquire.";
   }
   if (status === "unavailable") {
-    return "ME3 could not check Stripe right now. Try again before publishing paid offers.";
+    return "ME3 could not check Stripe right now. Try again in a moment.";
   }
-  return "Connect your Stripe account before publishing paid bookings or products.";
+  return "Connect Stripe to take card payments. Until then, card offers on your site show Enquire.";
 });
 
 const managedStripeActionLabel = computed(() => {

@@ -7,7 +7,7 @@ import { bookingNavigationScript } from "./booking-navigation.js";
 import { bookingConfirmationMarkup, bookingConfirmationRuntime, bookingConfirmationCss } from "./booking-confirmation.js";
 export { normalizeSiteTheme, siteThemes } from "./themes.js";
 export type { SiteColorMode, SiteThemeId } from "./themes.js";
-import { renderProductCheckout, renderProductDock, productCheckoutCss } from "./product-checkout.js";
+import { renderProductCheckout, renderProductDock, productCheckoutCss, safeEnquireHref } from "./product-checkout.js";
 import type { ProductOption } from "./product-offer.js";
 import { productShopCss, renderProductGallery, renderShopAvailabilityScript, renderShopCard } from "./product-shop.js";
 import { localizeRegionalPrices, regionalPricingCountries, type RegionalPrice } from "./regional-pricing.js";
@@ -77,6 +77,8 @@ type Me3Product = Me3Page & {
   /** With paymentMethod "stripe": the buyer may pay the owner directly instead of by card. */
   allowPayDirectly?: boolean;
   paymentInstructions?: string;
+  /** Set at publish when nobody can pay for this product yet: the page shows Enquire, linking here, instead of Buy. */
+  enquireUrl?: string;
   publishedAt?: string;
   stock?: number;
   stockSetAt?: string;
@@ -123,6 +125,8 @@ type BookingOffer = {
   location?: { mode?: "in_person" | "online" | "phone"; place?: string };
   /** Button wording that replaces the default "Book …". */
   buttonLabel?: string;
+  /** Set at publish when nobody can pay for this paid offer yet: it shows Enquire, linking here, instead of Book. */
+  enquireUrl?: string;
 };
 
 type BookingClass = BookingOffer & {
@@ -515,6 +519,7 @@ function primarySiteAction(profile: Me3SiteProfile): { label: string; href: stri
   }
   if (choice?.kind === "offer" && profile.intents?.book?.enabled && bookingOnHome) {
     const entry = bookingOfferEntries(profile.intents.book).find((item) => item.offer.id === choice.id);
+    if (entry && offerEnquireHref(entry.offer)) return { label: "Enquire", href: offerEnquireHref(entry.offer) };
     return { label: entry ? entry.offer.buttonLabel || `Book ${entry.offer.title || "a session"}` : "Book a session", href: "#booking" };
   }
   const button = choice?.kind === "button"
@@ -522,7 +527,9 @@ function primarySiteAction(profile: Me3SiteProfile): { label: string; href: stri
     : profile.buttons?.find((item) => item.text && item.url);
   if (button?.text && button.url) return { label: button.text, href: formatHref(button.url) };
   if (profile.intents?.book?.enabled && bookingOnHome) {
-    const first = bookingOfferEntries(profile.intents.book)[0];
+    const entries = bookingOfferEntries(profile.intents.book);
+    const first = entries.find((entry) => !offerEnquireHref(entry.offer));
+    if (!first && entries[0]) return { label: "Enquire", href: offerEnquireHref(entries[0].offer) };
     return { label: first ? first.offer.buttonLabel || defaultOfferButtonLabel(first.kind) : "Book a session", href: "#booking" };
   }
   if (profile.intents?.subscribe?.enabled && newsletterOnHome) return { label: "Subscribe", href: "#newsletter" };
@@ -591,6 +598,22 @@ function defaultOfferButtonLabel(kind: OfferKind): string {
   return "Book a session";
 }
 
+/** Where a paid offer nobody can pay for yet sends visitors instead of booking, or "" when it can be booked. */
+function offerEnquireHref(offer: { enquireUrl?: string; pricing?: { enabled?: boolean } }): string {
+  return offer.pricing?.enabled === true ? safeEnquireHref(offer.enquireUrl) : "";
+}
+
+/** The site's own label for the offer, or Enquire when it can't be booked yet. */
+function offerActionLabel(entry: OfferEntry): string {
+  return offerEnquireHref(entry.offer) ? "Enquire" : entry.offer.buttonLabel || defaultOfferButtonLabel(entry.kind);
+}
+
+/** Static cards for offers that show Enquire, beside (not inside) the booking widget. */
+function renderEnquireCards(entries: Array<{ offer: BookingOffer; meta: string }>): string {
+  if (!entries.length) return "";
+  return `<div class="booking-enquire-list">${entries.map(({ offer, meta }) => `<div class="booking-card booking-card--enquire"><strong>${escapeHtml(offer.title || "Session")}</strong>${renderBookingOfferDescription(offer.description)}${meta ? `<span>${escapeHtml(meta)}</span>` : ""}<a class="booking-submit booking-enquire" href="${escapeHtml(offerEnquireHref(offer))}" rel="nofollow" aria-label="${escapeHtml(`Enquire about ${offer.title || "this offer"}`)}">Enquire</a></div>`).join("")}</div>`;
+}
+
 const WEEKDAY_LABELS: Record<string, string> = { monday: "Monday", tuesday: "Tuesday", wednesday: "Wednesday", thursday: "Thursday", friday: "Friday", saturday: "Saturday", sunday: "Sunday" };
 
 function formatOfferDate(date: string, withYear = false): string {
@@ -633,15 +656,19 @@ function generateOffers(profile: Me3SiteProfile, inlineBooking: boolean): string
   if (!book?.enabled) return "";
   const entries = bookingOfferEntries(book);
   if (!entries.length) return "";
+  // The booking widget leaves Enquire offers out, so a Book button counts only the bookable offers before it.
+  const bookableBefore: Record<string, number> = {};
   const cards = entries.map((entry) => {
-    const { offer, kind, index } = entry;
+    const { offer, kind } = entry;
+    const enquireHref = offerEnquireHref(offer);
+    const index = enquireHref ? -1 : (bookableBefore[kind] = (bookableBefore[kind] ?? -1) + 1);
     const title = offer.title || "Session";
-    const label = offer.buttonLabel || defaultOfferButtonLabel(kind);
+    const label = offerActionLabel(entry);
     const place = offerPlace(offer);
     const places = kind !== "one_to_one" && typeof offer.capacity === "number" ? `${offer.capacity} places` : "";
     const pills = [offerWhen(entry, book.duration), place, formatPricing(offer.pricing), places].filter(Boolean);
     const image = offer.image ? `<img class="site-offer__image" src="${escapeHtml(filePathForHtml(offer.image))}" alt="" loading="lazy" decoding="async">` : "";
-    return `<article class="site-offer${image ? " site-offer--image" : ""}">${image}<div class="site-offer__body"><h3>${escapeHtml(title)}</h3><div class="site-offer__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>${offer.description ? `<p>${escapeHtml(plainTextFromMaybeHtml(offer.description))}</p>` : ""}<div class="site-offer__actions"><button type="button" data-offer-book-type="${kind}" data-offer-book="${index}" aria-label="${escapeHtml(`${label}: ${title}`)}">${escapeHtml(label)}</button>${offer.pageSlug ? `<a class="site-offer__more" href="./${escapeHtml(normalizeSitePath(offer.pageSlug))}" aria-label="${escapeHtml(`More about ${title}`)}">More →</a>` : ""}</div></div></article>`;
+    return `<article class="site-offer${image ? " site-offer--image" : ""}">${image}<div class="site-offer__body"><h3>${escapeHtml(title)}</h3><div class="site-offer__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>${offer.description ? `<p>${escapeHtml(plainTextFromMaybeHtml(offer.description))}</p>` : ""}<div class="site-offer__actions">${enquireHref ? `<a class="site-offer__enquire" href="${escapeHtml(enquireHref)}" rel="nofollow" aria-label="${escapeHtml(`${label}: ${title}`)}">${escapeHtml(label)}</a>` : `<button type="button" data-offer-book-type="${kind}" data-offer-book="${index}" aria-label="${escapeHtml(`${label}: ${title}`)}">${escapeHtml(label)}</button>`}${offer.pageSlug ? `<a class="site-offer__more" href="./${escapeHtml(normalizeSitePath(offer.pageSlug))}" aria-label="${escapeHtml(`More about ${title}`)}">More →</a>` : ""}</div></div></article>`;
   }).join("");
   const booking = inlineBooking ? `<div class="site-offer-booking" hidden>${generateBooking(profile)}</div>` : "";
   return `<section class="site-offers"><div class="site-section-heading"><h2>Work with me</h2></div><div class="site-offers__grid">${cards}</div>${booking}<script>(function(){var section=document.currentScript.parentElement;section.querySelectorAll('[data-offer-book]').forEach(function(button){button.addEventListener('click',function(){var booking=section.querySelector('.site-offer-booking');if(booking)booking.hidden=false;var target=booking||document.getElementById('booking');if(!target)return;var type=button.getAttribute('data-offer-book-type')||'one_to_one';var tab=target.querySelector('[data-booking-type-tab="'+type+'"]');if(tab)tab.click();var panel=target.querySelector('[data-booking-type-panel="'+type+'"]')||target;var index=Number(button.getAttribute('data-offer-book'));var card=panel.querySelectorAll('.booking-card')[index];if(card)card.click();var select=panel.querySelector('[data-booking-offer-select]');if(select&&select.options[index]){select.selectedIndex=index;select.dispatchEvent(new Event('change',{bubbles:true}));}target.scrollIntoView({behavior:'smooth',block:'start'});});});})();</script></section>`;
@@ -719,7 +746,8 @@ function generateOfferPageHtml(profile: Me3SiteProfile, entry: OfferEntry, capab
   const { offer, kind } = entry;
   const book = profile.intents?.book;
   const title = offer.title || "Session";
-  const label = offer.buttonLabel || defaultOfferButtonLabel(kind);
+  const label = offerActionLabel(entry);
+  const enquireHref = offerEnquireHref(offer);
   const place = offerPlace(offer);
   const places = kind !== "one_to_one" && typeof offer.capacity === "number" ? `${offer.capacity} places` : "";
   const pills = [offerWhen(entry, book?.duration), place, formatPricing(offer.pricing), places].filter(Boolean);
@@ -736,7 +764,7 @@ function generateOfferPageHtml(profile: Me3SiteProfile, entry: OfferEntry, capab
     activeSlug: entry.offer.pageSlug || "",
     basePath: "./",
     body: `${modern ? "" : `<header class="page-header"><a class="back-link" href="./">${profile.avatar ? `<img src="${escapeHtml(filePathForHtml(profile.avatar, "./"))}" alt="" class="avatar-small">` : ""}<span>${escapeHtml(profile.name || "Home")}</span></a>${generateNav(profile, "", "./", "header")}</header>`}
-      <main class="content offer-page">${offer.image ? `<img class="offer-page__image" src="${escapeHtml(filePathForHtml(offer.image, "./"))}" alt="" decoding="async">` : ""}<h1>${escapeHtml(title)}</h1>${pills.length ? `<div class="offer-page__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>` : ""}${offer.description ? `<div class="offer-page__description">${renderRichText(offer.description)}</div>` : ""}${booking ? `<p><a class="offer-page__cta" href="#booking">${escapeHtml(label)}</a></p>${booking}` : ""}</main>`,
+      <main class="content offer-page">${offer.image ? `<img class="offer-page__image" src="${escapeHtml(filePathForHtml(offer.image, "./"))}" alt="" decoding="async">` : ""}<h1>${escapeHtml(title)}</h1>${pills.length ? `<div class="offer-page__pills">${pills.map((pill) => `<span>${escapeHtml(pill)}</span>`).join("")}</div>` : ""}${offer.description ? `<div class="offer-page__description">${renderRichText(offer.description)}</div>` : ""}${enquireHref ? `<p><a class="offer-page__cta" href="${escapeHtml(enquireHref)}" rel="nofollow">${escapeHtml(label)}</a></p>` : booking ? `<p><a class="offer-page__cta" href="#booking">${escapeHtml(label)}</a></p>${booking}` : ""}</main>`,
     footer: generateFooter(profile, capabilities.footerCustomization),
     vibe: getVibe(profile),
   });
@@ -1533,7 +1561,12 @@ function generateBookingTypeBody(
   profile: Me3SiteProfile,
 ): string {
   if (type.type === "class") {
-    const classes = Array.isArray(type.classes) ? type.classes : [];
+    const all = Array.isArray(type.classes) ? type.classes : [];
+    const classes = all.filter((offer) => !offerEnquireHref(offer));
+    const enquire = renderEnquireCards(all.filter((offer) => offerEnquireHref(offer)).map((offer, index) => ({
+      offer,
+      meta: [offerWhen({ offer, kind: "class", index }), formatPricing(offer.pricing)].filter(Boolean).join(" · "),
+    })));
     const cards = classes.map((offer, index) => {
       const recurrence = offer.recurrence;
       const capacity = typeof offer.capacity === "number" ? `${offer.capacity} places` : "No place limit";
@@ -1546,11 +1579,16 @@ function generateBookingTypeBody(
       modern: Boolean(profile.extensions?.["me3.app/site"]),
       offers: classes,
       cards,
-    });
+    }) + enquire;
   }
 
   if (type.type === "retreat") {
-    const retreats = Array.isArray(type.retreats) ? type.retreats : [];
+    const all = Array.isArray(type.retreats) ? type.retreats : [];
+    const retreats = all.filter((offer) => !offerEnquireHref(offer));
+    const enquire = renderEnquireCards(all.filter((offer) => offerEnquireHref(offer)).map((offer, index) => ({
+      offer,
+      meta: [offerWhen({ offer, kind: "retreat", index }), formatPricing(offer.pricing)].filter(Boolean).join(" · "),
+    })));
     const cards = retreats.map((offer, index) => {
       const capacity = typeof offer.capacity === "number" ? `${offer.capacity} places` : "No place limit";
       const price = formatPricing(offer.pricing);
@@ -1562,10 +1600,10 @@ function generateBookingTypeBody(
       modern: Boolean(profile.extensions?.["me3.app/site"]),
       offers: retreats,
       cards,
-    });
+    }) + enquire;
   }
 
-  const offers =
+  const allOffers: BookingOffer[] =
     Array.isArray(type.offers) && type.offers.length > 0
       ? type.offers
       : [
@@ -1576,6 +1614,12 @@ function generateBookingTypeBody(
             pricing: book?.pricing,
           },
         ];
+  const offers = allOffers.filter((offer) => !offerEnquireHref(offer));
+  const enquire = renderEnquireCards(allOffers.filter((offer) => offerEnquireHref(offer)).map((offer) => ({
+    offer,
+    meta: [`${offer.duration || book?.duration || 30} min`, formatPricing(offer.pricing)].filter(Boolean).join(" · "),
+  })));
+  if (!offers.length) return enquire;
   const cards = offers.map((offer, index) => {
     const duration = offer.duration || book?.duration || 30;
     const price = formatPricing(offer.pricing);
@@ -1592,7 +1636,7 @@ function generateBookingTypeBody(
     fallbackDuration: book?.duration || 30,
     cards,
     displayMode: book?.offerDisplayMode === "dropdown" ? "dropdown" : "cards",
-  });
+  }) + enquire;
 }
 
 function renderBookingOfferDescription(value?: string): string {
@@ -2900,6 +2944,9 @@ function bookingControlsCss(): string {
 .booking-session-preview:has(.booking-offer-card:only-child){grid-template-columns:1fr}
 .booking-offer-card .booking-card,.booking-offer-card .booking-card.active{border:0;background:transparent}
 .booking-offer-card:has(.booking-card.active),.booking-session-preview>.booking-card.active{border-color:color-mix(in srgb,var(--accent) 70%,var(--text));background:color-mix(in srgb,var(--surface) 82%,var(--accent))}
+.booking-enquire-list{display:grid;gap:12px;margin-top:16px}
+.booking-card.booking-card--enquire{border:1px solid var(--border);cursor:default}
+.booking-card--enquire .booking-enquire{display:block;box-sizing:border-box;width:100%;margin-top:4px;text-align:center;text-decoration:none}
 .booking-session-preview>.booking-card{border-width:2px;border-style:solid;box-shadow:var(--ui-shadow-sm)}
 .booking-card .booking-card-selection{visibility:hidden;color:var(--text);font-size:.82rem;font-weight:800}
 .booking-card.active .booking-card-selection{visibility:visible}

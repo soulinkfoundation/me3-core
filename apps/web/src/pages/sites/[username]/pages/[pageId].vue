@@ -458,7 +458,7 @@ onMounted(load);
             </select>
           </label>
           <p v-if="primaryAction?.kind === 'booking' && bookingOffers.length === 0" class="field-note">Create and publish a booking offer in the site wizard first.</p>
-          <p v-if="primaryAction?.kind === 'booking' && bookingOffers.some((offer) => offer.id === primaryAction?.resourceId && offer.paid) && !paymentsReady" class="field-note warning">Connect Stripe in Account → Payments before publishing this paid booking.</p>
+          <p v-if="primaryAction?.kind === 'booking' && bookingOffers.some((offer) => offer.id === primaryAction?.resourceId && offer.paid) && !paymentsReady" class="field-note warning">Connect Stripe in Account → Payments so buyers can pay for this booking. Until then, it shows Enquire.</p>
           <label v-if="primaryAction?.kind === 'product'">Product
             <select v-model="primaryAction.resourceId">
               <option value="">Choose an existing product</option>
@@ -466,7 +466,7 @@ onMounted(load);
             </select>
           </label>
           <p v-if="primaryAction?.kind === 'product' && products.length === 0" class="field-note">Create and publish a product in the site wizard first.</p>
-          <p v-if="primaryAction?.kind === 'product' && !paymentsReady" class="field-note warning">Connect Stripe in Account → Payments before publishing this product action.</p>
+          <p v-if="primaryAction?.kind === 'product' && !paymentsReady" class="field-note warning">Connect Stripe in Account → Payments so buyers can pay for this product. Until then, it shows Enquire.</p>
         </div>
 
         <div v-if="activeSection" class="editor-group section-editor">

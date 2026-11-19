@@ -130,8 +130,9 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-offer__more{color:var(--text);font-size:.86rem;font-weight:700;text-decoration:none}
 .site-offer__more:hover{text-decoration:underline}
 .site-offer__more:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-.site-offer button{min-height:40px;padding:0 15px;border:1px solid var(--border);border-radius:var(--button-radius);background:var(--surface);color:var(--text);font:inherit;font-size:.86rem;font-weight:700;cursor:pointer}
-.site-offer button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.site-offer button,.site-offer .site-offer__enquire{min-height:40px;padding:0 15px;border:1px solid var(--border);border-radius:var(--button-radius);background:var(--surface);color:var(--text);font:inherit;font-size:.86rem;font-weight:700;cursor:pointer}
+.site-offer button:focus-visible,.site-offer .site-offer__enquire:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.site-offer .site-offer__enquire{display:inline-flex;align-items:center;box-sizing:border-box;text-decoration:none}
 .site-offer-booking{margin-top:24px}
 .site-offer-booking[hidden]{display:none}
 .booking,.booking-type-panel,.site-offer-booking{box-sizing:border-box;min-width:0;max-width:100%}

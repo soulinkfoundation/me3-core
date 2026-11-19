@@ -32,7 +32,7 @@ const statusLabel = computed(() => {
 const setupHint = computed(() =>
   managed.value
     ? "Card payments aren't connected yet."
-    : "Add a Stripe key before publishing paid offers.",
+    : "Add a Stripe key to take card payments. Until then, card offers show Enquire.",
 );
 
 onMounted(() => {

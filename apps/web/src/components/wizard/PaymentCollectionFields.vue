@@ -42,7 +42,7 @@ function dismissTidy() {
 
 onMounted(() => {
   try { tidySeen.value = localStorage.getItem(TIDY_KEY) === "1"; } catch { tidySeen.value = false; }
-  // The Worker checks again on publish, so a failed load only hides the summary.
+  // The Worker checks again on publish (an unpayable offer shows Enquire), so a failed load only hides the summary.
   void load().catch(() => undefined);
 });
 

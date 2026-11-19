@@ -14,8 +14,21 @@ type ProductPurchase = {
   paymentMethod?: "stripe" | "manual";
   /** With paymentMethod "stripe": the buyer may pay the owner directly instead of by card. */
   allowPayDirectly?: boolean;
+  /** Set at publish when nobody can pay for this product yet: Enquire, linking here, replaces Buy. */
+  enquireUrl?: string;
   enabled: boolean;
 };
+
+/** Enquire links are the Worker's own path or an email link; anything else is dropped. */
+export function safeEnquireHref(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const href = value.trim();
+  return /^\/api\/enquire\/[^\s"'<>]+$/.test(href) || /^mailto:[^\s"'<>]+$/i.test(href) ? href : "";
+}
+
+function enquireHref(product: ProductPurchase): string {
+  return safeEnquireHref(product.enquireUrl);
+}
 
 function escape(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -44,6 +57,8 @@ export function renderProductDock(product: ProductPurchase): string {
   }
   const { basePrice, unavailable } = purchaseState(product);
   if (unavailable || !product.enabled || typeof basePrice !== "number") return "";
+  const enquire = enquireHref(product);
+  if (enquire) return `<a class="site-action-dock__button" href="${escape(enquire)}" rel="nofollow">Enquire</a>`;
   return `<button type="button" class="site-action-dock__button" data-product-dock>Buy now · ${escape(displayMoney(basePrice, product.currency))}</button>`;
 }
 
@@ -92,6 +107,8 @@ export function renderProductCheckout(product: ProductPurchase): string {
   </fieldset>` : "";
   const priceRow = `<div class="product-price-row">${price}${soldOut ? "" : stockLine}</div>`;
   if (unavailable) return `<section class="product-purchase" aria-label="Purchase">${priceRow}<p class="product-unavailable">${unavailable}</p>${factList}</section>`;
+  const enquire = enquireHref(product);
+  if (enquire) return `<section class="product-purchase" aria-label="Purchase">${priceRow}<a class="product-buy" href="${escape(enquire)}" rel="nofollow">Enquire</a>${factList}</section>`;
   const config = JSON.stringify({ username: product.username, slug: product.slug, expectedAmount: basePrice, expectedCurrency: product.currency, manual, choose, physical, digital, counted, shipping: shippingCost, lowStock: LOW_STOCK_THRESHOLD }).replace(/</g, "\\u003c");
   return `<section class="product-purchase" aria-label="Purchase" data-product-purchase>
     ${priceRow}

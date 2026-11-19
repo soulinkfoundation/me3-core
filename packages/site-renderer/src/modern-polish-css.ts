@@ -169,10 +169,10 @@ body[data-layout=cover] .site-topbar__action{display:none!important}
 .site-hero__avatar,.site-hero--cover .site-hero__avatar{box-shadow:var(--card-shadow)}
 
 /* Buttons: one shape per theme, a calmer weight, and text centred on its capital letters so every font sits in the middle. */
-:is(.cta-button,.site-topbar__action,.site-action-dock__button,.site-end-action__button,.site-menu-action,.newsletter-form button,.site-offer button,.booking-continue,.booking-submit,.product-buy){display:inline-block;box-sizing:border-box;height:auto;min-height:0;padding:16px 24px;border-radius:var(--cta-radius);font-family:var(--cta-font);font-size:var(--cta-size);font-weight:600;letter-spacing:var(--cta-tracking);line-height:1;text-align:center;vertical-align:middle;text-box:trim-both cap alphabetic}
-@supports(text-box:trim-both cap alphabetic){:is(.cta-button,.site-topbar__action,.site-action-dock__button,.site-end-action__button,.site-menu-action,.newsletter-form button,.site-offer button,.booking-continue,.booking-submit,.product-buy){padding-top:18px;padding-bottom:18px}}
-:is(.site-topbar__action,.site-offer button){font-size:min(14px,var(--cta-size));padding-left:20px;padding-right:20px}
-@supports(text-box:trim-both cap alphabetic){:is(.site-topbar__action,.site-offer button){padding-top:15px;padding-bottom:15px}}
+:is(.cta-button,.site-topbar__action,.site-action-dock__button,.site-end-action__button,.site-menu-action,.newsletter-form button,.site-offer button,.site-offer .site-offer__enquire,.booking-continue,.booking-submit,.product-buy){display:inline-block;box-sizing:border-box;height:auto;min-height:0;padding:16px 24px;border-radius:var(--cta-radius);font-family:var(--cta-font);font-size:var(--cta-size);font-weight:600;letter-spacing:var(--cta-tracking);line-height:1;text-align:center;vertical-align:middle;text-box:trim-both cap alphabetic}
+@supports(text-box:trim-both cap alphabetic){:is(.cta-button,.site-topbar__action,.site-action-dock__button,.site-end-action__button,.site-menu-action,.newsletter-form button,.site-offer button,.site-offer .site-offer__enquire,.booking-continue,.booking-submit,.product-buy){padding-top:18px;padding-bottom:18px}}
+:is(.site-topbar__action,.site-offer button,.site-offer .site-offer__enquire){font-size:min(14px,var(--cta-size));padding-left:20px;padding-right:20px}
+@supports(text-box:trim-both cap alphabetic){:is(.site-topbar__action,.site-offer button,.site-offer .site-offer__enquire){padding-top:15px;padding-bottom:15px}}
 .cta-button .btn-icon{display:inline-flex;vertical-align:middle;margin-right:8px}
 .newsletter-form input[type=email]{border-radius:var(--cta-radius)}
 .site-action-dock [hidden]{display:none!important}

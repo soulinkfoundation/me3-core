@@ -48,7 +48,8 @@ export type PaidOffer = {
 
 /**
  * Whether buyers can pay for a paid offer: card needs Stripe; paying directly needs a saved way to
- * get paid in its currency, or a note; "let them choose" needs both. Mirrors the Worker's publish check.
+ * get paid in its currency, or a note; "let them choose" needs both. Mirrors the Worker's offerCanTakePayment:
+ * an offer that can't take payment still publishes and shows Enquire on the live site.
  */
 export function offerCanTakePayment(offer: PaidOffer, methods: PaymentMethod[], stripe: Stripe | null): boolean {
   const direct = payDirectlyReady(methods, offer.currency, offer.note);
