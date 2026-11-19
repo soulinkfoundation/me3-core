@@ -6,7 +6,6 @@ import { api } from "./api";
 import AgentChatLauncher from "./components/AgentChatLauncher.vue";
 import AppLoadingBar from "./components/AppLoadingBar.vue";
 import AppTopBar from "./components/AppTopBar.vue";
-import SoulinkJoinPrompt from "./components/SoulinkJoinPrompt.vue";
 import AppTour from "./components/tour/AppTour.vue";
 import { useMailboxRealtime } from "./composables/useMailboxRealtime";
 import { useAuthStore } from "./stores/auth";
@@ -22,25 +21,7 @@ const remoteApiHost = import.meta.env.DEV
   ? import.meta.env.VITE_REMOTE_API_HOST || ""
   : "";
 const agentChatInstalled = ref(false);
-const soulinkModalOpen = ref(false);
-const soulinkStatusLoaded = ref(false);
-const soulinkAvailableToOwner = ref(false);
-const soulinkConnected = ref(false);
-const soulinkOrigin = ref("https://soulinkfoundation.org");
-const soulinkBannerDismissed = ref(false);
 const pluginChangedEvent = "me3:plugins-changed";
-const soulinkBannerDismissalVersion = "v1";
-
-type SoulinkShellStatus = {
-  apiOrigin?: string | null;
-  connection?: {
-    status?: "pending" | "active" | "disconnected";
-  } | null;
-};
-
-type CoreShellConfig = {
-  ownerMe3AuthConfigured?: boolean;
-};
 
 const showAppShell = computed(
   () =>
@@ -62,80 +43,6 @@ const showAgentLauncher = computed(
     route.meta.hideAgentLauncher !== true &&
     !route.path.startsWith("/email"),
 );
-
-const showSoulinkBanner = computed(
-  () =>
-    showAppShell.value &&
-    soulinkStatusLoaded.value &&
-    !soulinkConnected.value &&
-    !soulinkBannerDismissed.value &&
-    !soulinkModalOpen.value,
-);
-
-function soulinkBannerStorageKey() {
-  return `me3:soulink-banner-dismissed:${soulinkBannerDismissalVersion}:${auth.user?.id || "owner"}`;
-}
-
-function loadSoulinkBannerPreference() {
-  try {
-    soulinkBannerDismissed.value =
-      window.localStorage.getItem(soulinkBannerStorageKey()) === "true";
-  } catch {
-    soulinkBannerDismissed.value = false;
-  }
-}
-
-function dismissSoulinkBanner() {
-  soulinkBannerDismissed.value = true;
-  try {
-    window.localStorage.setItem(soulinkBannerStorageKey(), "true");
-  } catch {
-    // The invitation remains dismissed for this session when storage is unavailable.
-  }
-}
-
-function openSoulinkModal() {
-  soulinkModalOpen.value = true;
-}
-
-function closeSoulinkModal() {
-  soulinkModalOpen.value = false;
-}
-
-async function loadSoulinkStatus() {
-  if (!auth.isAuthenticated) {
-    soulinkStatusLoaded.value = false;
-    soulinkAvailableToOwner.value = false;
-    soulinkConnected.value = false;
-    return;
-  }
-
-  try {
-    const config = await api.get<CoreShellConfig>("/config");
-    soulinkAvailableToOwner.value = config.ownerMe3AuthConfigured === true;
-  } catch {
-    soulinkAvailableToOwner.value = false;
-  }
-
-  if (soulinkAvailableToOwner.value) {
-    try {
-      const response = await api.get<SoulinkShellStatus>("/soulink/status");
-      soulinkConnected.value = response.connection?.status === "active";
-      if (response.apiOrigin) soulinkOrigin.value = response.apiOrigin;
-    } catch {
-      soulinkConnected.value = false;
-    }
-  } else {
-    soulinkConnected.value = false;
-  }
-
-  soulinkStatusLoaded.value = true;
-}
-
-function handleSoulinkConnectionActive() {
-  soulinkConnected.value = true;
-  dismissSoulinkBanner();
-}
 
 async function loadAgentChatPluginState() {
   if (!AGENT_LAUNCHER_UI_ENABLED || !auth.isAuthenticated) {
@@ -164,10 +71,6 @@ function handlePluginChanged() {
 
 onMounted(async () => {
   await auth.ensureInitialized();
-  if (auth.isAuthenticated) {
-    loadSoulinkBannerPreference();
-    void loadSoulinkStatus();
-  }
   if (AGENT_LAUNCHER_UI_ENABLED) {
     void loadAgentChatPluginState();
     window.addEventListener(pluginChangedEvent, handlePluginChanged);
@@ -182,16 +85,7 @@ onBeforeUnmount(() => {
 
 watch(
   () => auth.isAuthenticated,
-  (isAuthenticated) => {
-    if (isAuthenticated) {
-      loadSoulinkBannerPreference();
-      void loadSoulinkStatus();
-    } else {
-      closeSoulinkModal();
-      soulinkStatusLoaded.value = false;
-      soulinkAvailableToOwner.value = false;
-      soulinkConnected.value = false;
-    }
+  () => {
     if (AGENT_LAUNCHER_UI_ENABLED) {
       void loadAgentChatPluginState();
     }
@@ -213,16 +107,6 @@ watch(
       <RouterView />
     </div>
   </div>
-  <SoulinkJoinPrompt
-    v-if="showAppShell && soulinkAvailableToOwner"
-    :open="soulinkModalOpen"
-    :banner-visible="showSoulinkBanner"
-    :soulink-url="soulinkOrigin"
-    @open="openSoulinkModal"
-    @close="closeSoulinkModal"
-    @dismiss-banner="dismissSoulinkBanner"
-    @connection-active="handleSoulinkConnectionActive"
-  />
   <p v-if="remoteApiHost" class="remote-dev-banner" role="status">
     <strong>Production data</strong>
     <span>Local UI is connected to {{ remoteApiHost }}. Campaign delivery is blocked.</span>

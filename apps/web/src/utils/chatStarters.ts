@@ -6,7 +6,7 @@ export type ChatStarters = { firstRun: boolean; greeting: { title: string; body:
 export const EMPTY_CHAT_STARTERS: ChatStarters = { firstRun: false, greeting: null, starters: [] };
 
 export const CONFIGURE_PROMPT =
-  "Help me configure my ME3 installation. First check what is already set up across my public site/profile, email mailbox, Soulink, assistant/AI, plugins, and updates. Then suggest the missing or most useful next step. If I'm not sure, walk me through the basics.";
+  "Help me set up ME3. First check what is already set up: my website, email, calendar, bookings and payments. Then suggest the most useful next step. If I'm not sure, walk me through the basics.";
 
 /** A self-hosted install without a model can't answer the others, so Configure leads. */
 export const CONFIGURE_STARTER: ChatStarter = { id: "configure", emoji: "⚙️", label: "Configure", prompt: CONFIGURE_PROMPT };

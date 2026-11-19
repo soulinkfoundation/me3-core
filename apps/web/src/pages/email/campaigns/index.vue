@@ -102,8 +102,8 @@ const allowance = computed(() => {
 });
 const senderNote = computed(() => {
   const current = transport.value;
-  if (!current || current.ready || !current.managed) return null;
-  return "Sending isn't set up yet. Drafts are saved in the meantime.";
+  if (!current || current.ready || !current.managed || settingUpSender.value) return null;
+  return "Sending couldn't be switched on yet. Drafts are saved in the meantime.";
 });
 // Self-hosted installs send through the owner's own provider: connect one first, change it any time.
 const ownSender = computed(() => {
@@ -151,6 +151,11 @@ async function loadCampaigns(silent = false) {
     campaigns.value = campaignResponse.campaigns;
     transport.value = transportResponse.transport;
     scheduleRefresh();
+    // Managed sending needs nothing from the owner, so it's switched on the first time they open Campaigns.
+    if (transport.value?.managed && !transport.value.ready && !autoSetupTried) {
+      autoSetupTried = true;
+      void setupSender({ quiet: true });
+    }
   } catch (caught) {
     if (!silent) throw caught;
     toastFromUnknown(caught, "Couldn't refresh campaigns.");
@@ -165,7 +170,9 @@ function scheduleRefresh() {
     : null;
 }
 
-async function setupSender() {
+let autoSetupTried = false;
+
+async function setupSender(options: { quiet?: boolean } = {}) {
   if (settingUpSender.value) return;
   settingUpSender.value = true;
   try {
@@ -174,7 +181,7 @@ async function setupSender() {
     );
     transport.value = response.transport;
   } catch (caught) {
-    toastFromUnknown(caught, "Couldn't set up sending.");
+    if (!options.quiet) toastFromUnknown(caught, "Couldn't set up sending.");
   } finally {
     settingUpSender.value = false;
   }
@@ -304,8 +311,8 @@ onBeforeUnmount(() => {
               shape="soft"
               size="compact"
               :disabled="settingUpSender"
-              @click="setupSender"
-            >{{ settingUpSender ? "Setting up…" : "Set up sending" }}</Button>
+              @click="setupSender()"
+            >Try again</Button>
           </p>
           <div v-if="ownSender" class="campaigns-own-sender">
             <CampaignSenderSetup v-if="ownSender.connect" @connected="ownSenderConnected" />
@@ -370,8 +377,10 @@ onBeforeUnmount(() => {
           </section>
 
           <div v-if="!campaigns.length" class="campaigns-empty">
-            <p>No campaigns yet. Tell ME3 what's new and it will write the first one.</p>
-            <RouterLink to="/email/campaigns/create">Write a campaign</RouterLink>
+            <span class="campaigns-empty__icon" aria-hidden="true">📮</span>
+            <h2>No campaigns yet</h2>
+            <p>Tell ME3 what's new and it will write the first one.</p>
+            <Button to="/email/campaigns/create" color="primary" shape="soft">Write a campaign</Button>
           </div>
         </section>
 
@@ -446,10 +455,12 @@ onBeforeUnmount(() => {
 .campaign-pill--warn { --tone: var(--ui-warning, color-mix(in oklab, #b26a00 70%, var(--ui-text))); }
 .campaign-pill--bad { --tone: var(--ui-danger, color-mix(in oklab, #c62828 75%, var(--ui-text))); }
 .campaign-pill:not(.campaign-pill--muted) { background: color-mix(in srgb, var(--tone) 13%, transparent); }
-.campaigns-empty { margin-top: 28px; color: var(--ui-text-muted); font-size: 14px; }
-.campaigns-empty p { margin: 0 0 6px; }
-.campaigns-empty a { color: var(--ui-accent-strong, var(--ui-accent)); font-weight: 600; text-decoration: none; }
-.campaigns-empty a:hover { text-decoration: underline; }
+/* A centred first-run state with one clear action. */
+.campaigns-empty { display: grid; justify-items: center; gap: 8px; margin: 48px auto 0; max-width: 320px; color: var(--ui-text-muted); font-size: 15px; line-height: 1.45; text-align: center; }
+.campaigns-empty__icon { font: 44px/1 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
+.campaigns-empty h2 { margin: 4px 0 0; color: var(--ui-text); font-size: 19px; font-weight: 600; }
+.campaigns-empty p { margin: 0 0 12px; }
+.campaigns-empty :deep(.me3-btn) { min-height: 48px; padding-inline: 24px; }
 .campaigns-state { margin-top: 40px; }
 .campaigns-state h1 { margin: 0; font-size: 22px; font-weight: 650; }
 .campaigns-state p { margin: 8px 0 0; color: var(--ui-text-muted); line-height: 1.5; }

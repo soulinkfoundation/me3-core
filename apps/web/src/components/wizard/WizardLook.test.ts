@@ -74,19 +74,18 @@ describe("WizardLook badge", () => {
     const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true, RouterLink: true } } });
     await flushPromises();
 
-    const badge = wrapper.get<HTMLInputElement>('input[aria-describedby="look-badge-hint"]');
-    expect(badge.element.checked).toBe(true);
-    badge.element.checked = false;
-    await badge.trigger("change");
+    const badge = wrapper.get('[role="switch"][aria-label="Show the Made with ME3 badge"]');
+    expect(badge.attributes("aria-checked")).toBe("true");
+    await badge.trigger("click");
     await flushPromises();
     expect(apiHarness.put).toHaveBeenCalledWith("/site-badge", { preference: "hidden" });
-    expect(badge.element.checked).toBe(false);
+    expect(badge.attributes("aria-checked")).toBe("false");
   });
 
   it("hides the switch when the badge setting can't be read", async () => {
     apiHarness.get.mockRejectedValue(new Error("offline"));
     const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true, RouterLink: true } } });
     await flushPromises();
-    expect(wrapper.find('input[aria-describedby="look-badge-hint"]').exists()).toBe(false);
+    expect(wrapper.find('[aria-label="Show the Made with ME3 badge"]').exists()).toBe(false);
   });
 });

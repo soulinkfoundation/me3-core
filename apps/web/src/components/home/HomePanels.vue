@@ -407,7 +407,8 @@ async function loadToday() {
       api.get<{ sites: { username: string; bookings_enabled?: boolean; bookingsEnabled?: boolean }[] }>("/sites"),
     ]);
     if (disposed || generation !== todayGeneration) return;
-    if (pendingResult.status === "fulfilled") approvals.value = pendingResult.value.approvals;
+    // The first website draft lives in chat, where its preview and Publish are; Home doesn't repeat it.
+    if (pendingResult.status === "fulfilled") approvals.value = pendingResult.value.approvals.filter(approval => approval.payload?.kind !== "site_draft");
     if (feedResult.status === "rejected") throw feedResult.reason;
     if (sitesResult.status === "rejected") throw sitesResult.reason;
     const feed = feedResult.value; const sites = sitesResult.value;
@@ -848,6 +849,8 @@ p { margin: 4px 0; }
 .home-dialog { width: min(520px, 100%); max-height: 88dvh; overflow: auto; padding: 20px; border-radius: 28px; background: var(--ui-surface); box-sizing: border-box; box-shadow: var(--ui-shadow-md); }
 .home-dialog header, .home-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .home-dialog h2 { margin: 0; font-size: 20px; font-weight: 600; }
+.home-dialog header > button { display: grid; place-items: center; flex: 0 0 auto; width: 44px; height: 44px; margin-right: -8px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ui-text); cursor: pointer; }
+.home-dialog header > button:hover { background: var(--ui-surface-muted); }
 .home-dialog h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
 .home-dialog footer { position: sticky; bottom: 0; justify-content: flex-start; margin-top: 16px; padding-top: 8px; background: var(--ui-surface); }
 .home-primary { padding: 0 22px; background: var(--ui-primary); color: var(--ui-primary-contrast); border-radius: 24px; font-weight: 600; }

@@ -251,7 +251,7 @@ const pageSuggestions: Array<{ title: string; icon: UiIconName }> = [
 
 const adminPageSuggestions: Array<{ title: string; icon: UiIconName }> = [
   { title: "Privacy Policy", icon: "Shield" },
-  { title: "Terms of Service", icon: "FileText" },
+  { title: "Terms", icon: "FileText" },
 ];
 
 function addSuggestedPage(title: string) {
@@ -296,7 +296,7 @@ defineExpose({
 
 <template>
   <div class="step-pages">
-    <h2>Pages</h2>
+    <h2 v-if="!isEditingPage">Pages</h2>
     <div v-if="selectedPageIndex === null && !editingHome">
       <div class="page-list"><div class="page-item home-page-item"><div class="page-header"><span class="page-icon" aria-hidden="true"><UiIcon name="LayoutGrid" :size="20" /></span><div class="page-details"><strong class="page-title">Home</strong><span class="page-slug">/</span></div><button class="home-edit-button" type="button" @click="editingHome = true">Edit home</button></div></div></div>
       <!-- Page list -->
@@ -505,7 +505,7 @@ defineExpose({
     </div>
 
     <div v-if="editingHome" class="home-editor">
-      <button class="editor-back-link" type="button" @click="closeEditor">← Back to pages</button>
+      <button class="editor-back-link" type="button" @click="closeEditor"><UiIcon name="ChevronLeft" :size="18" aria-hidden="true" />All pages</button>
       <h3>Home</h3>
       <p>Drag to arrange the sections below your profile header.</p>
       <h4>Homepage sections</h4>
@@ -525,20 +525,17 @@ defineExpose({
 
     <!-- Editor view -->
     <div v-if="selectedPageIndex !== null && selectedPage" class="editor-view">
-      <!-- Back to pages button - positioned at bottom left -->
-      <div class="editor-nav">
-        <button class="editor-back-link" @click="closeEditor">
-          ← Back to pages
-        </button>
-      </div>
+      <button class="editor-back-link" type="button" @click="closeEditor">
+        <UiIcon name="ChevronLeft" :size="18" aria-hidden="true" />All pages
+      </button>
       <div class="editor-form">
         <div class="form-group title-input">
-          <label for="page-title-input" class="field-label">Title</label>
+          <label for="page-title-input" class="visually-hidden">Page title</label>
           <input
             id="page-title-input"
             v-model="editingTitle"
             type="text"
-            placeholder="Title (e.g. About)"
+            placeholder="Page title"
             maxlength="50"
             @blur="updatePageTitle"
             @keyup.enter="($event.target as HTMLInputElement).blur()"
@@ -546,7 +543,7 @@ defineExpose({
         </div>
         <div class="route-row">
           <template v-if="showRouteEditor">
-            <span class="slug-preview">URL: /</span>
+            <span class="slug-preview">/</span>
             <input
               id="page-route-input"
               ref="routeInputRef"
@@ -563,7 +560,7 @@ defineExpose({
             />
           </template>
           <template v-else>
-            <span class="slug-preview">URL: /{{ previewSlug }}</span>
+            <span class="slug-preview">/{{ previewSlug }}</span>
             <button
               class="route-edit-btn"
               type="button"
@@ -855,23 +852,25 @@ defineExpose({
   flex: 1;
 }
 
-.editor-nav {
-  margin-top: auto;
-  padding-bottom: 10px;
-}
-
 .editor-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  align-self: flex-start;
+  min-height: 40px;
+  margin: -6px 0 8px -8px;
+  padding: 0 12px 0 4px;
   border: none;
+  border-radius: 20px;
   background: transparent;
-  color: var(--color-text-muted);
-  font-size: 12px;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font: 500 15px var(--font-sans);
   cursor: pointer;
-  padding: 0;
 }
 
-.editor-back-btn:hover {
-  background: var(--color-text-muted);
-  color: var(--color-bg);
+.editor-back-link:hover {
+  background: var(--ui-surface-muted);
+  color: var(--ui-text, var(--color-text));
 }
 
 .editor-form {
@@ -889,8 +888,19 @@ defineExpose({
 .form-group.title-input {
   flex-direction: row;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+}
+
+.title-input input {
+  font-size: 22px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .form-group input {
@@ -913,6 +923,13 @@ defineExpose({
   max-width: 360px;
 }
 
+/* Phones keep the page editor to title, address and content. */
+@media (max-width: 640px) {
+  .navigation-group-input {
+    display: none;
+  }
+}
+
 .navigation-group-input .field-label span {
   font-weight: 400;
   letter-spacing: 0;
@@ -933,7 +950,7 @@ defineExpose({
 }
 
 .slug-preview {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-text-muted);
 }
 

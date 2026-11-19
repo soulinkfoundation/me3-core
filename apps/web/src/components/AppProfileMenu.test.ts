@@ -105,9 +105,10 @@ describe("AppProfileMenu optional plugin links", () => {
         .findAll("nav .profile-menu__row")
         .map((link) => link.attributes("aria-label")),
     ).toEqual([
+      "Edit website",
       "Email",
       "Calendar",
-      "Projects",
+      "Tasks",
       "People",
       "Campaigns",
       "Social",
@@ -116,11 +117,11 @@ describe("AppProfileMenu optional plugin links", () => {
       "Mission",
       "Files",
     ]);
-    // Edit site is in the header and Chat is the top switch, so neither repeats in Go to.
+    // Edit website leads Go to, as on the mobile apps; Chat is the top switch, so it doesn't repeat.
     expect(wrapper.find('nav [aria-label="Website"]').exists()).toBe(false);
     expect(wrapper.find('nav [aria-label="Chat"]').exists()).toBe(false);
     expect(wrapper.find("nav h2").exists()).toBe(false);
-    expect(wrapper.get('[aria-label="Projects"]').attributes("href")).toBe(
+    expect(wrapper.get('[aria-label="Tasks"]').attributes("href")).toBe(
       "/tasks",
     );
     expect(wrapper.find('nav img').exists()).toBe(false);
@@ -208,7 +209,7 @@ describe("AppProfileMenu optional plugin links", () => {
     ]);
 
     // Home and Add to Home decide what shows now; the old workspace switches no longer hide pages.
-    for (const label of ["Calendar", "Writing", "Projects", "Email", "Files", "Accounts"]) {
+    for (const label of ["Calendar", "Writing", "Tasks", "Email", "Files", "Accounts"]) {
       expect(wrapper.find(`[aria-label="${label}"]`).exists()).toBe(true);
     }
     wrapper.unmount();

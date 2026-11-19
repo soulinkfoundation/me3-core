@@ -11,7 +11,25 @@ const wizard = useWizardStore();
 const name = ref(wizard.profile.name);
 const handle = ref(wizard.profile.handle || wizard.username);
 const location = ref(wizard.profile.location);
-const bio = ref(wizard.profile.bio);
+const bio = ref(bioForEditor(wizard.profile.bio));
+
+/**
+ * Drafts written in chat store the bio as markdown (**headline** then the story), which the site renders
+ * but the rich text editor would show as raw asterisks. Plain-text bios become editor HTML here.
+ */
+function bioForEditor(value: string): string {
+  if (!value || /<\/?[a-z][^>]*>/i.test(value)) return value;
+  const escape = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return value
+    .split(/\n\s*\n/)
+    .map(paragraph => paragraph.trim())
+    .filter(Boolean)
+    .map(paragraph => `<p>${escape(paragraph)
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>")
+      .replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
 const sites = useSitesStore();
 const address = ref("");
 watch([handle, () => sites.sites], async ([username], _, onCleanup) => {

@@ -37,10 +37,9 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
       if (mobile) await page.screenshot({ path: testInfo.outputPath(`${name}-full.png`), fullPage: true, animations: 'disabled' });
     }
     await page.goto('/create?step=basics', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('.wizard-header').getByRole('button', { name: 'Publish', exact: true })).toHaveCount(0);
+    await expect(page.locator('.wizard-topbar').getByRole('button', { name: 'Publish', exact: true })).toHaveCount(0);
     await expect(page.locator('.wizard-step-button small')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Close editor' })).toHaveCount(0);
-    await expect(page.locator('.progress-step')).not.toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Close the editor' })).toBeVisible();
     await expect(page.locator('.step-nav svg')).toHaveCount(0);
     await expect(page.locator('.step-nav').getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
     await page.locator('#name').fill('Demo Owner'); await page.locator('#handle').fill('demo-site');
@@ -70,21 +69,21 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await jump('Links'); await page.getByRole('button', { name: 'Instagram', exact: true }).click();
     await page.getByRole('textbox', { name: 'Instagram link' }).fill('demo');
     await screenshot('editor-links');
-    await jump('Buttons'); await page.getByRole('button', { name: 'Book a session', exact: true }).click();
+    await jump('Buttons'); await page.getByRole('button', { name: 'Join Community', exact: true }).click();
     const action = page.getByRole('dialog', { name: 'Edit action button' });
     await action.getByRole('textbox', { name: 'Link URL', exact: true }).fill('#booking');
     await action.getByRole('button', { name: 'Add button', exact: true }).click();
-    await expect(page.locator('.button-item')).toContainText('Book a session');
+    await expect(page.locator('.button-item')).toContainText('Join Community');
     await screenshot('editor-buttons');
     await expect(page.locator('.button-item .remove-btn, .button-item .drag-handle')).toHaveCount(0);
-    await page.getByRole('button', { name: 'Edit Book a session', exact: true }).click();
+    await page.getByRole('button', { name: 'Edit Join Community', exact: true }).click();
     await expect(action.getByRole('button', { name: 'Remove button', exact: true })).toBeVisible();
     await action.getByRole('button', { name: 'Close action button', exact: true }).click();
     await jump('Pages');
     for (const title of ['First Review', 'Second Review']) {
       await page.locator('.add-pages').first().getByRole('button', { name: 'Custom', exact: true }).click();
       await page.locator('#page-title-input').fill(title);
-      await page.getByRole('button', { name: 'Back to pages' }).click();
+      await page.getByRole('button', { name: 'All pages' }).click();
     }
     const first = page.locator('.page-item').filter({ hasText: 'First Review' }).locator('.page-details');
     const second = page.locator('.page-item').filter({ hasText: 'Second Review' }).locator('.page-details');
@@ -94,7 +93,7 @@ for (const mobile of [false, true]) for (const dark of [false, true]) {
     await expect(page.locator('.page-title')).toHaveText(['Home', 'Second Review', 'First Review']);
     await page.getByRole('button', { name: 'Edit home', exact: true }).click();
     await expect(page.locator('#home-main-action')).toHaveCount(0);
-    await page.getByRole('button', { name: 'Back to pages' }).click();
+    await page.getByRole('button', { name: 'All pages' }).click();
     await screenshot('editor-pages');
     await jump('Blog');
     await page.getByRole('button', { name: 'Add a post', exact: true }).click();

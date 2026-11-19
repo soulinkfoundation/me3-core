@@ -51,8 +51,8 @@ function installed(id: string) { return plugins.value.some(plugin => plugin.id =
 // One Go to list shared with iOS (ProfileMenu.swift) and Android (HomeProfileSheet.kt), ordered for a solo
 // business owner: daily work (Email, Calendar, Tasks), growth (People, Campaigns, Social), then Writing,
 // the business (Accounts, Mission) and Files. Socials/Accounts are plugin-owned; Email and Files are Core
-// features. Campaigns is its own destination (Business); until plan gating lands its plugin record is the visibility gate. Wheel of Life lives in Mission, Edit site is in the
-// header and Chat is the top switch, so none of them repeat here. No hosted entitlement is inferred.
+// features. Campaigns is its own destination (Business); until plan gating lands its plugin record is the visibility gate. Wheel of Life lives in Mission, Edit website leads the
+// list in the template and Chat is the top switch, so none of them repeat here. No hosted entitlement is inferred.
 const destinations = computed(() => [
   { label: "Email", path: "/email", emoji: APP_FEATURE_ICONS.email, visible: true },
   { label: "Calendar", path: "/calendar", emoji: APP_FEATURE_ICONS.calendar, visible: installed("me3.calendar") },
@@ -129,12 +129,15 @@ onBeforeUnmount(() => {
   </button>
   <Teleport to="body">
     <section v-if="open" id="app-profile-menu" ref="menu" class="profile-menu" role="menu" aria-label="Your profile and navigation" @keydown="keys">
+      <!-- Centred like the iOS and Android profile sheets: photo, name, then the site address. -->
       <header class="profile-menu__header">
         <img v-if="photo" :src="photo" alt="" @error="failedPhoto = true" />
         <span v-else class="profile-menu__initial" aria-hidden="true">{{ name.slice(0, 1).toUpperCase() }}</span>
-        <div><strong>{{ name }}</strong><a :href="publicUrl" role="menuitem" tabindex="-1" target="_blank" rel="noopener noreferrer">{{ publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}<UiIcon name="ArrowUpRight" :size="14" /></a><RouterLink :to="editSite" role="menuitem" tabindex="-1" @click="close()">Edit site<UiIcon name="Pencil" :size="14" /></RouterLink></div>
+        <strong>{{ name }}</strong>
+        <a :href="publicUrl" role="menuitem" tabindex="-1" target="_blank" rel="noopener noreferrer"><span>{{ publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}</span><UiIcon name="ArrowUpRight" :size="14" /></a>
       </header>
       <nav aria-label="Go to">
+        <RouterLink :to="editSite" class="profile-menu__row" role="menuitem" tabindex="-1" aria-label="Edit website" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">🌐</span><span>Edit website</span></RouterLink>
         <RouterLink v-for="destination in destinations" :key="destination.path" :to="destination.path" class="profile-menu__row" :data-tour-target="destination.path === '/accounts' ? 'menu_accounts' : destination.path === '/social' ? 'menu_social' : undefined" role="menuitem" tabindex="-1" :aria-label="destination.label" :aria-current="route.fullPath === destination.path ? 'page' : undefined" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">{{ destination.emoji }}</span><span>{{ destination.label }}</span></RouterLink>
       </nav>
       <div class="profile-menu__settings">
@@ -156,12 +159,12 @@ onBeforeUnmount(() => {
 .profile-trigger img, .profile-trigger span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; object-fit: cover; background: var(--ui-surface-muted); font: 500 14px var(--font-sans); }
 .profile-trigger:hover { background: var(--ui-surface-muted); }
 .profile-menu { position: fixed; top: calc(var(--app-topbar-height) - 4px); right: 14px; z-index: 100; width: min(340px, calc(100vw - 28px)); max-height: calc(100dvh - var(--app-topbar-height) - 16px); box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; padding: 10px; border-radius: 24px; background: var(--ui-surface); color: var(--ui-text); box-shadow: var(--ui-shadow-md); }
-.profile-menu__header { display: flex; align-items: center; gap: 12px; padding: 10px 12px 16px; }
-.profile-menu__header > img, .profile-menu__initial { display: grid; place-items: center; flex: 0 0 auto; width: 52px; height: 52px; border-radius: 50%; object-fit: cover; background: var(--ui-surface-muted); font-size: 22px; }
-.profile-menu__header > div { display: grid; min-width: 0; gap: 4px; }
-.profile-menu__header strong { font-size: 17px; font-weight: 600; }
-.profile-menu__header a { display: flex; align-items: center; gap: 4px; width: fit-content; max-width: 100%; overflow-wrap: anywhere; color: var(--ui-text-muted); text-decoration: none; font-size: 13px; min-height: 24px; }
-.profile-menu__header a:last-child { font-weight: 600; color: var(--ui-accent-strong); }
+.profile-menu__header { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 12px 12px; text-align: center; }
+.profile-menu__header > img, .profile-menu__initial { display: grid; place-items: center; flex: 0 0 auto; width: 72px; height: 72px; margin-bottom: 4px; border-radius: 50%; object-fit: cover; background: var(--ui-surface-muted); font-size: 28px; }
+.profile-menu__header strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 19px; font-weight: 700; }
+.profile-menu__header a { display: flex; align-items: center; gap: 4px; max-width: 100%; min-height: 32px; color: var(--ui-text-muted); text-decoration: none; font-size: 14px; }
+.profile-menu__header a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-menu__header a svg { flex: 0 0 auto; }
 .profile-menu h2 { margin: 0; padding: 2px 12px 6px; font-size: 12px; font-weight: 500; color: var(--ui-text-muted); }
 .profile-menu__row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 8px 12px; box-sizing: border-box; border: 0; border-radius: 12px; color: var(--ui-text); background: transparent; font: 500 15px var(--font-sans); text-decoration: none; text-align: left; cursor: pointer; }
 .profile-menu__row:hover, .profile-menu__row[aria-current="page"] { background: var(--ui-surface-muted); }

@@ -15,11 +15,9 @@ const wizard = useWizardStore();
 // Buttons Config
 // ============================================================================
 const suggestions: Array<{ icon: UiIconName; text: string; hint: string }> = [
-  { icon: "CalendarClock", text: "Book a session", hint: "Your booking link" },
   { icon: "UsersRound", text: "Join Community", hint: "Your community link" },
   { icon: "GraduationCap", text: "Join My Course", hint: "Your course link" },
   { icon: "ShoppingCart", text: "View Shop", hint: "Your shop link" },
-  { icon: "Mail", text: "Email me", hint: "mailto:you@example.com" },
 ];
 
 // Form state

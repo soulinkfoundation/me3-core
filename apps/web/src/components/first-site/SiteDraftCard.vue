@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, useId } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, useId } from "vue";
 import { useRouter } from "vue-router";
 import { siteThemes } from "@me3-core/site-renderer";
 import { API_BASE, api } from "../../api";
+import AppDialog from "../AppDialog.vue";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import { useAppToast } from "../../composables/useAppToast";
@@ -23,6 +24,13 @@ const loading = ref(true);
 const busy = ref<"" | "approved" | "declined" | "theme">("");
 const host = computed(() => props.draft.publicUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""));
 let previewSeq = 0;
+// The card shows the site as a phone would, scaled down to the card's width, so it never pans or
+// fights the chat's scroll. Tapping it opens the full, scrollable preview.
+const PREVIEW_WIDTH = 390;
+const previewBox = ref<HTMLElement | null>(null);
+const previewScale = ref(0.8);
+const fullPreviewOpen = ref(false);
+let resizeObserver: ResizeObserver | null = null;
 
 /** The look's own page colour with its accent, from the renderer's themes. */
 function swatch(id: string) {
@@ -70,7 +78,28 @@ function edit(step: string) {
   void router.push({ path: "/create", query: { site: props.draft.username, step } });
 }
 
-onMounted(() => { void loadPreview(); });
+// A preview that failed (often a dropped connection) loads again once the app is back.
+function retryIfMissing() {
+  if (!html.value && !loading.value && document.visibilityState === "visible") void loadPreview();
+}
+
+onMounted(() => {
+  void loadPreview();
+  if (previewBox.value && typeof ResizeObserver !== "undefined") {
+    resizeObserver = new ResizeObserver(([entry]) => {
+      if (entry?.contentRect.width) previewScale.value = entry.contentRect.width / PREVIEW_WIDTH;
+    });
+    resizeObserver.observe(previewBox.value);
+  }
+  window.addEventListener("online", retryIfMissing);
+  document.addEventListener("visibilitychange", retryIfMissing);
+});
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  window.removeEventListener("online", retryIfMissing);
+  document.removeEventListener("visibilitychange", retryIfMissing);
+});
 </script>
 
 <template>
@@ -81,9 +110,15 @@ onMounted(() => { void loadPreview(); });
         <span class="site-draft__sub">{{ draft.name }}<template v-if="host"> · {{ host }}</template></span>
       </span>
     </div>
-    <div class="site-draft__preview" :aria-busy="loading">
-      <iframe v-if="html" :srcdoc="html" title="Website draft preview" sandbox="allow-same-origin" loading="lazy" />
-      <p v-else class="site-draft__placeholder">{{ loading ? "Loading your preview…" : "The preview isn't available right now. Edit opens the full draft." }}</p>
+    <div ref="previewBox" class="site-draft__preview" :aria-busy="loading">
+      <button v-if="html" type="button" class="site-draft__frame" aria-label="Open the full preview" @click="fullPreviewOpen = true">
+        <iframe :srcdoc="html" title="Website draft preview" sandbox="allow-same-origin" loading="lazy" tabindex="-1"
+          :style="{ width: `${PREVIEW_WIDTH}px`, height: `${100 / previewScale}%`, transform: `scale(${previewScale})` }" />
+      </button>
+      <div v-else class="site-draft__placeholder">
+        <p>{{ loading ? "Loading your preview…" : "The preview didn't load." }}</p>
+        <Button v-if="!loading" color="ghost" shape="soft" size="compact" @click="loadPreview()">Try again</Button>
+      </div>
     </div>
     <div v-if="draft.themes.length > 1" class="site-draft__looks" role="radiogroup" aria-label="Look">
       <button v-for="option in draft.themes" :key="option.id" type="button" role="radio" class="site-draft__look"
@@ -98,6 +133,12 @@ onMounted(() => { void loadPreview(); });
       <Button color="ghost" shape="soft" :disabled="busy !== ''" @click="edit('basics')"><UiIcon name="Pencil" :size="18" />Edit</Button>
       <Button class="site-draft__primary" color="primary" shape="soft" :disabled="busy !== ''" @click="decide('approved')">{{ busy === 'approved' ? 'Publishing…' : 'Publish' }}</Button>
     </div>
+    <AppDialog :open="fullPreviewOpen" aria-label="Website draft preview" close-on-backdrop @close="fullPreviewOpen = false">
+      <section class="site-draft__dialog">
+        <header><h2>Preview</h2><button type="button" aria-label="Close preview" @click="fullPreviewOpen = false"><UiIcon name="X" :size="20" /></button></header>
+        <iframe :srcdoc="html" title="Full website draft preview" sandbox="allow-same-origin" />
+      </section>
+    </AppDialog>
   </section>
 </template>
 
@@ -108,8 +149,16 @@ onMounted(() => { void loadPreview(); });
 .site-draft__title { margin: 0; font-size: 16px; font-weight: 600; }
 .site-draft__sub { color: var(--ui-text-muted); font-size: 14px; overflow-wrap: anywhere; }
 .site-draft__preview { position: relative; height: 420px; overflow: hidden; border-radius: var(--ui-radius-md); background: var(--ui-surface-muted); box-shadow: var(--ui-shadow-sm); }
-.site-draft__preview iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
-.site-draft__placeholder { display: grid; place-items: center; height: 100%; margin: 0; padding: 16px; box-sizing: border-box; color: var(--ui-text-muted); font-size: 14px; text-align: center; }
+.site-draft__frame { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: #fff; cursor: zoom-in; }
+/* Drawn at phone width and scaled down; it takes no touches, so swipes scroll the chat. */
+.site-draft__frame iframe { display: block; border: 0; background: #fff; transform-origin: 0 0; pointer-events: none; }
+.site-draft__placeholder { display: grid; place-content: center; justify-items: center; gap: 8px; height: 100%; padding: 16px; box-sizing: border-box; color: var(--ui-text-muted); font-size: 14px; text-align: center; }
+.site-draft__placeholder p { margin: 0; }
+.site-draft__dialog { display: flex; flex-direction: column; width: min(480px, 100%); height: min(85dvh, 860px); margin: auto; padding: 12px; box-sizing: border-box; border-radius: 24px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
+.site-draft__dialog header { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 8px 8px; }
+.site-draft__dialog h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.site-draft__dialog header button { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; background: transparent; color: var(--ui-text); cursor: pointer; }
+.site-draft__dialog iframe { flex: 1; width: 100%; border: 0; border-radius: 16px; background: #fff; }
 .site-draft__looks { display: flex; flex-wrap: wrap; gap: 8px; }
 .site-draft__look { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px 0 6px; border: 0; border-radius: 999px; background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; font-size: 14px; cursor: pointer; }
 .site-draft__look[aria-checked="true"] { background: var(--ui-accent-soft); box-shadow: inset 0 0 0 2px var(--ui-accent); font-weight: 600; }

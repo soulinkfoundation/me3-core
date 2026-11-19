@@ -6,6 +6,7 @@ import { useWizardStore } from "../../stores/wizard";
 import { vibes, selectableVibeIds } from "../../styles/vibes";
 import AppDialog from "../AppDialog.vue";
 import Button from "../Button.vue";
+import AppSwitch from "../AppSwitch.vue";
 import UiIcon from "../UiIcon.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import { api } from "../../api";
@@ -77,22 +78,6 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
   <div class="step-look">
     <h2>Make it yours</h2>
     <p class="section-desc">Pick a look. Everything updates live.</p>
-    <fieldset><legend>Logo</legend>
-      <div class="look-logo">
-        <span class="look-logo__preview" aria-hidden="true">
-          <img v-if="wizard.profile.logo" :src="wizard.profile.logo" alt="" />
-          <UiIcon v-else name="Image" :size="22" />
-        </span>
-        <div class="look-logo__body">
-          <div class="look-logo__actions">
-            <Button color="neutral" shape="soft" size="compact" @click="logoInput?.click()">{{ wizard.profile.logo ? "Change logo" : "Upload logo" }}</Button>
-            <Button v-if="wizard.profile.logo" color="ghost" size="compact" @click="removeLogo">Remove</Button>
-          </div>
-          <p id="look-logo-hint" class="look-logo__hint">Shown in place of your name at the top of your site, in the browser tab and on your emails. PNG, JPEG or WebP, up to 1.9 MB.</p>
-        </div>
-        <input ref="logoInput" class="look-logo__input" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Choose site logo" aria-describedby="look-logo-hint" @change="chooseLogo" />
-      </div>
-    </fieldset>
     <fieldset><legend>Layout</legend>
       <div class="look-layouts">
         <label v-for="choice in layouts" :key="choice.id" class="look-layout" :class="{ selected: layout === choice.id }">
@@ -120,14 +105,27 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
       <div class="look-appearance">
         <label v-for="mode in ['auto', 'light', 'dark'] as const" :key="mode" :class="{ selected: wizard.colorMode === mode }"><input type="radio" name="site-color-mode" :value="mode" :checked="wizard.colorMode === mode" @change="wizard.setColorMode(mode)" />{{ mode === 'auto' ? 'Auto' : mode === 'light' ? 'Light' : 'Dark' }}</label>
       </div>
-      <label class="look-visitor-switch"><input type="checkbox" :checked="wizard.visitorThemeToggle" @change="wizard.setVisitorThemeToggle(($event.target as HTMLInputElement).checked)" />Show a light/dark switch to visitors</label>
     </fieldset>
-    <fieldset v-if="siteBadge"><legend>Badge</legend>
-      <label class="look-visitor-switch"><input type="checkbox" :checked="siteBadgeShown" :disabled="siteBadgeSaving" aria-describedby="look-badge-hint" @change="setSiteBadgeShown(($event.target as HTMLInputElement).checked)" />Show the Made with ME3 badge</label>
-      <p id="look-badge-hint" class="look-logo__hint">A small link in the corner of your published pages.</p>
+    <fieldset><legend>Logo</legend>
+      <div class="look-logo">
+        <span class="look-logo__preview" aria-hidden="true">
+          <img v-if="wizard.profile.logo" :src="wizard.profile.logo" alt="" />
+          <UiIcon v-else name="Image" :size="20" />
+        </span>
+        <p id="look-logo-hint" class="look-logo__hint">Replaces your name at the top of your site. PNG, JPEG or WebP.</p>
+        <div class="look-logo__actions">
+          <Button v-if="wizard.profile.logo" color="ghost" size="compact" @click="removeLogo">Remove</Button>
+          <Button color="neutral" shape="soft" size="compact" @click="logoInput?.click()">{{ wizard.profile.logo ? "Change logo" : "Upload logo" }}</Button>
+        </div>
+        <input ref="logoInput" class="look-logo__input" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Choose site logo" aria-describedby="look-logo-hint" @change="chooseLogo" />
+      </div>
     </fieldset>
-    <button type="button" class="look-footer-link" @click="showFooter = true"><UiIcon name="Settings" :size="16" />Customize footer</button>
-    <RouterLink class="look-footer-link" :to="{ path: '/settings', query: { section: 'domain', ...(wizard.username ? { site: wizard.username } : {}) } }"><UiIcon name="Globe" :size="16" />Custom domain</RouterLink>
+    <div class="look-options">
+      <div class="look-option"><span>Light/dark switch for visitors</span><AppSwitch :model-value="wizard.visitorThemeToggle" label="Show a light/dark switch to visitors" @update:model-value="wizard.setVisitorThemeToggle" /></div>
+      <div v-if="siteBadge" class="look-option"><span>Made with ME3 badge</span><AppSwitch :model-value="siteBadgeShown" :disabled="siteBadgeSaving" label="Show the Made with ME3 badge" @update:model-value="setSiteBadgeShown" /></div>
+      <button type="button" class="look-option" @click="showFooter = true"><span>Footer</span><UiIcon name="ChevronRight" :size="18" aria-hidden="true" /></button>
+      <RouterLink class="look-option" :to="{ path: '/settings', query: { section: 'domain', ...(wizard.username ? { site: wizard.username } : {}) } }"><span>Custom domain</span><UiIcon name="ChevronRight" :size="18" aria-hidden="true" /></RouterLink>
+    </div>
     <AppDialog :open="showFooter" aria-label="Footer settings" close-on-backdrop @close="showFooter = false">
       <section class="look-footer-dialog">
         <header><h2>Footer settings</h2><button type="button" aria-label="Close footer settings" @click="showFooter = false"><UiIcon name="X" :size="20" /></button></header>
@@ -147,12 +145,11 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
 <style scoped>
 fieldset { min-width: 0; margin: 24px 0; padding: 0; border: 0; }
 legend { padding: 0; margin-bottom: 12px; font-size: 13px; color: var(--ui-text-muted); }
-.look-logo { display: flex; align-items: center; gap: 16px; }
-.look-logo__preview { display: grid; place-items: center; flex: 0 0 64px; width: 64px; height: 64px; overflow: hidden; border-radius: 16px; background: var(--ui-surface-muted); color: var(--ui-text-muted); }
+.look-logo { display: flex; align-items: center; gap: 12px; }
+.look-logo__preview { display: grid; place-items: center; flex: 0 0 48px; width: 48px; height: 48px; overflow: hidden; border-radius: 14px; background: var(--ui-surface-muted); color: var(--ui-text-muted); }
 .look-logo__preview img { width: 100%; height: 100%; object-fit: contain; }
-.look-logo__body { display: grid; gap: 6px; min-width: 0; }
-.look-logo__actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.look-logo__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.45; }
+.look-logo__actions { display: flex; gap: 4px; flex: 0 0 auto; }
+.look-logo__hint { flex: 1; min-width: 0; margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.45; }
 .look-logo__input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .look-layouts, .look-themes { display: flex; gap: 14px; overflow-x: auto; padding: 4px; margin: -4px; }
 .look-layout { position: relative; display: grid; justify-items: center; gap: 8px; flex: 0 0 96px; font-size: 13px; color: var(--ui-text-muted); cursor: pointer; }
@@ -189,8 +186,11 @@ legend { padding: 0; margin-bottom: 12px; font-size: 13px; color: var(--ui-text-
 .look-appearance { display: flex; gap: 4px; padding: 4px; border-radius: 24px; background: var(--ui-surface-muted); }
 .look-appearance label { position: relative; display: grid; place-items: center; flex: 1; min-height: 44px; border-radius: 20px; cursor: pointer; }
 .look-appearance .selected { background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
-.look-visitor-switch { display: flex; align-items: center; gap: 10px; margin-top: 12px; min-height: 44px; font-size: 14px; }
-.look-footer-link { text-decoration: none; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--ui-text-muted); font: inherit; cursor: pointer; }
+/* Site extras sit in one settings card: switches for on/off, chevrons for anything that opens more. */
+.look-options { display: grid; margin: 24px 0 0; padding: 4px 16px; border-radius: 18px; background: var(--ui-surface-muted); }
+.look-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 52px; padding: 0; border: 0; border-bottom: 1px solid var(--ui-border); background: transparent; color: var(--ui-text); font: 500 15px var(--font-sans); text-align: left; text-decoration: none; cursor: pointer; }
+.look-option:last-child { border-bottom: 0; }
+.look-option > svg { color: var(--ui-text-muted); }
 .look-footer-dialog { display: grid; gap: 14px; width: min(480px, 100%); margin: auto; padding: 24px; box-sizing: border-box; border-radius: 24px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
 .look-footer-dialog header { display: flex; justify-content: space-between; align-items: center; }
 .look-footer-dialog h2 { margin: 0; font-size: 20px; }.look-footer-dialog p { margin: 0; color: var(--ui-text-muted); font-size: 14px; }

@@ -456,6 +456,8 @@ const telegramPanelRef = ref<InstanceType<typeof TelegramConnectPanel> | null>(
 );
 // Telegram is hidden in every ME3 app for now; the Core channel and API stay in place.
 const TELEGRAM_UI_ENABLED = false;
+// Plugins and Coding agents are hidden while ME3 settles on a simpler settings page; News stays on by default.
+const SHOW_PLUGINS_AND_CODING_AGENTS = false;
 const telegramSetupOpen = ref(route.query.section === "telegram");
 
 const openSection = ref({
@@ -2466,7 +2468,7 @@ onBeforeUnmount(() => {
         </section>
 
         <section
-          v-if="pluginsLoading || pluginsError || visibleAccountPlugins.length"
+          v-if="SHOW_PLUGINS_AND_CODING_AGENTS && (pluginsLoading || pluginsError || visibleAccountPlugins.length)"
           class="card accordion-card plugins-section"
         >
           <button
@@ -3387,7 +3389,8 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="card accordion-card storage-section">
+        <!-- Managed installs come with storage, so there's nothing to set up. -->
+        <section v-if="aiDeploymentMode !== 'managed'" class="card accordion-card storage-section">
           <button
             id="account-trigger-storage"
             class="accordion-trigger"
@@ -3773,7 +3776,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section id="account-coding" class="card accordion-card coding-section">
+        <section v-if="SHOW_PLUGINS_AND_CODING_AGENTS" id="account-coding" class="card accordion-card coding-section">
           <button
             id="account-trigger-coding"
             class="accordion-trigger"
@@ -3933,7 +3936,7 @@ onBeforeUnmount(() => {
                   </label>
 
                   <div
-                    v-if="commerceSettings?.stripe.directKeySetupAllowed && !commerceSettings.stripe.directConfigured"
+                    v-if="commerceSettings?.stripe.directKeySetupAllowed && !commerceSettings.stripe.directKeyTestOnly && !commerceSettings.stripe.directConfigured"
                     class="field commerce-settings-row__field commerce-settings-row__field--secret payment-key-field"
                   >
                     <label for="stripe-secret-key-input">
@@ -4078,7 +4081,7 @@ onBeforeUnmount(() => {
             @click="openSection.timezone = !openSection.timezone"
           >
             <span class="accordion-title-wrap accordion-title-flex">
-              <h2>Timezone and morning calendar</h2>
+              <h2>Timezone</h2>
             </span>
             <span class="accordion-chevron" aria-hidden="true">▼</span>
           </button>
@@ -4132,14 +4135,6 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <label class="field">
-                <span>Morning calendar time</span>
-                <input v-model="dailyBriefingTimeInput" class="input" type="time" aria-describedby="morning-calendar-hint" />
-              </label>
-              <p id="morning-calendar-hint" class="hint">
-                A daily push with birthdays, events, bookings and reminders at this local time.
-                Turn it off using Daily Briefing in your phone's notification settings.
-              </p>
               <p v-if="error" class="error">{{ error }}</p>
             </div>
           </div>

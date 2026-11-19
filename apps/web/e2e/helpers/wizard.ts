@@ -59,18 +59,8 @@ export class WizardPage {
   }
 
   async clickStepShortcut(name: string) {
-    await this.page.locator(`.progress-step[data-step-name="${name}"]`).click();
-  }
-
-  async expectStepShortcutEnabled(name: string, enabled: boolean) {
-    const shortcut = this.page.locator(
-      `.progress-step[data-step-name="${name}"]`,
-    );
-    if (enabled) {
-      await expect(shortcut).toBeEnabled();
-    } else {
-      await expect(shortcut).toBeDisabled();
-    }
+    await this.page.locator(".wizard-step-button").click();
+    await this.page.getByRole("navigation", { name: "Choose an editor step" }).getByRole("button", { name }).click();
   }
 
   async expectCanProceed(canProceed: boolean) {

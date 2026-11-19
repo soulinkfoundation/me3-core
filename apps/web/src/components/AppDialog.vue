@@ -49,6 +49,11 @@ watch(
           ? document.activeElement
           : null;
       element.showModal();
+      // The browser focuses the first control, usually the close X, and phones draw a focus ring on it
+      // as if the owner had tabbed there. Without a field asking for focus, the dialog itself takes it.
+      if (document.activeElement instanceof HTMLButtonElement && !element.querySelector("[autofocus]")) {
+        element.focus({ preventScroll: true });
+      }
       emit("opened");
       return;
     }
@@ -88,6 +93,7 @@ onBeforeUnmount(() => {
       ref="dialog"
       v-bind="$attrs"
       class="app-dialog"
+      tabindex="-1"
       :aria-label="ariaLabel"
       :aria-labelledby="labelledBy"
       :aria-describedby="describedBy"
@@ -112,6 +118,10 @@ onBeforeUnmount(() => {
   color: var(--ui-text, inherit);
   background: transparent;
   border: 0;
+}
+
+.app-dialog:focus {
+  outline: none;
 }
 
 .app-dialog[open] {

@@ -127,10 +127,6 @@ test.describe("Wizard Full Flow", () => {
     await wizard.nextStep();
     await wizard.nextStep();
 
-    await wizard.expectStepShortcutEnabled("Basics", true);
-    await wizard.expectStepShortcutEnabled("Avatar", true);
-    await wizard.expectStepShortcutEnabled("Banner", true);
-    await wizard.expectStepShortcutEnabled("Features", false);
 
     await wizard.clickStepShortcut("Basics");
     await wizard.expectStepName("Basics");

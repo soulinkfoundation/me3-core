@@ -39,6 +39,7 @@ definePage({
     description:
       "Create your me3 site in minutes with the step-by-step wizard.",
     robots: "noindex,follow",
+    hideBack: true,
   },
 });
 
@@ -173,35 +174,6 @@ function handleBack() {
 
 function handleNext() {
   wizard.nextStep();
-}
-
-// Round step dots: visited steps jump straight back; later steps stay locked.
-const progressSteps = computed(() =>
-  wizard.steps.map((step, index) => {
-    const number = index + 1;
-    const isCurrent = number === wizard.currentStep;
-    const isVisited = number <= wizard.furthestStep;
-    return {
-      id: step.id,
-      name: step.name,
-      number,
-      isCurrent,
-      isVisited,
-      ariaLabel: isCurrent
-        ? `Current step: ${step.name}`
-        : isVisited
-          ? `Go to ${step.name}`
-          : `${step.name} unlocks after the earlier steps`,
-    };
-  }),
-);
-const progressFill = computed(() =>
-  wizard.totalSteps > 1 ? ((wizard.currentStep - 1) / (wizard.totalSteps - 1)) * 100 : 0,
-);
-
-function handleProgressStepClick(step: { number: number; isVisited: boolean; isCurrent: boolean }) {
-  if (!step.isVisited || step.isCurrent) return;
-  handleStepJump(step.number);
 }
 
 function handleStepJump(step: number) {
@@ -381,26 +353,16 @@ watch(
       <!-- Step selector and preview sit in the app top bar, beside Home, instead of a second header row. -->
       <Teleport to="#app-page-controls" defer>
         <div class="wizard-topbar">
-          <button type="button" class="wizard-step-button" :aria-label="`Step ${wizard.currentStep} of ${wizard.totalSteps}: ${wizard.currentStepName}. Show all steps`" aria-haspopup="dialog" :aria-expanded="stepsOpen" @click="stepsOpen = true"><span class="step-count">{{ wizard.currentStep }}<span>/</span>{{ wizard.totalSteps }}</span><span class="step-name">{{ wizard.currentStepName }}<UiIcon name="ChevronDown" :size="15" /></span></button>
           <Button color="ghost" size="large" icon-only class="wizard-icon-button" aria-label="Preview your site" @click="previewOpen = true"><UiIcon name="Eye" :size="20" /></Button>
+          <button type="button" class="wizard-step-button" :aria-label="`Step ${wizard.currentStep} of ${wizard.totalSteps}: ${wizard.currentStepName}. Show all steps`" aria-haspopup="dialog" :aria-expanded="stepsOpen" @click="stepsOpen = true"><span class="step-count">{{ wizard.currentStep }}<span>/</span>{{ wizard.totalSteps }}</span><span class="step-name">{{ wizard.currentStepName }}<UiIcon name="ChevronDown" :size="15" /></span></button>
+          <Button color="ghost" size="large" icon-only class="wizard-icon-button" aria-label="Close the editor" @click="handleExit"><UiIcon name="X" :size="22" /></Button>
         </div>
       </Teleport>
-      <header class="wizard-header">
-        <nav class="progress-bar" aria-label="Editor steps">
-          <div class="progress-track" aria-hidden="true"><div class="progress-fill" :style="{ width: `${progressFill}%` }" /></div>
-          <div class="progress-steps" :style="{ gridTemplateColumns: `repeat(${wizard.totalSteps}, minmax(0, 1fr))` }">
-            <button v-for="step in progressSteps" :key="step.id" type="button" class="progress-step" :class="{ 'is-current': step.isCurrent, 'is-visited': step.isVisited }" :data-step-name="step.name" :aria-label="step.ariaLabel" :aria-current="step.isCurrent ? 'step' : undefined" :disabled="!step.isVisited" @click="handleProgressStepClick(step)">
-              <span class="progress-step-dot" aria-hidden="true"><span v-if="step.isCurrent" class="progress-step-core" /><UiIcon v-else-if="step.isVisited" name="Check" :size="11" /></span>
-              <span class="progress-step-tooltip" aria-hidden="true">{{ step.name }}</span>
-            </button>
-          </div>
-        </nav>
-      </header>
       <section v-if="published" class="wizard-live" role="status" aria-label="Published">
         <UiIcon name="CircleCheck" :size="22" class="wizard-live__check" aria-hidden="true" />
         <div class="wizard-live__text">
           <strong>{{ siteIsPublic ? "You’re live" : "Your site is saved" }}</strong>
-          <button v-if="siteIsPublic" type="button" class="wizard-copy-link" aria-label="Copy site link" @click="copySiteLink">{{ publishedSiteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}<UiIcon name="Copy" :size="15" /></button>
+          <button v-if="siteIsPublic" type="button" class="wizard-copy-link" aria-label="Copy site link" @click="copySiteLink"><span>{{ publishedSiteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}</span><UiIcon name="Copy" :size="14" /></button>
           <span v-else>Your profile is private. Make it public in Basics when you’re ready to share it.</span>
         </div>
         <a v-if="siteIsPublic" class="wizard-live__view" :href="publishedSiteUrl" target="_blank" rel="noopener noreferrer"><UiIcon name="ExternalLink" :size="16" />View site</a>
@@ -469,28 +431,12 @@ watch(
 
 <style scoped>
 .wizard-page { min-height: calc(100dvh - var(--app-topbar-height)); padding-bottom: 48px; box-sizing: border-box; }
-/* Step name and dots stay pinned under the app top bar while the form scrolls. */
-.wizard-header { position: sticky; top: var(--app-topbar-height); z-index: 45; background: var(--ui-bg); }
 .wizard-topbar { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-.wizard-topbar .wizard-step-button { grid-column: 2; }
+.wizard-topbar .wizard-step-button { grid-column: 2; justify-self: center; }
 .wizard-icon-button { display: grid; place-items: center; flex: 0 0 auto; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; color: var(--ui-text); background: transparent; cursor: pointer; }
 .wizard-step-button { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 0; min-height: 44px; border: 0; background: transparent; color: var(--ui-text); font: inherit; cursor: pointer; }
 .step-count { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }.step-count span { margin: 0 3px; color: var(--ui-text-muted); font-weight: 400; }
 .step-name { display: flex; align-items: center; gap: 4px; overflow: hidden; color: var(--ui-text-muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
-.progress-bar { position: relative; max-width: 1120px; margin: 0 auto; padding: 4px 24px 8px; box-sizing: border-box; }
-.progress-track { position: absolute; top: 25px; right: 40px; left: 40px; height: 3px; border-radius: 999px; background: var(--ui-border); }
-.progress-fill { height: 100%; border-radius: inherit; background: var(--ui-accent); transition: width .3s ease; }
-.progress-steps { position: relative; display: grid; align-items: center; }
-.progress-step { position: relative; display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 0; border: 0; background: none; color: var(--ui-text-muted); cursor: pointer; }
-.progress-step:disabled, .progress-step.is-current { cursor: default; opacity: 1; }
-.progress-step-dot { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; box-sizing: border-box; border: 2px solid var(--ui-border-strong, var(--ui-border)); border-radius: 999px; background: var(--ui-bg); transition: transform .2s ease, box-shadow .2s ease; }
-.progress-step.is-visited .progress-step-dot { border-color: var(--ui-accent); background: var(--ui-accent); color: var(--ui-accent-contrast, #fff); }
-.progress-step.is-current .progress-step-dot { width: 22px; height: 22px; background: var(--ui-bg); color: var(--ui-accent); box-shadow: 0 0 0 4px var(--ui-accent-soft); }
-.progress-step.is-visited:not(.is-current):hover .progress-step-dot { transform: translateY(-1px); }
-.progress-step:focus-visible { outline: none; }.progress-step:focus-visible .progress-step-dot { box-shadow: 0 0 0 4px var(--ui-accent-soft); }
-.progress-step-core { width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
-.progress-step-tooltip { position: absolute; top: calc(100% + 4px); left: 50%; z-index: 2; padding: 6px 10px; border-radius: 999px; background: var(--ui-text); color: var(--ui-bg); font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap; opacity: 0; pointer-events: none; transform: translate(-50%, -4px); transition: opacity .18s ease, transform .18s ease; }
-.progress-step:hover .progress-step-tooltip, .progress-step:focus-visible .progress-step-tooltip { opacity: 1; transform: translate(-50%, 0); }
 .wizard-main { display: grid; grid-template-columns: minmax(0, 520px) minmax(0, 430px); justify-content: center; align-items: start; gap: 40px; max-width: 1120px; margin: 24px auto; padding: 0 24px; }
 .step-content { min-width: 0; }
 .step-content :deep(h2) { margin: 2px 0 8px; color: var(--ui-text); font-size: 24px; line-height: 1.2; font-weight: 600; letter-spacing: -.02em; }
@@ -510,7 +456,7 @@ watch(
 /* The @handle wrapper clips its input, so the focus ring goes on the wrapper rather than showing as a sliver. */
 .step-content :deep(.handle-input input:focus-visible) { outline: none; }
 .step-content :deep(.handle-input:focus-within) { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
-.preview-panel { position: sticky; top: calc(var(--app-topbar-height) + 76px); min-width: 0; overflow: hidden; }
+.preview-panel { position: sticky; top: calc(var(--app-topbar-height) + 16px); min-width: 0; overflow: hidden; }
 .preview-panel :deep(.generated-site-preview) { width: 100%; height: min(680px, calc(100dvh - 230px)); min-height: 240px; border: 0; border-radius: 24px; box-shadow: var(--ui-shadow-md); }
 .wizard-preview-label { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 13px; color: var(--ui-text-muted); }
 .wizard-preview-label button { margin-left: auto; min-height: 32px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
@@ -525,19 +471,18 @@ button:disabled { opacity: .45; cursor: not-allowed; } button:focus-visible, a:f
 .wizard-jump-list nav { display: grid; max-height: min(65dvh, 600px); overflow: auto; }.wizard-jump-list nav button { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 12px; border: 0; border-radius: 12px; background: transparent; color: var(--ui-text); font: 500 15px var(--font-sans); text-align: left; cursor: pointer; }
 .wizard-jump-list [aria-current='step'] { background: var(--ui-surface-muted); font-weight: 600; }.wizard-jump-list small { margin-left: auto; color: var(--ui-text-muted); font-weight: 400; }.wizard-jump-list p { margin: 16px 0 0; color: var(--ui-text-muted); font-size: 13px; }.wizard-jump-number { display: grid; place-items: center; width: 18px; font-variant-numeric: tabular-nums; color: var(--ui-text-muted); }
 .wizard-preview-dialog { width: min(960px, 100%); }.wizard-preview-dialog :deep(.generated-site-preview) { width: 100%; height: min(65dvh, 640px); border: 0; border-radius: 18px; }.wizard-preview-viewport { display: flex; gap: 2px; padding: 3px; background: var(--ui-surface-muted); border-radius: 24px; }.wizard-preview-viewport button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ui-text-muted); cursor: pointer; }.wizard-preview-viewport [aria-pressed='true'] { background: var(--ui-surface); color: var(--ui-text); box-shadow: var(--ui-shadow-sm); }
-.wizard-live { display: flex; align-items: center; gap: 12px; max-width: 960px; margin: 16px auto 0; padding: 10px 12px 10px 16px; box-sizing: border-box; border-radius: 18px; background: var(--ui-surface-muted); }.wizard-live__check { flex: 0 0 auto; color: var(--ui-accent-strong); }
-.wizard-live__text { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; flex: 1; min-width: 0; font-size: 14px; }.wizard-live__text strong { font-size: 15px; font-weight: 600; }.wizard-live__text span { color: var(--ui-text-muted); }
-.wizard-copy-link { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 12px; border: 0; border-radius: 18px; background: var(--ui-surface); color: var(--ui-text); font: inherit; overflow-wrap: anywhere; text-align: left; cursor: pointer; }
-.wizard-live__view { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; min-height: 44px; padding: 0 16px; border-radius: 22px; background: var(--ui-surface); color: var(--ui-text); text-decoration: none; font-weight: 600; font-size: 14px; }
+/* One tidy row: tick, status with the address under it, and View site. */
+.wizard-live { display: flex; align-items: center; gap: 12px; max-width: 960px; margin: 16px auto 0; padding: 12px 12px 12px 16px; box-sizing: border-box; border-radius: 18px; background: var(--ui-surface-muted); }.wizard-live__check { flex: 0 0 auto; color: var(--ui-accent-strong); }
+.wizard-live__text { display: grid; gap: 2px; flex: 1; min-width: 0; font-size: 14px; }.wizard-live__text strong { font-size: 15px; font-weight: 600; }.wizard-live__text span { color: var(--ui-text-muted); }
+.wizard-copy-link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; min-height: 28px; padding: 0; border: 0; background: transparent; color: var(--ui-text-muted); font: inherit; text-align: left; cursor: pointer; }.wizard-copy-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.wizard-copy-link svg { flex: 0 0 auto; }
+.wizard-live__view { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; min-height: 40px; padding: 0 14px; border-radius: 20px; background: var(--ui-surface); color: var(--ui-text); text-decoration: none; font-weight: 600; font-size: 14px; box-shadow: var(--ui-shadow-sm); }
 @media(max-width:900px) {
   .wizard-main { grid-template-columns: minmax(0, 620px); margin: 18px auto; gap: 20px; padding: 0 16px; }
   /* Small screens open the preview from the top bar instead of squeezing it above the form. */
   .preview-panel { display: none; }
-  .wizard-topbar { grid-template-columns: minmax(0, 1fr) 44px; }.wizard-topbar .wizard-step-button { grid-column: 1; justify-content: flex-start; }.progress-bar { padding-inline: 12px; }.progress-track { right: 24px; left: 24px; }
-  .progress-step-dot { width: 14px; height: 14px; }.progress-step.is-current .progress-step-dot { width: 18px; height: 18px; }.progress-step-tooltip { display: none; }
-  .step-nav { padding-top: 28px; }.nav-btn { padding: 0 20px; }
+  .wizard-topbar { grid-template-columns: minmax(0, 1fr) 44px; }.wizard-topbar .wizard-step-button { grid-column: 1; justify-content: flex-start; }    .step-nav { padding-top: 28px; }.nav-btn { padding: 0 20px; }
   .intro-panel { flex-direction: column; gap: 20px; }.intro-image { width: min(100%, 320px); }.intro-copy h1 { font-size: 28px; }.wizard-intro { margin: 12px auto; padding: 16px; }
-  .wizard-live { margin: 12px 16px 0; align-items: flex-start; }.wizard-live__check { margin-top: 8px; }.wizard-live__view { padding: 0 12px; }
+  .wizard-live { margin: 12px 16px 0; }.wizard-live__view { padding: 0 12px; }
 }
 @media(prefers-reduced-motion:reduce) { *, *::before, *::after { transition: none; animation: none; scroll-behavior: auto; } }
 
