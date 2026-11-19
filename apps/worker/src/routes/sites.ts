@@ -159,7 +159,7 @@ import {
   sendNewsletterWelcome,
   siteBaseUrlForEmail,
 } from "../newsletter-welcome";
-import { publishSiteFromSource } from "../site-publish";
+import { publishSiteFromSource, syncPublishedProfile } from "../site-publish";
 import { inlineDraftImages, renderDraftPreviewHtml, setDraftTheme } from "../site-starter";
 import {
   confirmDoubleOptInSubscriber,
@@ -294,12 +294,18 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
       const path = `files/logo.${ext}`;
       const hash = await sha256Buffer(buffer);
       await putSiteMediaFile(c.env, site, `public/${path}`, buffer, `image/${ext === "jpg" ? "jpeg" : ext}`);
-      const manifest = (await loadPublishManifest(c.env, site.id)) || createEmptyPublishManifest();
-      manifest.assetFiles[path] = hash;
-      manifest.updatedAt = new Date().toISOString();
-      await savePublishManifest(c.env, site.id, manifest);
       if (!(await setSiteProfileLogo(c.env, site.id, `./${path}`))) {
         return c.json({ error: "Publish your site once before adding a logo here." }, 409);
+      }
+      const manifest = (await loadPublishManifest(c.env, site.id)) || createEmptyPublishManifest();
+      manifest.assetFiles[path] = hash;
+      if (site.published_at) {
+        // The live pages are rendered at publish, so publish the saved source again with the new logo.
+        const result = await publishSiteFromSource(c.env, site, manifest);
+        if (result.networkProfile) await syncPublishedProfile(c.env, site, result.networkProfile);
+      } else {
+        manifest.updatedAt = new Date().toISOString();
+        await savePublishManifest(c.env, site.id, manifest);
       }
       return c.json({ branding: await getSiteBranding(c.env, site) });
     } catch (error) {

@@ -173,5 +173,7 @@ describe("Site branding", () => {
       emailLogoUrl: null,
     });
     expect(await setSiteProfileLogo(env, "site-2", "./files/logo.png")).toBe(false);
+    // Only the source profile changes; the public pages follow when the caller republishes.
+    expect(database.prepare("SELECT COUNT(*) AS count FROM site_files WHERE path = 'public/me.json'").get()).toEqual({ count: 0 });
   });
 });

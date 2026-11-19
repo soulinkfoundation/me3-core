@@ -306,26 +306,21 @@ function normalizeText(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
-const PROFILE_PATHS = ["src/me.json", "public/me.json"] as const;
-
 /**
- * Sets the Site logo (the profile's `logo`, the same field the site editor's Logo writes) without a
- * full publish, so the owner can add it from a campaign review. Returns false when the Site has no profile yet.
+ * Sets the Site logo (the profile's `logo`, the same field the site editor's Logo writes) in the
+ * site's source profile, so the owner can add it from a campaign review. The caller republishes.
+ * Returns false when the Site has no source profile yet.
  */
 export async function setSiteProfileLogo(env: Env, siteId: string, logoRef: string): Promise<boolean> {
-  let updated = false;
-  for (const path of PROFILE_PATHS) {
-    const source = await getSiteFileText(env, siteId, path);
-    if (!source) continue;
-    let profile: unknown;
-    try {
-      profile = JSON.parse(source);
-    } catch {
-      continue;
-    }
-    if (!profile || typeof profile !== "object" || Array.isArray(profile)) continue;
-    await putSiteFile(env, siteId, path, JSON.stringify({ ...profile, logo: logoRef }, null, 2), "application/json");
-    updated = true;
+  const source = await getSiteFileText(env, siteId, "src/me.json");
+  if (!source) return false;
+  let profile: unknown;
+  try {
+    profile = JSON.parse(source);
+  } catch {
+    return false;
   }
-  return updated;
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) return false;
+  await putSiteFile(env, siteId, "src/me.json", JSON.stringify({ ...profile, logo: logoRef }, null, 2), "application/json");
+  return true;
 }
