@@ -34,7 +34,7 @@ describe("site generator", () => {
     } as any, [{ name: "alignment.md", content: "Details" }]);
     expect(cards["index.html"]).toMatch(/class="booking-offer-card"><button[\s\S]*?<\/button><a class="booking-offer-link" href="\.\/alignment">Learn more about this offer<\/a><\/div>/);
   });
-  it.each(["card", "split", "cover", "minimal"] as const)("renders the %s layout with one header and a mobile dock", async (layout) => {
+  it.each(["card", "split", "cover", "minimal"] as const)("renders the %s layout with one header and no sticky mobile action bar", async (layout) => {
     const files = await generateSiteHtml({
       name: "Alex",
       avatar: "./files/avatar.jpg",
@@ -50,7 +50,7 @@ describe("site generator", () => {
     expect(home).toContain(`site-hero--${layout}`);
     expect(home.match(/class="site-topbar"/g)).toHaveLength(1);
     expect(about.match(/class="site-topbar"/g)).toHaveLength(1);
-    expect(home).toContain('class="site-action-dock"');
+    expect(home).not.toContain('class="site-action-dock"');
     expect(home).toContain("@media(max-width:760px)");
     // Social links sit in the hero in every layout, including over the cover photo.
     const hero = home.match(/<section class="site-hero[\s\S]*?<\/section>/)?.[0] || "";

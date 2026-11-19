@@ -175,10 +175,8 @@ body[data-layout=cover] .site-topbar__action{display:none!important}
 @supports(text-box:trim-both cap alphabetic){:is(.site-topbar__action,.site-offer button){padding-top:15px;padding-bottom:15px}}
 .cta-button .btn-icon{display:inline-flex;vertical-align:middle;margin-right:8px}
 .newsletter-form input[type=email]{border-radius:var(--cta-radius)}
-/* The booking steps' dock buttons stay hidden until the renderer's own booking-state rules show them. */
-.site-action-dock :is([data-booking-dock-continue],[data-booking-dock-select-time]){display:none}
 .site-action-dock [hidden]{display:none!important}
-/* Phones: the header never carries the action button; the bottom dock does. */
+/* Phones: the header never carries the action button; the hero's buttons do. */
 @media(max-width:760px){.site-topbar .site-topbar__action{display:none}}
 /* Phones: hero buttons are full width, one per row, in every layout. */
 @media(max-width:760px){

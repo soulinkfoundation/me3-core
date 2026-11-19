@@ -74,7 +74,7 @@ describe("shop for real products", () => {
     expect(files["shop/index.html"]).toContain("from €14");
   });
 
-  it("keeps the site's own action in the phone bar when a product can't be bought", async () => {
+  it("shows no phone Buy bar when a product can't be bought", async () => {
     const files = await generateSiteHtml({ ...base, buttons: [{ text: "Say hello", url: "https://example.com" }], products: [{ slug: "mug", title: "Mug", price: 1800, currency: "EUR", stock: 0, stockSetAt: setAt }], extensions: { "me3.app/site": { theme: "me3" } } }, []);
     expect(files["shop/mug.html"]).not.toContain("data-product-dock");
     expect(files["shop/mug.html"]).toContain("Say hello");

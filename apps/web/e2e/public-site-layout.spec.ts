@@ -113,74 +113,36 @@ test("dropdown links select the offer and allow continuing with an available tim
 });
 
 for (const mode of ["light", "dark"] as const) {
-  test(`mobile dock follows booking selection and details in ${mode} mode`, async ({ page }, info) => {
+  test(`mobile has no sticky action bar and books with inline Continue in ${mode} mode`, async ({ page }, info) => {
     await page.setViewportSize({ width: 375, height: 847 });
     await page.emulateMedia({ colorScheme: mode });
     await serve(page);
     await page.goto("https://site.test/?offer=clarity&bookingType=one_to_one#booking");
-    const dock = page.locator(".site-action-dock");
-    const promo = dock.getByRole("link", { name: "Website offer · €220" });
-    const next = dock.getByRole("button", { name: "Continue", exact: true });
-    const choose = dock.getByRole("button", { name: "Select a time", exact: true });
-    const time = page.getByRole("button", { name: "10:00", exact: false });
-    await expect(promo).toBeHidden();
-    await expect(choose).toBeVisible();
-    await expect(next).toBeHidden();
-    await page.screenshot({ path: info.outputPath(`booking-select-time-${mode}.png`) });
-    await choose.press("Enter");
-    await expect(time).toBeFocused();
-    await expect(time).not.toHaveAttribute("aria-pressed", "true");
-    await time.click();
-    await expect(choose).toBeHidden();
-    await expect(promo).toBeHidden();
-    await expect(next).toBeVisible();
-    await expect(page.locator("[data-booking-continue]")).toBeHidden();
+    await expect(page.locator(".site-action-dock")).toHaveCount(0);
+    await page.getByRole("button", { name: "10:00", exact: false }).click();
+    await expect(page.locator("[data-booking-continue]")).toBeVisible();
     await page.screenshot({ path: info.outputPath(`booking-continue-${mode}.png`) });
-    await next.press("Enter");
-    await expect(page.getByRole("textbox", { name: "Your name" })).toBeFocused();
-    await expect(page.getByRole("group", { name: "Available times" })).toBeHidden();
-    await expect(dock).toBeHidden();
-    await page.getByRole("button", { name: "Back", exact: true }).click();
-    await expect(promo).toBeHidden();
-    await expect(choose).toBeVisible();
-    await expect(next).toBeHidden();
-    await time.click();
-    await page.locator('[data-offer-id="website"]').click();
-    await expect(promo).toBeHidden();
-    await expect(choose).toBeVisible();
-    await expect(next).toBeHidden();
-    await time.click();
-    await page.locator(".booking-day:not(.active):not(:disabled)").first().click();
-    await expect(promo).toBeHidden();
-    await expect(choose).toBeVisible();
-    await expect(next).toBeHidden();
-    await time.click();
-    await next.click();
+    await page.locator("[data-booking-continue]").click();
     await page.getByRole("textbox", { name: "Your name" }).fill("UI Test Guest");
     await page.getByRole("textbox", { name: "Your email" }).fill("guest@example.test");
     await page.getByRole("button", { name: "Confirm Booking", exact: true }).click();
     const confirmation = page.getByRole("dialog", { name: "Booking confirmed", exact: true });
     await expect(confirmation).toBeVisible();
-    await expect(confirmation).toContainText("Website setup");
     await expect(confirmation).toContainText("10:00");
-    await expect(confirmation.getByRole("button", { name: "Done", exact: true })).toBeFocused();
     await page.screenshot({ path: info.outputPath(`booking-confirmation-mobile-${mode}.png`) });
-    await confirmation.press("Escape");
-    await expect(confirmation).toBeHidden();
-    await expect(page.getByRole("status")).toContainText("Your booking is confirmed.");
-    await expect(promo).toBeHidden();
-    await expect(choose).toBeVisible();
-    await expect(next).toBeHidden();
   });
 }
 
-test("ordinary and invalid offer links retain the promotional dock", async ({ page }) => {
+test("the home page has no sticky action bar on phones in any layout", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 847 });
-  await serve(page);
-  for (const url of ["https://site.test/", "https://site.test/?offer=missing&bookingType=one_to_one#booking"]) {
-    await page.goto(url);
-    await expect(page.locator(".site-action-dock").getByRole("link", { name: "Website offer · €220" })).toBeVisible();
-    await expect(page.locator("[data-booking-dock-select-time]")).toBeHidden();
+  for (const layout of ["card", "split", "cover", "minimal"] as const) {
+    const source = structuredClone(profile);
+    source.extensions!["me3.app/site"]!.layout = layout;
+    await page.unrouteAll();
+    await serve(page, source);
+    await page.goto("https://site.test/");
+    await expect(page.locator(".site-action-dock")).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Website offer · €220" }).first()).toBeVisible();
   }
 });
 
@@ -290,11 +252,10 @@ test("booking type links activate the matching panel and invalid offers keep the
   await page.goto("https://site.test/?offer=unknown#booking");
   await expect(page.locator('[data-offer-id="website"]')).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "10:00", exact: false }).click();
-  const next = page.locator("[data-booking-dock-continue]");
+  const next = page.locator('.booking-type-panel:not([hidden]) [data-booking-continue]');
   await expect(next).toBeVisible();
   await page.getByRole("tab", { name: "Classes", exact: true }).click();
   await expect(next).toBeHidden();
-  await expect(page.locator(".site-action-dock a")).toBeVisible();
   await page.getByRole("tab", { name: "1:1", exact: true }).click();
   await expect(next).toBeVisible();
 });

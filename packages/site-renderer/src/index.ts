@@ -916,7 +916,8 @@ function pageShell(
     ? generateSiteTopbar(profile, options.activeSlug, options.basePath)
     : siteSettings?.visitorThemeToggle !== false
       ? `<div class="starter-theme-control">${themeToggleMarkup(false)}</div>` : "") : "";
-  const actionDock = modern ? options.dock || siteActionLink(profile, "site-action-dock__button", options.basePath) : "";
+  // Phones get a sticky bar only for a product's Buy action; the site's own action stays in the page.
+  const actionDock = modern ? options.dock || "" : "";
   const footer = modern ? generateModernFooter(profile, options.basePath, options.footer, navigationEnabled) : options.footer;
   return `<!DOCTYPE html>
 <html lang="en">
@@ -935,7 +936,7 @@ function pageShell(
     ${options.body}
     ${footer}
   </div>
-  ${actionDock ? `<div class="site-action-dock">${actionDock}${profile.intents?.book?.enabled && !options.dock ? `<button type="button" class="site-action-dock__button" data-booking-dock-select-time>Select a time</button><button type="button" class="site-action-dock__button" data-booking-dock-continue>Continue</button><script>document.querySelector('[data-booking-dock-continue]').addEventListener('click',function(){var next=document.querySelector('.booking-type-panel:not([hidden]) [data-booking-continue]:not(:disabled)');if(next)next.click();});document.querySelector('[data-booking-dock-select-time]').addEventListener('click',function(){var panel=document.querySelector('.booking-type-panel:not([hidden])');if(!panel)return;var target=panel.querySelector('.booking-slot:not(:disabled)')||panel.querySelector('.booking-day:not(:disabled)');if(target){target.focus({preventScroll:true});target.scrollIntoView({block:'center'});}});</script>` : ""}</div>` : ""}
+  ${actionDock ? `<div class="site-action-dock">${actionDock}</div>` : ""}
   ${options.afterContainer || ""}
   ${navigationScript}
   ${modern ? `<script>(function(){function update(){document.body.classList.toggle("is-scrolled",window.scrollY>24)}addEventListener("scroll",update,{passive:true});update()})();</script>` : ""}
