@@ -815,7 +815,7 @@ p { margin: 4px 0; }
 /* Touch swipes the pager; the chevrons are for a mouse. */
 @media (hover: none) { .home-pager-nav__go { display: none; } }
 .home-pager-dots { display: flex; justify-content: center; gap: 6px; }
-.home-pager-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--ui-surface-muted); }
+.home-pager-dots i { width: 6px; height: 6px; border-radius: 50%; background: color-mix(in srgb, var(--ui-text) 22%, transparent); }
 .home-pager-dots i.is-on { background: var(--ui-text); }
 .home-approval strong { font-size: 14px; font-weight: 600; }
 .home-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }

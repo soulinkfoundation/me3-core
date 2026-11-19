@@ -258,25 +258,29 @@ onMounted(async () => { await load(); await applyFocus(); });
             </button>
           </div>
           <div v-if="expanded === goal.id" class="mission-goal__details">
-            <label class="mission-range"><span>Progress</span><output>{{ goal.progress || 0 }}%</output>
+            <label class="mission-slider" :style="{ '--pc': `${goal.progress || 0}%` }">
+              <span class="mission-field__label">Progress</span><output>{{ goal.progress || 0 }}%</output>
               <input v-model.number="goal.progress" type="range" min="0" max="100" step="5" :aria-label="`Progress for ${goal.title || 'new goal'}`" @input="save" />
             </label>
             <p v-if="taskLine(goal)" class="mission-muted">{{ taskLine(goal) }}</p>
-            <div class="mission-chips">
-              <label class="mission-chip"><span class="sr-only">Wheel of Life area</span>
-                <select v-model="goal.areaId" @change="save"><option :value="null">No area</option><option v-for="area in areas" :key="area.id" :value="area.id">{{ area.emoji }} {{ area.label }}</option></select>
+            <div class="mission-fields">
+              <label class="mission-field"><span class="mission-field__label">Area</span>
+                <span class="mission-chip"><select v-model="goal.areaId" @change="save"><option :value="null">No area</option><option v-for="area in areas" :key="area.id" :value="area.id">{{ area.emoji }} {{ area.label }}</option></select><UiIcon name="ChevronsUpDown" :size="14" aria-hidden="true" /></span>
               </label>
-              <details class="mission-chip mission-projects">
-                <summary><UiIcon name="Folder" :size="15" />{{ projects.filter(p => goal.projectIds?.includes(p.id)).map(p => p.name).join(', ') || 'Project' }}</summary>
-                <div class="mission-projects__list">
-                  <p v-if="!projects.length" class="mission-muted">No projects yet</p>
-                  <label v-for="project in projects" :key="project.id"><input type="checkbox" :checked="goal.projectIds?.includes(project.id)" @change="toggleProject(goal, project.id, ($event.target as HTMLInputElement).checked)" />{{ project.name }}</label>
-                </div>
-              </details>
+              <div class="mission-field"><span class="mission-field__label">Project</span>
+                <details class="mission-chip mission-projects">
+                  <summary><UiIcon name="Folder" :size="15" /><span class="mission-chip__text">{{ projects.filter(p => goal.projectIds?.includes(p.id)).map(p => p.name).join(', ') || 'None' }}</span><UiIcon name="ChevronsUpDown" :size="14" aria-hidden="true" /></summary>
+                  <div class="mission-projects__list">
+                    <p v-if="!projects.length" class="mission-muted">No projects yet</p>
+                    <label v-for="project in projects" :key="project.id"><input type="checkbox" :checked="goal.projectIds?.includes(project.id)" @change="toggleProject(goal, project.id, ($event.target as HTMLInputElement).checked)" />{{ project.name }}</label>
+                  </div>
+                </details>
+              </div>
             </div>
             <div class="mission-goal__actions">
-              <button v-if="index > 0 && goal.title.trim()" type="button" class="mission-focus" @click="makeFocus(goal)">Make focus</button>
-              <button type="button" class="mission-delete" :aria-label="goal.title.trim() ? `Delete ${goal.title}` : 'Discard new goal'" @click="remove(goal)">Delete</button>
+              <button type="button" class="mission-delete" :aria-label="goal.title.trim() ? `Delete ${goal.title}` : 'Discard new goal'" @click="remove(goal)"><UiIcon name="Trash2" :size="16" />{{ goal.title.trim() ? 'Delete' : 'Discard' }}</button>
+              <button v-if="index > 0 && goal.title.trim()" type="button" class="mission-focus" @click="makeFocus(goal)"><UiIcon name="Star" :size="15" />Make focus</button>
+              <Button color="primary" size="compact" shape="soft" @click="toggle(goal.id)">Done</Button>
             </div>
           </div>
         </div>
@@ -379,25 +383,42 @@ onMounted(async () => { await load(); await applyFocus(); });
 .mission-goal__text strong { overflow: hidden; font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .mission-goal__meta { display: flex; align-items: center; gap: 8px; }
 .mission-goal__meta .mission-muted { margin: 0; }
-.mission-goal__title { flex: 1; min-width: 0; padding: 10px 4px; border: 0; border-radius: var(--ui-radius-sm); background: transparent; color: var(--ui-text); font: inherit; font-size: 15px; font-weight: 600; }
+.mission-goal__title { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; border: 0; border-radius: var(--ui-radius-md); background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; font-size: 15px; font-weight: 600; }
 .mission-goal__title:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
-.mission-goal__details { display: grid; gap: 12px; padding: 0 0 14px 46px; }
+.mission-goal__details { display: grid; gap: 14px; padding: 2px 0 14px 54px; }
 .mission-progress { display: block; width: min(160px, 100%); height: 4px; border-radius: 4px; background: var(--ui-surface-muted); }
 .mission-progress i { display: block; height: 100%; border-radius: inherit; background: var(--ui-accent); }
 .mission-range { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 8px; font-size: 13px; color: var(--ui-text-muted); }
 .mission-range output { color: var(--ui-text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .mission-range input { grid-column: 1 / -1; width: 100%; min-height: 28px; accent-color: var(--ui-accent); }
-.mission-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.mission-chip select, .mission-chip summary { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
+.mission-slider { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 8px; }
+.mission-slider output { color: var(--ui-text); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.mission-slider input { grid-column: 1 / -1; width: 100%; height: 28px; margin: 0; background: transparent; cursor: pointer; -webkit-appearance: none; appearance: none; }
+.mission-slider input::-webkit-slider-runnable-track { height: 6px; border-radius: 6px; background: linear-gradient(var(--ui-accent), var(--ui-accent)) 0 / var(--pc) 100% no-repeat, var(--ui-surface-muted); }
+.mission-slider input::-moz-range-track { height: 6px; border-radius: 6px; background: var(--ui-surface-muted); }
+.mission-slider input::-moz-range-progress { height: 6px; border-radius: 6px; background: var(--ui-accent); }
+.mission-slider input::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -7px; border: 3px solid var(--ui-surface); border-radius: 50%; background: var(--ui-accent); box-shadow: var(--ui-shadow-sm); -webkit-appearance: none; appearance: none; }
+.mission-slider input::-moz-range-thumb { width: 14px; height: 14px; border: 3px solid var(--ui-surface); border-radius: 50%; background: var(--ui-accent); box-shadow: var(--ui-shadow-sm); }
+.mission-slider input:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; border-radius: 8px; }
+.mission-field__label { color: var(--ui-text-muted); font-size: 13px; font-weight: 500; }
+.mission-fields { display: grid; border-radius: var(--ui-radius-md); box-shadow: inset 0 0 0 1px var(--ui-border); }
+.mission-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 0 6px 0 14px; }
+.mission-field + .mission-field { box-shadow: inset 0 1px 0 var(--ui-border); }
+.mission-chip { position: relative; display: inline-flex; align-items: center; min-width: 0; color: var(--ui-text-muted); }
+.mission-chip select, .mission-chip summary { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; min-height: 36px; padding: 0 30px 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--ui-text); font: inherit; font-size: 14px; font-weight: 500; text-align: right; cursor: pointer; -webkit-appearance: none; appearance: none; }
+.mission-chip select:hover, .mission-chip summary:hover { background: var(--ui-surface-muted); }
+.mission-chip > :deep(svg) { position: absolute; right: 10px; pointer-events: none; }
+.mission-chip summary > :deep(svg:last-child) { position: absolute; right: 10px; }
+.mission-chip__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mission-projects { position: relative; }
 .mission-projects summary { list-style: none; }
 .mission-projects summary::-webkit-details-marker { display: none; }
-.mission-projects__list { position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; display: grid; gap: 4px; min-width: 200px; padding: 8px 12px; border-radius: var(--ui-radius-md); background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
+.mission-projects__list { position: absolute; z-index: 5; top: calc(100% + 6px); right: 0; display: grid; gap: 4px; min-width: 200px; padding: 8px 12px; border-radius: var(--ui-radius-md); background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
 .mission-projects__list label { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 14px; }
-.mission-goal__actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.mission-focus { flex-shrink: 0; min-height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; font-size: 13px; font-weight: 600; line-height: 34px; cursor: pointer; }
+.mission-goal__actions { display: flex; align-items: center; gap: 8px; }
+.mission-focus { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; font-size: 13px; font-weight: 600; line-height: 34px; cursor: pointer; }
 .mission-focus.is-on { background: var(--ui-primary); color: var(--ui-primary-contrast); cursor: default; }
-.mission-delete { min-height: 44px; margin-left: auto; padding: 0 4px; border: 0; background: transparent; color: var(--ui-danger); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
+.mission-delete { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin-right: auto; padding: 0 4px; border: 0; background: transparent; color: var(--ui-danger); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
 .mission-completed { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .mission-done { display: flex; align-items: center; gap: 10px; color: var(--ui-text-muted); text-decoration: line-through; font-size: 14px; }
 .mission-wheel { display: flex; align-items: center; gap: 24px; padding: 8px 0 4px; }
