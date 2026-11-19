@@ -8,7 +8,6 @@ import ContactReminder from "./ContactReminder.vue";
 import PersonAvatar from "./PersonAvatar.vue";
 import ProspectPanel from "./ProspectPanel.vue";
 import { useAppToast } from "../../composables/useAppToast";
-import { useSoulinkInvite } from "../../composables/useSoulinkInvite";
 import { useContactsStore, type Contact } from "../../stores/contacts";
 import {
   firstName,
@@ -26,7 +25,6 @@ const emit = defineEmits<{ close: [] }>();
 const router = useRouter();
 const contactsStore = useContactsStore();
 const { toastSuccess, toastError } = useAppToast();
-const invite = useSoulinkInvite();
 const starring = ref(false);
 const markingInTouch = ref(false);
 const tracking = ref(false);
@@ -182,10 +180,6 @@ async function weTalked() {
         <button type="button" class="person-sheet__quiet" :disabled="markingInTouch" @click="weTalked">
           <UiIcon name="Check" :size="15" aria-hidden="true" />
           We talked
-        </button>
-        <button v-if="!onSoulink && invite.available.value !== false" type="button" class="person-sheet__quiet" @click="invite.share()">
-          <UiIcon name="UserPlus" :size="15" aria-hidden="true" />
-          Invite to Soulink
         </button>
         <button v-if="prospect" type="button" class="person-sheet__quiet" :disabled="tracking" @click="setTracking(false)">
           Stop tracking

@@ -1183,7 +1183,6 @@ onMounted(() => {
                     <option value="external">Other video link (Zoom, etc.)</option>
                   </select>
                   <p v-if="!soulinkConnected && activeOfferMeetingProvider === 'soulink'" class="form-hint">Reconnect Soulink before taking new bookings for this offer.</p>
-                  <p v-else-if="!soulinkConnected" class="form-hint"><RouterLink to="/settings?section=connections">Connect Soulink</RouterLink> to use your call room.</p>
                 </div>
                 <div v-if="activeOfferMeetingProvider === 'external'" class="form-group">
                   <label :for="`booking-offer-meeting-url-${activeOffer.id}`">Link</label>

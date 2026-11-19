@@ -5,7 +5,6 @@ import { definePage } from "unplugin-vue-router/runtime";
 import { useRoute, useRouter } from "vue-router";
 import AppPageBar from "../components/AppPageBar.vue";
 import UiIcon from "../components/UiIcon.vue";
-import AddSomeoneSheet from "../components/people/AddSomeoneSheet.vue";
 import ImportProspectsSheet from "../components/people/ImportProspectsSheet.vue";
 import NewPersonSheet from "../components/people/NewPersonSheet.vue";
 import PersonAvatar from "../components/people/PersonAvatar.vue";
@@ -52,7 +51,6 @@ const loaded = ref(contacts.value.length > 0);
 const filter = ref<Filter>("all");
 const outreachTab = ref<OutreachTab>("open");
 const query = ref("");
-const addOpen = ref(false);
 const newPersonOpen = ref(false);
 const importOpen = ref(false);
 const soulinkConnected = ref<boolean | null>(null);
@@ -133,7 +131,6 @@ function jumpTo(letter: string) {
 }
 
 function addByHand() {
-  addOpen.value = false;
   newPersonOpen.value = true;
 }
 
@@ -213,7 +210,7 @@ watch(filter, () => { now.value = Date.now(); });
   <main class="people-page">
     <AppPageBar title="People">
       <template #actions>
-        <button type="button" class="people-add" aria-label="Add someone" title="Add someone" @click="addOpen = true">
+        <button type="button" class="people-add" aria-label="Add someone" title="Add someone" @click="addByHand">
           <UiIcon name="Plus" :size="22" aria-hidden="true" />
         </button>
       </template>
@@ -350,16 +347,12 @@ watch(filter, () => { now.value = Date.now(); });
           <p>No one here yet.</p>
           <p class="people-empty__sub">
             Tap + to add someone.
-            <template v-if="soulinkConnected === false">
-              Or <router-link to="/account?section=app-connections">connect Soulink</router-link> to bring in your Links.
-            </template>
           </p>
         </template>
       </div>
     </div>
 
     <PersonSheet :contact="openContact" @close="closePerson" />
-    <AddSomeoneSheet :open="addOpen" @close="addOpen = false" @add-by-hand="addByHand" />
     <NewPersonSheet :open="newPersonOpen" @close="newPersonOpen = false" @saved="onAdded" />
     <ImportProspectsSheet :open="importOpen" @close="importOpen = false" @imported="onImported" />
   </main>

@@ -6,6 +6,7 @@ import { api } from "./api";
 import AgentChatLauncher from "./components/AgentChatLauncher.vue";
 import AppLoadingBar from "./components/AppLoadingBar.vue";
 import AppTopBar from "./components/AppTopBar.vue";
+import GetTheAppBanner from "./components/GetTheAppBanner.vue";
 import AppTour from "./components/tour/AppTour.vue";
 import { useMailboxRealtime } from "./composables/useMailboxRealtime";
 import { useAuthStore } from "./stores/auth";
@@ -102,6 +103,7 @@ watch(
       'app-root--no-wide-bar': showAppShell && route.meta.hideTopBarOnWide === true,
     }"
   >
+    <GetTheAppBanner :enabled="showAppShell" />
     <AppTopBar v-if="showAppShell" />
     <div class="app-root__view">
       <RouterView />

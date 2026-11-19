@@ -24,7 +24,7 @@ const back = computed(() => {
 </template>
 
 <style scoped>
-.app-top-bar { position: fixed; inset: 0 0 auto; z-index: 70; display: flex; align-items: center; gap: 12px; height: var(--app-topbar-height); padding: 8px 14px; box-sizing: border-box; background: var(--ui-bg); }
+.app-top-bar { position: fixed; inset: var(--app-banner-height, 0px) 0 auto; z-index: 70; display: flex; align-items: center; gap: 12px; height: calc(var(--app-topbar-height) - var(--app-banner-height, 0px)); padding: 8px 14px; box-sizing: border-box; background: var(--ui-bg); }
 .app-top-bar__controls { display: flex; align-items: center; flex: 1; min-width: 0; }
 .app-home-link { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; min-height: 44px; color: var(--ui-text-muted); text-decoration: none; }
 .app-home-link:hover { color: var(--ui-text); }

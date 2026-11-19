@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PeoplePage from "./people.vue";
 import { api } from "../api";
 import type { Contact } from "../stores/contacts";
-import { resetSoulinkInvite } from "../composables/useSoulinkInvite";
 
 vi.mock("../api", () => ({
   ApiError: class ApiError extends Error {
@@ -78,8 +77,6 @@ async function mountPeople(path = "/people") {
 async function openAddByHand(wrapper: Awaited<ReturnType<typeof mountPeople>>["wrapper"]) {
   await wrapper.get('button[aria-label="Add someone"]').trigger("click");
   await flushPromises();
-  (Array.from(document.querySelectorAll(".add-someone button")).find((button) => button.textContent?.includes("Add by hand")) as HTMLButtonElement).click();
-  await flushPromises();
 }
 
 const rowNames = (wrapper: Awaited<ReturnType<typeof mountPeople>>["wrapper"]) =>
@@ -96,7 +93,6 @@ describe("People page", () => {
       this.removeAttribute("open");
     });
     toasts.success.mockReset();
-    resetSoulinkInvite();
     contacts = [
       person("c-zoe", "Zoe Hart"),
       person("c-erum", "Erum Shah", {
@@ -118,7 +114,6 @@ describe("People page", () => {
     vi.mocked(api.get).mockImplementation(async (path: string) => {
       if (path === "/contacts") return { contacts, summary: {} };
       if (path === "/soulink/status") return { connection: null };
-      if (path === "/soulink/invite-link") return { ok: true, url: "https://soulink.test/i/invite_abc" };
       throw new Error(`Unexpected GET ${path}`);
     });
   });
@@ -304,26 +299,6 @@ describe("People page", () => {
     }));
   });
 
-  it("shares the owner's Soulink invite link from Add someone and from people not on Soulink", async () => {
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    Object.defineProperty(navigator, "share", { value: undefined, configurable: true });
-    const { wrapper } = await mountPeople();
-    await wrapper.get('button[aria-label="Add someone"]').trigger("click");
-    await flushPromises();
-
-    const invite = Array.from(document.querySelectorAll(".add-someone button")).find((button) => button.textContent?.includes("Invite a friend")) as HTMLButtonElement;
-    expect(invite.textContent).not.toContain("Soulink link");
-    invite.click();
-    await flushPromises();
-    expect(writeText).toHaveBeenCalledWith("https://soulink.test/i/invite_abc");
-    expect(toasts.success).toHaveBeenCalledWith("Invite link copied");
-    wrapper.unmount();
-
-    await mountPeople("/people?person=c-zoe");
-    const sheetInvite = Array.from(document.querySelectorAll(".person-sheet button")).find((button) => button.textContent?.includes("Invite to Soulink"));
-    expect(sheetInvite).toBeDefined();
-  });
 
   describe("Outreach", () => {
     const inDays = (days: number) => {
@@ -511,15 +486,4 @@ describe("People page", () => {
     });
   });
 
-  it("hides Invite a friend when Soulink can't share invites", async () => {
-    vi.mocked(api.get).mockImplementation(async (path: string) => {
-      if (path === "/contacts") return { contacts, summary: {} };
-      if (path === "/soulink/status") return { connection: null };
-      throw new Error("Connect Soulink to invite friends");
-    });
-    const { wrapper } = await mountPeople("/people?person=c-zoe");
-    await wrapper.get('button[aria-label="Add someone"]').trigger("click");
-    await flushPromises();
-    expect(document.querySelector(".add-someone")?.textContent).not.toContain("Invite a friend");
-  });
 });
