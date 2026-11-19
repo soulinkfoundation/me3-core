@@ -127,8 +127,8 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     if (!ownerId) return deps.unauthorized(c);
 
     const body = await c.req
-      .json<{ country?: unknown; app?: unknown }>()
-      .catch((): { country?: unknown; app?: unknown } => ({}));
+      .json<{ country?: unknown; app?: unknown; returnPath?: unknown }>()
+      .catch((): { country?: unknown; app?: unknown; returnPath?: unknown } => ({}));
     const country = typeof body.country === "string" ? body.country.trim().toUpperCase() : "";
     if (country && !/^[A-Z]{2}$/.test(country)) {
       return c.json({ error: "Choose a valid country." }, 400);
@@ -139,7 +139,7 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
       const app = parseStripeReturnApp(body.app);
       const returnUrl = app
         ? stripeAppReturnUrl(webOrigin, app)
-        : new URL("/settings?section=payments", webOrigin).toString();
+        : new URL(stripeWebReturnPath(body.returnPath), webOrigin).toString();
       return c.json(await createManagedCommerceOnboardingLink(c.env, {
         country,
         returnUrl,
@@ -286,4 +286,13 @@ function commerceSettingsErrorResponse(c: AppContext, error: unknown) {
     return c.json({ ok: false, error: error.message }, error.status as any);
   }
   throw error;
+}
+
+/**
+ * Where Stripe sends the owner back on the web: the site editor step they started from, or
+ * Settings → Payments. Only /create paths are accepted, so this can't send anyone elsewhere.
+ */
+export function stripeWebReturnPath(value: unknown): string {
+  if (typeof value !== "string") return "/settings?section=payments";
+  return /^\/create(?:\?[\w.~%&=+-]*)?$/.test(value) ? value : "/settings?section=payments";
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, inject, onMounted, ref } from "vue";
 import type { SiteLayout } from "@me3-core/site-renderer";
 import { useWizardStore } from "../../stores/wizard";
 import { vibes, selectableVibeIds } from "../../styles/vibes";
@@ -12,12 +12,24 @@ import { api } from "../../api";
 import { useSitesStore } from "../../stores/sites";
 import { permanentPublicSiteUrl } from "../../utils/publicSiteUrl";
 import WizardDomainSheet from "./WizardDomainSheet.vue";
+import { GETTING_PAID_KEY, offerCanTakePayment, paidOffersFor, useStripeStatus } from "../../utils/gettingPaid";
+import { usePayDirectlyMethods } from "../../utils/payDirectly";
 import { domainSheetOpen } from "../../utils/wizardPublish";
 
 const wizard = useWizardStore();
 const sites = useSitesStore();
 const showFooter = ref(false);
 const showDomain = domainSheetOpen;
+
+// Paid offers nobody can pay for yet, named here so they're fixed before the site goes live.
+const openGettingPaid = inject(GETTING_PAID_KEY, null);
+const stripeStatus = useStripeStatus();
+const payDirectly = usePayDirectlyMethods();
+const unpayable = computed(() => {
+  if (!stripeStatus.loaded.value || !payDirectly.loaded.value) return [];
+  return [...paidOffersFor(wizard, "bookings"), ...paidOffersFor(wizard, "shop")]
+    .filter((offer) => !offerCanTakePayment(offer, payDirectly.methods.value, stripeStatus.stripe.value));
+});
 const site = computed(() => sites.sites.find((candidate) => candidate.username === wizard.username));
 // "clara.me3.app · Use your own", or the owner's domain and whether it's connected yet.
 const webAddress = computed(() => {
@@ -83,6 +95,8 @@ async function setSiteBadgeShown(shown: boolean) {
 }
 onMounted(() => {
   void sites.ensureSites();
+  void stripeStatus.load();
+  void payDirectly.load().catch(() => undefined);
   void api.get<SiteBadgeState>("/site-badge").then((state) => { siteBadge.value = state; }).catch(() => null);
 });
 
@@ -93,6 +107,11 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
   <div class="step-look">
     <h2>Make it yours</h2>
     <p class="section-desc">Pick a look. Everything updates live.</p>
+    <section v-if="unpayable.length" class="look-pay-check" role="status" aria-labelledby="look-pay-check-title">
+      <h3 id="look-pay-check-title">{{ unpayable.length === 1 ? "1 paid offer can't take payment yet" : `${unpayable.length} paid offers can't take payment yet` }}</h3>
+      <ul><li v-for="offer in unpayable" :key="offer.title">{{ offer.title || "Untitled" }}</li></ul>
+      <Button v-if="openGettingPaid" color="neutral" shape="soft" size="compact" @click="openGettingPaid()">Set up getting paid</Button>
+    </section>
     <div class="look-options look-options--top">
       <button type="button" class="look-option" @click="showDomain = true"><span>Web address</span><span class="look-option__value"><span>{{ webAddress.value }}</span><small>{{ webAddress.hint }}</small></span><UiIcon name="ChevronRight" :size="18" aria-hidden="true" /></button>
       <button type="button" class="look-option" @click="showFooter = true"><span>Footer</span><span class="look-option__value"><span>{{ footerLabel }}</span></span><UiIcon name="ChevronRight" :size="18" aria-hidden="true" /></button>
@@ -209,6 +228,10 @@ legend { padding: 0; margin-bottom: 12px; font-size: 13px; color: var(--ui-text-
 .look-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 52px; padding: 0; border: 0; border-bottom: 1px solid var(--ui-border); background: transparent; color: var(--ui-text); font: 500 15px var(--font-sans); text-align: left; text-decoration: none; cursor: pointer; }
 .look-option:last-child { border-bottom: 0; }
 .look-options--top { margin-bottom: 20px; }
+.look-pay-check { display: grid; gap: 8px; margin: 0 0 16px; padding: 14px 16px; border-radius: 18px; background: color-mix(in srgb, var(--ui-warning, #b26a00) 12%, var(--ui-surface)); }
+.look-pay-check h3 { margin: 0; font-size: 15px; }
+.look-pay-check ul { margin: 0; padding-left: 18px; color: var(--ui-text-muted); font-size: 14px; }
+.look-pay-check :deep(.me3-btn) { justify-self: start; }
 .look-option > svg { flex: none; color: var(--ui-text-muted); }
 .look-option > span:first-child { flex: none; }
 .look-option__value { display: grid; flex: 1; justify-items: end; min-width: 0; color: var(--ui-text-muted); font-size: 14px; text-align: right; }

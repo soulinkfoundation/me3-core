@@ -10,6 +10,8 @@ import { useSitesStore } from "../stores/sites";
 import { usePublish } from "../composables/usePublish";
 import { useTopBarClose } from "../composables/useTopBar";
 import { WIZARD_PUBLISH_KEY } from "../utils/wizardPublish";
+import { GETTING_PAID_KEY, useStripeStatus } from "../utils/gettingPaid";
+import GettingPaidSheet from "../components/payments/GettingPaidSheet.vue";
 import AppPageBar from "../components/AppPageBar.vue";
 import GeneratedSitePreview from "../components/GeneratedSitePreview.vue";
 import PageLoading from "../components/PageLoading.vue";
@@ -248,6 +250,22 @@ async function handlePublish(): Promise<boolean> {
 }
 // The Publish step's Web address sheet publishes first when the site isn't live yet.
 provide(WIZARD_PUBLISH_KEY, handlePublish);
+
+// Getting paid opens over whichever step asked (a paid offer, a step's status row, the Publish check).
+const gettingPaidOpen = ref(false);
+provide(GETTING_PAID_KEY, () => { gettingPaidOpen.value = true; });
+const stripeStatus = useStripeStatus();
+/** Stripe sends the owner back here with ?stripe_connect=; "refresh" means the link expired, so open it again. */
+async function completeStripeReturn() {
+  const result = typeof route.query.stripe_connect === "string" ? route.query.stripe_connect : "";
+  if (!result) return;
+  const query = { ...route.query };
+  delete query.stripe_connect;
+  await router.replace({ path: route.path, query });
+  await stripeStatus.load(true);
+  gettingPaidOpen.value = true;
+  if (result !== "refresh" && stripeStatus.stripe.value?.configured) toastSuccess("Card payments are connected.");
+}
 async function copySiteLink() {
   try { await navigator.clipboard.writeText(publishedSiteUrl.value); toastSuccess("Site link copied."); }
   catch (error) { toastFromUnknown(error, "Couldn't copy the site link."); }
@@ -333,6 +351,7 @@ async function openWizardTarget() {
 onMounted(async () => {
   wizardMounted = true;
   await openWizardTarget();
+  await completeStripeReturn();
 });
 
 watch(() => route.query.step, applyRouteStep);
@@ -419,6 +438,7 @@ watch(
         <GeneratedSitePreview :active-view="previewActiveView || undefined" viewport="mobile" compact />
       </aside>
     </main>
+    <GettingPaidSheet :open="gettingPaidOpen" @close="gettingPaidOpen = false" />
     <AppDialog :open="stepsOpen" aria-label="All editor steps" close-on-backdrop @close="stepsOpen = false">
       <section class="wizard-dialog-panel wizard-jump-list"><header><h2>All steps</h2><button type="button" class="wizard-icon-button" aria-label="Close step list" @click="stepsOpen = false"><UiIcon name="X" :size="20" /></button></header>
         <nav aria-label="Choose an editor step"><button v-for="(step, index) in wizard.steps" :key="step.id" type="button" :aria-current="index + 1 === wizard.currentStep ? 'step' : undefined" @click="handleStepJump(index + 1)"><UiIcon v-if="index + 1 < wizard.currentStep" name="CircleCheck" :size="18" /><span v-else class="wizard-jump-number">{{ index + 1 }}</span><span>{{ step.name }}</span><small v-if="index + 1 === wizard.currentStep">You’re here</small></button></nav>

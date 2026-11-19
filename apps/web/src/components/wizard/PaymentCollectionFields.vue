@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, inject, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import type { WizardPaymentMethod } from "../../stores/wizard";
 import { methodsOfferedFor, PAY_DIRECTLY_SETTINGS_PATH, paymentMethodName, usePayDirectlyMethods } from "../../utils/payDirectly";
 import StripePaymentSetupCallout from "./StripePaymentSetupCallout.vue";
+import { GETTING_PAID_KEY } from "../../utils/gettingPaid";
 
 const props = withDefaults(
   defineProps<{
@@ -25,6 +26,8 @@ const props = withDefaults(
 );
 
 const TIDY_KEY = "me3.payDirectly.tidyNoteSeen";
+// In the site editor, payment setup opens over the step instead of sending the owner to Settings.
+const openGettingPaid = inject(GETTING_PAID_KEY, null);
 const { methods, loaded, load } = usePayDirectlyMethods();
 const offered = computed(() => methodsOfferedFor(methods.value, props.currency));
 const offeredNames = computed(() => offered.value.map((method) => paymentMethodName(method.kind)).join(", "));
@@ -120,16 +123,19 @@ function updateInstructions(event: Event) {
     <div v-if="showsDirect" class="payment-instructions-field">
       <p v-if="offered.length" class="pay-directly-summary" data-test="pay-directly-offered">
         Buyers paying in {{ currency }} are offered: <strong>{{ offeredNames }}</strong>.
-        <RouterLink :to="PAY_DIRECTLY_SETTINGS_PATH">Change in Settings → Payments</RouterLink>
+        <button v-if="openGettingPaid" type="button" class="pay-directly-link" @click="openGettingPaid()">Change</button>
+        <RouterLink v-else :to="PAY_DIRECTLY_SETTINGS_PATH">Change in Settings → Payments</RouterLink>
       </p>
       <p v-else-if="loaded && !instructions.trim()" class="pay-directly-summary pay-directly-summary--missing" role="status" data-test="pay-directly-missing">
         You have no way to get paid in {{ currency }} yet.
-        <RouterLink :to="PAY_DIRECTLY_SETTINGS_PATH">Add one in Settings → Payments</RouterLink>,
+        <button v-if="openGettingPaid" type="button" class="pay-directly-link" @click="openGettingPaid()">Add one</button>
+        <RouterLink v-else :to="PAY_DIRECTLY_SETTINGS_PATH">Add one in Settings → Payments</RouterLink>,
         or write a note for buyers below.
       </p>
       <p v-else-if="loaded" class="pay-directly-summary">
         Buyers get your note. To offer one-tap PayPal, Revolut, Wise or bank details,
-        <RouterLink :to="PAY_DIRECTLY_SETTINGS_PATH">save them in Settings → Payments</RouterLink>.
+        <button v-if="openGettingPaid" type="button" class="pay-directly-link" @click="openGettingPaid()">save them here</button>
+        <RouterLink v-else :to="PAY_DIRECTLY_SETTINGS_PATH">save them in Settings → Payments</RouterLink>.
       </p>
       <label :for="`${inputId}-instructions`">Note for buyers (optional)</label>
       <textarea
@@ -160,6 +166,8 @@ function updateInstructions(event: Event) {
 </template>
 
 <style scoped>
+.pay-directly-link { padding: 0; border: 0; background: none; color: var(--ui-accent-strong, var(--ui-accent)); font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.pay-directly-link:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; border-radius: 4px; }
 .payment-collection-fields {
   display: grid;
   gap: 12px;

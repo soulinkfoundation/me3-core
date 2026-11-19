@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import GettingPaidRow from "./GettingPaidRow.vue";
 import RegionalPriceFields from "./RegionalPriceFields.vue";
 import type { RegionalPrice } from "../../../../../shared/regional-pricing";
 import ProductDeliveryFields from "./ProductDeliveryFields.vue";
@@ -444,6 +445,7 @@ defineExpose({
 
 <template>
   <div class="step-shop">
+    <GettingPaidRow step="shop" />
     <h2>Products</h2>
 
     <div v-if="!isEditingProduct" class="shop-menu-title">

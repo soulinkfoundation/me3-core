@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { api } from "../../api";
-import type { CommerceSettingsResponse } from "../../utils/commerce";
+import { computed, inject, onMounted } from "vue";
+import { GETTING_PAID_KEY, stripeReady, useStripeStatus } from "../../utils/gettingPaid";
 import UiIcon from "../UiIcon.vue";
 
 withDefaults(
@@ -13,10 +12,13 @@ withDefaults(
   },
 );
 
-const loading = ref(true);
-const configured = ref(false);
-const managed = ref(false);
-const connectionStatus = ref<CommerceSettingsResponse["stripe"]["connectionStatus"]>(null);
+// In the site editor, setup opens the Getting paid sheet over the step; elsewhere it links to Settings.
+const openGettingPaid = inject(GETTING_PAID_KEY, null);
+const { stripe, loaded, load } = useStripeStatus();
+const loading = computed(() => !loaded.value);
+const configured = computed(() => stripeReady(stripe.value));
+const managed = computed(() => stripe.value?.mode === "managed");
+const connectionStatus = computed(() => stripe.value?.connectionStatus ?? null);
 
 const statusLabel = computed(() => {
   if (loading.value) return "Checking Stripe";
@@ -29,26 +31,12 @@ const statusLabel = computed(() => {
 
 const setupHint = computed(() =>
   managed.value
-    ? "Connect Stripe before publishing paid offers."
+    ? "Card payments aren't connected yet."
     : "Add a Stripe key before publishing paid offers.",
 );
 
-async function loadCommerceStatus() {
-  loading.value = true;
-  try {
-    const response = await api.get<CommerceSettingsResponse>("/commerce/status");
-    configured.value = response.stripe.configured === true;
-    managed.value = response.stripe.mode === "managed";
-    connectionStatus.value = response.stripe.connectionStatus;
-  } catch {
-    configured.value = false;
-  } finally {
-    loading.value = false;
-  }
-}
-
 onMounted(() => {
-  void loadCommerceStatus();
+  void load();
 });
 </script>
 
@@ -65,8 +53,9 @@ onMounted(() => {
         <UiIcon :name="configured ? 'CircleCheck' : loading ? 'Clock' : 'CircleAlert'" :size="20" class="status-icon" aria-hidden="true" />
         <span class="status-text">{{ statusLabel }}</span>
       </div>
+      <button v-if="configured && openGettingPaid" type="button" class="disconnect-btn" @click="openGettingPaid()">Manage</button>
       <router-link
-        v-if="configured"
+        v-else-if="configured"
         class="disconnect-btn"
         to="/account?section=payments"
       >
@@ -77,7 +66,11 @@ onMounted(() => {
     <template v-if="!loading && !configured">
       <p class="connect-hint">{{ setupHint }}</p>
       <div class="stripe-actions">
-        <router-link class="connect-btn stripe" to="/account?section=payments">
+        <button v-if="openGettingPaid" type="button" class="connect-btn stripe" @click="openGettingPaid()">
+          <UiIcon name="CreditCard" :size="18" />
+          Set up card payments
+        </button>
+        <router-link v-else class="connect-btn stripe" to="/account?section=payments">
           <UiIcon name="CreditCard" :size="18" />
           {{ managed ? "Connect Stripe" : "Set up Stripe" }}
         </router-link>
@@ -192,6 +185,9 @@ onMounted(() => {
 
 .disconnect-btn,
 .stripe-docs-link {
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;

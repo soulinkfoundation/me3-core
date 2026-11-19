@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import GettingPaidRow from "./GettingPaidRow.vue";
 import { ref, computed, nextTick, onMounted, watch } from "vue";
 import { storeToRefs } from "pinia";
 import {
@@ -1040,6 +1041,7 @@ onMounted(() => {
 
 <template>
   <div class="step-bookings">
+    <GettingPaidRow step="bookings" />
     <h2>Let people book you</h2>
     <p class="section-desc">
       Add what people can book with you: appointments, classes, workshops or
