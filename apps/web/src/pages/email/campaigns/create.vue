@@ -4,6 +4,8 @@ import { definePage } from "unplugin-vue-router/runtime";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { api } from "../../../api";
 import AppDialog from "../../../components/AppDialog.vue";
+import AppPageBar from "../../../components/AppPageBar.vue";
+import AppPageFooter from "../../../components/AppPageFooter.vue";
 import Button from "../../../components/Button.vue";
 import CampaignEmailPreview from "../../../components/CampaignEmailPreview.vue";
 import CampaignApprovalCard from "../../../components/campaigns/CampaignApprovalCard.vue";
@@ -12,6 +14,7 @@ import PageLoading from "../../../components/PageLoading.vue";
 import TiptapEditor from "../../../components/TiptapEditor.vue";
 import UiIcon from "../../../components/UiIcon.vue";
 import { useAppToast } from "../../../composables/useAppToast";
+import { useTopBarClose } from "../../../composables/useTopBar";
 import { useAuthStore } from "../../../stores/auth";
 import { useSitesStore } from "../../../stores/sites";
 import {
@@ -33,9 +36,7 @@ import { exclusionReasonLabel, exclusionSentence, formatCount } from "../../../u
 definePage({
   meta: {
     requiresAuth: true,
-    // Email hides the top bar on wide screens; Campaigns is its own destination and keeps it (with Home).
-    hideTopBarOnWide: false,
-    // The top-bar arrow is this page's only back control.
+    // The top bar's X returns to the list (from the review, it returns to the writer).
     back: { to: "/email/campaigns", label: "Campaigns" },
     title: "Campaign | ME3",
     description: "Write an email campaign.",
@@ -167,7 +168,10 @@ const brand = ref<CampaignDocument["brand"]>({
   accentColor: "#147d64",
 });
 const siteBranding = ref<SiteBranding | null>(null);
-const lookLogoFailed = ref<string | null>(null);
+const previewOpen = ref(false);
+const logoInput = ref<HTMLInputElement | null>(null);
+const logoUploading = ref(false);
+const approvalRef = ref<InstanceType<typeof CampaignApprovalCard> | null>(null);
 const layouts = ref<StartLayout[]>([]);
 const pastOpen = ref(false);
 const pastLoading = ref(false);
@@ -225,10 +229,9 @@ const bodyEmpty = computed(() => {
 const starterLeft = computed(() =>
   findCampaignStarterText({ blocks: campaignEditorHtmlToBlocks(richTextHtml.value) }),
 );
-const brandSettingsPath = computed(() =>
-  // The email brand follows the site's logo and accent, set in the site editor's last step.
-  siteUsername.value ? `/create?site=${encodeURIComponent(siteUsername.value)}&step=publish` : "/create?step=publish",
-);
+// The review offers "Add your logo" only when the Site has neither a logo nor an avatar to stand in.
+const needsLogo = computed(() => isDraft.value && Boolean(siteBranding.value) && !brand.value.logoUrl && !siteBranding.value?.logoRef);
+const pageTitle = computed(() => reviewOpen.value ? "Review" : isDraft.value ? "New email" : "Email");
 
 async function initialize() {
   loading.value = true;
@@ -404,6 +407,53 @@ async function saveDraft(): Promise<boolean> {
     return false;
   } finally {
     saving.value = false;
+  }
+}
+
+/** X: from the review back to the writer; from the writer, save what's typed and go to the list. */
+async function closeEditor() {
+  if (reviewOpen.value) {
+    reviewOpen.value = false;
+    return;
+  }
+  if (saveTimer !== null) {
+    window.clearTimeout(saveTimer);
+    saveTimer = null;
+    if (!(await saveDraft()) && !window.confirm("This email didn't save. Leave anyway?")) return;
+  }
+  await waitForCurrentSave();
+  await router.push("/email/campaigns");
+}
+useTopBarClose(closeEditor);
+
+/** "Add your logo" in the review: saves the Site logo (the site editor's Logo field), then the email copy. */
+async function uploadSiteLogo(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  const username = siteUsername.value;
+  if (!file || !username || logoUploading.value) return;
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+    toastError("Choose a PNG, JPEG or WebP image.");
+    return;
+  }
+  if (file.size > 1_900_000) {
+    toastError("That logo is too large. Choose an image under 1.9 MB.");
+    return;
+  }
+  logoUploading.value = true;
+  try {
+    const form = new FormData();
+    form.append("file", file, file.name || "logo");
+    await api.upload<{ branding: SiteBranding }>(`/sites/${encodeURIComponent(username)}/branding/logo`, form);
+    await saveEmailLogo<SiteBranding>(username, file).catch(() => null);
+    await refreshSiteBrand();
+    if (await saveDraft()) await loadReview();
+    toastSuccess("Logo added to your site and your emails.");
+  } catch (caught) {
+    toastFromUnknown(caught, "Couldn't add the logo.");
+  } finally {
+    logoUploading.value = false;
   }
 }
 
@@ -741,26 +791,40 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="campaign-editor-page">
-    <header class="campaign-editor-bar">
-      <div v-if="!loading && !loadFailed && canDraftCampaign" class="campaign-editor-bar__actions">
-        <span class="campaign-editor-bar__saved" aria-live="polite">{{ saveState }}</span>
-        <Button
-          color="secondary"
-          shape="pill"
-          size="compact"
-          :disabled="testing || !sendingReady"
-          :title="!sendingReady ? 'Sending isn\'t set up yet' : undefined"
-          @click="sendTest"
-        >{{ testing ? "Sending…" : "Send test" }}</Button>
-        <Button
-          color="primary"
-          shape="pill"
-          size="compact"
-          :disabled="saving || creating"
-          @click="openReview"
-        >Review and send</Button>
-      </div>
-    </header>
+    <!-- One header row: Preview on the left, the title centred, the app X on the right. Finishing actions are in the footer. -->
+    <AppPageBar :title="pageTitle">
+      <template v-if="!reviewOpen && !loading && !loadFailed && canDraftCampaign" #leading>
+        <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Preview the email" title="Preview the email" @click="previewOpen = true">
+          <UiIcon name="Eye" :size="20" />
+        </Button>
+      </template>
+    </AppPageBar>
+    <AppPageFooter v-if="!loading && !loadFailed && canDraftCampaign" :status="reviewOpen ? '' : saveState">
+      <Button
+        color="secondary"
+        shape="pill"
+        size="compact"
+        :disabled="testing || !sendingReady"
+        :title="!sendingReady ? 'Sending isn\'t set up yet' : undefined"
+        @click="sendTest"
+      >{{ testing ? "Sending…" : "Send test" }}</Button>
+      <Button
+        v-if="!reviewOpen"
+        color="primary"
+        shape="pill"
+        size="compact"
+        :disabled="saving || creating"
+        @click="openReview"
+      >Review and send</Button>
+      <Button
+        v-else
+        color="primary"
+        shape="pill"
+        size="compact"
+        :disabled="!approvalRef || approvalRef.sending || Boolean(approvalRef.blocker)"
+        @click="approvalRef?.approve()"
+      >{{ approvalRef?.actionLabel || "Send" }}</Button>
+    </AppPageFooter>
 
     <PageLoading v-if="loading" label="Opening campaign…" />
 
@@ -776,35 +840,78 @@ onBeforeUnmount(() => {
     </section>
 
     <div v-else class="campaign-editor">
-      <CampaignApprovalCard
-        v-if="reviewOpen && campaign"
-        class="campaign-editor__approval"
-        :campaign-id="campaign.id"
-        :revision-id="campaign.revision.id"
-        :recipient-count="eligibleCount"
-        :audience-line="`${formatCount(eligibleCount || 0)} ${audienceLabel} of @${siteUsername}`"
-        :left-out="leftOut"
-        :sender-ready="sendingReady"
-        :mailing-address-missing="!brand.mailingAddress"
-        :starter-text="starterLeft[0] || review?.starterText?.[0] || ''"
-        :sends-left="sendsLeft"
-        :time-zone="ownerTimeZone"
-        :testing="testing"
-        @edit="reviewOpen = false"
-        @test="sendTest"
-        @sent="router.push('/email/campaigns')"
-        @stale="refreshAfterStale"
-      />
+      <section v-if="reviewOpen && campaign" class="campaign-review" aria-label="Review">
+        <div class="campaign-review__preview">
+          <button v-if="needsLogo" type="button" class="campaign-review__logo" :disabled="logoUploading" @click="logoInput?.click()">
+            <UiIcon name="Plus" :size="16" aria-hidden="true" />{{ logoUploading ? "Adding your logo…" : "Add your logo" }}
+          </button>
+          <input ref="logoInput" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Choose your logo" @change="uploadSiteLogo" />
+          <CampaignEmailPreview
+            :subject="subject"
+            :sender-name="brand.name"
+            :from-address="previewFromAddress"
+            :reply-to-address="replyToAddress"
+            :to-label="previewToLabel"
+            :html="campaign?.revision.renderedHtml || ''"
+          />
+          <p v-if="needsLogo" class="campaign-review__hint">Your logo also shows on your site. Colour comes from your site's accent.</p>
+        </div>
+        <CampaignApprovalCard
+            ref="approvalRef"
+            class="campaign-editor__approval"
+            footer-actions
+            :campaign-id="campaign.id"
+            :revision-id="campaign.revision.id"
+            :recipient-count="eligibleCount"
+            :audience-line="`${formatCount(eligibleCount || 0)} ${audienceLabel} of @${siteUsername}`"
+            :left-out="leftOut"
+            :sender-ready="sendingReady"
+            :mailing-address-missing="!brand.mailingAddress"
+            :starter-text="starterLeft[0] || review?.starterText?.[0] || ''"
+            :sends-left="sendsLeft"
+            :time-zone="ownerTimeZone"
+            :testing="testing"
+            @edit="reviewOpen = false"
+            @test="sendTest"
+            @sent="router.push('/email/campaigns')"
+            @stale="refreshAfterStale"
+          />
+      </section>
 
-      <div class="campaign-editor__grid">
+
+      <div v-show="!reviewOpen" class="campaign-editor__grid">
         <section class="campaign-editor__main" aria-label="Email">
+          <!-- Whole rows open the sheets; there are no "Change" links. -->
+          <div class="campaign-rows">
+            <button type="button" class="campaign-row" @click="audienceSheetOpen = true">
+              <span class="campaign-row__key">To</span>
+              <span class="campaign-row__value">
+                <template v-if="eligibleCount !== null">{{ formatCount(eligibleCount) }} {{ audienceLabel }}</template>
+                <template v-else>All {{ audienceLabel }}</template><template v-if="siteUsername"> of @{{ siteUsername }}</template>
+                <small v-if="notSentBy">Only people who didn't get {{ notSentBySubject ? `“${notSentBySubject}”` : "the earlier email" }}</small>
+                <small v-if="leftOut">{{ leftOut }}</small>
+              </span>
+              <UiIcon name="ChevronRight" :size="16" aria-hidden="true" />
+            </button>
+            <button type="button" class="campaign-row" @click="openFromSheet">
+              <span class="campaign-row__key">From</span>
+              <span class="campaign-row__value">
+                {{ brand.name }}
+                <small>{{ replyToAddress ? `Replies go to ${replyToAddress}` : "Replies aren't collected" }}</small>
+                <small v-if="ownSenderLine">{{ ownSenderLine }}</small>
+                <small v-if="brand.mailingAddress">{{ brand.mailingAddress }}</small>
+                <small v-if="!brand.mailingAddress" class="campaign-side-block__missing">Add a mailing address before sending.</small>
+              </span>
+              <UiIcon name="ChevronRight" :size="16" aria-hidden="true" />
+            </button>
+          </div>
           <label class="campaign-field campaign-field--subject">
-            <span>Subject</span>
-            <input v-model="subject" maxlength="200" placeholder="What's this email about?" />
+            <span class="sr-only">Subject</span>
+            <input v-model="subject" maxlength="200" placeholder="Subject" />
           </label>
-          <label class="campaign-field">
-            <span>Preview line</span>
-            <input v-model="previewText" maxlength="240" placeholder="Shown after the subject in the inbox" />
+          <label class="campaign-field campaign-field--preview">
+            <span class="sr-only">Preview line</span>
+            <input v-model="previewText" maxlength="240" placeholder="Add a preview line (optional)" />
           </label>
           <div ref="bodyRef" class="campaign-editor__body-wrap">
             <TiptapEditor
@@ -841,60 +948,6 @@ onBeforeUnmount(() => {
         </section>
 
         <aside class="campaign-editor__side" aria-label="Details">
-          <section class="campaign-side-block" aria-labelledby="campaign-to-title">
-            <div class="campaign-side-block__head">
-              <h2 id="campaign-to-title">To</h2>
-              <button type="button" class="campaign-side-block__change" @click="audienceSheetOpen = true">Change</button>
-            </div>
-            <p v-if="eligibleCount !== null" class="campaign-side-block__value">
-              <b>{{ formatCount(eligibleCount) }}</b> {{ audienceLabel }}<template v-if="siteUsername"> of @{{ siteUsername }}</template>
-            </p>
-            <p v-else class="campaign-side-block__value">All {{ audienceLabel }}<template v-if="siteUsername"> of @{{ siteUsername }}</template></p>
-            <p v-if="notSentBy" class="campaign-side-block__hint">Only people who didn't get {{ notSentBySubject ? `“${notSentBySubject}”` : "the earlier email" }}</p>
-            <p v-if="leftOut" class="campaign-side-block__hint campaign-side-block__left-out">{{ leftOut }}</p>
-          </section>
-
-          <section class="campaign-side-block" aria-labelledby="campaign-from-title">
-            <div class="campaign-side-block__head">
-              <h2 id="campaign-from-title">From</h2>
-              <button type="button" class="campaign-side-block__change" @click="openFromSheet">Change</button>
-            </div>
-            <p class="campaign-side-block__value">{{ brand.name }}</p>
-            <p class="campaign-side-block__hint">
-              {{ replyToAddress ? `Replies go to ${replyToAddress}` : "Replies aren't collected" }}
-            </p>
-            <p v-if="ownSenderLine" class="campaign-side-block__hint">{{ ownSenderLine }}</p>
-            <p v-if="brand.mailingAddress" class="campaign-side-block__hint">{{ brand.mailingAddress }}</p>
-            <p v-else class="campaign-side-block__hint campaign-side-block__missing">
-              Add a mailing address before sending.
-            </p>
-          </section>
-
-          <section class="campaign-side-block" aria-labelledby="campaign-look-title">
-            <div class="campaign-side-block__head">
-              <h2 id="campaign-look-title">Look</h2>
-              <RouterLink
-                class="campaign-side-block__change"
-                :to="brandSettingsPath"
-                target="_blank"
-                rel="noopener"
-              >Change</RouterLink>
-            </div>
-            <div class="campaign-look">
-              <img
-                v-if="brand.logoUrl && lookLogoFailed !== brand.logoUrl"
-                class="campaign-look__logo"
-                :src="brand.logoUrl"
-                alt=""
-                @error="lookLogoFailed = brand.logoUrl"
-              />
-              <span class="campaign-look__swatch" :style="{ background: brand.accentColor }" aria-hidden="true" />
-            </div>
-            <p class="campaign-side-block__hint">
-              {{ brand.logoUrl || siteBranding?.logoRef ? "Logo and colour from your Site" : "Add your logo on your Site" }}
-            </p>
-          </section>
-
           <section class="campaign-side-block campaign-side-block--preview" aria-labelledby="campaign-preview-title">
             <h2 id="campaign-preview-title">Preview</h2>
             <CampaignEmailPreview
@@ -909,6 +962,23 @@ onBeforeUnmount(() => {
         </aside>
       </div>
     </div>
+
+    <AppDialog :open="previewOpen" labelled-by="campaign-preview-dialog-title" close-on-backdrop @close="previewOpen = false">
+      <div class="campaign-from-sheet campaign-preview-sheet">
+        <div class="campaign-sheet-head">
+          <h2 id="campaign-preview-dialog-title">Preview</h2>
+          <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Close preview" @click="previewOpen = false"><UiIcon name="X" :size="20" /></Button>
+        </div>
+        <CampaignEmailPreview
+          :subject="subject"
+          :sender-name="brand.name"
+          :from-address="previewFromAddress"
+          :reply-to-address="replyToAddress"
+          :to-label="previewToLabel"
+          :html="campaign?.revision.renderedHtml || ''"
+        />
+      </div>
+    </AppDialog>
 
     <AppDialog :open="pastOpen" :labelled-by="pastTitleId" close-on-backdrop @close="pastOpen = false">
       <div class="campaign-from-sheet campaign-past">
@@ -1037,10 +1107,25 @@ onBeforeUnmount(() => {
 <style scoped>
 /* Lives in the Campaigns destination: the app top bar, then this page's actions. */
 .campaign-editor-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
-.campaign-editor-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; box-sizing: border-box; width: min(100%, 1040px); margin: 0 auto; padding: 4px 16px 8px; }
-.campaign-editor-bar__actions { display: flex; align-items: center; gap: 8px; }
-.campaign-editor-bar__saved { color: var(--ui-text-muted); font-size: 12px; }
-.campaign-editor-bar a:focus-visible, .campaign-side-block__change:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; border-radius: 6px; }
+.campaign-rows { display: grid; border-bottom: 1px solid var(--ui-border); }
+.campaign-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) 16px; align-items: center; gap: 8px; min-height: 48px; padding: 8px 0; border: 0; border-top: 1px solid var(--ui-border); background: none; color: var(--ui-text); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+.campaign-row:first-child { border-top: 0; }
+.campaign-row > :last-child { color: var(--ui-text-muted); }
+.campaign-row:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; border-radius: 6px; }
+.campaign-row__key { color: var(--ui-text-muted); font-size: 13px; }
+.campaign-row__value { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.campaign-row__value small { color: var(--ui-text-muted); font-size: 12.5px; }
+.campaign-field--preview input { min-height: 32px; border-bottom: 0; color: var(--ui-text-muted); font-size: 14px; }
+.campaign-review { display: grid; grid-template-columns: minmax(0, 1fr) 360px; align-items: start; gap: 24px; margin-top: 8px; }
+.campaign-review__preview { display: grid; gap: 8px; min-width: 0; }
+.campaign-review__logo { display: inline-flex; align-items: center; justify-content: center; gap: 6px; justify-self: center; min-width: 180px; min-height: 52px; padding: 0 16px; border: 1.5px dashed var(--ui-border-strong); border-radius: 12px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.campaign-review__logo:hover:not(:disabled) { border-color: var(--ui-accent); color: var(--ui-text); }
+.campaign-review__logo:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.campaign-review__hint { margin: 0; color: var(--ui-text-muted); font-size: 12.5px; }
+.campaign-preview-sheet { width: min(100%, 640px); }
+.campaign-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.campaign-sheet-head h2 { margin: 0; font-size: 18px; }
+.campaign-side-block__change:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; border-radius: 6px; }
 .campaign-editor { box-sizing: border-box; width: min(100%, 1040px); margin: 0 auto; padding: 0 16px 96px; }
 .campaign-editor__grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; align-items: start; gap: 32px; margin-top: 8px; }
 .campaign-editor__main { display: grid; gap: 14px; min-width: 0; }
@@ -1104,9 +1189,6 @@ onBeforeUnmount(() => {
 .campaign-start__thumb iframe { position: absolute; top: 0; left: 0; width: 600px; height: 1200px; border: 0; transform-origin: 0 0; pointer-events: none; color-scheme: light; }
 .campaign-start__name { font-size: 13px; font-weight: 600; }
 .campaign-start__desc { color: var(--ui-text-muted); font-size: 12px; line-height: 1.35; }
-.campaign-look { display: flex; align-items: center; gap: 8px; }
-.campaign-look__logo { width: auto; max-width: 160px; height: 32px; object-fit: contain; border: 1px solid var(--ui-border); border-radius: 6px; background: #ffffff; }
-.campaign-look__swatch { width: 16px; height: 16px; border: 1px solid var(--ui-border); border-radius: 50%; }
 a.campaign-side-block__change { display: inline-flex; align-items: center; text-decoration: none; }
 .campaign-past { width: min(100%, 460px); }
 .campaign-past h2 { margin: 0; font-size: 18px; }
@@ -1122,14 +1204,13 @@ a.campaign-side-block__change { display: inline-flex; align-items: center; text-
 @media (max-width: 860px) {
   .campaign-editor__grid { grid-template-columns: 1fr; gap: 8px; }
   .campaign-editor__side { position: static; }
-  .campaign-side-block:first-child { padding-top: 14px; border-top: 1px solid var(--ui-border); }
+  /* Phones preview from the eye in the header. */
+  .campaign-editor__side { display: none; }
+  .campaign-review { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .campaign-start__tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 480px) {
-  .campaign-editor-bar__saved { display: none; }
-  }
 </style>
 
 <style>

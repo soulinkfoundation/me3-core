@@ -9,8 +9,6 @@ declare module "vue-router" {
     requiresPlugin?: string;
     /** Hides the floating agent chat launcher on this route. */
     hideAgentLauncher?: boolean;
-    /** Hides the app top bar on wide screens; the page provides its own way Home. */
-    hideTopBarOnWide?: boolean;
   }
 }
 

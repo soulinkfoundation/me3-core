@@ -1,5 +1,5 @@
 import { normalizeSiteTheme, siteThemes } from "@me3-core/site-renderer";
-import { getPublicSiteOrigin, getSiteFileText } from "./sites";
+import { getPublicSiteOrigin, getSiteFileText, putSiteFile } from "./sites";
 import type { DbSite, Env } from "./types";
 
 export type SiteBranding = {
@@ -304,4 +304,28 @@ function normalizeColor(value: unknown, fallback: string): string {
 
 function normalizeText(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+const PROFILE_PATHS = ["src/me.json", "public/me.json"] as const;
+
+/**
+ * Sets the Site logo (the profile's `logo`, the same field the site editor's Logo writes) without a
+ * full publish, so the owner can add it from a campaign review. Returns false when the Site has no profile yet.
+ */
+export async function setSiteProfileLogo(env: Env, siteId: string, logoRef: string): Promise<boolean> {
+  let updated = false;
+  for (const path of PROFILE_PATHS) {
+    const source = await getSiteFileText(env, siteId, path);
+    if (!source) continue;
+    let profile: unknown;
+    try {
+      profile = JSON.parse(source);
+    } catch {
+      continue;
+    }
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) continue;
+    await putSiteFile(env, siteId, path, JSON.stringify({ ...profile, logo: logoRef }, null, 2), "application/json");
+    updated = true;
+  }
+  return updated;
 }

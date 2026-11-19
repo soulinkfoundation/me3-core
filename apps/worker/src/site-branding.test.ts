@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getSiteBranding, saveSiteEmailLogo } from "./site-branding";
+import { getSiteBranding, saveSiteEmailLogo, setSiteProfileLogo } from "./site-branding";
 import type { DbSite, Env } from "./types";
 
 type SqliteValue = null | number | string | Uint8Array;
@@ -14,7 +14,8 @@ class SqliteD1Statement {
   ) {}
 
   bind(...values: unknown[]) {
-    this.values = values as SqliteValue[];
+    // D1 takes ArrayBuffers; node:sqlite wants bytes.
+    this.values = values.map((value) => value instanceof ArrayBuffer ? new Uint8Array(value) : value) as SqliteValue[];
     return this;
   }
 
@@ -159,5 +160,18 @@ describe("Site branding", () => {
     await expect(saveSiteEmailLogo(env, site, { width: 400, height: 128, version: "x" })).rejects.toThrow(
       "at most 200 by 64",
     );
+  });
+
+  it("sets the Site logo from outside the editor and drops the old email copy", async () => {
+    writeProfile({ name: "Kieran Butler", links: { _accent: "#225544" } });
+    expect((await getSiteBranding(env, site, true)).logoRef).toBeNull();
+
+    expect(await setSiteProfileLogo(env, "site-1", "./files/logo.png")).toBe(true);
+    expect(await getSiteBranding(env, site)).toMatchObject({
+      displayName: "Kieran Butler",
+      logoRef: "./files/logo.png",
+      emailLogoUrl: null,
+    });
+    expect(await setSiteProfileLogo(env, "site-2", "./files/logo.png")).toBe(false);
   });
 });

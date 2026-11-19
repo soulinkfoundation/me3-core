@@ -23,6 +23,8 @@ const props = defineProps<{
   sendsLeft?: number | null;
   timeZone: string;
   testing?: boolean;
+  /** The page draws Send test and Send in its footer; the card keeps only the details. */
+  footerActions?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -76,6 +78,8 @@ const sendsLine = computed(() => {
   return `Uses ${formatCount(count.value)} of ${formatCount(props.sendsLeft)} sends left`;
 });
 
+defineExpose({ approve, actionLabel, blocker, sending });
+
 async function approve() {
   if (sending.value || blocker.value) return;
   sending.value = true;
@@ -128,7 +132,7 @@ async function approve() {
       </template>
     </dl>
     <p v-if="blocker" class="campaign-approval__blocker" role="status">{{ blocker }}</p>
-    <div class="campaign-approval__actions">
+    <div v-if="!footerActions" class="campaign-approval__actions">
       <Button color="ghost" shape="soft" size="compact" :disabled="testing || !senderReady" @click="emit('test')">
         {{ testing ? "Sending test…" : "Send test" }}
       </Button>

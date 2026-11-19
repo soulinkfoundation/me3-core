@@ -142,6 +142,7 @@ import {
   EMAIL_LOGO_PATH,
   SiteBrandingInputError,
   getSiteBranding,
+  setSiteProfileLogo,
   saveSiteEmailLogo,
 } from "../site-branding";
 import {
@@ -273,6 +274,39 @@ export function registerSiteRoutes(app: AppHono, deps: OwnerRouteDeps) {
     return new Response(siteFileContentToBytes(file.content) as Uint8Array<ArrayBuffer>, {
       headers: { "Content-Type": file.content_type, "Cache-Control": "private, no-store" },
     });
+  });
+
+  // Sets the Site logo from outside the site editor (a campaign review's "Add your logo").
+  // Same file and `logo` field the editor's publish writes, so the site and its emails share one logo.
+  app.post("/api/sites/:username/branding/logo", async (c) => {
+    const ownerId = await deps.requireOwner(c);
+    if (!ownerId) return deps.unauthorized(c);
+    const site = await getSiteForOwner(c.env, ownerId, c.req.param("username"));
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    try {
+      const form = await c.req.formData();
+      const file = form.get("file");
+      if (!(file instanceof File)) return c.json({ error: "Logo file is required" }, 400);
+      const buffer = await file.arrayBuffer();
+      if (buffer.byteLength > 1_900_000) return c.json({ error: "That logo is too large. Choose an image under 1.9 MB." }, 413);
+      const ext = logoImageExtension(new Uint8Array(buffer));
+      if (!ext) return c.json({ error: "Choose a PNG, JPEG or WebP image." }, 400);
+      const path = `files/logo.${ext}`;
+      const hash = await sha256Buffer(buffer);
+      await putSiteMediaFile(c.env, site, `public/${path}`, buffer, `image/${ext === "jpg" ? "jpeg" : ext}`);
+      const manifest = (await loadPublishManifest(c.env, site.id)) || createEmptyPublishManifest();
+      manifest.assetFiles[path] = hash;
+      manifest.updatedAt = new Date().toISOString();
+      await savePublishManifest(c.env, site.id, manifest);
+      if (!(await setSiteProfileLogo(c.env, site.id, `./${path}`))) {
+        return c.json({ error: "Publish your site once before adding a logo here." }, 409);
+      }
+      return c.json({ branding: await getSiteBranding(c.env, site) });
+    } catch (error) {
+      if (isMissingSiteFilesTableError(error)) return siteStorageSetupRequired(c);
+      if (isD1SiteFileLimitError(error)) return siteStorageActivationRequired(c);
+      throw error;
+    }
   });
 
   // Stores the email copy of the logo (PNG on white, 2x) that the browser made from the Site logo.
@@ -2493,4 +2527,11 @@ function buildSecurityTxt(requestUrl: string): string {
     `Canonical: ${canonical.toString()}`,
     "",
   ].join("\n");
+}
+
+function logoImageExtension(bytes: Uint8Array): "png" | "jpg" | "webp" | null {
+  if (bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "png";
+  if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpg";
+  if (bytes.length > 12 && String.fromCharCode(...bytes.slice(0, 4)) === "RIFF" && String.fromCharCode(...bytes.slice(8, 12)) === "WEBP") return "webp";
+  return null;
 }
