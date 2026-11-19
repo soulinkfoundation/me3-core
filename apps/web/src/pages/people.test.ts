@@ -1,4 +1,5 @@
 import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
+import { resetSoulinkInvite } from "../composables/useSoulinkInvite";
 import { createPinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -93,6 +94,7 @@ describe("People page", () => {
       this.removeAttribute("open");
     });
     toasts.success.mockReset();
+    resetSoulinkInvite();
     contacts = [
       person("c-zoe", "Zoe Hart"),
       person("c-erum", "Erum Shah", {
@@ -486,4 +488,40 @@ describe("People page", () => {
     });
   });
 
+
+  it("shares the Soulink invite link from Add someone and the person sheet when Soulink is connected", async () => {
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/contacts") return { contacts, summary: {} };
+      if (path === "/soulink/status") return { connection: { status: "active" } };
+      if (path === "/soulink/invite-link") return { ok: true, url: "https://soulink.test/i/invite_abc" };
+      throw new Error(`Unexpected GET ${path}`);
+    });
+    vi.mocked(api.post).mockResolvedValue({ ok: true });
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    Object.defineProperty(navigator, "share", { value: undefined, configurable: true });
+    const { wrapper } = await mountPeople();
+    await wrapper.get('button[aria-label="Add someone"]').trigger("click");
+    await flushPromises();
+
+    const invite = Array.from(document.querySelectorAll(".add-someone button")).find((button) => button.textContent?.includes("Invite a friend")) as HTMLButtonElement;
+    invite.click();
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith("https://soulink.test/i/invite_abc");
+    expect(toasts.success).toHaveBeenCalledWith("Invite link copied");
+    wrapper.unmount();
+
+    await mountPeople("/people?person=c-zoe");
+    const sheetInvite = Array.from(document.querySelectorAll(".person-sheet button")).find((button) => button.textContent?.includes("Invite to Soulink"));
+    expect(sheetInvite).toBeDefined();
+  });
+
+  it("shows no Soulink invites without a Soulink connection and + goes straight to Add by hand", async () => {
+    const { wrapper } = await mountPeople("/people?person=c-zoe");
+    expect(document.querySelector(".person-sheet")?.textContent).not.toContain("Invite to Soulink");
+    await wrapper.get('button[aria-label="Add someone"]').trigger("click");
+    await flushPromises();
+    expect(document.querySelector(".add-someone")?.closest("dialog")?.hasAttribute("open") ?? false).toBe(false);
+    expect(api.get).not.toHaveBeenCalledWith("/soulink/invite-link");
+  });
 });

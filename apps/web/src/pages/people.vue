@@ -5,6 +5,8 @@ import { definePage } from "unplugin-vue-router/runtime";
 import { useRoute, useRouter } from "vue-router";
 import AppPageBar from "../components/AppPageBar.vue";
 import UiIcon from "../components/UiIcon.vue";
+import AddSomeoneSheet from "../components/people/AddSomeoneSheet.vue";
+import { useSoulinkInvite } from "../composables/useSoulinkInvite";
 import ImportProspectsSheet from "../components/people/ImportProspectsSheet.vue";
 import NewPersonSheet from "../components/people/NewPersonSheet.vue";
 import PersonAvatar from "../components/people/PersonAvatar.vue";
@@ -51,9 +53,11 @@ const loaded = ref(contacts.value.length > 0);
 const filter = ref<Filter>("all");
 const outreachTab = ref<OutreachTab>("open");
 const query = ref("");
+const addOpen = ref(false);
 const newPersonOpen = ref(false);
 const importOpen = ref(false);
 const soulinkConnected = ref<boolean | null>(null);
+const soulinkInvite = useSoulinkInvite();
 const pullEl = ref<HTMLElement | null>(null);
 const headEl = ref<HTMLElement | null>(null);
 const pullProgress = ref(0);
@@ -130,7 +134,14 @@ function jumpTo(letter: string) {
   document.getElementById(`person-row-${target.id}`)?.scrollIntoView({ block: "start" });
 }
 
+// With Soulink connected, + also offers the invite link; otherwise it goes straight to Add by hand.
+function openAdd() {
+  if (soulinkConnected.value) addOpen.value = true;
+  else addByHand();
+}
+
 function addByHand() {
+  addOpen.value = false;
   newPersonOpen.value = true;
 }
 
@@ -154,6 +165,7 @@ async function syncSoulink() {
     soulinkConnected.value = false;
   }
   if (!soulinkConnected.value) return;
+  void soulinkInvite.load();
   try {
     await api.post("/soulink/contacts/sync");
     await contactsStore.fetchContacts();
@@ -210,7 +222,7 @@ watch(filter, () => { now.value = Date.now(); });
   <main class="people-page">
     <AppPageBar title="People">
       <template #actions>
-        <button type="button" class="people-add" aria-label="Add someone" title="Add someone" @click="addByHand">
+        <button type="button" class="people-add" aria-label="Add someone" title="Add someone" @click="openAdd">
           <UiIcon name="Plus" :size="22" aria-hidden="true" />
         </button>
       </template>
@@ -353,6 +365,7 @@ watch(filter, () => { now.value = Date.now(); });
     </div>
 
     <PersonSheet :contact="openContact" @close="closePerson" />
+    <AddSomeoneSheet :open="addOpen" @close="addOpen = false" @add-by-hand="addByHand" />
     <NewPersonSheet :open="newPersonOpen" @close="newPersonOpen = false" @saved="onAdded" />
     <ImportProspectsSheet :open="importOpen" @close="importOpen = false" @imported="onImported" />
   </main>
