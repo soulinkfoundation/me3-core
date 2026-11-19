@@ -12,7 +12,6 @@ import { useRoute, useRouter } from "vue-router";
 import { ApiError, api } from "../api";
 import AppDialog from "../components/AppDialog.vue";
 import Button from "../components/Button.vue";
-import FloatingActionButton from "../components/FloatingActionButton.vue";
 import IconPicker from "../components/IconPicker.vue";
 import PageLoading from "../components/PageLoading.vue";
 import TiptapEditor from "../components/TiptapEditor.vue";
@@ -687,10 +686,13 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="tasks-page">
+    <Teleport to="#app-page-leading" defer>
+      <Button color="ghost" shape="soft" size="large" icon-only aria-label="Add task" title="Add task" :disabled="loading || projects.length === 0" @click="openNewTask">
+        <UiIcon name="Plus" :size="20" />
+      </Button>
+    </Teleport>
     <Teleport to="#app-page-controls" defer>
     <header class="tasks-topbar">
-      <div aria-hidden="true" />
-
       <details ref="projectPicker" class="project-picker">
         <summary aria-label="Choose project">
           <ProjectIcon
@@ -732,14 +734,13 @@ onBeforeUnmount(() => {
             <span class="project-picker__all"><UiIcon name="Pencil" :size="15" /></span>
             <span>Edit {{ selectedProject.name }}</span>
           </button>
+          <div class="project-picker__divider" />
+          <button type="button" @click="router.push({ path: '/mission', query: { focus: 'goals' } })">
+            <span class="project-picker__all"><UiIcon name="Goal" :size="15" /></span>
+            <span>Goals</span>
+          </button>
         </div>
       </details>
-
-      <div class="tasks-topbar-actions">
-        <Button color="ghost" shape="soft" size="compact" icon-only aria-label="Goals" title="Goals" @click="router.push({ path: '/mission', query: { focus: 'goals' } })">
-          <UiIcon name="Goal" :size="19" />
-        </Button>
-      </div>
     </header>
     </Teleport>
 
@@ -864,13 +865,6 @@ onBeforeUnmount(() => {
         </article>
       </div>
     </section>
-
-    <FloatingActionButton
-      label="Add task"
-      column="var(--tasks-column-width)"
-      :disabled="loading || projects.length === 0"
-      @click="openNewTask"
-    />
 
     <AppDialog
       :open="taskDialogOpen"
@@ -1181,7 +1175,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .tasks-page {
-  /* The tasks column; the floating Add task button lines up with its right edge. */
+  /* The tasks column. */
   --tasks-column-width: min(700px, calc(100% - 32px));
   position: relative;
   min-height: 100vh;
@@ -1192,16 +1186,9 @@ onBeforeUnmount(() => {
 
 /* Lives in the app top bar, so the page has no second header row. */
 .tasks-topbar {
-  display: grid;
-  grid-template-columns: 80px minmax(0, 1fr) 80px;
-  align-items: center;
-  width: 100%;
-}
-
-.tasks-topbar-actions {
   display: flex;
-  gap: 4px;
-  justify-self: end;
+  justify-content: center;
+  min-width: 0;
 }
 
 .project-picker {
@@ -1215,7 +1202,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 38px;
+  min-height: 44px;
   padding: 0 8px;
   border-radius: var(--ui-radius-sm);
   color: var(--ui-text);
@@ -1303,7 +1290,7 @@ onBeforeUnmount(() => {
   display: grid;
   width: var(--tasks-column-width);
   margin: 0 auto;
-  padding: 18px 0 112px;
+  padding: 18px 0 48px;
 }
 
 .task-modes {

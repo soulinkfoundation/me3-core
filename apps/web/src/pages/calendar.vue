@@ -21,7 +21,6 @@ import AppDialog from "../components/AppDialog.vue";
 import Button from "../components/Button.vue";
 import PageLoading from "../components/PageLoading.vue";
 import UiIcon from "../components/UiIcon.vue";
-import type { UiIconName } from "../utils/icons";
 import BookingAvailabilityEditor, {
   type BookingAvailability,
 } from "../components/booking/BookingAvailabilityEditor.vue";
@@ -580,15 +579,12 @@ const calendarPickerSelectedDate = computed(() => {
   return null;
 });
 
-const mobileRangeCycleLabel = computed(() => {
-  const nextMode = nextCycleRangeMode();
-  return `Switch to ${nextMode === "schedule" ? "Schedule" : "Month"} view`;
-});
-
-const mobileRangeIcon = computed<UiIconName>(() => {
-  if (rangeMode.value === "schedule") return "List";
-  return "CalendarDays";
-});
+// Phones get Schedule and Month; Week needs the wider board.
+const rangeOptions = computed<{ mode: CalendarRangeMode; label: string; title: string }[]>(() => [
+  { mode: "schedule", label: "Schedule", title: "Schedule view (S)" },
+  ...(isCompactCalendar.value ? [] : [{ mode: "week" as CalendarRangeMode, label: "Week", title: "Week view (W)" }]),
+  { mode: "month", label: "Month", title: "Month view (M)" },
+]);
 
 const focusedAgendaDayKey = computed(() => {
   if (rangeMode.value !== "day") return focusedDayKey.value;
@@ -1594,18 +1590,6 @@ function siteDotColor(key: string): string {
     h = (h * 31 + key.charCodeAt(i)) | 0;
   }
   return SITE_DOT_PALETTE[Math.abs(h) % SITE_DOT_PALETTE.length];
-}
-
-const cycleRangeModes: CalendarRangeMode[] = ["schedule", "month"];
-
-function nextCycleRangeMode(): CalendarRangeMode {
-  const currentIndex = cycleRangeModes.indexOf(rangeMode.value);
-  if (currentIndex < 0) return "schedule";
-  return cycleRangeModes[(currentIndex + 1) % cycleRangeModes.length];
-}
-
-function cycleRangeMode() {
-  onRangeChange(nextCycleRangeMode());
 }
 
 function syncCalendarPickerMonth() {
@@ -2843,197 +2827,51 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ops-page calendar-spike">
-    <Teleport to="#app-page-controls" defer>
-      <div
-        v-if="isCompactCalendar && !initialCalendarLoading && !showCalendarUnavailable"
-        class="cal-mobile-nav-controls"
-        @click.stop
-      >
-        <div class="cal-period-switcher cal-period-switcher--mobile" aria-label="Calendar period">
+    <template v-if="!initialCalendarLoading && !showCalendarUnavailable">
+      <Teleport to="#app-page-leading" defer>
+        <div class="cal-create-wrap" @click.stop>
           <Button
+            id="calendar-create"
             color="ghost"
             shape="soft"
-            size="compact"
+            size="large"
             icon-only
-            class="cal-arrow"
-            aria-label="Previous period"
-            title="Previous period"
-            type="button"
-            @click="onToolbarPrev"
-          >
-            <UiIcon name="ChevronLeft" :size="18" aria-hidden="true" />
-          </Button>
-          <button
-            type="button"
-            class="cal-period-title"
-            :aria-expanded="calendarPickerOpen"
-            aria-haspopup="dialog"
-            aria-label="Choose calendar date"
-            @click="toggleCalendarPicker"
-          >
-            {{ mobileToolbarTitle }}
-          </button>
-          <Button
-            color="ghost"
-            shape="soft"
-            size="compact"
-            icon-only
-            class="cal-arrow"
-            aria-label="Next period"
-            title="Next period"
-            type="button"
-            @click="onToolbarNext"
-          >
-            <UiIcon name="ChevronRight" :size="18" aria-hidden="true" />
-          </Button>
-          <DatePickerPopover
-            v-if="calendarPickerOpen"
-            :month-key="calendarPickerMonth"
-            :selected-date="calendarPickerSelectedDate"
-            :today-date="todayDayKey"
-            :marked-dates="calendarPickerMarkedDates"
-            marked-date-label="calendar items scheduled"
-            aria-label="Choose calendar date"
-            @move-month="moveCalendarPickerMonth"
-            @select-date="chooseCalendarPickerDay"
-            @today="pickCalendarToday"
-          />
-        </div>
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          class="cal-mobile-icon-btn"
-          :aria-label="mobileRangeCycleLabel"
-          :title="mobileRangeCycleLabel"
-          type="button"
-          @click="cycleRangeMode"
-        >
-          <UiIcon :name="mobileRangeIcon" :size="18" aria-hidden="true" />
-        </Button>
-        <div class="cal-mobile-settings-wrap">
-          <Button
-            id="calendar-mobile-settings"
-            color="ghost"
-            shape="soft"
-            size="compact"
-            icon-only
-            class="cal-mobile-icon-btn"
-            aria-label="Calendar settings"
-            title="Calendar settings"
-            type="button"
-            :aria-expanded="showSettingsMenu"
-            @click="toggleSettingsMenu"
-          >
-            <UiIcon name="Settings" :size="18" aria-hidden="true" />
-          </Button>
-          <div
-            v-if="showSettingsMenu"
-            class="cal-create-menu cal-settings-menu cal-settings-menu--mobile-nav"
-          >
-            <button
-              type="button"
-              class="cal-settings-menu-item"
-              @click="openCalendarsDialog"
-            >
-              <UiIcon name="CalendarDays" :size="16" aria-hidden="true" />
-              Calendars
-            </button>
-            <button
-              type="button"
-              class="cal-settings-menu-item"
-              @click="openAvailabilitySettings"
-            >
-              <UiIcon name="CalendarClock" :size="16" aria-hidden="true" />
-              Availability
-            </button>
-            <button
-              type="button"
-              class="cal-settings-menu-item"
-              @click="openCreateMode('import')"
-            >
-              <UiIcon name="RefreshCw" :size="16" aria-hidden="true" />
-              Sync calendar
-            </button>
-          </div>
-        </div>
-        <div class="cal-mobile-create-wrap">
-          <Button
-            id="calendar-mobile-create"
-            color="ghost"
-            shape="soft"
-            size="compact"
-            icon-only
-            class="cal-mobile-icon-btn"
-            aria-label="Create calendar item"
-            title="Create calendar item"
+            class="cal-toolbar-icon-btn"
+            aria-label="Add to calendar"
+            title="Add to calendar"
+            aria-haspopup="menu"
             type="button"
             :aria-expanded="showCreateMenu"
             @click="toggleCreateMenu"
           >
-            <UiIcon name="Plus" :size="18" aria-hidden="true" />
+            <UiIcon name="Plus" :size="20" aria-hidden="true" />
           </Button>
           <div
             v-if="showCreateMenu"
-            class="cal-create-menu cal-create-menu--mobile-nav"
+            class="cal-create-menu cal-create-menu--leading"
           >
-            <button type="button" @click="openCreateMode('booking')">
-              New booking
+            <button type="button" @click="openCreateMode('event')">
+              New event
             </button>
             <button type="button" @click="openCreateMode('reminder')">
               New reminder
             </button>
-            <button type="button" @click="openCreateMode('event')">
-              New event
+            <button type="button" @click="openCreateMode('booking')">
+              New booking
             </button>
             <button type="button" @click="openCreateMode('birthday')">
               New birthday
             </button>
           </div>
         </div>
-      </div>
-    </Teleport>
-
-    <main class="main">
+      </Teleport>
       <Teleport to="#app-page-controls" defer>
-      <div
-        v-if="!initialCalendarLoading && !showCalendarUnavailable"
-        class="cal-toolbar"
-        @click.stop
-      >
-        <div class="cal-toolbar-left">
-          <div class="cal-view-toggle" role="group" aria-label="Calendar range">
-            <button
-              type="button"
-              :class="{ 'is-on': rangeMode === 'schedule' }"
-              :aria-pressed="rangeMode === 'schedule'"
-              title="Schedule view (S)"
-              @click="onRangeChange('schedule')"
-            >
-              Schedule
-            </button>
-            <button
-              type="button"
-              :class="{ 'is-on': rangeMode === 'week' }"
-              :aria-pressed="rangeMode === 'week'"
-              title="Week view (W)"
-              @click="onRangeChange('week')"
-            >
-              Week
-            </button>
-            <button
-              type="button"
-              :class="{ 'is-on': rangeMode === 'month' }"
-              :aria-pressed="rangeMode === 'month'"
-              title="Month view (M)"
-              @click="onRangeChange('month')"
-            >
-              Month
-            </button>
-          </div>
-        </div>
-        <div class="cal-period-switcher" aria-label="Calendar period">
+        <div
+          class="cal-period-switcher"
+          :class="{ 'cal-period-switcher--mobile': isCompactCalendar }"
+          aria-label="Calendar period"
+          @click.stop
+        >
           <Button
             color="ghost"
             shape="soft"
@@ -3055,7 +2893,7 @@ onBeforeUnmount(() => {
             aria-label="Choose calendar date"
             @click="toggleCalendarPicker"
           >
-            {{ activeToolbarTitle }}
+            {{ isCompactCalendar ? mobileToolbarTitle : activeToolbarTitle }}
           </button>
           <Button
             color="ghost"
@@ -3083,82 +2921,77 @@ onBeforeUnmount(() => {
             @today="pickCalendarToday"
           />
         </div>
-        <div class="cal-toolbar-actions">
-          <div class="cal-create-wrap">
-            <Button
-              id="calendar-desktop-settings"
-              color="ghost"
-              shape="soft"
-              size="compact"
-              icon-only
-              class="cal-toolbar-icon-btn"
-              aria-label="Calendar settings"
-              title="Calendar settings"
+      </Teleport>
+    </template>
+
+    <main class="main">
+      <!-- View and settings are page content; the header holds only Add, the period switcher and X. -->
+      <div
+        v-if="!initialCalendarLoading && !showCalendarUnavailable"
+        class="cal-page-bar"
+        @click.stop
+      >
+        <div class="cal-view-toggle" role="group" aria-label="Calendar range">
+          <button
+            v-for="option in rangeOptions"
+            :key="option.mode"
+            type="button"
+            :class="{ 'is-on': rangeMode === option.mode }"
+            :aria-pressed="rangeMode === option.mode"
+            :title="option.title"
+            @click="onRangeChange(option.mode)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+        <div class="cal-create-wrap">
+          <Button
+            id="calendar-settings"
+            color="ghost"
+            shape="soft"
+            size="compact"
+            icon-only
+            class="cal-toolbar-icon-btn"
+            aria-label="Calendar settings"
+            title="Calendar settings"
+            type="button"
+            :aria-expanded="showSettingsMenu"
+            @click="toggleSettingsMenu"
+          >
+            <UiIcon name="Settings" :size="18" aria-hidden="true" />
+          </Button>
+          <div
+            v-if="showSettingsMenu"
+            class="cal-create-menu cal-settings-menu cal-settings-menu--content"
+          >
+            <button
+              v-if="isCompactCalendar"
               type="button"
-              :aria-expanded="showSettingsMenu"
-              @click="toggleSettingsMenu"
+              class="cal-settings-menu-item"
+              @click="openCalendarsDialog"
             >
-              <UiIcon name="Settings" :size="18" aria-hidden="true" />
-            </Button>
-            <div
-              v-if="showSettingsMenu"
-              class="cal-create-menu cal-settings-menu cal-settings-menu--toolbar"
-            >
-              <button
-                type="button"
-                class="cal-settings-menu-item"
-                @click="openAvailabilitySettings"
-              >
-                <UiIcon name="CalendarClock" :size="16" aria-hidden="true" />
-                Availability
-              </button>
-              <button
-                type="button"
-                class="cal-settings-menu-item"
-                @click="openCreateMode('import')"
-              >
-                <UiIcon name="RefreshCw" :size="16" aria-hidden="true" />
-                Sync calendar
-              </button>
-            </div>
-          </div>
-          <div class="cal-create-wrap">
-            <Button
-              id="calendar-desktop-create"
-              color="ghost"
-              shape="soft"
-              size="compact"
-              icon-only
-              class="cal-toolbar-icon-btn"
-              aria-label="Create calendar item"
-              title="Create calendar item"
+              <UiIcon name="CalendarDays" :size="16" aria-hidden="true" />
+              Calendars
+            </button>
+            <button
               type="button"
-              :aria-expanded="showCreateMenu"
-              @click="toggleCreateMenu"
+              class="cal-settings-menu-item"
+              @click="openAvailabilitySettings"
             >
-              <UiIcon name="Plus" :size="18" aria-hidden="true" />
-            </Button>
-            <div
-              v-if="showCreateMenu"
-              class="cal-create-menu cal-create-menu--toolbar"
+              <UiIcon name="CalendarClock" :size="16" aria-hidden="true" />
+              Availability
+            </button>
+            <button
+              type="button"
+              class="cal-settings-menu-item"
+              @click="openCreateMode('import')"
             >
-              <button type="button" @click="openCreateMode('booking')">
-                New booking
-              </button>
-              <button type="button" @click="openCreateMode('reminder')">
-                New reminder
-              </button>
-              <button type="button" @click="openCreateMode('event')">
-                New event
-              </button>
-              <button type="button" @click="openCreateMode('birthday')">
-                New birthday
-              </button>
-            </div>
+              <UiIcon name="RefreshCw" :size="16" aria-hidden="true" />
+              Sync calendar
+            </button>
           </div>
         </div>
       </div>
-      </Teleport>
 
       <PageLoading v-if="initialCalendarLoading" label="Loading calendar..." />
       <div
@@ -4257,25 +4090,9 @@ onBeforeUnmount(() => {
   padding: 0 24px 40px;
 }
 
-.cal-toolbar {
-  display: none;
-}
-
-.cal-mobile-nav-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px 44px 44px;
-  align-items: center;
-  gap: 2px;
-  width: 100%;
-  min-width: 0;
-}
-
 .cal-period-switcher.cal-period-switcher--mobile {
   grid-template-columns: 44px minmax(0, 1fr) 44px;
   gap: 0;
-  justify-self: start;
-  width: 100%;
-  max-width: 100%;
   min-width: 0;
 }
 
@@ -4295,23 +4112,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   padding-inline: 2px;
   font-size: 14px;
-}
-
-.cal-create-menu--mobile-nav,
-.cal-settings-menu--mobile-nav {
-  position: absolute;
-  top: 0;
-  right: calc(100% + 8px);
-  left: auto;
-  width: min(220px, calc(100vw - 32px));
-}
-
-.cal-toolbar-left {
-  display: flex;
-  align-items: center;
-  justify-self: start;
-  min-width: 0;
-  gap: 10px;
 }
 
 .cal-period-switcher {
@@ -4381,11 +4181,10 @@ onBeforeUnmount(() => {
   color: var(--ui-text);
 }
 
-.cal-toolbar-actions {
+.cal-page-bar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  justify-self: end;
+  justify-content: space-between;
   gap: 8px;
   min-width: 0;
 }
@@ -4457,25 +4256,16 @@ onBeforeUnmount(() => {
   box-shadow: 0 18px 50px color-mix(in oklab, #000, transparent 86%);
 }
 
-.cal-create-menu--toolbar {
+.cal-create-menu.cal-create-menu--leading {
+  right: auto;
+  left: 0;
+  width: min(200px, calc(100vw - 32px));
+}
+
+.cal-create-menu.cal-settings-menu--content {
   right: 0;
   left: auto;
   width: 190px;
-}
-
-.cal-create-menu.cal-create-menu--mobile-nav,
-.cal-create-menu.cal-settings-menu--mobile-nav {
-  top: 0;
-  right: calc(100% + 8px);
-  left: auto;
-  width: min(220px, calc(100vw - 32px));
-}
-
-.cal-settings-menu--toolbar {
-  top: 0;
-  right: calc(100% + 8px);
-  left: auto;
-  width: 180px;
 }
 
 .cal-create-menu button {
@@ -4946,31 +4736,9 @@ onBeforeUnmount(() => {
   }
 }
 
-.cal-mobile-nav-controls .cal-mobile-icon-btn {
-  flex: 0 0 auto;
-  min-width: 44px;
-  width: 44px;
-  height: 44px;
-}
-
 .cal-toolbar-icon-btn {
   width: 44px;
   height: 44px;
-}
-
-.cal-mobile-create-wrap,
-.cal-mobile-settings-wrap {
-  position: relative;
-}
-
-@media (min-width: 1101px) {
-  .cal-toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    align-items: center;
-    gap: 16px;
-    width: 100%;
-  }
 }
 
 @media (max-width: 959px) {
@@ -4980,6 +4748,10 @@ onBeforeUnmount(() => {
 
   .main {
     padding: 0;
+  }
+
+  .cal-page-bar {
+    padding: 4px 14px 0;
   }
 
   .cal-sidebar {

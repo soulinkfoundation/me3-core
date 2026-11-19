@@ -610,12 +610,11 @@ onMounted(() => {
 <template>
   <main class="accounts-page">
     <AppPageBar title="Accounts">
+      <template v-if="currentView !== 'customers' && currentView !== 'waiting'" #leading>
+        <Button color="ghost" shape="soft" size="large" icon-only aria-label="Add entry" @click="openNewEntry"><UiIcon name="Plus" :size="20" /></Button>
+      </template>
       <template #actions>
         <div class="accounts-toolbar__actions">
-          <Button v-if="currentView !== 'waiting'" color="ghost" shape="soft" size="compact" icon-only aria-label="Search and filter" :active="Boolean(activeFilterCount)" @click="filtersOpen = true">
-            <UiIcon name="Search" :size="17" /><span v-if="activeFilterCount" class="accounts-filter-count">{{ activeFilterCount }}</span>
-          </Button>
-          <Button v-if="currentView !== 'customers' && currentView !== 'waiting'" color="ghost" shape="soft" size="compact" icon-only aria-label="Add entry" @click="openNewEntry"><UiIcon name="Plus" :size="18" /></Button>
           <details v-if="currentView !== 'customers' && currentView !== 'waiting'" ref="actionsMenu" class="accounts-actions-menu">
             <summary aria-label="Account actions"><UiIcon name="Ellipsis" :size="18" /></summary>
             <div class="accounts-actions-menu__popover">
@@ -661,6 +660,12 @@ onMounted(() => {
             Waiting
           </button>
         </div>
+        <span v-if="currentView !== 'waiting'" class="accounts-search">
+          <Button color="ghost" shape="soft" size="large" icon-only aria-label="Search and filter" :active="Boolean(activeFilterCount)" @click="filtersOpen = true">
+            <UiIcon name="Search" :size="18" />
+          </Button>
+          <span v-if="activeFilterCount" class="accounts-filter-count">{{ activeFilterCount }}</span>
+        </span>
       </header>
 
       <section id="accounts-panel" role="tabpanel" :aria-labelledby="`accounts-tab-${currentView === 'expense' ? 'expenses' : currentView}`">
@@ -832,10 +837,11 @@ onMounted(() => {
 .order-delivery__details { grid-column: 2 / -1; display: grid; gap: 4px; padding: 2px 0; color: var(--ui-text-muted); font-size: 12px; }
 .order-delivery__details p { margin: 0; }
 .order-delivery__details address { margin: 0; font-style: normal; }
-.accounts-page { width: 100%; min-width: 0; min-height: 100vh; min-height: 100dvh; overflow-x: hidden; padding: var(--workspace-topbar-padding-block) 24px 40px; background: var(--ui-bg); color: var(--ui-text); }
+.accounts-page { box-sizing: border-box; width: 100%; min-width: 0; min-height: 100vh; min-height: 100dvh; overflow-x: hidden; padding: var(--workspace-topbar-padding-block) 24px 40px; background: var(--ui-bg); color: var(--ui-text); }
 .accounts-workspace { display: grid; width: min(1120px, 100%); min-width: 0; gap: 14px; margin: 0 auto; }
-.accounts-toolbar { display: flex; justify-content: center; padding: 4px 0 8px; }
-.accounts-tabs { display: grid; width: min(640px, 100%); grid-template-columns: repeat(4, 1fr); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
+.accounts-toolbar { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 4px 0 8px; }
+.accounts-search { position: relative; display: inline-flex; flex: none; }
+.accounts-tabs { display: grid; flex: 0 1 640px; min-width: 0; grid-template-columns: repeat(4, 1fr); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
 .accounts-tabs button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }
 .accounts-tabs button:hover, .accounts-tabs button:focus-visible { color: var(--ui-text); outline: none; }
 .accounts-tabs button:focus-visible { box-shadow: inset 0 0 0 2px var(--ui-focus); }
@@ -843,7 +849,7 @@ onMounted(() => {
 .accounts-toolbar__actions { position: relative; display: flex; gap: 2px; }
 .accounts-filter-count { position: absolute; top: 2px; right: 2px; display: grid; min-width: 14px; height: 14px; place-items: center; border-radius: 999px; background: var(--ui-accent); color: var(--ui-accent-contrast); font-size: 9px; font-weight: 800; }
 .accounts-actions-menu { position: relative; }
-.accounts-actions-menu summary { display: inline-grid; width: 34px; height: 34px; place-items: center; border-radius: var(--ui-radius-sm); color: var(--ui-text-muted); cursor: pointer; list-style: none; }
+.accounts-actions-menu summary { display: inline-grid; width: 44px; height: 44px; place-items: center; border-radius: var(--ui-radius-sm); color: var(--ui-text-muted); cursor: pointer; list-style: none; }
 .accounts-actions-menu summary::-webkit-details-marker { display: none; }
 .accounts-actions-menu summary:hover { background: var(--ui-surface-muted); color: var(--ui-text); }
 .accounts-actions-menu__popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; display: grid; min-width: 176px; gap: 3px; padding: 6px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
@@ -917,7 +923,7 @@ onMounted(() => {
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (max-width: 959px) { .accounts-page { padding: var(--workspace-topbar-padding-block) 16px 32px; } }
 @media (max-width: 640px) {
-  .accounts-tabs { width: 100%; }
+  .accounts-tabs { flex: 1 1 auto; }
   .accounts-summary strong { overflow-wrap: anywhere; white-space: normal; }
   .accounts-dialog { width: 100vw; max-height: min(92vh, 92dvh); border-right: 0; border-bottom: 0; border-left: 0; border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0; }
   .accounts-dialog__grid { grid-template-columns: 1fr; }

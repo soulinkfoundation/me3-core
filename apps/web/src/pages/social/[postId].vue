@@ -79,6 +79,7 @@ definePage({
   meta: {
     requiresAuth: true,
     title: "Post | ME3",
+    back: { to: "/social", label: "Social" },
     description: "Review a social post for each platform, then schedule or post it.",
     robots: "noindex,follow",
   },
@@ -99,6 +100,10 @@ const savingIds = ref(new Set<string>());
 const busy = ref<"schedule" | "post" | "move" | "cancel" | "delete" | "upload" | "add" | "remove" | "duplicate" | "shorten" | null>(null);
 const accountsOpen = ref(false);
 const confirmDelete = ref(false);
+const postMenu = ref<HTMLDetailsElement | null>(null);
+function closePostMenu() {
+  if (postMenu.value) postMenu.value.open = false;
+}
 const confirmCancel = ref(false);
 const confirmRemove = ref<PostVersion | null>(null);
 const editor = ref<HTMLTextAreaElement | null>(null);
@@ -1156,15 +1161,16 @@ onMounted(async () => {
       <template v-else>
         <AppPageBar>
           <template #title>
-            <RouterLink class="post-header__back" to="/social">Social</RouterLink>
-            <span class="post-header__sep" aria-hidden="true">/</span>
             <span class="post-header__title">{{ title }}</span>
           </template>
           <template #actions>
-            <Button class="post-header__quiet" color="ghost" shape="soft" size="small" :disabled="busy !== null" @click="duplicatePost">
-              {{ busy === "duplicate" ? "Copying…" : "Duplicate" }}
-            </Button>
-            <Button class="post-header__quiet" color="ghost" shape="soft" size="small" @click="confirmDelete = true">Delete</Button>
+            <details ref="postMenu" class="post-menu">
+              <summary aria-label="Post actions" title="Post actions"><UiIcon name="Ellipsis" :size="20" /></summary>
+              <div class="post-menu__popover">
+                <button type="button" :disabled="busy !== null" @click="closePostMenu(); duplicatePost()"><UiIcon name="Copy" :size="15" aria-hidden="true" />{{ busy === "duplicate" ? "Copying…" : "Duplicate" }}</button>
+                <button type="button" class="is-danger" @click="closePostMenu(); confirmDelete = true"><UiIcon name="Trash2" :size="15" aria-hidden="true" />Delete</button>
+              </div>
+            </details>
           </template>
         </AppPageBar>
 
@@ -1592,8 +1598,6 @@ onMounted(async () => {
 <style scoped>
 .post-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
 .post-column { box-sizing: border-box; width: min(100%, 880px); margin: 0 auto; padding: 16px 16px 96px; }
-.post-header__back { color: var(--ui-text-muted); font-weight: 500; text-decoration: none; }
-.post-header__back:hover { color: var(--ui-text); }
 .post-tabs__add { display: inline-flex; align-items: center; gap: 4px; padding: 8px 10px; border: 0; background: none; color: var(--ui-text-muted); font: inherit; font-size: 13px; cursor: pointer; }
 .post-tabs__add:hover { color: var(--ui-text); }
 .post-video { display: grid; gap: 10px; }
@@ -1601,7 +1605,16 @@ onMounted(async () => {
 .post-video__title { padding: 10px 12px; }
 .post-video__file { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--ui-text); }
 .post-video__file span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.post-header__sep { color: var(--ui-text-muted); font-weight: 400; }
+.post-menu { position: relative; }
+.post-menu summary { display: inline-grid; width: 44px; height: 44px; place-items: center; border-radius: 999px; color: var(--ui-text-muted); cursor: pointer; list-style: none; }
+.post-menu summary::-webkit-details-marker { display: none; }
+.post-menu summary:hover { background: var(--ui-surface-muted, var(--ui-surface)); color: var(--ui-text); }
+.post-menu summary:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.post-menu__popover { position: absolute; top: calc(100% + 4px); right: 0; z-index: 80; display: grid; min-width: 168px; gap: 2px; padding: 6px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md, 12px); background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
+.post-menu__popover button { display: flex; min-height: 44px; align-items: center; gap: 8px; padding: 0 10px; border: 0; border-radius: var(--ui-radius-sm, 8px); background: transparent; color: var(--ui-text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.post-menu__popover button:hover:not(:disabled) { background: var(--ui-surface-muted, var(--ui-bg)); }
+.post-menu__popover button:disabled { opacity: 0.5; cursor: not-allowed; }
+.post-menu__popover button.is-danger { color: var(--ui-danger); }
 .post-header__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 :deep(.post-header__quiet) { color: var(--ui-text-muted); font-weight: 500; }
 

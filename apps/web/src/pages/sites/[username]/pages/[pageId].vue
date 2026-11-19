@@ -2,7 +2,7 @@
 import SiteEventFields from "../../../../components/SiteEventFields.vue";
 import { computed, onMounted, ref } from "vue";
 import { definePage } from "unplugin-vue-router/runtime";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
   getLandingPageValidationErrors,
   type LandingPageActionKind,
@@ -13,6 +13,9 @@ import { useSitesStore, type SitePageRevision } from "../../../../stores/sites";
 import { resolvePublicSiteUrl } from "../../../../utils/publicSiteUrl";
 import { loadRandomPhoto } from "../../../../utils/randomPhoto";
 import UiIcon from "../../../../components/UiIcon.vue";
+import AppPageBar from "../../../../components/AppPageBar.vue";
+import AppPageFooter from "../../../../components/AppPageFooter.vue";
+import { useLeaveGuard, useTopBarClose } from "../../../../composables/useTopBar";
 import { api } from "../../../../api";
 import { useAppToast } from "../../../../composables/useAppToast";
 
@@ -27,6 +30,7 @@ definePage({
 });
 
 const route = useRoute();
+const router = useRouter();
 const sites = useSitesStore();
 const { toastSuccess } = useAppToast();
 const username = computed(() => route.params.username as string);
@@ -48,6 +52,13 @@ const bookingOffers = ref<Array<{ id: string; title: string; paid: boolean }>>([
 const products = ref<Array<{ slug: string; title: string }>>([]);
 const paymentsReady = ref(false);
 const randomImageBusy = ref(false);
+// What the server last saved, so X and closing the tab ask before dropping unsaved edits.
+const savedJson = ref("");
+function markSaved() { savedJson.value = draft.value ? JSON.stringify(draft.value) : ""; }
+const dirty = computed(() => Boolean(draft.value) && JSON.stringify(draft.value) !== savedJson.value);
+const saveStatus = computed(() => busy.value ? "Working…" : dirty.value ? "Unsaved changes" : page.value?.publishedAt ? "Saved · Published" : "Saved");
+useTopBarClose(() => router.push(builderBackUrl.value));
+useLeaveGuard(() => dirty.value);
 
 const activeSection = computed(() =>
   draft.value?.content.sections.find((section) => section.id === activeSectionId.value),
@@ -72,6 +83,7 @@ async function load() {
   draft.value = structuredClone(record.document);
   draft.value.hero.imageLayout ||= "split";
   draft.value.hero.showActions ??= true;
+  markSaved();
   activeSectionId.value = draft.value.content.sections[0]?.id || "";
   const base = await resolvePublicSiteUrl(username.value, currentSite.value);
   liveUrl.value = `${base.replace(/\/+$/, "")}/${record.slug}`;
@@ -134,6 +146,7 @@ async function save(options: { quiet?: boolean } = {}) {
     return false;
   }
   draft.value = structuredClone(saved.document);
+  markSaved();
   await refreshPreview();
   if (!options.quiet) toastSuccess("Draft saved.");
   return true;
@@ -181,6 +194,7 @@ async function restore(revisionId: string) {
   }
   draft.value = structuredClone(restored.document);
   activeSectionId.value = draft.value.content.sections[0]?.id || "";
+  markSaved();
   await refreshPreview();
   toastSuccess("Previous version restored as the current draft.");
 }
@@ -331,30 +345,23 @@ onMounted(load);
 
 <template>
   <div class="page-builder">
-    <header class="builder-topbar">
-      <router-link :to="builderBackUrl" class="back-link">
-        <UiIcon name="ArrowLeft" :size="17" aria-hidden="true" />
-        Website
-      </router-link>
-      <div class="builder-title">
-        <strong>{{ page?.title || "Page builder" }}</strong>
-        <span v-if="page">/{{ page.slug }}</span>
-      </div>
-      <div class="top-actions">
-        <a v-if="page?.publishedAt" :href="liveUrl" target="_blank" rel="noreferrer" class="button ghost">
-          Open live
-        </a>
-        <button class="button secondary" type="button" :disabled="busy" @click="save()">
-          {{ busy ? "Working…" : "Save" }}
-        </button>
-        <button class="button primary" type="button" :disabled="busy" @click="publish">
-          {{ page?.publishedAt ? "Publish changes" : "Publish" }}
-        </button>
-        <button v-if="page?.publishedAt" class="button secondary" type="button" :disabled="busy" @click="unpublish">
-          Unpublish
-        </button>
-      </div>
-    </header>
+    <!-- Open live on the left, the page title centred, the top bar's X back to the site editor. -->
+    <AppPageBar>
+      <template v-if="page?.publishedAt" #leading>
+        <a :href="liveUrl" target="_blank" rel="noreferrer" class="icon-action" aria-label="Open the live page" title="Open the live page"><UiIcon name="ExternalLink" :size="19" /></a>
+      </template>
+      <template #title>{{ page?.title || "Page builder" }}</template>
+      <template v-if="page?.publishedAt" #actions>
+        <details class="more-menu">
+          <summary aria-label="More page actions"><UiIcon name="Ellipsis" :size="18" /></summary>
+          <div class="more-menu__popover"><button type="button" :disabled="busy" @click="unpublish">Unpublish</button></div>
+        </details>
+      </template>
+    </AppPageBar>
+    <AppPageFooter v-if="draft && !loading" :status="saveStatus">
+      <button class="button secondary" type="button" :disabled="busy" @click="save()">Save</button>
+      <button class="button primary" type="button" :disabled="busy" @click="publish">{{ page?.publishedAt ? "Publish changes" : "Publish" }}</button>
+    </AppPageFooter>
 
     <main v-if="draft && !loading" class="builder-workspace">
       <aside class="outline-panel" aria-label="Page outline">
@@ -583,6 +590,6 @@ onMounted(load);
 </template>
 
 <style scoped>
-.page-builder{min-height:100vh;background:var(--ui-bg,var(--color-bg));color:var(--ui-text,var(--color-text))}.builder-topbar{position:sticky;top:0;z-index:10;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:18px;min-height:68px;padding:10px 20px;border-bottom:1px solid var(--ui-border,var(--color-border));background:color-mix(in srgb,var(--ui-bg,var(--color-bg)) 94%,transparent);backdrop-filter:blur(14px)}.back-link,.button{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:var(--ui-radius-sm,8px);font:inherit;font-weight:700;text-decoration:none}.back-link{color:var(--ui-text-muted,var(--color-text-muted))}.builder-title{display:grid;min-width:0}.builder-title strong,.builder-title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.builder-title span{font-size:.85rem;color:var(--ui-text-muted,var(--color-text-muted))}.top-actions{display:flex;gap:8px}.button{padding:0 15px;border:1px solid var(--ui-border-strong,var(--color-border));cursor:pointer}.button.primary{border-color:var(--ui-accent,var(--color-accent));background:var(--ui-accent,var(--color-accent));color:var(--ui-accent-contrast,#fff)}.button.secondary,.button.ghost{background:var(--ui-surface,var(--color-bg));color:var(--ui-text,var(--color-text))}.button.ghost{border-color:transparent}.button:disabled{opacity:.55;cursor:not-allowed}.builder-workspace{display:grid;grid-template-columns:260px minmax(420px,640px) minmax(360px,1fr);gap:0;align-items:start}.outline-panel,.editor-panel{min-height:calc(100vh - 68px);border-right:1px solid var(--ui-border,var(--color-border))}.outline-panel{position:sticky;top:68px;max-height:calc(100vh - 68px);overflow:auto;padding:20px 14px}.editor-panel{padding:26px 28px}.preview-panel{position:sticky;top:68px;height:calc(100vh - 68px);padding:16px;background:var(--ui-surface-muted,var(--color-bg-subtle))}.panel-heading,.section-editor-heading,.preview-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.panel-heading h2,.editor-group h1,.editor-group h2{margin:0}.panel-heading span,.section-editor-heading span,.preview-heading span{color:var(--ui-text-muted,var(--color-text-muted));font-size:.82rem}.section-list{display:grid;gap:5px;margin:18px 0}.section-row{display:grid;grid-template-columns:minmax(0,1fr) auto;border-radius:var(--ui-radius-sm,8px)}.section-row.active{background:var(--ui-accent-soft,color-mix(in srgb,var(--ui-accent) 12%,transparent))}.section-select{display:grid;gap:2px;min-height:48px;padding:8px 10px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}.section-select span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}.section-select small{color:var(--ui-text-muted,var(--color-text-muted))}.row-tools{display:none;align-items:center}.section-row:hover .row-tools,.section-row:focus-within .row-tools{display:flex}.row-tools button,.add-section button,.history-panel button,.repeater-row>button{min-width:36px;min-height:36px;border:0;background:transparent;color:var(--ui-text-muted,var(--color-text-muted));cursor:pointer}.add-section{display:grid;gap:10px;padding-top:16px;border-top:1px solid var(--ui-border,var(--color-border));font-size:.85rem}.add-section>div{display:flex;flex-wrap:wrap;gap:4px}.add-section button{padding:0 9px;border:1px solid var(--ui-border,var(--color-border));border-radius:var(--ui-radius-sm,8px)}.history-panel{margin-top:20px;border-top:1px solid var(--ui-border,var(--color-border));padding-top:16px}.history-panel summary{cursor:pointer;font-weight:700}.history-panel button{display:block;width:100%;height:auto;padding:8px 0;text-align:left}.editor-group{display:grid;gap:14px;padding:0 0 26px;margin:0 0 26px;border-bottom:1px solid var(--ui-border,var(--color-border))}.editor-group label{display:grid;gap:7px;font-weight:700}.editor-group input,.editor-group textarea,.editor-group select{width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--ui-border-strong,var(--color-border));border-radius:var(--ui-radius-sm,8px);background:var(--ui-surface,var(--color-bg));color:var(--ui-text,var(--color-text));font:inherit}.editor-group textarea{resize:vertical}.image-field{display:grid;gap:10px}.image-field .button{justify-self:start}.field-note{margin:0;color:var(--ui-text-muted,var(--color-text-muted));font-size:.9rem}.repeater-row{display:grid;gap:10px;padding:14px 0;border-bottom:1px dashed var(--ui-border,var(--color-border))}.repeater-row.compact{grid-template-columns:1fr 1fr auto;align-items:end}.validation-panel{padding:15px;border:1px solid color-mix(in srgb,#b7791f 45%,var(--ui-border));border-radius:var(--ui-radius-sm,8px);background:color-mix(in srgb,#f6ad55 10%,var(--ui-surface));}.validation-panel ul{margin:8px 0 0;padding-left:20px}.message{min-height:1.4em}.message.error{color:#b42318}.preview-heading{height:42px}.preview-panel iframe,.preview-empty{width:100%;height:calc(100% - 42px);border:1px solid var(--ui-border,var(--color-border));border-radius:var(--ui-radius-md,10px);background:#fff}.preview-empty{display:grid;place-items:center;padding:20px;text-align:center;color:var(--ui-text-muted,var(--color-text-muted))}.loading-state{display:grid;place-items:center;min-height:60vh}.button:focus-visible,.back-link:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--ui-accent,var(--color-accent));outline-offset:2px}@media(max-width:1180px){.builder-workspace{grid-template-columns:230px minmax(0,1fr)}.preview-panel{position:static;grid-column:1/-1;height:760px;border-top:1px solid var(--ui-border,var(--color-border))}}@media(max-width:760px){.builder-topbar{position:static;grid-template-columns:1fr}.top-actions{display:grid;grid-template-columns:1fr 1fr}.builder-workspace{display:block}.outline-panel{position:static;max-height:none;min-height:0;border-right:0;border-bottom:1px solid var(--ui-border,var(--color-border))}.editor-panel{min-height:0;padding:22px 18px;border-right:0}.preview-panel{height:620px;padding:12px}.repeater-row.compact{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+.page-builder{background:var(--ui-bg,var(--color-bg));color:var(--ui-text,var(--color-text))}.icon-action{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:999px;color:var(--ui-text,var(--color-text))}.more-menu{position:relative}.more-menu summary{display:grid;place-items:center;width:36px;height:36px;border-radius:999px;color:var(--ui-text-muted,var(--color-text-muted));cursor:pointer;list-style:none}.more-menu summary::-webkit-details-marker{display:none}.more-menu__popover{position:absolute;top:calc(100% + 6px);left:50%;z-index:80;min-width:160px;padding:6px;transform:translateX(-50%);border-radius:14px;background:var(--ui-surface,var(--color-bg));box-shadow:var(--ui-shadow-md)}.more-menu__popover button{width:100%;min-height:44px;padding:0 12px;border:0;border-radius:10px;background:transparent;color:var(--ui-text,var(--color-text));font:inherit;text-align:left;cursor:pointer}.more-menu__popover button:hover{background:var(--ui-surface-muted,var(--color-bg-subtle))}.button{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:var(--ui-radius-sm,8px);font:inherit;font-weight:700;text-decoration:none}.button{padding:0 15px;border:1px solid var(--ui-border-strong,var(--color-border));cursor:pointer}.button.primary{border-color:var(--ui-accent,var(--color-accent));background:var(--ui-accent,var(--color-accent));color:var(--ui-accent-contrast,#fff)}.button.secondary,.button.ghost{background:var(--ui-surface,var(--color-bg));color:var(--ui-text,var(--color-text))}.button.ghost{border-color:transparent}.button:disabled{opacity:.55;cursor:not-allowed}.builder-workspace{display:grid;grid-template-columns:260px minmax(420px,640px) minmax(360px,1fr);gap:0;align-items:start}.outline-panel,.editor-panel{min-height:calc(100dvh - var(--app-topbar-height) - 76px);border-right:1px solid var(--ui-border,var(--color-border))}.outline-panel{position:sticky;top:var(--app-topbar-height);max-height:calc(100dvh - var(--app-topbar-height) - 76px);overflow:auto;padding:20px 14px}.editor-panel{padding:26px 28px}.preview-panel{position:sticky;top:var(--app-topbar-height);height:calc(100dvh - var(--app-topbar-height) - 76px);padding:16px;background:var(--ui-surface-muted,var(--color-bg-subtle))}.panel-heading,.section-editor-heading,.preview-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.panel-heading h2,.editor-group h1,.editor-group h2{margin:0}.panel-heading span,.section-editor-heading span,.preview-heading span{color:var(--ui-text-muted,var(--color-text-muted));font-size:.82rem}.section-list{display:grid;gap:5px;margin:18px 0}.section-row{display:grid;grid-template-columns:minmax(0,1fr) auto;border-radius:var(--ui-radius-sm,8px)}.section-row.active{background:var(--ui-accent-soft,color-mix(in srgb,var(--ui-accent) 12%,transparent))}.section-select{display:grid;gap:2px;min-height:48px;padding:8px 10px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}.section-select span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}.section-select small{color:var(--ui-text-muted,var(--color-text-muted))}.row-tools{display:none;align-items:center}.section-row:hover .row-tools,.section-row:focus-within .row-tools{display:flex}.row-tools button,.add-section button,.history-panel button,.repeater-row>button{min-width:36px;min-height:36px;border:0;background:transparent;color:var(--ui-text-muted,var(--color-text-muted));cursor:pointer}.add-section{display:grid;gap:10px;padding-top:16px;border-top:1px solid var(--ui-border,var(--color-border));font-size:.85rem}.add-section>div{display:flex;flex-wrap:wrap;gap:4px}.add-section button{padding:0 9px;border:1px solid var(--ui-border,var(--color-border));border-radius:var(--ui-radius-sm,8px)}.history-panel{margin-top:20px;border-top:1px solid var(--ui-border,var(--color-border));padding-top:16px}.history-panel summary{cursor:pointer;font-weight:700}.history-panel button{display:block;width:100%;height:auto;padding:8px 0;text-align:left}.editor-group{display:grid;gap:14px;padding:0 0 26px;margin:0 0 26px;border-bottom:1px solid var(--ui-border,var(--color-border))}.editor-group label{display:grid;gap:7px;font-weight:700}.editor-group input,.editor-group textarea,.editor-group select{width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--ui-border-strong,var(--color-border));border-radius:var(--ui-radius-sm,8px);background:var(--ui-surface,var(--color-bg));color:var(--ui-text,var(--color-text));font:inherit}.editor-group textarea{resize:vertical}.image-field{display:grid;gap:10px}.image-field .button{justify-self:start}.field-note{margin:0;color:var(--ui-text-muted,var(--color-text-muted));font-size:.9rem}.repeater-row{display:grid;gap:10px;padding:14px 0;border-bottom:1px dashed var(--ui-border,var(--color-border))}.repeater-row.compact{grid-template-columns:1fr 1fr auto;align-items:end}.validation-panel{padding:15px;border:1px solid color-mix(in srgb,#b7791f 45%,var(--ui-border));border-radius:var(--ui-radius-sm,8px);background:color-mix(in srgb,#f6ad55 10%,var(--ui-surface));}.validation-panel ul{margin:8px 0 0;padding-left:20px}.message{min-height:1.4em}.message.error{color:#b42318}.preview-heading{height:42px}.preview-panel iframe,.preview-empty{width:100%;height:calc(100% - 42px);border:1px solid var(--ui-border,var(--color-border));border-radius:var(--ui-radius-md,10px);background:#fff}.preview-empty{display:grid;place-items:center;padding:20px;text-align:center;color:var(--ui-text-muted,var(--color-text-muted))}.loading-state{display:grid;place-items:center;min-height:60vh}.button:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--ui-accent,var(--color-accent));outline-offset:2px}@media(max-width:1180px){.builder-workspace{grid-template-columns:230px minmax(0,1fr)}.preview-panel{position:static;grid-column:1/-1;height:760px;border-top:1px solid var(--ui-border,var(--color-border))}}@media(max-width:760px){.builder-workspace{display:block}.outline-panel{position:static;max-height:none;min-height:0;border-right:0;border-bottom:1px solid var(--ui-border,var(--color-border))}.editor-panel{min-height:0;padding:22px 18px;border-right:0}.preview-panel{height:620px;padding:12px}.repeater-row.compact{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 .editor-group .checkbox-field{display:flex;align-items:center;gap:10px}.editor-group .checkbox-field input{width:20px;min-height:20px;margin:0}
 </style>

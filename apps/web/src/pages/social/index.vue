@@ -183,14 +183,16 @@ onMounted(async () => {
 
       <template v-else>
         <AppPageBar title="Social">
+          <template #leading>
+            <Button color="ghost" shape="soft" size="large" icon-only aria-label="New post" title="New post" @click="openComposer">
+              <UiIcon name="Plus" :size="20" />
+            </Button>
+          </template>
           <template #actions>
             <button type="button" class="social-accounts-button" aria-label="Social accounts" @click="accountsOpen = true">
               <SocialMarks v-if="connectedNetworks.length" :platforms="connectedNetworks" />
               <span v-else>Accounts</span>
             </button>
-            <Button color="ghost" shape="soft" size="compact" icon-only aria-label="New post" title="New post" @click="openComposer">
-              <UiIcon name="Plus" :size="19" />
-            </Button>
           </template>
         </AppPageBar>
 

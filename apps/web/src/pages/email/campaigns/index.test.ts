@@ -78,7 +78,7 @@ describe("Campaigns page", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
-    document.body.innerHTML = '<div id="app-page-controls"></div>';
+    document.body.innerHTML = '<div id="app-page-leading"></div><div id="app-page-controls"></div>';
     pluginEnabled = true;
     routeQuery = {};
     transport = {
@@ -146,7 +146,7 @@ describe("Campaigns page", () => {
     ]);
     const topBar = document.querySelector("#app-page-controls")!;
     expect(topBar.textContent).toContain("Campaigns");
-    expect(topBar.querySelector('[aria-label="New campaign"]')?.getAttribute("data-to")).toBe(
+    expect(document.querySelector('#app-page-leading [aria-label="New campaign"]')?.getAttribute("data-to")).toBe(
       "/email/campaigns/create",
     );
     wrapper.unmount();

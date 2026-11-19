@@ -98,10 +98,7 @@ watch(
   <AppLoadingBar />
   <div
     class="app-root"
-    :class="{
-      'app-root--shelled': showAppShell,
-      'app-root--no-wide-bar': showAppShell && route.meta.hideTopBarOnWide === true,
-    }"
+    :class="{ 'app-root--shelled': showAppShell }"
   >
     <GetTheAppBanner :enabled="showAppShell" />
     <AppTopBar v-if="showAppShell" />
@@ -134,17 +131,8 @@ watch(
   min-height: 100dvh;
   box-sizing: border-box;
   padding-top: var(--app-topbar-height);
-}
-
-/* Pages with their own navigation column (Email) drop the Back row on wide screens. */
-@media (min-width: 641px) {
-  .app-root--no-wide-bar {
-    --app-topbar-height: 0px;
-  }
-
-  .app-root--no-wide-bar .app-top-bar {
-    display: none;
-  }
+  /* Pages with a finishing-actions footer (AppPageFooter) set this. */
+  padding-bottom: var(--app-page-footer-height, 0px);
 }
 
 .remote-dev-banner {

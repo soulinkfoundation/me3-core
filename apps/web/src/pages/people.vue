@@ -221,7 +221,7 @@ watch(filter, () => { now.value = Date.now(); });
 <template>
   <main class="people-page">
     <AppPageBar title="People">
-      <template #actions>
+      <template #leading>
         <button type="button" class="people-add" aria-label="Add someone" title="Add someone" @click="openAdd">
           <UiIcon name="Plus" :size="22" aria-hidden="true" />
         </button>

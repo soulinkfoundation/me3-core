@@ -34,8 +34,6 @@ import type { PluginsResponse } from "../../../utils/plugins";
 definePage({
   meta: {
     requiresAuth: true,
-    // Email hides the top bar on wide screens; Campaigns is its own destination and keeps it (with Home).
-    hideTopBarOnWide: false,
     title: "Campaigns | ME3",
     description: "Write, approve and send emails to your subscribers.",
     robots: "noindex,follow",
@@ -230,26 +228,23 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="campaigns-page">
-    <!-- Same pattern as Tasks: the title and the add button live in the app top bar. -->
+    <!-- One header row: New campaign on the left, the title centred, the app X back to Email. -->
+    <Teleport to="#app-page-leading" defer>
+      <Button
+        v-if="available && !loading"
+        color="ghost"
+        shape="soft"
+        size="compact"
+        icon-only
+        to="/email/campaigns/create"
+        aria-label="New campaign"
+        title="New campaign"
+      >
+        <UiIcon name="Plus" :size="20" />
+      </Button>
+    </Teleport>
     <Teleport to="#app-page-controls" defer>
-      <header class="campaigns-topbar">
-        <div aria-hidden="true" />
-        <p class="campaigns-topbar__title">Campaigns</p>
-        <div class="campaigns-topbar__actions">
-          <Button
-            v-if="available && !loading"
-            color="ghost"
-            shape="soft"
-            size="compact"
-            icon-only
-            to="/email/campaigns/create"
-            aria-label="New campaign"
-            title="New campaign"
-          >
-            <UiIcon name="Plus" :size="19" />
-          </Button>
-        </div>
-      </header>
+      <p class="campaigns-topbar__title">Campaigns</p>
     </Teleport>
     <div class="campaigns-column">
       <PageLoading v-if="loading" label="Loading campaigns…" />
@@ -412,9 +407,7 @@ onBeforeUnmount(() => {
 /* Own destination: plain page flow so the app scrolls it at every size (no Email shell, no fixed height). */
 .campaigns-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
 .campaigns-column { box-sizing: border-box; width: min(100%, 560px); margin: 0 auto; padding: 18px 16px 96px; }
-.campaigns-topbar { display: grid; grid-template-columns: 80px minmax(0, 1fr) 80px; align-items: center; width: 100%; }
-.campaigns-topbar__title { margin: 0; justify-self: center; color: var(--ui-text); font-size: 15px; font-weight: 750; }
-.campaigns-topbar__actions { display: flex; gap: 4px; justify-self: end; }
+.campaigns-topbar__title { margin: 0; color: var(--ui-text); font-size: 16px; font-weight: 700; }
 /* Tabs match Tasks: full width, counts beside the labels, the selected one raised. */
 .campaigns-switch { display: grid; grid-template-columns: repeat(2, 1fr); padding: 3px; border-radius: 999px; background: var(--ui-surface-muted); }
 .campaigns-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 38px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--ui-text-muted); font: inherit; font-size: 14px; cursor: pointer; }

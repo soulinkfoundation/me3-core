@@ -197,7 +197,6 @@ const breadcrumbs = computed(() => {
   }
   return trail;
 });
-const parentFolderName = computed(() => breadcrumbs.value.at(-2)?.name || "Files");
 const dialogItem = computed(() =>
   dialogItems.value.length === 1 ? dialogItems.value[0] || null : null,
 );
@@ -892,52 +891,23 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
 
 <template>
   <main class="files-page">
-    <Teleport
-      v-if="r2Available"
-      to="#app-page-controls"
-      defer
-    >
-      <div class="files-mobile-controls">
-        <form class="files-search" role="search" @submit.prevent="loadItems">
-          <UiIcon name="Search" :size="16" aria-hidden="true" />
-          <label class="sr-only" for="files-search-input">Search files</label>
-          <input
-            id="files-search-input"
-            v-model="searchQuery"
-            type="search"
-            placeholder="Search"
-          />
-        </form>
-
+    <AppPageBar title="Files">
+      <template v-if="r2Available" #leading>
         <Button
-          color="outline"
+          color="ghost"
           shape="soft"
-          size="compact"
+          size="large"
+          icon-only
           type="button"
-          aria-label="New folder"
-          @click="openNewFolderDialog"
-        >
-          <template #icon>
-            <UiIcon name="Folder" :size="15" aria-hidden="true" />
-          </template>
-          <span class="files-control-label">New folder</span>
-        </Button>
-
-        <Button
-          color="primary"
-          shape="soft"
-          size="compact"
-          type="button"
+          :aria-label="uploadBusy ? 'Uploading' : 'Upload files'"
+          :title="uploadBusy ? 'Uploading' : 'Upload files'"
           :disabled="uploadBusy"
           @click="triggerUpload"
         >
-          <template #icon>
-            <UiIcon name="Upload" :size="15" aria-hidden="true" />
-          </template>
-          {{ uploadBusy ? "Uploading" : "Upload" }}
+          <UiIcon name="Upload" :size="20" aria-hidden="true" />
         </Button>
-      </div>
-    </Teleport>
+      </template>
+    </AppPageBar>
 
     <input
       ref="uploadInput"
@@ -950,7 +920,6 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
     <PageLoading v-if="loading" label="Loading files..." />
 
     <section v-else-if="!r2Available" class="files-empty-setup">
-      <AppPageBar title="Files" />
       <div class="files-empty-setup__icon" aria-hidden="true">📂</div>
       <h1>Files need storage</h1>
       <Button color="primary" shape="soft" size="medium" to="/account?section=storage">
@@ -1014,6 +983,31 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
         </aside>
 
         <section class="files-list-panel" aria-label="Current folder">
+          <div class="files-tools">
+            <form class="files-search" role="search" @submit.prevent="loadItems">
+              <UiIcon name="Search" :size="16" aria-hidden="true" />
+              <label class="sr-only" for="files-search-input">Search files</label>
+              <input
+                id="files-search-input"
+                v-model="searchQuery"
+                type="search"
+                placeholder="Search"
+              />
+            </form>
+            <Button
+              color="outline"
+              shape="soft"
+              size="compact"
+              type="button"
+              aria-label="New folder"
+              @click="openNewFolderDialog"
+            >
+              <template #icon>
+                <UiIcon name="FolderPlus" :size="15" aria-hidden="true" />
+              </template>
+              <span class="files-control-label">New folder</span>
+            </Button>
+          </div>
           <div v-if="checkedCount > 0" class="files-list-controls files-selection-bar">
             <div class="files-path">
               <button
@@ -1067,16 +1061,6 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
 
           <div v-else class="files-list-controls">
             <div class="files-path">
-              <button
-                v-if="currentFolderId"
-                type="button"
-                class="files-icon-button"
-                :aria-label="`Back to ${parentFolderName}`"
-                :title="`Back to ${parentFolderName}`"
-                @click="goUp"
-              >
-                <UiIcon name="ArrowLeft" :size="16" aria-hidden="true" />
-              </button>
               <nav class="files-breadcrumbs" aria-label="Folder path">
                 <ol>
                   <li>
@@ -1319,11 +1303,11 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
               <button
                 type="button"
                 class="files-icon-button files-preview__back"
-                aria-label="Back to files"
-                title="Back to files"
+                aria-label="Close file details"
+                title="Close file details"
                 @click="closePreview"
               >
-                <UiIcon name="ArrowLeft" :size="16" aria-hidden="true" />
+                <UiIcon name="X" :size="16" aria-hidden="true" />
               </button>
               <div class="files-preview__title">
                 <UiIcon :name="itemIcon(selectedItem)" :size="20" aria-hidden="true" />
@@ -1585,20 +1569,25 @@ function apiErrorMessage(errorValue: unknown, fallback: string): string {
   overflow: hidden;
 }
 
-.files-mobile-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+/* Search and New folder sit at the top of the list, not in the header. */
+.files-tools {
+  display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
+  gap: 8px;
+  padding: 10px 14px 0;
+}
+
+.files-tools :deep(.me3-btn) {
+  min-height: 44px;
 }
 
 .files-search {
   display: flex;
   align-items: center;
   gap: 7px;
-  width: 100%;
-  height: 36px;
+  flex: 1;
+  min-width: 0;
+  height: 44px;
   padding: 0 10px;
   border: 1px solid var(--ui-border, var(--color-border));
   border-radius: var(--ui-radius-sm, 6px);

@@ -485,32 +485,24 @@ watch(snapshots, persistState, { deep: true });
     :aria-labelledby="props.labelledBy || 'life-wheel-title'"
   >
     <AppPageBar title="Wheel of Life" :title-id="props.labelledBy ? undefined : 'life-wheel-title'">
+      <template #leading>
+        <Button color="ghost" shape="soft" size="large" icon-only type="button"
+          aria-label="Edit wheel segments"
+          title="Edit wheel segments"
+          @click="editModalOpen = true"
+        >
+          <UiIcon name="Pencil" :size="20" />
+        </Button>
+      </template>
       <template #actions>
-        <div class="life-wheel__actions" aria-label="Wheel of Life actions">
-          <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-            :disabled="!historyAvailable"
-            aria-label="View snapshot history"
-            title="View snapshot history"
-            @click="historyModalOpen = true"
-          >
-            <UiIcon name="History" :size="18" />
-          </Button>
-          <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-            aria-label="Edit wheel segments"
-            title="Edit wheel segments"
-            @click="editModalOpen = true"
-          >
-            <UiIcon name="Pencil" :size="18" />
-          </Button>
-          <Button color="ghost" shape="soft" size="compact" icon-only type="button"
-            :disabled="!allSegmentsScored || saving"
-            aria-label="Save snapshot"
-            :title="saving ? 'Saving snapshot' : 'Save snapshot'"
-            @click="openSaveModal"
-          >
-            <UiIcon name="Save" :size="18" />
-          </Button>
-        </div>
+        <Button color="ghost" shape="soft" size="large" icon-only type="button"
+          :disabled="!historyAvailable"
+          aria-label="View snapshot history"
+          title="View snapshot history"
+          @click="historyModalOpen = true"
+        >
+          <UiIcon name="History" :size="20" />
+        </Button>
       </template>
     </AppPageBar>
 
@@ -522,6 +514,15 @@ watch(snapshots, persistState, { deep: true });
           @update:segment-value="setSegmentValue"
         />
 
+        <div class="life-wheel__stage-foot">
+          <Button color="primary" size="medium" type="button"
+            :disabled="!allSegmentsScored || saving"
+            @click="openSaveModal"
+          >
+            <UiIcon name="Save" :size="16" aria-hidden="true" />
+            {{ saving ? "Saving snapshot" : "Save snapshot" }}
+          </Button>
+        </div>
         <p v-if="latestSnapshot" class="life-wheel__latest">
           Last saved {{ formatSnapshotDate(latestSnapshot.createdAt) }}
         </p>
@@ -816,7 +817,6 @@ watch(snapshots, persistState, { deep: true });
   line-height: 1.35;
 }
 
-.life-wheel__actions,
 .life-wheel__panel-header,
 .life-wheel__segment-editor-top,
 .life-wheel__score-row,
@@ -825,11 +825,6 @@ watch(snapshots, persistState, { deep: true });
 .life-wheel-history__item header {
   display: flex;
   align-items: center;
-}
-
-.life-wheel__actions {
-  display: flex;
-  gap: 2px;
 }
 
 .life-wheel__icon-button,
@@ -1050,6 +1045,12 @@ watch(snapshots, persistState, { deep: true });
 
 .life-wheel__latest {
   text-align: center;
+}
+
+.life-wheel__stage-foot {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
 }
 
 .life-wheel__panel {

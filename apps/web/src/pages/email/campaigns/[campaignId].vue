@@ -23,9 +23,7 @@ import {
 definePage({
   meta: {
     requiresAuth: true,
-    // Email hides the top bar on wide screens; Campaigns is its own destination and keeps it (with Home).
-    hideTopBarOnWide: false,
-    // The top-bar arrow is this page's only back control.
+    // The top bar's X returns to the list.
     back: { to: "/email/campaigns", label: "Campaigns" },
     title: "Campaign | ME3",
     description: "A campaign and how it went.",
@@ -183,6 +181,7 @@ onMounted(() => void load());
 
 <template>
   <main class="campaign-page">
+    <Teleport to="#app-page-controls" defer><p class="campaign-topbar-title">Campaign</p></Teleport>
     <div class="campaign-column">
       <PageLoading v-if="loading" label="Loading campaign…" />
       <section v-else-if="!campaign" class="campaign-missing">
@@ -289,6 +288,7 @@ onMounted(() => void load());
 </template>
 
 <style scoped>
+.campaign-topbar-title { margin: 0; color: var(--ui-text); font-size: 16px; font-weight: 700; }
 .campaign-page { min-height: calc(100dvh - var(--app-topbar-height)); background: var(--ui-bg); color: var(--ui-text); }
 .campaign-column { box-sizing: border-box; width: min(100%, 560px); margin: 0 auto; padding: 8px 16px 96px; }
 .campaign-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 8px; }

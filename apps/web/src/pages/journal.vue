@@ -1179,13 +1179,37 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="journal">
+    <Teleport to="#app-page-leading" defer>
+      <Button color="ghost" shape="soft" size="large" icon-only type="button" aria-label="New note" title="New note" @click="createArticle()">
+        <UiIcon name="Plus" :size="20" aria-hidden="true" />
+      </Button>
+    </Teleport>
     <Teleport to="#app-page-controls" defer>
     <header class="journal__topbar">
       <div class="journal__tabs" role="group" aria-label="Journal">
         <button type="button" :aria-pressed="notesView ? 'true' : 'false'" @click="showNotes">Notes</button>
         <button type="button" :aria-pressed="!notesView && currentDateIsToday ? 'true' : 'false'" @click="showToday">Today</button>
       </div>
-      <div v-if="currentArticle" class="journal__day-switcher journal__note-location" @click.stop>
+      <div v-if="!currentArticle && !notesView && !currentDateIsToday" class="journal__day-switcher">
+        <strong class="journal__day-label">{{ selectedDateLabel }}</strong>
+      </div>
+    </header>
+    </Teleport>
+
+    <div class="journal__bar">
+      <Button
+        class="journal__library-toggle"
+        color="ghost"
+        shape="soft"
+        size="compact"
+        type="button"
+        :aria-pressed="libraryOpen ? 'true' : 'false'"
+        @click="toggleLibrary"
+      >
+        <UiIcon name="BookOpen" :size="18" aria-hidden="true" />
+        <span>{{ libraryOpen ? "Hide library" : "Library" }}</span>
+      </Button>
+      <div v-if="currentArticle" class="journal__note-location" @click.stop>
         <button
           type="button"
           class="journal__note-location-button"
@@ -1208,27 +1232,7 @@ onBeforeUnmount(() => {
           @new-folder="createFolder"
         />
       </div>
-      <div v-else-if="!notesView && !currentDateIsToday" class="journal__day-switcher">
-        <strong class="journal__day-label">{{ selectedDateLabel }}</strong>
-      </div>
-      <span v-else aria-hidden="true" />
-      <div class="journal__topbar-end">
-        <Button
-          color="ghost"
-          shape="soft"
-          size="compact"
-          icon-only
-          type="button"
-          :aria-pressed="libraryOpen ? 'true' : 'false'"
-          :aria-label="libraryOpen ? 'Hide library' : 'Show library'"
-          :title="libraryOpen ? 'Hide library' : 'Library'"
-          @click="toggleLibrary"
-        >
-          <UiIcon name="BookOpen" :size="18" aria-hidden="true" />
-        </Button>
-      </div>
-    </header>
-    </Teleport>
+    </div>
 
     <div
       class="journal__workspace"
@@ -1562,16 +1566,32 @@ onBeforeUnmount(() => {
 
 /* Lives in the app top bar, so the page has no second header row. */
 .journal__topbar {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
-  gap: 16px;
-  width: 100%;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-.journal__topbar-end {
+/* Library toggle and the open note's location: page content, not header. */
+.journal__bar {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: min(100%, 980px);
+  min-height: 44px;
+  margin: 0 auto;
+  padding: 4px 24px;
+  box-sizing: border-box;
+}
+
+.journal__library-toggle {
+  min-height: 44px;
+}
+
+.journal__note-location {
+  position: relative;
   min-width: 0;
 }
 
@@ -1654,10 +1674,10 @@ onBeforeUnmount(() => {
   }
 }
 
-/* Quiet text buttons beside the back arrow; the shown list's button is filled. */
+/* Quiet text buttons; the shown list's button is filled. */
 .journal__tabs { display: inline-flex; align-items: center; gap: 2px; justify-self: start; }
 .journal__tabs button {
-  min-height: 34px; border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 0 10px;
+  min-height: 44px; border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 0 10px;
   background: transparent; color: var(--ui-text-muted, var(--color-text-muted));
   font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
 }
@@ -1747,15 +1767,15 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   max-width: min(420px, 50vw);
-  min-height: 36px;
+  min-height: 44px;
   border: 0;
   border-radius: var(--ui-radius-sm, 8px);
   padding: 0 10px;
   background: transparent;
   color: var(--ui-text, var(--color-text));
   font: inherit;
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -1777,8 +1797,7 @@ onBeforeUnmount(() => {
 
 .journal__note-location-menu {
   top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+  right: 0;
 }
 
 .journal__empty,
@@ -2195,13 +2214,8 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
-  .journal__topbar {
-    grid-template-columns: auto 1fr auto;
-    gap: 8px;
-  }
-
-  .journal__day-switcher {
-    justify-self: end;
+  .journal__bar {
+    padding-inline: 14px;
   }
 
   .journal__workspace,

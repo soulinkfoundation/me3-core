@@ -2349,11 +2349,15 @@ onBeforeUnmount(() => {
           v{{ coreGithubInstalledVersion }}
         </span>
       </template>
-      <template #actions>
+    </AppPageBar>
+
+    <main class="main">
+      <div class="account-theme-row">
+        <span id="account-theme-label" class="account-theme-row__label">Theme</span>
         <div
           class="theme-segmented account-theme-switch"
           role="radiogroup"
-          aria-label="Interface theme"
+          aria-labelledby="account-theme-label"
         >
           <button
             v-for="option in themeOptions"
@@ -2373,10 +2377,7 @@ onBeforeUnmount(() => {
             <UiIcon :name="option.icon" :size="16" aria-hidden="true" />
           </button>
         </div>
-      </template>
-    </AppPageBar>
-
-    <main class="main">
+      </div>
 
       <PageLoading v-if="loading" label="Loading account..." />
 
@@ -4382,8 +4383,29 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.account-theme-row {
+  order: -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  margin-bottom: 12px;
+}
+
+.account-theme-row__label {
+  color: var(--ui-text, var(--color-text));
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .account-theme-switch {
   flex: 0 0 auto;
+}
+
+.account-theme-switch .theme-segmented__option {
+  width: 44px;
+  height: 38px;
 }
 
 .primary-section {

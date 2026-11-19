@@ -8,6 +8,7 @@ import {
 } from "../stores/wizard";
 import { useSitesStore } from "../stores/sites";
 import { usePublish } from "../composables/usePublish";
+import { useTopBarClose } from "../composables/useTopBar";
 import AppPageBar from "../components/AppPageBar.vue";
 import GeneratedSitePreview from "../components/GeneratedSitePreview.vue";
 import PageLoading from "../components/PageLoading.vue";
@@ -39,7 +40,6 @@ definePage({
     description:
       "Create your me3 site in minutes with the step-by-step wizard.",
     robots: "noindex,follow",
-    hideBack: true,
   },
 });
 
@@ -219,6 +219,7 @@ function exitWizardDestination(): string {
 function handleExit() {
   router.push(exitWizardDestination());
 }
+useTopBarClose(handleExit);
 
 function handleIntroGetStarted() {
   showIntroScreen.value = false;
@@ -350,13 +351,12 @@ watch(
   <PageLoading v-if="isOpeningWizard" label="Opening your website..." />
   <div v-else class="wizard-page">
     <template v-if="!showIntroScreen">
-      <!-- Step selector and preview sit in the app top bar, beside Home, instead of a second header row. -->
+      <!-- Preview on the left, the step picker centred; the app top bar's X closes the editor. -->
+      <Teleport to="#app-page-leading" defer>
+        <Button color="ghost" size="large" icon-only class="wizard-icon-button" aria-label="Preview your site" @click="previewOpen = true"><UiIcon name="Eye" :size="20" /></Button>
+      </Teleport>
       <Teleport to="#app-page-controls" defer>
-        <div class="wizard-topbar">
-          <Button color="ghost" size="large" icon-only class="wizard-icon-button" aria-label="Preview your site" @click="previewOpen = true"><UiIcon name="Eye" :size="20" /></Button>
-          <button type="button" class="wizard-step-button" :aria-label="`Step ${wizard.currentStep} of ${wizard.totalSteps}: ${wizard.currentStepName}. Show all steps`" aria-haspopup="dialog" :aria-expanded="stepsOpen" @click="stepsOpen = true"><span class="step-count">{{ wizard.currentStep }}<span>/</span>{{ wizard.totalSteps }}</span><span class="step-name">{{ wizard.currentStepName }}<UiIcon name="ChevronDown" :size="15" /></span></button>
-          <Button color="ghost" size="large" icon-only class="wizard-icon-button" aria-label="Close the editor" @click="handleExit"><UiIcon name="X" :size="22" /></Button>
-        </div>
+        <button type="button" class="wizard-step-button" :aria-label="`Step ${wizard.currentStep} of ${wizard.totalSteps}: ${wizard.currentStepName}. Show all steps`" aria-haspopup="dialog" :aria-expanded="stepsOpen" @click="stepsOpen = true"><span class="step-count">{{ wizard.currentStep }}<span>/</span>{{ wizard.totalSteps }}</span><span class="step-name">{{ wizard.currentStepName }}<UiIcon name="ChevronDown" :size="15" /></span></button>
       </Teleport>
       <section v-if="published" class="wizard-live" role="status" aria-label="Published">
         <UiIcon name="CircleCheck" :size="22" class="wizard-live__check" aria-hidden="true" />
@@ -431,8 +431,6 @@ watch(
 
 <style scoped>
 .wizard-page { min-height: calc(100dvh - var(--app-topbar-height)); padding-bottom: 48px; box-sizing: border-box; }
-.wizard-topbar { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-.wizard-topbar .wizard-step-button { grid-column: 2; justify-self: center; }
 .wizard-icon-button { display: grid; place-items: center; flex: 0 0 auto; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; color: var(--ui-text); background: transparent; cursor: pointer; }
 .wizard-step-button { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 0; min-height: 44px; border: 0; background: transparent; color: var(--ui-text); font: inherit; cursor: pointer; }
 .step-count { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }.step-count span { margin: 0 3px; color: var(--ui-text-muted); font-weight: 400; }
@@ -480,7 +478,7 @@ button:disabled { opacity: .45; cursor: not-allowed; } button:focus-visible, a:f
   .wizard-main { grid-template-columns: minmax(0, 620px); margin: 18px auto; gap: 20px; padding: 0 16px; }
   /* Small screens open the preview from the top bar instead of squeezing it above the form. */
   .preview-panel { display: none; }
-  .wizard-topbar { grid-template-columns: minmax(0, 1fr) 44px; }.wizard-topbar .wizard-step-button { grid-column: 1; justify-content: flex-start; }    .step-nav { padding-top: 28px; }.nav-btn { padding: 0 20px; }
+  .step-nav { padding-top: 28px; }.nav-btn { padding: 0 20px; }
   .intro-panel { flex-direction: column; gap: 20px; }.intro-image { width: min(100%, 320px); }.intro-copy h1 { font-size: 28px; }.wizard-intro { margin: 12px auto; padding: 16px; }
   .wizard-live { margin: 12px 16px 0; }.wizard-live__view { padding: 0 12px; }
 }
