@@ -39,6 +39,10 @@ export type PersonRow = {
   name: string;
   bio: string;
   location: string;
+  /** The town (or the location label when there is no town). */
+  place: string;
+  /** The free call and starting price, e.g. "Free 20-min call · from €55"; the first offer's title otherwise. */
+  offer: string;
   url: string;
   avatarUrl: string;
   self: boolean;
@@ -132,17 +136,46 @@ export function peopleRows(data: unknown): PersonRow[] {
     if (!name) return [];
     const offerings = Array.isArray(person.offerings) ? person.offerings.map(record) : [];
     const free = offerings.find(offering => typeof offering.durationMinutes === "number" && !record(offering.price).amount && text(offering.title));
+    const location = record(person.location);
+    const freeLine = free ? `Free ${free.durationMinutes}-min call` : "";
+    const offer = [freeLine, startingPrice(offerings)].filter(Boolean).join(" · ") || text(offerings[0]?.title);
     return [{
       key: text(person.profileId) || `${name}-${index}`,
       name,
       bio: plainBio(person.bio),
-      location: text(record(person.location).label),
+      location: text(location.label),
+      place: text(location.locality) || text(location.label),
+      offer,
       url: text(person.publicUrl) || text(person.profileUrl),
       avatarUrl: text(person.avatarUrl),
       self: person.self === true,
       freeCall: free ? { title: text(free.title) } : null,
     }];
   });
+}
+
+/** The lowest price in the first priced offer's currency: "from €55" when there are several, "€55" for one. */
+function startingPrice(offerings: Record<string, unknown>[]): string {
+  const prices = offerings.flatMap(offering => {
+    const price = record(offering.price);
+    const amount = Number(text(price.amount));
+    const currency = text(price.currency).toUpperCase();
+    return currency && Number.isFinite(amount) && text(price.amount) ? [{ amount, currency }] : [];
+  });
+  const currency = prices[0]?.currency;
+  if (!currency) return "";
+  const same = prices.filter(price => price.currency === currency);
+  const amount = Math.min(...same.map(price => price.amount));
+  return `${same.length > 1 ? "from " : ""}${formatMoney(amount, currency)}`;
+}
+
+function formatMoney(amount: number, currency: string): string {
+  const whole = Number.isInteger(amount);
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 }).format(amount);
+  } catch {
+    return `${whole ? amount : amount.toFixed(2)} ${currency}`;
+  }
 }
 
 export function initials(name: string): string {

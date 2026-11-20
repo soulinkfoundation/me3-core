@@ -158,7 +158,10 @@ test("first landing goes from the Build your website card to a published site an
   await expect(live).toHaveCount(0);
   const rows = page.getByTestId("people-results");
   await expect(rows.getByRole("listitem")).toHaveCount(2);
-  await expect(rows.getByRole("listitem").first()).toContainText("Maya Okafor · You");
+  await expect(rows.getByRole("listitem").first()).toContainText("Maya Okafor");
+  await expect(rows.getByRole("listitem").first().locator("small")).toHaveText("You");
+  await expect(rows.getByRole("listitem").nth(1)).toContainText("Free 20-min call");
+  await rows.screenshot({ path: testInfo.outputPath("people-cards.png") });
   await expect(rows).not.toContainText("**");
   await rows.getByRole("listitem").nth(1).getByRole("button", { name: "Book" }).click();
   await expect.poll(() => state.sent[2]).toBe("Book the Free 20-minute call with Kieran (stand-in) for me.");
