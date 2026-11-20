@@ -12,7 +12,7 @@ import { definePage } from "unplugin-vue-router/runtime";
 import { api, type ApiStreamEvent } from "../../api";
 import { EMPTY_CHAT_STARTERS, loadChatStarters, withConfigure, type ChatStarter, type ChatStarters } from "../../utils/chatStarters";
 import { useAuthStore } from "../../stores/auth";
-import { PEOPLE_SEARCH_TOOL, bookCallMessage, findPersonMessage, loadProfileSite, markFirstRunHandled, shouldStartFirstRun, peopleRows, showMeMessage, type PersonRow } from "../../utils/firstSite";
+import { PEOPLE_SEARCH_TOOL, bookCallMessage, findPersonMessage, isFirstRunHandled, loadProfileSite, markFirstRunHandled, shouldStartFirstRun, peopleRows, showMeMessage, type PersonRow } from "../../utils/firstSite";
 import SiteBuildAskCard from "../../components/first-site/SiteBuildAskCard.vue";
 import { useTourStore } from "../../stores/tour";
 import ChatFirstSite from "../../components/first-site/ChatFirstSite.vue";
@@ -318,6 +318,12 @@ const assistantSettings = ref<AssistantSettingsResponse>({
 const copiedMessageKey = ref<string | null>(null);
 const homePanels = ref<InstanceType<typeof HomePanels> | null>(null);
 const homeMode = ref(route.query.view === "home" || (!route.query.thread && !route.query.new && !route.query.prompt && !route.query.project && route.query.view !== "chat"));
+// A brand-new owner lands on Chat, which isn't known until their site and chat load. Until then, an owner this
+// browser hasn't settled yet sees neither Home nor Chat, so the page never switches tabs by itself.
+const landingPending = ref(
+  homeMode.value && route.query.view !== "home"
+    && !isFirstRunHandled(typeof window === "undefined" ? null : window.localStorage, useAuthStore().user?.id || ""),
+);
 useAgentChatPresence(assistantThreadId, computed(() => !homeMode.value));
 // Follow `view` when something else changes it while this page is open (the tour taking the owner to Chat).
 watch(() => route.query.view, view => {
@@ -516,17 +522,21 @@ async function readNews() {
 function homeAsk(text: string) { void submitAssistantText(text); }
 const lastUserMessageAt = computed(() => [...chatMessages.value].reverse().find(message => message.role === "user")?.createdAt ?? null);
 async function loadSiteStarter() {
+  try { await decideLanding(); } finally { landingPending.value = false; }
+}
+async function decideLanding() {
   let site: Awaited<ReturnType<typeof loadProfileSite>>;
   try { site = await loadProfileSite(api.get); } catch { return; }
   // First landing: Chat shows ME3's welcome and starters (from Core), including Show me around;
   // the Build your website card opens only when the owner picks Make my website. Only a new owner:
   // no bio yet and nothing ever said in Chat.
-  if (chatMessages.value.some(message => message.createdAt) || assistantHistoryHasMore.value) return;
   const ownerKey = useAuthStore().user?.id || "";
   const storage = typeof window === "undefined" ? null : window.localStorage;
-  if (!shouldStartFirstRun(storage, ownerKey, site?.bio)) return;
-  markFirstRunHandled(storage, ownerKey);
-  if (!routeQueryValue("prompt")) await showWorkspace(false);
+  const talkedBefore = chatMessages.value.some(message => message.createdAt) || assistantHistoryHasMore.value;
+  const firstRun = !talkedBefore && shouldStartFirstRun(storage, ownerKey, site?.bio);
+  // A returning owner is settled too, so this browser opens straight on Home from now on.
+  if (ownerKey) markFirstRunHandled(storage, ownerKey);
+  if (firstRun && !routeQueryValue("prompt")) await showWorkspace(false);
 }
 async function closeSiteAsk() {
   siteAskOpen.value = false;
@@ -2571,7 +2581,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
           :disabled="assistantSending"
           @start-fresh="startFresh"
         />
-        <div class="home-chat-switcher" role="group" aria-label="Workspace view">
+        <div class="home-chat-switcher" :class="{ 'is-pending': landingPending }" role="group" aria-label="Workspace view">
           <button type="button" :aria-pressed="homeMode" data-tour-target="home_tab" @click="showWorkspace(true)">Home</button>
           <button type="button" :aria-pressed="!homeMode" :data-tour-target="homeMode ? 'chat_tab' : undefined" @click="showWorkspace(false)">Chat</button>
         </div>
@@ -2584,9 +2594,10 @@ function messageFromUnknown(err: unknown, fallback: string) {
     >
     <main class="assistant-main" aria-label="Assistant console">
       <section class="assistant-console" aria-label="Assistant conversation">
-        <HomePanels v-if="!siteBuilderMode" v-show="homeMode" :active="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @ask="homeAsk" @approval-resolved="refreshAssistantAfterApproval" />
+        <PageLoading v-if="landingPending && !siteBuilderMode" label="Opening ME3..." />
+        <HomePanels v-if="!siteBuilderMode" v-show="homeMode && !landingPending" :active="homeMode" ref="homePanels" class="assistant-home" @pointerdown="dismissComposer" @touchmove.passive="dismissComposer" @suggest="homeSuggestion" @ask="homeAsk" @approval-resolved="refreshAssistantAfterApproval" />
         <div
-          v-show="!homeMode || siteBuilderMode"
+          v-show="siteBuilderMode || (!homeMode && !landingPending)"
           ref="assistantScrollerRef"
           class="assistant-timeline"
           aria-live="polite"
@@ -5507,6 +5518,7 @@ button:disabled {
 .home-chat-switcher button[aria-pressed="true"] { color: var(--ui-primary-contrast); background: var(--ui-primary); font-weight: 600; }
 /* Home scrolls with the window, so there is one scrollbar rather than a second one on the card list. */
 .assistant-home { margin-inline: -14px; align-content: start; box-sizing: border-box; }
+.home-chat-switcher.is-pending { visibility: hidden; }
 @media (max-width: 360px) { .home-chat-switcher { left: calc(50% + 8px); } .home-chat-switcher button { min-width: 52px; padding-inline: 10px; } }
 .home-chat-switcher button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .assistant-page:not(.assistant-page--site-builder) .assistant-timeline { padding-top: 18px; }

@@ -164,6 +164,11 @@ export function shouldStartFirstRun(storage: Pick<Storage, "getItem"> | null, ow
   if (!ownerKey || text(siteBio)) return false;
   try { return storage?.getItem(FIRST_RUN_KEY + ownerKey) !== "1"; } catch { return false; }
 }
+/** True once this browser has settled where the owner lands, so their first screen needs no wait. */
+export function isFirstRunHandled(storage: Pick<Storage, "getItem"> | null, ownerKey: string): boolean {
+  if (!ownerKey) return true;
+  try { return storage?.getItem(FIRST_RUN_KEY + ownerKey) === "1"; } catch { return true; }
+}
 export function markFirstRunHandled(storage: Pick<Storage, "setItem"> | null, ownerKey: string) {
   try { storage?.setItem(FIRST_RUN_KEY + ownerKey, "1"); } catch { /* private mode: it may show again */ }
 }
