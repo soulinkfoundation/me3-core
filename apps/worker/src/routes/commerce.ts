@@ -51,7 +51,8 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     const ownerId = await deps.requireOwner(c);
     if (!ownerId) return deps.unauthorized(c);
 
-    const settings = await getCommerceSettings(c.env, ownerId);
+    const country = (c.req.raw as Request & { cf?: { country?: unknown } }).cf?.country;
+    const settings = await getCommerceSettings(c.env, ownerId, { country: typeof country === "string" ? country : null });
     // Stripe onboarding finishes on Stripe's side; the first status read after it flips Enquire to Book or Buy.
     if (settings.stripe.connectionStatus !== "unavailable") queuePaymentRepublish(c, ownerId);
     return c.json({ ok: true, ...settings });

@@ -31,6 +31,8 @@ type CommerceSettingsRow = {
 export type CommerceSettingsResponse = {
   encryptionConfigured: boolean;
   defaultCurrency: string;
+  /** The owner's country from Cloudflare's request metadata, so setup forms can default to it. */
+  suggestedCountry: string | null;
   stripe: {
     configured: boolean;
     source: "environment" | "stored" | "managed" | "not_configured";
@@ -77,7 +79,9 @@ const DEFAULT_CURRENCY_REGEX = /^[A-Z]{3}$/;
 export async function getCommerceSettings(
   env: Env,
   ownerId: string,
+  options: { country?: string | null } = {},
 ): Promise<CommerceSettingsResponse> {
+  const country = normalizeCountry(options.country);
   const row = await getCommerceSettingsRow(env, ownerId);
   const envKey = normalizeSecret(env.STRIPE_SECRET_KEY);
   const hasEnvKey = Boolean(envKey);
@@ -107,7 +111,8 @@ export async function getCommerceSettings(
 
   return {
     encryptionConfigured: await hasInstallEncryptionKey(env),
-    defaultCurrency: await resolveDefaultCurrency(env, ownerId, row),
+    defaultCurrency: await resolveDefaultCurrency(env, ownerId, row, country),
+    suggestedCountry: country,
     stripe: {
       configured: mode === "managed" ? managedReady : directConfigured,
       source: mode === "managed"
@@ -444,12 +449,33 @@ async function resolveDefaultCurrency(
   env: Env,
   ownerId: string,
   row: CommerceSettingsRow | null,
+  country: string | null = null,
 ): Promise<string> {
   return (
     normalizeDefaultCurrency(row?.default_currency) ||
     inferDefaultCurrencyFromTimezone(await getOwnerTimezone(env, ownerId)) ||
+    inferDefaultCurrencyFromCountry(country) ||
     DEFAULT_COMMERCE_CURRENCY
   );
+}
+
+function normalizeCountry(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const country = value.trim().toUpperCase();
+  // Cloudflare reports "XX" when it cannot tell and "T1" for Tor.
+  return /^[A-Z]{2}$/.test(country) && country !== "XX" && country !== "T1" ? country : null;
+}
+
+const EURO_COUNTRIES = new Set([
+  "AT", "BE", "BG", "CY", "DE", "EE", "ES", "FI", "FR", "GR", "HR", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PT", "SI", "SK",
+]);
+const COUNTRY_CURRENCIES: Record<string, string> = {
+  GB: "GBP", CH: "CHF", US: "USD", CA: "CAD", AU: "AUD", NZ: "NZD", SG: "SGD", HK: "HKD", JP: "JPY", IN: "INR", PK: "PKR",
+};
+
+export function inferDefaultCurrencyFromCountry(country: string | null): string | null {
+  if (!country) return null;
+  return EURO_COUNTRIES.has(country) ? "EUR" : COUNTRY_CURRENCIES[country] || null;
 }
 
 async function getOwnerTimezone(env: Env, ownerId: string): Promise<string | null> {

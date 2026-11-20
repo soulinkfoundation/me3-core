@@ -650,6 +650,16 @@ describe("seller controls", () => {
     expect((await call(env, "/offerings")).status).toBe(200);
   });
 
+  // Failure mode: a new owner in Ireland, with no timezone saved yet, saw USD and a UK Stripe country.
+  it("defaults the currency and suggested country to where the owner is", async () => {
+    const { env } = fixture();
+    await env.DB.prepare("UPDATE owner_profile SET timezone = NULL").run().catch(() => undefined);
+    const settings = await getCommerceSettings(env, "owner", { country: "ie" });
+    expect(settings.suggestedCountry).toBe("IE");
+    expect(settings.defaultCurrency).toBe("EUR");
+    expect((await getCommerceSettings(env, "owner", { country: "XX" })).suggestedCountry).toBeNull();
+  });
+
   it("is on by default and saved through commerce settings", async () => {
     const { env } = fixture();
     expect((await getCommerceSettings(env, "owner")).agentCheckout).toEqual({ enabled: true });
