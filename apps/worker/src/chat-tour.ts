@@ -1,4 +1,6 @@
 import { getHomeLayout, type HomeLayout } from "./home-layout";
+import { readCachedManagedPlan } from "./managed-ai-billing";
+import { socialPlanAccess } from "./plan-features";
 import { isCorePluginEnabled } from "./plugins";
 import { siteFileContentToBytes } from "./sites";
 import type { Env } from "./types";
@@ -39,7 +41,7 @@ export type ChatTour = { steps: TourStep[]; progress: TourProgress };
 export type TourContext = {
   siteBuilt: boolean;
   layout: HomeLayout | null;
-  /** Steps whose plugin is on; a step for a plugin that's off is left out. */
+  /** Steps whose plugin is on; a step for a plugin that's off is left out. Social also needs Business or a trial. */
   accounts: boolean;
   social: boolean;
   /** Places the owner has opened during the tour. */
@@ -61,10 +63,8 @@ export function chatTour(context: TourContext): ChatTour {
   const steps: TourStep[] = [
     {
       id: "home", emoji: "🏠", title: "Home",
-      // On Chat it says what Home is; on Home, the one thing to do there.
-      body: homeDone
-        ? "That's your Home. Add or change cards any time with Add to Home."
-        : "Tap Add to Home and pick the cards you want to see each day. Inbox is a good one to start with.",
+      // On Chat it says what Home is; on Home, the one thing to do there. Adding a card moves the owner straight on.
+      body: "Tap Add to Home and pick the cards you want to see each day. Inbox is a good one to start with.",
       screen: "home", intro: "Home shows your day: what's on, plus cards for the things you use most. Tap Home to take a look.",
       targets: [{ id: "home_tab", hint: "Tap Home at the top." }, { id: "add_to_home", hint: "Now tap Add to Home and pick any card." }],
       task: null,
@@ -72,10 +72,8 @@ export function chatTour(context: TourContext): ChatTour {
     },
     {
       id: "email", emoji: "✉️", title: "ME3's own email",
-      // The Inbox card shows and copies the address, so the step only asks for the card.
-      body: inboxDone
-        ? "Like any good assistant, I have my own email. Forward me invoices and I'll log them in your Accounts. My address is on your Inbox card."
-        : "Like any good assistant, I have my own email. Forward me invoices and I'll log them in your Accounts. Add the Inbox card to Home to keep my address handy.",
+      // The Inbox card shows and copies the address; the targets lead to it.
+      body: "Like any good assistant, I have my own email. Forward me invoices and I'll log them in your Accounts.",
       screen: "home", intro: null,
       targets: [{ id: "home_tab", hint: "Go to Home." }, { id: "add_to_home", hint: "Tap Add to Home." }, { id: "add_inbox", hint: "Pick Inbox." }],
       task: null,
@@ -142,13 +140,20 @@ async function progressRow(env: Env, ownerId: string) {
     .bind(ownerId).first<{ status: string; step_id: string | null; seen_json: string }>();
 }
 
+/** Social is a Business feature: the tour shows it on Business (or self-hosted) and during a trial, when it's switched on. */
+async function socialInTour(env: Env): Promise<boolean> {
+  if (!(await isCorePluginEnabled(env, "me3.social-publishing"))) return false;
+  if ((await socialPlanAccess(env)) === "included") return true;
+  return (await readCachedManagedPlan(env).catch(() => null))?.source === "trial";
+}
+
 /** Each part is read on its own: one that fails falls back to its plainer step. */
 export async function loadChatTour(env: Env, ownerId: string): Promise<ChatTour> {
   const [siteBuilt, layout, accounts, social, row] = await Promise.all([
     profileSiteBuilt(env, ownerId).catch(() => true),
     getHomeLayout(env, ownerId).then(result => result.layout).catch(() => null),
     isCorePluginEnabled(env, "me3.accounts").catch(() => false),
-    isCorePluginEnabled(env, "me3.social-publishing").catch(() => false),
+    socialInTour(env).catch(() => false),
     progressRow(env, ownerId).catch(() => null),
   ]);
   const { progress, seen } = readProgress(row);
