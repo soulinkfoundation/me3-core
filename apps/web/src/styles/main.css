@@ -149,40 +149,6 @@ code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-/* Celebration Animation */
-.celebration-container {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  pointer-events: none;
-  z-index: 9999;
-  overflow: hidden;
-}
-
-.celebration-emoji {
-  position: absolute;
-  font-size: 32px;
-  animation: celebrate 1s ease-out forwards;
-  opacity: 0;
-}
-
-@keyframes celebrate {
-  0% {
-    opacity: 1;
-    transform: translate(0, 0) rotate(0deg) scale(0);
-  }
-  10% {
-    opacity: 1;
-    transform: translate(0, 0) rotate(0deg) scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: translate(var(--end-x), var(--end-y)) rotate(720deg) scale(0.5);
-  }
-}
-
 /* vue-sonner: match ME3 surfaces (no loud semantic fills) */
 [data-sonner-toaster][data-theme="light"],
 [data-sonner-toaster][data-theme="dark"] {

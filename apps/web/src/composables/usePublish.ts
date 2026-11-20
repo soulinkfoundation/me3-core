@@ -7,6 +7,7 @@ import { useSitesStore, type PublishManifest } from "../stores/sites";
 import { api } from "../api";
 import { payDirectlyReady, type PaymentMethod } from "../utils/payDirectly";
 import { resolvePublicSiteUrl } from "../utils/publicSiteUrl";
+import { launchConfetti } from "../utils/confetti";
 import {
   exportSiteContentToMarkdown,
   type ExportedSiteContentAsset,
@@ -120,43 +121,7 @@ export function usePublish() {
   );
 
   function triggerCelebration() {
-    const emojis = ["🎉", "🎊", "✨", "🌟", "💫", "🎈"];
-    const container = document.createElement("div");
-    container.className = "celebration-container";
-    document.body.appendChild(container);
-
-    // Create 50 emoji elements
-    for (let i = 0; i < 50; i++) {
-      const emoji = document.createElement("div");
-      emoji.className = "celebration-emoji";
-      emoji.textContent = emojis[Math.floor(Math.random() * emojis.length)];
-
-      // Random starting position near center
-      const startX = window.innerWidth / 2 + (Math.random() - 0.5) * 100;
-      const startY = window.innerHeight / 2;
-
-      // Random end position
-      const endX = Math.random() * window.innerWidth;
-      const endY = Math.random() * window.innerHeight;
-
-      // Random animation duration and delay
-      const duration = 1.5 + Math.random() * 1;
-      const delay = Math.random() * 0.3;
-
-      emoji.style.left = `${startX}px`;
-      emoji.style.top = `${startY}px`;
-      emoji.style.setProperty("--end-x", `${endX - startX}px`);
-      emoji.style.setProperty("--end-y", `${endY - startY}px`);
-      emoji.style.animationDuration = `${duration}s`;
-      emoji.style.animationDelay = `${delay}s`;
-
-      container.appendChild(emoji);
-    }
-
-    // Remove container after animation completes
-    setTimeout(() => {
-      container.remove();
-    }, 3000);
+    launchConfetti();
   }
 
   async function publish(

@@ -8,6 +8,7 @@ import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import { useAppToast } from "../../composables/useAppToast";
 import type { SiteDraftView } from "../../utils/firstSite";
+import { launchConfetti } from "../../utils/confetti";
 
 /**
  * The first site draft (core_sites_starter_draft approval): the real renderer's preview of the
@@ -67,6 +68,7 @@ async function decide(decision: "approved" | "declined") {
   busy.value = decision;
   try {
     await api.post(`/assistant/approvals/${encodeURIComponent(props.draft.approvalId)}`, { decision });
+    if (decision === "approved") launchConfetti();
     emit("resolved", decision);
   } catch (error) {
     // Never resend on its own: the next load shows whether it went through.

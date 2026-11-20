@@ -873,11 +873,16 @@ const managedStripeDescription = computed(() => {
   return "Connect Stripe to take card payments. Until then, card offers on your site show Enquire.";
 });
 
+/** Stripe only uses the business country when it first creates the account ("onboard"). */
+const managedStripeOnboardingMode = computed<"onboard" | "refresh">(() =>
+  commerceSettings.value?.stripe.connected ? "refresh" : "onboard",
+);
+
 const managedStripeActionLabel = computed(() => {
-  const status = commerceSettings.value?.stripe.connectionStatus;
   if (commerceConnecting.value) return "Opening Stripe...";
-  if (status === "pending" || status === "restricted") return "Continue Stripe setup";
-  return "Connect Stripe";
+  return managedStripeOnboardingMode.value === "refresh"
+    ? "Continue Stripe setup"
+    : "Connect Stripe";
 });
 
 const me3ConnectionStatusLabel = computed(() => {
@@ -3847,7 +3852,25 @@ onBeforeUnmount(() => {
                       <h3>Stripe payments</h3>
                       <p>{{ managedStripeDescription }}</p>
                     </div>
-                    <StatusBadge :tone="managedStripeStatusTone">
+                    <!-- Until Stripe is ready, the status's place holds the next step; the status stays readable to screen readers. -->
+                    <template
+                      v-if="commerceSettings.stripe.connectionStatus !== 'active'"
+                    >
+                      <span id="managed-stripe-status" class="sr-only">
+                        {{ managedStripeStatusLabel }}
+                      </span>
+                      <Button
+                        color="primary"
+                        size="compact"
+                        type="button"
+                        aria-describedby="managed-stripe-status"
+                        :disabled="commerceConnecting"
+                        @click="startManagedStripeOnboarding(managedStripeOnboardingMode)"
+                      >
+                        {{ managedStripeActionLabel }}
+                      </Button>
+                    </template>
+                    <StatusBadge v-else :tone="managedStripeStatusTone">
                       {{ managedStripeStatusLabel }}
                     </StatusBadge>
                   </div>
@@ -3862,9 +3885,15 @@ onBeforeUnmount(() => {
                     still {{ commerceSettings.stripe.requirementsDue.length === 1 ? "needs" : "need" }} attention.
                   </p>
 
-                  <div class="managed-stripe-panel__actions">
+                  <div
+                    v-if="
+                      managedStripeOnboardingMode !== 'refresh' ||
+                      commerceSettings.stripe.connectionStatus === 'active'
+                    "
+                    class="managed-stripe-panel__actions"
+                  >
                     <label
-                      v-if="!commerceSettings.stripe.connected"
+                      v-if="managedStripeOnboardingMode !== 'refresh'"
                       class="field managed-stripe-panel__country"
                       for="stripe-connect-country"
                     >
@@ -3883,17 +3912,6 @@ onBeforeUnmount(() => {
                         </option>
                       </select>
                     </label>
-
-                    <Button
-                      v-if="commerceSettings.stripe.connectionStatus !== 'active'"
-                      color="primary"
-                      size="compact"
-                      type="button"
-                      :disabled="commerceConnecting"
-                      @click="startManagedStripeOnboarding(commerceSettings.stripe.connected ? 'refresh' : 'onboard')"
-                    >
-                      {{ managedStripeActionLabel }}
-                    </Button>
 
                     <Button
                       v-if="
