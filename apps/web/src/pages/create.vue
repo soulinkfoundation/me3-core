@@ -431,7 +431,6 @@ watch(
         </div>
         <a v-if="siteIsPublic" class="wizard-live__view" :href="publishedSiteUrl" target="_blank" rel="noopener noreferrer"><UiIcon name="ExternalLink" :size="16" />View site</a>
       </section>
-      <p v-if="publishProgress" class="wizard-publish-status" role="status">{{ publishProgress }}</p>
       <p v-if="publishNeedsStorage" class="wizard-publish-error" role="alert">{{ publishError }}<RouterLink to="/settings?section=storage">Activate storage</RouterLink></p>
     </template>
     <AppPageBar v-if="showIntroScreen" title="Website" />
@@ -469,10 +468,12 @@ watch(
         <nav v-if="!isEditingPage" class="step-nav" aria-label="Step navigation">
           <Button class="nav-btn back" color="secondary" size="large" :disabled="isPublishing" @click="handleBack">{{ wizard.currentStep === 1 ? 'Cancel' : 'Back' }}</Button>
           <div class="step-nav__right">
-            <Button v-if="wizard.needsPublish || wizard.currentStep >= wizard.totalSteps" class="nav-btn publish" color="primary" size="large" :disabled="isPublishing || wizard.isCheckingUsername" @click="handlePublish">{{ isPublishing ? 'Publishing…' : 'Publish' }}</Button>
+            <Button v-if="wizard.needsPublish || wizard.currentStep >= wizard.totalSteps" class="nav-btn publish" color="primary" size="large" :disabled="isPublishing || wizard.isCheckingUsername" :aria-busy="isPublishing" @click="handlePublish"><span v-if="isPublishing" class="wizard-spinner" aria-hidden="true" />{{ isPublishing ? 'Publishing…' : 'Publish' }}</Button>
             <Button v-if="wizard.currentStep < wizard.totalSteps" class="nav-btn next" color="neutral" size="large" :disabled="!wizard.canProceed || isPublishing" @click="handleNext">Next</Button>
           </div>
         </nav>
+        <!-- Upload detail sits quietly under the Publish button, where the owner is looking. -->
+        <p v-if="!isEditingPage && publishProgress" class="wizard-publish-status" role="status">{{ publishProgress.replace(/(\.\.\.|…)$/, '') }}</p>
       </div>
       <aside v-if="showPreview" class="preview-panel" aria-label="Live site preview">
         <div class="wizard-preview-label"><UiIcon name="Eye" :size="15" />Live preview<button type="button" @click="previewOpen = true">Expand</button></div>
@@ -543,7 +544,8 @@ watch(
 .step-nav__right { display: flex; align-items: center; gap: 12px; }
 .nav-btn { min-height: 48px; padding: 0 28px; font: 600 15px var(--font-sans); }
 button:disabled { opacity: .45; cursor: not-allowed; } button:focus-visible, a:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
-.wizard-publish-error, .wizard-publish-status { max-width: 960px; margin: 16px auto; padding: 0 16px; font-size: 14px; }.wizard-publish-error { color: var(--ui-danger); }.wizard-publish-error a { display: block; color: inherit; }
+.wizard-publish-error { max-width: 960px; margin: 16px auto; padding: 0 16px; font-size: 14px; }.wizard-publish-status { margin: 10px 0 0; color: var(--ui-text-muted); font-size: 13px; text-align: right; }
+.wizard-spinner { display: inline-block; width: 14px; height: 14px; margin-right: 8px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -2px; animation: wizard-spin 0.8s linear infinite; }@keyframes wizard-spin { to { transform: rotate(360deg); } }@media (prefers-reduced-motion: reduce) { .wizard-spinner { animation-duration: 2.4s; } }.wizard-publish-error { color: var(--ui-danger); }.wizard-publish-error a { display: block; color: inherit; }
 .wizard-intro { max-width: 960px; margin: 40px auto; padding: 24px; }.intro-panel { display: flex; align-items: center; gap: 40px; }.intro-image { width: 42%; max-width: 360px; border-radius: 24px; }.intro-copy { flex: 1; }.intro-copy h1 { font-size: 32px; font-weight: 600; }.intro-copy p { color: var(--ui-text-muted); font-size: 16px; line-height: 1.5; }.intro-button { min-height: 48px; border: 0; border-radius: 24px; padding: 12px 24px; background: var(--ui-primary); color: var(--ui-primary-contrast); font: 600 16px var(--font-sans); cursor: pointer; }
 .wizard-dialog-panel { width: min(560px, 100%); margin: auto; padding: 20px; box-sizing: border-box; border-radius: 24px; background: var(--ui-surface); box-shadow: var(--ui-shadow-md); }
 .wizard-dialog-panel header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }.wizard-dialog-panel h2 { flex: 1; margin: 0; font-size: 20px; font-weight: 600; }

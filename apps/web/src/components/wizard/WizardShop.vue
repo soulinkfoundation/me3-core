@@ -445,6 +445,9 @@ defineExpose({
 
 <template>
   <div class="step-shop">
+    <button v-if="isEditingProduct" type="button" class="editor-back-btn" @click="closeEditor">
+      <UiIcon name="ArrowLeft" :size="16" aria-hidden="true" />Back to offerings
+    </button>
     <GettingPaidRow step="shop" />
     <h2>Products</h2>
 
@@ -452,15 +455,17 @@ defineExpose({
       <label class="shop-menu-title-label" for="shop-menu-title-input">
         Main menu title
       </label>
-      <input
-        id="shop-menu-title-input"
-        v-model="shopTitle"
-        type="text"
-        class="shop-menu-title-input"
-        placeholder="Products"
-        maxlength="40"
-      />
-      <p class="shop-menu-title-hint">URL path: /{{ wizard.shopPath }}</p>
+      <div class="shop-menu-title-row">
+        <input
+          id="shop-menu-title-input"
+          v-model="shopTitle"
+          type="text"
+          class="shop-menu-title-input"
+          placeholder="Products"
+          maxlength="40"
+        />
+        <span class="shop-menu-title-hint">/{{ wizard.shopPath }}</span>
+      </div>
     </div>
 
     <!-- Product list -->
@@ -745,12 +750,6 @@ defineExpose({
           @asset-added="handleContentAssetAdded"
         />
       </div>
-
-      <div class="editor-nav">
-        <button class="editor-back-btn" @click="closeEditor">
-          ← Back to offerings
-        </button>
-      </div>
     </div>
 
     <p
@@ -779,8 +778,18 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-width: 320px;
   margin-bottom: 20px;
+}
+
+.shop-menu-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.shop-menu-title-row .shop-menu-title-input {
+  flex: 0 1 320px;
+  min-width: 0;
 }
 
 .product-thumb {
@@ -813,9 +822,11 @@ defineExpose({
 }
 
 .shop-menu-title-hint {
-  margin: 0;
+  overflow: hidden;
   color: var(--ui-text-muted, var(--color-text-muted));
   font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .suggest-btn {
@@ -1077,16 +1088,22 @@ defineExpose({
   transform: translateX(20px);
 }
 
-.editor-nav {
-  margin-top: 16px;
+.editor-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  margin: 0 0 4px -4px;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--ui-text-muted, var(--color-text-muted));
+  font: 500 14px var(--font-sans);
+  cursor: pointer;
 }
 
-.editor-back-btn {
-  background: none;
-  border: none;
-  color: var(--color-text);
-  cursor: pointer;
-  font-weight: 600;
+.editor-back-btn:hover {
+  color: var(--ui-text, var(--color-text));
 }
 
 .empty-hint,
