@@ -53,10 +53,9 @@ describe("chatTour", () => {
   });
 
   // Failure mode: a step explains a screen the owner isn't looking at (Socials shown on Accounts, then Home).
-  it("ties each step to its screen, and says where Accounts lives instead of walking the menu", () => {
+  it("ties each step to its screen, and never walks the menu", () => {
     expect(tour().steps.map(item => item.screen)).toEqual(["home", "home", "accounts", "social", "chat"]);
     expect(tour().steps.some(item => item.targets.some(target => target.id === "profile_menu"))).toBe(false);
-    expect(step({}, "accounts").body).toContain("profile picture");
   });
 
   it("offers Make my website until the site is built, then the editor", () => {

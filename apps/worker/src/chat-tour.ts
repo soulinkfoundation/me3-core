@@ -82,8 +82,8 @@ export function chatTour(context: TourContext): ChatTour {
   ];
   if (context.accounts) steps.push({
     id: "accounts", emoji: "📒", title: "Accounts",
-    body: "Track your income and expenses in one place. Sales and bookings from your site show up here on their own, and so do invoices sent to my email. Find Accounts any time under your profile picture.",
-    // Next opens Accounts straight away, like Social and the website: the card says where it lives in the menu.
+    body: "Track your income and expenses here. Sales and bookings from your site show up on their own, so do invoices sent to my email.",
+    // Next opens Accounts straight away, like Social and the website.
     screen: "accounts", intro: null,
     targets: [],
     task: null,
@@ -91,7 +91,7 @@ export function chatTour(context: TourContext): ChatTour {
   });
   if (context.social) steps.push({
     id: "social", emoji: "📣", title: "Socials made simple",
-    body: "Connect your accounts and post everywhere from one place. Repost and schedule in a couple of taps.",
+    body: "Connect your social accounts and post everywhere. Repost and schedule in a couple of taps.",
     screen: "social", intro: null,
     targets: [],
     task: null,
