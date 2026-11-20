@@ -626,14 +626,14 @@ onMounted(() => {
                 </label>
               </fieldset>
               <fieldset class="accounts-columns">
-                <legend>Agent mailbox</legend>
+                <legend>ME3 mailbox</legend>
                 <label>
                   <input id="accounts-email-triage" v-model="emailTriageEnabled" type="checkbox"
                     :disabled="emailTriageLoading || emailTriageSaving" @change="saveEmailTriageSettings"
                     aria-describedby="accounts-email-triage-hint" />
                   <span>Triage invoices and receipts</span>
                 </label>
-                <p id="accounts-email-triage-hint" class="hint">Forward invoices to the agent mailbox. Uncertain entries need review.</p>
+                <p id="accounts-email-triage-hint" class="hint">Forward invoices to your ME3 email. Uncertain entries need review.</p>
               </fieldset>
               <button type="button" :disabled="syncing || !stripeConfigured" @click="syncStripe"><UiIcon name="RefreshCw" :size="15" />{{ syncing ? "Syncing Stripe" : "Sync Stripe" }}</button>
               <button type="button" :disabled="importing" @click="chooseImportFile"><UiIcon name="Upload" :size="15" />{{ importing ? "Importing CSV" : "Import CSV" }}</button>

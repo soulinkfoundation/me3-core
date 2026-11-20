@@ -31,7 +31,7 @@ export const AI_AGENT_MODEL_OPTIONS: AiAgentModelOption[] = [
     runtimeLabel: "Anthropic",
     costLabel: "Paid",
     capabilities: ["text", "image_input", "long-context", "reasoning", "tool-use"],
-    description: "Paid Claude model for everyday agent work with tools and images.",
+    description: "Paid Claude model for everyday assistant work with tools and images.",
   },
   {
     id: "anthropic-sonnet-4-6",

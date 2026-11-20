@@ -56,7 +56,7 @@ const inboxStatus = computed(() => {
   return count === 0 ? { badge: "", note: "All caught up" } : { badge: `${count} ${count === 1 ? "needs" : "need"} you`, note: "" };
 });
 async function copyAgentAddress() {
-  try { await navigator.clipboard.writeText(agentAddress.value); toastSuccess("Agent email copied"); }
+  try { await navigator.clipboard.writeText(agentAddress.value); toastSuccess("ME3 email copied"); }
   catch { toastFromUnknown(null, "Couldn't copy the address"); }
 }
 // A sign-in code that just arrived (Core 0.1.254+), so it is one click from Home instead of three.
@@ -612,8 +612,8 @@ onBeforeUnmount(() => {
                 </span>
               </RouterLink>
               <template v-if="!inboxRows.length && (!brief || brief.handled.total === 0)">
-                <button v-if="agentAddress" type="button" class="home-copy" @click="copyAgentAddress"><span>{{ agentAddress }}</span><UiIcon name="Copy" :size="16" /><span class="sr-only">Copy agent email</span></button>
-                <RouterLink v-else to="/settings?section=mailbox" class="home-quiet"><UiIcon name="Plus" :size="16" />Set up agent email</RouterLink>
+                <button v-if="agentAddress" type="button" class="home-copy" @click="copyAgentAddress"><span>{{ agentAddress }}</span><UiIcon name="Copy" :size="16" /><span class="sr-only">Copy ME3 email</span></button>
+                <RouterLink v-else to="/settings?section=mailbox" class="home-quiet"><UiIcon name="Plus" :size="16" />Set up ME3 email</RouterLink>
                 <p v-if="!brief" class="home-muted">ME3's own email. Forward it invoices and anything it should know or handle. It never reads your inbox.</p>
               </template>
             </template>

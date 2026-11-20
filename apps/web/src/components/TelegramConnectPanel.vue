@@ -567,7 +567,7 @@ defineExpose({
 
     <div v-else class="recommended-card">
       <span class="recommended-pill">Pro</span>
-      <h3>Connect Telegram for agent messages</h3>
+      <h3>Connect Telegram for ME3 messages</h3>
       <p class="hint">
         Pro unlocks the Telegram channel MVP, which records message events and
         prepares the account for Cloudflare agent routing.

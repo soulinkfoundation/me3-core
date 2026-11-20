@@ -14,8 +14,8 @@ import { useAppToast } from "../composables/useAppToast";
 definePage({
   meta: {
     requiresAuth: true,
-    title: "Your agent | ME3",
-    description: "Your agent's name, its email, what it remembers about how you like to work, and its recent work.",
+    title: "Your assistant | ME3",
+    description: "Your assistant's name, its email, what it remembers about how you like to work, and its recent work.",
     robots: "noindex,follow",
   },
 });
@@ -81,7 +81,7 @@ const waitingMemories = computed(() => memories.value.filter(item => item.review
 const work = computed<WorkItem[]>(() => {
   const runIds = new Set(runs.value.map(run => run.id));
   const done = [
-    ...runs.value.map(run => ({ id: `run:${run.id}`, title: run.title || run.promptSummary || "Agent run", at: run.finishedAt || run.startedAt || run.createdAt, waiting: false })),
+    ...runs.value.map(run => ({ id: `run:${run.id}`, title: run.title || run.promptSummary || "Task", at: run.finishedAt || run.startedAt || run.createdAt, waiting: false })),
     ...activity.value.filter(item => !item.relatedId || !runIds.has(item.relatedId)).map(item => ({ id: `activity:${item.id}`, title: item.title, at: item.createdAt, waiting: false })),
   ].sort((a, b) => b.at.localeCompare(a.at));
   const waiting = approvals.value.map(approval => ({ id: `approval:${approval.id}`, title: approval.title, at: approval.requestedAt, waiting: true, approval }));
@@ -128,7 +128,7 @@ async function load() {
   approvals.value = pending.status === "fulfilled" ? pending.value.approvals || [] : [];
   runs.value = runList.status === "fulfilled" ? runList.value.runs || [] : [];
   activity.value = activityList.status === "fulfilled" ? activityList.value.activity || [] : [];
-  if (settings.status === "rejected" || memory.status === "rejected") error.value = "Couldn't load your agent. Try again.";
+  if (settings.status === "rejected" || memory.status === "rejected") error.value = "Couldn't load your assistant. Try again.";
   const failed = [pending, runList, activityList].find(result => result.status === "rejected" && !(result.reason instanceof ApiError && [403, 404].includes(result.reason.status)));
   if (failed?.status === "rejected") toastFromUnknown(failed.reason, "Some recent work couldn't load.");
   loading.value = false;
@@ -216,7 +216,7 @@ async function decide(decision: "approved" | "declined") {
 }
 
 async function clearActivity() {
-  if (clearing.value || !window.confirm("Clear your agent's activity history? Approvals waiting for you are kept.")) return;
+  if (clearing.value || !window.confirm("Clear your assistant's activity history? Approvals waiting for you are kept.")) return;
   clearing.value = true;
   try {
     await api.delete("/mission-control/activity");
@@ -258,19 +258,19 @@ onMounted(async () => {
 
 <template>
   <main class="agent-page">
-    <AppPageBar title="Your agent" />
+    <AppPageBar title="Your assistant" />
     <div class="agent-col" :aria-busy="loading">
       <p v-if="error" class="agent-error" role="alert">{{ error }} <button type="button" @click="load">Try again</button></p>
 
       <header class="agent-hero">
         <AgentDog :size="92" />
         <form v-if="renaming" class="agent-hero__name" @submit.prevent="saveName">
-          <input ref="nameInput" v-model="nameDraft" :maxlength="NAME_MAX" placeholder="ME3" aria-label="Agent name" autocomplete="off" :disabled="savingName" @blur="saveName" @keydown.esc="renaming = false">
+          <input ref="nameInput" v-model="nameDraft" :maxlength="NAME_MAX" placeholder="ME3" aria-label="Assistant name" autocomplete="off" :disabled="savingName" @blur="saveName" @keydown.esc="renaming = false">
         </form>
         <button v-else type="button" class="agent-hero__name" :aria-label="`Rename ${displayName}`" @click="startRename">
           {{ displayName }}<UiIcon name="Pencil" :size="16" class="agent-hero__pen" />
         </button>
-        <p>Your own AI agent. It runs on your ME3, and everything it knows is yours.</p>
+        <p>Your own AI assistant. It runs on your ME3, and everything it knows is yours.</p>
       </header>
 
       <section class="agent-card" aria-label="Its email">
