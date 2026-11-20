@@ -57,10 +57,9 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-export function siteBuildMessage(work: string, links = ""): string {
-  const about = work.trim();
-  const extra = links.trim();
-  return `Build my website. About my work: ${about}${extra ? `\nMy website or social links: ${extra}` : ""}`;
+/** The owner's answer as one message, so ME3 drafts without asking again. */
+export function siteBuildMessage(work: string): string {
+  return `Build my website. About my work: ${work.trim()}`;
 }
 
 export function showMeMessage(searchQuery: string): string {

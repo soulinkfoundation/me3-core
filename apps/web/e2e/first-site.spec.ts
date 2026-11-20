@@ -134,9 +134,8 @@ test("first landing goes from the Build your website card to a published site an
   await page.getByRole("button", { name: "Make my website" }).click();
   await expect(ask).toBeVisible();
   await ask.getByLabel("About your work").fill("Sports massage and yoga for runners in Bristol.");
-  await ask.getByLabel("Your website or social links (optional)").fill("maya.example");
   await ask.getByRole("button", { name: "Draft my site" }).click();
-  await expect.poll(() => state.sent[0]).toBe("Build my website. About my work: Sports massage and yoga for runners in Bristol.\nMy website or social links: maya.example");
+  await expect.poll(() => state.sent[0]).toBe("Build my website. About my work: Sports massage and yoga for runners in Bristol.");
 
   // The draft card, not raw approval fields: preview, looks, Edit and Publish.
   const draft = page.getByTestId("site-draft-card");
@@ -218,13 +217,13 @@ test("Show me around stays over the app while the owner does each step, keeps it
   await expect(tour).toHaveAttribute("data-target", "add_to_home");
   await page.getByRole("button", { name: "Add to Home" }).click();
   const add = page.getByRole("dialog", { name: "Add to Home" });
+  // The owner is doing the step in Add to Home, so the card steps aside rather than sit over it.
+  await expect(tour).toBeHidden();
   await add.getByRole("button", { name: "Inbox" }).click();
   await page.keyboard.press("Escape");
-  await expect(tour.getByTestId("tour-done")).toBeVisible();
-  // Skip is only on the first card.
-  await tour.getByRole("button", { name: "Next" }).click();
-  await expect(tour.getByRole("button", { name: "Skip", exact: true })).toHaveCount(0);
+  // A card added and back on Home: straight on to the next step, no Next to find. Skip was only on the first card.
   await expect(tour.getByRole("heading", { name: "ME3's own email" })).toBeVisible();
+  await expect(tour.getByRole("button", { name: "Skip", exact: true })).toHaveCount(0);
   await expect(tour.getByTestId("tour-done")).toBeVisible();
   // A reload picks up where the owner was.
   await page.reload();
@@ -240,6 +239,29 @@ test("Show me around stays over the app while the owner does each step, keeps it
   await expect(tour).toHaveCount(0);
   expect(state.tour.status).toBe("finished");
   expect(state.sent).toEqual([]);
+});
+
+test("the last card closes with its ×, and walking away from it ends the tour", async ({ page }) => {
+  const state = await fixture(page, { tour: { status: "active", stepId: "website" } });
+  await page.goto("/assistant?view=chat");
+  await page.getByRole("button", { name: "Show me around" }).click();
+  const tour = page.getByTestId("app-tour");
+  await expect(tour.getByRole("heading", { name: "Your website" })).toBeVisible();
+  // The website's button sits in the footer where Back was.
+  await expect(tour.getByRole("button", { name: "Back" })).toHaveCount(0);
+  await expect(tour.getByTestId("tour-task")).toHaveText("Make my website");
+  // On Chat with nothing to point at, the card covers the welcome, which fades out under it.
+  await expect(page.locator(".tour-backdrop--covered")).toContainText("Hi Maya, I'm ME3");
+  await page.getByRole("group", { name: "Workspace view" }).getByRole("button", { name: "Home", exact: true }).click();
+  await expect(tour).toHaveCount(0);
+  await expect.poll(() => state.tour.status).toBe("finished");
+
+  state.tour = { status: "active", stepId: "website" };
+  await page.goto("/assistant?view=chat");
+  await page.getByRole("button", { name: "Show me around" }).click();
+  await tour.getByRole("button", { name: "Close the tour" }).click();
+  await expect(tour).toHaveCount(0);
+  await expect.poll(() => state.tour.status).toBe("finished");
 });
 
 test("a brand-new owner gets one pulsing choice, Show me around; skipping the tour brings back the others", async ({ page }) => {

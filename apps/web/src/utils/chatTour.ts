@@ -50,7 +50,7 @@ export function currentTourTarget(targets: TourTarget[], visible: (id: string) =
 
 type Box = { top: number; left: number; right: number; bottom: number };
 /** `arrow` is how far along the card's edge the pointer sits (x for above/below, y for left). */
-export type TourPlacement = { top: number; left: number; side: "below" | "above" | "left"; arrow: number };
+export type TourPlacement = { top: number; left: number; side: "below" | "above" | "left" | "over"; arrow: number };
 
 /**
  * Where the card goes so its arrow points at `target` without covering it. `around` is something open the card
@@ -83,4 +83,63 @@ export function onTourScreen(screen: TourScreen | null, path: string, view: unkn
 
 export function tourScreenRoute(screen: TourScreen) {
   return screen === "home" || screen === "chat" ? { path: "/assistant", query: { view: screen } } : { path: `/${screen}` };
+}
+
+/** The screen the owner is looking at now, or null anywhere else. */
+export function currentTourScreen(path: string, view: unknown): TourScreen | null {
+  return (["home", "chat", "accounts", "social"] as const).find(screen => onTourScreen(screen, path, view)) ?? null;
+}
+
+/**
+ * Where Next or Back takes the owner, if anywhere: a step with nothing to point at opens its screen, and leaving
+ * Accounts or Social for a step on another screen closes them too, so Back doesn't leave them open.
+ */
+export function tourScreenToOpen(step: TourStep, current: TourScreen | null): TourScreen | null {
+  const screen = step.screen;
+  if (!screen || screen === current) return null;
+  return !step.targets.length || current === "accounts" || current === "social" ? screen : null;
+}
+
+/** Where the tour just sent the owner and when; `arrived` is when that screen came up. */
+export type TourTrip = { screen: TourScreen; asked: number; arrived: number | null };
+/** The card waits while the screen the tour asked for opens and settles (0.45 s), giving up after 3 s. */
+export function tourArrival(trip: TourTrip | null, current: TourScreen | null, now: number): { trip: TourTrip | null; waiting: boolean } {
+  if (!trip) return { trip: null, waiting: false };
+  if (current === trip.screen) {
+    const arrived = trip.arrived ?? now;
+    if (now - arrived < 450) return { trip: { ...trip, arrived }, waiting: true };
+  } else if (now - trip.asked < 3000) {
+    return { trip, waiting: true };
+  }
+  return { trip: null, waiting: false };
+}
+
+/** A dialog over the step's screen (Add to Home) is where the owner is doing the step, so the card steps aside unless it points inside it. */
+export function tourCardWaits(step: TourStep, current: TourScreen | null, dialog: { open: boolean; holdsTarget: boolean }): boolean {
+  return dialog.open && !dialog.holdsTarget && onScreen(step.screen, current);
+}
+const onScreen = (screen: TourScreen | null, current: TourScreen | null) => !screen || screen === current;
+
+/** The step last seen settled (on its screen, nothing open) and whether it was done then. */
+export type TourTickMemory = { stepId: string; done: boolean };
+/** Done what Home asked (a card added, Inbox picked) and back with nothing open: straight on to the next step. */
+export function tourMovesOn(memory: TourTickMemory | null, now: { stepId: string; done: boolean; hasTargets: boolean; settled: boolean }): { memory: TourTickMemory | null; advance: boolean } {
+  if (memory?.stepId === now.stepId && !memory.done && now.done && now.hasTargets && now.settled) return { memory: { stepId: now.stepId, done: true }, advance: true };
+  if (memory?.stepId !== now.stepId || now.settled) return { memory: { stepId: now.stepId, done: now.done }, advance: false };
+  return { memory, advance: false };
+}
+
+/** Walking away from the last card's screen, once the owner has been on it, finishes the tour. */
+export function tourLeftLast(reached: boolean, now: { isLast: boolean; screen: TourScreen | null; current: TourScreen | null }): { reached: boolean; end: boolean } {
+  if (!now.isLast || !now.screen) return { reached: false, end: false };
+  if (now.current === now.screen) return { reached: true, end: false };
+  return { reached, end: reached };
+}
+
+/** With nothing to point at, the card covers `backdrop` (a screen's empty placeholder, which fades out under it), `bottomLimit` clear of the bottom. */
+export function coverTourCard(backdrop: Box, card: { width: number; height: number }, view: { width: number; height: number }, bottomLimit: number): TourPlacement {
+  const margin = 12;
+  const top = Math.max(margin, Math.min((backdrop.top + backdrop.bottom) / 2 - card.height / 2, view.height - bottomLimit - card.height));
+  const left = Math.max(margin, Math.min((backdrop.left + backdrop.right) / 2 - card.width / 2, view.width - card.width - margin));
+  return { top, left, side: "over", arrow: 0 };
 }

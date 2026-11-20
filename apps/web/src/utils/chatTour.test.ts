@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentTourTarget, onTourScreen, placeTourCard, tourScreenRoute, readChatTour, tourPlaceForPath, tourStartIndex, type ChatTour } from "./chatTour";
+import { coverTourCard, currentTourScreen, currentTourTarget, onTourScreen, placeTourCard, tourArrival, tourCardWaits, tourLeftLast, tourMovesOn, tourScreenRoute, tourScreenToOpen, readChatTour, tourPlaceForPath, tourStartIndex, type ChatTour } from "./chatTour";
 
 // Failure modes: an older Core without the tour leaves Show me around doing nothing; a broken step draws an empty card;
 // the tour restarts from the top after a reload instead of the owner's step; a page that isn't Accounts or Social ticks a step.
@@ -90,5 +90,93 @@ describe("onTourScreen", () => {
     expect(onTourScreen("social", "/accounts", undefined)).toBe(false);
     expect(tourScreenRoute("social")).toEqual({ path: "/social" });
     expect(tourScreenRoute("chat")).toEqual({ path: "/assistant", query: { view: "chat" } });
+  });
+});
+
+// Failure mode: Back from Accounts to Home leaves Accounts open; Next to a pointing step on the same screen jumps somewhere.
+describe("tourScreenToOpen", () => {
+  const home = { ...step("home"), screen: "home" as const, targets: [{ id: "home_tab", hint: "Tap Home." }] };
+  const social = { ...step("social"), screen: "social" as const };
+  it("opens a leading step's screen, and leaves Accounts or Social for a step on another screen", () => {
+    expect(tourScreenToOpen(social, "home")).toBe("social");
+    expect(tourScreenToOpen(social, "social")).toBeNull();
+    expect(tourScreenToOpen(home, "accounts")).toBe("home");
+    expect(tourScreenToOpen(home, "social")).toBe("home");
+    // On Chat the card points the owner to Home instead of taking them there.
+    expect(tourScreenToOpen(home, "chat")).toBeNull();
+    expect(tourScreenToOpen(step("x"), "accounts")).toBeNull();
+  });
+
+  it("reads the screen from the route", () => {
+    expect(currentTourScreen("/assistant", "chat")).toBe("chat");
+    expect(currentTourScreen("/assistant", undefined)).toBe("home");
+    expect(currentTourScreen("/accounts", undefined)).toBe("accounts");
+    expect(currentTourScreen("/email", undefined)).toBeNull();
+  });
+});
+
+// Failure mode: the card shows over the screen being left before Accounts or Social has opened, or waits forever.
+describe("tourArrival", () => {
+  it("waits until the screen is up and a moment after, and gives up after 3 s", () => {
+    let state = tourArrival({ screen: "accounts", asked: 0, arrived: null }, "home", 100);
+    expect(state.waiting).toBe(true);
+    state = tourArrival(state.trip, "accounts", 500);
+    expect(state).toEqual({ trip: { screen: "accounts", asked: 0, arrived: 500 }, waiting: true });
+    expect(tourArrival(state.trip, "accounts", 900).waiting).toBe(true);
+    expect(tourArrival(state.trip, "accounts", 1000)).toEqual({ trip: null, waiting: false });
+    expect(tourArrival({ screen: "social", asked: 0, arrived: null }, "home", 3000)).toEqual({ trip: null, waiting: false });
+    expect(tourArrival(null, "home", 0)).toEqual({ trip: null, waiting: false });
+  });
+});
+
+// Failure mode: the card sits over Add to Home while the owner is choosing a card, or vanishes when it points into the dialog.
+describe("tourCardWaits", () => {
+  const home = { ...step("home"), screen: "home" as const };
+  it("hides while a dialog covers the step's screen, unless it points inside the dialog", () => {
+    expect(tourCardWaits(home, "home", { open: true, holdsTarget: false })).toBe(true);
+    expect(tourCardWaits(home, "home", { open: true, holdsTarget: true })).toBe(false);
+    expect(tourCardWaits(home, "home", { open: false, holdsTarget: false })).toBe(false);
+    expect(tourCardWaits(home, "chat", { open: true, holdsTarget: false })).toBe(false);
+  });
+});
+
+// Failure mode: the owner adds a card and has to find Next; or a step that was already done skips itself.
+describe("tourMovesOn", () => {
+  it("moves on once the step is done and the owner is back on Home with nothing open", () => {
+    let state = tourMovesOn(null, { stepId: "home", done: false, hasTargets: true, settled: true });
+    expect(state.advance).toBe(false);
+    // Added a card inside Add to Home: done, but the dialog is still open.
+    state = tourMovesOn(state.memory, { stepId: "home", done: true, hasTargets: true, settled: false });
+    expect(state.advance).toBe(false);
+    state = tourMovesOn(state.memory, { stepId: "home", done: true, hasTargets: true, settled: true });
+    expect(state.advance).toBe(true);
+  });
+
+  it("leaves a step that was done on arrival, and steps with nothing to point at", () => {
+    const done = tourMovesOn(null, { stepId: "email", done: true, hasTargets: true, settled: true });
+    expect(tourMovesOn(done.memory, { stepId: "email", done: true, hasTargets: true, settled: true }).advance).toBe(false);
+    const accounts = tourMovesOn(null, { stepId: "accounts", done: false, hasTargets: false, settled: true });
+    expect(tourMovesOn(accounts.memory, { stepId: "accounts", done: true, hasTargets: false, settled: true }).advance).toBe(false);
+  });
+});
+
+// Failure mode: the owner walks away from the last card and the tour follows them around the app.
+describe("tourLeftLast", () => {
+  it("ends once the owner has been on the last card's screen and left it", () => {
+    let state = tourLeftLast(false, { isLast: true, screen: "chat", current: "home" });
+    expect(state).toEqual({ reached: false, end: false });
+    state = tourLeftLast(state.reached, { isLast: true, screen: "chat", current: "chat" });
+    expect(state).toEqual({ reached: true, end: false });
+    expect(tourLeftLast(true, { isLast: true, screen: "chat", current: "home" }).end).toBe(true);
+    expect(tourLeftLast(true, { isLast: false, screen: "chat", current: "home" })).toEqual({ reached: false, end: false });
+  });
+});
+
+// Failure mode: with nothing to point at the card sits half across the dog, or under Chat's composer.
+describe("coverTourCard", () => {
+  it("centres the card on the placeholder, clear of the bottom", () => {
+    const placed = coverTourCard({ top: 200, left: 400, right: 800, bottom: 400 }, { width: 340, height: 180 }, { width: 1200, height: 800 }, 96);
+    expect(placed).toEqual({ top: 210, left: 430, side: "over", arrow: 0 });
+    expect(coverTourCard({ top: 600, left: 0, right: 375, bottom: 800 }, { width: 340, height: 180 }, { width: 375, height: 812 }, 96).top).toBe(812 - 96 - 180);
   });
 });

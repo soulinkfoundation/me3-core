@@ -695,7 +695,7 @@ onMounted(() => {
             <thead><tr><th scope="col">Customer</th><th scope="col">Email</th><th scope="col">Bought / booked</th><th scope="col">Latest activity</th></tr></thead>
             <tbody>
               <tr v-if="loading"><td colspan="4"><PageLoading compact label="Loading customers..." /></td></tr>
-              <tr v-else-if="customers.length === 0"><td colspan="4">No customers yet.</td></tr>
+              <tr v-else-if="customers.length === 0" data-tour-backdrop><td colspan="4">No customers yet.</td></tr>
               <template v-for="customer in customers" v-else :key="customer.id">
                 <tr>
                   <th scope="row">
@@ -738,7 +738,7 @@ onMounted(() => {
             <thead><tr><th v-if="visibleEntryColumns.date" class="accounts-table__date-column" scope="col">Date</th><th scope="col">Description</th><th v-if="visibleEntryColumns.category" class="accounts-table__category-column" scope="col">Category</th><th v-if="visibleEntryColumns.project" class="accounts-table__project-column" scope="col">Project</th><th class="accounts-table__amount-column" scope="col">Amount</th><th v-if="visibleEntryColumns.status" class="accounts-table__status-column" scope="col">Status</th><th v-if="visibleEntryColumns.source" class="accounts-table__source-column" scope="col">Source</th><th class="accounts-table__actions-column" scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
             <tbody>
               <tr v-if="loading"><td :colspan="entryColumnCount"><PageLoading compact label="Loading accounts..." /></td></tr>
-              <tr v-else-if="entries.length === 0"><td :colspan="entryColumnCount">No {{ entryType }} entries yet.</td></tr>
+              <tr v-else-if="entries.length === 0" data-tour-backdrop><td :colspan="entryColumnCount">No {{ entryType }} entries yet.</td></tr>
               <tr v-for="entry in entries" v-else :key="entry.id">
                 <td v-if="visibleEntryColumns.date">{{ formatDate(entry.date) }}</td>
                 <th scope="row">{{ entry.description }}</th>

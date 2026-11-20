@@ -2622,9 +2622,12 @@ function messageFromUnknown(err: unknown, fallback: string) {
             v-else-if="assistantConsoleMessages.length === 0 && voiceDictationState !== 'listening' && !siteAskOpen"
             class="assistant-empty-state"
           >
-            <AgentDog :size="128" />
-            <h2 class="assistant-empty-state__heading">{{ chatStarters.greeting?.title ?? "What should I fetch?" }}</h2>
-            <p class="assistant-empty-state__hint">{{ chatStarters.greeting?.body ?? "Ask for anything. I’ll do the legwork." }}</p>
+            <!-- A tour card with nothing to point at sits over the welcome, which fades out under it. -->
+            <div class="assistant-empty-state__welcome" data-tour-backdrop>
+              <AgentDog :size="128" />
+              <h2 class="assistant-empty-state__heading">{{ chatStarters.greeting?.title ?? "What should I fetch?" }}</h2>
+              <p class="assistant-empty-state__hint">{{ chatStarters.greeting?.body ?? "Ask for anything. I’ll do the legwork." }}</p>
+            </div>
             <!-- While the tour is open its card is the next step, so the starters wait. -->
             <div
               v-if="visibleStarters.length && !tourStore.open"
@@ -3888,6 +3891,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
   display: grid; gap: 12px; justify-items: center; margin: 0 0 18px;
   padding: clamp(60px, 17vh, 170px) 0 10px; text-align: center;
 }
+.assistant-empty-state__welcome { display: grid; gap: 12px; justify-items: center; }
 .assistant-empty-state__heading { margin: 6px 0 0; font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
 .assistant-empty-state__hint { margin: 0; color: var(--ui-text-muted); font-size: 15px; }
 /* Small centred badges that wrap to one or two rows (me3-q6la.2). */
