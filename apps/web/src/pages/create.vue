@@ -469,7 +469,7 @@ watch(
         <nav v-if="!isEditingPage" class="step-nav" aria-label="Step navigation">
           <Button class="nav-btn back" color="secondary" size="large" :disabled="isPublishing" @click="handleBack">{{ wizard.currentStep === 1 ? 'Cancel' : 'Back' }}</Button>
           <div class="step-nav__right">
-            <Button v-if="wizard.needsPublish" class="nav-btn publish" color="primary" size="large" :disabled="isPublishing || wizard.isCheckingUsername" @click="handlePublish">{{ isPublishing ? 'Publishing…' : 'Publish' }}</Button>
+            <Button v-if="wizard.needsPublish || wizard.currentStep >= wizard.totalSteps" class="nav-btn publish" color="primary" size="large" :disabled="isPublishing || wizard.isCheckingUsername" @click="handlePublish">{{ isPublishing ? 'Publishing…' : 'Publish' }}</Button>
             <Button v-if="wizard.currentStep < wizard.totalSteps" class="nav-btn next" color="neutral" size="large" :disabled="!wizard.canProceed || isPublishing" @click="handleNext">Next</Button>
           </div>
         </nav>
