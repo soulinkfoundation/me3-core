@@ -123,16 +123,6 @@ function mailboxResponseFor(endpoint: string) {
   if (endpoint === "/mailbox" || endpoint === "/mailbox?include_activity=0") {
     return { mailbox: { aliasAddress: "hey@example.com" }, sources: [] };
   }
-  if (endpoint === "/telegram/status") {
-    return {
-      available: true,
-      configured: false,
-      botUsername: null,
-      startUrl: null,
-      connection: null,
-      recentEvents: [],
-    };
-  }
   if (endpoint === "/email-provider-settings") {
     return { activeProviderId: "", providers: [] };
   }

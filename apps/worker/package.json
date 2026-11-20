@@ -19,7 +19,6 @@
     "@me3-core/plugin-landing-pages": "workspace:*",
     "@me3-core/plugin-mission-control": "workspace:*",
     "@me3-core/plugin-social-publishing": "workspace:*",
-    "@me3-core/plugin-telegram": "workspace:*",
     "@me3-core/site-renderer": "workspace:*",
     "@me3-core/web-research": "workspace:*",
     "@me3/knowledge": "workspace:*",

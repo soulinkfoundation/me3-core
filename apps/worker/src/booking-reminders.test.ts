@@ -30,7 +30,7 @@ type ReminderRow = {
   site_id: string;
   user_id: string;
   reminder_type: "booking_reminder_24h" | "booking_reminder_2h";
-  channel: "email" | "telegram" | "soulink";
+  channel: "email" | "soulink";
   status: "scheduled" | "queued" | "processing" | "sent" | "cancelled" | "failed" | "skipped";
   scheduled_for: string;
   queued_at: string | null;

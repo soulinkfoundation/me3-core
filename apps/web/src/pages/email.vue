@@ -9,7 +9,6 @@ import MailRecipientField from "../components/email/MailRecipientField.vue";
 import MailSignatureBlock from "../components/email/MailSignatureBlock.vue";
 import { invalidMailRecipients, parseMailRecipients } from "../../../../shared/mail-recipients";
 import Button from "../components/Button.vue";
-import PageLoading from "../components/PageLoading.vue";
 import UiIcon from "../components/UiIcon.vue";
 import EmailBrief from "../components/email/EmailBrief.vue";
 import MailOutreachToggle, { type ComposeOutreach } from "../components/email/MailOutreachToggle.vue";
@@ -217,54 +216,10 @@ type EmailProviderSettingsResponse = {
   }>;
 };
 
-type TelegramStatusResponse = {
-  available: boolean;
-  configured: boolean;
-  botUsername: string | null;
-  startUrl: string | null;
-  connection: {
-    status: "pending" | "active" | "disconnected";
-    telegramUsername: string | null;
-  } | null;
-  recentEvents: unknown[];
-};
-
-type AgentTurn = {
-  id: string;
-  channel: "telegram" | "sandbox" | "soulink";
-  status: "pending" | "running" | "completed" | "failed";
-  inputText: string | null;
-  outputText: string | null;
-  errorMessage: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type AgentTurnsResponse = {
-  turns: AgentTurn[];
-  total?: number;
-  limit?: number;
-  offset?: number;
-};
-
-type ClearTelegramHistoryResponse = {
-  ok: boolean;
-  deletedTurns: number;
-  deletedEvents: number;
-};
-
 type EmailTab = "inbox" | "drafts" | "sent" | "archive" | "trash" | "spam";
 type MoveFolder = "inbox" | "archive" | "trash";
 type SpamTarget = { scope: "threads" | "messages"; id: string };
-type Tab = EmailTab | "telegram" | "brief";
-
-type TelegramChatBubble = {
-  id: string;
-  role: "user" | "agent";
-  text: string;
-  at: string;
-  errorNote?: string;
-};
+type Tab = EmailTab | "brief";
 
 const loading = ref(false);
 const messagesLoaded = ref(false);
@@ -423,7 +378,6 @@ const lastUpdatedAt = ref<number | null>(null);
 let phoneLayoutQuery: MediaQueryList | null = null;
 const offset = ref(0);
 const limit = 50;
-const TELEGRAM_PAGE_LIMIT = 50;
 const { toastFromUnknown, toastSuccess, toast } = useAppToast();
 const auth = useAuthStore();
 const mailboxCache = useMailboxCacheStore();
@@ -438,7 +392,6 @@ const contactsStore = useContactsStore();
 const { contacts } = storeToRefs(contactsStore);
 let contactsRequested = contacts.value.length > 0;
 let providerSettingsRequested = false;
-let telegramHealthRequested = false;
 let threadEndpointAvailable: boolean | null = null;
 let threadRequestId = 0;
 const threadPageScrollOffsets = new Map<string, number>();
@@ -448,18 +401,6 @@ const deliveryRefreshAttemptedIds = new Set<string>();
 const mailboxMeta = ref<FullMailboxResponse["mailbox"] | null>(null);
 const mailboxSources = ref<MailboxSource[]>([]);
 const configuredEmailAddress = ref<string | null>(null);
-const telegramHealth = ref<{
-  configured: boolean;
-  connectionStatus: "pending" | "active" | "disconnected" | null;
-} | null>(null);
-
-const telegramLoading = ref(false);
-const telegramLoadingMore = ref(false);
-const telegramClearing = ref(false);
-const telegramError = ref("");
-const telegramMoreError = ref("");
-const turns = ref<AgentTurn[]>([]);
-const telegramTotal = ref(0);
 let messageRequestId = 0;
 
 function isInternalMailboxAddress(address: string | null | undefined) {
@@ -563,7 +504,6 @@ function replyFromAddressFor(message: InboxMessage | null | undefined): string |
     .map((address) => outboundSenderOptions.value.find((option) => option.address === address)?.address)
     .find(Boolean);
 }
-const telegramChatRef = ref<HTMLElement | null>(null);
 
 const contactRecipientOptions = computed(() =>
   contacts.value
@@ -662,11 +602,7 @@ const mailFolderTabs = computed(() => {
 });
 
 function isEmailTab(tab: Tab | "campaigns" | "rules"): tab is EmailTab {
-  return tab !== "telegram" && tab !== "campaigns" && tab !== "brief" && tab !== "rules";
-}
-
-function isMailTab(tab: Tab): boolean {
-  return tab !== "telegram";
+  return tab !== "campaigns" && tab !== "brief" && tab !== "rules";
 }
 
 const activeFolderLabel = computed(() =>
@@ -697,54 +633,6 @@ const mailNeedsSetupHint = computed(() => {
   const s = mailboxMeta.value?.status;
   return s === "pending_setup" || !visibleMailboxAddress.value;
 });
-
-const telegramNeedsSetupHint = computed(() => {
-  if (!telegramHealth.value) return false;
-  if (!telegramHealth.value.configured) return true;
-  return telegramHealth.value.connectionStatus !== "active";
-});
-
-const telegramConversation = computed((): TelegramChatBubble[] => {
-  const items: TelegramChatBubble[] = [];
-  const sorted = [...turns.value].sort(
-    (a, b) => parseApiDate(a.createdAt).getTime() - parseApiDate(b.createdAt).getTime(),
-  );
-  for (const turn of sorted) {
-    if (turn.inputText?.trim()) {
-      items.push({
-        id: `${turn.id}-in`,
-        role: "user",
-        text: turn.inputText.trim(),
-        at: turn.createdAt,
-      });
-    }
-    if (turn.outputText?.trim()) {
-      items.push({
-        id: `${turn.id}-out`,
-        role: "agent",
-        text: turn.outputText.trim(),
-        at: turn.updatedAt || turn.createdAt,
-        errorNote:
-          turn.status === "failed"
-            ? "This reply may not have been delivered."
-            : undefined,
-      });
-    } else if (turn.status === "failed") {
-      items.push({
-        id: `${turn.id}-fail`,
-        role: "agent",
-        text: "This reply could not be completed.",
-        at: turn.updatedAt || turn.createdAt,
-        errorNote: "Something went wrong. Try again in a moment.",
-      });
-    }
-  }
-  return items;
-});
-
-const telegramHasMore = computed(
-  () => telegramTotal.value > 0 && turns.value.length < telegramTotal.value,
-);
 
 const messageIdsOnPage = computed(() =>
   messages.value.map((message) => message.id),
@@ -1786,128 +1674,10 @@ async function loadProviderSettings() {
   }
 }
 
-async function loadTelegramHealth() {
-  if (telegramHealthRequested) return;
-  telegramHealthRequested = true;
-  try {
-    const telegramData = await api.get<TelegramStatusResponse>(
-      "/telegram/status",
-    );
-    telegramHealth.value = {
-      configured: telegramData.configured,
-      connectionStatus: telegramData.connection?.status ?? null,
-    };
-  } catch {
-    telegramHealth.value = null;
-  }
-}
-
 async function loadContactsForCompose() {
   if (contactsRequested) return;
   contactsRequested = true;
   await contactsStore.fetchContacts();
-}
-
-function scrollTelegramToBottom() {
-  const el = telegramChatRef.value;
-  if (!el) return;
-  el.scrollTop = el.scrollHeight;
-}
-
-async function loadTelegramHistory() {
-  telegramLoading.value = true;
-  telegramLoadingMore.value = false;
-  telegramError.value = "";
-  telegramMoreError.value = "";
-  try {
-    await Promise.all([loadMailboxHealth(), loadTelegramHealth()]);
-    const turnResponse = await api.get<AgentTurnsResponse>(
-      `/agent/turns?channel=telegram&limit=${TELEGRAM_PAGE_LIMIT}&offset=0`,
-    );
-    turns.value = turnResponse.turns || [];
-    telegramTotal.value =
-      typeof turnResponse.total === "number"
-        ? turnResponse.total
-        : turns.value.length;
-    await nextTick();
-    scrollTelegramToBottom();
-  } catch (err) {
-    turns.value = [];
-    telegramTotal.value = 0;
-    telegramError.value =
-      err instanceof Error ? err.message : "Failed to load Telegram";
-  } finally {
-    telegramLoading.value = false;
-  }
-}
-
-async function loadMoreTelegramTurns() {
-  if (
-    telegramLoading.value ||
-    telegramLoadingMore.value ||
-    telegramClearing.value ||
-    !telegramHasMore.value
-  ) {
-    return;
-  }
-  const el = telegramChatRef.value;
-  const prevScrollHeight = el?.scrollHeight ?? 0;
-  const prevScrollTop = el?.scrollTop ?? 0;
-
-  telegramLoadingMore.value = true;
-  telegramMoreError.value = "";
-  try {
-    const nextOffset = turns.value.length;
-    const turnResponse = await api.get<AgentTurnsResponse>(
-      `/agent/turns?channel=telegram&limit=${TELEGRAM_PAGE_LIMIT}&offset=${nextOffset}`,
-    );
-    if (typeof turnResponse.total === "number") {
-      telegramTotal.value = turnResponse.total;
-    }
-    const batch = turnResponse.turns || [];
-    const seen = new Set(turns.value.map((t) => t.id));
-    const merged = batch.filter((t) => !seen.has(t.id));
-    turns.value = [...turns.value, ...merged];
-    await nextTick();
-    if (el && prevScrollHeight > 0) {
-      el.scrollTop = prevScrollTop + (el.scrollHeight - prevScrollHeight);
-    }
-  } catch (err) {
-    telegramMoreError.value =
-      err instanceof Error ? err.message : "Failed to load older messages";
-  } finally {
-    telegramLoadingMore.value = false;
-  }
-}
-
-async function clearTelegramHistory() {
-  if (telegramClearing.value || turns.value.length === 0) return;
-  const confirmed = window.confirm(
-    "Clear all stored Telegram history for this account? This will not disconnect Telegram.",
-  );
-  if (!confirmed) return;
-
-  telegramClearing.value = true;
-  telegramError.value = "";
-  telegramMoreError.value = "";
-
-  try {
-    const result = await api.delete<ClearTelegramHistoryResponse>(
-      "/agent/turns?channel=telegram",
-    );
-    turns.value = [];
-    telegramTotal.value = 0;
-    toastSuccess(
-      result.deletedTurns > 0 || result.deletedEvents > 0
-        ? "Telegram history cleared."
-        : "Telegram history was already empty.",
-    );
-  } catch (err) {
-    telegramMoreError.value =
-      err instanceof Error ? err.message : "Failed to clear Telegram history";
-  } finally {
-    telegramClearing.value = false;
-  }
 }
 
 function switchTab(tab: Tab) {
@@ -1919,11 +1689,7 @@ function switchTab(tab: Tab) {
   clearSelectedMessages();
   selectMode.value = false;
   error.value = "";
-  telegramError.value = "";
-  telegramMoreError.value = "";
-  if (tab === "telegram") {
-    void loadTelegramHistory();
-  } else if (tab === "brief") {
+  if (tab === "brief") {
     void briefRef.value?.refresh();
   } else {
     void loadMessages();
@@ -1947,9 +1713,7 @@ function switchMailFolderTab(tabId: string) {
 }
 
 async function refreshMessagesPage() {
-  if (activeTab.value === "telegram") {
-    await loadTelegramHistory();
-  } else if (activeTab.value === "brief") {
+  if (activeTab.value === "brief") {
     await briefRef.value?.refresh();
   } else {
     await loadMessages();
@@ -3917,28 +3681,6 @@ function formatRelativeDate(value: string): string {
   });
 }
 
-/** Short relative labels for Telegram bubbles */
-function formatChatRelativeTime(value: string): string {
-  const date = parseApiDate(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const diffMs = Date.now() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return "Just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return formatDateTimePart(date, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: auth.user?.timezone || undefined,
-  });
-}
-
 const totalPages = computed(() =>
   threadMode.value
     ? threadCursorIndex.value + (threadNextCursor.value ? 2 : 1)
@@ -4140,13 +3882,11 @@ onBeforeUnmount(() => {
   <RouterView v-if="isNestedEmailTool" />
   <div
     v-else
-    class="agent-page"
-    :class="{ 'agent-page--with-mobile-controls': isMailTab(activeTab) }"
+    class="agent-page agent-page--with-mobile-controls"
   >
     <!-- One header row: Compose on the left, the title (or, on phones in Inbox mode, the folder menu) centred, the app X on the right. -->
     <Teleport to="#app-page-leading" defer>
       <Button
-        v-if="isMailTab(activeTab)"
         color="ghost"
         shape="soft"
         size="compact"
@@ -4162,7 +3902,7 @@ onBeforeUnmount(() => {
     </Teleport>
     <Teleport to="#app-page-controls" defer>
       <div class="mail-mobile-nav">
-        <h1 class="mail-header-title" :class="{ 'mail-header-title--wide-only': isEmailTab(activeTab) }">{{ activeTab === "telegram" ? "Telegram" : activeTab === "brief" ? "Email" : activeTabLabel }}</h1>
+        <h1 class="mail-header-title" :class="{ 'mail-header-title--wide-only': isEmailTab(activeTab) }">{{ activeTab === "brief" ? "Email" : activeTabLabel }}</h1>
         <!-- Phones in Inbox mode: the title is the folder menu, in the apps' order. Brief has no menu. -->
         <div v-if="isEmailTab(activeTab)" class="mail-title-menu" @keydown.esc="mobileMenuOpen = false">
           <button
@@ -4210,99 +3950,8 @@ onBeforeUnmount(() => {
 
       <template v-else>
         <div
-          class="inbox-panel"
-          :class="{ 'inbox-panel--with-mobile-controls': isMailTab(activeTab) }"
+          class="inbox-panel inbox-panel--with-mobile-controls"
         >
-          <template v-if="activeTab === 'telegram'">
-            <PageLoading
-              v-if="telegramLoading"
-              compact
-              class="panel-pad"
-              label="Loading Telegram..."
-            />
-            <div
-              v-else-if="telegramError"
-              class="state-card state-card--error panel-pad"
-              role="alert"
-            >
-              {{ telegramError }}
-            </div>
-            <div
-              v-else-if="telegramConversation.length"
-              class="telegram-thread"
-            >
-              <div class="telegram-thread__meta">
-                <p class="telegram-thread__count" role="status">
-                  Showing {{ turns.length }} of {{ telegramTotal }} turn{{
-                    telegramTotal === 1 ? "" : "s"
-                  }}
-                  <template v-if="telegramConversation.length">
-                    · {{ telegramConversation.length }} message{{
-                      telegramConversation.length === 1 ? "" : "s"
-                    }}
-                  </template>
-                </p>
-                <div class="telegram-thread__actions">
-                  <Button color="outline" shape="soft" size="compact" type="button"
-                    v-if="telegramHasMore"
-                    :disabled="telegramLoadingMore || telegramClearing"
-                    @click="loadMoreTelegramTurns"
-                  >
-                    {{
-                      telegramLoadingMore
-                        ? "Loading older…"
-                        : "Load older messages"
-                    }}
-                  </Button>
-                  <Button color="danger" shape="soft" size="compact" type="button"
-                    :disabled="telegramClearing || telegramLoadingMore"
-                    @click="clearTelegramHistory"
-                  >
-                    {{ telegramClearing ? "Clearing…" : "Clear history" }}
-                  </Button>
-                </div>
-              </div>
-              <p
-                v-if="telegramMoreError"
-                class="telegram-thread__more-error"
-                role="alert"
-              >
-                {{ telegramMoreError }}
-              </p>
-              <div ref="telegramChatRef" class="telegram-chat panel-pad">
-                <article
-                  v-for="bubble in telegramConversation"
-                  :key="bubble.id"
-                  class="tg-bubble"
-                  :class="`tg-bubble--${bubble.role}`"
-                >
-                  <div class="tg-bubble__meta">
-                    <span class="tg-bubble__who">{{
-                      bubble.role === "user" ? "You" : "Assistant"
-                    }}</span>
-                    <span class="tg-bubble__time">{{
-                      formatChatRelativeTime(bubble.at)
-                    }}</span>
-                  </div>
-                  <p class="tg-bubble__text">{{ bubble.text }}</p>
-                  <p v-if="bubble.errorNote" class="tg-bubble__error">
-                    {{ bubble.errorNote }}
-                  </p>
-                </article>
-              </div>
-            </div>
-            <div v-else class="empty-state panel-pad">
-              <p>No Telegram messages yet.</p>
-              <p v-if="telegramNeedsSetupHint" class="empty-hint">
-                Telegram is not connected.
-                <router-link to="/account" class="empty-hint-link">
-                  Configure in account settings
-                </router-link>
-              </p>
-            </div>
-          </template>
-
-          <template v-else>
             <!-- Phones: Brief | Inbox like the apps. The other folders live in the title menu in Inbox mode. -->
             <div v-if="!mobileThreadOpen" class="mail-segments" role="group" aria-label="Email view">
               <button type="button" :aria-pressed="activeTab === 'brief'" @click="switchMailFolderTab('brief')">Brief<template v-if="briefCount"> · {{ briefCount }}</template></button>
@@ -5085,7 +4734,6 @@ onBeforeUnmount(() => {
                 </section>
               </template>
             </div>
-          </template>
         </div>
       </template>
     </main>
@@ -5292,145 +4940,6 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 18px;
-}
-
-.telegram-thread {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.telegram-thread__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px 16px;
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg);
-}
-
-.telegram-thread__count {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.telegram-thread__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.telegram-load-older {
-  padding: 6px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-bg);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition:
-    color 0.12s,
-    border-color 0.12s;
-}
-
-.telegram-load-older:hover:not(:disabled) {
-  color: var(--color-text);
-  border-color: var(--color-text);
-}
-
-.telegram-load-older:disabled,
-.telegram-clear-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.telegram-clear-btn {
-  padding: 6px 12px;
-  border: 1px solid #b33b2e;
-  border-radius: 6px;
-  background: var(--color-bg);
-  font-size: 12px;
-  font-weight: 700;
-  color: #b33b2e;
-  cursor: pointer;
-  transition: opacity 0.12s;
-}
-
-.telegram-clear-btn:hover:not(:disabled) {
-  opacity: 0.8;
-}
-
-.telegram-thread__more-error {
-  margin: 0;
-  padding: 8px 18px;
-  font-size: 13px;
-  color: #b33b2e;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.telegram-chat {
-  display: grid;
-  gap: 12px;
-  max-height: min(70vh, 560px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.tg-bubble {
-  padding: 14px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-subtle);
-}
-
-.tg-bubble--agent {
-  border-left: 3px solid var(--color-text);
-}
-
-.tg-bubble--user {
-  border-left: 3px solid var(--color-border);
-}
-
-.tg-bubble__meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.tg-bubble__who {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.tg-bubble__time {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-
-.tg-bubble__text {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.tg-bubble__error {
-  margin: 10px 0 0;
-  font-size: 13px;
-  color: #b33b2e;
 }
 
 .empty-hint {

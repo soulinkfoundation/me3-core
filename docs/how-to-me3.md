@@ -202,7 +202,6 @@ R2 storage is not required for first install. Activate it later from Account set
 
 - ME3.app: links hosted ME3 sign-in and public `me.json` preference back to this Core install. Disconnect is only available when password auth remains available.
 - Soulink: creates a private Soulink chat between the owner and their ME3 assistant. It requires a live public Core URL; local callback URLs cannot connect.
-- Telegram: create a bot with BotFather, save the bot username and token in Account, sync the webhook, then open the setup link or QR code and tap Start in Telegram.
 
 ### AI Models And Gateway
 

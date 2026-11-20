@@ -20,7 +20,6 @@ export type SiteQuota = {
     mailboxAlias: true;
     approvalFirstOutbound: true;
     soulinkAgentAccess: true;
-    telegramAgentAccess: true;
   };
 };
 
@@ -79,7 +78,6 @@ export async function getSiteQuota(env: Env, ownerId: string): Promise<SiteQuota
       mailboxAlias: true,
       approvalFirstOutbound: true,
       soulinkAgentAccess: true,
-      telegramAgentAccess: true,
     },
   };
 }

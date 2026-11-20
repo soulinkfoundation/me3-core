@@ -12,7 +12,6 @@ export interface TierCapabilities {
   importFromUrl: boolean;
   agentEnabled: boolean;
   soulinkAgentAccess: boolean;
-  telegramAgentAccess: boolean;
   notificationDelivery: boolean;
   bookingsEnabled: boolean;
   bookingReminders: boolean;
@@ -32,7 +31,6 @@ export const TIER_CAPABILITIES: Record<SubscriptionTier, TierCapabilities> = {
     importFromUrl: true,
     agentEnabled: false,
     soulinkAgentAccess: false,
-    telegramAgentAccess: false,
     notificationDelivery: true,
     bookingsEnabled: false,
     bookingReminders: false,
@@ -50,7 +48,6 @@ export const TIER_CAPABILITIES: Record<SubscriptionTier, TierCapabilities> = {
     importFromUrl: true,
     agentEnabled: false,
     soulinkAgentAccess: false,
-    telegramAgentAccess: false,
     notificationDelivery: true,
     bookingsEnabled: true,
     bookingReminders: true,
@@ -68,7 +65,6 @@ export const TIER_CAPABILITIES: Record<SubscriptionTier, TierCapabilities> = {
     importFromUrl: true,
     agentEnabled: false,
     soulinkAgentAccess: true,
-    telegramAgentAccess: true,
     notificationDelivery: true,
     bookingsEnabled: true,
     bookingReminders: true,

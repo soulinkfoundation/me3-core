@@ -37,7 +37,6 @@ export const test = base.extend({
             shopEnabled: false,
             importFromUrl: true,
             agentEnabled: false,
-            telegramAgentAccess: false,
             notificationDelivery: true,
             bookingReminders: true,
           },

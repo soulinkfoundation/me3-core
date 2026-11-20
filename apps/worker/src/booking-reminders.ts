@@ -3,7 +3,6 @@ import {
   EmailProviderInputError,
   sendEmailWithProvider,
 } from "./email-providers";
-import { resolveTelegramBotToken } from "./telegram-settings";
 import type {
   BookingReminderQueueMessage,
   DbBooking,
@@ -37,7 +36,7 @@ export async function updateSiteBookingReminders(env: Env, userId: string, siteI
 }
 
 type BookingReminderType = "booking_reminder_24h" | "booking_reminder_2h";
-type BookingReminderChannel = "email" | "telegram" | "soulink";
+type BookingReminderChannel = "email" | "soulink";
 type BookingReminderSettings = {
   enabled?: boolean;
   reminder24h?: boolean;
@@ -63,18 +62,16 @@ type BookingReminderPayload = {
   isFree: boolean;
   meetingUrl?: string | null;
   meetingHostUrl?: string | null;
-  telegramChatId?: string | null;
   soulinkConnectionId?: string | null;
   soulinkThreadId?: string | null;
 };
 
 type BookingReminderPlanInput = Omit<
   BookingReminderPayload,
-  "userId" | "telegramChatId" | "soulinkConnectionId" | "soulinkThreadId"
+  "userId" | "soulinkConnectionId" | "soulinkThreadId"
 > & {
   userId: string;
   reminders?: BookingReminderSettings | null;
-  telegramChatId?: string | null;
   soulinkConnection?: {
     id: string;
     threadId: string;
@@ -105,7 +102,6 @@ type ActiveChannelConnectionRow = {
   setup_token: string;
   provider_connection_id: string | null;
   provider_thread_id: string | null;
-  telegram_chat_id: string | null;
 };
 
 type SoulinkNotifyResult = {
@@ -132,10 +128,7 @@ export async function scheduleBookingRemindersForBooking(
     return 0;
   }
 
-  const [telegramConnection, soulinkConnection] = await Promise.all([
-    getActiveTelegramConnection(env, owner.id),
-    getActiveSoulinkConnection(env, owner.id),
-  ]);
+  const soulinkConnection = await getActiveSoulinkConnection(env, owner.id);
 
   const entries = buildBookingReminderPlan({
     bookingId: input.booking.id,
@@ -157,7 +150,6 @@ export async function scheduleBookingRemindersForBooking(
     meetingUrl: input.booking.meeting_url || null,
     meetingHostUrl: input.booking.meeting_host_url || null,
     reminders: input.reminders,
-    telegramChatId: telegramConnection?.telegram_chat_id || null,
     soulinkConnection: soulinkConnection?.provider_thread_id
       ? {
           id: soulinkConnection.id,
@@ -275,14 +267,6 @@ export function buildBookingReminderPlan(
       scheduledFor,
       payload: basePayload,
     });
-    if (input.telegramChatId) {
-      entries.push({
-        reminderType: candidate.reminderType,
-        channel: "telegram",
-        scheduledFor,
-        payload: { ...basePayload, telegramChatId: input.telegramChatId },
-      });
-    }
     if (input.soulinkConnection) {
       entries.push({
         reminderType: candidate.reminderType,
@@ -506,7 +490,6 @@ async function sendBookingReminder(
   payload: BookingReminderPayload,
 ): Promise<ReminderSendResult> {
   if (reminder.channel === "email") return sendEmailReminder(env, payload, reminder.reminder_type, reminder.id);
-  if (reminder.channel === "telegram") return sendTelegramReminder(env, payload, reminder.reminder_type);
   if (reminder.channel === "soulink") return sendSoulinkReminder(env, payload, reminder.reminder_type);
   return { status: "skipped", reason: "Unsupported reminder channel" };
 }
@@ -563,27 +546,6 @@ async function sendEmailReminder(
       error: formatError(error),
       retryable: !(error instanceof EmailProviderInputError),
     };
-  }
-}
-
-async function sendTelegramReminder(
-  env: Env,
-  payload: BookingReminderPayload,
-  reminderType: BookingReminderType,
-): Promise<ReminderSendResult> {
-  if (!payload.telegramChatId) {
-    return { status: "skipped", reason: "No active Telegram chat" };
-  }
-  const botToken = await resolveTelegramBotToken(env, payload.userId);
-  if (!botToken) {
-    return { status: "failed", error: "Telegram bot token is not configured" };
-  }
-
-  try {
-    await sendTelegramMessage(botToken, payload.telegramChatId, buildOwnerReminderText(reminderType, payload));
-    return { status: "sent" };
-  } catch (error) {
-    return { status: "failed", error: formatError(error), retryable: true };
   }
 }
 
@@ -736,24 +698,9 @@ async function getBookingOwner(env: Env, siteId: string): Promise<OwnerProfileRo
     .first<OwnerProfileRow>();
 }
 
-async function getActiveTelegramConnection(env: Env, userId: string) {
-  return env.DB.prepare(
-    `SELECT id, setup_token, provider_connection_id, provider_thread_id, telegram_chat_id
-     FROM agent_channel_connections
-     WHERE user_id = ?
-       AND channel = 'telegram'
-       AND status = 'active'
-       AND telegram_chat_id IS NOT NULL
-     ORDER BY updated_at DESC
-     LIMIT 1`,
-  )
-    .bind(userId)
-    .first<ActiveChannelConnectionRow>();
-}
-
 async function getActiveSoulinkConnection(env: Env, userId: string) {
   return env.DB.prepare(
-    `SELECT id, setup_token, provider_connection_id, provider_thread_id, telegram_chat_id
+    `SELECT id, setup_token, provider_connection_id, provider_thread_id
      FROM agent_channel_connections
      WHERE user_id = ?
        AND channel = 'soulink'
@@ -859,18 +806,6 @@ async function markReminderSkipped(env: Env, reminderId: string, message: string
     .run();
 }
 
-async function sendTelegramMessage(botToken: string, chatId: string, text: string) {
-  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: truncateText(text, 4096) }),
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { description?: string } | null;
-    throw new Error(payload?.description || `Telegram sendMessage failed (${response.status})`);
-  }
-}
-
 function formatBookingTime(startsAt: string, timezone: string): string {
   return new Date(startsAt).toLocaleString("en-US", {
     weekday: "long",
@@ -900,10 +835,6 @@ function normalizeText(value?: string | null): string | null {
 
 function normalizeOptionalText(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function truncateText(value: string, maxLength: number): string {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
 }
 
 function formatError(error: unknown): string {

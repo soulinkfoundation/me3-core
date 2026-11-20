@@ -15,7 +15,6 @@ import AppPageBar from "../components/AppPageBar.vue";
 import PluginList from "../components/PluginList.vue";
 import SoulinkConnectPanel from "../components/SoulinkConnectPanel.vue";
 import StatusBadge from "../components/StatusBadge.vue";
-import TelegramConnectPanel from "../components/TelegramConnectPanel.vue";
 import UiIcon from "../components/UiIcon.vue";
 import { useAppToast } from "../composables/useAppToast";
 import { useTheme, type ThemePreference } from "../composables/useTheme";
@@ -451,14 +450,8 @@ const commerceCurrencyOptions = COMMERCE_CURRENCY_OPTIONS;
 const soulinkPanelRef = ref<InstanceType<typeof SoulinkConnectPanel> | null>(
   null,
 );
-const telegramPanelRef = ref<InstanceType<typeof TelegramConnectPanel> | null>(
-  null,
-);
-// Telegram is hidden in every ME3 app for now; the Core channel and API stay in place.
-const TELEGRAM_UI_ENABLED = false;
 // Plugins and Coding agents are hidden while ME3 settles on a simpler settings page; News stays on by default.
 const SHOW_PLUGINS_AND_CODING_AGENTS = false;
-const telegramSetupOpen = ref(route.query.section === "telegram");
 
 const openSection = ref({
   ai: false,
@@ -631,25 +624,6 @@ const soulinkStatusLabel = computed(() => {
 
 const soulinkStatusClass = computed(() => {
   const panel = soulinkPanelRef.value;
-  if (!panel) return "pending_setup";
-  if (!panel.available || !panel.connection) return "pending_setup";
-  if (panel.connection.status === "disconnected") return "paused";
-  return panel.connection.status;
-});
-
-const telegramStatusLabel = computed(() => {
-  const panel = telegramPanelRef.value;
-  if (!panel) return "";
-  if (!panel.available) return "Not available";
-  if (!panel.configured) return "Needs setup";
-  if (!panel.connection) return "Not connected";
-  if (panel.connection.status === "active") return "Connected";
-  if (panel.connection.status === "disconnected") return "Disconnected";
-  return "Pending setup";
-});
-
-const telegramStatusClass = computed(() => {
-  const panel = telegramPanelRef.value;
   if (!panel) return "pending_setup";
   if (!panel.available || !panel.connection) return "pending_setup";
   if (panel.connection.status === "disconnected") return "paused";
@@ -2285,7 +2259,7 @@ function openRouteSection() {
     openSection.value.appConnections = true;
     appConnectionsError.value = "ME3.app connection failed. Please try again.";
   }
-  if (route.query.section === "soulink" || route.query.section === "telegram") {
+  if (route.query.section === "soulink") {
     openSection.value.appConnections = true;
   }
   if (route.query.section === "mailbox" || route.query.section === "email") {
@@ -3259,102 +3233,6 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div
-                  v-if="TELEGRAM_UI_ENABLED"
-                  class="connection-line connection-line--telegram"
-                  :class="{
-                    'connection-line--connected':
-                      telegramPanelRef?.connection?.status === 'active',
-                    'connection-line--telegram-connected':
-                      telegramPanelRef?.connection?.status === 'active',
-                  }"
-                >
-                  <div
-                    v-if="telegramPanelRef?.connection?.status === 'active'"
-                    class="connection-line__copy"
-                  >
-                    <span class="connection-line__title">Telegram</span>
-                    <p class="connection-line__description">
-                      Chat with your ME3 assistant in Telegram.
-                    </p>
-                  </div>
-                  <template v-else>
-                    <div class="connection-line__header">
-                      <div class="connection-line__copy">
-                        <span class="connection-line__title">Telegram</span>
-                        <p class="connection-line__description">
-                          Chat with your ME3 assistant in Telegram.
-                        </p>
-                      </div>
-                      <div class="connection-line__end">
-                        <StatusBadge
-                          v-if="telegramPanelRef?.available"
-                          :tone="telegramStatusClass"
-                        >
-                          {{ telegramStatusLabel }}
-                        </StatusBadge>
-                        <Button
-                          color="outline"
-                          size="compact"
-                          type="button"
-                          aria-controls="telegram-setup-panel"
-                          :aria-expanded="telegramSetupOpen"
-                          @click="telegramSetupOpen = !telegramSetupOpen"
-                        >
-                          {{ telegramSetupOpen ? "Hide setup" : "Configure" }}
-                        </Button>
-                      </div>
-                    </div>
-                    <div
-                      id="telegram-setup-panel"
-                      v-show="telegramSetupOpen"
-                      class="telegram-setup-panel"
-                    >
-                      <ol class="telegram-setup-steps">
-                        <li>Open Telegram and search for BotFather.</li>
-                        <li>
-                          Type <code>/newbot</code> and follow the instructions.
-                        </li>
-                        <li>
-                          You will get a bot name and token. Save them here.
-                        </li>
-                      </ol>
-                      <div class="connection-line__end">
-                        <TelegramConnectPanel
-                          ref="telegramPanelRef"
-                          :show-status-row="false"
-                          :compact-connected="true"
-                          :auto-prepare-when-not-connected="
-                            route.query.section === 'telegram'
-                          "
-                        />
-                      </div>
-                    </div>
-                  </template>
-                  <div
-                    v-if="telegramPanelRef?.connection?.status === 'active'"
-                    class="connection-line__end"
-                  >
-                    <StatusBadge
-                      v-if="
-                        telegramPanelRef?.available &&
-                        telegramPanelRef?.connection?.status === 'active'
-                      "
-                      :tone="telegramStatusClass"
-                    >
-                      {{ telegramStatusLabel }}
-                    </StatusBadge>
-                    <TelegramConnectPanel
-                      ref="telegramPanelRef"
-                      :show-status-row="false"
-                      :compact-connected="true"
-                      :auto-prepare-when-not-connected="
-                        route.query.section === 'telegram'
-                      "
-                    />
-                  </div>
-                </div>
-
-                <div
                   class="connection-line"
                   :class="{
                     'connection-line--connected':
@@ -3387,9 +3265,6 @@ onBeforeUnmount(() => {
               </template>
               <p v-if="soulinkPanelRef?.error" class="error">
                 {{ soulinkPanelRef.error }}
-              </p>
-              <p v-if="telegramPanelRef?.error" class="error">
-                {{ telegramPanelRef.error }}
               </p>
             </div>
           </div>
@@ -5532,19 +5407,6 @@ onBeforeUnmount(() => {
   );
 }
 
-.connection-line--telegram {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  padding: 12px;
-}
-
-.connection-line--telegram-connected {
-  display: flex;
-  align-items: center;
-  padding: 10px 12px;
-}
-
 .connection-line--local-password {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -5640,18 +5502,6 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
-.connection-line--telegram:not(.connection-line--telegram-connected)
-  .connection-line__header {
-  width: 100%;
-}
-
-.connection-line--telegram:not(.connection-line--telegram-connected)
-  .connection-line__header
-  .connection-line__end {
-  display: inline-flex;
-  padding-top: 0;
-}
-
 .connection-line__meta {
   color: var(--ui-text-muted, var(--color-text-muted));
   font-size: 12px;
@@ -5665,44 +5515,6 @@ onBeforeUnmount(() => {
   gap: 8px;
   flex-shrink: 0;
   padding-top: 2px;
-}
-
-.connection-line--telegram .connection-line__end {
-  display: inline-flex;
-  padding-top: 0;
-}
-
-.connection-line--telegram-connected .connection-line__end {
-  display: inline-flex;
-  padding-top: 2px;
-}
-
-.telegram-setup-panel {
-  display: grid;
-  gap: 12px;
-}
-
-.telegram-setup-steps {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding-left: 20px;
-  color: var(--ui-text-muted, var(--color-text-muted));
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.telegram-setup-steps li::marker {
-  color: var(--ui-accent, var(--color-accent));
-  font-weight: 700;
-}
-
-.telegram-setup-steps code {
-  padding: 2px 5px;
-  border-radius: 5px;
-  background: var(--ui-surface, var(--color-bg));
-  color: var(--ui-text, var(--color-text));
-  font-size: 12px;
 }
 
 .connection-lines__hint {
@@ -6128,16 +5940,6 @@ onBeforeUnmount(() => {
 
   .connection-line__header {
     align-items: flex-start;
-  }
-
-  .connection-line--telegram:not(.connection-line--telegram-connected)
-    .connection-line__header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .connection-line--telegram-connected {
-    align-items: stretch;
   }
 
   .connection-line--local-password .connection-line__header {
