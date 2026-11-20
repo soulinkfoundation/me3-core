@@ -38,7 +38,7 @@ export async function extractEmbeddedPageImages(env: Env, site: DbSite, path: st
     if (!metadata || (env.IMAGES && dimensions.width > 320 && !metadata.variants?.length)) {
       const form = new FormData();
       if (env.IMAGES) {
-        for (const width of [320, 640, 960, 1280].filter(width => width < dimensions.width)) {
+        for (const width of [320, 640, 960, 1280, 1920].filter(width => width < dimensions.width)) {
           const result = await env.IMAGES.input(new Response(buffer).body!)
             .transform({width, fit: 'scale-down'}).output({format: 'image/webp', quality: 80});
           const response = result.response();

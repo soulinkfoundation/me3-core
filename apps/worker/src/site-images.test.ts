@@ -47,6 +47,13 @@ function webp(width: number, height: number) {
 }
 
 describe('uploaded responsive image metadata', () => {
+  it('keeps a 1920w variant for wide Cover banners', async () => {
+    const env = imageEnv(), site = { id:'a', username:'alex' } as DbSite;
+    const form = new FormData();
+    form.set('variant-1920',new File([webp(1920,1200)],'cover.webp',{type:'image/webp'}));
+    await saveUploadedImageMetadata(env,site,'files/banner.png',png(2400,1500),form);
+    expect((await getSiteImageMetadata(env,site))['files/banner.png'].variants?.map(v => v.width)).toEqual([1920]);
+  });
   it('stores verified variants without losing concurrent uploads or mixing sites', async () => {
     const env = imageEnv(), site = { id:'a', username:'alex' } as DbSite;
     const form = new FormData();

@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { Cropper } from "vue-advanced-cropper";
 import "vue-advanced-cropper/dist/style.css";
 import { useWizardStore } from "../../stores/wizard";
 import UiIcon from "../UiIcon.vue";
 import Button from "../Button.vue";
 import { loadRandomPhoto } from "../../utils/randomPhoto";
+import { bannerCropSpec, bannerOutputSize } from "../../utils/bannerCrop";
 
 const wizard = useWizardStore();
+const cropSpec = computed(() => bannerCropSpec(wizard.profile.layout));
 
 const cropperRef = ref<InstanceType<typeof Cropper> | null>(null);
 const tempImageUrl = ref<string | null>(null);
@@ -48,7 +50,8 @@ async function loadRandomBanner() {
   randomBannerError.value = null;
 
   try {
-    const blob = await loadRandomPhoto(1200, 400);
+    const size = bannerOutputSize(cropSpec.value, cropSpec.value.fixed ? 0 : 1920);
+    const blob = await loadRandomPhoto(size.width, size.height);
     wizard.updateProfile({
       banner: await blobToDataUrl(blob),
       bannerBlob: blob,
@@ -76,14 +79,16 @@ async function confirmCrop() {
   const { canvas } = cropperRef.value.getResult();
   if (!canvas) return;
 
-  // Create 1200x400 output (3:1 ratio)
+  // 1200x400 strip for most layouts; a larger, taller photo for the full-bleed Cover hero.
+  const { width, height } = bannerOutputSize(cropSpec.value, canvas.width);
   const outputCanvas = document.createElement("canvas");
-  outputCanvas.width = 1200;
-  outputCanvas.height = 400;
+  outputCanvas.width = width;
+  outputCanvas.height = height;
 
   const ctx = outputCanvas.getContext("2d");
   if (ctx) {
-    ctx.drawImage(canvas, 0, 0, 1200, 400);
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(canvas, 0, 0, width, height);
 
     // Get as blob for uploading later
     const blob = await new Promise<Blob | null>((resolve) => {
@@ -170,13 +175,14 @@ function removeBanner() {
     <!-- Cropper Modal -->
     <div v-if="showCropper" class="cropper-modal">
       <div class="cropper-container">
-        <h3>Crop the site banner</h3>
+        <h3>{{ cropSpec.title }}</h3>
+        <p v-if="cropSpec.hint" class="cropper-hint">{{ cropSpec.hint }}</p>
 
         <div class="cropper-wrapper">
           <Cropper
             ref="cropperRef"
             :src="tempImageUrl!"
-            :stencil-props="{ aspectRatio: 3 }"
+            :stencil-props="{ aspectRatio: cropSpec.aspectRatio }"
             class="cropper"
           />
         </div>
@@ -205,7 +211,7 @@ function removeBanner() {
 
 .banner-preview {
   width: 100%;
-  aspect-ratio: 3 / 1;
+  aspect-ratio: v-bind("cropSpec.aspectRatio");
   border-radius: 12px;
   background: var(--color-border);
   position: relative;
@@ -332,6 +338,12 @@ function removeBanner() {
 .cropper-container h3 {
   font-size: 20px;
   margin-bottom: 16px;
+}
+
+.cropper-hint {
+  margin: -8px 0 16px;
+  color: var(--color-text-muted);
+  font-size: 14px;
 }
 
 .cropper-wrapper {

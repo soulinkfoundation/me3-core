@@ -49,3 +49,21 @@ describe('responsive published images', () => {
     }
   });
 });
+
+describe('site banner responsive sizes', () => {
+  const hash = (n: string) => n.repeat(64);
+  const images = { 'files/banner.jpg': { width: 2400, height: 1500, variants: [640, 1280, 1920].map((width, i) => ({ path: `files/responsive/${hash('abc'[i])}.webp`, width })) } };
+  const bannerTag = (html: string) => html.match(/<div class="site-hero__banner"><img[^>]*>/)?.[0] || '';
+  const render = (layout: string) => generateSiteHtml({ name: 'Niamh', banner: './files/banner.jpg', extensions: { 'me3.app/site': { layout } } } as never, [], undefined, { baseUrl: 'https://example.com', images });
+  it('fills the full-bleed Cover hero from desktop-sized variants', async () => {
+    const tag = bannerTag((await render('cover'))['index.html']);
+    expect(tag).toContain('sizes="max(100vw, 960px)"');
+    expect(tag.match(/sizes=/g)).toHaveLength(1);
+    expect(tag).toContain(`files/responsive/${hash('c')}.webp 1920w`);
+    expect(tag).toContain('files/banner.jpg 2400w');
+  });
+  it('keeps the Card banner on the column-width sizes', async () => {
+    const tag = bannerTag((await render('card'))['index.html']);
+    expect(tag).toContain('sizes="(max-width: 640px) 100vw, 640px"');
+  });
+});

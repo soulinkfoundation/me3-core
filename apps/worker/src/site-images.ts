@@ -67,7 +67,7 @@ export async function saveUploadedImageMetadata(env: Env, site: DbSite, path: st
   if (!dimensions) { await deleteSiteFile(env, site.id, metadataPath); }
   else {
     const variants: Array<{ path: string; width: number }> = [];
-    for (const width of [320, 640, 960, 1280]) {
+    for (const width of [320, 640, 960, 1280, 1920]) {
       const file = form?.get(`variant-${width}`);
       if (!(file instanceof File) || file.type !== 'image/webp' || file.size > 1_900_000) continue;
       const bytes = await file.arrayBuffer(), size = imageDimensions(bytes);

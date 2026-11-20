@@ -551,7 +551,7 @@ function generateModernIndexHtml(profile: Me3SiteProfile, capabilities: SiteRend
   const bannerPath = profile.banner ? filePathForHtml(profile.banner) : "";
   const avatarPath = profile.avatar ? filePathForHtml(profile.avatar) : "";
   const banner = bannerPath && layout !== "minimal" && layout !== "split"
-    ? `<div class="site-hero__banner"><img src="${escapeHtml(bannerPath)}" alt="" loading="eager" decoding="async" fetchpriority="high"></div>` : "";
+    ? `<div class="site-hero__banner"><img src="${escapeHtml(bannerPath)}" alt="" loading="eager" decoding="async" fetchpriority="high"${layout === "cover" ? ` sizes="${COVER_BANNER_SIZES}"` : ""}></div>` : "";
   // Until the owner adds a photo, their initials hold its place so the site already looks finished.
   const initials = siteInitials(title);
   const avatar = avatarPath ? `<img class="site-hero__avatar" src="${escapeHtml(avatarPath)}" alt="" loading="eager" decoding="async">`
@@ -813,6 +813,9 @@ function generateLatestWriting(profile: Me3SiteProfile, fileMap: Map<string, str
   }).join("");
   return `<section class="site-writing"><div class="site-section-heading"><h2>Latest writing</h2><a href="./${escapeHtml(path)}/">All posts →</a></div><div class="site-writing__rows">${rows}</div></section>`;
 }
+
+/** The Cover hero is full-bleed and at least 560px tall; a 16:10 photo fills it at max(100vw, 960px). */
+export const COVER_BANNER_SIZES = "max(100vw, 960px)";
 
 function modernSiteLayout(profile: Me3SiteProfile): "card" | "split" | "cover" | "minimal" {
   const value = profile.extensions?.["me3.app/site"]?.layout || profile.links?.[SITE_LAYOUT_LINK_KEY];

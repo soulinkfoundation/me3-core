@@ -28,7 +28,9 @@ export function applyImageMetadata(html: string, images: SiteImageMetadata, opti
         // Relative paths keep downloadable/preview sites portable when no public base is available.
         const srcset = variants.join(', ').split('https://site.invalid/').join('../'.repeat((options.pagePath || '').split('/').length - 1) || './');
         const fixed = tag.match(/\bwidth="(\d+)"/)?.[1];
-        attributes += ` srcset="${escapeMetadata(srcset)}" sizes="${escapeMetadata(fixed ? `${fixed}px` : options.sizes)}"`;
+        attributes += ` srcset="${escapeMetadata(srcset)}"`;
+        // A tag that states its own sizes (a full-bleed hero) keeps it.
+        if (!/\bsizes=/.test(tag)) attributes += ` sizes="${escapeMetadata(fixed ? `${fixed}px` : options.sizes)}"`;
       }
     }
     return tag.replace(/\/?\s*>$/, `${attributes}>`);
