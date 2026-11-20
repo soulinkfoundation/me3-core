@@ -6,7 +6,7 @@ export type TourTask = { kind: "open"; label: string; to: TourPlace } | { kind: 
 export type TourTarget = { id: string; hint: string };
 /** The screen a step is about: Next takes the owner there, and the card explains it once they're on it. */
 export type TourScreen = "home" | "accounts" | "social" | "chat";
-export type TourStep = { id: string; emoji: string; title: string; body: string; screen: TourScreen | null; intro: string | null; targets: TourTarget[]; task: TourTask | null; copy: { label: string; value: string } | null; done: boolean };
+export type TourStep = { id: string; emoji: string; title: string; body: string; screen: TourScreen | null; intro: string | null; targets: TourTarget[]; task: TourTask | null; done: boolean };
 export type TourStatus = "new" | "active" | "finished" | "skipped";
 export type ChatTour = { steps: TourStep[]; progress: { status: TourStatus; stepId: string | null } };
 
@@ -16,7 +16,7 @@ type GetJson = <T>(path: string) => Promise<T>;
 export function readChatTour(tour: Partial<ChatTour> | null | undefined): ChatTour | null {
   const steps = (Array.isArray(tour?.steps) ? tour.steps : [])
     .filter(step => step?.title && step.body)
-    .map(step => ({ ...step, screen: step.screen ?? null, intro: step.intro ?? null, targets: Array.isArray(step.targets) ? step.targets.filter(target => target?.id) : [], task: step.task ?? null, copy: step.copy ?? null, done: step.done === true }));
+    .map(step => ({ ...step, screen: step.screen ?? null, intro: step.intro ?? null, targets: Array.isArray(step.targets) ? step.targets.filter(target => target?.id) : [], task: step.task ?? null, done: step.done === true }));
   if (!steps.length) return null;
   const status = tour?.progress?.status ?? "new";
   return { steps, progress: { status, stepId: tour?.progress?.stepId ?? null } };

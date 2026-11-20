@@ -1,9 +1,6 @@
-import { getAgentMailboxOverview } from "@me3-core/plugin-agent-chat";
-import { getConfiguredEmailIdentity } from "./email-providers";
 import { getHomeLayout, type HomeLayout } from "./home-layout";
-import { isManagedEmailDeployment } from "./managed-email";
 import { isCorePluginEnabled } from "./plugins";
-import { getOwnerProfile, siteFileContentToBytes } from "./sites";
+import { siteFileContentToBytes } from "./sites";
 import type { Env } from "./types";
 
 /**
@@ -31,8 +28,6 @@ export type TourStep = {
   targets: TourTarget[];
   /** A button for a step the owner can't do by tapping around (the website, which needs their input). */
   task: TourTask | null;
-  /** ME3's address, for the email step, so the owner can copy it. */
-  copy: { label: string; value: string } | null;
   /** The owner has done the step. */
   done: boolean;
 };
@@ -43,7 +38,6 @@ export type ChatTour = { steps: TourStep[]; progress: TourProgress };
 
 export type TourContext = {
   siteBuilt: boolean;
-  emailAddress: string | null;
   layout: HomeLayout | null;
   /** Steps whose plugin is on; a step for a plugin that's off is left out. */
   accounts: boolean;
@@ -62,41 +56,47 @@ function inboxOnHome(layout: HomeLayout | null) {
 }
 
 export function chatTour(context: TourContext): ChatTour {
+  const homeDone = Boolean(context.layout?.pinned.length);
+  const inboxDone = inboxOnHome(context.layout);
   const steps: TourStep[] = [
     {
       id: "home", emoji: "🏠", title: "Home",
-      body: "Home shows your day: what's on, plus your own cards for quick access to what matters to you.",
-      screen: "home", intro: null,
+      // On Chat it says what Home is; on Home, the one thing to do there.
+      body: homeDone
+        ? "That's your Home. Add or change cards any time with Add to Home."
+        : "Tap Add to Home and pick the cards you want to see each day. Inbox is a good one to start with.",
+      screen: "home", intro: "Home shows your day: what's on, plus cards for the things you use most. Tap Home to take a look.",
       targets: [{ id: "home_tab", hint: "Tap Home at the top." }, { id: "add_to_home", hint: "Now tap Add to Home and pick any card." }],
-      task: null, copy: null,
-      done: Boolean(context.layout?.pinned.length),
+      task: null,
+      done: homeDone,
     },
     {
       id: "email", emoji: "✉️", title: "ME3's own email",
-      body: "Like any good assistant, I have my own email. Forward me invoices and I'll log them in your Accounts. Add my email card to Home for quick access.",
+      // The Inbox card shows and copies the address, so the step only asks for the card.
+      body: inboxDone
+        ? "Like any good assistant, I have my own email. Forward me invoices and I'll log them in your Accounts. My address is on your Inbox card."
+        : "Like any good assistant, I have my own email. Forward me invoices and I'll log them in your Accounts. Add the Inbox card to Home to keep my address handy.",
       screen: "home", intro: null,
       targets: [{ id: "home_tab", hint: "Go to Home." }, { id: "add_to_home", hint: "Tap Add to Home." }, { id: "add_inbox", hint: "Pick Inbox." }],
       task: null,
-      copy: context.emailAddress ? { label: "Copy my address", value: context.emailAddress } : null,
-      done: inboxOnHome(context.layout),
+      done: inboxDone,
     },
   ];
   if (context.accounts) steps.push({
     id: "accounts", emoji: "📒", title: "Accounts",
-    body: "Track your income and expenses in one place. Purchases and bookings from your site show up on their own, and so do invoices sent to my email.",
-    // The one step that teaches the menu: everything else in ME3 lives there too.
-    screen: "accounts", intro: "Everything in ME3 is in your menu. Tap your profile picture, then Accounts.",
-    targets: [{ id: "profile_menu", hint: "Tap your profile picture." }, { id: "menu_accounts", hint: "Now tap Accounts." }],
-    task: null, copy: null,
+    body: "Track your income and expenses in one place. Sales and bookings from your site show up here on their own, and so do invoices sent to my email. Find Accounts any time under your profile picture.",
+    // Next opens Accounts straight away, like Social and the website: the card says where it lives in the menu.
+    screen: "accounts", intro: null,
+    targets: [],
+    task: null,
     done: context.seen.includes("accounts"),
   });
   if (context.social) steps.push({
     id: "social", emoji: "📣", title: "Socials made simple",
     body: "Connect your accounts and post everywhere from one place. Repost and schedule in a couple of taps.",
-    // Next from Accounts goes straight to Social: the menu was learned once, no need to repeat it.
     screen: "social", intro: null,
     targets: [],
-    task: null, copy: null,
+    task: null,
     done: context.seen.includes("social"),
   });
   steps.push({
@@ -108,7 +108,6 @@ export function chatTour(context: TourContext): ChatTour {
     screen: "chat", intro: null,
     targets: [],
     task: context.siteBuilt ? { kind: "open", label: "Open the editor", to: "website" } : { kind: "site_ask", label: "Make my website" },
-    copy: null,
     done: context.siteBuilt,
   });
   const stepId = steps.some(step => step.id === context.progress.stepId) ? context.progress.stepId : null;
@@ -138,37 +137,28 @@ async function profileSiteBuilt(env: Env, ownerId: string): Promise<boolean> {
   } catch { return true; } // Unreadable counts as built: never offer to redo an owner's site.
 }
 
-/** ME3's own address, read the way GET /api/mailbox does. */
-async function agentEmailAddress(env: Env, ownerId: string): Promise<string | null> {
-  const owner = await getOwnerProfile(env, ownerId);
-  const configuredIdentity = isManagedEmailDeployment(env) ? null : await getConfiguredEmailIdentity(env, ownerId).catch(() => null);
-  const overview = await getAgentMailboxOverview(env, ownerId, owner || undefined, { includeRecentActivity: false, configuredIdentity });
-  return overview.mailbox?.aliasAddress || overview.sources.find(source => source.inboundEnabled)?.address || null;
-}
-
 async function progressRow(env: Env, ownerId: string) {
   return env.DB.prepare("SELECT status, step_id, seen_json FROM chat_tour_progress WHERE user_id = ?")
     .bind(ownerId).first<{ status: string; step_id: string | null; seen_json: string }>();
 }
 
 /** Each part is read on its own: one that fails falls back to its plainer step. */
-export async function loadChatTour(env: Env, ownerId: string, options: { emailAddress?: () => Promise<string | null> } = {}): Promise<ChatTour> {
-  const [siteBuilt, emailAddress, layout, accounts, social, row] = await Promise.all([
+export async function loadChatTour(env: Env, ownerId: string): Promise<ChatTour> {
+  const [siteBuilt, layout, accounts, social, row] = await Promise.all([
     profileSiteBuilt(env, ownerId).catch(() => true),
-    (options.emailAddress ?? (() => agentEmailAddress(env, ownerId)))().catch(() => null),
     getHomeLayout(env, ownerId).then(result => result.layout).catch(() => null),
     isCorePluginEnabled(env, "me3.accounts").catch(() => false),
     isCorePluginEnabled(env, "me3.social-publishing").catch(() => false),
     progressRow(env, ownerId).catch(() => null),
   ]);
   const { progress, seen } = readProgress(row);
-  return chatTour({ siteBuilt, emailAddress, layout, accounts, social, seen, progress });
+  return chatTour({ siteBuilt, layout, accounts, social, seen, progress });
 }
 
 export class TourInputError extends Error {}
 
 /** Saves where the owner is: `status` and `stepId` as given, and `seen` added to the places they've opened. */
-export async function saveChatTourProgress(env: Env, ownerId: string, input: unknown, options: { emailAddress?: () => Promise<string | null> } = {}): Promise<ChatTour> {
+export async function saveChatTourProgress(env: Env, ownerId: string, input: unknown): Promise<ChatTour> {
   const body = input && typeof input === "object" ? input as Record<string, unknown> : {};
   const { progress, seen } = readProgress(await progressRow(env, ownerId));
   const status = body.status === undefined ? (progress.status === "new" ? "active" : progress.status) : body.status;
@@ -180,5 +170,5 @@ export async function saveChatTourProgress(env: Env, ownerId: string, input: unk
   await env.DB.prepare(`INSERT INTO chat_tour_progress(user_id, status, step_id, seen_json, updated_at) VALUES(?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(user_id) DO UPDATE SET status = excluded.status, step_id = excluded.step_id, seen_json = excluded.seen_json, updated_at = excluded.updated_at`)
     .bind(ownerId, status, stepId, JSON.stringify(nextSeen)).run();
-  return loadChatTour(env, ownerId, options);
+  return loadChatTour(env, ownerId);
 }

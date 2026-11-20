@@ -2,19 +2,17 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "../Button.vue";
-import { useAppToast } from "../../composables/useAppToast";
 import { currentTourTarget, onTourScreen, placeTourCard, tourPlaceForPath, tourScreenRoute, type TourPlacement, type TourStep, type TourTarget } from "../../utils/chatTour";
 import { useTourStore } from "../../stores/tour";
 
 /**
  * Show me around (me3-q6la.5): a card over the whole app that points at what to tap next (the Home tab, then
- * + Add to Home; the profile picture, then Accounts). The owner does each step themselves and keeps their place;
+ * + Add to Home). The owner does each step themselves and keeps their place;
  * each step ticks when it's really done. With nothing to point at, the card docks in the corner.
  */
 const tour = useTourStore();
 const route = useRoute();
 const router = useRouter();
-const { toastSuccess, toastFromUnknown } = useAppToast();
 const titleId = useId();
 const step = computed(() => tour.step);
 // Landing on Accounts or Social is the step, so it counts at once rather than after Core answers;
@@ -86,12 +84,6 @@ async function doTask() {
   if (task.kind === "site_ask") await router.push({ path: "/assistant", query: { view: "chat", build: "site" } });
   else await router.push("/sites");
 }
-async function copy() {
-  const value = step.value?.copy?.value;
-  if (!value) return;
-  try { await navigator.clipboard.writeText(value); toastSuccess("Copied"); }
-  catch (error) { toastFromUnknown(error, "Couldn't copy that"); }
-}
 async function goTo(index: number) {
   tour.go(index);
   const item = tour.step;
@@ -115,7 +107,6 @@ async function openScreen() { if (step.value?.screen) await router.push(tourScre
     <div class="app-tour__actions">
       <Button v-if="step.task && !done" color="primary" shape="soft" type="button" data-testid="tour-task" @click="doTask">{{ step.task.label }}</Button>
       <Button v-if="takeThere" color="primary" shape="soft" type="button" @click="openScreen">Take me there</Button>
-      <Button v-if="step.copy" color="ghost" shape="soft" type="button" @click="copy">{{ step.copy.label }}</Button>
     </div>
     <div class="app-tour__foot">
       <span class="app-tour__dots" aria-hidden="true"><i v-for="(item, dot) in tour.tour?.steps" :key="item.id" :class="{ 'is-on': dot <= tour.index }" /></span>

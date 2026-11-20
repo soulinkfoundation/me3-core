@@ -3,7 +3,7 @@ import { currentTourTarget, onTourScreen, placeTourCard, tourScreenRoute, readCh
 
 // Failure modes: an older Core without the tour leaves Show me around doing nothing; a broken step draws an empty card;
 // the tour restarts from the top after a reload instead of the owner's step; a page that isn't Accounts or Social ticks a step.
-const step = (id: string) => ({ id, emoji: "🏠", title: id, body: "Hi", screen: null, intro: null, targets: [], task: null, copy: null, done: false });
+const step = (id: string) => ({ id, emoji: "🏠", title: id, body: "Hi", screen: null, intro: null, targets: [], task: null, done: false });
 
 describe("readChatTour", () => {
   it("keeps only steps it can draw", () => {

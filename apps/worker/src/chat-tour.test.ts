@@ -13,7 +13,7 @@ import { chatTour, type ChatTour, type TourContext } from "./chat-tour";
 // - the website step isn't last, or offers Make my website to an owner whose site is built;
 // - a bad progress write (unknown step or status) is saved instead of refused.
 const base: TourContext = {
-  siteBuilt: false, emailAddress: "maya@inbox.me3.app", layout: null, accounts: true, social: true, seen: [],
+  siteBuilt: false, layout: null, accounts: true, social: true, seen: [],
   progress: { status: "new", stepId: null },
 };
 const tour = (context: Partial<TourContext> = {}) => chatTour({ ...base, ...context });
@@ -45,7 +45,7 @@ describe("chatTour", () => {
   it("points the owner at what to tap, in order, and gives a button only to the website", () => {
     expect(step({}, "home").targets.map(target => target.id)).toEqual(["home_tab", "add_to_home"]);
     expect(step({}, "email").targets.map(target => target.id)).toEqual(["home_tab", "add_to_home", "add_inbox"]);
-    expect(step({}, "accounts").targets.map(target => target.id)).toEqual(["profile_menu", "menu_accounts"]);
+    expect(step({}, "accounts").targets).toEqual([]);
     expect(step({}, "social").targets).toEqual([]);
     expect(step({}, "website").targets).toEqual([]);
     for (const id of ["home", "email", "accounts", "social"]) expect(step({}, id).task).toBeNull();
@@ -53,10 +53,10 @@ describe("chatTour", () => {
   });
 
   // Failure mode: a step explains a screen the owner isn't looking at (Socials shown on Accounts, then Home).
-  it("ties each step to its screen, and teaches the menu only once", () => {
+  it("ties each step to its screen, and says where Accounts lives instead of walking the menu", () => {
     expect(tour().steps.map(item => item.screen)).toEqual(["home", "home", "accounts", "social", "chat"]);
-    expect(tour().steps.filter(item => item.targets.some(target => target.id === "profile_menu")).map(item => item.id)).toEqual(["accounts"]);
-    expect(step({}, "accounts").intro).toContain("profile picture");
+    expect(tour().steps.some(item => item.targets.some(target => target.id === "profile_menu"))).toBe(false);
+    expect(step({}, "accounts").body).toContain("profile picture");
   });
 
   it("offers Make my website until the site is built, then the editor", () => {
@@ -64,11 +64,6 @@ describe("chatTour", () => {
     const built = step({ siteBuilt: true }, "website");
     expect(built.task).toEqual({ kind: "open", label: "Open the editor", to: "website" });
     expect(built.done).toBe(true);
-  });
-
-  it("offers ME3's address to copy only when there is one", () => {
-    expect(step({}, "email").copy).toEqual({ label: "Copy my address", value: "maya@inbox.me3.app" });
-    expect(step({ emailAddress: null }, "email").copy).toBeNull();
   });
 
   it("forgets a saved step this install no longer shows", () => {
