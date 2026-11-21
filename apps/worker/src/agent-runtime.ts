@@ -316,7 +316,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     accounts:createAgentAccountsServices(env,ownerId),
     contacts:createAgentContactServices(env,ownerId),
     images:createAgentImageGenerationServices(env,ownerId),
-    payments:parkedFeaturesOn(env)?{...createAgentPaymentServices(env,ownerId),...createAgentNetworkPaymentServices(env,ownerId)}:undefined,
+    payments:{...createAgentPaymentServices(env,ownerId),...createAgentNetworkPaymentServices(env,ownerId)},
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
     web:createWebResearchToolServices(env,ownerId),landingPageEnv:env as never,
     sites:{draft:input=>draftStarterSite(env,ownerId,input),publish:()=>publishStarterSite(env,ownerId),domainOptions:query=>getAgentDomainOffer(env,ownerId,query)},

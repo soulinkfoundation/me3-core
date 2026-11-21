@@ -32,10 +32,11 @@ export const APP_FEATURE_ICONS: Record<AppFeatureId, string> = {
 };
 
 /**
- * Parked until after the first release (me3-5u97.6): built, not deleted, and not offered to new
- * owners. Flip a flag to show its entry points again. The agent side is `ME3_PARKED_FEATURES` in the Worker.
+ * Entry points for features that can be parked (me3-5u97.6): built, not deleted. Set a flag to false
+ * to hide it from owners. Agent purchases are back on (me3-2gdu.17); to park them again, also stop
+ * offering `payments` in the Worker's `newAgentServices`.
  */
-export const PARKED_FEATURES = { agentPayments: false } as const;
+export const PARKED_FEATURES = { agentPayments: true } as const;
 
 type AppFeatureMatcher = {
   id: AppFeatureId;
