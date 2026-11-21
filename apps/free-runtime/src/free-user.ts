@@ -9,7 +9,8 @@ import { dispatchDueNewsNotifications } from "../../worker/src/news-push";
 import type { Env } from "../../worker/src/types";
 import { countMessage, usageCostMicroUsd } from "./budget";
 import { createD1Adapter } from "./d1-adapter";
-import { getMe3CloudOrigin } from "../../worker/src/sites";
+import { getMe3CloudApiOrigin, getMe3CloudOrigin } from "../../worker/src/sites";
+import { freePageRequest, isFreePagePath } from "./free-page";
 import { FREE_PLAN_NOTE, freeApiAccess, freePluginList, freeStarters, freeToolAllowlist, freeTour, isChatTurnPath, isTourPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
 import { activateUserDatabase, prepareUserDatabase, type ActivationInput } from "./user-database";
 
@@ -151,6 +152,31 @@ export class Me3FreeUser extends Me3Agent {
     }
   }
 
+  /** The free page editor: the caller must be this ME3's owner; the page itself is read and saved in ME3 Cloud. */
+  private async freePage(request: Request): Promise<Response> {
+    const context = { waitUntil: (work: Promise<unknown>) => this.ctx.waitUntil(work), passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
+    const owner = await app.fetch(new Request(new URL("/api/account", request.url), { headers: { authorization: request.headers.get("authorization") ?? "" } }), this.env, context);
+    if (!owner.ok) return Response.json({ ok: false, error: "Authentication required" }, { status: 401 });
+    const response = await freePageRequest(request, {
+      cloudApiOrigin: getMe3CloudApiOrigin(this.env),
+      serviceToken: (this.env as FreeRuntimeEnv).FREE_RUNTIME_SERVICE_TOKEN ?? "",
+      userId: this.meta("user_id") ?? "",
+    });
+    const url = new URL(request.url);
+    if (!response.ok || request.method !== "POST" || url.pathname !== "/api/free/page") return response;
+    // Cloud is the source for the name and handle; keep this ME3's owner row in step after a save.
+    const saved = (await response.clone().json().catch(() => null)) as { user?: { handle?: unknown }; profile?: { name?: unknown } } | null;
+    const name = typeof saved?.profile?.name === "string" ? saved.profile.name.trim() : "";
+    const handle = typeof saved?.user?.handle === "string" ? saved.user.handle.trim() : "";
+    if (name || handle) {
+      this.ctx.storage.sql.exec(
+        "UPDATE owner_profile SET name = COALESCE(NULLIF(?, ''), name), username = COALESCE(NULLIF(?, ''), username), updated_at = CURRENT_TIMESTAMP WHERE id = 'owner'",
+        name, handle,
+      );
+    }
+    return response;
+  }
+
   /** Reminders and pushes run on a per-user timer that only keeps going while the user is around. */
   private async touch() {
     const now = Date.now();
@@ -247,6 +273,7 @@ export class Me3FreeUser extends Me3Agent {
 
     await this.prepare();
     await this.touch();
+    if (isFreePagePath(url.pathname)) return this.freePage(forwarded);
     if (request.method === "POST" && isChatTurnPath(url.pathname)) {
       const limited = await this.chatLimit(url.pathname.endsWith("/stream"), (body as Record<string, unknown>).threadId);
       if (limited) return limited;

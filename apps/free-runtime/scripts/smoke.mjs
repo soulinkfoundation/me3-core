@@ -31,6 +31,11 @@ function hostedSession(sub, installIds) {
 }
 const cloud = createServer((req, res) => {
   res.setHeader("content-type", "application/json");
+  if (req.url.startsWith("/api/profile/starter")) {
+    const authorised = req.headers.authorization === `Bearer ${SERVICE_TOKEN}`;
+    res.statusCode = authorised ? 200 : 401;
+    return res.end(JSON.stringify({ ok: authorised, forwardedFor: req.headers["x-me3-free-runtime-user"], path: req.url }));
+  }
   res.end(req.url === "/.well-known/jwks.json" ? JSON.stringify({ keys: [jwk] }) : "{}");
 }).listen(CLOUD_PORT, "127.0.0.1");
 
@@ -104,6 +109,9 @@ try {
 
   const thread = await call("/u/alice/api/assistant/threads/primary", { method: "POST", token, body: {} });
   check("main chat thread resolves", thread.status === 200 && thread.json?.thread?.id, thread.json ?? thread.text);
+  check("the free page editor needs the owner's sign-in", (await call("/u/alice/api/free/page")).status === 401);
+  const page = await call("/u/alice/api/free/page", { token });
+  check("the free page editor forwards to ME3 Cloud as the user", page.status === 200 && page.json?.forwardedFor === "alice" && page.json?.path === "/api/profile/starter", page.json ?? page.text);
   const plugins = await call("/u/alice/api/plugins", { token });
   const pluginIds = (plugins.json?.plugins ?? []).map((plugin) => plugin.id).sort();
   check("the app's menu source lists only free features", plugins.status === 200 && pluginIds.join() === "me3.agent-chat,me3.calendar,me3.journal,me3.mission-control", plugins.json ?? plugins.text);
