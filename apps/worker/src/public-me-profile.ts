@@ -181,7 +181,18 @@ function publicLocation(profile: Me3SiteProfile): Me3LocationData | undefined {
   };
 }
 
-function bookingServices(profile: Me3SiteProfile): Me3Service[] {
+/** The site's own enquiry form for an offer that can't be paid for yet, as an absolute link. */
+function enquiryLink(origin: string | undefined, value: unknown): string | undefined {
+  if (!origin || typeof value !== "string" || !value.startsWith("/api/enquire/")) return undefined;
+  try {
+    const url = new URL(value, origin);
+    return url.origin === new URL(origin).origin ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function bookingServices(profile: Me3SiteProfile, origin?: string): Me3Service[] {
   const book = profile.intents?.book;
   if (!book?.enabled) return [];
 
@@ -210,7 +221,10 @@ function bookingServices(profile: Me3SiteProfile): Me3Service[] {
         ? { durationMinutes: offer.duration }
         : {}),
       ...(price ? { price } : {}),
-      availability: book.url ? "external" : "calendar",
+      // A paid offer nobody can pay for yet shows Enquire on the site: say so, and where to enquire.
+      ...(enquiryLink(origin, (offer as { enquireUrl?: unknown }).enquireUrl)
+        ? { url: enquiryLink(origin, (offer as { enquireUrl?: unknown }).enquireUrl), availability: "manual" as const }
+        : { availability: book.url ? "external" as const : "calendar" as const }),
       status: "active",
     });
   }
@@ -238,7 +252,7 @@ function bookingServices(profile: Me3SiteProfile): Me3Service[] {
 
 /** Site-level offers without calendar booking: listed so agents can ask about them, never priced. */
 function manualServices(profile: Me3SiteProfile): Me3Service[] {
-  const booked = new Set(bookingServices(profile).map((service) => service.id));
+  const booked = new Set(bookingServices(profile, undefined).map((service) => service.id));
   const services: Me3Service[] = [];
   for (const entry of profile.services || []) {
     const title = text(entry?.title, 160);
@@ -300,14 +314,14 @@ export function buildPublicMe3Profile(
   }
 
   const sectionPaths = resolveSiteSectionPaths(source);
-  const services = [...bookingServices(source), ...manualServices(source)];
+  const services = [...bookingServices(source, origin), ...manualServices(source)];
   const products = (source.products || [])
     .filter((product) => product.slug && product.title)
     .map((product) => ({
       id: publicProductId(product.slug) || "product:unknown",
       title: text(product.title, 160) || product.slug || "Product",
       ...(text(product.excerpt, 1000) ? { description: text(product.excerpt, 1000) } : {}),
-      url: `./${sectionPaths.shop}/${product.slug}.html`,
+      url: enquiryLink(origin, (product as { enquireUrl?: unknown }).enquireUrl) || `./${sectionPaths.shop}/${product.slug}.html`,
       price: productMoney(product.price, product.currency),
       ...(productPhotoPaths(product).length ? { images: productPhotoPaths(product).map((path) => `./${path}`) } : {}),
       ...(typeof product.available === "boolean" ? { available: product.available } : {}),

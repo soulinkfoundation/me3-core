@@ -163,6 +163,25 @@ describe("public me.json profile", () => {
     expect(buildPublicMe3Profile({ name: "Niamh" })).not.toHaveProperty("extensions");
     expect(buildPublicMe3Profile({ name: "Niamh", visibility: "private" }, "https://niamh.me3.app")).not.toHaveProperty("extensions");
   });
+  it("points Enquire offers and products at the site's enquiry form", () => {
+    const profile = buildPublicMe3Profile({
+      name: "Niamh",
+      intents: { book: { enabled: true, offers: [
+        { id: "cut", title: "Cut", duration: 45, pricing: { enabled: true, amount: 45, currency: "EUR" }, enquireUrl: "/api/enquire/niamh?about=Cut" },
+        { id: "colour", title: "Colour", duration: 90 },
+        { id: "evil", title: "Evil", enquireUrl: "https://evil.example/api/enquire/x" },
+      ] } },
+      products: [{ slug: "oil", title: "Hair oil", price: 20, currency: "EUR", enquireUrl: "/api/enquire/niamh?about=Hair%20oil" }],
+    } as Me3SiteProfile, "https://niamh.me3.app");
+    expect(validateProfile(profile).valid).toBe(true);
+    if (profile.visibility !== "public") throw new Error("Expected a public profile");
+    const byTitle = Object.fromEntries((profile.services || []).map((service) => [service.title, service]));
+    expect(byTitle.Cut).toMatchObject({ availability: "manual", url: "https://niamh.me3.app/api/enquire/niamh?about=Cut" });
+    expect(byTitle.Colour).toMatchObject({ availability: "calendar" });
+    expect(byTitle.Colour).not.toHaveProperty("url");
+    expect(byTitle.Evil).not.toHaveProperty("url");
+    expect(profile.products?.[0].url).toBe("https://niamh.me3.app/api/enquire/niamh?about=Hair%20oil");
+  });
   it("publishes a valid identity-only profile when no public HTTPS origin exists", () => {
     const profile = buildPublicMe3Profile({
       version: "0.1",

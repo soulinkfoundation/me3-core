@@ -65,7 +65,8 @@ export async function publishSiteFromSource(
           { offerPagesEnabled: (await offerPagesPlanAccess(env)) === "included" },
           { baseUrl: publishedBaseUrl, images: await getSiteImageMetadata(env, site, [...sourceFiles.values()]) },
         );
-    networkProfile = buildPublicMe3Profile(profile, publishedBaseUrl, {
+    // The same marked profile the pages render, so me.json says Enquire wherever the site does.
+    networkProfile = buildPublicMe3Profile(payment ? markUnpayableOffers(profile, site.username, payment) : profile, publishedBaseUrl, {
       agentCheckout: isPrivateProfile ? null : await resolveAgentCheckoutPublication(env, site, profile, publishedBaseUrl),
     });
     generatedFiles["me.json"] = JSON.stringify(networkProfile, null, 2);
