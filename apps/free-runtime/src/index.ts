@@ -4,12 +4,15 @@
  *
  *   POST /internal/activate   ME3 Cloud only (service token). Creates or refreshes a user's ME3 and
  *                             returns its install id and base URL for the apps.
+ *   GET|POST /internal/budget ME3 only (service token). Read today's free chat spend, or change the daily
+ *                             budget, the per-user message limit, or pause free chat. Takes effect at once.
  *   /u/{userId}/...           The user's ME3, same API as an installation. The path picks the object;
  *                             the object's own per-database credentials decide whether the caller is its owner.
  */
+import { FreeBudget } from "./budget-object";
 import { Me3FreeUser, type FreeRuntimeEnv } from "./free-user";
 
-export { Me3FreeUser };
+export { FreeBudget, Me3FreeUser };
 
 const USER_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
@@ -32,10 +35,18 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/health") return Response.json({ ok: true, service: "me3-free-runtime" });
 
-    if (url.pathname === "/internal/activate" || url.pathname === "/internal/status") {
+    if (url.pathname === "/internal/activate" || url.pathname === "/internal/status" || url.pathname === "/internal/budget") {
       const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
       if (!env.FREE_RUNTIME_SERVICE_TOKEN || !token || !(await sameSecret(token, env.FREE_RUNTIME_SERVICE_TOKEN))) {
         return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      }
+      if (url.pathname === "/internal/budget") {
+        const body = request.method === "POST" ? await request.text() : undefined;
+        return env.FREE_BUDGET.get(env.FREE_BUDGET.idFromName("global")).fetch(`https://free-budget/${body === undefined ? "state" : "settings"}`, {
+          method: body === undefined ? "GET" : "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        });
       }
       if (url.pathname === "/internal/status") {
         const userId = url.searchParams.get("userId") ?? "";

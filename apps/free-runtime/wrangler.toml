@@ -14,9 +14,13 @@ enabled = true
 name = "FREE_USER"
 class_name = "Me3FreeUser"
 
+[[durable_objects.bindings]]
+name = "FREE_BUDGET"
+class_name = "FreeBudget"
+
 [[migrations]]
 tag = "2026-11-21-free-user"
-new_sqlite_classes = ["Me3FreeUser"]
+new_sqlite_classes = ["Me3FreeUser", "FreeBudget"]
 
 [[rules]]
 type = "Text"
@@ -28,8 +32,12 @@ binding = "AI"
 remote = true
 
 [vars]
-ENVIRONMENT = "local"
+# Local runs pass --var ENVIRONMENT:local (see package.json and scripts/smoke.mjs).
+ENVIRONMENT = "production"
+# Follow-up suggestions and memory extraction stay on the free chat model, not a paid one.
+ME3_AGENT_FAST_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
 # "on" adds News (the morning paper) to the free plan.
 ME3_FREE_NEWS = "off"
 
 # Secrets: FREE_RUNTIME_SERVICE_TOKEN (shared with ME3 Cloud).
+# Free chat limits are not config here: GET/POST /internal/budget changes them live.

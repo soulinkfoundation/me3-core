@@ -6,7 +6,7 @@
   "description": "Hosted-only: one shared Worker running ME3 Core inside one Durable Object per free user.",
   "scripts": {
     "generate": "node scripts/generate-migrations.mjs",
-    "dev": "node scripts/generate-migrations.mjs && wrangler dev --port 8931",
+    "dev": "node scripts/generate-migrations.mjs && wrangler dev --port 8931 --var ENVIRONMENT:local",
     "typecheck": "node scripts/generate-migrations.mjs && tsc --noEmit",
     "test": "node scripts/generate-migrations.mjs && vitest run",
     "smoke": "node scripts/smoke.mjs"

@@ -37,7 +37,7 @@ const cloud = createServer((req, res) => {
 let wrangler;
 async function start() {
   wrangler = spawn("pnpm", ["exec", "wrangler", "dev", "--port", String(PORT), "--inspector-port", String(PORT + 408), "--persist-to", state,
-    "--var", `FREE_RUNTIME_SERVICE_TOKEN:${SERVICE_TOKEN}`, "--var", `ME3_CLOUD_API_ORIGIN:${CLOUD}`,
+    "--var", "ENVIRONMENT:local", "--var", `FREE_RUNTIME_SERVICE_TOKEN:${SERVICE_TOKEN}`, "--var", `ME3_CLOUD_API_ORIGIN:${CLOUD}`,
     "--var", "ME3_AI_CHAT_PROVIDER:workers-ai", "--var", `ME3_AI_CHAT_MODEL:${MODEL}`, "--var", `ME3_AGENT_FAST_MODEL:${MODEL}`, "--var", "ME3_AGENT_MEMORY:off", "--var", "ME3_AGENT_SUGGESTED_REPLIES:off"],
     { cwd: root, detached: true, stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
@@ -113,6 +113,25 @@ try {
     chat = done ? JSON.parse(done[1]) : null;
     check("a chat turn completes", chat?.ok === true && typeof chat.replyText === "string" && chat.replyText.length > 0, turn.text.slice(-600));
     check("the client's model choice is ignored", chat?.model === MODEL, chat?.model);
+  }
+  const budgetCall = (body) => call("/internal/budget", { method: body ? "POST" : "GET", token: SERVICE_TOKEN, body });
+  const sendChat = (text) => call("/u/alice/api/assistant/chat/turn/stream", { method: "POST", token, body: { threadId: thread.json.thread.id, requestId: `smoke-${randomUUID()}`, messageText: text } });
+  const limitOf = (turn) => { const done = /event: done\ndata: (.*)/.exec(turn.text); return done ? JSON.parse(done[1]).limit ?? null : "no-done-event"; };
+  check("budget needs the service token", (await call("/internal/budget", { token: "wrong" })).status === 401);
+  const before = await budgetCall();
+  check("budget starts at $100 a day and 20 messages", before.json?.dailyBudgetUsd === 100 && before.json?.perUserDailyMessages === 20 && before.json?.paused === false, before.json);
+  await budgetCall({ paused: true });
+  check("kill switch pauses free chat with a normal reply", limitOf(await sendChat("hello")) === "paused");
+  await budgetCall({ paused: false, dailyBudgetUsd: 0 });
+  check("an exhausted budget pauses free chat", limitOf(await sendChat("hello")) === "budget");
+  const used = (await call("/internal/status?userId=alice", { token: SERVICE_TOKEN })).json?.chatCount ?? 0;
+  await budgetCall({ dailyBudgetUsd: 100, perUserDailyMessages: used });
+  check("a user at their daily messages gets the limit reply", limitOf(await sendChat("hello")) === "user");
+  await budgetCall({ perUserDailyMessages: 20 });
+  if (!skipChat) {
+    check("chat works again once limits are restored", limitOf(await sendChat("Reply with the single word: ready")) === null);
+    const spent = await budgetCall();
+    check("model spend reaches the global ledger", spent.json?.spentUsd > 0, spent.json);
   }
   const bobTokens = await claim("bob", bob.json.installId);
   const bobThread = await call("/u/bob/api/assistant/threads/primary", { method: "POST", token: bobTokens.json?.accessToken, body: {} });
