@@ -1,4 +1,9 @@
 # Hosted only. Deployed by ME3, never by an owner's installation.
+# Cloudflare Workers Builds (Production account) deploys this Worker from this repository's `production`
+# branch; promote `main` with a merge-commit PR. Don't run `wrangler deploy` by hand: a deploy from another
+# checkout replaces whatever is live. Build settings (repository root):
+#   build:  pnpm --filter @me3-core/free-runtime run typecheck && pnpm --filter @me3-core/free-runtime run test
+#   deploy: pnpm --filter @me3-core/free-runtime run deploy
 name = "me3-free-runtime"
 main = "src/index.ts"
 compatibility_date = "2026-06-24"

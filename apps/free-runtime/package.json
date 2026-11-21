@@ -9,7 +9,8 @@
     "dev": "node scripts/generate-migrations.mjs && wrangler dev --port 8931 --var ENVIRONMENT:local",
     "typecheck": "node scripts/generate-migrations.mjs && tsc --noEmit",
     "test": "node scripts/generate-migrations.mjs && vitest run",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "deploy": "wrangler deploy && curl -fsS --retry 3 --retry-delay 5 https://me3-free-runtime.soulink8.workers.dev/health"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260620.1",
