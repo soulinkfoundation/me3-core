@@ -771,7 +771,7 @@ function generateOfferPageHtml(profile: Me3SiteProfile, entry: OfferEntry, capab
 }
 
 function offerPageCss(): string {
-  return `.offer-page__image{display:block;width:100%;max-width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--radius,12px);margin:0 0 20px}
+  return `.offer-page__image{display:block;width:100%;max-width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;border-radius:var(--radius,12px);margin:0 0 20px}
 .offer-page h1{margin-top:0}
 .offer-page__pills{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px}
 .offer-page__pills span{padding:4px 11px;border-radius:999px;background:var(--raised,rgba(127,127,127,.14));font-family:var(--font,inherit);font-size:.85rem;font-weight:500}

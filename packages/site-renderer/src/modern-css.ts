@@ -120,7 +120,7 @@ html[data-color-mode=dark] .site-theme-icon--moon{opacity:0;transform:rotate(90d
 .site-offer{display:flex;flex-direction:column;align-items:flex-start;padding:24px;border:0;border-radius:var(--radius);background:var(--surface);box-shadow:var(--ui-shadow-sm)}
 .site-offer h3{margin:0 0 8px;font-family:var(--display-font);font-size:1.45rem}
 .site-offer--image{padding:0;overflow:hidden}
-.site-offer__image{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
+.site-offer__image{display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:cover}
 .site-offer__body{display:flex;flex:1;flex-direction:column;align-items:flex-start;width:100%;box-sizing:border-box}
 .site-offer--image .site-offer__body{padding:20px 24px 24px}
 .site-offer__pills{display:flex;flex-wrap:wrap;gap:6px}

@@ -14,6 +14,12 @@ describe("shop for real products", () => {
     expect(files["shop/log.html"]).toContain("data-product-gallery");
   });
 
+  it("keeps cover photos at their card shape when publish adds the photo's real width and height", async () => {
+    const files = await generateSiteHtml({ ...base, products: [{ slug: "log", title: "The Captain's Log", price: 3500, currency: "GBP", images: ["files/content/log-cover.jpg"] }] }, []);
+    // Published tags carry width="1024" height="1024"; without height:auto that height wins over aspect-ratio.
+    expect(files["shop/index.html"]).toMatch(/\.shop-items \.shop-item-cover\{[^}]*width:100%;height:auto;aspect-ratio:4\/5/);
+  });
+
   it("ignores unsafe photo paths", async () => {
     const files = await generateSiteHtml({ ...base, products: [{ slug: "x", title: "X", price: 500, currency: "GBP", images: ["javascript:alert(1)", "https://evil.example/a.jpg"] }] }, []);
     expect(files["shop/x.html"]).not.toContain("javascript:alert");

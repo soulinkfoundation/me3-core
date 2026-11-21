@@ -128,7 +128,7 @@ export const productShopCss = `
 .content.content--shop{width:min(1120px,calc(100% - 48px))}
 .shop-items{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:40px 24px;align-items:start}
 .shop-items .shop-item{position:relative;display:flex;flex-direction:column;gap:4px;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:var(--text);text-decoration:none}
-.shop-items .shop-item-cover{display:block;width:100%;aspect-ratio:4/5;margin:0 0 12px;object-fit:cover;border-radius:var(--radius,12px);background:var(--raised,var(--border));box-shadow:var(--card-shadow,none);transition:transform .35s cubic-bezier(.2,.7,.2,1),box-shadow .35s ease}
+.shop-items .shop-item-cover{display:block;width:100%;height:auto;aspect-ratio:4/5;margin:0 0 12px;object-fit:cover;border-radius:var(--radius,12px);background:var(--raised,var(--border));box-shadow:var(--card-shadow,none);transition:transform .35s cubic-bezier(.2,.7,.2,1),box-shadow .35s ease}
 .shop-items .shop-item:hover .shop-item-cover{transform:translateY(-4px);box-shadow:var(--card-shadow-hover,none)}
 .shop-items .shop-item:focus-visible{outline:3px solid var(--accent);outline-offset:6px;border-radius:var(--radius,12px)}
 .shop-item-title{font-family:var(--display-font,inherit);font-size:1.08rem;font-weight:600;line-height:1.3}
