@@ -21,6 +21,23 @@ export const DEFERRED_TOOL_GROUPS: Record<string, { prefix: string; summary: str
   social: { prefix: "core_social_", summary: "read the social queue (scheduled, reposts, nudges), save a social draft in the owner's own words from their message, start sharing one of their published site blog posts, and search their past social posts. ME3 never writes post copy; scheduling and posting need the owner's button press in Social. Load it when the owner asks to share a site post, save a post they wrote, asks what's scheduled or wants nudges off" },
 };
 
+/**
+ * Extra groups a runtime can defer when every prompt token counts (ME3_AGENT_LEAN_TOOLS). Tasks, reminders
+ * and the calendar stay in view; writing and search wait behind the loader.
+ */
+export const LEAN_TOOL_GROUPS: Record<string, { prefixes: string[]; summary: string; hint: RegExp }> = {
+  writing: {
+    prefixes: ["core_journal_", "core_quotes_"],
+    summary: "read and write the owner's journal (daily pages and notes) and save quotes. Load it when the owner asks about their journal, notes or writing, wants something written down, or shares a quote to keep",
+    hint: /\b(?:journal|diary|notes?|wr(?:ite|ote|iting)|jot|quotes?)\b/i,
+  },
+  search: {
+    prefixes: ["core_conversations_", "core_owner_", "core_docs_"],
+    summary: "search past conversations and the owner's own content, and read ME3's help docs. Load it when the owner asks what was said or decided before, wants to find something they wrote, or asks how ME3 works",
+    hint: /\b(?:we (?:talk(?:ed)?|spoke|discuss(?:ed)?)|you (?:said|told)|i (?:said|told you|mentioned)|last time|earlier|previous(?:ly)?|search|look up|find (?:my|the|that|where)|how (?:do|does|can) (?:i|me3|this))\b/i,
+  },
+};
+
 export function toolGroupFor(name: string): string | undefined {
   return Object.entries(DEFERRED_TOOL_GROUPS).find(([, group]) => name.startsWith(group.prefix))?.[0];
 }
@@ -32,7 +49,7 @@ export function withToolLoader(tools: AgentTool[], preloaded: Iterable<string> =
   if (!groups.length) return tools;
   const loader: AgentTool = {
     name: TOOL_LOADER_NAME, effect: "read", approval: "none",
-    description: `Load more tools for this turn, then call them. Groups: ${groups.map(group => `${group} = ${DEFERRED_TOOL_GROUPS[group]?.summary ?? group}`).join("; ")}.`,
+    description: `Load more tools for this turn, then call them. Groups: ${groups.map(group => `${group} = ${DEFERRED_TOOL_GROUPS[group]?.summary ?? LEAN_TOOL_GROUPS[group]?.summary ?? group}`).join("; ")}.`,
     parameters: { type: "object", properties: { groups: { type: "array", minItems: 1, items: { type: "string", enum: groups } } }, required: ["groups"], additionalProperties: false },
     async execute(args) {
       const requested = new Set(Array.isArray(args.groups) ? args.groups : []);

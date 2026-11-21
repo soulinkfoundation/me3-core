@@ -38,7 +38,7 @@ let wrangler;
 async function start() {
   wrangler = spawn("pnpm", ["exec", "wrangler", "dev", "--port", String(PORT), "--inspector-port", String(PORT + 408), "--persist-to", state,
     "--var", "ENVIRONMENT:local", "--var", `FREE_RUNTIME_SERVICE_TOKEN:${SERVICE_TOKEN}`, "--var", `ME3_CLOUD_API_ORIGIN:${CLOUD}`,
-    "--var", "ME3_AI_CHAT_PROVIDER:workers-ai", "--var", `ME3_AI_CHAT_MODEL:${MODEL}`, "--var", `ME3_AGENT_FAST_MODEL:${MODEL}`, "--var", "ME3_AGENT_MEMORY:off", "--var", "ME3_AGENT_SUGGESTED_REPLIES:off"],
+    "--var", "ME3_AI_CHAT_PROVIDER:workers-ai", "--var", `ME3_AI_CHAT_MODEL:${MODEL}`, "--var", `ME3_AGENT_FAST_MODEL:${MODEL}`, ...(process.env.SMOKE_AFTER_TURN === "on" ? [] : ["--var", "ME3_AGENT_MEMORY:off", "--var", "ME3_AGENT_SUGGESTED_REPLIES:off"])],
     { cwd: root, detached: true, stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
   wrangler.stdout.on("data", (chunk) => { log += chunk; });
@@ -121,7 +121,7 @@ try {
 
   let chat = null;
   if (!skipChat) {
-    const turn = await call("/u/alice/api/assistant/chat/turn/stream", { method: "POST", token, body: { threadId: thread.json.thread.id, requestId: `smoke-${randomUUID()}`, messageText: "Reply with the single word: ready", model: { providerId: "anthropic", model: "claude-opus-5-5" } } });
+    const turn = await call("/u/alice/api/assistant/chat/turn/stream", { method: "POST", token, body: { threadId: thread.json.thread.id, requestId: `smoke-${randomUUID()}`, messageText: process.env.SMOKE_CHAT_TEXT || "Reply with the single word: ready", model: { providerId: "anthropic", model: "claude-opus-5-5" } } });
     const done = /event: done\ndata: (.*)/.exec(turn.text);
     chat = done ? JSON.parse(done[1]) : null;
     check("a chat turn completes", chat?.ok === true && typeof chat.replyText === "string" && chat.replyText.length > 0, turn.text.slice(-600));

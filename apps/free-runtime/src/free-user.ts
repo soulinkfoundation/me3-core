@@ -86,6 +86,8 @@ export class Me3FreeUser extends Me3Agent {
       ME3_USER_AGENT: undefined,
       ME3_DEPLOYMENT_MODE: "self_hosted",
       ME3_AGENT_TOOL_ALLOWLIST: freeToolAllowlist({ news }),
+      // Free chat is priced by prompt size: writing and search tools load only when a turn needs them.
+      ME3_AGENT_LEAN_TOOLS: "on",
       // Session and encryption secrets are generated per database (install_secrets), so a session issued
       // by one user's ME3 is never valid in another's. Setup-by-password does not exist here.
       JWT_SECRET: undefined,
