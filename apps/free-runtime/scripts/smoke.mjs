@@ -169,6 +169,43 @@ try {
   check("after a restart the refresh token still signs in", refreshed.status === 200 && refreshed.json?.accessToken, refreshed.json ?? refreshed.text);
   const again = await call("/u/alice/api/assistant/threads/primary", { method: "POST", token: refreshed.json?.accessToken, body: {} });
   check("after a restart the same thread is there", again.json?.thread?.id === thread.json.thread.id && (skipChat || again.json.thread.lastMessageAt !== null), again.json);
+
+  // Leaving for a paid ME3 (bob): close, export, delete.
+  const bobToken = bobTokens.json?.accessToken;
+  const article = await call("/u/bob/api/journal/articles", { method: "POST", token: bobToken, body: { title: "Smoke note", body: "Kept across the upgrade" } });
+  check("bob writes a journal note", article.status < 300, article.text.slice(0, 200));
+  const internal = (path, body) => call(`/internal/${path}`, { method: body ? "POST" : "GET", token: SERVICE_TOKEN, body });
+  check("closing needs the service token", (await call("/internal/freeze", { method: "POST", token: "wrong", body: { userId: "bob" } })).status === 401);
+  check("an open ME3 cannot be exported", (await internal("export?userId=bob")).json?.code === "not_closed");
+  check("an open ME3 is not deleted by a clean-up", (await internal("purge", { userId: "bob" })).json?.code === "not_closed");
+  const closed = await internal("freeze", { userId: "bob" });
+  check("Cloud closes bob's free ME3", closed.status === 200 && closed.json?.closedAt > 0, closed.json ?? closed.text);
+  check("closing again keeps the first time", (await internal("freeze", { userId: "bob" })).json?.closedAt === closed.json?.closedAt);
+  const afterClose = await call("/u/bob/api/account", { token: bobToken });
+  check("a closed ME3 answers the apps with 'upgraded'", afterClose.status === 410 && afterClose.json?.code === "upgraded", afterClose.json ?? afterClose.text);
+  check("a closed ME3 accepts no writes", (await call("/u/bob/api/journal/articles", { method: "POST", token: bobToken, body: { title: "Late", body: "Lost" } })).status === 410);
+  check("a closed ME3 issues no new sessions", (await claim("bob", bob.json.installId)).status === 410);
+  check("a sign-in does not reopen a closed ME3", (await activate("bob")).json?.code === "upgraded");
+  const closedStatus = await internal("status?userId=bob");
+  check("a closed ME3 has no timer", closedStatus.json?.nextTickAt === 0 && closedStatus.json?.closedAt === closed.json?.closedAt, closedStatus.json);
+  const exported = await internal("export?userId=bob");
+  const exportText = exported.text;
+  check("the export holds bob's note and profile", exported.status === 200 && exported.json?.format === "me3-free-export-v1" && exported.json.tables?.journal_articles?.some((row) => row.body?.includes("Kept across the upgrade")) && exported.json.owner?.name === "bob", exportText.slice(0, 400));
+  check("the export holds no identity, secret or chat", !/core_[0-9a-f]{8}-|bob@example\.test|install_secrets|me3_agent_turns|refresh/.test(exportText) && !exportText.includes(bobToken));
+  check("alice is untouched by bob's closing", (await call("/u/alice/api/account", { token: refreshed.json?.accessToken })).status === 200);
+  check("the export is not reachable from outside", (await call("/u/bob/__free/export", { token: bobToken })).status === 404);
+  const reopened = await internal("freeze", { userId: "bob", frozen: false });
+  check("Cloud can reopen a closed ME3", reopened.json?.closedAt === 0 && (await call("/u/bob/api/account", { token: bobToken })).status === 200, reopened.json);
+  await internal("freeze", { userId: "bob" });
+  const purged = await internal("purge", { userId: "bob" });
+  check("Cloud deletes the closed ME3", purged.status === 200 && purged.json?.purged === true, purged.json ?? purged.text);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  check("a deleted ME3 holds nothing", (await internal("status?userId=bob")).status === 404);
+  check("a deleted ME3 is gone for the apps", (await call("/u/bob/api/account", { token: bobToken })).status === 404);
+  const fresh = await activate("bob");
+  check("the same account can start a new free ME3 later", fresh.status === 200 && fresh.json?.installId && fresh.json.installId !== bob.json.installId, fresh.json ?? fresh.text);
+  const freshExport = (await internal("freeze", { userId: "bob" })) && (await internal("export?userId=bob"));
+  check("the new free ME3 has none of the old content", freshExport.json?.tables?.journal_articles?.length === 0, freshExport.text.slice(0, 200));
 } catch (error) {
   failed = true;
   console.error(error);

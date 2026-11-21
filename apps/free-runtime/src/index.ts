@@ -4,6 +4,10 @@
  *
  *   POST /internal/activate   ME3 Cloud only (service token). Creates or refreshes a user's ME3 and
  *                             returns its install id and base URL for the apps.
+ *   POST /internal/freeze     ME3 Cloud only. Closes a user's free ME3 once their paid ME3 is live: the apps get
+ *                             410 "upgraded", nothing changes and nothing is sent. {frozen:false} reopens it.
+ *   GET  /internal/export     ME3 Cloud only. The closed ME3's own content (upgrade.ts), for the paid ME3 to import.
+ *   POST /internal/purge      ME3 Cloud only. Deletes everything a closed ME3 holds; {force:true} deletes an open one.
  *   GET|POST /internal/budget ME3 only (service token). Read today's free chat spend, or change the daily
  *                             budget, the per-user message limit, or pause free chat. Takes effect at once.
  *   /u/{userId}/...           The user's ME3, same API as an installation. The path picks the object;
@@ -37,7 +41,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/health") return Response.json({ ok: true, service: "me3-free-runtime" });
 
-    if (url.pathname === "/internal/activate" || url.pathname === "/internal/status" || url.pathname === "/internal/budget") {
+    if (url.pathname.startsWith("/internal/")) {
       const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
       if (!env.FREE_RUNTIME_SERVICE_TOKEN || !token || !(await sameSecret(token, env.FREE_RUNTIME_SERVICE_TOKEN))) {
         return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -55,10 +59,20 @@ export default {
         if (!USER_ID.test(userId)) return Response.json({ ok: false, error: "Invalid userId" }, { status: 400 });
         return userObject(env, userId, new Request(new URL("/__free/status", url), { headers: request.headers }), url.origin);
       }
+      if (url.pathname === "/internal/export") {
+        const userId = url.searchParams.get("userId") ?? "";
+        if (!USER_ID.test(userId)) return Response.json({ ok: false, error: "Invalid userId" }, { status: 400 });
+        return userObject(env, userId, new Request(new URL("/__free/export", url)), url.origin);
+      }
+      const action = url.pathname.slice("/internal/".length);
+      if (!["activate", "freeze", "purge"].includes(action)) return Response.json({ ok: false, error: "Not found" }, { status: 404 });
       if (request.method !== "POST") return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
       const body = (await request.json().catch(() => null)) as { userId?: unknown } | null;
       const userId = typeof body?.userId === "string" ? body.userId : "";
       if (!USER_ID.test(userId)) return Response.json({ ok: false, error: "Invalid userId" }, { status: 400 });
+      if (action !== "activate") {
+        return userObject(env, userId, new Request(new URL(`/__free/${action}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), url.origin);
+      }
       const response = await userObject(env, userId, new Request(new URL("/__free/activate", url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), url.origin);
       const result = (await response.json()) as Record<string, unknown>;
       return Response.json(response.ok ? { ...result, apiBaseURL: `${url.origin}/u/${userId}` } : result, { status: response.status });

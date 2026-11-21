@@ -12,6 +12,7 @@ import { createD1Adapter } from "./d1-adapter";
 import { getMe3CloudApiOrigin, getMe3CloudOrigin } from "../../worker/src/sites";
 import { freePageRequest, isFreePagePath, ownerFieldsFromFreePage } from "./free-page";
 import { FREE_PLAN_NOTE, freeApiAccess, freePluginList, freeStarters, freeToolAllowlist, freeTour, isChatTurnPath, isTourPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
+import { exportFreeContent, upgradedReply } from "./upgrade";
 import { activateUserDatabase, prepareUserDatabase, type ActivationInput } from "./user-database";
 
 export type FreeRuntimeEnv = Env & {
@@ -134,6 +135,8 @@ export class Me3FreeUser extends Me3Agent {
   private async activate(request: Request): Promise<Response> {
     const input = (await request.json().catch(() => null)) as ActivationInput | null;
     if (!input || typeof input.userId !== "string" || !input.userId) return Response.json({ ok: false, error: "userId is required" }, { status: 400 });
+    // A closed ME3 is not reopened by a sign-in; only ME3 Cloud reopening it (/internal/freeze) does that.
+    if (this.isActivated() && this.closedAt()) return Response.json({ ok: false, error: "This ME3 has moved to a paid plan", code: "upgraded" }, { status: 409 });
     await this.prepare();
     try {
       const { installId } = await activateUserDatabase(this.env.DB, {
@@ -150,6 +153,39 @@ export class Me3FreeUser extends Me3Agent {
     } catch (error) {
       return Response.json({ ok: false, error: error instanceof Error ? error.message : "Activation failed" }, { status: 409 });
     }
+  }
+
+  /** Set once the user's paid ME3 is live: nothing here changes any more, so a copy taken later misses nothing. */
+  private closedAt(): number {
+    return Number(this.meta("closed_at") ?? 0);
+  }
+
+  /** ME3 Cloud only (index.ts checks the service token): close or reopen, export a closed ME3, delete everything. */
+  private async internal(action: string, request: Request): Promise<Response> {
+    if (action === "freeze") {
+      const body = (await request.json().catch(() => null)) as { frozen?: unknown } | null;
+      if (body?.frozen === false) {
+        this.setMeta("closed_at", "0");
+        return Response.json({ ok: true, closedAt: 0 });
+      }
+      // Repeating the call keeps the first closing time.
+      if (!this.closedAt()) this.setMeta("closed_at", String(Date.now()));
+      this.setMeta("next_tick_at", "0");
+      return Response.json({ ok: true, closedAt: this.closedAt() });
+    }
+    if (action === "export") {
+      if (!this.closedAt()) return Response.json({ ok: false, error: "Close this ME3 before exporting it", code: "not_closed" }, { status: 409 });
+      return Response.json({ ok: true, ...exportFreeContent(this.ctx.storage) });
+    }
+    if (action === "purge") {
+      const body = (await request.json().catch(() => null)) as { force?: unknown } | null;
+      // An open ME3 is only deleted on purpose (account deletion), never by a late or repeated clean-up.
+      if (!this.closedAt() && body?.force !== true) return Response.json({ ok: false, error: "This ME3 is still in use", code: "not_closed" }, { status: 409 });
+      this.ready = null;
+      await this.destroy();
+      return Response.json({ ok: true, purged: true });
+    }
+    return notFound();
   }
 
   /** The free page editor: the caller must be this ME3's owner; the page itself is read and saved in ME3 Cloud. */
@@ -232,6 +268,8 @@ export class Me3FreeUser extends Me3Agent {
   }
 
   async tick() {
+    // A closed ME3 sends nothing and does not come back on the timer.
+    if (!this.isActivated() || this.closedAt()) return;
     await this.prepare();
     await this.settleSpend().catch((error) => console.error("Free budget report failed", error));
     for (const [name, run] of this.news ? [...FREE_STEPS, ...NEWS_STEPS] : FREE_STEPS) {
@@ -256,9 +294,10 @@ export class Me3FreeUser extends Me3Agent {
     // An object nobody activated stays empty: no schema, no storage, no Core.
     if (!this.isActivated()) return notFound();
     if (url.pathname === "/__free/status") {
-      return Response.json({ ok: true, userId: this.meta("user_id"), chatDay: this.meta("chat_day"), chatCount: Number(this.meta("chat_count") ?? 0), lastSeenAt: Number(this.meta("last_seen_at") ?? 0), nextTickAt: Number(this.meta("next_tick_at") ?? 0), bytes: this.ctx.storage.sql.databaseSize });
+      return Response.json({ ok: true, userId: this.meta("user_id"), chatDay: this.meta("chat_day"), chatCount: Number(this.meta("chat_count") ?? 0), lastSeenAt: Number(this.meta("last_seen_at") ?? 0), nextTickAt: Number(this.meta("next_tick_at") ?? 0), closedAt: this.closedAt(), bytes: this.ctx.storage.sql.databaseSize });
     }
-    if (url.pathname.startsWith("/__free/")) return notFound();
+    if (url.pathname.startsWith("/__free/")) return this.internal(url.pathname.slice("/__free/".length), request);
+    if (this.closedAt()) return upgradedReply();
 
     let forwarded = request;
     const needsBody = request.method === "POST" && (url.pathname === "/api/batch" || isChatTurnPath(url.pathname));
