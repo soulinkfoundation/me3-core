@@ -55,6 +55,10 @@ export interface Env {
   ME3_AGENT_TOOL_ALLOWLIST?: string;
   /** "on" defers the writing and search tools behind the tool loader to shorten every model request. The hosted free runtime sets it. */
   ME3_AGENT_LEAN_TOOLS?: string;
+  /** Model steps allowed per turn, 2 to 30; unset keeps the default of 30. */
+  ME3_AGENT_MAX_STEPS?: string;
+  /** Added to the agent's system prompt: what the owner's plan does not include. */
+  ME3_AGENT_PLAN_NOTE?: string;
   /** The Human Soup API origin; defaults to https://api.thehumansoup.ai. */
   ME3_SOUP_API_ORIGIN?: string;
   /** Local development only: build News from the bundled fixture of Soup's news contract instead of calling Soup. */

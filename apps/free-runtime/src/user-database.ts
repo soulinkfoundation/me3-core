@@ -29,7 +29,11 @@ export async function prepareUserDatabase(host: SqlHost, db: D1Database): Promis
   return { applied, failed };
 }
 
-export type ActivationInput = { userId: string; email: string | null; name: string | null; handle: string | null; timezone?: string | null };
+export type ActivationInput = {
+  userId: string; email: string | null; name: string | null; handle: string | null; timezone?: string | null;
+  /** Issued by ME3 Cloud at each sign-in; Core presents it to Cloud's push relay. */
+  coreToken?: string | null;
+};
 
 /**
  * Makes this database the given ME3 Cloud user's ME3: the single Core owner row (no password; sign-in is
@@ -54,5 +58,11 @@ export async function activateUserDatabase(db: D1Database, input: ActivationInpu
          ON CONFLICT(name) DO NOTHING`,
       ).bind(name, value)),
   ]);
+  if (input.coreToken) {
+    await db.prepare(
+      `INSERT INTO install_secrets (name, value, created_at, updated_at) VALUES ('ME3_CLOUD_CORE_TOKEN', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+    ).bind(input.coreToken).run();
+  }
   return { installId };
 }

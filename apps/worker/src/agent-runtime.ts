@@ -2,6 +2,7 @@ import { shareOwnerSitePost } from "./social-site-share";
 import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, coalesceAgentStreamEvents, createCloudflareModel, isModelRequestRejected, createIntentVerifierFromModel, createD1TurnStore, runAgentTurn, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import { createCodingAgentServices } from "./coding-agent";
 import { leanToolGroupsFor, toolAllowedByEnv, withLeanToolGroups } from "./agent-tool-allowlist";
+import { agentMaxSteps, agentPlanNote } from "./agent-plan-limits";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { TOOL_LOADER_NAME } from "../../../packages/agent/src/tool-groups";
 import { saveOwnerQuote } from "./quotes";
@@ -102,7 +103,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       // The model sees the pixels; core_images_edit needs the ID to name which image to change.
       const imageIds=attachments.filter(item=>item.kind==="image").map(item=>`${JSON.stringify(item.name)} id=${item.id}`).join(", ");
       const content=[input.messageText,input.attachmentTextContext,imageIds&&`[Attached image IDs: ${imageIds}]`].filter(Boolean).join("\n\n");
-      messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt})},...recent,{role:"user",content,...(images.length?{images}:{})}];
+      messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt,planNote:agentPlanNote(env)})},...recent,{role:"user",content,...(images.length?{images}:{})}];
       await env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").bind(`${input.turnId}:user`,input.userId,input.threadId,input.messageText,JSON.stringify({requestId:input.requestId,runtime:"agent",...(attachments.length?{attachments}:{})})).run();
     }
     const tools=withLeanToolGroups(env,[...createDomainTools(),...computerChatTools()].filter(tool=>isToolAvailable(tool.name,services)&&toolAllowedByEnv(env,tool.name)));
@@ -141,7 +142,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       onEvent?.(event,data,seq);
     });
     let result:AgentTurnResult;
-    try {result=await runAgentTurn({model,backupModel:backup,tools,preloadedToolGroups,messages,store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,verifyCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:stream.push});}
+    try {result=await runAgentTurn({model,backupModel:backup,tools,preloadedToolGroups,messages,maxSteps:agentMaxSteps(env),store,contextWindow:AGENT_CONTEXT_LIMITS,context:{db:env.DB,ownerId:input.userId,threadId:input.threadId,turnId:input.turnId,requestId:input.requestId,ownerTimezone:timezone,messageText:input.messageText,targetSelection:input.targetSelection,loadIntentOwnerInputs,verifyTargetIntent,verifyOwnerCreateIntent,verifyCreateIntent,intentReadToolContracts:tools.filter(tool=>tool.effect==="read"&&!tool.endsTurn).map(({name,parameters})=>({name,parameters})),intentToolContracts:intentTools.filter(tool=>tool.target).map(({name,description,parameters,effect,approval,target})=>({name,description,parameters,effect,approval,target:{domain:target!.domain,idParameter:target!.idParameter}})),enabledPluginIds,services:services as unknown as Record<string,unknown>},signal,onEvent:stream.push});}
     finally {await stream.flush();}
     const allowanceNotice=managed&&allowanceFallbackUsed()?getManagedAiBillingSettings(env,{syncUsage:false}).then(managedAllowanceNotice):Promise.resolve(null);
     // The reply has already streamed. Follow-ups and memory finish inside the turn so their

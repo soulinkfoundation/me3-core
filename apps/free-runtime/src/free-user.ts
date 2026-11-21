@@ -10,7 +10,7 @@ import type { Env } from "../../worker/src/types";
 import { countMessage, usageCostMicroUsd } from "./budget";
 import { createD1Adapter } from "./d1-adapter";
 import { getMe3CloudOrigin } from "../../worker/src/sites";
-import { freeApiAccess, freePluginList, freeToolAllowlist, freeTour, isChatTurnPath, isTourPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
+import { FREE_PLAN_NOTE, freeApiAccess, freePluginList, freeStarters, freeToolAllowlist, freeTour, isChatTurnPath, isTourPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
 import { activateUserDatabase, prepareUserDatabase, type ActivationInput } from "./user-database";
 
 export type FreeRuntimeEnv = Env & {
@@ -88,6 +88,9 @@ export class Me3FreeUser extends Me3Agent {
       ME3_AGENT_TOOL_ALLOWLIST: freeToolAllowlist({ news }),
       // Free chat is priced by prompt size: writing and search tools load only when a turn needs them.
       ME3_AGENT_LEAN_TOOLS: "on",
+      // One message may not run the model more than a few times, and the agent knows what the plan leaves out.
+      ME3_AGENT_MAX_STEPS: "8",
+      ME3_AGENT_PLAN_NOTE: FREE_PLAN_NOTE,
       // Session and encryption secrets are generated per database (install_secrets), so a session issued
       // by one user's ME3 is never valid in another's. Setup-by-password does not exist here.
       JWT_SECRET: undefined,
@@ -138,6 +141,7 @@ export class Me3FreeUser extends Me3Agent {
         name: typeof input.name === "string" ? input.name : null,
         handle: typeof input.handle === "string" ? input.handle : null,
         timezone: typeof input.timezone === "string" ? input.timezone : null,
+        coreToken: typeof input.coreToken === "string" && input.coreToken.length >= 32 ? input.coreToken : null,
       });
       this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ${META_TABLE} (name TEXT PRIMARY KEY, value TEXT NOT NULL)`);
       this.setMeta("user_id", input.userId);
@@ -253,6 +257,11 @@ export class Me3FreeUser extends Me3Agent {
       props: {},
     } as unknown as ExecutionContext);
     const isJson = response.headers.get("content-type")?.includes("application/json");
+    if (isJson && response.ok && url.pathname === "/api/assistant/starters") {
+      const headers = new Headers(response.headers);
+      headers.delete("content-length");
+      return new Response(JSON.stringify(freeStarters((await response.json()) as Parameters<typeof freeStarters>[0])), { status: response.status, headers });
+    }
     if (isJson && response.ok && isTourPath(url.pathname)) {
       const headers = new Headers(response.headers);
       headers.delete("content-length");

@@ -96,3 +96,22 @@ export function freeTour<T extends TourBody>(body: T): T {
 }
 
 export const isTourPath = (path: string) => path === "/api/assistant/tour" || path === "/api/assistant/tour/progress";
+
+/** Added to the agent's system prompt on the free runtime. */
+export const FREE_PLAN_NOTE =
+  "This owner is on the free ME3 plan. It includes this chat, tasks, goals and mission, the journal, the calendar and reminders. " +
+  "It does not include ME3's own email, a website or pages, bookings, a shop, Accounts, files, contacts, social posting, web research or image generation, and you have no tools for those. " +
+  "If the owner asks for one of them, say in one sentence that it is part of a paid ME3 plan they can upgrade to from the menu, then help with what you can do here. " +
+  "Never say you did something you have no tool for.";
+
+type StartersBody = { greeting?: { title: string; body: string } | null; starters?: { id: string }[] };
+const PAID_STARTERS = new Set(["site", "reply"]);
+
+/** Chat's opening for a free user: no website or inbox in the greeting, no starters that need them. */
+export function freeStarters<T extends StartersBody>(body: T): T {
+  if (!body || !Array.isArray(body.starters)) return body;
+  const greeting = body.greeting
+    ? { ...body.greeting, body: body.greeting.body.replace("Your assistant, website and inbox in one place.", "Your assistant for your tasks, goals, journal and day.") }
+    : body.greeting;
+  return { ...body, greeting, starters: body.starters.filter((starter) => !PAID_STARTERS.has(starter.id)) };
+}

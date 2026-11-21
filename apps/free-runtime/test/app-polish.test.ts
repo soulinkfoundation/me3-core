@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createD1Adapter } from "../src/d1-adapter";
-import { freeApiAccess, freeTour } from "../src/policy";
+import { FREE_PLAN_NOTE, freeApiAccess, freeStarters, freeTour } from "../src/policy";
 import { activateUserDatabase, prepareUserDatabase } from "../src/user-database";
 import { createSqliteHost } from "./sqlite-host";
 
@@ -41,5 +41,37 @@ describe("free plan app polish", () => {
     await activateUserDatabase(db, { userId: "u1", email: "ada.lovelace@example.test", name: "Cloud Name", handle: "ada" });
     expect(await name()).toBe("Ada");
     expect(await db.prepare("SELECT username FROM owner_profile WHERE id = 'owner'").first("username")).toBe("ada");
+  });
+
+  // Failure modes: a free user's first screen says "Your assistant, website and inbox in one place" and offers
+  // "Make my website"; the agent offers email or a website it has no tools for; push registration answers
+  // "ME3 Cloud is not linked" because a free ME3 never received the token ME3 Cloud's relay checks.
+  it("greets a free user without the website and inbox, and never leaves them without a starter", () => {
+    const first = freeStarters({ firstRun: true, greeting: { title: "Hi Ada, I'm ME3", body: "Your assistant, website and inbox in one place. Where shall we start?" }, starters: [{ id: "site", label: "Make my website" }, { id: "help", label: "What can you help with?" }, { id: "tour", label: "Show me around" }] });
+    expect(first.starters.map((item) => item.id)).toEqual(["help", "tour"]);
+    expect(first.greeting?.body).toBe("Your assistant for your tasks, goals, journal and day. Where shall we start?");
+    const later = freeStarters({ firstRun: false, greeting: null, starters: [{ id: "reply", label: "Reply to Sam" }, { id: "site", label: "Build my site" }, { id: "mission", label: "Draft my mission" }] });
+    expect(later.starters.map((item) => item.id)).toEqual(["mission"]);
+    expect(freeStarters({ error: "x" } as never)).toEqual({ error: "x" });
+  });
+
+  it("tells the agent what the free plan leaves out", () => {
+    for (const word of ["free", "email", "website", "paid", "upgrade"]) expect(FREE_PLAN_NOTE.toLowerCase(), word).toContain(word);
+    expect(FREE_PLAN_NOTE.length).toBeLessThan(700);
+  });
+
+  it("stores the token ME3 Cloud issues for its push relay, and replaces it at the next sign-in", async () => {
+    const host = createSqliteHost();
+    const db = createD1Adapter(host);
+    await prepareUserDatabase(host, db);
+    const token = () => db.prepare("SELECT value FROM install_secrets WHERE name = 'ME3_CLOUD_CORE_TOKEN'").first("value");
+    await activateUserDatabase(db, { userId: "u1", email: "a@example.test", name: null, handle: null });
+    expect(await token()).toBeNull();
+    await activateUserDatabase(db, { userId: "u1", email: "a@example.test", name: null, handle: null, coreToken: "first-token" });
+    expect(await token()).toBe("first-token");
+    await activateUserDatabase(db, { userId: "u1", email: "a@example.test", name: null, handle: null, coreToken: "second-token" });
+    expect(await token()).toBe("second-token");
+    await activateUserDatabase(db, { userId: "u1", email: "a@example.test", name: null, handle: null });
+    expect(await token()).toBe("second-token");
   });
 });
