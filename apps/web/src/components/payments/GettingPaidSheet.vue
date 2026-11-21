@@ -9,6 +9,7 @@ import AppDialog from "../AppDialog.vue";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import PayDirectlySettings from "./PayDirectlySettings.vue";
+import StripeTestKeyDisclosure from "./StripeTestKeyDisclosure.vue";
 
 /**
  * "Getting paid" over the site editor: card payments (Stripe) and pay-me-directly methods, the same
@@ -25,6 +26,8 @@ const connecting = ref(false);
 
 const ready = computed(() => stripeReady(stripe.value));
 const managed = computed(() => stripe.value?.managedAvailable === true);
+/** Hosted ME3 can try card payments with a Stripe test key until Connect is set up. */
+const testKeyAllowed = computed(() => stripe.value?.directKeySetupAllowed === true && stripe.value?.directKeyTestOnly === true);
 const statusLabel = computed(() => stripeStatusLabel(stripe.value, loaded.value));
 const actionLabel = computed(() => stripe.value?.connected ? "Finish setup" : "Connect");
 
@@ -78,6 +81,7 @@ async function connectStripe() {
           </select>
         </label>
         <p v-if="loaded && !ready && managed" class="getting-paid__hint">Opens Stripe to finish, then brings you back here.</p>
+        <StripeTestKeyDisclosure v-if="loaded && !ready && testKeyAllowed" @saved="load(true)" />
       </section>
 
       <PayDirectlySettings class="getting-paid__direct" />

@@ -11,6 +11,7 @@ import EmailSendAs from "../components/email/EmailSendAs.vue";
 import SiteDomainSettings from "../components/SiteDomainSettings.vue";
 import PageLoading from "../components/PageLoading.vue";
 import PayDirectlySettings from "../components/payments/PayDirectlySettings.vue";
+import StripeTestKeyDisclosure from "../components/payments/StripeTestKeyDisclosure.vue";
 import AppPageBar from "../components/AppPageBar.vue";
 import PluginList from "../components/PluginList.vue";
 import SoulinkConnectPanel from "../components/SoulinkConnectPanel.vue";
@@ -3814,6 +3815,15 @@ onBeforeUnmount(() => {
                     </Button>
                   </div>
                 </div>
+
+                <StripeTestKeyDisclosure
+                  v-if="
+                    commerceSettings?.stripe.directKeySetupAllowed &&
+                    commerceSettings.stripe.directKeyTestOnly &&
+                    !commerceSettings.stripe.directConfigured
+                  "
+                  @saved="syncCommerceSettings"
+                />
 
                 <div class="commerce-settings-row">
                   <label class="field commerce-settings-row__field">
