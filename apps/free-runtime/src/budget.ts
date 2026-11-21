@@ -65,6 +65,21 @@ const FALLBACK_INPUT_MICRO_USD_PER_TOKEN = 0.5;
 const FALLBACK_OUTPUT_MICRO_USD_PER_TOKEN = 2;
 const FALLBACK_CALL_MICRO_USD = 2000;
 
+/**
+ * How long one isolate may reuse the global ledger's answer when it has no new spend to report. Without this
+ * every user's 15-minute tick and every allowance read would hit the one ledger object (about 110 requests a
+ * second at 100k users). Spend reports and chat turns still go straight through; other reads see a pause within this window.
+ */
+export const LEDGER_REUSE_MS = 30_000;
+
+export type LedgerAnswer<T> = { at: number; value: T };
+
+/** The cached ledger answer, if it may stand in for a ledger call that would report nothing. */
+export function reusableLedgerAnswer<T>(cached: LedgerAnswer<T> | null, hasNewSpend: boolean, now: number): T | null {
+  if (hasNewSpend || !cached) return null;
+  return now >= cached.at && now - cached.at < LEDGER_REUSE_MS ? cached.value : null;
+}
+
 export const utcDay = (now: number) => new Date(now).toISOString().slice(0, 10);
 
 export function budgetDecision(state: BudgetState, now: number, addMicroUsd: number): { allowed: boolean; reason?: "paused" | "budget"; state: BudgetState } {

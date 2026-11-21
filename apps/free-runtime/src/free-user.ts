@@ -7,7 +7,7 @@ import { dispatchDueMorningCalendarPushes } from "../../worker/src/morning-calen
 import { dispatchDueNewsPapers } from "../../worker/src/news-paper";
 import { dispatchDueNewsNotifications } from "../../worker/src/news-push";
 import type { Env, OwnerPublicPage } from "../../worker/src/types";
-import { addUserSpend, localDay, messagesLeft, nextLocalMidnight, usageCostMicroUsd, type UserAllowance } from "./budget";
+import { addUserSpend, localDay, messagesLeft, nextLocalMidnight, reusableLedgerAnswer, usageCostMicroUsd, type LedgerAnswer, type UserAllowance } from "./budget";
 import { createD1Adapter } from "./d1-adapter";
 import { getMe3CloudApiOrigin, getMe3CloudOrigin } from "../../worker/src/sites";
 import { freePageRequest, isFreePagePath, ownerFieldsFromFreePage, publicPageFromFreePage } from "./free-page";
@@ -28,6 +28,8 @@ export type FreeRuntimeEnv = Env & {
 export const FREE_BASE_HEADER = "x-me3-free-base";
 
 const META_TABLE = "free_runtime_meta";
+// Shared by every user object in this isolate: the last global ledger answer (see LEDGER_REUSE_MS).
+let lastLedgerAnswer: LedgerAnswer<BudgetCheck> | null = null;
 const TICK_SECONDS = 15 * 60;
 const ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const SEEN_WRITE_INTERVAL_MS = 60 * 60 * 1000;
@@ -262,7 +264,7 @@ export class Me3FreeUser extends Me3Agent {
   }
 
   /** Sends settled model spend to the global ledger and returns whether free chat may run right now. */
-  private async settleSpend(): Promise<BudgetCheck> {
+  private async settleSpend(fresh = false): Promise<BudgetCheck> {
     const sql = this.ctx.storage.sql;
     const marker = Number(this.meta("usage_reported_rowid") ?? 0);
     // A call still in flight has reported no usage yet; stop before it so it is reported once it settles (or after ten minutes).
@@ -274,6 +276,9 @@ export class Me3FreeUser extends Me3Agent {
     const rows = upTo > marker
       ? (sql.exec("SELECT estimated_cost_usd, tokens_in, tokens_out FROM ai_usage_events WHERE rowid > ? AND rowid <= ?", marker, upTo).toArray() as { estimated_cost_usd: number; tokens_in: number; tokens_out: number }[])
       : [];
+    // Chat turns always ask the ledger, so a pause stops the next message at once.
+    const reused = fresh ? null : reusableLedgerAnswer(lastLedgerAnswer, rows.length > 0, Date.now());
+    if (reused) return reused;
     const budget = (this.env as FreeRuntimeEnv).FREE_BUDGET;
     const response = await budget.get(budget.idFromName("global")).fetch("https://free-budget/check", {
       method: "POST",
@@ -285,7 +290,9 @@ export class Me3FreeUser extends Me3Agent {
       this.setMeta("usage_reported_rowid", String(upTo));
       this.saveAllowance(addUserSpend(this.allowance(), this.today(), usageCostMicroUsd(rows)));
     }
-    return (await response.json()) as BudgetCheck;
+    const answer = (await response.json()) as BudgetCheck;
+    lastLedgerAnswer = { at: Date.now(), value: answer };
+    return answer;
   }
 
   private timeZone(): string | null {
@@ -335,7 +342,7 @@ export class Me3FreeUser extends Me3Agent {
   private async chatLimit(stream: boolean, threadId: unknown): Promise<Response | null> {
     let budget: BudgetCheck;
     try {
-      budget = await this.settleSpend();
+      budget = await this.settleSpend(true);
     } catch (error) {
       console.error("Free budget check failed", error);
       return limitReply("paused", stream, threadId, this.describeAllowance(null, "paused"));

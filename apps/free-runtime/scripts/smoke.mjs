@@ -143,7 +143,7 @@ try {
   const limitOf = (turn) => { const done = /event: done\ndata: (.*)/.exec(turn.text); return done ? JSON.parse(done[1]).limit ?? null : "no-done-event"; };
   check("budget needs the service token", (await call("/internal/budget", { token: "wrong" })).status === 401);
   const before = await budgetCall();
-  check("budget starts at $100 a day and 20 messages", before.json?.dailyBudgetUsd === 100 && before.json?.perUserDailyMessages === 20 && before.json?.paused === false, before.json);
+  check("budget starts at $100 a day, $0.15 and 60 messages a user", before.json?.dailyBudgetUsd === 100 && before.json?.perUserDailyUsd === 0.15 && before.json?.perUserDailyMessages === 60 && before.json?.paused === false, before.json);
   await budgetCall({ paused: true });
   check("kill switch pauses free chat with a normal reply", limitOf(await sendChat("hello")) === "paused");
   await budgetCall({ paused: false, dailyBudgetUsd: 0 });
@@ -151,7 +151,7 @@ try {
   const used = (await call("/internal/status?userId=alice", { token: SERVICE_TOKEN })).json?.chatCount ?? 0;
   await budgetCall({ dailyBudgetUsd: 100, perUserDailyMessages: used });
   check("a user at their daily messages gets the limit reply", limitOf(await sendChat("hello")) === "user");
-  await budgetCall({ perUserDailyMessages: 20 });
+  await budgetCall({ perUserDailyMessages: 60 });
   if (!skipChat) {
     check("chat works again once limits are restored", limitOf(await sendChat("Reply with the single word: ready")) === null);
     const spent = await budgetCall();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addUserSpend, budgetDecision, localDay, messagesLeft, nextLocalMidnight, usageCostMicroUsd, DEFAULT_BUDGET, TYPICAL_MESSAGE_MICRO_USD, type BudgetState } from "../src/budget";
+import { addUserSpend, budgetDecision, LEDGER_REUSE_MS, reusableLedgerAnswer, localDay, messagesLeft, nextLocalMidnight, usageCostMicroUsd, DEFAULT_BUDGET, TYPICAL_MESSAGE_MICRO_USD, type BudgetState } from "../src/budget";
 
 // Failure modes: spend carries into the next day and blocks chat forever (or never resets); the kill switch
 // or an exhausted budget still lets a turn through; a user past their daily messages keeps chatting; usage
@@ -90,5 +90,25 @@ describe("usage cost", () => {
   });
   it("charges a flat amount when nothing was reported", () => {
     expect(usageCostMicroUsd([{ estimated_cost_usd: 0, tokens_in: 0, tokens_out: 0 }])).toBe(2000);
+  });
+});
+
+// Failure modes: every idle tick and allowance read hits the single global ledger (a hot spot at 100k users);
+// or a cached answer swallows real spend, or keeps chat running long after the kill switch.
+describe("reusing the global ledger's answer", () => {
+  const cached = { at: DAY, value: { allowed: true } };
+  it("reuses a fresh answer when there is nothing to report", () => {
+    expect(reusableLedgerAnswer(cached, false, DAY + LEDGER_REUSE_MS - 1)).toEqual({ allowed: true });
+  });
+  it("always calls the ledger when there is new spend to report", () => {
+    expect(reusableLedgerAnswer(cached, true, DAY + 1)).toBeNull();
+  });
+  it("asks again once the answer is older than the window, so a pause lands within it", () => {
+    expect(reusableLedgerAnswer(cached, false, DAY + LEDGER_REUSE_MS)).toBeNull();
+    expect(LEDGER_REUSE_MS).toBeLessThanOrEqual(60_000);
+  });
+  it("asks the ledger when nothing is cached or the clock went backwards", () => {
+    expect(reusableLedgerAnswer(null, false, DAY)).toBeNull();
+    expect(reusableLedgerAnswer(cached, false, DAY - 1)).toBeNull();
   });
 });
