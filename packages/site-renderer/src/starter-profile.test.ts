@@ -46,7 +46,7 @@ describe("starter profile rendering", () => {
   });
 
   it("shows one identity hero without installation navigation, while keeping theme switching", async () => {
-    const profile: Me3SiteProfile = { name: 'Starter', avatar: 'https://example.com/avatar.jpg', banner: 'https://example.com/banner.jpg', links: { instagram: 'https://instagram.com/starter' }, extensions: { 'me3.app/site': { layout: 'card' } } };
+    const profile: Me3SiteProfile = { name: 'Starter', avatar: 'https://example.com/avatar.jpg', banner: 'https://example.com/banner.jpg', buttons: [{ id: 'book', text: 'Book a session', url: 'https://cal.example/starter', style: 'primary' }], links: { instagram: 'https://instagram.com/starter' }, extensions: { 'me3.app/site': { layout: 'card' } } };
     const markup = (await renderStarterProfileHtml(profile))['index.html'].replace(/<style>[\s\S]*?<\/style>/g, '');
     expect(markup).not.toContain('<header');
     expect(markup).not.toContain('Footer navigation');
@@ -55,6 +55,9 @@ describe("starter profile rendering", () => {
     expect(markup.match(/href="https:\/\/instagram.com\/starter"/g)).toHaveLength(1);
     expect(markup).toContain('data-site-theme-toggle');
     expect(markup).toContain('site-hero__banner');
+    // The button sits in the hero; phones get no copy of it pinned to the bottom.
+    expect(markup.match(/Book a session/g)).toHaveLength(1);
+    expect(markup).not.toContain('site-action-dock');
     const installation = (await generateSiteHtml(profile, []))['index.html'];
     expect(installation).toContain('<header class="site-topbar">');
     expect(installation).toContain('Footer navigation');
