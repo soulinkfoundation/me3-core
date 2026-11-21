@@ -31,12 +31,21 @@ export function socialMetadata(options: { title: string; description: string; ca
     `<meta name="twitter:card" content="${options.image ? 'summary_large_image' : 'summary'}">`;
 }
 
+/** The ME3 connector (MCP) an agent can use to act on a published site: search, free times and the link to book or buy. */
+export const ME3_CONNECTOR_URL = 'https://api.me3.app/mcp';
+
+// Only for a published, indexable site: a preview has no public address and a noindex site asked not to be found.
+function connectorSection(base: string | undefined, noindex: boolean | undefined): string {
+  if (!base || noindex) return '';
+  return `\n## Act on this site\n\n- [ME3 connector (MCP)](${ME3_CONNECTOR_URL}): add it to an AI assistant, with no sign-in, to find people, check their free times and get the link to book or buy. It never books, pays or sends anything by itself: your user opens the link to finish.\n`;
+}
+
 export function publicDiscoveryFiles(options: { baseUrl?: string; name: string; description: string; pages: Array<{ path: string; title: string }>; noindex?: boolean }): Record<string, string> {
   const base = publicSiteUrl(options.baseUrl);
   const line = (s: string) => s.replace(/[\r\n\[\]<>]/g, ' ').trim();
   const pages = options.noindex ? [] : options.pages;
   const output: Record<string, string> = {
-    'llms.txt': `# ${line(options.name)}\n\n${options.noindex ? '' : line(options.description)}\n\n## Public profile\n\n- [Machine-readable profile](${base || './'}me.json): Public identity and advertised capabilities. Discovery is not authorization to act.\n\n## Pages\n\n${pages.map(page => `- [${line(page.title)}](${publicSiteUrl(base, page.path) || './' + page.path})`).join('\n')}\n`,
+    'llms.txt': `# ${line(options.name)}\n\n${options.noindex ? '' : line(options.description)}\n\n## Public profile\n\n- [Machine-readable profile](${base || './'}me.json): Public identity and advertised capabilities. Discovery is not authorization to act.\n\n## Pages\n\n${pages.map(page => `- [${line(page.title)}](${publicSiteUrl(base, page.path) || './' + page.path})`).join('\n')}\n${connectorSection(base, options.noindex)}`,
     // noindex must remain crawlable so crawlers can see the page/HTTP directive.
     'robots.txt': `User-agent: *\nAllow: /\n${base ? `Sitemap: ${base}sitemap.xml\n` : ''}`,
   };

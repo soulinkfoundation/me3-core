@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateSiteHtml, applyImageMetadata, publicSiteUrl } from './index';
+import { publicDiscoveryFiles } from './public-metadata';
 
 describe('public profile metadata', () => {
   it('uses the complete site base for canonical, image and discovery URLs and lists only emitted pages', async () => {
@@ -27,6 +28,15 @@ describe('public profile metadata', () => {
     expect(output['index.html']).not.toContain('rel="canonical"');
     expect(output['sitemap.xml']).toBeUndefined();
     expect(publicSiteUrl('https://example.com', 'javascript:alert(1)')).toBeUndefined();
+  });
+  it('names the ME3 connector in llms.txt only for a published, indexable site', async () => {
+    const pages = [{ path: 'about', title: 'About' }];
+    const published = publicDiscoveryFiles({ baseUrl: 'https://alex.me3.app', name: 'Alex', description: 'Coach', pages })['llms.txt'];
+    expect(published).toContain('https://api.me3.app/mcp');
+    expect(published).toMatch(/never books, pays or sends anything/);
+    expect(publicDiscoveryFiles({ baseUrl: 'https://alex.me3.app', name: 'Alex', description: 'Coach', pages, noindex: true })['llms.txt']).not.toContain('api.me3.app/mcp');
+    expect(publicDiscoveryFiles({ name: 'Alex', description: 'Coach', pages })['llms.txt']).not.toContain('api.me3.app/mcp');
+    expect(await generateSiteHtml({ visibility: 'private', bio: 'private' }, [], undefined, { baseUrl: 'https://alex.me3.app' })).toEqual({});
   });
 });
 
