@@ -240,8 +240,8 @@ importers:
         specifier: ^2.2.1
         version: 2.2.1
       me3-protocol:
-        specifier: ^5.0.0
-        version: 5.0.0
+        specifier: ^5.1.0
+        version: 5.1.0
       qrcode:
         specifier: 1.5.4
         version: 1.5.4
@@ -2650,8 +2650,8 @@ packages:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
 
-  me3-protocol@5.0.0:
-    resolution: {integrity: sha512-4tAe22aBz6Jv8osFHoesq3TQzGe8K5bPfpUj40ZWRszrPiKjrXIdQzIxdK4vxk49kvbEWTpg4vyONf6pxSR6Aw==}
+  me3-protocol@5.1.0:
+    resolution: {integrity: sha512-+6xuFfrcg68j/zLrhOqc8+AB2Od8bPgji+Pm2tEzyT7IQC+1ScWtBYekTJximDY7WLcjCkExGdHKLEM2NqYYNA==}
 
   media-typer@1.1.1:
     resolution: {integrity: sha512-yz3xRaG20c6/BOzvYoDaGtPmGscs7YivItZEEqe6GbwNfHuxu9YNmvnEkMzKldAGY4/80pRcQRZSEnhquk9XuQ==}
@@ -5579,7 +5579,7 @@ snapshots:
 
   math-intrinsics@1.1.0: {}
 
-  me3-protocol@5.0.0:
+  me3-protocol@5.1.0:
     dependencies:
       '@sinclair/typebox': 0.34.51
 
