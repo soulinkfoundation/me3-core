@@ -10,7 +10,7 @@ import type { Env } from "../../worker/src/types";
 import { countMessage, usageCostMicroUsd } from "./budget";
 import { createD1Adapter } from "./d1-adapter";
 import { getMe3CloudOrigin } from "../../worker/src/sites";
-import { freeApiAccess, freePluginList, freeToolAllowlist, isChatTurnPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
+import { freeApiAccess, freePluginList, freeToolAllowlist, freeTour, isChatTurnPath, isTourPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
 import { activateUserDatabase, prepareUserDatabase, type ActivationInput } from "./user-database";
 
 export type FreeRuntimeEnv = Env & {
@@ -251,6 +251,11 @@ export class Me3FreeUser extends Me3Agent {
       props: {},
     } as unknown as ExecutionContext);
     const isJson = response.headers.get("content-type")?.includes("application/json");
+    if (isJson && response.ok && isTourPath(url.pathname)) {
+      const headers = new Headers(response.headers);
+      headers.delete("content-length");
+      return new Response(JSON.stringify(freeTour((await response.json()) as Parameters<typeof freeTour>[0])), { status: response.status, headers });
+    }
     if (isJson && response.ok && url.pathname === "/api/plugins") {
       const headers = new Headers(response.headers);
       headers.delete("content-length");

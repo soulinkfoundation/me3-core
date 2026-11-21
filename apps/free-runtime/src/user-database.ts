@@ -34,7 +34,8 @@ export type ActivationInput = { userId: string; email: string | null; name: stri
 /**
  * Makes this database the given ME3 Cloud user's ME3: the single Core owner row (no password; sign-in is
  * through ME3 Cloud), the linked Cloud owner id that Core checks on every mobile token claim, and a stable
- * install id for Cloud to hand to the apps. Safe to repeat; refuses a different Cloud user.
+ * install id for Cloud to hand to the apps. Safe to repeat; refuses a different Cloud user. Email and handle
+ * follow ME3 Cloud on every sign-in; the name is only a starting point, since the user can change it here.
  */
 export async function activateUserDatabase(db: D1Database, input: ActivationInput): Promise<{ installId: string }> {
   const secret = (name: string) => db.prepare("SELECT value FROM install_secrets WHERE name = ?").bind(name).first<string>("value");
@@ -44,9 +45,9 @@ export async function activateUserDatabase(db: D1Database, input: ActivationInpu
   await db.batch([
     db.prepare(
       `INSERT INTO owner_profile (id, email, name, username, timezone, updated_at) VALUES ('owner', ?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name, username = excluded.username,
+       ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = COALESCE(NULLIF(owner_profile.name, ''), excluded.name), username = excluded.username,
          timezone = COALESCE(excluded.timezone, owner_profile.timezone), updated_at = CURRENT_TIMESTAMP`,
-    ).bind(input.email, input.name, input.handle, input.timezone ?? null),
+    ).bind(input.email, input.name?.trim() || input.handle?.trim() || input.email?.split("@")[0] || null, input.handle, input.timezone ?? null),
     ...[["ME3_CLOUD_OWNER_ID", input.userId], ["ME3_CORE_INSTALL_ID", installId]].map(([name, value]) =>
       db.prepare(
         `INSERT INTO install_secrets (name, value, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)

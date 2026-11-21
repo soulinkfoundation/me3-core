@@ -95,7 +95,7 @@ try {
   check("alice's Core token is not valid in bob's ME3", (await call("/u/bob/api/account", { token })).status === 401);
   check("requests without credentials are refused", (await call("/u/alice/api/account")).status === 401);
 
-  for (const [name, path, method] of [["mailbox", "/api/mailbox/messages", "GET"], ["sites", "/api/sites", "GET"], ["password setup", "/api/admin/bootstrap", "POST"], ["AI settings", "/api/ai-settings", "GET"], ["file upload", "/api/assistant/attachments", "POST"], ["MCP", "/mcp", "POST"]]) {
+  for (const [name, path, method] of [["mailbox", "/api/mailbox/messages", "GET"], ["sites", "/api/sites/alice/content", "GET"], ["password setup", "/api/admin/bootstrap", "POST"], ["AI settings", "/api/ai-settings", "GET"], ["file upload", "/api/assistant/attachments", "POST"], ["MCP", "/mcp", "POST"]]) {
     const blocked = await call(`/u/alice${path}`, { method, token, body: method === "POST" ? {} : undefined });
     check(`paid or setup route is off: ${name}`, blocked.status === 403 && blocked.json?.code === "upgrade_required", blocked.status);
   }
@@ -108,6 +108,12 @@ try {
   const pluginIds = (plugins.json?.plugins ?? []).map((plugin) => plugin.id).sort();
   check("the app's menu source lists only free features", plugins.status === 200 && pluginIds.join() === "me3.agent-chat,me3.calendar,me3.journal,me3.mission-control", plugins.json ?? plugins.text);
   check("a free user cannot switch on a paid plugin", (await call("/u/alice/api/plugins/me3.accounts/activate", { method: "POST", token, body: {} })).status === 403);
+  const sitesList = await call("/u/alice/api/sites", { token });
+  check("Home can read an empty site list", sitesList.status === 200 && Array.isArray(sitesList.json?.sites) && sitesList.json.sites.length === 0, sitesList.json ?? sitesList.text);
+  check("Home can read the contact list", (await call("/u/alice/api/contacts", { token })).status === 200);
+  check("creating a site stays a paid feature", (await call("/u/alice/api/sites", { method: "POST", token, body: {} })).status === 403);
+  const tour = await call("/u/alice/api/assistant/tour", { token });
+  check("the first-run tour has only the Home step", tour.status === 200 && tour.json?.steps?.map((step) => step.id).join() === "home", tour.json ?? tour.text);
   const goals = await call("/u/alice/api/tasks/goals", { token });
   check("goals API works", goals.status === 200, goals.text.slice(0, 200));
   const journal = await call("/u/alice/api/journal/articles", { token });

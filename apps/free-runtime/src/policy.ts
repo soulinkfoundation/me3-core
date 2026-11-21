@@ -13,6 +13,8 @@ const NEWS_API_PREFIXES = ["/api/news", "/api/soup"];
 // Inside an allowed area but not free: uploads need storage, and these agent channels belong to paid installs.
 const BLOCKED_API_PREFIXES = ["/api/assistant/attachments", "/api/calendar/sources"];
 
+const FREE_EMPTY_LISTS = ["/api/sites", "/api/contacts"];
+
 const FREE_TOOL_PREFIXES = [
   "core_calendar_", "core_conversations_", "core_docs_", "core_journal_", "core_memory_", "core_mission_",
   "core_owner_", "core_quotes_", "core_reminders_", "core_targets_", "core_tools_",
@@ -24,6 +26,9 @@ export function freeApiAccess(method: string, path: string, options: FreePolicyO
   const pathname = path.split("?")[0];
   // The apps build their menu from the plugin list; a free user may read it (filtered) but not switch plugins.
   if (pathname === "/api/plugins") return method === "GET" ? "allow" : "upgrade";
+  // Home reads these two lists on every refresh. A free ME3 has no sites or contacts, so they are empty;
+  // only the bare list is readable, nothing under it and no writes.
+  if (FREE_EMPTY_LISTS.includes(pathname)) return method === "GET" ? "allow" : "upgrade";
   if (pathname === "/api/batch") {
     const requests = (body as { requests?: unknown } | null | undefined)?.requests;
     if (method !== "POST" || !Array.isArray(requests)) return "upgrade";
@@ -77,3 +82,17 @@ export function freePluginList<T extends { plugins?: { id: string }[] }>(body: T
   const allowed = new Set(options.news ? [...FREE_PLUGIN_IDS, "me3.soup"] : FREE_PLUGIN_IDS);
   return { ...body, plugins: body.plugins.filter((plugin) => allowed.has(plugin.id)) };
 }
+
+type TourBody = { steps?: { id: string; body?: string }[]; progress?: { status: string; stepId: string | null } };
+
+/** The first-run tour for a free user: Home only. Inbox, Accounts, Social and the website builder are paid. */
+export function freeTour<T extends TourBody>(body: T): T {
+  if (!body || !Array.isArray(body.steps)) return body;
+  const steps = body.steps
+    .filter((step) => step.id === "home")
+    .map((step) => ({ ...step, body: step.body?.replace(/\s*Inbox is a good one to start with\./, "") }));
+  const stepId = steps.some((step) => step.id === body.progress?.stepId) ? body.progress!.stepId : null;
+  return { ...body, steps, progress: body.progress ? { ...body.progress, stepId } : body.progress };
+}
+
+export const isTourPath = (path: string) => path === "/api/assistant/tour" || path === "/api/assistant/tour/progress";
