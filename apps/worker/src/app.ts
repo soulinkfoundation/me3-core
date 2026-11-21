@@ -604,7 +604,6 @@ app.get("/health", async (c) => {
 });
 
 registerManagedRuntimeRoutes(app);
-registerFreeImportRoutes(app);
 registerManagedSetupSessionRoutes(app, { setOwnerSession });
 
 app.get("/api/config", async (c) => {
@@ -993,6 +992,7 @@ app.post("/api/account/sign-out-everywhere", async (c) => {
 
 registerAssistantRoutes(app, { requireOwner, unauthorized, getSessionOwnerId, getSetupRequired, ownerSessionIssuedAt });
 registerNavigationFeatureRoutes(app, { requireOwner, unauthorized });
+registerFreeImportRoutes(app, { requireOwner, unauthorized });
 
 app.get("/api/account", async (c) => {
   const ownerId = await requireOwner(c);

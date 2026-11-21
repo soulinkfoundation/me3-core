@@ -1,6 +1,6 @@
 /**
  * Leaving the free runtime for a paid ME3. ME3 Cloud closes the user's free ME3 once the paid one is live,
- * and the paid ME3 may then fetch a copy of the user's own content if they ask to bring it over.
+ * and the paid ME3 may then fetch a copy of the user's own content, through Cloud, if they ask to bring it over.
  *
  * The export is a short allowlist of plain content. A table that is not named here is never exported:
  * chats, sessions and tokens, secrets, calendar connections and push registrations all stay behind.

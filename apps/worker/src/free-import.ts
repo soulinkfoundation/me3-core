@@ -74,6 +74,8 @@ export async function importFreeContent(env: Env, input: unknown): Promise<FreeI
   const result: FreeImportResult = { tables: {}, ownerFieldsFilled: [] };
   const moved = { mission_projects: new Map<string, string>(), journal_entries: new Map<string, string>() };
 
+  const here = whatIsHere(env);
+
   for (const table of IMPORT_TABLES) {
     const rows = tables[table] ?? [];
     const counts: FreeImportCounts = (result.tables[table] = { received: rows.length, added: 0, merged: 0, skipped: 0 });
@@ -97,7 +99,7 @@ export async function importFreeContent(env: Env, input: unknown): Promise<FreeI
         counts.skipped++;
         continue;
       }
-      if (await alreadyHere(env, table, row, moved, counts)) continue;
+      if (await alreadyHere(env, table, row, moved, counts, here)) continue;
       statements.push(
         env.DB.prepare(`INSERT OR IGNORE INTO ${table} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`).bind(...columns.map((column) => row[column] as Value)),
       );
@@ -137,6 +139,23 @@ export async function importFreeContent(env: Env, input: unknown): Promise<FreeI
   return result;
 }
 
+type Entry = { id: string; body: string | null; body_format: string | null };
+type Here = { projects: () => Promise<Map<string, string>>; entries: () => Promise<Map<string, Entry>> };
+
+/** The owner's projects by name and journal days by date, read once each: a long journal must not cost a query a day. */
+function whatIsHere(env: Env): Here {
+  let projects: Promise<Map<string, string>> | undefined;
+  let entries: Promise<Map<string, Entry>> | undefined;
+  return {
+    projects: () =>
+      (projects ??= env.DB.prepare("SELECT id, slug FROM mission_projects WHERE user_id = ?").bind(OWNER_ID).all<{ id: string; slug: string }>()
+        .then((found) => new Map(found.results.map((row) => [row.slug, row.id])))),
+    entries: () =>
+      (entries ??= env.DB.prepare("SELECT id, entry_date, body, body_format FROM journal_entries WHERE user_id = ?").bind(OWNER_ID).all<Entry & { entry_date: string }>()
+        .then((found) => new Map(found.results.map((row) => [row.entry_date, { id: row.id, body: row.body, body_format: row.body_format }])))),
+  };
+}
+
 /**
  * Two things can only exist once here whatever their id: a project name, and a day's journal entry. When the
  * user already has one, the free rows that point at the free copy are pointed at theirs instead, and the free
@@ -148,19 +167,18 @@ async function alreadyHere(
   row: Row,
   moved: { mission_projects: Map<string, string>; journal_entries: Map<string, string> },
   counts: FreeImportCounts,
+  here: Here,
 ): Promise<boolean> {
   if (table === "mission_projects" && typeof row.slug === "string") {
-    const existing = await env.DB.prepare("SELECT id FROM mission_projects WHERE user_id = ? AND slug = ? AND id <> ?").bind(OWNER_ID, row.slug, row.id as string).first<{ id: string }>();
-    if (!existing) return false;
-    moved.mission_projects.set(row.id as string, existing.id);
+    const existing = (await here.projects()).get(row.slug);
+    if (!existing || existing === row.id) return false;
+    moved.mission_projects.set(row.id as string, existing);
     counts.merged++;
     return true;
   }
   if (table === "journal_entries" && typeof row.entry_date === "string") {
-    const existing = await env.DB.prepare("SELECT id, body, body_format FROM journal_entries WHERE user_id = ? AND entry_date = ? AND id <> ?")
-      .bind(OWNER_ID, row.entry_date, row.id as string)
-      .first<{ id: string; body: string | null; body_format: string | null }>();
-    if (!existing) return false;
+    const existing = (await here.entries()).get(row.entry_date);
+    if (!existing || existing.id === row.id) return false;
     moved.journal_entries.set(row.id as string, existing.id);
     const body = typeof row.body === "string" ? row.body.trim() : "";
     const sameFormat = (row.body_format ?? existing.body_format) === existing.body_format;
@@ -169,8 +187,8 @@ async function alreadyHere(
       return true;
     }
     if (!(existing.body ?? "").includes(body)) {
-      const joined = (existing.body ?? "").trim() ? `${existing.body}\n\n${body}` : body;
-      await env.DB.prepare("UPDATE journal_entries SET body = ?, revision = coalesce(revision, 0) + 1, updated_at = datetime('now') WHERE id = ?").bind(joined, existing.id).run();
+      existing.body = (existing.body ?? "").trim() ? `${existing.body}\n\n${body}` : body;
+      await env.DB.prepare("UPDATE journal_entries SET body = ?, revision = coalesce(revision, 0) + 1, updated_at = datetime('now') WHERE id = ?").bind(existing.body, existing.id).run();
     }
     counts.merged++;
     return true;
