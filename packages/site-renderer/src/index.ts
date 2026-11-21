@@ -1773,7 +1773,7 @@ function bookingDayStripMarkup(label: string): string {
 }
 
 function bookingDayStripRuntime(timezone: string, enabled: string, onSelect: string): string {
-  return `var refreshDayStrip=function(){};var dayStrip=root.querySelector('[data-booking-day-strip]');if(dayStrip){refreshDayStrip=function(){var zone=${timezone};var parts;try{parts=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());}catch(e){parts=new Intl.DateTimeFormat('en-US',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());}var values={};parts.forEach(function(part){values[part.type]=part.value});var start=Date.UTC(Number(values.year),Number(values.month)-1,Number(values.day));dayStrip.innerHTML='';var first=null;for(var i=0;i<14;i++){var day=new Date(start+i*86400000);var dateValue=day.toISOString().slice(0,10);var weekday=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][day.getUTCDay()];var available=${enabled};var button=document.createElement('button');button.type='button';button.className='booking-day';button.disabled=!available;button.dataset.date=dateValue;button.setAttribute('aria-label',day.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',timeZone:'UTC'}));button.setAttribute('aria-pressed',String(dateInput.value===dateValue));button.innerHTML='<span>'+day.toLocaleDateString(undefined,{weekday:'short',timeZone:'UTC'})+'</span><strong>'+day.getUTCDate()+'</strong>';button.addEventListener('click',function(){var chosen=this;dateInput.value=chosen.dataset.date;dayStrip.querySelectorAll('.booking-day').forEach(function(item){item.setAttribute('aria-pressed',String(item===chosen));});${onSelect}();});dayStrip.appendChild(button);if(!first&&available)first=button;}var current=dayStrip.querySelector('[data-date="'+dateInput.value+'"]');if(current&&!current.disabled)current.click();else if(first)first.click();else dateInput.value='';};refreshDayStrip();}`;
+  return `var refreshDayStrip=function(){};var dayStrip=root.querySelector('[data-booking-day-strip]');if(dayStrip){refreshDayStrip=function(){var zone=${timezone};var parts;try{parts=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());}catch(e){parts=new Intl.DateTimeFormat('en-US',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());}var values={};parts.forEach(function(part){values[part.type]=part.value});var start=Date.UTC(Number(values.year),Number(values.month)-1,Number(values.day));dayStrip.innerHTML='';var first=null;for(var i=0;i<14;i++){var day=new Date(start+i*86400000);var dateValue=day.toISOString().slice(0,10);var weekday=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][day.getUTCDay()];var available=${enabled};var button=document.createElement('button');button.type='button';button.className='booking-day';button.disabled=!available;button.dataset.date=dateValue;button.setAttribute('aria-label',day.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',timeZone:'UTC'}));button.setAttribute('aria-pressed',String(dateInput.value===dateValue));button.innerHTML='<span>'+day.toLocaleDateString(undefined,{weekday:'short',timeZone:'UTC'})+'</span><strong>'+day.getUTCDate()+'</strong>';button.addEventListener('click',function(){var chosen=this;dateInput.value=chosen.dataset.date;dayStrip.querySelectorAll('.booking-day').forEach(function(item){item.setAttribute('aria-pressed',String(item===chosen));});${onSelect}();});dayStrip.appendChild(button);if(!first&&available)first=button;}var wanted=typeof linkedSlot==='function'&&linkedSlot()?linkedSlot().date:dateInput.value;var current=dayStrip.querySelector('[data-date="'+wanted+'"]');if(current&&!current.disabled)current.click();else if(first)first.click();else dateInput.value='';};refreshDayStrip();}`;
 }
 
 function eventBookingWidgetScript(): string {
@@ -1921,6 +1921,9 @@ function paidBookingWidgetScript(): string {
   var selectedTime='';
   var slotRequest=0;
   var dayNames=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  // A link such as ?offer=cut&date=2026-11-28&time=13:00 (from an assistant) opens with that slot chosen, once.
+  var linked=(function(){try{var params=new URLSearchParams(window.location.search);var d=params.get('date')||'';var t=params.get('time')||'';return /^\\d{4}-\\d{2}-\\d{2}$/.test(d)&&/^\\d{2}:\\d{2}$/.test(t)?{date:d,time:t,offer:params.get('offer')||'',used:false}:null;}catch(_error){return null;}})();
+  function linkedSlot(){return linked&&!linked.used&&(!linked.offer||linked.offer===selectedOfferId)?linked:null;}
   function setStatus(message,isError){statusEl.textContent=message||'';statusEl.classList.toggle('is-error',!!isError);}
   var submitButton=form.querySelector('.booking-submit');var submitLabel=submitButton?submitButton.textContent:'';
   // Progress shows on the button alone; the status line is for the outcome.
@@ -1981,6 +1984,8 @@ function paidBookingWidgetScript(): string {
     timeInput.value='';
     if(continueButton)continueButton.disabled=true;
     setDetailsVisible(false);
+    var linkedDay=linkedSlot();
+    if(linkedDay&&!root.querySelector('[data-booking-day-strip]')&&linkedDay.date>=(dateInput.min||''))dateInput.value=linkedDay.date;
     var dateValue=dateInput.value;
     var request=++slotRequest;
     var windows=(selected.windows&&selected.windows[dayName(dateValue)])||[];
@@ -2028,6 +2033,8 @@ function paidBookingWidgetScript(): string {
       slotsEl.hidden=!found;
       emptyEl.hidden=found||!dateValue;
       setStatus('');
+      var linkedTime=linkedSlot();
+      if(linkedTime&&linkedTime.date===dateValue){linkedTime.used=true;var linkedButton=slotsEl.querySelector('.booking-slot[data-time-value="'+linkedTime.time+'"]');if(linkedButton&&!linkedButton.disabled)linkedButton.click();}
     }).catch(function(error){
       if(request!==slotRequest)return;
       slotsEl.innerHTML='';
