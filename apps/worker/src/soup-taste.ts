@@ -3,6 +3,7 @@
 // said they love and stands alone. Plus "Less of", followed soups and the servings they chose:
 // their own times, or none at all (only when they ask). Taste never leaves the installation.
 import { JournalInputError } from "./journal";
+import { ownerPublicPage } from "./owner-public-page";
 import { cleanSoupTopic, type SoupMedium } from "./soup-client";
 import { isRecord, parseJsonRecord } from "./workspace-input";
 import type { Env } from "./types";
@@ -255,7 +256,8 @@ export async function soupSuggestionDue(env: Env, userId: string): Promise<boole
   const row = await env.DB.prepare("SELECT set_up_at, suggested_at FROM soup_taste WHERE user_id = ?").bind(userId).first<{ set_up_at: string | null; suggested_at: string | null }>();
   if (row?.set_up_at || row?.suggested_at) return false;
   const project = await env.DB.prepare("SELECT 1 FROM mission_projects WHERE user_id = ? AND status != 'archived' LIMIT 1").bind(userId).first();
-  return Boolean(project);
+  // A free owner's public page bio also tells ME3 enough to suggest topics.
+  return Boolean(project) || Boolean((await ownerPublicPage(env))?.bio);
 }
 
 /** All topic words Soup may see for this owner: the two lanes, nothing else. */

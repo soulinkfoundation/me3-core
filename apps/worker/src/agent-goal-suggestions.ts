@@ -1,5 +1,6 @@
 import type { AgentModel, AgentTool } from "../../../packages/agent/src/types";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
+import { ownerPublicPage } from "./owner-public-page";
 import { createAgentModels } from "./agent-runtime";
 import { getGoals } from "./goals";
 import { getOwnerProfile } from "./sites";
@@ -102,10 +103,10 @@ export async function suggestStarterGoals(env: Env, ownerId: string, wheelInput:
   if (!owner) return [];
   const wheel = readWheel(wheelInput);
   const [snapshot, goals] = await Promise.all([
-    loadOwnerSnapshotContext({
-      db: env.DB, ownerId, meJsonUrl: null,
+    ownerPublicPage(env).then(publicProfile => loadOwnerSnapshotContext({
+      db: env.DB, ownerId, meJsonUrl: null, publicProfile,
       owner: { id: owner.id, name: owner.name, username: owner.username, timezone: owner.timezone || "UTC", assistantName: owner.assistant_name || "ME3" },
-    }),
+    })),
     getGoals(env, ownerId),
   ]);
   const requestId = `goal-suggestions:${crypto.randomUUID()}`;

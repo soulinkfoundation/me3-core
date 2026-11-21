@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { freeApiAccess } from "../src/policy";
-import { freePageRequest, isFreePagePath } from "../src/free-page";
+import { freePageRequest, isFreePagePath, publicPageFromFreePage } from "../src/free-page";
 
 // Failure modes: the editor reaches Cloud routes other than the free page; the service token or the user's
 // own ME3 token is sent to the wrong place (the user's token must never reach Cloud, the service token must
@@ -73,5 +73,25 @@ describe("owner details taken from the saved page", () => {
   it("gives nothing for a response that is not a page", () => {
     expect(ownerFieldsFromFreePage({ error: "nope" }, origin, 1)).toBeNull();
     expect(ownerFieldsFromFreePage(null, origin, 1)).toBeNull();
+  });
+});
+
+// Failure modes: a private page's bio or town reaches News or the agent; an empty page yields an empty object
+// that hides "no page"; a long bio floods the prompt.
+describe("the page News may use", () => {
+  const page = (profile: Record<string, unknown>) => ({ ok: true, profile });
+  const town = { label: "Ennis, Ireland", locality: "Ennis", countryCode: "IE", latitude: 52.8, longitude: -8.98, precision: "locality" };
+
+  it("gives the bio and town of a public page", () => {
+    expect(publicPageFromFreePage(page({ visibility: "public", bio: "  Potter in Clare.  ", location: "Ennis, Ireland", locationData: town })))
+      .toEqual({ bio: "Potter in Clare.", location: "Ennis, Ireland", locationData: town });
+    expect(publicPageFromFreePage(page({ visibility: "public", bio: "x".repeat(900) }))?.bio).toHaveLength(600);
+  });
+
+  it("gives nothing for a private page, an empty page, or something that is not a page", () => {
+    expect(publicPageFromFreePage(page({ visibility: "private", bio: "Potter", location: "Ennis, Ireland", locationData: town }))).toBeNull();
+    expect(publicPageFromFreePage(page({ visibility: "public", bio: " ", location: null, locationData: null }))).toBeNull();
+    expect(publicPageFromFreePage({ ok: false })).toBeNull();
+    expect(publicPageFromFreePage(null)).toBeNull();
   });
 });

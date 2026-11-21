@@ -5,6 +5,7 @@
 // so a failure leaves no card rather than a broken one.
 import type { AgentModel, AgentTool } from "../../../packages/agent/src/types";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
+import { fastModelAllowed, ownerPublicPage } from "./owner-public-page";
 import { createAgentModels } from "./agent-runtime";
 import { addDaysToDateString, getUtcMsForLocalTime, normalizeTimeZone } from "./calendar";
 import { JournalInputError } from "./journal";
@@ -193,10 +194,13 @@ export function readSoupPicks(value: unknown, candidateIds: string[], count: num
  */
 export async function runWithFastModel<T>(env: Env, ownerId: string, label: string, run: (model: AgentModel, ownerSnapshot: string, timeoutMs: number) => Promise<T>): Promise<T | null> {
   try {
+    // On the free plan, once the day's allowance is used (or free is paused) there is no model call:
+    // News prints its front page in Soup's order and servings keep Soup's order.
+    if (!await fastModelAllowed(env)) return null;
     const owner = await getOwnerProfile(env, ownerId);
     if (!owner) return null;
     const snapshot = await loadOwnerSnapshotContext({
-      db: env.DB, ownerId, meJsonUrl: null,
+      db: env.DB, ownerId, meJsonUrl: null, publicProfile: await ownerPublicPage(env),
       owner: { id: owner.id, name: owner.name, username: owner.username, timezone: owner.timezone || "UTC", assistantName: owner.assistant_name || "ME3" },
     });
     const requestId = `soup-serving:${crypto.randomUUID()}`;

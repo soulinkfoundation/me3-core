@@ -93,6 +93,8 @@ export async function loadOwnerSnapshotContext(input: {
   ownerId: string;
   owner: OwnerSnapshotProfile | null;
   meJsonUrl: string | null;
+  /** Stands in for the profile site's me.json when the owner has none (a free ME3's public me3.app page). */
+  publicProfile?: Record<string, unknown> | null;
 }): Promise<OwnerSnapshotContext> {
   const [missionRow, wheelRow, projectRows, privateMeJsonRow, publicMeJsonRow, memoryRows] = await Promise.all([
     loadMissionSnapshot(input.db, input.ownerId),
@@ -108,7 +110,7 @@ export async function loadOwnerSnapshotContext(input: {
   const missionStatement = normalizeMissionStatement(missionRow?.mission_statement)
     ?? (privateMeJson ? missionStatementFromMeJson(privateMeJson) : null);
   const goals = resolveGoals(missionRow?.settings_json);
-  const meJson = parseMeJson(publicMeJsonRow?.content);
+  const meJson = parseMeJson(publicMeJsonRow?.content) ?? input.publicProfile ?? null;
   const compactMeJson = compactMeJsonForPrompt(meJson);
   const lifeSnapshot = resolveLifeSnapshot(wheelRow);
   const projects = projectRows.map(toContextProject);

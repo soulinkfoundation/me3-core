@@ -59,6 +59,13 @@ export interface Env {
   ME3_AGENT_MAX_STEPS?: string;
   /** Added to the agent's system prompt: what the owner's plan does not include. */
   ME3_AGENT_PLAN_NOTE?: string;
+  /**
+   * Hosted free runtime only: the owner's me3.app page from ME3 Cloud while it is public (bio and town), else null.
+   * A free ME3 has no profile site, so this stands in for its public me.json.
+   */
+  ME3_OWNER_PUBLIC_PAGE?: () => Promise<OwnerPublicPage | null>;
+  /** Hosted free runtime only: false while the free allowance is used up or free is paused. Background fast-model calls then fall back to no model. */
+  ME3_FAST_MODEL_ALLOWED?: () => Promise<boolean>;
   /** The Human Soup API origin; defaults to https://api.thehumansoup.ai. */
   ME3_SOUP_API_ORIGIN?: string;
   /** Local development only: build News from the bundled fixture of Soup's news contract instead of calling Soup. */
@@ -648,3 +655,6 @@ export interface DbSchedulingRequestAudit {
   metadata_json: string | null;
   created_at: string;
 }
+
+/** What a free owner's public me3.app page says about them, in me.json's shape. */
+export type OwnerPublicPage = { bio?: string; location?: string; locationData?: Record<string, unknown> };

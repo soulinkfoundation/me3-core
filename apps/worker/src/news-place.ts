@@ -2,6 +2,7 @@
 // is the best first guess; the city their timezone is named after is only a fallback, because a
 // timezone names a capital, not a home (Europe/Dublin covers Limerick and Galway too).
 import { cityFromTimezone, cleanCityName } from "./news-weather";
+import { ownerPublicPage } from "./owner-public-page";
 import { getSiteFileText } from "./sites";
 import type { Env } from "./types";
 
@@ -18,14 +19,14 @@ export function townFromProfile(profile: unknown): NewsTown | null {
   return { name, country: code };
 }
 
-/** The town on the owner's own profile site, if they gave one. */
+/** The town on the owner's own profile site, if they gave one; on the free plan, the town on their public me3.app page. */
 export async function ownerProfileTown(env: Env, userId: string): Promise<NewsTown | null> {
   try {
     const site = await env.DB.prepare(
       `SELECT id FROM sites WHERE user_id = ? AND (site_role = 'profile' OR (site_role IS NULL AND COALESCE(site_type, 'profile') = 'profile'))
        ORDER BY created_at ASC LIMIT 1`,
     ).bind(userId).first<{ id: string }>();
-    if (!site) return null;
+    if (!site) return townFromProfile(await ownerPublicPage(env));
     const raw = await getSiteFileText(env, site.id, "public/me.json");
     return raw ? townFromProfile(JSON.parse(raw)) : null;
   } catch { return null; }

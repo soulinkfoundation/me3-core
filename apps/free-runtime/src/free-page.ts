@@ -4,6 +4,8 @@
  * through these paths and this runtime forwards to Cloud's starter profile as that user. Nothing about
  * the page is stored here beyond the owner's name and handle.
  */
+import type { OwnerPublicPage } from "../../worker/src/types";
+
 const FREE_PAGE_PATH = /^\/api\/free\/page(?:\/handles\/[^/]+\/available|\/media\/(?:avatar|banner))?$/;
 
 export const isFreePagePath = (path: string) => FREE_PAGE_PATH.test(path);
@@ -44,4 +46,19 @@ export function ownerFieldsFromFreePage(body: unknown, cloudApiOrigin: string, v
   const handle = typeof page.user?.handle === "string" ? page.user.handle.trim() : "";
   const hasPhoto = typeof page.profile.avatar === "string" && page.profile.avatar.trim() !== "";
   return { name, handle, avatarUrl: hasPhoto && handle ? `${cloudApiOrigin}/api/profile/public/${encodeURIComponent(handle)}/media/avatar?v=${version}` : null };
+}
+
+/**
+ * What News and the agent may use from the page: the bio and town, only while the page is public.
+ * A private page gives nothing, so nothing the owner hid shapes their paper.
+ */
+export function publicPageFromFreePage(body: unknown): OwnerPublicPage | null {
+  const profile = (body as { profile?: Record<string, unknown> } | null)?.profile;
+  if (!profile || typeof profile !== "object" || profile.visibility !== "public") return null;
+  const text = (value: unknown, max: number) => typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
+  const bio = text(profile.bio, 600);
+  const location = text(profile.location, 160);
+  const locationData = profile.locationData && typeof profile.locationData === "object" && !Array.isArray(profile.locationData) ? profile.locationData as Record<string, unknown> : undefined;
+  if (!bio && !location && !locationData) return null;
+  return { ...(bio ? { bio } : {}), ...(location ? { location } : {}), ...(locationData ? { locationData } : {}) };
 }

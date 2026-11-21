@@ -14,6 +14,7 @@ import { computerAvailability, createComputerChatServices, type ComputerJobHost 
 import { computerChatTools } from "../../../packages/agent/src/computer/tools";
 import { createOwnerCreateIntentVerifier } from "./agent-owner-create-intent";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
+import { ownerPublicPage } from "./owner-public-page";
 import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
 import { getAiSettings } from "./ai-providers";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
@@ -93,7 +94,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     let ownerSnapshot:string|undefined;
     if(!checkpoint) {
       const [snapshot,images,attachments]=await Promise.all([
-        loadOwnerSnapshotContext({db:env.DB,ownerId:input.userId,owner:{id:owner.id,name:owner.name,username:owner.username,timezone,assistantName:owner.assistant_name||"ME3"},meJsonUrl:null}),
+        ownerPublicPage(env).then(publicProfile=>loadOwnerSnapshotContext({db:env.DB,ownerId:input.userId,owner:{id:owner.id,name:owner.name,username:owner.username,timezone,assistantName:owner.assistant_name||"ME3"},meJsonUrl:null,publicProfile})),
         prepareAgentImageInputs(env,imageScope,input.attachments||[],signal),
         loadAgentAttachmentManifest(env,imageScope,input.attachments||[]),
       ]);

@@ -6,11 +6,11 @@ import { Me3Agent } from "../../worker/src/me3-agent";
 import { dispatchDueMorningCalendarPushes } from "../../worker/src/morning-calendar-push";
 import { dispatchDueNewsPapers } from "../../worker/src/news-paper";
 import { dispatchDueNewsNotifications } from "../../worker/src/news-push";
-import type { Env } from "../../worker/src/types";
+import type { Env, OwnerPublicPage } from "../../worker/src/types";
 import { addUserSpend, localDay, messagesLeft, nextLocalMidnight, usageCostMicroUsd, type UserAllowance } from "./budget";
 import { createD1Adapter } from "./d1-adapter";
 import { getMe3CloudApiOrigin, getMe3CloudOrigin } from "../../worker/src/sites";
-import { freePageRequest, isFreePagePath, ownerFieldsFromFreePage } from "./free-page";
+import { freePageRequest, isFreePagePath, ownerFieldsFromFreePage, publicPageFromFreePage } from "./free-page";
 import { FREE_PLAN_NOTE, freeApiAccess, isFreeAllowancePath, freePluginList, freeStarters, freeToolAllowlist, freeTour, isChatTurnPath, isTourPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
 import { exportFreeContent, upgradedReply } from "./upgrade";
 import { activateUserDatabase, prepareUserDatabase, type ActivationInput } from "./user-database";
@@ -31,6 +31,8 @@ const META_TABLE = "free_runtime_meta";
 const TICK_SECONDS = 15 * 60;
 const ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const SEEN_WRITE_INTERVAL_MS = 60 * 60 * 1000;
+// How long the public page read from Cloud is reused; saving the page here refreshes it at once.
+const PUBLIC_PAGE_TTL_MS = 30 * 60 * 1000;
 
 type ScheduledStep = readonly [name: string, run: (env: Env) => Promise<unknown>];
 const FREE_STEPS: readonly ScheduledStep[] = [
@@ -77,6 +79,7 @@ export class Me3FreeUser extends Me3Agent {
   private readonly news: boolean;
   private ready: Promise<void> | null = null;
   private seenWrittenAt = 0;
+  private publicPageRead: { at: number; page: OwnerPublicPage | null } | null = null;
 
   constructor(ctx: DurableObjectState, env: FreeRuntimeEnv) {
     const self: { agent?: Me3FreeUser } = {};
@@ -99,6 +102,10 @@ export class Me3FreeUser extends Me3Agent {
       // One message may not run the model more than a few times, and the agent knows what the plan leaves out.
       ME3_AGENT_MAX_STEPS: "8",
       ME3_AGENT_PLAN_NOTE: FREE_PLAN_NOTE,
+      // A free ME3 has no profile site: its public me3.app page in Cloud gives News a town and the agent a bio.
+      ME3_OWNER_PUBLIC_PAGE: () => self.agent!.publicPage(),
+      // News and Soup picks spend from the same daily allowance as chat and stop with it.
+      ME3_FAST_MODEL_ALLOWED: () => self.agent!.fastModelAllowed(),
       // Session and encryption secrets are generated per database (install_secrets), so a session issued
       // by one user's ME3 is never valid in another's. Setup-by-password does not exist here.
       JWT_SECRET: undefined,
@@ -113,6 +120,30 @@ export class Me3FreeUser extends Me3Agent {
 
   private agentRequest(request: Request) {
     return super.onRequest(request);
+  }
+
+  private pageConfig() {
+    return { cloudApiOrigin: getMe3CloudApiOrigin(this.env), serviceToken: (this.env as FreeRuntimeEnv).FREE_RUNTIME_SERVICE_TOKEN ?? "", userId: this.meta("user_id") ?? "" };
+  }
+
+  /** The owner's page while it is public, read from Cloud and reused for a while. A failed read is not kept. */
+  private async publicPage(): Promise<OwnerPublicPage | null> {
+    if (this.publicPageRead && Date.now() - this.publicPageRead.at < PUBLIC_PAGE_TTL_MS) return this.publicPageRead.page;
+    const response = await freePageRequest(new Request("https://free-runtime.invalid/api/free/page"), this.pageConfig());
+    if (!response.ok) return null;
+    const page = publicPageFromFreePage(await response.json().catch(() => null));
+    this.publicPageRead = { at: Date.now(), page };
+    return page;
+  }
+
+  /** False once today's free allowance is used or free is paused; also reports settled spend. Fails closed. */
+  private async fastModelAllowed(): Promise<boolean> {
+    try {
+      return (await this.settleSpend()).allowed;
+    } catch (error) {
+      console.error("Free budget check failed", error);
+      return false;
+    }
   }
 
   private isActivated(): boolean {
@@ -199,16 +230,14 @@ export class Me3FreeUser extends Me3Agent {
     const context = { waitUntil: (work: Promise<unknown>) => this.ctx.waitUntil(work), passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
     const owner = await app.fetch(new Request(new URL("/api/account", request.url), { headers: { authorization: request.headers.get("authorization") ?? "" } }), this.env, context);
     if (!owner.ok) return Response.json({ ok: false, error: "Authentication required" }, { status: 401 });
-    const response = await freePageRequest(request, {
-      cloudApiOrigin: getMe3CloudApiOrigin(this.env),
-      serviceToken: (this.env as FreeRuntimeEnv).FREE_RUNTIME_SERVICE_TOKEN ?? "",
-      userId: this.meta("user_id") ?? "",
-    });
+    const response = await freePageRequest(request, this.pageConfig());
     const url = new URL(request.url);
     if (!response.ok || url.pathname !== "/api/free/page") return response;
+    const body = await response.clone().json().catch(() => null);
+    this.publicPageRead = { at: Date.now(), page: publicPageFromFreePage(body) };
     // Cloud is the source for the name, handle and photo; keep this ME3's owner row in step whenever the page
     // is read or saved, so the apps show them everywhere.
-    const fields = ownerFieldsFromFreePage(await response.clone().json().catch(() => null), getMe3CloudApiOrigin(this.env), Date.now());
+    const fields = ownerFieldsFromFreePage(body, getMe3CloudApiOrigin(this.env), Date.now());
     if (fields) {
       const current = this.ctx.storage.sql.exec("SELECT avatar_url FROM owner_profile WHERE id = 'owner'").toArray()[0]?.avatar_url as string | null | undefined;
       // A read keeps the photo address it already has, so the app's image cache is not thrown away each time.
