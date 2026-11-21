@@ -2989,8 +2989,10 @@ function bookingControlsCss(): string {
 .booking-session-preview:has(.booking-offer-card:only-child){grid-template-columns:1fr}
 .booking-offer-card .booking-card,.booking-offer-card .booking-card.active{border:0;background:transparent}
 .booking-offer-card:has(.booking-card.active),.booking-session-preview>.booking-card.active{border-color:color-mix(in srgb,var(--accent) 70%,var(--text));background:color-mix(in srgb,var(--surface) 82%,var(--accent))}
-.booking-enquire-list{display:grid;gap:12px;margin-top:16px}
-.booking-card.booking-card--enquire{border:1px solid var(--border);cursor:default}
+.booking-enquire-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:16px}
+.booking-enquire-list:has(.booking-card:only-child){grid-template-columns:1fr}
+@media (max-width:560px){.booking-enquire-list{grid-template-columns:1fr}}
+.booking-card.booking-card--enquire{box-sizing:border-box;border:1px solid var(--border);cursor:default}
 .booking-card--enquire .booking-enquire{display:block;box-sizing:border-box;width:100%;margin-top:4px;text-align:center;text-decoration:none}
 .booking-session-preview>.booking-card{border-width:2px;border-style:solid;box-shadow:var(--ui-shadow-sm)}
 .booking-card .booking-card-selection{visibility:hidden;color:var(--text);font-size:.82rem;font-weight:800}

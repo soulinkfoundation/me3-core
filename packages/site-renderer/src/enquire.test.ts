@@ -24,6 +24,16 @@ const site = (enquire: boolean) => ({
 });
 
 describe("Enquire for paid offers nobody can pay for yet", () => {
+  it("lays Enquire cards out two to a row, one per row on phones", async () => {
+    const files = await generateSiteHtml(site(true) as any, [], { offerPagesEnabled: true });
+    const css = Object.values(files).join("\n");
+    expect(css).toContain(".booking-enquire-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))");
+    expect(css).toContain(".booking-enquire-list:has(.booking-card:only-child){grid-template-columns:1fr}");
+    expect(css).toContain("@media (max-width:560px){.booking-enquire-list{grid-template-columns:1fr}}");
+    // Full-width cards with padding would spill into the next column without border-box.
+    expect(css).toContain(".booking-card.booking-card--enquire{box-sizing:border-box;");
+  });
+
   it("replaces Book and Buy with Enquire, and keeps the other offers bookable", async () => {
     const files = await generateSiteHtml(site(true) as any, [], { offerPagesEnabled: true });
     const home = files["index.html"];
