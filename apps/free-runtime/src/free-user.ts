@@ -10,7 +10,7 @@ import type { Env } from "../../worker/src/types";
 import { countMessage, usageCostMicroUsd } from "./budget";
 import { createD1Adapter } from "./d1-adapter";
 import { getMe3CloudOrigin } from "../../worker/src/sites";
-import { freeApiAccess, freeToolAllowlist, isChatTurnPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
+import { freeApiAccess, freePluginList, freeToolAllowlist, isChatTurnPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
 import { activateUserDatabase, prepareUserDatabase, type ActivationInput } from "./user-database";
 
 export type FreeRuntimeEnv = Env & {
@@ -250,8 +250,14 @@ export class Me3FreeUser extends Me3Agent {
       passThroughOnException() {},
       props: {},
     } as unknown as ExecutionContext);
+    const isJson = response.headers.get("content-type")?.includes("application/json");
+    if (isJson && response.ok && url.pathname === "/api/plugins") {
+      const headers = new Headers(response.headers);
+      headers.delete("content-length");
+      return new Response(JSON.stringify(freePluginList((await response.json()) as { plugins?: { id: string }[] }, { news: this.news })), { status: response.status, headers });
+    }
     const base = request.headers.get(FREE_BASE_HEADER);
-    if (!base || !url.pathname.startsWith("/api/mobile/") || !response.headers.get("content-type")?.includes("application/json")) return response;
+    if (!base || !url.pathname.startsWith("/api/mobile/") || !isJson) return response;
     const handle = this.ctx.storage.sql.exec("SELECT username FROM owner_profile WHERE id = 'owner'").toArray()[0]?.username;
     const cloud = getMe3CloudOrigin(this.env);
     const corrected = rewriteMobileInstall(await response.json(), { base, publicURL: typeof handle === "string" && handle ? `${cloud}/${handle}` : cloud });

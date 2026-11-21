@@ -104,6 +104,10 @@ try {
 
   const thread = await call("/u/alice/api/assistant/threads/primary", { method: "POST", token, body: {} });
   check("main chat thread resolves", thread.status === 200 && thread.json?.thread?.id, thread.json ?? thread.text);
+  const plugins = await call("/u/alice/api/plugins", { token });
+  const pluginIds = (plugins.json?.plugins ?? []).map((plugin) => plugin.id).sort();
+  check("the app's menu source lists only free features", plugins.status === 200 && pluginIds.join() === "me3.agent-chat,me3.calendar,me3.journal,me3.mission-control", plugins.json ?? plugins.text);
+  check("a free user cannot switch on a paid plugin", (await call("/u/alice/api/plugins/me3.accounts/activate", { method: "POST", token, body: {} })).status === 403);
   const goals = await call("/u/alice/api/tasks/goals", { token });
   check("goals API works", goals.status === 200, goals.text.slice(0, 200));
   const journal = await call("/u/alice/api/journal/articles", { token });

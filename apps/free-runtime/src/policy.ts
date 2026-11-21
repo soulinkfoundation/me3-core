@@ -22,6 +22,8 @@ const under = (path: string, prefix: string) => path === prefix || path.startsWi
 
 export function freeApiAccess(method: string, path: string, options: FreePolicyOptions, body?: unknown): "allow" | "upgrade" {
   const pathname = path.split("?")[0];
+  // The apps build their menu from the plugin list; a free user may read it (filtered) but not switch plugins.
+  if (pathname === "/api/plugins") return method === "GET" ? "allow" : "upgrade";
   if (pathname === "/api/batch") {
     const requests = (body as { requests?: unknown } | null | undefined)?.requests;
     if (method !== "POST" || !Array.isArray(requests)) return "upgrade";
@@ -65,4 +67,13 @@ export function rewriteMobileInstall<T>(body: T, place: { base: string; publicUR
     result.capabilities = { ...(result.capabilities as Record<string, unknown>), mailbox: false, sites: false };
   }
   return result as T;
+}
+
+const FREE_PLUGIN_IDS = ["me3.agent-chat", "me3.calendar", "me3.journal", "me3.mission-control"];
+
+/** GET /api/plugins for a free user: only the plugins the free plan includes. */
+export function freePluginList<T extends { plugins?: { id: string }[] }>(body: T, options: FreePolicyOptions): T {
+  if (!body || !Array.isArray(body.plugins)) return body;
+  const allowed = new Set(options.news ? [...FREE_PLUGIN_IDS, "me3.soup"] : FREE_PLUGIN_IDS);
+  return { ...body, plugins: body.plugins.filter((plugin) => allowed.has(plugin.id)) };
 }
