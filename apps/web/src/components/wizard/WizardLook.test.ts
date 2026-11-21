@@ -61,34 +61,3 @@ describe("WizardLook logo", () => {
     expect(toastHarness.error).toHaveBeenCalledWith("That logo is too large. Choose an image under 1.9 MB.");
   });
 });
-
-describe("WizardLook badge", () => {
-  beforeEach(() => {
-    setActivePinia(createPinia());
-    vi.clearAllMocks();
-  });
-
-  it("shows the owner's badge choice and saves a change", async () => {
-    apiHarness.get.mockImplementation(async (path: string) => {
-      if (path === "/site-badge") return { preference: "shown", automaticallyShown: false };
-      throw new Error("offline");
-    });
-    apiHarness.put.mockResolvedValue({ preference: "hidden", automaticallyShown: false });
-    const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true, RouterLink: true } } });
-    await flushPromises();
-
-    const badge = wrapper.get('[role="switch"][aria-label="Show the Made with ME3 badge"]');
-    expect(badge.attributes("aria-checked")).toBe("true");
-    await badge.trigger("click");
-    await flushPromises();
-    expect(apiHarness.put).toHaveBeenCalledWith("/site-badge", { preference: "hidden" });
-    expect(badge.attributes("aria-checked")).toBe("false");
-  });
-
-  it("hides the switch when the badge setting can't be read", async () => {
-    apiHarness.get.mockRejectedValue(new Error("offline"));
-    const wrapper = mount(WizardLook, { global: { stubs: { AppDialog: true, RouterLink: true } } });
-    await flushPromises();
-    expect(wrapper.find('[aria-label="Show the Made with ME3 badge"]').exists()).toBe(false);
-  });
-});

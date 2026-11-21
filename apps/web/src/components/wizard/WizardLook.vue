@@ -8,7 +8,6 @@ import Button from "../Button.vue";
 import AppSwitch from "../AppSwitch.vue";
 import UiIcon from "../UiIcon.vue";
 import { useAppToast } from "../../composables/useAppToast";
-import { api } from "../../api";
 import { useSitesStore } from "../../stores/sites";
 import { permanentPublicSiteUrl } from "../../utils/publicSiteUrl";
 import WizardDomainSheet from "./WizardDomainSheet.vue";
@@ -71,33 +70,10 @@ function removeLogo() {
   wizard.updateProfile({ logo: null, logoBlob: null });
 }
 
-// The "Made with ME3" badge on published pages. It's an owner-wide choice, saved straight away.
-// "auto" (owners from before the badge was on by default) follows the install's own rule.
-type SiteBadgeState = { preference: "auto" | "shown" | "hidden"; automaticallyShown: boolean };
-const siteBadge = ref<SiteBadgeState | null>(null);
-const siteBadgeSaving = ref(false);
-const siteBadgeShown = computed(() =>
-  siteBadge.value?.preference === "auto" ? siteBadge.value.automaticallyShown : siteBadge.value?.preference === "shown",
-);
-async function setSiteBadgeShown(shown: boolean) {
-  if (!siteBadge.value) return;
-  const previous = siteBadge.value;
-  siteBadge.value = { ...previous, preference: shown ? "shown" : "hidden" };
-  siteBadgeSaving.value = true;
-  try {
-    siteBadge.value = await api.put<SiteBadgeState>("/site-badge", { preference: shown ? "shown" : "hidden" });
-  } catch {
-    siteBadge.value = previous;
-    toastError("Couldn't save the badge setting.");
-  } finally {
-    siteBadgeSaving.value = false;
-  }
-}
 onMounted(() => {
   void sites.ensureSites();
   void stripeStatus.load();
   void payDirectly.load().catch(() => undefined);
-  void api.get<SiteBadgeState>("/site-badge").then((state) => { siteBadge.value = state; }).catch(() => null);
 });
 
 const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f"];
@@ -161,7 +137,6 @@ const accents = ["#2b2723", "#b5522d", "#3f6b35", "#3d9b7c", "#315d86", "#87426f
     </fieldset>
     <div class="look-options">
       <div class="look-option"><span>Light/dark switch for visitors</span><AppSwitch :model-value="wizard.visitorThemeToggle" label="Show a light/dark switch to visitors" @update:model-value="wizard.setVisitorThemeToggle" /></div>
-      <div v-if="siteBadge" class="look-option"><span>Made with ME3 badge</span><AppSwitch :model-value="siteBadgeShown" :disabled="siteBadgeSaving" label="Show the Made with ME3 badge" @update:model-value="setSiteBadgeShown" /></div>
     </div>
     <WizardDomainSheet :open="showDomain" @close="showDomain = false" />
     <AppDialog :open="showFooter" aria-label="Footer settings" close-on-backdrop @close="showFooter = false">
