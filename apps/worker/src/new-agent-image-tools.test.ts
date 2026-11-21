@@ -67,6 +67,22 @@ describe("declarative private Core image generation", () => {
     expect(f.raw.prepare("SELECT COUNT(*) count FROM assistant_attachments").get()).toMatchObject({ count: 0 });
   });
 
+  it("passes an edit's named image and region to the service, and refuses a region outside the image", async () => {
+    const f = fixture(); const edit = vi.fn(f.generate); f.context.services = { images: { generate: f.generate, edit } };
+    const tool = createDomainTools().find(tool => tool.name === "core_images_edit")!;
+    expect(tool).toMatchObject({ effect: "write", approval: "none", pluginId: null });
+    const region = { x: 0.4, y: 0.5, width: 0.1, height: 0.1 };
+    expect(await tool.execute({ prompt, attachmentId: "photo", region }, f.context)).toMatchObject({ status: "ok", data: { redrawn: "region", imageAction: { kind: "generated" } } });
+    expect(edit).toHaveBeenCalledExactlyOnceWith(prompt, { idempotencyKey: "direct-key", threadId: "thread", turnId: "image-turn", requestId: "image-request", signal: f.context.signal, attachmentId: "photo", region });
+    for (const bad of [{ region: { ...region, x: 0.95 } }, { region: { ...region, width: 0 } }, { region: { x: 0.4 } }, { region: { ...region, y: 1.2 } }, { model: "other" }, { prompt: " " }])
+      expect(await tool.execute({ prompt, ...bad }, f.context), JSON.stringify(bad)).toMatchObject({ status: "error" });
+    expect(edit).toHaveBeenCalledTimes(1);
+    // An installation whose image service cannot edit reports that instead of generating a new picture.
+    f.context.services = { images: { generate: f.generate } };
+    expect(await tool.execute({ prompt }, f.context)).toMatchObject({ status: "error", error: "Image editing is unavailable." });
+    expect(f.generate).toHaveBeenCalledTimes(1);
+  });
+
   it("does not admit an image operation after Stop", async () => {
     const f = fixture(); const controller = new AbortController(); f.context.signal = controller.signal; controller.abort("Owner Stop");
     expect(await f.tool.execute({ prompt }, f.context)).toMatchObject({ status: "error" });

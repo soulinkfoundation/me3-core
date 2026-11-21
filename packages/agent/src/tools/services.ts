@@ -47,10 +47,13 @@ export type AgentImageGenerationResult =
   | { status: "complete"; operationId: string; action: AgentGeneratedImageAction }
   | { status: "unknown"; operationId: string; error: string }
   | { status: "failed"; operationId?: string; error: string };
+/** Fractions of the image's width and height, measured from its top-left corner. */
+export type AgentImageEditRegion = { x: number; y: number; width: number; height: number };
+type AgentImageOperationInput = { idempotencyKey: string; threadId: string; turnId: string; requestId: string; signal: AbortSignal };
 export interface AgentImageGenerationServices {
-  generate(prompt: string, input: {
-    idempotencyKey: string; threadId: string; turnId: string; requestId: string; signal: AbortSignal;
-  }): Promise<AgentImageGenerationResult>;
+  generate(prompt: string, input: AgentImageOperationInput): Promise<AgentImageGenerationResult>;
+  /** Saves an edited copy of an image already in the conversation; the newest one when none is named. */
+  edit?(instruction: string, input: AgentImageOperationInput & { attachmentId?: string; region?: AgentImageEditRegion }): Promise<AgentImageGenerationResult>;
 }
 /** Payment proposal records; Core never charges. See apps/worker/src/agent-payments.ts. */
 export type PaymentProposalRecord = { id: string; status: string; proposalHash: string; amount: string; currency: string; merchant: { name: string; url: string }; [key: string]: unknown };

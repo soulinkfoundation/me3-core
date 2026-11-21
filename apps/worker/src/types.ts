@@ -105,11 +105,16 @@ export interface ImageTransformationsBinding {
 export interface ImageTransformationsPipeline {
   transform(options: {
     width?: number;
-    fit?: "scale-down";
+    height?: number;
+    fit?: "scale-down" | "squeeze";
     background?: string;
+    /** Keeps the rectangle at left/top of this width and height. */
+    trim?: { left: number; top: number; width: number; height: number };
   }): ImageTransformationsPipeline;
+  /** Draws another image over this one, offset from the top-left corner. */
+  draw(image: ImageTransformationsPipeline, options?: { left?: number; top?: number }): ImageTransformationsPipeline;
   output(options: {
-    format: "image/jpeg" | "image/webp";
+    format: "image/jpeg" | "image/webp" | "image/png";
     quality?: number;
     /** false keeps only the first frame of an animated image. */
     anim?: boolean;

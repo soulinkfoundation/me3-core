@@ -24,13 +24,21 @@ async function boundedResponseBytes(response: Response, signal: AbortSignal): Pr
   return bytes;
 }
 
+/** An input image to edit and the output size to ask for. Both providers take it beside the prompt. */
+export type ProviderImageEdit = { reference: { bytes: Uint8Array; mimeType: string }; size: { width: number; height: number } };
+function base64(bytes: Uint8Array): string { let binary = ""; for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192)); return btoa(binary); }
+
 /** `onCompleted` runs once the provider reports a completed image, before its bytes are fetched. */
-export async function generateAgentProviderImage(env: Env, model: string, prompt: string, gatewayId: string, signal: AbortSignal, metadata: Record<string,string>, onCompleted?: () => Promise<void>): Promise<GeneratedProviderImage> {
+export async function generateAgentProviderImage(env: Env, model: string, prompt: string, gatewayId: string, signal: AbortSignal, metadata: Record<string,string>, onCompleted?: () => Promise<void>, edit?: ProviderImageEdit): Promise<GeneratedProviderImage> {
   signal.throwIfAborted();
   const ai = env.AI as unknown as { run(model: string, input: unknown, options: unknown): Promise<unknown> };
-  let input: unknown = { prompt, size: "1024x1024", quality: "medium", output_format: "png" };
+  const size = edit?.size ?? { width: 1024, height: 1024 };
+  // OpenAI edits take `images[]` as base64 data URIs: https://developers.cloudflare.com/ai/models/openai/gpt-image-2/
+  let input: unknown = { prompt, size: `${size.width}x${size.height}`, quality: "medium", output_format: "png", ...(edit ? { images: [`data:${edit.reference.mimeType};base64,${base64(edit.reference.bytes)}`] } : {}) };
   if (model.startsWith("@cf/")) {
-    const form = new FormData(); form.set("prompt", prompt); form.set("width", "1024"); form.set("height", "1024");
+    const form = new FormData(); form.set("prompt", prompt); form.set("width", String(size.width)); form.set("height", String(size.height));
+    // FLUX.2 reference images are named input_image_0..3: https://developers.cloudflare.com/changelog/post/2026-01-15-flux-2-klein-4b-workers-ai/
+    if (edit) form.set("input_image_0", new Blob([edit.reference.bytes.slice().buffer], { type: edit.reference.mimeType }), "reference");
     const request = new Request("https://image-generation.invalid", { method: "POST", body: form });
     input = { multipart: { body: request.body, contentType: request.headers.get("content-type") } };
   }
@@ -98,4 +106,37 @@ export function verifiedImageCost(model: string, image: GeneratedProviderImage):
   const input = usage.input_tokens as number; const output = usage.output_tokens as number;
   if (details.image_tokens !== 0 || details.text_tokens !== input || usage.total_tokens !== input + output || output <= 0) return null;
   return { baseCostUsd: (input * 5 + output * 30) / 1_000_000, inputTokens: input, outputTokens: output, pricingBasis: `${model.slice("openai/".length)}-verified-text-input-image-output-tokens`, usageReported: true };
+}
+
+// Workers AI bills FLUX.2 klein per 512x512 tile: https://developers.cloudflare.com/workers-ai/platform/pricing/
+const FLUX_KLEIN_OUTPUT_TILE_USD = 0.000287;
+const FLUX_KLEIN_INPUT_TILE_USD = 0.000059;
+// The AI binding reports no token usage, so one reference image is charged this allowance:
+// about 2,500 image-input tokens at $8 per million. An estimate, like the output price above.
+const GPT_IMAGE_EDIT_INPUT_USD = 0.02;
+type Size = { width: number; height: number };
+const openAiImage = (model: string) => model === "openai/gpt-image-2" || model === "openai/gpt-image-2.5-sunburst";
+
+/** What one edit of this output size costs before the gateway fee, or null when it is not fixed. */
+export function requestedImageEditCostUsd(model: string, size: Size): number | null {
+  // The reference is at most one input tile (agent-image-edit.ts keeps it under 512px).
+  if (model === "@cf/black-forest-labs/flux-2-klein-4b") return Math.ceil(size.width / 512) * Math.ceil(size.height / 512) * FLUX_KLEIN_OUTPUT_TILE_USD + FLUX_KLEIN_INPUT_TILE_USD;
+  if (openAiImage(model)) return GPT_IMAGE_MEDIUM_1024_USD * (size.width * size.height) / (1024 * 1024) + GPT_IMAGE_EDIT_INPUT_USD;
+  return null;
+}
+
+export function verifiedImageEditCost(model: string, image: GeneratedProviderImage, size: Size): ReturnType<typeof verifiedImageCost> {
+  const requested = requestedImageEditCostUsd(model, size);
+  const asRequested = image.width === size.width && image.height === size.height;
+  if (requested === null) return null;
+  if (!openAiImage(model)) return asRequested ? { baseCostUsd: requested, inputTokens: 0, outputTokens: 0, pricingBasis: "workers-ai-flux-2-klein-4b-edit-verified-tiles", usageReported: false } : null;
+  const name = model.slice("openai/".length);
+  if (image.usage === undefined) return asRequested ? { baseCostUsd: requested, inputTokens: 0, outputTokens: 0, pricingBasis: `${name}-edit-medium-${size.width}x${size.height}-estimate`, usageReported: false } : null;
+  const usage = record(image.usage); const details = record(usage?.input_tokens_details);
+  const integer = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  if (!usage || !details || ![usage.input_tokens, usage.output_tokens, usage.total_tokens, details.text_tokens, details.image_tokens].every(integer)) return null;
+  const input = usage.input_tokens as number; const output = usage.output_tokens as number; const text = details.text_tokens as number; const imageTokens = details.image_tokens as number;
+  if (text + imageTokens !== input || usage.total_tokens !== input + output || output <= 0) return null;
+  // Text input $5, image input $8, image output $30 per million tokens.
+  return { baseCostUsd: (text * 5 + imageTokens * 8 + output * 30) / 1_000_000, inputTokens: input, outputTokens: output, pricingBasis: `${name}-edit-verified-text-and-image-input-image-output-tokens`, usageReported: true };
 }

@@ -99,7 +99,9 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       // News is offered once in chat, after ME3 knows the owner's projects (me3-6ptk; plugin id is still me3.soup).
       const soupHint=enabledPluginIds.has("me3.soup")?await soupSetupHint(env,input.userId):null;
       ownerSnapshot=[snapshot.prompt,soupHint].filter(Boolean).join("\n\n");
-      const content=[input.messageText,input.attachmentTextContext].filter(Boolean).join("\n\n");
+      // The model sees the pixels; core_images_edit needs the ID to name which image to change.
+      const imageIds=attachments.filter(item=>item.kind==="image").map(item=>`${JSON.stringify(item.name)} id=${item.id}`).join(", ");
+      const content=[input.messageText,input.attachmentTextContext,imageIds&&`[Attached image IDs: ${imageIds}]`].filter(Boolean).join("\n\n");
       messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt})},...recent,{role:"user",content,...(images.length?{images}:{})}];
       await env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").bind(`${input.turnId}:user`,input.userId,input.threadId,input.messageText,JSON.stringify({requestId:input.requestId,runtime:"agent",...(attachments.length?{attachments}:{})})).run();
     }
@@ -327,6 +329,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
 export function isToolAvailable(name:string,services:AgentDomainServices):boolean {
   if(name==="core_quotes_save")return Boolean(services.quotes);
   if(name==="core_images_generate")return Boolean(services.images);
+  if(name==="core_images_edit")return Boolean(services.images?.edit);
   if(name.startsWith("core_mailbox_"))return Boolean(services.mailbox);
   if(name.startsWith("core_payments_"))return Boolean(services.payments);
   if(name.startsWith("core_computer_"))return Boolean(services.computer);

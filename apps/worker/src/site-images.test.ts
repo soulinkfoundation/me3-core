@@ -79,7 +79,7 @@ function dataImage(width = 1600, height = 900) {
 function transformations(env: Env) {
   let width = 0;
   const output = vi.fn(async () => ({response: () => new Response(webp(width, Math.round(width*900/1600)))}));
-  env.IMAGES = {input: () => ({transform(options) { width = options.width!; return this; }, output})};
+  env.IMAGES = {input: () => ({transform(options) { width = options.width!; return this; }, draw() { return this; }, output})};
   return output;
 }
 

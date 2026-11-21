@@ -60,7 +60,7 @@ describe("new runtime image input from canonical uploaded attachments", () => {
     expect(f.runModel).toHaveBeenCalledTimes(1);
     const request = f.runModel.mock.calls[0] as unknown as [string, { messages: Array<{ role: string; content: unknown }> }];
     expect(request[1].messages.find(message => message.role === "user")?.content).toEqual([
-      { type: "text", text: input.messageText }, { type: "image_url", image_url: { url: "data:image/png;base64,AQID" } },
+      { type: "text", text: `${input.messageText}\n\n[Attached image IDs: "synthetic.png" id=image-1]` }, { type: "image_url", image_url: { url: "data:image/png;base64,AQID" } },
     ]);
   });
   it("accepts an owner-scoped upload staged without a thread for the first message", async () => {

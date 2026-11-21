@@ -3,7 +3,8 @@ import { getAiSettings } from "./ai-providers";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
 import { getManagedAiBillingSettings, syncManagedAiUsage } from "./managed-ai-billing";
 import { isManagedRuntime } from "./managed-runtime-lifecycle";
-import { generateAgentProviderImage, requestedImageCostUsd, verifiedImageCost } from "./agent-image-provider";
+import { generateAgentProviderImage, requestedImageCostUsd, requestedImageEditCostUsd, verifiedImageCost, verifiedImageEditCost } from "./agent-image-provider";
+import { finishImageEdit, IMAGE_EDIT_PROMPT_SUFFIX, prepareImageEdit, type ImageEditPlan, type ImageEditRequest } from "./agent-image-edit";
 import { assertProvisionalHoldsCovered, MAX_PROVISIONAL_HOLDS } from "./managed-ai-holds";
 import type { Env } from "./types";
 export { AGENT_IMAGE_SCHEMA_STATEMENTS } from "./agent-image-schema";
@@ -55,7 +56,9 @@ async function managedAdmission(env: Env, ownerId: string, signal: AbortSignal):
 
 export function createAgentImageGenerationServices(env: Env, ownerId: string): AgentImageGenerationServices | undefined {
   if (!env.AI || !env.SITE_ASSETS) return undefined;
-  return { async generate(rawPrompt, input) {
+  type OperationInput = Parameters<AgentImageGenerationServices["generate"]>[1];
+  // One admission, billing and storage path for both tools; an edit adds a source image.
+  const run = async (toolName: "core_images_generate" | "core_images_edit", rawPrompt: string, input: OperationInput, edit?: ImageEditRequest): Promise<Awaited<ReturnType<AgentImageGenerationServices["generate"]>>> => {
     let operation: Operation | null = null; let providerStarted = false; let ownsAdmission = false;
     try {
       const prompt = rawPrompt.trim();
@@ -69,14 +72,18 @@ export function createAgentImageGenerationServices(env: Env, ownerId: string): A
       }
       const unresolved = await env.DB.prepare("SELECT id FROM me3_agent_image_operations WHERE owner_id=? AND turn_id=? AND status IN ('admitted','unknown') LIMIT 1").bind(ownerId, input.turnId).first<{ id: string }>();
       if (unresolved) return { status: "unknown", operationId: unresolved.id, error: "An image operation for this request requires reconciliation before another generation" };
-      const receipt = await env.DB.prepare("SELECT arguments_json FROM me3_agent_tool_receipts WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND tool_name='core_images_generate' AND status='running'").bind(ownerId, input.idempotencyKey, input.turnId).first<{ arguments_json: string }>();
-      if (!receipt || JSON.parse(receipt.arguments_json)?.prompt?.trim() !== prompt) throw new Error("Image tool receipt does not match this request");
+      const receipt = await env.DB.prepare("SELECT arguments_json FROM me3_agent_tool_receipts WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND tool_name=? AND status='running'").bind(ownerId, input.idempotencyKey, input.turnId, toolName).first<{ arguments_json: string }>();
+      const receiptArgs = receipt ? JSON.parse(receipt.arguments_json) : null;
+      if (!receipt || receiptArgs?.prompt?.trim() !== prompt) throw new Error("Image tool receipt does not match this request");
+      if (edit && ((receiptArgs.attachmentId ?? null) !== (edit.attachmentId ?? null) || JSON.stringify(receiptArgs.region ?? null) !== JSON.stringify(edit.region ?? null))) throw new Error("Image tool receipt does not match this request");
       if (!env.AI || !env.SITE_ASSETS) throw new Error("Private image generation provider or storage is unavailable");
       const route = (await getAiSettings(env, ownerId)).defaults.image_generation;
       let model = route.model;
       if (route.providerId === "openai") model = model.startsWith("openai/") ? model : `openai/${model}`;
       if (route.providerId === "workers-ai" && /^black-forest-labs\/flux-2-(klein-4b|dev)$/.test(model)) model = `@cf/${model}`;
       if (!route.configured || !["openai/gpt-image-2.5-sunburst", "openai/gpt-image-2", "@cf/black-forest-labs/flux-2-klein-4b", "@cf/black-forest-labs/flux-2-dev"].includes(model)) throw new Error("Configured image model is unavailable for private generation");
+      // The source is authorized and prepared before anything is reserved or charged.
+      const plan: ImageEditPlan | null = edit ? await prepareImageEdit(env, { ownerId, threadId: input.threadId }, edit, model, input.signal) : null;
       const managed = isManagedRuntime(env);
       const reportCount = managed ? await managedAdmission(env, ownerId, input.signal) : 0;
       const gateway = await getAiGatewayRuntimeConfig(env, ownerId);
@@ -112,18 +119,20 @@ export function createAgentImageGenerationServices(env: Env, ownerId: string): A
       providerStarted = true;
       // A completed provider call has charged its fixed price whatever happens to the download,
       // so price the receipt now rather than leave it holding for reconciliation.
-      const requestedCost = requestedImageCostUsd(model);
+      const requestedCost = plan ? requestedImageEditCostUsd(model, plan.size) : requestedImageCostUsd(model);
       const priceRequested = async () => {
         if (requestedCost === null) return;
         await env.DB.prepare("UPDATE ai_usage_events SET estimated_cost_usd=?,successful_request_count=1,metadata_json=? WHERE id=? AND user_id=? AND json_extract(metadata_json,'$.costKnown')=0 AND json_extract(metadata_json,'$.settlementId') IS NULL")
-          .bind(requestedCost * (1 + billingFeeRate), JSON.stringify({ ...metadata, costKnown: true, baseCostUsd: requestedCost, pricingBasis: "requested-1024x1024-on-completion" }), usageId, ownerId).run();
+          .bind(requestedCost * (1 + billingFeeRate), JSON.stringify({ ...metadata, costKnown: true, baseCostUsd: requestedCost, pricingBasis: `requested-${plan ? `edit-${plan.size.width}x${plan.size.height}` : "1024x1024"}-on-completion` }), usageId, ownerId).run();
       };
-      const image = await generateAgentProviderImage(env, model, prompt, gateway.gatewayId || env.CLOUDFLARE_AI_GATEWAY_ID || "default", input.signal, { me3_runtime: "agent", operationId: id, me3_turn_id: input.turnId, me3_request_id: input.requestId, me3_thread_id: input.threadId }, priceRequested);
-      const cost = verifiedImageCost(model, image);
+      const provided = await generateAgentProviderImage(env, model, plan ? `${prompt}\n\n${IMAGE_EDIT_PROMPT_SUFFIX}` : prompt, gateway.gatewayId || env.CLOUDFLARE_AI_GATEWAY_ID || "default", input.signal, { me3_runtime: "agent", operationId: id, me3_turn_id: input.turnId, me3_request_id: input.requestId, me3_thread_id: input.threadId }, priceRequested, plan ?? undefined);
+      const cost = plan ? verifiedImageEditCost(model, provided, plan.size) : verifiedImageCost(model, provided);
       await env.DB.prepare("UPDATE ai_usage_events SET tokens_in=?,tokens_out=?,estimated_cost_usd=?,successful_request_count=1,metadata_json=? WHERE id=? AND user_id=? AND json_extract(metadata_json,'$.settlementId') IS NULL")
         .bind(cost?.inputTokens || 0, cost?.outputTokens || 0, cost ? cost.baseCostUsd * (1 + billingFeeRate) : 0, JSON.stringify({ ...metadata, costKnown: Boolean(cost), usageReported: cost?.usageReported || false, baseCostUsd: cost?.baseCostUsd ?? null, pricingBasis: cost?.pricingBasis ?? null }), usageId, ownerId).run();
+      // A region edit saves the original photo with the redrawn patch pasted in.
+      const image = plan ? { ...provided, ...await finishImageEdit(env, plan, provided, input.signal) } : provided;
       const attachmentId = `${id}:asset`; const storageKey = `assistant/${ownerId}/generated/${id.replace(":", "-")}`;
-      const sha256 = await hash(image.bytes); const filename = `Generated image.${image.mimeType === "image/jpeg" ? "jpg" : image.mimeType.split("/")[1]}`;
+      const sha256 = await hash(image.bytes); const filename = `${plan ? "Edited" : "Generated"} image.${image.mimeType === "image/jpeg" ? "jpg" : image.mimeType.split("/")[1]}`;
       await env.DB.prepare("UPDATE me3_agent_image_operations SET attachment_id=?,storage_key=?,mime_type=?,size=?,width=?,height=?,revised_prompt=?,sha256=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND owner_id=? AND status='admitted'")
         .bind(attachmentId,storageKey,image.mimeType,image.bytes.length,image.width,image.height,image.revisedPrompt,sha256,id,ownerId).run();
       await env.SITE_ASSETS.put(storageKey, image.bytes, { httpMetadata: { contentType: image.mimeType }, customMetadata: { ownerId, operationId: id, sha256 } });
@@ -131,9 +140,9 @@ export function createAgentImageGenerationServices(env: Env, ownerId: string): A
       const action: AgentGeneratedImageAction = { kind: "generated", status: "complete", prompt, revisedPrompt: image.revisedPrompt, providerId: "workers-ai", model, reason: null, assets: [{ id: attachmentId, attachmentId, name: filename, mimeType: image.mimeType, size: image.bytes.length, width: image.width, height: image.height, url: `/api/assistant/attachments/${encodeURIComponent(attachmentId)}/content`, storageKey }] };
       try {
         await env.DB.batch([
-          env.DB.prepare("INSERT INTO assistant_attachments(id,owner_id,thread_id,filename,mime_type,size,kind,status,storage_key,metadata_json) VALUES(?,?,?,?,?,?,'image','ready',?,?)").bind(attachmentId, ownerId, input.threadId, filename, image.mimeType, image.bytes.length, storageKey, JSON.stringify({ operationId: id, sha256, generated: true, width: image.width, height: image.height })),
+          env.DB.prepare("INSERT INTO assistant_attachments(id,owner_id,thread_id,filename,mime_type,size,kind,status,storage_key,metadata_json) VALUES(?,?,?,?,?,?,'image','ready',?,?)").bind(attachmentId, ownerId, input.threadId, filename, image.mimeType, image.bytes.length, storageKey, JSON.stringify({ operationId: id, sha256, generated: true, width: image.width, height: image.height, ...(plan ? { editedFrom: plan.sourceId, ...(plan.paste && edit?.region ? { region: edit.region } : {}) } : {}) })),
           env.DB.prepare("UPDATE me3_agent_image_operations SET status='complete',attachment_id=?,storage_key=?,mime_type=?,size=?,width=?,height=?,revised_prompt=?,sha256=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND owner_id=? AND status='admitted'").bind(attachmentId, storageKey, image.mimeType, image.bytes.length, image.width, image.height, image.revisedPrompt, sha256, id, ownerId),
-          env.DB.prepare("UPDATE me3_agent_tool_receipts SET status='finished',result_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND tool_name='core_images_generate'").bind(JSON.stringify({ status: "ok", data: { operationId: id, imageAction: action } }), ownerId, input.idempotencyKey, input.turnId),
+          env.DB.prepare("UPDATE me3_agent_tool_receipts SET status='finished',result_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND idempotency_key=? AND turn_id=? AND tool_name=?").bind(JSON.stringify({ status: "ok", data: { operationId: id, imageAction: action } }), ownerId, input.idempotencyKey, input.turnId, toolName),
         ]);
       } catch (error) {
         // A lost D1 acknowledgement may follow a committed batch. Never delete committed media.
@@ -163,5 +172,9 @@ export function createAgentImageGenerationServices(env: Env, ownerId: string): A
       }
       return { status: "failed", error: errorText(error) };
     }
-  } };
+  };
+  return {
+    generate: (prompt, input) => run("core_images_generate", prompt, input),
+    edit: (instruction, { attachmentId, region, ...input }) => run("core_images_edit", instruction, input, { attachmentId, region }),
+  };
 }
