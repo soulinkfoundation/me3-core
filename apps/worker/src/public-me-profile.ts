@@ -12,6 +12,7 @@ import {
   type Me3Service,
 } from "me3-protocol";
 import {
+  publicTrade,
   resolveSiteSectionPaths,
   type Me3SiteProfile,
 } from "@me3-core/site-renderer";
@@ -369,6 +370,7 @@ export function buildPublicMe3Profile(
     ...(origin ? { id: `${origin}/me.json`, url: `${origin}/` } : {}),
     ...(id(source.handle) ? { handle: id(source.handle) } : {}),
     ...(text(source.bio, 500) ? { bio: text(source.bio, 500) } : {}),
+    ...(publicTrade(source) ? { trade: publicTrade(source) } : {}),
     ...(publicAsset(source.avatar) ? { avatar: publicAsset(source.avatar) } : {}),
     ...(publicAsset(source.banner) ? { banner: publicAsset(source.banner) } : {}),
     ...(text(source.location, 160) ? { location: text(source.location, 160) } : {}),

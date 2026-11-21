@@ -54,6 +54,8 @@ export type SiteStructuredDataInput = {
   name: string;
   /** Plain text. */
   description?: string;
+  /** What the owner does, in a few words. */
+  trade?: string;
   /** Site path or URL of the avatar or logo. */
   image?: string;
   /** Resolved hrefs of the profile's links. */
@@ -180,6 +182,8 @@ export function buildSiteStructuredData(input: SiteStructuredDataInput): SiteStr
     name: input.name,
     url: home,
     ...(input.description ? { description: input.description } : {}),
+    // A person has a job title; a business is found by what it does.
+    ...(input.trade ? (!localBusiness && (input.entityType || "Person") === "Person" ? { jobTitle: input.trade } : { keywords: input.trade }) : {}),
     ...(image ? { image } : {}),
     ...(address ? { address } : {}),
     ...(areaServed && (localBusiness || priced.length > 0) ? { areaServed } : {}),

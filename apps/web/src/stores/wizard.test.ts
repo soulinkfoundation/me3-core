@@ -37,6 +37,20 @@ describe("wizard store", () => {
     expect(reloaded.profile.booking.retreatOffers[0].pricing?.regionalPrices).toEqual(regionalPrices);
   });
 
+  it("keeps what the owner does through publishing, site loading and draft reload, and leaves it out when blank", () => {
+    const store = useWizardStore();
+    store.updateProfile({ name: "Niamh", trade: "  Hairdresser " });
+    const source = store.generateMe3Json();
+    expect(source.trade).toBe("Hairdresser");
+    store.updateProfile({ trade: "" });
+    expect(store.generateMe3Json()).not.toHaveProperty("trade");
+    store.loadFromSiteContent({ ...source, name: "Niamh" } as Parameters<typeof store.loadFromSiteContent>[0], [], [], [], "niamh");
+    expect(store.profile.trade).toBe("Hairdresser");
+    store.saveToStorage();
+    setActivePinia(createPinia());
+    expect(useWizardStore().profile.trade).toBe("Hairdresser");
+  });
+
   it("keeps each offer's own page path through publishing, site loading and draft reload", () => {
     const store = useWizardStore();
     store.setBooking({ enabled: true, oneToOneEnabled: true, classEnabled: true, retreatEnabled: true });

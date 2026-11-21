@@ -4,6 +4,16 @@ import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import { buildPublicMe3Profile } from "./public-me-profile";
 
 describe("public me.json profile", () => {
+  it("publishes the owner's trade, or the headline their starter site saved, and nothing otherwise", () => {
+    const stated = buildPublicMe3Profile({ name: "Niamh", trade: " Hairdresser ", bio: "**Stylist in Galway**\n\nHello." } as Me3SiteProfile, "https://example.com");
+    expect(stated).toMatchObject({ trade: "Hairdresser" });
+    expect(validateProfile(stated).valid).toBe(true);
+    const headline = buildPublicMe3Profile({ name: "Niamh", bio: "**Hairdresser in Galway**\n\nColour and cuts." }, "https://example.com");
+    expect(headline).toMatchObject({ trade: "Hairdresser in Galway" });
+    expect(validateProfile(headline).valid).toBe(true);
+    expect(buildPublicMe3Profile({ name: "Niamh", bio: "Colour and cuts." }, "https://example.com")).not.toHaveProperty("trade");
+    expect(buildPublicMe3Profile({ name: "Niamh", visibility: "private", trade: "Hairdresser" } as Me3SiteProfile, "https://example.com")).not.toHaveProperty("trade");
+  });
   it("links YouTube and TikTok handles to their profiles", () => {
     const profile = buildPublicMe3Profile({
       name: "Social links",

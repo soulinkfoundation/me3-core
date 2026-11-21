@@ -16,6 +16,8 @@ export * from "./image-metadata.js";
 import { discoveryLinks, jsonLd, publicDiscoveryFiles, publicSiteUrl, socialMetadata } from "./public-metadata.js";
 export * from "./public-metadata.js";
 import { buildSiteStructuredData, pageStructuredData, type StructuredDataService } from "./structured-data.js";
+import { publicTrade } from "./trade.js";
+export * from "./trade.js";
 import {
   formatPublicLocation,
   type PublicLocationData,
@@ -175,6 +177,8 @@ export type Me3SiteProfile = {
   location?: string;
   locationData?: PublicLocationData;
   bio?: string;
+  /** What the owner does, in a few words people search for ("Hairdresser"). Published as me.json `trade`. */
+  trade?: string;
   /** Site branding asset. Used for the favicon and available to future site layouts. */
   logo?: string;
   avatar?: string;
@@ -445,6 +449,7 @@ export async function generateSiteHtml(
   const structuredData = context.baseUrl ? buildSiteStructuredData({
     baseUrl: context.baseUrl, entityType: context.entityType, name,
     description: profile.bio ? contentToPlainText(profile.bio) : undefined,
+    trade: publicTrade(profile),
     image: profile.avatar || profile.logo || profile.banner,
     links: Object.entries(profile.links || {})
       .filter(([key, value]) => value && !key.startsWith("_") && !key.endsWith("_label"))

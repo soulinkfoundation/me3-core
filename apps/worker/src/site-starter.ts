@@ -3,7 +3,7 @@
 // The draft is the site's source (`src/me.json`, `src/about.md`): the same files the site editor
 // and web wizard read, so Edit on the draft card opens the real thing. Drafting never touches the
 // published files or `published_at`; publishing runs the one shared pipeline in site-publish.ts.
-import { normalizeSiteTheme, siteThemes, generateSiteHtml, type Me3SiteProfile, type SiteThemeId } from "@me3-core/site-renderer";
+import { headlineTrade, normalizeSiteTheme, siteThemes, generateSiteHtml, type Me3SiteProfile, type SiteThemeId } from "@me3-core/site-renderer";
 import { validateProfile } from "me3-protocol";
 import { readOwnerMission, saveOwnerMission } from "@me3-core/plugin-mission-control";
 import { buildPublicMe3Profile } from "./public-me-profile";
@@ -259,7 +259,7 @@ export async function draftStarterSite(env: Env, ownerId: string, input: Record<
 /** What someone would type to find this owner, e.g. "Career coach in Leeds"; the Show me demo searches for it. */
 export function starterSearchQuery(headline: string, location: string, services: readonly { title: string }[]): string {
   // The headline's first clause ("Career coach", not "Career coach helping people who…"), at most five words.
-  const what = (headline.split(/\s*[·•|–—,-]\s*|\s+(?:helping|for|who|that|with)\s+/i)[0] || services[0]?.title || "").trim().split(/\s+/).slice(0, 5).join(" ");
+  const what = headlineTrade(headline) || (services[0]?.title || "").trim().split(/\s+/).slice(0, 5).join(" ");
   const where = location.split(",")[0].trim();
   return [what, where].filter(Boolean).join(" in ");
 }

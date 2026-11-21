@@ -71,6 +71,8 @@ export interface WizardProfile {
   location: string;
   locationData: WizardLocationData | null;
   bio: string;
+  /** What the owner does, in a few words people search for. Published as me.json `trade`. */
+  trade: string;
   logo: string | null; // Site branding URL, data URL, or temporary blob URL
   avatar: string | null; // URL or data URL
   banner: string | null; // URL or data URL
@@ -1600,6 +1602,7 @@ const defaultProfile: WizardProfile = {
   location: "",
   locationData: null,
   bio: "",
+  trade: "",
   logo: null,
   avatar: null,
   banner: null,
@@ -3382,6 +3385,10 @@ export const useWizardStore = defineStore("wizard", () => {
 
     if (profile.value.location && profile.value.location.trim()) {
       me3.location = profile.value.location.trim();
+    }
+
+    if (profile.value.trade?.trim()) {
+      me3.trade = profile.value.trade.trim();
     }
 
     const locationData = normalizeLocationData(profile.value.locationData);
@@ -5184,6 +5191,7 @@ export const useWizardStore = defineStore("wizard", () => {
       location: (siteProfile as any).location || "",
       locationData: normalizeLocationData((siteProfile as any).locationData),
       bio: siteProfile.bio || "",
+      trade: typeof (siteProfile as any).trade === "string" ? (siteProfile as any).trade : "",
       logo: resolveLoadedSiteAssetUrl(siteProfile.logo),
       avatar: resolveLoadedSiteAssetUrl(siteProfile.avatar),
       banner: resolveLoadedSiteAssetUrl(siteProfile.banner),

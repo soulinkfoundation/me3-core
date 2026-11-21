@@ -11,6 +11,8 @@ const wizard = useWizardStore();
 const name = ref(wizard.profile.name);
 const handle = ref(wizard.profile.handle || wizard.username);
 const location = ref(wizard.profile.location);
+const trade = ref(wizard.profile.trade || "");
+watch(trade, (value) => wizard.updateProfile({ trade: value }));
 const bio = ref(bioForEditor(wizard.profile.bio));
 
 /**
@@ -309,6 +311,22 @@ const bioTextLength = computed(() =>
           characters
         </span>
       </div>
+    </div>
+
+    <div class="form-group">
+      <label for="trade">
+        What you do
+        <span class="optional">(optional)</span>
+      </label>
+      <input
+        id="trade"
+        v-model="trade"
+        type="text"
+        placeholder="e.g. Hairdresser"
+        maxlength="60"
+        aria-describedby="trade-help"
+      />
+      <p id="trade-help" class="handle-help">A few words people would search for. It helps people and AI assistants find you.</p>
     </div>
 
     <div class="form-group">
