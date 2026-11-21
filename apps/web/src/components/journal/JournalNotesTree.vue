@@ -22,6 +22,7 @@ const emit = defineEmits<{
   move: [note: T, placement: NotePlacement];
   "new-note": [placement: NotePlacement];
   "new-folder": [projectId: string | null];
+  "new-project": [note: T];
   "rename-folder": [folder: NoteFolder];
   "delete-folder": [folder: NoteFolder];
 }>();
@@ -92,6 +93,11 @@ function move(note: T, placement: NotePlacement) {
   emit("move", note, placement);
 }
 
+function newProject(note: T) {
+  closeMenu();
+  emit("new-project", note);
+}
+
 function newFolder(projectId: string | null) {
   closeMenu();
   emit("new-folder", projectId);
@@ -149,7 +155,7 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
                 <button type="button" role="menuitem" class="notes-tree__menu-item" @click="menu = { ...menu!, view: 'move' }"><UiIcon name="FolderInput" :size="15" aria-hidden="true" />Move to…</button>
                 <button type="button" role="menuitem" class="notes-tree__menu-item is-danger" @click="closeMenu(); emit('delete', item.note)"><UiIcon name="Trash2" :size="15" aria-hidden="true" />Delete note</button>
               </div>
-              <JournalNoteMoveMenu v-if="menu?.id === item.note.id && menu.view === 'move'" class="notes-tree__move" :class="{ 'is-up': menu.up }" :projects="projects" :folders="folders" :current="item.placement" @move="move(item.note, $event)" @new-folder="newFolder" />
+              <JournalNoteMoveMenu v-if="menu?.id === item.note.id && menu.view === 'move'" class="notes-tree__move" :class="{ 'is-up': menu.up }" :projects="projects" :folders="folders" :current="item.placement" @move="move(item.note, $event)" @new-folder="newFolder" @new-project="newProject(item.note)" />
             </div>
           </div>
         </template>

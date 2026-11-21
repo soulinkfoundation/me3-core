@@ -22,6 +22,7 @@ import { journalBodyForEditor } from "../utils/journalContent";
 import { writtenGratitude } from "../utils/gratitude";
 import JournalNoteMoveMenu from "../components/journal/JournalNoteMoveMenu.vue";
 import JournalNotesTree from "../components/journal/JournalNotesTree.vue";
+import NewProjectDialog, { type CreatedProject } from "../components/tasks/NewProjectDialog.vue";
 import type { NoteFolder, NotePlacement } from "../utils/journalNotes";
 import { homeTodayTasks, plainPreview, type HomeTask } from "../utils/homeSummary";
 import { useTodayPlan } from "../composables/useTodayPlan";
@@ -1064,6 +1065,24 @@ async function moveArticle(article: Article, placement: NotePlacement) {
   try { await next; } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not move note."; }
 }
 
+// A project added from a note's Move to menu takes that note with it.
+const newProjectFor = ref<Article | null>(null);
+const newProjectOpen = ref(false);
+
+function openNewProject(article: Article | null) {
+  noteLocationOpen.value = false;
+  newProjectFor.value = article;
+  newProjectOpen.value = true;
+}
+
+function projectCreated(project: CreatedProject) {
+  newProjectOpen.value = false;
+  projects.value = [...projects.value.filter((item) => item.id !== project.id), project];
+  const article = newProjectFor.value;
+  newProjectFor.value = null;
+  if (article) void moveArticle(article, { projectId: project.id, folderId: null });
+}
+
 async function createFolder(projectId: string | null) {
   noteLocationOpen.value = false;
   const name = window.prompt("Folder name")?.trim();
@@ -1230,6 +1249,7 @@ onBeforeUnmount(() => {
           :current="currentNotePlacement"
           @move="moveArticle(currentArticle, $event)"
           @new-folder="createFolder"
+          @new-project="openNewProject(currentArticle)"
         />
       </div>
     </div>
@@ -1314,6 +1334,7 @@ onBeforeUnmount(() => {
             @move="moveArticle"
             @new-note="createArticle"
             @new-folder="createFolder"
+            @new-project="openNewProject"
             @rename-folder="renameFolder"
             @delete-folder="deleteFolder"
           />
@@ -1550,6 +1571,7 @@ onBeforeUnmount(() => {
       </form>
     </div>
 
+    <NewProjectDialog :open="newProjectOpen" @close="newProjectOpen = false" @created="projectCreated" />
   </main>
 </template>
 

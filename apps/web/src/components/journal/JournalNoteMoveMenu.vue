@@ -13,6 +13,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   move: [placement: NotePlacement];
   "new-folder": [projectId: string | null];
+  "new-project": [];
 }>();
 
 const targets = computed(() => {
@@ -66,6 +67,10 @@ function isCurrent(placement: NotePlacement) {
     <button type="button" role="menuitem" class="note-move-menu__item" @click="emit('new-folder', current.projectId ?? null)">
       <UiIcon name="FolderPlus" :size="15" aria-hidden="true" />
       <span>New folder in {{ currentProjectName }}</span>
+    </button>
+    <button type="button" role="menuitem" class="note-move-menu__item" @click="emit('new-project')">
+      <UiIcon name="Plus" :size="15" aria-hidden="true" />
+      <span>New project</span>
     </button>
   </div>
 </template>
