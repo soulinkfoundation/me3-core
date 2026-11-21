@@ -603,7 +603,7 @@ export const CORE_CHAT_CAPABILITIES = [
     pluginId: null,
     ownerFacingLabel: "Find people",
     summary:
-      "Find a person, provider, business, service, skill, or collaborator across the owner's Soulink Links and the ME3 network, such as 'I need a parent coach' or 'do I know a developer?'. Run core_web_search alongside it for the same request. Do not use it for products, devices or things to buy: use core_web_search, unless the owner asks for something on ME3 by name. When the owner wants to book or buy from someone found here, offerings with agentCheckout can be checked live and bought with core_payments_network_check and core_payments_propose_network. Say which results are on the ME3 network, show their badges, and never hide a clearly better outside option.",
+      "Find a person, provider, business, service, skill, or collaborator across the owner's Soulink Links and the ME3 network, such as 'I need a parent coach' or 'do I know a developer?'. Run core_web_search alongside it for the same request. Do not use it for products, devices or things to buy: use core_web_search, unless the owner asks for something on ME3 by name. When the owner wants to book or buy from someone found here, offerings with agentCheckout can be checked live and bought with core_payments_network_check and core_payments_propose_network. Say which results are on the ME3 network, show their badges, and never hide a clearly better outside option. When the owner asks for someone free on a day or in a period, pass availableFrom and availableTo.",
     category: "messaging",
     handler: {
       surface: "chat",
@@ -641,6 +641,16 @@ export const CORE_CHAT_CAPABILITIES = [
         includeMe: {
           type: "boolean",
           description: "Also return the owner's own public listing (marked self: true), only when they want to see how an assistant finds them. Defaults to false.",
+        },
+        availableFrom: {
+          type: "string",
+          format: "date",
+          description: "When the owner wants someone free or available on a day or in a period (\"free on Saturday\", \"this week\", \"tomorrow afternoon\"), the first day as YYYY-MM-DD in their timezone. Only people with a bookable time then are returned, each with nextFree, their first free time. Leave out when no day or availability was mentioned.",
+        },
+        availableTo: {
+          type: "string",
+          format: "date",
+          description: "The last day of that period as YYYY-MM-DD, at most 7 days after availableFrom. Same as availableFrom for a single day.",
         },
       },
       additionalProperties: false,

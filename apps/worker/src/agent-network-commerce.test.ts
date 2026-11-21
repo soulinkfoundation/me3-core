@@ -419,6 +419,56 @@ describe("network commerce journey (two installations)", () => {
   });
 });
 
+describe("people search for a day (me3-7obo)", () => {
+  // Failure modes: the day not reaching ME3 Cloud; Cloud's next free time dropped on the way to the card;
+  // a Link or a result with no time that day still shown for a dated request; an undated search changing.
+  function cloudWithTimes(sent: Array<Record<string, unknown>>) {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url !== "https://api.me3.test/v1/network/search") return Response.json({ error: "Not found" }, { status: 404 });
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      sent.push(body);
+      const results = searchResponse().results;
+      if (!body.from) return Response.json({ query: "coaching", results });
+      // Cloud only returns people with time in the window, each with its next free slot.
+      return Response.json({ query: "coaching", results: [{ ...results[1], nextFree: {
+        startsAt: "2026-11-28T13:00:00.000Z", localDate: "2026-11-28", localTime: "13:00", timezone: "Europe/Dublin",
+        offeringId: "service:coaching", offeringTitle: "Coaching session" } }] });
+    });
+  }
+
+  it("asks ME3 Cloud for that day and keeps each person's next free time", async () => {
+    const j = journey();
+    const sent: Array<Record<string, unknown>> = [];
+    cloudWithTimes(sent);
+    const found = await j.run("core_people_search", { query: "coaching", availableFrom: "2026-11-28", availableTo: "2026-11-28" });
+    expect(sent[0]).toMatchObject({ from: "2026-11-28", to: "2026-11-28" });
+    expect(found.data.results.map((person: { name: string }) => person.name)).toEqual(["Aoife"]);
+    expect(found.data.results[0].nextFree).toEqual({
+      startsAt: "2026-11-28T13:00:00.000Z", localDate: "2026-11-28", localTime: "13:00", timezone: "Europe/Dublin",
+      offeringId: "service:coaching", offeringTitle: "Coaching session",
+    });
+    expect(found.data.next).toMatch(/free/i);
+  });
+
+  it("an undated search sends no window and shows no times", async () => {
+    const j = journey();
+    const sent: Array<Record<string, unknown>> = [];
+    cloudWithTimes(sent);
+    const found = await j.run("core_people_search", { query: "coaching" });
+    expect(sent[0]).not.toHaveProperty("from");
+    expect(found.data.results.map((person: { name: string }) => person.name)).toEqual(["Aoife", "Brian"]);
+    expect(found.data.results.some((person: Record<string, unknown>) => person.nextFree)).toBe(false);
+  });
+
+  it("refuses a day that is not YYYY-MM-DD", async () => {
+    const j = journey();
+    cloudWithTimes([]);
+    const found = await j.run("core_people_search", { query: "coaching", availableFrom: "Saturday" });
+    expect(found.status).toBe("error");
+  });
+});
+
 describe("seller addresses and search ranking", () => {
   it("accepts only public https agent commerce spec URLs", () => {
     expect(sellerApiBase(SPEC_URL)).toBe(`${SELLER_ORIGIN}/api/agent-commerce/v1/sites/aoife`);

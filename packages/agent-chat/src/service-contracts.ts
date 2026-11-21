@@ -159,6 +159,18 @@ export type CorePeopleSearchResult = {
   badges?: string[];
   /** The owner's own listing, returned only when they asked to see how they are found. */
   self?: boolean;
+  /** Its first free time in the asked-for window, read live from the site; only on dated searches. */
+  nextFree?: CorePeopleSearchNextFree | null;
+};
+
+export type CorePeopleSearchNextFree = {
+  startsAt: string;
+  /** The day and time on the site's own calendar, in its timezone. */
+  localDate: string;
+  localTime: string;
+  timezone: string;
+  offeringId: string;
+  offeringTitle: string;
 };
 
 export type CorePeopleSearchToolServices = {
@@ -169,6 +181,9 @@ export type CorePeopleSearchToolServices = {
     countryCode?: string;
     limit?: number;
     includeMe?: boolean;
+    /** Only people free between these days (YYYY-MM-DD, at most 7 days), each with its next free time. */
+    availableFrom?: string;
+    availableTo?: string;
   }): Promise<{
     query: string;
     results: CorePeopleSearchResult[];

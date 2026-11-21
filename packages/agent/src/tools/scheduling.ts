@@ -44,12 +44,21 @@ export function schedulingTools(): AgentTool[] {
     domainTool("core.people.search", async (args, context) => {
       const service = services(context).people?.search;
       if (!service) throw new Error("People search is unavailable.");
-      const result = await service(args as Parameters<typeof service>[0]);
+      const day = (value: unknown, label: string) => {
+        const text = optionalString(value);
+        if (text && !/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error(`${label} must be a date as YYYY-MM-DD.`);
+        return text;
+      };
+      const availableFrom = day(args.availableFrom, "availableFrom"), availableTo = day(args.availableTo, "availableTo");
+      const dated = Boolean(availableFrom || availableTo);
+      const result = await service({ ...args, availableFrom, availableTo } as Parameters<typeof service>[0]);
       const profiles = result.results.flatMap(person => person.profileId ? [{ ...person, id: person.profileId }] : []);
       const self = result.results.some(person => person.self === true);
       const next = self
         ? "The result marked self: true is the owner's own listing, and the owner's app shows every result as a card, so do not repeat names, bios or offerings. Reply in two or three plain sentences: this is what an assistant sees when someone looks for what they do, their free call is what it would book, and nothing else is needed. Never book or propose booking the owner's own call."
-        : "The owner's app shows every result as a card, so do not repeat names, bios or offerings; reply in one or two plain sentences. If the owner asked to book someone's free call, call core_scheduling_book_free_call now with that result's profileId and do not ask for a date or time first: ME3 picks the earliest free time and the owner approves it or asks for another. Paid offerings are booked on the person's own site: give the owner the link.";
+        : dated
+          ? `Only people free on the asked days are shown, and each card already shows their next free time and price, so do not repeat names, times or offerings. Reply in one plain sentence, such as "${result.results.length === 1 ? "One person" : `${result.results.length} people`} on ME3 ${result.results.length === 1 ? "has" : "have"} time then." If none are free, say so and offer to look at other days. If the owner asked to book someone's free call, call core_scheduling_book_free_call now with that result's profileId and its nextFree date and time. Paid offerings are booked on the person's own site: give the owner the link.`
+          : "The owner's app shows every result as a card, so do not repeat names, bios or offerings; reply in one or two plain sentences. If the owner asked to book someone's free call, call core_scheduling_book_free_call now with that result's profileId and do not ask for a date or time first: ME3 picks the earliest free time and the owner approves it or asks for another. Paid offerings are booked on the person's own site: give the owner the link.";
       return ok({ ...result, next, ...await rememberTargets(context, "public profile", profiles, profile => profile.name) });
     }),
     // Books a free call on another ME3 site as a visitor would: the approval pins the exact site, offer

@@ -33,7 +33,7 @@ export type FreeCallPlan = {
 export type FreeCallBooking = FreeCallPlan & { status: "booked"; bookingId: string | null; calendarEventId: string | null };
 export type PeopleRecord = { profileId: string | null; name: string; [key: string]: unknown };
 export interface AgentPeopleServices {
-  search(input: { query: string; offeringType?: "service" | "product"; offeringKind?: "booking" | "event" | "product"; countryCode?: string; limit?: number; includeMe?: boolean }): Promise<{ results: PeopleRecord[]; [key: string]: unknown }>;
+  search(input: { query: string; offeringType?: "service" | "product"; offeringKind?: "booking" | "event" | "product"; countryCode?: string; limit?: number; includeMe?: boolean; availableFrom?: string; availableTo?: string }): Promise<{ results: PeopleRecord[]; [key: string]: unknown }>;
 }
 export type AgentGeneratedImageAsset = {
   id: string; attachmentId: string; name: string; mimeType: string; size: number;

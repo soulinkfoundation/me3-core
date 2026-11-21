@@ -1,4 +1,5 @@
 import type {
+  CorePeopleSearchNextFree,
   CorePeopleSearchOffering,
   CorePeopleSearchResult,
   CorePeopleSearchSeller,
@@ -130,11 +131,12 @@ export async function searchPeople(
     .filter((link) => linkMatchesQuery(link, input.query))
     .filter((link) => !annotatedPublicResults.some((result) => publicResultMatchesLink(result, link)))
     .map(linkCandidateToPeopleResult);
+  const dated = Boolean(input.availableFrom || input.availableTo);
   const ordered = preferAgentCheckoutOnTies(deduplicatePeopleResults([
     ...localMatches,
     ...annotatedPublicResults.filter((result) => result.relationshipTier === "link"),
     ...annotatedPublicResults.filter((result) => result.relationshipTier === "public"),
-  ]));
+  ])).filter((result) => !dated || result.self || result.nextFree);
   // The owner's own listing always makes the cut when they asked for it.
   const own = ordered.filter((result) => result.self);
   const merged = [...ordered.filter((result) => !result.self).slice(0, Math.max(0, limit - own.length)), ...own];
@@ -174,6 +176,8 @@ export async function searchPublicSoulinkDirectory(
       countryCode: input.countryCode?.trim().slice(0, 2).toUpperCase(),
       limit: Math.min(10, Math.max(1, Math.floor(input.limit || 5))),
       ...(input.includeMe ? { includeSelf: true } : {}),
+      ...(input.availableFrom ? { from: input.availableFrom } : {}),
+      ...(input.availableTo ? { to: input.availableTo } : {}),
     }),
   });
   const data = await readJson(response);
@@ -306,6 +310,7 @@ function normalizeSearchResponse(
             : [],
           indexedAt: string(result.indexedAt, 80) || "",
           ...sellerFields(result.seller),
+          ...nextFreeField(result.nextFree),
         }];
       })
     : [];
@@ -315,6 +320,18 @@ function normalizeSearchResponse(
     total: results.length,
     warnings: [],
   };
+}
+
+/** The site's first free time as ME3 Cloud read it; dropped unless every part is there. */
+function nextFreeField(value: unknown): { nextFree?: CorePeopleSearchNextFree } {
+  if (!value || typeof value !== "object") return {};
+  const raw = value as Record<string, unknown>;
+  const startsAt = string(raw.startsAt, 40);
+  const localDate = string(raw.localDate, 10);
+  const localTime = string(raw.localTime, 5);
+  const offeringId = string(raw.offeringId, 200);
+  if (!startsAt || Number.isNaN(Date.parse(startsAt)) || !localDate || !/^\d{4}-\d{2}-\d{2}$/.test(localDate) || !localTime || !/^\d{2}:\d{2}$/.test(localTime) || !offeringId) return {};
+  return { nextFree: { startsAt, localDate, localTime, timezone: string(raw.timezone, 64) || "UTC", offeringId, offeringTitle: string(raw.offeringTitle, 200) || "" } };
 }
 
 function normalizeOfferings(value: unknown): CorePeopleSearchOffering[] {
