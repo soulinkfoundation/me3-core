@@ -43,3 +43,26 @@ export function sanitizeChatTurnBody(body: Record<string, unknown>): Record<stri
 }
 
 export const isChatTurnPath = (path: string) => /^\/api\/assistant\/chat\/turn(\/stream)?$/.test(path) || path === "/api/agent/sandbox";
+
+/** What the apps may show a free user; mailbox and sites belong to paid installations. */
+export const FREE_MOBILE_CAPABILITIES = ["mobile.v1", "assistant", "mission-control", "calendar", "journal", "account"];
+
+/**
+ * Core describes an install by its origin, but a free user's ME3 lives under /u/{userId} on a shared
+ * origin and offers fewer features. Corrects the install details in /api/mobile responses so the apps
+ * call the right base URL and hide what the free plan does not include.
+ */
+export function rewriteMobileInstall<T>(body: T, place: { base: string; publicURL: string }): T {
+  if (!body || typeof body !== "object") return body;
+  const result = { ...(body as Record<string, unknown>) };
+  const install = result.install;
+  if (install && typeof install === "object") {
+    result.install = { ...(install as Record<string, unknown>), apiBaseURL: `${place.base}/api`, publicURL: place.publicURL, capabilities: FREE_MOBILE_CAPABILITIES };
+    if (Array.isArray(result.scope)) result.scope = FREE_MOBILE_CAPABILITIES;
+  }
+  if (typeof result.installId === "string" && result.capabilities && typeof result.capabilities === "object" && !Array.isArray(result.capabilities)) {
+    result.publicURL = place.publicURL;
+    result.capabilities = { ...(result.capabilities as Record<string, unknown>), mailbox: false, sites: false };
+  }
+  return result as T;
+}

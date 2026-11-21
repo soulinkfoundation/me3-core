@@ -10,7 +10,7 @@
  *                             the object's own per-database credentials decide whether the caller is its owner.
  */
 import { FreeBudget } from "./budget-object";
-import { Me3FreeUser, type FreeRuntimeEnv } from "./free-user";
+import { FREE_BASE_HEADER, Me3FreeUser, type FreeRuntimeEnv } from "./free-user";
 
 export { FreeBudget, Me3FreeUser };
 
@@ -24,9 +24,11 @@ async function sameSecret(a: string, b: string): Promise<boolean> {
   return diff === 0;
 }
 
-function userObject(env: FreeRuntimeEnv, userId: string, request: Request): Promise<Response> {
+function userObject(env: FreeRuntimeEnv, userId: string, request: Request, origin: string): Promise<Response> {
   const headers = new Headers(request.headers);
   headers.set("x-partykit-room", userId);
+  // Always overwritten here, so a client cannot choose the base URL its responses advertise.
+  headers.set(FREE_BASE_HEADER, `${origin}/u/${userId}`);
   return env.FREE_USER.get(env.FREE_USER.idFromName(userId)).fetch(new Request(request, { headers }));
 }
 
@@ -51,13 +53,13 @@ export default {
       if (url.pathname === "/internal/status") {
         const userId = url.searchParams.get("userId") ?? "";
         if (!USER_ID.test(userId)) return Response.json({ ok: false, error: "Invalid userId" }, { status: 400 });
-        return userObject(env, userId, new Request(new URL("/__free/status", url), { headers: request.headers }));
+        return userObject(env, userId, new Request(new URL("/__free/status", url), { headers: request.headers }), url.origin);
       }
       if (request.method !== "POST") return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
       const body = (await request.json().catch(() => null)) as { userId?: unknown } | null;
       const userId = typeof body?.userId === "string" ? body.userId : "";
       if (!USER_ID.test(userId)) return Response.json({ ok: false, error: "Invalid userId" }, { status: 400 });
-      const response = await userObject(env, userId, new Request(new URL("/__free/activate", url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+      const response = await userObject(env, userId, new Request(new URL("/__free/activate", url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), url.origin);
       const result = (await response.json()) as Record<string, unknown>;
       return Response.json(response.ok ? { ...result, apiBaseURL: `${url.origin}/u/${userId}` } : result, { status: response.status });
     }
@@ -67,6 +69,6 @@ export default {
     const inner = new URL(url);
     inner.pathname = match[2] ?? "/";
     if (inner.pathname.startsWith("/__free/")) return Response.json({ ok: false, error: "Not found" }, { status: 404 });
-    return userObject(env, match[1], new Request(inner, request));
+    return userObject(env, match[1], new Request(inner, request), url.origin);
   },
 };

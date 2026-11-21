@@ -84,6 +84,9 @@ try {
   const aliceTokens = await claim("alice", alice.json.installId);
   check("mobile sign-in with a Cloud session issues Core tokens", aliceTokens.status === 200 && aliceTokens.json?.accessToken && aliceTokens.json?.refreshToken, aliceTokens.json ?? aliceTokens.text);
   const token = aliceTokens.json.accessToken;
+  check("sign-in tells the app the user's own base URL", aliceTokens.json?.install?.apiBaseURL === `${BASE}/u/alice/api`, aliceTokens.json?.install);
+  check("sign-in advertises only free features", !aliceTokens.json?.install?.capabilities?.includes("mailbox") && !aliceTokens.json?.install?.capabilities?.includes("sites") && aliceTokens.json?.install?.capabilities?.includes("assistant"), aliceTokens.json?.install?.capabilities);
+  check("the public link is the user's ME3 page, not the runtime", /\/alice$/.test(aliceTokens.json?.install?.publicURL ?? "") && !aliceTokens.json.install.publicURL.includes(String(PORT)), aliceTokens.json?.install?.publicURL);
   const account = await call("/u/alice/api/account", { token });
   check("the signed-in user is the activated owner", account.status === 200 && JSON.stringify(account.json).includes("alice@example.test"), account.json ?? account.text);
 
