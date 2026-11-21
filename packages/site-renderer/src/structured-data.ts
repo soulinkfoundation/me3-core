@@ -141,15 +141,12 @@ function place(input: SiteStructuredDataInput): { address?: unknown; areaServed?
   return { address, areaServed };
 }
 
-function servicePrice(pricing: Pricing | undefined): { price: string; priceCurrency: string; minPrice?: string } {
+/** The price the page shows for an offer ("€55", or "From €55" when the buyer may pay more). */
+function servicePrice(pricing: Pricing | undefined): { price: string; priceCurrency: string } {
   const priceCurrency = currencyCode(pricing?.currency);
   const amount = pricing?.enabled && typeof pricing.suggestedAmount === "number" && Number.isFinite(pricing.suggestedAmount) && pricing.suggestedAmount > 0
     ? pricing.suggestedAmount : 0;
-  if (!amount) return { price: "0.00", priceCurrency };
-  const flexible = pricing?.allowFlexiblePricing !== false;
-  const minimum = pricing?.allowFree ? 0
-    : typeof pricing?.minimumAmount === "number" && pricing.minimumAmount >= 0 && pricing.minimumAmount <= amount ? pricing.minimumAmount : amount;
-  return { price: amount.toFixed(2), priceCurrency, ...(flexible && minimum < amount ? { minPrice: minimum.toFixed(2) } : {}) };
+  return { price: amount.toFixed(2), priceCurrency };
 }
 
 function reserveOrBuy(type: "ReserveAction" | "BuyAction", url: string): StructuredDataNode {
@@ -171,7 +168,7 @@ export function buildSiteStructuredData(input: SiteStructuredDataInput): SiteStr
   const telephone = input.links.find((href) => /^tel:\+?[\d\s().-]{5,}$/i.test(href))?.slice("tel:".length).trim();
   const amounts = priced.map((service) => servicePrice(service.pricing)).filter((price) => Number(price.price) > 0);
   const currencies = new Set(amounts.map((price) => price.priceCurrency));
-  const low = Math.min(...amounts.map((price) => Number(price.minPrice ?? price.price)));
+  const low = Math.min(...amounts.map((price) => Number(price.price)));
   const high = Math.max(...amounts.map((price) => Number(price.price)));
   // "EUR 55-95": Google reads priceRange as free text, so one currency or nothing.
   const priceRange = localBusiness && currencies.size === 1 ? `${[...currencies][0]} ${low === high ? low : `${low}-${high}`}` : undefined;
@@ -197,16 +194,21 @@ export function buildSiteStructuredData(input: SiteStructuredDataInput): SiteStr
   const offers: StructuredDataNode[] = [];
   const serviceByPage = new Map<string, StructuredDataNode>();
   const taken = new Set<string>();
+  const named = new Set<string>();
   const services = input.services.flatMap((service) => {
     const name = clean(service.title);
     if (!name) return [];
+    // A service arranged by hand that is already listed (as a calendar offer, or twice) is the same service.
+    const repeat = !service.priced && (taken.has(fragment(clean(service.id) || name)) || named.has(name.toLowerCase()));
+    named.add(name.toLowerCase());
+    if (repeat) return [];
     let key = fragment(clean(service.id) || name);
     for (let n = 2; taken.has(key); n++) key = `${fragment(clean(service.id) || name)}-${n}`;
     taken.add(key);
     const pageUrl = service.pageSlug ? publicSiteUrl(home, service.pageSlug) : undefined;
     const bookingUrl = input.externalBookingUrl || pageUrl || `${home}#booking`;
     const hours = openingHours(service.windows);
-    const { price, priceCurrency, minPrice } = servicePrice(service.pricing);
+    const { price, priceCurrency } = servicePrice(service.pricing);
     const duration = typeof service.duration === "number" && service.duration > 0 ? service.duration : 0;
     const offerRef = { "@id": `${home}#offer-${key}` };
     const serviceImage = service.image ? publicSiteUrl(home, service.image) : undefined;
@@ -224,9 +226,8 @@ export function buildSiteStructuredData(input: SiteStructuredDataInput): SiteStr
         "@type": "Offer", ...offerRef, price, priceCurrency,
         ...(service.bookable ? { availability: "https://schema.org/InStock", url: bookingUrl } : {}),
         seller: identityRef,
-        ...(duration || minPrice ? { priceSpecification: {
+        ...(duration ? { priceSpecification: {
           "@type": "UnitPriceSpecification", price, priceCurrency,
-          ...(minPrice ? { minPrice } : {}),
           ...(duration ? { referenceQuantity: { "@type": "QuantitativeValue", value: duration, unitCode: "MIN" } } : {}),
         } } : {}),
       } } : {}),

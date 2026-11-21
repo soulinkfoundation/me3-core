@@ -184,16 +184,30 @@ describe("schema.org structured data", () => {
     expect(bridal.potentialAction).toBeUndefined();
   });
 
-  it("prices flexible offers from their minimum and keeps author text inert", async () => {
-    const html = (await render({ name: "A", handle: "a", intents: { book: { enabled: true, availability: { windows: { monday: ["09:00-17:00", "not a window"] } }, offers: [
-      { id: "x", title: "</script><script>alert(1)</script>", description: "Costs $' and $& more", duration: 30, pricing: { enabled: true, suggestedAmount: 40, minimumAmount: 20, currency: "eur" } },
+  it("prices a flexible offer at the price the page shows, never a hidden lower floor, and keeps author text inert", async () => {
+    const html = (await render({ name: "A", handle: "a", location: "Galway", intents: { book: { enabled: true, availability: { windows: { monday: ["09:00-17:00", "not a window"] } }, offers: [
+      { id: "x", title: "</script><script>alert(1)</script>", description: "Costs $' and $& more", duration: 30, pricing: { enabled: true, suggestedAmount: 40, minimumAmount: 5, currency: "eur" } },
+      { id: "y", title: "Long session", duration: 90, pricing: { enabled: true, suggestedAmount: 90, minimumAmount: 5, currency: "EUR" } },
     ] } } }))["index.html"];
     expect(html).not.toContain("</script><script>alert(1)</script>");
     const [service] = ofType(graph(html), "Service");
     expect(service.description).toBe("Costs $' and $& more");
     expect(service.offers).toMatchObject({ price: "40.00", priceCurrency: "EUR" });
-    expect(service.offers.priceSpecification.minPrice).toBe("20.00");
+    expect(JSON.stringify(service.offers)).not.toContain("minPrice");
     expect(service.hoursAvailable).toHaveLength(1);
+    // The page says "From 40" and "From 90", so the range starts at 40.
+    expect(ofType(graph(html), "ProfessionalService")[0].priceRange).toBe("EUR 40-90");
+  });
+
+  it("lists a service once when it is both a calendar offer and in the site's services list", async () => {
+    const nodes = graph((await render({ ...hairdresser, services: [
+      { id: "cut", title: "Cut & blow-dry", description: "Wash, cut and finish.", durationMinutes: 60 },
+      { title: "Full colour" },
+      { id: "bridal", title: "Bridal hair" },
+      { id: "bridal", title: "Bridal hair" },
+    ] }))["index.html"]);
+    expect(ofType(nodes, "Service").map((service) => service.name)).toEqual(["Cut & blow-dry", "Full colour", "Bridal hair"]);
+    expect(ofType(nodes, "Service")[0].offers.price).toBe("55.00");
   });
 
   it("stays a plain Person profile when there is nothing to sell", async () => {
