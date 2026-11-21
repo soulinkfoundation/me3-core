@@ -43,6 +43,8 @@ export type PersonRow = {
   place: string;
   /** The free call and starting price, e.g. "Free 20-min call · from €55"; the first offer's title otherwise. */
   offer: string;
+  /** Their next free time from a dated search, e.g. "Free Sat 13:00"; empty when the search had no day. */
+  freeAt: string;
   url: string;
   avatarUrl: string;
   self: boolean;
@@ -127,7 +129,7 @@ export function plainBio(value: unknown): string {
 }
 
 /** People found by core_people_search, from the tool result's data. The owner's own listing is marked self. */
-export function peopleRows(data: unknown): PersonRow[] {
+export function peopleRows(data: unknown, now = new Date()): PersonRow[] {
   const results = record(data).results;
   if (!Array.isArray(results)) return [];
   return results.flatMap((entry, index) => {
@@ -137,7 +139,9 @@ export function peopleRows(data: unknown): PersonRow[] {
     const offerings = Array.isArray(person.offerings) ? person.offerings.map(record) : [];
     const free = offerings.find(offering => typeof offering.durationMinutes === "number" && !record(offering.price).amount && text(offering.title));
     const location = record(person.location);
-    const freeLine = free ? `Free ${free.durationMinutes}-min call` : "";
+    const freeAt = freeAtLabel(record(person.nextFree), now);
+    // With a time shown, "Free" already leads the line, so a free call is described by its length.
+    const freeLine = free ? (freeAt ? `${free.durationMinutes}-min call` : `Free ${free.durationMinutes}-min call`) : "";
     const offer = [freeLine, startingPrice(offerings)].filter(Boolean).join(" · ") || text(offerings[0]?.title);
     return [{
       key: text(person.profileId) || `${name}-${index}`,
@@ -146,12 +150,32 @@ export function peopleRows(data: unknown): PersonRow[] {
       location: text(location.label),
       place: text(location.locality) || text(location.label),
       offer,
+      freeAt,
       url: text(person.publicUrl) || text(person.profileUrl),
       avatarUrl: text(person.avatarUrl),
       self: person.self === true,
       freeCall: free ? { title: text(free.title) } : null,
     }];
   });
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "Free Sat 13:00" from the site's own calendar day and time; today and tomorrow by name, a week or more by date. */
+function freeAtLabel(nextFree: Record<string, unknown>, now: Date): string {
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text(nextFree.localDate));
+  const time = text(nextFree.localTime);
+  if (!date || !/^\d{2}:\d{2}$/.test(time)) return "";
+  const day = Date.UTC(Number(date[1]), Number(date[2]) - 1, Number(date[3]));
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const ahead = Math.round((day - today) / 86_400_000);
+  const when = new Date(day);
+  const label = ahead === 0 ? "today"
+    : ahead === 1 ? "tomorrow"
+    : ahead > 1 && ahead < 7 ? WEEKDAYS[when.getUTCDay()]
+    : `${when.getUTCDate()} ${MONTHS[when.getUTCMonth()]}`;
+  return `Free ${label} ${time}`;
 }
 
 /** The lowest price in the first priced offer's currency: "from €55" when there are several, "€55" for one. */

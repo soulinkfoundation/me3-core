@@ -19,8 +19,10 @@ const emit = defineEmits<{ book: [person: PersonRow] }>();
       <span class="people-cards__who">
         <strong><span class="people-cards__name">{{ person.name }}</span><small v-if="person.self">You</small></strong>
         <span v-if="person.place" class="people-cards__place">{{ person.place }}</span>
-        <span v-if="person.offer" class="people-cards__offer">{{ person.offer }}</span>
-        <span v-if="!person.place && !person.offer" class="people-cards__place">On ME3</span>
+        <span v-if="person.freeAt || person.offer" class="people-cards__offer">
+          <i v-if="person.freeAt" class="people-cards__dot" aria-hidden="true"></i>{{ [person.freeAt, person.offer].filter(Boolean).join(" · ") }}
+        </span>
+        <span v-if="!person.place && !person.offer && !person.freeAt" class="people-cards__place">On ME3</span>
       </span>
       <Button v-if="person.freeCall && !person.self" color="primary" shape="pill" size="small" :disabled="busy" @click="emit('book', person)">Book</Button>
       <Button v-else-if="person.url" color="primary" shape="pill" size="small" :href="person.url" target="_blank" rel="noopener noreferrer">Open</Button>
@@ -39,5 +41,6 @@ const emit = defineEmits<{ book: [person: PersonRow] }>();
 .people-cards__who small { flex: none; padding: 1px 6px; border-radius: 6px; background: var(--ui-accent-soft); color: var(--ui-accent-strong, var(--ui-accent)); font-size: 12px; font-weight: 600; }
 .people-cards__place, .people-cards__offer { overflow: hidden; font-size: 13.5px; text-overflow: ellipsis; white-space: nowrap; }
 .people-cards__place { color: var(--ui-text-muted); }
-.people-cards__offer { margin-top: 3px; color: var(--ui-text); font-weight: 500; }
+.people-cards__offer { display: flex; align-items: center; gap: 6px; margin-top: 3px; color: var(--ui-text); font-weight: 500; }
+.people-cards__dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ui-accent); box-shadow: 0 0 0 3px var(--ui-accent-soft); }
 </style>

@@ -61,3 +61,34 @@ describe("peopleRows card lines", () => {
     expect(row.offer).toBe("55 XX");
   });
 });
+
+describe("peopleRows next free time", () => {
+  // Failure modes: a time shown when the search had no day; the wrong weekday (timezone drift on a bare date);
+  // "Today"/"Tomorrow" not used for the next two days; the price lost when a time is shown; a free call with no
+  // price showing nothing after the time.
+  const now = new Date(2026, 10, 25, 9, 0); // Wed 25 Nov 2026, local time
+  const free = (localDate: string, localTime = "13:00") => ({ startsAt: `${localDate}T${localTime}:00.000Z`, localDate, localTime, timezone: "Europe/Dublin", offeringId: "service:cut", offeringTitle: "Cut" });
+
+  it("shows the weekday and time before the starting price", () => {
+    const [row] = peopleRows({ results: [person({ nextFree: free("2026-11-28"), offerings: [offer("Cut", "55"), offer("Colour", "85")] })] }, now);
+    expect(row.freeAt).toBe("Free Sat 13:00");
+    expect(row.offer).toBe("from €55");
+  });
+
+  it("says today and tomorrow for the next two days, and a date a week or more away", () => {
+    expect(peopleRows({ results: [person({ nextFree: free("2026-11-25", "16:30") })] }, now)[0].freeAt).toBe("Free today 16:30");
+    expect(peopleRows({ results: [person({ nextFree: free("2026-11-26", "09:00") })] }, now)[0].freeAt).toBe("Free tomorrow 09:00");
+    expect(peopleRows({ results: [person({ nextFree: free("2026-12-02") })] }, now)[0].freeAt).toBe("Free 2 Dec 13:00");
+  });
+
+  it("describes a free call by its length after the time, not 'Free' twice", () => {
+    const [row] = peopleRows({ results: [person({ nextFree: free("2026-11-28"), offerings: [offer("Intro call", undefined, "EUR", 20)] })] }, now);
+    expect(row.freeAt).toBe("Free Sat 13:00");
+    expect(row.offer).toBe("20-min call");
+  });
+
+  it("shows no time without nextFree, or with a broken one", () => {
+    expect(peopleRows({ results: [person({})] }, now)[0].freeAt).toBe("");
+    expect(peopleRows({ results: [person({ nextFree: { localDate: "Saturday", localTime: "13:00" } })] }, now)[0].freeAt).toBe("");
+  });
+});

@@ -20,7 +20,8 @@ const plan = {
 const people = {
   results: [
     { profileId: "p-me", name: "Maya Okafor", bio: "**Sports massage** in [Bristol](https://x.example)", self: true, publicUrl: "https://maya.me3.app", location: { label: "Bristol, UK" }, offerings: [{ id: "clarity-call", title: "Free 30-minute clarity call", durationMinutes: 30 }] },
-    { profileId: "p-k", name: "Kieran (stand-in)", bio: "Builds ME3.", publicUrl: "http://localhost:8788", offerings: [{ id: "intro-call", title: "Free 20-minute call", durationMinutes: 20 }] },
+    { profileId: "p-k", name: "Kieran (stand-in)", bio: "Builds ME3.", publicUrl: "http://localhost:8788", offerings: [{ id: "intro-call", title: "Free 20-minute call", durationMinutes: 20 }],
+      nextFree: { startsAt: "2026-11-02T10:00:00.000Z", localDate: "2026-11-02", localTime: "10:00", timezone: "Europe/Dublin", offeringId: "service:intro-call", offeringTitle: "Free 20-minute call" } },
   ],
 };
 
@@ -160,7 +161,7 @@ test("first landing goes from the Build your website card to a published site an
   await expect(rows.getByRole("listitem")).toHaveCount(2);
   await expect(rows.getByRole("listitem").first()).toContainText("Maya Okafor");
   await expect(rows.getByRole("listitem").first().locator("small")).toHaveText("You");
-  await expect(rows.getByRole("listitem").nth(1)).toContainText("Free 20-min call");
+  await expect(rows.getByRole("listitem").nth(1)).toContainText(/Free .+ 10:00 · 20-min call/);
   await rows.screenshot({ path: testInfo.outputPath("people-cards.png") });
   await expect(rows).not.toContainText("**");
   await rows.getByRole("listitem").nth(1).getByRole("button", { name: "Book" }).click();
