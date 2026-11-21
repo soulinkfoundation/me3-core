@@ -116,6 +116,7 @@ import { registerLocationsRoutes } from "./routes/locations";
 import { registerCoreGithubUpdaterRoutes } from "./routes/core-github-updater";
 import { registerFilesRoutes } from "./routes/files";
 import { registerJournalRoutes } from "./routes/journal";
+import { registerFreeImportRoutes } from "./routes/free-import";
 import { registerManagedRuntimeRoutes } from "./routes/managed-runtime";
 import { registerManagedSetupSessionRoutes } from "./routes/managed-setup-session";
 import {
@@ -603,6 +604,7 @@ app.get("/health", async (c) => {
 });
 
 registerManagedRuntimeRoutes(app);
+registerFreeImportRoutes(app);
 registerManagedSetupSessionRoutes(app, { setOwnerSession });
 
 app.get("/api/config", async (c) => {
