@@ -37,7 +37,7 @@ ENVIRONMENT = "production"
 # Follow-up suggestions and memory extraction stay on the free chat model, not a paid one.
 ME3_AGENT_FAST_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
 # "on" adds News (the morning paper) to the free plan.
-ME3_FREE_NEWS = "off"
+ME3_FREE_NEWS = "on"
 
 # Secrets: FREE_RUNTIME_SERVICE_TOKEN (shared with ME3 Cloud).
 # Free chat limits are not config here: GET/POST /internal/budget changes them live.
