@@ -779,7 +779,7 @@ describe("me.json agent checkout projection", () => {
     const plain = buildPublicMe3Profile(sellerProfile(), "https://aoife.example") as Json;
     expect(plain.actions.book.type).toBe("link");
     expect(plain.actions["book-link"]).toBeUndefined();
-    expect(plain.extensions).toBeUndefined();
+    expect(plain.extensions?.["me3.app/agent-checkout"]).toBeUndefined();
 
     const external = sellerProfile();
     external.intents!.book!.url = "https://cal.example/aoife";
@@ -813,7 +813,7 @@ describe("me.json agent checkout projection", () => {
     expect(off.actions.book).toEqual({ type: "link", url: "https://aoife.example/#booking" });
     expect(off.actions["book-link"]).toBeUndefined();
     expect(off.actions.purchase.type).toBe("link");
-    expect(off.extensions).toBeUndefined();
+    expect(off.extensions?.["me3.app/agent-checkout"]).toBeUndefined();
   });
 
   it("publishes agent checkout only when commerce is ready", async () => {

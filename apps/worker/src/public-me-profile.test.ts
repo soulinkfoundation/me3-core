@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateProfile } from "me3-protocol";
 import type { Me3SiteProfile } from "@me3-core/site-renderer";
-import { buildPublicMe3Profile } from "./public-me-profile";
+import { buildPublicMe3Profile, withoutAgentCheckout } from "./public-me-profile";
 
 describe("public me.json profile", () => {
   it("publishes the owner's trade, or the headline their starter site saved, and nothing otherwise", () => {
@@ -151,6 +151,18 @@ describe("public me.json profile", () => {
     expect(JSON.stringify(profile)).not.toContain("clarify their offer");
   });
 
+  it("tells AI assistants where to book or buy only on a published public site", () => {
+    const published = buildPublicMe3Profile({ name: "Niamh" }, "https://niamh.me3.app");
+    expect(validateProfile(published).valid).toBe(true);
+    if (published.visibility !== "public") throw new Error("Expected a public profile");
+    expect(published.extensions?.["me3.app/connector"]).toEqual({
+      mcp: "https://api.me3.app/mcp",
+      description: "To book or buy through an AI, use api.me3.app/mcp.",
+    });
+    expect(withoutAgentCheckout(published)).toMatchObject({ extensions: { "me3.app/connector": { mcp: "https://api.me3.app/mcp" } } });
+    expect(buildPublicMe3Profile({ name: "Niamh" })).not.toHaveProperty("extensions");
+    expect(buildPublicMe3Profile({ name: "Niamh", visibility: "private" }, "https://niamh.me3.app")).not.toHaveProperty("extensions");
+  });
   it("publishes a valid identity-only profile when no public HTTPS origin exists", () => {
     const profile = buildPublicMe3Profile({
       version: "0.1",

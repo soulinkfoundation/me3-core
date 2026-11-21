@@ -257,6 +257,13 @@ function manualServices(profile: Me3SiteProfile): Me3Service[] {
 }
 
 export const AGENT_CHECKOUT_EXTENSION = "me3.app/agent-checkout";
+
+/** Where an AI assistant can act on a published ME3 site: an extension, so no protocol release is needed. */
+export const CONNECTOR_EXTENSION = "me3.app/connector";
+export const ME3_CONNECTOR = {
+  mcp: "https://api.me3.app/mcp",
+  description: "To book or buy through an AI, use api.me3.app/mcp.",
+} as const;
 export const AGENT_CHECKOUT_OPERATION_ID = "createCheckout";
 
 export type PublicAgentCheckout = {
@@ -420,7 +427,15 @@ export function buildPublicMe3Profile(
     ...(services.length > 0 ? { services } : {}),
     ...(Object.keys(actions).length > 0 ? { actions } : {}),
     ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
-    ...(agentCheckout ? { extensions: { [AGENT_CHECKOUT_EXTENSION]: agentCheckout } } : {}),
+    // Only a site with a published address: a preview or draft has nothing an assistant could act on.
+    ...(agentCheckout || origin
+      ? {
+          extensions: {
+            ...(origin ? { [CONNECTOR_EXTENSION]: ME3_CONNECTOR } : {}),
+            ...(agentCheckout ? { [AGENT_CHECKOUT_EXTENSION]: agentCheckout } : {}),
+          },
+        }
+      : {}),
   };
 
   const result = validateProfile(profile);
