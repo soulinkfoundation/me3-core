@@ -49,6 +49,8 @@ describe("Enquire for paid offers nobody can pay for yet", () => {
     const product = files["shop/kit.html"];
     expect(product).toContain('<a class="product-buy" href="/api/enquire/maya?about=Kit" rel="nofollow">Enquire</a>');
     expect(product).toContain('<a class="site-action-dock__button" href="/api/enquire/maya?about=Kit" rel="nofollow">Enquire</a>');
+    // Must out-specify the shared `.content a{color:var(--accent)}` link rule, or the label is accent-on-accent.
+    expect(product).toContain(".content a.product-buy");
     expect(product).not.toContain("data-product-checkout");
   });
 

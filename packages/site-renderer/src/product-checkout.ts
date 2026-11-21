@@ -352,7 +352,7 @@ export const productCheckoutCss = `
 .product-stock.is-low{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--text)}
 .product-unavailable{margin:0 0 18px;font-weight:600}
 .product-purchase [hidden]{display:none!important}
-.product-buy{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:100%;min-height:52px;padding:12px 24px;border:1px solid var(--accent);border-radius:var(--cta-radius,var(--radius-md));background:var(--accent);color:var(--accent-text,var(--surface));font:inherit;font-family:var(--cta-font,inherit);font-weight:600;cursor:pointer;list-style:none;text-align:center;text-decoration:none;transition:filter .2s ease,transform .2s ease}
+.product-buy,.content a.product-buy{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:100%;min-height:52px;padding:12px 24px;border:1px solid var(--accent);border-radius:var(--cta-radius,var(--radius-md));background:var(--accent);color:var(--accent-text,var(--surface));font:inherit;font-family:var(--cta-font,inherit);font-weight:600;cursor:pointer;list-style:none;text-align:center;text-decoration:none;transition:filter .2s ease,transform .2s ease}
 .product-buy:hover:not(:disabled){filter:brightness(1.06)}
 .product-buy:active:not(:disabled){transform:translateY(1px)}
 .product-buy::-webkit-details-marker{display:none}
