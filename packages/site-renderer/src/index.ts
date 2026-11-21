@@ -15,6 +15,7 @@ import { applyImageMetadata, type SiteImageMetadata } from "./image-metadata.js"
 export * from "./image-metadata.js";
 import { discoveryLinks, jsonLd, publicDiscoveryFiles, publicSiteUrl, socialMetadata } from "./public-metadata.js";
 export * from "./public-metadata.js";
+import { buildSiteStructuredData, pageStructuredData, type StructuredDataService } from "./structured-data.js";
 import {
   formatPublicLocation,
   type PublicLocationData,
@@ -441,28 +442,69 @@ export async function generateSiteHtml(
 
   const name = profile.name || profile.handle || "ME3 site";
   const pages: Array<{ path: string; title: string }> = [];
+  const structuredData = context.baseUrl ? buildSiteStructuredData({
+    baseUrl: context.baseUrl, entityType: context.entityType, name,
+    description: profile.bio ? contentToPlainText(profile.bio) : undefined,
+    image: profile.avatar || profile.logo || profile.banner,
+    links: Object.entries(profile.links || {})
+      .filter(([key, value]) => value && !key.startsWith("_") && !key.endsWith("_label"))
+      .map(([key, value]) => formatLinkHref(key, value || "")),
+    location: profile.location, locationData: profile.locationData,
+    services: structuredDataServices(profile, access),
+    products: products.map((product) => ({ ...product, description: plainTextFromMaybeHtml(product.excerpt || "") })),
+    shopPath: sectionPaths.shop,
+    externalBookingUrl: /^https:\/\//i.test(formatHref(profile.intents?.book?.url || "")) ? formatHref(profile.intents?.book?.url || "") : undefined,
+    windows: normalizeBookingTypes(profile.intents?.book).find((type) => type.type === "one_to_one")?.availability?.windows,
+    checkoutEnabled: access.productCheckoutEnabled,
+  }) : null;
+  const offerPageFiles = new Map(offerPages.pages.map((page) => [`${page.slug}.html`, page.slug]));
+  const productFiles = new Map(products.map((product) => [`${sectionPaths.shop}/${normalizeSitePath(product.slug || "")}.html`, product.slug || ""]));
   for (const [file, html] of Object.entries(output)) {
     const path = file.replace(/index\.html$/, "").replace(/\.html$/, "");
     const canonicalUrl = publicSiteUrl(context.baseUrl, path);
     const basePath = "../".repeat(file.split("/").length - 1) || "./";
     const title = html.match(/<title>(.*?)<\/title>/)?.[1] || name;
     if (!unlistedFiles.has(file)) pages.push({ path, title: path || name });
-    const identity = {
-      "@type": context.entityType || "Person", name,
-      ...(context.baseUrl ? { "@id": publicSiteUrl(context.baseUrl, "#identity"), url: publicSiteUrl(context.baseUrl) } : {}),
-      ...(profile.bio ? { description: contentToPlainText(profile.bio) } : {}),
-    };
     // Existing title/description are escaped by pageShell; recover plain text before metadata escaping.
     const decode = (value: string) => value.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
     const description = decode(html.match(/<meta name="description" content="([^"]*)"/)?.[1] || "");
     const image = publicSiteUrl(context.baseUrl, profile.banner || profile.avatar || profile.logo || "");
     const metadata = socialMetadata({ title: decode(title), description, canonicalUrl, image: (profile.banner || profile.avatar || profile.logo) ? image : undefined }) +
       discoveryLinks(publicSiteUrl(context.baseUrl, "me.json") || `${basePath}me.json`) +
-      jsonLd({ "@context": "https://schema.org", "@type": file === "index.html" ? "ProfilePage" : "WebPage", name: decode(title), ...(canonicalUrl ? { url: canonicalUrl } : {}), mainEntity: identity });
-    output[file] = applyImageMetadata(html.replace("</head>", `${metadata}\n</head>`), context.images || {}, { baseUrl: context.baseUrl, pagePath: file, sizes: "(max-width: 640px) 100vw, 640px" });
+      jsonLd(structuredData
+        ? pageStructuredData(structuredData, {
+            home: file === "index.html", name: decode(title), url: canonicalUrl,
+            about: structuredData.productBySlug.get(productFiles.get(file) || "") || structuredData.serviceByPage.get(offerPageFiles.get(file) || ""),
+          })
+        // A preview has no public address to identify anything by, so it only names the page and its owner.
+        : { "@context": "https://schema.org", "@type": file === "index.html" ? "ProfilePage" : "WebPage", name: decode(title), mainEntity: { "@type": context.entityType || "Person", name, ...(profile.bio ? { description: contentToPlainText(profile.bio) } : {}) } });
+    // A replacer function, so "$&" or "$'" in author text is not read as a replacement pattern.
+    output[file] = applyImageMetadata(html.replace("</head>", () => `${metadata}\n</head>`), context.images || {}, { baseUrl: context.baseUrl, pagePath: file, sizes: "(max-width: 640px) 100vw, 640px" });
   }
   Object.assign(output, publicDiscoveryFiles({ baseUrl: context.baseUrl, name, description: contentToPlainText(profile.bio || ""), pages }));
   return output;
+}
+
+/** What the site offers, as its structured data describes it: calendar offers people can book, then services arranged by hand. */
+function structuredDataServices(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities): StructuredDataService[] {
+  const book = profile.intents?.book;
+  const shared = normalizeBookingTypes(book).find((type) => type.type === "one_to_one")?.availability?.windows;
+  const booked: StructuredDataService[] = capabilities.bookingsEnabled && book?.enabled
+    ? bookingOfferEntries(book).map(({ offer, kind }) => ({
+        id: offer.id, title: offer.title, description: plainTextFromMaybeHtml(offer.description || ""),
+        duration: kind === "retreat" ? undefined : offer.duration || (kind === "one_to_one" ? book.duration : undefined),
+        pricing: offer.pricing, image: offer.image,
+        pageSlug: offer.pageSlug ? normalizeSitePath(offer.pageSlug) : undefined,
+        remote: offer.location?.mode ? offer.location.mode !== "in_person" : offer.meetingProvider === "soulink" || offer.meetingProvider === "external",
+        bookable: !offerEnquireHref(offer), priced: true,
+        windows: kind === "one_to_one" ? offer.availability?.windows || shared : undefined,
+      }))
+    : [];
+  const manual: StructuredDataService[] = (profile.services || []).map((service) => ({
+    id: service.id, title: service.title, description: plainTextFromMaybeHtml(service.description || ""),
+    duration: service.durationMinutes, bookable: false, priced: false,
+  }));
+  return [...booked, ...manual];
 }
 
 function generateIndexHtml(profile: Me3SiteProfile, capabilities: SiteRenderCapabilities, placeholders = false, fileMap: Map<string, string> = new Map()): string {

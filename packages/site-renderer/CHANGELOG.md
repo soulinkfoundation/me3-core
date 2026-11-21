@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Every page carries one schema.org JSON-LD graph built from the profile: the person or business (a ProfessionalService with address, area served, opening hours and price range when there is a place and something to book in person), each bookable offer as a Service with a priced Offer, duration and ReserveAction, each product as a Product with an Offer and BuyAction, and social links as sameAs. Product and offer pages make that product or service the page's main entity. Offers and products that show Enquire keep their price but advertise no action.
 - A home Shop section shows the first three products in one row, like Latest writing (a sideways-swipe row on phones), as photo cards with prices and an All products link. It sits after offers by default, can be hidden or moved like other sections, and sites saved before it existed get it after offers.
 - The Shop page is wide, with image-led cards (4:5 photos, soft shadow, stock and download tags on the photo) in three columns, two on phones. `normalizeHomeSections` is exported for editors.
 - Product pages set the photo beside a buy panel: title, price with stock, option cards, one Buy button and short delivery facts, then the description. Buyer details open in a short step only after Buy; on phones the action bar becomes Buy now · price, then submits the step.
