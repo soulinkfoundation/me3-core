@@ -1,0 +1,21 @@
+{
+  "name": "@me3-core/free-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hosted-only: one shared Worker running ME3 Core inside one Durable Object per free user.",
+  "scripts": {
+    "generate": "node scripts/generate-migrations.mjs",
+    "dev": "node scripts/generate-migrations.mjs && wrangler dev --port 8931",
+    "typecheck": "node scripts/generate-migrations.mjs && tsc --noEmit",
+    "test": "node scripts/generate-migrations.mjs && vitest run",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260620.1",
+    "@types/node": "^22.19.18",
+    "typescript": "^5.3.3",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.162.0"
+  }
+}

@@ -38,6 +38,24 @@ importers:
         specifier: ^4.162.0
         version: 4.162.0(@cloudflare/workers-types@4.20260620.1)(@types/node@22.19.18)
 
+  apps/free-runtime:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260620.1
+        version: 4.20260620.1
+      '@types/node':
+        specifier: ^22.19.18
+        version: 22.19.18
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.12
+        version: 4.1.12(@types/node@22.19.18)(happy-dom@21.0.4)(vite@8.3.8(@types/node@22.19.18)(esbuild@0.28.2)(tsx@4.23.1)(yaml@2.9.0))
+      wrangler:
+        specifier: ^4.162.0
+        version: 4.162.0(@cloudflare/workers-types@4.20260620.1)(@types/node@22.19.18)
+
   apps/web:
     dependencies:
       '@me3-core/plugin-email-campaigns':
@@ -2833,10 +2851,6 @@ packages:
     resolution: {integrity: sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==}
     engines: {node: '>=8.6'}
 
-  picomatch@4.0.4:
-    resolution: {integrity: sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==}
-    engines: {node: '>=12'}
-
   picomatch@4.0.7:
     resolution: {integrity: sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==}
     engines: {node: '>=12'}
@@ -4227,7 +4241,7 @@ snapshots:
     dependencies:
       '@types/estree': 1.0.8
       estree-walker: 2.0.2
-      picomatch: 4.0.4
+      picomatch: 4.0.7
     optionalDependencies:
       rollup: 4.62.2
 
@@ -4626,7 +4640,7 @@ snapshots:
       local-pkg: 1.1.2
       magic-string-ast: 0.7.1
       pathe: 2.0.3
-      picomatch: 4.0.4
+      picomatch: 4.0.7
     optionalDependencies:
       vue: 3.5.45(typescript@5.9.3)
 
@@ -5736,8 +5750,6 @@ snapshots:
   picocolors@1.1.1: {}
 
   picomatch@2.3.2: {}
-
-  picomatch@4.0.4: {}
 
   picomatch@4.0.7: {}
 

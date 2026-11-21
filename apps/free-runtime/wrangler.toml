@@ -1,0 +1,35 @@
+# Hosted only. Deployed by ME3, never by an owner's installation.
+name = "me3-free-runtime"
+main = "src/index.ts"
+compatibility_date = "2026-06-24"
+compatibility_flags = ["nodejs_compat"]
+
+[build]
+command = "node scripts/generate-migrations.mjs"
+
+[observability]
+enabled = true
+
+[[durable_objects.bindings]]
+name = "FREE_USER"
+class_name = "Me3FreeUser"
+
+[[migrations]]
+tag = "2026-11-21-free-user"
+new_sqlite_classes = ["Me3FreeUser"]
+
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+fallthrough = true
+
+[ai]
+binding = "AI"
+remote = true
+
+[vars]
+ENVIRONMENT = "local"
+# "on" adds News (the morning paper) to the free plan.
+ME3_FREE_NEWS = "off"
+
+# Secrets: FREE_RUNTIME_SERVICE_TOKEN (shared with ME3 Cloud).

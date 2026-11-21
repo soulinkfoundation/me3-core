@@ -1083,16 +1083,20 @@ const runtimeMigrations: RuntimeMigration[] = [
   },
 ];
 
-let migrationPromise: Promise<void> | null = null;
+// Keyed by database, not module-wide: a shared runtime serves many owners' databases from one isolate.
+let migrationPromises = new WeakMap<object, Promise<void>>();
 
 export async function ensureCoreRuntimeMigrations(env: Env): Promise<void> {
-  if (!migrationPromise) {
-    migrationPromise = runCoreRuntimeMigrations(env).catch((error) => {
-      migrationPromise = null;
+  const key = env.DB as unknown as object;
+  let promise = migrationPromises.get(key);
+  if (!promise) {
+    promise = runCoreRuntimeMigrations(env).catch((error) => {
+      migrationPromises.delete(key);
       throw error;
     });
+    migrationPromises.set(key, promise);
   }
-  return migrationPromise;
+  return promise;
 }
 
 export async function ensureCoreRuntimeMigrationsForRequest(
@@ -1124,7 +1128,7 @@ export async function ensureCoreRuntimeMigrationsForRequest(
 }
 
 export function resetCoreRuntimeMigrationsForTest() {
-  migrationPromise = null;
+  migrationPromises = new WeakMap();
 }
 
 async function runCoreRuntimeMigrations(env: Env): Promise<void> {

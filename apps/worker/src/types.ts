@@ -51,6 +51,8 @@ export interface Env {
   /** "off" stops the agent saving memories automatically after each turn. */
   ME3_AGENT_MEMORY?: string;
   ME3_AGENT_FAST_MODEL?: string;
+  /** Comma-separated tool-name prefixes the agent may use; unset allows every tool. The hosted free runtime sets it. */
+  ME3_AGENT_TOOL_ALLOWLIST?: string;
   /** The Human Soup API origin; defaults to https://api.thehumansoup.ai. */
   ME3_SOUP_API_ORIGIN?: string;
   /** Local development only: build News from the bundled fixture of Soup's news contract instead of calling Soup. */

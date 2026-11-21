@@ -1,6 +1,7 @@
 import { shareOwnerSitePost } from "./social-site-share";
 import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, coalesceAgentStreamEvents, createCloudflareModel, isModelRequestRejected, createIntentVerifierFromModel, createD1TurnStore, runAgentTurn, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import { createCodingAgentServices } from "./coding-agent";
+import { toolAllowedByEnv } from "./agent-tool-allowlist";
 import { createDomainTools, type AgentDomainServices } from "../../../packages/agent/src/tools";
 import { TOOL_LOADER_NAME } from "../../../packages/agent/src/tool-groups";
 import { saveOwnerQuote } from "./quotes";
@@ -102,7 +103,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt})},...recent,{role:"user",content,...(images.length?{images}:{})}];
       await env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").bind(`${input.turnId}:user`,input.userId,input.threadId,input.messageText,JSON.stringify({requestId:input.requestId,runtime:"agent",...(attachments.length?{attachments}:{})})).run();
     }
-    const tools=[...createDomainTools(),...computerChatTools()].filter(tool=>isToolAvailable(tool.name,services));
+    const tools=[...createDomainTools(),...computerChatTools()].filter(tool=>isToolAvailable(tool.name,services)&&toolAllowedByEnv(env,tool.name));
     const preloadedToolGroups=[...new Set([...threadGroups,...TOOL_GROUP_HINTS.filter(([pattern])=>pattern.test(input.messageText)).map(([,group])=>group)])];
     const intentTools=tools.filter(tool=>!tool.pluginId||enabledPluginIds.has(tool.pluginId));
     const loadIntentOwnerInputs=(references:Parameters<typeof loadTargetIntentOwnerInputs>[2],intentSignal:AbortSignal)=>
