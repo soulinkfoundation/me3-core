@@ -54,3 +54,24 @@ describe("free page editor proxy", () => {
     expect(unset.status).toBe(503);
   });
 });
+
+// Failure modes (owner device test, 21 Nov 2026): after saving a photo in the app, the avatar showed
+// nowhere, because this ME3 never learned the photo's address; a page with no photo keeps a stale one; a
+// failed or malformed Cloud response wipes the owner's name.
+import { ownerFieldsFromFreePage } from "../src/free-page";
+
+describe("owner details taken from the saved page", () => {
+  const origin = "https://api.example.test";
+  it("takes the name, handle and the public address of the photo", () => {
+    const fields = ownerFieldsFromFreePage({ user: { handle: "ada" }, profile: { name: " Ada ", avatar: "/files/avatar.jpg" } }, origin, 1700)!;
+    expect(fields).toEqual({ name: "Ada", handle: "ada", avatarUrl: "https://api.example.test/api/profile/public/ada/media/avatar?v=1700" });
+  });
+  it("clears the photo when the page has none, or no address to serve it from", () => {
+    expect(ownerFieldsFromFreePage({ user: { handle: "ada" }, profile: { name: "Ada", avatar: null } }, origin, 1)!.avatarUrl).toBeNull();
+    expect(ownerFieldsFromFreePage({ user: { handle: null }, profile: { name: "Ada", avatar: "/files/avatar.jpg" } }, origin, 1)!.avatarUrl).toBeNull();
+  });
+  it("gives nothing for a response that is not a page", () => {
+    expect(ownerFieldsFromFreePage({ error: "nope" }, origin, 1)).toBeNull();
+    expect(ownerFieldsFromFreePage(null, origin, 1)).toBeNull();
+  });
+});

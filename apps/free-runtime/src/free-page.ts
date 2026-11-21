@@ -32,3 +32,16 @@ export async function freePageRequest(request: Request, config: FreePageConfig, 
   }
   return new Response(response.body, { status: response.status, headers: outgoing });
 }
+
+/**
+ * What this ME3 keeps about its owner from their page in ME3 Cloud: the name and handle, and the public
+ * address of the photo so the apps can show it. Null when the response is not a page.
+ */
+export function ownerFieldsFromFreePage(body: unknown, cloudApiOrigin: string, version: number): { name: string; handle: string; avatarUrl: string | null } | null {
+  const page = body as { user?: { handle?: unknown }; profile?: { name?: unknown; avatar?: unknown } } | null;
+  if (!page || typeof page !== "object" || !page.profile || typeof page.profile !== "object") return null;
+  const name = typeof page.profile.name === "string" ? page.profile.name.trim() : "";
+  const handle = typeof page.user?.handle === "string" ? page.user.handle.trim() : "";
+  const hasPhoto = typeof page.profile.avatar === "string" && page.profile.avatar.trim() !== "";
+  return { name, handle, avatarUrl: hasPhoto && handle ? `${cloudApiOrigin}/api/profile/public/${encodeURIComponent(handle)}/media/avatar?v=${version}` : null };
+}

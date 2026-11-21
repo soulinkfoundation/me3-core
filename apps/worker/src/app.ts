@@ -2054,6 +2054,8 @@ function serializeAccountOwner(owner: OwnerRecord) {
     email: owner.email,
     name: owner.name || "ME3 Owner",
     username: owner.username || "owner",
+    // The owner's photo when ME3 holds one outside a site (the hosted free plan's me3.app page).
+    avatarUrl: owner.avatar_url?.trim() || null,
     timezone: storedTimezone,
     locale: explicitLocale || inferLocaleFromTimeZone(effectiveTimezone),
     localeSource: explicitLocale ? "explicit" : "inferred",

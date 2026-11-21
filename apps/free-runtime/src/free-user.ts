@@ -10,7 +10,7 @@ import type { Env } from "../../worker/src/types";
 import { countMessage, usageCostMicroUsd } from "./budget";
 import { createD1Adapter } from "./d1-adapter";
 import { getMe3CloudApiOrigin, getMe3CloudOrigin } from "../../worker/src/sites";
-import { freePageRequest, isFreePagePath } from "./free-page";
+import { freePageRequest, isFreePagePath, ownerFieldsFromFreePage } from "./free-page";
 import { FREE_PLAN_NOTE, freeApiAccess, freePluginList, freeStarters, freeToolAllowlist, freeTour, isChatTurnPath, isTourPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
 import { activateUserDatabase, prepareUserDatabase, type ActivationInput } from "./user-database";
 
@@ -163,15 +163,17 @@ export class Me3FreeUser extends Me3Agent {
       userId: this.meta("user_id") ?? "",
     });
     const url = new URL(request.url);
-    if (!response.ok || request.method !== "POST" || url.pathname !== "/api/free/page") return response;
-    // Cloud is the source for the name and handle; keep this ME3's owner row in step after a save.
-    const saved = (await response.clone().json().catch(() => null)) as { user?: { handle?: unknown }; profile?: { name?: unknown } } | null;
-    const name = typeof saved?.profile?.name === "string" ? saved.profile.name.trim() : "";
-    const handle = typeof saved?.user?.handle === "string" ? saved.user.handle.trim() : "";
-    if (name || handle) {
+    if (!response.ok || url.pathname !== "/api/free/page") return response;
+    // Cloud is the source for the name, handle and photo; keep this ME3's owner row in step whenever the page
+    // is read or saved, so the apps show them everywhere.
+    const fields = ownerFieldsFromFreePage(await response.clone().json().catch(() => null), getMe3CloudApiOrigin(this.env), Date.now());
+    if (fields) {
+      const current = this.ctx.storage.sql.exec("SELECT avatar_url FROM owner_profile WHERE id = 'owner'").toArray()[0]?.avatar_url as string | null | undefined;
+      // A read keeps the photo address it already has, so the app's image cache is not thrown away each time.
+      const samePhoto = request.method === "GET" && Boolean(current) === Boolean(fields.avatarUrl) && current?.split("?")[0] === fields.avatarUrl?.split("?")[0];
       this.ctx.storage.sql.exec(
-        "UPDATE owner_profile SET name = COALESCE(NULLIF(?, ''), name), username = COALESCE(NULLIF(?, ''), username), updated_at = CURRENT_TIMESTAMP WHERE id = 'owner'",
-        name, handle,
+        "UPDATE owner_profile SET name = COALESCE(NULLIF(?, ''), name), username = COALESCE(NULLIF(?, ''), username), avatar_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 'owner'",
+        fields.name, fields.handle, samePhoto ? (current ?? null) : fields.avatarUrl,
       );
     }
     return response;
