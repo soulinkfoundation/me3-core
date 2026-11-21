@@ -16,6 +16,7 @@ export class FreeBudget extends DurableObject {
       if (typeof body.paused === "boolean") state.paused = body.paused;
       if (typeof body.dailyBudgetUsd === "number" && body.dailyBudgetUsd >= 0) state.dailyBudgetMicroUsd = Math.round(body.dailyBudgetUsd * 1_000_000);
       if (typeof body.perUserDailyMessages === "number" && body.perUserDailyMessages >= 0) state.perUserDailyMessages = Math.floor(body.perUserDailyMessages);
+      if (typeof body.perUserDailyUsd === "number" && body.perUserDailyUsd >= 0) state.perUserDailyMicroUsd = Math.round(body.perUserDailyUsd * 1_000_000);
     }
     const decision = budgetDecision(state, Date.now(), url.pathname === "/check" ? Number(body.addMicroUsd ?? 0) : 0);
     state = decision.state;
@@ -28,6 +29,8 @@ export class FreeBudget extends DurableObject {
       spentUsd: state.spentMicroUsd / 1_000_000,
       dailyBudgetUsd: state.dailyBudgetMicroUsd / 1_000_000,
       perUserDailyMessages: state.perUserDailyMessages,
+      perUserDailyUsd: state.perUserDailyMicroUsd / 1_000_000,
+      perUserDailyMicroUsd: state.perUserDailyMicroUsd,
       paused: state.paused,
     });
   }

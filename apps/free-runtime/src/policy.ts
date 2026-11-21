@@ -27,6 +27,7 @@ export function freeApiAccess(method: string, path: string, options: FreePolicyO
   // The apps build their menu from the plugin list; a free user may read it (filtered) but not switch plugins.
   if (pathname === "/api/plugins") return method === "GET" ? "allow" : "upgrade";
   // The free me3.app page editor (free-page.ts), forwarded to ME3 Cloud.
+  if (isFreeAllowancePath(pathname)) return "allow";
   if (/^\/api\/free\/page(?:\/handles\/[^/]+\/available|\/media\/(?:avatar|banner))?$/.test(pathname)) return "allow";
   // Home reads these two lists on every refresh. A free ME3 has no sites or contacts, so they are empty;
   // only the bare list is readable, nothing under it and no writes.
@@ -40,6 +41,9 @@ export function freeApiAccess(method: string, path: string, options: FreePolicyO
   const allowed = options.news ? [...FREE_API_PREFIXES, ...NEWS_API_PREFIXES] : FREE_API_PREFIXES;
   return allowed.some((prefix) => under(pathname, prefix)) ? "allow" : "upgrade";
 }
+
+/** How much free chat is left today (free-user.ts). */
+export const isFreeAllowancePath = (path: string) => path.split("?")[0] === "/api/free/allowance";
 
 export function freeToolAllowlist(options: FreePolicyOptions): string {
   return (options.news ? [...FREE_TOOL_PREFIXES, "core_news_"] : FREE_TOOL_PREFIXES).join(",");

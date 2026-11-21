@@ -9,7 +9,8 @@
  *   GET  /internal/export     ME3 Cloud only. The closed ME3's own content (upgrade.ts), for the paid ME3 to import.
  *   POST /internal/purge      ME3 Cloud only. Deletes everything a closed ME3 holds; {force:true} deletes an open one.
  *   GET|POST /internal/budget ME3 only (service token). Read today's free chat spend, or change the daily
- *                             budget, the per-user message limit, or pause free chat. Takes effect at once.
+ *                             budget, the per-user allowance (perUserDailyUsd) and message backstop
+ *                             (perUserDailyMessages), or pause free chat. Takes effect at once.
  *   /u/{userId}/...           The user's ME3, same API as an installation. The path picks the object;
  *                             the object's own per-database credentials decide whether the caller is its owner.
  */

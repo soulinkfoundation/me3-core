@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { budgetDecision, countMessage, usageCostMicroUsd, DEFAULT_BUDGET, type BudgetState } from "../src/budget";
+import { addUserSpend, budgetDecision, localDay, messagesLeft, nextLocalMidnight, usageCostMicroUsd, DEFAULT_BUDGET, TYPICAL_MESSAGE_MICRO_USD, type BudgetState } from "../src/budget";
 
 // Failure modes: spend carries into the next day and blocks chat forever (or never resets); the kill switch
 // or an exhausted budget still lets a turn through; a user past their daily messages keeps chatting; usage
@@ -23,7 +23,7 @@ describe("global AI budget", () => {
   it("starts a new day at zero and keeps the settings", () => {
     const result = budgetDecision(state({ day: "2026-12-11", spentMicroUsd: 100_000_000, perUserDailyMessages: 7 }), DAY, 500);
     expect(result.allowed).toBe(true);
-    expect(result.state).toMatchObject({ day: "2026-12-12", spentMicroUsd: 500, perUserDailyMessages: 7 });
+    expect(result.state).toMatchObject({ day: "2026-12-12", spentMicroUsd: 500, perUserDailyMessages: 7, perUserDailyMicroUsd: 150_000 });
   });
   it("ignores negative or non-numeric spend", () => {
     expect(budgetDecision(state({ spentMicroUsd: 10 }), DAY, -5).state.spentMicroUsd).toBe(10);
@@ -31,20 +31,52 @@ describe("global AI budget", () => {
   });
 });
 
-describe("per-user daily messages", () => {
-  it("counts up to the limit, then refuses", () => {
-    let meta = { day: "2026-12-12", count: 18 };
-    const first = countMessage(meta, 20, DAY);
-    expect(first).toEqual({ allowed: true, day: "2026-12-12", count: 19 });
-    const second = countMessage(first, 20, DAY);
-    expect(second.allowed).toBe(true);
-    expect(countMessage(second, 20, DAY)).toEqual({ allowed: false, day: "2026-12-12", count: 20 });
+describe("per-user daily allowance", () => {
+  const limits = { perUserDailyMessages: 60, perUserDailyMicroUsd: 150_000 };
+  it("starts a fresh day at the allowance divided by a typical message", () => {
+    expect(messagesLeft({ day: "", count: 0, spentMicroUsd: 0 }, "2026-12-12", limits)).toBe(Math.floor(150_000 / TYPICAL_MESSAGE_MICRO_USD));
   });
-  it("resets on a new day", () => {
-    expect(countMessage({ day: "2026-12-11", count: 20 }, 20, DAY)).toEqual({ allowed: true, day: "2026-12-12", count: 1 });
+  it("estimates from the user's own average once they have spent", () => {
+    // 10 messages cost $0.10, so $0.05 left buys about 5 more.
+    expect(messagesLeft({ day: "2026-12-12", count: 10, spentMicroUsd: 100_000 }, "2026-12-12", limits)).toBe(5);
   });
-  it("refuses everything when the limit is zero", () => {
-    expect(countMessage({ day: "2026-12-12", count: 0 }, 0, DAY).allowed).toBe(false);
+  it("stops when the spend allowance is used, however few messages were sent", () => {
+    // Two heavy multi-step messages can use the whole day.
+    expect(messagesLeft({ day: "2026-12-12", count: 2, spentMicroUsd: 150_000 }, "2026-12-12", limits)).toBe(0);
+  });
+  it("stops at the message backstop even when spend is low", () => {
+    expect(messagesLeft({ day: "2026-12-12", count: 60, spentMicroUsd: 1_000 }, "2026-12-12", limits)).toBe(0);
+  });
+  it("leaves at least one message while any allowance remains", () => {
+    expect(messagesLeft({ day: "2026-12-12", count: 5, spentMicroUsd: 149_000 }, "2026-12-12", limits)).toBe(1);
+  });
+  it("starts again on the user's next day", () => {
+    const spent = { day: "2026-12-11", count: 60, spentMicroUsd: 500_000 };
+    expect(messagesLeft(spent, "2026-12-12", limits)).toBeGreaterThan(0);
+    expect(addUserSpend(spent, "2026-12-12", 3_000)).toEqual({ day: "2026-12-12", count: 0, spentMicroUsd: 3_000 });
+  });
+  it("adds spend within the day and ignores bad amounts", () => {
+    expect(addUserSpend({ day: "2026-12-12", count: 3, spentMicroUsd: 10 }, "2026-12-12", 5)).toEqual({ day: "2026-12-12", count: 3, spentMicroUsd: 15 });
+    expect(addUserSpend({ day: "2026-12-12", count: 3, spentMicroUsd: 10 }, "2026-12-12", Number.NaN).spentMicroUsd).toBe(10);
+  });
+  it("refuses everything when either limit is zero", () => {
+    expect(messagesLeft({ day: "", count: 0, spentMicroUsd: 0 }, "2026-12-12", { perUserDailyMessages: 0, perUserDailyMicroUsd: 150_000 })).toBe(0);
+    expect(messagesLeft({ day: "", count: 0, spentMicroUsd: 0 }, "2026-12-12", { perUserDailyMessages: 60, perUserDailyMicroUsd: 0 })).toBe(0);
+  });
+});
+
+describe("the user's own day", () => {
+  // 21:00 UTC on 12 Dec is already 13 Dec in Auckland and still 12 Dec in Los Angeles.
+  it("follows the user's time zone", () => {
+    expect(localDay(DAY, "Pacific/Auckland")).toBe("2026-12-13");
+    expect(localDay(DAY, "America/Los_Angeles")).toBe("2026-12-12");
+    expect(localDay(DAY, null)).toBe("2026-12-12");
+    expect(localDay(DAY, "Not/AZone")).toBe("2026-12-12");
+  });
+  it("renews at the user's next midnight", () => {
+    expect(new Date(nextLocalMidnight(DAY, "Europe/Dublin")).toISOString()).toBe("2026-12-13T00:00:00.000Z");
+    expect(new Date(nextLocalMidnight(DAY, "America/New_York")).toISOString()).toBe("2026-12-13T05:00:00.000Z");
+    expect(new Date(nextLocalMidnight(DAY, "Asia/Kolkata")).toISOString()).toBe("2026-12-13T18:30:00.000Z");
   });
 });
 

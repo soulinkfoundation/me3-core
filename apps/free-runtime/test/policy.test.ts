@@ -6,7 +6,7 @@ import { toolAllowedByEnv } from "../../worker/src/agent-tool-allowlist";
 // /api/batch), or a free feature is blocked.
 describe("free tier policy", () => {
   it("allows the free feature APIs", () => {
-    for (const path of ["/api/mobile/token", "/api/assistant/chat/turn/stream", "/api/mission-control/tasks", "/api/tasks/goals", "/api/journal/articles", "/api/calendar/events", "/api/account", "/api/push/devices", "/api/auth/me"]) {
+    for (const path of ["/api/mobile/token", "/api/assistant/chat/turn/stream", "/api/mission-control/tasks", "/api/tasks/goals", "/api/journal/articles", "/api/calendar/events", "/api/account", "/api/push/devices", "/api/auth/me", "/api/free/allowance"]) {
       expect(freeApiAccess("GET", path, { news: false }), path).toBe("allow");
     }
   });

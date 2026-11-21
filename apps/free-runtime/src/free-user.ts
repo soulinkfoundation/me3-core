@@ -7,11 +7,11 @@ import { dispatchDueMorningCalendarPushes } from "../../worker/src/morning-calen
 import { dispatchDueNewsPapers } from "../../worker/src/news-paper";
 import { dispatchDueNewsNotifications } from "../../worker/src/news-push";
 import type { Env } from "../../worker/src/types";
-import { countMessage, usageCostMicroUsd } from "./budget";
+import { addUserSpend, localDay, messagesLeft, nextLocalMidnight, usageCostMicroUsd, type UserAllowance } from "./budget";
 import { createD1Adapter } from "./d1-adapter";
 import { getMe3CloudApiOrigin, getMe3CloudOrigin } from "../../worker/src/sites";
 import { freePageRequest, isFreePagePath, ownerFieldsFromFreePage } from "./free-page";
-import { FREE_PLAN_NOTE, freeApiAccess, freePluginList, freeStarters, freeToolAllowlist, freeTour, isChatTurnPath, isTourPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
+import { FREE_PLAN_NOTE, freeApiAccess, isFreeAllowancePath, freePluginList, freeStarters, freeToolAllowlist, freeTour, isChatTurnPath, isTourPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
 import { exportFreeContent, upgradedReply } from "./upgrade";
 import { activateUserDatabase, prepareUserDatabase, type ActivationInput } from "./user-database";
 
@@ -45,20 +45,26 @@ const NEWS_STEPS: readonly ScheduledStep[] = [
 ];
 
 const LIMIT_REPLIES = {
-  user: "That's today's free messages used up. They reset at midnight UTC, and a paid ME3 plan has no daily limit.",
+  user: "That's today's free messages used up. They come back at midnight, or upgrade to keep chatting.",
   budget: "Free chat is paused for the rest of today because ME3's free allowance has been used. It comes back at midnight UTC.",
   paused: "Free chat is paused for the moment. Please try again later.",
 } as const;
 
+type LimitKind = keyof typeof LIMIT_REPLIES;
+/** What the apps show about the day's free chat: messages left, what stopped it, and when it comes back. */
+export type FreeAllowance = { ok: true; messagesLeft: number; limited: LimitKind | null; resetsAt: string };
+
 /** A limit is an ordinary reply from ME3, in the shape the apps already render, not an error. */
-function limitReply(kind: keyof typeof LIMIT_REPLIES, stream: boolean, threadId: unknown): Response {
-  const payload = { ok: true, runtime: "agent", status: "complete", source: "free-limit", limit: kind, threadId: typeof threadId === "string" ? threadId : null, replyText: LIMIT_REPLIES[kind], model: null, approvalId: null };
+function limitReply(kind: LimitKind, stream: boolean, threadId: unknown, freeAllowance: FreeAllowance): Response {
+  const payload = { ok: true, runtime: "agent", status: "complete", source: "free-limit", limit: kind, threadId: typeof threadId === "string" ? threadId : null, replyText: LIMIT_REPLIES[kind], model: null, approvalId: null, freeAllowance };
   if (!stream) return Response.json(payload);
   const frames = [["status", { state: "started" }], ["delta", { text: payload.replyText, source: "runtime" }], ["done", payload]] as const;
   return new Response(frames.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join(""), {
     headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" },
   });
 }
+
+type BudgetCheck = { allowed: boolean; reason: "budget" | "paused" | null; perUserDailyMessages: number; perUserDailyMicroUsd: number };
 
 const upgradeRequired = () => Response.json({ ok: false, error: "This is part of a paid ME3 plan.", code: "upgrade_required" }, { status: 403 });
 const notFound = () => Response.json({ ok: false, error: "Not found" }, { status: 404 });
@@ -227,7 +233,7 @@ export class Me3FreeUser extends Me3Agent {
   }
 
   /** Sends settled model spend to the global ledger and returns whether free chat may run right now. */
-  private async settleSpend(): Promise<{ allowed: boolean; reason: "budget" | "paused" | null; perUserDailyMessages: number }> {
+  private async settleSpend(): Promise<BudgetCheck> {
     const sql = this.ctx.storage.sql;
     const marker = Number(this.meta("usage_reported_rowid") ?? 0);
     // A call still in flight has reported no usage yet; stop before it so it is reported once it settles (or after ten minutes).
@@ -246,24 +252,73 @@ export class Me3FreeUser extends Me3Agent {
       body: JSON.stringify({ addMicroUsd: usageCostMicroUsd(rows) }),
     });
     if (!response.ok) throw new Error("Free budget is unavailable");
-    if (upTo > marker) this.setMeta("usage_reported_rowid", String(upTo));
-    return (await response.json()) as { allowed: boolean; reason: "budget" | "paused" | null; perUserDailyMessages: number };
+    if (upTo > marker) {
+      this.setMeta("usage_reported_rowid", String(upTo));
+      this.saveAllowance(addUserSpend(this.allowance(), this.today(), usageCostMicroUsd(rows)));
+    }
+    return (await response.json()) as BudgetCheck;
+  }
+
+  private timeZone(): string | null {
+    const zone = this.ctx.storage.sql.exec("SELECT timezone FROM owner_profile WHERE id = 'owner'").toArray()[0]?.timezone;
+    return typeof zone === "string" && zone ? zone : null;
+  }
+
+  private today(now = Date.now()): string {
+    return localDay(now, this.timeZone());
+  }
+
+  private allowance(): UserAllowance {
+    try {
+      const stored = JSON.parse(this.meta("chat_allowance") ?? "null") as Partial<UserAllowance> | null;
+      if (stored && typeof stored.day === "string") return { day: stored.day, count: Number(stored.count) || 0, spentMicroUsd: Number(stored.spentMicroUsd) || 0 };
+    } catch {
+      // A damaged record starts the day again.
+    }
+    return { day: "", count: 0, spentMicroUsd: 0 };
+  }
+
+  private saveAllowance(allowance: UserAllowance) {
+    this.setMeta("chat_allowance", JSON.stringify(allowance));
+  }
+
+  private describeAllowance(budget: BudgetCheck | null, limited: LimitKind | null): FreeAllowance {
+    const now = Date.now();
+    const left = budget ? messagesLeft(this.allowance(), this.today(now), budget) : 0;
+    const reason = limited ?? (!budget ? "paused" : !budget.allowed ? (budget.reason === "paused" ? "paused" : "budget") : left === 0 ? "user" : null);
+    const zone = reason === "user" ? this.timeZone() : null;
+    return { ok: true, messagesLeft: reason ? 0 : left, limited: reason, resetsAt: new Date(nextLocalMidnight(now, zone)).toISOString() };
+  }
+
+  /** GET /api/free/allowance, for the owner only: how much free chat is left today. */
+  private async freeAllowance(request: Request): Promise<Response> {
+    const context = { waitUntil: (work: Promise<unknown>) => this.ctx.waitUntil(work), passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
+    const owner = await app.fetch(new Request(new URL("/api/account", request.url), { headers: { authorization: request.headers.get("authorization") ?? "" } }), this.env, context);
+    if (!owner.ok) return Response.json({ ok: false, error: "Authentication required" }, { status: 401 });
+    const budget = await this.settleSpend().catch((error) => {
+      console.error("Free budget check failed", error);
+      return null;
+    });
+    return Response.json(this.describeAllowance(budget, null));
   }
 
   /** Null lets the turn run; otherwise the reply to send instead. Fails closed: no ledger, no model call. */
   private async chatLimit(stream: boolean, threadId: unknown): Promise<Response | null> {
-    let budget: Awaited<ReturnType<Me3FreeUser["settleSpend"]>>;
+    let budget: BudgetCheck;
     try {
       budget = await this.settleSpend();
     } catch (error) {
       console.error("Free budget check failed", error);
-      return limitReply("paused", stream, threadId);
+      return limitReply("paused", stream, threadId, this.describeAllowance(null, "paused"));
     }
-    if (!budget.allowed) return limitReply(budget.reason === "paused" ? "paused" : "budget", stream, threadId);
-    const counted = countMessage({ day: this.meta("chat_day") ?? "", count: Number(this.meta("chat_count") ?? 0) }, budget.perUserDailyMessages, Date.now());
-    if (!counted.allowed) return limitReply("user", stream, threadId);
-    this.setMeta("chat_day", counted.day);
-    this.setMeta("chat_count", String(counted.count));
+    if (!budget.allowed) {
+      const kind = budget.reason === "paused" ? "paused" : "budget";
+      return limitReply(kind, stream, threadId, this.describeAllowance(budget, kind));
+    }
+    const day = this.today();
+    if (messagesLeft(this.allowance(), day, budget) === 0) return limitReply("user", stream, threadId, this.describeAllowance(budget, "user"));
+    const today = addUserSpend(this.allowance(), day, 0);
+    this.saveAllowance({ ...today, count: today.count + 1 });
     return null;
   }
 
@@ -315,6 +370,7 @@ export class Me3FreeUser extends Me3Agent {
     await this.prepare();
     await this.touch();
     if (isFreePagePath(url.pathname)) return this.freePage(forwarded);
+    if (isFreeAllowancePath(url.pathname)) return request.method === "GET" ? this.freeAllowance(forwarded) : notFound();
     if (request.method === "POST" && isChatTurnPath(url.pathname)) {
       const limited = await this.chatLimit(url.pathname.endsWith("/stream"), (body as Record<string, unknown>).threadId);
       if (limited) return limited;
