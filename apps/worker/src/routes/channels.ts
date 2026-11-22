@@ -113,78 +113,18 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
       );
     }
 
-    const owner = await getOwnerProfile(c.env, ownerId);
-    if (!owner) return c.json({ ok: false, error: "Account not found" }, 404);
-
-    const dispatchToken = crypto.randomUUID();
-    const issuer = getCoreApiOrigin(c.env, c.req.url);
-    const callbackUrl = `${issuer}/api/agent/channels/soulink/dispatch`;
-    const proof = await createSoulinkProvisionProof(c.env, { issuer, subject: owner.id, callbackUrl, dispatchToken });
-    const ownerAssertion = await fetchSoulinkOwnerAssertion(c.env, issuer);
-    const response = await fetch(`${config.apiOrigin}/api/me3/assistant-channel/provision`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        issuer,
-        subject: owner.id,
-        proof,
-        ...(ownerAssertion ? { ownerAssertion } : {}),
-        owner: {
-          displayName: owner.name || owner.username || "ME3 Owner",
-          handle: owner.username || "owner",
-          me3Url: await getOwnerMe3Url(c.env, ownerId, c.req.url),
-          avatarUrl: owner.avatar_url || null,
-        },
-        assistant: {
-          displayName: "ME3 Assistant",
-          avatarUrl: null,
-        },
-        runtime: {
-          kind: "standalone-me3-core",
-          callbackUrl,
-          dispatchToken,
-        },
-      }),
-    });
-
-    const payload = (await response.json().catch(() => null)) as SoulinkProvisionResponse | null;
-    if (!response.ok || payload?.ok !== true || !payload.streamChannelId) {
+    const connected = await connectSoulink(c.env, ownerId, c.req.url);
+    if (!connected.ok) {
       return c.json(
         {
           ok: false,
-          error: payload?.error || `Soulink provisioning failed (${response.status})`,
+          error: connected.error,
           ...(await buildSoulinkStatusPayload(c.env, ownerId, c.req.url)),
         },
-        502,
+        connected.status,
       );
     }
-
-    const connection = await upsertActiveSoulinkConnection(c.env, ownerId, {
-      ownerNodeId: payload.ownerNodeId || null,
-      assistantNodeId: payload.assistantNodeId || null,
-      streamChannelType: payload.streamChannelType || "messaging",
-      streamChannelId: payload.streamChannelId,
-      soulinkChatUrl: payload.soulinkChatUrl || null,
-      runtimeCallbackUrl: callbackUrl,
-      dispatchToken,
-    });
-    await resolvePrimaryAssistantThread(c.env, ownerId);
-
-    await insertProviderChannelEventOnce(c.env, {
-      channel: "soulink",
-      connectionId: connection.id,
-      direction: "system",
-      eventType: "link",
-      status: "linked",
-      providerEventId: `setup:${payload.streamChannelId}`,
-      providerMessageId: null,
-      replyToMessageId: null,
-      textBody: "Soulink assistant chat connected.",
-      rawJson: payload,
-      errorMessage: null,
-    });
+    const { connection } = connected;
 
     const contactSync = await syncSoulinkContacts(c.env, ownerId);
 
@@ -315,6 +255,92 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
   });
 }
 
+export type SoulinkConnectResult =
+  | { ok: true; connection: DbAgentChannelConnection }
+  | { ok: false; status: 404 | 502 | 503; error: string };
+
+/**
+ * Connects this owner's ME3 to Soulink: provisions the assistant channel on the
+ * owner's Soulink node and stores the connection with a fresh dispatch token.
+ * Used by Soulink setup and by messaging, which connects on first use.
+ */
+export async function connectSoulink(env: Env, ownerId: string, requestUrl: string): Promise<SoulinkConnectResult> {
+  const config = getSoulinkConnectorConfig(env);
+  const owner = await getOwnerProfile(env, ownerId);
+  if (!owner) return { ok: false, status: 404, error: "Account not found" };
+
+  const dispatchToken = crypto.randomUUID();
+  const issuer = getCoreApiOrigin(env, requestUrl);
+  const callbackUrl = `${issuer}/api/agent/channels/soulink/dispatch`;
+  const proof = await createSoulinkProvisionProof(env, { issuer, subject: owner.id, callbackUrl, dispatchToken });
+  const ownerAssertion = await fetchSoulinkOwnerAssertion(env, issuer);
+  let response: Response;
+  try {
+    response = await fetch(`${config.apiOrigin}/api/me3/assistant-channel/provision`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        issuer,
+        subject: owner.id,
+        proof,
+        ...(ownerAssertion ? { ownerAssertion } : {}),
+        owner: {
+          displayName: owner.name || owner.username || "ME3 Owner",
+          handle: owner.username || "owner",
+          me3Url: await getOwnerMe3Url(env, ownerId, requestUrl),
+          avatarUrl: owner.avatar_url || null,
+        },
+        assistant: {
+          displayName: "ME3 Assistant",
+          avatarUrl: null,
+        },
+        runtime: {
+          kind: "standalone-me3-core",
+          callbackUrl,
+          dispatchToken,
+        },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    console.warn("Soulink provisioning request failed", error);
+    return { ok: false, status: 503, error: "Soulink could not be reached. Please try again." };
+  }
+
+  const payload = (await response.json().catch(() => null)) as SoulinkProvisionResponse | null;
+  if (!response.ok || payload?.ok !== true || !payload.streamChannelId) {
+    return { ok: false, status: 502, error: payload?.error || `Soulink provisioning failed (${response.status})` };
+  }
+
+  const connection = await upsertActiveSoulinkConnection(env, ownerId, {
+    ownerNodeId: payload.ownerNodeId || null,
+    assistantNodeId: payload.assistantNodeId || null,
+    streamChannelType: payload.streamChannelType || "messaging",
+    streamChannelId: payload.streamChannelId,
+    soulinkChatUrl: payload.soulinkChatUrl || null,
+    runtimeCallbackUrl: callbackUrl,
+    dispatchToken,
+  });
+  await resolvePrimaryAssistantThread(env, ownerId);
+
+  await insertProviderChannelEventOnce(env, {
+    channel: "soulink",
+    connectionId: connection.id,
+    direction: "system",
+    eventType: "link",
+    status: "linked",
+    providerEventId: `setup:${payload.streamChannelId}`,
+    providerMessageId: null,
+    replyToMessageId: null,
+    textBody: "Soulink assistant chat connected.",
+    rawJson: payload,
+    errorMessage: null,
+  });
+  return { ok: true, connection };
+}
+
 /**
  * An install linked to ME3 Cloud asks Cloud to vouch for its owner, so Soulink
  * puts this connection on the same node as the owner's Soulink app sign-in.
@@ -396,7 +422,7 @@ function constantTimeEqual(a: string, b: string): boolean {
   return mismatch === 0;
 }
 
-function getSoulinkConnectorConfig(env: Env) {
+export function getSoulinkConnectorConfig(env: Env) {
   const apiOrigin =
     originFromUrl(env.SOULINK_API_ORIGIN) || DEFAULT_SOULINK_API_ORIGIN;
   return {
@@ -951,7 +977,7 @@ function serializeProviderChannelEvent(row: DbAgentChannelEvent) {
   };
 }
 
-async function getSoulinkConnection(env: Env, ownerId: string) {
+export async function getSoulinkConnection(env: Env, ownerId: string) {
   return env.DB.prepare(
     `SELECT id, user_id, channel, status, setup_token,
             provider_connection_id, provider_user_id, provider_thread_id,

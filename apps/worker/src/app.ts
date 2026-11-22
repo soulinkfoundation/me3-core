@@ -107,6 +107,7 @@ import { registerCalendarRoutes } from "./routes/calendar";
 import { registerCalendarSourceRoutes } from "./routes/calendar-sources";
 import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerChannelRoutes } from "./routes/channels";
+import { registerMessagingRoutes } from "./routes/messaging";
 import { registerAgentSchedulingRoutes } from "./routes/agent-scheduling";
 import { registerAssistantSkillsRoutes } from "./routes/assistant-skills";
 import { registerContactsRoutes } from "./routes/contacts";
@@ -1631,6 +1632,7 @@ registerMailboxRoutes(app, { requireOwner, unauthorized });
 registerEmailSendIdentityRoutes(app, { requireOwner, unauthorized });
 
 registerChannelRoutes(app, { requireOwner, unauthorized });
+registerMessagingRoutes(app, { requireOwner, unauthorized });
 
 registerAgentSchedulingRoutes(app);
 
