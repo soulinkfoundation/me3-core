@@ -64,7 +64,7 @@ const routes = {
   ME3_MANAGED_EMAIL_GATEWAY_ORIGIN: managedEmailGatewayUrl.origin,
   ME3_SOCIAL_OAUTH_ORIGIN: "https://api.me3.app",
   ME3_AI_CHAT_PROVIDER: "workers-ai",
-  ME3_AI_CHAT_MODEL: "openai/gpt-6.1-sol",
+  ME3_AI_CHAT_MODEL: "anthropic/claude-sonnet-5.5",
   ME3_AI_CHAT_BACKUP_MODEL: "anthropic/claude-haiku-5.5",
   // Follow-up suggestions, memory extraction and the new-record check run here (routing was removed, me3-ahsk.45).
   ME3_AGENT_FAST_MODEL: "anthropic/claude-haiku-5.5",

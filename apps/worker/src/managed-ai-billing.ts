@@ -5,7 +5,8 @@ import type { Env } from "./types";
 
 export const MANAGED_AI_BILLING_POLICY_SECRET = "ME3_MANAGED_AI_BILLING_POLICY";
 const INCLUDED_MONTHLY_CENTS = 1000;
-const DEFAULT_MANAGED_MODEL = "openai/gpt-6.1-sol";
+// Matches ME3 Cloud's recommended model (me3-cloud migration 0142).
+const DEFAULT_MANAGED_MODEL = "anthropic/claude-sonnet-5.5";
 const MANAGED_MODELS = [
   "openai/gpt-5.4-mini",
   "openai/gpt-5.4-nano",
