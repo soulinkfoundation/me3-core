@@ -428,7 +428,7 @@ export function countPaper(pages: NewsPaperPages, considered: number): NewsPaper
 
 // ── When ────────────────────────────────────────────────────
 
-/** The owner's time today in minutes after local midnight: an hour later at the weekend. */
+/** The owner's time today in minutes after local midnight. A paper saved before the weekend hour was dropped reads as zero. */
 export function newsDueMinutes(prefs: Pick<NewsPrefs, "time" | "weekendOffsetMinutes">, weekday: number): number {
   const [hour, minute] = prefs.time.split(":").map(Number);
   const weekend = weekday === 0 || weekday === 6;

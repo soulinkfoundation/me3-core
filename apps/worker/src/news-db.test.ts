@@ -67,7 +67,7 @@ describe("the paper on Home, against the schema", () => {
     await expect(actOnNewsPaper(f.env, "owner", "paper-1", { action: "shred" }, at("07:10"))).rejects.toThrow(/read, hide, unhide or rate/);
     // The next day has no paper yet, and when it arrives it is a new row that was never hidden.
     const tomorrow = await getNewsToday(f.env, "owner", new Date("2026-11-14T08:00:00.000Z"));
-    expect(tomorrow).toMatchObject({ setUp: true, paper: null, time: "07:45" });
+    expect(tomorrow).toMatchObject({ setUp: true, paper: null, time: "06:45" });
   });
 });
 

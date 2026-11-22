@@ -31,10 +31,10 @@ const extras = { labels: { "ai agents": "AI agents" }, city: "Dublin", weather: 
 
 describe("news build window", () => {
   const prefs = founderTaste().news!;
-  it("is an hour later at the weekend", () => {
+  it("comes at the same time every day, weekends too", () => {
     expect(clockTime(newsDueMinutes(prefs, 5))).toBe("06:45");
-    expect(clockTime(newsDueMinutes(prefs, 6))).toBe("07:45");
-    expect(clockTime(newsDueMinutes(prefs, 0))).toBe("07:45");
+    expect(clockTime(newsDueMinutes(prefs, 6))).toBe("06:45");
+    expect(clockTime(newsDueMinutes(prefs, 0))).toBe("06:45");
     expect(clockTime(newsDueMinutes({ time: "23:30", weekendOffsetMinutes: 60 }, 6))).toBe("23:45");
   });
   it("opens thirty minutes before the owner's time and closes after the catch-up", () => {
@@ -44,8 +44,8 @@ describe("news build window", () => {
     expect(at("06:45")).toBe(true);
     expect(at("09:30")).toBe(true);
     expect(at("09:45")).toBe(false);
-    expect(at("06:15", 6)).toBe(false);
-    expect(at("07:15", 6)).toBe(true);
+    expect(at("06:00", 6)).toBe(false);
+    expect(at("06:15", 6)).toBe(true);
   });
   it("never builds while paused or before setup", () => {
     expect(newsBuildDue({ ...prefs, paused: true }, { minutes: 6 * 60 + 30, weekday: 5 })).toBe(false);
@@ -240,6 +240,14 @@ describe("news settings", () => {
     expect(taste.news).toMatchObject({ city: "Inis Meáin", country: "IE", lat: null, lon: null });
   });
 
+  // Failure mode: an owner in Europe/Dublin picks Dublin, it matches the timezone's city, and the next
+  // paper swaps it for the town on their profile. Only a town the owner sends counts as chosen.
+  it("marks a town the owner picked as chosen, and nothing else does", () => {
+    const dublin = { city: "Dublin", country: "IE", lat: 53.35, lon: -6.26 };
+    expect(applyNewsPatch(emptySoupTaste(), { city: "Dublin" }, { ...context, place: dublin }).news).toMatchObject({ ...dublin, cityChosen: true });
+    expect(applyNewsPatch(emptySoupTaste(), {}, { ...context, place: dublin }).news?.cityChosen).toBe(false);
+  });
+
   it("turns the agent's plain lines into chips and keeps suggestions it did not mention", () => {
     const current = describeNewsSettings({ taste: applyNewsPatch(emptySoupTaste(), { mine: ["Surfing", { label: "Music", on: false }] }, context), setUp: false, setUpAt: null, projects: [] });
     const patch = newsPatchFromAgent({ workTopics: ["AI agents @ ME3"], interests: ["Surfing", "Poetry"], city: "Dublin", time: "06:45", setUp: true, headsUp: true }, current, new Map([["p1", "ME3"]]));
@@ -302,7 +310,7 @@ describe("moving a Soup setup to News", () => {
   const evening = { id: "evening", name: "Something longer", time: "20:00", days: [], kind: "pick" as const };
   it("takes the morning headlines time as the paper's time and keeps the topics", () => {
     const prefs = newsPrefsFromSoup(soup([evening, headlines]), { briefingTime: "08:00", removedFromHome: false, place: { city: "Dublin", country: "IE", lat: 53.35, lon: -6.26 }, now })!;
-    expect(prefs).toMatchObject({ time: "07:15", weekendOffsetMinutes: 60, notify: true, paused: false, city: "Dublin", country: "IE", setUpAt: now.toISOString() });
+    expect(prefs).toMatchObject({ time: "07:15", weekendOffsetMinutes: 0, notify: true, paused: false, city: "Dublin", country: "IE", setUpAt: now.toISOString() });
     expect(newsBuildDue(prefs, { minutes: 7 * 60, weekday: 5 })).toBe(true);
   });
   it("falls back to the briefing time, and stays paused when the Soup card was taken off Home", () => {

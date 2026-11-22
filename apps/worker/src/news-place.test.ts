@@ -12,6 +12,9 @@ describe("the owner's town for local news", () => {
     expect(townFromProfile({ location: "Limerick, Ireland" })).toEqual({ name: "Limerick", country: null });
     expect(townFromProfile({ locationData: { locality: "Galway", label: "Galway, Ireland", countryCode: "ie" } })).toEqual({ name: "Galway", country: "IE" });
     expect(townFromProfile({ location: "12 Main Street" })).toBeNull();
+    // A country on a profile is not a town, so it never becomes the local paper.
+    expect(townFromProfile({ location: "Ireland", locationData: { label: "Ireland", country: "Ireland", countryCode: "IE", precision: "country" } })).toBeNull();
+    expect(townFromProfile({ locationData: { label: "Ireland", country: "Ireland" } })).toBeNull();
     expect(townFromProfile({})).toBeNull();
     expect(townFromProfile(null)).toBeNull();
   });

@@ -17,6 +17,8 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const CLOUD = `http://127.0.0.1:${CLOUD_PORT}`;
 const SERVICE_TOKEN = `smoke-${randomUUID()}`;
 const MODEL = process.env.SMOKE_CHAT_MODEL || "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+// "anthropic/claude-haiku-5.5" runs the production chat model; any @cf/ model runs on Workers AI.
+const PROVIDER = MODEL.startsWith("@cf/") ? "workers-ai" : MODEL.split("/")[0];
 const skipChat = process.env.SMOKE_SKIP_CHAT === "1";
 const state = mkdtempSync(join(tmpdir(), "me3-free-smoke-"));
 const checks = [];
@@ -44,7 +46,7 @@ let wrangler;
 async function start() {
   wrangler = spawn("pnpm", ["exec", "wrangler", "dev", "--port", String(PORT), "--inspector-port", String(PORT + 408), "--persist-to", state,
     "--var", "ENVIRONMENT:local", "--var", `FREE_RUNTIME_SERVICE_TOKEN:${SERVICE_TOKEN}`, "--var", `ME3_CLOUD_API_ORIGIN:${CLOUD}`,
-    "--var", "ME3_AI_CHAT_PROVIDER:workers-ai", "--var", `ME3_AI_CHAT_MODEL:${MODEL}`, "--var", `ME3_AGENT_FAST_MODEL:${MODEL}`, ...(process.env.SMOKE_AFTER_TURN === "on" ? [] : ["--var", "ME3_AGENT_MEMORY:off", "--var", "ME3_AGENT_SUGGESTED_REPLIES:off"])],
+    "--var", `ME3_AI_CHAT_PROVIDER:${PROVIDER}`, "--var", `ME3_AI_CHAT_MODEL:${MODEL}`, "--var", `ME3_AGENT_FAST_MODEL:${MODEL}`, ...(process.env.SMOKE_AFTER_TURN === "on" ? [] : ["--var", "ME3_AGENT_MEMORY:off", "--var", "ME3_AGENT_SUGGESTED_REPLIES:off"])],
     { cwd: root, detached: true, stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
   wrangler.stdout.on("data", (chunk) => { log += chunk; });

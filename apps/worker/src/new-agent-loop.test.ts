@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { runAgentTurn } from "../../../packages/agent/src/loop";
+import { BUSY_REPLY, runAgentTurn } from "../../../packages/agent/src/loop";
 import { withOneStepConfirmation } from "../../../packages/agent/src/confirmations";
 import type { AgentCheckpoint, AgentEvent, AgentModel, AgentTool, AgentToolResult, AgentTurnStore } from "../../../packages/agent/src/types";
 
@@ -131,6 +131,18 @@ describe("from scratch agent loop", () => {
     const f = fixture();
     const result = await runAgentTurn({ ...f, tools: [], messages: [], model: { id: "primary", async step({ onDelta }) { await onDelta("Partial"); throw new Error("Provider stream truncated"); } }, backupModel: { id: "backup", async step() { return { text: "Completed", toolCalls: [], usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0, estimatedCostUsd: 0.01 } }; } } });
     expect(result.status).toBe("complete"); expect(result.trace.model).toBe("backup"); expect(result.usage.estimatedCostUsd).toBeNull();
+  });
+  // Failure mode: a rate-limited provider shows the owner a raw "HTTP 429; code 3021" error.
+  it("answers plainly when the model and its backup are rate limited", async () => {
+    const f = fixture();
+    const busy: AgentModel = { id: "busy", async step() { throw new Error("Cloudflare model request failed (HTTP 429; code 3021): inference request per min rate reached"); } };
+    const result = await runAgentTurn({ ...f, tools: [], messages: [], model: busy, backupModel: { ...busy, id: "backup" } });
+    expect(result.status).toBe("failed"); expect(result.replyText).toBe(BUSY_REPLY);
+  });
+  it("still names other failures", async () => {
+    const f = fixture();
+    const result = await runAgentTurn({ ...f, tools: [], messages: [], model: { id: "broken", async step() { throw new Error("Provider stream truncated"); } } });
+    expect(result.replyText).toBe("I couldn't complete this turn: Provider stream truncated");
   });
   it("deduplicates semantic writes when the provider changes call IDs", async () => {
     const f = fixture(); let writes = 0;

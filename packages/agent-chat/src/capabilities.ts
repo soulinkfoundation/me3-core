@@ -542,6 +542,41 @@ export const CORE_CHAT_CAPABILITIES = [
     },
   }),
   defineCoreChatCapability({
+    id: "core.messages.draft",
+    owner: "core",
+    pluginId: null,
+    ownerFacingLabel: "Draft a message",
+    summary:
+      "Draft a short chat message to one person the owner knows, for 'tell X ...' or 'message X ...'. The owner's app shows it as a card with Edit and Send and only the owner sends it; this never sends and cannot read messages. Give `to` as the name the owner said (or contactId from a contacts read) and `text` written as the owner would say it to that person, in the first person. If the result says the name is unknown or ambiguous, ask who.",
+    category: "messaging",
+    handler: {
+      surface: "chat",
+      route: "core.messages.draft",
+    },
+    sideEffect: "external_draft",
+    approvalMode: "none",
+    requiresSetup: [],
+    inputSchema: {
+      type: "object",
+      required: ["text"],
+      properties: {
+        to: { type: "string", description: "The person's name as the owner said it, e.g. 'Erum'." },
+        contactId: { type: "string", description: "Stable contact ID from a contacts read, when known or after the owner picked one." },
+        text: { type: "string", description: "The message itself, in the owner's voice, addressed to the person." },
+      },
+      additionalProperties: false,
+    },
+    auditEventKind: "core_message_drafted",
+    examples: {
+      positive: ["Tell Erum I'm running late.", "Message Sam that the keys are under the mat."],
+      negative: ["Email Erum about next week.", "What did Erum say?"],
+    },
+    chat: {
+      intentKind: "write_action",
+      sideEffectLevel: "write",
+    },
+  }),
+  defineCoreChatCapability({
     id: "core.outreach.list",
     owner: "core",
     pluginId: null,

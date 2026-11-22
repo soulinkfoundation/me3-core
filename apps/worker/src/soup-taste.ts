@@ -42,6 +42,8 @@ export type NewsPrefs = {
   /** Removed from Home: no paper is built and nothing is announced. */
   paused: boolean;
   city: string | null;
+  /** The owner picked the town themselves, so no guess from their profile or timezone ever replaces it. */
+  cityChosen: boolean;
   /** ISO 3166-1 alpha-2. */
   country: string | null;
   lat: number | null;
@@ -90,10 +92,12 @@ export function readNewsPrefs(raw: unknown): NewsPrefs | null {
   const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : null;
   return {
     time: snapNewsTime(raw.time) || NEWS_DEFAULT_TIME,
-    weekendOffsetMinutes: number(raw.weekendOffsetMinutes) === 0 ? 0 : 60,
+    // The paper comes at the same time every day; an older weekend hour is no longer kept.
+    weekendOffsetMinutes: 0,
     notify: raw.notify !== false,
     paused: raw.paused === true,
     city: typeof raw.city === "string" && raw.city.trim() ? raw.city.trim().slice(0, 60) : null,
+    cityChosen: raw.cityChosen === true,
     country: typeof raw.country === "string" && /^[A-Z]{2}$/.test(raw.country) ? raw.country : null,
     lat: number(raw.lat),
     lon: number(raw.lon),

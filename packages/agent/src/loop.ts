@@ -183,6 +183,8 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     }
   } catch (error) {
     if (await cancelled()) return finish("cancelled", "The turn was cancelled before completion.");
+    // A busy provider is not the owner's problem to debug: say so plainly instead of quoting the error.
+    if (isRateLimited(error)) return finish("failed", BUSY_REPLY);
     return finish("failed", `I couldn't complete this turn: ${error instanceof Error ? error.message : "agent failure"}`);
   } finally {
     clearTimeout(timeout);
@@ -311,4 +313,13 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
 function result(state: AgentCheckpoint): AgentTurnResult {
   const replyText = state.status === "needs_approval" ? "This action needs your approval before I can continue." : [...state.messages].reverse().find(message => message.role === "assistant" && !message.toolCalls?.length)?.content ?? "";
   return {replyText,source:"agent",toolCalls:state.trace.toolCalls,usage:state.trace.usage,modelRequestCount:state.steps+(state.trace.targetIntentRequests?.length??0),trace:state.trace,status:state.status,...(state.approvalId?{approvalId:state.approvalId}:{}),...(state.targetPresentation?{targetPresentation:state.targetPresentation}:{})};
+}
+
+export const BUSY_REPLY = "I'm a bit busy right now. Please try again in a minute.";
+const RATE_LIMITED = /\b429\b|rate[ _-]?limit|code[^0-9]{0,4}3021|too many requests|overloaded/i;
+function isRateLimited(error: unknown): boolean {
+  for (let current: unknown = error, depth = 0; current && depth < 3; current = (current as {cause?: unknown}).cause, depth++) {
+    if (RATE_LIMITED.test(current instanceof Error ? current.message : String(current))) return true;
+  }
+  return false;
 }
