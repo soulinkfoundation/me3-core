@@ -47,10 +47,14 @@ ME3_AI_CHAT_BACKUP_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
 # Free AI goes through its own gateway, so its usage and cost show apart from paid installs and it has
 # its own spend limit (me3-bybb.14). Created by hand on the Production account; logs and cache off.
 CLOUDFLARE_AI_GATEWAY_ID = "me3-free"
+# Haiku pays from ME3's own Anthropic key stored on the me3-free gateway under this alias, so free chat is
+# not held to Unified Billing's 200 requests/minute per gateway (me3-bybb.13). Takes effect only with the
+# CLOUDFLARE_AI_GATEWAY_TOKEN secret; without it Haiku keeps paying from gateway credits.
+ANTHROPIC_BYOK_ALIAS = "me3-free"
 # Follow-up suggestions and memory extraction use the same model as chat.
 ME3_AGENT_FAST_MODEL = "anthropic/claude-haiku-5.5"
 # "on" adds News (the morning paper) to the free plan.
 ME3_FREE_NEWS = "on"
 
-# Secrets: FREE_RUNTIME_SERVICE_TOKEN (shared with ME3 Cloud).
+# Secrets: FREE_RUNTIME_SERVICE_TOKEN (shared with ME3 Cloud); CLOUDFLARE_AI_GATEWAY_TOKEN (AI Gateway run token).
 # Free chat limits are not config here: GET/POST /internal/budget changes them live.
