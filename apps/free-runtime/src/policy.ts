@@ -21,7 +21,7 @@ const BLOCKED_API_PREFIXES = ["/api/assistant/attachments", "/api/calendar/sourc
 const FREE_EMPTY_LISTS = ["/api/sites", "/api/contacts"];
 
 const FREE_TOOL_PREFIXES = [
-  "core_calendar_", "core_conversations_", "core_docs_", "core_journal_", "core_memory_", "core_mission_",
+  "core_calendar_", "core_conversations_", "core_docs_", "core_journal_", "core_memory_", "core_messages_", "core_mission_",
   "core_owner_", "core_quotes_", "core_reminders_", "core_targets_", "core_tools_",
 ];
 

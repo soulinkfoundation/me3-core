@@ -30,5 +30,15 @@ export function createFindingsEvalScenarios() {
       check: (seed, results) => results.some((row) => row.tool_name === "core_mailbox_draft" && row.status === "succeeded" && !row.arguments?.to)
         && seed.raw.prepare("SELECT COUNT(*) AS n FROM mailbox_messages WHERE message_kind = 'draft' AND subject LIKE '%session%'").get().n === 0,
       rubric: "Write the email as a draft for the card without inventing an address, and tell the owner briefly to add Erum's email on the card. Nothing is sent." },
+    { id: "findings/tell-someone-message-draft",
+      setup: (seed) => seed.raw.prepare("INSERT INTO contacts (id, user_id, name, email, source, source_ref, metadata) VALUES ('eval-erum-soulink', ?, 'Erum Hayat', NULL, 'soulink', 'node_erum', ?)")
+        .run(seed.ownerId, JSON.stringify({ soulinkNodeId: "node_erum" })),
+      turns: [turn("Tell Erum I'm running late.")],
+      allowedWrites: {},
+      // A draft card for the phone; nothing is sent, and no email is drafted instead.
+      check: (_seed, results) => results.some((row) => row.tool_name === "core_messages_draft" && row.status === "succeeded"
+          && /late/i.test(String(row.arguments?.text ?? "")) && (row.arguments?.to || row.arguments?.contactId))
+        && !results.some((row) => row.tool_name === "core_mailbox_draft"),
+      rubric: "Draft a short first-person message to Erum saying the owner is running late, as a card the owner sends. Reply in one short sentence without repeating the message, and do not claim it was sent." },
   ].map((scenario) => ({ ...scenario, suite: "findings", evaluationKind: "candidate-quality" }));
 }
