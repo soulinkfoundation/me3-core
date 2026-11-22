@@ -39,8 +39,13 @@ remote = true
 [vars]
 # Local runs pass --var ENVIRONMENT:local (see package.json and scripts/smoke.mjs).
 ENVIRONMENT = "production"
-# Follow-up suggestions and memory extraction stay on the free chat model, not a paid one.
-ME3_AGENT_FAST_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
+# Free chat runs on Claude Haiku 5.5 (me3-bybb.6, eval 2026-11-22). DeepSeek is the backup when a Haiku
+# call fails or is rate limited: separate providers, separate per-minute limits (me3-bybb.13).
+ME3_AI_CHAT_PROVIDER = "anthropic"
+ME3_AI_CHAT_MODEL = "claude-haiku-5.5"
+ME3_AI_CHAT_BACKUP_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
+# Follow-up suggestions and memory extraction use the same model as chat.
+ME3_AGENT_FAST_MODEL = "anthropic/claude-haiku-5.5"
 # "on" adds News (the morning paper) to the free plan.
 ME3_FREE_NEWS = "on"
 
