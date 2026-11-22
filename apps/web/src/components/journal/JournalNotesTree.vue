@@ -1,10 +1,10 @@
 <script setup lang="ts" generic="T extends { id: string; title: string | null; updatedAt: string; projectId?: string | null; folderId?: string | null }">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import JournalNoteMoveMenu from "./JournalNoteMoveMenu.vue";
 import ProjectIcon from "../tasks/ProjectIcon.vue";
-import { groupNotes, type NoteFolder, type NotePlacement, type NoteProject, type NoteProjectGroup } from "../../utils/journalNotes";
+import { groupNotes, samePlacement, type NoteFolder, type NotePlacement, type NoteProject, type NoteProjectGroup } from "../../utils/journalNotes";
 
 // The Notes tab of the Journal library: projects, then folders inside them, then loose notes.
 const props = defineProps<{
@@ -47,9 +47,9 @@ function isOpen(key: string, holdsActive: boolean) {
   return holdsActive || !collapsed.value.has(key);
 }
 
-function toggle(key: string) {
+function toggle(key: string, open?: boolean) {
   const next = new Set(collapsed.value);
-  if (next.has(key)) next.delete(key);
+  if (open ?? next.has(key)) next.delete(key);
   else next.add(key);
   collapsed.value = next;
   try { window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next])); } catch { /* per-browser convenience only */ }
@@ -103,14 +103,82 @@ function newFolder(projectId: string | null) {
   emit("new-folder", projectId);
 }
 
+// Drag a note onto a project or folder header to file it there. Mouse only: touch keeps "Move to…".
+// A private type keeps the editor and other drop zones from treating the drag as text.
+const DRAG_TYPE = "application/x-me3-journal-note";
+const OPEN_DELAY_MS = 600;
+const dragging = shallowRef<{ note: T; placement: NotePlacement } | null>(null);
+const dropKey = ref<string | null>(null);
+let openTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearOpenTimer() {
+  if (openTimer) clearTimeout(openTimer);
+  openTimer = null;
+}
+
+function onNoteDragStart(event: DragEvent, note: T, placement: NotePlacement) {
+  if (!event.dataTransfer) return;
+  closeMenu();
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData(DRAG_TYPE, note.id);
+  dragging.value = { note, placement };
+}
+
+function onDragEnd() {
+  dragging.value = null;
+  dropKey.value = null;
+  clearOpenTimer();
+}
+
+function canDrop(placement: NotePlacement) {
+  return dragging.value !== null && !samePlacement(dragging.value.placement, placement);
+}
+
+// Hovering a closed project or folder opens it after a moment, so notes can reach folders inside.
+function onDragOver(event: DragEvent, key: string, placement: NotePlacement, closed: boolean) {
+  if (!dragging.value) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = canDrop(placement) ? "move" : "none";
+  if (dropKey.value === key) return;
+  dropKey.value = key;
+  clearOpenTimer();
+  if (closed) openTimer = setTimeout(() => toggle(key, true), OPEN_DELAY_MS);
+}
+
+function onDragLeave(event: DragEvent, key: string) {
+  const next = event.relatedTarget;
+  if (next instanceof Node && (event.currentTarget as Element).contains(next)) return;
+  if (dropKey.value === key) {
+    dropKey.value = null;
+    clearOpenTimer();
+  }
+}
+
+function onDrop(event: DragEvent, placement: NotePlacement) {
+  const drag = dragging.value;
+  onDragEnd();
+  if (!drag) return;
+  event.preventDefault();
+  if (!samePlacement(drag.placement, placement)) emit("move", drag.note, placement);
+}
+
 onMounted(() => window.addEventListener("click", closeMenu));
-onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
+onBeforeUnmount(() => {
+  window.removeEventListener("click", closeMenu);
+  clearOpenTimer();
+});
 </script>
 
 <template>
   <div class="notes-tree">
     <section v-for="group in groups" :key="group.key" class="notes-tree__group">
-      <div class="notes-tree__head" :class="{ 'is-muted': !group.projectId }">
+      <div
+        class="notes-tree__head"
+        :class="{ 'is-muted': !group.projectId, 'is-drop-target': dropKey === group.key && canDrop({ projectId: group.projectId, folderId: null }) }"
+        @dragover="onDragOver($event, group.key, { projectId: group.projectId, folderId: null }, !isOpen(group.key, groupHoldsActive(group.projectId)))"
+        @dragleave="onDragLeave($event, group.key)"
+        @drop="onDrop($event, { projectId: group.projectId, folderId: null })"
+      >
         <button
           type="button"
           class="notes-tree__toggle"
@@ -130,7 +198,14 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
 
       <div v-if="isOpen(group.key, groupHoldsActive(group.projectId))" class="notes-tree__body">
         <template v-for="item in rowsOf(group)" :key="item.key">
-          <div v-if="item.kind === 'folder'" class="notes-tree__head notes-tree__head--folder">
+          <div
+            v-if="item.kind === 'folder'"
+            class="notes-tree__head notes-tree__head--folder"
+            :class="{ 'is-drop-target': dropKey === item.folder.id && canDrop({ projectId: group.projectId, folderId: item.folder.id }) }"
+            @dragover="onDragOver($event, item.folder.id, { projectId: group.projectId, folderId: item.folder.id }, !item.open)"
+            @dragleave="onDragLeave($event, item.folder.id)"
+            @drop="onDrop($event, { projectId: group.projectId, folderId: item.folder.id })"
+          >
             <button type="button" class="notes-tree__toggle" :aria-expanded="item.open" @click="toggle(item.folder.id)">
               <UiIcon class="notes-tree__chevron" name="ChevronDown" :size="15" aria-hidden="true" />
               <UiIcon name="Folder" :size="15" aria-hidden="true" />
@@ -144,7 +219,14 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
             </div>
           </div>
           <p v-else-if="item.kind === 'empty'" class="notes-tree__empty">Empty folder</p>
-          <div v-else class="notes-tree__row" :class="{ 'is-active': item.note.id === activeId, 'is-menu-open': menu?.id === item.note.id, 'is-filed': item.placement.folderId }">
+          <div
+            v-else
+            class="notes-tree__row"
+            :class="{ 'is-active': item.note.id === activeId, 'is-menu-open': menu?.id === item.note.id, 'is-filed': item.placement.folderId, 'is-dragging': dragging?.note.id === item.note.id }"
+            draggable="true"
+            @dragstart="onNoteDragStart($event, item.note, item.placement)"
+            @dragend="onDragEnd"
+          >
             <button type="button" class="notes-tree__row-main" @click="emit('open', item.note.id)">
               <span class="notes-tree__row-head"><strong>{{ item.note.title || 'Untitled note' }}</strong><small>{{ wordCount(item.note).toLocaleString() }} words</small></span>
               <span>{{ subtitle(item.note) }}</span>
@@ -199,6 +281,15 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
 .notes-tree__head:hover,
 .notes-tree__head:focus-within {
   background: var(--ui-surface-muted, var(--color-surface-muted));
+}
+
+.notes-tree__head.is-drop-target {
+  background: var(--ui-accent-soft, var(--ui-surface-muted));
+  box-shadow: inset 0 0 0 2px var(--ui-accent);
+}
+
+.notes-tree__row.is-dragging {
+  opacity: 0.45;
 }
 
 .notes-tree__toggle {

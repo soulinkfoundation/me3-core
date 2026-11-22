@@ -13485,6 +13485,202 @@ describe("ME3 Worker auth", () => {
     }
   });
 
+  describe("ME3 messaging session", () => {
+    const provisioned = {
+      ok: true,
+      ownerNodeId: "node-owner",
+      assistantNodeId: "assistant-owner",
+      streamChannelType: "messaging",
+      streamChannelId: "assistant-channel",
+      soulinkChatUrl: "https://soulink.test/chats/assistant-channel",
+    };
+    const chatSession = {
+      ok: true,
+      ownerNodeId: "node-owner",
+      session: { token: "soulink-session-token", expiresAt: "2026-11-22T13:00:00.000Z" },
+      user: { id: "node-owner" },
+      access: { hasAccess: true },
+      stream: { provider: "stream", apiKey: "stream-key", userId: "node-owner", token: "stream-user-token" },
+    };
+    // Soulink as Core sees it: provision mints the connection, chat-session trades its dispatch token.
+    function soulink(options: { chatSession?: (token: string, attempt: number) => Response } = {}) {
+      const tokens: string[] = [];
+      let attempts = 0;
+      const mock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/api/me3/links")) return Response.json({ ok: true, ownerNodeId: "node-owner", links: [] });
+        if (url.endsWith("/api/me3/assistant-channel/provision")) {
+          tokens.push(JSON.parse(String(init?.body)).runtime.dispatchToken);
+          return Response.json(provisioned);
+        }
+        if (url.endsWith("/api/me3/chat-session")) {
+          const token = String(new Headers(init?.headers).get("Authorization")).replace("Bearer ", "");
+          attempts += 1;
+          if (options.chatSession) return options.chatSession(token, attempts);
+          return tokens.includes(token) ? Response.json(chatSession) : Response.json({ ok: false }, { status: 401 });
+        }
+        return Response.json({});
+      });
+      vi.stubGlobal("fetch", mock);
+      const calls = (suffix: string) => mock.mock.calls.filter(([input]) => String(input).endsWith(suffix));
+      return { mock, tokens, calls };
+    }
+    const post = (env: ReturnType<typeof createEnv>, session: string | null, body: unknown = { client: "ios" }) =>
+      app.fetch(new Request("http://localhost/api/messaging/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(session ? { Cookie: session } : {}) },
+        body: JSON.stringify(body),
+      }), env);
+
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("connects a fresh owner to Soulink and returns a session in one call", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      const { calls, tokens } = soulink();
+
+      const response = await post(env, session);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(await response.json()).toEqual({
+        ok: true,
+        soulinkApiOrigin: "https://soulink.test",
+        soulinkSessionToken: "soulink-session-token",
+        expiresAt: "2026-11-22T13:00:00.000Z",
+        ownerNodeId: "node-owner",
+        stream: { apiKey: "stream-key", userId: "node-owner", token: "stream-user-token" },
+        connected: true,
+      });
+      expect(calls("/provision")).toHaveLength(1);
+      expect(env.soulinkConnection).toMatchObject({ status: "active", setup_token: tokens[0] });
+      const [, init] = calls("/api/me3/chat-session")[0];
+      expect(JSON.parse(String(init?.body))).toEqual({ client: "ios" });
+      // Core keeps only the connection: no session or Stream token lands in its records.
+      expect(JSON.stringify(env.soulinkConnection)).not.toMatch(/soulink-session-token|stream-user-token/);
+    });
+
+    it("reuses an active connection without provisioning again", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      const { calls } = soulink();
+      expect((await post(env, session)).status).toBe(200);
+      const second = await post(env, session, { client: "android" });
+      expect(second.status).toBe(200);
+      expect((await second.json() as { connected: boolean }).connected).toBe(false);
+      expect(calls("/provision")).toHaveLength(1);
+      expect(calls("/api/me3/chat-session")).toHaveLength(2);
+    });
+
+    it("reconnects once when Soulink no longer holds the connection", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      const { calls, tokens } = soulink();
+      await post(env, session);
+      tokens.splice(0); // Soulink revoked the old dispatch token.
+
+      const response = await post(env, session);
+      expect(response.status).toBe(200);
+      expect((await response.json() as { connected: boolean }).connected).toBe(true);
+      expect(calls("/provision")).toHaveLength(2);
+      expect(env.soulinkConnection?.setup_token).toBe(tokens[0]);
+    });
+
+    it("stops after one reconnect if Soulink still refuses", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      const { calls } = soulink({ chatSession: () => Response.json({ ok: false }, { status: 401 }) });
+      await post(env, session);
+      const response = await post(env, session);
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ ok: false, code: "soulink_error" });
+      expect(calls("/api/me3/chat-session")).toHaveLength(3);
+    });
+
+    it("tells the phone when the owner is not eligible or the account is being deleted", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      soulink({ chatSession: () => Response.json({ ok: false, error: "Soulink access is not available for this account." }, { status: 403 }) });
+      const refused = await post(env, session);
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toEqual({
+        ok: false, status: 403, code: "not_eligible", error: "Soulink access is not available for this account.",
+      });
+
+      soulink({ chatSession: () => Response.json({ ok: false, error: "This Soulink account is being deleted." }, { status: 409 }) });
+      const deleting = await post(env, session);
+      expect(deleting.status).toBe(409);
+      expect(await deleting.json()).toMatchObject({ code: "account_deleting" });
+    });
+
+    it("says Soulink is unavailable when it cannot be reached", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("network down"); }));
+      const unreachable = await post(env, session);
+      expect(unreachable.status).toBe(503);
+      expect(await unreachable.json()).toMatchObject({ ok: false, code: "soulink_unavailable" });
+      expect(env.soulinkConnection).toBeNull();
+
+      soulink({ chatSession: () => Response.json({ ok: false }, { status: 503 }) });
+      const down = await post(env, session);
+      expect(down.status).toBe(503);
+      expect(await down.json()).toMatchObject({ code: "soulink_unavailable" });
+    });
+
+    it("on the free runtime, connects as this user's own address and says so to Soulink", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      const base = "https://free.me3.app/u/user-a";
+      Object.assign(env, { ME3_SOULINK_ISSUER: () => base, ME3_OWNER_PUBLIC_URL: () => "https://me3.app/clara" });
+      const { calls } = soulink();
+
+      expect((await post(env, session)).status).toBe(200);
+      const [, init] = calls("/provision")[0];
+      const provision = JSON.parse(String(init?.body));
+      expect(provision).toMatchObject({
+        issuer: base,
+        owner: { me3Url: "https://me3.app/clara" },
+        runtime: { callbackUrl: `${base}/api/agent/channels/soulink/dispatch` },
+      });
+      // Soulink confirms the proof at that address (the free runtime strips /u/{id}); the shared origin is not this ME3.
+      const verify = (issuer: string) => app.fetch(new Request("http://localhost/api/soulink/provision/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issuer, subject: provision.subject, callbackUrl: provision.runtime.callbackUrl,
+          dispatchToken: provision.runtime.dispatchToken, proof: provision.proof }),
+      }), env);
+      expect(await (await verify(base)).json()).toEqual({ authorized: true });
+      expect(await (await verify("https://free.me3.app")).json()).toEqual({ authorized: false });
+    });
+
+    it("on the free runtime, does not connect before it knows this user's address", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      Object.assign(env, { ME3_SOULINK_ISSUER: () => null });
+      const { mock } = soulink();
+      const response = await post(env, session);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "soulink_unavailable" });
+      expect(mock.mock.calls.filter(([input]) => String(input).includes("soulink"))).toHaveLength(0);
+    });
+
+    it("requires the owner and names the phone client", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      const { mock } = soulink();
+      expect((await post(env, null)).status).toBe(401);
+      expect((await post(env, session, {})).status).toBe(400);
+      expect((await post(env, session, { client: "web" })).status).toBe(400);
+      expect(mock).not.toHaveBeenCalled();
+
+      const viaQuery = await app.fetch(new Request("http://localhost/api/messaging/session?client=android", {
+        headers: { Cookie: session },
+      }), env);
+      expect(viaQuery.status).toBe(200);
+    });
+  });
+
   it("keeps Soulink setup event logging idempotent on reconnect", async () => {
     const env = createEnv();
     const session = cookieHeader(await bootstrap(env));

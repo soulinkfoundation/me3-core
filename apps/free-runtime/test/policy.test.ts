@@ -17,6 +17,15 @@ describe("free tier policy", () => {
     }
   });
 
+  it("allows ME3 messaging over Soulink but not the paid Soulink features or the assistant dispatch", () => {
+    for (const [method, path] of [["POST", "/api/messaging/session"], ["GET", "/api/messaging/session"], ["POST", "/api/soulink/setup"], ["GET", "/api/soulink/status"], ["POST", "/api/soulink/disconnect"], ["POST", "/api/soulink/provision/verify"]]) {
+      expect(freeApiAccess(method, path, { news: false }), path).toBe("allow");
+    }
+    for (const path of ["/api/soulink/contacts/sync", "/api/soulink/invite-link", "/api/soulink/bookings/upcoming", "/api/agent/channels/soulink/dispatch", "/api/soulink/setupx"]) {
+      expect(freeApiAccess("POST", path, { news: false }), path).toBe("upgrade");
+    }
+  });
+
   it("keeps News off unless it is switched on", () => {
     expect(freeApiAccess("GET", "/api/news/today", { news: false })).toBe("upgrade");
     expect(freeApiAccess("GET", "/api/news/today", { news: true })).toBe("allow");

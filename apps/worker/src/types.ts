@@ -66,6 +66,14 @@ export interface Env {
   ME3_OWNER_PUBLIC_PAGE?: () => Promise<OwnerPublicPage | null>;
   /** Hosted free runtime only: false while the free allowance is used up or free is paused. Background fast-model calls then fall back to no model. */
   ME3_FAST_MODEL_ALLOWED?: () => Promise<boolean>;
+  /**
+   * Hosted free runtime only: this ME3's own address on the shared host
+   * (https://…/u/{userId}), used as its Soulink issuer so free users never share
+   * one. Null while it is not known; Soulink setup then waits.
+   */
+  ME3_SOULINK_ISSUER?: () => string | null;
+  /** Hosted free runtime only: the owner's public me3.app page, which stands in for a profile site's address. */
+  ME3_OWNER_PUBLIC_URL?: () => string | null;
   /** The Human Soup API origin; defaults to https://api.thehumansoup.ai. */
   ME3_SOUP_API_ORIGIN?: string;
   /** Local development only: build News from the bundled fixture of Soup's news contract instead of calling Soup. */

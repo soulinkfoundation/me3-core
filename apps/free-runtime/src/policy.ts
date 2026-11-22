@@ -8,7 +8,12 @@ const FREE_API_PREFIXES = [
   "/api/mobile", "/api/auth/me", "/api/auth/logout", "/api/assistant", "/api/agent/approvals",
   "/api/mission-control", "/api/tasks", "/api/journal", "/api/calendar", "/api/home", "/api/account",
   "/api/quotes", "/api/gratitude", "/api/push", "/api/config", "/api/navigation-features",
+  "/api/messaging",
 ];
+// ME3 messaging over Soulink chat: connect, status, disconnect, and the check Soulink makes that a connect
+// came from this ME3. Contacts sync, invite links, bookings and the Soulink assistant chat (agent dispatch,
+// which would run the model outside the free allowance) stay paid.
+const FREE_SOULINK_PATHS = ["/api/soulink/setup", "/api/soulink/status", "/api/soulink/disconnect", "/api/soulink/provision/verify"];
 const NEWS_API_PREFIXES = ["/api/news", "/api/soup"];
 // Inside an allowed area but not free: uploads need storage, and these agent channels belong to paid installs.
 const BLOCKED_API_PREFIXES = ["/api/assistant/attachments", "/api/calendar/sources"];
@@ -37,6 +42,7 @@ export function freeApiAccess(method: string, path: string, options: FreePolicyO
     if (method !== "POST" || !Array.isArray(requests)) return "upgrade";
     return requests.every((entry) => typeof entry === "string" && entry !== "/api/batch" && freeApiAccess("GET", entry, options) === "allow") ? "allow" : "upgrade";
   }
+  if (FREE_SOULINK_PATHS.includes(pathname)) return "allow";
   if (BLOCKED_API_PREFIXES.some((prefix) => under(pathname, prefix))) return "upgrade";
   const allowed = options.news ? [...FREE_API_PREFIXES, ...NEWS_API_PREFIXES] : FREE_API_PREFIXES;
   return allowed.some((prefix) => under(pathname, prefix)) ? "allow" : "upgrade";
