@@ -63,9 +63,9 @@ describe("Home summaries", () => {
     expect(visibleHomeCards(emptyHomeLayout())).toEqual(["today", "people"]);
     expect(visibleHomeCards({ ...emptyHomeLayout(), pinned: ["gratitude"] })).not.toContain("gratitude");
   });
-  it("starts a new install with Today alone, People hidden and Accounts earned", () => {
-    expect(visibleHomeCards(newInstallHomeLayout())).toEqual(["today"]);
-    expect(visibleHomeCards({ ...newInstallHomeLayout(), earned: ["accounts"] })).toEqual(["today", "accounts"]);
+  it("starts a new install with the paper and Today, People hidden and Accounts earned", () => {
+    expect(visibleHomeCards(newInstallHomeLayout())).toEqual(["soup", "today"]);
+    expect(visibleHomeCards({ ...newInstallHomeLayout(), earned: ["accounts"] })).toEqual(["soup", "today", "accounts"]);
     expect(visibleHomeCards({ ...newInstallHomeLayout(), pinned: ["accounts"] })).toContain("accounts");
   });
   it("treats the first active goal as the focus and moves a new focus to the front", () => {

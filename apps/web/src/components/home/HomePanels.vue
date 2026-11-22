@@ -113,7 +113,7 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
   tasks: { title: "Tasks", href: "/tasks", emoji: "✅" },
   mission: { title: "Mission", href: "/mission", emoji: "🚀" },
   accounts: { title: "Accounts", href: "/accounts", emoji: "💰" },
-  soup: { title: "News", href: "/?view=home", emoji: "🗞️" },
+  soup: { title: "The Morning Paper", href: "/?view=home", emoji: "🗞️" },
   notes: { title: "Notes", href: "/journal?tab=notes", emoji: "🗒️" },
 };
 // Notes (me3-qvyt): opt-in. The header's mic and + open the field inside the card.
@@ -129,7 +129,7 @@ function noteSaved(note: HomeNote) { notes.value = [note, ...notes.value].slice(
 const peopleCard = computed(() => rankHomePeople(contactsStore.contacts, contact => contact.reminderAt));
 const openPersonId = ref<string | null>(null);
 const openPerson = computed(() => contactsStore.contacts.find(contact => contact.id === openPersonId.value) || null);
-// News (me3-6ptk.5). The card id stays "soup" in saved Home layouts; owners only ever see "News".
+// News (me3-6ptk.5). The card id stays "soup" in saved Home layouts; owners see it as "The Morning Paper".
 const news = ref<NewsToday | null>(null);
 const newsPaper = computed<NewsPaper | null>(() => news.value?.paper ?? null);
 const newsBuilding = ref(false);
@@ -140,7 +140,7 @@ let newsOpenWhenLoaded = false;
 // On Home: the intro until News is set up, then today's paper unless it is hidden until tomorrow.
 const newsShow = computed(() => Boolean(news.value) && (!news.value!.setUp || newsBuilding.value || Boolean(newsPaper.value && !newsPaper.value.hiddenAt)));
 const newsRead = computed(() => Boolean(newsPaper.value?.readAt));
-// Unread, the title says "Today’s news" and needs no date; once read it says when the next one comes.
+// Once read, the card says when the next paper comes.
 const newsDetail = computed(() => newsPaper.value?.readAt && news.value ? `Read · tomorrow at ${news.value.nextTime}` : "");
 /** The card drops onto Home once for each new paper, and again when it is brought back. */
 function landNews(paper?: NewsPaper) {
@@ -257,18 +257,24 @@ function goToMissionPage(page: number) {
 }
 function onMissionScroll(event: Event) { const pager = event.currentTarget as HTMLElement; missionPage.value = Math.round(pager.scrollLeft / Math.max(pager.clientWidth, 1)); }
 const todayLabel = computed(() => new Date(`${day.value}T12:00:00`).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }));
+// Same rule as Today's page: after a tap here, a slower load doesn't put the old value back.
+let gratitudeSet = false;
 async function toggleGratitude() {
   const next = !gratitudeOn.value;
+  gratitudeSet = true;
   gratitudeOn.value = next;
   try { await api.patch("/gratitude/settings", { inToday: next }); }
-  catch (error) { gratitudeOn.value = !next; toastFromUnknown(error, "Couldn't change Gratitude"); }
+  catch (error) { if (gratitudeOn.value === next) { gratitudeOn.value = !next; toastFromUnknown(error, "Couldn't change Gratitude"); } }
 }
-async function toggleTodayPage() {
-  const next = !todayPageOn.value;
+// Once the owner (or a new install) sets Today's page here, a slower settings load must not put the old value back.
+let todayPageSet = false;
+async function setTodayPage(next: boolean) {
+  todayPageSet = true;
   todayPageOn.value = next;
   try { await api.patch("/home/settings", { todayPage: next }); }
-  catch (error) { todayPageOn.value = !next; toastFromUnknown(error, "Couldn't change Today's page"); }
+  catch (error) { if (todayPageOn.value === next) { todayPageOn.value = !next; toastFromUnknown(error, "Couldn't change Today's page"); } }
 }
+const toggleTodayPage = () => setTodayPage(!todayPageOn.value);
 const activeGoals = computed(() => goals.value.filter(goal => goal.status !== "completed"));
 const lowestArea = computed(() => [...wheel.value].filter(area => area.value !== null).sort((a, b) => a.value! - b.value!)[0]);
 const areaFor = (id?: string | null) => wheel.value.find(area => area.id === id);
@@ -305,7 +311,11 @@ async function loadLayout() {
     if (disposed || generation !== layoutGeneration) return;
     // First visit after the update: carry this browser's saved layout over once.
     // A brand-new install with nothing cached starts with the shared new-install layout.
-    if (!result.layout) { if (!Object.values(layout.value).some(list => list.length)) layout.value = newInstallHomeLayout(); save(); return; }
+    if (!result.layout) {
+      // A brand-new install also starts with Today's page off; the owner can switch it on from Today's menu.
+      if (!Object.values(layout.value).some(list => list.length)) { layout.value = newInstallHomeLayout(); setTodayPage(false); }
+      save(); return;
+    }
     layout.value = readLayout(result.layout); cache();
   } catch { /* Keep the cached layout; the next refresh tries again. */ }
 }
@@ -447,8 +457,8 @@ async function refresh() {
         soulink.value = homeInboxSoulink(result.recentEvents || []).map(e => ({ ...e, outcome: result.recentEvents?.find(reply => e.providerEventId && reply.direction === "outbound" && reply.providerEventId === `${e.providerEventId}:reply`)?.textBody }));
       } catch (error) { if (!(error instanceof ApiError && error.status === 404)) throw error; }
     }),
-    api.get<{ todayPage?: boolean }>("/home/settings").then(settings => { if (!disposed) todayPageOn.value = settings.todayPage !== false; }).catch(() => undefined),
-    resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed) gratitudeOn.value = Boolean(state.settings?.inToday); }),
+    api.get<{ todayPage?: boolean }>("/home/settings").then(settings => { if (!disposed && !todayPageSet) todayPageOn.value = settings.todayPage !== false; }).catch(() => undefined),
+    resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed && !gratitudeSet) gratitudeOn.value = Boolean(state.settings?.inToday); }),
     loadNews(),
     loadNotes(),
     resource("people", async () => { await contactsStore.fetchContacts(); if (contactsStore.error) throw new Error(contactsStore.error); }),
@@ -542,7 +552,7 @@ onBeforeUnmount(() => {
         <article :ref="el => setCardElement(card, el)" class="home-card" :class="{ 'home-card--landing': card === 'soup' && newsFresh, 'home-card--line': card === 'soup' && newsRead }" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header class="home-card__header">
             <!-- News opens the paper in place; a RouterLink here would also navigate, since its own click handler runs before ours. -->
-            <button v-if="card === 'soup' && newsPaper" type="button" class="home-card__title" @click="newsReader = true"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ newsPaper.readAt ? cards[card].title : 'Today’s news' }}</span></button>
+            <button v-if="card === 'soup' && newsPaper" type="button" class="home-card__title" @click="newsReader = true"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></button>
             <RouterLink v-else :to="card === 'today' ? `/calendar?date=${day}` : card === 'tasks' ? `/tasks?view=${tasksCard.view}` : cards[card].href" class="home-card__title"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></RouterLink>
             <span v-if="card === 'today'" class="home-card__detail">{{ todayLabel }}</span>
             <span v-else-if="card === 'soup' && newsDetail" class="home-card__detail">{{ newsDetail }}</span>
@@ -664,7 +674,7 @@ onBeforeUnmount(() => {
         </article>
       </template>
     </draggable>
-    <button v-if="newsHidden" type="button" class="home-news-bring" @click="newsBringBack"><span aria-hidden="true">🗞️</span> Today’s news</button>
+    <button v-if="newsHidden" type="button" class="home-news-bring" @click="newsBringBack"><span aria-hidden="true">🗞️</span> The Morning Paper</button>
     <button type="button" class="home-add" data-tour-target="add_to_home" @click="dialog = 'add'"><UiIcon name="Plus" :size="26" /><span>Add to Home</span></button>
     <AppDialog :open="dialog !== null" aria-label="Add to Home" @close="dialog = null">
       <section class="home-dialog"><header><h2>Add to Home</h2><button type="button" aria-label="Close Home editor" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>

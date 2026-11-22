@@ -16,10 +16,12 @@ let tasks: object[] = [];
 let goals: object[] = [];
 let gratitudeInToday = false;
 let homeSettings: object | Error = { todayPage: true };
+// null is a brand-new install: no client has saved a Home layout yet.
+let savedLayout: object | null = null;
 const daysAgo = (days: number) => new Date(Date.now() - days * 864e5).toISOString();
 const contact = (id: string, name: string, extra: object = {}) => ({ id, name, status: "active", source: "manual", socialHandles: {}, metadata: null, isClose: true, closeness: "close", closeSince: daysAgo(100), isClient: false, lastInTouchAt: null, reminderAt: null, ...extra });
 beforeEach(() => {
-  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = []; tasks = []; goals = []; gratitudeInToday = false; homeSettings = { todayPage: true };
+  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = []; tasks = []; goals = []; gratitudeInToday = false; homeSettings = { todayPage: true }; savedLayout = null;
   vi.spyOn(HTMLDialogElement.prototype, "showModal").mockImplementation(function (this: HTMLDialogElement) { this.setAttribute("open", ""); });
   vi.spyOn(HTMLDialogElement.prototype, "close").mockImplementation(function (this: HTMLDialogElement) { this.removeAttribute("open"); });
   vi.mocked(api.get).mockImplementation(async endpoint => {
@@ -32,6 +34,7 @@ beforeEach(() => {
     if (endpoint.startsWith("/mission-control/tasks")) return { tasks } as never;
     if (endpoint === "/tasks/goals") return { goals } as never;
     if (endpoint === "/gratitude") return { date: "2026-10-14", timezone: "UTC", quote: null, gratitude: [], goodThings: [], days: [], settings: { quoteInBriefing: true, eveningReminder: false, inToday: gratitudeInToday } } as never;
+    if (endpoint === "/home/layout" && savedLayout) return { layout: savedLayout } as never;
     if (endpoint === "/home/settings") { if (homeSettings instanceof Error) throw homeSettings; return homeSettings as never; }
     if (endpoint.startsWith("/journal/archive")) return { entries: [] } as never;
     if (endpoint === "/mission-control/wheel") return { snapshots: [], settings: { segments: [] } } as never;
@@ -155,6 +158,8 @@ describe("Home Today card", () => {
   const today = () => document.body.querySelector('article[aria-label="Today"]')!;
   const gratitude = () => today().querySelector('[aria-label="Gratitude"], [aria-label="Three good things"]');
   const feed = (events: object[], sources: object[] = [{ id: "google" }]) => vi.mocked(api.get).mockImplementation((original => async (endpoint: string) => endpoint.startsWith("/calendar/feed") ? { events, sources } as never : original(endpoint))(vi.mocked(api.get).getMockImplementation()!));
+  // These cover an existing install; the last test covers a brand-new one.
+  beforeEach(() => { savedLayout = { order: ["today"], hidden: ["inbox", "people"], pinned: [], earned: [] }; });
   // Failure modes: tasks, notes or the focus goal creeping back into Today; the tasks line
   // miscounting or not opening the journal; the title not opening the calendar on today.
   it("is the calendar at a glance, with one line into today's page for tasks", async () => {
@@ -233,6 +238,13 @@ describe("Home Today card", () => {
     expect(todayPage()).toBeNull();
     await openTodayMenu();
     expect(todayPageSwitch().getAttribute("aria-checked")).toBe("false");
+  });
+  it("starts a brand-new install with Today's page off and saves that", async () => {
+    savedLayout = null;
+    render(); await flushPromises();
+    expect(todayPage()).toBeNull();
+    expect(api.patch).toHaveBeenCalledWith("/home/settings", { todayPage: false });
+    expect(api.put).toHaveBeenCalledWith("/home/layout", expect.objectContaining({ order: ["soup", "today"], pinned: ["soup"] }));
   });
   it("puts Today's page back when saving the switch fails", async () => {
     vi.mocked(api.patch).mockRejectedValueOnce(new Error("offline"));
