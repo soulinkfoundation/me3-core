@@ -44,6 +44,9 @@ ENVIRONMENT = "production"
 ME3_AI_CHAT_PROVIDER = "anthropic"
 ME3_AI_CHAT_MODEL = "claude-haiku-5.5"
 ME3_AI_CHAT_BACKUP_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
+# Free AI goes through its own gateway, so its usage and cost show apart from paid installs and it has
+# its own spend limit (me3-bybb.14). Created by hand on the Production account; logs and cache off.
+CLOUDFLARE_AI_GATEWAY_ID = "me3-free"
 # Follow-up suggestions and memory extraction use the same model as chat.
 ME3_AGENT_FAST_MODEL = "anthropic/claude-haiku-5.5"
 # "on" adds News (the morning paper) to the free plan.
