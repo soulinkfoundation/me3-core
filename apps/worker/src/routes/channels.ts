@@ -19,6 +19,7 @@ import type { DbAgentChannelConnection, DbAgentChannelEvent, DbContact, Env } fr
 import { hashGuestToken } from "../booking-meetings";
 import { getOrCreateInstallSessionSecret } from "../install-secrets";
 import { resolvePrimaryAssistantThread } from "../assistant-primary-thread";
+import { getSoulinkDirectoryBridgeConfig } from "../network-directory";
 
 const DEFAULT_SOULINK_API_ORIGIN = "https://soulinkfoundation.org";
 
@@ -119,6 +120,7 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
     const issuer = getCoreApiOrigin(c.env, c.req.url);
     const callbackUrl = `${issuer}/api/agent/channels/soulink/dispatch`;
     const proof = await createSoulinkProvisionProof(c.env, { issuer, subject: owner.id, callbackUrl, dispatchToken });
+    const ownerAssertion = await fetchSoulinkOwnerAssertion(c.env, issuer);
     const response = await fetch(`${config.apiOrigin}/api/me3/assistant-channel/provision`, {
       method: "POST",
       headers: {
@@ -128,6 +130,7 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
         issuer,
         subject: owner.id,
         proof,
+        ...(ownerAssertion ? { ownerAssertion } : {}),
         owner: {
           displayName: owner.name || owner.username || "ME3 Owner",
           handle: owner.username || "owner",
@@ -201,6 +204,11 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
     const existing = await getSoulinkConnection(c.env, ownerId);
     if (!existing) {
       return c.json({ ok: true, disconnected: false, ...(await buildSoulinkStatusPayload(c.env, ownerId, c.req.url)) });
+    }
+
+    // Soulink revokes the connection so chat sessions minted for it stop working.
+    if (existing.status === "active" && existing.setup_token) {
+      await revokeSoulinkConnection(getSoulinkConnectorConfig(c.env).apiOrigin, existing.setup_token);
     }
 
     await c.env.DB.prepare(
@@ -305,6 +313,46 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
       hostName: booking.username, startsAt: booking.starts_at, endsAt: booking.ends_at,
     } });
   });
+}
+
+/**
+ * An install linked to ME3 Cloud asks Cloud to vouch for its owner, so Soulink
+ * puts this connection on the same node as the owner's Soulink app sign-in.
+ * A self-hosted install with no Cloud link connects without one.
+ */
+export async function fetchSoulinkOwnerAssertion(env: Env, coreOrigin: string): Promise<string | null> {
+  const bridge = await getSoulinkDirectoryBridgeConfig(env);
+  if (!bridge?.origin) return null;
+  try {
+    const response = await fetch(`${bridge.origin}/v1/network/soulink-owner-assertion`, {
+      method: "POST",
+      headers: { ...bridge.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ coreOrigin }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    const body = (await response.json().catch(() => null)) as { token?: unknown } | null;
+    if (response.ok && typeof body?.token === "string" && body.token) return body.token;
+    console.warn("ME3 Cloud did not vouch for the Soulink owner", { status: response.status });
+  } catch (error) {
+    console.warn("ME3 Cloud owner assertion failed", error);
+  }
+  return null;
+}
+
+export async function revokeSoulinkConnection(apiOrigin: string, dispatchToken: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${apiOrigin}/api/me3/assistant-channel/disconnect`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${dispatchToken}` },
+      signal: AbortSignal.timeout(5_000),
+    });
+    // 401 means Soulink no longer holds this connection as active.
+    if (response.ok || response.status === 401) return true;
+    console.warn("Soulink did not revoke the connection", { status: response.status });
+  } catch (error) {
+    console.warn("Soulink connection revoke failed", error);
+  }
+  return false;
 }
 
 type SoulinkProvisionProofInput = { issuer: string; subject: string; callbackUrl: string; dispatchToken: string };
