@@ -67,6 +67,11 @@ export interface Env {
   /** Hosted free runtime only: false while the free allowance is used up or free is paused. Background fast-model calls then fall back to no model. */
   ME3_FAST_MODEL_ALLOWED?: () => Promise<boolean>;
   /**
+   * Hosted free runtime only: true while model input is scarce (provider rate limits or budget pressure). A finished
+   * turn then skips follow-up suggestions and leaves memory extraction for rememberDeferredTurns, so a message is one call.
+   */
+  ME3_AGENT_SHED_AFTER_TURN?: () => Promise<boolean>;
+  /**
    * Hosted free runtime only: this ME3's own address on the shared host
    * (https://…/u/{userId}), used as its Soulink issuer so free users never share
    * one. Null while it is not known; Soulink setup then waits.

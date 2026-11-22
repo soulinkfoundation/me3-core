@@ -9,11 +9,47 @@ export type BudgetState = {
   perUserDailyMessages: number;
   perUserDailyMicroUsd: number;
   paused: boolean;
+  /** Shedding drops after-turn model calls (follow-ups, memory) so a message is one call: "auto" sheds when busy. */
+  shed: "auto" | "on" | "off";
+  /** Busy above this many chat turns a minute, runtime-wide. */
+  shedTurnsPerMinute: number;
+  minute: number;
+  turnsThisMinute: number;
+  turnsLastMinute: number;
+  /** When a model call was last refused (rate limited or overloaded), in ms. */
+  rateLimitedAt: number;
 };
 
 export const DEFAULT_BUDGET: BudgetState = {
   day: "", spentMicroUsd: 0, dailyBudgetMicroUsd: 100_000_000, perUserDailyMessages: 60, perUserDailyMicroUsd: 150_000, paused: false,
+  shed: "auto", shedTurnsPerMinute: 300, minute: 0, turnsThisMinute: 0, turnsLastMinute: 0, rateLimitedAt: 0,
 };
+
+/** Busy for this long after any refused model call. */
+export const RATE_LIMIT_SHED_MS = 2 * 60_000;
+/** Busy once this share of the daily budget is spent. */
+export const BUDGET_SHED_SHARE = 0.8;
+
+/** Counts a chat turn and any refused model calls into the per-minute load. */
+export function recordLoad(state: BudgetState, now: number, load: { turn?: boolean; rateLimited?: number }): BudgetState {
+  const minute = Math.floor(now / 60_000);
+  const next = minute === state.minute ? { ...state }
+    : { ...state, minute, turnsLastMinute: minute === state.minute + 1 ? state.turnsThisMinute : 0, turnsThisMinute: 0 };
+  if (load.turn) next.turnsThisMinute += 1;
+  if ((load.rateLimited ?? 0) > 0) next.rateLimitedAt = now;
+  return next;
+}
+
+/** Whether after-turn model calls should wait: switched on, recent refusals, a busy minute, or most of today's budget gone. */
+export function shouldShed(state: BudgetState, now: number): boolean {
+  if (state.shed !== "auto") return state.shed === "on";
+  const minute = Math.floor(now / 60_000);
+  const thisMinute = minute === state.minute ? state.turnsThisMinute : 0;
+  const lastMinute = minute === state.minute ? state.turnsLastMinute : minute === state.minute + 1 ? state.turnsThisMinute : 0;
+  return now - state.rateLimitedAt < RATE_LIMIT_SHED_MS
+    || Math.max(thisMinute, lastMinute) >= state.shedTurnsPerMinute
+    || (state.day === utcDay(now) && state.spentMicroUsd >= state.dailyBudgetMicroUsd * BUDGET_SHED_SHARE);
+}
 
 /** What one message costs before a user has any spend today to judge by (a cold DeepSeek turn measured ~$0.004). */
 export const TYPICAL_MESSAGE_MICRO_USD = 4_000;

@@ -99,12 +99,28 @@ describe("new agent Cloudflare model transport", () => {
       {type:"message_stop"},
     ]);}}});
     const result=await model.step({messages:[{role:"system",content:"Be useful"},{role:"user",content:"Save"},{role:"assistant",content:"",toolCalls:[{id:"old",name:"save",arguments:{title:"first"}}]},{role:"tool",content:'{"status":"ok"}',toolCallId:"old"}],tools:[tool],signal:new AbortController().signal,onDelta:async()=>{}});
-    expect(request.system).toEqual([{type:"text",text:"Be useful",cache_control:{type:"ephemeral"}}]);
-    expect(request.tools).toMatchObject([{cache_control:{type:"ephemeral"}}]);
+    expect(request.system).toEqual([{type:"text",text:"Be useful",cache_control:{type:"ephemeral",ttl:"1h"}}]);
+    expect(request.tools).toMatchObject([{cache_control:{type:"ephemeral",ttl:"1h"}}]);
     expect((request.messages as Array<{content:unknown[]}>).at(-1)?.content.at(-1)).toMatchObject({type:"tool_result",cache_control:{type:"ephemeral"}});
     expect(JSON.stringify(request)).toContain("tool_result");
     expect(result.usage).toMatchObject({inputTokens:140,outputTokens:10,cachedInputTokens:40});
     expect(result.toolCalls[0].arguments).toEqual({title:"hello"});
+  });
+  it("caches the shared prompt part for every owner and keeps always-on tools ahead of loaded groups", async () => {
+    let request:Record<string,unknown>={};
+    const model = createCloudflareModel({model:"anthropic/claude-haiku-5.5",gatewayId:"test",ai:{run:async(_,input)=>{request=input;return stream([
+      {type:"message_start",message:{usage:{input_tokens:10,output_tokens:0}}},{type:"message_delta",usage:{output_tokens:1}},{type:"message_stop"},
+    ]);}}});
+    const grouped={...tool,name:"journal_save",group:"writing"},loader={...tool,name:"core_tools_load"},other={...tool,name:"list"};
+    await model.step({messages:[{role:"system",content:"Shared"},{role:"system",content:"Owner"},{role:"system",content:"Clock"},{role:"user",content:"Hi"}],tools:[tool,grouped,other,loader],signal:new AbortController().signal,onDelta:async()=>{}});
+    expect(request.system).toEqual([
+      {type:"text",text:"Shared",cache_control:{type:"ephemeral",ttl:"1h"}},
+      {type:"text",text:"Owner",cache_control:{type:"ephemeral"}},
+      {type:"text",text:"Clock"},
+    ]);
+    const tools=request.tools as Array<{name:string;cache_control?:unknown}>;
+    expect(tools.map(item=>item.name)).toEqual(["save","list","journal_save","core_tools_load"]);
+    expect(tools.map(item=>item.cache_control)).toEqual([undefined,{type:"ephemeral",ttl:"1h"},undefined,undefined]);
   });
   it("rejects EOF after a valid tool fragment without provider completion", async () => {
     const fixtures: Array<[string, unknown[]]> = [

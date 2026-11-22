@@ -1,5 +1,5 @@
 import { shareOwnerSitePost } from "./social-site-share";
-import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemPrompt, coalesceAgentStreamEvents, createCloudflareModel, isModelRequestRejected, createIntentVerifierFromModel, createD1TurnStore, runAgentTurn, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
+import { AGENT_CONTEXT_LIMITS, appendAgentStreamEvent, buildAgentSystemMessages, coalesceAgentStreamEvents, createCloudflareModel, isModelRequestRejected, createIntentVerifierFromModel, createD1TurnStore, runAgentTurn, type AgentToolContext, type AgentMessage, type AgentModel, type AgentTurnResult, type AgentUsage } from "../../../packages/agent/src";
 import { createCodingAgentServices } from "./coding-agent";
 import { leanToolGroupsFor, toolAllowedByEnv, withLeanToolGroups } from "./agent-tool-allowlist";
 import { agentMaxSteps, agentPlanNote } from "./agent-plan-limits";
@@ -14,7 +14,8 @@ import { computerAvailability, createComputerChatServices, type ComputerJobHost 
 import { computerChatTools } from "../../../packages/agent/src/computer/tools";
 import { createOwnerCreateIntentVerifier } from "./agent-owner-create-intent";
 import { loadOwnerSnapshotContext } from "../../../packages/agent-chat/src/owner-snapshot";
-import { ownerPublicPage } from "./owner-public-page";
+import { ownerPublicPage, shedAfterTurn } from "./owner-public-page";
+import { deferTurnMemory } from "./agent-memory-backlog";
 import { modelSupportsImageInput, modelCapabilitiesFor } from "../../../packages/agent-chat/src/model-capabilities";
 import { getAiSettings } from "./ai-providers";
 import { getAiGatewayRuntimeConfig } from "./ai-gateway";
@@ -105,7 +106,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       // The model sees the pixels; core_images_edit needs the ID to name which image to change.
       const imageIds=attachments.filter(item=>item.kind==="image").map(item=>`${JSON.stringify(item.name)} id=${item.id}`).join(", ");
       const content=[input.messageText,input.attachmentTextContext,imageIds&&`[Attached image IDs: ${imageIds}]`].filter(Boolean).join("\n\n");
-      messages=[{role:"system",content:buildAgentSystemPrompt({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt,planNote:agentPlanNote(env)})},...recent,{role:"user",content,...(images.length?{images}:{})}];
+      messages=[...buildAgentSystemMessages({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt,planNote:agentPlanNote(env)}).map(content=>({role:"system" as const,content})),...recent,{role:"user",content,...(images.length?{images}:{})}];
       await env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").bind(`${input.turnId}:user`,input.userId,input.threadId,input.messageText,JSON.stringify({requestId:input.requestId,runtime:"agent",...(attachments.length?{attachments}:{})})).run();
     }
     const tools=withLeanToolGroups(env,[...createDomainTools(),...computerChatTools()].filter(tool=>isToolAvailable(tool.name,services)&&toolAllowedByEnv(env,tool.name)));
@@ -150,15 +151,21 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     // The reply has already streamed. Follow-ups and memory finish inside the turn so their
     // usage receipts reconcile before the owner's next turn; a miss only means none this time.
     const finished=result.status==="complete"&&Boolean(result.replyText.trim())&&fastAllowed;
-    const followUps=finished&&env.ME3_AGENT_SUGGESTED_REPLIES?.trim()!=="off"
+    // Busy (a model step failed this turn, or the runtime says input is scarce): the message stays one model
+    // call. No follow-ups, and memory waits for rememberDeferredTurns (me3-bybb.15).
+    const memoryOn=env.ME3_AGENT_MEMORY?.trim()!=="off";
+    const shed=finished&&(Boolean(result.trace.modelSteps?.some(step=>step.status==="error"))||await shedAfterTurn(env));
+    const followUps=finished&&!shed&&env.ME3_AGENT_SUGGESTED_REPLIES?.trim()!=="off"
       ?suggestAgentReplies(modelFor(fastName,{purpose:"suggested_replies"}),{ownerMessage:input.messageText,replyText:result.replyText},AbortSignal.any([signal,AbortSignal.timeout(8_000)])).catch(()=>[] as string[])
       :Promise.resolve([] as string[]);
-    const remembered=finished&&env.ME3_AGENT_MEMORY?.trim()!=="off"
+    const remembered=finished&&!shed&&memoryOn
       ?rememberFromTurn(env.DB,modelFor(fastName,{purpose:"memory_extraction"}),{ownerId:input.userId,turnId:input.turnId,ownerMessage:input.messageText,replyText:result.replyText,ownerSnapshot},AbortSignal.any([signal,AbortSignal.timeout(10_000)])).catch(()=>undefined)
       :Promise.resolve(undefined);
     // At most one "Remember this?" card per reply: the most important memory held back this turn.
     const memoryReview=remembered.then(memory=>memory?.held[0]?{memoryId:memory.held[0].id,id:memory.held[0].id,body:memory.held[0].body,displayBody:ownerFacingMemory(memory.held[0].body),status:"pending" as const}:null);
-    return persistNewAgentResult(env,input,result,onEvent,allowanceNotice,followUps,memoryReview);
+    const persisted=await persistNewAgentResult(env,input,result,onEvent,allowanceNotice,followUps,memoryReview);
+    if(shed&&memoryOn)await deferTurnMemory(env.DB,input.userId,input.turnId);
+    return persisted;
   } finally {await releaseManagedRuntimeWriteLease(env,lease);}
 }
 

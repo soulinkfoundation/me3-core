@@ -10,7 +10,7 @@ import { createSeededEvalServices } from "./agent-eval-services.mjs";
 import { createGatewayRoute, gradeAgentReply, resolveGraderModel, graderOutputProvenance } from "./agent-eval-gateway.mjs";
 import { GRADER_MODEL, buildAgentEvalReport, agentEvalMarkdown, sumUsage, estimateCost } from "./agent-eval-report.mjs";
 import { DEFAULT_EVAL_PRICING, createEvalBudget } from "./agent-eval-budget.mjs";
-import { buildAgentSystemPrompt } from "../packages/agent/src/prompt.ts";
+import { buildAgentSystemMessages } from "../packages/agent/src/prompt.ts";
 import { sourceFingerprint } from "./agent-eval-source.mjs";
 
 const args = process.argv.slice(2).filter((arg) => arg !== "--");
@@ -102,14 +102,16 @@ evaluation: for (let iteration = 1; iteration <= repeat; iteration++) {
     const toolResults = new Map();
     const toolContracts = new Map();
     const canonicalOwnerInputs = [];
-    const messages = [{ role: "system", content: buildAgentSystemPrompt({ ownerName: "Eval Owner", timezone: "Europe/Dublin", now: new Date(`${baseDate}T12:00:00Z`), ownerSnapshot: "Synthetic owner. Main project: ME3 Launch. Goals: a calmer launch week. Contact and mailbox data require tools." }) }];
+    // The same shared / owner / clock system parts the runtime sends (me3-bybb.15).
+    const systemMessages = (ownerSnapshot) => buildAgentSystemMessages({ ownerName: "Eval Owner", timezone: "Europe/Dublin", now: new Date(`${baseDate}T12:00:00Z`), ownerSnapshot }).map((content) => ({ role: "system", content }));
+    const messages = systemMessages("Synthetic owner. Main project: ME3 Launch. Goals: a calmer launch week. Contact and mailbox data require tools.");
     const verifierRoute = live && verifierModelChoice ? createGatewayRoute(verifierModelChoice, { budget }) : undefined;
     const createVerifierRoute = live && createVerifierModelChoice ? createGatewayRoute(createVerifierModelChoice, { budget }) : undefined;
     const route = live ? createGatewayRoute(modelChoice, { budget }) : { model: "scripted-fixture", providerId: "workers-ai", configured: true, usageSamples: [], recordUsage() {}, ai: { async run() { throw new Error("Fixture provider not initialized"); } }, aiGateway: null };
     try {
       scenario.setup?.(seed);
       // Memory scenarios build the real owner snapshot from the seeded installation.
-      if (scenario.ownerSnapshot) messages[0].content = buildAgentSystemPrompt({ ownerName: "Eval Owner", timezone: "Europe/Dublin", now: new Date(`${baseDate}T12:00:00Z`), ownerSnapshot: await scenario.ownerSnapshot(seed) });
+      if (scenario.ownerSnapshot) { const parts = systemMessages(await scenario.ownerSnapshot(seed)); messages.splice(0, parts.length, ...parts); }
       const initialState = snapshotEvalState(seed);
       const initialQuoteState = snapshotQuoteEvalState(seed);
       const services = createSeededEvalServices(seed);

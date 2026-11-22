@@ -1,6 +1,7 @@
 import app from "../../worker/src/app";
 import { retryAgentTurnNotifications } from "../../worker/src/agent-notifications";
 import { dispatchDueCalendarPushNotifications } from "../../worker/src/calendar-push-notifications";
+import { rememberDeferredTurns } from "../../worker/src/agent-memory-backlog";
 import { dispatchDueGratitudeReminders } from "../../worker/src/gratitude";
 import { Me3Agent } from "../../worker/src/me3-agent";
 import { dispatchDueMorningCalendarPushes } from "../../worker/src/morning-calendar-push";
@@ -68,7 +69,7 @@ function limitReply(kind: LimitKind, stream: boolean, threadId: unknown, freeAll
   });
 }
 
-type BudgetCheck = { allowed: boolean; reason: "budget" | "paused" | null; perUserDailyMessages: number; perUserDailyMicroUsd: number };
+type BudgetCheck = { allowed: boolean; reason: "budget" | "paused" | null; perUserDailyMessages: number; perUserDailyMicroUsd: number; shed?: boolean };
 
 const upgradeRequired = () => Response.json({ ok: false, error: "This is part of a paid ME3 plan.", code: "upgrade_required" }, { status: 403 });
 const notFound = () => Response.json({ ok: false, error: "Not found" }, { status: 404 });
@@ -109,6 +110,8 @@ export class Me3FreeUser extends Me3Agent {
       ME3_OWNER_PUBLIC_PAGE: () => self.agent!.publicPage(),
       // News and Soup picks spend from the same daily allowance as chat and stop with it.
       ME3_FAST_MODEL_ALLOWED: () => self.agent!.fastModelAllowed(),
+      // While free chat is busy a message is one model call: no follow-ups, memory waits for a quiet tick (me3-bybb.15).
+      ME3_AGENT_SHED_AFTER_TURN: () => self.agent!.shedAfterTurn(),
       // Soulink knows each free ME3 by its own /u/{userId} address, so two free users never share a channel.
       ME3_SOULINK_ISSUER: () => self.agent!.meta("base_url"),
       ME3_OWNER_PUBLIC_URL: () => self.agent!.publicUrl(),
@@ -149,6 +152,15 @@ export class Me3FreeUser extends Me3Agent {
     } catch (error) {
       console.error("Free budget check failed", error);
       return false;
+    }
+  }
+
+  /** True while the global ledger says free chat is busy. Unsure counts as busy. */
+  private async shedAfterTurn(): Promise<boolean> {
+    try {
+      return (await this.settleSpend()).shed === true;
+    } catch {
+      return true;
     }
   }
 
@@ -286,7 +298,7 @@ export class Me3FreeUser extends Me3Agent {
   }
 
   /** Sends settled model spend to the global ledger and returns whether free chat may run right now. */
-  private async settleSpend(fresh = false): Promise<BudgetCheck> {
+  private async settleSpend(fresh = false, turn = false): Promise<BudgetCheck> {
     const sql = this.ctx.storage.sql;
     const marker = Number(this.meta("usage_reported_rowid") ?? 0);
     // A call still in flight has reported no usage yet; stop before it so it is reported once it settles (or after ten minutes).
@@ -296,7 +308,7 @@ export class Me3FreeUser extends Me3Agent {
     ).toArray()[0]?.first as number | null;
     const upTo = pending ? pending - 1 : Number(sql.exec("SELECT coalesce(max(rowid), 0) AS last FROM ai_usage_events").toArray()[0].last);
     const rows = upTo > marker
-      ? (sql.exec("SELECT estimated_cost_usd, tokens_in, tokens_out FROM ai_usage_events WHERE rowid > ? AND rowid <= ?", marker, upTo).toArray() as { estimated_cost_usd: number; tokens_in: number; tokens_out: number }[])
+      ? (sql.exec("SELECT estimated_cost_usd, tokens_in, tokens_out, coalesce(json_extract(metadata_json,'$.rejectedBeforeGeneration'),0) AS rejected FROM ai_usage_events WHERE rowid > ? AND rowid <= ?", marker, upTo).toArray() as { estimated_cost_usd: number; tokens_in: number; tokens_out: number; rejected: number }[])
       : [];
     // Chat turns always ask the ledger, so a pause stops the next message at once.
     const reused = fresh ? null : reusableLedgerAnswer(lastLedgerAnswer, rows.length > 0, Date.now());
@@ -305,7 +317,8 @@ export class Me3FreeUser extends Me3Agent {
     const response = await budget.get(budget.idFromName("global")).fetch("https://free-budget/check", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ addMicroUsd: usageCostMicroUsd(rows) }),
+      // A refused call (rate limit or overload) tells the ledger free chat is busy.
+      body: JSON.stringify({ addMicroUsd: usageCostMicroUsd(rows), turn, rateLimited: rows.filter((row) => row.rejected).length }),
     });
     if (!response.ok) throw new Error("Free budget is unavailable");
     if (upTo > marker) {
@@ -364,7 +377,7 @@ export class Me3FreeUser extends Me3Agent {
   private async chatLimit(stream: boolean, threadId: unknown): Promise<Response | null> {
     let budget: BudgetCheck;
     try {
-      budget = await this.settleSpend(true);
+      budget = await this.settleSpend(true, true);
     } catch (error) {
       console.error("Free budget check failed", error);
       return limitReply("paused", stream, threadId, this.describeAllowance(null, "paused"));
@@ -384,7 +397,12 @@ export class Me3FreeUser extends Me3Agent {
     // A closed ME3 sends nothing and does not come back on the timer.
     if (!this.isActivated() || this.closedAt()) return;
     await this.prepare();
-    await this.settleSpend().catch((error) => console.error("Free budget report failed", error));
+    const budget = await this.settleSpend().catch((error) => {
+      console.error("Free budget report failed", error);
+      return null;
+    });
+    // Memory from turns a busy moment deferred, a batch at a time, once free chat is quiet.
+    if (budget?.allowed && !budget.shed) await rememberDeferredTurns(this.env, AbortSignal.timeout(60_000)).catch((error) => console.error("Free runtime step failed: deferred memory", error));
     for (const [name, run] of this.news ? [...FREE_STEPS, ...NEWS_STEPS] : FREE_STEPS) {
       try {
         await run(this.env);
