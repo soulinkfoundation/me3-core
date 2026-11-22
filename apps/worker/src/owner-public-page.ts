@@ -13,3 +13,9 @@ export async function fastModelAllowed(env: Env): Promise<boolean> {
   if (!env.ME3_FAST_MODEL_ALLOWED) return true;
   try { return await env.ME3_FAST_MODEL_ALLOWED(); } catch { return false; }
 }
+
+/** Whether a finished turn should skip its after-turn model calls because the runtime is busy. A Core install never sheds. */
+export async function shedAfterTurn(env: Env): Promise<boolean> {
+  if (!env.ME3_AGENT_SHED_AFTER_TURN) return false;
+  try { return await env.ME3_AGENT_SHED_AFTER_TURN(); } catch { return true; }
+}

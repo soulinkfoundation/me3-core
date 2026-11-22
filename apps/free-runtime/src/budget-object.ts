@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { budgetDecision, DEFAULT_BUDGET, type BudgetState } from "./budget";
+import { budgetDecision, DEFAULT_BUDGET, recordLoad, shouldShed, type BudgetState } from "./budget";
 
 /** The single global ledger for free chat spend. Every user's object checks in here before a chat turn. */
 export class FreeBudget extends DurableObject {
@@ -17,8 +17,12 @@ export class FreeBudget extends DurableObject {
       if (typeof body.dailyBudgetUsd === "number" && body.dailyBudgetUsd >= 0) state.dailyBudgetMicroUsd = Math.round(body.dailyBudgetUsd * 1_000_000);
       if (typeof body.perUserDailyMessages === "number" && body.perUserDailyMessages >= 0) state.perUserDailyMessages = Math.floor(body.perUserDailyMessages);
       if (typeof body.perUserDailyUsd === "number" && body.perUserDailyUsd >= 0) state.perUserDailyMicroUsd = Math.round(body.perUserDailyUsd * 1_000_000);
+      if (body.shed === "auto" || body.shed === "on" || body.shed === "off") state.shed = body.shed;
+      if (typeof body.shedTurnsPerMinute === "number" && body.shedTurnsPerMinute >= 1) state.shedTurnsPerMinute = Math.floor(body.shedTurnsPerMinute);
     }
-    const decision = budgetDecision(state, Date.now(), url.pathname === "/check" ? Number(body.addMicroUsd ?? 0) : 0);
+    const now = Date.now();
+    if (url.pathname === "/check") state = recordLoad(state, now, { turn: body.turn === true, rateLimited: Number(body.rateLimited ?? 0) });
+    const decision = budgetDecision(state, now, url.pathname === "/check" ? Number(body.addMicroUsd ?? 0) : 0);
     state = decision.state;
     this.ctx.storage.kv.put("state", state);
     return Response.json({
@@ -32,6 +36,9 @@ export class FreeBudget extends DurableObject {
       perUserDailyUsd: state.perUserDailyMicroUsd / 1_000_000,
       perUserDailyMicroUsd: state.perUserDailyMicroUsd,
       paused: state.paused,
+      shed: shouldShed(state, now),
+      shedMode: state.shed,
+      shedTurnsPerMinute: state.shedTurnsPerMinute,
     });
   }
 }

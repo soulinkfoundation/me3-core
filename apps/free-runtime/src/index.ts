@@ -10,7 +10,10 @@
  *   POST /internal/purge      ME3 Cloud only. Deletes everything a closed ME3 holds; {force:true} deletes an open one.
  *   GET|POST /internal/budget ME3 only (service token). Read today's free chat spend, or change the daily
  *                             budget, the per-user allowance (perUserDailyUsd) and message backstop
- *                             (perUserDailyMessages), or pause free chat. Takes effect at once.
+ *                             (perUserDailyMessages), or pause free chat. Takes effect at once. shed
+ *                             ("auto" | "on" | "off") and shedTurnsPerMinute decide when a message drops its
+ *                             after-turn calls (follow-ups, memory) so it is one model call; "shed" in the
+ *                             answer says whether that is happening now.
  *   /u/{userId}/...           The user's ME3, same API as an installation. The path picks the object;
  *                             the object's own per-database credentials decide whether the caller is its owner.
  */

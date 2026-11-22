@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addUserSpend, budgetDecision, LEDGER_REUSE_MS, reusableLedgerAnswer, localDay, messagesLeft, nextLocalMidnight, usageCostMicroUsd, DEFAULT_BUDGET, TYPICAL_MESSAGE_MICRO_USD, type BudgetState } from "../src/budget";
+import { addUserSpend, budgetDecision, recordLoad, shouldShed, RATE_LIMIT_SHED_MS, LEDGER_REUSE_MS, reusableLedgerAnswer, localDay, messagesLeft, nextLocalMidnight, usageCostMicroUsd, DEFAULT_BUDGET, TYPICAL_MESSAGE_MICRO_USD, type BudgetState } from "../src/budget";
 
 // Failure modes: spend carries into the next day and blocks chat forever (or never resets); the kill switch
 // or an exhausted budget still lets a turn through; a user past their daily messages keeps chatting; usage
@@ -110,5 +110,35 @@ describe("reusing the global ledger's answer", () => {
   it("asks the ledger when nothing is cached or the clock went backwards", () => {
     expect(reusableLedgerAnswer(null, false, DAY)).toBeNull();
     expect(reusableLedgerAnswer(cached, false, DAY - 1)).toBeNull();
+  });
+});
+
+// Failure modes: a busy runtime keeps making three calls a message and runs into the provider's per-minute input
+// limit; or a quiet one sheds forever after one busy minute or one refused call, and nobody gets follow-ups or memory.
+describe("shedding after-turn calls when free chat is busy", () => {
+  const minute = Math.floor(DAY / 60_000);
+  it("is quiet by default", () => {
+    expect(shouldShed(state(), DAY)).toBe(false);
+  });
+  it("sheds above the turns-a-minute line and stops two minutes later", () => {
+    let busy = state({ shedTurnsPerMinute: 3 });
+    for (let i = 0; i < 3; i++) busy = recordLoad(busy, DAY, { turn: true });
+    expect(shouldShed(busy, DAY)).toBe(true);
+    expect(shouldShed(busy, DAY + 60_000)).toBe(true);
+    expect(shouldShed(busy, DAY + 120_000)).toBe(false);
+    expect(recordLoad(busy, DAY + 120_000, {})).toMatchObject({ minute: minute + 2, turnsThisMinute: 0, turnsLastMinute: 0 });
+  });
+  it("sheds for a while after a refused model call", () => {
+    const refused = recordLoad(state(), DAY, { rateLimited: 1 });
+    expect(shouldShed(refused, DAY + RATE_LIMIT_SHED_MS - 1)).toBe(true);
+    expect(shouldShed(refused, DAY + RATE_LIMIT_SHED_MS)).toBe(false);
+  });
+  it("sheds once most of today's budget is spent, not yesterday's", () => {
+    expect(shouldShed(state({ spentMicroUsd: 80_000_000 }), DAY)).toBe(true);
+    expect(shouldShed(state({ day: "2026-12-11", spentMicroUsd: 99_000_000 }), DAY)).toBe(false);
+  });
+  it("can be switched on or off by hand", () => {
+    expect(shouldShed(state({ shed: "on" }), DAY)).toBe(true);
+    expect(shouldShed(state({ shed: "off", rateLimitedAt: DAY }), DAY)).toBe(false);
   });
 });

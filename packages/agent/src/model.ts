@@ -1,4 +1,5 @@
 import type { AgentMessage, AgentModel, AgentModelResponse, AgentTool, AgentToolCall, AgentUsage } from "./types";
+import { TOOL_LOADER_NAME } from "./tool-groups";
 
 export interface CloudflareModelOptions {
   ai: { run(model: string, input: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown> };
@@ -239,11 +240,22 @@ function anthropicRequest(messages: readonly AgentMessage[], tools: readonly Age
   // tool step in a turn rereads the earlier prefix from Anthropic's cache.
   const lastBlock = history.at(-1)?.content.at(-1);
   if (lastBlock && typeof lastBlock === "object") (lastBlock as Record<string, unknown>).cache_control = {type:"ephemeral"};
-  const system = messages.filter(message=>message.role==="system").map(message=>message.content).join("\n\n");
+  // Each system message is its own block. With several, every block but the last (the clock) ends a
+  // breakpoint, so the part shared by every owner is cached once for all of them (me3-bybb.15).
+  const systems = messages.filter(message=>message.role==="system"&&message.content).map(message=>message.content);
+  // The tools and the first system block are the same for every owner of a runtime (and every follow-up or
+  // memory call), so they stay cached for an hour: a quiet spell costs one rewrite, not every owner's first message.
+  const shared = {cache_control:{type:"ephemeral",ttl:"1h"}}, recent = {cache_control:{type:"ephemeral"}};
+  const system = systems.map((text,index)=>({type:"text",text,...(index===0?shared:index===1&&systems.length>2?recent:{})}));
+  // Always-on tools go first and end the tools breakpoint, so loading a tool group (which also changes
+  // the loader's text) leaves that prefix cached. At most four breakpoints: tools, two system, newest message.
+  const ordered = [...tools.filter(tool=>!tool.group&&tool.name!==TOOL_LOADER_NAME),...tools.filter(tool=>tool.group||tool.name===TOOL_LOADER_NAME)];
+  const stableEnd = ordered.findIndex(tool=>tool.group||tool.name===TOOL_LOADER_NAME);
+  const toolBreakpoint = stableEnd>0 ? stableEnd-1 : ordered.length-1;
   return {
-    ...(system?{system:[{type:"text",text:system,cache_control:{type:"ephemeral"}}]}:{}),
+    ...(system.length?{system}:{}),
     messages:history,
-    ...(tools.length?{tools:tools.map((tool,index)=>({name:tool.name,description:tool.description,input_schema:anthropicInputSchema(tool),...(index===tools.length-1?{cache_control:{type:"ephemeral"}}:{})}))}:{}),
+    ...(ordered.length?{tools:ordered.map((tool,index)=>({name:tool.name,description:tool.description,input_schema:anthropicInputSchema(tool),...(index===toolBreakpoint?shared:{})}))}:{}),
     max_tokens:maxTokens,
     // Claude 5.5 models think adaptively by default; effort is the depth control.
     ...(effort?{output_config:{effort}}:{}),
