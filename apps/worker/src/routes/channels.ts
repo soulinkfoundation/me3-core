@@ -92,7 +92,7 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
     if (!body || typeof body.proof !== "string" || typeof body.issuer !== "string" ||
         typeof body.subject !== "string" || typeof body.callbackUrl !== "string" ||
         typeof body.dispatchToken !== "string") return c.json({ authorized: false }, 400);
-    const authorized = body.issuer === getCoreApiOrigin(c.env, c.req.url) &&
+    const authorized = body.issuer === getSoulinkIssuer(c.env, c.req.url) &&
       await verifySoulinkProvisionProof(c.env, body as SoulinkProvisionProofInput & { proof: string });
     return c.json({ authorized });
   });
@@ -255,6 +255,15 @@ export function registerChannelRoutes(app: AppHono, deps: ChannelRouteDeps) {
   });
 }
 
+/**
+ * The address Soulink knows this ME3 by: Core's API origin, or on the free
+ * runtime this user's own /u/{userId} address on the shared host.
+ */
+export function getSoulinkIssuer(env: Env, requestUrl: string): string | null {
+  if (env.ME3_SOULINK_ISSUER) return env.ME3_SOULINK_ISSUER();
+  return getCoreApiOrigin(env, requestUrl);
+}
+
 export type SoulinkConnectResult =
   | { ok: true; connection: DbAgentChannelConnection }
   | { ok: false; status: 404 | 502 | 503; error: string };
@@ -269,8 +278,9 @@ export async function connectSoulink(env: Env, ownerId: string, requestUrl: stri
   const owner = await getOwnerProfile(env, ownerId);
   if (!owner) return { ok: false, status: 404, error: "Account not found" };
 
+  const issuer = getSoulinkIssuer(env, requestUrl);
+  if (!issuer) return { ok: false, status: 503, error: "Soulink could not be reached. Please try again." };
   const dispatchToken = crypto.randomUUID();
-  const issuer = getCoreApiOrigin(env, requestUrl);
   const callbackUrl = `${issuer}/api/agent/channels/soulink/dispatch`;
   const proof = await createSoulinkProvisionProof(env, { issuer, subject: owner.id, callbackUrl, dispatchToken });
   const ownerAssertion = await fetchSoulinkOwnerAssertion(env, issuer);
@@ -498,7 +508,7 @@ async function buildSoulinkStatusPayload(
     available: true,
     configured: config.configured,
     apiOrigin: config.apiOrigin,
-    runtimeCallbackUrl: `${getCoreApiOrigin(env, requestUrl)}/api/agent/channels/soulink/dispatch`,
+    runtimeCallbackUrl: `${getSoulinkIssuer(env, requestUrl) ?? getCoreApiOrigin(env, requestUrl)}/api/agent/channels/soulink/dispatch`,
     connection: serializeSoulinkConnection(connection),
     recentEvents: (events.results || []).map(serializeProviderChannelEvent),
   };
@@ -1085,6 +1095,8 @@ async function upsertActiveSoulinkConnection(
 }
 
 async function getOwnerMe3Url(env: Env, ownerId: string, requestUrl: string): Promise<string | null> {
+  const publicUrl = env.ME3_OWNER_PUBLIC_URL?.();
+  if (publicUrl) return publicUrl;
   const site = await env.DB.prepare(
     `SELECT username, custom_domain
      FROM sites

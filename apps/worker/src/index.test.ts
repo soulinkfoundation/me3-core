@@ -13628,6 +13628,43 @@ describe("ME3 Worker auth", () => {
       expect(await down.json()).toMatchObject({ code: "soulink_unavailable" });
     });
 
+    it("on the free runtime, connects as this user's own address and says so to Soulink", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      const base = "https://free.me3.app/u/user-a";
+      Object.assign(env, { ME3_SOULINK_ISSUER: () => base, ME3_OWNER_PUBLIC_URL: () => "https://me3.app/clara" });
+      const { calls } = soulink();
+
+      expect((await post(env, session)).status).toBe(200);
+      const [, init] = calls("/provision")[0];
+      const provision = JSON.parse(String(init?.body));
+      expect(provision).toMatchObject({
+        issuer: base,
+        owner: { me3Url: "https://me3.app/clara" },
+        runtime: { callbackUrl: `${base}/api/agent/channels/soulink/dispatch` },
+      });
+      // Soulink confirms the proof at that address (the free runtime strips /u/{id}); the shared origin is not this ME3.
+      const verify = (issuer: string) => app.fetch(new Request("http://localhost/api/soulink/provision/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issuer, subject: provision.subject, callbackUrl: provision.runtime.callbackUrl,
+          dispatchToken: provision.runtime.dispatchToken, proof: provision.proof }),
+      }), env);
+      expect(await (await verify(base)).json()).toEqual({ authorized: true });
+      expect(await (await verify("https://free.me3.app")).json()).toEqual({ authorized: false });
+    });
+
+    it("on the free runtime, does not connect before it knows this user's address", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      Object.assign(env, { ME3_SOULINK_ISSUER: () => null });
+      const { mock } = soulink();
+      const response = await post(env, session);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "soulink_unavailable" });
+      expect(mock.mock.calls.filter(([input]) => String(input).includes("soulink"))).toHaveLength(0);
+    });
+
     it("requires the owner and names the phone client", async () => {
       const env = createEnv();
       const session = cookieHeader(await bootstrap(env));

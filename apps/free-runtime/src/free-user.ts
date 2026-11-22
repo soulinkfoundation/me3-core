@@ -81,6 +81,7 @@ export class Me3FreeUser extends Me3Agent {
   private readonly news: boolean;
   private ready: Promise<void> | null = null;
   private seenWrittenAt = 0;
+  private baseSeen = false;
   private publicPageRead: { at: number; page: OwnerPublicPage | null } | null = null;
 
   constructor(ctx: DurableObjectState, env: FreeRuntimeEnv) {
@@ -108,6 +109,9 @@ export class Me3FreeUser extends Me3Agent {
       ME3_OWNER_PUBLIC_PAGE: () => self.agent!.publicPage(),
       // News and Soup picks spend from the same daily allowance as chat and stop with it.
       ME3_FAST_MODEL_ALLOWED: () => self.agent!.fastModelAllowed(),
+      // Soulink knows each free ME3 by its own /u/{userId} address, so two free users never share a channel.
+      ME3_SOULINK_ISSUER: () => self.agent!.meta("base_url"),
+      ME3_OWNER_PUBLIC_URL: () => self.agent!.publicUrl(),
       // Session and encryption secrets are generated per database (install_secrets), so a session issued
       // by one user's ME3 is never valid in another's. Setup-by-password does not exist here.
       JWT_SECRET: undefined,
@@ -162,6 +166,12 @@ export class Me3FreeUser extends Me3Agent {
     }));
   }
 
+  /** The owner's me3.app page, as the apps are told (rewriteMobileInstall). */
+  private publicUrl(): string | null {
+    const handle = this.ctx.storage.sql.exec("SELECT username FROM owner_profile WHERE id = 'owner'").toArray()[0]?.username;
+    return typeof handle === "string" && handle ? `${getMe3CloudOrigin(this.env)}/${handle}` : null;
+  }
+
   private meta(name: string): string | null {
     const row = this.ctx.storage.sql.exec(`SELECT value FROM ${META_TABLE} WHERE name = ?`, name).toArray()[0];
     return row ? String(row.value) : null;
@@ -188,6 +198,8 @@ export class Me3FreeUser extends Me3Agent {
       });
       this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ${META_TABLE} (name TEXT PRIMARY KEY, value TEXT NOT NULL)`);
       this.setMeta("user_id", input.userId);
+      const base = request.headers.get(FREE_BASE_HEADER);
+      if (base) this.setMeta("base_url", base);
       return Response.json({ ok: true, installId });
     } catch (error) {
       return Response.json({ ok: false, error: error instanceof Error ? error.message : "Activation failed" }, { status: 409 });
@@ -250,6 +262,16 @@ export class Me3FreeUser extends Me3Agent {
       );
     }
     return response;
+  }
+
+  /**
+   * This ME3's public base URL (index.ts sets it on every request). Kept from activation, which ME3 Cloud
+   * makes at the address it gives the apps, so Soulink always sees one issuer even if another hostname is used.
+   */
+  private rememberBase(base: string | null) {
+    if (!base || this.baseSeen) return;
+    if (!this.meta("base_url")) this.setMeta("base_url", base);
+    this.baseSeen = true;
   }
 
   /** Reminders and pushes run on a per-user timer that only keeps going while the user is around. */
@@ -405,6 +427,7 @@ export class Me3FreeUser extends Me3Agent {
 
     await this.prepare();
     await this.touch();
+    this.rememberBase(request.headers.get(FREE_BASE_HEADER));
     if (isFreePagePath(url.pathname)) return this.freePage(forwarded);
     if (isFreeAllowancePath(url.pathname)) return request.method === "GET" ? this.freeAllowance(forwarded) : notFound();
     if (request.method === "POST" && isChatTurnPath(url.pathname)) {
