@@ -15,6 +15,9 @@ export function townFromProfile(profile: unknown): NewsTown | null {
   const data = row.locationData && typeof row.locationData === "object" ? row.locationData as Record<string, unknown> : {};
   const name = cleanCityName(data.locality) || cleanCityName(data.label) || cleanCityName(row.location);
   if (!name) return null;
+  // A country is not a town: "Ireland" on a profile says nothing about which paper is local.
+  const country = typeof data.country === "string" ? data.country.trim().toLowerCase() : "";
+  if (!cleanCityName(data.locality) && (data.precision === "country" || (country && name.toLowerCase() === country))) return null;
   const code = typeof data.countryCode === "string" && /^[A-Za-z]{2}$/.test(data.countryCode) ? data.countryCode.toUpperCase() : null;
   return { name, country: code };
 }

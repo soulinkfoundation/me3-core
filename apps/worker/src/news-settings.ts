@@ -28,7 +28,7 @@ export type NewsSettings = {
 /** A chip from the owner or the agent: a plain label, on or off, and for work topics the project it follows. */
 export type NewsTopicInput = { label: string; on: boolean; projectId: string | null };
 
-const PATCH_KEYS = new Set(["work", "mine", "lessOf", "city", "time", "notify", "paused", "setUp"]);
+const PATCH_KEYS = new Set(["work", "mine", "lessOf", "city", "country", "time", "notify", "paused", "setUp"]);
 const SENTENCE_CASE = /^[a-z]/;
 
 export function newsTopicLabel(word: string, labels: Record<string, string>): string {
@@ -39,7 +39,7 @@ export function newsTopicLabel(word: string, labels: Record<string, string>): st
 export const newsIsSetUp = (state: Pick<SoupTasteState, "taste">) => Boolean(state.taste.news?.setUpAt);
 
 export function defaultNewsPrefs(time: string | null = null): NewsPrefs {
-  return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 60, notify: true, paused: false, city: null, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null };
+  return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 0, notify: true, paused: false, city: null, cityChosen: false, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null };
 }
 
 export function describeNewsSettings(state: SoupTasteState): NewsSettings {
@@ -120,6 +120,7 @@ export function applyNewsPatch(taste: SoupTaste, input: Record<string, unknown>,
     if (typeof input.paused !== "boolean") throw new JournalInputError("paused must be true or false");
     prefs.paused = input.paused;
   }
+  if (input.city !== undefined) prefs.cityChosen = true;
   if (context.place) {
     prefs.city = context.place.city; prefs.country = context.place.country ?? prefs.country; prefs.lat = context.place.lat; prefs.lon = context.place.lon;
   } else if (context.city) {
@@ -146,7 +147,7 @@ async function ownerClock(env: Env, userId: string) {
  */
 export async function settleOwnerTown(env: Env, userId: string, options: { geocode?: Geocode } = {}): Promise<void> {
   const [current, clock] = await Promise.all([getSoupTaste(env, userId), ownerClock(env, userId)]);
-  if (!current.taste.news) return;
+  if (!current.taste.news || current.taste.news.cityChosen) return;
   if (await townToTry(env, userId, current.taste.news.city, clock.timezone)) await updateNewsSettings(env, userId, {}, options);
 }
 
@@ -162,7 +163,8 @@ type Geocode = (name: string, options?: { country?: string | null }) => Promise<
  * first guess. `setUp: true` records the owner's confirmation, after which the paper is built daily.
  */
 export async function updateNewsSettings(env: Env, userId: string, input: unknown, options: { now?: Date; geocode?: Geocode } = {}): Promise<{ settings: NewsSettings; firstSetUp: boolean }> {
-  if (!isRecord(input) || Object.keys(input).some(key => !PATCH_KEYS.has(key))) throw new JournalInputError("News settings changes must be work, mine, lessOf, city, time, notify, paused or setUp");
+  if (!isRecord(input) || Object.keys(input).some(key => !PATCH_KEYS.has(key))) throw new JournalInputError("News settings changes must be work, mine, lessOf, city, country, time, notify, paused or setUp");
+  if (input.country !== undefined && (input.city === undefined || typeof input.country !== "string" || !/^[A-Za-z]{2}$/.test(input.country))) throw new JournalInputError("country is a two-letter code sent with a city, like IE");
   const now = options.now || new Date();
   const geocode = options.geocode || geocodeCity;
   const [current, clock] = await Promise.all([getSoupTaste(env, userId), ownerClock(env, userId)]);
@@ -171,9 +173,9 @@ export async function updateNewsSettings(env: Env, userId: string, input: unknow
   if (input.city !== undefined) {
     const name = cleanCityName(input.city);
     if (!name) throw new JournalInputError("city must be a place name, like Galway");
-    place = await geocode(name) ?? undefined;
+    place = await geocode(name, { country: typeof input.country === "string" ? input.country.toUpperCase() : null }) ?? undefined;
     if (!place) city = name;
-  } else {
+  } else if (!current.taste.news?.cityChosen) {
     // Never chosen by the owner: their profile's town, else the city their timezone is named after.
     const town = await townToTry(env, userId, current.taste.news?.city || null, clock.timezone);
     place = (town ? await geocode(town.name, { country: town.country }) : null) ?? undefined;
