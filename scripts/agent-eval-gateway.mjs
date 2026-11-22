@@ -42,7 +42,18 @@ export function createGatewayRoute(modelChoice, options = {}) {
       // AI/run currently serializes native streaming results as an empty envelope.
       // The documented compatibility endpoints preserve the provider SSE stream.
       const endpoint = selectedModel.startsWith("anthropic/") ? "messages" : selectedModel.startsWith("openai/") && "input" in input ? "responses" : "chat/completions";
-      const response = await (options.fetch || fetch)(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1/${endpoint}`, {
+      // EVAL_DEEPSEEK_BYOK_ALIAS sends DeepSeek V4.1 Flash to DeepSeek's own API with the key stored on the
+      // gateway, as the free runtime's backup does (thinking off; needs CLOUDFLARE_AI_GATEWAY_TOKEN).
+      const deepseekAlias = process.env.EVAL_DEEPSEEK_BYOK_ALIAS?.trim();
+      const deepseekDirect = deepseekAlias && /^@cf\/deepseek-ai\/deepseek-v4\.1-flash/.test(selectedModel);
+      const { reasoning_effort: _effort, ...directInput } = input;
+      const response = deepseekDirect
+        ? await (options.fetch || fetch)(`https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(gatewayId)}/deepseek/chat/completions`, {
+          method: "POST", signal: options.signal || AbortSignal.timeout(120_000),
+          headers: { "content-type": "application/json", "cf-aig-authorization": `Bearer ${process.env.CLOUDFLARE_AI_GATEWAY_TOKEN?.trim()}`, "cf-aig-byok-alias": deepseekAlias },
+          body: JSON.stringify({ ...directInput, model: "deepseek-flash", thinking: { type: "disabled" } }),
+        })
+        : await (options.fetch || fetch)(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1/${endpoint}`, {
         method: "POST", signal: options.signal || AbortSignal.timeout(120_000),
         headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json", "cf-aig-gateway-id": gatewayId },
         body: JSON.stringify({ model: selectedModel, ...input }),

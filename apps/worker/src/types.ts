@@ -116,6 +116,7 @@ export interface Env {
   CLOUDFLARE_AI_GATEWAY_TOKEN?: string;
   /** Name of an Anthropic key stored in the AI Gateway; Claude uses it before Cloudflare credits. */
   ANTHROPIC_BYOK_ALIAS?: string;
+  DEEPSEEK_BYOK_ALIAS?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   ME3_COMMERCE_BRIDGE_ORIGIN?: string;

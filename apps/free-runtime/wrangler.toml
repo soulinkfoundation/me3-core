@@ -40,7 +40,8 @@ remote = true
 # Local runs pass --var ENVIRONMENT:local (see package.json and scripts/smoke.mjs).
 ENVIRONMENT = "production"
 # Free chat runs on Claude Haiku 5.5 (me3-bybb.6, eval 2026-11-22). DeepSeek is the backup when a Haiku
-# call fails or is rate limited: separate providers, separate per-minute limits (me3-bybb.13).
+# call fails or is rate limited: separate providers, separate per-minute limits (me3-bybb.13). Order: Haiku on
+# ME3's Anthropic key, Haiku on gateway credits, DeepSeek's own API, Workers AI DeepSeek, busy reply.
 ME3_AI_CHAT_PROVIDER = "anthropic"
 ME3_AI_CHAT_MODEL = "claude-haiku-5.5"
 ME3_AI_CHAT_BACKUP_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
@@ -51,6 +52,10 @@ CLOUDFLARE_AI_GATEWAY_ID = "me3-free"
 # not held to Unified Billing's 200 requests/minute per gateway (me3-bybb.13). Takes effect only with the
 # CLOUDFLARE_AI_GATEWAY_TOKEN secret; without it Haiku keeps paying from gateway credits.
 ANTHROPIC_BYOK_ALIAS = "me3-free"
+# The DeepSeek backup pays from ME3's DeepSeek key stored on the me3-free gateway under this alias, so it is
+# not held to Workers AI's 20-50 calls/minute (me3-bybb.16). DeepSeek's API caps concurrency (2,500), not
+# calls per minute. If the key fails, the backup falls through to Workers AI DeepSeek, then the busy reply.
+DEEPSEEK_BYOK_ALIAS = "me3-free-deepseek"
 # Follow-up suggestions and memory extraction use the same model as chat.
 ME3_AGENT_FAST_MODEL = "anthropic/claude-haiku-5.5"
 # "on" adds News (the morning paper) to the free plan.

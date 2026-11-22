@@ -276,3 +276,48 @@ describe("Anthropic stored key before Cloudflare credits", () => {
     expect(calls.unified).toBe(1);
   });
 });
+
+describe("DeepSeek's own API before Workers AI", () => {
+  const model = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+  const reply = [{choices:[{delta:{content:"Hi"}}]},{choices:[{delta:{},finish_reason:"stop"}],usage:{prompt_tokens:1000,completion_tokens:10,prompt_cache_hit_tokens:600,prompt_cache_miss_tokens:400}}];
+  const step = {messages:[{role:"user" as const,content:"Hello"}],tools:[],signal:new AbortController().signal,onDelta:async()=>{}};
+  function setup(responses: Array<() => Response>, name = model) {
+    const calls = {direct:[] as Array<{url:string;init:RequestInit}>,workersAi:0};
+    const fetch = (async (url: string, init: RequestInit) => {calls.direct.push({url,init});return responses[Math.min(calls.direct.length-1,responses.length-1)]();}) as unknown as typeof globalThis.fetch;
+    const agentModel = createCloudflareModel({model:name,gatewayId:"gw",deepseekByok:{baseUrl:"https://gateway.example/v1/acct/gw/deepseek",token:"aig",alias:"deepseek-key",fetch},ai:{run:async()=>{calls.workersAi++;return stream(reply);}}});
+    return {calls,agentModel};
+  }
+  beforeEach(() => resetAnthropicByokPause());
+  it("pays with the stored DeepSeek key, thinking off, at the catalog price", async () => {
+    const {calls,agentModel} = setup([() => new Response(stream(reply))]);
+    const result = await agentModel.step(step);
+    expect(result.text).toBe("Hi");
+    expect(result.usage).toMatchObject({inputTokens:1000,cachedInputTokens:600,provider:"deepseek"});
+    expect(result.usage?.estimatedCostUsd).toBeCloseTo((400*0.3+600*0.006+10*1.2)/1_000_000, 12);
+    expect(calls.workersAi).toBe(0);
+    expect(calls.direct[0].url).toBe("https://gateway.example/v1/acct/gw/deepseek/chat/completions");
+    expect(calls.direct[0].init.headers).toMatchObject({"cf-aig-byok-alias":"deepseek-key","cf-aig-authorization":"Bearer aig"});
+    const body = JSON.parse(String(calls.direct[0].init.body));
+    expect(body).toMatchObject({model:"deepseek-flash",thinking:{type:"disabled"},stream:true});
+    expect(body.reasoning_effort).toBeUndefined();
+  });
+  it("falls back to Workers AI for one step when DeepSeek is busy", async () => {
+    const {calls,agentModel} = setup([() => new Response('{"error":{"message":"rate limit"}}',{status:429}), () => new Response(stream(reply))]);
+    expect((await agentModel.step(step)).usage?.provider).toBeUndefined();
+    expect((await agentModel.step(step)).usage?.provider).toBe("deepseek");
+    expect(calls.workersAi).toBe(1);
+    expect(calls.direct).toHaveLength(2);
+  });
+  it("stops trying a key with no balance", async () => {
+    const {calls,agentModel} = setup([() => new Response('{"error":{"message":"Insufficient Balance"}}',{status:402})]);
+    await agentModel.step(step);
+    await agentModel.step(step);
+    expect(calls.direct).toHaveLength(1);
+    expect(calls.workersAi).toBe(2);
+  });
+  it("leaves other Workers AI models alone", async () => {
+    const {calls,agentModel} = setup([() => new Response(stream(reply))], "@cf/zai-org/glm-4.7-flash");
+    await agentModel.step(step);
+    expect(calls.direct).toHaveLength(0);
+  });
+});
