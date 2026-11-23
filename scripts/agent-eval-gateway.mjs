@@ -43,12 +43,12 @@ export function createGatewayRoute(modelChoice, options = {}) {
       // The documented compatibility endpoints preserve the provider SSE stream.
       const endpoint = selectedModel.startsWith("anthropic/") ? "messages" : selectedModel.startsWith("openai/") && "input" in input ? "responses" : "chat/completions";
       // EVAL_DEEPSEEK_BYOK_ALIAS sends DeepSeek V4.1 Flash to DeepSeek's own API with the key stored on the
-      // gateway, as the free runtime's backup does (thinking off; needs CLOUDFLARE_AI_GATEWAY_TOKEN).
+      // gateway (EVAL_DEEPSEEK_GATEWAY_ID, default the run's), as the free runtime's backup does (thinking off; needs CLOUDFLARE_AI_GATEWAY_TOKEN).
       const deepseekAlias = process.env.EVAL_DEEPSEEK_BYOK_ALIAS?.trim();
       const deepseekDirect = deepseekAlias && /^@cf\/deepseek-ai\/deepseek-v4\.1-flash/.test(selectedModel);
       const { reasoning_effort: _effort, ...directInput } = input;
       const response = deepseekDirect
-        ? await (options.fetch || fetch)(`https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(gatewayId)}/deepseek/chat/completions`, {
+        ? await (options.fetch || fetch)(`https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(process.env.EVAL_DEEPSEEK_GATEWAY_ID?.trim() || gatewayId)}/deepseek/chat/completions`, {
           method: "POST", signal: options.signal || AbortSignal.timeout(120_000),
           headers: { "content-type": "application/json", "cf-aig-authorization": `Bearer ${process.env.CLOUDFLARE_AI_GATEWAY_TOKEN?.trim()}`, "cf-aig-byok-alias": deepseekAlias },
           body: JSON.stringify({ ...directInput, model: "deepseek-flash", thinking: { type: "disabled" } }),

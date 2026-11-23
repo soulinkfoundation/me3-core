@@ -241,13 +241,7 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
   const gatewayId=gateway.gatewayId||env.CLOUDFLARE_AI_GATEWAY_ID||"default";
   // Claude pays from the installation's stored Anthropic key first. Managed
   // usage is still metered at catalog price; only the payer changes.
-  const byokAlias=env.ANTHROPIC_BYOK_ALIAS?.trim(),byokToken=env.CLOUDFLARE_AI_GATEWAY_TOKEN?.trim()||gateway.apiToken;
-  const byokBaseUrl=byokAlias&&byokToken?await providerGatewayUrl(env,gateway.accountId,gatewayId,"anthropic"):null;
-  const anthropicByok=byokAlias&&byokToken&&byokBaseUrl?{baseUrl:byokBaseUrl,token:byokToken,alias:byokAlias}:undefined;
-  // The DeepSeek backup pays from ME3's DeepSeek key on the gateway first (no per-minute cap), then Workers AI.
-  const deepseekAlias=env.DEEPSEEK_BYOK_ALIAS?.trim();
-  const deepseekBaseUrl=deepseekAlias&&byokToken?await providerGatewayUrl(env,gateway.accountId,gatewayId,"deepseek"):null;
-  const deepseekByok=deepseekAlias&&byokToken&&deepseekBaseUrl?{baseUrl:deepseekBaseUrl,token:byokToken,alias:deepseekAlias}:undefined;
+  const {anthropicByok,deepseekByok}=await gatewayProviderKeys(env,gateway.accountId,gatewayId,gateway.apiToken);
   // AI Gateway keeps at most five metadata entries. The thread is recoverable from the turn, so
   // its slot carries the attempt's usage id for reconciling an interrupted call.
   const gatewayMetadata=(usageId:string,purpose?:ModelPurpose)=>({me3_runtime:metadata.me3_runtime,me3_turn_id:metadata.me3_turn_id,me3_request_id:metadata.me3_request_id,me3_usage_id:usageId,...(purpose?{purpose:purpose.purpose}:{})});
@@ -377,6 +371,16 @@ async function loadThreadToolGroups(env:Env,scope:{ownerId:string;threadId:strin
     for(const step of trace.modelSteps??[])for(const call of step.toolCalls)if(call.name===TOOL_LOADER_NAME&&Array.isArray(call.arguments.groups))for(const group of call.arguments.groups)groups.add(String(group));
   }
   return [...groups];
+}
+// Provider keys stored on the gateway pay first: Claude from the installation's Anthropic key, and the
+// DeepSeek backup from ME3's DeepSeek key (DeepSeek's own API has no per-minute cap), then Workers AI.
+export async function gatewayProviderKeys(env:Env,accountId:string|null,gatewayId:string,apiToken:string|null) {
+  const token=env.CLOUDFLARE_AI_GATEWAY_TOKEN?.trim()||apiToken;
+  const key=async(alias:string|undefined,provider:string)=>{
+    const baseUrl=alias&&token?await providerGatewayUrl(env,accountId,gatewayId,provider):null;
+    return alias&&token&&baseUrl?{baseUrl,token,alias}:undefined;
+  };
+  return {anthropicByok:await key(env.ANTHROPIC_BYOK_ALIAS?.trim(),"anthropic"),deepseekByok:await key(env.DEEPSEEK_BYOK_ALIAS?.trim(),"deepseek")};
 }
 // Managed Workers carry no account id, so the AI binding names the gateway URL.
 async function providerGatewayUrl(env:Env,accountId:string|null,gatewayId:string,provider:string):Promise<string|null> {

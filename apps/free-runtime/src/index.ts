@@ -14,11 +14,14 @@
  *                             ("auto" | "on" | "off") and shedTurnsPerMinute decide when a message drops its
  *                             after-turn calls (follow-ups, memory) so it is one model call; "shed" in the
  *                             answer says whether that is happening now.
+ *   POST /internal/backup-check ME3 only. One chat step with Haiku forced to a 429, so the backup answers through
+ *                             the live wiring; returns which provider served it, how fast and at what cost.
  *   /u/{userId}/...           The user's ME3, same API as an installation. The path picks the object;
  *                             the object's own per-database credentials decide whether the caller is its owner.
  */
 import { FreeBudget } from "./budget-object";
 import { FREE_BASE_HEADER, Me3FreeUser, type FreeRuntimeEnv } from "./free-user";
+import { backupCheck } from "./backup-check";
 
 export { FreeBudget, Me3FreeUser };
 
@@ -58,6 +61,7 @@ export default {
           body,
         });
       }
+      if (url.pathname === "/internal/backup-check" && request.method === "POST") return Response.json(await backupCheck(env));
       if (url.pathname === "/internal/status") {
         const userId = url.searchParams.get("userId") ?? "";
         if (!USER_ID.test(userId)) return Response.json({ ok: false, error: "Invalid userId" }, { status: 400 });
@@ -90,3 +94,4 @@ export default {
     return userObject(env, match[1], new Request(inner, request), url.origin);
   },
 };
+
