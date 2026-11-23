@@ -1,7 +1,8 @@
 import type { AgentTool } from "../types";
-import { domainTool, ok, optionalString, requiredString } from "./common";
+import { domainTool, ok, optionalString, requiredString, services } from "./common";
 
 type ContactRow = { id: string; name: string; source: string | null; source_ref: string | null; social_handles: string | null; metadata: string | null };
+const COLUMNS = "id, name, source, source_ref, social_handles, metadata";
 
 /**
  * "Tell Erum I'm running late": ME3 drafts a message to one person and the owner's
@@ -18,19 +19,24 @@ export function messageTools(): AgentTool[] {
       if (!contactId && !name) throw new Error("Say who the message is for: their name as the owner said it, or a contactId.");
       context.signal.throwIfAborted();
 
-      const columns = "id, name, source, source_ref, social_handles, metadata";
-      const rows = contactId
-        ? [await context.db.prepare(`SELECT ${columns} FROM contacts WHERE id = ? AND user_id = ? AND status = 'active'`)
+      const contacts = services(context).contacts;
+      const lookup = async () => contactId
+        ? [await context.db.prepare(`SELECT ${COLUMNS} FROM contacts WHERE id = ? AND user_id = ? AND status = 'active'`)
           .bind(contactId, context.ownerId).first<ContactRow>()].filter((row): row is ContactRow => Boolean(row))
         : bestNameMatches((await context.db.prepare(
-          `SELECT ${columns} FROM contacts WHERE user_id = ? AND status = 'active' AND name LIKE ? COLLATE NOCASE
-           ORDER BY updated_at DESC LIMIT 20`,
-        ).bind(context.ownerId, `%${name!.replace(/[%_]/g, "")}%`).all<ContactRow>()).results || [], name!);
-
+          `SELECT ${COLUMNS} FROM contacts WHERE user_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 2000`,
+        ).bind(context.ownerId).all<ContactRow>()).results || [], name!);
+      await contacts?.refresh?.();
+      let rows = await lookup();
+      // Someone linked on Soulink since the last sync: pull them in now rather than tell the owner they don't exist.
+      if (!rows.length && contacts?.refresh) {
+        await contacts.refresh({ force: true });
+        rows = await lookup();
+      }
       const recipient = { name: name ?? null };
       if (!rows.length) {
         return ok({ drafted: false, reason: "unknown", recipient,
-          next: "No one in the owner's People matches. Ask who they mean in one short sentence; nothing was drafted or sent." });
+          next: "No one in the owner's People matches, even after checking Soulink for new links. Ask who they mean in one short sentence; nothing was drafted or sent." });
       }
       const reachable = rows.filter(row => nodeId(row));
       if (!reachable.length) {
@@ -51,14 +57,52 @@ export function messageTools(): AgentTool[] {
   ];
 }
 
-/** Exact full name first, then first name, then anything containing the words. */
-function bestNameMatches(rows: ContactRow[], query: string): ContactRow[] {
-  const wanted = query.toLowerCase().replace(/\s+/g, " ");
-  const exact = rows.filter(row => row.name.trim().toLowerCase().replace(/\s+/g, " ") === wanted);
-  if (exact.length) return exact;
-  const first = rows.filter(row => row.name.trim().toLowerCase().split(/\s+/)[0] === wanted);
-  if (first.length) return first;
-  return rows;
+const normal = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/^@/, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+
+/** Edit distance where swapping two neighbouring letters ("Keiran") counts as one edit. */
+function distance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  const rows: number[][] = [Array.from({ length: b.length + 1 }, (_, index) => index)];
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(rows[i - 1][j] + 1, row[j - 1] + 1, rows[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) row[j] = Math.min(row[j], rows[i - 2][j - 2] + 1);
+    }
+    rows.push(row);
+  }
+  return rows[a.length][b.length];
+}
+
+/**
+ * Who the owner means, most certain first: the exact full name or Soulink handle, then a first name,
+ * then names containing what they said, then a small misspelling (dictation turns "Soulink" into
+ * "Solink"). Each tier wins outright, so a near miss never outvotes a real match.
+ */
+export function bestNameMatches(rows: ContactRow[], query: string): ContactRow[] {
+  const wanted = normal(query);
+  if (!wanted) return [];
+  const names = (row: ContactRow) => {
+    const full = normal(row.name);
+    const tag = handle(row);
+    return { full, first: full.split(" ")[0], tag: tag ? normal(tag) : null, words: full.split(" ") };
+  };
+  const tiers: ((row: ContactRow) => boolean)[] = [
+    row => { const n = names(row); return n.full === wanted || n.tag === wanted; },
+    row => names(row).first === wanted,
+    row => { const n = names(row); return n.full.includes(wanted) || Boolean(n.tag?.includes(wanted)); },
+    row => {
+      const n = names(row);
+      const allowed = wanted.length >= 8 ? 2 : wanted.length >= 4 ? 1 : 0;
+      if (!allowed) return false;
+      return [n.full, n.tag, ...n.words].some(candidate => candidate && distance(candidate, wanted, allowed) <= allowed);
+    },
+  ];
+  for (const tier of tiers) {
+    const found = rows.filter(tier);
+    if (found.length) return found;
+  }
+  return [];
 }
 
 function record(value: string | null): Record<string, unknown> {

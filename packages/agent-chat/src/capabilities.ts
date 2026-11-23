@@ -547,7 +547,7 @@ export const CORE_CHAT_CAPABILITIES = [
     pluginId: null,
     ownerFacingLabel: "Draft a message",
     summary:
-      "Draft a short chat message to one person the owner knows, for 'tell X ...' or 'message X ...'. The owner's app shows it as a card with Edit and Send and only the owner sends it; this never sends and cannot read messages. Give `to` as the name the owner said (or contactId from a contacts read) and `text` written as the owner would say it to that person, in the first person. If the result says the name is unknown or ambiguous, ask who.",
+      "Draft a short chat message to one person the owner knows, for 'tell X ...' or 'message X ...'. The owner's app shows it as a card with Edit and Send and only the owner sends it; this never sends and cannot read messages. Give `to` as the name the owner said (or contactId from a contacts read) and `text` written as the owner would say it to that person, in the first person. Call it straight away, without searching contacts first: it finds people by name, Soulink handle or a near spelling, and checks Soulink for new links. Only if the result says the name is unknown or ambiguous, ask who.",
     category: "messaging",
     handler: {
       surface: "chat",
@@ -1045,7 +1045,7 @@ export const CORE_CHAT_CAPABILITIES = [
     owner: "core",
     pluginId: null,
     ownerFacingLabel: "Create reminder",
-    summary: "Create a Core reminder from a clear owner request.",
+    summary: "Create a reminder. Never ask the owner for a day or time: pick a sensible one and say when it is set for. Vague times: this weekend → Saturday 09:00, tomorrow or a named day → 09:00, tonight or this evening → 19:00, this afternoon → 14:00, next week → Monday 09:00. Omit date and time when the owner gave none; ME3 then uses tomorrow at 09:00.",
     category: "calendar",
     handler: {
       surface: "chat",
@@ -1056,15 +1056,15 @@ export const CORE_CHAT_CAPABILITIES = [
     requiresSetup: ["calendar.reminders"],
     inputSchema: {
       type: "object",
-      required: ["title", "date", "time"],
+      required: ["title"],
       properties: {
         title: { type: "string", description: "Reminder title." },
         notes: { type: "string", description: "Optional reminder notes." },
         date: {
           type: "string",
-          description: "Requested future local YYYY-MM-DD; ME3 converts timezone.",
+          description: "Future local YYYY-MM-DD; ME3 converts timezone. Omit for tomorrow.",
         },
-        time: { type: "string", description: "Requested local HH:MM (24h); noon 12:00." },
+        time: { type: "string", description: "Local HH:MM (24h); noon 12:00. Omit for 09:00." },
         timezone: { type: "string", description: "IANA zone for local date/time; default owner timezone." },
         recurrence: {
           type: "string",

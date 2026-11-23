@@ -2,6 +2,7 @@ import { clearContactReminder, createAgentContact, markAgentContactInTouch, setC
 import { getAgentContact } from "../../../packages/agent-chat/src/contacts";
 import type { AgentContactServices } from "../../../packages/agent/src/tools/services";
 import { listContactMailHistory } from "./mailbox-outreach";
+import { ensureSoulinkContactsFresh } from "./routes/channels";
 import type { Env } from "./types";
 
 const SECTION_LIMIT = 8;
@@ -14,6 +15,13 @@ export function createAgentContactServices(env: Env, ownerId: string): AgentCont
     return value as Exclude<T, { error: string }>;
   };
   return {
+    // People linked on Soulink after setup only reach ME3 through a sync. Installs with a cron sync daily;
+    // the free runtime has none, so a lookup refreshes them itself (and right away when a name is missing).
+    async refresh(options) {
+      await ensureSoulinkContactsFresh(env, ownerId, options?.force ? 60_000 : undefined).catch((error) => {
+        console.warn("Soulink contact refresh failed", error);
+      });
+    },
     async read(contactId) {
       const contact = await getAgentContact(env, ownerId, contactId);
       if (!contact) return null;

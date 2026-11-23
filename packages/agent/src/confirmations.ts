@@ -27,7 +27,8 @@ export const confirmReminder: Confirm = (data, timezone) => {
   const reminder = record(data, "reminder");
   const title = text(reminder?.title), at = ownerLocal(reminder?.remindAt, text(reminder?.timezone) ?? timezone);
   if (!title || !at) return null;
-  return `Reminder set: ${title}, ${at}${text(reminder?.recurrenceRule) ? ", repeating" : ""}.`;
+  const chosen = data && typeof data === "object" && (data as Record<string, unknown>).timeChosenByMe3 === true;
+  return `Reminder set: ${title}, ${at}${text(reminder?.recurrenceRule) ? ", repeating" : ""}.${chosen ? " Tell me if you'd like a different time." : ""}`;
 };
 
 export const confirmEvent: Confirm = (data, timezone) => {
