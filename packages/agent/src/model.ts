@@ -12,8 +12,13 @@ export interface CloudflareModelOptions {
   reasoningEffort?: string;
   /** Tried first for anthropic/ models; any failure hands the step to Unified Billing. */
   anthropicByok?: AnthropicByokOptions;
+  /** Tried first for Workers AI DeepSeek V4.1 Flash: the same model on DeepSeek's own API, past Workers AI's per-minute cap. */
+  deepseekByok?: ProviderByokOptions;
   recordUsage?(usage: AgentUsage): Promise<void> | void;
 }
+
+/** A provider key stored on the gateway: base is https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/{provider} */
+export type ProviderByokOptions = Omit<AnthropicByokOptions, "baseUrl"> & { baseUrl: string };
 
 export interface AnthropicByokOptions {
   /** Provider-native gateway base: https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/anthropic */
@@ -122,7 +127,8 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
       // Each protocol names a forced tool differently; all of them suppress prose.
       if (toolChoice && !FORCED_TOOL_UNSUPPORTED.some(pattern => pattern.test(model))) request.tool_choice = anthropic ? {type:"tool",name:toolChoice} : responses ? {type:"function",name:toolChoice} : {type:"function",function:{name:toolChoice}};
       const byok = anthropic && options.anthropicByok ? await runAnthropicByok(options.anthropicByok, model, {...request,stream:true}, options.metadata, signal) : null;
-      let result: unknown = byok;
+      const deepseek = !byok && options.deepseekByok && DEEPSEEK_API_MODEL.test(model) ? await runDeepseekByok(options.deepseekByok, request, options.metadata, signal) : null;
+      let result: unknown = byok ?? deepseek;
       if (!result) {
         try {
           result = await options.ai.run(model, {...request,stream:true}, options.gatewayId ?{gateway:{id:options.gatewayId,metadata:options.metadata ?? {},requestTimeoutMs:60_000,retries:{maxAttempts:1}}} : undefined);
@@ -137,6 +143,7 @@ export function createCloudflareModel(options: CloudflareModelOptions): AgentMod
       if (!isStream(result) && response.text) await onDelta(response.text);
       if (response.usage) {
         response.usage.estimatedCostUsd = estimateCost(model, response.usage, options.pricing);
+        if (deepseek) response.usage.provider = "deepseek";
         await options.recordUsage?.(response.usage);
       }
       return response;
@@ -164,6 +171,28 @@ async function runAnthropicByok(byok: AnthropicByokOptions, model: string, body:
   if (response.ok && response.body) return response.body;
   const detail = await response.text().catch(() => "");
   if ([401,402,403].includes(response.status) || /credit|billing|api[ _-]?key|byok/i.test(detail)) byokPausedUntil.set(byok.alias, Date.now() + BYOK_PAUSE_MS);
+  return null;
+}
+
+// DeepSeek's API serves V4.1 Flash as deepseek-flash at Workers AI's peak price (half off-peak), with a
+// 2,500-request concurrency limit and no per-minute cap. Thinking is off: with tools on, thinking mode needs
+// every earlier turn's reasoning_content sent back, which a turn started on another model does not have.
+// https://api-docs.deepseek.com/quick_start/pricing https://api-docs.deepseek.com/quick_start/rate_limit
+const DEEPSEEK_API_MODEL = /^@cf\/deepseek-ai\/deepseek-v4\.1-flash/;
+async function runDeepseekByok(byok: ProviderByokOptions, request: Record<string, unknown>, metadata: CloudflareModelOptions["metadata"], signal: AbortSignal): Promise<ReadableStream<Uint8Array>|null> {
+  if ((byokPausedUntil.get(byok.alias) ?? 0) > Date.now()) return null;
+  const {reasoning_effort: _effort, ...body} = request;
+  let response: Response;
+  try {
+    response = await (byok.fetch ?? fetch)(`${byok.baseUrl}/chat/completions`, {method:"POST",signal,headers:{"content-type":"application/json","cf-aig-authorization":`Bearer ${byok.token}`,"cf-aig-byok-alias":byok.alias,"cf-aig-metadata":JSON.stringify(metadata ?? {})},
+      body:JSON.stringify({...body,model:"deepseek-flash",thinking:{type:"disabled"},stream:true})});
+  } catch {
+    signal.throwIfAborted();
+    return null;
+  }
+  if (response.ok && response.body) return response.body;
+  const detail = await response.text().catch(() => "");
+  if ([401,402,403].includes(response.status) || /insufficient balance|api[ _-]?key|byok/i.test(detail)) byokPausedUntil.set(byok.alias, Date.now() + BYOK_PAUSE_MS);
   return null;
 }
 
@@ -350,7 +379,7 @@ function readUsage(value:unknown,anthropic:boolean,previous?:AgentUsage):AgentUs
   const details=record(usage.prompt_tokens_details??usage.input_tokens_details);
   const reported=[usage.prompt_tokens,usage.input_tokens,usage.output_tokens,usage.completion_tokens,usage.cache_read_input_tokens,usage.cache_creation_input_tokens,details.cached_tokens,details.cache_write_tokens].filter(count=>count!==undefined);
   if (!reported.every(count=>typeof count==="number" && Number.isSafeInteger(count) && count>=0)) return undefined;
-  const cached=anthropic?usage.cache_read_input_tokens ?? previous?.cachedInputTokens ?? 0:details.cached_tokens ?? 0;
+  const cached=anthropic?usage.cache_read_input_tokens ?? previous?.cachedInputTokens ?? 0:details.cached_tokens ?? usage.prompt_cache_hit_tokens ?? 0;
   const cacheWrite=anthropic?usage.cache_creation_input_tokens??previous?.cacheWriteInputTokens??0:details.cache_write_tokens??0;
   const input=anthropic
     ? usage.input_tokens===undefined && previous ? previous.inputTokens-previous.cachedInputTokens-(previous.cacheWriteInputTokens??0) : usage.input_tokens

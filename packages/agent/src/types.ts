@@ -17,7 +17,7 @@ export type AgentMessage = {
   toolCallId?: string;
   images?: AgentImage[];
 };
-export type AgentUsage = { inputTokens: number; outputTokens: number; cachedInputTokens: number; cacheWriteInputTokens?: number; estimatedCostUsd: number | null };
+export type AgentUsage = { inputTokens: number; outputTokens: number; cachedInputTokens: number; cacheWriteInputTokens?: number; estimatedCostUsd: number | null; /** Set when a provider other than the model's default served the call. */ provider?: string };
 export type AgentModelResponse = { text: string; toolCalls: AgentToolCall[]; usage?: AgentUsage; billingUsageId?: string };
 export interface AgentModel {
   id: string;
