@@ -76,11 +76,14 @@ export function renderProductCheckout(product: ProductPurchase): string {
       : "<p>This product is currently unavailable.</p>"}</section>`;
   }
   const counted = options.length ? options.some((option) => option.stock !== undefined) : stock !== null && Boolean(product.stockSetAt);
+  // With options, the badge counts the chosen option's copies, not every option's together.
+  const shown = options.length ? (typeof firstOption?.stock === "number" ? firstOption.stock : null) : stock;
+  const low = !soldOut && shown !== null && shown <= LOW_STOCK_THRESHOLD;
   const stockLine = counted
-    ? `<p class="product-stock${!soldOut && stock !== null && stock <= LOW_STOCK_THRESHOLD ? " is-low" : ""}" data-product-availability>${soldOut ? "Sold out" : stock !== null && stock <= LOW_STOCK_THRESHOLD ? `Only ${stock} left` : ""}</p>`
+    ? `<p class="product-stock${low ? " is-low" : ""}" data-product-availability>${soldOut ? "Sold out" : low ? `Only ${shown} left` : ""}</p>`
     : "";
   const optionPicker = options.length
-    ? `<fieldset class="product-options"><legend>Choose an option</legend>${options.map((option) => `<label class="product-option"><input type="radio" name="optionId" value="${escape(option.id)}" data-price="${option.price}"${option === firstOption && option.stock !== 0 ? " checked" : ""}${option.stock === 0 ? " disabled" : ""} required><span>${escape(option.label)}</span><span class="product-option-price">${escape(money(option.price))}</span>${option.stock === 0 ? '<span class="product-option-note">Sold out</span>' : ""}</label>`).join("")}</fieldset>`
+    ? `<fieldset class="product-options"><legend>Choose an option</legend>${options.map((option) => `<label class="product-option"><input type="radio" name="optionId" value="${escape(option.id)}" data-price="${option.price}"${typeof option.stock === "number" ? ` data-stock="${option.stock}"` : ""}${option === firstOption && option.stock !== 0 ? " checked" : ""}${option.stock === 0 ? " disabled" : ""} required><span>${escape(option.label)}</span><span class="product-option-price">${escape(money(option.price))}</span>${option.stock === 0 ? '<span class="product-option-note">Sold out</span>' : ""}</label>`).join("")}</fieldset>`
     : "";
   const manual = product.paymentMethod === "manual";
   // "Let them choose": a card product whose buyer may pay the owner directly instead.
@@ -92,7 +95,6 @@ export function renderProductCheckout(product: ProductPurchase): string {
   const facts = [
     digital ? `${escape(downloadSummary(product.delivery))} · download link by email after payment` : "",
     physical ? `Shipping ${escape(money(shippingCost))}${instructions ? ` · ${escape(instructions)}` : ""}` : instructions ? escape(instructions) : "",
-    digital && instructions ? escape(instructions) : "",
     product.delivery?.returns ? `<strong>Returns and cancellations</strong> ${escape(product.delivery.returns)}` : "",
   ].filter(Boolean);
   const factList = facts.length ? `<ul class="product-facts">${facts.map((fact) => `<li>${fact}</li>`).join("")}</ul>` : "";
@@ -173,8 +175,22 @@ const productCheckoutScript = String.raw`function(config) {
     if (stepOpen) form.requestSubmit(); else openStep(true);
   });
   function selectedOption() { return form.querySelector('input[name="optionId"]:checked'); }
+  // Live counts from /availability once loaded; until then, the counts published with the page.
+  let live = null;
+  function updateStock() {
+    if (!stockLabel) return;
+    const option = selectedOption();
+    const optionCount = option && live && live.options && typeof live.options[option.value] === "number" ? live.options[option.value]
+      : option && option.dataset.stock !== undefined ? Number(option.dataset.stock) : null;
+    const left = option ? optionCount : live && typeof live.remaining === "number" ? live.remaining : null;
+    const soldOut = live ? live.soldOut : false;
+    const low = !soldOut && typeof left === "number" && left <= config.lowStock;
+    stockLabel.textContent = soldOut ? "Sold out" : low ? "Only " + left + " left" : "";
+    stockLabel.classList.toggle("is-low", low);
+  }
   function syncOption() {
     const option = selectedOption();
+    updateStock();
     if (!option) return;
     config.expectedAmount = Number(option.dataset.price);
     if (priceLabel) priceLabel.textContent = money(config.expectedAmount);
@@ -190,7 +206,9 @@ const productCheckoutScript = String.raw`function(config) {
     link.className = "product-buy";
     link.href = url;
     link.textContent = "Download now";
-    root.appendChild(link);
+    // Right under "Payment received", not after the product details where it sat against the list.
+    if (status && status.parentNode) status.insertAdjacentElement("afterend", link);
+    else root.appendChild(link);
   }
   if (config.counted) {
     fetch("/api/shop/" + encodeURIComponent(config.username) + "/availability").then((r) => r.ok ? r.json() : null).then((data) => {
@@ -206,10 +224,8 @@ const productCheckoutScript = String.raw`function(config) {
         if (next) { next.checked = true; syncOption(); }
       }
       const soldOut = info.remaining === 0 || (optionInputs.length > 0 && optionInputs.every((input) => input.disabled));
-      if (stockLabel) {
-        stockLabel.textContent = soldOut ? "Sold out" : typeof info.remaining === "number" && info.remaining <= config.lowStock ? "Only " + info.remaining + " left" : "";
-        stockLabel.classList.toggle("is-low", !soldOut && typeof info.remaining === "number" && info.remaining <= config.lowStock);
-      }
+      live = { options: info.options, remaining: info.remaining, soldOut };
+      updateStock();
       if (soldOut && !completed && new URLSearchParams(window.location.search).get("purchase") !== "success") {
         completed = true;
         details.hidden = true;
@@ -337,7 +353,7 @@ const productCheckoutScript = String.raw`function(config) {
 }`;
 
 export const productCheckoutCss = `
-.content.content--product{width:min(1120px,calc(100% - 48px))}
+.content.content--product{box-sizing:border-box;width:min(1120px,calc(100% - 48px));margin-left:auto;margin-right:auto;padding-left:0;padding-right:0}
 .product{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr);gap:clamp(32px,5vw,64px);align-items:start}
 .product--no-media{grid-template-columns:minmax(0,640px);justify-content:center}
 .product__media{position:sticky;top:96px}
@@ -378,7 +394,7 @@ export const productCheckoutCss = `
 .product__description{margin-top:28px;padding-top:24px;border-top:1px solid var(--border);font-size:1rem;line-height:1.65}
 .product__description>:first-child{margin-top:0}
 .product-status:empty{display:none}
-.product-status{margin:0 0 16px}.product-status.is-error{font-weight:600}
+.product-status{margin:0 0 16px}.product-status.is-error{font-weight:600}.product-status+.product-buy{margin-bottom:20px}
 @keyframes product-step-in{from{transform:translateY(6px)}to{transform:none}}
 @media(prefers-reduced-motion:reduce){.product-step{animation:none}}
 @media(max-width:760px){

@@ -1,5 +1,6 @@
 import ICAL from "ical.js";
 import { getOrCreateInstallEncryptionKey } from "./install-secrets";
+import { getMe3CloudApiOrigin, getMe3CloudOrigin } from "./sites";
 import type { DbCalendarSource, Env } from "./types";
 
 type IcalComponent = InstanceType<typeof ICAL.Component>;
@@ -139,7 +140,7 @@ export async function subscribeIcsUrl(
   const parsedEvents = parseIcsEvents(text, {
     pastDays: ICS_URL_SYNC_PAST_DAYS,
     futureDays: ICS_URL_SYNC_FUTURE_DAYS,
-  }, Boolean(soulinkFeedParts(url)));
+  }, Boolean(soulinkFeedParts(url) || cloudCalendarFeedParts(env, url)));
 
   const sourceId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -207,6 +208,8 @@ export async function removeCalendarSource(
     throw new CalendarSourceInputError("Calendar source not found.", 404);
   }
 
+  if (source.encrypted_source_url) await disconnectCloudCalendarFeed(env, source.encrypted_source_url);
+
   await env.DB.batch([
     env.DB.prepare("DELETE FROM calendar_source_events WHERE source_id = ?")
       .bind(source.id),
@@ -222,6 +225,26 @@ export async function removeCalendarSource(
   ]);
 
   return { ok: true, sourceId: source.id };
+}
+
+/**
+ * Google and Outlook calendars connected through ME3 Cloud (hosted only) arrive as a private feed link on
+ * the Cloud API. Cloud holds the provider's token; the installation only ever holds this link.
+ */
+export function cloudCalendarFeedParts(env: Env, url: URL): { id: string; token: string } | null {
+  const hosts = new Set([new URL(getMe3CloudApiOrigin(env)).hostname, new URL(getMe3CloudOrigin(env)).hostname]);
+  if (url.protocol !== "https:" || !hosts.has(url.hostname)) return null;
+  const match = /^\/api\/calendar-connect\/feeds\/([0-9a-f-]{36})\/([A-Za-z0-9_-]{32,128})$/.exec(url.pathname);
+  return match ? { id: match[1], token: match[2] } : null;
+}
+
+/** Removing a connected calendar also asks Cloud to forget the provider token. Best effort: removal never waits on Cloud. */
+async function disconnectCloudCalendarFeed(env: Env, encryptedSourceUrl: string): Promise<void> {
+  try {
+    const url = new URL(await decryptSecret(encryptedSourceUrl, await getOrCreateInstallEncryptionKey(env)));
+    if (!cloudCalendarFeedParts(env, url)) return;
+    await fetch(url.toString(), { method: "DELETE", signal: AbortSignal.timeout(5_000) });
+  } catch { /* Cloud can be unreachable; the link is deleted here either way. */ }
 }
 
 function soulinkFeedParts(url: URL): { id: string; token: string } | null {
@@ -347,7 +370,7 @@ async function refreshCalendarSourceRow(
     const parsedEvents = parseIcsEvents(text, {
       pastDays: ICS_URL_SYNC_PAST_DAYS,
       futureDays: ICS_URL_SYNC_FUTURE_DAYS,
-    }, Boolean(soulinkFeedParts(url)));
+    }, Boolean(soulinkFeedParts(url) || cloudCalendarFeedParts(env, url)));
     const now = new Date().toISOString();
 
     await replaceSourceWithEvents(env, {
@@ -590,6 +613,9 @@ async function fetchIcsUrl(
     },
   });
 
+  if (response.status === 410) {
+    throw new CalendarSourceInputError("This calendar was disconnected. Connect it again to keep it in sync.", 400);
+  }
   if (!response.ok) {
     throw new CalendarSourceInputError(
       `Calendar feed returned HTTP ${response.status}.`,

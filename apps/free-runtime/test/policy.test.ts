@@ -11,6 +11,12 @@ describe("free tier policy", () => {
     }
   });
 
+  it("allows subscribed calendars, including Google and Outlook connected through ME3 Cloud", () => {
+    expect(freeApiAccess("POST", "/api/calendar/sources/ics-url", { news: false })).toBe("allow");
+    expect(freeApiAccess("POST", "/api/calendar/sources/abc/refresh", { news: false })).toBe("allow");
+    expect(freeApiAccess("DELETE", "/api/calendar/sources/abc", { news: false })).toBe("allow");
+  });
+
   it("blocks paid features, setup and uploads", () => {
     for (const path of ["/api/mailbox/messages", "/api/sites/x", "/api/social/queue", "/api/accounts/summary", "/api/files/list", "/api/computer/jobs", "/api/ai-settings", "/api/admin/bootstrap", "/api/auth/login", "/api/assistant/attachments", "/api/coding-agent/tasks", "/api/payments/x", "/mcp", "/api/assistantx", "/"]) {
       expect(freeApiAccess("POST", path, { news: false }), path).toBe("upgrade");
@@ -18,10 +24,10 @@ describe("free tier policy", () => {
   });
 
   it("allows ME3 messaging over Soulink but not the paid Soulink features or the assistant dispatch", () => {
-    for (const [method, path] of [["POST", "/api/messaging/session"], ["GET", "/api/messaging/session"], ["POST", "/api/soulink/setup"], ["GET", "/api/soulink/status"], ["POST", "/api/soulink/disconnect"], ["POST", "/api/soulink/provision/verify"]]) {
+    for (const [method, path] of [["POST", "/api/messaging/session"], ["GET", "/api/messaging/session"], ["POST", "/api/soulink/setup"], ["GET", "/api/soulink/status"], ["POST", "/api/soulink/disconnect"], ["POST", "/api/soulink/provision/verify"], ["POST", "/api/soulink/contacts/sync"]]) {
       expect(freeApiAccess(method, path, { news: false }), path).toBe("allow");
     }
-    for (const path of ["/api/soulink/contacts/sync", "/api/soulink/invite-link", "/api/soulink/bookings/upcoming", "/api/agent/channels/soulink/dispatch", "/api/soulink/setupx"]) {
+    for (const path of ["/api/soulink/invite-link", "/api/soulink/bookings/upcoming", "/api/agent/channels/soulink/dispatch", "/api/soulink/setupx"]) {
       expect(freeApiAccess("POST", path, { news: false }), path).toBe("upgrade");
     }
   });
@@ -33,8 +39,8 @@ describe("free tier policy", () => {
 
   it("limits the agent to free tools", () => {
     const env = { ME3_AGENT_TOOL_ALLOWLIST: freeToolAllowlist({ news: false }) };
-    for (const name of ["core_mission_task_create", "core_journal_save", "core_calendar_event_create", "core_reminders_create", "core_memory_search", "core_tools_load"]) expect(toolAllowedByEnv(env, name), name).toBe(true);
-    for (const name of ["core_mailbox_send", "core_web_search", "core_images_generate", "core_sites_starter_draft", "core_payments_propose", "core_computer_start", "core_news_paper", "core_social_queue_read", "core_coding_send", "core_accounts_summary"]) expect(toolAllowedByEnv(env, name), name).toBe(false);
+    for (const name of ["core_mission_task_create", "core_journal_save", "core_calendar_event_create", "core_reminders_create", "core_memory_search", "core_tools_load", "core_contacts_search", "core_messages_draft"]) expect(toolAllowedByEnv(env, name), name).toBe(true);
+    for (const name of ["core_mailbox_send", "core_web_search", "core_images_generate", "core_sites_starter_draft", "core_payments_propose", "core_computer_start", "core_news_paper", "core_social_queue_read", "core_coding_send", "core_accounts_summary", "core_contact_save"]) expect(toolAllowedByEnv(env, name), name).toBe(false);
     expect(toolAllowedByEnv({ ME3_AGENT_TOOL_ALLOWLIST: freeToolAllowlist({ news: true }) }, "core_news_paper")).toBe(true);
   });
 

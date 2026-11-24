@@ -247,7 +247,7 @@ const deletingEventId = ref<string | null>(null);
 const removingSourceId = ref<string | null>(null);
 const removingImportedEventId = ref<string | null>(null);
 const addingImportedBirthdayId = ref<string | null>(null);
-const { toastSuccess, toastFromUnknown } = useAppToast();
+const { toastSuccess, toastError, toastFromUnknown } = useAppToast();
 let calendarLoadToken = 0;
 let calendarLoadController: AbortController | null = null;
 let calendarPickerLoadToken = 0;
@@ -2681,6 +2681,38 @@ async function submitImport() {
   }
 }
 
+type CalendarConnectProvider = "google" | "microsoft";
+const calendarConnecting = ref<CalendarConnectProvider | null>(null);
+const CALENDAR_CONNECT_ERRORS: Record<string, string> = {
+  denied: "Calendar connection was cancelled.",
+  scope_missing: "ME3 needs permission to see your calendar. Try again and leave calendar access ticked.",
+};
+
+/** Google and Outlook sign in through ME3 Cloud, which returns here with a private feed link. */
+async function connectCalendar(provider: CalendarConnectProvider) {
+  calendarConnecting.value = provider;
+  let cloudOrigin = "https://me3.app";
+  try {
+    const config = await api.get<{ me3Cloud?: { origin?: string } }>("/config");
+    if (config.me3Cloud?.origin) cloudOrigin = config.me3Cloud.origin.replace(/\/+$/, "");
+  } catch { /* Fall back to me3.app. */ }
+  const returnTo = `${window.location.origin}/calendar`;
+  window.location.assign(`${cloudOrigin}/api/calendar-connect/${provider}/start?return_to=${encodeURIComponent(returnTo)}`);
+}
+
+async function finishCalendarConnect(feed: string, name: string) {
+  try {
+    const response = await api.post<{ importedCount: number; source: { name: string } }>(
+      "/calendar/sources/ics-url",
+      { name, url: feed },
+    );
+    toastSuccess(`Connected ${response.source.name}. ${response.importedCount} events added.`);
+    await reloadCalendar();
+  } catch (err) {
+    toastFromUnknown(err, "Could not connect that calendar.");
+  }
+}
+
 watch(
   () => sites.sites.length,
   (nextCount) => {
@@ -2778,6 +2810,14 @@ onMounted(async () => {
       openedOnLinkedDay = true; rangeMode.value = "day"; dayCursor.value = day; monthCursor.value = new Date(day);
       focusedDayKey.value = dayKeyFormatter.value.format(day);
     }
+  }
+  const connectParams = new URLSearchParams(window.location.hash.slice(1));
+  const connectedFeed = connectParams.get("me3_calendar_feed");
+  const connectError = connectParams.get("me3_calendar_error");
+  if (connectedFeed || connectError) {
+    window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+    if (connectedFeed) void finishCalendarConnect(connectedFeed, connectParams.get("me3_calendar_name") || "");
+    else toastError(CALENDAR_CONNECT_ERRORS[connectError || ""] || "Could not connect that calendar.");
   }
   const soulinkFeed = new URLSearchParams(window.location.hash.slice(1)).get("soulink_calendar_feed");
   if (soulinkFeed) {
@@ -3832,6 +3872,26 @@ onBeforeUnmount(() => {
         </div>
 
         <form class="booking-form" @submit.prevent="submitImport">
+          <div v-if="!soulinkApprovalOrigin" class="calendar-connect">
+            <Button
+              type="button"
+              color="outline"
+              :disabled="calendarConnecting !== null"
+              @click="connectCalendar('google')"
+            >
+              {{ calendarConnecting === 'google' ? 'Opening Google…' : 'Connect Google Calendar' }}
+            </Button>
+            <Button
+              type="button"
+              color="outline"
+              :disabled="calendarConnecting !== null"
+              @click="connectCalendar('microsoft')"
+            >
+              {{ calendarConnecting === 'microsoft' ? 'Opening Outlook…' : 'Connect Outlook' }}
+            </Button>
+            <p class="form-hint">Sign in and ME3 keeps a read-only copy in sync. Or add any calendar by link or file:</p>
+          </div>
+
           <div v-if="!soulinkApprovalOrigin" class="create-tabs" role="group" aria-label="Calendar sync method">
             <button
               type="button"
@@ -4640,6 +4700,11 @@ onBeforeUnmount(() => {
 .availability-modal :deep(.booking-availability-editor) {
   padding: 0;
   border-top: 0;
+}
+
+.calendar-connect {
+  display: grid;
+  gap: 8px;
 }
 
 .form-hint {

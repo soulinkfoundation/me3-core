@@ -24,11 +24,14 @@ const props = withDefaults(
     interactive?: boolean;
     compact?: boolean;
     ariaLabel?: string;
+    /** Scores from an earlier snapshot, drawn as a dashed outline. */
+    previous?: Record<string, number | null> | null;
   }>(),
   {
     interactive: true,
     compact: false,
     ariaLabel: "Wheel of Life score selector",
+    previous: null,
   },
 );
 
@@ -80,6 +83,23 @@ const wheelSegments = computed(() => {
       labelStyle: labelPositionStyle(midAngle),
     };
   });
+});
+
+const previousPath = computed(() => {
+  const previous = props.previous;
+  if (!previous) return "";
+  return wheelSegments.value
+    .map((segment) => {
+      const score = previous[segment.id];
+      if (typeof score !== "number" || score <= 0) return "";
+      const radius = (score / 10) * OUTER_RADIUS;
+      const start = polarPoint(segment.startAngle, radius);
+      const end = polarPoint(segment.endAngle, radius);
+      const largeArc = segment.endAngle - segment.startAngle > 180 ? 1 : 0;
+      return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`;
+    })
+    .filter(Boolean)
+    .join(" ");
 });
 
 function polarPoint(angleDeg: number, radius: number) {
@@ -229,6 +249,13 @@ function handleSegmentKeydown(event: KeyboardEvent, segmentId: string) {
         <circle r="2.6" class="life-wheel-chart__center-dot" />
       </g>
 
+      <path
+        v-if="previousPath"
+        class="life-wheel-chart__previous"
+        :d="previousPath"
+        aria-hidden="true"
+      />
+
       <g>
         <path
           v-for="segment in wheelSegments"
@@ -333,6 +360,16 @@ function handleSegmentKeydown(event: KeyboardEvent, segmentId: string) {
   stroke: none;
 }
 
+.life-wheel-chart__previous {
+  fill: none;
+  stroke: var(--ui-text);
+  stroke-width: 1.6;
+  stroke-dasharray: 4 4;
+  opacity: 0.55;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
 .life-wheel-chart__hit-area {
   cursor: crosshair;
   outline: none;
@@ -369,8 +406,8 @@ function handleSegmentKeydown(event: KeyboardEvent, segmentId: string) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: clamp(68px, 14%, 108px);
-  max-width: 24%;
+  width: clamp(76px, 17%, 108px);
+  max-width: 26%;
   gap: 2px;
   padding: 4px 5px;
   border: 1px solid transparent;

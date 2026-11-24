@@ -11,7 +11,7 @@ import type { Env } from "./types";
 const databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
 
-function context() {
+function context(onRefresh?: (force: boolean) => void) {
   const raw = new DatabaseSync(":memory:");
   databases.push(raw);
   raw.exec(`CREATE TABLE contacts (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, email TEXT, source TEXT, source_ref TEXT,
@@ -28,7 +28,8 @@ function context() {
   });
   const db: AgentDb = { prepare: sql => statement(sql) };
   const ctx = { db, ownerId: "owner", threadId: "thread", turnId: "turn", requestId: "request", toolCallId: "call", idempotencyKey: "k",
-    ownerTimezone: "Europe/Dublin", messageText: "", messages: [], enabledPluginIds: new Set(), signal: new AbortController().signal } as unknown as AgentToolContext;
+    ownerTimezone: "Europe/Dublin", messageText: "", messages: [], enabledPluginIds: new Set(), signal: new AbortController().signal,
+    services: onRefresh ? { contacts: { refresh: async (options?: { force?: boolean }) => onRefresh(Boolean(options?.force)) } } : undefined } as unknown as AgentToolContext;
   const draft = (args: Record<string, unknown>) => createDomainTools().find(tool => tool.name === "core_messages_draft")!.execute(args, ctx);
   return { add, draft };
 }
@@ -55,6 +56,33 @@ describe("core_messages_draft", () => {
     // The owner picks one; the exact full name also settles it.
     expect(await draft({ contactId: "c-sam-2", text: "Hi" })).toMatchObject({ data: { drafted: true, draft: { recipientName: "Sam Patel" } } });
     expect(await draft({ to: "sam lee", text: "Hi" })).toMatchObject({ data: { drafted: true, draft: { contactId: "c-sam-1" } } });
+  });
+
+  it("finds people by Soulink handle and through small misspellings, without guessing between real matches", async () => {
+    const { add, draft } = context();
+    add("c-soulink", "Soulink", { node: "node_soulink", handle: "soulink" });
+    add("c-kier", "Kieran Butler", { node: "node_kier", handle: "kb22" });
+    add("c-ciara", "Ciara Walsh", { node: "node_ciara" });
+    expect(await draft({ to: "Solink", text: "Hello" })).toMatchObject({ data: { drafted: true, draft: { contactId: "c-soulink" } } });
+    expect(await draft({ to: "@kb22", text: "Hello" })).toMatchObject({ data: { drafted: true, draft: { contactId: "c-kier" } } });
+    expect(await draft({ to: "Keiran", text: "Hello" })).toMatchObject({ data: { drafted: true, draft: { contactId: "c-kier" } } });
+    expect(await draft({ to: "Kieran Butlr", text: "Hello" })).toMatchObject({ data: { drafted: true, draft: { contactId: "c-kier" } } });
+    // Too short to trust a misspelling, and unrelated names stay unknown.
+    expect(await draft({ to: "Kim", text: "Hello" })).toMatchObject({ data: { drafted: false, reason: "unknown" } });
+    expect(await draft({ to: "Priya", text: "Hello" })).toMatchObject({ data: { drafted: false, reason: "unknown" } });
+  });
+
+  it("pulls in someone linked on Soulink since the last sync before saying they're unknown", async () => {
+    const calls: boolean[] = [];
+    const { add, draft } = context((force) => {
+      calls.push(force);
+      if (force) add("c-new", "Aoife Byrne", { node: "node_aoife" });
+    });
+    expect(await draft({ to: "Aoife", text: "Hi" })).toMatchObject({ data: { drafted: true, draft: { contactId: "c-new" } } });
+    expect(calls).toEqual([false, true]);
+    calls.length = 0;
+    expect(await draft({ to: "Aoife", text: "Hi again" })).toMatchObject({ data: { drafted: true } });
+    expect(calls).toEqual([false]);
   });
 
   it("says when the person cannot get ME3 messages", async () => {

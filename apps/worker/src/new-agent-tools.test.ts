@@ -226,6 +226,16 @@ describe("new agent domain tools", () => {
     expect(ctx.raw.prepare("SELECT * FROM user_reminders ORDER BY id").all()).toEqual(before);
   });
 
+  it("sets a reminder with no day or time for tomorrow at 09:00 and says it can be changed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-23T12:00:00Z"));
+    const ctx = context();
+    const result = await tool("core_reminders_create").execute({ title: "Watch Robinhood", timezone: "Europe/Dublin" }, ctx);
+    expect(result).toMatchObject({ status: "ok", data: { timeChosenByMe3: true, reminder: { title: "Watch Robinhood", remindAt: "2026-11-24T09:00:00.000Z" } } });
+    const guessed = await tool("core_reminders_create").execute({ title: "Weekend film", date: "2026-11-28", time: "09:00", timezone: "Europe/Dublin", guessedTime: true }, ctx);
+    expect(guessed).toMatchObject({ status: "ok", data: { timeChosenByMe3: true } });
+    vi.useRealTimers();
+  });
+
   it.each([
     ["2027-01", "12:00:00.000Z", "09:30:00.000Z"],
     ["2027-07", "11:00:00.000Z", "08:30:00.000Z"],

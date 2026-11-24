@@ -10,7 +10,7 @@ import type { AppHono } from "../http/types";
 vi.mock("../plugins", () => ({ isCorePluginEnabled: vi.fn() }));
 vi.mock("../wheel-of-life", () => ({
   getMissionWheel: vi.fn(async (_env, ownerId) => ({ settings: { userId: ownerId }, snapshots: [] })),
-  updateMissionWheelSettings: vi.fn(), createMissionWheelSnapshot: vi.fn(), listMissionWheelSnapshots: vi.fn(),
+  updateMissionWheelSettings: vi.fn(), createMissionWheelSnapshot: vi.fn(), listMissionWheelSnapshots: vi.fn(), updateMissionWheelSnapshotNotes: vi.fn(),
 }));
 vi.mock("../goals", () => ({ getGoals: vi.fn(async () => ({ goals: [] })), updateGoals: vi.fn() }));
 function appFor(ownerId: string | null = "alice") {

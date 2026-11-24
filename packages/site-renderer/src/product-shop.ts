@@ -125,7 +125,7 @@ export function renderShopAvailabilityScript(username: string): string {
 export { externalShopLabel };
 
 export const productShopCss = `
-.content.content--shop{width:min(1120px,calc(100% - 48px))}
+.content.content--shop{box-sizing:border-box;width:min(1120px,calc(100% - 48px));margin-left:auto;margin-right:auto;padding-left:0;padding-right:0}
 .shop-items{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:40px 24px;align-items:start}
 .shop-items .shop-item{position:relative;display:flex;flex-direction:column;gap:4px;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:var(--text);text-decoration:none}
 .shop-items .shop-item-cover{display:block;width:100%;height:auto;aspect-ratio:4/5;margin:0 0 12px;object-fit:cover;border-radius:var(--radius,12px);background:var(--raised,var(--border));box-shadow:var(--card-shadow,none);transition:transform .35s cubic-bezier(.2,.7,.2,1),box-shadow .35s ease}

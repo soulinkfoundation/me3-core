@@ -5,6 +5,7 @@ import {
   updateMissionWheelSettings,
   createMissionWheelSnapshot,
   listMissionWheelSnapshots,
+  updateMissionWheelSnapshotNotes,
 } from "../wheel-of-life";
 
 export function registerWheelOfLifeRoutes(app: AppHono, deps: OwnerRouteDeps) {
@@ -67,6 +68,27 @@ export function registerWheelOfLifeRoutes(app: AppHono, deps: OwnerRouteDeps) {
     }
   });
 
+  app.on(
+    "PATCH",
+    ["/api/journal/wheel/snapshots/:id", "/api/mission-control/wheel/snapshots/:id"],
+    async (c) => {
+      const ownerId = await deps.requireOwner(c);
+      if (!ownerId) return deps.unauthorized(c);
+
+      try {
+        return c.json(
+          await updateMissionWheelSnapshotNotes(
+            c.env,
+            ownerId,
+            c.req.param("id"),
+            await c.req.json().catch(() => ({})),
+          ),
+        );
+      } catch (error) {
+        return wheelErrorResponse(c, error);
+      }
+    },
+  );
 }
 
 function wheelErrorResponse(c: AppContext, error: unknown) {

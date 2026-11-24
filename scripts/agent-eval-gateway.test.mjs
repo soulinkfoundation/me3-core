@@ -186,3 +186,16 @@ test("buffered present-but-invalid token fields stay unknown instead of settling
     assert.equal(settled, null);
   }
 });
+
+test("Claude pays from the gateway's stored Anthropic key when an alias and gateway token are set", async () => {
+  const calls = [];
+  const route = createGatewayRoute("anthropic:claude-haiku-5.5", { accountId: "acct", apiToken: "synthetic", gatewayId: "gw", byokAlias: "me3-key", byokToken: "run-token",
+    fetch: async (url, options) => { calls.push({ url, options }); return new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }); } });
+  await route.ai.run("anthropic/claude-haiku-5.5", { stream: true, max_tokens: 10, messages: [] });
+  await route.ai.run("openai/gpt-5.5", { stream: true, messages: [] });
+  assert.equal(calls[0].url, "https://gateway.ai.cloudflare.com/v1/acct/gw/anthropic/v1/messages");
+  assert.equal(calls[0].options.headers["cf-aig-byok-alias"], "me3-key");
+  assert.equal(calls[0].options.headers["cf-aig-authorization"], "Bearer run-token");
+  assert.equal(JSON.parse(calls[0].options.body).model, "claude-haiku-5-5");
+  assert.match(calls[1].url, /api\.cloudflare\.com\/client\/v4\/accounts\/acct\/ai\/v1\/chat\/completions$/);
+});

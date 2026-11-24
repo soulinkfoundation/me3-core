@@ -21,6 +21,11 @@ export function createGatewayRoute(modelChoice, options = {}) {
   const apiToken = options.apiToken || process.env.CLOUDFLARE_API_TOKEN?.trim();
   const gatewayId = options.gatewayId || process.env.CLOUDFLARE_AI_GATEWAY_ID?.trim() || "default";
   if (!accountId || !apiToken) throw new Error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required for live synthetic evaluations.");
+  // Like managed installs, Claude can pay from ME3's Anthropic key stored on the gateway instead of
+  // Cloudflare credits. Unlike the runtime, a failed key call fails the request: no silent payer switch.
+  const byokAlias = options.byokAlias ?? process.env.ANTHROPIC_BYOK_ALIAS?.trim();
+  const byokToken = options.byokToken ?? process.env.CLOUDFLARE_AI_GATEWAY_TOKEN?.trim();
+  const byok = byokAlias && byokToken ? { alias: byokAlias, token: byokToken } : null;
   const usageSamples = [];
   const pendingReservations = [];
   let requestCount = 0;
@@ -47,17 +52,25 @@ export function createGatewayRoute(modelChoice, options = {}) {
       const deepseekAlias = process.env.EVAL_DEEPSEEK_BYOK_ALIAS?.trim();
       const deepseekDirect = deepseekAlias && /^@cf\/deepseek-ai\/deepseek-v4\.1-flash/.test(selectedModel);
       const { reasoning_effort: _effort, ...directInput } = input;
+      const signal = options.signal || AbortSignal.timeout(120_000);
       const response = deepseekDirect
         ? await (options.fetch || fetch)(`https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(process.env.EVAL_DEEPSEEK_GATEWAY_ID?.trim() || gatewayId)}/deepseek/chat/completions`, {
-          method: "POST", signal: options.signal || AbortSignal.timeout(120_000),
+          method: "POST", signal,
           headers: { "content-type": "application/json", "cf-aig-authorization": `Bearer ${process.env.CLOUDFLARE_AI_GATEWAY_TOKEN?.trim()}`, "cf-aig-byok-alias": deepseekAlias },
           body: JSON.stringify({ ...directInput, model: "deepseek-flash", thinking: { type: "disabled" } }),
         })
+        : byok && selectedModel.startsWith("anthropic/")
+        ? await (options.fetch || fetch)(`https://gateway.ai.cloudflare.com/v1/${encodeURIComponent(accountId)}/${encodeURIComponent(gatewayId)}/anthropic/v1/messages`, {
+          method: "POST", signal,
+          headers: { "Content-Type": "application/json", "anthropic-version": "2023-06-01", "cf-aig-authorization": `Bearer ${byok.token}`, "cf-aig-byok-alias": byok.alias },
+          // The gateway catalog names claude-sonnet-5.5; Anthropic names claude-sonnet-5-5.
+          body: JSON.stringify({ ...input, model: selectedModel.slice("anthropic/".length).replace(/\./g, "-") }),
+        })
         : await (options.fetch || fetch)(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1/${endpoint}`, {
-        method: "POST", signal: options.signal || AbortSignal.timeout(120_000),
-        headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json", "cf-aig-gateway-id": gatewayId },
-        body: JSON.stringify({ model: selectedModel, ...input }),
-      });
+          method: "POST", signal,
+          headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json", "cf-aig-gateway-id": gatewayId },
+          body: JSON.stringify({ model: selectedModel, ...input }),
+        });
       if (input.stream && response.ok) {
         if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) throw new Error("Gateway returned a buffered response to a streaming request; no provider TTFT evidence.");
         pendingReservations.push(reservation);

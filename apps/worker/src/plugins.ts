@@ -1295,6 +1295,12 @@ const JOURNAL_PLUGIN: CorePluginManifestSummary = {
       auth: "owner",
     },
     {
+      id: "journal.wheel.snapshot.notes.api",
+      path: "/api/journal/wheel/snapshots/:id",
+      methods: ["PATCH"],
+      auth: "owner",
+    },
+    {
       id: "journal.day.read.api",
       path: "/api/journal/days/:date",
       methods: ["GET"],

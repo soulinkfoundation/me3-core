@@ -35,12 +35,39 @@ export async function searchLocalDirectory(env: Env, ownerId: string, input: Sea
     const profile = await fetchProfile(`${origin}/me.json`);
     if (profile) sources.push({ profile, origin, self: false });
   }
-  return sources
-    .map(({ profile, origin, self }) => ({ result: profileToResult(profile, origin, self), score: 0 }))
+  const results = await Promise.all(sources.map(async ({ profile, origin, self }) => {
+    const result = profileToResult(profile, origin, self);
+    return self ? result : withLocalAgentCheckout(result, origin);
+  }));
+  return results
+    .map((result) => ({ result, score: 0 }))
     .map((entry) => ({ ...entry, score: matchScore(entry.result, tokens) }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score)
     .map((entry) => ({ ...entry.result, reasons: matchReasons(entry.result, tokens) }));
+}
+
+/**
+ * Local sellers publish no https me.json agent checkout, so the stand-in's live agent
+ * commerce API stands in for ME3 Cloud's index: offerings it lists get the spec URL.
+ */
+async function withLocalAgentCheckout(result: CorePeopleSearchResult, origin: string): Promise<CorePeopleSearchResult> {
+  if (!result.handle) return result;
+  const base = `${origin}/api/agent-commerce/v1/sites/${encodeURIComponent(result.handle)}`;
+  const listed = await fetchJson(`${base}/offerings`);
+  const ids = new Set((Array.isArray(listed?.offerings) ? listed.offerings : [])
+    .map((entry) => (entry && typeof entry === "object" ? text((entry as Record<string, unknown>).id, 200) : null))
+    .filter((id): id is string => Boolean(id)));
+  if (!ids.size) return result;
+  const agentCheckout = { version: "1", specUrl: `${base}/openapi.json` };
+  return { ...result, offerings: result.offerings.map((entry) => ids.has(entry.id) ? { ...entry, agentCheckout } : entry) };
+}
+
+/** Whether a seller URL belongs to a stand-in this local install was started with (ENVIRONMENT=local only). */
+export function isLocalSellerUrl(env: Env, value: string): boolean {
+  if (!isLocalDirectoryEnabled(env)) return false;
+  const origin = originOf(value);
+  return Boolean(origin) && configuredOrigins(env).includes(origin!);
 }
 
 function configuredOrigins(env: Env): string[] {
@@ -70,12 +97,17 @@ async function ownerProfileSite(env: Env, ownerId: string): Promise<DbSite | nul
 }
 
 async function fetchProfile(url: string): Promise<Record<string, unknown> | null> {
+  return parseProfile(JSON.stringify(await fetchJson(url)));
+}
+
+async function fetchJson(url: string): Promise<Record<string, unknown> | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
     if (!response.ok) return null;
-    return parseProfile(await response.text());
+    const parsed = JSON.parse(await response.text()) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
   } catch {
     return null;
   } finally {

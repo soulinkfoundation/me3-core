@@ -1,5 +1,6 @@
 import type { AgentPaymentServices, PaymentProposalRecord } from "../../../packages/agent/src/tools";
 import type { Env } from "./types";
+import { isLocalSellerUrl } from "./local-directory";
 
 /**
  * Agent payments (me3-2gdu.3). ME3 proposes an exact purchase; the owner approves
@@ -161,7 +162,9 @@ function optionalText(value: unknown, label: string, max = 500): string | null {
 }
 
 /** Only public https pages: a payment link must never point at the installation or a private network. */
-export function publicHttpsUrl(value: unknown, label: string): URL {
+export function publicHttpsUrl(value: unknown, label: string, localEnv?: Env): URL {
+  // `pnpm dev:fresh` stand-ins are http on 127.0.0.1; only those configured origins pass, and only locally.
+  if (localEnv && typeof value === "string" && isLocalSellerUrl(localEnv, value)) { const local = new URL(value); local.hash = ""; return local; }
   let url: URL;
   try { url = new URL(requiredText(value, label, 2000)); } catch (error) { if (error instanceof PaymentError) throw error; throw new PaymentError(`${label} must be a full https URL.`); }
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
@@ -287,7 +290,7 @@ export async function assertWithinLimits(env: Env, ownerId: string, amountMinor:
 export async function proposePayment(env: Env, ownerId: string, scope: PaymentScope, input: PaymentProposalInput, network?: NetworkProposalDetails) {
   const currency = normalizeCurrency(input.currency);
   const amountMinor = toMinorUnits(input.amount, currency);
-  const merchantUrl = publicHttpsUrl(input.merchantUrl, "Merchant URL");
+  const merchantUrl = publicHttpsUrl(input.merchantUrl, "Merchant URL", network ? env : undefined);
   const checkoutUrl = input.checkoutUrl === undefined || input.checkoutUrl === null || input.checkoutUrl === "" ? null : publicHttpsUrl(input.checkoutUrl, "Checkout URL");
   const immutable = {
     method: network ? "in_network" : "finish_on_device", merchantName: requiredText(input.merchantName, "Merchant name", 200), merchantUrl: merchantUrl.toString(),

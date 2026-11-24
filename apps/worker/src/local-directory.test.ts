@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { profileToResult, searchLocalDirectory } from "./local-directory";
+import { isLocalSellerUrl, profileToResult, searchLocalDirectory } from "./local-directory";
 import type { Env } from "./types";
 
 // Failure modes, written before the service: the owner finds themselves in an ordinary search; a
@@ -94,6 +94,18 @@ describe("the local directory", () => {
 
     vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("connect ECONNREFUSED"); }));
     expect(await searchLocalDirectory(fixture(), "owner", { query: "Kieran" })).toEqual([]);
+  });
+
+  it("marks the stand-in's agent checkout offerings, and trusts only configured origins locally", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url === "http://127.0.0.1:8788/me.json" ? Response.json(STANDIN_ME_JSON)
+      : url === "http://127.0.0.1:8788/api/agent-commerce/v1/sites/kieran/offerings" ? Response.json({ offerings: [{ id: "service:intro-call" }] })
+        : new Response("", { status: 404 })));
+    const [standin] = await searchLocalDirectory(fixture(), "owner", { query: "Kieran" });
+    expect(standin.offerings[0].agentCheckout).toEqual({ version: "1", specUrl: "http://127.0.0.1:8788/api/agent-commerce/v1/sites/kieran/openapi.json" });
+
+    expect(isLocalSellerUrl(fixture(), "http://127.0.0.1:8788/api/agent-commerce/v1/sites/kieran/checkouts")).toBe(true);
+    expect(isLocalSellerUrl(fixture(), "http://127.0.0.1:9999/api/agent-commerce/v1/sites/kieran/checkouts")).toBe(false);
+    expect(isLocalSellerUrl(fixture({ environment: "production" }), "http://127.0.0.1:8788/api/agent-commerce/v1/sites/kieran/checkouts")).toBe(false);
   });
 
   it("maps a me.json into a people result that the booking tool can use", () => {

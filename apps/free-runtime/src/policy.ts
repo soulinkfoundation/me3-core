@@ -10,18 +10,19 @@ const FREE_API_PREFIXES = [
   "/api/quotes", "/api/gratitude", "/api/push", "/api/config", "/api/navigation-features",
   "/api/messaging",
 ];
-// ME3 messaging over Soulink chat: connect, status, disconnect, and the check Soulink makes that a connect
-// came from this ME3. Contacts sync, invite links, bookings and the Soulink assistant chat (agent dispatch,
-// which would run the model outside the free allowance) stay paid.
-const FREE_SOULINK_PATHS = ["/api/soulink/setup", "/api/soulink/status", "/api/soulink/disconnect", "/api/soulink/provision/verify"];
+// ME3 messaging over Soulink chat: connect, status, disconnect, the check Soulink makes that a connect
+// came from this ME3, and contacts sync (messaging finds people through it). Invite links, bookings and the
+// Soulink assistant chat (agent dispatch, which would run the model outside the free allowance) stay paid.
+const FREE_SOULINK_PATHS = ["/api/soulink/setup", "/api/soulink/status", "/api/soulink/disconnect", "/api/soulink/provision/verify", "/api/soulink/contacts/sync"];
 const NEWS_API_PREFIXES = ["/api/news", "/api/soup"];
-// Inside an allowed area but not free: uploads need storage, and these agent channels belong to paid installs.
-const BLOCKED_API_PREFIXES = ["/api/assistant/attachments", "/api/calendar/sources"];
+// Inside an allowed area but not free: chat attachments need storage. Subscribed calendars (a private
+// iCal link, or Google and Outlook connected through ME3 Cloud) are free: they live in the user's own database.
+const BLOCKED_API_PREFIXES = ["/api/assistant/attachments"];
 
 const FREE_EMPTY_LISTS = ["/api/sites", "/api/contacts"];
 
 const FREE_TOOL_PREFIXES = [
-  "core_calendar_", "core_conversations_", "core_docs_", "core_journal_", "core_memory_", "core_messages_", "core_mission_",
+  "core_calendar_", "core_contacts_", "core_conversations_", "core_docs_", "core_journal_", "core_memory_", "core_messages_", "core_mission_",
   "core_owner_", "core_quotes_", "core_reminders_", "core_targets_", "core_tools_",
 ];
 
@@ -111,8 +112,8 @@ export const isTourPath = (path: string) => path === "/api/assistant/tour" || pa
 
 /** Added to the agent's system prompt on the free runtime. */
 export const FREE_PLAN_NOTE =
-  "This owner is on the free ME3 plan. It includes this chat, tasks, goals and mission, the journal, the calendar and reminders. " +
-  "It does not include ME3's own email, a website or pages, bookings, a shop, Accounts, files, contacts, social posting, web research or image generation, and you have no tools for those. " +
+  "This owner is on the free ME3 plan. It includes this chat, tasks, goals and mission, the journal, the calendar, reminders, and messaging the people they are linked with on Soulink (their contacts). " +
+  "It does not include ME3's own email, a website or pages, bookings, a shop, Accounts, files, social posting, web research or image generation, and you have no tools for those. " +
   "If the owner asks for one of them, say in one sentence that it is part of a paid ME3 plan they can upgrade to from the menu, then help with what you can do here. " +
   "Never say you did something you have no tool for.";
 

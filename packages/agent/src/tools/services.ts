@@ -121,6 +121,8 @@ export interface AgentAccountsServices {
 /** One person in the owner's People, with what ME3 holds about them. */
 export type ContactRecord = { id: string; name: string; email: string | null; [key: string]: unknown };
 export interface AgentContactServices {
+  /** Bring in people linked elsewhere (Soulink) since the last sync; force skips the daily freshness window. */
+  refresh?(options?: { force?: boolean }): Promise<void>;
   read(contactId: string): Promise<{ contact: ContactRecord; [key: string]: unknown } | null>;
   save(input: Record<string, unknown>, timezone: string): Promise<{ contact: ContactRecord; created: boolean; reminderAt?: string | null }>;
 }

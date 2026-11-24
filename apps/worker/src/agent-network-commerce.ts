@@ -91,8 +91,8 @@ const text = (value: unknown, max = 500): string | null => typeof value === "str
 const instant = (value: unknown): string | null => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value)).toISOString() : null;
 
 /** The seller's API base, from the spec URL its me.json and the index advertise. Public https only. */
-export function sellerApiBase(specUrl: unknown): string {
-  const url = publicHttpsUrl(specUrl, "Seller checkout address");
+export function sellerApiBase(specUrl: unknown, env?: Env): string {
+  const url = publicHttpsUrl(specUrl, "Seller checkout address", env);
   const path = url.pathname.replace(/\/openapi\.json$/, "");
   if (url.search || !url.pathname.endsWith("/openapi.json") || !SELLER_API_PATH.test(path)) throw new PaymentError("This seller does not publish an ME3 agent checkout.", 400);
   return `${url.origin}${path}`;
@@ -118,8 +118,8 @@ async function readCapped(response: Response, maxBytes: number): Promise<string>
 }
 
 /** One request to a seller's agent commerce API: no redirects, a timeout and a size limit. */
-async function sellerRequest(base: string, path: string, init: { method?: "GET" | "POST"; body?: unknown; bearer?: string } = {}): Promise<SellerResponse> {
-  const url = publicHttpsUrl(`${base}${path}`, "Seller checkout address");
+async function sellerRequest(env: Env, base: string, path: string, init: { method?: "GET" | "POST"; body?: unknown; bearer?: string } = {}): Promise<SellerResponse> {
+  const url = publicHttpsUrl(`${base}${path}`, "Seller checkout address", env);
   let response: Response;
   try {
     response = await fetch(url.toString(), {
@@ -171,9 +171,9 @@ function sellerSummary(seller: NetworkSellerRef) {
   return { name: seller.name, handle: seller.handle, profileId: seller.profileId, profileUrl: seller.profileUrl, onMe3Network: true };
 }
 
-function sellerPageUrl(seller: NetworkSellerRef): string | null {
+function sellerPageUrl(env: Env, seller: NetworkSellerRef): string | null {
   for (const candidate of [seller.offeringUrl, seller.profileUrl]) {
-    try { if (candidate) return publicHttpsUrl(candidate, "Seller page").toString(); } catch { /* try the next link */ }
+    try { if (candidate) return publicHttpsUrl(candidate, "Seller page", env).toString(); } catch { /* try the next link */ }
   }
   return null;
 }
@@ -189,25 +189,25 @@ function slotLabel(start: string, timezone: string | null): string {
 }
 
 /** Live price and availability straight from the seller. Read-only. */
-export async function checkNetworkOffering(seller: NetworkSellerRef, input: { offeringId: unknown; from?: unknown; to?: unknown }) {
-  const base = sellerApiBase(seller.specUrl);
+export async function checkNetworkOffering(env: Env, seller: NetworkSellerRef, input: { offeringId: unknown; from?: unknown; to?: unknown }) {
+  const base = sellerApiBase(seller.specUrl, env);
   const offeringId = text(input.offeringId, 200);
   if (!offeringId) throw new PaymentError("Offering ID is required.");
-  const listed = await sellerRequest(base, "/offerings");
+  const listed = await sellerRequest(env, base, "/offerings");
   if (listed.status === 403 && listed.body.code === "agent_checkout_disabled") {
-    return { status: "agent_checkout_off" as const, seller: sellerSummary(seller), fallbackUrl: sellerPageUrl(seller),
+    return { status: "agent_checkout_off" as const, seller: sellerSummary(seller), fallbackUrl: sellerPageUrl(env, seller),
       next: "This seller has turned agent checkout off. Give the owner the seller's page link to book or buy there themselves." };
   }
   if (listed.status !== 200) throw sellerError(listed, "The seller's offerings could not be read.");
   const offering = (Array.isArray(listed.body.offerings) ? listed.body.offerings : []).map(parseOffering).find(candidate => candidate?.id === offeringId) ?? null;
-  if (!offering) return { status: "not_found" as const, seller: sellerSummary(seller), fallbackUrl: sellerPageUrl(seller), next: "The seller no longer offers this through agent checkout." };
+  if (!offering) return { status: "not_found" as const, seller: sellerSummary(seller), fallbackUrl: sellerPageUrl(env, seller), next: "The seller no longer offers this through agent checkout." };
   let availability: { timezone: string | null; from: string | null; to: string | null; available: boolean; slots: LiveSlot[] } | null = null;
   if (offering.kind !== "product") {
     const query = new URLSearchParams();
     for (const key of ["from", "to"] as const) { const value = text(input[key], 40); if (value) query.set(key, value); }
-    const live = await sellerRequest(base, `/offerings/${encodeURIComponent(offering.id)}/availability${query.size ? `?${query}` : ""}`);
+    const live = await sellerRequest(env, base, `/offerings/${encodeURIComponent(offering.id)}/availability${query.size ? `?${query}` : ""}`);
     if (live.status === 403 && live.body.code === "agent_checkout_disabled") {
-      return { status: "agent_checkout_off" as const, seller: sellerSummary(seller), fallbackUrl: sellerPageUrl(seller), next: "This seller has turned agent checkout off. Give the owner the seller's page link." };
+      return { status: "agent_checkout_off" as const, seller: sellerSummary(seller), fallbackUrl: sellerPageUrl(env, seller), next: "This seller has turned agent checkout off. Give the owner the seller's page link." };
     }
     if (live.status !== 200) throw sellerError(live, "The seller's availability could not be read.");
     const slots = parseSlots(live.body.slots);
@@ -247,7 +247,7 @@ export async function proposeNetworkPurchase(env: Env, ownerId: string, scope: P
   const seller = input.seller;
   const slotStart = input.slotStart === undefined || input.slotStart === null || input.slotStart === "" ? null : instant(input.slotStart);
   if (input.slotStart && !slotStart) throw new PaymentError("Slot start must be an exact time from the seller's availability.");
-  const live = await checkNetworkOffering(seller, { offeringId: input.offeringId, ...(slotStart ? { from: slotStart, to: new Date(Date.parse(slotStart) + 60_000).toISOString() } : {}) });
+  const live = await checkNetworkOffering(env, seller, { offeringId: input.offeringId, ...(slotStart ? { from: slotStart, to: new Date(Date.parse(slotStart) + 60_000).toISOString() } : {}) });
   if (live.status === "agent_checkout_off") throw new PaymentError(`${seller.name} has turned agent checkout off.${live.fallbackUrl ? ` The owner can book on ${live.fallbackUrl}.` : ""}`, 409);
   if (live.status === "not_found") throw new PaymentError("The seller no longer offers this through agent checkout.", 404);
   if (live.status === "free") throw new PaymentError("This offering is free. Give the owner the seller's page link instead of a payment.", 409);
@@ -267,11 +267,11 @@ export async function proposeNetworkPurchase(env: Env, ownerId: string, scope: P
   }
   const buyer = await ownerContact(env, ownerId);
   if (!buyer.name || !buyer.email) throw new PaymentError("Add your name and email in Settings first: the seller needs them for the booking or order.", 409);
-  const merchantUrl = sellerPageUrl(seller);
+  const merchantUrl = sellerPageUrl(env, seller);
   if (!merchantUrl) throw new PaymentError("The seller has no public page link to show on the approval.", 409);
   const timezone = live.availability?.timezone ?? offering.timezone;
   const network: NetworkProposalDetails = {
-    sellerProfileId: seller.profileId, sellerHandle: seller.handle, apiBase: sellerApiBase(seller.specUrl), offeringId: offering.id, offeringKind: offering.kind,
+    sellerProfileId: seller.profileId, sellerHandle: seller.handle, apiBase: sellerApiBase(seller.specUrl, env), offeringId: offering.id, offeringKind: offering.kind,
     offeringTitle: offering.title, slotStart: slot?.start ?? null, slotEnd: slot?.end ?? null, slotRequired: offering.requiresSlot, timezone, quantity, unitAmountMinor: offering.amount,
     buyerName: buyer.name, buyerEmail: buyer.email,
   };
@@ -344,7 +344,7 @@ export async function handOverNetworkPurchase(env: Env, ownerId: string, proposa
   if (!network.checkout_id) {
     // Limits are checked again before anything is held at the seller.
     await assertWithinLimits(env, ownerId, proposal.amount_minor, proposal.currency);
-    const response = await sellerRequest(network.api_base, "/checkouts", { method: "POST", body: {
+    const response = await sellerRequest(env, network.api_base, "/checkouts", { method: "POST", body: {
       offeringId: network.offering_id, ...(network.slot_required && network.slot_start ? { slot: { start: network.slot_start } } : {}),
       quantity: network.quantity, buyer: { name: network.buyer_name, email: network.buyer_email },
       expectedAmount: proposal.amount_minor, expectedCurrency: proposal.currency, idempotencyKey: network.checkout_idempotency_key,
@@ -367,7 +367,7 @@ export async function handOverNetworkPurchase(env: Env, ownerId: string, proposa
     const checkout = response.body;
     const checkoutId = text(checkout.checkoutId, 100), payUrl = text(checkout.payUrl, 2000), secret = text(checkout.statusSecret, 200), expiresAt = instant(checkout.expiresAt);
     if (!checkoutId || !secret || !expiresAt || !payUrl || !payUrl.startsWith(`${network.api_base}/checkouts/`)) throw new PaymentError("The seller returned an invalid checkout.", 502);
-    publicHttpsUrl(payUrl, "Seller payment link");
+    publicHttpsUrl(payUrl, "Seller payment link", env);
     if (checkout.amount !== proposal.amount_minor || text(checkout.currency, 3) !== proposal.currency) {
       // The seller guards the price; a different total here is still never handed over.
       await closeProposal(env, ownerId, proposal, "price_changed", "price_changed", { amountMinor: checkout.amount }, Number.isSafeInteger(checkout.amount) ? { amount: checkout.amount as number, currency: text(checkout.currency, 3) || proposal.currency } : undefined);
@@ -401,7 +401,7 @@ export async function refreshNetworkPurchase(env: Env, ownerId: string, proposal
   if (network.checkout_status !== "pending" || !network.checkout_id || !network.encrypted_status_secret) return paymentView(env, ownerId, proposal);
   let response: SellerResponse;
   try {
-    response = await sellerRequest(network.api_base, `/checkouts/${encodeURIComponent(network.checkout_id)}`, { bearer: await decryptStatusSecret(env, network.encrypted_status_secret) });
+    response = await sellerRequest(env, network.api_base, `/checkouts/${encodeURIComponent(network.checkout_id)}`, { bearer: await decryptStatusSecret(env, network.encrypted_status_secret) });
   } catch (error) {
     await env.DB.prepare("UPDATE agent_network_purchases SET last_checked_at=?,next_check_at=?,check_error=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND proposal_id=?")
       .bind(new Date().toISOString(), nextCheckAt(network.created_at), error instanceof PaymentError ? error.message.slice(0, 200) : "Seller unavailable", ownerId, proposalId).run();
@@ -524,7 +524,7 @@ async function decryptStatusSecret(env: Env, encrypted: string): Promise<string>
 export function createAgentNetworkPaymentServices(env: Env, ownerId: string): Pick<AgentPaymentServices, "networkCheck" | "proposeNetwork" | "handOverNetwork" | "refreshNetwork"> {
   const asRecord = (view: PaymentProposalView) => view as unknown as PaymentProposalRecord;
   return {
-    networkCheck: (seller, input) => checkNetworkOffering(seller, input),
+    networkCheck: (seller, input) => checkNetworkOffering(env, seller, input),
     proposeNetwork: async (input, scope) => asRecord(await proposeNetworkPurchase(env, ownerId, scope, input)),
     handOverNetwork: async (proposalId, proposalHash) => { const result = await handOverNetworkPurchase(env, ownerId, proposalId, proposalHash); return { ...result, proposal: asRecord(result.proposal) }; },
     refreshNetwork: async proposalId => asRecord(await refreshNetworkPurchase(env, ownerId, proposalId)),
