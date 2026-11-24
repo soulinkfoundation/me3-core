@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "../../api";
 import HomePanels from "./HomePanels.vue";
 
-vi.mock("../../api", () => ({ API_BASE: "/api", ApiError: class extends Error { constructor(message: string, public status: number) { super(message); } }, api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(async () => ({})) } }));
+vi.mock("../../api", () => ({ API_BASE: "/api", ApiError: class extends Error { constructor(message: string, public status: number) { super(message); } }, api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(async () => ({})), delete: vi.fn(async () => ({ ok: true })) } }));
 vi.mock("../../composables/useAppToast", () => ({ useAppToast: () => ({ toastError: vi.fn(), toastFromUnknown: vi.fn(), toastSuccess: vi.fn() }) }));
 enableAutoUnmount(afterEach);
 const body = `First paragraph.\n${"The owner must see this complete text. ".repeat(30)}\nLast paragraph <img src=x onerror=alert(1)>`;
@@ -278,5 +278,79 @@ describe("Home Tasks card", () => {
     expect(card()!.querySelector(".home-card__detail")!.textContent).toBe("Backlog");
     expect([...card()!.querySelectorAll(".home-task")].map(row => row.textContent!.trim())).toEqual(["One", "Two", "Three"]);
     expect(card()!.querySelector(".home-card__title")!.getAttribute("to")).toBe("/tasks?view=backlog");
+  });
+});
+
+describe("Home custom cards", () => {
+  const habits = (today: boolean) => ({
+    card: { id: "card-habits", name: "Habits", emoji: "✅", version: 1, createdBy: "agent", createdAt: "2026-11-24T09:00:00Z", updatedAt: "", history: [{ version: 1, name: "Habits", emoji: "✅", summary: "Made by your ME3", createdAt: "2026-11-24T09:00:00Z" }], access: { sees: [], changes: ["Its own entries"] },
+      blocks: [{ type: "habit", key: "run", label: "Run" }, { type: "stat", key: "stat1", source: "money.today" }] },
+    state: { date: "2026-11-24", done: today ? 1 : 0, total: 1, blocks: { run: { type: "habit", today, streak: today ? 1 : 0, week: [null, today, null, null, null, null, null] }, stat1: { type: "stat", value: "–", label: "Part of ME3 Starter and Business" } } },
+  });
+  let response: object;
+  beforeEach(() => {
+    response = { date: "2026-11-24", cards: [habits(false)], offered: true, sources: ["tasks", "reminders", "goal"] };
+    const original = vi.mocked(api.get).getMockImplementation()!;
+    vi.mocked(api.get).mockImplementation(async endpoint => {
+      if (endpoint === "/home/layout") return { layout: { order: ["today", "card-habits"], hidden: [], pinned: ["card-habits"], earned: [] } } as never;
+      if (endpoint === "/home/cards") return response as never;
+      return original(endpoint);
+    });
+  });
+  const card = () => document.body.querySelector('[aria-label="Habits"].home-card');
+
+  it("draws a pinned card and saves a tick to the install", async () => {
+    vi.mocked(api.post).mockImplementation(async () => habits(true) as never);
+    render(); await flushPromises();
+    expect(card()?.textContent).toContain("Part of ME3 Starter and Business");
+    (card()!.querySelector('[aria-label="Run"]') as HTMLButtonElement).click(); await flushPromises();
+    expect(api.post).toHaveBeenCalledWith("/home/cards/card-habits/act", { action: "tick", key: "run", on: true });
+    expect(card()!.querySelector('[aria-label="Run"]')!.getAttribute("aria-pressed")).toBe("true");
+    expect(card()!.textContent).toContain("1 of 1 today");
+  });
+  it("puts the tick back when the install refuses it", async () => {
+    vi.mocked(api.post).mockRejectedValue(new Error("offline"));
+    render(); await flushPromises();
+    (card()!.querySelector('[aria-label="Run"]') as HTMLButtonElement).click(); await flushPromises();
+    expect(card()!.querySelector('[aria-label="Run"]')!.getAttribute("aria-pressed")).toBe("false");
+  });
+  it("lists Your cards in Add to Home and starts a Custom card in chat with ideas this plan can show", async () => {
+    const wrapper = render(); await flushPromises();
+    (wrapper.vm as unknown as { openAdd: () => void }).openAdd(); await flushPromises();
+    expect(document.body.textContent).toContain("Your cards");
+    expect(document.body.querySelector('.home-add-tile[aria-label="Habits"]')!.getAttribute("aria-pressed")).toBe("true");
+    button("Custom card")!.click(); await flushPromises();
+    expect(document.body.textContent).toContain("A goal with its tasks");
+    expect(document.body.textContent).not.toContain("Who owes me money");
+    const field = document.body.querySelector('textarea[aria-label="Describe your card"]') as HTMLTextAreaElement;
+    field.value = "water I drink"; field.dispatchEvent(new Event("input")); await flushPromises();
+    button("Make it")!.click(); await flushPromises();
+    expect(wrapper.emitted("ask")).toEqual([["Make me a Home card: water I drink"]]);
+  });
+  it("hides Your cards when ME3 can't build cards and there are none", async () => {
+    response = { date: "2026-11-24", cards: [], offered: false };
+    const wrapper = render(); await flushPromises();
+    (wrapper.vm as unknown as { openAdd: () => void }).openAdd(); await flushPromises();
+    expect(document.body.textContent).not.toContain("Your cards");
+    expect(button("Custom card")).toBeUndefined();
+  });
+  it("removes a card from Home, keeping it in Your cards", async () => {
+    render(); await flushPromises();
+    (card()!.querySelector('[aria-label="Habits options"]') as HTMLButtonElement).click(); await flushPromises();
+    button("Remove from Home")!.click(); await flushPromises();
+    expect(card()).toBeNull();
+    expect(api.put).toHaveBeenLastCalledWith("/home/layout", expect.objectContaining({ pinned: [], hidden: ["card-habits"] }));
+  });
+  it("opens About this card, goes back a version and removes the card", async () => {
+    vi.mocked(api.post).mockImplementation(async () => habits(false) as never);
+    render(); await flushPromises();
+    (card()!.querySelector('[aria-label="Open Habits"]') as HTMLButtonElement).click(); await flushPromises();
+    const about = document.body.querySelector('dialog[open][aria-label="About this card"]')!;
+    expect(about.textContent).toContain("Made by your ME3");
+    expect(about.textContent).toContain("Nothing else");
+    button("Remove card")!.click(); await flushPromises();
+    [...document.body.querySelectorAll("button")].filter(node => node.textContent?.trim() === "Remove card").at(-1)!.click(); await flushPromises();
+    expect(api.delete).toHaveBeenCalledWith("/home/cards/card-habits");
+    expect(card()).toBeNull();
   });
 });

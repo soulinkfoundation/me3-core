@@ -19,6 +19,8 @@ import ChatFirstSite from "../../components/first-site/ChatFirstSite.vue";
 import ChatPeopleResults from "../../components/first-site/ChatPeopleResults.vue";
 import SoupBowl from "../../components/soup/SoupBowl.vue";
 import NewsChatCard from "../../components/news/NewsChatCard.vue";
+import CustomCardPreview from "../../components/home/CustomCardPreview.vue";
+import { homeCardFromTool, readHomeCardRecord, type HomeCardRecord } from "../../utils/homeCards";
 import { NEWS_PAPER_TOOL, NEWS_SETTINGS_READ_TOOL, NEWS_SETTINGS_TOOL, newsChatCardFromTool, type NewsChatCard as NewsChatCardData } from "../../utils/news";
 import { SOUP_SERVE_TOOL, soupServingIdFromTool, type SoupServing, type SoupServingAction } from "../../utils/soup";
 import Button from "../../components/Button.vue";
@@ -504,6 +506,24 @@ async function newsShowFirstPaper(messageId: string) {
   if (card && !newsCardByMessage.value[messageId]) newsCardShown(messageId, card);
   void homePanels.value?.refreshNews();
 }
+// A custom Home card ME3 built or changed (me3-c5h8.2): drawn live under the reply with Add to Home.
+// The reply keeps the card's id, so the preview comes back on reload, read fresh from the install.
+const cardPreviewByMessage = ref<Record<string, { record: HomeCardRecord; isUpdate: boolean }>>({});
+function cardPreviewShown(messageId: string, record: HomeCardRecord, isUpdate: boolean) {
+  cardPreviewByMessage.value = { ...cardPreviewByMessage.value, [messageId]: { record, isUpdate } };
+  // Home's copy follows the card ME3 just made or changed.
+  void homePanels.value?.refreshCards();
+}
+async function restoreCardPreview(messageId: string, saved: unknown) {
+  const homeCard = (saved as { homeCard?: { id?: unknown; isUpdate?: unknown } } | null)?.homeCard;
+  if (!homeCard || typeof homeCard.id !== "string" || cardPreviewByMessage.value[messageId]) return;
+  try {
+    const record = readHomeCardRecord(await api.get(`/home/cards/${encodeURIComponent(homeCard.id)}`));
+    if (record && !cardPreviewByMessage.value[messageId]) cardPreviewByMessage.value = { ...cardPreviewByMessage.value, [messageId]: { record, isUpdate: homeCard.isUpdate === true } };
+  } catch { /* A card removed since shows nothing; the reply still stands. */ }
+}
+function addPreviewToHome(record: HomeCardRecord) { homePanels.value?.addCustomCard(record.card.id); }
+function changePreview(record: HomeCardRecord) { homeSuggestion(`Change my ${record.card.name} card: `); }
 // The cards are saved with ME3's reply, so they are still there when the conversation is reopened.
 function restoreNewsCards(messageId: string, saved: { newsCard?: unknown; newsServingId?: string | null }) {
   const card = newsChatCardFromTool(saved.newsCard);
@@ -920,6 +940,7 @@ function mapAssistantThreadMessages(messages: AssistantThreadMessage[]) {
     };
     if (message.role === "assistant") {
       restoreNewsCards(message.id, message);
+      void restoreCardPreview(message.id, message);
       mappedMessage.emailDraftAction = message.emailDraft
         ? createServerAgentChatEmailDraftAction(message, message.emailDraft)
         : createAgentChatEmailDraftAction(message, previousUserText);
@@ -1787,6 +1808,8 @@ async function submitAssistantText(
             // Home shows the News card as soon as setup is confirmed.
             if (card?.kind === "ready") void homePanels.value?.refreshNews();
           }
+          const builtCard = data.state === "complete" ? homeCardFromTool(data.toolName, toolResult) : null;
+          if (builtCard) { ensureAssistantMessage(); cardPreviewShown(assistantMessageId, builtCard.record, builtCard.isUpdate); }
           if (data.toolName === SOUP_SERVE_TOOL && data.state === "complete" && toolResult?.status === "ok") {
             const servingId = soupServingIdFromTool(toolResult.data);
             if (servingId) { ensureAssistantMessage(); void loadSoupServing(assistantMessageId, servingId); }
@@ -1999,7 +2022,7 @@ function applyAssistantResultToMessage(
   message.targetPresentation = normalizeAgentTargetPresentation(result.targetPresentation);
   message.allowanceNotice = result.allowanceNotice || null;
   message.memoryReview = result.memoryReview || null;
-  if (message.id) restoreNewsCards(message.id, result);
+  if (message.id) { restoreNewsCards(message.id, result); void restoreCardPreview(message.id, result); }
   message.emailDraftAction = result.emailDraft
     ? createServerAgentChatEmailDraftAction(message, result.emailDraft)
     : createAgentChatEmailDraftAction(message, previousUserTextForAssistantMessage(message));
@@ -3169,6 +3192,7 @@ function messageFromUnknown(err: unknown, fallback: string) {
             </div>
             <ChatPeopleResults v-if="message.id && peopleByMessage[message.id]" :people="peopleByMessage[message.id]" :busy="assistantSending" @book="bookPerson" />
             <section v-if="message.id && soupByMessage[message.id]" class="assistant-soup-bowl" aria-label="Picked for you"><SoupBowl :serving="soupByMessage[message.id]" @act="(action, itemId) => soupAct(message.id!, action, itemId)" /></section>
+            <CustomCardPreview v-if="message.id && cardPreviewByMessage[message.id]" :record="cardPreviewByMessage[message.id].record" :is-update="cardPreviewByMessage[message.id].isUpdate" :pinned="Boolean(homePanels?.customCardOnHome(cardPreviewByMessage[message.id].record.card.id))" @add-to-home="addPreviewToHome(cardPreviewByMessage[message.id!].record)" @change="changePreview(cardPreviewByMessage[message.id!].record)" @ask="homeSuggestion" @changed="homePanels?.refreshCards()" />
             <NewsChatCard v-if="message.id && newsCardByMessage[message.id]" class="assistant-news-card" :card="newsCardByMessage[message.id]" :busy="assistantSending" :latest="message.id === lastNewsCardMessageId" @say="submitAssistantText" @time="newsTimeChosen" @read="readNews" />
           </article>
 

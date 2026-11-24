@@ -25,6 +25,10 @@ import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people"
 import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, newInstallHomeLayout, homeDoneToday, homeInboxSoulink, homeMailTime, homeTasksCard, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
 import { useAppLoadingWhile } from "../../composables/useAppLoading";
+import CustomCardFace from "./CustomCardFace.vue";
+import CustomCardAbout from "./CustomCardAbout.vue";
+import CustomCardStarter from "./CustomCardStarter.vue";
+import { homeCardCall, homePanelOrder, optimisticHomeCard, readHomeCardRecord, readHomeCardsResponse, shownCustomCards, withCustomCard, withoutCustomCard, type HomeCardRecord, type HomeCardRequest } from "../../utils/homeCards";
 const emit = defineEmits<{ suggest: [text: string]; ask: [text: string]; approvalResolved: [] }>();
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
 const auth = useAuthStore();
@@ -84,12 +88,16 @@ const calendarConnected = ref(false);
 const accountsEnabled = ref(false);
 const accountSummary = ref<{ income: string; expense: string } | null>(null);
 // Resources load per card; tasks and wheel feed Today and Mission rather than cards of their own.
-type HomeResource = HomeCard | "tasks" | "wheel";
+type HomeResource = HomeCard | "tasks" | "wheel" | "cards";
+// Home holds built-in cards and the owner's custom cards (ids like card-habits) in one ordered list.
+type CustomId = `card-${string}`;
+type PanelId = HomeCard | CustomId;
+const isCustom = (id: PanelId): id is CustomId => !(HOME_CARDS as readonly string[]).includes(id);
 const errors = ref<Partial<Record<HomeResource, string>>>({});
 const loading = ref(true);
 useAppLoadingWhile(loading);
 const busy = ref<string[]>([]);
-const dialog = ref<"add" | null>(null);
+const dialog = ref<"add" | "custom" | null>(null);
 const panels = ref<HTMLElement | null>(null);
 const unavailable = ref<HomeResource[]>([]);
 // Resources that have answered at least once (or failed); until then their card shows a skeleton, as on iOS.
@@ -102,8 +110,8 @@ const orderAnnouncement = ref("");
 const motionPreference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 const reducedMotion = ref(motionPreference?.matches ?? false);
 function updateMotionPreference() { reducedMotion.value = motionPreference?.matches ?? false; }
-defineExpose({ openAdd: () => { dialog.value = "add"; }, refreshToday: loadToday, openNews, refreshNews: loadNews });
-const menu = ref<HomeCard | null>(null);
+defineExpose({ openAdd: () => { dialog.value = "add"; }, refreshToday: loadToday, openNews, refreshNews: loadNews, refreshCards: loadCards, customCardOnHome: (id: string) => shownCustom.value.includes(id), addCustomCard: (id: string) => pinCustomCard(id, true) });
+const menu = ref<PanelId | null>(null);
 const day = ref(localDateKey(new Date()));
 const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = {
   today: { title: "Today", href: "/journal", emoji: "🗓️" },
@@ -125,6 +133,73 @@ const loadNotes = () => resource("notes", async () => {
   if (!disposed) notes.value = (result.articles || []).slice(0, 3);
 });
 function noteSaved(note: HomeNote) { notes.value = [note, ...notes.value].slice(0, 3); void loadNotes(); }
+// Custom cards (me3-c5h8): built by ME3 from chat, drawn natively. Shown while pinned and not hidden.
+const customCards = ref<HomeCardRecord[]>([]);
+const cardsOffered = ref(false);
+const cardSources = ref<string[] | undefined>();
+const cardBusy = ref<string[]>([]);
+const aboutCardId = ref<string | null>(null);
+const aboutWorking = ref(false);
+const aboutCard = computed(() => customCards.value.find(record => record.card.id === aboutCardId.value) ?? null);
+const customById = computed(() => Object.fromEntries(customCards.value.map(record => [record.card.id, record])) as Record<string, HomeCardRecord>);
+const shownCustom = computed(() => shownCustomCards(layout.value, customCards.value));
+function loadCards() {
+  return resource("cards", async () => {
+    const result = readHomeCardsResponse(await api.get("/home/cards"));
+    if (disposed) return;
+    customCards.value = result.cards; cardsOffered.value = result.offered === true; cardSources.value = result.sources;
+  });
+}
+function replaceCard(record: HomeCardRecord) {
+  const index = customCards.value.findIndex(item => item.card.id === record.card.id);
+  if (index >= 0) customCards.value.splice(index, 1, record); else customCards.value.push(record);
+}
+/** Ticks, adds or sets one block. A tick flips at once; the install's answer then replaces the whole card. */
+async function actOnCard(id: string, request: HomeCardRequest) {
+  const record = customById.value[id];
+  const token = `${id}:${request.key}`;
+  if (!record || cardBusy.value.includes(token)) return;
+  cardBusy.value.push(token);
+  replaceCard(optimisticHomeCard(record, request));
+  try {
+    const call = homeCardCall(id, request);
+    const next = readHomeCardRecord(await api.post(call.path, call.body));
+    if (next && !disposed) replaceCard(next);
+  } catch (error) {
+    if (customById.value[id]) replaceCard({ ...customById.value[id], state: record.state });
+    toastFromUnknown(error, `Couldn't update ${record.card.name}. Try again.`);
+  } finally { cardBusy.value = cardBusy.value.filter(item => item !== token); }
+}
+const busyKeys = (id: string) => cardBusy.value.filter(token => token.startsWith(`${id}:`)).map(token => token.slice(id.length + 1));
+function pinCustomCard(id: string, on: boolean) {
+  layout.value = withCustomCard(layout.value, id, on); save(); menu.value = null;
+  if (on) toastSuccess(`${customById.value[id]?.card.name ?? "Card"} added to Home`);
+}
+async function rollbackCard(version: number) {
+  const id = aboutCardId.value;
+  if (!id) return;
+  aboutWorking.value = true;
+  try { const next = readHomeCardRecord(await api.post(`/home/cards/${encodeURIComponent(id)}/rollback`, { version })); if (next) replaceCard(next); }
+  catch (error) { toastFromUnknown(error, "Couldn't go back to that version. Try again."); }
+  finally { aboutWorking.value = false; }
+}
+async function removeCard() {
+  const id = aboutCardId.value;
+  if (!id) return;
+  aboutWorking.value = true;
+  try {
+    await api.delete(`/home/cards/${encodeURIComponent(id)}`);
+    customCards.value = customCards.value.filter(record => record.card.id !== id);
+    // The install drops the id from the shared layout; this copy follows without saving over it.
+    layout.value = withoutCustomCard(layout.value, id); cache();
+    aboutCardId.value = null;
+  } catch (error) { toastFromUnknown(error, "Couldn't remove the card. Try again."); }
+  finally { aboutWorking.value = false; }
+}
+function changeWithME3(record: HomeCardRecord) { aboutCardId.value = null; menu.value = null; emit("suggest", `Change my ${record.card.name} card: `); }
+function makeCard(request: string) { dialog.value = null; emit("ask", request); }
+function openAbout(id: string) { menu.value = null; aboutCardId.value = id; }
+const panelTitle = (id: PanelId) => isCustom(id) ? customById.value[id]?.card.name ?? "Card" : cards[id].title;
 // People appears once someone is Close (People v1).
 const peopleCard = computed(() => rankHomePeople(contactsStore.contacts, contact => contact.reminderAt));
 const openPersonId = ref<string | null>(null);
@@ -208,6 +283,7 @@ async function newsAdd() {
 }
 const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value) && (id !== "people" || peopleCard.value.state !== "hidden") && (id !== "soup" || Boolean(news.value))));
 const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id) && (id !== "soup" || newsShow.value)));
+const panelIds = computed(() => homePanelOrder(layout.value, visible.value, shownCustom.value) as PanelId[]);
 // A quiet way back to a paper hidden until tomorrow, while News is still on Home.
 const newsHidden = computed(() => Boolean(news.value?.setUp && !news.value.paused && newsPaper.value?.hiddenAt) && visibleHomeCards(layout.value).includes("soup"));
 // Cards already on Home sort first when the sheet opens, then the order holds still,
@@ -278,8 +354,8 @@ const toggleTodayPage = () => setTodayPage(!todayPageOn.value);
 const activeGoals = computed(() => goals.value.filter(goal => goal.status !== "completed"));
 const lowestArea = computed(() => [...wheel.value].filter(area => area.value !== null).sort((a, b) => a.value! - b.value!)[0]);
 const areaFor = (id?: string | null) => wheel.value.find(area => area.id === id);
-const cardElements = new Map<HomeCard, HTMLElement>();
-function setCardElement(card: HomeCard, element: unknown) { if (element instanceof HTMLElement) cardElements.set(card, element); else cardElements.delete(card); }
+const cardElements = new Map<PanelId, HTMLElement>();
+function setCardElement(card: PanelId, element: unknown) { if (element instanceof HTMLElement) cardElements.set(card, element); else cardElements.delete(card); }
 let disposed = false;
 let todayGeneration = 0;
 let pressTimer: ReturnType<typeof setTimeout> | undefined;
@@ -326,14 +402,14 @@ watch(storageKey, () => {
 function earn(card: HomeCard, hasData: boolean) { if (hasData && !layout.value.earned.includes(card)) { layout.value.earned.push(card); save(); } }
 function add(card: HomeCard) { layout.value.hidden = layout.value.hidden.filter(id => id !== card); if (!layout.value.pinned.includes(card)) layout.value.pinned.push(card); save(); toastSuccess(`${cards[card].title} added to Home`); }
 function remove(card: HomeCard) { if (!layout.value.hidden.includes(card)) layout.value.hidden.push(card); layout.value.pinned = layout.value.pinned.filter(id => id !== card); save(); menu.value = null; }
-function setOrder(order: HomeCard[]) {
-  layout.value.order = [...order, ...layout.value.order.filter(id => !order.includes(id as HomeCard))];
+function setOrder(order: PanelId[]) {
+  layout.value.order = [...order, ...layout.value.order.filter(id => !order.includes(id as PanelId))];
   save();
-  orderAnnouncement.value = `Home order: ${order.map(id => cards[id].title).join(", ")}`;
+  orderAnnouncement.value = `Home order: ${order.map(panelTitle).join(", ")}`;
 }
 // Dragging the ⋯ reorders with a pointer; Alt+↑ / Alt+↓ on it reorders from the keyboard.
-function move(card: HomeCard, offset: number) {
-  const order = [...visible.value]; const i = order.indexOf(card); const target = i + offset;
+function move(card: PanelId, offset: number) {
+  const order = [...panelIds.value]; const i = order.indexOf(card); const target = i + offset;
   if (target < 0 || target >= order.length) return;
   [order[i], order[target]] = [order[target], order[i]]; setOrder(order); closeMenu(card);
 }
@@ -341,7 +417,7 @@ function closeMenu(card = menu.value) {
   menu.value = null;
   void nextTick(() => cardElements.get(card!)?.querySelector<HTMLButtonElement>(".home-card__more")?.focus());
 }
-function openMenu(card: HomeCard) {
+function openMenu(card: PanelId) {
   menu.value = card;
   void nextTick(() => cardElements.get(card)?.querySelector<HTMLButtonElement>("[role=menuitem]:not(:disabled)")?.focus());
 }
@@ -390,7 +466,7 @@ async function updateGoal(id: string, edit: (goal: HomeGoal) => void, undoMessag
 const completeGoal = (id: string) => updateGoal(id, goal => { goal.status = "completed"; }, "Goal completed");
 const setGoalProgress = (id: string, value: number) => updateGoal(id, goal => { goal.progress = value; });
 function focusGoalFromHome(id: string) { goalMenu.value = ""; plan.makeFocus(id).catch(error => toastFromUnknown(error, "Couldn't change your focus. Try again.")); }
-function beginPress(event: PointerEvent, card: HomeCard) {
+function beginPress(event: PointerEvent, card: PanelId) {
   if (event.pointerType === "mouse" || (event.target as HTMLElement).closest("a,button,input,textarea,select")) return;
   pressOrigin = { x: event.clientX, y: event.clientY };
   pressTimer = setTimeout(() => { openMenu(card); }, 600);
@@ -461,6 +537,7 @@ async function refresh() {
     resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed && !gratitudeSet) gratitudeOn.value = Boolean(state.settings?.inToday); }),
     loadNews(),
     loadNotes(),
+    loadCards(),
     resource("people", async () => { await contactsStore.fetchContacts(); if (contactsStore.error) throw new Error(contactsStore.error); }),
     resource("tasks", plan.loadTasks),
     resource("mission", async () => {
@@ -526,6 +603,7 @@ watch(() => props.active, active => {
   if (day.value !== today) day.value = today; else void loadToday();
   void loadNews();
   void loadNotes();
+  void loadCards();
 });
 onMounted(() => {
   motionPreference?.addEventListener("change", updateMotionPreference);
@@ -547,9 +625,27 @@ onBeforeUnmount(() => {
     <HomeGreeting :name="auth.user?.name" />
     <PaymentsNeedYou />
     <p v-if="offline || Object.keys(errors).length" class="home-offline" role="status"><UiIcon name="WifiOff" :size="16" /><span>{{ offline ? 'You’re offline.' : 'Home couldn’t fully refresh.' }} {{ lastRefresh ? `Showing the last available data · ${lastRefresh}.` : 'Connect to refresh Home.' }}</span><button type="button" :disabled="loading" @click="refresh">Try again</button></p>
-    <draggable :model-value="visible" :item-key="(card: HomeCard) => card" class="home-grid" handle=".home-card__more" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
-      <template #item="{ element: card }: { element: HomeCard }">
-        <article :ref="el => setCardElement(card, el)" class="home-card" :class="{ 'home-card--landing': card === 'soup' && newsFresh, 'home-card--line': card === 'soup' && newsRead }" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
+    <!-- Built-in and custom cards share one list. A custom card's face is the install's card spec; its ⋯ drags to reorder
+         like every card. vuedraggable needs one root element per item, so no comments inside the item slot. -->
+    <draggable :model-value="panelIds" :item-key="(card: PanelId) => card" class="home-grid" handle=".home-card__more" :animation="reducedMotion ? 0 : 160" :delay="250" :delay-on-touch-only="true" :touch-start-threshold="8" ghost-class="home-card--dragging" @update:model-value="setOrder" @start="menu = null">
+      <template #item="{ element: card }: { element: PanelId }">
+        <article v-if="isCustom(card)" :ref="el => setCardElement(card, el)" class="home-card home-card--custom" :aria-label="panelTitle(card)" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
+          <CustomCardFace v-if="customById[card]" :record="customById[card]" :busy="busyKeys(card)" @act="request => actOnCard(card, request)" @ask="prompt => emit('suggest', prompt)" @open="openAbout(card)">
+            <template #controls>
+              <div class="home-card__controls">
+                <button type="button" class="home-card__more" :aria-label="`${panelTitle(card)} options`" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-haspopup="menu" :aria-expanded="menu === card" title="Options. Drag to reorder." @click="menu === card ? closeMenu(card) : openMenu(card)" @keydown.alt.up.prevent="move(card, -1)" @keydown.alt.down.prevent="move(card, 1)"><UiIcon name="Ellipsis" :size="20" /></button>
+              </div>
+            </template>
+            <template #menu>
+              <div v-if="menu === card" class="home-card__menu" role="menu" :aria-label="`${panelTitle(card)} options`" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
+                <button type="button" role="menuitem" @click="changeWithME3(customById[card])"><UiIcon name="Sparkles" :size="16" />Change with ME3</button>
+                <button type="button" role="menuitem" @click="openAbout(card)"><UiIcon name="Info" :size="16" />About this card</button>
+                <button type="button" role="menuitem" class="home-danger" @click="pinCustomCard(card, false)"><UiIcon name="X" :size="16" />Remove from Home</button>
+              </div>
+            </template>
+          </CustomCardFace>
+        </article>
+        <article v-else :ref="el => setCardElement(card, el)" class="home-card" :class="{ 'home-card--landing': card === 'soup' && newsFresh, 'home-card--line': card === 'soup' && newsRead }" :aria-label="cards[card].title" @contextmenu.prevent="openMenu(card)" @pointerdown="beginPress($event, card)" @pointermove="trackPress" @pointerup="cancelPress" @pointercancel="cancelPress">
           <header class="home-card__header">
             <!-- News opens the paper in place; a RouterLink here would also navigate, since its own click handler runs before ours. -->
             <button v-if="card === 'soup' && newsPaper" type="button" class="home-card__title" @click="newsReader = true"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span></button>
@@ -677,10 +773,19 @@ onBeforeUnmount(() => {
     <button v-if="newsHidden" type="button" class="home-news-bring" @click="newsBringBack"><span aria-hidden="true">🗞️</span> The Morning Paper</button>
     <button type="button" class="home-add" data-tour-target="add_to_home" @click="dialog = 'add'"><UiIcon name="Plus" :size="26" /><span>Add to Home</span></button>
     <AppDialog :open="dialog !== null" aria-label="Add to Home" @close="dialog = null">
-      <section class="home-dialog"><header><h2>Add to Home</h2><button type="button" aria-label="Close Home editor" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>
+      <section class="home-dialog"><header><button v-if="dialog === 'custom'" type="button" class="home-dialog__back" @click="dialog = 'add'">Back</button><h2>{{ dialog === 'custom' ? 'Custom card' : 'Add to Home' }}</h2><button type="button" aria-label="Close Home editor" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>
+        <CustomCardStarter v-if="dialog === 'custom'" :sources="cardSources" @make="makeCard" />
         <div v-if="dialog === 'add'" class="home-add-grid"><button v-for="card in addCards" :key="card" type="button" :aria-label="cards[card].title" :aria-pressed="visible.includes(card)" :data-tour-target="card === 'inbox' ? 'add_inbox' : undefined" class="home-add-tile" @click="card === 'soup' ? (visible.includes(card) ? newsRemove() : newsAdd()) : visible.includes(card) ? remove(card) : add(card)"><span class="home-emoji" aria-hidden="true">{{ cards[card].emoji }}</span><span>{{ cards[card].title }}</span><UiIcon v-if="visible.includes(card)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button></div>
+        <template v-if="dialog === 'add' && (cardsOffered || customCards.length)">
+          <h3 class="home-add-label">Your cards</h3>
+          <div class="home-add-grid">
+            <button v-for="record in customCards" :key="record.card.id" type="button" :aria-label="record.card.name" :aria-pressed="shownCustom.includes(record.card.id)" class="home-add-tile" @click="pinCustomCard(record.card.id, !shownCustom.includes(record.card.id))"><span class="home-emoji" aria-hidden="true">{{ record.card.emoji }}</span><span class="home-add-tile__name">{{ record.card.name }}</span><UiIcon v-if="shownCustom.includes(record.card.id)" name="CircleCheck" :size="17" class="home-add-tile__check" /></button>
+            <button v-if="cardsOffered" type="button" class="home-add-tile home-add-tile--custom" title="Describe a card and ME3 builds it" @click="dialog = 'custom'"><UiIcon name="Plus" :size="26" /><span>Custom card</span></button>
+          </div>
+        </template>
       </section>
     </AppDialog>
+    <CustomCardAbout :record="aboutCard" :working="aboutWorking" @close="aboutCardId = null" @rollback="rollbackCard" @remove="removeCard" @change="aboutCard && changeWithME3(aboutCard)" />
     <PersonSheet :contact="openPerson" @close="openPersonId = null" />
     <NewsReader v-if="newsReader && newsPaper && news" :paper="newsPaper" :next-time="news.nextTime" @close="newsReader = false" @done="newsDone" @settings="newsSettingsOpen = true" @rate="newsRate" @ask="newsAsk" />
     <NewsSettingsSheet :open="newsSettingsOpen" @close="newsSettingsOpen = false" />
@@ -868,6 +973,11 @@ p { margin: 4px 0; }
 .home-add-tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 100px; padding: 12px 4px; box-shadow: var(--ui-shadow-sm); border-radius: 18px; font-size: 14px; font-weight: 600; }
 .home-add-tile .home-emoji { font-size: 32px; }
 .home-add-tile[aria-pressed="true"] { background: var(--ui-accent-soft); }
+.home-add-label { margin: 20px 0 0; color: var(--ui-text-muted); font-size: 13px; font-weight: 600; }
+.home-add-tile__name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-add-tile--custom { background: var(--ui-accent-soft); color: var(--ui-accent-strong); box-shadow: none; }
+.home-dialog header > .home-dialog__back { width: auto; height: 44px; border-radius: 12px; min-width: 0; margin-left: -8px; padding: 0 10px; color: var(--ui-accent-strong); font-weight: 600; }
+.home-dialog header > h2 { flex: 1; }
 .home-add-tile__check { position: absolute; top: 8px; right: 8px; color: var(--ui-accent-strong); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 640px) {
