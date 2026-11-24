@@ -22,7 +22,7 @@ import PersonSheet from "../people/PersonSheet.vue";
 import { useContactsStore } from "../../stores/contacts";
 import { ownMissionStatement } from "../../utils/missionStatement";
 import { firstName, formatSinceShort, rankHomePeople } from "../../utils/people";
-import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, newInstallHomeLayout, homeDoneToday, homeInboxSoulink, homeMailTime, homeTasksCard, homeTodayTasks, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
+import { HOME_CARDS, HOME_INSIDE_TODAY, emptyHomeLayout, newInstallHomeLayout, homeInboxSoulink, homeMailTime, homeTasksCard, journalPreview, localDateKey, visibleHomeCards, type HomeCard, type HomeLayout, type HomeGoal } from "../../utils/homeSummary";
 import { useTodayPlan } from "../../composables/useTodayPlan";
 import { useAppLoadingWhile } from "../../composables/useAppLoading";
 import CustomCardFace from "./CustomCardFace.vue";
@@ -122,17 +122,18 @@ const cards: Record<HomeCard, { title: string; href: string; emoji: string }> = 
   mission: { title: "Mission", href: "/mission", emoji: "🚀" },
   accounts: { title: "Accounts", href: "/accounts", emoji: "💰" },
   soup: { title: "The Morning Paper", href: "/?view=home", emoji: "🗞️" },
-  notes: { title: "Notes", href: "/journal?tab=notes", emoji: "🗒️" },
+  notes: { title: "Writing", href: "/journal?tab=notes", emoji: "✍️" },
 };
-// Notes (me3-qvyt): opt-in. The header's mic and + open the field inside the card.
+// Writing (card id `notes`; me3-qvyt, me3-ddse): opt-in. One line into today's page, Gratitude when it's on,
+// and the latest two notes. The header's mic and + open the note field inside the card.
 const notes = ref<HomeNote[]>([]);
 const notesOpen = ref(false);
 const notesCard = ref<InstanceType<typeof HomeNotesCard> | null>(null);
 const loadNotes = () => resource("notes", async () => {
-  const result = await api.get<{ articles: HomeNote[] }>("/journal/articles?limit=3&preview=1");
-  if (!disposed) notes.value = (result.articles || []).slice(0, 3);
+  const result = await api.get<{ articles: HomeNote[] }>("/journal/articles?limit=2&preview=1");
+  if (!disposed) notes.value = (result.articles || []).slice(0, 2);
 });
-function noteSaved(note: HomeNote) { notes.value = [note, ...notes.value].slice(0, 3); void loadNotes(); }
+function noteSaved(note: HomeNote) { notes.value = [note, ...notes.value].slice(0, 2); void loadNotes(); }
 // Custom cards (me3-c5h8): built by ME3 from chat, drawn natively. Shown while pinned and not hidden.
 const customCards = ref<HomeCardRecord[]>([]);
 const cardsOffered = ref(false);
@@ -293,12 +294,12 @@ watch(dialog, value => {
   if (value === "add") addOrder.value = available.value.filter(id => !HOME_INSIDE_TODAY.includes(id)).sort((a, b) => Number(visible.value.includes(b)) - Number(visible.value.includes(a)));
 });
 const addCards = computed(() => addOrder.value.filter(id => available.value.includes(id)));
-const todayTasks = computed(() => homeTodayTasks(tasks.value));
 // Server setting (gratitude_settings.in_today), so it follows the owner across web and the apps.
 const gratitudeOn = ref(false);
 const showGratitude = computed(() => gratitudeOn.value && !unavailable.value.includes("gratitude"));
-// Today's page is on until the owner switches it off; a Core without the setting keeps it on.
+// The retired Today's page switch (home settings `todayPage`): read only to give earlier journalers the Writing card.
 const todayPageOn = ref(true);
+let todayPageRead = false;
 // Upcoming events only; an event drops off an hour after it starts.
 // Today is the calendar at a glance: finished events fade, the current one is marked, and an
 // event without an end counts as an hour long.
@@ -314,13 +315,6 @@ function eventState(event: { start: string; end?: string | null; allDay?: boolea
 const todayEvents = computed(() => events.value.slice(0, 6));
 const dayOver = computed(() => events.value.length > 0 && events.value.every(event => eventState(event) === "is-past"));
 const tomorrowKey = computed(() => { const date = new Date(`${day.value}T12:00:00`); date.setDate(date.getDate() + 1); return localDateKey(date); });
-// One line into today's journal page (each day has its own), where tasks are added and ticked off.
-const doneToday = computed(() => homeDoneToday(tasks.value));
-const tasksLine = computed(() => {
-  const open = todayTasks.value.length; const done = doneToday.value; const total = open + done;
-  const count = !total ? "" : !open ? "All done" : !done ? `${open} ${open === 1 ? "task" : "tasks"}` : `${open} of ${total} left`;
-  return { count, label: total ? `Open today's page. ${open} of ${total} tasks left` : "Open today's page" };
-});
 // Tasks shows Now, falling back to the top of the backlog; the Tasks page has the tabs and projects.
 const tasksCard = computed(() => homeTasksCard(tasks.value));
 const missionPage = ref(0);
@@ -350,7 +344,14 @@ async function setTodayPage(next: boolean) {
   try { await api.patch("/home/settings", { todayPage: next }); }
   catch (error) { if (todayPageOn.value === next) { todayPageOn.value = !next; toastFromUnknown(error, "Couldn't change Today's page"); } }
 }
-const toggleTodayPage = () => setTodayPage(!todayPageOn.value);
+// Today's page and Gratitude moved from Today to Writing, so an owner who had either on there gets Writing on
+// Home once the install's layout has loaded. A Writing card they removed stays removed.
+let layoutRead = false;
+function addWritingForJournalers() {
+  const { pinned, hidden } = layout.value;
+  if (!layoutRead || !available.value.includes("notes") || pinned.includes("notes") || hidden.includes("notes")) return;
+  if (gratitudeOn.value || (todayPageRead && todayPageOn.value)) { layout.value.pinned.push("notes"); save(); }
+}
 const activeGoals = computed(() => goals.value.filter(goal => goal.status !== "completed"));
 const lowestArea = computed(() => [...wheel.value].filter(area => area.value !== null).sort((a, b) => a.value! - b.value!)[0]);
 const areaFor = (id?: string | null) => wheel.value.find(area => area.id === id);
@@ -390,9 +391,9 @@ async function loadLayout() {
     if (!result.layout) {
       // A brand-new install also starts with Today's page off; the owner can switch it on from Today's menu.
       if (!Object.values(layout.value).some(list => list.length)) { layout.value = newInstallHomeLayout(); setTodayPage(false); }
-      save(); return;
+      save(); layoutRead = true; return;
     }
-    layout.value = readLayout(result.layout); cache();
+    layout.value = readLayout(result.layout); cache(); layoutRead = true;
   } catch { /* Keep the cached layout; the next refresh tries again. */ }
 }
 watch(storageKey, () => {
@@ -533,7 +534,7 @@ async function refresh() {
         soulink.value = homeInboxSoulink(result.recentEvents || []).map(e => ({ ...e, outcome: result.recentEvents?.find(reply => e.providerEventId && reply.direction === "outbound" && reply.providerEventId === `${e.providerEventId}:reply`)?.textBody }));
       } catch (error) { if (!(error instanceof ApiError && error.status === 404)) throw error; }
     }),
-    api.get<{ todayPage?: boolean }>("/home/settings").then(settings => { if (!disposed && !todayPageSet) todayPageOn.value = settings.todayPage !== false; }).catch(() => undefined),
+    api.get<{ todayPage?: boolean }>("/home/settings").then(settings => { if (!disposed && !todayPageSet) { todayPageOn.value = settings.todayPage !== false; todayPageRead = true; } }).catch(() => undefined),
     resource("gratitude", async () => { const state = await api.get<{ settings?: { inToday?: boolean } }>("/gratitude"); if (!disposed && !gratitudeSet) gratitudeOn.value = Boolean(state.settings?.inToday); }),
     loadNews(),
     loadNotes(),
@@ -558,6 +559,7 @@ async function refresh() {
       if (!disposed) { accountSummary.value = { income: money(income.stats), expense: money(expense.stats) }; earn("accounts", incomeEntries.total + expenseEntries.total > 0); }
     }),
   ]);
+  if (!disposed) addWritingForJournalers();
   if (!disposed) { loading.value = false; if (!Object.keys(errors.value).length) lastRefresh.value = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
 }
 async function confirm(id: string) {
@@ -667,18 +669,15 @@ onBeforeUnmount(() => {
               <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-haspopup="menu" :aria-expanded="menu === card" title="Options. Drag to reorder." @click="menu === card ? closeMenu(card) : openMenu(card)" @keydown.alt.up.prevent="move(card, -1)" @keydown.alt.down.prevent="move(card, 1)"><UiIcon name="Ellipsis" :size="20" /></button>
             </div>
           </header>
-          <!-- Today's menu holds only its section switches; every card reorders by dragging its ⋯. -->
-          <div v-if="menu === card && card === 'today'" class="home-card__menu" role="menu" aria-label="Today options" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
-            <button type="button" role="menuitemcheckbox" :aria-checked="showGratitude" @click="toggleGratitude"><span class="home-emoji home-emoji--menu" aria-hidden="true">🌅</span>Gratitude<span class="home-switch" :class="{ 'is-on': showGratitude }" aria-hidden="true" /></button>
-            <button type="button" role="menuitemcheckbox" :aria-checked="todayPageOn" @click="toggleTodayPage"><span class="home-emoji home-emoji--menu" aria-hidden="true">📝</span>Today's page<span class="home-switch" :class="{ 'is-on': todayPageOn }" aria-hidden="true" /></button>
-          </div>
-          <div v-else-if="menu === card" class="home-card__menu" role="menu" :aria-label="`${cards[card].title} options`" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
+          <!-- Every card reorders by dragging its ⋯; Writing's menu also holds the Gratitude switch. -->
+          <div v-if="menu === card" class="home-card__menu" role="menu" :aria-label="`${cards[card].title} options`" @keydown.esc.stop.prevent="closeMenu(card)" @keydown="menuKeys">
             <template v-if="card === 'soup' && news?.setUp">
               <button v-if="newsPaper && !newsPaper.hiddenAt" type="button" role="menuitem" class="home-menu-two" @click="newsHide"><UiIcon name="EyeOff" :size="16" /><span>Hide until tomorrow<small>It comes back with tomorrow’s news</small></span></button>
               <button type="button" role="menuitem" @click="menu = null; newsSettingsOpen = true"><UiIcon name="Settings" :size="16" />News settings</button>
               <button type="button" role="menuitem" class="home-danger home-menu-two" @click="newsRemove"><UiIcon name="X" :size="16" /><span>Remove from Home<small>Stops your daily news</small></span></button>
             </template>
-            <button v-else type="button" role="menuitem" class="home-danger" @click="card === 'soup' ? newsRemove() : remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
+            <button v-if="card === 'notes' && !unavailable.includes('gratitude')" type="button" role="menuitemcheckbox" :aria-checked="showGratitude" @click="toggleGratitude"><span class="home-emoji home-emoji--menu" aria-hidden="true">🌅</span>Gratitude<span class="home-switch" :class="{ 'is-on': showGratitude }" aria-hidden="true" /></button>
+            <button v-if="!(card === 'soup' && news?.setUp)" type="button" role="menuitem" class="home-danger" @click="card === 'soup' ? newsRemove() : remove(card)"><UiIcon name="X" :size="16" />Remove from Home</button>
           </div>
           <div class="home-card__body">
             <div v-if="cardPending(card)" class="home-skeleton" role="status" aria-label="Loading content"><i /><i /><i /></div>
@@ -695,13 +694,6 @@ onBeforeUnmount(() => {
                 <RouterLink v-for="event in todayEvents" :key="event.id" :to="`/calendar?date=${day}`" class="home-line home-event" :class="eventState(event)"><span class="home-time">{{ event.allDay ? 'All day' : compactTime(event.start) }}</span><i class="home-event__bar" aria-hidden="true" /><span class="home-event__title">{{ event.title }}<template v-if="eventState(event) === 'is-now'"> · now</template></span></RouterLink>
                 <p v-if="dayOver" class="home-empty-line">Nothing else today · <RouterLink :to="`/calendar?date=${tomorrowKey}`" aria-label="Open tomorrow in Calendar">Tomorrow</RouterLink></p>
               </template>
-              <GratitudeCard v-if="showGratitude" section :active="active" @unavailable="unavailable.push('gratitude')" />
-              <RouterLink v-if="todayPageOn" to="/journal" class="home-tasksline" :aria-label="tasksLine.label">
-                <span class="home-emoji" aria-hidden="true">📝</span>
-                <strong>Today's page</strong>
-                <span v-if="tasksLine.count" class="home-muted">· {{ tasksLine.count }}</span>
-                <UiIcon name="ChevronRight" :size="16" class="home-tasksline__go" />
-              </RouterLink>
             </template>
             <template v-else-if="card === 'inbox'">
               <button v-for="login in brief?.loginCodes || []" :key="login.messageId" type="button" class="home-copy home-login-code" @click="copyLoginCode(login)">
@@ -763,7 +755,13 @@ onBeforeUnmount(() => {
               </div>
             </template>
             <template v-else-if="card === 'accounts'"><div v-if="accountSummary" class="home-stats"><div><span class="home-muted">Income this month</span><strong>{{ accountSummary.income }}</strong></div><div><span class="home-muted">Expenses this month</span><strong>{{ accountSummary.expense }}</strong></div></div><RouterLink v-else to="/accounts" class="home-quiet">Open Accounts<UiIcon name="ArrowRight" :size="16" /></RouterLink></template>
-            <HomeNotesCard v-else-if="card === 'notes'" :ref="el => { notesCard = el as typeof notesCard }" v-model:open="notesOpen" :notes="notes" @saved="noteSaved" />
+            <template v-else-if="card === 'notes'">
+              <template v-if="!notesOpen">
+                <RouterLink to="/journal" class="home-tasksline" aria-label="Open today's page"><span class="home-emoji" aria-hidden="true">📝</span><strong>Today's page</strong></RouterLink>
+                <GratitudeCard v-if="showGratitude" section :active="active" @unavailable="unavailable.push('gratitude')" />
+              </template>
+              <HomeNotesCard :ref="el => { notesCard = el as typeof notesCard }" v-model:open="notesOpen" :notes="notes" @saved="noteSaved" />
+            </template>
             <NewsCard v-else-if="card === 'soup' && news" :today="news" :building="newsBuilding" @setup="emit('ask', 'Set up my news')" @open="newsReader = true" />
             <template v-else-if="card === 'people'"><template v-if="peopleCard.state === 'people'"><button v-for="person in peopleCard.people" :key="person.id" type="button" class="home-person" @click="openPersonId = person.id"><PersonAvatar :contact="person" :size="40" /><strong>{{ firstName(person.name) }}</strong><span class="home-muted home-person__since">{{ formatSinceShort(person.lastInTouchAt) || 'Not yet' }}</span></button></template><p v-else class="home-muted">All caught up.</p></template>
           </div>
@@ -897,9 +895,8 @@ p { margin: 4px 0; }
 .home-event.is-now, .home-event.is-now .home-time { color: var(--ui-accent); font-weight: 600; }
 .home-empty-line { min-height: 36px; display: flex; align-items: center; gap: 4px; margin: 0; color: var(--ui-text-muted); font-size: 14px; }
 .home-empty-line a { color: var(--ui-accent); font-weight: 600; text-decoration: none; }
-.home-tasksline { display: flex; align-items: center; gap: 8px; min-height: 40px; margin-top: 6px; padding: 0 12px; border-radius: 12px; background: var(--ui-surface-muted); color: var(--ui-text); font-size: 14px; text-decoration: none; }
+.home-tasksline { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border-radius: 12px; background: var(--ui-surface-muted); color: var(--ui-text); font-size: 14px; text-decoration: none; }
 .home-tasksline strong { font-weight: 600; }
-.home-tasksline__go { margin-left: auto; color: var(--ui-text-muted); }
 .home-tasksline .home-emoji { font-size: 16px; }
 .home-task { min-height: 36px; }
 .home-task__dot { flex: none; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ui-text-muted); }

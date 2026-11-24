@@ -15,13 +15,14 @@ let people: object[] = [];
 let tasks: object[] = [];
 let goals: object[] = [];
 let gratitudeInToday = false;
-let homeSettings: object | Error = { todayPage: true };
+// Most owners never had Today's page on; the Writing card tests set it.
+let homeSettings: object | Error = { todayPage: false };
 // null is a brand-new install: no client has saved a Home layout yet.
 let savedLayout: object | null = null;
 const daysAgo = (days: number) => new Date(Date.now() - days * 864e5).toISOString();
 const contact = (id: string, name: string, extra: object = {}) => ({ id, name, status: "active", source: "manual", socialHandles: {}, metadata: null, isClose: true, closeness: "close", closeSince: daysAgo(100), isClient: false, lastInTouchAt: null, reminderAt: null, ...extra });
 beforeEach(() => {
-  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = []; tasks = []; goals = []; gratitudeInToday = false; homeSettings = { todayPage: true }; savedLayout = null;
+  setActivePinia(createPinia()); localStorage.clear(); vi.clearAllMocks(); calendarUnavailable = false; pending = [core]; people = []; tasks = []; goals = []; gratitudeInToday = false; homeSettings = { todayPage: false }; savedLayout = null;
   vi.spyOn(HTMLDialogElement.prototype, "showModal").mockImplementation(function (this: HTMLDialogElement) { this.setAttribute("open", ""); });
   vi.spyOn(HTMLDialogElement.prototype, "close").mockImplementation(function (this: HTMLDialogElement) { this.removeAttribute("open"); });
   vi.mocked(api.get).mockImplementation(async endpoint => {
@@ -160,29 +161,19 @@ describe("Home Today card", () => {
   const feed = (events: object[], sources: object[] = [{ id: "google" }]) => vi.mocked(api.get).mockImplementation((original => async (endpoint: string) => endpoint.startsWith("/calendar/feed") ? { events, sources } as never : original(endpoint))(vi.mocked(api.get).getMockImplementation()!));
   // These cover an existing install; the last test covers a brand-new one.
   beforeEach(() => { savedLayout = { order: ["today"], hidden: ["inbox", "people"], pinned: [], earned: [] }; });
-  // Failure modes: tasks, notes or the focus goal creeping back into Today; the tasks line
-  // miscounting or not opening the journal; the title not opening the calendar on today.
-  it("is the calendar at a glance, with one line into today's page for tasks", async () => {
+  // Failure modes: tasks, notes, Gratitude or Today's page creeping back into Today; the title not opening
+  // the calendar on today; Today's menu offering switches that now live on Writing.
+  it("is just the day: no tasks, notes, Gratitude or Today's page", async () => {
     goals = [{ id: "ship", title: "Ship People v1", status: "active" }];
-    tasks = [
-      { id: "t-now", title: "Finish the person sheet", status: "in_progress", goalId: "ship" },
-      { id: "t-done", title: "Done earlier", status: "done", updatedAt: new Date().toISOString() },
-      { id: "t-someday", title: "Someday idea", status: "backlog" },
-    ];
+    tasks = [{ id: "t-now", title: "Finish the person sheet", status: "in_progress", goalId: "ship" }];
+    gratitudeInToday = true;
     render(); await flushPromises();
     const text = today().textContent!;
-    expect(text).not.toContain("Ship People v1");
-    expect(text).not.toContain("Finish the person sheet");
-    expect(text).not.toContain("Notes");
-    expect(today().querySelector('input[aria-label="Add a task"]')).toBeNull();
-    const line = today().querySelector('a[aria-label="Open today\'s page. 1 of 2 tasks left"]')!;
-    expect(line.textContent!.replace(/\s+/g, "")).toBe("📝Today'spage·1of2left");
-    expect(line.getAttribute("href") ?? line.getAttribute("to")).toBe("/journal");
+    for (const gone of ["Ship People v1", "Finish the person sheet", "Notes", "Today's page"]) expect(text).not.toContain(gone);
+    expect(gratitude()).toBeNull();
     expect(today().querySelector(".home-card__title")!.getAttribute("to")).toMatch(/^\/calendar\?date=\d{4}-\d{2}-\d{2}$/);
-  });
-  it("shows the server's Gratitude setting", async () => {
-    gratitudeInToday = true; render(); await flushPromises();
-    expect(gratitude()).toBeTruthy();
+    (today().querySelector('[aria-label="Today options"]') as HTMLButtonElement).click(); await flushPromises();
+    expect([...today().querySelectorAll('[role="menu"] button')].map(item => item.textContent?.trim())).toEqual(["Remove from Home"]);
   });
   it("shows one quiet line when nothing is scheduled", async () => {
     feed([]); render(); await flushPromises();
@@ -203,54 +194,58 @@ describe("Home Today card", () => {
     expect(today().textContent).toContain("Nothing else today");
     expect(today().querySelector('a[aria-label="Open tomorrow in Calendar"]')).toBeTruthy();
   });
-  it("keeps gratitude off until it is switched on from the Today menu, which holds only the section switches", async () => {
+});
+
+describe("Home Writing card", () => {
+  const writing = () => document.body.querySelector('article[aria-label="Writing"]');
+  const gratitude = () => writing()!.querySelector('[aria-label="Gratitude"], [aria-label="Three good things"]');
+  const pinnedOnSave = () => (vi.mocked(api.put).mock.calls.filter(call => call[0] === "/home/layout").at(-1)?.[1] as { pinned?: string[] } | undefined)?.pinned;
+  // Failure modes: Today's page missing or counting tasks; Gratitude shown while off or not switching from
+  // Writing's menu; the switch not saving to the shared server setting.
+  it("holds one line into today's page, and Gratitude switched from its menu", async () => {
+    savedLayout = { order: ["today", "notes"], hidden: ["inbox", "people"], pinned: ["notes"], earned: [] };
+    tasks = [{ id: "t-now", title: "Finish the person sheet", status: "in_progress" }];
     render(); await flushPromises();
+    const line = writing()!.querySelector('a[aria-label="Open today\'s page"]')!;
+    expect(line.textContent!.replace(/\s+/g, "")).toBe("📝Today'spage");
     expect(gratitude()).toBeNull();
-    (today().querySelector('[aria-label="Today options"]') as HTMLButtonElement).click(); await flushPromises();
-    const items = [...today().querySelectorAll('[role="menu"] button')];
-    expect(items.map(item => item.textContent?.replace(/🌅|📝/u, "").trim())).toEqual(["Gratitude", "Today's page"]);
+    (writing()!.querySelector('[aria-label="Writing options"]') as HTMLButtonElement).click(); await flushPromises();
+    const items = [...writing()!.querySelectorAll<HTMLButtonElement>('[role="menu"] button')];
+    expect(items.map(item => item.textContent?.replace(/🌅/u, "").trim())).toEqual(["Gratitude", "Remove from Home"]);
     expect(items[0].getAttribute("aria-checked")).toBe("false");
-    (items[0] as HTMLButtonElement).click(); await flushPromises();
+    items[0].click(); await flushPromises();
     expect(gratitude()).toBeTruthy();
     expect(api.patch).toHaveBeenCalledWith("/gratitude/settings", { inToday: true });
   });
-  // Failure modes: Today's page vanishing on installs that never chose (or on an older Core without
-  // the setting), the switch not saving, the saved choice not being honoured, a failed save sticking.
-  const todayPage = () => today().querySelector(".home-tasksline");
-  const todayPageSwitch = () => [...today().querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(item => item.textContent?.includes("Today's page"))!;
-  async function openTodayMenu() { (today().querySelector('[aria-label="Today options"]') as HTMLButtonElement).click(); await flushPromises(); }
-  it("shows Today's page by default, including on a Core without the setting", async () => {
-    homeSettings = new ApiError("Not found", 404);
-    render(); await flushPromises();
-    expect(todayPage()).toBeTruthy();
-    await openTodayMenu();
-    expect(todayPageSwitch().getAttribute("aria-checked")).toBe("true");
+  // Failure modes: an owner who journaled from Today losing Today's page or Gratitude; the card forced on an
+  // owner who never used them, on one whose Core never answered, or back onto a Home it was removed from.
+  const existing = { order: ["today"], hidden: ["inbox", "people"], pinned: [], earned: [] };
+  it("is added for an owner who had Today's page on", async () => {
+    savedLayout = existing; homeSettings = { todayPage: true }; render(); await flushPromises();
+    expect(writing()).toBeTruthy();
+    expect(pinnedOnSave()).toContain("notes");
   });
-  it("hides Today's page from the Today menu and saves the choice", async () => {
-    render(); await flushPromises();
-    await openTodayMenu(); todayPageSwitch().click(); await flushPromises();
-    expect(todayPage()).toBeNull();
-    expect(api.patch).toHaveBeenCalledWith("/home/settings", { todayPage: false });
+  it("is added for an owner who had Gratitude on, even with Today's page off", async () => {
+    savedLayout = existing; homeSettings = { todayPage: false }; gratitudeInToday = true; render(); await flushPromises();
+    expect(writing()).toBeTruthy();
+    expect(gratitude()).toBeTruthy();
   });
-  it("honours a saved choice to hide Today's page", async () => {
-    homeSettings = { todayPage: false };
-    render(); await flushPromises();
-    expect(todayPage()).toBeNull();
-    await openTodayMenu();
-    expect(todayPageSwitch().getAttribute("aria-checked")).toBe("false");
+  it("is not added when neither was on, when the setting couldn't be read, or when the owner removed it", async () => {
+    savedLayout = existing; homeSettings = { todayPage: false }; render(); await flushPromises();
+    expect(writing()).toBeNull();
+    document.body.innerHTML = "";
+    homeSettings = new ApiError("Not found", 404); render(); await flushPromises();
+    expect(writing()).toBeNull();
+    document.body.innerHTML = "";
+    homeSettings = { todayPage: true }; savedLayout = { ...existing, hidden: ["inbox", "people", "notes"] }; render(); await flushPromises();
+    expect(writing()).toBeNull();
+    expect(pinnedOnSave()).toBeUndefined();
   });
-  it("starts a brand-new install with Today's page off and saves that", async () => {
-    savedLayout = null;
-    render(); await flushPromises();
-    expect(todayPage()).toBeNull();
+  it("is not added to a brand-new install, which starts with Today's page off", async () => {
+    savedLayout = null; render(); await flushPromises();
+    expect(writing()).toBeNull();
     expect(api.patch).toHaveBeenCalledWith("/home/settings", { todayPage: false });
     expect(api.put).toHaveBeenCalledWith("/home/layout", expect.objectContaining({ order: ["soup", "today"], pinned: ["soup"] }));
-  });
-  it("puts Today's page back when saving the switch fails", async () => {
-    vi.mocked(api.patch).mockRejectedValueOnce(new Error("offline"));
-    render(); await flushPromises();
-    await openTodayMenu(); todayPageSwitch().click(); await flushPromises();
-    expect(todayPage()).toBeTruthy();
   });
 });
 
