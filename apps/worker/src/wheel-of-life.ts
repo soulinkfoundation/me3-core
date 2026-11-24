@@ -163,6 +163,41 @@ export async function createMissionWheelSnapshot(
   };
 }
 
+export async function updateMissionWheelSnapshotNotes(
+  env: Env,
+  userId: string,
+  snapshotId: string,
+  input: unknown,
+) {
+  const row = await getMissionWheelSnapshotRow(env, userId, snapshotId);
+  if (!row) throw new MissionControlInputError("Wheel snapshot not found", 404);
+  const body = isRecord(input) ? input : {};
+  const incoming = isRecord(body.notes) ? body.notes : {};
+  const segmentIds = new Set(
+    sanitizeMissionWheelSegments(parseJsonArray(row.segments_json)).map((segment) => segment.id),
+  );
+  const notes: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parseJsonRecord(row.notes_json))) {
+    if (typeof value === "string") notes[key] = value;
+  }
+  for (const [segmentId, value] of Object.entries(incoming)) {
+    if (!segmentIds.has(segmentId) || typeof value !== "string") continue;
+    notes[segmentId] = value.trim().slice(0, 600);
+  }
+
+  await env.DB.prepare(
+    `UPDATE mission_wheel_snapshots SET notes_json = ? WHERE id = ? AND user_id = ?`,
+  )
+    .bind(JSON.stringify(notes), snapshotId, userId)
+    .run();
+
+  return {
+    snapshot: serializeMissionWheelSnapshot(
+      (await getMissionWheelSnapshotRow(env, userId, snapshotId)) as MissionWheelSnapshotRow,
+    ),
+  };
+}
+
 export async function listMissionWheelSnapshots(
   env: Env,
   userId: string,
