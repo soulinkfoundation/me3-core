@@ -108,7 +108,7 @@ describe("Home card data", () => {
     let state = (await getHomeCard(f.env, "owner", card.id, saturday)).state;
     expect(state.blocks.water).toMatchObject({ today: 7, goal: 8, done: false });
     await actOnHomeCard(f.env, "owner", card.id, { action: "add", key: "water", by: -10 }, saturday);
-    expect((await getHomeCard(f.env, "owner", card.id, saturday)).state.blocks.water.today).toBe(0);
+    expect(((await getHomeCard(f.env, "owner", card.id, saturday)).state.blocks.water as { today: number }).today).toBe(0);
     await actOnHomeCard(f.env, "owner", card.id, { action: "set", key: "water", value: 8 }, saturday);
     await actOnHomeCard(f.env, "owner", card.id, { action: "set", key: "win", value: "  Shipped the card  " }, saturday);
     state = (await getHomeCard(f.env, "owner", card.id, saturday)).state;

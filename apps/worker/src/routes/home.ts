@@ -1,5 +1,5 @@
 import { getHomeLayout, getHomeSettings, saveHomeLayout, updateHomeSettings } from "../home-layout";
-import { actOnHomeCard, createHomeCard, deleteHomeCard, getHomeCard, listHomeCards, rollbackHomeCard, updateHomeCard } from "../home-cards";
+import { actOnHomeCard, createHomeCard, handleHomeCardAction, deleteHomeCard, getHomeCard, listHomeCards, rollbackHomeCard, updateHomeCard } from "../home-cards";
 import { JournalInputError } from "../journal";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 
@@ -26,6 +26,8 @@ export function registerHomeRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.get("/api/home/cards/:id", c => run(c, async () => getHomeCard(c.env, await owner(c), c.req.param("id"))));
   app.patch("/api/home/cards/:id", c => run(c, async () => { const input = await body(c); return updateHomeCard(c.env, await owner(c), c.req.param("id"), input, input?.summary ?? "Changed by you"); }));
   app.post("/api/home/cards/:id/act", c => run(c, async () => actOnHomeCard(c.env, await owner(c), c.req.param("id"), await body(c))));
+  // A2UI v1.0 action events from a card surface: { name, sourceComponentId, context }.
+  app.post("/api/home/cards/:id/action", c => run(c, async () => handleHomeCardAction(c.env, await owner(c), c.req.param("id"), await body(c))));
   app.post("/api/home/cards/:id/rollback", c => run(c, async () => rollbackHomeCard(c.env, await owner(c), c.req.param("id"), (await body(c))?.version)));
   app.delete("/api/home/cards/:id", c => run(c, async () => deleteHomeCard(c.env, await owner(c), c.req.param("id"))));
 }
