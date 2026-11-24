@@ -39,19 +39,20 @@ function fakeModel(ops: unknown[]) {
   return { model, seen };
 }
 
+const said = "My daughter Mia starts school on Monday.";
 const turn = { ownerId: "owner", turnId: "turn-1", ownerMessage: "My daughter Mia starts school on Monday.", replyText: "Noted, good luck to Mia!" };
 const signal = new AbortController().signal;
 
 describe("automatic agent memory", () => {
   it("saves a new fact as an active agent memory linked to its turn", async () => {
     const f = fixture();
-    await rememberFromTurn(f.db, fakeModel([{ op: "add", kind: "relationship_note", body: "Owner's daughter is Mia.", importance: 4 }]).model, turn, signal);
+    await rememberFromTurn(f.db, fakeModel([{ op: "add", kind: "relationship_note", body: "Owner's daughter is Mia.", importance: 4, ownerWords: said }]).model, turn, signal);
     expect(f.rows()).toEqual([expect.objectContaining({ user_id: "owner", memory_kind: "relationship_note", body: "Owner's daughter is Mia.", source_kind: "agent", source_ref: "turn-1", review_status: "active", importance: 4 })]);
   });
 
   it("holds sensitive facts for the owner's review", async () => {
     const f = fixture();
-    await rememberFromTurn(f.db, fakeModel([{ op: "add", kind: "owner_note", body: "Owner is managing a back injury.", importance: 3, sensitive: true }]).model, turn, signal);
+    await rememberFromTurn(f.db, fakeModel([{ op: "add", kind: "owner_note", body: "Owner is managing a back injury.", importance: 3, sensitive: true, ownerWords: said }]).model, turn, signal);
     expect(f.rows()[0]).toMatchObject({ review_status: "needs_review" });
   });
 
@@ -60,7 +61,7 @@ describe("automatic agent memory", () => {
     f.memory("m-city", { body: "Owner lives in Dublin." });
     f.memory("m-trip", { body: "Owner is in Lisbon this week." });
     await rememberFromTurn(f.db, fakeModel([
-      { op: "update", id: "m-city", body: "Owner lives in Cork.", importance: 4 },
+      { op: "update", id: "m-city", body: "Owner lives in Cork.", importance: 4, ownerWords: said },
       { op: "archive", id: "m-trip" },
     ]).model, turn, signal);
     expect(f.rows()).toEqual([
@@ -74,9 +75,9 @@ describe("automatic agent memory", () => {
     f.memory("m-manual", { body: "Keep replies short.", kind: "preference", source: "manual" });
     f.memory("m-other", { owner: "other", body: "Other owner's fact." });
     await rememberFromTurn(f.db, fakeModel([
-      { op: "update", id: "m-manual", body: "Write long replies." },
+      { op: "update", id: "m-manual", body: "Write long replies.", ownerWords: said },
       { op: "archive", id: "m-manual" },
-      { op: "update", id: "m-other", body: "Changed." },
+      { op: "update", id: "m-other", body: "Changed.", ownerWords: said },
       { op: "archive", id: "m-other" },
     ]).model, turn, signal);
     expect(f.rows()).toEqual([
@@ -89,18 +90,39 @@ describe("automatic agent memory", () => {
     const f = fixture();
     f.memory("m-mia", { body: "Owner's daughter is Mia." });
     await rememberFromTurn(f.db, fakeModel([
-      { op: "add", kind: "owner_note", body: "  owner's daughter is   mia. " },
-      { op: "add", kind: "not_a_kind", body: "Bad kind." },
-      { op: "add", kind: "owner_note", body: "" },
-      { op: "add", kind: "owner_note", body: "Fact one." },
-      { op: "add", kind: "owner_note", body: "Fact two." },
-      { op: "add", kind: "owner_note", body: "Fact three." },
-      { op: "add", kind: "owner_note", body: "Fact four." },
+      { op: "add", kind: "owner_note", body: "  owner's daughter is   mia. ", ownerWords: said },
+      { op: "add", kind: "not_a_kind", body: "Bad kind.", ownerWords: said },
+      { op: "add", kind: "owner_note", body: "", ownerWords: said },
+      { op: "add", kind: "owner_note", body: "Fact one.", ownerWords: said },
+      { op: "add", kind: "owner_note", body: "Fact two.", ownerWords: said },
+      { op: "add", kind: "owner_note", body: "Fact three.", ownerWords: said },
+      { op: "add", kind: "owner_note", body: "Fact four.", ownerWords: said },
     ]).model, turn, signal);
     expect(f.rows().map(row => row.body)).toEqual(["Owner's daughter is Mia.", "Fact one.", "Fact two.", "Fact three."]);
   });
 
-  it("shows the model only the owner's words, the reply and this owner's live memories", async () => {
+  it("never turns the assistant's own claims into owner facts (me3-yz6n)", async () => {
+    const f = fixture();
+    const booking = { ownerId: "owner", turnId: "turn-2", ownerMessage: "Book me a paid strategy session with Kieran.", replyText: "Kieran's paid sessions must be booked on his own platform at http://127.0.0.1:9088/." };
+    const { model, seen } = fakeModel([
+      { op: "add", kind: "relationship_note", body: "Owner engages Kieran for paid strategy sessions that must be booked on his own platform.", importance: 4, ownerWords: "paid sessions must be booked on his own platform" },
+      { op: "add", kind: "relationship_note", body: "Owner has booked strategy sessions with Kieran before.", importance: 4 },
+      { op: "add", kind: "owner_note", body: "Owner books paid sessions externally.", importance: 3, ownerWords: "Owner books paid sessions externally" },
+    ]);
+    await rememberFromTurn(f.db, model, booking, signal);
+    expect(f.rows()).toEqual([]);
+    expect(JSON.stringify(seen[0])).not.toContain("his own platform");
+  });
+
+  it("keeps what the owner said in their own words", async () => {
+    const f = fixture();
+    await rememberFromTurn(f.db, fakeModel([
+      { op: "add", kind: "relationship_note", body: "Owner's daughter Mia starts school on Monday.", importance: 4, ownerWords: "my daughter mia starts school" },
+    ]).model, turn, signal);
+    expect(f.rows()).toEqual([expect.objectContaining({ body: "Owner's daughter Mia starts school on Monday.", review_status: "active" })]);
+  });
+
+  it("shows the model only the owner's words and this owner's live memories", async () => {
     const f = fixture();
     f.memory("m-live", { body: "Owner runs on Saturdays." });
     f.memory("m-gone", { body: "Forgotten fact.", status: "archived", forgottenAt: "2026-10-02T09:00:00Z" });
@@ -152,9 +174,9 @@ describe("memory review and forgetting", () => {
   it("reports what it held back for review, most important first", async () => {
     const f = fixture();
     const outcome = await rememberFromTurn(f.db, fakeModel([
-      { op: "add", kind: "owner_note", body: "Owner has a mild back injury.", importance: 2, sensitive: true },
-      { op: "add", kind: "owner_note", body: "Owner is going through a divorce.", importance: 5, sensitive: true },
-      { op: "add", kind: "preference", body: "Owner likes short replies.", importance: 4 },
+      { op: "add", kind: "owner_note", body: "Owner has a mild back injury.", importance: 2, sensitive: true, ownerWords: said },
+      { op: "add", kind: "owner_note", body: "Owner is going through a divorce.", importance: 5, sensitive: true, ownerWords: said },
+      { op: "add", kind: "preference", body: "Owner likes short replies.", importance: 4, ownerWords: said },
     ]).model, turn, signal);
     expect(outcome.held.map(item => item.body)).toEqual(["Owner is going through a divorce.", "Owner has a mild back injury."]);
     expect(outcome.held.every(item => typeof item.id === "string")).toBe(true);

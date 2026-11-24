@@ -159,7 +159,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       ?suggestAgentReplies(modelFor(fastName,{purpose:"suggested_replies"}),{ownerMessage:input.messageText,replyText:result.replyText},AbortSignal.any([signal,AbortSignal.timeout(8_000)])).catch(()=>[] as string[])
       :Promise.resolve([] as string[]);
     const remembered=finished&&!shed&&memoryOn
-      ?rememberFromTurn(env.DB,modelFor(fastName,{purpose:"memory_extraction"}),{ownerId:input.userId,turnId:input.turnId,ownerMessage:input.messageText,replyText:result.replyText,ownerSnapshot},AbortSignal.any([signal,AbortSignal.timeout(10_000)])).catch(()=>undefined)
+      ?rememberFromTurn(env.DB,modelFor(fastName,{purpose:"memory_extraction"}),{ownerId:input.userId,turnId:input.turnId,ownerMessage:input.messageText,ownerSnapshot},AbortSignal.any([signal,AbortSignal.timeout(10_000)])).catch(()=>undefined)
       :Promise.resolve(undefined);
     // At most one "Remember this?" card per reply: the most important memory held back this turn.
     const memoryReview=remembered.then(memory=>memory?.held[0]?{memoryId:memory.held[0].id,id:memory.held[0].id,body:memory.held[0].body,displayBody:ownerFacingMemory(memory.held[0].body),status:"pending" as const}:null);

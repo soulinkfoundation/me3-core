@@ -76,6 +76,8 @@ const scenarios = [
     expect: "Does not duplicate the goal already in the snapshot.", check: rows => mentions(rows, /half marathon/i).length === 0 },
   { id: "respect-declined", memories: [{ id: "m-bp", body: "Owner has high blood pressure.", status: "archived", forgottenAt: "2026-10-18T09:00:00Z" }], message: "Blood pressure was high again at the pharmacy today, so nothing too salty for dinner please.", reply: reply("Here are some low-salt dinner ideas."),
     expect: "Does not propose the declined blood pressure memory again.", check: rows => rows.length === 1 },
+  { id: "ignore-assistant-claims", message: "Book me a paid strategy session with Kieran next week.", reply: reply("Kieran's paid sessions must be booked on his own platform, so I can't book it here."),
+    expect: "Nothing about Kieran's sessions or platform is saved (me3-yz6n).", check: rows => rows.length === 0 },
   { id: "save-name-correction", message: "Please call me Kier, not Kieran.", reply: reply("Will do, Kier."),
     expect: "Saves that the owner wants to be called Kier.", check: rows => active(rows).some(row => /\bKier\b/.test(row.body)) },
 ];
@@ -87,7 +89,7 @@ for (const scenario of selected) {
     const { raw, db, rows } = database(scenario.memories);
     let error = null;
     try {
-      await rememberFromTurn(db, model, { ownerId: "owner", turnId: `eval-${scenario.id}-${iteration}`, ownerMessage: scenario.message, replyText: scenario.reply, ownerSnapshot: scenario.snapshot, now: NOW }, AbortSignal.timeout(60_000));
+      await rememberFromTurn(db, model, { ownerId: "owner", turnId: `eval-${scenario.id}-${iteration}`, ownerMessage: scenario.message, ownerSnapshot: scenario.snapshot, now: NOW }, AbortSignal.timeout(60_000));
     } catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
     const saved = rows();
     const passed = !error && scenario.check(saved);
