@@ -15,8 +15,9 @@ const FREE_API_PREFIXES = [
 // Soulink assistant chat (agent dispatch, which would run the model outside the free allowance) stay paid.
 const FREE_SOULINK_PATHS = ["/api/soulink/setup", "/api/soulink/status", "/api/soulink/disconnect", "/api/soulink/provision/verify", "/api/soulink/contacts/sync"];
 const NEWS_API_PREFIXES = ["/api/news", "/api/soup"];
-// Inside an allowed area but not free: uploads need storage, and these agent channels belong to paid installs.
-const BLOCKED_API_PREFIXES = ["/api/assistant/attachments", "/api/calendar/sources"];
+// Inside an allowed area but not free: chat attachments need storage. Subscribed calendars (a private
+// iCal link, or Google and Outlook connected through ME3 Cloud) are free: they live in the user's own database.
+const BLOCKED_API_PREFIXES = ["/api/assistant/attachments"];
 
 const FREE_EMPTY_LISTS = ["/api/sites", "/api/contacts"];
 

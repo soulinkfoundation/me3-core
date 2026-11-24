@@ -361,6 +361,39 @@ describe("calendar source subscriptions", () => {
     expect(state.events[0]!.title).toBe("Client call");
   });
 
+  it("connects a Google or Outlook feed from ME3 Cloud and tells Cloud to forget the token on removal", async () => {
+    const { env, state } = createCalendarSourceEnv();
+    const feed = "https://api.me3.app/api/calendar-connect/feeds/123e4567-e89b-42d3-a456-426614174000/abcdefghijklmnopqrstuvwxyz012345678";
+    const fetcher = vi.fn(async () => new Response("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n")) as typeof fetch;
+    const subscribed = await subscribeIcsUrl(env, "owner", { url: feed, name: "Google Calendar" }, fetcher);
+    expect(state.sources).toHaveLength(1);
+
+    const cloud = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", cloud);
+    try {
+      await removeCalendarSource(env, "owner", subscribed.source.id);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(cloud).toHaveBeenCalledWith(feed, expect.objectContaining({ method: "DELETE" }));
+    expect(state.sources[0]).toMatchObject({ status: "archived", encrypted_source_url: null });
+  });
+
+  it("does not call out when removing an ordinary calendar link", async () => {
+    const { env } = createCalendarSourceEnv();
+    const subscribed = await subscribeIcsUrl(env, "owner", {
+      url: "https://calendar.google.com/calendar/ical/private/basic.ics",
+    }, vi.fn(async () => new Response(FEED_ONE)) as typeof fetch);
+    const cloud = vi.fn();
+    vi.stubGlobal("fetch", cloud);
+    try {
+      await removeCalendarSource(env, "owner", subscribed.source.id);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(cloud).not.toHaveBeenCalled();
+  });
+
   it("removes an imported source and its events", async () => {
     const { env, state } = createCalendarSourceEnv();
     const fetcher = vi.fn(async () => new Response(FEED_ONE)) as typeof fetch;

@@ -11,6 +11,12 @@ describe("free tier policy", () => {
     }
   });
 
+  it("allows subscribed calendars, including Google and Outlook connected through ME3 Cloud", () => {
+    expect(freeApiAccess("POST", "/api/calendar/sources/ics-url", { news: false })).toBe("allow");
+    expect(freeApiAccess("POST", "/api/calendar/sources/abc/refresh", { news: false })).toBe("allow");
+    expect(freeApiAccess("DELETE", "/api/calendar/sources/abc", { news: false })).toBe("allow");
+  });
+
   it("blocks paid features, setup and uploads", () => {
     for (const path of ["/api/mailbox/messages", "/api/sites/x", "/api/social/queue", "/api/accounts/summary", "/api/files/list", "/api/computer/jobs", "/api/ai-settings", "/api/admin/bootstrap", "/api/auth/login", "/api/assistant/attachments", "/api/coding-agent/tasks", "/api/payments/x", "/mcp", "/api/assistantx", "/"]) {
       expect(freeApiAccess("POST", path, { news: false }), path).toBe("upgrade");

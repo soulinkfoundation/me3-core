@@ -1,6 +1,7 @@
 import app from "../../worker/src/app";
 import { retryAgentTurnNotifications } from "../../worker/src/agent-notifications";
 import { dispatchDueCalendarPushNotifications } from "../../worker/src/calendar-push-notifications";
+import { dispatchDueCalendarSourceRefreshes } from "../../worker/src/calendar-sources";
 import { rememberDeferredTurns } from "../../worker/src/agent-memory-backlog";
 import { dispatchDueGratitudeReminders } from "../../worker/src/gratitude";
 import { Me3Agent } from "../../worker/src/me3-agent";
@@ -40,6 +41,7 @@ const PUBLIC_PAGE_TTL_MS = 30 * 60 * 1000;
 type ScheduledStep = readonly [name: string, run: (env: Env) => Promise<unknown>];
 const FREE_STEPS: readonly ScheduledStep[] = [
   ["calendar push dispatch", dispatchDueCalendarPushNotifications],
+  ["calendar source refresh", (env) => dispatchDueCalendarSourceRefreshes(env)],
   ["morning calendar push", dispatchDueMorningCalendarPushes],
   ["gratitude reminders", dispatchDueGratitudeReminders],
   ["agent turn notification retry", retryAgentTurnNotifications],
