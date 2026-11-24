@@ -50,6 +50,8 @@ const showAdvancedSetup = ref(false);
 const error = ref("");
 // Payment approvals send a signed-in owner here to prove they are present (see agentPayments.ts).
 const notice = ref(route.query.reauth === "payment" ? "Sign in again to approve your payment. You'll go straight back to it." : "");
+// ME3.app's "Open ME3" link adds ?signin=me3 so an owner already signed in there skips this button.
+const autoMe3SignIn = ref(route.query.signin === "me3");
 const passwordMinLength = 8;
 
 const isSetupMode = computed(() => !ownerAuthConfigured.value);
@@ -251,8 +253,9 @@ async function submitAuth() {
   loading.value = false;
 }
 
-async function startMe3SignIn() {
-  if (me3SignInLoading.value || configLoading.value) return;
+// Resolves true once the browser is heading to ME3.app.
+async function startMe3SignIn(): Promise<boolean> {
+  if (me3SignInLoading.value || configLoading.value) return false;
 
   me3SignInLoading.value = true;
   error.value = "";
@@ -272,7 +275,7 @@ async function startMe3SignIn() {
 
     if (response.ok && response.url) {
       window.location.href = response.url;
-      return;
+      return true;
     }
 
     error.value = "ME3 sign-in is not ready for this install yet.";
@@ -283,6 +286,7 @@ async function startMe3SignIn() {
   } finally {
     me3SignInLoading.value = false;
   }
+  return false;
 }
 
 function startResetMode() {
@@ -307,7 +311,13 @@ function cancelResetMode() {
   error.value = "";
 }
 
-onMounted(loadConfig);
+onMounted(async () => {
+  await loadConfig();
+  const redirecting =
+    autoMe3SignIn.value && showAuthChoice.value && !error.value && (await startMe3SignIn());
+  // Keep "Opening ME3..." up while the browser leaves; otherwise show the normal choice and any error.
+  if (!redirecting) autoMe3SignIn.value = false;
+});
 </script>
 
 <template>
@@ -316,6 +326,10 @@ onMounted(loadConfig);
     <main class="login__main">
       <BrandLogo class="login__logo" alt="me3" />
 
+      <p v-if="autoMe3SignIn" class="cloud-claim__copy" aria-live="polite">Opening ME3...</p>
+
+      <!-- Wait for the install's config so managed and self-hosted copy never swap on screen. -->
+      <template v-if="!configLoading && !autoMe3SignIn">
       <section v-if="showAuthChoice" class="cloud-claim">
         <p class="cloud-claim__copy">
           {{
@@ -539,6 +553,7 @@ onMounted(loadConfig);
         <p v-if="notice" class="notice">{{ notice }}</p>
         <p v-if="showBootstrapSetup && error" class="error">{{ error }}</p>
       </form>
+      </template>
     </main>
   </div>
 </template>
