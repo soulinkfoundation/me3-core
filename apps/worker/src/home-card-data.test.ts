@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { homeCardDataState, type HomeCardLoaders } from "./home-card-data";
+import { homeCardDataState, pickCardCurrency, type HomeCardLoaders } from "./home-card-data";
 import { HOME_CARDS_SCHEMA, createHomeCard, handleHomeCardAction, homeCardAccess, homeCardSurface, parseHomeCardSpec } from "./home-cards";
 import { HOME_LAYOUT_SCHEMA } from "./home-layout";
 import { gratitudeFixture } from "./test-utils/gratitude-fixture";
@@ -79,6 +79,19 @@ describe("data block state", () => {
     const money = loaders({ moneyToday: async () => 18000, moneyMonth: async () => 124000 });
     expect(await homeCardDataState({ type: "stat", key: "s", source: "money.today" }, money)).toMatchObject({ value: "£180", label: "in today" });
     expect(await homeCardDataState({ type: "progress", key: "p", source: "money.month", goal: 3000 }, money)).toEqual({ type: "progress", pct: 41, label: "£1,240 of your £3,000 goal for November" });
+  });
+
+  // Found on a live install: an owner whose default currency was never set (EUR) but who is paid in GBP saw €0.
+  it("shows money in the currency the owner is actually paid in", () => {
+    expect(pickCardCurrency("EUR", [{ currency: "GBP", amountCents: 124000 }])).toBe("GBP");
+    expect(pickCardCurrency("EUR", [{ currency: "GBP", amountCents: 500 }, { currency: "EUR", amountCents: 100 }])).toBe("EUR");
+    expect(pickCardCurrency("EUR", [{ currency: "USD", amountCents: 100 }, { currency: "GBP", amountCents: 900 }])).toBe("GBP");
+    expect(pickCardCurrency("EUR", [])).toBe("EUR");
+  });
+
+  it("keeps the amounts on a money bar that ME3 labelled", async () => {
+    const money = loaders({ moneyMonth: async () => 124000 });
+    expect(await homeCardDataState({ type: "progress", key: "p", source: "money.month", goal: 3000, label: "Progress toward £3,000" }, money)).toEqual({ type: "progress", pct: 41, label: "£1,240 of your £3,000 goal for November" });
   });
 
   it("marks overdue invoices and totals only the owner's currency", async () => {

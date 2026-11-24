@@ -27,5 +27,13 @@ describe("parked features stay out of a new owner's agent", () => {
     const prompt = buildAgentSystemPrompt({ ownerName: "Ada", timezone: "UTC" });
     expect(prompt).toMatch(/never offer or suggest them/);
     expect(prompt).not.toMatch(/make purchases/);
+    expect(prompt).toMatch(/custom Home cards/);
+  });
+
+  // me3-c5h8: once cards are offered, the prompt must not still forbid them, or the agent answers in text.
+  it("lets the agent build cards when they are offered", () => {
+    const prompt = buildAgentSystemPrompt({ ownerName: "Ada", timezone: "UTC", cardsOffered: true });
+    expect(prompt).toMatch(/never offer or suggest them/);
+    expect(prompt).not.toMatch(/custom Home cards/);
   });
 });

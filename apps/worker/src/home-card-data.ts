@@ -76,8 +76,16 @@ export type HomeCardLoaders = {
 const memo = <T>(fn: () => Promise<T>) => { let value: Promise<T> | null = null; return () => (value ??= fn()); };
 const settledTotal = (totals: { currency: string; amountCents: number }[] | undefined, currency: string) => (totals || []).find(total => total.currency?.toUpperCase() === currency.toUpperCase())?.amountCents ?? 0;
 
+/** The currency a card shows money in: the owner's default, unless none of this month's income is in it; then the one they earn most in. */
+export function pickCardCurrency(defaultCode: string, monthTotals: { currency: string; amountCents: number }[]): string {
+  const paid = monthTotals.filter(total => total.amountCents > 0);
+  if (!paid.length || paid.some(total => total.currency?.toUpperCase() === defaultCode.toUpperCase())) return defaultCode;
+  return paid.reduce((best, total) => total.amountCents > best.amountCents ? total : best).currency.toUpperCase();
+}
+
 export function createHomeCardLoaders(env: Env, userId: string, clock: { timezone: string; date: string }, now = new Date()): HomeCardLoaders {
-  const currency = memo(() => getDefaultCommerceCurrency(env, userId));
+  const monthStats = memo(async () => (await getFinancialStats(env, userId, "income") as { stats: { thisMonthCents: number; thisMonthTotals?: { currency: string; amountCents: number }[] } }).stats);
+  const currency = memo(async () => pickCardCurrency(await getDefaultCommerceCurrency(env, userId), (await monthStats().catch(() => null))?.thisMonthTotals || []));
   const invoices = memo(async () => {
     const rows: HomeCardInvoice[] = [];
     for (const status of ["overdue", "pending"] as const) {
@@ -102,7 +110,7 @@ export function createHomeCardLoaders(env: Env, userId: string, clock: { timezon
       return settledTotal(page.totals, code);
     },
     async moneyMonth(code) {
-      const { stats } = await getFinancialStats(env, userId, "income") as { stats: { thisMonthCents: number; thisMonthTotals?: { currency: string; amountCents: number }[] } };
+      const stats = await monthStats();
       return stats.thisMonthTotals?.length ? settledTotal(stats.thisMonthTotals, code) : stats.thisMonthCents || 0;
     },
     invoices,
@@ -245,7 +253,8 @@ async function resolve(block: HomeCardDataBlock, loaders: HomeCardLoaders): Prom
       if (block.type === "progress") {
         const goalMinor = Math.round((block.goal ?? 0) * 100);
         const pct = goalMinor > 0 ? Math.min(100, Math.round(total / goalMinor * 100)) : 0;
-        return { type: "progress", pct, label: label(`${formatMoney(total, currency)} of your ${formatMoney(goalMinor, currency)} goal for ${monthName}`) };
+        // The amounts are the point of a money bar, so they stay even when ME3 gave the block its own label.
+        return { type: "progress", pct, label: `${formatMoney(total, currency)} of your ${formatMoney(goalMinor, currency)} goal for ${monthName}` };
       }
       return { type: "stat", value: formatMoney(total, currency), label: label(`in ${monthName}`) };
     }
