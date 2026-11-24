@@ -106,7 +106,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       // The model sees the pixels; core_images_edit needs the ID to name which image to change.
       const imageIds=attachments.filter(item=>item.kind==="image").map(item=>`${JSON.stringify(item.name)} id=${item.id}`).join(", ");
       const content=[input.messageText,input.attachmentTextContext,imageIds&&`[Attached image IDs: ${imageIds}]`].filter(Boolean).join("\n\n");
-      messages=[...buildAgentSystemMessages({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt,planNote:agentPlanNote(env),cardsOffered:parkedFeaturesOn(env)}).map(content=>({role:"system" as const,content})),...recent,{role:"user",content,...(images.length?{images}:{})}];
+      messages=[...buildAgentSystemMessages({ownerName:owner.name||"the owner",timezone,ownerSnapshot:snapshot.prompt,planNote:agentPlanNote(env)}).map(content=>({role:"system" as const,content})),...recent,{role:"user",content,...(images.length?{images}:{})}];
       await env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'user',?,?)").bind(`${input.turnId}:user`,input.userId,input.threadId,input.messageText,JSON.stringify({requestId:input.requestId,runtime:"agent",...(attachments.length?{attachments}:{})})).run();
     }
     const tools=withLeanToolGroups(env,[...createDomainTools(),...computerChatTools()].filter(tool=>isToolAvailable(tool.name,services)&&toolAllowedByEnv(env,tool.name)));
@@ -156,7 +156,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
     const memoryOn=env.ME3_AGENT_MEMORY?.trim()!=="off";
     const shed=finished&&(Boolean(result.trace.modelSteps?.some(step=>step.status==="error"))||await shedAfterTurn(env));
     const followUps=finished&&!shed&&env.ME3_AGENT_SUGGESTED_REPLIES?.trim()!=="off"
-      ?suggestAgentReplies(modelFor(fastName,{purpose:"suggested_replies"}),{ownerMessage:input.messageText,replyText:result.replyText,cardsOffered:parkedFeaturesOn(env)},AbortSignal.any([signal,AbortSignal.timeout(8_000)])).catch(()=>[] as string[])
+      ?suggestAgentReplies(modelFor(fastName,{purpose:"suggested_replies"}),{ownerMessage:input.messageText,replyText:result.replyText},AbortSignal.any([signal,AbortSignal.timeout(8_000)])).catch(()=>[] as string[])
       :Promise.resolve([] as string[]);
     const remembered=finished&&!shed&&memoryOn
       ?rememberFromTurn(env.DB,modelFor(fastName,{purpose:"memory_extraction"}),{ownerId:input.userId,turnId:input.turnId,ownerMessage:input.messageText,ownerSnapshot},AbortSignal.any([signal,AbortSignal.timeout(10_000)])).catch(()=>undefined)
@@ -312,7 +312,6 @@ async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:
   return visiblePayload;
 }
 
-export function parkedFeaturesOn(env:Pick<Env,"ME3_PARKED_FEATURES">):boolean {return env.ME3_PARKED_FEATURES?.trim().toLowerCase()==="on";}
 async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJobHost):Promise<AgentDomainServices> {
   return {
     // Hidden unless the installation has Browser Run and the turn runs in the owner's agent instance.
@@ -328,8 +327,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
     web:createWebResearchToolServices(env,ownerId),landingPageEnv:env as never,
     sites:{draft:input=>draftStarterSite(env,ownerId,input),publish:()=>publishStarterSite(env,ownerId),domainOptions:query=>getAgentDomainOffer(env,ownerId,query)},
-    // Parked after the first release (me3-5u97.6): tools hide until ME3_PARKED_FEATURES is "on".
-    cards:parkedFeaturesOn(env)?createAgentHomeCardServices(env,ownerId):undefined,
+    cards:createAgentHomeCardServices(env,ownerId),
     coding:await createCodingAgentServices(env),
     soup:createAgentSoupServices(env,ownerId),
     socialShare:{shareSitePost:async input=>{const result=await shareOwnerSitePost(env,ownerId,input);return{postId:result.post.post.id,created:result.created,platforms:result.post.versions.map(version=>version.platform)};}},

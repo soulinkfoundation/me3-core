@@ -14,6 +14,19 @@ import type { Env } from "./types";
  */
 export const HOME_CARD_SOURCES = ["bookings.week", "money.today", "money.month", "invoices.unpaid", "invoices.overdue", "enquiries.new", "tasks", "reminders", "goal"] as const;
 export type HomeCardSource = typeof HOME_CARD_SOURCES[number];
+/** What a free ME3 (ME3_HOME_CARDS=free) may show. Bookings, money, invoices and enquiries come with Starter and Business. */
+export const HOME_CARD_FREE_SOURCES: readonly HomeCardSource[] = ["tasks", "reminders", "goal"];
+export const HOME_CARD_PAID_ONLY = "Part of ME3 Starter and Business";
+export function homeCardSources(env: { ME3_HOME_CARDS?: string }): readonly HomeCardSource[] {
+  return env.ME3_HOME_CARDS?.trim().toLowerCase() === "free" ? HOME_CARD_FREE_SOURCES : HOME_CARD_SOURCES;
+}
+/** A data block for a source this plan leaves out: says so instead of showing the data. */
+export function paidOnlyState(block: HomeCardDataBlock): HomeCardDataState {
+  if (block.type === "list") return { type: "list", rows: [], empty: HOME_CARD_PAID_ONLY };
+  if (block.type === "days") return { type: "days", values: [0, 0, 0, 0, 0, 0, 0], labels: DAY_LABELS, today: 0 };
+  if (block.type === "progress") return { type: "progress", pct: 0, label: HOME_CARD_PAID_ONLY };
+  return { type: "stat", value: "–", label: HOME_CARD_PAID_ONLY };
+}
 export type HomeCardDataBlockType = "stat" | "progress" | "days" | "list";
 
 /** Which blocks can show which sources. Anything else is rejected when the card is saved. */

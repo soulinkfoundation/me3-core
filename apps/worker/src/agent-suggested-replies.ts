@@ -19,11 +19,11 @@ const suggestionTool: AgentTool = {
   async execute() { throw Error("Suggested replies never execute."); },
 };
 
-const systemPrompt = (cardsOffered: boolean) => [
+const SYSTEM_PROMPT = [
   "You suggest quick replies for the owner of a personal assistant.",
   "Given the owner's last message and the assistant's reply, return up to three replies the owner would most plausibly tap next.",
   "Write each in the owner's voice, 2 to 5 words, as an answer or instruction to the assistant, for example \"Yes, move it\", \"Draft the email\", \"Make it shorter\".",
-  `When the assistant asked a question, cover the likely answers. Only suggest things the assistant can act on, never email campaigns${cardsOffered ? " or social posts" : ", social posts or custom Home cards"}.`,
+  "When the assistant asked a question, cover the likely answers. Only suggest things the assistant can act on, never email campaigns or social posts.",
   "Never introduce names, times or facts that are not in the conversation.",
   "If the reply needs no follow-up, return an empty list.",
   "Call core_suggested_replies exactly once with no prose.",
@@ -31,12 +31,12 @@ const systemPrompt = (cardsOffered: boolean) => [
 
 export async function suggestAgentReplies(
   model: AgentModel,
-  input: { ownerMessage: string; replyText: string; cardsOffered?: boolean },
+  input: { ownerMessage: string; replyText: string },
   signal: AbortSignal,
 ): Promise<string[]> {
   const response = await model.step({
     messages: [
-      { role: "system", content: systemPrompt(input.cardsOffered === true) },
+      { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: JSON.stringify({ ownerMessage: input.ownerMessage.slice(0, 2_000), assistantReply: input.replyText.slice(0, 4_000) }) },
     ],
     tools: [suggestionTool],

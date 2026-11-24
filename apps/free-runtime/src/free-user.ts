@@ -103,6 +103,8 @@ export class Me3FreeUser extends Me3Agent {
       ME3_USER_AGENT: undefined,
       ME3_DEPLOYMENT_MODE: "self_hosted",
       ME3_AGENT_TOOL_ALLOWLIST: freeToolAllowlist({ news }),
+      // Home cards show only tasks, reminders and goals (plus habits and counters); money and bookings are paid.
+      ME3_HOME_CARDS: "free",
       // Free chat is priced by prompt size: writing and search tools load only when a turn needs them.
       ME3_AGENT_LEAN_TOOLS: "on",
       // One message may not run the model more than a few times, and the agent knows what the plan leaves out.

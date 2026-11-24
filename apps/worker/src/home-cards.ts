@@ -1,5 +1,5 @@
 import { addDaysToDateString } from "@me3-core/plugin-calendar";
-import { HOME_CARD_SOURCE_ACCESS, HOME_CARD_SOURCE_BLOCKS, HOME_CARD_SOURCES, createHomeCardLoaders, homeCardDataState, homeCardTaskBelongs, type HomeCardDataBlock, type HomeCardDataState, type HomeCardLoaders, type HomeCardSource } from "./home-card-data";
+import { HOME_CARD_SOURCE_ACCESS, HOME_CARD_SOURCE_BLOCKS, HOME_CARD_SOURCES, createHomeCardLoaders, homeCardDataState, homeCardSources, homeCardTaskBelongs, paidOnlyState, type HomeCardDataBlock, type HomeCardDataState, type HomeCardLoaders, type HomeCardSource } from "./home-card-data";
 import { updateMissionTask } from "./mission-control";
 import { JournalInputError } from "./journal";
 import { getHomeLayout, saveHomeLayout } from "./home-layout";
@@ -256,11 +256,19 @@ export function homeCardSurface(card: Pick<HomeCard, "id" | "name" | "emoji" | "
   return { version: "1.0", createSurface: { surfaceId: card.id, catalogId: HOME_CARD_CATALOG_ID, components, dataModel: { date: state.date, done: state.done, total: state.total, blocks: state.blocks } } };
 }
 
-async function withDataState(blocks: HomeCardBlock[], state: HomeCardState, loaders: () => HomeCardLoaders): Promise<HomeCardState> {
+/** Refuses a card that shows data this plan leaves out (a free ME3 has no bookings, money, invoices or enquiries). */
+function assertPlanAllows(env: Env, spec: HomeCardSpec) {
+  const allowed = homeCardSources(env);
+  const blocked = spec.blocks.some(block => DATA_TYPES.has(block.type) && !allowed.includes((block as HomeCardDataBlock).source));
+  if (blocked) throw bad(`Cards with bookings, money, invoices or enquiries come with ME3 Starter and Business. On this plan a card can show ${allowed.join(", ")}, habits and counters`);
+}
+
+async function withDataState(env: Env, blocks: HomeCardBlock[], state: HomeCardState, loaders: () => HomeCardLoaders): Promise<HomeCardState> {
   const data = blocks.filter((block): block is HomeCardDataBlock => DATA_TYPES.has(block.type));
   if (!data.length) return state;
+  const allowed = homeCardSources(env);
   const load = loaders();
-  const resolved = await Promise.all(data.map(block => homeCardDataState(block, load)));
+  const resolved = await Promise.all(data.map(block => allowed.includes(block.source) ? homeCardDataState(block, load) : paidOnlyState(block)));
   data.forEach((block, i) => { state.blocks[block.key] = resolved[i]; });
   return state;
 }
@@ -273,7 +281,7 @@ async function loadCard(env: Env, userId: string, row: CardRow, date: string, lo
   const blocks = parseBlocks(row.blocks_json);
   const card: HomeCard = { id: row.id, name: row.name, emoji: row.emoji, version: row.version, blocks, createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
     history: (versions.results || []).map(version => ({ version: version.version, name: version.name, emoji: version.emoji, summary: version.summary, createdAt: version.created_at })), access: homeCardAccess(blocks) };
-  const state = await withDataState(blocks, homeCardState(blocks, entries.results || [], date), loaders);
+  const state = await withDataState(env, blocks, homeCardState(blocks, entries.results || [], date), loaders);
   return { card, state, surface: homeCardSurface(card, state) };
 }
 
@@ -296,6 +304,7 @@ export async function getHomeCard(env: Env, userId: string, id: string, now = ne
 
 export async function createHomeCard(env: Env, userId: string, input: unknown, createdBy: "agent" | "owner", now = new Date()): Promise<HomeCardRecord> {
   const spec = parseHomeCardSpec(input);
+  assertPlanAllows(env, spec);
   const base = slug(spec.name);
   const taken = new Set((await env.DB.prepare("SELECT id FROM home_cards WHERE user_id = ? AND (id = ? OR id LIKE ?)").bind(userId, base, `${base}-%`).all<{ id: string }>()).results?.map(row => row.id) ?? []);
   let id = base;
@@ -327,6 +336,7 @@ export async function updateHomeCard(env: Env, userId: string, id: string, input
   const row = await loadRow(env, userId, id);
   if (input.name === undefined && input.emoji === undefined && input.blocks === undefined) throw bad("Nothing to change");
   const spec = parseHomeCardSpec({ name: input.name ?? row.name, emoji: input.emoji ?? row.emoji, blocks: input.blocks ?? parseBlocks(row.blocks_json) });
+  assertPlanAllows(env, spec);
   return writeVersion(env, userId, row, spec, note, now);
 }
 

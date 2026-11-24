@@ -1,7 +1,7 @@
 import { getHomeLayout, getHomeSettings, saveHomeLayout, updateHomeSettings } from "../home-layout";
 import { actOnHomeCard, createHomeCard, handleHomeCardAction, deleteHomeCard, getHomeCard, listHomeCards, rollbackHomeCard, updateHomeCard } from "../home-cards";
 import { JournalInputError } from "../journal";
-import { parkedFeaturesOn } from "../agent-runtime";
+import { homeCardSources } from "../home-card-data";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 
 export function registerHomeRoutes(app: AppHono, deps: OwnerRouteDeps) {
@@ -22,8 +22,9 @@ export function registerHomeRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.get("/api/home/settings", async c => c.json(await getHomeSettings(c.env, await owner(c))));
   app.patch("/api/home/settings", c => run(c, async () => updateHomeSettings(c.env, await owner(c), await body(c))));
   // Custom cards: built by ME3 from chat or by the owner; drawn natively by every client.
-  // offered: whether the agent can build cards on this install (they stay parked unless ME3_PARKED_FEATURES is on).
-  app.get("/api/home/cards", async c => c.json({ ...(await listHomeCards(c.env, await owner(c))), offered: parkedFeaturesOn(c.env) }));
+  // offered: ME3 can build cards here (older apps hide the Custom card tile without it). sources: the data
+  // sources this plan may show, so apps only suggest cards the owner can have (a free ME3 has fewer).
+  app.get("/api/home/cards", async c => c.json({ ...(await listHomeCards(c.env, await owner(c))), offered: true, sources: homeCardSources(c.env) }));
   app.post("/api/home/cards", c => run(c, async () => createHomeCard(c.env, await owner(c), await body(c), "owner")));
   app.get("/api/home/cards/:id", c => run(c, async () => getHomeCard(c.env, await owner(c), c.req.param("id"))));
   app.patch("/api/home/cards/:id", c => run(c, async () => { const input = await body(c); return updateHomeCard(c.env, await owner(c), c.req.param("id"), input, input?.summary ?? "Changed by you"); }));

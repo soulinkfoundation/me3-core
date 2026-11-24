@@ -22,7 +22,7 @@ const BLOCKED_API_PREFIXES = ["/api/assistant/attachments"];
 const FREE_EMPTY_LISTS = ["/api/sites", "/api/contacts"];
 
 const FREE_TOOL_PREFIXES = [
-  "core_calendar_", "core_contacts_", "core_conversations_", "core_docs_", "core_journal_", "core_memory_", "core_messages_", "core_mission_",
+  "core_calendar_", "core_cards_", "core_contacts_", "core_conversations_", "core_docs_", "core_journal_", "core_memory_", "core_messages_", "core_mission_",
   "core_owner_", "core_quotes_", "core_reminders_", "core_targets_", "core_tools_",
 ];
 
@@ -112,8 +112,8 @@ export const isTourPath = (path: string) => path === "/api/assistant/tour" || pa
 
 /** Added to the agent's system prompt on the free runtime. */
 export const FREE_PLAN_NOTE =
-  "This owner is on the free ME3 plan. It includes this chat, tasks, goals and mission, the journal, the calendar, reminders, and messaging the people they are linked with on Soulink (their contacts). " +
-  "It does not include ME3's own email, a website or pages, bookings, a shop, Accounts, files, social posting, web research or image generation, and you have no tools for those. " +
+  "This owner is on the free ME3 plan. It includes this chat, tasks, goals and mission, the journal, the calendar, reminders, Home cards for habits, counters, goals, tasks and reminders, messaging the people they are linked with on Soulink (their contacts). " +
+  "It does not include ME3's own email, a website or pages, bookings, a shop, Accounts, cards of bookings, money, invoices or enquiries, files, social posting, web research or image generation, and you have no tools for those. " +
   "If the owner asks for one of them, say in one sentence that it is part of a paid ME3 plan they can upgrade to from the menu, then help with what you can do here. " +
   "Never say you did something you have no tool for.";
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { homeCardDataState, pickCardCurrency, type HomeCardLoaders } from "./home-card-data";
-import { HOME_CARDS_SCHEMA, createHomeCard, handleHomeCardAction, homeCardAccess, homeCardSurface, parseHomeCardSpec } from "./home-cards";
+import { HOME_CARDS_SCHEMA, createHomeCard, handleHomeCardAction, homeCardAccess, homeCardSurface, listHomeCards, parseHomeCardSpec, updateHomeCard } from "./home-cards";
+import { homeCardSources } from "./home-card-data";
 import { HOME_LAYOUT_SCHEMA } from "./home-layout";
 import { gratitudeFixture } from "./test-utils/gratitude-fixture";
 
@@ -149,5 +150,36 @@ describe("card surface and actions", () => {
     const ticked = await handleHomeCardAction(f.env, "owner", card.card.id, { name: "tick", sourceComponentId: "med", context: { on: true } }, now);
     expect(ticked.state.blocks.med).toMatchObject({ today: true });
     expect(ticked.surface.createSurface.dataModel).toMatchObject({ done: 1, total: 1 });
+  });
+});
+
+// Free ME3 (ME3_HOME_CARDS=free) gets habit, counter, goal, tasks and reminders cards; bookings, money, invoices
+// and enquiries come with Starter and Business. Failure modes: a free card made or changed to show paid data,
+// a paid card that slipped in showing that data anyway, and the apps not told which sources they may offer.
+describe("cards on the free plan", () => {
+  function freeFixture() {
+    const f = gratitudeFixture();
+    for (const sql of [...HOME_LAYOUT_SCHEMA, ...HOME_CARDS_SCHEMA]) f.raw.exec(sql);
+    fixtures.push(f);
+    return { f, env: { ...f.env, ME3_HOME_CARDS: "free" } };
+  }
+
+  it("lists which sources each plan may show", () => {
+    expect(homeCardSources({ ME3_HOME_CARDS: "free" })).toEqual(["tasks", "reminders", "goal"]);
+    expect(homeCardSources({})).toContain("money.month");
+  });
+
+  it("refuses Starter and Business data on a free ME3, and allows the free card types", async () => {
+    const { env } = freeFixture();
+    await expect(createHomeCard(env, "owner", { name: "Money", emoji: "💷", blocks: [{ type: "stat", source: "money.today" }] }, "agent", now)).rejects.toThrow(/Starter and Business/);
+    const card = await createHomeCard(env, "owner", { name: "Launch", emoji: "🚀", blocks: [{ type: "habit", key: "med", label: "Meditate" }, { type: "list", source: "tasks" }, { type: "list", source: "reminders" }] }, "agent", now);
+    await expect(updateHomeCard(env, "owner", card.card.id, { blocks: [{ type: "list", source: "invoices.unpaid" }] }, "Add invoices", now)).rejects.toThrow(/Starter and Business/);
+  });
+
+  it("shows paid data on a free ME3 as part of Starter and Business, not the data", async () => {
+    const { f, env } = freeFixture();
+    await createHomeCard(f.env, "owner", { name: "Money", emoji: "💷", blocks: [{ type: "stat", source: "money.today" }] }, "agent", now);
+    const [card] = (await listHomeCards(env, "owner", now)).cards;
+    expect(card.state.blocks.stat1).toEqual({ type: "stat", value: "–", label: "Part of ME3 Starter and Business" });
   });
 });
