@@ -71,7 +71,7 @@ export interface AgentPaymentServices {
   refreshNetwork?(proposalId: string): Promise<PaymentProposalRecord>;
 }
 /** A seller from the network index. Its spec URL is the only address ME3 calls to buy. */
-export type NetworkSellerRef = { profileId: string | null; name: string; handle: string | null; profileUrl: string | null; specUrl: string; offeringUrl?: string | null };
+export type NetworkSellerRef = { profileId: string | null; name: string; handle: string | null; profileUrl: string | null; specUrl: string; offeringUrl?: string | null; publicUrl?: string | null };
 
 /** Custom Home cards, provided by the worker. Each call throws an owner-facing Error on bad input. */
 export interface AgentHomeCardServices {

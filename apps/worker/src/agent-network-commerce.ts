@@ -171,8 +171,9 @@ function sellerSummary(seller: NetworkSellerRef) {
   return { name: seller.name, handle: seller.handle, profileId: seller.profileId, profileUrl: seller.profileUrl, onMe3Network: true };
 }
 
+/** The page a person opens: the offering's own page, else the seller's site. profileUrl (their me.json) is the last resort. */
 function sellerPageUrl(env: Env, seller: NetworkSellerRef): string | null {
-  for (const candidate of [seller.offeringUrl, seller.profileUrl]) {
+  for (const candidate of [seller.offeringUrl, seller.publicUrl, seller.profileUrl]) {
     try { if (candidate) return publicHttpsUrl(candidate, "Seller page", env).toString(); } catch { /* try the next link */ }
   }
   return null;
@@ -442,10 +443,10 @@ async function recordSellerPayment(env: Env, proposal: ProposalRow, network: Net
   await appendEvent(env, ownerId, proposal.id, "network_paid", { checkoutId: network.checkout_id, paidAmountMinor: paidAmount, currency: paidCurrency, mismatch, calendarEventId });
   const owner = await ownerContact(env, ownerId);
   const paid = paidAmount !== null ? formatMoney(paidAmount, paidCurrency) : "payment";
-  const when = network.slot_start ? `${ownerTime(network.slot_start, owner.timezone || network.timezone)} ` : "";
+  const when = network.slot_start ? ` on ${ownerTime(network.slot_start, owner.timezone || network.timezone)}` : "";
   const message = network.offering_kind === "product"
     ? `Bought: ${network.offering_title} from ${network.seller_name}, ${paid} paid.`
-    : `Booked: ${when}${network.offering_title} with ${network.seller_name}, ${paid} paid.${calendarEventId ? " It's in your calendar." : ""}`;
+    : `Booked: ${network.offering_title} with ${network.seller_name}${when}. ${paidAmount !== null ? `${paid} paid.` : "Paid."}${calendarEventId ? " It's in your calendar." : ""}`;
   await postPurchaseMessage(env, proposal, network, "paid", mismatch ? `${message} The seller recorded ${paid}, but you approved ${formatMoney(proposal.amount_minor, proposal.currency)}.` : message);
 }
 
@@ -485,9 +486,13 @@ function formatMoney(minor: number, currency: string): string {
   catch { return `${formatMinorUnits(minor, currency)} ${currency}`; }
 }
 
+/** "Monday 30 November at 08:00" in the owner's timezone. */
 function ownerTime(start: string, timezone: string | null): string {
-  try { return new Intl.DateTimeFormat("en-GB", { timeZone: timezone || "UTC", weekday: "long", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(start)); }
-  catch { return start; }
+  try {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: timezone || "UTC", weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+      .formatToParts(new Date(start)).map(part => [part.type, part.value]));
+    return `${parts.weekday} ${parts.day} ${parts.month} at ${parts.hour}:${parts.minute}`;
+  } catch { return start; }
 }
 
 /** Scheduled sweep: checks due pending network checkouts. */
