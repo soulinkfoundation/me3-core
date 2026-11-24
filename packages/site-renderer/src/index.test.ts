@@ -1068,6 +1068,8 @@ describe("site generator", () => {
     expect(files["index.html"]).not.toContain("Your booking request is ready.");
     expect(files["index.html"]).toContain('"bufferTime":15');
     expect(files["index.html"]).toContain("t+=slotStep");
+    // Times are drawn on the server's 15-minute grid, so a free time is never shown as booked.
+    expect(files["index.html"]).toContain("var slotStep=Math.max(15,Math.ceil((duration+bufferTime)/15)*15)");
     expect(files["index.html"]).toContain("button.dataset.timeValue=value");
     expect(files["index.html"]).toContain("/slots?date='+encodeURIComponent(dateValue)+'&offerId='");
     expect(files["index.html"]).toContain("if(!available[value]){button.disabled=true");
@@ -1232,6 +1234,10 @@ describe("site generator", () => {
     expect(html).toContain("'/free'");
     expect(html).not.toContain("Private payment link");
     expect(html).toContain("Confirm Booking");
+    // A card-paid offer names its price and the payment step instead of "Confirm Booking";
+    // manual and pay-directly bookings keep confirming.
+    expect(html).toContain("pricing.paymentMethod!=='manual'&&!direct&&amount>0?'Continue to payment · '+formatAmount(amount,pricing.currency):'Confirm Booking'");
+    expect(html).toContain("input.addEventListener('change',updateSubmitLabel)");
   });
 
   it("renders functional class and retreat registration flows with attendee quantities", async () => {

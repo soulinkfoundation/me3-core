@@ -20,6 +20,36 @@ describe("shop for real products", () => {
     expect(files["shop/index.html"]).toMatch(/\.shop-items \.shop-item-cover\{[^}]*width:100%;height:auto;aspect-ratio:4\/5/);
   });
 
+  // Failure mode: classic themes pad .content by 32px on each side, so a width without
+  // border-box made shop and product pages 64px wider than a phone screen.
+  it("keeps shop and product pages inside a phone screen on classic themes", async () => {
+    const files = await generateSiteHtml({ ...base, products: [{ slug: "log", title: "Log", price: 3500, currency: "GBP" }] }, []);
+    for (const [page, kind] of [["shop/index.html", "shop"], ["shop/log.html", "product"]] as const) {
+      expect(files[page]).toContain(`<main class="content content--${kind}">`);
+      expect(files[page]).toContain(`.content.content--${kind}{box-sizing:border-box;width:min(1120px,calc(100% - 48px));margin-left:auto;margin-right:auto;padding-left:0;padding-right:0}`);
+    }
+  });
+
+  // Failure mode: a download's delivery note was listed twice, and "Download now" landed under
+  // the details list instead of beside "Payment received".
+  it("lists a download's delivery note once and puts Download now under the payment message", async () => {
+    const files = await generateSiteHtml({ ...base, products: [{ slug: "pdf", title: "Prompts", price: 500, currency: "GBP", delivery: { kind: "digital", instructions: "Download straight after paying.", file: pdf } }] }, []);
+    const page = files["shop/pdf.html"];
+    expect(page.split("<li>Download straight after paying.</li>")).toHaveLength(2);
+    expect(page).toContain('status.insertAdjacentElement("afterend", link)');
+    expect(page).toContain(".product-status+.product-buy{margin-bottom:20px}");
+  });
+
+  // Failure mode: with Small (2) and Large (2) the badge read "Only 4 left" whichever was chosen.
+  it("counts the chosen option's copies, not every option's together", async () => {
+    const files = await generateSiteHtml({ ...base, products: [{ slug: "tee", title: "Tee", price: 2000, currency: "EUR", stockSetAt: setAt, options: [{ id: "small", label: "Small", price: 2000, stock: 2 }, { id: "large", label: "Large", price: 2400, stock: 3 }] }] } as never, []);
+    const page = files["shop/tee.html"];
+    expect(page).toContain(">Only 2 left</p>");
+    expect(page).not.toContain("Only 5 left");
+    expect(page).toContain('value="large" data-price="2400" data-stock="3"');
+    expect(page).toContain("live.options[option.value]");
+  });
+
   it("ignores unsafe photo paths", async () => {
     const files = await generateSiteHtml({ ...base, products: [{ slug: "x", title: "X", price: 500, currency: "GBP", images: ["javascript:alert(1)", "https://evil.example/a.jpg"] }] }, []);
     expect(files["shop/x.html"]).not.toContain("javascript:alert");

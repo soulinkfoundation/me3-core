@@ -1941,7 +1941,18 @@ function paidBookingWidgetScript(): string {
   }
   function offer(){return config.offers.find(function(item){return item.id===selectedOfferId;})||config.offers[0];}
   function updateOfferLink(){if(!offerLink)return;var href=offer().pageHref;offerLink.hidden=!href;if(href)offerLink.href=href;}
-  function updatePaymentNote(){var selected=offer();if(paymentLaterEl)paymentLaterEl.hidden=!(selected.pricing&&selected.pricing.enabled&&selected.pricing.paymentMethod==='manual');var payChoiceEl=root.querySelector('[data-pay-choice]');if(payChoiceEl)payChoiceEl.hidden=!(selected.pricing&&selected.pricing.enabled&&selected.pricing.allowPayDirectly);}
+  function updatePaymentNote(){var selected=offer();if(paymentLaterEl)paymentLaterEl.hidden=!(selected.pricing&&selected.pricing.enabled&&selected.pricing.paymentMethod==='manual');var payChoiceEl=root.querySelector('[data-pay-choice]');if(payChoiceEl)payChoiceEl.hidden=!(selected.pricing&&selected.pricing.enabled&&selected.pricing.allowPayDirectly);updateSubmitLabel();}
+  // A card-paid offer says what it costs and that Stripe comes next; anything else confirms the booking.
+  function formatAmount(amount,currency){try{return new Intl.NumberFormat(undefined,{style:'currency',currency:String(currency||'USD').toUpperCase(),minimumFractionDigits:amount%1===0?0:2}).format(amount);}catch(_error){return amount+' '+String(currency||'').toUpperCase();}}
+  function updateSubmitLabel(){
+    if(!submitButton)return;
+    var selected=offer();var pricing=selected&&selected.pricing;
+    var direct=!!(pricing&&pricing.allowPayDirectly&&form.elements.payChoice&&form.elements.payChoice.value==='direct');
+    var amount=amountInput?Number(amountInput.value):pricing&&pricing.suggestedAmount;
+    submitLabel=pricing&&pricing.enabled&&pricing.paymentMethod!=='manual'&&!direct&&amount>0?'Continue to payment · '+formatAmount(amount,pricing.currency):'Confirm Booking';
+    if(!submitButton.disabled)submitButton.textContent=submitLabel;
+  }
+  Array.prototype.forEach.call(form.querySelectorAll('input[name="payChoice"]'),function(input){input.addEventListener('change',updateSubmitLabel);});
   function setDetailsVisible(visible){
     form.classList.toggle('is-visible',!!visible);
     slotsEl.hidden=!!visible||slotsEl.hidden;
@@ -1993,7 +2004,8 @@ function paidBookingWidgetScript(): string {
     if(!Number.isFinite(duration)||duration<=0)duration=30;
     var bufferTime=Number(config.bufferTime||0);
     if(!Number.isFinite(bufferTime)||bufferTime<0)bufferTime=0;
-    var slotStep=duration+bufferTime;
+    // The server offers starts every 15 minutes, so only multiples of 15 can be real slots.
+    var slotStep=Math.max(15,Math.ceil((duration+bufferTime)/15)*15);
     var found=false;
     if(!dateValue){slotsEl.hidden=true;emptyEl.hidden=true;return;}
     setStatus('Checking availability...');
