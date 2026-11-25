@@ -2811,6 +2811,12 @@ onMounted(async () => {
       focusedDayKey.value = dayKeyFormatter.value.format(day);
     }
   }
+  // Home's Connect your calendar opens the connect dialog straight away: /calendar?connect=1.
+  if (new URLSearchParams(window.location.search).has("connect")) {
+    const query = new URLSearchParams(window.location.search); query.delete("connect");
+    window.history.replaceState(window.history.state, "", window.location.pathname + (query.size ? `?${query}` : "") + window.location.hash);
+    openCreateMode("import");
+  }
   const connectParams = new URLSearchParams(window.location.hash.slice(1));
   const connectedFeed = connectParams.get("me3_calendar_feed");
   const connectError = connectParams.get("me3_calendar_error");
