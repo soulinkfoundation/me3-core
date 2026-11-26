@@ -13,6 +13,8 @@ import { useAppToast } from "../composables/useAppToast";
 import UiIcon from "./UiIcon.vue";
 import { useTheme, type ThemePreference } from "../composables/useTheme";
 
+// On a feature page the menu replaces the header's X, so Home leads the list there.
+defineProps<{ showHome?: boolean }>();
 const auth = useAuthStore();
 const sites = useSitesStore();
 // People's Soulink conversations: Messages sits first in the menu, with what waits on you, as on the phones.
@@ -141,6 +143,7 @@ onBeforeUnmount(() => {
         <a :href="publicUrl" role="menuitem" tabindex="-1" target="_blank" rel="noopener noreferrer"><span>{{ publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}</span><UiIcon name="ArrowUpRight" :size="14" /></a>
       </header>
       <nav aria-label="Go to">
+        <RouterLink v-if="showHome" to="/assistant" class="profile-menu__row" role="menuitem" tabindex="-1" aria-label="Home" data-testid="menu-home" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">🏠</span><span>Home</span></RouterLink>
         <RouterLink :to="editSite" class="profile-menu__row" role="menuitem" tabindex="-1" aria-label="Edit website" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">🌐</span><span>Edit website</span></RouterLink>
         <RouterLink v-if="messaging.status !== 'unavailable'" to="/conversations" class="profile-menu__row" role="menuitem" tabindex="-1" aria-label="Messages" :aria-current="route.path === '/conversations' ? 'page' : undefined" data-testid="menu-messages" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">💬</span><span>Messages</span><span v-if="messaging.waiting > 0" class="profile-menu__count">{{ messaging.waiting }}</span></RouterLink>
         <RouterLink v-for="destination in destinations" :key="destination.path" :to="destination.path" class="profile-menu__row" :data-tour-target="destination.path === '/accounts' ? 'menu_accounts' : destination.path === '/social' ? 'menu_social' : undefined" role="menuitem" tabindex="-1" :aria-label="destination.label" :aria-current="route.fullPath === destination.path ? 'page' : undefined" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">{{ destination.emoji }}</span><span>{{ destination.label }}</span></RouterLink>
