@@ -37,7 +37,7 @@ export function registerSoupRoutes(app: AppHono, deps: OwnerRouteDeps) {
   // ── News ──
   // What Home shows: the intro until News is set up, then today's paper once it is ready.
   app.get("/api/news/today", c => run(c, async () => getNewsToday(c.env, await owner(c))));
-  app.get("/api/news/settings", c => run(c, async () => getNewsSettings(c.env, await owner(c))));
+  app.get("/api/news/settings", c => run(c, async () => getNewsSettings(c.env, await owner(c), { profile: c.req.query("profile") === "1" })));
   app.patch("/api/news/settings", c => run(c, async () => (await updateNewsSettings(c.env, await owner(c), await body(c))).settings));
   // Build today's paper now: after setup, when News is added back to Home, and for local testing.
   app.post("/api/news/build", c => run(c, async () => {

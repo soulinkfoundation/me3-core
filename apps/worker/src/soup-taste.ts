@@ -34,6 +34,16 @@ export type SoupTaste = {
   /** News (me3-6ptk): delivery time, region and the rest of the morning paper's settings. Null until News is set up. */
   news: NewsPrefs | null;
 };
+/** How the owner would like to feel after reading (me3-6ptk.14). The first one leads the paper. */
+export type NewsFeeling = "hopeful" | "motivated" | "know" | "connected";
+export const NEWS_FEELINGS: readonly NewsFeeling[] = ["hopeful", "motivated", "know", "connected"];
+export const DEFAULT_NEWS_BASE: NewsFeeling[] = ["hopeful", "know"];
+/** One or two known feelings, in order, without repeats; anything else gives null. */
+export function readNewsBase(value: unknown): NewsFeeling[] | null {
+  if (!Array.isArray(value)) return null;
+  const picked = [...new Set(value.filter((item): item is NewsFeeling => NEWS_FEELINGS.includes(item as NewsFeeling)))];
+  return picked.length >= 1 && picked.length <= 2 && picked.length === value.length ? picked : null;
+}
 export type NewsPrefs = {
   /** Local HH:MM on a quarter hour. */
   time: string;
@@ -55,6 +65,10 @@ export type NewsPrefs = {
   moreMine: string[];
   /** The end-page rating of the latest paper read, to steer the next one. */
   lastRating: "fire" | "ok" | "sleepy" | null;
+  /** The base: how the owner would like to feel after reading, first one leading. */
+  base: NewsFeeling[];
+  /** Tell the owner when something big happens, whatever the base. On by default. */
+  bigStories: boolean;
   /** When the owner confirmed their News setup. A Soup setup alone leaves this null. */
   setUpAt: string | null;
 };
@@ -106,6 +120,8 @@ export function readNewsPrefs(raw: unknown): NewsPrefs | null {
     moreMine: words(raw.moreMine),
     lastRating: raw.lastRating === "fire" || raw.lastRating === "ok" || raw.lastRating === "sleepy" ? raw.lastRating : null,
     setUpAt: typeof raw.setUpAt === "string" && !Number.isNaN(Date.parse(raw.setUpAt)) ? raw.setUpAt : null,
+    base: readNewsBase(raw.base) ?? [...DEFAULT_NEWS_BASE],
+    bigStories: raw.bigStories !== false,
   };
 }
 

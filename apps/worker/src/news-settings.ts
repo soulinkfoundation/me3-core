@@ -4,10 +4,11 @@
 // key holds the rest. Only topic words and a region ever leave the install.
 import { JournalInputError } from "./journal";
 import { normalizeDailyBriefingTime } from "./morning-calendar-push";
-import { townToTry } from "./news-place";
+import { publicTrade } from "@me3-core/site-renderer";
+import { ownerMeJson, townToTry } from "./news-place";
 import { cleanCityName, geocodeCity, type NewsPlace } from "./news-weather";
 import { cleanSoupTopic } from "./soup-client";
-import { MAX_TOPICS_PER_LANE, NEWS_DEFAULT_TIME, earnSoupHomeCard, getSoupTaste, snapNewsTime, type NewsPrefs, type SoupTaste, type SoupTasteState, type SoupWorkTopic } from "./soup-taste";
+import { DEFAULT_NEWS_BASE, MAX_TOPICS_PER_LANE, NEWS_DEFAULT_TIME, readNewsBase, type NewsFeeling, earnSoupHomeCard, getSoupTaste, snapNewsTime, type NewsPrefs, type SoupTaste, type SoupTasteState, type SoupWorkTopic } from "./soup-taste";
 import { isRecord } from "./workspace-input";
 import type { Env } from "./types";
 
@@ -23,12 +24,14 @@ export type NewsSettings = {
   time: string;
   weekendOffsetMinutes: number;
   notify: boolean;
+  base: NewsFeeling[];
+  bigStories: boolean;
 };
 
 /** A chip from the owner or the agent: a plain label, on or off, and for work topics the project it follows. */
 export type NewsTopicInput = { label: string; on: boolean; projectId: string | null };
 
-const PATCH_KEYS = new Set(["work", "mine", "lessOf", "city", "country", "time", "notify", "paused", "setUp"]);
+const PATCH_KEYS = new Set(["work", "mine", "lessOf", "city", "country", "time", "notify", "paused", "setUp", "base", "bigStories"]);
 const SENTENCE_CASE = /^[a-z]/;
 
 export function newsTopicLabel(word: string, labels: Record<string, string>): string {
@@ -39,7 +42,7 @@ export function newsTopicLabel(word: string, labels: Record<string, string>): st
 export const newsIsSetUp = (state: Pick<SoupTasteState, "taste">) => Boolean(state.taste.news?.setUpAt);
 
 export function defaultNewsPrefs(time: string | null = null): NewsPrefs {
-  return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 0, notify: true, paused: false, city: null, cityChosen: false, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null };
+  return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 0, notify: true, paused: false, city: null, cityChosen: false, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null, base: [...DEFAULT_NEWS_BASE], bigStories: true };
 }
 
 export function describeNewsSettings(state: SoupTasteState): NewsSettings {
@@ -54,6 +57,7 @@ export function describeNewsSettings(state: SoupTasteState): NewsSettings {
     mine: chips(state.taste.interests, prefs.moreMine),
     lessOf: state.taste.lessOf,
     city: prefs.city, country: prefs.country, time: prefs.time, weekendOffsetMinutes: prefs.weekendOffsetMinutes, notify: prefs.notify,
+    base: prefs.base, bigStories: prefs.bigStories,
   };
 }
 
@@ -116,6 +120,15 @@ export function applyNewsPatch(taste: SoupTaste, input: Record<string, unknown>,
     if (typeof input.notify !== "boolean") throw new JournalInputError("notify must be true or false");
     prefs.notify = input.notify;
   }
+  if (input.base !== undefined) {
+    const base = readNewsBase(input.base);
+    if (!base) throw new JournalInputError("base is one or two of hopeful, motivated, know and connected");
+    prefs.base = base;
+  }
+  if (input.bigStories !== undefined) {
+    if (typeof input.bigStories !== "boolean") throw new JournalInputError("bigStories must be true or false");
+    prefs.bigStories = input.bigStories;
+  }
   if (input.paused !== undefined) {
     if (typeof input.paused !== "boolean") throw new JournalInputError("paused must be true or false");
     prefs.paused = input.paused;
@@ -151,8 +164,32 @@ export async function settleOwnerTown(env: Env, userId: string, options: { geoco
   if (await townToTry(env, userId, current.taste.news.city, clock.timezone)) await updateNewsSettings(env, userId, {}, options);
 }
 
-export async function getNewsSettings(env: Env, userId: string): Promise<NewsSettings> {
-  return describeNewsSettings(await getSoupTaste(env, userId));
+/** What the setup sheet shows under "First, let ME3 get to know you". Read only; it stays on the install. */
+export type NewsProfile = { work: string | null; mission: string | null; goals: string[] };
+
+/** Goals still open on the Mission, newest wording first; an older single main goal counts as one. */
+export function goalsFromMission(settingsJson: string | null | undefined): string[] {
+  let settings: unknown = null;
+  try { settings = settingsJson ? JSON.parse(settingsJson) : null; } catch { return []; }
+  if (!isRecord(settings)) return [];
+  const clean = (value: unknown) => typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 80) : "";
+  if (Array.isArray(settings.goals)) return settings.goals.filter(isRecord).filter(goal => goal.status !== "completed").map(goal => clean(goal.title)).filter(Boolean).slice(0, 6);
+  const main = clean(settings.mainGoal);
+  return main ? [main] : [];
+}
+
+export async function getNewsProfile(env: Env, userId: string): Promise<NewsProfile> {
+  const [meJson, mission] = await Promise.all([
+    ownerMeJson(env, userId),
+    env.DB.prepare("SELECT mission_statement, settings_json FROM mission_dashboard_settings WHERE user_id = ?").bind(userId).first<{ mission_statement: string | null; settings_json: string | null }>().catch(() => null),
+  ]);
+  const statement = mission?.mission_statement?.replace(/\s+/g, " ").trim() || null;
+  return { work: (meJson && publicTrade(meJson)) || null, mission: statement ? statement.slice(0, 160) : null, goals: goalsFromMission(mission?.settings_json) };
+}
+
+export async function getNewsSettings(env: Env, userId: string, options: { profile?: boolean } = {}): Promise<NewsSettings & { profile?: NewsProfile }> {
+  const [state, profile] = await Promise.all([getSoupTaste(env, userId), options.profile ? getNewsProfile(env, userId) : null]);
+  return { ...describeNewsSettings(state), ...(profile ? { profile } : {}) };
 }
 
 type Geocode = (name: string, options?: { country?: string | null }) => Promise<NewsPlace | null>;
@@ -163,7 +200,7 @@ type Geocode = (name: string, options?: { country?: string | null }) => Promise<
  * first guess. `setUp: true` records the owner's confirmation, after which the paper is built daily.
  */
 export async function updateNewsSettings(env: Env, userId: string, input: unknown, options: { now?: Date; geocode?: Geocode } = {}): Promise<{ settings: NewsSettings; firstSetUp: boolean }> {
-  if (!isRecord(input) || Object.keys(input).some(key => !PATCH_KEYS.has(key))) throw new JournalInputError("News settings changes must be work, mine, lessOf, city, country, time, notify, paused or setUp");
+  if (!isRecord(input) || Object.keys(input).some(key => !PATCH_KEYS.has(key))) throw new JournalInputError("News settings changes must be work, mine, lessOf, city, country, time, notify, paused, setUp, base or bigStories");
   if (input.country !== undefined && (input.city === undefined || typeof input.country !== "string" || !/^[A-Za-z]{2}$/.test(input.country))) throw new JournalInputError("country is a two-letter code sent with a city, like IE");
   const now = options.now || new Date();
   const geocode = options.geocode || geocodeCity;

@@ -22,17 +22,21 @@ export function townFromProfile(profile: unknown): NewsTown | null {
   return { name, country: code };
 }
 
-/** The town on the owner's own profile site, if they gave one; on the free plan, the town on their public me3.app page. */
-export async function ownerProfileTown(env: Env, userId: string): Promise<NewsTown | null> {
+/** The owner's own profile (me.json) from their profile site; on the free plan, their public me3.app page. */
+export async function ownerMeJson(env: Env, userId: string): Promise<Record<string, unknown> | null> {
   try {
     const site = await env.DB.prepare(
       `SELECT id FROM sites WHERE user_id = ? AND (site_role = 'profile' OR (site_role IS NULL AND COALESCE(site_type, 'profile') = 'profile'))
        ORDER BY created_at ASC LIMIT 1`,
     ).bind(userId).first<{ id: string }>();
-    if (!site) return townFromProfile(await ownerPublicPage(env));
-    const raw = await getSiteFileText(env, site.id, "public/me.json");
-    return raw ? townFromProfile(JSON.parse(raw)) : null;
+    const profile = site ? JSON.parse(await getSiteFileText(env, site.id, "public/me.json") || "null") : await ownerPublicPage(env);
+    return profile && typeof profile === "object" && !Array.isArray(profile) ? profile as Record<string, unknown> : null;
   } catch { return null; }
+}
+
+/** The town on the owner's own profile site, if they gave one; on the free plan, the town on their public me3.app page. */
+export async function ownerProfileTown(env: Env, userId: string): Promise<NewsTown | null> {
+  return townFromProfile(await ownerMeJson(env, userId));
 }
 
 /**
