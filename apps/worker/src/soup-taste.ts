@@ -71,9 +71,33 @@ export type NewsPrefs = {
   bigStories: boolean;
   /** What the owner does, typed during News setup when their profile does not say. Private to the install. */
   occupation: string | null;
+  /** Voices the owner follows, picked from Soup's "who to follow" list during News setup. */
+  follows: NewsFollow[];
   /** When the owner confirmed their News setup. A Soup setup alone leaves this null. */
   setUpAt: string | null;
 };
+/** One voice the owner follows: a person, show or publication from Soup's trusted lists. */
+export type NewsFollow = { id: string; name: string; medium: "read" | "listen" | "watch"; feed: string; image: string | null };
+export const MAX_NEWS_FOLLOWS = 30;
+
+export function readNewsFollows(value: unknown): NewsFollow[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const follows: NewsFollow[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const id = typeof entry.id === "string" ? entry.id.trim().toLowerCase().slice(0, 80) : "";
+    const name = typeof entry.name === "string" ? entry.name.replace(/\s+/g, " ").trim().slice(0, 80) : "";
+    const feed = typeof entry.feed === "string" && /^https?:\/\//.test(entry.feed) ? entry.feed.slice(0, 500) : "";
+    const medium = entry.medium === "read" || entry.medium === "listen" || entry.medium === "watch" ? entry.medium : null;
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(id) || !name || !feed || !medium || seen.has(id)) continue;
+    seen.add(id);
+    const image = typeof entry.image === "string" && /^https:\/\//.test(entry.image) ? entry.image.slice(0, 500) : null;
+    follows.push({ id, name, medium, feed, image });
+    if (follows.length >= MAX_NEWS_FOLLOWS) break;
+  }
+  return follows;
+}
 export type SoupTasteState = {
   taste: SoupTaste;
   setUp: boolean;
@@ -125,6 +149,7 @@ export function readNewsPrefs(raw: unknown): NewsPrefs | null {
     base: readNewsBase(raw.base) ?? [...DEFAULT_NEWS_BASE],
     bigStories: raw.bigStories !== false,
     occupation: typeof raw.occupation === "string" && raw.occupation.trim() ? raw.occupation.replace(/\s+/g, " ").trim().slice(0, 80) : null,
+    follows: readNewsFollows(raw.follows),
   };
 }
 

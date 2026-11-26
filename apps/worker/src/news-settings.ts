@@ -8,7 +8,7 @@ import { publicTrade } from "@me3-core/site-renderer";
 import { ownerMeJson, townToTry } from "./news-place";
 import { cleanCityName, geocodeCity, type NewsPlace } from "./news-weather";
 import { cleanSoupTopic } from "./soup-client";
-import { DEFAULT_NEWS_BASE, MAX_TOPICS_PER_LANE, NEWS_DEFAULT_TIME, readNewsBase, type NewsFeeling, earnSoupHomeCard, getSoupTaste, snapNewsTime, type NewsPrefs, type SoupTaste, type SoupTasteState, type SoupWorkTopic } from "./soup-taste";
+import { DEFAULT_NEWS_BASE, MAX_TOPICS_PER_LANE, NEWS_DEFAULT_TIME, readNewsBase, type NewsFeeling, earnSoupHomeCard, getSoupTaste, snapNewsTime, type NewsPrefs, readNewsFollows, type NewsFollow, type SoupTaste, type SoupTasteState, type SoupWorkTopic } from "./soup-taste";
 import { isRecord } from "./workspace-input";
 import type { Env } from "./types";
 
@@ -26,12 +26,13 @@ export type NewsSettings = {
   notify: boolean;
   base: NewsFeeling[];
   bigStories: boolean;
+  follows: NewsFollow[];
 };
 
 /** A chip from the owner or the agent: a plain label, on or off, and for work topics the project it follows. */
 export type NewsTopicInput = { label: string; on: boolean; projectId: string | null };
 
-const PATCH_KEYS = new Set(["work", "mine", "lessOf", "city", "country", "time", "notify", "paused", "setUp", "base", "bigStories", "occupation"]);
+const PATCH_KEYS = new Set(["work", "mine", "lessOf", "city", "country", "time", "notify", "paused", "setUp", "base", "bigStories", "occupation", "follows"]);
 const SENTENCE_CASE = /^[a-z]/;
 
 export function newsTopicLabel(word: string, labels: Record<string, string>): string {
@@ -42,7 +43,7 @@ export function newsTopicLabel(word: string, labels: Record<string, string>): st
 export const newsIsSetUp = (state: Pick<SoupTasteState, "taste">) => Boolean(state.taste.news?.setUpAt);
 
 export function defaultNewsPrefs(time: string | null = null): NewsPrefs {
-  return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 0, notify: true, paused: false, city: null, cityChosen: false, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null, base: [...DEFAULT_NEWS_BASE], bigStories: true, occupation: null };
+  return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 0, notify: true, paused: false, city: null, cityChosen: false, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null, base: [...DEFAULT_NEWS_BASE], bigStories: true, occupation: null, follows: [] };
 }
 
 /**
@@ -69,6 +70,7 @@ export function describeNewsSettings(state: SoupTasteState): NewsSettings {
     lessOf: state.taste.lessOf,
     city: prefs.city, country: prefs.country, time: prefs.time, weekendOffsetMinutes: prefs.weekendOffsetMinutes, notify: prefs.notify,
     base: prefs.base, bigStories: prefs.bigStories,
+    follows: prefs.follows,
   };
 }
 
@@ -137,6 +139,10 @@ export function applyNewsPatch(taste: SoupTaste, input: Record<string, unknown>,
     const base = readNewsBase(input.base);
     if (!base) throw new JournalInputError("base is one or two of hopeful, motivated, know and connected");
     prefs.base = base;
+  }
+  if (input.follows !== undefined) {
+    if (!Array.isArray(input.follows)) throw new JournalInputError("follows must be a list of voices");
+    prefs.follows = readNewsFollows(input.follows);
   }
   if (input.occupation !== undefined) {
     if (input.occupation !== null && typeof input.occupation !== "string") throw new JournalInputError("occupation must be a few words, like nurse or founder");
@@ -219,7 +225,7 @@ type Geocode = (name: string, options?: { country?: string | null }) => Promise<
  * first guess. `setUp: true` records the owner's confirmation, after which the paper is built daily.
  */
 export async function updateNewsSettings(env: Env, userId: string, input: unknown, options: { now?: Date; geocode?: Geocode } = {}): Promise<{ settings: NewsSettings; firstSetUp: boolean }> {
-  if (!isRecord(input) || Object.keys(input).some(key => !PATCH_KEYS.has(key))) throw new JournalInputError("News settings changes must be work, mine, lessOf, city, country, time, notify, paused, setUp, base, bigStories or occupation");
+  if (!isRecord(input) || Object.keys(input).some(key => !PATCH_KEYS.has(key))) throw new JournalInputError("News settings changes must be work, mine, lessOf, city, country, time, notify, paused, setUp, base, bigStories, occupation or follows");
   if (input.country !== undefined && (input.city === undefined || typeof input.country !== "string" || !/^[A-Za-z]{2}$/.test(input.country))) throw new JournalInputError("country is a two-letter code sent with a city, like IE");
   const now = options.now || new Date();
   const geocode = options.geocode || geocodeCity;
