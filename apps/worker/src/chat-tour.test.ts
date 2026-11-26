@@ -24,15 +24,15 @@ const layout = (patch: Partial<NonNullable<TourContext["layout"]>>) => ({ order:
 describe("chatTour", () => {
   it("walks Home, the calendar, email, Accounts and Social, and ends on the website", () => {
     expect(tour().steps.map(item => item.id)).toEqual(["home", "calendar", "email", "accounts", "social", "website"]);
-    expect(tour().steps.every(item => !item.done)).toBe(true);
+    expect(tour().steps.filter(item => item.done).map(item => item.id)).toEqual(["home"]);
   });
 
   it("leaves out Accounts and Social when they're switched off", () => {
     expect(tour({ accounts: false, social: false }).steps.map(item => item.id)).toEqual(["home", "calendar", "email", "website"]);
   });
 
-  it("ticks Home once a card is added, and email only once the email card is on Home", () => {
-    expect(step({ layout: layout({ pinned: ["accounts"] }) }, "home").done).toBe(true);
+  it("leaves Home to the apps (done once the owner is on it), and ticks email only once the email card is on Home", () => {
+    expect(step({}, "home").done).toBe(true);
     expect(step({ layout: layout({ pinned: ["accounts"] }) }, "email").done).toBe(false);
     expect(step({ layout: layout({ hidden: ["people"], pinned: ["inbox"] }) }, "email").done).toBe(true);
     expect(step({ layout: layout({ pinned: ["inbox"] }) }, "email").done).toBe(false); // still hidden
@@ -44,7 +44,7 @@ describe("chatTour", () => {
   });
 
   it("points the owner at what to tap, in order, and gives a button only to the website", () => {
-    expect(step({}, "home").targets.map(target => target.id)).toEqual(["home_tab", "add_to_home"]);
+    expect(step({}, "home").targets.map(target => target.id)).toEqual(["home_tab"]);
     expect(step({}, "calendar").targets.map(target => target.id)).toEqual(["home_tab", "connect_calendar"]);
     expect(step({}, "email").targets.map(target => target.id)).toEqual(["home_tab", "add_to_home", "add_inbox"]);
     expect(step({}, "accounts").targets).toEqual([]);
@@ -63,7 +63,7 @@ describe("chatTour", () => {
   it("offers Make my website until the site is built, then the editor", () => {
     expect(step({}, "website").task).toEqual({ kind: "site_ask", label: "Make my website" });
     const built = step({ siteBuilt: true }, "website");
-    expect(built.task).toEqual({ kind: "open", label: "Open the editor", to: "website" });
+    expect(built.task).toEqual({ kind: "open", label: "Open", to: "website" });
     expect(built.done).toBe(true);
   });
 
@@ -75,7 +75,7 @@ describe("chatTour", () => {
   it("gives a free owner Home, the calendar, a reminder and their page, and nothing paid", () => {
     const free = tour({ plan: "free" });
     expect(free.steps.map(item => item.id)).toEqual(["home", "calendar", "ask", "page"]);
-    expect(free.steps[0].body).not.toContain("Inbox");
+    expect(free.steps.map(item => item.body).join(" ")).not.toContain("Inbox");
     expect(free.steps.map(item => item.screen)).toEqual(["home", "home", "chat", "home"]);
     expect(step({ plan: "free" }, "ask").targets.map(target => target.id)).toEqual(["chat_tab", "chat_composer"]);
     expect(step({ plan: "free" }, "ask").done).toBe(false);
@@ -135,7 +135,7 @@ describe("tour progress", () => {
 
   it("ticks the calendar from a connected calendar, and a free owner's Ask me from a reminder", async () => {
     const { raw, get } = fixture("free");
-    expect((await get()).steps.map(item => [item.id, item.done])).toEqual([["home", false], ["calendar", false], ["ask", false], ["page", false]]);
+    expect((await get()).steps.map(item => [item.id, item.done])).toEqual([["home", true], ["calendar", false], ["ask", false], ["page", false]]);
     raw.exec(`INSERT INTO calendar_sources(id, user_id, name) VALUES('cal', 'owner', 'Work')`);
     raw.exec(`INSERT INTO user_reminders(id, user_id, title, remind_at) VALUES('r1', 'owner', 'Call Mum', '2026-11-27T17:00:00Z')`);
     const steps = (await get()).steps;

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } fro
 import { useRoute, useRouter } from "vue-router";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
-import { coverTourCard, currentTourScreen, currentTourTarget, onTourScreen, placeTourCard, tourArrival, tourCardWaits, tourLeftLast, tourMovesOn, tourPlaceForPath, tourScreenRoute, tourScreenToOpen, type TourPlacement, type TourScreen, type TourTarget, type TourTickMemory, type TourTrip } from "../../utils/chatTour";
+import { coverTourCard, currentTourScreen, currentTourTarget, onTourScreen, placeTourCard, tourArrival, tourCardWaits, tourLeftLast, tourMovesOn, tourPlaceForPath, tourScreenRoute, tourScreenToOpen, tourStepDone, tourStepIsHere, type TourPlacement, type TourScreen, type TourTarget, type TourTickMemory, type TourTrip } from "../../utils/chatTour";
 import { useTourStore } from "../../stores/tour";
 
 /**
@@ -20,7 +20,7 @@ const step = computed(() => tour.step);
 const screen = computed(() => currentTourScreen(route.path, route.query.view));
 // Landing on Accounts or Social is the step, so it counts at once rather than after Core answers;
 // otherwise the card would jump to Back for a moment while the save is on its way.
-const done = computed(() => Boolean(step.value && (step.value.done || tourPlaceForPath(route.path) === step.value.id)));
+const done = computed(() => Boolean(step.value && tourStepDone(step.value, screen.value)));
 const total = computed(() => tour.tour?.steps.length ?? 0);
 const here = computed(() => Boolean(step.value && onTourScreen(step.value.screen, route.path, route.query.view)));
 // A step explains its screen once the owner is on it; on the way there it says how to get there.
@@ -90,6 +90,8 @@ function update() {
   const arrival = tourArrival(trip, screen.value, Date.now());
   trip = arrival.trip;
   if (arrival.waiting) { hide(true); return; }
+  // Calendar is where the owner connects one: the card waits until they're back.
+  if (tourStepIsHere(item, route.path)) { hide(true); return; }
   // Walking away from the last card without choosing anything finishes the tour.
   const last = tourLeftLast(reachedLast, { isLast: tour.isLast, screen: item.screen, current: screen.value });
   reachedLast = last.reached;
@@ -101,7 +103,7 @@ function update() {
   if (tourCardWaits(item, screen.value, { open: Boolean(dialog), holdsTarget: Boolean(dialog && visibleElement && dialog.contains(visibleElement)) })) { hide(true); return; }
   hide(false);
   // Done what Home asked (a card added, Inbox picked) and back with nothing open: straight on to the next step.
-  const moves = tourMovesOn(ticked, { stepId: item.id, done: done.value, hasTargets: item.targets.length > 0, settled: here.value && !dialog });
+  const moves = tourMovesOn(ticked, { stepId: item.id, done: item.done, hasTargets: item.targets.length > 0, settled: here.value && !dialog });
   ticked = moves.memory;
   if (moves.advance) { next(); return; }
   const pointAt = done.value ? null : visible;
@@ -203,6 +205,8 @@ function openScreen() { if (step.value?.screen) travel(step.value.screen); }
       <Button v-else-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="back">Back</Button>
       <!-- One thing to do at a time: Next shows only once the owner has done the step. -->
       <Button v-if="done" color="primary" shape="soft" type="button" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
+      <!-- A step the owner may leave for later (connecting a calendar). -->
+      <Button v-else-if="step.optional" color="ghost" shape="soft" type="button" data-testid="tour-later" @click="next">Not now</Button>
     </div>
   </section>
 </template>

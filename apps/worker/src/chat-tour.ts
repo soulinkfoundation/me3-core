@@ -35,6 +35,8 @@ export type TourStep = {
   task: TourTask | null;
   /** The owner has done the step. */
   done: boolean;
+  /** The owner may move on without doing it (connecting a calendar): the apps offer Not now. */
+  optional?: boolean;
 };
 export type TourStepId = "home" | "calendar" | "email" | "accounts" | "social" | "website" | "ask" | "page";
 export type TourStatus = "new" | "active" | "finished" | "skipped";
@@ -71,13 +73,13 @@ export function chatTour(context: TourContext): ChatTour {
   const steps: TourStep[] = [
     {
       id: "home", emoji: "🏠", title: "Home",
-      // On Chat it says what Home is; on Home, the one thing to do there. Adding a card moves the owner straight on.
-      // Inbox is a paid card, so a free owner isn't pointed at it.
-      body: free ? "Tap Add to Home and pick the cards you want to see each day." : "Tap Add to Home and pick the cards you want to see each day. Inbox is a good one to start with.",
+      // The first thing to do is open Home: the apps show it done once the owner is on it. A new Home already has
+      // cards, so adding one can't be the tick; the next step (email, or the calendar) asks for something real.
+      body: "This is Home: your day at a glance, plus cards for the things you use most. Add more any time with Add to Home.",
       screen: "home", intro: "Home shows your day: what's on, plus cards for the things you use most. Tap Home to take a look.",
-      targets: [{ id: "home_tab", hint: "Tap Home at the top." }, { id: "add_to_home", hint: "Now tap Add to Home and pick any card." }],
+      targets: [{ id: "home_tab", hint: "Tap Home at the top." }],
       task: null,
-      done: Boolean(context.layout?.pinned.length),
+      done: true,
     },
     {
       // Every plan: the Today card's Connect your calendar opens the connect dialog, and connecting moves the owner on.
@@ -87,6 +89,7 @@ export function chatTour(context: TourContext): ChatTour {
       targets: [{ id: "home_tab", hint: "Go to Home." }, { id: "connect_calendar", hint: "Tap Connect your calendar." }],
       task: null,
       done: context.calendarConnected,
+      optional: true,
     },
   ];
   if (free) {
@@ -115,7 +118,7 @@ export function chatTour(context: TourContext): ChatTour {
     {
       id: "email", emoji: "✉️", title: "ME3's own email",
       // The Inbox card shows and copies the address; the targets lead to it.
-      body: "Like any good assistant, I have my own email. Forward me invoices and I'll log them in your Accounts.",
+      body: "Like any good assistant, I have my own email. Tap Add to Home and pick Inbox to see it, then forward me invoices and I'll log them in Accounts.",
       screen: "home", intro: null,
       targets: [{ id: "home_tab", hint: "Go to Home." }, { id: "add_to_home", hint: "Tap Add to Home." }, { id: "add_inbox", hint: "Pick Inbox." }],
       task: null,
@@ -147,7 +150,7 @@ export function chatTour(context: TourContext): ChatTour {
     // Next takes the owner to Chat, where ME3 drafts it.
     screen: "chat", intro: null,
     targets: [],
-    task: context.siteBuilt ? { kind: "open", label: "Open the editor", to: "website" } : { kind: "site_ask", label: "Make my website" },
+    task: context.siteBuilt ? { kind: "open", label: "Open", to: "website" } : { kind: "site_ask", label: "Make my website" },
     done: context.siteBuilt,
   });
   const stepId = steps.some(step => step.id === context.progress.stepId) ? context.progress.stepId : null;
