@@ -10,6 +10,8 @@ const tool = (toolName: string, data: unknown, status = "ok") => ({ state: "comp
 describe("custom card saved with ME3's reply", () => {
   it("keeps the card a turn built", async () => {
     expect(await loadAgentHomeCard(envWith([tool("core_cards_create", { card: { id: "card-habits" }, state: {} })]), { ownerId: "o", turnId: "t" })).toEqual({ id: "card-habits", isUpdate: false });
+    // A card ME3 built on an earlier turn already has its preview there.
+    expect(await loadAgentHomeCard(envWith([tool("core_cards_create", { card: { id: "card-habits" }, state: {}, existing: true })]), { ownerId: "o", turnId: "t" })).toBeNull();
   });
 
   it("keeps the last card, marks a change, and skips failed or unfinished tools", async () => {

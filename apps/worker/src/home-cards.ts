@@ -429,11 +429,25 @@ export async function handleHomeCardAction(env: Env, userId: string, id: string,
 }
 
 /** What the agent's card tools can do. Errors carry the owner-facing message. */
+/**
+ * ME3 building a card it already built (me3 dup on a later turn): the same name and rows return the card
+ * that is there, marked existing so chat does not draw a second preview; the same name with other rows
+ * points ME3 at core_cards_update instead of making a second card with that name.
+ */
+async function createAgentHomeCard(env: Env, userId: string, input: unknown, now: Date): Promise<HomeCardRecord & { existing?: true }> {
+  const spec = parseHomeCardSpec(input);
+  const same = (await env.DB.prepare("SELECT id, blocks_json FROM home_cards WHERE user_id = ? AND lower(trim(name)) = lower(?)").bind(userId, spec.name.trim()).all<{ id: string; blocks_json: string }>()).results ?? [];
+  const match = same.find(row => row.blocks_json === JSON.stringify(spec.blocks));
+  if (match) return { ...(await getHomeCard(env, userId, match.id, now)), existing: true };
+  if (same.length) throw bad(`The owner already has a card called ${spec.name} (${same[0].id}). Change it with core_cards_update, or give the new card another name if they want a second one.`);
+  return createHomeCard(env, userId, input, "agent", now);
+}
+
 export function createAgentHomeCardServices(env: Env, ownerId: string, clock: () => Date = () => new Date()) {
   return {
     list: () => listHomeCards(env, ownerId, clock()),
     read: (id: string) => getHomeCard(env, ownerId, id, clock()),
-    create: (input: unknown) => createHomeCard(env, ownerId, input, "agent", clock()),
+    create: (input: unknown) => createAgentHomeCard(env, ownerId, input, clock()),
     update: (id: string, input: unknown, summary: unknown) => updateHomeCard(env, ownerId, id, input, summary, clock()),
     act: (id: string, input: unknown) => actOnHomeCard(env, ownerId, id, input, clock()),
   };

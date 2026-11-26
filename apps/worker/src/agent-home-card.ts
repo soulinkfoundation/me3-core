@@ -27,7 +27,9 @@ export async function loadAgentHomeCard(env: Env, scope: { ownerId: string; turn
     let data: { toolName?: unknown; state?: unknown; result?: { status?: unknown; data?: unknown } };
     try { data = JSON.parse(row.data_json); } catch { continue; }
     if (data.state !== "complete" || data.result?.status !== "ok" || !CARD_TOOLS.has(String(data.toolName))) continue;
-    const record = data.result.data as { card?: { id?: unknown } } | null | undefined;
+    const record = data.result.data as { card?: { id?: unknown }; existing?: unknown } | null | undefined;
+    // A card ME3 already built (an earlier turn's) has its preview there; never draw it twice.
+    if (record?.existing === true) continue;
     card = readAgentHomeCard({ id: record?.card?.id, isUpdate: data.toolName === "core_cards_update" }) || card;
   }
   return card;

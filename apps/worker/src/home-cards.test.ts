@@ -177,6 +177,13 @@ describe("Home card agent tools", () => {
     const card = (created.data as { card: { id: string; version: number } }).card;
     expect(card).toMatchObject({ id: "card-habits", version: 1 });
     expect((created.data as { state: { total: number } }).state.total).toBe(3);
+    // Building the same card again (a later turn repeating itself) returns the one there, not a second card.
+    const again = await tool("core_cards_create").execute({ name: "habits ", emoji: "✅", blocks: habits.blocks }, context(f));
+    expect(again.status).toBe("ok");
+    expect(again.data).toMatchObject({ existing: true, card: { id: "card-habits" } });
+    const other = await tool("core_cards_create").execute({ name: "Habits", emoji: "✅", blocks: [{ type: "habit", key: "swim", label: "Swim" }] }, context(f));
+    expect(other.status).toBe("error");
+    expect(JSON.stringify(other)).toContain("core_cards_update");
     expect((await tool("core_cards_create").execute({ name: "Habits", emoji: "✅", blocks: [{ type: "pie" }] }, context(f))).status).toBe("error");
     expect((await tool("core_cards_create").execute({ name: "Habits", emoji: "✅", blocks: habits.blocks, surprise: 1 }, context(f))).status).toBe("error");
     const ticked = await tool("core_cards_act").execute({ cardId: card.id, action: "tick", key: "run" }, context(f));
