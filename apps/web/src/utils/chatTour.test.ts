@@ -117,12 +117,14 @@ describe("tourScreenToOpen", () => {
     expect(tourStepDone({ ...step("website"), screen: "chat" as const, done: true }, "home")).toBe(true);
   });
 
-  // Failure mode (owner device test, 26 Nov 2026): once on Home, the first card dropped to the bottom of the screen.
-  it("keeps a done step's card by its one target, and nowhere for a step with a path", () => {
+  // Failure modes (owner device tests, 26 Nov 2026): once on Home, the first card dropped to the bottom of the screen,
+  // and on the free plan it covered Add to Home there. A done step's card sits by its first target.
+  it("keeps a done step's card by its first target when it's in view", () => {
     const tab = { id: "home_tab", hint: "" };
-    expect(tourPointsWhenDone([tab], tab)).toEqual(tab);
-    expect(tourPointsWhenDone([tab], null)).toBeNull();
-    expect(tourPointsWhenDone([tab, { id: "add_to_home", hint: "" }], tab)).toBeNull();
+    expect(tourPointsWhenDone([tab], () => true)).toEqual(tab);
+    expect(tourPointsWhenDone([tab], () => false)).toBeNull();
+    expect(tourPointsWhenDone([tab, { id: "add_to_home", hint: "" }], () => true)).toEqual(tab);
+    expect(tourPointsWhenDone([], () => true)).toBeNull();
   });
 
   it("steps aside on Calendar during the calendar step", () => {

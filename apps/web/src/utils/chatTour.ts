@@ -40,11 +40,11 @@ export function tourPlaceForPath(path: string): "accounts" | "social" | null {
 }
 
 /**
- * What the card points at once the step is done: a step whose one target is where the owner had to go (Home's tab)
- * keeps its card beside it, so the first card sits up by the Home tab rather than at the bottom of the screen.
+ * What the card points at once the step is done: the step's first target (Home's tab) when it's in view, so the card
+ * never docks at the bottom where it would cover Add to Home on a short Home.
  */
-export function tourPointsWhenDone(targets: TourTarget[], visible: TourTarget | null): TourTarget | null {
-  return targets.length === 1 && visible?.id === targets[0].id ? targets[0] : null;
+export function tourPointsWhenDone(targets: TourTarget[], inView: (id: string) => boolean): TourTarget | null {
+  return targets[0] && inView(targets[0].id) ? targets[0] : null;
 }
 
 /** Off Home (Accounts, Social) the profile picture isn't there, so the card points at Back first. */

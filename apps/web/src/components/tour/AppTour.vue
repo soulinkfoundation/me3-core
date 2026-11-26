@@ -112,7 +112,7 @@ function update() {
   const moves = tourMovesOn(ticked, { stepId: item.id, done: item.done, hasTargets: item.targets.length > 0, settled: here.value && !dialog });
   ticked = moves.memory;
   if (moves.advance) { next(); return; }
-  const pointAt = done.value ? tourPointsWhenDone(item.targets, visible) : visible;
+  const pointAt = done.value ? tourPointsWhenDone(item.targets, id => Boolean(targetElement(id))) : visible;
   target.value = pointAt;
   const element = pointAt ? targetElement(pointAt.id) : null;
   // The control to tap scrolls clear of the composer floating over the bottom (Add to Home at the end of a long Home).
