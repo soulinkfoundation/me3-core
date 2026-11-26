@@ -226,6 +226,16 @@ describe("news settings", () => {
     expect(describeNewsSettings({ taste: applyNewsPatch(emptySoupTaste(), { work: ["coaching", "Instagram marketing"] }, context), setUp: false, setUpAt: null, projects: [] }).work.map(chip => chip.label)).toEqual(["Coaching", "Instagram marketing"]);
   });
 
+  it("never makes a project's own name a work topic", () => {
+    const projects = [{ id: "p1", name: "Soulink", description: null }, { id: "p2", name: "ME3", description: null }];
+    const taste = applyNewsPatch(emptySoupTaste(), { work: ["Soulink", "Coaching", { label: "ME3", on: false }, { label: "AI agents", on: false }] }, { ...context, projectNames: new Set(["soulink", "me3"]) });
+    expect(taste.workTopics.map(topic => topic.topic)).toEqual(["coaching"]);
+    expect(taste.news?.moreWork).toEqual(["ai agents"]);
+    // Topics saved before this rule stay hidden from the chips.
+    const old = applyNewsPatch(emptySoupTaste(), { work: ["Soulink", "ME3", "Coaching"] }, context);
+    expect(describeNewsSettings({ taste: old, setUp: true, setUpAt: null, projects }).work.map(chip => chip.label)).toEqual(["Coaching"]);
+  });
+
   it("keeps the base: one or two feelings in order, hopeful and know by default", () => {
     expect(readNewsPrefs({})?.base).toEqual(["hopeful", "know"]);
     expect(readNewsPrefs({ base: ["nonsense"] })?.base).toEqual(["hopeful", "know"]);

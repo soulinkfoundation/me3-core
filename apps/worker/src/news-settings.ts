@@ -45,9 +45,20 @@ export function defaultNewsPrefs(time: string | null = null): NewsPrefs {
   return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 0, notify: true, paused: false, city: null, cityChosen: false, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null, base: [...DEFAULT_NEWS_BASE], bigStories: true, occupation: null };
 }
 
+/**
+ * The owner's own project names ("ME3", "Soulink") make poor news topics: the Soup finds little
+ * about them. Work topics are what a project is about, never the project itself.
+ */
+export function projectNameWords(projects: Array<{ name: string }>): Set<string> {
+  return new Set(projects.map(project => cleanSoupTopic(project.name)).filter((word): word is string => !!word));
+}
+
 export function describeNewsSettings(state: SoupTasteState): NewsSettings {
   const prefs = state.taste.news || defaultNewsPrefs();
+  const ownNames = projectNameWords(state.projects);
   const chips = (on: string[], off: string[]): NewsTopicChip[] => {
+    on = on.filter(word => !ownNames.has(word));
+    off = off.filter(word => !ownNames.has(word));
     const taken = new Set(on);
     return [...on.map(word => ({ word, label: newsTopicLabel(word, prefs.labels), on: true })), ...off.filter(word => !taken.has(word)).map(word => ({ word, label: newsTopicLabel(word, prefs.labels), on: false }))];
   };
@@ -78,7 +89,7 @@ export function readTopicInputs(value: unknown, label: string): NewsTopicInput[]
 }
 
 /** Applies a settings change to the stored taste. Pure, so the rules are testable without a database. */
-export function applyNewsPatch(taste: SoupTaste, input: Record<string, unknown>, context: { projectIds: Set<string>; defaultTime: string | null; place?: NewsPlace; city?: string; now?: Date }): SoupTaste {
+export function applyNewsPatch(taste: SoupTaste, input: Record<string, unknown>, context: { projectIds: Set<string>; projectNames?: Set<string>; defaultTime: string | null; place?: NewsPlace; city?: string; now?: Date }): SoupTaste {
   const prefs: NewsPrefs = { ...(taste.news || defaultNewsPrefs(context.defaultTime)), labels: { ...(taste.news?.labels || {}) } };
   const next: SoupTaste = { ...taste, news: prefs };
   // A label is kept only when it carries its own capitals ("AI agents"); a plain lower-case one is shown
@@ -94,12 +105,14 @@ export function applyNewsPatch(taste: SoupTaste, input: Record<string, unknown>,
     const topics = readTopicInputs(input.work, "work");
     remember(topics);
     const known = new Map(taste.workTopics.map(topic => [topic.topic, topic]));
-    next.workTopics = topics.filter(topic => topic.on).map((topic): SoupWorkTopic => {
+    const ownNames = context.projectNames ?? new Set<string>();
+    const notOwnName = (topic: NewsTopicInput) => !ownNames.has(cleanSoupTopic(topic.label)!);
+    next.workTopics = topics.filter(topic => topic.on && notOwnName(topic)).map((topic): SoupWorkTopic => {
       const word = cleanSoupTopic(topic.label)!;
       const projectId = topic.projectId && context.projectIds.has(topic.projectId) ? topic.projectId : known.get(word)?.projectId ?? null;
       return { topic: word, projectId, source: projectId ? "project" : known.get(word)?.source ?? "owner" };
     });
-    prefs.moreWork = topics.filter(topic => !topic.on).map(topic => cleanSoupTopic(topic.label)!).slice(0, MAX_TOPICS_PER_LANE);
+    prefs.moreWork = topics.filter(topic => !topic.on && notOwnName(topic)).map(topic => cleanSoupTopic(topic.label)!).slice(0, MAX_TOPICS_PER_LANE);
   }
   if (input.mine !== undefined) {
     const topics = readTopicInputs(input.mine, "mine");
@@ -224,7 +237,7 @@ export async function updateNewsSettings(env: Env, userId: string, input: unknow
     place = (town ? await geocode(town.name, { country: town.country }) : null) ?? undefined;
   }
   const wasSetUp = newsIsSetUp(current);
-  const next = applyNewsPatch(current.taste, input, { projectIds: new Set(current.projects.map(project => project.id)), defaultTime: clock.briefingTime, now, ...(place ? { place } : {}), ...(city ? { city } : {}) });
+  const next = applyNewsPatch(current.taste, input, { projectIds: new Set(current.projects.map(project => project.id)), projectNames: projectNameWords(current.projects), defaultTime: clock.briefingTime, now, ...(place ? { place } : {}), ...(city ? { city } : {}) });
   const setUpAt = input.setUp === true ? now.toISOString() : null;
   await env.DB.prepare(`INSERT INTO soup_taste(user_id, taste_json, set_up_at, updated_at) VALUES (?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET taste_json = excluded.taste_json, set_up_at = coalesce(soup_taste.set_up_at, excluded.set_up_at), updated_at = excluded.updated_at`)
