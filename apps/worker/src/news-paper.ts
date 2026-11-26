@@ -258,7 +258,7 @@ export type NewsWeek = { calendar: string[]; tasks: string[] };
 
 export async function writeNewsPicks(
   model: AgentModel,
-  input: { candidates: NewsCandidates; taste: Pick<SoupTaste, "workTopics" | "interests" | "lessOf">; ownerSnapshot: string; week: NewsWeek; date: string; city: string | null; lastRating: NewsRating | null; base?: NewsFeeling[]; bigStories?: boolean },
+  input: { candidates: NewsCandidates; taste: Pick<SoupTaste, "workTopics" | "interests" | "lessOf">; ownerSnapshot: string; week: NewsWeek; date: string; city: string | null; lastRating: NewsRating | null; base?: NewsFeeling[]; bigStories?: boolean; occupation?: string | null },
   signal: AbortSignal,
 ): Promise<PaperPicks | null> {
   const brief = (story: NewsStory) => ({ id: story.id, headline: story.headline, summary: story.summary.slice(0, 220), source: story.sources[0]?.name, ...(story.medium !== "read" ? { medium: story.medium, minutes: soupMinutes(story) } : {}) });
@@ -271,6 +271,7 @@ export async function writeNewsPicks(
         city: input.city,
         base: input.base?.length ? input.base : undefined,
         bigStories: input.bigStories === false ? false : undefined,
+        ownerWork: input.occupation || undefined,
         topics: { work: input.taste.workTopics.map(topic => topic.topic), mine: input.taste.interests, lessOf: input.taste.lessOf },
         yesterday: input.lastRating === "sleepy" ? "The owner found yesterday's paper dull." : input.lastRating === "fire" ? "The owner loved yesterday's paper." : undefined,
         candidates: { front: input.candidates.front.slice(0, 10).map(brief), work: lane(input.candidates.work), mine: lane(input.candidates.mine), local: input.candidates.local.slice(0, 6).map(brief), media: input.candidates.media.slice(0, 8).map(brief) },
@@ -538,7 +539,7 @@ export async function composeNewsPaper(env: Env, ownerId: string, options: Compo
     if (!allCandidateIds(candidates).length) return fail("Soup had no stories");
     const [modelPicks, weather, good] = await Promise.all([
       loadWeek(env, ownerId, now).then(week => runWithFastModel(env, ownerId, "News picks", (model, ownerSnapshot, timeoutMs) =>
-        writeNewsPicks(model, { candidates, taste, ownerSnapshot, week, date: options.dateKey, city: prefs.city, lastRating: prefs.lastRating, base: prefs.base, bigStories: prefs.bigStories }, AbortSignal.timeout(timeoutMs)))),
+        writeNewsPicks(model, { candidates, taste, ownerSnapshot, week, date: options.dateKey, city: prefs.city, lastRating: prefs.lastRating, base: prefs.base, bigStories: prefs.bigStories, occupation: prefs.occupation }, AbortSignal.timeout(timeoutMs)))),
       prefs.lat !== null && prefs.lon !== null ? fetchWeather({ lat: prefs.lat, lon: prefs.lon }) : Promise.resolve(null),
       env.ME3_SOUP_NEWS_FIXTURE ? Promise.resolve(newsFixtureGood({ city: prefs.city })) : findGoodThing(client, exclude),
     ]);

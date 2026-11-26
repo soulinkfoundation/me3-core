@@ -238,6 +238,9 @@ describe("news settings", () => {
     expect(() => applyNewsPatch(taste, { base: ["calm"] }, context)).toThrow(/one or two/);
     expect(() => applyNewsPatch(taste, { base: ["know", "know"] }, context)).toThrow(/one or two/);
     expect(() => applyNewsPatch(taste, { bigStories: "yes" }, context)).toThrow(/true or false/);
+    expect(applyNewsPatch(taste, { occupation: "  Product   designer " }, context).news?.occupation).toBe("Product designer");
+    expect(applyNewsPatch(taste, { occupation: "" }, context).news?.occupation).toBeNull();
+    expect(() => applyNewsPatch(taste, { occupation: 4 }, context)).toThrow(/nurse or founder/);
   });
 
   it("lists open goals for the setup sheet, or the older main goal", () => {

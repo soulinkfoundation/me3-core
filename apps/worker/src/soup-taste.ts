@@ -69,6 +69,8 @@ export type NewsPrefs = {
   base: NewsFeeling[];
   /** Tell the owner when something big happens, whatever the base. On by default. */
   bigStories: boolean;
+  /** What the owner does, typed during News setup when their profile does not say. Private to the install. */
+  occupation: string | null;
   /** When the owner confirmed their News setup. A Soup setup alone leaves this null. */
   setUpAt: string | null;
 };
@@ -122,6 +124,7 @@ export function readNewsPrefs(raw: unknown): NewsPrefs | null {
     setUpAt: typeof raw.setUpAt === "string" && !Number.isNaN(Date.parse(raw.setUpAt)) ? raw.setUpAt : null,
     base: readNewsBase(raw.base) ?? [...DEFAULT_NEWS_BASE],
     bigStories: raw.bigStories !== false,
+    occupation: typeof raw.occupation === "string" && raw.occupation.trim() ? raw.occupation.replace(/\s+/g, " ").trim().slice(0, 80) : null,
   };
 }
 

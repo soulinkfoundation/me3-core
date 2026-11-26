@@ -22,7 +22,7 @@ export interface LocationSearchResult {
   country?: string;
   countryCode?: string;
   source: {
-    provider: "photon";
+    provider: "photon" | "open-meteo";
     id?: string;
     osmType?: string;
     osmId?: string | number;
@@ -35,7 +35,7 @@ export type LocationSearchResponse =
   | {
       ok: true;
       locations: LocationSearchResult[];
-      attribution: { provider: "photon"; label: string; url: string };
+      attribution: { provider: "photon" | "open-meteo"; label: string; url: string };
     }
   | { ok: false; status: number; error: string };
 
@@ -51,6 +51,10 @@ type PhotonResponse = {
 };
 
 const DEFAULT_LOCATION_SEARCH_ORIGIN = "https://photon.komoot.io";
+/** Photon's public server asks callers to say who they are. */
+const LOCATION_SEARCH_USER_AGENT = "ME3 (+https://me3.app)";
+/** A second lookup for towns when Photon is down or refuses a shared Cloudflare address. */
+const FALLBACK_GEOCODE_ORIGIN = "https://geocoding-api.open-meteo.com";
 const LOCATION_SEARCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const LOCATION_SEARCH_CACHE_MAX = 100;
 const LOCATION_SEARCH_TIMEOUT_MS = 4500;
@@ -276,7 +280,7 @@ export async function searchLocationQuery(
     const timeout = setTimeout(() => controller.abort(), LOCATION_SEARCH_TIMEOUT_MS);
     try {
       const response = await fetch(upstreamUrl, {
-        headers: { Accept: "application/json" },
+        headers: { Accept: "application/json", "User-Agent": LOCATION_SEARCH_USER_AGENT },
         signal: controller.signal,
       });
       if (!response.ok) continue;
@@ -300,5 +304,41 @@ export async function searchLocationQuery(
       clearTimeout(timeout);
     }
   }
+  const fallback = await searchOpenMeteo(query, limit);
+  if (fallback) {
+    setCachedLocationSearch(cacheKey, fallback);
+    return fallback;
+  }
   return { ok: false, status: 502, error: failure };
+}
+
+type OpenMeteoPlace = { id?: number; name?: string; latitude?: number; longitude?: number; country?: string; country_code?: string; admin1?: string; feature_code?: string };
+
+/** Towns and cities from Open-Meteo's geocoder, shaped like Photon's results. Null when it fails too. */
+export async function searchOpenMeteo(query: string, limit: number, fetchImpl: typeof fetch = fetch): Promise<LocationSearchResponse | null> {
+  const params = new URLSearchParams({ name: query, count: String(limit), language: "en", format: "json" });
+  try {
+    const response = await fetchImpl(`${FALLBACK_GEOCODE_ORIGIN}/v1/search?${params}`, { headers: { Accept: "application/json", "User-Agent": LOCATION_SEARCH_USER_AGENT }, signal: AbortSignal.timeout(LOCATION_SEARCH_TIMEOUT_MS) });
+    if (!response.ok) return null;
+    const data = await response.json() as { results?: OpenMeteoPlace[] };
+    const locations = (data.results || []).flatMap((place): LocationSearchResult[] => {
+      const name = text(place.name);
+      if (!name || typeof place.latitude !== "number" || typeof place.longitude !== "number") return [];
+      const countryCode = text(place.country_code)?.toUpperCase();
+      const isCountry = place.feature_code === "PCLI";
+      return [{
+        id: `open-meteo:${place.id ?? name}`,
+        label: [name, text(place.admin1), text(place.country)].filter((part, index, all) => part && all.indexOf(part) === index).join(", "),
+        latitude: place.latitude,
+        longitude: place.longitude,
+        precision: isCountry ? "country" : "locality",
+        ...(isCountry ? {} : { locality: name }),
+        ...(text(place.admin1) ? { region: text(place.admin1) } : {}),
+        ...(text(place.country) ? { country: text(place.country) } : {}),
+        ...(countryCode ? { countryCode } : {}),
+        source: { provider: "open-meteo", ...(place.id ? { id: String(place.id) } : {}) },
+      }];
+    }).slice(0, limit);
+    return { ok: true, locations, attribution: { provider: "open-meteo", label: "Open-Meteo", url: FALLBACK_GEOCODE_ORIGIN } };
+  } catch { return null; }
 }

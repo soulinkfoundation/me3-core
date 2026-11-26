@@ -31,7 +31,7 @@ export type NewsSettings = {
 /** A chip from the owner or the agent: a plain label, on or off, and for work topics the project it follows. */
 export type NewsTopicInput = { label: string; on: boolean; projectId: string | null };
 
-const PATCH_KEYS = new Set(["work", "mine", "lessOf", "city", "country", "time", "notify", "paused", "setUp", "base", "bigStories"]);
+const PATCH_KEYS = new Set(["work", "mine", "lessOf", "city", "country", "time", "notify", "paused", "setUp", "base", "bigStories", "occupation"]);
 const SENTENCE_CASE = /^[a-z]/;
 
 export function newsTopicLabel(word: string, labels: Record<string, string>): string {
@@ -42,7 +42,7 @@ export function newsTopicLabel(word: string, labels: Record<string, string>): st
 export const newsIsSetUp = (state: Pick<SoupTasteState, "taste">) => Boolean(state.taste.news?.setUpAt);
 
 export function defaultNewsPrefs(time: string | null = null): NewsPrefs {
-  return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 0, notify: true, paused: false, city: null, cityChosen: false, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null, base: [...DEFAULT_NEWS_BASE], bigStories: true };
+  return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 0, notify: true, paused: false, city: null, cityChosen: false, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null, base: [...DEFAULT_NEWS_BASE], bigStories: true, occupation: null };
 }
 
 export function describeNewsSettings(state: SoupTasteState): NewsSettings {
@@ -125,6 +125,11 @@ export function applyNewsPatch(taste: SoupTaste, input: Record<string, unknown>,
     if (!base) throw new JournalInputError("base is one or two of hopeful, motivated, know and connected");
     prefs.base = base;
   }
+  if (input.occupation !== undefined) {
+    if (input.occupation !== null && typeof input.occupation !== "string") throw new JournalInputError("occupation must be a few words, like nurse or founder");
+    const work = typeof input.occupation === "string" ? input.occupation.replace(/\s+/g, " ").trim().slice(0, 80) : "";
+    prefs.occupation = work || null;
+  }
   if (input.bigStories !== undefined) {
     if (typeof input.bigStories !== "boolean") throw new JournalInputError("bigStories must be true or false");
     prefs.bigStories = input.bigStories;
@@ -178,17 +183,18 @@ export function goalsFromMission(settingsJson: string | null | undefined): strin
   return main ? [main] : [];
 }
 
-export async function getNewsProfile(env: Env, userId: string): Promise<NewsProfile> {
+export async function getNewsProfile(env: Env, userId: string, occupation: string | null = null): Promise<NewsProfile> {
   const [meJson, mission] = await Promise.all([
     ownerMeJson(env, userId),
     env.DB.prepare("SELECT mission_statement, settings_json FROM mission_dashboard_settings WHERE user_id = ?").bind(userId).first<{ mission_statement: string | null; settings_json: string | null }>().catch(() => null),
   ]);
   const statement = mission?.mission_statement?.replace(/\s+/g, " ").trim() || null;
-  return { work: (meJson && publicTrade(meJson)) || null, mission: statement ? statement.slice(0, 160) : null, goals: goalsFromMission(mission?.settings_json) };
+  return { work: (meJson && publicTrade(meJson)) || occupation || null, mission: statement ? statement.slice(0, 160) : null, goals: goalsFromMission(mission?.settings_json) };
 }
 
 export async function getNewsSettings(env: Env, userId: string, options: { profile?: boolean } = {}): Promise<NewsSettings & { profile?: NewsProfile }> {
-  const [state, profile] = await Promise.all([getSoupTaste(env, userId), options.profile ? getNewsProfile(env, userId) : null]);
+  const state = await getSoupTaste(env, userId);
+  const profile = options.profile ? await getNewsProfile(env, userId, state.taste.news?.occupation ?? null) : null;
   return { ...describeNewsSettings(state), ...(profile ? { profile } : {}) };
 }
 
@@ -200,7 +206,7 @@ type Geocode = (name: string, options?: { country?: string | null }) => Promise<
  * first guess. `setUp: true` records the owner's confirmation, after which the paper is built daily.
  */
 export async function updateNewsSettings(env: Env, userId: string, input: unknown, options: { now?: Date; geocode?: Geocode } = {}): Promise<{ settings: NewsSettings; firstSetUp: boolean }> {
-  if (!isRecord(input) || Object.keys(input).some(key => !PATCH_KEYS.has(key))) throw new JournalInputError("News settings changes must be work, mine, lessOf, city, country, time, notify, paused, setUp, base or bigStories");
+  if (!isRecord(input) || Object.keys(input).some(key => !PATCH_KEYS.has(key))) throw new JournalInputError("News settings changes must be work, mine, lessOf, city, country, time, notify, paused, setUp, base, bigStories or occupation");
   if (input.country !== undefined && (input.city === undefined || typeof input.country !== "string" || !/^[A-Za-z]{2}$/.test(input.country))) throw new JournalInputError("country is a two-letter code sent with a city, like IE");
   const now = options.now || new Date();
   const geocode = options.geocode || geocodeCity;
