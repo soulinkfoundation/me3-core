@@ -10,6 +10,7 @@ export const OWNER_APP_ROUTE_PREFIXES = [
   "/assistant",
   "/calendar",
   "/contacts",
+  "/conversations",
   "/create",
   "/email",
   "/files",

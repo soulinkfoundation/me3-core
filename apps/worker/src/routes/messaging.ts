@@ -1,5 +1,5 @@
 import type { AppContext, AppHono } from "../http/types";
-import { createMessagingSession, type MessagingClient } from "../soulink-messaging";
+import { createMessagingSession, forwardSoulinkChatCall, isSoulinkChatCall, MESSAGING_CLIENTS, type MessagingClient } from "../soulink-messaging";
 import { syncSoulinkContacts } from "./channels";
 
 type MessagingRouteDeps = {
@@ -7,7 +7,7 @@ type MessagingRouteDeps = {
   unauthorized(c: AppContext): Response;
 };
 
-/** ME3 messaging for the owner's phone, over the owner's Soulink connection. */
+/** ME3 messaging for the owner's phones and web app, over the owner's Soulink connection. */
 export function registerMessagingRoutes(app: AppHono, deps: MessagingRouteDeps) {
   const { requireOwner, unauthorized } = deps;
 
@@ -15,8 +15,8 @@ export function registerMessagingRoutes(app: AppHono, deps: MessagingRouteDeps) 
     c.header("Cache-Control", "no-store");
     const ownerId = await requireOwner(c);
     if (!ownerId) return unauthorized(c);
-    if (client !== "ios" && client !== "android") {
-      return c.json({ ok: false, code: "bad_request", error: "client must be ios or android" }, 400);
+    if (!MESSAGING_CLIENTS.includes(client as MessagingClient)) {
+      return c.json({ ok: false, code: "bad_request", error: "client must be ios, android or web" }, 400);
     }
 
     const result = await createMessagingSession(c.env, ownerId, c.req.url, client as MessagingClient);
@@ -34,6 +34,24 @@ export function registerMessagingRoutes(app: AppHono, deps: MessagingRouteDeps) 
   app.post("/api/messaging/session", async (c) => {
     const body = (await c.req.json().catch(() => null)) as { client?: unknown } | null;
     return session(c, body?.client ?? c.req.query("client"));
+  });
+
+  // The web app's Soulink chat calls (requests, block, report, people, start a chat); see forwardSoulinkChatCall.
+  app.all("/api/messaging/soulink/*", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const ownerId = await requireOwner(c);
+    if (!ownerId) return unauthorized(c);
+    const url = new URL(c.req.url);
+    const path = url.pathname.slice("/api/messaging/soulink".length);
+    if (!isSoulinkChatCall(c.req.method, path)) return c.json({ ok: false, code: "not_found", error: "Not found" }, 404);
+    const sessionToken = c.req.header("X-Soulink-Session")?.trim();
+    if (!sessionToken) return c.json({ ok: false, code: "bad_request", error: "Missing Soulink session" }, 400);
+    const body = c.req.method === "GET" || c.req.method === "DELETE" ? null : await c.req.text();
+    const forwarded = await forwardSoulinkChatCall(c.env, {
+      method: c.req.method, path, search: url.search, sessionToken, body: body === "" ? null : body,
+    });
+    forwarded.headers.set("Cache-Control", "no-store");
+    return forwarded;
   });
 }
 

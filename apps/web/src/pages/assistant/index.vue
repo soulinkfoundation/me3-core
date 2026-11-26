@@ -75,6 +75,10 @@ import {
   type AiAgentModelProviderId,
 } from "../../utils/aiModelCatalog";
 import AgentDog from "../../components/AgentDog.vue";
+import MessageDraftCard from "../../components/messaging/MessageDraftCard.vue";
+import PersonMessageCard from "../../components/messaging/PersonMessageCard.vue";
+import { useMessagingStore } from "../../stores/messaging";
+import { placePersonCards, readMessageDraft, waitingCards, type AgentMessageDraft, type PersonMessageCard as PersonCard } from "../../utils/messagingCards";
 import ChatPayments from "../../components/payments/ChatPayments.vue";
 import { createTextReveal } from "../../utils/textReveal";
 
@@ -165,6 +169,7 @@ type AgentSandboxResponse = {
   allowanceNotice?: AgentChatAllowanceNotice | null;
   memoryReview?: AgentChatMemoryReview | null;
   emailDraft?: AgentChatServerEmailDraft | null;
+  messageDraft?: unknown;
   newsCard?: unknown;
   newsServingId?: string | null;
   contentAction?: {
@@ -200,6 +205,7 @@ type AssistantThreadMessage = {
   allowanceNotice?: AgentChatAllowanceNotice | null;
   memoryReview?: AgentChatMemoryReview | null;
   emailDraft?: AgentChatServerEmailDraft | null;
+  messageDraft?: unknown;
   newsCard?: unknown;
   newsServingId?: string | null;
   siteAction?: AgentSandboxResponse["siteAction"];
@@ -614,6 +620,44 @@ function isFirstAllowanceNotice(index: number): boolean {
 const assistantConsoleMessages = computed(() =>
   chatMessages.value.filter((message) => message.id !== "assistant-ready"),
 );
+
+// People's Soulink conversations, as on the phones: placed in the thread by time; on an empty chat only what waits.
+const messaging = useMessagingStore();
+function personSlotKey(message: { id?: string }, index: number): string {
+  return message.id || `index-${index}`;
+}
+const placedPersonCards = computed(() =>
+  placePersonCards(
+    messaging.cards,
+    assistantConsoleMessages.value.map((message, index) => ({
+      id: personSlotKey(message, index),
+      createdAt: message.createdAt ? Date.parse(message.createdAt) : null,
+    })),
+  ),
+);
+/** Empty chat: cards shown this visit (a reply settles to its line), and cards dismissed at their latest message. */
+const emptyChatKept = ref<Set<string>>(new Set());
+const dismissedPersonCards = ref<Record<string, string>>({});
+const emptyChatWaiting = computed(() =>
+  waitingCards(messaging.cards, { dismissed: dismissedPersonCards.value, keep: emptyChatKept.value }),
+);
+function keepWaitingCard(card: PersonCard) {
+  if (emptyChatKept.value.has(card.cid)) return;
+  emptyChatKept.value = new Set([...emptyChatKept.value, card.cid]);
+}
+function dismissWaitingCard(card: PersonCard) {
+  const kept = new Set(emptyChatKept.value);
+  kept.delete(card.cid);
+  emptyChatKept.value = kept;
+  dismissedPersonCards.value = { ...dismissedPersonCards.value, [card.cid]: card.latest.id };
+  // Marked read in Soulink, so the badge and Messages agree.
+  if (card.unreadCount > 0) void messaging.markRead(card.cid);
+}
+// A fresh visit to an empty chat starts from what's waiting now.
+watch(() => assistantConsoleMessages.value.length > 0, (hasMessages) => { if (hasMessages) emptyChatKept.value = new Set(); });
+function openPersonConversation(cid: string) {
+  void router.push({ path: "/conversations", query: { c: cid } });
+}
 const assistantSitePreview = computed(() =>
   findLatestAssistantSitePreview(assistantConsoleMessages.value),
 );
@@ -920,6 +964,7 @@ function mapAssistantThreadMessages(messages: AssistantThreadMessage[]) {
       allowanceNotice: AgentChatAllowanceNotice | null;
       memoryReview: AgentChatMemoryReview | null;
       emailDraftAction: AgentChatEmailDraftAction | null;
+      messageDraft: AgentMessageDraft | null;
       attachments: AgentChatMessageAttachment[];
       actionHref: string | null;
       actionLabel: string | null;
@@ -935,6 +980,7 @@ function mapAssistantThreadMessages(messages: AssistantThreadMessage[]) {
       allowanceNotice: message.allowanceNotice || null,
       memoryReview: message.memoryReview || null,
       emailDraftAction: null,
+      messageDraft: message.role === "assistant" ? readMessageDraft(message.messageDraft) : null,
       actionHref: actionLink?.href || null,
       actionLabel: actionLink?.label || null,
     };
@@ -2027,6 +2073,7 @@ function applyAssistantResultToMessage(
     ? createServerAgentChatEmailDraftAction(message, result.emailDraft)
     : createAgentChatEmailDraftAction(message, previousUserTextForAssistantMessage(message));
   hydrateAssistantEmailDraftMessage(message);
+  message.messageDraft = readMessageDraft(result.messageDraft);
   message.inboxLink = result.emailAction?.kind === "drafted";
   message.reminderLink =
     result.reminderAction?.kind === "created" ||
@@ -2644,7 +2691,25 @@ function messageFromUnknown(err: unknown, fallback: string) {
           <div
             v-else-if="assistantConsoleMessages.length === 0 && voiceDictationState !== 'listening' && !siteAskOpen"
             class="assistant-empty-state"
+            :class="{ 'assistant-empty-state--people': emptyChatWaiting.shown.length > 0 }"
           >
+            <!-- Only what waits on the owner, newest first, three at most; swipe or dismiss marks it read. -->
+            <div v-if="emptyChatWaiting.shown.length" class="assistant-empty-state__people" aria-label="Messages waiting">
+              <TransitionGroup name="assistant-person-card">
+                <PersonMessageCard
+                  v-for="card in emptyChatWaiting.shown"
+                  :key="`person-${card.cid}-waiting`"
+                  :card="card"
+                  :dismissible="card.kind.type !== 'request'"
+                  @open="openPersonConversation"
+                  @dismiss="dismissWaitingCard(card)"
+                  @vue:mounted="keepWaitingCard(card)"
+                />
+              </TransitionGroup>
+              <RouterLink v-if="emptyChatWaiting.more > 0" to="/conversations" class="assistant-empty-state__see-all" data-testid="empty-chat-see-all-messages">
+                {{ emptyChatWaiting.more }} more · See all
+              </RouterLink>
+            </div>
             <!-- A tour card with nothing to point at sits over the welcome, which fades out under it. -->
             <div class="assistant-empty-state__welcome" data-tour-backdrop>
               <AgentDog :size="128" />
@@ -2677,12 +2742,24 @@ function messageFromUnknown(err: unknown, fallback: string) {
             </div>
           </div>
 
-          <article
+          <template
             v-for="(message, index) in assistantConsoleMessages"
             :key="
               message.id ||
               `${message.role}-${index}-${message.text.slice(0, 24)}`
             "
+          >
+          <!-- People's conversations sit in the thread by time, before the first message sent after them. -->
+          <TransitionGroup name="assistant-person-card">
+            <PersonMessageCard
+              v-for="card in placedPersonCards.before.get(personSlotKey(message, index)) ?? []"
+              :key="`person-${card.cid}-${personSlotKey(message, index)}`"
+              class="assistant-person-card"
+              :card="card"
+              @open="openPersonConversation"
+            />
+          </TransitionGroup>
+          <article
             class="assistant-message"
             :class="`assistant-message--${message.role}`"
             :data-assistant-message-id="message.id || undefined"
@@ -3196,7 +3273,19 @@ function messageFromUnknown(err: unknown, fallback: string) {
             <section v-if="message.id && soupByMessage[message.id]" class="assistant-soup-bowl" aria-label="Picked for you"><SoupBowl :serving="soupByMessage[message.id]" @act="(action, itemId) => soupAct(message.id!, action, itemId)" /></section>
             <CustomCardPreview v-if="message.id && cardPreviewByMessage[message.id]" :record="cardPreviewByMessage[message.id].record" :is-update="cardPreviewByMessage[message.id].isUpdate" :pinned="Boolean(homePanels?.customCardOnHome(cardPreviewByMessage[message.id].record.card.id))" @add-to-home="addPreviewToHome(cardPreviewByMessage[message.id!].record)" @change="changePreview(cardPreviewByMessage[message.id!].record)" @ask="homeSuggestion" @changed="homePanels?.refreshCards()" />
             <NewsChatCard v-if="message.id && newsCardByMessage[message.id]" class="assistant-news-card" :card="newsCardByMessage[message.id]" :busy="assistantSending" :latest="message.id === lastNewsCardMessageId" @say="submitAssistantText" @time="newsTimeChosen" @read="readNews" />
+            <MessageDraftCard v-if="message.role === 'assistant' && message.messageDraft" :draft="message.messageDraft" />
           </article>
+          </template>
+
+          <TransitionGroup name="assistant-person-card">
+            <PersonMessageCard
+              v-for="card in placedPersonCards.trailing"
+              :key="`person-${card.cid}-end`"
+              class="assistant-person-card"
+              :card="card"
+              @open="openPersonConversation"
+            />
+          </TransitionGroup>
 
           <SiteBuildAskCard v-if="siteAskOpen && !siteBuilderMode" class="assistant-message assistant-message--assistant" :busy="assistantSending" @submit="submitSiteAsk" @close="closeSiteAsk" />
           <ChatFirstSite
@@ -3918,6 +4007,16 @@ function messageFromUnknown(err: unknown, fallback: string) {
   padding: clamp(60px, 17vh, 170px) 0 10px; text-align: center;
 }
 .assistant-empty-state__welcome { display: grid; gap: 12px; justify-items: center; }
+/* Waiting conversations sit above the welcome, so the welcome needs less room above it. */
+.assistant-empty-state--people { padding-top: 12px; }
+.assistant-empty-state__people { display: grid; gap: 12px; width: min(560px, 100%); margin-bottom: clamp(16px, 6vh, 56px); text-align: left; }
+.assistant-empty-state__see-all { justify-self: center; padding: 6px 12px; color: var(--ui-text-muted); font-size: 14px; font-weight: 500; text-decoration: none; }
+.assistant-empty-state__see-all:hover { color: var(--ui-text); }
+.assistant-person-card { width: min(560px, 100%); }
+/* A card that moves (a send, a reply) leaves its old place at once and fades in at the new one. */
+.assistant-person-card-enter-active { transition: opacity .22s ease; }
+.assistant-person-card-enter-from { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .assistant-person-card-enter-active { transition: none; } }
 .assistant-empty-state__heading { margin: 6px 0 0; font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
 .assistant-empty-state__hint { margin: 0; color: var(--ui-text-muted); font-size: 15px; }
 /* Small centred badges that wrap to one or two rows (me3-q6la.2). */

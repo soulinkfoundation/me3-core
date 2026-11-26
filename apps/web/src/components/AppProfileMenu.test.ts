@@ -106,6 +106,7 @@ describe("AppProfileMenu optional plugin links", () => {
         .map((link) => link.attributes("aria-label")),
     ).toEqual([
       "Edit website",
+      "Messages",
       "Email",
       "Calendar",
       "Tasks",

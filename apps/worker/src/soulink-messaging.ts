@@ -9,7 +9,9 @@ import type { Env } from "./types";
  * nothing beyond the existing connection, and never logs the tokens.
  */
 
-export type MessagingClient = "ios" | "android";
+export type MessagingClient = "ios" | "android" | "web";
+
+export const MESSAGING_CLIENTS: readonly MessagingClient[] = ["ios", "android", "web"];
 
 export type MessagingSession = {
   ok: true;
@@ -151,4 +153,50 @@ async function exchangeDispatchToken(apiOrigin: string, dispatchToken: string, c
     status: response.ok ? 502 : response.status,
     error: typeof body?.error === "string" ? body.error : null,
   };
+}
+
+/**
+ * The Soulink chat calls the phones make directly with their Soulink session, which a browser can't (Soulink's API
+ * only answers its own site). ME3's web app sends them here with that same session; Core checks the owner, forwards
+ * only these, and keeps and logs nothing of them. Message text in a report passes straight through; contact matches
+ * carry only email hashes.
+ */
+const SOULINK_CHAT_CALLS: ReadonlyArray<{ method: string; path: RegExp }> = [
+  { method: "POST", path: /^\/api\/chat-requests\/[A-Za-z0-9!_-]+\/(accept|decline)$/ },
+  { method: "POST", path: /^\/api\/nodes\/[A-Za-z0-9._-]+\/block$/ },
+  { method: "DELETE", path: /^\/api\/nodes\/[A-Za-z0-9._-]+\/block$/ },
+  { method: "GET", path: /^\/api\/nodes\/[A-Za-z0-9._-]+\/block\/status$/ },
+  { method: "POST", path: /^\/api\/content-reports$/ },
+  { method: "GET", path: /^\/api\/people$/ },
+  { method: "POST", path: /^\/api\/stream\/chats$/ },
+  { method: "POST", path: /^\/api\/contacts\/matches$/ },
+];
+
+export function isSoulinkChatCall(method: string, path: string): boolean {
+  return SOULINK_CHAT_CALLS.some((call) => call.method === method && call.path.test(path));
+}
+
+export async function forwardSoulinkChatCall(
+  env: Env,
+  input: { method: string; path: string; search: string; sessionToken: string; body: string | null },
+): Promise<Response> {
+  const apiOrigin = getSoulinkConnectorConfig(env).apiOrigin;
+  const headers: Record<string, string> = { Authorization: `Bearer ${input.sessionToken}` };
+  if (input.body !== null) headers["Content-Type"] = "application/json";
+  let response: Response;
+  try {
+    response = await fetch(`${apiOrigin}${input.path}${input.search}`, {
+      method: input.method,
+      headers,
+      body: input.body,
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    return Response.json({ ok: false, code: "soulink_unavailable", error: UNAVAILABLE }, { status: 503 });
+  }
+  const text = await response.text();
+  return new Response(text, {
+    status: response.status,
+    headers: { "Content-Type": response.headers.get("Content-Type") || "application/json" },
+  });
 }

@@ -13665,19 +13665,114 @@ describe("ME3 Worker auth", () => {
       expect(mock.mock.calls.filter(([input]) => String(input).includes("soulink"))).toHaveLength(0);
     });
 
-    it("requires the owner and names the phone client", async () => {
+    it("requires the owner and names the client", async () => {
       const env = createEnv();
       const session = cookieHeader(await bootstrap(env));
       const { mock } = soulink();
       expect((await post(env, null)).status).toBe(401);
       expect((await post(env, session, {})).status).toBe(400);
-      expect((await post(env, session, { client: "web" })).status).toBe(400);
+      expect((await post(env, session, { client: "desktop" })).status).toBe(400);
       expect(mock).not.toHaveBeenCalled();
 
       const viaQuery = await app.fetch(new Request("http://localhost/api/messaging/session?client=android", {
         headers: { Cookie: session },
       }), env);
       expect(viaQuery.status).toBe(200);
+    });
+
+    it("gives ME3's web app a session too", async () => {
+      const env = createEnv();
+      const session = cookieHeader(await bootstrap(env));
+      const { calls } = soulink();
+      const response = await post(env, session, { client: "web" });
+      expect(response.status).toBe(200);
+      const [, init] = calls("/api/me3/chat-session")[0];
+      expect(JSON.parse(String(init?.body))).toEqual({ client: "web" });
+    });
+
+    // Failure modes: the browser can't reach Soulink (its CORS only allows Soulink's own site), so Core forwards
+    // the few chat calls the phones make directly. It must refuse a non-owner, forward only those calls, carry the
+    // owner's Soulink session, pass Soulink's answer back, and keep nothing.
+    describe("Soulink pass-through for the web app", () => {
+      const through = (env: ReturnType<typeof createEnv>, cookie: string | null, method: string, path: string, body?: unknown, token: string | null = "soulink-session-token") =>
+        app.fetch(new Request(`http://localhost/api/messaging/soulink${path}`, {
+          method,
+          headers: {
+            ...(cookie ? { Cookie: cookie } : {}),
+            ...(token ? { "X-Soulink-Session": token } : {}),
+            ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        }), env);
+
+      it("forwards the allowed chat calls with the owner's Soulink session and passes the answer back", async () => {
+        const env = createEnv();
+        const cookie = cookieHeader(await bootstrap(env));
+        const mock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+          const url = String(input);
+          if (url.endsWith("/block/status")) return Response.json({ isBlocked: true });
+          if (url.includes("/api/people")) return Response.json({ people: [{ id: "node-a" }] });
+          if (url.endsWith("/api/stream/chats")) return Response.json({ streamChannelType: "messaging", streamChannelId: "dm-1" });
+          return Response.json({ ok: true });
+        });
+        vi.stubGlobal("fetch", mock);
+
+        const cases: Array<[string, string, unknown?]> = [
+          ["POST", "/api/chat-requests/dm-1/accept", {}],
+          ["POST", "/api/chat-requests/dm-1/decline", {}],
+          ["POST", "/api/nodes/erum/block"],
+          ["DELETE", "/api/nodes/erum/block"],
+          ["GET", "/api/nodes/erum/block/status"],
+          ["POST", "/api/content-reports", { data: { contentType: "message", contentId: "m1", reason: "spam" } }],
+          ["GET", "/api/people?q=erum"],
+          ["POST", "/api/stream/chats", { memberIds: ["node-a"] }],
+          ["POST", "/api/contacts/matches", { hashes: ["abc"] }],
+        ];
+        for (const [method, path, body] of cases) {
+          const response = await through(env, cookie, method, path, body);
+          expect(response.status, `${method} ${path}`).toBe(200);
+          expect(response.headers.get("Cache-Control")).toBe("no-store");
+        }
+        expect(mock).toHaveBeenCalledTimes(cases.length);
+        cases.forEach(([method, path, body], index) => {
+          const [input, init] = mock.mock.calls[index];
+          expect(String(input)).toBe(`https://soulink.test${path}`);
+          expect(init?.method).toBe(method);
+          expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer soulink-session-token");
+          if (body !== undefined) expect(JSON.parse(String(init?.body))).toEqual(body);
+        });
+        expect(await (await through(env, cookie, "GET", "/api/nodes/erum/block/status")).json()).toEqual({ isBlocked: true });
+        // Nothing about the calls lands in Core's records.
+        expect(JSON.stringify(env.soulinkConnection ?? null)).not.toMatch(/soulink-session-token|spam/);
+      });
+
+      it("refuses a non-owner, a missing session and anything outside the chat calls", async () => {
+        const env = createEnv();
+        const cookie = cookieHeader(await bootstrap(env));
+        const mock = vi.fn(async () => Response.json({ ok: true }));
+        vi.stubGlobal("fetch", mock);
+        expect((await through(env, null, "POST", "/api/chat-requests/dm-1/accept", {})).status).toBe(401);
+        expect((await through(env, cookie, "POST", "/api/chat-requests/dm-1/accept", {}, null)).status).toBe(400);
+        expect((await through(env, cookie, "GET", "/api/admin/summary")).status).toBe(404);
+        expect((await through(env, cookie, "DELETE", "/api/content-reports")).status).toBe(404);
+        expect((await through(env, cookie, "POST", "/api/nodes/a/b/block")).status).toBe(404);
+        expect((await through(env, cookie, "POST", "/api/chat-requests/..%2Fadmin/accept", {})).status).toBe(404);
+        expect(mock).not.toHaveBeenCalled();
+      });
+
+      it("passes Soulink's refusals back and says so when Soulink is down", async () => {
+        const env = createEnv();
+        const cookie = cookieHeader(await bootstrap(env));
+        vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: false, error: "Already blocked" }, { status: 409 })));
+        const refused = await through(env, cookie, "POST", "/api/nodes/erum/block");
+        expect(refused.status).toBe(409);
+        expect(await refused.json()).toEqual({ ok: false, error: "Already blocked" });
+
+        vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("network"); }));
+        const down = await through(env, cookie, "POST", "/api/nodes/erum/block");
+        expect(down.status).toBe(503);
+        expect((await down.json() as { code: string }).code).toBe("soulink_unavailable");
+      });
     });
   });
 
