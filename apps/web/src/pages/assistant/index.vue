@@ -2669,7 +2669,9 @@ function messageFromUnknown(err: unknown, fallback: string) {
                 data-testid="chat-starter"
                 @click="startStarterPrompt(starter)"
               >
-                <span v-if="starter.emoji" class="starter-prompt__emoji" aria-hidden="true">{{ starter.emoji }}</span>
+                <!-- Play with ME3 wears the ME3 dog itself rather than a generic emoji dog. -->
+                <img v-if="starter.id === 'game'" class="starter-prompt__dog" src="/me3-dog-head-emoji-smooth.webp" alt="" aria-hidden="true" />
+                <span v-else-if="starter.emoji" class="starter-prompt__emoji" aria-hidden="true">{{ starter.emoji }}</span>
                 <span>{{ starter.label }}</span>
               </button>
             </div>
@@ -3920,10 +3922,12 @@ function messageFromUnknown(err: unknown, fallback: string) {
 .assistant-empty-state__hint { margin: 0; color: var(--ui-text-muted); font-size: 15px; }
 /* Small centred badges that wrap to one or two rows (me3-q6la.2). */
 .starter-prompt-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: min(520px, 100%); margin-top: 14px; }
-.starter-prompt { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; max-width: 100%; border: 1px solid var(--ui-border); border-radius: 999px; padding: 8px 14px; background: var(--ui-surface); color: var(--ui-text); font: 500 14px var(--font-sans); white-space: nowrap; cursor: pointer; }
+/* Borderless pills lifted by a soft shadow, as on iOS and Android (owner design pass, 26 Nov 2026). */
+.starter-prompt { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; max-width: 100%; border: 0; border-radius: 999px; padding: 8px 14px; background: var(--ui-surface); color: var(--ui-text); font: 500 14px var(--font-sans); white-space: nowrap; cursor: pointer; box-shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 4px 12px rgb(0 0 0 / 8%); }
+.starter-prompt__dog { width: 22px; height: 22px; object-fit: contain; flex: none; }
 .starter-prompt > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .starter-prompt__emoji { flex-shrink: 0; font-size: 16px; line-height: 1; }
-.starter-prompt--lead { border-color: var(--ui-accent); }
+
 /* The only choice on a first visit: a soft ring pulses out so it's clearly the thing to click. */
 .starter-prompt--pulse { padding: 10px 18px; font-size: 15px; animation: starter-pulse 2s ease-out infinite; }
 @keyframes starter-pulse {
