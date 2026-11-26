@@ -69,8 +69,11 @@ export function placeTourCard(target: Box, card: { width: number; height: number
     const top = clamp(centreY - 32, margin, view.height - card.height - margin);
     return { top, left: around.left - card.width - gap, side: "left", arrow: clamp(centreY - top, 20, card.height - 20) };
   }
+  // A target in the lower half (Add to Home at the end of Home) gets the card above it, clear of the composer.
+  const roomAbove = !around && avoid.top - gap - card.height >= margin;
+  if (roomAbove && centreY > view.height / 2) return horizontal(avoid.top - gap - card.height, "above");
   if (avoid.bottom + gap + card.height <= view.height - margin) return horizontal(avoid.bottom + gap, "below");
-  if (!around && avoid.top - gap - card.height >= margin) return horizontal(avoid.top - gap - card.height, "above");
+  if (roomAbove) return horizontal(avoid.top - gap - card.height, "above");
   return null;
 }
 

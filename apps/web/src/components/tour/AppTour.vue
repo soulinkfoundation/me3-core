@@ -36,6 +36,7 @@ const hidden = ref(false);
 let trip: TourTrip | null = null;
 let reachedLast = false;
 let ticked: TourTickMemory | null = null;
+let scrolledTo: HTMLElement | null = null;
 
 watch([() => route.path, () => tour.open], ([path]) => { const place = tourPlaceForPath(path); if (place) tour.seen(place); }, { immediate: true });
 watch(() => tour.open, open => { if (open) { trip = null; reachedLast = false; ticked = null; } });
@@ -109,6 +110,12 @@ function update() {
   const pointAt = done.value ? null : visible;
   target.value = pointAt;
   const element = pointAt ? targetElement(pointAt.id) : null;
+  // The control to tap scrolls clear of the composer floating over the bottom (Add to Home at the end of a long Home).
+  if (element && element !== scrolledTo) {
+    const box = element.getBoundingClientRect();
+    if (box.top < 72 || box.bottom > window.innerHeight - 110) element.scrollIntoView({ block: "center", behavior: "smooth" });
+    scrolledTo = element;
+  }
   ring(element);
   const size = { width: card.value.offsetWidth, height: card.value.offsetHeight };
   const view = { width: window.innerWidth, height: window.innerHeight };
