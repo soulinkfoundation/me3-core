@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "../Button.vue";
-import UiIcon from "../UiIcon.vue";
 import { coverTourCard, currentTourScreen, currentTourTarget, onTourScreen, placeTourCard, tourArrival, tourCardWaits, tourLeftLast, tourMovesOn, tourPlaceForPath, tourScreenRoute, tourScreenToOpen, tourPointsWhenDone, tourStepDone, tourStepIsHere, type TourPlacement, type TourScreen, type TourTarget, type TourTickMemory, type TourTrip } from "../../utils/chatTour";
 import { useTourStore } from "../../stores/tour";
 
@@ -25,9 +24,6 @@ const total = computed(() => tour.tour?.steps.length ?? 0);
 const here = computed(() => Boolean(step.value && onTourScreen(step.value.screen, route.path, route.query.view)));
 // A step explains its screen once the owner is on it; on the way there it says how to get there.
 const text = computed(() => step.value && step.value.intro && !here.value && !done.value ? step.value.intro : step.value?.body ?? "");
-// A step with nothing to point at (Socials, the website) has Next bring the owner to its screen,
-// and a way there if they come back to it from somewhere else.
-const takeThere = computed(() => Boolean(step.value?.screen && !step.value.targets.length && !here.value && !step.value.task));
 const card = ref<HTMLElement | null>(null);
 const target = ref<TourTarget | null>(null);
 const placement = ref<TourPlacement | null>(null);
@@ -189,8 +185,6 @@ function goTo(index: number) {
   if (place) travel(place);
 }
 function next() { if (tour.isLast) tour.end("finished"); else goTo(tour.index + 1); }
-function back() { goTo(tour.index - 1); }
-function openScreen() { if (step.value?.screen) travel(step.value.screen); }
 </script>
 
 <template>
@@ -201,28 +195,21 @@ function openScreen() { if (step.value?.screen) travel(step.value.screen); }
     <div class="app-tour__head">
       <span class="app-tour__emoji" aria-hidden="true">{{ step.emoji }}</span>
       <h2 :id="titleId" class="app-tour__title">{{ step.title }}</h2>
-      <span v-if="done" class="app-tour__done" data-testid="tour-done">✓ Done</span>
-      <!-- The last card's way out for an owner who isn't ready to make their website. -->
-      <button v-if="step.task && tour.isLast" type="button" class="app-tour__close" aria-label="Close the tour" @click="tour.end('finished')"><UiIcon name="X" :size="18" /></button>
     </div>
     <p class="app-tour__body" data-testid="tour-body">{{ text }}</p>
     <p v-if="target" class="app-tour__sr" aria-live="polite" data-testid="tour-hint">{{ target.hint }}</p>
-    <div v-if="takeThere" class="app-tour__actions">
-      <Button color="primary" shape="soft" type="button" @click="openScreen">Take me there</Button>
-    </div>
     <div class="app-tour__foot">
       <span class="app-tour__dots" aria-hidden="true"><i v-for="(item, dot) in tour.tour?.steps" :key="item.id" :class="{ 'is-on': dot <= tour.index }" /></span>
-      <span class="app-tour__count">{{ tour.index + 1 }} of {{ total }}</span>
+      <!-- With the last card's own button beside Finish there's no room for the count; the dots still say where. -->
+      <span v-if="!step.task" class="app-tour__count">{{ tour.index + 1 }} of {{ total }}</span>
       <span class="app-tour__spacer" />
       <!-- Skip only on the first card: once they've started, the tour carries on to the end. -->
       <button v-if="tour.index === 0" type="button" class="app-tour__skip" @click="tour.end('skipped')">Skip</button>
       <!-- The website's button (Make my website, Open the editor) takes Back's place: it ends the tour. -->
-      <Button v-if="step.task" :color="done ? 'secondary' : 'primary'" shape="soft" type="button" data-testid="tour-task" @click="doTask">{{ step.task.label }}</Button>
-      <Button v-else-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="back">Back</Button>
-      <!-- One thing to do at a time: Next shows only once the owner has done the step. -->
-      <Button v-if="done" color="primary" shape="soft" type="button" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
-      <!-- A step the owner may leave for later (connecting a calendar). -->
-      <Button v-else-if="step.optional" color="ghost" shape="soft" type="button" data-testid="tour-later" @click="next">Not now</Button>
+      <!-- The tour shows where things are; it never makes the owner do them (owner device test, 26 Nov 2026): Next on
+           every card, Finish on the last, beside the last card's own button if it has one. -->
+      <Button v-if="step.task" color="secondary" shape="soft" type="button" data-testid="tour-task" @click="doTask">{{ step.task.label }}</Button>
+      <Button color="primary" shape="soft" type="button" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
     </div>
   </section>
 </template>
