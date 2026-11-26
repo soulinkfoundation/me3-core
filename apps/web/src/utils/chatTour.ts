@@ -1,6 +1,6 @@
 // Show me around (me3-q6la.5): Core writes the steps and keeps the owner's place (GET /api/assistant/tour),
 // so every app tours the same things and a tour started on one picks up on another.
-export type TourPlace = "website";
+export type TourPlace = "website" | "page";
 export type TourTask = { kind: "open"; label: string; to: TourPlace } | { kind: "site_ask"; label: string };
 /** What the card points at, in the order the owner reaches them; elements carry `data-tour-target="<id>"`. */
 export type TourTarget = { id: string; hint: string };

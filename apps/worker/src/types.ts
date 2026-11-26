@@ -49,6 +49,8 @@ export interface Env {
   /** "on" offers features parked after the first release (custom Home cards). Unset hides them. Agent purchases are always offered (me3-2gdu.17). */
   /** "free" limits Home cards to tasks, reminders, goals, habits and counters (the free ME3 runtime sets it). */
   ME3_HOME_CARDS?: string;
+  /** "free" gives Show me around the free plan's steps (the free ME3 runtime sets it). */
+  ME3_TOUR?: string;
   /** "off" stops the agent saving memories automatically after each turn. */
   ME3_AGENT_MEMORY?: string;
   ME3_AGENT_FAST_MODEL?: string;

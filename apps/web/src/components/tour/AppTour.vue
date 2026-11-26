@@ -123,10 +123,15 @@ function update() {
   placement.value = placeTourCard(element.getBoundingClientRect(), size, view, menu?.getBoundingClientRect());
 }
 // Menus, Home and dialogs open and close without telling the tour, so it looks again a few times a second.
+// A calendar connected (on Calendar, or through Google) doesn't tell it either, so while a step waits it asks Core every few seconds.
 let timer: ReturnType<typeof setInterval> | undefined;
+let ticks: ReturnType<typeof setInterval> | undefined;
 watch(() => tour.open, open => {
-  clearInterval(timer);
-  if (open) { timer = setInterval(update, 200); void nextTick(update); } else update();
+  clearInterval(timer); clearInterval(ticks);
+  if (open) {
+    timer = setInterval(update, 200); void nextTick(update);
+    ticks = setInterval(() => { if (step.value && !done.value && !document.hidden) void tour.refresh(); }, 5000);
+  } else update();
 }, { immediate: true });
 watch(() => [tour.index, done.value], () => void nextTick(update));
 
@@ -141,7 +146,7 @@ watch(cardKey, key => {
 }, { immediate: true });
 
 onMounted(() => { window.addEventListener("me3:home-layout-changed", homeChanged); window.addEventListener("resize", update); });
-onBeforeUnmount(() => { clearInterval(timer); clearTimeout(fade); ring(null); cover(null); window.removeEventListener("me3:home-layout-changed", homeChanged); window.removeEventListener("resize", update); });
+onBeforeUnmount(() => { clearInterval(timer); clearInterval(ticks); clearTimeout(fade); ring(null); cover(null); window.removeEventListener("me3:home-layout-changed", homeChanged); window.removeEventListener("resize", update); });
 
 const position = computed(() => placement.value ? { top: `${placement.value.top}px`, left: `${placement.value.left}px`, right: "auto", bottom: "auto", transform: "none" } : undefined);
 const arrowStyle = computed(() => !placement.value ? undefined

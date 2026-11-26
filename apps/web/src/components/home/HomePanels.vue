@@ -691,7 +691,7 @@ onBeforeUnmount(() => {
               <!-- The title already opens Calendar, so the empty day is one quiet line. A new owner's is their first step: connect a calendar. -->
               <template v-if="!events.length">
                 <p v-if="calendarConnected" class="home-empty-day">Nothing scheduled</p>
-                <RouterLink v-else-if="!errors.today" to="/calendar?connect=1" class="home-connect-calendar" data-testid="home-connect-calendar"><UiIcon name="Calendar" :size="16" aria-hidden="true" />Connect your calendar</RouterLink>
+                <RouterLink v-else-if="!errors.today" to="/calendar?connect=1" class="home-connect-calendar" data-testid="home-connect-calendar" data-tour-target="connect_calendar"><UiIcon name="Calendar" :size="16" aria-hidden="true" />Connect your calendar</RouterLink>
               </template>
               <template v-else>
                 <RouterLink v-for="event in todayEvents" :key="event.id" :to="`/calendar?date=${day}`" class="home-line home-event" :class="eventState(event)"><span class="home-time">{{ event.allDay ? 'All day' : compactTime(event.start) }}</span><i class="home-event__bar" aria-hidden="true" /><span class="home-event__title">{{ event.title }}<template v-if="eventState(event) === 'is-now'"> · now</template></span></RouterLink>

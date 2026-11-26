@@ -96,20 +96,6 @@ export function freePluginList<T extends { plugins?: { id: string }[] }>(body: T
   return { ...body, plugins: body.plugins.filter((plugin) => allowed.has(plugin.id)) };
 }
 
-type TourBody = { steps?: { id: string; body?: string }[]; progress?: { status: string; stepId: string | null } };
-
-/** The first-run tour for a free user: Home only. Inbox, Accounts, Social and the website builder are paid. */
-export function freeTour<T extends TourBody>(body: T): T {
-  if (!body || !Array.isArray(body.steps)) return body;
-  const steps = body.steps
-    .filter((step) => step.id === "home")
-    .map((step) => ({ ...step, body: step.body?.replace(/\s*Inbox is a good one to start with\./, "") }));
-  const stepId = steps.some((step) => step.id === body.progress?.stepId) ? body.progress!.stepId : null;
-  return { ...body, steps, progress: body.progress ? { ...body.progress, stepId } : body.progress };
-}
-
-export const isTourPath = (path: string) => path === "/api/assistant/tour" || path === "/api/assistant/tour/progress";
-
 /** Added to the agent's system prompt on the free runtime. */
 export const FREE_PLAN_NOTE =
   "This owner is on the free ME3 plan. It includes this chat, tasks, goals and mission, the journal, the calendar, reminders, Home cards for habits, counters, goals, tasks and reminders, messaging the people they are linked with on Soulink (their contacts). " +
