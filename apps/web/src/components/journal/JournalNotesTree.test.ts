@@ -9,7 +9,7 @@ const notes: Note[] = [
   { id: "n2", title: "Filed note", updatedAt: "2026-11-20T10:00:00Z", projectId: "p1", folderId: "f1" },
 ];
 
-function mountTree() {
+function mountTree(extra: { activeId?: string | null; query?: string } = {}) {
   return mount(JournalNotesTree, {
     props: {
       notes,
@@ -17,7 +17,7 @@ function mountTree() {
       projects: [{ id: "p1", name: "Book" }],
       activeId: null,
       wordCount: () => 0,
-      subtitle: () => "",
+      ...extra,
     },
     global: { stubs: { UiIcon: true, ProjectIcon: true } },
   });
@@ -81,5 +81,43 @@ describe("JournalNotesTree drag and drop", () => {
     await vi.advanceTimersByTimeAsync(700);
 
     expect(wrapper.text()).toContain("Filed note");
+  });
+});
+
+describe("JournalNotesTree folders and search", () => {
+  afterEach(() => window.localStorage.clear());
+
+  it("collapses the folder holding the open note and marks it", async () => {
+    const wrapper = mountTree({ activeId: "n2" });
+    expect(wrapper.text()).toContain("Filed note");
+    await head(wrapper, "Drafts").find(".notes-tree__toggle").trigger("click");
+
+    expect(wrapper.text()).not.toContain("Filed note");
+    expect(head(wrapper, "Drafts").find(".notes-tree__dot").exists()).toBe(true);
+  });
+
+  it("collapses everything, then expands it again", async () => {
+    const wrapper = mountTree();
+    (wrapper.vm as unknown as { collapseAll: () => void }).collapseAll();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.findAll(".notes-tree__row")).toHaveLength(0);
+
+    (wrapper.vm as unknown as { collapseAll: () => void }).collapseAll();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.findAll(".notes-tree__row")).toHaveLength(2);
+  });
+
+  it("shows only matching notes and opens the folders that hold them", async () => {
+    window.localStorage.setItem("me3.journal.notes.collapsed", JSON.stringify(["f1", "p1"]));
+    const wrapper = mountTree({ query: "filed" });
+
+    expect(wrapper.text()).toContain("Filed note");
+    expect(wrapper.text()).not.toContain("Loose note");
+    expect(wrapper.text()).not.toContain("No project");
+  });
+
+  it("says so when nothing matches", () => {
+    const wrapper = mountTree({ query: "zzz" });
+    expect(wrapper.text()).toContain("No notes match.");
   });
 });

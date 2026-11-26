@@ -127,6 +127,57 @@ const libraryOpen = ref(wideScreen.value && !libraryHiddenPreference());
 const keyboardInset = ref(0);
 const archiveLoaded = ref(false);
 const libraryTab = ref<"daily" | "articles">("articles");
+const notesQuery = ref("");
+const notesTree = ref<{ collapseAll: () => void; allCollapsed: boolean } | null>(null);
+
+// The library's width follows a drag on its edge and is remembered per browser.
+const LIBRARY_WIDTH_KEY = "me3.journal.library.width";
+const LIBRARY_DEFAULT_WIDTH = 280;
+const LIBRARY_MIN_WIDTH = 220;
+const LIBRARY_MAX_WIDTH = 520;
+function clampLibraryWidth(value: number) {
+  return Math.round(Math.min(LIBRARY_MAX_WIDTH, Math.max(LIBRARY_MIN_WIDTH, value)));
+}
+function storedLibraryWidth() {
+  try {
+    const value = Number(window.localStorage.getItem(LIBRARY_WIDTH_KEY));
+    return Number.isFinite(value) && value > 0 ? clampLibraryWidth(value) : LIBRARY_DEFAULT_WIDTH;
+  } catch { return LIBRARY_DEFAULT_WIDTH; }
+}
+const libraryWidth = ref(storedLibraryWidth());
+const libraryResizing = ref(false);
+function setLibraryWidth(value: number) {
+  libraryWidth.value = clampLibraryWidth(value);
+  try { window.localStorage.setItem(LIBRARY_WIDTH_KEY, String(libraryWidth.value)); } catch { /* per-browser convenience only */ }
+}
+function startLibraryResize(event: PointerEvent) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  const handle = event.currentTarget as HTMLElement;
+  const startX = event.clientX;
+  const startWidth = libraryWidth.value;
+  handle.setPointerCapture(event.pointerId);
+  libraryResizing.value = true;
+  const move = (moveEvent: PointerEvent) => setLibraryWidth(startWidth + moveEvent.clientX - startX);
+  const stop = () => {
+    libraryResizing.value = false;
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", stop);
+    handle.removeEventListener("pointercancel", stop);
+  };
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", stop);
+  handle.addEventListener("pointercancel", stop);
+}
+function resizeLibraryByKey(event: KeyboardEvent) {
+  const step = event.shiftKey ? 48 : 16;
+  if (event.key === "ArrowLeft") setLibraryWidth(libraryWidth.value - step);
+  else if (event.key === "ArrowRight") setLibraryWidth(libraryWidth.value + step);
+  else if (event.key === "Home") setLibraryWidth(LIBRARY_MIN_WIDTH);
+  else if (event.key === "End") setLibraryWidth(LIBRARY_MAX_WIDTH);
+  else return;
+  event.preventDefault();
+}
 // True while the Notes side of the switch is showing, even before a note is open.
 const notesView = ref(false);
 // Today's open tasks fold into one line above the writing, so the page opens on the words.
@@ -357,20 +408,6 @@ function archiveWordCount(entry: JournalArchiveEntry) {
 
 function articleWordCount(article: Article): number {
   return htmlToPlainText(article.body).split(/\s+/).filter(Boolean).length;
-}
-
-// The tree already shows each note's project and folder, so the row shows its words.
-function noteSubtitle(article: Article): string {
-  const preview = plainPreview(htmlToPlainText(article.body));
-  return preview ? preview : articleEditedLabel(article.updatedAt);
-}
-
-function articleEditedLabel(value: string) {
-  const hours = Math.floor((Date.now() - new Date(value).getTime()) / 3_600_000);
-  if (hours < 1) return "just now";
-  if (hours < 24) return `edited ${hours}h ago`;
-  if (hours < 48) return "yesterday";
-  return formatArchiveDate(value.slice(0, 10));
 }
 
 function htmlToPlainText(value: string): string {
@@ -1199,6 +1236,21 @@ onBeforeUnmount(() => {
 <template>
   <main class="journal">
     <Teleport to="#app-page-leading" defer>
+      <Button
+        class="journal__library-toggle"
+        :class="{ 'is-on': libraryOpen }"
+        color="ghost"
+        shape="soft"
+        size="large"
+        icon-only
+        type="button"
+        :aria-label="libraryOpen ? 'Hide library' : 'Show library'"
+        :title="libraryOpen ? 'Hide library' : 'Show library'"
+        :aria-pressed="libraryOpen ? 'true' : 'false'"
+        @click="toggleLibrary"
+      >
+        <UiIcon name="PanelLeft" :size="20" aria-hidden="true" />
+      </Button>
       <Button color="ghost" shape="soft" size="large" icon-only type="button" aria-label="New note" title="New note" @click="createArticle()">
         <UiIcon name="Plus" :size="20" aria-hidden="true" />
       </Button>
@@ -1215,58 +1267,44 @@ onBeforeUnmount(() => {
     </header>
     </Teleport>
 
-    <div class="journal__bar">
-      <Button
-        class="journal__library-toggle"
-        color="ghost"
-        shape="soft"
-        size="compact"
-        type="button"
-        :aria-pressed="libraryOpen ? 'true' : 'false'"
-        @click="toggleLibrary"
-      >
-        <UiIcon name="BookOpen" :size="18" aria-hidden="true" />
-        <span>{{ libraryOpen ? "Hide library" : "Library" }}</span>
-      </Button>
-      <div v-if="currentArticle" class="journal__note-location" @click.stop>
-        <button
-          type="button"
-          class="journal__note-location-button"
-          aria-haspopup="menu"
-          :aria-expanded="noteLocationOpen ? 'true' : 'false'"
-          :title="`Filed in ${currentNoteLocation}. Move to…`"
-          @click="noteLocationOpen = !noteLocationOpen"
-        >
-          <UiIcon :name="currentNotePlacement.folderId ? 'Folder' : currentNotePlacement.projectId ? 'Target' : 'FileText'" :size="15" aria-hidden="true" />
-          <span>{{ currentNoteLocation }}</span>
-          <UiIcon name="ChevronDown" :size="15" aria-hidden="true" />
-        </button>
-        <JournalNoteMoveMenu
-          v-if="noteLocationOpen"
-          class="journal__note-location-menu"
-          :projects="projects"
-          :folders="folders"
-          :current="currentNotePlacement"
-          @move="moveArticle(currentArticle, $event)"
-          @new-folder="createFolder"
-          @new-project="openNewProject(currentArticle)"
-        />
-      </div>
-    </div>
-
     <div
       class="journal__workspace"
-      :class="{ 'journal__workspace--library': libraryOpen }"
+      :class="{ 'journal__workspace--library': libraryOpen, 'is-resizing': libraryResizing }"
+      :style="{ '--journal-library-width': `${libraryWidth}px` }"
     >
       <aside
         v-if="libraryOpen"
         class="journal__archive"
         aria-label="Library"
       >
-        <div class="journal__libtabs" role="tablist" aria-label="Library">
-          <button type="button" role="tab" :aria-selected="libraryTab === 'articles' ? 'true' : 'false'" @click="pickLibraryTab('articles')">Notes</button>
-          <button type="button" role="tab" :aria-selected="libraryTab === 'daily' ? 'true' : 'false'" @click="pickLibraryTab('daily')">Daily</button>
+        <div class="journal__libhead">
+          <div class="journal__libhead-row">
+            <div class="journal__libtabs" role="tablist" aria-label="Library">
+              <button type="button" role="tab" :aria-selected="libraryTab === 'articles' ? 'true' : 'false'" @click="pickLibraryTab('articles')">Notes</button>
+              <button type="button" role="tab" :aria-selected="libraryTab === 'daily' ? 'true' : 'false'" @click="pickLibraryTab('daily')">Daily</button>
+            </div>
+            <template v-if="libraryTab === 'articles'">
+              <button type="button" class="journal__libicon" aria-label="New folder" title="New folder" @click="createFolder(null)">
+                <UiIcon name="FolderPlus" :size="16" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="journal__libicon"
+                :aria-label="notesTree?.allCollapsed ? 'Expand all' : 'Collapse all'"
+                :title="notesTree?.allCollapsed ? 'Expand all' : 'Collapse all'"
+                @click="notesTree?.collapseAll()"
+              >
+                <UiIcon :name="notesTree?.allCollapsed ? 'ChevronsUpDown' : 'ChevronsDownUp'" :size="16" aria-hidden="true" />
+              </button>
+            </template>
+          </div>
+          <label v-if="libraryTab === 'articles' && articles.length > 0" class="journal__libsearch">
+            <UiIcon name="Search" :size="14" aria-hidden="true" />
+            <span class="journal__sr-only">Search notes</span>
+            <input v-model="notesQuery" type="search" placeholder="Search notes" autocomplete="off" @keydown.esc="notesQuery = ''" />
+          </label>
         </div>
+        <div class="journal__libscroll">
         <template v-if="libraryTab === 'daily'">
           <section v-for="month in archiveMonths" :key="month.key" class="journal__month">
             <h3 class="journal__month-heading">{{ month.label }}</h3>
@@ -1321,14 +1359,14 @@ onBeforeUnmount(() => {
           <p v-if="nonEmptyArchiveEntries.length === 0" class="journal__empty">{{ archiveLoading ? 'Loading…' : 'No saved entries yet.' }}</p>
         </template>
         <template v-else>
-          <button type="button" class="journal__new-note" @click="createArticle()"><UiIcon name="Plus" :size="16" aria-hidden="true" />New note</button>
           <JournalNotesTree
+            ref="notesTree"
             :notes="articles"
             :folders="folders"
             :projects="projects"
             :active-id="currentArticle?.id ?? null"
             :word-count="articleWordCount"
-            :subtitle="noteSubtitle"
+            :query="notesQuery"
             @open="openArticle"
             @delete="deleteArticle"
             @move="moveArticle"
@@ -1340,6 +1378,22 @@ onBeforeUnmount(() => {
           />
           <p v-if="articles.length === 0" class="journal__empty">No notes yet.</p>
         </template>
+        </div>
+        <button
+          type="button"
+          class="journal__resize"
+          :class="{ 'is-active': libraryResizing }"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize library"
+          :aria-valuenow="libraryWidth"
+          :aria-valuemin="LIBRARY_MIN_WIDTH"
+          :aria-valuemax="LIBRARY_MAX_WIDTH"
+          title="Drag to resize · double-click to reset"
+          @pointerdown="startLibraryResize"
+          @dblclick="setLibraryWidth(LIBRARY_DEFAULT_WIDTH)"
+          @keydown="resizeLibraryByKey"
+        />
       </aside>
 
       <section class="journal__sheet" :aria-label="currentArticle ? 'Note' : 'Daily page'">
@@ -1371,6 +1425,32 @@ onBeforeUnmount(() => {
             :upload-image="uploadJournalImage"
             :placeholder="currentArticle ? 'Write your note here...' : 'Write about your day...'"
           >
+            <template v-if="currentArticle" #before-title>
+              <div class="journal__note-location" @click.stop>
+                <button
+                  type="button"
+                  class="journal__note-location-button"
+                  aria-haspopup="menu"
+                  :aria-expanded="noteLocationOpen ? 'true' : 'false'"
+                  :title="`Filed in ${currentNoteLocation}. Move to…`"
+                  @click="noteLocationOpen = !noteLocationOpen"
+                >
+                  <UiIcon :name="currentNotePlacement.folderId ? 'Folder' : currentNotePlacement.projectId ? 'Target' : 'FileText'" :size="14" aria-hidden="true" />
+                  <span>{{ currentNoteLocation }}</span>
+                  <UiIcon name="ChevronDown" :size="14" aria-hidden="true" />
+                </button>
+                <JournalNoteMoveMenu
+                  v-if="noteLocationOpen"
+                  class="journal__note-location-menu"
+                  :projects="projects"
+                  :folders="folders"
+                  :current="currentNotePlacement"
+                  @move="moveArticle(currentArticle, $event)"
+                  @new-folder="createFolder"
+                  @new-project="openNewProject(currentArticle)"
+                />
+              </div>
+            </template>
             <template #after-title>
               <div v-if="showTodayTasks" class="journal__tasks">
                 <button
@@ -1595,26 +1675,16 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-/* Library toggle and the open note's location: page content, not header. */
-.journal__bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: min(100%, 980px);
-  min-height: 44px;
-  margin: 0 auto;
-  padding: 4px 24px;
-  box-sizing: border-box;
+/* The library toggle lives in the app header beside New note. */
+.journal__library-toggle.is-on {
+  color: var(--ui-accent-strong, var(--ui-accent));
 }
 
-.journal__library-toggle {
-  min-height: 44px;
-}
-
+/* The open note's folder sits just above its title and opens Move to… */
 .journal__note-location {
   position: relative;
   min-width: 0;
+  margin: 2px 0 -2px;
 }
 
 .journal__day-switcher {
@@ -1661,39 +1731,23 @@ onBeforeUnmount(() => {
   grid-template-rows: minmax(0, 1fr);
   gap: 24px;
   flex: 1;
-  min-height: 0;
-  width: min(100%, 980px);
+  width: 100%;
   margin: 0 auto;
   padding: 0 24px 16px;
   box-sizing: border-box;
   min-height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
 }
 
+/* The library runs down the left edge at its chosen width; the page centres in the space left. */
 .journal__workspace:has(.journal__archive) {
-  grid-template-columns: minmax(220px, 280px) minmax(0, 628px);
+  grid-template-columns: min(var(--journal-library-width, 280px), 50vw) minmax(0, 1fr);
   align-items: stretch;
+  padding-left: 0;
 }
 
-/* Desktop: the library is always open on the left and the editor stays centred on the page. */
-@media (min-width: 1180px) {
-  .journal__workspace,
-  .journal__workspace:has(.journal__archive) {
-    width: 100%;
-    grid-template-columns: minmax(240px, 1fr) minmax(0, 700px) minmax(240px, 1fr);
-    align-items: stretch;
-    gap: 24px;
-    padding: 0 24px 16px;
-  }
-
-  .journal__archive {
-    grid-column: 1;
-    width: min(100%, 300px);
-  }
-
-  .journal__sheet {
-    grid-column: 2;
-    width: 100%;
-  }
+.journal__workspace.is-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 /* Quiet text buttons; the shown list's button is filled. */
@@ -1705,15 +1759,17 @@ onBeforeUnmount(() => {
 }
 .journal__tabs button:hover { color: var(--ui-text, var(--color-text)); }
 .journal__tabs button[aria-pressed="true"] { background: var(--ui-surface-muted, var(--color-surface-muted)); color: var(--ui-text, var(--color-text)); }
-.journal__tabs button:focus-visible, .journal__libtabs button:focus-visible, .journal__new-note:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
+.journal__tabs button:focus-visible, .journal__libtabs button:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
 
 /* Library tabs: Notes first, then Daily. */
+.journal__libhead { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 10px 8px; }
+.journal__libhead-row { display: flex; align-items: center; gap: 4px; }
 .journal__libtabs {
-  display: flex; gap: 2px; margin-bottom: 8px; padding: 3px;
+  flex: 1; display: flex; gap: 2px; padding: 2px;
   border-radius: var(--ui-radius-sm, 8px); background: var(--ui-surface-muted, var(--color-surface-muted));
 }
 .journal__libtabs button {
-  flex: 1; min-height: 30px; border: 0; border-radius: calc(var(--ui-radius-sm, 8px) - 2px);
+  flex: 1; min-height: 28px; border: 0; border-radius: calc(var(--ui-radius-sm, 8px) - 2px);
   background: transparent; color: var(--ui-text-muted, var(--color-text-muted));
   font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
 }
@@ -1761,43 +1817,108 @@ onBeforeUnmount(() => {
 .journal__notes-empty p { margin: 0; }
 .journal__library-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .journal__library-row-head small { flex-shrink: 0; color: var(--ui-text-muted); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
-.journal__new-note {
-  display: flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 6px; border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 8px;
-  background: transparent; color: var(--ui-accent-strong, var(--ui-accent));
-  font: inherit; font-size: 0.88rem; font-weight: 600; text-align: left; cursor: pointer;
+.journal__libicon {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border: 0; border-radius: var(--ui-radius-sm, 8px); padding: 0;
+  background: transparent; color: var(--ui-text-muted, var(--color-text-muted)); cursor: pointer;
 }
-.journal__new-note:hover { background: var(--ui-surface-muted, var(--color-surface-muted)); }
+.journal__libicon:hover { background: var(--ui-surface-muted, var(--color-surface-muted)); color: var(--ui-text, var(--color-text)); }
+.journal__libicon:focus-visible { outline: 2px solid var(--ui-focus, var(--ui-accent)); }
+.journal__libsearch {
+  display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; box-sizing: border-box;
+  border: 1px solid var(--ui-border, var(--color-border)); border-radius: var(--ui-radius-sm, 8px);
+  background: var(--ui-surface, var(--color-surface)); color: var(--ui-text-muted, var(--color-text-muted));
+}
+.journal__libsearch:focus-within { border-color: var(--ui-accent); }
+.journal__libsearch input {
+  flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; outline: none;
+  color: var(--ui-text, var(--color-text)); font: inherit; font-size: 0.84rem;
+}
+.journal__sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
 
-/* The list scrolls on its own, so a long page never carries it away. */
+/* The library runs full height down the left edge; only its list scrolls, so a long page never carries it away. */
 .journal__archive {
   position: sticky;
   top: calc(var(--app-topbar-height) + var(--workspace-topbar-height));
   align-self: start;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  min-width: 0;
   height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
+  border-right: 1px solid var(--ui-border, var(--color-border));
+  background: color-mix(in srgb, var(--ui-surface-muted, var(--color-surface-muted)) 35%, var(--ui-bg, var(--color-bg, #fff)));
+  box-sizing: border-box;
+}
+
+.journal__libscroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-right: 1px solid var(--ui-border, var(--color-border));
-  padding: 8px 14px 24px 0;
-  box-sizing: border-box;
+  padding: 0 6px 24px;
+  /* A thin scrollbar that only shows while the pointer is over the list. */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.journal__libscroll:hover,
+.journal__libscroll:focus-within {
+  scrollbar-color: color-mix(in srgb, var(--ui-text-muted, #888) 45%, transparent) transparent;
+}
+
+/* Drag the library's right edge to resize it; double-click puts it back. */
+.journal__resize {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  z-index: 5;
+  width: 9px;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.journal__resize::after {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.journal__resize:hover::after,
+.journal__resize:focus-visible::after,
+.journal__resize.is-active::after {
+  background: var(--ui-accent);
+}
+
+.journal__resize:focus-visible {
+  outline: none;
 }
 
 .journal__note-location-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: min(420px, 50vw);
-  min-height: 44px;
+  max-width: 100%;
+  min-height: 30px;
+  margin-left: -8px;
   border: 0;
   border-radius: var(--ui-radius-sm, 8px);
-  padding: 0 10px;
+  padding: 0 8px;
   background: transparent;
-  color: var(--ui-text, var(--color-text));
+  color: var(--ui-text-muted, var(--color-text-muted));
   font: inherit;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -1819,7 +1940,8 @@ onBeforeUnmount(() => {
 
 .journal__note-location-menu {
   top: calc(100% + 6px);
-  right: 0;
+  left: -8px;
+  right: auto;
 }
 
 .journal__empty,
@@ -2236,10 +2358,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
-  .journal__bar {
-    padding-inline: 14px;
-  }
-
   .journal__workspace,
   .journal__workspace:has(.journal__archive) {
     grid-template-columns: minmax(0, 1fr);
@@ -2253,7 +2371,20 @@ onBeforeUnmount(() => {
     height: auto;
     min-height: calc(100dvh - var(--app-topbar-height) - var(--workspace-topbar-height));
     border-right: 0;
-    padding: 4px 0 24px;
+    background: transparent;
+  }
+
+  .journal__libhead {
+    padding-inline: 0;
+  }
+
+  .journal__libscroll {
+    overflow: visible;
+    padding-inline: 0;
+  }
+
+  .journal__resize {
+    display: none;
   }
 
   .journal__workspace--library .journal__sheet {
