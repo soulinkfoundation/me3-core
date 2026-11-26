@@ -244,7 +244,7 @@ async function newsAct(action: NewsPaperAction, extra: Record<string, unknown> =
     if (news.value) news.value = { ...news.value, paper: result.paper };
   } catch (error) { toastFromUnknown(error, "Couldn't update your news"); }
 }
-async function newsHide() { menu.value = null; await newsAct("hide"); toastSuccess("Hidden until tomorrow’s news"); }
+async function newsHide() { menu.value = null; await newsAct("hide"); toastSuccess("Hidden until tomorrow. Bring it back from + Add to Home"); }
 async function newsBringBack() { await newsAct("unhide"); landNews(); }
 function newsDone() { newsReader.value = false; void newsAct("read"); }
 function newsRate(rating: NewsRating) { void newsAct("rate", { rating }); toastSuccess(rating === "sleepy" ? "I’ll mix it up tomorrow" : "Noted, more like this"); }
@@ -285,8 +285,6 @@ async function newsAdd() {
 const available = computed(() => HOME_CARDS.filter(id => !unavailable.value.includes(id) && (id !== "accounts" || accountsEnabled.value) && (id !== "people" || peopleCard.value.state !== "hidden") && (id !== "soup" || Boolean(news.value))));
 const visible = computed(() => visibleHomeCards(layout.value).filter(id => available.value.includes(id) && (id !== "soup" || newsShow.value)));
 const panelIds = computed(() => homePanelOrder(layout.value, visible.value, shownCustom.value) as PanelId[]);
-// A quiet way back to a paper hidden until tomorrow, while News is still on Home.
-const newsHidden = computed(() => Boolean(news.value?.setUp && !news.value.paused && newsPaper.value?.hiddenAt) && visibleHomeCards(layout.value).includes("soup"));
 // Cards already on Home sort first when the sheet opens, then the order holds still,
 // so adding one never slides a different tile under the next tap.
 const addOrder = ref<HomeCard[]>([]);
@@ -665,7 +663,6 @@ onBeforeUnmount(() => {
               </template>
             </div>
             <div class="home-card__controls">
-              <button v-if="card === 'soup' && newsRead" type="button" class="home-news-hide" aria-label="Hide until tomorrow" title="Hide until tomorrow" @click="newsHide"><UiIcon name="EyeOff" :size="18" /></button>
               <button type="button" class="home-card__more" :aria-label="`${cards[card].title} options`" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-haspopup="menu" :aria-expanded="menu === card" title="Options. Drag to reorder." @click="menu === card ? closeMenu(card) : openMenu(card)" @keydown.alt.up.prevent="move(card, -1)" @keydown.alt.down.prevent="move(card, 1)"><UiIcon name="Ellipsis" :size="20" /></button>
             </div>
           </header>
@@ -771,7 +768,6 @@ onBeforeUnmount(() => {
         </article>
       </template>
     </draggable>
-    <button v-if="newsHidden" type="button" class="home-news-bring" @click="newsBringBack"><span aria-hidden="true">🗞️</span> The Morning Paper</button>
     <button type="button" class="home-add" data-tour-target="add_to_home" @click="dialog = 'add'"><UiIcon name="Plus" :size="26" /><span>Add to Home</span></button>
     <AppDialog :open="dialog !== null" aria-label="Add to Home" @close="dialog = null">
       <section class="home-dialog"><header><button v-if="dialog === 'custom'" type="button" class="home-dialog__back" @click="dialog = 'add'">Back</button><h2>{{ dialog === 'custom' ? 'Custom card' : 'Add to Home' }}</h2><button type="button" aria-label="Close Home editor" @click="dialog = null"><UiIcon name="X" :size="20" /></button></header>
@@ -829,8 +825,6 @@ onBeforeUnmount(() => {
 .home-card--line .home-card__detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .home-card--line .home-card__controls > button { width: 40px; min-width: 40px; }
 .home-card--line .home-card__body { display: none; }
-.home-card__controls > .home-news-hide { color: var(--ui-text-muted); }
-.home-news-bring { display: flex; justify-content: center; gap: 6px; justify-self: center; margin: 14px auto 0; padding: 6px 12px; background: transparent; color: var(--ui-text-muted); font-size: 14.5px; font-weight: 400; }
 .home-card__menu button.home-menu-two { height: auto; padding-top: 8px; padding-bottom: 8px; }
 .home-menu-two span { display: flex; flex-direction: column; line-height: 1.25; }
 .home-menu-two small { font-size: 12px; font-weight: 400; color: var(--ui-text-muted); }
