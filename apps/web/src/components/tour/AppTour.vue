@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } fro
 import { useRoute, useRouter } from "vue-router";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
-import { coverTourCard, currentTourScreen, currentTourTarget, onTourScreen, placeTourCard, tourArrival, tourCardWaits, tourLeftLast, tourMovesOn, tourPlaceForPath, tourScreenRoute, tourScreenToOpen, tourStepDone, tourStepIsHere, type TourPlacement, type TourScreen, type TourTarget, type TourTickMemory, type TourTrip } from "../../utils/chatTour";
+import { coverTourCard, currentTourScreen, currentTourTarget, onTourScreen, placeTourCard, tourArrival, tourCardWaits, tourLeftLast, tourMovesOn, tourPlaceForPath, tourScreenRoute, tourScreenToOpen, tourPointsWhenDone, tourStepDone, tourStepIsHere, type TourPlacement, type TourScreen, type TourTarget, type TourTickMemory, type TourTrip } from "../../utils/chatTour";
 import { useTourStore } from "../../stores/tour";
 
 /**
@@ -33,6 +33,11 @@ const target = ref<TourTarget | null>(null);
 const placement = ref<TourPlacement | null>(null);
 // The card steps aside while the screen the tour asked for opens, and while a dialog covers the step's screen.
 const hidden = ref(false);
+// The control in the spotlight: the app dims around it while a card shows.
+const spot = ref<DOMRect | null>(null);
+const spotStyle = computed(() => spot.value
+  ? { top: `${spot.value.top - 6}px`, left: `${spot.value.left - 6}px`, width: `${spot.value.width + 12}px`, height: `${spot.value.height + 12}px` }
+  : { top: "50%", left: "50%", width: "0px", height: "0px" });
 let trip: TourTrip | null = null;
 let reachedLast = false;
 let ticked: TourTickMemory | null = null;
@@ -82,7 +87,7 @@ function cover(element: HTMLElement | null) {
 
 function hide(value: boolean) {
   hidden.value = value;
-  if (value) { ring(null); cover(null); placement.value = null; target.value = null; }
+  if (value) { ring(null); cover(null); placement.value = null; target.value = null; spot.value = null; }
 }
 
 function update() {
@@ -107,7 +112,7 @@ function update() {
   const moves = tourMovesOn(ticked, { stepId: item.id, done: item.done, hasTargets: item.targets.length > 0, settled: here.value && !dialog });
   ticked = moves.memory;
   if (moves.advance) { next(); return; }
-  const pointAt = done.value ? null : visible;
+  const pointAt = done.value ? tourPointsWhenDone(item.targets, visible) : visible;
   target.value = pointAt;
   const element = pointAt ? targetElement(pointAt.id) : null;
   // The control to tap scrolls clear of the composer floating over the bottom (Add to Home at the end of a long Home).
@@ -116,7 +121,9 @@ function update() {
     if (box.top < 72 || box.bottom > window.innerHeight - 110) element.scrollIntoView({ block: "center", behavior: "smooth" });
     scrolledTo = element;
   }
-  ring(element);
+  // It pulses while it's the thing to tap; a done step's card can still sit beside it.
+  ring(done.value ? null : element);
+  spot.value = element ? element.getBoundingClientRect() : null;
   const size = { width: card.value.offsetWidth, height: card.value.offsetHeight };
   const view = { width: window.innerWidth, height: window.innerHeight };
   if (!element) {
@@ -187,6 +194,8 @@ function openScreen() { if (step.value?.screen) travel(step.value.screen); }
 </script>
 
 <template>
+  <!-- The app dims behind the card, the thing to tap left clear. Drawing only: clicks go through to the app. -->
+  <div v-if="tour.open && step" class="app-tour-scrim" :class="{ 'is-shown': visibleKey === cardKey && !hidden }" :style="spotStyle" aria-hidden="true" />
   <section v-if="tour.open && step" ref="card" class="app-tour" :class="[placement && `app-tour--${placement.side}`, { 'is-hidden': hidden, 'is-shown': visibleKey === cardKey }]" :style="position" role="dialog" aria-modal="false" :aria-labelledby="titleId" :aria-hidden="hidden || undefined" data-testid="app-tour" :data-target="target?.id">
     <span v-if="placement && placement.side !== 'over'" class="app-tour__arrow" :style="arrowStyle" aria-hidden="true" />
     <div class="app-tour__head">
@@ -256,6 +265,9 @@ function openScreen() { if (step.value?.screen) travel(step.value.screen); }
 </style>
 
 <style>
+/* The dim layer: a clear hole the size of the spotlight, whose huge shadow dims everything else. */
+.app-tour-scrim { position: fixed; z-index: 59; border-radius: 16px; box-shadow: 0 0 0 200vmax rgb(0 0 0 / 32%); pointer-events: none; opacity: 0; transition: opacity .25s ease-out; }
+.app-tour-scrim.is-shown { opacity: 1; }
 /* The thing to tap next: a ring pulses out from it. */
 .tour-target-ring { animation: tour-target-ring 1.8s ease-out infinite; }
 @keyframes tour-target-ring {

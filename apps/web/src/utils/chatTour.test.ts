@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coverTourCard, currentTourScreen, currentTourTarget, onTourScreen, placeTourCard, tourArrival, tourCardWaits, tourLeftLast, tourMovesOn, tourScreenRoute, tourScreenToOpen, tourStepDone, tourStepIsHere, readChatTour, tourPlaceForPath, tourStartIndex, type ChatTour } from "./chatTour";
+import { coverTourCard, currentTourScreen, currentTourTarget, onTourScreen, placeTourCard, tourArrival, tourCardWaits, tourLeftLast, tourMovesOn, tourScreenRoute, tourScreenToOpen, tourPointsWhenDone, tourStepDone, tourStepIsHere, readChatTour, tourPlaceForPath, tourStartIndex, type ChatTour } from "./chatTour";
 
 // Failure modes: an older Core without the tour leaves Show me around doing nothing; a broken step draws an empty card;
 // the tour restarts from the top after a reload instead of the owner's step; a page that isn't Accounts or Social ticks a step.
@@ -115,6 +115,14 @@ describe("tourScreenToOpen", () => {
     expect(tourStepDone(home, "home")).toBe(false);
     expect(tourStepDone(social, "social")).toBe(true);
     expect(tourStepDone({ ...step("website"), screen: "chat" as const, done: true }, "home")).toBe(true);
+  });
+
+  // Failure mode (owner device test, 26 Nov 2026): once on Home, the first card dropped to the bottom of the screen.
+  it("keeps a done step's card by its one target, and nowhere for a step with a path", () => {
+    const tab = { id: "home_tab", hint: "" };
+    expect(tourPointsWhenDone([tab], tab)).toEqual(tab);
+    expect(tourPointsWhenDone([tab], null)).toBeNull();
+    expect(tourPointsWhenDone([tab, { id: "add_to_home", hint: "" }], tab)).toBeNull();
   });
 
   it("steps aside on Calendar during the calendar step", () => {

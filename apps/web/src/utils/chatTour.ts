@@ -39,6 +39,14 @@ export function tourPlaceForPath(path: string): "accounts" | "social" | null {
   return null;
 }
 
+/**
+ * What the card points at once the step is done: a step whose one target is where the owner had to go (Home's tab)
+ * keeps its card beside it, so the first card sits up by the Home tab rather than at the bottom of the screen.
+ */
+export function tourPointsWhenDone(targets: TourTarget[], visible: TourTarget | null): TourTarget | null {
+  return targets.length === 1 && visible?.id === targets[0].id ? targets[0] : null;
+}
+
 /** Off Home (Accounts, Social) the profile picture isn't there, so the card points at Back first. */
 export const BACK_HOME: TourTarget = { id: "back_home", hint: "Tap back to get to Home." };
 
