@@ -101,6 +101,9 @@ export type NewsCandidates = {
 };
 
 /** Sorts Soup's answer into the paper's lanes and drops anything the owner wants less of. */
+/** The topic name the paper gives to pieces from voices the owner follows. */
+export const FOLLOWED_LANE = "from voices you follow";
+
 export function toNewsCandidates(news: NewsToday, taste: Pick<SoupTaste, "workTopics" | "interests" | "lessOf">): NewsCandidates {
   const lessOf = taste.lessOf;
   const keep = (story: NewsStory) => !lessOf.length || !lessOf.some(topic => [story.headline, ...story.topics].join(" ").toLowerCase().includes(topic));
@@ -108,12 +111,17 @@ export function toNewsCandidates(news: NewsToday, taste: Pick<SoupTaste, "workTo
     const stories = (news.byTopic.find(entry => entry.topic === word)?.stories || []).filter(keep);
     return stories.length ? [{ topic: word, stories }] : [];
   });
+  // Pieces from the voices the owner follows: reading joins their own topics, first in line;
+  // episodes and videos go to the front of the media queue.
+  const followed = (news.followed || []).filter(keep);
+  const followedRead = followed.filter(story => story.medium === "read");
+  const followedIds = new Set(followed.map(story => story.id));
   return {
     front: news.frontPage.filter(keep),
     work: lane(taste.workTopics.map(topic => topic.topic)),
-    mine: lane(taste.interests),
+    mine: [...(followedRead.length ? [{ topic: FOLLOWED_LANE, stories: followedRead }] : []), ...lane(taste.interests)],
     local: news.local.filter(keep),
-    media: news.media.filter(keep),
+    media: [...followed.filter(story => story.medium !== "read"), ...news.media.filter(story => keep(story) && !followedIds.has(story.id))],
     considered: news.meta.considered,
   };
 }
@@ -159,7 +167,11 @@ async function gatherNews(env: Env, client: SoupClient, taste: SoupTaste, prefs:
   const topics = [...taste.workTopics.map(topic => topic.topic), ...taste.interests].slice(0, 12);
   // Soup requires a country. `since` is left to Soup: its own windows keep a week of videos and
   // podcasts and top a quiet topic up from the last three days, which a fixed cut-off would lose.
-  const request = { topics, country: prefs.country || countryFromTimezone(timezone), city: prefs.city, exclude };
+  const request = {
+    topics, country: prefs.country || countryFromTimezone(timezone), city: prefs.city, exclude,
+    base: prefs.base, ...(prefs.bigStories === false ? { bigStories: false } : {}),
+    ...(prefs.follows.length ? { follows: prefs.follows.map(follow => follow.id) } : {}),
+  };
   if (env.ME3_SOUP_NEWS_FIXTURE) return newsFixtureFor(request);
   try { return await client.newsToday(request, AbortSignal.timeout(12_000)); }
   catch (error) {

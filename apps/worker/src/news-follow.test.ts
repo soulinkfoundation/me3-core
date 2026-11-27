@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { applyNewsPatch, describeNewsSettings } from "./news-settings";
 import { newsFollowTopics } from "./news-follow";
-import { readSoupFollow, soupFollowQuery } from "./soup-client";
+import { newsTodayQuery, readNewsToday, readSoupFollow, soupFollowQuery } from "./soup-client";
+import { FOLLOWED_LANE, toNewsCandidates } from "./news-paper";
 import { emptySoupTaste, readNewsPrefs } from "./soup-taste";
 
 describe("who to follow", () => {
@@ -34,5 +35,25 @@ describe("who to follow", () => {
     expect(taste.news?.follows).toEqual([{ id: "tara-brach", name: "Tara Brach", medium: "listen", feed: "https://feeds/tara", image: "https://img/tara.jpg" }]);
     expect(describeNewsSettings({ taste, setUp: false, setUpAt: null, projects: [] }).follows).toHaveLength(1);
     expect(readNewsPrefs({})?.follows).toEqual([]);
+  });
+});
+
+describe("follows in the paper", () => {
+  const story = (id: string, medium: "read" | "listen" | "watch", headline = id) => ({ id, headline, summary: "", url: `https://example.com/${id}`, sources: [{ name: "Voice", url: "https://example.com" }], topics: [], medium });
+
+  it("sends feelings, big stories and follow ids, and nothing else new", () => {
+    const params = newsTodayQuery({ topics: ["coaching"], country: "IE", base: ["hopeful", "nonsense", "know"], bigStories: false, follows: ["tara-brach", "https://bad.example"] });
+    expect(params.get("base")).toBe("hopeful,know");
+    expect(params.get("bigStories")).toBe("0");
+    expect(params.get("follows")).toBe("tara-brach");
+    expect(newsTodayQuery({ topics: [], bigStories: true }).has("bigStories")).toBe(false);
+  });
+
+  it("reads followed and puts it first: reading in its own lane, episodes and videos at the front of media", () => {
+    const news = readNewsToday({ frontPage: [], byTopic: [{ topic: "surfing", stories: [story("s1", "read")] }], local: [], media: [story("m1", "watch"), story("f2", "listen")], followed: [story("f1", "read"), story("f2", "listen")], meta: {} });
+    const candidates = toNewsCandidates(news, { workTopics: [], interests: ["surfing"], lessOf: [] });
+    expect(candidates.mine.map(lane => [lane.topic, lane.stories.map(s => s.id)])).toEqual([[FOLLOWED_LANE, ["f1"]], ["surfing", ["s1"]]]);
+    expect(candidates.media.map(s => s.id)).toEqual(["f2", "m1"]);
+    expect(readNewsToday({}).followed).toEqual([]);
   });
 });

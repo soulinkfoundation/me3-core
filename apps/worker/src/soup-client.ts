@@ -108,17 +108,28 @@ export type NewsStory = {
   /** Trusted accounts that shared this story on X: how many, and up to three of their handles. */
   sharedBy?: { count: number; handles: string[] };
 };
-export type NewsTodayRequest = { topics: string[]; country?: string | null; city?: string | null; since?: string; exclude?: string[] };
+export type NewsTodayRequest = {
+  topics: string[]; country?: string | null; city?: string | null; since?: string; exclude?: string[];
+  /** How the owner would like to feel, first leading (Soup's `base`). */
+  base?: string[];
+  /** False leaves the ordinary news cycle off the front page. */
+  bigStories?: boolean;
+  /** Ids from Soup's public follow list, never names or links. */
+  follows?: string[];
+};
 export type NewsToday = {
   contractVersion: string | null;
   frontPage: NewsStory[];
   byTopic: Array<{ topic: string; stories: NewsStory[] }>;
   local: NewsStory[];
   media: NewsStory[];
+  /** The newest piece from each voice the owner follows. Empty when none were sent or Soup is older. */
+  followed?: NewsStory[];
   meta: { considered: number; grouped: boolean };
 };
 
-const NEWS_KEYS = new Set(["topics", "country", "city", "since", "exclude"]);
+const NEWS_KEYS = new Set(["topics", "country", "city", "since", "exclude", "base", "bigStories", "follows"]);
+const NEWS_FEELING_WORDS = new Set(["hopeful", "motivated", "know", "connected"]);
 
 /** The only shape ever sent to Soup's news API: topic words, a country, a city name and story IDs already shown. */
 export function newsTodayQuery(request: NewsTodayRequest): URLSearchParams {
@@ -132,6 +143,11 @@ export function newsTodayQuery(request: NewsTodayRequest): URLSearchParams {
   if (request.since && !Number.isNaN(Date.parse(request.since))) params.set("since", new Date(request.since).toISOString());
   const exclude = (request.exclude || []).filter(id => typeof id === "string" && /^[\w:.-]{1,120}$/.test(id)).slice(0, MAX_EXCLUDE);
   if (exclude.length) params.set("exclude", exclude.join(","));
+  const base = [...new Set((request.base || []).filter(word => NEWS_FEELING_WORDS.has(word)))].slice(0, 2);
+  if (base.length) params.set("base", base.join(","));
+  if (request.bigStories === false) params.set("bigStories", "0");
+  const follows = [...new Set((request.follows || []).filter(id => typeof id === "string" && /^[a-z0-9][a-z0-9-]{0,79}$/.test(id)))].slice(0, 30);
+  if (follows.length) params.set("follows", follows.join(","));
   // A plain identifier for the agent, and a mark that this is a scheduled build so no public count moves.
   params.set("agent", SOUP_AGENT_ID);
   params.set("scheduled", "1");
@@ -174,6 +190,7 @@ export function readNewsToday(data: unknown): NewsToday {
     }),
     local: readNewsStories(raw.local),
     media: readNewsStories(raw.media),
+    followed: readNewsStories(raw.followed),
     meta: { considered: typeof meta.considered === "number" ? meta.considered : 0, grouped: meta.grouped === true },
   };
 }
