@@ -625,7 +625,7 @@ export async function getNewsToday(env: Env, ownerId: string, now = new Date()):
   return { setUp: true, paused: settings.paused, paper: row && !settings.paused ? serialize(row, time) : null, time, nextTime };
 }
 
-/** Builds today's paper now: right after setup, when News is added back to Home, or when the owner asks. An existing paper is returned as it is unless `fresh`. */
+/** Builds today's paper now: right after setup, when News is added back to Home, or when the owner asks. An existing paper is returned as it is unless `fresh`, or unless the owner changed their order after it was made. */
 export async function buildNewsNow(env: Env, ownerId: string, options: { fresh?: boolean; now?: Date } = {}): Promise<NewsPaper | null> {
   const now = options.now || new Date();
   const [state, { timezone, local }] = await Promise.all([getSoupTaste(env, ownerId), ownerLocal(env, ownerId, now)]);
@@ -634,7 +634,9 @@ export async function buildNewsNow(env: Env, ownerId: string, options: { fresh?:
   if (!options.fresh) {
     const row = await env.DB.prepare("SELECT * FROM news_papers WHERE user_id = ? AND date_key = ?").bind(ownerId, local.dateKey).first<PaperRow>();
     const paper = row ? serialize(row, time) : null;
-    if (paper) return paper;
+    // A paper made before the owner last changed their order (setup run again, new follows) is rebuilt.
+    const ordered = state.taste.news.orderedAt;
+    if (paper && !(ordered && row!.ready_at && row!.ready_at < ordered)) return paper;
   }
   const due = localInstant(local.dateKey, time, timezone);
   // Built by hand before the usual time, it is simply ready now.

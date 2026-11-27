@@ -33,6 +33,8 @@ export type NewsSettings = {
 export type NewsTopicInput = { label: string; on: boolean; projectId: string | null };
 
 const PATCH_KEYS = new Set(["work", "mine", "lessOf", "city", "country", "time", "notify", "paused", "setUp", "base", "bigStories", "occupation", "follows"]);
+/** Changes to what goes in the paper. Time, notify and pausing don't change today's paper. */
+const ORDER_KEYS = ["work", "mine", "lessOf", "city", "country", "base", "bigStories", "occupation", "follows"];
 const SENTENCE_CASE = /^[a-z]/;
 
 export function newsTopicLabel(word: string, labels: Record<string, string>): string {
@@ -43,7 +45,7 @@ export function newsTopicLabel(word: string, labels: Record<string, string>): st
 export const newsIsSetUp = (state: Pick<SoupTasteState, "taste">) => Boolean(state.taste.news?.setUpAt);
 
 export function defaultNewsPrefs(time: string | null = null): NewsPrefs {
-  return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 0, notify: true, paused: false, city: null, cityChosen: false, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null, base: [...DEFAULT_NEWS_BASE], bigStories: true, occupation: null, follows: [] };
+  return { time: snapNewsTime(time) || NEWS_DEFAULT_TIME, weekendOffsetMinutes: 0, notify: true, paused: false, city: null, cityChosen: false, country: null, lat: null, lon: null, labels: {}, moreWork: [], moreMine: [], lastRating: null, setUpAt: null, orderedAt: null, base: [...DEFAULT_NEWS_BASE], bigStories: true, occupation: null, follows: [] };
 }
 
 /**
@@ -170,6 +172,7 @@ export function applyNewsPatch(taste: SoupTaste, input: Record<string, unknown>,
     prefs.paused = false;
     prefs.setUpAt ||= (context.now || new Date()).toISOString();
   }
+  if (ORDER_KEYS.some(key => input[key] !== undefined)) prefs.orderedAt = (context.now || new Date()).toISOString();
   return next;
 }
 

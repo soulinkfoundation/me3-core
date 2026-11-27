@@ -272,6 +272,12 @@ describe("news settings", () => {
     expect(() => applyNewsPatch(taste, { time: "soon" }, context)).toThrow(/06:45/);
   });
 
+  it("notes when the order changed, but not for the time, notifications or a pause", () => {
+    expect(applyNewsPatch(founderTaste(), { follows: [] }, context).news?.orderedAt).toBe("2026-11-13T08:00:00.000Z");
+    expect(applyNewsPatch(founderTaste(), { mine: ["Yoga"] }, context).news?.orderedAt).toBe("2026-11-13T08:00:00.000Z");
+    expect(applyNewsPatch(founderTaste(), { time: "07:00", notify: false, paused: true }, context).news?.orderedAt).toBeNull();
+  });
+
   it("keeps a city the lookup did not know and drops the old coordinates", () => {
     const taste = applyNewsPatch(founderTaste(), {}, { ...context, city: "Inis Meáin" });
     expect(taste.news).toMatchObject({ city: "Inis Meáin", country: "IE", lat: null, lon: null });

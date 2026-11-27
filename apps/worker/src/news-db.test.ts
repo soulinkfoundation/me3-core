@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { moveSoupSetupsToNews } from "./news-migrate";
-import { actOnNewsPaper, getNewsToday } from "./news-paper";
+import { actOnNewsPaper, buildNewsNow, getNewsToday } from "./news-paper";
 import { NEWS_PUSH_TITLE, dispatchDueNewsNotifications } from "./news-push";
 import { defaultNewsPrefs } from "./news-settings";
 import { notifyCalendarItemDue } from "./push-notifications";
@@ -68,6 +68,21 @@ describe("the paper on Home, against the schema", () => {
     // The next day has no paper yet, and when it arrives it is a new row that was never hidden.
     const tomorrow = await getNewsToday(f.env, "owner", new Date("2026-11-14T08:00:00.000Z"));
     expect(tomorrow).toMatchObject({ setUp: true, paper: null, time: "06:45" });
+  });
+});
+
+// Failure mode: the owner runs setup again and follows fifteen channels, and the paper they were
+// already given today comes back unchanged.
+describe("building today's paper now, against the schema", () => {
+  it("hands back today's paper as it is, unless the order changed after it was made", async () => {
+    const f = fixture(); seedPaper(f, { orderedAt: "2026-11-13T06:00:00.000Z" });
+    expect(await buildNewsNow(f.env, "owner", { now: at("07:00") })).toMatchObject({ id: "paper-1", readyAt: "2026-11-13T06:16:00.000Z" });
+
+    const g = fixture(); seedPaper(g, { orderedAt: "2026-11-13T06:55:00.000Z" });
+    (g.env as { ME3_SOUP_NEWS_FIXTURE?: string }).ME3_SOUP_NEWS_FIXTURE = "1";
+    const rebuilt = await buildNewsNow(g.env, "owner", { now: at("07:00") });
+    expect(rebuilt?.readyAt).toBe("2026-11-13T07:00:00.000Z");
+    expect(rebuilt?.pages.front.lead.id).not.toBe("news:a");
   });
 });
 

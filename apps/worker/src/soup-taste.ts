@@ -75,6 +75,8 @@ export type NewsPrefs = {
   follows: NewsFollow[];
   /** When the owner confirmed their News setup. A Soup setup alone leaves this null. */
   setUpAt: string | null;
+  /** When the owner last changed what goes in the paper (topics, base, place, follows). A paper built before this is out of date. */
+  orderedAt: string | null;
 };
 /** One voice the owner follows: a person, show or publication from Soup's trusted lists. */
 export type NewsFollow = { id: string; name: string; medium: "read" | "listen" | "watch"; feed: string; image: string | null };
@@ -146,6 +148,7 @@ export function readNewsPrefs(raw: unknown): NewsPrefs | null {
     moreMine: words(raw.moreMine),
     lastRating: raw.lastRating === "fire" || raw.lastRating === "ok" || raw.lastRating === "sleepy" ? raw.lastRating : null,
     setUpAt: typeof raw.setUpAt === "string" && !Number.isNaN(Date.parse(raw.setUpAt)) ? raw.setUpAt : null,
+    orderedAt: typeof raw.orderedAt === "string" && !Number.isNaN(Date.parse(raw.orderedAt)) ? new Date(raw.orderedAt).toISOString() : null,
     base: readNewsBase(raw.base) ?? [...DEFAULT_NEWS_BASE],
     bigStories: raw.bigStories !== false,
     occupation: typeof raw.occupation === "string" && raw.occupation.trim() ? raw.occupation.replace(/\s+/g, " ").trim().slice(0, 80) : null,
